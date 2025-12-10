@@ -1,0 +1,14 @@
+project_root: D:\CursorProjects\Orchestra
+exclude_dirs:
+    - .git
+    - node_modules
+    - dist
+    - build
+    - .orchestra
+context_limit_kb: 50
+llm:
+    api_base: http://10.5.0.2:1234
+    api_key: "lm-studio"
+    model: qwen3-coder-30b-a3b-instruct
+    max_tokens: 15000
+    temperature: 0.2
