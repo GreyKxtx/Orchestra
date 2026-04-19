@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -243,6 +242,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
+		var agentLogger *llm.Logger
+		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
+			agentLogger = openAIClient.GetLogger()
+		}
+
 		ag, err := agent.New(llmClient, validator, runner, agent.Options{
 			MaxSteps:             cfg.Agent.MaxSteps,
 			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
@@ -258,6 +262,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			ResponseFormat:       respFmt,
 			PromptFamily:         cfg.LLM.PromptFamily,
 			OnEvent:              buildCLIRenderer(),
+			AgentLogger:          agentLogger,
 		})
 		if err != nil {
 			retErr = err
@@ -315,41 +320,13 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 }
 
 func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string, allowExec bool, dryRun bool, backup bool) (*core.AgentRunResult, error) {
-	exe, err := os.Executable()
+	child, err := spawnCoreChild(cmd.Context(), cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}
+	defer child.Close()
 
-	child := exec.CommandContext(cmd.Context(), exe, "core", "--workspace-root", cfg.ProjectRoot)
-	child.Stderr = os.Stderr
-
-	stdin, err := child.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := child.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, err
-	}
-	if err := child.Start(); err != nil {
-		_ = stdin.Close()
-		return nil, err
-	}
-	defer func() {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		done := make(chan error, 1)
-		go func() { done <- child.Wait() }()
-		select {
-		case <-time.After(2 * time.Second):
-			_ = child.Process.Kill()
-			_ = <-done
-		case <-done:
-		}
-	}()
-
-	rpc := jsonrpc.NewClient(stdout, stdin)
+	rpc := child.Client
 
 	projectID, err := store.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
@@ -378,7 +355,6 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 		Debug:             debugMode,
 	}, &out)
 	if err != nil {
-		// Try to extract more details from RPC error
 		if rpcErr, ok := err.(*jsonrpc.RPCError); ok && rpcErr.Data != nil {
 			if dataMap, ok := rpcErr.Data.(map[string]any); ok {
 				if errorDetail, ok := dataMap["error"].(string); ok {
@@ -578,6 +554,8 @@ func buildCLIRenderer() func(agent.AgentEvent) {
 			if ev.Stream.Response != nil && ev.Stream.Response.Message.Content != "" {
 				fmt.Fprintln(os.Stderr) // newline after streamed text
 			}
+		case llm.StreamEventExecOutput:
+			fmt.Fprint(os.Stderr, ev.Stream.Content)
 		}
 	}
 }

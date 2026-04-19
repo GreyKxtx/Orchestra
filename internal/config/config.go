@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // LLMConfig contains LLM API settings
 type LLMConfig struct {
+	// Provider selects the API provider: "openai" (default), "anthropic".
+	Provider    string  `yaml:"provider"`
 	APIBase     string  `yaml:"api_base"`
 	APIKey      string  `yaml:"api_key"`
 	Model       string  `yaml:"model"`
@@ -64,14 +67,73 @@ type LimitsConfig struct {
 
 // ExecConfig contains exec.run safety + consent settings (vNext).
 type ExecConfig struct {
-	Confirm       *bool `yaml:"confirm"`
-	TimeoutS      int   `yaml:"timeout_s"`
-	OutputLimitKB int   `yaml:"output_limit_kb"`
+	Confirm       *bool    `yaml:"confirm"`
+	Allow         []string `yaml:"allow,omitempty"`  // commands explicitly allowed (basename, e.g. "go", "npm")
+	Deny          []string `yaml:"deny,omitempty"`   // commands explicitly denied (takes precedence over Allow)
+	TimeoutS      int      `yaml:"timeout_s"`
+	OutputLimitKB int      `yaml:"output_limit_kb"`
+}
+
+// IsCommandAllowed reports whether cmd may run given the allow/deny lists.
+// Called only when Confirm=true (binary consent is already checked by the caller).
+// Deny list takes precedence over Allow list.
+// Empty Allow list with no Deny list → deny all (require explicit allowlist).
+func (e ExecConfig) IsCommandAllowed(cmd string) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(cmd)))
+	base = strings.TrimSuffix(base, ".exe") // Windows: strip extension for comparison
+	if base == "" || base == "." {
+		return false
+	}
+	for _, d := range e.Deny {
+		if strings.ToLower(strings.TrimSpace(d)) == base {
+			return false
+		}
+	}
+	if len(e.Allow) == 0 {
+		return false // no allowlist configured → deny all
+	}
+	for _, a := range e.Allow {
+		if strings.ToLower(strings.TrimSpace(a)) == base {
+			return true
+		}
+	}
+	return false
 }
 
 // LanguagesConfig selects enabled language parsers (vNext).
 type LanguagesConfig struct {
 	Enabled []string `yaml:"enabled"`
+}
+
+// MCPServerConfig configures a single MCP server (Phase 8).
+type MCPServerConfig struct {
+	// Name is the server identifier — tools appear as mcp:<name>:<tool>.
+	Name string `yaml:"name"`
+	// Command is the executable + args to start the MCP server via stdio.
+	Command []string `yaml:"command"`
+	// Env is additional environment variables (values support ${VAR} expansion).
+	Env map[string]string `yaml:"env,omitempty"`
+	// Disabled skips this server without removing it from the config.
+	Disabled bool `yaml:"disabled,omitempty"`
+}
+
+// MCPConfig holds the list of MCP servers to connect to.
+type MCPConfig struct {
+	Servers []MCPServerConfig `yaml:"servers,omitempty"`
+}
+
+// HooksConfig configures pre/post tool call hooks (Phase 6).
+type HooksConfig struct {
+	// Enabled gates all hook execution. Hooks are disabled by default.
+	Enabled bool `yaml:"enabled"`
+	// PreTool is the command + args to run before each tool call.
+	// Non-zero exit denies the tool call. Env: ORCH_TOOL_NAME, ORCH_TOOL_INPUT, ORCH_WORKSPACE_ROOT.
+	PreTool []string `yaml:"pre_tool,omitempty"`
+	// PostTool is the command + args to run after each successful tool call.
+	// Non-zero exit is logged but does not fail the tool.
+	PostTool []string `yaml:"post_tool,omitempty"`
+	// TimeoutMS is the per-hook subprocess timeout (default: 5000ms).
+	TimeoutMS int `yaml:"timeout_ms"`
 }
 
 // ProjectConfig represents the Orchestra configuration
@@ -86,6 +148,8 @@ type ProjectConfig struct {
 	Agent        AgentConfig     `yaml:"agent"`
 	Daemon       DaemonConfig    `yaml:"daemon"`
 	Exec         ExecConfig      `yaml:"exec"`
+	Hooks        HooksConfig     `yaml:"hooks"`
+	MCP          MCPConfig       `yaml:"mcp"`
 	Languages    LanguagesConfig `yaml:"languages"`
 }
 
@@ -228,6 +292,11 @@ func (c *ProjectConfig) applyDefaults() {
 	// Default confirm=true unless explicitly set.
 	if c.Exec.Confirm == nil {
 		c.Exec.Confirm = boolPtr(true)
+	}
+
+	// Hooks defaults
+	if c.Hooks.TimeoutMS <= 0 {
+		c.Hooks.TimeoutMS = 5000
 	}
 
 	// Languages defaults

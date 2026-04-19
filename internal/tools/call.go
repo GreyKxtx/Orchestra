@@ -15,6 +15,11 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		return nil, fmt.Errorf("tool name is empty")
 	}
 
+	// Route mcp:* calls to the registered MCP manager.
+	if r.mcpCaller != nil && strings.HasPrefix(name, "mcp:") {
+		return r.mcpCaller.Call(ctx, name, input)
+	}
+
 	switch name {
 	case "fs.list":
 		var req FSListRequest
@@ -33,6 +38,39 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 			return nil, err
 		}
 		resp, err := r.FSRead(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "fs.glob":
+		var req FSGlobRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.FSGlob(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "fs.write":
+		var req FSWriteRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.FSWrite(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "fs.edit":
+		var req FSEditRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.FSEdit(ctx, req)
 		if err != nil {
 			return nil, err
 		}

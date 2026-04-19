@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,6 +22,9 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
+	"github.com/orchestra/orchestra/internal/hooks"
+	"github.com/orchestra/orchestra/internal/mcp"
+	"github.com/orchestra/orchestra/internal/tasks"
 )
 
 type Core struct {
@@ -34,9 +38,10 @@ type Core struct {
 	cfg       *config.ProjectConfig
 	llmClient llm.Client
 
-	validator *schema.Validator
-	tools     *tools.Runner
-	sessions  *coresession.Manager
+	validator  *schema.Validator
+	tools      *tools.Runner
+	sessions   *coresession.Manager
+	mcpManager *mcp.Manager
 }
 
 type Options struct {
@@ -83,10 +88,29 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 
 	llmClient := opts.LLMClient
 	if llmClient == nil {
-		llmClient = llm.NewOpenAIClient(cfg.LLM)
-		// Set logger for LLM requests (only for real client)
-		logger := llm.NewLogger(rootAbs)
-		llmClient.(*llm.OpenAIClient).SetLogger(logger)
+		switch strings.ToLower(cfg.LLM.Provider) {
+		case "anthropic":
+			llmClient = llm.NewAnthropicClient(cfg.LLM)
+		default:
+			oc := llm.NewOpenAIClient(cfg.LLM)
+			logger := llm.NewLogger(rootAbs)
+			oc.SetLogger(logger)
+			llmClient = oc
+		}
+	}
+
+	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
+	var mcpMgr *mcp.Manager
+	if len(cfg.MCP.Servers) > 0 {
+		var startErrs []error
+		mcpMgr, startErrs = mcp.NewManager(context.Background(), cfg.MCP)
+		for _, err := range startErrs {
+			// Log to stderr — not a fatal error.
+			fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", err)
+		}
+		if !mcpMgr.IsEmpty() {
+			tr.SetMCPCaller(mcpMgr)
+		}
 	}
 
 	return &Core{
@@ -98,6 +122,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		validator:     v,
 		tools:         tr,
 		sessions:      coresession.NewManager(),
+		mcpManager:    mcpMgr,
 	}, nil
 }
 
@@ -317,16 +342,46 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if params.OnEvent != nil {
 		notify := params.OnEvent
 		onEvent = func(ev agent.AgentEvent) {
+			if ev.Stream.Kind == llm.StreamEventExecOutput {
+				notify("exec/output_chunk", map[string]any{
+					"step":  ev.Step,
+					"chunk": ev.Stream.Content,
+				})
+				return
+			}
 			notify("agent/event", map[string]any{
-				"step": ev.Step,
-				"type": string(ev.Stream.Kind),
-				"content":        ev.Stream.Content,
-				"tool_call_id":   ev.Stream.ToolCallID,
-				"tool_call_name": ev.Stream.ToolCallName,
+				"step":            ev.Step,
+				"type":            string(ev.Stream.Kind),
+				"content":         ev.Stream.Content,
+				"tool_call_id":    ev.Stream.ToolCallID,
+				"tool_call_name":  ev.Stream.ToolCallName,
 				"tool_call_index": ev.Stream.ToolCallIndex,
-				"args_delta":     ev.Stream.ArgsDelta,
+				"args_delta":      ev.Stream.ArgsDelta,
 			})
 		}
+	}
+
+	allowExec := params.AllowExec
+	if c.cfg != nil && c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
+		allowExec = true // Confirm: false in config = allow all (backward compat)
+	}
+	var execAllow, execDeny []string
+	if c.cfg != nil {
+		execAllow = c.cfg.Exec.Allow
+		execDeny = c.cfg.Exec.Deny
+	}
+
+	var agentLogger *llm.Logger
+	if c.llmClient != nil {
+		if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
+			agentLogger = oc.GetLogger()
+		}
+	}
+
+	taskRunner := tasks.New(c.llmClient, c.validator, c.tools)
+	var hooksRunner agent.HooksRunner
+	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
+		hooksRunner = hr
 	}
 
 	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
@@ -339,11 +394,17 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
 		Apply:                params.Apply,
 		Backup:               params.Backup,
-		AllowExec:            params.AllowExec,
+		AllowExec:            allowExec,
+		ExecAllow:            execAllow,
+		ExecDeny:             execDeny,
 		Debug:                params.Debug || c.debug,
 		ResponseFormat:       respFmt,
 		PromptFamily:         promptFamily,
 		OnEvent:              onEvent,
+		AgentLogger:          agentLogger,
+		SubtaskRunner:        taskRunner,
+		HooksRunner:          hooksRunner,
+		ExtraTools:           c.mcpToolDefs(),
 	})
 	if err != nil {
 		return nil, err
@@ -376,19 +437,44 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "tool name is empty", nil)
 	}
 
-	// Consent policy: exec.run is forbidden unless explicitly allowed by config.
-	if strings.TrimSpace(params.Name) == "exec.run" && c.cfg != nil && c.cfg.Exec.Confirm != nil && *c.cfg.Exec.Confirm {
-		return nil, protocol.NewError(protocol.ExecDenied, "exec.run requires user consent", map[string]any{
-			"tool": params.Name,
-		})
+	// Consent policy: exec.run is blocked by default (Confirm=true).
+	// Allowed when: Confirm=false (allow all), OR command is in exec.allow list.
+	if strings.TrimSpace(params.Name) == "exec.run" && c.cfg != nil {
+		confirm := c.cfg.Exec.Confirm == nil || *c.cfg.Exec.Confirm
+		if confirm {
+			var execReq struct {
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal(params.Input, &execReq)
+			if !c.cfg.Exec.IsCommandAllowed(execReq.Command) {
+				msg := "exec.run requires user consent (configure exec.allow or use --allow-exec)"
+				if len(c.cfg.Exec.Allow) > 0 {
+					msg = fmt.Sprintf("exec.run: command %q is not in the allowlist", execReq.Command)
+				}
+				return nil, protocol.NewError(protocol.ExecDenied, msg, map[string]any{
+					"tool":    params.Name,
+					"command": execReq.Command,
+				})
+			}
+		}
 	}
 
 	return c.tools.Call(ctx, params.Name, params.Input)
 }
 
 func (c *Core) Close() error {
-	// Reserved for future (daemon state, caches, etc).
+	if c.mcpManager != nil {
+		c.mcpManager.Close()
+	}
 	return nil
+}
+
+// mcpToolDefs returns MCP tool definitions if a manager is active.
+func (c *Core) mcpToolDefs() []llm.ToolDef {
+	if c.mcpManager == nil || c.mcpManager.IsEmpty() {
+		return nil
+	}
+	return c.mcpManager.ListToolDefs()
 }
 
 // ── Session API ──────────────────────────────────────────────────────────────
@@ -456,8 +542,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		sess.Unlock()
 		return nil, protocol.NewError(protocol.ExecFailed, "session is busy", map[string]any{"session_id": params.SessionID})
 	}
-	// Snapshot history for this turn (under lock).
+	// Snapshot history and todos for this turn (under lock).
 	inHistory := sess.CopyHistory()
+	inTodos := sess.CopyTodos()
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
@@ -513,6 +600,13 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if agParams.OnEvent != nil {
 		notify := agParams.OnEvent
 		onEvent = func(ev agent.AgentEvent) {
+			if ev.Stream.Kind == llm.StreamEventExecOutput {
+				notify("exec/output_chunk", map[string]any{
+					"step":  ev.Step,
+					"chunk": ev.Stream.Content,
+				})
+				return
+			}
 			notify("agent/event", map[string]any{
 				"step":            ev.Step,
 				"type":            string(ev.Stream.Kind),
@@ -525,6 +619,29 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		}
 	}
 
+	sessAllowExec := agParams.AllowExec
+	if c.cfg != nil && c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
+		sessAllowExec = true
+	}
+	var sessExecAllow, sessExecDeny []string
+	if c.cfg != nil {
+		sessExecAllow = c.cfg.Exec.Allow
+		sessExecDeny = c.cfg.Exec.Deny
+	}
+
+	var sessAgentLogger *llm.Logger
+	if c.llmClient != nil {
+		if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
+			sessAgentLogger = oc.GetLogger()
+		}
+	}
+
+	sessTaskRunner := tasks.New(c.llmClient, c.validator, c.tools)
+	var sessHooksRunner agent.HooksRunner
+	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
+		sessHooksRunner = hr
+	}
+
 	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
@@ -535,11 +652,18 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
 		Apply:                agParams.Apply,
 		Backup:               agParams.Backup,
-		AllowExec:            agParams.AllowExec,
+		AllowExec:            sessAllowExec,
+		ExecAllow:            sessExecAllow,
+		ExecDeny:             sessExecDeny,
+		InitialTodos:         inTodos,
 		Debug:                c.debug,
 		ResponseFormat:       respFmt,
 		PromptFamily:         promptFamily,
 		OnEvent:              onEvent,
+		AgentLogger:          sessAgentLogger,
+		SubtaskRunner:        sessTaskRunner,
+		HooksRunner:          sessHooksRunner,
+		ExtraTools:           c.mcpToolDefs(),
 	})
 	if err != nil {
 		return nil, err
@@ -550,13 +674,25 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 
-	// Update session history with the new messages from this turn.
+	// Update session history and todos with the results of this turn.
 	newMsgs := outHistory[len(inHistory):]
+	sess.Lock()
 	if len(newMsgs) > 0 {
-		sess.Lock()
 		sess.AppendHistory(newMsgs)
-		sess.Unlock()
 	}
+	if res != nil {
+		sess.SetTodos(res.Todos)
+	}
+	sess.Unlock()
+
+	// Store ops for potential later apply; clear if already applied or no ops.
+	sess.Lock()
+	if !params.Apply && len(res.Ops) > 0 {
+		sess.SetPending(res.Ops)
+	} else {
+		sess.SetPending(nil)
+	}
+	sess.Unlock()
 
 	return &SessionMessageResult{
 		Steps:         res.Steps,
@@ -565,6 +701,51 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Ops:           res.Ops,
 		ApplyResponse: res.ApplyResponse,
 	}, nil
+}
+
+type SessionApplyPendingParams struct {
+	SessionID string `json:"session_id"`
+	Backup    bool   `json:"backup,omitempty"`
+}
+
+type SessionApplyPendingResult struct {
+	Applied       bool                      `json:"applied"`
+	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+}
+
+// SessionApplyPending applies ops stored from the last dry-run turn of the session.
+func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendingParams) (*SessionApplyPendingResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
+	}
+	sess, err := c.sessions.Get(params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+
+	sess.Lock()
+	pendingOps := sess.TakePending()
+	sess.Unlock()
+
+	if len(pendingOps) == 0 {
+		return &SessionApplyPendingResult{Applied: false}, nil
+	}
+
+	resp, err := c.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
+		Ops:    pendingOps,
+		Backup: params.Backup,
+	})
+	if err != nil {
+		// Restore pending so the user can retry.
+		sess.Lock()
+		sess.SetPending(pendingOps)
+		sess.Unlock()
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+	}
+	return &SessionApplyPendingResult{Applied: true, ApplyResponse: resp}, nil
 }
 
 type SessionHistoryParams struct {

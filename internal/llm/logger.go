@@ -8,23 +8,30 @@ import (
 	"time"
 )
 
-// LLMLogEntry represents a single LLM request/response log entry
+// LLMLogEntry represents a single log entry in llm_log.jsonl.
+// Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result".
 type LLMLogEntry struct {
 	TSUnix          int64    `json:"ts_unix"`
-	Event           string   `json:"event"` // "llm_request", "llm_response", "llm_error"
+	Event           string   `json:"event"`
 	URL             string   `json:"url,omitempty"`
 	Model           string   `json:"model,omitempty"`
 	TimeoutS        int      `json:"timeout_s,omitempty"`
 	RequestBytes    int      `json:"request_bytes,omitempty"`
 	ToolsCount      int      `json:"tools_count,omitempty"`
 	MessagesCount   int      `json:"messages_count,omitempty"`
-	MessageRoles    []string `json:"message_roles,omitempty"` // Roles of messages: ["system","user","assistant","tool",...]
+	MessageRoles    []string `json:"message_roles,omitempty"`
 	ResponseBytes   int      `json:"response_bytes,omitempty"`
 	DurationMS      int64    `json:"duration_ms,omitempty"`
 	HTTPCode        int      `json:"http_code,omitempty"`
-	ErrorBody       string   `json:"error_body,omitempty"`       // Truncated to 2KB
-	RequestPreview  string   `json:"request_preview,omitempty"`  // Truncated to 2KB, no secrets
-	ResponsePreview string   `json:"response_preview,omitempty"` // Truncated to 2KB
+	ErrorBody       string   `json:"error_body,omitempty"`
+	RequestPreview  string   `json:"request_preview,omitempty"`
+	ResponsePreview string   `json:"response_preview,omitempty"`
+
+	// tool_call / tool_result fields
+	ToolName    string `json:"tool_name,omitempty"`
+	InputBytes  int    `json:"input_bytes,omitempty"`
+	OutputBytes int    `json:"output_bytes,omitempty"`
+	ErrorStr    string `json:"error,omitempty"`
 }
 
 // Logger handles LLM request/response logging
@@ -103,6 +110,34 @@ func (l *Logger) LogError(httpCode int, errorBody string, durationMS int64) {
 		"duration_ms": durationMS,
 	}
 	l.writeLastError(errorData)
+}
+
+// LogToolCall logs a tool invocation before execution.
+func (l *Logger) LogToolCall(toolName string, inputBytes int) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix:     time.Now().Unix(),
+		Event:      "tool_call",
+		ToolName:   toolName,
+		InputBytes: inputBytes,
+	})
+}
+
+// LogToolResult logs the result (or error) of a tool invocation.
+func (l *Logger) LogToolResult(toolName string, outputBytes int, durationMS int64, errStr string) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix:      time.Now().Unix(),
+		Event:       "tool_result",
+		ToolName:    toolName,
+		OutputBytes: outputBytes,
+		DurationMS:  durationMS,
+		ErrorStr:    errStr,
+	})
 }
 
 func (l *Logger) appendLog(entry LLMLogEntry) {

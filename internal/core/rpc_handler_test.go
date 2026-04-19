@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -280,5 +281,91 @@ func TestSession_Cancel_IdleIsNoOp(t *testing.T) {
 	cancelP, _ := json.Marshal(SessionCancelParams{SessionID: sessionID})
 	if _, err := h.Handle(context.Background(), "session.cancel", cancelP); err != nil {
 		t.Fatalf("session.cancel on idle session: %v", err)
+	}
+}
+
+// slowLLM blocks Complete until the context is cancelled.
+// It closes ready the first time Complete is entered so callers can synchronize.
+type slowLLM struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (s *slowLLM) Complete(ctx context.Context, _ llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	s.once.Do(func() { close(s.ready) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (s *slowLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
+
+func TestSession_Cancel_InterruptsRunningTurn(t *testing.T) {
+	root := t.TempDir()
+
+	slow := &slowLLM{ready: make(chan struct{})}
+	_, h := setupInitializedCore(t, root, slow)
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sessionID := res.(*SessionStartResult).SessionID
+
+	// Run session.message in the background; it will block inside the LLM.
+	msgErrCh := make(chan error, 1)
+	go func() {
+		msgP, _ := json.Marshal(SessionMessageParams{
+			SessionID: sessionID,
+			Content:   "slow task",
+		})
+		_, err := h.Handle(context.Background(), "session.message", msgP)
+		msgErrCh <- err
+	}()
+
+	// Wait until the LLM has been entered.
+	<-slow.ready
+
+	// Cancel the running turn.
+	cancelP, _ := json.Marshal(SessionCancelParams{SessionID: sessionID})
+	if _, err := h.Handle(context.Background(), "session.cancel", cancelP); err != nil {
+		t.Fatalf("session.cancel: %v", err)
+	}
+
+	// session.message must return an error (context cancelled).
+	if err := <-msgErrCh; err == nil {
+		t.Fatal("expected session.message to fail after cancel, got nil")
+	}
+
+	// Session must still be accessible after cancellation.
+	histP, _ := json.Marshal(SessionHistoryParams{SessionID: sessionID})
+	if _, err := h.Handle(context.Background(), "session.history", histP); err != nil {
+		t.Fatalf("session.history after cancel should succeed: %v", err)
+	}
+}
+
+func TestSession_ApplyPending_NoOpsReturnsNotApplied(t *testing.T) {
+	root := t.TempDir()
+	_, h := setupInitializedCore(t, root, &fixedLLM{})
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sessionID := res.(*SessionStartResult).SessionID
+
+	// No session.message was sent, so pending ops are empty.
+	applyP, _ := json.Marshal(SessionApplyPendingParams{SessionID: sessionID})
+	applyRes, err := h.Handle(context.Background(), "session.apply_pending", applyP)
+	if err != nil {
+		t.Fatalf("session.apply_pending: %v", err)
+	}
+	ar, ok := applyRes.(*SessionApplyPendingResult)
+	if !ok {
+		t.Fatalf("expected *SessionApplyPendingResult, got %T", applyRes)
+	}
+	if ar.Applied {
+		t.Fatal("expected Applied=false when no pending ops")
 	}
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,19 @@ import (
 
 	"github.com/orchestra/orchestra/internal/protocol"
 )
+
+type execOutputCBKey struct{}
+
+// WithExecOutputCallback returns a context that carries a chunk callback for exec.run streaming.
+// The callback receives raw output chunks (stdout and stderr interleaved) as they are produced.
+func WithExecOutputCallback(ctx context.Context, cb func(chunk string)) context.Context {
+	return context.WithValue(ctx, execOutputCBKey{}, cb)
+}
+
+func execOutputCBFromCtx(ctx context.Context) func(string) {
+	cb, _ := ctx.Value(execOutputCBKey{}).(func(string))
+	return cb
+}
 
 func runExec(parent context.Context, workspaceRoot string, defaultTimeout time.Duration, defaultOutputLimit int, req ExecRunRequest) (*ExecRunResponse, error) {
 	cmdName := strings.TrimSpace(req.Command)
@@ -64,13 +78,41 @@ func runExec(parent context.Context, workspaceRoot string, defaultTimeout time.D
 	cmd.Dir = absDir
 	cmd.Stdin = nil
 
+	streamCB := execOutputCBFromCtx(parent)
 	lim := &outputLimiter{limit: limit}
-	stdoutBuf := &limitedBuffer{lim: lim}
-	stderrBuf := &limitedBuffer{lim: lim}
-	cmd.Stdout = stdoutBuf
-	cmd.Stderr = stderrBuf
+	stdoutBuf := &limitedBuffer{lim: lim, cb: streamCB}
+	stderrBuf := &limitedBuffer{lim: lim, cb: streamCB}
 
-	err := cmd.Run()
+	var err error
+	if streamCB != nil {
+		// Streaming path: use pipes so output is forwarded incrementally.
+		stdoutPipe, pipeErr := cmd.StdoutPipe()
+		if pipeErr != nil {
+			return nil, protocol.NewError(protocol.ExecFailed, "failed to create stdout pipe", map[string]any{"error": pipeErr.Error()})
+		}
+		stderrPipe, pipeErr := cmd.StderrPipe()
+		if pipeErr != nil {
+			return nil, protocol.NewError(protocol.ExecFailed, "failed to create stderr pipe", map[string]any{"error": pipeErr.Error()})
+		}
+		if startErr := cmd.Start(); startErr != nil {
+			return nil, protocol.NewError(protocol.ExecFailed, "failed to start command", map[string]any{
+				"error":   startErr.Error(),
+				"command": cmdName,
+				"args":    req.Args,
+				"workdir": filepath.ToSlash(workdir),
+			})
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(stdoutBuf, stdoutPipe) }()
+		go func() { defer wg.Done(); _, _ = io.Copy(stderrBuf, stderrPipe) }()
+		wg.Wait()
+		err = cmd.Wait()
+	} else {
+		cmd.Stdout = stdoutBuf
+		cmd.Stderr = stderrBuf
+		err = cmd.Run()
+	}
 	dur := time.Since(start).Milliseconds()
 
 	// Process exit code handling: non-zero exit is not a transport error.
@@ -125,6 +167,7 @@ type outputLimiter struct {
 type limitedBuffer struct {
 	lim *outputLimiter
 	b   strings.Builder
+	cb  func(string) // optional streaming callback; called for each accepted chunk
 }
 
 func (w *limitedBuffer) Write(p []byte) (int, error) {
@@ -133,6 +176,9 @@ func (w *limitedBuffer) Write(p []byte) (int, error) {
 	}
 	if w.lim == nil {
 		_, _ = w.b.Write(p)
+		if w.cb != nil {
+			w.cb(string(p))
+		}
 		return len(p), nil
 	}
 
@@ -152,7 +198,11 @@ func (w *limitedBuffer) Write(p []byte) (int, error) {
 	w.lim.mu.Unlock()
 
 	if take > 0 {
-		_, _ = w.b.Write(p[:take])
+		chunk := string(p[:take])
+		_, _ = w.b.WriteString(chunk)
+		if w.cb != nil {
+			w.cb(chunk)
+		}
 	}
 	return len(p), nil
 }

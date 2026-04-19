@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +20,34 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 )
 
+// HooksRunner executes pre/post tool call hooks.
+type HooksRunner interface {
+	RunPreTool(ctx context.Context, toolName string, input json.RawMessage) error
+	RunPostTool(ctx context.Context, toolName string, output json.RawMessage)
+}
+
+// SubtaskRunner manages child agent tasks spawned via task.spawn.
+type SubtaskRunner interface {
+	Spawn(ctx context.Context, req SubtaskSpawnRequest) (string, error)
+	Wait(ctx context.Context, taskID string, timeoutMS int) (*SubtaskResult, error)
+	Cancel(ctx context.Context, taskID string) error
+}
+
+// SubtaskSpawnRequest is the request for spawning a child agent task.
+type SubtaskSpawnRequest struct {
+	Goal      string
+	MaxSteps  int
+	TimeoutMS int
+}
+
+// SubtaskResult is the result returned by a completed child agent task.
+type SubtaskResult struct {
+	TaskID string `json:"task_id"`
+	Status string `json:"status"` // "done" | "cancelled" | "error"
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
 type Options struct {
 	MaxSteps int
 	// MaxInvalidRetries is the number of extra attempts after an invalid JSON/schema output.
@@ -31,8 +60,16 @@ type Options struct {
 	Apply  bool
 	Backup bool
 
-	// AllowExec controls whether exec.run is allowed without external consent.
+	// AllowExec bypasses all exec consent checks — equivalent to --allow-exec (debug/override).
 	AllowExec bool
+	// ExecAllow is a per-command allowlist (basename, e.g. "go", "npm").
+	// If non-empty, exec.run is shown to the model and only listed commands are allowed.
+	ExecAllow []string
+	// ExecDeny is a per-command denylist (takes precedence over ExecAllow).
+	ExecDeny []string
+
+	// InitialTodos is the model's task checklist loaded from the session at turn start.
+	InitialTodos []tools.TodoItem
 
 	// MaxDeniedToolRepeats is a hard stop to prevent infinite TOOL_DENIED loops
 	// (e.g. model repeatedly calling exec.run when it's not allowed).
@@ -54,6 +91,23 @@ type Options struct {
 	// The callback must not block; use a goroutine or buffered channel if you need async processing.
 	OnEvent func(AgentEvent)
 
+	// AgentLogger, if non-nil, writes tool_call / tool_result events to llm_log.jsonl.
+	AgentLogger *llm.Logger
+
+	// CustomTools, if non-empty, overrides tools.ListTools() for this agent.
+	// Used to give child agents a restricted tool set.
+	CustomTools []llm.ToolDef
+
+	// ExtraTools are appended to the standard tool list (e.g. MCP server tools).
+	// Ignored when CustomTools is set.
+	ExtraTools []llm.ToolDef
+
+	// SubtaskRunner, if non-nil, enables task.spawn/task.wait/task.cancel tools.
+	SubtaskRunner SubtaskRunner
+
+	// HooksRunner, if non-nil, runs pre/post tool call hooks.
+	HooksRunner HooksRunner
+
 	Debug  bool
 	Logger *log.Logger
 }
@@ -73,6 +127,12 @@ type Result struct {
 	Applied bool
 	// ApplyResponse is returned from fs.apply_ops (dry-run or write).
 	ApplyResponse *tools.FSApplyOpsResponse
+
+	// Todos is the model's updated task checklist after this run.
+	Todos []tools.TodoItem
+
+	// SubtaskResult is set when a child agent completed via task.result tool call.
+	SubtaskResult string
 }
 
 type Agent struct {
@@ -80,6 +140,7 @@ type Agent struct {
 	validator *schema.Validator
 	tools     *tools.Runner
 	opts      Options
+	todos     []tools.TodoItem // current turn's working todo list
 }
 
 func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, opts Options) (*Agent, error) {
@@ -128,6 +189,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	if userQuery == "" {
 		return nil, nil, fmt.Errorf("user query is empty")
 	}
+	// Initialize todos from session state (empty for one-shot runs).
+	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
 
 	if history == nil {
 		history = make([]llm.Message, 0, 32)
@@ -193,25 +256,124 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				a.logf("agent.tool_call WARNING: no tool_calls in response, history_len=%d", len(history))
 			}
 
-			// Consent policy: block exec.run unless explicitly allowed.
+			// Consent policy: block exec.run unless AllowExec (all allowed) or per-command allowlist permits it.
 			if name == "exec.run" && !a.opts.AllowExec {
-				toolResult := formatToolDeniedJSON(name, step.Tool.Input, "exec.run requires user consent")
+				cmd := execCommandFromInput(step.Tool.Input)
+				if !execCommandAllowed(cmd, a.opts.ExecAllow, a.opts.ExecDeny) {
+					msg := "exec.run requires user consent (use --allow-exec or configure exec.allow)"
+					if len(a.opts.ExecAllow) > 0 {
+						msg = fmt.Sprintf("exec.run: command %q is not in the allowlist", cmd)
+					}
+					toolResult := formatToolDeniedJSON(name, step.Tool.Input, msg)
+					history = append(history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolCallID: toolCallID,
+						Content:    toolResult,
+					})
+					if cbErr := cb.RecordDenied(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+					continue
+				}
+			}
+
+			// task.result: child agent reports its answer and exits immediately.
+			if name == "task.result" {
+				var req struct {
+					Content string `json:"content"`
+				}
+				_ = json.Unmarshal(step.Tool.Input, &req)
+				return history, &Result{
+					Steps:         steps,
+					SubtaskResult: req.Content,
+					Todos:         a.todos,
+				}, nil
+			}
+
+			// task.spawn/wait/cancel are handled in-process via SubtaskRunner.
+			if a.opts.SubtaskRunner != nil && (name == "task.spawn" || name == "task.wait" || name == "task.cancel") {
+				out, taskErr := a.handleTaskTool(ctx, name, step.Tool.Input)
+				var content string
+				if taskErr != nil {
+					content = formatToolErrorJSON(name, step.Tool.Input, taskErr)
+				} else {
+					content = string(out)
+				}
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
-					Content:    toolResult,
+					Content:    content,
 				})
-				if cbErr := cb.RecordDenied(name); cbErr != nil {
-					return nil, nil, cbErr
+				if taskErr != nil {
+					if cbErr := cb.RecordToolError(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+				} else {
+					cb.ResetToolErrors()
 				}
 				continue
 			}
 
+			// todo.write / todo.read are handled in-process (session state, no filesystem access).
+			if name == "todo.write" || name == "todo.read" {
+				out, err := a.handleTodoTool(name, step.Tool.Input)
+				var content string
+				if err != nil {
+					content = formatToolErrorJSON(name, step.Tool.Input, err)
+				} else {
+					content = string(out)
+				}
+				history = append(history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolCallID: toolCallID,
+					Content:    content,
+				})
+				if err != nil {
+					if cbErr := cb.RecordToolError(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+				} else {
+					cb.ResetToolErrors()
+				}
+				continue
+			}
+
+			// For exec.run with streaming enabled, forward output chunks via OnEvent.
+			callCtx := ctx
+			if name == "exec.run" && a.opts.OnEvent != nil {
+				capturedStep := steps
+				onEvent := a.opts.OnEvent
+				callCtx = tools.WithExecOutputCallback(ctx, func(chunk string) {
+					onEvent(AgentEvent{Step: capturedStep, Stream: llm.StreamEvent{
+						Kind:    llm.StreamEventExecOutput,
+						Content: chunk,
+					}})
+				})
+			}
+
+			// Pre-tool hook: non-zero exit denies the tool call.
+			if a.opts.HooksRunner != nil {
+				if hookErr := a.opts.HooksRunner.RunPreTool(callCtx, name, step.Tool.Input); hookErr != nil {
+					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "pre-tool hook denied: "+hookErr.Error())
+					history = append(history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolCallID: toolCallID,
+						Content:    toolResult,
+					})
+					if cbErr := cb.RecordDenied(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+					continue
+				}
+			}
+
+			a.opts.AgentLogger.LogToolCall(name, len(step.Tool.Input))
 			start := time.Now()
-			out, err := a.tools.Call(ctx, name, step.Tool.Input)
+			out, err := a.tools.Call(callCtx, name, step.Tool.Input)
 			dur := time.Since(start).Milliseconds()
 			if err != nil {
 				a.logf("tool_call name=%s status=error duration_ms=%d err=%v", name, dur, err)
+				a.opts.AgentLogger.LogToolResult(name, 0, dur, err.Error())
 				toolResult := formatToolErrorJSON(name, step.Tool.Input, err)
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
@@ -223,7 +385,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				}
 				continue
 			}
+			// Post-tool hook: errors logged but do not fail the tool.
+			if a.opts.HooksRunner != nil {
+				a.opts.HooksRunner.RunPostTool(callCtx, name, out)
+			}
 			a.logf("tool_call name=%s status=ok duration_ms=%d output_bytes=%d", name, dur, len(out))
+			a.opts.AgentLogger.LogToolResult(name, len(out), dur, "")
 			history = append(history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
@@ -251,6 +418,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				return history, &Result{
 					Patches: []externalpatch.Patch{},
 					Applied: false,
+					Todos:   a.todos,
 				}, nil
 			}
 
@@ -309,6 +477,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				Ops:           internalOps,
 				Applied:       a.opts.Apply,
 				ApplyResponse: resp,
+				Todos:         a.todos,
 			}, nil
 
 		default:
@@ -324,13 +493,39 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	})
 }
 
+// buildToolDefs returns the tool definitions for this agent run.
+// Uses CustomTools when set (child agents), otherwise picks from ListTools / ListToolsWithSubtasks
+// and appends ExtraTools (e.g. MCP server tools).
+func (a *Agent) buildToolDefs() []llm.ToolDef {
+	if len(a.opts.CustomTools) > 0 {
+		return a.opts.CustomTools
+	}
+	allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
+	var base []llm.ToolDef
+	if a.opts.SubtaskRunner != nil {
+		base = tools.ListToolsWithSubtasks(allowExec)
+	} else {
+		base = tools.ListTools(allowExec)
+	}
+	if len(a.opts.ExtraTools) > 0 {
+		base = append(base, a.opts.ExtraTools...)
+	}
+	return base
+}
+
 // nextStep returns the next step, raw response, full LLM response, and error.
 // stepNum is the current step count (used for streaming event tagging).
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
-	toolDefs := tools.ListTools(a.opts.AllowExec)
+	toolDefs := a.buildToolDefs()
 	systemPrompt := promptpkg.BuildSystemPromptForFamily(a.opts.PromptFamily)
+	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
+		systemPrompt += "\n\n" + memory
+	}
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
+	if block := renderTodosBlock(a.todos); block != "" {
+		userPrompt = block + "\n" + userPrompt
+	}
 
 	// Build messages: system + user (initial) + history (assistant tool calls + tool results)
 	messages := make([]llm.Message, 0, len(history)+2)
@@ -760,6 +955,138 @@ func estimateMessageSize(msg llm.Message) int {
 		}
 	}
 	return size
+}
+
+// handleTodoTool handles todo.read and todo.write in-process (no runner involvement).
+func (a *Agent) handleTodoTool(name string, input json.RawMessage) (json.RawMessage, error) {
+	switch name {
+	case "todo.write":
+		var req tools.TodoWriteRequest
+		if err := json.Unmarshal(input, &req); err != nil {
+			return nil, fmt.Errorf("todo.write: invalid input: %w", err)
+		}
+		a.todos = req.Todos
+		resp, _ := json.Marshal(tools.TodoWriteResponse{Count: len(req.Todos)})
+		return resp, nil
+	case "todo.read":
+		resp, _ := json.Marshal(tools.TodoReadResponse{Todos: a.todos})
+		return resp, nil
+	default:
+		return nil, fmt.Errorf("unknown todo tool: %s", name)
+	}
+}
+
+// renderTodosBlock returns a formatted todo block for injection into the user prompt.
+// Returns empty string when todos is empty.
+func renderTodosBlock(todos []tools.TodoItem) string {
+	if len(todos) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<todo_list>\n")
+	for _, item := range todos {
+		b.WriteString(fmt.Sprintf("- [%s] %s (id: %s)\n", item.Status, item.Content, item.ID))
+	}
+	b.WriteString("</todo_list>\n")
+	return b.String()
+}
+
+// handleTaskTool handles task.spawn/task.wait/task.cancel in-process via SubtaskRunner.
+func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawMessage) (json.RawMessage, error) {
+	switch name {
+	case "task.spawn":
+		var req struct {
+			Goal      string `json:"goal"`
+			MaxSteps  int    `json:"max_steps"`
+			TimeoutMS int    `json:"timeout_ms"`
+		}
+		if err := json.Unmarshal(input, &req); err != nil {
+			return nil, fmt.Errorf("task.spawn: invalid input: %w", err)
+		}
+		if strings.TrimSpace(req.Goal) == "" {
+			return nil, fmt.Errorf("task.spawn: goal is required")
+		}
+		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
+			Goal:      req.Goal,
+			MaxSteps:  req.MaxSteps,
+			TimeoutMS: req.TimeoutMS,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("task.spawn: %w", err)
+		}
+		resp, _ := json.Marshal(map[string]any{"task_id": taskID, "status": "spawned"})
+		return resp, nil
+
+	case "task.wait":
+		var req struct {
+			TaskID    string `json:"task_id"`
+			TimeoutMS int    `json:"timeout_ms"`
+		}
+		if err := json.Unmarshal(input, &req); err != nil {
+			return nil, fmt.Errorf("task.wait: invalid input: %w", err)
+		}
+		if strings.TrimSpace(req.TaskID) == "" {
+			return nil, fmt.Errorf("task.wait: task_id is required")
+		}
+		result, err := a.opts.SubtaskRunner.Wait(ctx, req.TaskID, req.TimeoutMS)
+		if err != nil {
+			return nil, fmt.Errorf("task.wait: %w", err)
+		}
+		resp, _ := json.Marshal(result)
+		return resp, nil
+
+	case "task.cancel":
+		var req struct {
+			TaskID string `json:"task_id"`
+		}
+		if err := json.Unmarshal(input, &req); err != nil {
+			return nil, fmt.Errorf("task.cancel: invalid input: %w", err)
+		}
+		if strings.TrimSpace(req.TaskID) == "" {
+			return nil, fmt.Errorf("task.cancel: task_id is required")
+		}
+		if err := a.opts.SubtaskRunner.Cancel(ctx, req.TaskID); err != nil {
+			return nil, fmt.Errorf("task.cancel: %w", err)
+		}
+		resp, _ := json.Marshal(map[string]any{"task_id": req.TaskID, "status": "cancelled"})
+		return resp, nil
+
+	default:
+		return nil, fmt.Errorf("unknown task tool: %s", name)
+	}
+}
+
+// execCommandFromInput extracts the command basename from exec.run JSON input.
+func execCommandFromInput(input json.RawMessage) string {
+	var req struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal(input, &req)
+	return req.Command
+}
+
+// execCommandAllowed reports whether cmd is permitted by the allow/deny lists.
+// Deny takes precedence. Empty allow list with no deny list → deny all.
+func execCommandAllowed(cmd string, allow, deny []string) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(cmd)))
+	base = strings.TrimSuffix(base, ".exe")
+	if base == "" || base == "." {
+		return false
+	}
+	for _, d := range deny {
+		if strings.ToLower(strings.TrimSpace(d)) == base {
+			return false
+		}
+	}
+	if len(allow) == 0 {
+		return false
+	}
+	for _, a := range allow {
+		if strings.ToLower(strings.TrimSpace(a)) == base {
+			return true
+		}
+	}
+	return false
 }
 
 // formatToolDeniedJSON formats a tool denial as JSON for tool message content.

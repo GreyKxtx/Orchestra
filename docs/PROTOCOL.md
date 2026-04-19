@@ -181,6 +181,111 @@ Response `result`:
 
 Response `result` — JSON-объект/массив (ответ инструмента).
 
+## Методы сессий
+
+Сессия инкапсулирует multi-turn диалог: история сообщений и pending-операции хранятся в памяти core-процесса между вызовами `session.message`.
+
+### `session.start`
+
+Создаёт новую сессию.
+
+`params`: `{}`
+
+Response `result`:
+
+```json
+{"session_id": "abc123..."}
+```
+
+### `session.message`
+
+Выполняет один агентный ход в рамках сессии.
+
+`params`:
+
+- `session_id` (string, обязательный)
+- `content` (string, обязательный) — запрос пользователя
+- `apply` (bool, optional; default=false) — применить изменения на диск
+- `backup` (bool, optional) — делать резервные копии изменённых файлов
+- `allow_exec` (bool, optional) — разрешить инструмент `exec.run`
+- `max_steps` (int, optional)
+- `max_invalid_retries` (int, optional)
+- `max_prompt_bytes` (int, optional)
+
+Response `result`:
+
+- `steps` (int) — число шагов агента
+- `applied` (bool)
+- `patches` (optional) — diff/patches (при `apply=false`)
+- `ops` (optional) — сырые операции
+- `apply_response` (optional) — при `apply=true`
+
+Пока ход выполняется, core отправляет уведомления `agent/event` по тому же JSON-RPC соединению.
+
+Структура уведомления:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent/event",
+  "params": {
+    "step": 1,
+    "type": "message_delta | tool_call_start | tool_call_end | done",
+    "content": "...",
+    "tool_call_name": "..."
+  }
+}
+```
+
+Если `apply=false` и агент вернул непустые ops, они сохраняются как pending и могут быть применены через `session.apply_pending`.
+
+### `session.cancel`
+
+Прерывает текущий ход (no-op, если сессия простаивает).
+
+`params`:
+
+- `session_id` (string)
+
+Response `result`: `null`
+
+### `session.apply_pending`
+
+Применяет ops, сохранённые после последнего dry-run хода. Pending сбрасывается после применения или если следующий ход вернул новые ops.
+
+`params`:
+
+- `session_id` (string)
+- `backup` (bool, optional)
+
+Response `result`:
+
+- `applied` (bool) — false если pending пуст
+- `apply_response` (optional) — при `applied=true`
+
+### `session.history`
+
+Возвращает накопленную историю сообщений сессии.
+
+`params`:
+
+- `session_id` (string)
+
+Response `result`:
+
+- `session_id` (string)
+- `messages` (array of `{role, content}`)
+
+### `session.close`
+
+Отменяет текущий ход (если есть) и удаляет сессию. Идемпотентен — если сессия не найдена, возвращает OK.
+
+`params`:
+
+- `session_id` (string)
+
+Response `result`: `null`
+
 ## Ошибки
 
 ### Стандартные JSON-RPC

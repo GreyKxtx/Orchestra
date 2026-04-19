@@ -13,13 +13,30 @@ func ListTools(allowExec bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(),
 		toolFSRead(),
+		toolFSGlob(),
+		toolFSWrite(),
+		toolFSEdit(),
 		toolSearchText(),
 		toolCodeSymbols(),
+		toolTodoWrite(),
+		toolTodoRead(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
 	}
 	return out
+}
+
+// ListToolsWithMCP appends MCP server tools to the base tool list.
+func ListToolsWithMCP(allowExec bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListTools(allowExec)
+	return append(out, mcpDefs...)
+}
+
+// ListToolsWithSubtasksAndMCP returns parent-agent tools including subtask and MCP tools.
+func ListToolsWithSubtasksAndMCP(allowExec bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListToolsWithSubtasks(allowExec)
+	return append(out, mcpDefs...)
 }
 
 // ToolNames returns tool function names for prompt/debug usage.
@@ -68,6 +85,71 @@ func toolFSRead() llm.ToolDef {
   "properties": {
     "path": { "type": "string", "minLength": 1 },
     "max_bytes": { "type": "integer", "minimum": 0 }
+  }
+}`),
+		},
+	}
+}
+
+func toolFSGlob() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "fs.glob",
+			Description: "Поиск файлов по glob-паттерну (поддерживает ** для рекурсивного поиска).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pattern"],
+  "properties": {
+    "pattern": { "type": "string", "minLength": 1 },
+    "limit": { "type": "integer", "minimum": 0 },
+    "include_hash": { "type": "boolean" },
+    "exclude_dirs": { "type": "array", "items": { "type": "string" } }
+  }
+}`),
+		},
+	}
+}
+
+func toolFSWrite() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "fs.write",
+			Description: "Атомарная запись файла (создание или перезапись). Для создания нового файла используй must_not_exist=true. Для перезаписи — file_hash текущей версии (из fs.read).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "content"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1 },
+    "content": { "type": "string" },
+    "file_hash": { "type": "string" },
+    "must_not_exist": { "type": "boolean" },
+    "backup": { "type": "boolean" }
+  }
+}`),
+		},
+	}
+}
+
+func toolFSEdit() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "fs.edit",
+			Description: "Точечная замена в файле (search → replace). Строка поиска должна быть уникальна в файле. При неоднозначности — AmbiguousMatch; если не найдена — StaleContent. file_hash рекомендуется для защиты от гонок.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "search", "replace"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1 },
+    "search": { "type": "string", "minLength": 1 },
+    "replace": { "type": "string" },
+    "file_hash": { "type": "string" },
+    "backup": { "type": "boolean" }
   }
 }`),
 		},
@@ -138,6 +220,146 @@ func toolExecRun() llm.ToolDef {
     "workdir": { "type": "string" },
     "timeout_ms": { "type": "integer", "minimum": 0 },
     "output_limit_kb": { "type": "integer", "minimum": 0 }
+  }
+}`),
+		},
+	}
+}
+
+func toolTodoWrite() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "todo.write",
+			Description: "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["todos"],
+  "properties": {
+    "todos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "content", "status"],
+        "properties": {
+          "id":      { "type": "string", "minLength": 1 },
+          "content": { "type": "string", "minLength": 1 },
+          "status":  { "type": "string", "enum": ["pending", "in_progress", "done", "cancelled"] }
+        }
+      }
+    }
+  }
+}`),
+		},
+	}
+}
+
+func toolTodoRead() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "todo.read",
+			Description: "Прочитать текущий список задач.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}`),
+		},
+	}
+}
+
+// ListToolsWithSubtasks returns tools including task.spawn/wait/cancel for parent agents.
+func ListToolsWithSubtasks(allowExec bool) []llm.ToolDef {
+	out := ListTools(allowExec)
+	out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	return out
+}
+
+// ListToolsForChild returns a restricted read-only tool set for child agents plus task.result.
+// Child agents cannot write files, run commands, or spawn further subtasks.
+func ListToolsForChild() []llm.ToolDef {
+	return []llm.ToolDef{
+		toolFSList(),
+		toolFSRead(),
+		toolFSGlob(),
+		toolSearchText(),
+		toolCodeSymbols(),
+		toolTaskResult(),
+	}
+}
+
+func toolTaskSpawn() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "task.spawn",
+			Description: "Создать дочернюю задачу для независимого исследования. Возвращает task_id. Используй task.wait для получения результата.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal"],
+  "properties": {
+    "goal": { "type": "string", "minLength": 1 },
+    "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
+    "timeout_ms": { "type": "integer", "minimum": 0 }
+  }
+}`),
+		},
+	}
+}
+
+func toolTaskWait() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "task.wait",
+			Description: "Подождать завершения дочерней задачи и получить её результат.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "timeout_ms": { "type": "integer", "minimum": 0 }
+  }
+}`),
+		},
+	}
+}
+
+func toolTaskCancel() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "task.cancel",
+			Description: "Отменить дочернюю задачу.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 }
+  }
+}`),
+		},
+	}
+}
+
+func toolTaskResult() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "task.result",
+			Description: "Сообщить результат исследования родительскому агенту. Вызови когда закончил анализ.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["content"],
+  "properties": {
+    "content": { "type": "string", "minLength": 1 }
   }
 }`),
 		},

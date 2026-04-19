@@ -1,96 +1,150 @@
 # Orchestra
 
-Сервис-оркестратор для работы LLM с кодовой базой проекта.
+**Local AI coding assistant** — LLM читает проект, планирует правки и безопасно применяет их.
 
-## Статус
+Основной транспорт: **JSON-RPC 2.0 over stdio** (LSP-стиль); поверх — CLI.
 
-✅ **vNext** — core JSON-RPC протокол + безопасный apply
+---
 
-[Changelog](docs/CHANGELOG.md) | [Protocol](docs/PROTOCOL.md) | [Проектные заметки](docs/Task_project.md)
+## Возможности
 
-## Описание
+| Фаза | Фича | Статус |
+|------|------|--------|
+| Core | JSON-RPC 2.0 stdio, agent loop, external/internal patches | ✅ |
+| Streaming | SSE-стриминг, накопитель tool-call чанков | ✅ |
+| Grammar | Structured output, retry/circuit-breaker, prompt families | ✅ |
+| Session | История диалога, todo-лист, `agent.run` по JSON-RPC | ✅ |
+| Subagents | `task.spawn/wait/cancel`, дочерние агенты с read-only инструментами | ✅ |
+| Hooks | Pre/post-tool shell-хуки, `TOOL_DENIED` при ненулевом коде | ✅ |
+| Memory | `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
+| MCP | JSON-RPC 2.0 stdio MCP-клиент, мульти-сервер менеджер | ✅ |
+| Providers | Anthropic API + OpenAI-совместимые провайдеры (LM Studio, vLLM…) | ✅ |
+| Eval | YAML-задачи, изолированные воркспейсы, `orchestra eval` | ✅ |
 
-Orchestra — консольный инструмент, который умеет читать проект, формировать контекст для LLM и применять предлагаемые моделью изменения в файлах (с возможностью dry-run).
+---
 
 ## Быстрый старт
 
 ```bash
-# 1) Инициализация проекта (в корне репозитория)
+# Сборка
+go build -o orchestra ./cmd/orchestra
+
+# Инициализация проекта
 orchestra init
 
-# 2) Запуск core (JSON-RPC over stdio) — нужно для интеграций / --via-core
-orchestra core --workspace-root .
-
-# (debug) HTTP JSON-RPC для отладки (только localhost; токен обязателен)
-# ⚠️ НЕ ОСНОВНОЙ РЕЖИМ: HTTP = debug-only, loopback + token, может не поддерживать все фичи
-orchestra core --workspace-root . --http
-# Токен автоматически генерируется (или задайте через --http-token)
-# Discovery файл: .orchestra/core.http.json (содержит URL + токен, права 0600, в .gitignore)
-# Пример подключения: curl -H "Authorization: Bearer <token>" http://127.0.0.1:<port>/rpc
-
-# 3) Поиск по коду
-orchestra search "function main"
-
-# 4) Просмотр плана изменений (без генерации кода)
+# Просмотр плана (без изменений файлов)
 orchestra apply --plan-only "добавь логирование в main.go"
 
-# 5) Dry-run apply (по умолчанию)
+# Dry-run apply (по умолчанию — только показывает diff)
 orchestra apply "добавь логирование в main.go"
 
-# 6) Реальное применение изменений (с backup по умолчанию)
+# Реальное применение изменений (создаёт .orchestra.bak)
 orchestra apply --apply "добавь логирование в main.go"
 
-# 7) Разрешить exec.run (опасно; включайте осознанно)
+# Разрешить выполнение команд через exec.run
 orchestra apply --apply --allow-exec "запусти go test и исправь ошибки"
 
-# 8) Изолированно через subprocess core (stdio)
+# Через subprocess core (JSON-RPC stdio, изолированный)
 orchestra apply --via-core "добавь функцию Sum"
 
-# 9) Проверка подключения к LLM провайдеру (smoke test)
+# Smoke-test подключения к LLM
 orchestra llm-ping
+
+# Поиск по коду
+orchestra search "function main"
+
+# Запуск eval-задач (нужен работающий LLM)
+orchestra eval                          # tests/eval/tasks/ по умолчанию
+orchestra eval path/to/tasks/           # своя директория
 ```
 
-## Daemon-режим (v0.3)
+---
 
-Daemon — локальный процесс, который обслуживает **один** `project_root`, хранит метаданные файлов в памяти и предоставляет HTTP API для ускорения `apply/search`.
+## Конфигурация (`.orchestra.yml`)
 
-- **Discovery**: daemon пишет `.orchestra/daemon.json` (в `.gitignore`), CLI читает его и подключается автоматически.
-- **Cache**: daemon хранит снапшот метаданных в `.orchestra/cache.json` (в `.gitignore`).
-- **Fallback**: если daemon недоступен/не тот проект/несовместимый протокол — CLI автоматически падает обратно в прямой режим (v0.2).
+```yaml
+project_root: .
+exclude_dirs: [.git, node_modules, dist]
 
-Переменная окружения (опционально):
+llm:
+  provider: openai          # "openai" | "anthropic"
+  api_base: http://localhost:1234   # LM Studio, vLLM, OpenAI…
+  api_key: ""
+  model: qwen2.5-coder-7b-instruct
+  max_tokens: 4096
+  timeout_s: 120
 
-- `ORCHESTRA_DAEMON_URL` — принудительно указать URL daemon (например `http://127.0.0.1:8080`).
+exec:
+  confirm: true             # false = разрешить exec.run без --allow-exec
 
-## Требования
+hooks:
+  enabled: false
+  pre_tool: ["sh", "-c", "echo pre"]  # ненулевой код = TOOL_DENIED
+  post_tool: ["sh", "-c", "echo post"]
+  timeout_ms: 5000
 
-- Go 1.22+
-- LLM API (OpenAI-совместимый, локальный vLLM или внешний провайдер)
-
-## Установка
-
-```bash
-go build -o orchestra ./cmd/orchestra
+mcp:
+  servers:
+    - name: my-server
+      command: ["node", "mcp-server.js"]
+      env: {API_KEY: "..."}
+      disabled: false
 ```
+
+### Память проекта
+
+Создайте `ORCHESTRA.md` в корне проекта — он будет автоматически инжектироваться в системный промпт агента (макс. 2 КБ). Альтернативно: `.orchestra/memory/*.md` или `~/.orchestra/memory.md`.
+
+---
+
+## Архитектура (ключевые абстракции)
+
+**Два уровня патчей — строго разделены:**
+
+- **External Patches** (`internal/externalpatch`) — гибкий LLM-формат: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Содержат `file_hash` версии, которую читал LLM.
+- **Internal Ops** (`internal/ops`) — детерминированный формат записи на диск: `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Координаты 0-based, end-exclusive. Каждая операция содержит `conditions.file_hash`.
+- `internal/resolver` — мост: `ResolveExternalPatches` конвертирует External → Internal, перечитывая файлы и вычисляя точные диапазоны.
+
+**Agent loop** (`internal/agent/agent.go`): системный промпт + история → `llm.Complete` → `tool_call` (выполнить, добавить в историю, продолжить) или `final` (резолвить патчи → применить). Recoverable ошибки (`StaleContent`, `AmbiguousMatch`) возвращаются в историю компактными хинтами.
+
+**Три режима `apply`:**
+1. `direct` — агент in-process.
+2. `--via-core` — спавнит `orchestra core` как subprocess, управляет через JSON-RPC.
+3. `--from-plan` — воспроизводит сохранённый `plan.json` без LLM.
+
+---
 
 ## Тесты
 
 ```bash
+go vet ./...
 go test ./...
-go test -race ./... # на Linux/macOS или Windows с cgo/gcc
-go test -race -count=50 ./internal/jsonrpc ./internal/core
+go test -race ./...
+
+# Один пакет / один тест
+go test ./internal/agent -run TestAgent_Run -v
+go test ./internal/jsonrpc -race -count=10
+
+# E2E с реальным LLM (не входит в CI)
+$env:ORCH_E2E_LLM = "1"
+go test ./tests/e2e_real_llm -v -count=1
 ```
+
+---
 
 ## Документация
 
-- [Контракт протокола core](docs/PROTOCOL.md)
 - [Changelog](docs/CHANGELOG.md)
-- [Проектные заметки](docs/Task_project.md)
-- [Критерии готовности](docs/READINESS_CRITERIA.md)
-- [Инструкции по проверке](docs/VERIFICATION.md)
-- [Быстрая проверка](docs/QUICK_CHECK.md)
+- [Protocol contract](docs/PROTOCOL.md)
+- [Roadmap](docs/ROADMAP.md)
+
+---
+
+## Требования
+
+- Go 1.22+
+- LLM API: OpenAI-совместимый провайдер (LM Studio, vLLM, OpenAI, Anthropic…)
 
 ## Лицензия
 
 MIT
-

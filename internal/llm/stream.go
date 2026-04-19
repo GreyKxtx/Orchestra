@@ -30,6 +30,8 @@ const (
 	StreamEventDone StreamEventKind = "done"
 	// StreamEventError signals a stream-level error.
 	StreamEventError StreamEventKind = "error"
+	// StreamEventExecOutput carries an incremental chunk of exec.run stdout/stderr output.
+	StreamEventExecOutput StreamEventKind = "exec_output"
 )
 
 // StreamEvent is one event emitted during a streaming completion.

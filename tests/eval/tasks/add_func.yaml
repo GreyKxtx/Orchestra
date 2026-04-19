@@ -1,0 +1,22 @@
+name: add_func
+description: Add a new function to an existing Go file
+max_steps: 8
+files:
+  go.mod: |
+    module testpkg
+    go 1.21
+  math.go: |
+    package testpkg
+
+    // Add adds two integers.
+    func Add(a, b int) int {
+        return a + b
+    }
+query: "Add a Multiply function to math.go that multiplies two integers."
+checks:
+  - type: file_contains
+    path: math.go
+    content: "func Multiply"
+  - type: file_contains
+    path: math.go
+    content: "func Add"

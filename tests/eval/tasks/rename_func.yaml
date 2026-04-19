@@ -1,0 +1,35 @@
+name: rename_func
+description: Rename a Go function from Add to Sum
+max_steps: 8
+files:
+  go.mod: |
+    module testpkg
+    go 1.21
+  math.go: |
+    package testpkg
+
+    // Add adds two integers.
+    func Add(a, b int) int {
+        return a + b
+    }
+  math_test.go: |
+    package testpkg
+
+    import "testing"
+
+    func TestAdd(t *testing.T) {
+        if got := Add(1, 2); got != 3 {
+            t.Errorf("got %d, want 3", got)
+        }
+    }
+query: "Rename the function Add to Sum in math.go and update the call in math_test.go."
+checks:
+  - type: file_contains
+    path: math.go
+    content: "func Sum"
+  - type: file_not_contains
+    path: math.go
+    content: "func Add"
+  - type: file_contains
+    path: math_test.go
+    content: "Sum(1, 2)"

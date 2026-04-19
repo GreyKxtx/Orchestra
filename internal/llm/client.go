@@ -64,6 +64,11 @@ func (c *OpenAIClient) SetLogger(logger *Logger) {
 	c.logger = logger
 }
 
+// GetLogger returns the logger attached to this client (may be nil).
+func (c *OpenAIClient) GetLogger() *Logger {
+	return c.logger
+}
+
 // chatCompletionRequest represents OpenAI chat completion request
 type chatCompletionRequest struct {
 	Model          string              `json:"model"`

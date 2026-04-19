@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,11 @@ import (
 	"github.com/orchestra/orchestra/internal/search"
 )
 
+// MCPCaller routes mcp:<server>:<tool> calls to the appropriate MCP server.
+type MCPCaller interface {
+	Call(ctx context.Context, prefixedName string, input json.RawMessage) (json.RawMessage, error)
+}
+
 // Runner executes vNext tools inside a workspace (no network tools).
 type Runner struct {
 	workspaceRoot string
@@ -24,6 +30,8 @@ type Runner struct {
 	// Defaults for exec.run safety contract.
 	execTimeout     time.Duration
 	execOutputLimit int // bytes, combined stdout+stderr
+
+	mcpCaller MCPCaller
 }
 
 type RunnerOptions struct {
@@ -65,6 +73,9 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 }
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
+
+// SetMCPCaller registers an MCP manager for routing mcp:* tool calls.
+func (r *Runner) SetMCPCaller(caller MCPCaller) { r.mcpCaller = caller }
 
 // --- fs.list ---
 

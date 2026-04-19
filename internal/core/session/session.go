@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // Session holds a persistent multi-turn conversation for one user.
@@ -17,8 +19,10 @@ type Session struct {
 	CreatedAt    time.Time
 	LastActivity time.Time
 
-	mu       sync.Mutex
-	cancelFn context.CancelFunc // non-nil while a turn is running
+	mu          sync.Mutex
+	cancelFn    context.CancelFunc // non-nil while a turn is running
+	pendingOps  []ops.AnyOp        // ops from last dry-run turn, cleared on apply or new turn
+	todos       []tools.TodoItem   // model's working checklist, persisted across turns
 }
 
 func newID() string {
@@ -74,4 +78,38 @@ func (s *Session) CopyHistory() []llm.Message {
 	out := make([]llm.Message, len(s.History))
 	copy(out, s.History)
 	return out
+}
+
+// SetPending stores ops from a dry-run turn for later apply. Overwrites any previous pending.
+// Must be called with lock held.
+func (s *Session) SetPending(pending []ops.AnyOp) {
+	s.pendingOps = pending
+}
+
+// TakePending returns and clears the pending ops. Returns nil if none.
+// Must be called with lock held.
+func (s *Session) TakePending() []ops.AnyOp {
+	out := s.pendingOps
+	s.pendingOps = nil
+	return out
+}
+
+// HasPending reports whether there are pending ops. Must be called with lock held.
+func (s *Session) HasPending() bool {
+	return len(s.pendingOps) > 0
+}
+
+// CopyTodos returns a shallow copy of the current todo list. Must be called with lock held.
+func (s *Session) CopyTodos() []tools.TodoItem {
+	if len(s.todos) == 0 {
+		return nil
+	}
+	out := make([]tools.TodoItem, len(s.todos))
+	copy(out, s.todos)
+	return out
+}
+
+// SetTodos replaces the todo list. Must be called with lock held.
+func (s *Session) SetTodos(items []tools.TodoItem) {
+	s.todos = items
 }

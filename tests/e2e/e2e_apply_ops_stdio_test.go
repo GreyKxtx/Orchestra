@@ -75,7 +75,7 @@ func TestInitializeIdempotentSame(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	}
 
@@ -106,7 +106,7 @@ func TestInitializeIdempotentDifferent(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -114,7 +114,7 @@ func TestInitializeIdempotentDifferent(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       "sha256:deadbeef",
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 	if code != string(protocol.AlreadyInitialized) && !strings.Contains(code, string(protocol.AlreadyInitialized)) {
@@ -223,7 +223,7 @@ func TestApplyOps_Stdio_DryRun_NoWrite(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -280,7 +280,7 @@ func TestApplyOps_Stdio_Apply_WithBackup(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -464,7 +464,7 @@ func TestApplyOps_Stdio_MultiOp_AllApplied(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -549,7 +549,7 @@ func TestApplyOps_Stdio_MultiOp_TwoFiles(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -635,7 +635,7 @@ func TestApplyOps_Stdio_MultiOp_SecondFails_NoWrites(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -709,7 +709,7 @@ func TestWriteAtomic_CreateNewFile(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -771,7 +771,7 @@ func TestWriteAtomic_MustNotExist_AlreadyExists(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -831,7 +831,7 @@ func TestWriteAtomic_DryRun_NoCreate(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -884,7 +884,7 @@ func TestMkdirAll_CreateNested(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
@@ -1217,7 +1217,7 @@ func TestApplyOps_Stdio_JSONRPC_Semantics_TwoRequests_TwoResponses(t *testing.T)
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    1,
+		"tools_version":    2,
 		"ops_version":      1,
 	})
 
