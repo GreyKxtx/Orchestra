@@ -1,0 +1,487 @@
+package resolver
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/projectfs"
+	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/internal/store"
+)
+
+// ResolveExternalPatches converts External Patch objects into Internal Ops v1.
+//
+// It intentionally produces strict ops and relies on the applier's strict+fuzzy policy
+// for safe application.
+func ResolveExternalPatches(projectRoot string, patches []externalpatch.Patch) ([]ops.AnyOp, error) {
+	if strings.TrimSpace(projectRoot) == "" {
+		return nil, fmt.Errorf("projectRoot is empty")
+	}
+	if len(patches) == 0 {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "no patches provided", nil)
+	}
+
+	out := make([]ops.AnyOp, 0, len(patches))
+
+	for _, p := range patches {
+		path, perr := normalizeRelPath(p.Path)
+		if perr != nil {
+			return nil, perr
+		}
+		p.Path = path
+
+		switch p.Type {
+		case externalpatch.TypeFileSearchReplace:
+			op, err := resolveSearchReplace(projectRoot, p)
+			if err != nil {
+				return nil, err
+			}
+			rr := op
+			out = append(out, ops.AnyOp{Op: rr.Op, Path: rr.Path, ReplaceRange: &rr})
+
+		case externalpatch.TypeFileUnifiedDiff:
+			op, err := resolveUnifiedDiff(projectRoot, p)
+			if err != nil {
+				return nil, err
+			}
+			rr := op
+			out = append(out, ops.AnyOp{Op: rr.Op, Path: rr.Path, ReplaceRange: &rr})
+
+		case externalpatch.TypeFileWriteAtomic:
+			anyOp, err := resolveWriteAtomic(projectRoot, p)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, anyOp)
+
+		default:
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "unsupported patch type", map[string]any{
+				"type": p.Type,
+				"path": p.Path,
+			})
+		}
+	}
+
+	return out, nil
+}
+
+func resolveSearchReplace(projectRoot string, p externalpatch.Patch) (ops.ReplaceRangeOp, error) {
+	if strings.TrimSpace(p.Search) == "" && p.Search != "" {
+		// Empty-but-present is allowed; treat as explicit empty search (unsupported).
+	}
+	if p.Search == "" {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "search is empty", map[string]any{
+			"path": p.Path,
+			"type": p.Type,
+		})
+	}
+	// replace can be empty (deletion).
+
+	before, _, err := readFileOrEmpty(projectRoot, p.Path)
+	if err != nil {
+		return ops.ReplaceRangeOp{}, err
+	}
+
+	start, end, matches := findUnique(string(before), p.Search)
+	if matches == 0 {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+			"path":     p.Path,
+			"search":   preview(p.Search, 200),
+			"fileHash": store.ComputeSHA256(before),
+		})
+	}
+	if matches > 1 {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous", map[string]any{
+			"path":    p.Path,
+			"matches": matches,
+			"search":  preview(p.Search, 200),
+		})
+	}
+
+	startPos, err := posFromOffset(before, start)
+	if err != nil {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "failed to compute start position", map[string]any{
+			"path":  p.Path,
+			"error": err.Error(),
+		})
+	}
+	endPos, err := posFromOffset(before, end)
+	if err != nil {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "failed to compute end position", map[string]any{
+			"path":  p.Path,
+			"error": err.Error(),
+		})
+	}
+
+	return ops.ReplaceRangeOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: p.Path,
+		Range: ops.Range{
+			Start: startPos,
+			End:   endPos,
+		},
+		Expected:    p.Search,
+		Replacement: p.Replace,
+		Conditions: ops.Conditions{
+			FileHash:    p.FileHash,
+			AllowFuzzy:  true,
+			FuzzyWindow: 2,
+		},
+	}, nil
+}
+
+func resolveUnifiedDiff(projectRoot string, p externalpatch.Patch) (ops.ReplaceRangeOp, error) {
+	if strings.TrimSpace(p.Diff) == "" {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "diff is empty", map[string]any{
+			"path": p.Path,
+			"type": p.Type,
+		})
+	}
+
+	before, _, err := readFileOrEmpty(projectRoot, p.Path)
+	if err != nil {
+		return ops.ReplaceRangeOp{}, err
+	}
+
+	after, err := applyUnifiedDiff(string(before), p.Diff)
+	if err != nil {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "failed to apply unified diff", map[string]any{
+			"path":  p.Path,
+			"error": err.Error(),
+		})
+	}
+
+	// Whole-file replacement is the simplest safe op for diffs.
+	endPos, err := posFromOffset(before, len(before))
+	if err != nil {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "failed to compute file end position", map[string]any{
+			"path":  p.Path,
+			"error": err.Error(),
+		})
+	}
+
+	return ops.ReplaceRangeOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: p.Path,
+		Range: ops.Range{
+			Start: ops.Position{Line: 0, Col: 0},
+			End:   endPos,
+		},
+		Expected:    string(before),
+		Replacement: after,
+		Conditions: ops.Conditions{
+			FileHash:   p.FileHash,
+			AllowFuzzy: false,
+		},
+	}, nil
+}
+
+func resolveWriteAtomic(projectRoot string, p externalpatch.Patch) (ops.AnyOp, error) {
+	_ = projectRoot // resolution is path-only; apply phase enforces workspace safety.
+
+	// Guardrails: require at least one safety condition.
+	mustNotExist := false
+	condHash := ""
+	if p.Conditions != nil {
+		mustNotExist = p.Conditions.MustNotExist
+		condHash = strings.TrimSpace(p.Conditions.FileHash)
+	}
+	// Back-compat: accept top-level file_hash for write_atomic if provided.
+	if condHash == "" {
+		condHash = strings.TrimSpace(p.FileHash)
+	}
+	if !mustNotExist && condHash == "" {
+		return ops.AnyOp{}, protocol.NewError(protocol.InvalidLLMOutput, "write_atomic requires conditions.must_not_exist=true or conditions.file_hash", map[string]any{
+			"path": p.Path,
+			"type": p.Type,
+		})
+	}
+
+	wa := ops.WriteAtomicOp{
+		Op:      ops.OpFileWriteAtomic,
+		Path:    p.Path,
+		Content: p.Content,
+		Mode:    p.Mode,
+		Conditions: ops.WriteAtomicConditions{
+			MustNotExist: mustNotExist,
+			FileHash:     condHash,
+		},
+	}
+	waCopy := wa
+	return ops.AnyOp{Op: waCopy.Op, Path: waCopy.Path, WriteAtomic: &waCopy}, nil
+}
+
+func readFileOrEmpty(projectRoot, relPath string) ([]byte, string, error) {
+	info, err := projectfs.ReadFile(projectRoot, filepath.FromSlash(relPath))
+	if err != nil {
+		// Path traversal gets mapped to a stable error code.
+		if strings.Contains(err.Error(), "invalid file path") {
+			return nil, "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{"path": relPath})
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, store.ComputeSHA256(nil), nil
+		}
+		return nil, "", err
+	}
+	b := []byte(info.Content)
+	return b, store.ComputeSHA256(b), nil
+}
+
+func normalizeRelPath(p string) (string, *protocol.Error) {
+	p = filepath.ToSlash(strings.TrimSpace(p))
+	if p == "" {
+		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
+	}
+	p = filepath.Clean(filepath.FromSlash(p))
+	p = filepath.ToSlash(p)
+	if p == "." {
+		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
+	}
+	if p == ".." || strings.HasPrefix(p, "../") {
+		return "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{"path": p})
+	}
+	return p, nil
+}
+
+func preview(s string, max int) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "\n...(truncated)"
+}
+
+func findUnique(haystack string, needle string) (start int, end int, matches int) {
+	if needle == "" {
+		return 0, 0, 0
+	}
+	idx := 0
+	for {
+		j := strings.Index(haystack[idx:], needle)
+		if j < 0 {
+			break
+		}
+		matches++
+		if matches == 1 {
+			start = idx + j
+			end = start + len(needle)
+		}
+		if matches > 1 {
+			return start, end, matches
+		}
+		idx = idx + j + max(1, len(needle))
+	}
+	return start, end, matches
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func posFromOffset(content []byte, off int) (ops.Position, error) {
+	if off < 0 || off > len(content) {
+		return ops.Position{}, fmt.Errorf("offset out of range")
+	}
+	lineStarts := computeLineStarts(content)
+	// Find the last lineStart <= off.
+	i := sort.Search(len(lineStarts), func(i int) bool { return lineStarts[i] > off })
+	line := i - 1
+	if line < 0 {
+		line = 0
+	}
+	col := off - lineStarts[line]
+	return ops.Position{Line: line, Col: col}, nil
+}
+
+func computeLineStarts(content []byte) []int {
+	starts := make([]int, 0, 64)
+	starts = append(starts, 0)
+	for i := 0; i < len(content); i++ {
+		if content[i] == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	return starts
+}
+
+// --- unified diff ---
+
+type hunk struct {
+	oldStart int
+	oldCount int
+	newStart int
+	newCount int
+	lines    []string
+}
+
+var hunkHeaderRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
+
+func applyUnifiedDiff(original string, diffText string) (string, error) {
+	original = strings.ReplaceAll(original, "\r\n", "\n")
+	diffText = strings.ReplaceAll(diffText, "\r\n", "\n")
+
+	origLines, origHasNL := splitLines(original)
+	hunks, err := parseUnifiedDiff(diffText)
+	if err != nil {
+		return "", err
+	}
+	if len(hunks) == 0 {
+		return "", fmt.Errorf("no hunks found")
+	}
+
+	var out []string
+	origIdx := 0
+
+	for _, h := range hunks {
+		// Unified diff uses 1-based line numbers; for new files oldStart may be 0.
+		target := h.oldStart - 1
+		if h.oldStart == 0 {
+			target = 0
+		}
+		if target < origIdx {
+			return "", fmt.Errorf("hunk overlaps previous hunks")
+		}
+		if target > len(origLines) {
+			return "", fmt.Errorf("hunk starts beyond end of file")
+		}
+
+		out = append(out, origLines[origIdx:target]...)
+		origIdx = target
+
+		for _, l := range h.lines {
+			if l == "" {
+				// empty context/add/remove line (prefix-only) is valid
+				continue
+			}
+			prefix := l[0]
+			body := ""
+			if len(l) > 1 {
+				body = l[1:]
+			}
+			switch prefix {
+			case ' ':
+				if origIdx >= len(origLines) {
+					return "", fmt.Errorf("context exceeds file length")
+				}
+				if origLines[origIdx] != body {
+					return "", fmt.Errorf("context mismatch at line %d", origIdx+1)
+				}
+				out = append(out, body)
+				origIdx++
+			case '-':
+				if origIdx >= len(origLines) {
+					return "", fmt.Errorf("remove exceeds file length")
+				}
+				if origLines[origIdx] != body {
+					return "", fmt.Errorf("remove mismatch at line %d", origIdx+1)
+				}
+				origIdx++
+			case '+':
+				out = append(out, body)
+			case '\\':
+				// "\ No newline at end of file" - ignore
+			default:
+				return "", fmt.Errorf("invalid hunk line prefix: %q", prefix)
+			}
+		}
+	}
+
+	out = append(out, origLines[origIdx:]...)
+	res := strings.Join(out, "\n")
+	if origHasNL && res != "" {
+		res += "\n"
+	}
+	// If original was empty and had no newline, keep it as-is.
+	if origHasNL && original == "" && res == "" {
+		res = "\n"
+	}
+	return res, nil
+}
+
+func parseUnifiedDiff(diffText string) ([]hunk, error) {
+	lines := strings.Split(diffText, "\n")
+	var hunks []hunk
+
+	i := 0
+	for i < len(lines) {
+		line := lines[i]
+		if !strings.HasPrefix(line, "@@") {
+			i++
+			continue
+		}
+		m := hunkHeaderRe.FindStringSubmatch(line)
+		if len(m) == 0 {
+			return nil, fmt.Errorf("invalid hunk header: %q", line)
+		}
+		oldStart := atoi(m[1])
+		oldCount := 1
+		if m[2] != "" {
+			oldCount = atoi(m[2])
+		}
+		newStart := atoi(m[3])
+		newCount := 1
+		if m[4] != "" {
+			newCount = atoi(m[4])
+		}
+
+		i++
+		var hLines []string
+		for i < len(lines) {
+			if strings.HasPrefix(lines[i], "@@") {
+				break
+			}
+			// Stop if next file header begins (rare when diff contains multiple files).
+			if strings.HasPrefix(lines[i], "diff --git ") || strings.HasPrefix(lines[i], "--- ") || strings.HasPrefix(lines[i], "+++ ") {
+				// treat as separator; next loop will skip until next @@
+				break
+			}
+			hLines = append(hLines, lines[i])
+			i++
+		}
+
+		hunks = append(hunks, hunk{
+			oldStart: oldStart,
+			oldCount: oldCount,
+			newStart: newStart,
+			newCount: newCount,
+			lines:    hLines,
+		})
+		_ = oldCount
+		_ = newCount
+	}
+
+	return hunks, nil
+}
+
+func splitLines(s string) (lines []string, endsWithNewline bool) {
+	if strings.HasSuffix(s, "\n") {
+		endsWithNewline = true
+		s = strings.TrimSuffix(s, "\n")
+	}
+	if s == "" {
+		return nil, endsWithNewline
+	}
+	return strings.Split(s, "\n"), endsWithNewline
+}
+
+func atoi(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return n
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}

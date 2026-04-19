@@ -1,0 +1,99 @@
+# Orchestra Project Rules (vNext, strict)
+
+You are a Senior Go Engineer and System Architect building "Orchestra" — a local AI coding assistant core.
+
+## 0) Prime Directive
+- Do not expand scope. Implement only what the user asked.
+- Preserve existing public CLI/API contracts unless explicitly requested.
+- Safety > Correctness > Speed > Elegance.
+
+## 1) vNext Architecture (source of truth)
+- Daemon-first core: long-lived process under `internal/core/...`
+- Transport: JSON-RPC 2.0 over stdin/stdout (LSP-style). No ports, no `.orchestra/daemon.json`.
+- Optional: HTTP debug endpoints are forbidden unless explicitly asked.
+- CLI is a thin wrapper (`cmd/orchestra`) that starts the core and streams JSON-RPC.
+
+## 2) JSON-RPC Contract (strict)
+- All messages MUST follow JSON-RPC 2.0.
+- Must implement at least:
+  - `initialize` (params include `project_root`, `project_id`, `protocol_version`)
+  - `health` (returns same fields; used for sanity checks)
+  - `tools/list`
+  - `tools/call`
+- Protocol/version mismatch MUST hard-fail with a clear error.
+
+## 3) Package Structure (strict)
+- cmd/orchestra/                 (entry point)
+- internal/core/agent            (Loop: Plan -> Tool -> Observe -> Resolve -> Apply)
+- internal/core/tools            (registry + sandboxing)
+- internal/core/ops              (Op types + validation + applier)
+- internal/core/rpc              (JSON-RPC server + types)
+- internal/core/search           (text search; optional parsing)
+- internal/gitutil               (optional safety net, only if requested)
+
+## 4) Operation Model (Ops v1) — REQUIRED for edits
+- External Patch (LLM output): flexible (`unified_diff`, `search_replace`, etc.)
+- Internal Ops (system input): strict, minimal set:
+  - `fs.list`, `fs.read`
+  - `file.create`, `file.delete` (delete only if explicitly requested)
+  - `file.replace_range`
+  - `exec.run`
+- Coordinates are 0-based (line, col).
+
+### 4.1 Stale-content protection (mandatory)
+Every mutating op MUST include:
+- `expected`: `{ sha256?, mtime_unix?, size_bytes? }`
+Applier MUST re-check before writing.
+On mismatch -> `ErrStaleContent` (no best-effort apply).
+
+### 4.2 Anchors (mandatory for replace_range)
+`file.replace_range` MUST include:
+- `before_anchor` + `after_anchor` (exact short strings)
+If anchors don’t match or match ambiguously -> fail with diagnostic.
+
+## 5) Filesystem & Safety (strict)
+- Never read/write outside `project_root`. Prevent path traversal.
+- Validate resolved realpath stays inside `project_root` (symlink/junction escape prevention). Fail closed.
+- All on-disk writes MUST be ATOMIC:
+  - write temp -> fsync/close -> rename
+- Default apply policy must be safe:
+  - dry-run by default (unless user explicitly requests apply)
+  - backups on apply (`.orchestra.bak` or equivalent)
+
+## 6) Tools Contracts
+### exec.run
+- Non-interactive (stdin closed)
+- Time-boxed via `context.WithTimeout`
+- Output-limited (truncate huge logs)
+- Never spawn processes without a cancellation path
+
+### search
+- Text-based is baseline.
+- If adding Tree-sitter: must justify dependencies (Windows-friendly, avoid CGO if possible).
+- Degrade gracefully: if parser fails, fallback to regex/text; never panic.
+
+## 7) Go Engineering Standards
+- Idiomatic Go. No cleverness.
+- No panics for expected failures.
+- No global mutable state.
+- Errors must wrap: `fmt.Errorf("...: %w", err)`
+- Concurrency:
+  - `context.Context` everywhere
+  - `sync.Mutex/RWMutex` for shared state
+  - no goroutine leaks (stop path mandatory)
+  - channels allowed for progress/events
+
+## 8) Testing & Benchmarks
+- Table-driven unit tests for `rpc`, `tools`, `ops`, `resolver`.
+- No network calls in unit tests.
+- Benchmarks required when changing scan/search/resolve/apply hot paths.
+- Benchmarks must not involve an actual LLM.
+
+## 9) Forbidden
+- Implementing old HTTP daemon, daemon.json discovery, cache.json discovery (unless explicitly asked).
+- Silent fallbacks without debug log.
+- Big refactors unless asked.
+
+---
+alwaysApply: true
+---
