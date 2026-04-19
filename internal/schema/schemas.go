@@ -35,7 +35,7 @@ const externalPatchesSchemaJSON = `{
   "properties": {
     "patches": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": { "$ref": "#/$defs/patch" }
     }
   },
@@ -138,7 +138,7 @@ const agentStepSchemaJSON = `{
       "properties": {
         "patches": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": { "$ref": "#/$defs/patch" }
         }
       }

@@ -80,47 +80,69 @@ func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, strin
 	})
 }
 
-// extractJSON extracts JSON object from text, handling markdown code blocks and extra text.
-// Returns the first valid JSON object found, or the original string if no JSON found.
+// extractJSON extracts the last valid JSON object from text.
+// Searches from the end so that text answers before {"patches":[...]} are skipped correctly.
+// Also strips markdown code fences and <think>...</think> blocks (Qwen3 thinking mode).
 func extractJSON(text string) string {
 	text = strings.TrimSpace(text)
 
-	// Remove markdown code blocks
-	if strings.HasPrefix(text, "```json") {
-		text = strings.TrimPrefix(text, "```json")
-		text = strings.TrimSuffix(text, "```")
-		text = strings.TrimSpace(text)
-	} else if strings.HasPrefix(text, "```") {
-		text = strings.TrimPrefix(text, "```")
-		text = strings.TrimSuffix(text, "```")
-		text = strings.TrimSpace(text)
+	// Strip <think>...</think> blocks produced by reasoning models.
+	text = stripThinkBlocks(text)
+	text = strings.TrimSpace(text)
+
+	// Strip markdown code fences.
+	for _, fence := range []string{"```json", "```"} {
+		if strings.HasPrefix(text, fence) {
+			text = strings.TrimPrefix(text, fence)
+			if idx := strings.LastIndex(text, "```"); idx != -1 {
+				text = text[:idx]
+			}
+			text = strings.TrimSpace(text)
+			break
+		}
 	}
 
-	// Find first '{' and last '}' to extract JSON object
-	start := strings.Index(text, "{")
-	if start == -1 {
-		return text // No JSON found, return as-is
+	// Find the last '}' and walk backwards to its matching '{'.
+	// This lets the model write a text answer first and put JSON at the end.
+	end := strings.LastIndex(text, "}")
+	if end == -1 {
+		return text
 	}
 
-	// Find matching closing brace
 	braceCount := 0
-	end := -1
-	for i := start; i < len(text); i++ {
-		if text[i] == '{' {
+	start := -1
+	for i := end; i >= 0; i-- {
+		if text[i] == '}' {
 			braceCount++
-		} else if text[i] == '}' {
+		} else if text[i] == '{' {
 			braceCount--
 			if braceCount == 0 {
-				end = i + 1
+				start = i
 				break
 			}
 		}
 	}
 
-	if end > start {
-		return strings.TrimSpace(text[start:end])
+	if start != -1 {
+		return strings.TrimSpace(text[start : end+1])
 	}
+	return strings.TrimSpace(text)
+}
 
-	// Fallback: return text from first '{' to end (might be incomplete, but validator will catch it)
-	return strings.TrimSpace(text[start:])
+// stripThinkBlocks removes <think>...</think> sections inserted by reasoning models.
+func stripThinkBlocks(s string) string {
+	for {
+		open := strings.Index(s, "<think>")
+		if open == -1 {
+			break
+		}
+		close := strings.Index(s[open:], "</think>")
+		if close == -1 {
+			// Unclosed block — drop everything from <think> onward.
+			s = strings.TrimSpace(s[:open])
+			break
+		}
+		s = s[:open] + s[open+close+len("</think>"):]
+	}
+	return s
 }
