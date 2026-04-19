@@ -97,6 +97,28 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
+// Notify sends a server-initiated JSON-RPC notification (no id field) to the client.
+// It is safe to call concurrently with Serve; the Writer is mutex-protected.
+func (s *Server) Notify(method string, params any) error {
+	if s == nil {
+		return nil
+	}
+	var paramsRaw json.RawMessage
+	if params != nil {
+		b, err := json.Marshal(params)
+		if err != nil {
+			return fmt.Errorf("notify marshal params: %w", err)
+		}
+		paramsRaw = b
+	}
+	return s.w.WriteMessage(Request{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  paramsRaw,
+		// no ID = notification per JSON-RPC 2.0 spec
+	})
+}
+
 func classifyID(id json.RawMessage) (isNotification bool, valid bool) {
 	// Notifications: absent id only.
 	if len(id) == 0 {

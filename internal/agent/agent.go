@@ -49,8 +49,19 @@ type Options struct {
 	// PromptFamily selects model-family-specific system prompt. Auto-detected if empty.
 	PromptFamily string
 
+	// OnEvent, if non-nil, is called synchronously for each streaming event during a step.
+	// Nil disables streaming (agent falls back to the blocking Complete path).
+	// The callback must not block; use a goroutine or buffered channel if you need async processing.
+	OnEvent func(AgentEvent)
+
 	Debug  bool
 	Logger *log.Logger
+}
+
+// AgentEvent wraps a streaming event with agent-level context.
+type AgentEvent struct {
+	Step   int
+	Stream llm.StreamEvent
 }
 
 type Result struct {
@@ -124,7 +135,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 	for steps < a.opts.MaxSteps {
 		steps++
 
-		step, raw, resp, err := a.nextStep(ctx, userQuery, history)
+		step, raw, resp, err := a.nextStep(ctx, userQuery, history, steps)
 		if err != nil {
 			return nil, err
 		}
@@ -306,8 +317,8 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 }
 
 // nextStep returns the next step, raw response, full LLM response, and error.
-// It builds messages from history and adds system/user prompts.
-func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message) (*Step, string, *llm.CompleteResponse, error) {
+// stepNum is the current step count (used for streaming event tagging).
+func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := tools.ListTools(a.opts.AllowExec)
 	systemPrompt := promptpkg.BuildSystemPromptForFamily(a.opts.PromptFamily)
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
@@ -362,17 +373,27 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	var lastInvalid *protocol.Error
 	var lastRaw string
 
+	// Determine streaming availability once; steps is captured in closure below.
+	streamer, canStream := a.llm.(llm.Streamer)
+
 	for attempt := 0; attempt <= a.opts.MaxInvalidRetries; attempt++ {
 		stepCtx := ctx
 		var cancel context.CancelFunc
 		if a.opts.LLMStepTimeout > 0 {
 			stepCtx, cancel = context.WithTimeout(ctx, a.opts.LLMStepTimeout)
 		}
-		resp, err := a.llm.Complete(stepCtx, llm.CompleteRequest{
+		llmReq := llm.CompleteRequest{
 			Messages:       messages,
 			Tools:          toolDefs,
 			ResponseFormat: a.opts.ResponseFormat,
-		})
+		}
+		var resp *llm.CompleteResponse
+		var err error
+		if canStream && a.opts.OnEvent != nil {
+			resp, err = a.streamStep(stepCtx, llmReq, streamer, stepNum)
+		} else {
+			resp, err = a.llm.Complete(stepCtx, llmReq)
+		}
 		if cancel != nil {
 			cancel() // Always cancel timeout context to free resources
 		}
@@ -412,6 +433,31 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		return nil, lastRaw, nil, lastInvalid
 	}
 	return nil, lastRaw, nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: unknown validation failure", nil)
+}
+
+// streamStep calls CompleteStream and forwards events to OnEvent, returning the
+// final assembled CompleteResponse from the Done event.
+func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.Streamer, step int) (*llm.CompleteResponse, error) {
+	ch, err := s.CompleteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	var final *llm.CompleteResponse
+	for ev := range ch {
+		if a.opts.OnEvent != nil {
+			a.opts.OnEvent(AgentEvent{Step: step, Stream: ev})
+		}
+		switch ev.Kind {
+		case llm.StreamEventError:
+			return nil, ev.Err
+		case llm.StreamEventDone:
+			final = ev.Response
+		}
+	}
+	if final == nil {
+		return nil, fmt.Errorf("stream ended without Done event")
+	}
+	return final, nil
 }
 
 func (a *Agent) logf(format string, args ...any) {

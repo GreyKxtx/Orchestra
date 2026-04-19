@@ -11,13 +11,26 @@ import (
 	"github.com/orchestra/orchestra/internal/protocol"
 )
 
+// Notifier sends server-initiated JSON-RPC notifications to the client.
+// *jsonrpc.Server implements this interface.
+type Notifier interface {
+	Notify(method string, params any) error
+}
+
 // RPCHandler adapts Core to the jsonrpc.Handler interface.
 type RPCHandler struct {
-	core *Core
+	core     *Core
+	notifier Notifier // optional; nil = no streaming notifications
 }
 
 func NewRPCHandler(c *Core) *RPCHandler {
 	return &RPCHandler{core: c}
+}
+
+// SetNotifier attaches a Notifier so that agent.run can emit streaming events
+// as JSON-RPC notifications. Call this after constructing both the Server and handler.
+func (h *RPCHandler) SetNotifier(n Notifier) {
+	h.notifier = n
 }
 
 func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -52,6 +65,12 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
+		}
+		// Wire streaming notifications when a notifier is available.
+		if h.notifier != nil {
+			p.OnEvent = func(method string, params any) {
+				_ = h.notifier.Notify(method, params)
+			}
 		}
 		return h.core.AgentRun(ctx, p)
 

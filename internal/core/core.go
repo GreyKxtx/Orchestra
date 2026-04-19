@@ -251,6 +251,10 @@ type AgentRunParams struct {
 
 	AllowExec bool `json:"allow_exec,omitempty"`
 	Debug     bool `json:"debug,omitempty"`
+
+	// OnEvent is called for each agent streaming event (method + params).
+	// Not serialized — set programmatically by the RPC handler.
+	OnEvent func(method string, params any) `json:"-"`
 }
 
 type AgentRunResult struct {
@@ -300,6 +304,23 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		promptFamily = c.cfg.LLM.PromptFamily
 	}
 
+	// Build OnEvent callback: translate agent.AgentEvent to JSON-RPC notifications.
+	var onEvent func(agent.AgentEvent)
+	if params.OnEvent != nil {
+		notify := params.OnEvent
+		onEvent = func(ev agent.AgentEvent) {
+			notify("agent/event", map[string]any{
+				"step": ev.Step,
+				"type": string(ev.Stream.Kind),
+				"content":        ev.Stream.Content,
+				"tool_call_id":   ev.Stream.ToolCallID,
+				"tool_call_name": ev.Stream.ToolCallName,
+				"tool_call_index": ev.Stream.ToolCallIndex,
+				"args_delta":     ev.Stream.ArgsDelta,
+			})
+		}
+	}
+
 	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
@@ -314,6 +335,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Debug:                params.Debug || c.debug,
 		ResponseFormat:       respFmt,
 		PromptFamily:         promptFamily,
+		OnEvent:              onEvent,
 	})
 	if err != nil {
 		return nil, err

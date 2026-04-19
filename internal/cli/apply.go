@@ -257,6 +257,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Debug:                debugMode,
 			ResponseFormat:       respFmt,
 			PromptFamily:         cfg.LLM.PromptFamily,
+			OnEvent:              buildCLIRenderer(),
 		})
 		if err != nil {
 			retErr = err
@@ -553,4 +554,43 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	_ = daemon.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600)
 
 	return nil
+}
+
+// buildCLIRenderer returns an OnEvent callback that renders streaming events to stderr
+// when stdout is an interactive terminal. Returns nil (disables streaming display) when
+// stdout is piped, redirected, or NO_COLOR is set.
+func buildCLIRenderer() func(agent.AgentEvent) {
+	if !isTTY() {
+		return nil
+	}
+	var lastStep int
+	return func(ev agent.AgentEvent) {
+		switch ev.Stream.Kind {
+		case llm.StreamEventMessageDelta:
+			fmt.Fprint(os.Stderr, ev.Stream.Content)
+		case llm.StreamEventToolCallStart:
+			if ev.Step != lastStep {
+				fmt.Fprintln(os.Stderr)
+				lastStep = ev.Step
+			}
+			fmt.Fprintf(os.Stderr, "\n→ %s", ev.Stream.ToolCallName)
+		case llm.StreamEventDone:
+			if ev.Stream.Response != nil && ev.Stream.Response.Message.Content != "" {
+				fmt.Fprintln(os.Stderr) // newline after streamed text
+			}
+		}
+	}
+}
+
+// isTTY reports whether os.Stdout is connected to an interactive terminal.
+// Returns false when NO_COLOR is set or when stdout is piped/redirected.
+func isTTY() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }

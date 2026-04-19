@@ -35,6 +35,7 @@ type OpenAIClient struct {
 	maxTokens   int
 	temperature float32
 	client      *http.Client
+	streamClient *http.Client // no Timeout — relies on context cancellation for SSE connections
 	logger      *Logger
 }
 
@@ -53,7 +54,8 @@ func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
 		client: &http.Client{
 			Timeout: timeout,
 		},
-		logger: nil, // Set via SetLogger if needed
+		streamClient: &http.Client{Timeout: 0}, // SSE connections are long-lived; context handles cancellation
+		logger:       nil,                       // Set via SetLogger if needed
 	}
 }
 
@@ -64,13 +66,14 @@ func (c *OpenAIClient) SetLogger(logger *Logger) {
 
 // chatCompletionRequest represents OpenAI chat completion request
 type chatCompletionRequest struct {
-	Model          string               `json:"model"`
-	Messages       []Message            `json:"messages"`
-	Tools          []ToolDef            `json:"tools,omitempty"`
-	ToolChoice     string               `json:"tool_choice,omitempty"`
-	MaxTokens      int                  `json:"max_tokens,omitempty"`
-	Temperature    *float32             `json:"temperature,omitempty"`
-	ResponseFormat *responseFormatWire  `json:"response_format,omitempty"`
+	Model          string              `json:"model"`
+	Messages       []Message           `json:"messages"`
+	Tools          []ToolDef           `json:"tools,omitempty"`
+	ToolChoice     string              `json:"tool_choice,omitempty"`
+	MaxTokens      int                 `json:"max_tokens,omitempty"`
+	Temperature    *float32            `json:"temperature,omitempty"`
+	ResponseFormat *responseFormatWire `json:"response_format,omitempty"`
+	Stream         bool                `json:"stream,omitempty"`
 }
 
 type responseFormatWire struct {
@@ -244,4 +247,87 @@ func (c *OpenAIClient) Plan(ctx context.Context, prompt string) (string, error) 
 		return "", err
 	}
 	return resp.Message.Content, nil
+}
+
+// CompleteStream implements Streamer for OpenAIClient.
+// It sends the request with stream:true and returns a channel of StreamEvents.
+// The channel is closed when the stream ends or an error occurs.
+// ResponseFormat is wired in exactly as in Complete so grammar-constrained
+// sampling works for streaming calls too.
+func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) (<-chan StreamEvent, error) {
+	baseURL := strings.TrimSuffix(c.baseURL, "/")
+	if baseURL == "" {
+		return nil, fmt.Errorf("api_base is empty")
+	}
+	if !strings.HasSuffix(baseURL, "/v1") {
+		baseURL = baseURL + "/v1"
+	}
+	url := baseURL + "/chat/completions"
+
+	reqBody := chatCompletionRequest{
+		Model:     c.model,
+		Messages:  req.Messages,
+		MaxTokens: c.maxTokens,
+		Tools:     req.Tools,
+		Stream:    true,
+	}
+	if c.temperature != 0 {
+		temp := c.temperature
+		reqBody.Temperature = &temp
+	}
+	if len(reqBody.Tools) > 0 {
+		reqBody.ToolChoice = "auto"
+	}
+	if req.ResponseFormat != nil && req.ResponseFormat.Type != "" {
+		wf := &responseFormatWire{Type: req.ResponseFormat.Type}
+		if req.ResponseFormat.Type == "json_schema" && len(req.ResponseFormat.Schema) > 0 {
+			name := req.ResponseFormat.SchemaName
+			if name == "" {
+				name = "response"
+			}
+			wf.JSONSchema = &jsonSchemaSpec{
+				Name:   name,
+				Schema: json.RawMessage(req.ResponseFormat.Schema),
+				Strict: true,
+			}
+		}
+		reqBody.ResponseFormat = wf
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal stream request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stream request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.streamClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send stream request: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("stream request failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// ParseSSEStream owns reading; we wrap its output to close the body on finish.
+	raw := ParseSSEStream(ctx, resp.Body)
+	out := make(chan StreamEvent, 16)
+	go func() {
+		defer resp.Body.Close()
+		defer close(out)
+		for ev := range raw {
+			out <- ev
+		}
+	}()
+	return out, nil
 }
