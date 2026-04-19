@@ -58,11 +58,15 @@ func runChat(cmd *cobra.Command, args []string) error {
 	}
 	defer child.Close()
 
+	// textBuf accumulates streamed text content so we can strip the trailing
+	// {"patches":[...]} JSON before showing the response to the user.
+	var textBuf strings.Builder
+
 	// Stream agent events and exec output to stderr while a turn is running.
 	child.Client.SetNotificationHandler(func(method string, params json.RawMessage) {
 		switch method {
 		case "agent/event":
-			printChatEvent(params)
+			printChatEventBuffered(params, &textBuf)
 		case "exec/output_chunk":
 			var ev struct{ Chunk string `json:"chunk"` }
 			if err := json.Unmarshal(params, &ev); err == nil && ev.Chunk != "" {
@@ -157,6 +161,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 			}
 
 		default:
+			textBuf.Reset() // reset buffer for each new turn
 			lastResult = runChatTurn(child, sigCh, sessionID, line, chatApply, chatAllowExec)
 		}
 	}
@@ -217,8 +222,9 @@ func runChatTurn(child *CoreChild, sigCh chan os.Signal, sessionID, content stri
 	return &msgRes
 }
 
-// printChatEvent renders a streaming agent/event notification to stderr.
-func printChatEvent(params json.RawMessage) {
+// printChatEventBuffered accumulates message_delta chunks and flushes clean text
+// on tool_call_start and done events, stripping the trailing {"patches":...} JSON.
+func printChatEventBuffered(params json.RawMessage, buf *strings.Builder) {
 	var ev struct {
 		Type         string `json:"type"`
 		Content      string `json:"content"`
@@ -229,12 +235,39 @@ func printChatEvent(params json.RawMessage) {
 	}
 	switch ev.Type {
 	case "message_delta":
-		fmt.Fprint(os.Stderr, ev.Content)
+		buf.WriteString(ev.Content)
 	case "tool_call_start":
+		// Flush any buffered text before showing the tool call line.
+		flushTextBuf(buf)
 		fmt.Fprintf(os.Stderr, "\n← %s ", ev.ToolCallName)
 	case "done":
+		// Flush buffered text, stripping the trailing patches JSON.
+		flushTextBuf(buf)
 		fmt.Fprintln(os.Stderr)
 	}
+}
+
+// flushTextBuf prints the buffered content minus any trailing {"patches"...} block.
+func flushTextBuf(buf *strings.Builder) {
+	text := buf.String()
+	buf.Reset()
+	if text == "" {
+		return
+	}
+	// Remove trailing patches JSON (the model puts it at the end).
+	if idx := strings.LastIndex(text, `{"patches"`); idx != -1 {
+		text = strings.TrimRight(text[:idx], " \t\n\r")
+	}
+	text = strings.TrimRight(text, " \t\n\r")
+	if text != "" {
+		fmt.Fprintln(os.Stderr, text)
+	}
+}
+
+// printChatEvent is kept for callers that don't need buffering.
+func printChatEvent(params json.RawMessage) {
+	var buf strings.Builder
+	printChatEventBuffered(params, &buf)
 }
 
 // printChatPatches shows each patch's type and path.
