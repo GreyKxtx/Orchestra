@@ -111,12 +111,37 @@ func splitListEnv(key string) []string {
 	return out
 }
 
+// DetectPromptFamily infers model family from the model name string.
+// Returns one of: "openai", "qwen", "llama", "mistral", "deepseek", "gemma".
+// Falls back to "openai" if unrecognized.
+func DetectPromptFamily(modelName string) string {
+	lower := strings.ToLower(modelName)
+	switch {
+	case strings.Contains(lower, "qwen"):
+		return "qwen"
+	case strings.Contains(lower, "llama"):
+		return "llama"
+	case strings.Contains(lower, "mistral") || strings.Contains(lower, "mixtral"):
+		return "mistral"
+	case strings.Contains(lower, "deepseek"):
+		return "deepseek"
+	case strings.Contains(lower, "gemma"):
+		return "gemma"
+	default:
+		return "openai"
+	}
+}
+
 // BuildSystemPrompt returns a compact system instruction for the vNext agent.
-//
-// Tools are provided out-of-band via the API "tools" schema (function calling).
-// The assistant must NOT emulate tool calls in plain text.
+// Family selects model-family-specific phrasing; empty string uses the default.
 func BuildSystemPrompt() string {
-	return strings.TrimSpace(`
+	return BuildSystemPromptForFamily("")
+}
+
+// BuildSystemPromptForFamily returns a system prompt tuned for the given model family.
+// Supported families: "openai" (default), "qwen", "llama", "mistral", "deepseek", "gemma".
+func BuildSystemPromptForFamily(family string) string {
+	base := strings.TrimSpace(`
 Ты — IDE-агент для работы с кодовой базой в workspace.
 
 ВАЖНО:
@@ -140,10 +165,13 @@ func BuildSystemPrompt() string {
 Когда задача выполнена (ты собрал нужную информацию через tool calls), верни:
   {"patches":[ ... ]}
 
-Патчи поддерживают:
+Предпочтительный тип патча:
 - {"type":"file.search_replace","path":"...","search":"...","replace":"...","file_hash":"sha256:..."}
+  Используй для точечных правок (поиск + замена блока).
+- {"type":"file.write_atomic","path":"...","content":"...","mode":420}
+  Используй для создания новых файлов или полной перезаписи.
 - {"type":"file.unified_diff","path":"...","diff":"...","file_hash":"sha256:..."}
-- {"type":"file.write_atomic","path":"...","content":"...","mode":420,"conditions":{"must_not_exist":true,"file_hash":"sha256:..."}}
+  Используй только если поиск/замена неприменимы (крупные diff).
 
 ПРАВИЛА:
 - Для существующих файлов перед изменением сначала сделай fs.read и используй точный file_hash.
@@ -155,6 +183,13 @@ func BuildSystemPrompt() string {
 - Когда ты понимаешь, какие изменения нужно сделать (или что изменений не требуется)
 - НЕ продолжай делать tool calls бесконечно — верни {"patches":[...]} с изменениями (или {"patches":[]} если изменений нет)
 `)
+
+	// For local model families, append a reminder to avoid markdown wrapping.
+	switch family {
+	case "qwen", "llama", "mistral", "deepseek", "gemma":
+		base += "\n\nВАЖНО: Отвечай ТОЛЬКО чистым JSON. Не используй ```json блоки или markdown разметку."
+	}
+	return base
 }
 
 // BuildUserPrompt builds the user-facing message content:

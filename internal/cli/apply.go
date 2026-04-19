@@ -234,15 +234,29 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 
+		var respFmt *llm.ResponseFormat
+		if cfg.LLM.ResponseFormatType != "" {
+			respFmt = &llm.ResponseFormat{Type: cfg.LLM.ResponseFormatType}
+			if cfg.LLM.ResponseFormatType == "json_schema" {
+				respFmt.Schema = schema.AgentStepSchemaRaw()
+				respFmt.SchemaName = "agent_step"
+			}
+		}
+
 		ag, err := agent.New(llmClient, validator, runner, agent.Options{
-			MaxSteps:          24,
-			MaxInvalidRetries: 3,
-			MaxPromptBytes:    64 * 1024,
-			LLMStepTimeout:    time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			Apply:             !dryRun,
-			Backup:            backup,
-			AllowExec:         allowExecEffective,
-			Debug:             debugMode,
+			MaxSteps:             cfg.Agent.MaxSteps,
+			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
+			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,
+			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
+			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
+			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
+			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
+			Apply:                !dryRun,
+			Backup:               backup,
+			AllowExec:            allowExecEffective,
+			Debug:                debugMode,
+			ResponseFormat:       respFmt,
+			PromptFamily:         cfg.LLM.PromptFamily,
 		})
 		if err != nil {
 			retErr = err
@@ -356,9 +370,9 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 		Query:             query,
 		Apply:             !dryRun,
 		Backup:            backup,
-		MaxSteps:          24,
-		MaxInvalidRetries: 3,
-		MaxPromptBytes:    64 * 1024,
+		MaxSteps:          cfg.Agent.MaxSteps,
+		MaxInvalidRetries: cfg.Agent.MaxInvalidRetries,
+		MaxPromptBytes:    cfg.Limits.ContextKB * 1024,
 		AllowExec:         allowExec,
 		Debug:             debugMode,
 	}, &out)

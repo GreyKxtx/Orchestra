@@ -44,6 +44,11 @@ type Options struct {
 	// LLMStepTimeout bounds time spent waiting for the model per attempt.
 	LLMStepTimeout time.Duration
 
+	// ResponseFormat, if non-nil, is sent to the LLM on every call (grammar-constrained sampling).
+	ResponseFormat *llm.ResponseFormat
+	// PromptFamily selects model-family-specific system prompt. Auto-detected if empty.
+	PromptFamily string
+
 	Debug  bool
 	Logger *log.Logger
 }
@@ -114,9 +119,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 	// History as structured messages (system + user + assistant tool calls + tool results)
 	history := make([]llm.Message, 0, 32)
 	steps := 0
-	deniedCounts := make(map[string]int, 4)
-	consecutiveToolErrors := 0
-	finalFailures := 0
+	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 
 	for steps < a.opts.MaxSteps {
 		steps++
@@ -178,20 +181,14 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 
 			// Consent policy: block exec.run unless explicitly allowed.
 			if name == "exec.run" && !a.opts.AllowExec {
-				deniedCounts[name]++
-				// Add tool message with denial
 				toolResult := formatToolDeniedJSON(name, step.Tool.Input, "exec.run requires user consent")
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
 					Content:    toolResult,
 				})
-				if deniedCounts[name] > a.opts.MaxDeniedToolRepeats {
-					return nil, protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly requested denied tool", map[string]any{
-						"tool":        name,
-						"count":       deniedCounts[name],
-						"max_repeats": a.opts.MaxDeniedToolRepeats,
-					})
+				if cbErr := cb.RecordDenied(name); cbErr != nil {
+					return nil, cbErr
 				}
 				continue
 			}
@@ -201,33 +198,26 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 			dur := time.Since(start).Milliseconds()
 			if err != nil {
 				a.logf("tool_call name=%s status=error duration_ms=%d err=%v", name, dur, err)
-				// Add tool message with error
 				toolResult := formatToolErrorJSON(name, step.Tool.Input, err)
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
 					Content:    toolResult,
 				})
-				consecutiveToolErrors++
-				if consecutiveToolErrors >= a.opts.MaxToolErrorRepeats {
-					return nil, protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly produced failing tool calls", map[string]any{
-						"count":       consecutiveToolErrors,
-						"max_repeats": a.opts.MaxToolErrorRepeats,
-						"last_tool":   name,
-					})
+				if cbErr := cb.RecordToolError(name); cbErr != nil {
+					return nil, cbErr
 				}
 				continue
 			}
 			a.logf("tool_call name=%s status=ok duration_ms=%d output_bytes=%d", name, dur, len(out))
-			// Add tool message with success result
 			history = append(history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
 				Content:    string(out),
 			})
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
-			consecutiveToolErrors = 0
-			finalFailures = 0 // Reset final failures on successful tool call (model is making progress)
+			cb.ResetToolErrors()
+			cb.ResetFinalFailures() // successful tool call = model is making progress
 			continue
 
 		case StepFinal:
@@ -256,18 +246,12 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 			resolveMS := time.Since(start).Milliseconds()
 			if err != nil {
 				a.logf("resolve status=error duration_ms=%d err=%v", resolveMS, err)
-				// Add user message with resolve error for retry
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
 					Content: formatResolveErrorCompact(err),
 				})
-				finalFailures++
-				if finalFailures >= a.opts.MaxFinalFailures {
-					return nil, protocol.NewError(protocol.InvalidLLMOutput, "failed to resolve/apply patches repeatedly", map[string]any{
-						"count":        finalFailures,
-						"max_failures": a.opts.MaxFinalFailures,
-						"last_error":   formatErr(err),
-					})
+				if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+					return nil, cbErr
 				}
 				continue
 			}
@@ -286,18 +270,12 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 				// StaleContent/AmbiguousMatch are recoverable: keep looping.
 				if pe, ok := protocol.AsError(err); ok && (pe.Code == protocol.StaleContent || pe.Code == protocol.AmbiguousMatch) {
 					a.logf("apply status=recoverable_error duration_ms=%d err=%v", applyMS, err)
-					// Add user message with apply error for retry
 					history = append(history, llm.Message{
 						Role:    llm.RoleUser,
 						Content: formatApplyErrorCompact(err, pe.Code),
 					})
-					finalFailures++
-					if finalFailures >= a.opts.MaxFinalFailures {
-						return nil, protocol.NewError(protocol.InvalidLLMOutput, "failed to resolve/apply patches repeatedly", map[string]any{
-							"count":        finalFailures,
-							"max_failures": a.opts.MaxFinalFailures,
-							"last_error":   formatErr(err),
-						})
+					if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+						return nil, cbErr
 					}
 					continue
 				}
@@ -331,7 +309,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 // It builds messages from history and adds system/user prompts.
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := tools.ListTools(a.opts.AllowExec)
-	systemPrompt := promptpkg.BuildSystemPrompt()
+	systemPrompt := promptpkg.BuildSystemPromptForFamily(a.opts.PromptFamily)
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
 
@@ -391,8 +369,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			stepCtx, cancel = context.WithTimeout(ctx, a.opts.LLMStepTimeout)
 		}
 		resp, err := a.llm.Complete(stepCtx, llm.CompleteRequest{
-			Messages: messages,
-			Tools:    toolDefs,
+			Messages:       messages,
+			Tools:          toolDefs,
+			ResponseFormat: a.opts.ResponseFormat,
 		})
 		if cancel != nil {
 			cancel() // Always cancel timeout context to free resources

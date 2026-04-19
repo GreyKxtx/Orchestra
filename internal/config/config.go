@@ -17,6 +17,31 @@ type LLMConfig struct {
 	Temperature float32 `yaml:"temperature"`
 	// TimeoutS bounds a single LLM request (agent step attempt).
 	TimeoutS int `yaml:"timeout_s"`
+
+	// PromptFamily selects a model-family-specific system prompt template.
+	// Auto-detected from Model name if empty.
+	// Supported: "openai" (default), "qwen", "llama", "mistral", "deepseek".
+	PromptFamily string `yaml:"prompt_family"`
+
+	// ResponseFormatType requests structured output from the provider.
+	// "" (default) — no constraint; "json_object" — valid JSON output;
+	// "json_schema" — strict schema-constrained JSON (requires provider support).
+	// Set "json_object" for vLLM/lm-studio; leave empty for cloud APIs.
+	ResponseFormatType string `yaml:"response_format_type"`
+}
+
+// AgentConfig controls the agent loop retry and step limits.
+type AgentConfig struct {
+	// MaxSteps is the hard cap on agent loop iterations.
+	MaxSteps int `yaml:"max_steps"`
+	// MaxInvalidRetries is the number of extra LLM attempts after a JSON/schema validation failure.
+	MaxInvalidRetries int `yaml:"max_invalid_retries"`
+	// MaxFinalFailures is the max resolve/apply failures before giving up.
+	MaxFinalFailures int `yaml:"max_final_failures"`
+	// MaxToolErrors is the max consecutive tool call errors before giving up.
+	MaxToolErrors int `yaml:"max_tool_errors"`
+	// MaxDeniedRepeats is the max repeated calls to a denied tool before giving up.
+	MaxDeniedRepeats int `yaml:"max_denied_repeats"`
 }
 
 // DaemonConfig contains local daemon settings (v0.3+).
@@ -58,6 +83,7 @@ type ProjectConfig struct {
 	ContextLimit int             `yaml:"context_limit_kb"`
 	Limits       LimitsConfig    `yaml:"limits"`
 	LLM          LLMConfig       `yaml:"llm"`
+	Agent        AgentConfig     `yaml:"agent"`
 	Daemon       DaemonConfig    `yaml:"daemon"`
 	Exec         ExecConfig      `yaml:"exec"`
 	Languages    LanguagesConfig `yaml:"languages"`
@@ -86,6 +112,14 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			Temperature: 0.7,
 			MaxTokens:   4096,
 			TimeoutS:    300,
+			// ResponseFormatType: "json_object" — раскомментируй если провайдер поддерживает
+		},
+		Agent: AgentConfig{
+			MaxSteps:          24,
+			MaxInvalidRetries: 3,
+			MaxFinalFailures:  6,
+			MaxToolErrors:     6,
+			MaxDeniedRepeats:  2,
 		},
 		Daemon: DaemonConfig{
 			Enabled:      false,
@@ -204,6 +238,23 @@ func (c *ProjectConfig) applyDefaults() {
 	// LLM defaults
 	if c.LLM.TimeoutS <= 0 {
 		c.LLM.TimeoutS = 300
+	}
+
+	// Agent defaults (tuned for local models).
+	if c.Agent.MaxSteps <= 0 {
+		c.Agent.MaxSteps = 24
+	}
+	if c.Agent.MaxInvalidRetries <= 0 {
+		c.Agent.MaxInvalidRetries = 3
+	}
+	if c.Agent.MaxFinalFailures <= 0 {
+		c.Agent.MaxFinalFailures = 6
+	}
+	if c.Agent.MaxToolErrors <= 0 {
+		c.Agent.MaxToolErrors = 6
+	}
+	if c.Agent.MaxDeniedRepeats <= 0 {
+		c.Agent.MaxDeniedRepeats = 2
 	}
 }
 

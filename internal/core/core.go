@@ -271,14 +271,49 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "query is empty", nil)
 	}
 
+	// Build ResponseFormat from config (grammar-constrained sampling for local models).
+	var respFmt *llm.ResponseFormat
+	if c.cfg != nil && c.cfg.LLM.ResponseFormatType != "" {
+		respFmt = &llm.ResponseFormat{Type: c.cfg.LLM.ResponseFormatType}
+		if c.cfg.LLM.ResponseFormatType == "json_schema" {
+			respFmt.Schema = schema.AgentStepSchemaRaw()
+			respFmt.SchemaName = "agent_step"
+		}
+	}
+
+	// Merge params with config defaults (params take precedence when non-zero).
+	maxSteps := params.MaxSteps
+	if maxSteps <= 0 && c.cfg != nil {
+		maxSteps = c.cfg.Agent.MaxSteps
+	}
+	maxRetries := params.MaxInvalidRetries
+	if maxRetries <= 0 && c.cfg != nil {
+		maxRetries = c.cfg.Agent.MaxInvalidRetries
+	}
+	maxPromptBytes := params.MaxPromptBytes
+	if maxPromptBytes <= 0 && c.cfg != nil {
+		maxPromptBytes = c.cfg.Limits.ContextKB * 1024
+	}
+
+	promptFamily := ""
+	if c.cfg != nil {
+		promptFamily = c.cfg.LLM.PromptFamily
+	}
+
 	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
-		MaxSteps:          params.MaxSteps,
-		MaxInvalidRetries: params.MaxInvalidRetries,
-		MaxPromptBytes:    params.MaxPromptBytes,
-		Apply:             params.Apply,
-		Backup:            params.Backup,
-		AllowExec:         params.AllowExec,
-		Debug:             params.Debug || c.debug,
+		MaxSteps:             maxSteps,
+		MaxInvalidRetries:    maxRetries,
+		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
+		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
+		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
+		MaxPromptBytes:       maxPromptBytes,
+		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
+		Apply:                params.Apply,
+		Backup:               params.Backup,
+		AllowExec:            params.AllowExec,
+		Debug:                params.Debug || c.debug,
+		ResponseFormat:       respFmt,
+		PromptFamily:         promptFamily,
 	})
 	if err != nil {
 		return nil, err

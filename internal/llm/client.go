@@ -64,12 +64,24 @@ func (c *OpenAIClient) SetLogger(logger *Logger) {
 
 // chatCompletionRequest represents OpenAI chat completion request
 type chatCompletionRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Tools       []ToolDef `json:"tools,omitempty"`
-	ToolChoice  string    `json:"tool_choice,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Temperature *float32  `json:"temperature,omitempty"`
+	Model          string               `json:"model"`
+	Messages       []Message            `json:"messages"`
+	Tools          []ToolDef            `json:"tools,omitempty"`
+	ToolChoice     string               `json:"tool_choice,omitempty"`
+	MaxTokens      int                  `json:"max_tokens,omitempty"`
+	Temperature    *float32             `json:"temperature,omitempty"`
+	ResponseFormat *responseFormatWire  `json:"response_format,omitempty"`
+}
+
+type responseFormatWire struct {
+	Type       string          `json:"type"`
+	JSONSchema *jsonSchemaSpec `json:"json_schema,omitempty"`
+}
+
+type jsonSchemaSpec struct {
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict"`
 }
 
 // chatCompletionResponse represents OpenAI chat completion response
@@ -107,6 +119,21 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 	// If tools are provided, let the model choose automatically.
 	if len(reqBody.Tools) > 0 {
 		reqBody.ToolChoice = "auto"
+	}
+	if req.ResponseFormat != nil && req.ResponseFormat.Type != "" {
+		wf := &responseFormatWire{Type: req.ResponseFormat.Type}
+		if req.ResponseFormat.Type == "json_schema" && len(req.ResponseFormat.Schema) > 0 {
+			name := req.ResponseFormat.SchemaName
+			if name == "" {
+				name = "response"
+			}
+			wf.JSONSchema = &jsonSchemaSpec{
+				Name:   name,
+				Schema: json.RawMessage(req.ResponseFormat.Schema),
+				Strict: true,
+			}
+		}
+		reqBody.ResponseFormat = wf
 	}
 
 	jsonData, err := json.Marshal(reqBody)

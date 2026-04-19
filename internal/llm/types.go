@@ -108,10 +108,22 @@ func (a ToolArguments) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(raw))
 }
 
+// ResponseFormat requests structured output from the provider.
+type ResponseFormat struct {
+	// Type is "json_object" or "json_schema".
+	Type string
+	// Schema is the JSON Schema to enforce (only for Type="json_schema").
+	// Must be a valid JSON Schema object understood by the provider.
+	Schema []byte
+	// SchemaName is the schema identifier sent to the provider (for json_schema mode).
+	SchemaName string
+}
+
 // CompleteRequest is a single chat completion request.
 type CompleteRequest struct {
-	Messages []Message
-	Tools    []ToolDef
+	Messages       []Message
+	Tools          []ToolDef
+	ResponseFormat *ResponseFormat // optional; nil = no constraint
 }
 
 // CompleteResponse is a single assistant turn (content and/or tool calls).

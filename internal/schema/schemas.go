@@ -1,5 +1,7 @@
 package schema
 
+import "encoding/json"
+
 // JSON Schemas (draft-07) used for schema enforcement of LLM JSON-only outputs.
 
 const planSchemaJSON = `{
@@ -89,6 +91,12 @@ const externalPatchesSchemaJSON = `{
     }
   }
 }`
+
+// AgentStepSchemaRaw returns the JSON Schema for AgentStep as raw bytes.
+// Used by the LLM client when response_format=json_schema is configured.
+func AgentStepSchemaRaw() json.RawMessage {
+	return json.RawMessage(agentStepSchemaJSON)
+}
 
 const agentStepSchemaJSON = `{
   "$schema": "http://json-schema.org/draft-07/schema#",
