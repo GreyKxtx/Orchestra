@@ -1,0 +1,147 @@
+package pkg007
+
+import "fmt"
+
+type Item struct {
+	ID int
+	Name string
+}
+
+func Func00032() string {
+	fmt.Println("pkg007 32 logging")
+	return "pkg007"
+}
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging
+// filler pkg007 32 logging

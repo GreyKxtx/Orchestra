@@ -7,6 +7,11 @@ orchestra.exe
 *.so
 *.dylib
 
+# Build directories
+bin/
+dist/
+build/
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -38,4 +43,29 @@ Thumbs.db
 # Test artifacts
 testdata/**/tmp/
 testdata/**/.orchestra/
+
+# Test run reports (generated during e2e/real-llm runs)
+e2e_llm_*.md
+e2e_llm_results.txt
+e2e_real_llm_results.txt
+test_results.txt
+test_analysis_report.md
+
+# Large benchmark project (generated via testdata/large/synthetic_project/generator)
+testdata/large/synthetic_project/cmd/
+testdata/large/synthetic_project/internal/
+testdata/large/synthetic_project/pkg/
+testdata/large/synthetic_project/api/
+testdata/large/synthetic_project/docs/
+testdata/large/synthetic_project/configs/
+testdata/large/synthetic_project/scripts/
+
+# Real projects (place locally, never commit)
+# Only README.md files in real_project/ are tracked
+testdata/small/real_project/**/*
+!testdata/small/real_project/README.md
+testdata/medium/real_project/**/*
+!testdata/medium/real_project/README.md
+testdata/large/real_project/**/*
+!testdata/large/real_project/README.md
 

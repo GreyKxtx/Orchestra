@@ -1,0 +1,145 @@
+package pkg031
+
+import "fmt"
+
+type Item struct {
+	ID int
+	Name string
+}
+
+func Func00207() string {
+	fmt.Println("pkg031 207 logging")
+	return "pkg031"
+}
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging
+// filler pkg031 207 logging

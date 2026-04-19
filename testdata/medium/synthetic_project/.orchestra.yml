@@ -1,0 +1,14 @@
+project_root: .
+exclude_dirs:
+  - .git
+  - node_modules
+  - dist
+  - build
+  - .orchestra
+context_limit_kb: 50
+llm:
+  api_base: http://localhost:8000/v1
+  api_key: ""
+  model: qwen2.5-coder-7b
+  max_tokens: 15000
+  temperature: 0.2

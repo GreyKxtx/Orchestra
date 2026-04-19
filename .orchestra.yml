@@ -9,6 +9,9 @@ context_limit_kb: 50
 llm:
     api_base: http://10.5.0.2:1234
     api_key: "lm-studio"
-    model: qwen3-coder-30b-a3b-instruct
-    max_tokens: 15000
+    # Быстрая модель для smoke-check/быстрых прогонов.
+    # Для тяжёлых моделей/больших запросов увеличивай timeout_s и max_tokens по необходимости.
+    model: openai/gpt-oss-20b
+    max_tokens: 35000
     temperature: 0.2
+    timeout_s: 300

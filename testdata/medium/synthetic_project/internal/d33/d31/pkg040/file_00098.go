@@ -1,0 +1,146 @@
+package pkg040
+
+import "fmt"
+
+type Item struct {
+	ID int
+	Name string
+}
+
+func Func00098() string {
+	fmt.Println("pkg040 98 logging")
+	return "pkg040"
+}
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
+// filler pkg040 98 logging
