@@ -19,6 +19,8 @@ import (
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/store"
 	"github.com/orchestra/orchestra/internal/tools"
+
+	coresession "github.com/orchestra/orchestra/internal/core/session"
 )
 
 type Core struct {
@@ -34,10 +36,13 @@ type Core struct {
 
 	validator *schema.Validator
 	tools     *tools.Runner
+	sessions  *coresession.Manager
 }
 
 type Options struct {
 	Debug bool
+	// LLMClient overrides the default OpenAI client (used in tests).
+	LLMClient llm.Client
 }
 
 func New(workspaceRoot string, opts Options) (*Core, error) {
@@ -76,11 +81,13 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		return nil, err
 	}
 
-	// LLM client can be overridden in tests via env hook.
-	llmClient := llm.NewOpenAIClient(cfg.LLM)
-	// Set logger for LLM requests
-	logger := llm.NewLogger(rootAbs)
-	llmClient.SetLogger(logger)
+	llmClient := opts.LLMClient
+	if llmClient == nil {
+		llmClient = llm.NewOpenAIClient(cfg.LLM)
+		// Set logger for LLM requests (only for real client)
+		logger := llm.NewLogger(rootAbs)
+		llmClient.(*llm.OpenAIClient).SetLogger(logger)
+	}
 
 	return &Core{
 		workspaceRoot: rootAbs,
@@ -90,6 +97,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		llmClient:     llmClient,
 		validator:     v,
 		tools:         tr,
+		sessions:      coresession.NewManager(),
 	}, nil
 }
 
@@ -341,7 +349,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
-	res, err := ag.Run(ctx, params.Query)
+	_, res, err := ag.Run(ctx, nil, params.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +388,242 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 
 func (c *Core) Close() error {
 	// Reserved for future (daemon state, caches, etc).
+	return nil
+}
+
+// ── Session API ──────────────────────────────────────────────────────────────
+
+type SessionStartParams struct{}
+
+type SessionStartResult struct {
+	SessionID string `json:"session_id"`
+}
+
+// SessionStart creates a new session and returns its ID.
+func (c *Core) SessionStart(_ SessionStartParams) (*SessionStartResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	s := c.sessions.Create()
+	return &SessionStartResult{SessionID: s.ID}, nil
+}
+
+type SessionMessageParams struct {
+	SessionID string `json:"session_id"`
+	Content   string `json:"content"`
+
+	Apply     bool `json:"apply,omitempty"`
+	Backup    bool `json:"backup,omitempty"`
+	AllowExec bool `json:"allow_exec,omitempty"`
+
+	MaxSteps          int `json:"max_steps,omitempty"`
+	MaxInvalidRetries int `json:"max_invalid_retries,omitempty"`
+	MaxPromptBytes    int `json:"max_prompt_bytes,omitempty"`
+
+	// OnEvent is set programmatically by the RPC handler for streaming notifications.
+	OnEvent func(method string, params any) `json:"-"`
+}
+
+type SessionMessageResult struct {
+	Steps   int  `json:"steps"`
+	Applied bool `json:"applied"`
+
+	Patches       []externalpatch.Patch     `json:"patches,omitempty"`
+	Ops           []ops.AnyOp               `json:"ops,omitempty"`
+	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+}
+
+// SessionMessage runs one agent turn in the named session, streaming events via OnEvent.
+func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) (*SessionMessageResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
+	}
+	if strings.TrimSpace(params.Content) == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "content is empty", nil)
+	}
+
+	sess, err := c.sessions.Get(params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+
+	// Prevent concurrent turns on the same session.
+	sess.Lock()
+	if sess.IsBusy() {
+		sess.Unlock()
+		return nil, protocol.NewError(protocol.ExecFailed, "session is busy", map[string]any{"session_id": params.SessionID})
+	}
+	// Snapshot history for this turn (under lock).
+	inHistory := sess.CopyHistory()
+	// Create a cancellable context for this turn and store its cancel in the session.
+	turnCtx, cancel := context.WithCancel(ctx)
+	sess.SetCancel(cancel)
+	sess.Unlock()
+
+	// Ensure cancel and session state are cleaned up on exit.
+	defer func() {
+		sess.Lock()
+		sess.ClearCancel()
+		sess.Unlock()
+		cancel()
+	}()
+
+	// Merge params with config defaults.
+	agParams := AgentRunParams{
+		Query:             params.Content,
+		Apply:             params.Apply,
+		Backup:            params.Backup,
+		AllowExec:         params.AllowExec,
+		MaxSteps:          params.MaxSteps,
+		MaxInvalidRetries: params.MaxInvalidRetries,
+		MaxPromptBytes:    params.MaxPromptBytes,
+		OnEvent:           params.OnEvent,
+	}
+
+	// Build and run the agent (same setup as AgentRun).
+	var respFmt *llm.ResponseFormat
+	if c.cfg != nil && c.cfg.LLM.ResponseFormatType != "" {
+		respFmt = &llm.ResponseFormat{Type: c.cfg.LLM.ResponseFormatType}
+		if c.cfg.LLM.ResponseFormatType == "json_schema" {
+			respFmt.Schema = schema.AgentStepSchemaRaw()
+			respFmt.SchemaName = "agent_step"
+		}
+	}
+	maxSteps := agParams.MaxSteps
+	if maxSteps <= 0 && c.cfg != nil {
+		maxSteps = c.cfg.Agent.MaxSteps
+	}
+	maxRetries := agParams.MaxInvalidRetries
+	if maxRetries <= 0 && c.cfg != nil {
+		maxRetries = c.cfg.Agent.MaxInvalidRetries
+	}
+	maxPromptBytes := agParams.MaxPromptBytes
+	if maxPromptBytes <= 0 && c.cfg != nil {
+		maxPromptBytes = c.cfg.Limits.ContextKB * 1024
+	}
+	promptFamily := ""
+	if c.cfg != nil {
+		promptFamily = c.cfg.LLM.PromptFamily
+	}
+
+	var onEvent func(agent.AgentEvent)
+	if agParams.OnEvent != nil {
+		notify := agParams.OnEvent
+		onEvent = func(ev agent.AgentEvent) {
+			notify("agent/event", map[string]any{
+				"step":            ev.Step,
+				"type":            string(ev.Stream.Kind),
+				"content":         ev.Stream.Content,
+				"tool_call_id":    ev.Stream.ToolCallID,
+				"tool_call_name":  ev.Stream.ToolCallName,
+				"tool_call_index": ev.Stream.ToolCallIndex,
+				"args_delta":      ev.Stream.ArgsDelta,
+			})
+		}
+	}
+
+	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
+		MaxSteps:             maxSteps,
+		MaxInvalidRetries:    maxRetries,
+		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
+		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
+		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
+		MaxPromptBytes:       maxPromptBytes,
+		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
+		Apply:                agParams.Apply,
+		Backup:               agParams.Backup,
+		AllowExec:            agParams.AllowExec,
+		Debug:                c.debug,
+		ResponseFormat:       respFmt,
+		PromptFamily:         promptFamily,
+		OnEvent:              onEvent,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	outHistory, res, err := ag.Run(turnCtx, inHistory, params.Content)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update session history with the new messages from this turn.
+	newMsgs := outHistory[len(inHistory):]
+	if len(newMsgs) > 0 {
+		sess.Lock()
+		sess.AppendHistory(newMsgs)
+		sess.Unlock()
+	}
+
+	return &SessionMessageResult{
+		Steps:         res.Steps,
+		Applied:       res.Applied,
+		Patches:       res.Patches,
+		Ops:           res.Ops,
+		ApplyResponse: res.ApplyResponse,
+	}, nil
+}
+
+type SessionHistoryParams struct {
+	SessionID string `json:"session_id"`
+}
+
+type SessionHistoryResult struct {
+	SessionID string        `json:"session_id"`
+	Messages  []llm.Message `json:"messages"`
+}
+
+// SessionHistory returns the accumulated history for a session.
+func (c *Core) SessionHistory(params SessionHistoryParams) (*SessionHistoryResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	sess, err := c.sessions.Get(params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	sess.Lock()
+	msgs := sess.CopyHistory()
+	sess.Unlock()
+	return &SessionHistoryResult{SessionID: params.SessionID, Messages: msgs}, nil
+}
+
+type SessionCancelParams struct {
+	SessionID string `json:"session_id"`
+}
+
+// SessionCancel cancels the currently running turn in a session (no-op if idle).
+func (c *Core) SessionCancel(params SessionCancelParams) error {
+	if c == nil {
+		return protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	sess, err := c.sessions.Get(params.SessionID)
+	if err != nil {
+		return protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	sess.Cancel()
+	return nil
+}
+
+type SessionCloseParams struct {
+	SessionID string `json:"session_id"`
+}
+
+// SessionClose cancels any running turn and removes the session.
+func (c *Core) SessionClose(params SessionCloseParams) error {
+	if c == nil {
+		return protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	sess, err := c.sessions.Get(params.SessionID)
+	if err != nil {
+		// Already gone — not an error.
+		return nil
+	}
+	sess.Cancel()
+	c.sessions.Delete(params.SessionID)
 	return nil
 }
 

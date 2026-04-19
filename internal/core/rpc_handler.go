@@ -92,6 +92,56 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return v, nil
 
+	case "session.start":
+		var p SessionStartParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionStart(p)
+
+	case "session.message":
+		var p SessionMessageParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		if h.notifier != nil {
+			p.OnEvent = func(method string, params any) {
+				_ = h.notifier.Notify(method, params)
+			}
+		}
+		return h.core.SessionMessage(ctx, p)
+
+	case "session.history":
+		var p SessionHistoryParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionHistory(p)
+
+	case "session.cancel":
+		var p SessionCancelParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return nil, h.core.SessionCancel(p)
+
+	case "session.close":
+		var p SessionCloseParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return nil, h.core.SessionClose(p)
+
 	default:
 		return nil, jsonrpc.MethodNotFound(method)
 	}

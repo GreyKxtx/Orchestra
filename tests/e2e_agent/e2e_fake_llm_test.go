@@ -94,7 +94,7 @@ func TestAgent_E2E_FakeLLM_RewritesFile(t *testing.T) {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	res, err := ag.Run(context.Background(), "replace old with new")
+	_, res, err := ag.Run(context.Background(), nil, "replace old with new")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestAgent_E2E_FakeLLM_CreatesNewFile(t *testing.T) {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	_, err = ag.Run(context.Background(), "create new file")
+	_, _, err = ag.Run(context.Background(), nil, "create new file")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}

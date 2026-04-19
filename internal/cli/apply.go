@@ -264,7 +264,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 
-		res, err := ag.Run(cmd.Context(), query)
+		_, res, err := ag.Run(cmd.Context(), nil, query)
 		if err != nil {
 			retErr = err
 			return retErr

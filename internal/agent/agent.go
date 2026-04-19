@@ -121,26 +121,29 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 	}, nil
 }
 
-func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
+// Run executes the agent loop for userQuery and returns the updated history, result, and error.
+// Pass a nil history for a fresh (one-shot) run; pass an existing history to continue a session.
+func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string) ([]llm.Message, *Result, error) {
 	userQuery = strings.TrimSpace(userQuery)
 	if userQuery == "" {
-		return nil, fmt.Errorf("user query is empty")
+		return nil, nil, fmt.Errorf("user query is empty")
 	}
 
-	// History as structured messages (system + user + assistant tool calls + tool results)
-	history := make([]llm.Message, 0, 32)
+	if history == nil {
+		history = make([]llm.Message, 0, 32)
+	}
 	steps := 0
 	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 
 	for steps < a.opts.MaxSteps {
 		steps++
 
-		step, raw, resp, err := a.nextStep(ctx, userQuery, history, steps)
+		step, raw, llmResp, err := a.nextStep(ctx, userQuery, history, steps)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if step == nil {
-			return nil, fmt.Errorf("nextStep returned nil step without error")
+			return nil, nil, fmt.Errorf("nextStep returned nil step without error")
 		}
 		// resp can be nil only if there was an error, which should have been returned above
 		// But we handle it gracefully for tool calls that need tool_call_id
@@ -166,9 +169,9 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 
 			// Extract tool_call_id from response
 			toolCallID := ""
-			hasToolCalls := resp != nil && len(resp.Message.ToolCalls) > 0
+			hasToolCalls := llmResp != nil && len(llmResp.Message.ToolCalls) > 0
 			if hasToolCalls {
-				toolCallID = resp.Message.ToolCalls[0].ID
+				toolCallID = llmResp.Message.ToolCalls[0].ID
 			}
 			if toolCallID == "" {
 				// Fallback: generate a synthetic ID if not provided (for legacy JSON format)
@@ -182,7 +185,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 				assistantMsg := llm.Message{
 					Role:      llm.RoleAssistant,
 					Content:   "", // Clear content when tool_calls are present
-					ToolCalls: resp.Message.ToolCalls,
+					ToolCalls: llmResp.Message.ToolCalls,
 				}
 				history = append(history, assistantMsg)
 				a.logf("agent.tool_call added assistant message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
@@ -199,7 +202,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 					Content:    toolResult,
 				})
 				if cbErr := cb.RecordDenied(name); cbErr != nil {
-					return nil, cbErr
+					return nil, nil, cbErr
 				}
 				continue
 			}
@@ -216,7 +219,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 					Content:    toolResult,
 				})
 				if cbErr := cb.RecordToolError(name); cbErr != nil {
-					return nil, cbErr
+					return nil, nil, cbErr
 				}
 				continue
 			}
@@ -242,8 +245,10 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 			// Empty patches is valid (no changes needed)
 			if len(step.Final.Patches) == 0 {
 				a.logf("final received empty patches (no changes needed)")
-				// Return empty result - this is success, not an error
-				return &Result{
+				if llmResp != nil {
+					history = append(history, llmResp.Message)
+				}
+				return history, &Result{
 					Patches: []externalpatch.Patch{},
 					Applied: false,
 				}, nil
@@ -262,7 +267,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 					Content: formatResolveErrorCompact(err),
 				})
 				if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
-					return nil, cbErr
+					return nil, nil, cbErr
 				}
 				continue
 			}
@@ -286,16 +291,19 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 						Content: formatApplyErrorCompact(err, pe.Code),
 					})
 					if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
-						return nil, cbErr
+						return nil, nil, cbErr
 					}
 					continue
 				}
 				a.logf("apply status=error duration_ms=%d err=%v", applyMS, err)
-				return nil, err
+				return nil, nil, err
 			}
 			a.logf("apply status=ok duration_ms=%d diffs=%d dry_run=%v", applyMS, len(resp.Diffs), applyReq.DryRun)
 
-			return &Result{
+			if llmResp != nil {
+				history = append(history, llmResp.Message)
+			}
+			return history, &Result{
 				Steps:         steps,
 				Patches:       patches,
 				Ops:           internalOps,
@@ -311,7 +319,7 @@ func (a *Agent) Run(ctx context.Context, userQuery string) (*Result, error) {
 		}
 	}
 
-	return nil, protocol.NewError(protocol.InvalidLLMOutput, "max_steps exceeded", map[string]any{
+	return nil, nil, protocol.NewError(protocol.InvalidLLMOutput, "max_steps exceeded", map[string]any{
 		"max_steps": a.opts.MaxSteps,
 	})
 }

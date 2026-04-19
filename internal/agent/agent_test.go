@@ -159,7 +159,7 @@ func TestAgent_Run_ToolCallThenFinal_Applies(t *testing.T) {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	res, err := ag.Run(context.Background(), "replace old with new")
+	_, res, err := ag.Run(context.Background(), nil, "replace old with new")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAgent_Run_ExecDenied_IsRetriedInsideNextStep_AndDoesNotBurnStep(t *test
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	res, err := ag.Run(context.Background(), "replace old with new")
+	_, res, err := ag.Run(context.Background(), nil, "replace old with new")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestAgent_Run_InvalidJSON_Retries(t *testing.T) {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	_, err = ag.Run(context.Background(), "change x to y")
+	_, _, err = ag.Run(context.Background(), nil, "change x to y")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestAgent_Run_ExecDenied_RepeatsThenStopsEarly(t *testing.T) {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	_, err = ag.Run(context.Background(), "run echo hello")
+	_, _, err = ag.Run(context.Background(), nil, "run echo hello")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -334,7 +334,7 @@ func TestAgent_Run_FinalResolveFailure_RepeatsThenStopsEarly(t *testing.T) {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	_, err = ag.Run(context.Background(), "do something")
+	_, _, err = ag.Run(context.Background(), nil, "do something")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}

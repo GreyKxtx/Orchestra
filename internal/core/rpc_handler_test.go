@@ -8,9 +8,27 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/store"
 )
+
+// fixedLLM always returns the same scripted responses in order.
+type fixedLLM struct {
+	steps []string
+	i     int
+}
+
+func (f *fixedLLM) Complete(_ context.Context, _ llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	if f.i >= len(f.steps) {
+		return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: `{"type":"final","final":{"patches":[]}}`}}, nil
+	}
+	out := f.steps[f.i]
+	f.i++
+	return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: out}}, nil
+}
+
+func (f *fixedLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
 
 func TestRPCHandler_RequiresInitialize(t *testing.T) {
 	root := t.TempDir()
@@ -123,5 +141,144 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 	_, err = h.Handle(context.Background(), "tool.call", callParams)
 	if err != nil {
 		t.Fatalf("tool.call after failed initialize should still work: %v", err)
+	}
+}
+
+func setupInitializedCore(t *testing.T, root string, llmOverride llm.Client) (*Core, *RPCHandler) {
+	t.Helper()
+	cfg := config.DefaultConfig(root)
+	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
+		t.Fatalf("Save config failed: %v", err)
+	}
+	c, err := New(root, Options{LLMClient: llmOverride})
+	if err != nil {
+		t.Fatalf("New core failed: %v", err)
+	}
+	h := NewRPCHandler(c)
+
+	projectID, err := store.ComputeProjectID(root)
+	if err != nil {
+		t.Fatalf("ComputeProjectID: %v", err)
+	}
+	initP, _ := json.Marshal(InitializeParams{
+		ProjectRoot:     root,
+		ProjectID:       projectID,
+		ProtocolVersion: protocol.ProtocolVersion,
+		OpsVersion:      protocol.OpsVersion,
+		ToolsVersion:    protocol.ToolsVersion,
+	})
+	if _, err := h.Handle(context.Background(), "initialize", initP); err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	return c, h
+}
+
+func TestSession_StartHistoryClose(t *testing.T) {
+	root := t.TempDir()
+	_, h := setupInitializedCore(t, root, &fixedLLM{})
+
+	// session.start
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sr, ok := res.(*SessionStartResult)
+	if !ok {
+		t.Fatalf("expected *SessionStartResult, got %T", res)
+	}
+	sessionID := sr.SessionID
+	if sessionID == "" {
+		t.Fatal("expected non-empty session_id")
+	}
+
+	// session.history — initially empty
+	histP, _ := json.Marshal(SessionHistoryParams{SessionID: sessionID})
+	histRes, err := h.Handle(context.Background(), "session.history", histP)
+	if err != nil {
+		t.Fatalf("session.history: %v", err)
+	}
+	hr := histRes.(*SessionHistoryResult)
+	if len(hr.Messages) != 0 {
+		t.Fatalf("expected empty history, got %d messages", len(hr.Messages))
+	}
+
+	// session.close
+	closeP, _ := json.Marshal(SessionCloseParams{SessionID: sessionID})
+	if _, err := h.Handle(context.Background(), "session.close", closeP); err != nil {
+		t.Fatalf("session.close: %v", err)
+	}
+
+	// session.history after close → not found
+	_, err = h.Handle(context.Background(), "session.history", histP)
+	if err == nil {
+		t.Fatal("expected error after close, got nil")
+	}
+}
+
+func TestSession_MessageUpdatesHistory(t *testing.T) {
+	root := t.TempDir()
+	// Write a target file so fs.read in the query makes sense.
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\n"), 0644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+
+	fileHash := store.ComputeSHA256([]byte("hello\n"))
+	patch := `{"type":"file.search_replace","path":"a.txt","search":"hello","replace":"hello","file_hash":"` + fileHash + `"}`
+	finalResp := `{"type":"final","final":{"patches":[` + patch + `]}}`
+
+	_, h := setupInitializedCore(t, root, &fixedLLM{
+		steps: []string{finalResp},
+	})
+
+	// Start a session.
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sessionID := res.(*SessionStartResult).SessionID
+
+	// Send a message — agent does a no-op search_replace (search == replace).
+	msgP, _ := json.Marshal(SessionMessageParams{
+		SessionID: sessionID,
+		Content:   "check a.txt",
+		Apply:     false, // dry-run
+	})
+	msgRes, err := h.Handle(context.Background(), "session.message", msgP)
+	if err != nil {
+		t.Fatalf("session.message: %v", err)
+	}
+	mr := msgRes.(*SessionMessageResult)
+	if mr.Applied {
+		t.Fatal("expected Applied=false for dry-run")
+	}
+
+	// History should now contain the final assistant message.
+	histP, _ := json.Marshal(SessionHistoryParams{SessionID: sessionID})
+	histRes, err := h.Handle(context.Background(), "session.history", histP)
+	if err != nil {
+		t.Fatalf("session.history: %v", err)
+	}
+	hr := histRes.(*SessionHistoryResult)
+	if len(hr.Messages) == 0 {
+		t.Fatal("expected non-empty history after session.message")
+	}
+}
+
+func TestSession_Cancel_IdleIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	_, h := setupInitializedCore(t, root, &fixedLLM{})
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sessionID := res.(*SessionStartResult).SessionID
+
+	cancelP, _ := json.Marshal(SessionCancelParams{SessionID: sessionID})
+	if _, err := h.Handle(context.Background(), "session.cancel", cancelP); err != nil {
+		t.Fatalf("session.cancel on idle session: %v", err)
 	}
 }
