@@ -15,14 +15,52 @@ type LLMConfig struct {
 	Model       string  `yaml:"model"`
 	MaxTokens   int     `yaml:"max_tokens"`
 	Temperature float32 `yaml:"temperature"`
+	// TimeoutS bounds a single LLM request (agent step attempt).
+	TimeoutS int `yaml:"timeout_s"`
+}
+
+// DaemonConfig contains local daemon settings (v0.3+).
+type DaemonConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Address      string `yaml:"address"`
+	Port         int    `yaml:"port"`
+	ScanInterval int    `yaml:"scan_interval"` // seconds
+
+	CacheEnabled *bool  `yaml:"cache_enabled"`
+	CachePath    string `yaml:"cache_path"` // default: .orchestra/cache.json
+}
+
+// LimitsConfig contains context/IO limits (vNext).
+type LimitsConfig struct {
+	ContextKB       int   `yaml:"context_kb"`
+	MaxFiles        int   `yaml:"max_files"`
+	MaxBytesPerFile int64 `yaml:"max_bytes_per_file"`
+}
+
+// ExecConfig contains exec.run safety + consent settings (vNext).
+type ExecConfig struct {
+	Confirm       *bool `yaml:"confirm"`
+	TimeoutS      int   `yaml:"timeout_s"`
+	OutputLimitKB int   `yaml:"output_limit_kb"`
+}
+
+// LanguagesConfig selects enabled language parsers (vNext).
+type LanguagesConfig struct {
+	Enabled []string `yaml:"enabled"`
 }
 
 // ProjectConfig represents the Orchestra configuration
 type ProjectConfig struct {
-	ProjectRoot  string    `yaml:"project_root"`
-	ExcludeDirs  []string  `yaml:"exclude_dirs"`
-	ContextLimit int       `yaml:"context_limit_kb"`
-	LLM          LLMConfig `yaml:"llm"`
+	ProjectRoot string   `yaml:"project_root"`
+	ExcludeDirs []string `yaml:"exclude_dirs"`
+	// ContextLimit is the v0.2/v0.3 name kept for backward compatibility.
+	// Prefer Limits.ContextKB.
+	ContextLimit int             `yaml:"context_limit_kb"`
+	Limits       LimitsConfig    `yaml:"limits"`
+	LLM          LLMConfig       `yaml:"llm"`
+	Daemon       DaemonConfig    `yaml:"daemon"`
+	Exec         ExecConfig      `yaml:"exec"`
+	Languages    LanguagesConfig `yaml:"languages"`
 }
 
 // DefaultConfig creates a default configuration for the project root
@@ -37,11 +75,33 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			".orchestra",
 		},
 		ContextLimit: 50,
+		Limits: LimitsConfig{
+			ContextKB:       50,
+			MaxFiles:        30,
+			MaxBytesPerFile: 200 * 1024,
+		},
 		LLM: LLMConfig{
 			APIBase:     "http://localhost:8000/v1",
 			Model:       "qwen2.5-coder-7b",
 			Temperature: 0.7,
 			MaxTokens:   4096,
+			TimeoutS:    300,
+		},
+		Daemon: DaemonConfig{
+			Enabled:      false,
+			Address:      "127.0.0.1",
+			Port:         8080,
+			ScanInterval: 10,
+			CacheEnabled: boolPtr(true),
+			CachePath:    ".orchestra/cache.json",
+		},
+		Exec: ExecConfig{
+			Confirm:       boolPtr(true),
+			TimeoutS:      30,
+			OutputLimitKB: 100,
+		},
+		Languages: LanguagesConfig{
+			Enabled: []string{"go"},
 		},
 	}
 }
@@ -57,6 +117,8 @@ func Load(path string) (*ProjectConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+
+	cfg.applyDefaults()
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -85,6 +147,68 @@ func Save(path string, cfg *ProjectConfig) error {
 	return nil
 }
 
+func (c *ProjectConfig) applyDefaults() {
+	// Daemon defaults (so older configs without daemon section still work).
+	if c.Daemon.Address == "" {
+		c.Daemon.Address = "127.0.0.1"
+	}
+	if c.Daemon.Port == 0 {
+		c.Daemon.Port = 8080
+	}
+	if c.Daemon.ScanInterval == 0 {
+		c.Daemon.ScanInterval = 10
+	}
+	if c.Daemon.CachePath == "" {
+		c.Daemon.CachePath = ".orchestra/cache.json"
+	}
+	// Default true for cache unless explicitly set to false.
+	if c.Daemon.CacheEnabled == nil {
+		c.Daemon.CacheEnabled = boolPtr(true)
+	}
+
+	// vNext limits: inherit legacy context_limit_kb if limits.context_kb is missing.
+	if c.Limits.ContextKB <= 0 && c.ContextLimit > 0 {
+		c.Limits.ContextKB = c.ContextLimit
+	}
+	if c.Limits.ContextKB <= 0 {
+		c.Limits.ContextKB = 50
+	}
+	// Keep legacy field in sync so old code paths still work.
+	if c.ContextLimit <= 0 {
+		c.ContextLimit = c.Limits.ContextKB
+	}
+	if c.Limits.MaxFiles <= 0 {
+		c.Limits.MaxFiles = 30
+	}
+	if c.Limits.MaxBytesPerFile <= 0 {
+		c.Limits.MaxBytesPerFile = 200 * 1024
+	}
+
+	// Exec defaults
+	if c.Exec.TimeoutS <= 0 {
+		c.Exec.TimeoutS = 30
+	}
+	if c.Exec.OutputLimitKB <= 0 {
+		c.Exec.OutputLimitKB = 100
+	}
+	// Default confirm=true unless explicitly set.
+	if c.Exec.Confirm == nil {
+		c.Exec.Confirm = boolPtr(true)
+	}
+
+	// Languages defaults
+	if len(c.Languages.Enabled) == 0 {
+		c.Languages.Enabled = []string{"go"}
+	}
+
+	// LLM defaults
+	if c.LLM.TimeoutS <= 0 {
+		c.LLM.TimeoutS = 300
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
 // Validate validates the configuration
 func (c *ProjectConfig) Validate() error {
 	if c.ProjectRoot == "" {
@@ -98,9 +222,36 @@ func (c *ProjectConfig) Validate() error {
 	if c.LLM.Model == "" {
 		return fmt.Errorf("llm.model is required")
 	}
+	if c.LLM.TimeoutS <= 0 {
+		return fmt.Errorf("llm.timeout_s must be > 0")
+	}
 
 	if c.ContextLimit <= 0 {
 		return fmt.Errorf("context_limit_kb must be greater than 0")
+	}
+
+	if c.Limits.ContextKB <= 0 {
+		return fmt.Errorf("limits.context_kb must be greater than 0")
+	}
+	if c.Limits.MaxFiles < 0 {
+		return fmt.Errorf("limits.max_files must be >= 0")
+	}
+	if c.Limits.MaxBytesPerFile < 0 {
+		return fmt.Errorf("limits.max_bytes_per_file must be >= 0")
+	}
+
+	if c.Exec.TimeoutS <= 0 {
+		return fmt.Errorf("exec.timeout_s must be > 0")
+	}
+	if c.Exec.OutputLimitKB <= 0 {
+		return fmt.Errorf("exec.output_limit_kb must be > 0")
+	}
+
+	if c.Daemon.Port < 0 || c.Daemon.Port > 65535 {
+		return fmt.Errorf("daemon.port must be between 0 and 65535")
+	}
+	if c.Daemon.ScanInterval < 0 {
+		return fmt.Errorf("daemon.scan_interval must be >= 0")
 	}
 
 	return nil

@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/cli"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/plan"
-	"github.com/orchestra/orchestra/pkg/cli"
 )
 
 // contains проверяет, содержит ли строка подстроку
@@ -46,14 +47,17 @@ func (m *MockLLM) Plan(ctx context.Context, prompt string) (string, error) {
 	return string(jsonBytes), nil
 }
 
-func (m *MockLLM) Complete(ctx context.Context, prompt string) (string, error) {
+func (m *MockLLM) Complete(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	_ = ctx
+	_ = req
 	if m.CompleteResponse != "" {
-		return m.CompleteResponse, nil
+		return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: m.CompleteResponse}}, nil
 	}
-	// Дефолтный ответ для парсера: создать файл hello.txt с содержимым
-	return `---FILE: hello.txt
-Hello, Integration World!
----END`, nil
+	// Дефолтный ответ (legacy): валидный AgentStep JSON, чтобы не зависеть от реальной модели.
+	return &llm.CompleteResponse{Message: llm.Message{
+		Role:    llm.RoleAssistant,
+		Content: `{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"hello.txt","search":"","replace":"Hello, Integration World!","file_hash":"sha256:deadbeef"}]}}`,
+	}}, nil
 }
 
 // setupGitRepo инициализирует git репозиторий в указанной директории
@@ -147,15 +151,14 @@ func TestOrchestra_FullCycle_WithGit(t *testing.T) {
 	}
 
 	// Проверяем, что Complete возвращает валидный ответ
-	completeResponse, err := mockClient.Complete(context.Background(), "test")
+	completeResp, err := mockClient.Complete(context.Background(), llm.CompleteRequest{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "test"}},
+	})
 	if err != nil {
 		t.Fatalf("Mock Complete failed: %v", err)
 	}
-	if !contains(completeResponse, "---FILE: hello.txt") {
-		t.Errorf("Expected response to contain '---FILE: hello.txt', got: %s", completeResponse)
-	}
-	if !contains(completeResponse, "Hello, Integration World!") {
-		t.Errorf("Expected response to contain 'Hello, Integration World!', got: %s", completeResponse)
+	if !contains(completeResp.Message.Content, "Hello, Integration World!") {
+		t.Errorf("Expected response to contain 'Hello, Integration World!', got: %s", completeResp.Message.Content)
 	}
 }
 

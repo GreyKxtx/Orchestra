@@ -8,14 +8,14 @@ import (
 
 func TestSearchInProject_Basic(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create test files
 	testFile1 := filepath.Join(tmpDir, "file1.go")
 	testFile2 := filepath.Join(tmpDir, "file2.go")
-	
+
 	content1 := "package main\n\nfunc hello() {\n\tfmt.Println(\"hello\")\n}\n"
 	content2 := "package main\n\nfunc world() {\n\tfmt.Println(\"world\")\n}\n"
-	
+
 	if err := os.WriteFile(testFile1, []byte(content1), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestSearchInProject_Basic(t *testing.T) {
 
 func TestSearchInProject_ExcludeDirs(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create file in root
 	rootFile := filepath.Join(tmpDir, "root.go")
 	if err := os.WriteFile(rootFile, []byte("package main\nfunc root() {}\n"), 0644); err != nil {
@@ -96,7 +96,7 @@ func TestSearchInProject_ExcludeDirs(t *testing.T) {
 
 func TestSearchInProject_CaseInsensitive(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	testFile := filepath.Join(tmpDir, "test.go")
 	content := "package main\n\nfunc Hello() {}\nfunc hello() {}\n"
 	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
@@ -105,7 +105,7 @@ func TestSearchInProject_CaseInsensitive(t *testing.T) {
 
 	opts := DefaultOptions()
 	opts.CaseInsensitive = true
-	
+
 	matches, err := SearchInProject(tmpDir, "HELLO", []string{}, opts)
 	if err != nil {
 		t.Fatalf("SearchInProject failed: %v", err)
@@ -118,7 +118,7 @@ func TestSearchInProject_CaseInsensitive(t *testing.T) {
 
 func TestSearchInProject_MaxMatchesPerFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	testFile := filepath.Join(tmpDir, "test.go")
 	content := "func a() {}\nfunc b() {}\nfunc c() {}\nfunc d() {}\nfunc e() {}\n"
 	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
@@ -127,7 +127,7 @@ func TestSearchInProject_MaxMatchesPerFile(t *testing.T) {
 
 	opts := DefaultOptions()
 	opts.MaxMatchesPerFile = 3
-	
+
 	matches, err := SearchInProject(tmpDir, "func", []string{}, opts)
 	if err != nil {
 		t.Fatalf("SearchInProject failed: %v", err)
@@ -140,11 +140,10 @@ func TestSearchInProject_MaxMatchesPerFile(t *testing.T) {
 
 func TestSearchInProject_EmptyQuery(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	opts := DefaultOptions()
 	_, err := SearchInProject(tmpDir, "", []string{}, opts)
 	if err == nil {
 		t.Error("Expected error for empty query, got nil")
 	}
 }
-
