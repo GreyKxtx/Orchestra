@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Orchestra CKG Explorer</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --panel-bg: #252526;
+            --border-color: #3c3c3c;
+            --text-main: #d4d4d4;
+
+            --c-folder: #555555;
+            --c-file: #E91E63;
+            --c-struct: #FF9800;
+            --c-func: #00BCD4;
+            --c-test: #4CAF50;
+            --c-var: #9C27B0;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            grid-template-rows: 50px 1fr;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* ZONES */
+        #topbar {
+            grid-column: 1 / 3;
+            grid-row: 1;
+            background: var(--panel-bg);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            z-index: 10;
+            justify-content: space-between;
+        }
+
+        #sidebar-left {
+            grid-column: 1;
+            grid-row: 2;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            padding: 10px;
+            font-size: 13px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #canvas-container {
+            grid-column: 2;
+            grid-row: 2;
+            position: relative;
+        }
+
+        #sidebar-right {
+            position: fixed;
+            right: 0;
+            top: 50px;
+            width: 350px;
+            height: calc(100vh - 50px);
+            background: rgba(37, 37, 38, 0.98);
+            border-left: 1px solid var(--border-color);
+            display: none;
+            padding: 20px;
+            overflow-y: auto;
+            z-index: 20;
+            box-shadow: -5px 0 20px rgba(0, 0, 0, 0.3);
+        }
+
+        /* TOP BAR */
+        .brand {
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+        }
+
+        .brand span {
+            color: var(--c-file);
+            margin-left: 5px;
+        }
+
+        .search-box {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .search-box input {
+            width: 100%;
+            max-width: 400px;
+            padding: 6px 12px;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            color: #fff;
+            border-radius: 4px;
+            outline: none;
+            margin-right: 15px;
+        }
+
+        .search-box input:focus {
+            border-color: #007acc;
+        }
+
+        .filter-select {
+            padding: 6px;
+            background: #3c3c3c;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        /* LEGEND */
+        .legend {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        /* D3 CANVAS */
+        #graph-svg {
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+
+        #graph-svg:active {
+            cursor: grabbing;
+        }
+
+        .node text {
+            pointer-events: none;
+            fill: #fff;
+            font-size: 12px;
+            opacity: 0;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        }
+
+        .node:hover text,
+        .node.search-match text,
+        .node.focus text {
+            opacity: 1;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .node circle {
+            cursor: pointer;
+        }
+
+        .link {
+            pointer-events: none;
+        }
+
+        .link.calls {
+            stroke: #00BCD4;
+            stroke-width: 1.5px;
+            stroke-opacity: 0;
+        }
+
+        .link.calls.visible {
+            stroke-opacity: 0.6;
+        }
+
+        .link.uses {
+            stroke: #FFEB3B;
+            stroke-width: 1px;
+            stroke-dasharray: 4;
+            stroke-opacity: 0;
+        }
+
+        .link.uses.visible {
+            stroke-opacity: 0.5;
+        }
+
+        .link.in_file {
+            stroke: #E91E63;
+            stroke-width: 0.5px;
+            stroke-opacity: 0.1;
+            stroke-dasharray: 2 6;
+        }
+
+        .link.in_folder {
+            stroke: #888;
+            stroke-width: 1px;
+            stroke-opacity: 0.15;
+            stroke-dasharray: 6 3;
+        }
+
+        .dimmed {
+            opacity: 0.08 !important;
+        }
+
+        .node.focus circle {
+            stroke: #fff;
+            stroke-width: 3px;
+        }
+
+        .node.focus text {
+            opacity: 1 !important;
+            font-size: 16px !important;
+            font-weight: bold;
+            fill: #fff !important;
+        }
+
+        /* SIDEBAR TREE (LEFT) */
+        .tree-node {
+            margin-left: 15px;
+        }
+
+        .tree-item {
+            cursor: pointer;
+            padding: 4px 6px;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            word-break: break-all;
+            transition: background 0.1s;
+        }
+
+        .tree-item:hover {
+            background: #2a2d2e;
+        }
+
+        .tree-item.selected {
+            background: #04395e;
+            border-left: 3px solid var(--c-func);
+        }
+
+        .tree-icon {
+            width: 14px;
+            height: 14px;
+            margin-right: 6px;
+            fill: currentColor;
+            flex-shrink: 0;
+        }
+
+        .c-folder {
+            color: #aaaaaa;
+            font-weight: bold;
+        }
+
+        .c-file {
+            color: #e91e63;
+        }
+
+        .c-func {
+            color: #00bcd4;
+            font-size: 12px;
+        }
+
+        .c-struct {
+            color: #ff9800;
+            font-size: 12px;
+        }
+
+        .c-test {
+            color: #4caf50;
+            font-size: 12px;
+        }
+
+        .tree-children {
+            display: none;
+        }
+
+        .tree-children.open {
+            display: block;
+        }
+
+        /* RIGHT PANEL (META) */
+        .close-btn {
+            float: right;
+            cursor: pointer;
+            color: #aaa;
+            font-size: 20px;
+            font-weight: bold;
+            line-height: 1;
+        }
+
+        .close-btn:hover {
+            color: #fff;
+        }
+
+        #panel-title-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 25px;
+        }
+
+        #sidebar-right h2 {
+            margin: 0;
+            color: #fff;
+            font-size: 20px;
+            word-break: break-all;
+        }
+
+        .meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .meta-table td {
+            padding: 10px 0;
+            border-bottom: 1px solid #3c3c3c;
+            vertical-align: top;
+        }
+
+        .meta-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .meta-table td:first-child {
+            width: 120px;
+            color: #858585;
+            font-weight: bold;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #fff;
+            font-weight: bold;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            width: max-content;
+        }
+
+        /* SOURCE CODE VIEWER */
+        .source-toggle {
+            margin-top: 15px;
+            cursor: pointer;
+            color: #00BCD4;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        .source-toggle:hover {
+            text-decoration: underline;
+        }
+
+        .source-block {
+            margin-top: 10px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+            color: #d4d4d4;
+            white-space: pre;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+            line-height: 1.5;
+        }
+
+        .source-block.open {
+            display: block;
+        }
+
+        .bg-folder {
+            background: var(--c-folder);
+        }
+
+        .bg-file {
+            background: var(--c-file);
+        }
+
+        .bg-struct {
+            background: var(--c-struct);
+        }
+
+        .bg-interface {
+            background: var(--c-struct);
+        }
+
+        .bg-func {
+            background: var(--c-func);
+        }
+
+        .bg-method {
+            background: var(--c-func);
+        }
+
+        .bg-test {
+            background: var(--c-test);
+        }
+
+        /* ICONS SVG */
+        .svg-folder {
+            color: #888;
+        }
+
+        .svg-file {
+            color: #ccc;
+        }
+
+        .svg-code {
+            color: #666;
+        }
+
+        /* CHAT */
+        #chat-btn {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #E91E63, #9C27B0);
+            border: none;
+            cursor: pointer;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(233, 30, 99, 0.4);
+            transition: transform 0.2s;
+        }
+
+        #chat-btn:hover {
+            transform: scale(1.1);
+        }
+
+        #chat-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: #fff;
+        }
+
+        #chat-panel {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 400px;
+            height: 500px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            display: none;
+            flex-direction: column;
+            z-index: 30;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        #chat-panel.open {
+            display: flex;
+        }
+
+        .chat-header {
+            padding: 12px 16px;
+            background: #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .chat-header span {
+            font-weight: bold;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .chat-close {
+            cursor: pointer;
+            color: #aaa;
+            font-size: 18px;
+            background: none;
+            border: none;
+        }
+
+        .chat-close:hover {
+            color: #fff;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            font-size: 13px;
+        }
+
+        .chat-msg {
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 85%;
+            line-height: 1.4;
+        }
+
+        .chat-msg.user {
+            background: #0d47a1;
+            color: #fff;
+            margin-left: auto;
+        }
+
+        .chat-msg.bot {
+            background: #333;
+            color: var(--text-main);
+        }
+
+        .chat-input-row {
+            display: flex;
+            padding: 10px;
+            border-top: 1px solid var(--border-color);
+            gap: 8px;
+        }
+
+        .chat-input-row input {
+            flex: 1;
+            padding: 8px 12px;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            color: #fff;
+            border-radius: 6px;
+            outline: none;
+            font-size: 13px;
+        }
+
+        .chat-input-row input:focus {
+            border-color: #007acc;
+        }
+
+        .chat-input-row button {
+            padding: 8px 16px;
+            background: var(--c-file);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .chat-input-row button:hover {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="topbar">
+        <div class="brand">Orchestra <span>CKG</span></div>
+        <div class="search-box">
+            <input type="text" id="search-input" placeholder="Поиск (напр. SaveFileNodes)...">
+            <select id="type-filter" class="filter-select">
+                <option value="all">Везде (Все типы)</option>
+                <option value="file">Файлы</option>
+                <option value="struct,interface">Структуры / Классы</option>
+                <option value="func,method">Функции / Методы</option>
+                <option value="test">Тесты</option>
+            </select>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+            <button id="btn-freeze" onclick="toggleFreeze()"
+                style="padding:5px 12px;background:#3c3c3c;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;font-size:12px">⏸
+                Заморозить</button>
+            <button onclick="unpinAll()"
+                style="padding:5px 12px;background:#3c3c3c;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;font-size:12px">📌
+                Открепить всё</button>
+        </div>
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-dot" style="background: var(--c-folder)"></div>Папка
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: var(--c-file)"></div>Файл
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: var(--c-struct)"></div>Структура
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: var(--c-func)"></div>Функция
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: var(--c-test)"></div>Тест
+            </div>
+        </div>
+    </div>
+
+    <div id="sidebar-left">
+        <!-- File tree injected here -->
+    </div>
+
+    <div id="canvas-container">
+        <svg id="graph-svg">
+            <defs>
+                <marker id="arrow-call" viewBox="0 -5 10 10" refX="15" refY="0" markerWidth="5" markerHeight="5"
+                    orient="auto">
+                    <path d="M0,-5L10,0L0,5" fill="#00BCD4"></path>
+                </marker>
+                <marker id="arrow-folder" viewBox="0 -5 10 10" refX="30" refY="0" markerWidth="4" markerHeight="4"
+                    orient="auto">
+                    <path d="M0,-5L10,0L0,5" fill="#888"></path>
+                </marker>
+                <marker id="arrow-file" viewBox="0 -5 10 10" refX="18" refY="0" markerWidth="4" markerHeight="4"
+                    orient="auto">
+                    <path d="M0,-5L10,0L0,5" fill="#E91E63"></path>
+                </marker>
+            </defs>
+        </svg>
+    </div>
+
+    <div id="sidebar-right">
+        <span class="close-btn"
+            onclick="document.getElementById('sidebar-right').style.display='none'; clearFocus();">&times;</span>
+        <div id="panel-title-container">
+            <span id="panel-badge" class="badge">Type</span>
+            <h2 id="panel-title">Item Name</h2>
+        </div>
+        <table class="meta-table" id="panel-meta">
+            <!-- Meta rows injected here -->
+        </table>
+        <div class="source-toggle" id="source-toggle" onclick="toggleSource()" style="display:none">▶ Показать исходный
+            код</div>
+        <pre class="source-block" id="source-block"></pre>
+    </div>
+
+    <!-- Chat Button -->
+    <button id="chat-btn" onclick="toggleChat()">
+        <svg viewBox="0 0 24 24">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" />
+        </svg>
+    </button>
+    <!-- Chat Panel -->
+    <div id="chat-panel">
+        <div class="chat-header">
+            <span>💬 Вопросы по проекту</span>
+            <button class="chat-close" onclick="toggleChat()">&times;</button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-msg bot">Привет! Я могу ответить на вопросы о структуре проекта. Например: «Какие функции
+                вызывает SaveFileNodes?» или «Покажи все тесты».</div>
+        </div>
+        <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Спроси о коде..."
+                onkeydown="if(event.key==='Enter')sendChat()">
+            <button onclick="sendChat()">→</button>
+        </div>
+    </div>
+
+    <!-- SVGs templates -->
+    <svg style="display:none">
+        <symbol id="icon-folder" viewBox="0 0 24 24">
+            <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
+        </symbol>
+        <symbol id="icon-file" viewBox="0 0 24 24">
+            <path
+                d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
+        </symbol>
+        <symbol id="icon-code" viewBox="0 0 24 24">
+            <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" />
+        </symbol>
+    </svg>
+
+    <script>
+        let graphData = { nodes: [], links: [] };
+        let nodeGroup, linkGroup;
+        let zoomBehavior;
+        let simulation;
+        let isFrozen = false;
+
+        function toggleFreeze() {
+            const btn = document.getElementById('btn-freeze');
+            if (isFrozen) {
+                simulation.alpha(0.3).restart();
+                btn.textContent = '⏸ Заморозить';
+                isFrozen = false;
+            } else {
+                simulation.stop();
+                btn.textContent = '▶ Разморозить';
+                isFrozen = true;
+            }
+        }
+
+        function unpinAll() {
+            graphData.nodes.forEach(d => { d.fx = null; d.fy = null; });
+            if (!isFrozen) simulation.alpha(0.3).restart();
+        }
+
+        // Fetch data
+        fetch('/api/graph')
+            .then(res => res.json())
+            .then(data => {
+                graphData = data;
+                console.log('CKG Data loaded:', data.nodes.length, 'nodes,', data.links.length, 'links');
+                processData();
+                initApp();
+            })
+            .catch(err => console.error('Failed to load graph data:', err));
+
+        function processData() {
+            // Generate in_folder links for files -> folders, and folders -> parent folders
+            const folderIds = new Set(graphData.nodes.filter(n => n.group === 'folder').map(n => n.id));
+
+            graphData.nodes.forEach(n => {
+                if (n.group === 'file') {
+                    const parts = n.id.split('/');
+                    if (parts.length > 1) {
+                        parts.pop();
+                        const parentDir = parts.join('/');
+                        if (folderIds.has(parentDir)) {
+                            graphData.links.push({ source: n.id, target: parentDir, relation: 'in_folder' });
+                        }
+                    }
+                } else if (n.group === 'folder') {
+                    const parts = n.id.split('/');
+                    if (parts.length > 1) {
+                        parts.pop();
+                        const parentDir = parts.join('/');
+                        if (folderIds.has(parentDir)) {
+                            graphData.links.push({ source: n.id, target: parentDir, relation: 'in_folder' });
+                        }
+                    }
+                }
+            });
+        }
+
+        function initApp() {
+            renderSidebar();
+            renderGraph();
+            setupSearch();
+        }
+
+        // ====== 1. SIDEBAR (LEFT TREE) ======
+        function renderSidebar() {
+            const sidebar = document.getElementById("sidebar-left");
+            sidebar.innerHTML = "";
+
+            // Build hierarchical tree
+            const tree = {};
+
+            // 1. Add folders
+            graphData.nodes.filter(n => n.group === 'folder').forEach(f => {
+                const parts = f.id.split('/');
+                let current = tree;
+                parts.forEach((part, i) => {
+                    const path = parts.slice(0, i + 1).join('/');
+                    if (!current[part]) current[part] = { _type: 'folder', _id: path, _name: part, children: {} };
+                    current = current[part].children;
+                });
+            });
+
+            // 2. Add files
+            graphData.nodes.filter(n => n.group === 'file').forEach(f => {
+                const parts = f.id.split('/');
+                const fileName = parts.pop();
+                let current = tree;
+                parts.forEach(part => {
+                    if (current[part]) current = current[part].children;
+                });
+                current[fileName] = { _type: 'file', _id: f.id, _name: fileName, children: {} };
+            });
+
+            // 3. Add functions/structs to files (O(1) lookup via prebuilt map)
+            const inFileMap = new Map();
+            graphData.links.filter(l => l.relation === 'in_file').forEach(l => {
+                const src = typeof l.source === 'string' ? l.source : l.source.id;
+                const tgt = typeof l.target === 'string' ? l.target : l.target.id;
+                inFileMap.set(src, tgt);
+            });
+
+            graphData.nodes.filter(n => ['func', 'method', 'struct', 'interface', 'test'].includes(n.group)).forEach(n => {
+                const fileId = inFileMap.get(n.id);
+                if (fileId) {
+                    const parts = fileId.split('/');
+                    const fileName = parts.pop();
+                    let current = tree;
+                    parts.forEach(part => { if (current[part]) current = current[part].children; });
+                    if (current[fileName]) {
+                        current[fileName].children[n.name] = { _type: n.group, _id: n.id, _name: n.name, children: {} };
+                    }
+                }
+            });
+
+            function buildDOM(nodeObj, container) {
+                // Sort: folders first, then files, then funcs
+                const keys = Object.keys(nodeObj).filter(k => !k.startsWith('_')).sort((a, b) => {
+                    const tA = nodeObj[a]._type; const tB = nodeObj[b]._type;
+                    if (tA === 'folder' && tB !== 'folder') return -1;
+                    if (tB === 'folder' && tA !== 'folder') return 1;
+                    if (tA === 'file' && tB !== 'file') return -1;
+                    if (tB === 'file' && tA !== 'file') return 1;
+                    return a.localeCompare(b);
+                });
+
+                keys.forEach(k => {
+                    const n = nodeObj[k];
+                    const hasChildren = Object.keys(n.children).length > 0;
+
+                    const itemDiv = document.createElement("div");
+                    itemDiv.className = `tree-item c-${n._type}`;
+                    itemDiv.dataset.id = n._id;
+
+                    // Icon
+                    const iconSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    iconSvg.setAttribute('class', `tree-icon svg-${n._type === 'folder' ? 'folder' : (n._type === 'file' ? 'file' : 'code')}`);
+                    const iconUse = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+                    iconUse.setAttribute('href', `#icon-${n._type === 'folder' ? 'folder' : (n._type === 'file' ? 'file' : 'code')}`);
+                    iconSvg.appendChild(iconUse);
+                    itemDiv.appendChild(iconSvg);
+
+                    const textSpan = document.createElement("span");
+                    textSpan.textContent = n._name;
+                    itemDiv.appendChild(textSpan);
+
+                    const wrapDiv = document.createElement("div");
+                    wrapDiv.className = "tree-node";
+                    wrapDiv.appendChild(itemDiv);
+
+                    const childrenDiv = document.createElement("div");
+                    childrenDiv.className = "tree-children";
+                    if (hasChildren) {
+                        buildDOM(n.children, childrenDiv);
+                        wrapDiv.appendChild(childrenDiv);
+                    }
+
+                    itemDiv.onclick = (e) => {
+                        e.stopPropagation();
+                        if (hasChildren) childrenDiv.classList.toggle("open");
+                        selectNode(n._id);
+                    };
+
+                    container.appendChild(wrapDiv);
+                });
+            }
+
+            buildDOM(tree, sidebar);
+
+            // Open root folders by default
+            sidebar.querySelectorAll(':scope > .tree-node > .tree-children').forEach(c => c.classList.add('open'));
+        }
+
+        // ====== 2. D3 CANVAS ======
+        function renderGraph() {
+            const container = document.getElementById('canvas-container');
+            const svg = d3.select("#graph-svg");
+            const width = container.clientWidth || 800;
+            const height = container.clientHeight || 600;
+            console.log('Graph canvas size:', width, 'x', height);
+
+            const g = svg.append("g").style("will-change", "transform");
+
+            zoomBehavior = d3.zoom().scaleExtent([0.05, 4]).on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+            svg.call(zoomBehavior);
+
+            // Filter valid links
+            const nodeMap = new Map(graphData.nodes.map(n => [n.id, n]));
+            const validLinks = graphData.links.filter(l => nodeMap.has(l.source) && nodeMap.has(l.target));
+
+            // 4 LAYERS with massive vertical separation
+            const LAYER_GAP = 800;
+            const layerY = d => {
+                if (d.group === 'folder') return 0;
+                if (d.group === 'file') return LAYER_GAP;
+                if (d.group === 'struct' || d.group === 'interface') return LAYER_GAP * 2;
+                if (d.group === 'test') return LAYER_GAP * 3.5;
+                return LAYER_GAP * 2.7; // func, method
+            };
+
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force("link", d3.forceLink(validLinks).id(d => d.id)
+                    .distance(d => {
+                        if (d.relation === 'in_file') return LAYER_GAP * 0.8;
+                        if (d.relation === 'in_folder') return 80;
+                        return 350;
+                    })
+                    .strength(d => {
+                        if (d.relation === 'in_file') return 0.9;
+                        if (d.relation === 'in_folder') return 0.2;
+                        return 0.003;
+                    })
+                )
+                .force("charge", d3.forceManyBody().strength(d => {
+                    if (d.group === 'folder') return -2000;
+                    if (d.group === 'file') return -1000;
+                    return -250;
+                }))
+                .force("x", d3.forceX(width / 2).strength(0.005))
+                .force("y", d3.forceY(d => layerY(d)).strength(0.7))
+                .force("collision", d3.forceCollide().radius(d => {
+                    if (d.group === 'folder') return 60;
+                    if (d.group === 'file') return 40;
+                    return 35;
+                }).strength(1).iterations(4));
+
+            linkGroup = g.append("g")
+                .selectAll("line")
+                .data(validLinks)
+                .join("line")
+                .attr("class", d => `link ${d.relation}`)
+                .attr("marker-end", d => {
+                    if (d.relation === 'calls') return 'url(#arrow-call)';
+                    if (d.relation === 'in_folder') return 'url(#arrow-folder)';
+                    if (d.relation === 'in_file') return 'url(#arrow-file)';
+                    return '';
+                });
+
+            nodeGroup = g.append("g")
+                .selectAll("g")
+                .data(graphData.nodes)
+                .join("g")
+                .attr("class", "node")
+                .attr("id", d => `node-${d.id.replace(/[^a-zA-Z0-9-]/g, '-')}`)
+                .call(d3.drag()
+                    .on("start", (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+                    .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+                    .on("end", (event, d) => { if (!event.active) simulation.alphaTarget(0); /* keep fx/fy — node stays pinned */ })
+                );
+
+            nodeGroup.append("circle")
+                .attr("r", d => {
+                    if (d.group === "folder") return 25;
+                    if (d.group === "file") return 12;
+                    return 6;
+                })
+                .attr("fill", d => {
+                    if (d.group === "folder") return "var(--c-folder)";
+                    if (d.group === "file") return "var(--c-file)";
+                    if (d.group === "struct" || d.group === "interface") return "var(--c-struct)";
+                    if (d.group === "test") return "var(--c-test)";
+                    return "var(--c-func)";
+                })
+                .style("opacity", d => d.group === "folder" ? 0.8 : 1);
+
+            nodeGroup.append("text")
+                .attr("dx", d => {
+                    if (d.group === "folder") return 28;
+                    if (d.group === "file") return 16;
+                    return 10;
+                })
+                .attr("dy", 4)
+                .style("opacity", d => d.group === 'folder' || d.group === 'file' ? 1 : 0) // Always show folder/file names
+                .text(d => d.name);
+
+            // Node interactions
+            nodeGroup.on("click", (event, d) => {
+                event.stopPropagation();
+                selectNode(d.id);
+            });
+
+            // Pre-build adjacency map — O(1) lookups instead of O(n²) on hover
+            const adjacency = new Map();
+            validLinks.forEach(l => {
+                const sid = l.source.id || l.source;
+                const tid = l.target.id || l.target;
+                if (!adjacency.has(sid)) adjacency.set(sid, new Set());
+                if (!adjacency.has(tid)) adjacency.set(tid, new Set());
+                adjacency.get(sid).add(tid);
+                adjacency.get(tid).add(sid);
+            });
+
+            nodeGroup.on("mouseover", function (event, d) {
+                // Show ONLY this node's calls/uses links
+                linkGroup.classed("visible", l =>
+                    (l.source.id === d.id || l.target.id === d.id) &&
+                    (l.relation === 'calls' || l.relation === 'uses')
+                );
+                // Dim unrelated nodes — O(1) per node via adjacency map
+                const neighbors = adjacency.get(d.id) || new Set();
+                nodeGroup.classed("dimmed", n => n.id !== d.id && !neighbors.has(n.id));
+                d3.select(this).select("text").style("opacity", 1).style("font-size", "16px");
+            }).on("mouseout", function (event, d) {
+                if (!document.querySelector('.node.focus')) {
+                    linkGroup.classed("visible", false);
+                    nodeGroup.classed("dimmed", false);
+                }
+                d3.select(this).select("text")
+                    .style("opacity", (d.group === "file" || d.group === "folder") ? 1 : 0)
+                    .style("font-size", "12px");
+            });
+
+            svg.on("click", clearFocus);
+
+            simulation.alphaDecay(0.03); // Settle faster (default 0.0228)
+
+            simulation.on("tick", () => {
+                linkGroup.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+                nodeGroup.attr("transform", d => `translate(${d.x},${d.y})`);
+            });
+        }
+
+        // ====== 3. SEARCH & FILTER ======
+        function setupSearch() {
+            const input = document.getElementById("search-input");
+            const filter = document.getElementById("type-filter");
+            let debounceTimer;
+
+            const doSearch = () => {
+                const term = input.value.toLowerCase();
+                const types = filter.value === "all" ? [] : filter.value.split(",");
+
+                if (term === "" && filter.value === "all") {
+                    nodeGroup.classed("dimmed", false).classed("search-match", false);
+                    linkGroup.classed("dimmed", false);
+                    return;
+                }
+
+                nodeGroup.classed("dimmed", true).classed("search-match", false);
+                linkGroup.classed("dimmed", true);
+
+                nodeGroup.filter(d => {
+                    const matchText = term === "" || d.name.toLowerCase().includes(term);
+                    const matchType = types.length === 0 || types.includes(d.group);
+                    return matchText && matchType;
+                }).classed("dimmed", false).classed("search-match", true);
+            };
+
+            input.addEventListener("input", () => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(doSearch, 200);
+            });
+            filter.addEventListener("change", doSearch);
+        }
+
+        // ====== 4. SELECTION & RIGHT PANEL ======
+        function selectNode(id) {
+            const nodeData = graphData.nodes.find(n => n.id === id);
+            if (!nodeData) return;
+
+            // Update UI Sidebar
+            document.querySelectorAll(".tree-item").forEach(el => el.classList.remove("selected"));
+            const treeItem = document.querySelector(`.tree-item[data-id="${id}"]`);
+            if (treeItem) {
+                treeItem.classList.add("selected");
+                let parent = treeItem.parentElement;
+                while (parent) {
+                    if (parent.classList.contains("tree-children")) parent.classList.add("open");
+                    parent = parent.parentElement;
+                }
+                treeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            // Update Graph — zoom camera to node
+            const d3Node = nodeGroup.filter(d => d.id === id);
+            if (!d3Node.empty()) {
+                // Remove old focus without hiding panel
+                nodeGroup.classed("focus", false).classed("dimmed", false);
+                linkGroup.classed("visible", false);
+                d3Node.classed("focus", true);
+
+                // Show this node's calls/uses links
+                linkGroup.classed("visible", l =>
+                    (l.source.id === id || l.target.id === id) &&
+                    (l.relation === 'calls' || l.relation === 'uses')
+                );
+
+                const d = d3Node.datum();
+                const container = document.getElementById('canvas-container');
+                const cw = container.clientWidth;
+                const ch = container.clientHeight;
+                const scale = 1.2;
+                const tx = cw / 2 - d.x * scale;
+                const ty = ch / 2 - d.y * scale;
+
+                d3.select("#graph-svg").transition().duration(750).call(
+                    zoomBehavior.transform,
+                    d3.zoomIdentity.translate(tx, ty).scale(scale)
+                );
+            }
+
+            showPanel(nodeData);
+        }
+
+        function clearFocus() {
+            nodeGroup.classed("dimmed", false).classed("focus", false);
+            linkGroup.classed("dimmed", false).classed("visible", false);
+            document.getElementById('sidebar-right').style.display = 'none';
+            document.querySelectorAll(".tree-item").forEach(el => el.classList.remove("selected"));
+        }
+
+        let currentSourceNode = null;
+
+        function showPanel(node) {
+            const panel = document.getElementById("sidebar-right");
+            document.getElementById("panel-title").textContent = node.name;
+
+            const badge = document.getElementById("panel-badge");
+            badge.textContent = node.group;
+            badge.className = `badge bg-${node.group}`;
+
+            const tbody = document.getElementById("panel-meta");
+            tbody.innerHTML = "";
+
+            if (node.meta) {
+                for (const [key, val] of Object.entries(node.meta)) {
+                    if (val === null || val === undefined || val === 0) continue;
+                    const tr = document.createElement("tr");
+                    const tdKey = document.createElement("td");
+                    tdKey.textContent = key;
+                    const tdVal = document.createElement("td");
+                    tdVal.textContent = Array.isArray(val) ? val.join(", ") : val;
+                    tr.appendChild(tdKey);
+                    tr.appendChild(tdVal);
+                    tbody.appendChild(tr);
+                }
+            }
+
+            // Count related tests for funcs (exact match: TestFuncName or Test_FuncName)
+            if (node.group === 'func' || node.group === 'method') {
+                const funcName = node.name;
+                const tests = graphData.nodes.filter(n =>
+                    n.group === 'test' && (
+                        n.name === `Test${funcName}` ||
+                        n.name === `Test_${funcName}` ||
+                        n.name.startsWith(`Test${funcName}_`) ||
+                        n.name.startsWith(`Test_${funcName}_`)
+                    )
+                );
+                const tr = document.createElement("tr");
+                const tdKey = document.createElement("td");
+                tdKey.textContent = "Тестов";
+                const tdVal = document.createElement("td");
+                tdVal.textContent = tests.length > 0 ? tests.map(t => t.name).join(", ") : "нет";
+                tdVal.style.color = tests.length > 0 ? "#4CAF50" : "#888";
+                tr.appendChild(tdKey);
+                tr.appendChild(tdVal);
+                tbody.appendChild(tr);
+            }
+
+            // Source code toggle
+            const srcToggle = document.getElementById("source-toggle");
+            const srcBlock = document.getElementById("source-block");
+            srcBlock.classList.remove("open");
+            srcBlock.textContent = "";
+            currentSourceNode = null;
+
+            if (node.meta && node.meta["Файл"] && node.meta["Строки"]) {
+                srcToggle.style.display = "block";
+                srcToggle.textContent = "▶ Показать исходный код";
+                currentSourceNode = node;
+            } else {
+                srcToggle.style.display = "none";
+            }
+
+            panel.style.display = "block";
+        }
+
+        function toggleSource() {
+            const srcBlock = document.getElementById("source-block");
+            const srcToggle = document.getElementById("source-toggle");
+
+            if (srcBlock.classList.contains("open")) {
+                srcBlock.classList.remove("open");
+                srcToggle.textContent = "▶ Показать исходный код";
+                return;
+            }
+
+            if (!currentSourceNode) return;
+            const lines = currentSourceNode.meta["Строки"];
+            const file = currentSourceNode.meta["Файл"];
+            const [start, end] = lines.split("-");
+
+            srcToggle.textContent = "⏳ Загрузка...";
+            fetch(`/api/source?file=${encodeURIComponent(file)}&start=${start}&end=${end}`)
+                .then(r => r.text())
+                .then(code => {
+                    srcBlock.textContent = code;
+                    srcBlock.classList.add("open");
+                    srcToggle.textContent = "▼ Скрыть исходный код";
+                })
+                .catch(() => {
+                    srcToggle.textContent = "❌ Не удалось загрузить";
+                });
+        }
+
+        // ====== 5. CHAT ======
+        function toggleChat() {
+            const panel = document.getElementById('chat-panel');
+            const btn = document.getElementById('chat-btn');
+            panel.classList.toggle('open');
+            btn.style.display = panel.classList.contains('open') ? 'none' : 'flex';
+        }
+
+        function sendChat() {
+            const input = document.getElementById('chat-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+            input.value = '';
+
+            const messages = document.getElementById('chat-messages');
+            // Safe DOM creation (no XSS via innerHTML + user input)
+            const userDiv = document.createElement('div');
+            userDiv.className = 'chat-msg user';
+            userDiv.textContent = msg;
+            messages.appendChild(userDiv);
+
+            // Simple local graph query engine (no LLM needed for basic queries)
+            const reply = answerFromGraph(msg);
+            const botDiv = document.createElement('div');
+            botDiv.className = 'chat-msg bot';
+            botDiv.innerHTML = reply; // reply is our own HTML, safe
+            messages.appendChild(botDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function answerFromGraph(query) {
+            const q = query.toLowerCase();
+            const nodes = graphData.nodes;
+            const links = graphData.links;
+
+            // "сколько файлов/функций/тестов"
+            if (q.includes('сколько')) {
+                const files = nodes.filter(n => n.group === 'file').length;
+                const funcs = nodes.filter(n => n.group === 'func' || n.group === 'method').length;
+                const tests = nodes.filter(n => n.group === 'test').length;
+                const structs = nodes.filter(n => n.group === 'struct').length;
+                return `📊 В графе: <b>${files}</b> файлов, <b>${funcs}</b> функций, <b>${structs}</b> структур, <b>${tests}</b> тестов.`;
+            }
+
+            // "покажи тесты"
+            if (q.includes('тест')) {
+                const tests = nodes.filter(n => n.group === 'test').slice(0, 15);
+                if (tests.length === 0) return 'Тестов не найдено в графе.';
+                return '🧪 Тесты:<br>' + tests.map(t => `• <a href="#" onclick="selectNode('${t.id}');return false" style="color:#4CAF50">${t.name}</a>`).join('<br>');
+            }
+
+            // "что вызывает X" / "кто вызывает X"
+            const callsMatch = q.match(/вызывает\s+(\w+)/i);
+            if (callsMatch) {
+                const name = callsMatch[1].toLowerCase();
+                const outgoing = links.filter(l => {
+                    const src = typeof l.source === 'string' ? l.source : l.source.id;
+                    return src.toLowerCase().includes(name) && l.relation === 'calls';
+                });
+                if (outgoing.length === 0) return `Не найдено вызовов от "${callsMatch[1]}".`;
+                const targets = [...new Set(outgoing.map(l => { const t = typeof l.target === 'string' ? l.target : l.target.id; return t.split(':').pop(); }))];
+                return `📞 <b>${callsMatch[1]}</b> вызывает:<br>` + targets.slice(0, 20).map(t => `• ${t}`).join('<br>');
+            }
+
+            // Search for a symbol by name
+            const found = nodes.filter(n => n.name.toLowerCase().includes(q)).slice(0, 10);
+            if (found.length > 0) {
+                return '🔍 Найдено:<br>' + found.map(n => `• <a href="#" onclick="selectNode('${n.id}');return false" style="color:${n.group === 'file' ? '#E91E63' : '#00BCD4'}">${n.name}</a> (${n.group})`).join('<br>');
+            }
+
+            return 'Не удалось найти информацию. Попробуй: «сколько файлов», «покажи тесты», «что вызывает SaveFileNodes», или просто имя функции.';
+        }
+    </script>
+</body>
+
+</html>

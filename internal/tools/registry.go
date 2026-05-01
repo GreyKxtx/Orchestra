@@ -18,6 +18,7 @@ func ListTools(allowExec bool) []llm.ToolDef {
 		toolFSEdit(),
 		toolSearchText(),
 		toolCodeSymbols(),
+		toolExploreCodebase(),
 		toolTodoWrite(),
 		toolTodoRead(),
 	}
@@ -198,6 +199,27 @@ func toolCodeSymbols() llm.ToolDef {
   "required": ["path"],
   "properties": {
     "path": { "type": "string", "minLength": 1 }
+  }
+}`),
+		},
+	}
+}
+
+func toolExploreCodebase() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "explore_codebase",
+			Description: "Поиск архитектурного контекста. Используй, чтобы найти код функции, структуры или интерфейса по имени, а также посмотреть, где они используются в проекте. НЕ используй для чтения целых файлов.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["symbol_name"],
+  "properties": {
+    "symbol_name": {
+      "type": "string",
+      "description": "Точное имя функции, класса или интерфейса (например: UpsertFile или UserRepository)"
+    }
   }
 }`),
 		},

@@ -29,14 +29,15 @@ type Client interface {
 
 // OpenAIClient is an OpenAI-compatible LLM client
 type OpenAIClient struct {
-	baseURL     string
-	apiKey      string
-	model       string
-	maxTokens   int
-	temperature float32
-	client      *http.Client
+	baseURL      string
+	apiKey       string
+	model        string
+	maxTokens    int
+	temperature  float32
+	extraBody    map[string]any
+	client       *http.Client
 	streamClient *http.Client // no Timeout — relies on context cancellation for SSE connections
-	logger      *Logger
+	logger       *Logger
 }
 
 // NewOpenAIClient creates a new OpenAI-compatible client
@@ -51,6 +52,7 @@ func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
 		model:       cfg.Model,
 		maxTokens:   cfg.MaxTokens,
 		temperature: cfg.Temperature,
+		extraBody:   cfg.ExtraBody,
 		client: &http.Client{
 			Timeout: timeout,
 		},
@@ -67,6 +69,26 @@ func (c *OpenAIClient) SetLogger(logger *Logger) {
 // GetLogger returns the logger attached to this client (may be nil).
 func (c *OpenAIClient) GetLogger() *Logger {
 	return c.logger
+}
+
+// mergeExtraBody merges extraBody fields into the serialized request.
+// Fields in extraBody override fields in req only if not already set.
+func mergeExtraBody(req chatCompletionRequest, extraBody map[string]any) ([]byte, error) {
+	base, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(extraBody) == 0 {
+		return base, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(base, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range extraBody {
+		m[k] = v
+	}
+	return json.Marshal(m)
 }
 
 // chatCompletionRequest represents OpenAI chat completion request
@@ -144,7 +166,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 		reqBody.ResponseFormat = wf
 	}
 
-	jsonData, err := json.Marshal(reqBody)
+	jsonData, err := mergeExtraBody(reqBody, c.extraBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -299,7 +321,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 		reqBody.ResponseFormat = wf
 	}
 
-	jsonData, err := json.Marshal(reqBody)
+	jsonData, err := mergeExtraBody(reqBody, c.extraBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal stream request: %w", err)
 	}
