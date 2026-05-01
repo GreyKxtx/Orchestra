@@ -137,59 +137,68 @@ func buildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 		}
 	}
 
-	// 2. Fetch Nodes
-	nodeRows, err := store.db.QueryContext(ctx, "SELECT id, file_id, name, type, line_start, line_end FROM nodes")
+	// 2. Fetch Nodes (v2 schema: fqn, short_name, kind)
+	nodeRows, err := store.db.QueryContext(ctx, "SELECT id, file_id, fqn, short_name, kind, line_start, line_end FROM nodes")
 	if err != nil {
 		return nil, err
 	}
 	defer nodeRows.Close()
 
 	nodeIdToGlobalId := make(map[int64]string)
-	
+	// fqnToGlobalId maps FQN → graph node ID for edge resolution
+	fqnToGlobalId := make(map[string]string)
+
 	// Track connections for metadata
 	callsCount := make(map[string]int)
 	calledByCount := make(map[string]int)
 
 	for nodeRows.Next() {
 		var id, fileID int64
-		var name, nodeType string
+		var fqn, shortName, kind string
 		var start, end int
-		if err := nodeRows.Scan(&id, &fileID, &name, &nodeType, &start, &end); err == nil {
+		if err := nodeRows.Scan(&id, &fileID, &fqn, &shortName, &kind, &start, &end); err == nil {
 			filePath := fileIDtoPath[fileID]
-			
+
 			// Skip nodes from testdata/vendor
 			if strings.HasPrefix(filePath, "testdata") || strings.HasPrefix(filePath, "vendor") {
 				continue
 			}
 			fileStats[filePath]++
 
+			// Map v2 kind → UI group. Keep "func" as default.
 			group := "func"
-			switch nodeType {
-			case "method_declaration":
+			switch kind {
+			case "method":
 				group = "method"
-			case "type_spec":
-				// Could be struct or interface, map to struct for now
-				group = "struct" 
+			case "struct":
+				group = "struct"
+			case "interface":
+				group = "interface"
+			case "type":
+				group = "struct" // render generic types as struct
 			}
 
-			// Simple heuristic: if name starts with Test, it's a test
-			if strings.HasPrefix(name, "Test") {
+			// Simple heuristic: if short_name starts with Test, it's a test
+			if strings.HasPrefix(shortName, "Test") {
 				group = "test"
 			}
 
-			globalID := fmt.Sprintf("%s:%s", filePath, name)
+			// Use FQN as the unique graph ID; short_name as the display label
+			globalID := fqn
 			nodeIdToGlobalId[id] = globalID
+			fqnToGlobalId[fqn] = globalID
 
 			meta := map[string]any{
-				"Имя": name,
-				"Файл": filePath,
+				"Имя":   shortName,
+				"FQN":   fqn,
+				"Файл":  filePath,
 				"Строки": fmt.Sprintf("%d-%d", start, end),
 			}
 
 			data.Nodes = append(data.Nodes, GraphNode{
 				ID:    globalID,
 				Group: group,
-				Name:  name,
+				Name:  shortName, // JSON "name" backed by short_name
 				Meta:  meta,
 			})
 
@@ -208,25 +217,12 @@ func buildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 		}
 	}
 
-	// 3. Batch-load node name → file path mapping (eliminates N+1 queries)
-	nodeNameToFile := make(map[string]string)
-	nameRows, err := store.db.QueryContext(ctx, "SELECT n.name, f.path FROM nodes n JOIN files f ON n.file_id = f.id")
-	if err != nil {
-		return nil, err
-	}
-	defer nameRows.Close()
-	for nameRows.Next() {
-		var name, fp string
-		if err := nameRows.Scan(&name, &fp); err == nil {
-			nodeNameToFile[name] = fp
-		}
-	}
-
-	// 4. Fetch Edges (no more per-row queries)
+	// 3. Fetch Edges (v2 schema: source_id, target_id, target_fqn, relation)
+	// source_id and target_id are FKs to nodes.id; target_fqn is always populated
+	// (target_id may be NULL for external/unresolved symbols).
 	edgeRows, err := store.db.QueryContext(ctx, `
-		SELECT f.path, e.source_name, e.target_name, e.relation
+		SELECT e.source_id, e.target_id, e.target_fqn, e.relation
 		FROM edges e
-		JOIN files f ON e.file_id = f.id
 	`)
 	if err != nil {
 		return nil, err
@@ -234,14 +230,31 @@ func buildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 	defer edgeRows.Close()
 
 	for edgeRows.Next() {
-		var filePath, sourceName, targetName, relation string
-		if err := edgeRows.Scan(&filePath, &sourceName, &targetName, &relation); err == nil {
-			sourceGlobalID := fmt.Sprintf("%s:%s", filePath, sourceName)
+		var sourceID int64
+		var targetIDPtr *int64
+		var targetFQN, relation string
+		if err := edgeRows.Scan(&sourceID, &targetIDPtr, &targetFQN, &relation); err == nil {
+			sourceGlobalID, ok := nodeIdToGlobalId[sourceID]
+			if !ok {
+				// Source node was skipped (testdata/vendor) or not yet indexed
+				continue
+			}
 
-			// O(1) lookup instead of SQL query per edge
-			targetGlobalID := targetName
-			if tfp, ok := nodeNameToFile[targetName]; ok {
-				targetGlobalID = fmt.Sprintf("%s:%s", tfp, targetName)
+			// Prefer target_id lookup (internal node); fall back to target_fqn as label
+			var targetGlobalID string
+			if targetIDPtr != nil {
+				if gid, ok := nodeIdToGlobalId[*targetIDPtr]; ok {
+					targetGlobalID = gid
+				}
+			}
+			if targetGlobalID == "" {
+				// External symbol: use target_fqn as the graph node ID.
+				// If the FQN happens to match an indexed node, use that.
+				if gid, ok := fqnToGlobalId[targetFQN]; ok {
+					targetGlobalID = gid
+				} else {
+					targetGlobalID = targetFQN
+				}
 			}
 
 			data.Links = append(data.Links, GraphLink{

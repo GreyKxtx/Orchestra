@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/golang"
@@ -33,18 +34,26 @@ func LanguageFromExt(ext string) string {
 	}
 }
 
-// ParseFile parses a source file using Tree-sitter and extracts structural nodes
-// and their line coordinate boundaries for the Code Knowledge Graph.
-func ParseFile(ctx context.Context, filePath string) ([]Node, []Edge, error) {
+// ParseFile parses a Go source file and returns:
+//   - nodes (with FQN populated)
+//   - edges (FQN→FQN; receiver-FQN to short calledName for calls;
+//     packageFQN to imported-importpath for imports)
+//   - pkgName (the `package foo` directive — for files.package column)
+//   - error
+//
+// modulePath: from go.mod (may be empty for non-module workspaces)
+// rootDir:    workspace root (absolute)
+// filePath:   absolute path of the source file
+func ParseFile(ctx context.Context, modulePath, rootDir, filePath string) ([]Node, []Edge, string, error) {
 	src, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	ext := filepath.Ext(filePath)
 	lang := getSitterLanguage(ext)
 	if lang == nil {
-		return nil, nil, nil // Unsupported language natively by parser
+		return nil, nil, "", nil // Unsupported language natively by parser
 	}
 
 	parser := sitter.NewParser()
@@ -52,7 +61,7 @@ func ParseFile(ctx context.Context, filePath string) ([]Node, []Edge, error) {
 
 	tree, err := parser.ParseCtx(ctx, nil, src)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer tree.Close()
 
@@ -61,7 +70,37 @@ func ParseFile(ctx context.Context, filePath string) ([]Node, []Edge, error) {
 	var nodes []Node
 	var edges []Edge
 
-	// Execute language-specific queries to extract nodes
+	// Step 2: Find package name via query.
+	var pkgName string
+	if ext == ".go" {
+		pkgQ, qErr := sitter.NewQuery([]byte(`(package_clause (package_identifier) @name)`), lang)
+		if qErr == nil {
+			pkgQC := sitter.NewQueryCursor()
+			pkgQC.Exec(pkgQ, root)
+			if m, ok := pkgQC.NextMatch(); ok {
+				for _, c := range m.Captures {
+					if pkgQ.CaptureNameForId(c.Index) == "name" {
+						pkgName = c.Node.Content(src)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Step 3: Compute package FQN.
+	pkgFQN := GoPackageFQN(modulePath, rootDir, filePath)
+
+	// Step 4: Synthetic package-level node.
+	nodes = append(nodes, Node{
+		FQN:       pkgFQN,
+		ShortName: pkgName,
+		Kind:      "package",
+		LineStart: 1,
+		LineEnd:   1,
+	})
+
+	// Step 5: Run definition queries (function, method, type_spec).
 	queries := getLanguageQueries(ext)
 	for _, qStr := range queries {
 		q, err := sitter.NewQuery([]byte(qStr), lang)
@@ -91,21 +130,27 @@ func ParseFile(ctx context.Context, filePath string) ([]Node, []Edge, error) {
 			}
 
 			if name != "" && defNode != nil {
-				nodeType := inferNodeType(defNode)
-				
+				kind := inferNodeType(defNode)
+
+				var recvType string
 				if defNode.Type() == "method_declaration" && ext == ".go" {
 					recvNode := defNode.ChildByFieldName("receiver")
 					if recvNode != nil {
-						recvType := extractGoReceiverType(recvNode, src)
-						if recvType != "" {
-							name = recvType + "." + name
-						}
+						recvType = extractGoReceiverType(recvNode, src)
 					}
 				}
 
+				fqn := GoFQN(modulePath, rootDir, filePath, recvType, name)
+
+				shortName := name
+				if recvType != "" {
+					shortName = recvType + "." + name
+				}
+
 				nodes = append(nodes, Node{
-					Name:      name,
-					Type:      nodeType,
+					FQN:       fqn,
+					ShortName: shortName,
+					Kind:      kind,
 					LineStart: int(defNode.StartPoint().Row) + 1,
 					LineEnd:   int(defNode.EndPoint().Row) + 1,
 				})
@@ -113,7 +158,36 @@ func ParseFile(ctx context.Context, filePath string) ([]Node, []Edge, error) {
 		}
 	}
 
-	// 2. Extract edges (method calls)
+	// Step 6: Extract import edges.
+	if ext == ".go" {
+		impQ, qErr := sitter.NewQuery([]byte(`(import_spec path: (interpreted_string_literal) @path)`), lang)
+		if qErr == nil {
+			impQC := sitter.NewQueryCursor()
+			impQC.Exec(impQ, root)
+			for {
+				m, ok := impQC.NextMatch()
+				if !ok {
+					break
+				}
+				for _, c := range m.Captures {
+					if impQ.CaptureNameForId(c.Index) == "path" {
+						rawPath := c.Node.Content(src)
+						// Strip surrounding quotes from the interpreted string literal.
+						importPath := strings.Trim(rawPath, `"`)
+						if importPath != "" {
+							edges = append(edges, Edge{
+								SourceFQN: pkgFQN,
+								TargetFQN: importPath,
+								Relation:  "imports",
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Step 7: Run call queries and attach to parent node by line containment.
 	callQueries := getCallQueries(ext)
 	for _, qStr := range callQueries {
 		q, err := sitter.NewQuery([]byte(qStr), lang)
@@ -143,36 +217,36 @@ func ParseFile(ctx context.Context, filePath string) ([]Node, []Edge, error) {
 			}
 
 			if calledName != "" && callNode != nil {
-				// We don't know exactly who is calling (the source_id) until we link
-				// it to the parent Node. For now, we store edges temporarily by finding
-				// which node's line boundaries contain this call.
 				callLine := int(callNode.StartPoint().Row) + 1
-				
-				// Find parent node
-				var sourceName string
+
+				// Find parent node by line containment; exclude "package" kind nodes.
+				var sourceFQN string
 				for _, n := range nodes {
+					if n.Kind == "package" {
+						continue
+					}
 					if callLine >= n.LineStart && callLine <= n.LineEnd {
-						sourceName = n.Name
+						sourceFQN = n.FQN
 						break
 					}
 				}
 
-				if sourceName != "" {
-					// We use a temporary representation. In the Store we will map Names to IDs.
-					// Since our SaveFileNodes assigns IDs and we might reference nodes outside this file,
-					// we actually need the Store to link edges by Name, or we store string names.
-					// Let's modify Edge struct logic or store string names for now.
+				if sourceFQN != "" {
+					// NOTE: TargetFQN here is the short calledName identifier (best-effort).
+					// Full FQN resolution of cross-package calls is a known limitation;
+					// it will be resolved in a later sub-project when the store has full
+					// FQN coverage and a resolver pass can link by short name.
 					edges = append(edges, Edge{
-						SourceName: sourceName,
-						TargetName: calledName,
-						Relation:   "calls",
+						SourceFQN: sourceFQN,
+						TargetFQN: calledName,
+						Relation:  "calls",
 					})
 				}
 			}
 		}
 	}
 
-	return nodes, edges, nil
+	return nodes, edges, pkgName, nil
 }
 
 func getSitterLanguage(ext string) *sitter.Language {
