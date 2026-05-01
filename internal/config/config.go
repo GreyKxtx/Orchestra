@@ -31,6 +31,13 @@ type LLMConfig struct {
 	// "json_schema" — strict schema-constrained JSON (requires provider support).
 	// Set "json_object" for vLLM/lm-studio; leave empty for cloud APIs.
 	ResponseFormatType string `yaml:"response_format_type"`
+
+	// ExtraBody contains arbitrary key-value pairs merged into every API request body.
+	// Use this to pass provider-specific parameters, e.g.:
+	//   extra_body:
+	//     chat_template_kwargs:
+	//       enable_thinking: false
+	ExtraBody map[string]any `yaml:"extra_body,omitempty"`
 }
 
 // AgentConfig controls the agent loop retry and step limits.
