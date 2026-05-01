@@ -53,6 +53,7 @@ func newTestTaskRunner(t *testing.T) *TaskRunner {
 	if err != nil {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 	return New(&mockTaskResultLLM{result: "all done"}, v, tr)
 }
 
@@ -113,6 +114,7 @@ func TestSpawnWait_ReturnsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 	r := New(&mockTaskResultLLM{result: "research complete"}, v, tr)
 
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "research files", MaxSteps: 3})
@@ -148,6 +150,7 @@ func TestCancel_BeforeCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 	r := New(blockingLLM, v, tr)
 
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "block forever", MaxSteps: 1})

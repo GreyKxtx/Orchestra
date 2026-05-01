@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/search"
@@ -32,6 +33,9 @@ type Runner struct {
 	execOutputLimit int // bytes, combined stdout+stderr
 
 	mcpCaller MCPCaller
+
+	ckgStore    *ckg.Store
+	ckgProvider *ckg.Provider
 }
 
 type RunnerOptions struct {
@@ -64,15 +68,40 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		limit = 100 * 1024
 	}
 
+	orchDir := filepath.Join(rootAbs, ".orchestra")
+	if err := os.MkdirAll(orchDir, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir .orchestra: %w", err)
+	}
+	dbPath := filepath.Join(orchDir, "ckg.db")
+	store, err := ckg.NewStore("file:" + dbPath + "?cache=shared")
+	if err != nil {
+		return nil, fmt.Errorf("open ckg store: %w", err)
+	}
+	provider := ckg.NewProvider(store, rootAbs)
+
 	return &Runner{
 		workspaceRoot:   rootAbs,
 		excludeDirs:     exclude,
 		execTimeout:     timeout,
 		execOutputLimit: limit,
+		ckgStore:        store,
+		ckgProvider:     provider,
 	}, nil
 }
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
+
+// Close releases resources held by the Runner (CKG store, etc).
+// Safe to call multiple times.
+func (r *Runner) Close() error {
+	if r.ckgStore != nil {
+		err := r.ckgStore.Close()
+		r.ckgStore = nil
+		r.ckgProvider = nil
+		return err
+	}
+	return nil
+}
 
 // SetMCPCaller registers an MCP manager for routing mcp:* tool calls.
 func (r *Runner) SetMCPCaller(caller MCPCaller) { r.mcpCaller = caller }

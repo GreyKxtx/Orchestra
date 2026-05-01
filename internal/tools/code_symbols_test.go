@@ -25,6 +25,7 @@ func (f Foo) Baz() {}
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { r.Close() })
 
 	resp, err := r.CodeSymbols(context.Background(), CodeSymbolsRequest{Path: "a.go"})
 	if err != nil {

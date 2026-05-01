@@ -33,6 +33,7 @@ func TestExecRun_OutputLimit_Truncates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { r.Close() })
 
 	os.Setenv("ORCHESTRA_EXEC_HELPER_MODE", "spam")
 	defer os.Unsetenv("ORCHESTRA_EXEC_HELPER_MODE")
@@ -64,6 +65,7 @@ func TestExecRun_Timeout_ReturnsExecTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { r.Close() })
 
 	os.Setenv("ORCHESTRA_EXEC_HELPER_MODE", "sleep")
 	defer os.Unsetenv("ORCHESTRA_EXEC_HELPER_MODE")
@@ -92,6 +94,7 @@ func TestExecRun_WorkdirTraversal_ReturnsPathTraversal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { r.Close() })
 
 	_, err = r.ExecRun(context.Background(), ExecRunRequest{
 		Command: os.Args[0],
