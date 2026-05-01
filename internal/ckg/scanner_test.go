@@ -54,7 +54,7 @@ func TestScannerIncremental(t *testing.T) {
 	for _, path := range toParse {
 		fullPath := filepath.Join(tempDir, path)
 		hash, _ := hashFile(fullPath)
-		if err := store.SaveFileNodes(ctx, path, hash, "go", nil, nil); err != nil {
+		if err := store.SaveFileNodes(ctx, path, hash, "go", "", "main", nil, nil); err != nil {
 			t.Fatalf("SaveFileNodes failed: %v", err)
 		}
 	}

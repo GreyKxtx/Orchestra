@@ -45,20 +45,28 @@ func (c *Car) Drive() {
 		t.Fatalf("failed to write dummy file: %v", err)
 	}
 
-	nodes, _, err := ParseFile(context.Background(), filePath)
+	nodes, _, _, err := ParseFile(context.Background(), "", tempDir, filePath)
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
 	}
 
-	if len(nodes) != 4 {
-		t.Fatalf("Expected 4 nodes, got %d: %+v", len(nodes), nodes)
+	// Filter out the synthetic package node added by ParseFile.
+	var defNodes []Node
+	for _, n := range nodes {
+		if n.Kind != "package" {
+			defNodes = append(defNodes, n)
+		}
 	}
 
-	// Helper function to find a node by name
+	if len(defNodes) != 4 {
+		t.Fatalf("Expected 4 definition nodes, got %d: %+v", len(defNodes), defNodes)
+	}
+
+	// Helper function to find a node by ShortName.
 	findNode := func(name string) *Node {
-		for i, n := range nodes {
-			if n.Name == name {
-				return &nodes[i]
+		for i, n := range defNodes {
+			if n.ShortName == name {
+				return &defNodes[i]
 			}
 		}
 		return nil
@@ -66,7 +74,7 @@ func (c *Car) Drive() {
 
 	// 1. Check interface
 	engineNode := findNode("Engine")
-	if engineNode == nil || engineNode.Type != "interface" {
+	if engineNode == nil || engineNode.Kind != "interface" {
 		t.Errorf("Engine node missing or invalid: %+v", engineNode)
 	} else if engineNode.LineStart != 6 || engineNode.LineEnd != 9 {
 		t.Errorf("Engine node has wrong coordinates: %d-%d", engineNode.LineStart, engineNode.LineEnd)
@@ -74,7 +82,7 @@ func (c *Car) Drive() {
 
 	// 2. Check struct
 	carNode := findNode("Car")
-	if carNode == nil || carNode.Type != "struct" {
+	if carNode == nil || carNode.Kind != "struct" {
 		t.Errorf("Car node missing or invalid: %+v", carNode)
 	} else if carNode.LineStart != 12 || carNode.LineEnd != 14 {
 		t.Errorf("Car node has wrong coordinates: %d-%d", carNode.LineStart, carNode.LineEnd)
@@ -82,7 +90,7 @@ func (c *Car) Drive() {
 
 	// 3. Check func
 	newCarNode := findNode("NewCar")
-	if newCarNode == nil || newCarNode.Type != "func" {
+	if newCarNode == nil || newCarNode.Kind != "func" {
 		t.Errorf("NewCar node missing or invalid: %+v", newCarNode)
 	} else if newCarNode.LineStart != 17 || newCarNode.LineEnd != 19 {
 		t.Errorf("NewCar node has wrong coordinates: %d-%d", newCarNode.LineStart, newCarNode.LineEnd)
@@ -90,7 +98,7 @@ func (c *Car) Drive() {
 
 	// 4. Check method
 	driveNode := findNode("Car.Drive")
-	if driveNode == nil || driveNode.Type != "method" {
+	if driveNode == nil || driveNode.Kind != "method" {
 		t.Errorf("Car.Drive node missing or invalid: %+v", driveNode)
 	} else if driveNode.LineStart != 22 || driveNode.LineEnd != 24 {
 		t.Errorf("Car.Drive node has wrong coordinates: %d-%d", driveNode.LineStart, driveNode.LineEnd)

@@ -2,6 +2,7 @@ package ckg
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,136 +22,209 @@ func NewProvider(store *Store, root string) *Provider {
 
 // ExploreSymbol retrieves the exact source code definition of a symbol
 // and its dependencies (edges) from the database without reading the whole file.
-func (p *Provider) ExploreSymbol(ctx context.Context, name string) (string, error) {
-	query := `
-		SELECT n.id, n.type, n.line_start, n.line_end, f.path
-		FROM nodes n
-		JOIN files f ON n.file_id = f.id
-		WHERE n.name = ?
-	`
-	rows, err := p.store.db.QueryContext(ctx, query, name)
+func (p *Provider) ExploreSymbol(ctx context.Context, query string) (string, error) {
+	var rows *sql.Rows
+	var err error
+
+	if IsLikelyFQN(query) {
+		rows, err = p.store.db.QueryContext(ctx, `
+            SELECT n.id, n.fqn, n.short_name, n.kind, n.line_start, n.line_end, f.path
+            FROM nodes n JOIN files f ON n.file_id = f.id
+            WHERE n.fqn = ?`, query)
+	} else {
+		rows, err = p.store.db.QueryContext(ctx, `
+            SELECT n.id, n.fqn, n.short_name, n.kind, n.line_start, n.line_end, f.path
+            FROM nodes n JOIN files f ON n.file_id = f.id
+            WHERE n.short_name = ?`, query)
+	}
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
 
-	var sb strings.Builder
-	found := false
-
+	type hit struct {
+		id        int64
+		fqn       string
+		shortName string
+		kind      string
+		lineStart int
+		lineEnd   int
+		relPath   string
+	}
+	var hits []hit
 	for rows.Next() {
-		found = true
-		var id int64
-		var nodeType, relPath string
-		var lineStart, lineEnd int
-		if err := rows.Scan(&id, &nodeType, &lineStart, &lineEnd, &relPath); err != nil {
+		var h hit
+		if err := rows.Scan(&h.id, &h.fqn, &h.shortName, &h.kind, &h.lineStart, &h.lineEnd, &h.relPath); err != nil {
 			continue
 		}
+		hits = append(hits, h)
+	}
 
-		// Read the exact snippet from the file
-		absPath := filepath.Join(p.root, filepath.FromSlash(relPath))
+	if len(hits) == 0 {
+		return p.fuzzyFallback(ctx, query)
+	}
+	if len(hits) > 1 && !IsLikelyFQN(query) {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Запрос '%s' неоднозначен — найдено %d символов с одинаковым short-name. Уточните FQN:\n\n", query, len(hits)))
+		for _, h := range hits {
+			sb.WriteString(fmt.Sprintf("- `%s` (%s в %s, строки %d-%d)\n", h.fqn, h.kind, h.relPath, h.lineStart, h.lineEnd))
+		}
+		return sb.String(), nil
+	}
+
+	var sb strings.Builder
+	for _, h := range hits {
+		absPath := filepath.Join(p.root, filepath.FromSlash(h.relPath))
 		content, err := os.ReadFile(absPath)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("Error reading file %s: %v\n\n", relPath, err))
+			sb.WriteString(fmt.Sprintf("Error reading file %s: %v\n\n", h.relPath, err))
 			continue
 		}
-
 		lines := strings.Split(string(content), "\n")
-		// Bounds checking (1-based index to 0-based slice)
-		if lineStart < 1 {
-			lineStart = 1
+		ls, le := h.lineStart, h.lineEnd
+		if ls < 1 {
+			ls = 1
 		}
-		if lineEnd > len(lines) {
-			lineEnd = len(lines)
+		if le > len(lines) {
+			le = len(lines)
 		}
+		snippet := strings.Join(lines[ls-1:le], "\n")
 
-		snippet := strings.Join(lines[lineStart-1:lineEnd], "\n")
+		sb.WriteString(fmt.Sprintf("### `%s` (%s) в `%s` (строки %d-%d)\n", h.fqn, h.kind, h.relPath, ls, le))
+		ext := filepath.Ext(h.relPath)
+		sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n\n", LanguageFromExt(ext), snippet))
 
-		sb.WriteString(fmt.Sprintf("### Definition: `%s` (%s) in `%s` (lines %d-%d)\n", name, nodeType, relPath, lineStart, lineEnd))
-		
-		// Map extension for markdown code block formatting
-		ext := filepath.Ext(relPath)
-		lang := LanguageFromExt(ext)
-		sb.WriteString(fmt.Sprintf("```%s\n", lang))
-		sb.WriteString(snippet)
-		sb.WriteString("\n```\n\n")
-
-		// Retrieve edges (who calls or uses this symbol)
-		edgesQuery := `
-			SELECT source_name, relation
-			FROM edges
-			WHERE target_name = ?
-		`
-		eRows, err := p.store.db.QueryContext(ctx, edgesQuery, name)
-		if err == nil {
-			hasEdges := false
-			for eRows.Next() {
-				if !hasEdges {
-					sb.WriteString("**Вызывается из (Used by):**\n")
-					hasEdges = true
+		// Callers
+		cRows, _ := p.store.db.QueryContext(ctx,
+			`SELECT n.fqn, e.relation FROM edges e JOIN nodes n ON e.source_id = n.id
+             WHERE e.target_fqn = ?`, h.fqn)
+		if cRows != nil {
+			first := true
+			for cRows.Next() {
+				if first {
+					sb.WriteString("**Вызывается из (callers):**\n")
+					first = false
 				}
-				var srcName, relation string
-				if eRows.Scan(&srcName, &relation) == nil {
-					sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", srcName, relation))
+				var srcFQN, rel string
+				if cRows.Scan(&srcFQN, &rel) == nil {
+					sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", srcFQN, rel))
 				}
 			}
-			eRows.Close()
-			if hasEdges {
+			cRows.Close()
+			if !first {
 				sb.WriteString("\n")
 			}
 		}
 
-		// Dependencies (what this symbol calls)
-		depsQuery := `
-			SELECT target_name, relation
-			FROM edges
-			WHERE source_name = ?
-		`
-		dRows, err := p.store.db.QueryContext(ctx, depsQuery, name)
-		if err == nil {
-			hasDeps := false
+		// Callees
+		dRows, _ := p.store.db.QueryContext(ctx,
+			`SELECT e.target_fqn, e.relation FROM edges e WHERE e.source_id = ?`, h.id)
+		if dRows != nil {
+			first := true
 			for dRows.Next() {
-				if !hasDeps {
-					sb.WriteString("**Зависит от (Calls/Uses):**\n")
-					hasDeps = true
+				if first {
+					sb.WriteString("**Зависит от (callees):**\n")
+					first = false
 				}
-				var tgtName, relation string
-				if dRows.Scan(&tgtName, &relation) == nil {
-					sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", tgtName, relation))
+				var tgtFQN, rel string
+				if dRows.Scan(&tgtFQN, &rel) == nil {
+					sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", tgtFQN, rel))
 				}
 			}
 			dRows.Close()
-			if hasDeps {
+			if !first {
 				sb.WriteString("\n")
 			}
 		}
 	}
-
-	if !found {
-		// Graceful Degradation: Find similar symbols using LIKE
-		fuzzyQuery := `
-			SELECT name, type, files.path 
-			FROM nodes 
-			JOIN files ON nodes.file_id = files.id
-			WHERE name LIKE ? 
-			LIMIT 5
-		`
-		fRows, err := p.store.db.QueryContext(ctx, fuzzyQuery, "%"+name+"%")
-		if err == nil {
-			defer fRows.Close()
-			var suggestions []string
-			for fRows.Next() {
-				var sName, sType, sPath string
-				if fRows.Scan(&sName, &sType, &sPath) == nil {
-					suggestions = append(suggestions, fmt.Sprintf("- `%s` (%s в %s)", sName, sType, sPath))
-				}
-			}
-			if len(suggestions) > 0 {
-				return fmt.Sprintf("Символ '%s' не найден. Возможно, вы имели в виду один из этих символов:\n%s", name, strings.Join(suggestions, "\n")), nil
-			}
-		}
-
-		return fmt.Sprintf("Символ '%s' не найден в базе (даже среди похожих). Проверьте правильность написания.", name), nil
-	}
-
 	return sb.String(), nil
+}
+
+func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, error) {
+	rows, err := p.store.db.QueryContext(ctx, `
+        SELECT n.fqn, n.kind, f.path FROM nodes n JOIN files f ON n.file_id = f.id
+        WHERE n.short_name LIKE ? LIMIT 5`, "%"+query+"%")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var sugg []string
+	for rows.Next() {
+		var fqn, kind, path string
+		if rows.Scan(&fqn, &kind, &path) == nil {
+			sugg = append(sugg, fmt.Sprintf("- `%s` (%s в %s)", fqn, kind, path))
+		}
+	}
+	if len(sugg) == 0 {
+		return fmt.Sprintf("Символ '%s' не найден в графе.", query), nil
+	}
+	return fmt.Sprintf("Символ '%s' не найден точно. Похожие:\n%s", query, strings.Join(sugg, "\n")), nil
+}
+
+// Callers returns all nodes that have a "calls" or "instantiates" edge whose
+// target_fqn equals the given fqn.
+func (p *Provider) Callers(ctx context.Context, fqn string) ([]Node, error) {
+	rows, err := p.store.db.QueryContext(ctx, `
+        SELECT n.id, n.file_id, n.fqn, n.short_name, n.kind, n.line_start, n.line_end, n.complexity
+        FROM edges e JOIN nodes n ON e.source_id = n.id
+        WHERE e.target_fqn = ? AND e.relation IN ('calls','instantiates')`, fqn)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodes(rows)
+}
+
+// Callees returns all edges originating from the node with the given fqn.
+func (p *Provider) Callees(ctx context.Context, fqn string) ([]Edge, error) {
+	rows, err := p.store.db.QueryContext(ctx, `
+        SELECT e.target_fqn, e.relation FROM edges e
+        JOIN nodes n ON e.source_id = n.id
+        WHERE n.fqn = ?`, fqn)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Edge
+	for rows.Next() {
+		e := Edge{SourceFQN: fqn}
+		if err := rows.Scan(&e.TargetFQN, &e.Relation); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// Importers returns FQNs of all packages that import the given package FQN.
+func (p *Provider) Importers(ctx context.Context, packageFQN string) ([]string, error) {
+	rows, err := p.store.db.QueryContext(ctx, `
+        SELECT DISTINCT n.fqn FROM edges e
+        JOIN nodes n ON e.source_id = n.id
+        WHERE e.target_fqn = ? AND e.relation = 'imports' AND n.kind = 'package'`, packageFQN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func scanNodes(rows *sql.Rows) ([]Node, error) {
+	var out []Node
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.ID, &n.FileID, &n.FQN, &n.ShortName, &n.Kind, &n.LineStart, &n.LineEnd, &n.Complexity); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }

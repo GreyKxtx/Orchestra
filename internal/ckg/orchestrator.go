@@ -8,17 +8,20 @@ import (
 // Orchestrator ties together the Store, Scanner, and Parser to keep the
 // Code Knowledge Graph up-to-date with the filesystem.
 type Orchestrator struct {
-	store   *Store
-	scanner *Scanner
-	root    string
+	store      *Store
+	scanner    *Scanner
+	root       string
+	modulePath string
 }
 
 // NewOrchestrator creates a new Orchestrator.
 func NewOrchestrator(store *Store, root string) *Orchestrator {
+	mp, _ := ParseModulePath(root) // empty string for non-Go workspaces — safe
 	return &Orchestrator{
-		store:   store,
-		scanner: NewScanner(store, root),
-		root:    root,
+		store:      store,
+		scanner:    NewScanner(store, root),
+		root:       root,
+		modulePath: mp,
 	}
 }
 
@@ -41,15 +44,12 @@ func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 	for _, relPath := range toParse {
 		absPath := filepath.Join(o.root, filepath.FromSlash(relPath))
 
-		// Extract AST structural nodes
-		nodes, edges, err := ParseFile(ctx, absPath)
+		nodes, edges, pkgName, err := ParseFile(ctx, o.modulePath, o.root, absPath)
 		if err != nil {
-			// In a real codebase, some files might have syntax errors (e.g. while being typed).
-			// We skip files that cannot be parsed so we don't halt the entire indexing process.
+			// Files with syntax errors are skipped to keep indexing resilient.
 			continue
 		}
 
-		// Compute hash again since the scanner just returns the paths.
 		hash, err := hashFile(absPath)
 		if err != nil {
 			continue
@@ -57,8 +57,7 @@ func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 
 		lang := LanguageFromExt(filepath.Ext(absPath))
 
-		// Save the file and its nodes transactionally
-		if err := o.store.SaveFileNodes(ctx, relPath, hash, lang, nodes, edges); err != nil {
+		if err := o.store.SaveFileNodes(ctx, relPath, hash, lang, o.modulePath, pkgName, nodes, edges); err != nil {
 			return err
 		}
 	}
