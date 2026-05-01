@@ -79,3 +79,40 @@ func TestSaveFileNodesAndLazyResolve(t *testing.T) {
 		t.Fatal("target_id still NULL after lazy resolve")
 	}
 }
+
+func TestSaveFileNodesResolvesUniqueShortNameCallTarget(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// First index target symbol B.
+	nodesB := []Node{
+		{FQN: "ex/foo.B", ShortName: "B", Kind: "func", LineStart: 1, LineEnd: 3},
+	}
+	if err := s.SaveFileNodes(ctx, "b.go", "h1", "go", "ex", "foo", nodesB, nil); err != nil {
+		t.Fatalf("save B: %v", err)
+	}
+
+	// Parser-style edge: short name target ("B"), not FQN.
+	nodesA := []Node{
+		{FQN: "ex/foo.A", ShortName: "A", Kind: "func", LineStart: 1, LineEnd: 3},
+	}
+	edgesA := []Edge{
+		{SourceFQN: "ex/foo.A", TargetFQN: "B", Relation: "calls"},
+	}
+	if err := s.SaveFileNodes(ctx, "a.go", "h2", "go", "ex", "foo", nodesA, edgesA); err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+
+	var targetID *int64
+	var targetFQN string
+	err := s.db.QueryRowContext(ctx, `SELECT target_id, target_fqn FROM edges WHERE relation = 'calls'`).Scan(&targetID, &targetFQN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targetID == nil {
+		t.Fatal("expected target_id resolved for unique short_name, got NULL")
+	}
+	if targetFQN != "ex/foo.B" {
+		t.Fatalf("target_fqn = %q, want ex/foo.B", targetFQN)
+	}
+}

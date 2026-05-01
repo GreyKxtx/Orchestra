@@ -55,9 +55,12 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string) (string, err
 	for rows.Next() {
 		var h hit
 		if err := rows.Scan(&h.id, &h.fqn, &h.shortName, &h.kind, &h.lineStart, &h.lineEnd, &h.relPath); err != nil {
-			continue
+			return "", fmt.Errorf("explore symbol: scan hit: %w", err)
 		}
 		hits = append(hits, h)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("explore symbol: iterate hits: %w", err)
 	}
 
 	if len(hits) == 0 {
@@ -95,46 +98,63 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string) (string, err
 		sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n\n", LanguageFromExt(ext), snippet))
 
 		// Callers
-		cRows, _ := p.store.db.QueryContext(ctx,
-			`SELECT n.fqn, e.relation FROM edges e JOIN nodes n ON e.source_id = n.id
-             WHERE e.target_fqn = ?`, h.fqn)
-		if cRows != nil {
-			first := true
-			for cRows.Next() {
-				if first {
-					sb.WriteString("**Вызывается из (callers):**\n")
-					first = false
-				}
-				var srcFQN, rel string
-				if cRows.Scan(&srcFQN, &rel) == nil {
-					sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", srcFQN, rel))
-				}
+		cRows, err := p.store.db.QueryContext(ctx,
+			`SELECT src.fqn, e.relation
+			 FROM edges e
+			 JOIN nodes src ON e.source_id = src.id
+			 LEFT JOIN nodes tgt ON e.target_id = tgt.id
+			 WHERE tgt.fqn = ? OR e.target_fqn = ?`, h.fqn, h.fqn)
+		if err != nil {
+			return "", fmt.Errorf("explore symbol: query callers: %w", err)
+		}
+		first := true
+		for cRows.Next() {
+			if first {
+				sb.WriteString("**Вызывается из (callers):**\n")
+				first = false
 			}
+			var srcFQN, rel string
+			if err := cRows.Scan(&srcFQN, &rel); err != nil {
+				cRows.Close()
+				return "", fmt.Errorf("explore symbol: scan caller: %w", err)
+			}
+			sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", srcFQN, rel))
+		}
+		if err := cRows.Err(); err != nil {
 			cRows.Close()
-			if !first {
-				sb.WriteString("\n")
-			}
+			return "", fmt.Errorf("explore symbol: iterate callers: %w", err)
+		}
+		cRows.Close()
+		if !first {
+			sb.WriteString("\n")
 		}
 
 		// Callees
-		dRows, _ := p.store.db.QueryContext(ctx,
+		dRows, err := p.store.db.QueryContext(ctx,
 			`SELECT e.target_fqn, e.relation FROM edges e WHERE e.source_id = ?`, h.id)
-		if dRows != nil {
-			first := true
-			for dRows.Next() {
-				if first {
-					sb.WriteString("**Зависит от (callees):**\n")
-					first = false
-				}
-				var tgtFQN, rel string
-				if dRows.Scan(&tgtFQN, &rel) == nil {
-					sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", tgtFQN, rel))
-				}
+		if err != nil {
+			return "", fmt.Errorf("explore symbol: query callees: %w", err)
+		}
+		first = true
+		for dRows.Next() {
+			if first {
+				sb.WriteString("**Зависит от (callees):**\n")
+				first = false
 			}
+			var tgtFQN, rel string
+			if err := dRows.Scan(&tgtFQN, &rel); err != nil {
+				dRows.Close()
+				return "", fmt.Errorf("explore symbol: scan callee: %w", err)
+			}
+			sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", tgtFQN, rel))
+		}
+		if err := dRows.Err(); err != nil {
 			dRows.Close()
-			if !first {
-				sb.WriteString("\n")
-			}
+			return "", fmt.Errorf("explore symbol: iterate callees: %w", err)
+		}
+		dRows.Close()
+		if !first {
+			sb.WriteString("\n")
 		}
 	}
 	return sb.String(), nil
@@ -151,9 +171,13 @@ func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, err
 	var sugg []string
 	for rows.Next() {
 		var fqn, kind, path string
-		if rows.Scan(&fqn, &kind, &path) == nil {
-			sugg = append(sugg, fmt.Sprintf("- `%s` (%s в %s)", fqn, kind, path))
+		if err := rows.Scan(&fqn, &kind, &path); err != nil {
+			return "", fmt.Errorf("fuzzy fallback: scan suggestion: %w", err)
 		}
+		sugg = append(sugg, fmt.Sprintf("- `%s` (%s в %s)", fqn, kind, path))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("fuzzy fallback: iterate suggestions: %w", err)
 	}
 	if len(sugg) == 0 {
 		return fmt.Sprintf("Символ '%s' не найден в графе.", query), nil
@@ -166,8 +190,11 @@ func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, err
 func (p *Provider) Callers(ctx context.Context, fqn string) ([]Node, error) {
 	rows, err := p.store.db.QueryContext(ctx, `
         SELECT n.id, n.file_id, n.fqn, n.short_name, n.kind, n.line_start, n.line_end, n.complexity
-        FROM edges e JOIN nodes n ON e.source_id = n.id
-        WHERE e.target_fqn = ? AND e.relation IN ('calls','instantiates')`, fqn)
+        FROM edges e
+		JOIN nodes n ON e.source_id = n.id
+		LEFT JOIN nodes t ON e.target_id = t.id
+        WHERE (t.fqn = ? OR e.target_fqn = ?)
+		  AND e.relation IN ('calls','instantiates')`, fqn, fqn)
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +220,9 @@ func (p *Provider) Callees(ctx context.Context, fqn string) ([]Edge, error) {
 		}
 		out = append(out, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -214,6 +244,9 @@ func (p *Provider) Importers(ctx context.Context, packageFQN string) ([]string, 
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -225,6 +258,9 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 			return nil, err
 		}
 		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

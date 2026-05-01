@@ -268,15 +268,15 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 				// Source was not in our nodes — likely a parser bug; skip silently.
 				continue
 			}
-			var targetID *int64
-			var tid int64
-			err := sel.QueryRowContext(ctx, e.TargetFQN).Scan(&tid)
-			if err == nil {
-				targetID = &tid
-			} else if err != sql.ErrNoRows {
-				return fmt.Errorf("resolve target %s: %w", e.TargetFQN, err)
+			targetID, resolvedTargetFQN, err := resolveEdgeTarget(ctx, tx, sel, e.TargetFQN, e.Relation)
+			if err != nil {
+				return err
 			}
-			if _, err := ins.ExecContext(ctx, sourceID, targetID, e.TargetFQN, e.Relation); err != nil {
+			targetFQN := e.TargetFQN
+			if resolvedTargetFQN != "" {
+				targetFQN = resolvedTargetFQN
+			}
+			if _, err := ins.ExecContext(ctx, sourceID, targetID, targetFQN, e.Relation); err != nil {
 				return fmt.Errorf("insert edge %s→%s: %w", e.SourceFQN, e.TargetFQN, err)
 			}
 		}
@@ -296,9 +296,81 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 				return fmt.Errorf("lazy resolve %s: %w", fqn, err)
 			}
 		}
+
+		// Also resolve dangling call edges that still carry short names.
+		// We update only when the short name is globally unique at update time.
+		updShort, err := tx.PrepareContext(ctx, `
+			UPDATE edges
+			SET target_id = ?, target_fqn = ?
+			WHERE target_id IS NULL
+			  AND relation IN ('calls', 'instantiates')
+			  AND target_fqn = ?
+			  AND NOT EXISTS (
+				  SELECT 1 FROM nodes n2
+				  WHERE n2.short_name = ? AND n2.id <> ?
+			  )`)
+		if err != nil {
+			return fmt.Errorf("prepare lazy resolve by short_name: %w", err)
+		}
+		defer updShort.Close()
+
+		for _, n := range nodes {
+			if n.ShortName == "" {
+				continue
+			}
+			if _, err := updShort.ExecContext(ctx, n.ID, n.FQN, n.ShortName, n.ShortName, n.ID); err != nil {
+				return fmt.Errorf("lazy resolve short_name %s: %w", n.ShortName, err)
+			}
+		}
 	}
 
 	return tx.Commit()
+}
+
+func resolveEdgeTarget(ctx context.Context, tx *sql.Tx, selByFQN *sql.Stmt, rawTarget, relation string) (*int64, string, error) {
+	var tid int64
+	err := selByFQN.QueryRowContext(ctx, rawTarget).Scan(&tid)
+	if err == nil {
+		return &tid, rawTarget, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, "", fmt.Errorf("resolve target %s: %w", rawTarget, err)
+	}
+
+	// Parser currently emits short names for calls (known limitation). If a short name
+	// maps to exactly one node in the graph, resolve it and canonicalize target_fqn.
+	if relation != "calls" && relation != "instantiates" {
+		return nil, rawTarget, nil
+	}
+	if strings.Contains(rawTarget, "/") {
+		return nil, rawTarget, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, fqn FROM nodes WHERE short_name = ? LIMIT 2`, rawTarget)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve short_name %s: %w", rawTarget, err)
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		id  int64
+		fqn string
+	}
+	var cands []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.fqn); err != nil {
+			return nil, "", fmt.Errorf("scan short_name candidate %s: %w", rawTarget, err)
+		}
+		cands = append(cands, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate short_name candidates %s: %w", rawTarget, err)
+	}
+	if len(cands) == 1 {
+		return &cands[0].id, cands[0].fqn, nil
+	}
+	return nil, rawTarget, nil
 }
 
 // DeleteFile deletes a file and cascades its deletion to nodes and edges.
