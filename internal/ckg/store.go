@@ -3,6 +3,7 @@ package ckg
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -51,40 +52,64 @@ func NewStore(dbPath string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	ddl := `
-	CREATE TABLE IF NOT EXISTS files (
-		id INTEGER PRIMARY KEY,
-		path TEXT UNIQUE NOT NULL,
-		hash TEXT NOT NULL,
-		language TEXT NOT NULL,
-		updated_at DATETIME NOT NULL
-	);
+	var version int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("migrate: read user_version: %w", err)
+	}
 
-	CREATE TABLE IF NOT EXISTS nodes (
-		id INTEGER PRIMARY KEY,
-		file_id INTEGER NOT NULL,
-		name TEXT NOT NULL,
-		type TEXT NOT NULL,
-		line_start INTEGER NOT NULL,
-		line_end INTEGER NOT NULL,
-		complexity INTEGER NOT NULL DEFAULT 0,
-		FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-	);
+	const targetVersion = 1 // bump for each new schema version
 
-	CREATE TABLE IF NOT EXISTS edges (
-		file_id INTEGER NOT NULL,
-		source_name TEXT NOT NULL,
-		target_name TEXT NOT NULL,
-		relation TEXT NOT NULL,
-		FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE,
-		UNIQUE(file_id, source_name, target_name, relation)
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
-	CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
-	`
-	_, err := s.db.Exec(ddl)
-	return err
+	if version > targetVersion {
+		return fmt.Errorf("ckg store: database schema version %d is newer than supported %d; upgrade the binary", version, targetVersion)
+	}
+
+	if version < 1 {
+		// Initial schema (v1). Existing behaviour preserved.
+		ddl := `
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL,
+            hash TEXT NOT NULL,
+            language TEXT NOT NULL,
+            updated_at DATETIME NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS nodes (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            line_start INTEGER NOT NULL,
+            line_end INTEGER NOT NULL,
+            complexity INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+            file_id INTEGER NOT NULL,
+            source_name TEXT NOT NULL,
+            target_name TEXT NOT NULL,
+            relation TEXT NOT NULL,
+            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE,
+            UNIQUE(file_id, source_name, target_name, relation)
+        );
+        CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+        CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
+        `
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("migrate v1: begin tx: %w", err)
+		}
+		if _, err := tx.Exec(ddl); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate v1: apply schema: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migrate v1: commit: %w", err)
+		}
+		if _, err := s.db.Exec("PRAGMA user_version = 1"); err != nil {
+			return fmt.Errorf("migrate v1: set user_version: %w", err)
+		}
+	}
+	return nil
 }
 
 // Close closes the database connection.

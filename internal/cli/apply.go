@@ -169,6 +169,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
+		defer runner.Close()
 
 		resp, err := runner.FSApplyOps(cmd.Context(), tools.FSApplyOpsRequest{
 			Ops:    plan.Ops,
@@ -232,6 +233,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
+		defer runner.Close()
 
 		var respFmt *llm.ResponseFormat
 		if cfg.LLM.ResponseFormatType != "" {

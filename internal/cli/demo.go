@@ -204,6 +204,7 @@ func Subtract(a, b int) int {
 	if err != nil {
 		return fmt.Errorf("failed to create runner: %w", err)
 	}
+	defer runner.Close()
 
 	resp, err := runner.FSApplyOps(cmd.Context(), tools.FSApplyOpsRequest{
 		Ops:    anyOps,

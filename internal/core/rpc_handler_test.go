@@ -43,6 +43,7 @@ func TestRPCHandler_RequiresInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New core failed: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 
 	h := NewRPCHandler(c)
 
@@ -71,6 +72,7 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New core failed: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
 	projectID, err := store.ComputeProjectID(root)
@@ -155,6 +157,7 @@ func setupInitializedCore(t *testing.T, root string, llmOverride llm.Client) (*C
 	if err != nil {
 		t.Fatalf("New core failed: %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
 	projectID, err := store.ComputeProjectID(root)

@@ -51,6 +51,7 @@ func TestAgent_E2E_FakeLLM_RewritesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	llmClient := &fakeLLM{responses: []*llm.CompleteResponse{
 		{
@@ -119,6 +120,7 @@ func TestAgent_E2E_FakeLLM_CreatesNewFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	llmClient := &fakeLLM{responses: []*llm.CompleteResponse{
 		{

@@ -142,6 +142,7 @@ func TestAgent_Run_ToolCallThenFinal_Applies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	llm := &scriptedLLM{
 		steps: []string{
@@ -188,6 +189,7 @@ func TestAgent_Run_ExecDenied_IsRetriedInsideNextStep_AndDoesNotBurnStep(t *test
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	llm := &policyRetryLLM{fileHash: h}
 
@@ -231,6 +233,7 @@ func TestAgent_Run_InvalidJSON_Retries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	fileHash := store.ComputeSHA256([]byte("x"))
 	llm := &scriptedLLM{
@@ -272,6 +275,7 @@ func TestAgent_Run_ExecDenied_RepeatsThenStopsEarly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	llm := &scriptedLLM{
 		steps: []string{
@@ -314,6 +318,7 @@ func TestAgent_Run_FinalResolveFailure_RepeatsThenStopsEarly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
+	t.Cleanup(func() { tr.Close() })
 
 	// Empty "search" passes schema, but resolver rejects it.
 	badFinal := `{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"a.txt","search":"","replace":"x","file_hash":"sha256:deadbeef"}]}}`

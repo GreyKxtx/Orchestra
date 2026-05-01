@@ -15,6 +15,7 @@ func newGlobRunner(t *testing.T) (*Runner, string) {
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
+	t.Cleanup(func() { r.Close() })
 	return r, root
 }
 
