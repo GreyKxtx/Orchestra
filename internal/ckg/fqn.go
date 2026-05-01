@@ -21,6 +21,12 @@ import (
 // symbol:     the func/method/type name.
 func GoFQN(modulePath, rootDir, filePath, recvType, symbol string) string {
 	pkgPath := goPackagePath(modulePath, rootDir, filePath)
+	if pkgPath == "" {
+		if recvType != "" {
+			return recvType + "." + symbol
+		}
+		return symbol
+	}
 	if recvType != "" {
 		return pkgPath + "." + recvType + "." + symbol
 	}

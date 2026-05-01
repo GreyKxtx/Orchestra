@@ -45,6 +45,8 @@ func TestGoFQN(t *testing.T) {
 			"github.com/x/y.main"},
 		{"no module path", "", "/repo/internal/agent/agent.go", "", "Run",
 			"internal/agent.Run"},
+		{"no module path root file", "", "/repo/main.go", "", "Run",
+			"Run"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
