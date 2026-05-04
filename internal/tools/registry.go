@@ -19,6 +19,7 @@ func ListTools(allowExec bool) []llm.ToolDef {
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
+		toolRuntimeQuery(),
 		toolTodoWrite(),
 		toolTodoRead(),
 	}
@@ -382,6 +383,34 @@ func toolTaskResult() llm.ToolDef {
   "required": ["content"],
   "properties": {
     "content": { "type": "string", "minLength": 1 }
+  }
+}`),
+		},
+	}
+}
+
+func toolRuntimeQuery() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "runtime.query",
+			Description: "Получить spans OTel-трейса с привязкой к узлам CKG (code_file, code_lineno, node_fqn). Используй для диагностики багов по trace_id.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_id"],
+  "properties": {
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Hex trace_id из OTel (128-бит, 32 символа)"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Максимальное число spans (по умолчанию 500)"
+    }
   }
 }`),
 		},

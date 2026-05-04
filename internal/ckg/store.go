@@ -62,7 +62,7 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("migrate: read user_version: %w", err)
 	}
 
-	const targetVersion = 2 // bump for each new schema version
+	const targetVersion = 3 // bump for each new schema version
 
 	if version > targetVersion {
 		return fmt.Errorf("ckg store: database schema version %d is newer than supported %d; upgrade the binary", version, targetVersion)
@@ -74,6 +74,8 @@ func (s *Store) migrate() error {
 
 	// Local cache — drop+recreate is acceptable. Incremental scan rebuilds quickly.
 	drop := `
+        DROP TABLE IF EXISTS spans;
+        DROP TABLE IF EXISTS traces;
         DROP TABLE IF EXISTS edges;
         DROP TABLE IF EXISTS nodes;
         DROP TABLE IF EXISTS files;
@@ -118,24 +120,56 @@ func (s *Store) migrate() error {
     CREATE INDEX idx_edges_target_id  ON edges(target_id);
     CREATE INDEX idx_edges_target_fqn ON edges(target_fqn);
     CREATE UNIQUE INDEX idx_edges_unique ON edges(source_id, target_fqn, relation);
+
+    CREATE TABLE traces (
+        id          TEXT PRIMARY KEY,
+        service     TEXT,
+        started_at  DATETIME,
+        duration_ms INTEGER
+    );
+
+    CREATE TABLE spans (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        span_id        TEXT NOT NULL,
+        trace_id       TEXT NOT NULL,
+        parent_span_id TEXT,
+        name           TEXT NOT NULL,
+        service        TEXT,
+        code_file      TEXT,
+        code_lineno    INTEGER,
+        code_func      TEXT,
+        ckg_node_id    INTEGER,
+        resolve_status TEXT,
+        started_at     DATETIME,
+        duration_ms    INTEGER,
+        status         TEXT,
+        error_msg      TEXT,
+        attributes     TEXT,
+        FOREIGN KEY(trace_id)    REFERENCES traces(id),
+        FOREIGN KEY(ckg_node_id) REFERENCES nodes(id) ON DELETE SET NULL,
+        UNIQUE(trace_id, span_id)
+    );
+    CREATE INDEX idx_spans_trace_id    ON spans(trace_id);
+    CREATE INDEX idx_spans_ckg_node_id ON spans(ckg_node_id);
+    CREATE INDEX idx_spans_code_file   ON spans(code_file);
     `
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v2: begin tx: %w", err)
+		return fmt.Errorf("migrate v3: begin tx: %w", err)
 	}
 	if _, err := tx.Exec(drop); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("migrate v2: drop old: %w", err)
+		return fmt.Errorf("migrate v3: drop old: %w", err)
 	}
 	if _, err := tx.Exec(ddl); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("migrate v2: apply schema: %w", err)
+		return fmt.Errorf("migrate v3: apply schema: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v2: commit: %w", err)
+		return fmt.Errorf("migrate v3: commit: %w", err)
 	}
-	if _, err := s.db.Exec("PRAGMA user_version = 2"); err != nil {
-		return fmt.Errorf("migrate v2: set user_version: %w", err)
+	if _, err := s.db.Exec("PRAGMA user_version = 3"); err != nil {
+		return fmt.Errorf("migrate v3: set user_version: %w", err)
 	}
 	return nil
 }
@@ -144,6 +178,9 @@ func (s *Store) migrate() error {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+
+// DB returns the underlying *sql.DB for advanced queries (e.g. runtime.query tool).
+func (s *Store) DB() *sql.DB { return s.db }
 
 // GetFileHash returns the hash of the file if it exists, otherwise an empty string.
 func (s *Store) GetFileHash(ctx context.Context, path string) (string, error) {
@@ -377,4 +414,25 @@ func resolveEdgeTarget(ctx context.Context, tx *sql.Tx, selByFQN *sql.Stmt, rawT
 func (s *Store) DeleteFile(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM files WHERE path = ?", path)
 	return err
+}
+
+// FindNodeAtLine returns the innermost CKG node containing the given 1-based line
+// in the file identified by its CKG-canonical slash-relative path.
+// Returns (0, nil) when no node matches.
+func (s *Store) FindNodeAtLine(ctx context.Context, filePath string, lineno int) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT n.id
+		FROM nodes n
+		JOIN files f ON f.id = n.file_id
+		WHERE f.path = ? AND n.line_start <= ? AND n.line_end >= ?
+		ORDER BY n.line_start DESC
+		LIMIT 1`, filePath, lineno, lineno).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }

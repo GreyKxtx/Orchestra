@@ -17,22 +17,31 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestMigrateToV2(t *testing.T) {
+func TestMigrateToV3(t *testing.T) {
 	s := newTestStore(t)
 	var v int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		t.Fatal(err)
 	}
-	if v != 2 {
-		t.Fatalf("user_version = %d, want 2", v)
+	if v != 3 {
+		t.Fatalf("user_version = %d, want 3", v)
 	}
 
-	// Schema sanity: nodes.fqn column exists and is queryable.
+	// Schema sanity: nodes.fqn column exists.
 	var dummy string
 	err := s.db.QueryRow(`SELECT fqn FROM nodes LIMIT 1`).Scan(&dummy)
-	// sql.ErrNoRows is fine (table empty); other errors mean missing column.
 	if err != nil && err.Error() != "sql: no rows in result set" {
 		t.Fatalf("nodes.fqn missing or unreadable: %v", err)
+	}
+
+	// Schema sanity: traces and spans tables exist.
+	err = s.db.QueryRow(`SELECT id FROM traces LIMIT 1`).Scan(&dummy)
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		t.Fatalf("traces table missing or unreadable: %v", err)
+	}
+	err = s.db.QueryRow(`SELECT span_id FROM spans LIMIT 1`).Scan(&dummy)
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		t.Fatalf("spans table missing or unreadable: %v", err)
 	}
 }
 
