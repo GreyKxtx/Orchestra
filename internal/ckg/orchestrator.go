@@ -11,21 +11,33 @@ type Orchestrator struct {
 	store      *Store
 	scanner    *Scanner
 	root       string
-	modulePath string
+	modulePath string // Go module path (from go.mod)
+	crateName  string // Rust crate name (from Cargo.toml)
 }
 
 // NewOrchestrator creates a new Orchestrator.
 func NewOrchestrator(store *Store, root string) *Orchestrator {
-	mp, _ := ParseModulePath(root) // empty string for non-Go workspaces — safe
+	mp, _ := ParseModulePath(root)
+	cn, _ := ParseCrateName(root)
 	return &Orchestrator{
 		store:      store,
 		scanner:    NewScanner(store, root),
 		root:       root,
 		modulePath: mp,
+		crateName:  cn,
 	}
 }
 
-// UpdateGraph runs an incremental scan and parses any changed Go files,
+// modulePathFor returns the appropriate module identifier for the given file extension.
+// For Rust files this is the crate name; for Go files it is the go.mod module path.
+func (o *Orchestrator) modulePathFor(ext string) string {
+	if ext == ".rs" {
+		return o.crateName
+	}
+	return o.modulePath
+}
+
+// UpdateGraph runs an incremental scan and parses any changed files,
 // updating the database transactionally.
 func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 	toParse, toDelete, err := o.scanner.Scan(ctx)
@@ -33,20 +45,19 @@ func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 		return err
 	}
 
-	// 1. Delete files that no longer exist
 	for _, relPath := range toDelete {
 		if err := o.store.DeleteFile(ctx, relPath); err != nil {
 			return err
 		}
 	}
 
-	// 2. Parse and save new/modified files
 	for _, relPath := range toParse {
 		absPath := filepath.Join(o.root, filepath.FromSlash(relPath))
+		ext := filepath.Ext(absPath)
+		mp := o.modulePathFor(ext)
 
-		nodes, edges, pkgName, err := ParseFile(ctx, o.modulePath, o.root, absPath)
+		nodes, edges, pkgName, err := ParseFile(ctx, mp, o.root, absPath)
 		if err != nil {
-			// Files with syntax errors are skipped to keep indexing resilient.
 			continue
 		}
 
@@ -55,9 +66,8 @@ func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 			continue
 		}
 
-		lang := LanguageFromExt(filepath.Ext(absPath))
-
-		if err := o.store.SaveFileNodes(ctx, relPath, hash, lang, o.modulePath, pkgName, nodes, edges); err != nil {
+		lang := LanguageFromExt(ext)
+		if err := o.store.SaveFileNodes(ctx, relPath, hash, lang, mp, pkgName, nodes, edges); err != nil {
 			return err
 		}
 	}
