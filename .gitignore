@@ -60,6 +60,9 @@ testdata/large/synthetic_project/docs/
 testdata/large/synthetic_project/configs/
 testdata/large/synthetic_project/scripts/
 
+# External repos for reference (never commit)
+_opencode/
+
 # Real projects (place locally, never commit)
 # Only README.md files in real_project/ are tracked
 testdata/small/real_project/**/*
