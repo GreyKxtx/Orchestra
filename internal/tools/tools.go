@@ -91,6 +91,19 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
 
+// FetchCKGContext returns a <ckg_context> block of up to 12 nodes relevant to
+// the query, or an empty string if the CKG store is unavailable or has no matches.
+func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
+	if r.ckgStore == nil {
+		return ""
+	}
+	nodes, err := r.ckgStore.FindRelevantNodes(ctx, query, 12)
+	if err != nil || len(nodes) == 0 {
+		return ""
+	}
+	return ckg.FormatNodesForPrompt(nodes, 800)
+}
+
 // Close releases resources held by the Runner (CKG store, etc).
 // Safe to call multiple times.
 func (r *Runner) Close() error {

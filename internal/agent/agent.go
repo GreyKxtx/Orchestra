@@ -136,11 +136,12 @@ type Result struct {
 }
 
 type Agent struct {
-	llm       llm.Client
-	validator *schema.Validator
-	tools     *tools.Runner
-	opts      Options
-	todos     []tools.TodoItem // current turn's working todo list
+	llm        llm.Client
+	validator  *schema.Validator
+	tools      *tools.Runner
+	opts       Options
+	todos      []tools.TodoItem // current turn's working todo list
+	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
 }
 
 func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, opts Options) (*Agent, error) {
@@ -191,6 +192,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	}
 	// Initialize todos from session state (empty for one-shot runs).
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
+	// Pre-fetch relevant CKG nodes once per Run; injected into every nextStep prompt.
+	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
 
 	if history == nil {
 		history = make([]llm.Message, 0, 32)
@@ -525,6 +528,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
 	if block := renderTodosBlock(a.todos); block != "" {
 		userPrompt = block + "\n" + userPrompt
+	}
+	if a.ckgContext != "" {
+		userPrompt = a.ckgContext + "\n" + userPrompt
 	}
 
 	// Build messages: system + user (initial) + history (assistant tool calls + tool results)

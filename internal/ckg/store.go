@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -414,6 +415,92 @@ func resolveEdgeTarget(ctx context.Context, tx *sql.Tx, selByFQN *sql.Stmt, rawT
 func (s *Store) DeleteFile(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM files WHERE path = ?", path)
 	return err
+}
+
+var queryStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "from": true,
+	"this": true, "that": true, "are": true, "was": true, "will": true,
+	"how": true, "what": true, "when": true, "where": true, "which": true,
+	"add": true, "get": true, "set": true, "run": true, "new": true,
+	"use": true, "can": true, "not": true, "has": true, "its": true,
+}
+
+// tokenizeQuery splits a user query into lowercase tokens (min 3 chars, no stopwords).
+func tokenizeQuery(q string) []string {
+	words := strings.FieldsFunc(q, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	seen := make(map[string]bool, len(words))
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		w = strings.ToLower(w)
+		if len(w) < 3 || queryStopwords[w] || seen[w] {
+			continue
+		}
+		seen[w] = true
+		out = append(out, w)
+	}
+	return out
+}
+
+// FindRelevantNodes returns up to limit nodes whose FQN or short_name contains
+// at least one token from query. Results are ranked by number of matching tokens.
+func (s *Store) FindRelevantNodes(ctx context.Context, query string, limit int) ([]Node, error) {
+	tokens := tokenizeQuery(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 12
+	}
+
+	// Build score expression: sum of per-token CASE matches.
+	scoreParts := make([]string, len(tokens))
+	whereParts := make([]string, len(tokens))
+	// Args: CASE args (for SELECT) come first, then WHERE args, then LIMIT.
+	args := make([]interface{}, 0, len(tokens)*4+1)
+
+	for i, tok := range tokens {
+		pattern := "%" + tok + "%"
+		scoreParts[i] = "(CASE WHEN short_name LIKE ? OR fqn LIKE ? THEN 1 ELSE 0 END)"
+		whereParts[i] = "(short_name LIKE ? OR fqn LIKE ?)"
+		args = append(args, pattern, pattern) // CASE args
+	}
+	for _, tok := range tokens {
+		pattern := "%" + tok + "%"
+		args = append(args, pattern, pattern) // WHERE args
+	}
+	args = append(args, limit)
+
+	q := fmt.Sprintf(`
+		SELECT id, file_id, fqn, short_name, kind, line_start, line_end, complexity
+		FROM (
+			SELECT id, file_id, fqn, short_name, kind, line_start, line_end, complexity,
+			       (%s) AS score
+			FROM nodes
+			WHERE %s
+		)
+		ORDER BY score DESC, fqn ASC
+		LIMIT ?`,
+		strings.Join(scoreParts, " + "),
+		strings.Join(whereParts, " OR "),
+	)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("find relevant nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.ID, &n.FileID, &n.FQN, &n.ShortName, &n.Kind, &n.LineStart, &n.LineEnd, &n.Complexity); err != nil {
+			return nil, fmt.Errorf("scan node: %w", err)
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
 }
 
 // FindNodeAtLine returns the innermost CKG node containing the given 1-based line
