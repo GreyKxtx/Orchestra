@@ -87,6 +87,9 @@ func runEval(cmd *cobra.Command, args []string) error {
 			Query:    query,
 			Apply:    apply,
 			MaxSteps: maxSteps,
+			// No-op OnEvent forces streaming mode, which is required for LM Studio
+			// to return tool_calls correctly (non-streaming path has a known issue).
+			OnEvent: func(string, any) {},
 		})
 		if err != nil {
 			return 0, err

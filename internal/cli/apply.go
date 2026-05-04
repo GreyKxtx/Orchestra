@@ -17,6 +17,7 @@ import (
 	"github.com/orchestra/orchestra/internal/jsonrpc"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/pipeline"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/store"
@@ -25,15 +26,19 @@ import (
 )
 
 var (
-	applyFlag bool
-	gitStrict bool
-	gitCommit bool
-	planOnly  bool
-	fromPlan  string
-	noDaemon  bool
-	debugMode bool
-	allowExec bool
-	viaCore   bool
+	applyFlag           bool
+	gitStrict           bool
+	gitCommit           bool
+	planOnly            bool
+	fromPlan            string
+	noDaemon            bool
+	debugMode           bool
+	allowExec           bool
+	viaCore             bool
+	agentMode           string // "plan", "build", or "" (default)
+	pipelineMode        bool
+	pipelineMaxAttempts int
+	pipelineTraceID     string
 )
 
 var applyCmd = &cobra.Command{
@@ -54,6 +59,10 @@ func init() {
 	applyCmd.Flags().BoolVar(&debugMode, "debug", false, "Show performance metrics and debug information")
 	applyCmd.Flags().BoolVar(&allowExec, "allow-exec", false, "Allow exec.run tool (DANGEROUS; still sandboxed with limits)")
 	applyCmd.Flags().BoolVar(&viaCore, "via-core", false, "Run via JSON-RPC core subprocess (stdio)")
+	applyCmd.Flags().StringVar(&agentMode, "mode", "", "Agent mode: plan (read-only analysis) or build (default)")
+	applyCmd.Flags().BoolVar(&pipelineMode, "pipeline", false, "Run multi-agent pipeline: Investigator → Coder → Critic")
+	applyCmd.Flags().IntVar(&pipelineMaxAttempts, "pipeline-attempts", 2, "Max Coder→Critic cycles in pipeline mode")
+	applyCmd.Flags().StringVar(&pipelineTraceID, "trace-id", "", "Trace ID for runtime evidence pre-fetch in pipeline mode")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -202,6 +211,115 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		applyResp = out.ApplyResponse
 
+	} else if pipelineMode {
+		// --- Mode: multi-agent pipeline (Investigator → Coder → Critic) ---
+		mode = "pipeline"
+
+		var llmClient llm.Client
+		if testLLMClient != nil {
+			llmClient = testLLMClient
+		} else {
+			llmClient = llm.NewOpenAIClient(cfg.LLM)
+			if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
+				logger := llm.NewLogger(cfg.ProjectRoot)
+				openAIClient.SetLogger(logger)
+			}
+		}
+
+		validator, err := schema.NewValidator()
+		if err != nil {
+			retErr = err
+			return retErr
+		}
+		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
+			ExcludeDirs:     cfg.ExcludeDirs,
+			ExecTimeout:     time.Duration(cfg.Exec.TimeoutS) * time.Second,
+			ExecOutputLimit: cfg.Exec.OutputLimitKB * 1024,
+		})
+		if err != nil {
+			retErr = err
+			return retErr
+		}
+		defer runner.Close()
+
+		var respFmt *llm.ResponseFormat
+		if cfg.LLM.ResponseFormatType != "" {
+			respFmt = &llm.ResponseFormat{Type: cfg.LLM.ResponseFormatType}
+			if cfg.LLM.ResponseFormatType == "json_schema" {
+				respFmt.Schema = schema.AgentStepSchemaRaw()
+				respFmt.SchemaName = "agent_step"
+			}
+		}
+
+		var agentLogger *llm.Logger
+		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
+			agentLogger = openAIClient.GetLogger()
+		}
+
+		cliRenderer := buildCLIRenderer()
+		var onPipelineEvent func(stage string, ev agent.AgentEvent)
+		if cliRenderer != nil {
+			var lastStage string
+			onPipelineEvent = func(stage string, ev agent.AgentEvent) {
+				if stage != lastStage {
+					fmt.Fprintf(os.Stderr, "\n[pipeline:%s]\n", stage)
+					lastStage = stage
+				}
+				cliRenderer(ev)
+			}
+		}
+
+		var traceCtx *pipeline.TraceContext
+		if pipelineTraceID != "" {
+			traceCtx = &pipeline.TraceContext{TraceID: pipelineTraceID}
+		}
+
+		pipeRes, err := pipeline.Run(cmd.Context(), llmClient, validator, runner, query, pipeline.Options{
+			MaxCoderAttempts:     pipelineMaxAttempts,
+			Apply:                !dryRun,
+			Backup:               backup,
+			TraceCtx:             traceCtx,
+			MaxStepsCoder:        cfg.Agent.MaxSteps,
+			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
+			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,
+			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
+			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
+			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
+			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
+			PromptFamily:         cfg.LLM.PromptFamily,
+			ResponseFormat:       respFmt,
+			Debug:                debugMode,
+			AgentLogger:          agentLogger,
+			OnEvent:              onPipelineEvent,
+		})
+		if err != nil {
+			retErr = err
+			return retErr
+		}
+
+		totalSteps := 0
+		for _, sr := range pipeRes.StageResults {
+			totalSteps += sr.Steps
+		}
+		steps = totalSteps
+
+		if !pipeRes.Accepted {
+			fmt.Fprintln(os.Stderr, "[pipeline] WARNING: Critic did not accept after all attempts — using last Coder output")
+		} else {
+			fmt.Fprintf(os.Stderr, "[pipeline] Critic accepted after %d attempt(s)\n", pipeRes.Attempts)
+		}
+
+		plan = planArtifact{
+			ProtocolVersion: protocol.ProtocolVersion,
+			OpsVersion:      protocol.OpsVersion,
+			ToolsVersion:    protocol.ToolsVersion,
+			Query:           query,
+			GeneratedAtUnix: time.Now().Unix(),
+			Patches:         pipeRes.Patches,
+			Ops:             pipeRes.Ops,
+		}
+		applyResp = pipeRes.ApplyResponse
+
 	} else {
 		// --- Mode: direct (agent + tools) ---
 		mode = "direct"
@@ -263,6 +381,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Debug:                debugMode,
 			ResponseFormat:       respFmt,
 			PromptFamily:         cfg.LLM.PromptFamily,
+			Mode:                 agentMode,
+			QuestionAsker:        buildQuestionAsker(agentMode),
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
 		})
@@ -560,6 +680,15 @@ func buildCLIRenderer() func(agent.AgentEvent) {
 			fmt.Fprint(os.Stderr, ev.Stream.Content)
 		}
 	}
+}
+
+// buildQuestionAsker returns a StdinQuestionAsker when mode requires it and stdin is a terminal.
+// Returns nil otherwise (disables the question tool) to avoid corrupting stdio JSON-RPC in core mode.
+func buildQuestionAsker(mode string) tools.QuestionAsker {
+	if mode == agent.ModePlan && isTTY() {
+		return &tools.StdinQuestionAsker{}
+	}
+	return nil
 }
 
 // isTTY reports whether os.Stdout is connected to an interactive terminal.

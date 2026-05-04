@@ -525,9 +525,13 @@ func resolveWorkspacePath(workspaceRoot, p string) (abs string, relSlash string,
 		return "", "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
 	}
 
-	// Build absolute path from workspace root
-	abs = filepath.Join(workspaceRoot, filepath.FromSlash(p))
-	abs = filepath.Clean(abs)
+	// Build absolute path from workspace root.
+	// If p is already absolute (e.g. model uses workspace_root from prompt), use it directly.
+	if filepath.IsAbs(p) {
+		abs = filepath.Clean(p)
+	} else {
+		abs = filepath.Clean(filepath.Join(workspaceRoot, filepath.FromSlash(p)))
+	}
 
 	// Step 1: Lexical check - ensure path doesn't escape via ".."
 	rel, err := filepath.Rel(workspaceRoot, abs)
