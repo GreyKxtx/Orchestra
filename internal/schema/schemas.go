@@ -126,7 +126,7 @@ const agentStepSchemaJSON = `{
       "properties": {
         "name": {
           "type": "string",
-          "enum": ["fs.list", "fs.read", "search.text", "code.symbols", "exec.run"]
+          "minLength": 1
         },
         "input": { "type": "object" }
       }

@@ -314,6 +314,67 @@ func ListToolsForChild() []llm.ToolDef {
 	}
 }
 
+// ListToolsForInvestigator returns the Investigator tool set: read-only tools + task.result + runtime.query.
+// The Investigator can call runtime.query to correlate trace spans with CKG nodes.
+func ListToolsForInvestigator() []llm.ToolDef {
+	return append(ListToolsForChild(), toolRuntimeQuery())
+}
+
+// ListToolsForMode returns tools for the given agent mode.
+// mode: "build" (default, full access), "plan" (read-only + plan tools), "explore" (subagent).
+// hasSubtasks enables task.spawn/wait/cancel; hasQuestionAsker enables question tool.
+func ListToolsForMode(mode string, allowExec, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+	switch mode {
+	case "plan":
+		return listToolsPlan(hasSubtasks, hasQuestionAsker)
+	case "explore":
+		return listToolsExplore()
+	default: // "build" or ""
+		return listToolsBuild(allowExec, hasSubtasks, hasQuestionAsker)
+	}
+}
+
+func listToolsBuild(allowExec, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(), toolPlanEnter(),
+	}
+	if allowExec {
+		out = append(out, toolExecRun())
+	}
+	if hasSubtasks {
+		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	}
+	if hasQuestionAsker {
+		out = append(out, toolQuestion())
+	}
+	return out
+}
+
+func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+	// fs.write is kept so the model can write .orchestra/plan.md — enforced at runtime.
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
+	}
+	if hasSubtasks {
+		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	}
+	if hasQuestionAsker {
+		out = append(out, toolQuestion())
+	}
+	return out
+}
+
+func listToolsExplore() []llm.ToolDef {
+	return []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(),
+		toolSearchText(), toolCodeSymbols(), toolTaskResult(),
+	}
+}
+
 func toolTaskSpawn() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
@@ -410,6 +471,58 @@ func toolRuntimeQuery() llm.ToolDef {
       "minimum": 1,
       "maximum": 1000,
       "description": "Максимальное число spans (по умолчанию 500)"
+    }
+  }
+}`),
+		},
+	}
+}
+
+func toolPlanEnter() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "plan_enter",
+			Description: "Переключиться в режим ПЛАНИРОВАНИЯ (read-only). Используй для детального анализа задачи перед внесением изменений.",
+			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
+		},
+	}
+}
+
+func toolPlanExit() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "plan_exit",
+			Description: "Завершить планирование и запросить переключение в build-режим. Вызывай только когда план в .orchestra/plan.md полностью готов.",
+			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
+		},
+	}
+}
+
+func toolQuestion() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "question",
+			Description: "Задать пользователю уточняющий вопрос (блокирует выполнение до ответа). Используй для критичных трейдоффов при планировании.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["questions"],
+  "properties": {
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1},
+          "options":  {"type": "array", "items": {"type": "string"}}
+        }
+      }
     }
   }
 }`),

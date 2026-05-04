@@ -1,7 +1,8 @@
 # Orchestra vNext+1 — CKG, Runtime Tracing, Multi-Agent Roadmap
 
-**Дата:** 2026-05-01
-**Статус:** Vision / Roadmap (живой документ)
+**Дата:** 2026-05-01  
+**Обновлён:** 2026-05-04  
+**Статус:** В работе — под-проекты 0–3 закрыты, под-проект 4 в очереди  
 **Уровень:** надстройка над `docs/ROADMAP.md` (vNext, фазы 0–9 — готовы)
 
 ---
@@ -55,17 +56,17 @@ User query
 
 Реализация: `internal/ckg/` (orchestrator, store, parser, scanner, provider) + `internal/tools/explore_codebase.go`. Ниже — таблица проблем, выявленных при чтении кода.
 
-| # | Проблема | Где смотреть | Эффект | Чинится в |
-|---|---|---|---|---|
-| 1 | Полиглот заявлен, реально работает только Go. `getSitterLanguage()` возвращает language только для `.go`, для остальных — `nil` → `ParseFile` молча возвращает пустоту. Sqlite-store при этом честно записывает `language = "python"/"typescript"/...`, но узлов и рёбер для них нет. | `internal/ckg/parser.go:178-185`, `internal/ckg/parser.go:38-57` | `ExploreSymbol` бесполезен на любом не-Go проекте. | Под-проект 1 |
-| 2 | Имена не квалифицированы. `Node.Name` хранит short-name (или `Type.Method` для Go-method). Если в проекте две функции `Run` в разных пакетах — `ExploreSymbol("Run")` вернёт обе. | `internal/ckg/store.go:16-23`, `internal/ckg/provider.go:24-49` | Контекст для LLM становится неоднозначным; модель получает вдвое больше шума. | Под-проект 0 |
-| 3 | Edges хранят имена строкой, а не ссылку на `node_id`. Колонки `source_name` / `target_name`, индекса по ним нет. | `internal/ckg/store.go:74-81` | Граф нельзя обходить алгоритмически (BFS/DFS «кто транзитивно зависит от X»), только string-match. | Под-проект 0 |
-| 4 | Только `relation = "calls"`. В `Edge`-структуре поле `Relation` есть, но парсер извлекает лишь вызовы; `imports`, `implements`, `instantiates`, `references` — пусто. | `internal/ckg/parser.go:200-211` | Невозможно ответить «кто реализует интерфейс X», «какие пакеты импортируют этот модуль». | Под-проект 0 (imports), Под-проект 1 (implements / references) |
-| 5 | Tool на каждый вызов открывает новый SQLite-handle. | `internal/tools/explore_codebase.go:21-49` | Не катастрофа (incremental scan быстрый), но избыточный overhead и риск race при конкурентных вызовах из разных горутин (`cache=shared` помогает, но не решает). | Под-проект 0 |
-| 6 | `complexity` всегда 0. Колонка в схеме есть, парсер её не считает. | `internal/ckg/parser.go:106-111`, `internal/ckg/store.go:64-72` | Невозможно ранжировать «горячие» / сложные функции. | Под-проект 1 (как побочный эффект перевода парсера на нормальную AST-walk per-language) |
-| 7 | Нет import / dependency-графа между файлами / пакетами / модулями вообще. | `internal/ckg/parser.go` целиком | Невозможен «слой пакетной зависимости» — а это ровно то, что просят при вопросах «что зависит от auth_service». | Под-проект 0 |
-| 8 | Vector DB / семантический поиск — нет. | — | LLM получает только символический поиск. На вопросах «где у нас бизнес-логика валидации email» — мимо. | Под-проект 4 |
-| 9 | Runtime Observability Bridge — нет. Нет интеграции с OTel / Sentry / Jaeger, нет ingestion, нет mapping `span → CKG node`. | — | Главная фича-дифференциатор отсутствует. | Под-проект 2 |
+| # | Проблема | Где смотреть | Эффект | Чинится в | Статус |
+|---|---|---|---|---|---|
+| 1 | Полиглот заявлен, реально работает только Go. `getSitterLanguage()` возвращает language только для `.go`, для остальных — `nil` → `ParseFile` молча возвращает пустоту. | `internal/ckg/parser.go:178-185` | `ExploreSymbol` бесполезен на любом не-Go проекте. | Под-проект 1 | ✅ Закрыто 2026-05-04, коммит `42c7ce1` |
+| 2 | Имена не квалифицированы. `Node.Name` хранит short-name. Если в проекте две функции `Run` в разных пакетах — `ExploreSymbol("Run")` вернёт обе. | `internal/ckg/store.go:16-23` | Контекст для LLM неоднозначный. | Под-проект 0 | ✅ Закрыто 2026-05-04, коммиты `b43c1e3`, `ac8a89c` |
+| 3 | Edges хранят имена строкой, а не ссылку на `node_id`. Индекса по ним нет. | `internal/ckg/store.go:74-81` | Граф нельзя обходить алгоритмически. | Под-проект 0 | ✅ Закрыто 2026-05-04, коммиты `b43c1e3`, `ac8a89c` |
+| 4 | Только `relation = "calls"`. `imports`, `implements`, `instantiates`, `references` — пусто. | `internal/ckg/parser.go:200-211` | Невозможно ответить «кто импортирует этот модуль». | Под-проект 0 (imports), Под-проект 1 (implements) | ✅ imports — закрыто `ac8a89c`; implements — known-limitation |
+| 5 | Tool на каждый вызов открывает новый SQLite-handle. | `internal/tools/explore_codebase.go:21-49` | Избыточный overhead и риск race. | Под-проект 0 | ✅ Закрыто 2026-05-04, коммит `b43c1e3` |
+| 6 | `complexity` всегда 0. | `internal/ckg/parser.go:106-111` | Невозможно ранжировать «горячие» функции. | Под-проект 1 | ✅ Закрыто 2026-05-04, коммит `42c7ce1` |
+| 7 | Нет import / dependency-графа между файлами / пакетами. | `internal/ckg/parser.go` целиком | Невозможен «слой пакетной зависимости». | Под-проект 0 | ✅ Закрыто 2026-05-04, коммит `ac8a89c` |
+| 8 | Vector DB / семантический поиск — нет. | — | LLM получает только символический поиск. | Под-проект 4 | ⏳ В очереди (низкий приоритет) |
+| 9 | Runtime Observability Bridge — нет. Нет OTel ingestion, нет mapping `span → CKG node`. | — | Главная фича-дифференциатор отсутствует. | Под-проект 2 | ✅ Закрыто 2026-05-04, коммит `87b078b` |
 
 ---
 
@@ -101,39 +102,61 @@ API для агентов. Здесь критично разделить **дв
 
 ## 5. Декомпозиция на под-проекты
 
-| № | Название | Цель | Зависимости | Грубая оценка | Definition of Done |
-|---|---|---|---|---|---|
-| **0** | Доводка Go-CKG до точного | Сделать существующий CKG алгоритмически полезным на самом репо Orchestra. FQN, edges по `node_id`, imports, Store как член Runner. | — | 2-3 дня | Запрос `ExploreSymbol("Run")` возвращает только целевой узел с FQN формата `<module-path>/<pkg>.<Type>.<Method>`. Граф проходится BFS/DFS по `node_id`, не по строкам. Запрос «кто импортирует пакет `internal/agent`» отрабатывает корректно. Один Store живёт на весь жизненный цикл Runner. `go test ./internal/ckg/... ./internal/tools/...` зелёный на Linux и Windows. |
-| **1** | Полиглот | Tree-sitter для Python + TypeScript / JavaScript первой волной. Затем Java, C / C++, Rust. FQN-эмуляция per-language. | 0 | 5-8 дней (первая волна, py + ts/js) | На тестовом py- и ts-проекте `ExploreSymbol` возвращает узлы с корректными FQN (`module.Class.method` для python, `<file>#<export>.<function>` для ts). Граф вызовов содержит cross-file edges. Edge-cases (anonymous functions, dynamic imports, default exports) задокументированы и покрыты тестами или явно отмечены как known-limitations. |
-| **2** | Runtime Observability Bridge MVP | Ingestion OpenTelemetry JSON → SQLite (`traces`, `spans`). Резолвер `span.code.filepath:lineno → ckg.node_id`. Tool `query_runtime` для агента. | 0 (резолвер требует точного CKG) | 6-10 дней | Скрипт-донор отправляет OTel-batch с известным span. CKG содержит соответствующий node. `query_runtime{trace_id}` возвращает spans, для каждого — связанный CKG node (или `null` с диагностикой при отсутствии). E2E-тест: агент получает trace-кусок и CKG-кусок одной парой запросов и формулирует диагноз. |
-| **3** | Multi-agent оркестрация | Dispatcher + Investigator + Coder + Critic поверх vNext-механизма субагентов. | 0, 2 (Investigator бесполезен без runtime) | 5-7 дней | На синтетическом сценарии «дай trace_id, найди и почини баг» Dispatcher автоматически вызывает Investigator → Coder → Critic. На входе только `trace_id` или текстовое описание; на выходе — patch + успешный `go test` (или явный отчёт «не починилось, причина X»). |
-| **4** | Vector DB / семантический поиск | Эмбеддинги функций (или файлов) + ANN-поиск. Tool `semantic_search` для агента. | 0, 1 | 5-8 дней | Запрос «где валидируется email» возвращает топ-5 функций с релевантностью выше порога на тестовом проекте. Индекс инкрементально обновляется по тем же хешам, что и CKG. Embedding-провайдер настраивается в `.orchestra.yml`. |
+| № | Название | Статус | Коммиты / дата |
+|---|---|---|---|
+| **0** | Доводка Go-CKG до точного (FQN, edges по node_id, imports, Store как член Runner) | ✅ **DONE** 2026-05-04 | `b43c1e3`, `ac8a89c`, `c5f9ced` |
+| **1** | Полиглот (Python, TypeScript, Rust, Java + complexity) | ✅ **DONE** 2026-05-04 | `42c7ce1` |
+| **2** | Runtime Observability Bridge MVP (OTel ingestion, span→CKG резолвер, `runtime.query` tool) | ✅ **DONE** 2026-05-04 | `87b078b` |
+| **3** | Multi-agent оркестрация | ✅ **DONE** 2026-05-04 | см. ниже |
+| **4** | Vector DB / семантический поиск | ⏳ **В очереди** | — |
+
+### Под-проект 3 — детали
+
+| Часть | Что реализовано | Коммит |
+|---|---|---|
+| **3A** | CKG pre-injection в agent prompt (`ckg_context` блок в user prompt, `FindRelevantNodes`, `FormatNodesForPrompt`) | `a0a9c43` |
+| **3B** | Roles & Modes: `ModePlan/ModeBuild`, `plan_exit/plan_enter` tools, `question` tool + `StdinQuestionAsker`, `modeReminder()`, `JustSwitchedFromPlan`, `ListToolsForMode()` | встроен в основную кодовую базу |
+| **3C** | Go-level pipeline Investigator→Coder→Critic (`internal/pipeline/pipeline.go`), CLI флаги `--pipeline`, `--pipeline-attempts` | `87b078b`+ текущая сессия |
+| **Runtime Bridge** | `TraceContext` в `pipeline.Options`, `fetchRuntimeEvidence()`, `formatRuntimeEvidence()`, `ListToolsForInvestigator()`, CLI флаг `--trace-id` | 2026-05-04, текущая сессия |
 
 **Зависимости визуально:**
 
 ```
-Под-проект 0 ─┬─ Под-проект 1
-              ├─ Под-проект 2 ── Под-проект 3
-              └─ Под-проект 4 (через 1 для не-Go)
+Под-проект 0 ─┬─ Под-проект 1        ✅✅
+              ├─ Под-проект 2 ── Под-проект 3   ✅✅✅
+              └─ Под-проект 4 (через 1 для не-Go)   ⏳
 ```
 
-**Критический путь к дифференциатору:** 0 → 2 → 3. Под-проекты 1 и 4 — расширение охвата, можно делать параллельно или после.
-
-**Грубая оценка:**
-- До полного дифференциатора (0 + 2 + 3): ~14-20 дней работы.
-- До покрытия мейнстрим-языков (0 + 1 + 2 + 3): ~19-28 дней.
+**Критический путь к дифференциатору пройден:** 0 → 2 → 3 — всё реализовано.  
+Следующий шаг по расширению охвата — Под-проект 4 (Vector DB) или полевые испытания.
 
 ---
 
-## 6. Что делаем дальше
+## 6. Текущий статус и что дальше
 
-Следующая сессия:
+**Обновлено 2026-05-04.** Критический путь 0→2→3 пройден полностью. Все unit-тесты зелёные (29 пакетов).
 
-1. Открыть отдельный спек на **Под-проект 0** в `docs/superpowers/specs/<дата>-ckg-go-fqn-edges-design.md`.
-2. Внутри спека — детали реализации: схема FQN per Go (`<module-path>/<pkg>.<Type>.<Method>`), миграция существующих БД (drop / recreate допустим — `.orchestra/` локальный артефакт, гитигнорится), API-изменения в `Provider.ExploreSymbol`, как Store становится членом `tools.Runner`, какие тесты добавить (unit + integration на тестовом мини-репо).
-3. После реализации Под-проекта 0 — отдельная сессия, отдельный спек на Под-проект 1.
+### Что готово к полевым испытаниям
 
-**Этот roadmap — живой.** При закрытии каждого под-проекта — отметка в таблице секции 5 (статус, дата, ссылка на PR / коммит). Архитектурные изменения — обновление секции 4. Если по ходу работы обнаруживаются новые проблемы CKG — добавляются в секцию 3.
+```bash
+# Базовый pipeline
+orchestra apply --pipeline "добавь логирование в handler X" --apply
+
+# Pipeline с runtime-трейсом (нужен ingested trace)
+orchestra apply --pipeline "исправь баг из трейса" --trace-id <id> --apply
+
+# Plan → Build flow
+orchestra apply --mode plan "рефактори пакет Y"
+orchestra apply --from-plan .orchestra/plan.json --apply
+```
+
+### Следующие шаги (в порядке приоритета)
+
+1. **Полевые испытания** — запустить pipeline на реальной задаче с qwen3.5-27b, зафиксировать проблемы.
+2. **Eval harness** — прогнать `orchestra eval` с реальным LLM на задачах `rename_func` / `add_func`.
+3. **Под-проект 4 (Vector DB)** — эмбеддинги + ANN-поиск, `semantic_search` tool. Низкий приоритет пока CKG достаточен.
+
+**Этот roadmap — живой.** При закрытии каждого под-проекта — отметка в таблице секции 5. Новые проблемы CKG добавляются в секцию 3.
 
 ---
 

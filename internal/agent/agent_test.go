@@ -20,6 +20,21 @@ type scriptedLLM struct {
 	i     int
 }
 
+// mockQuestionAsker records questions asked and returns preset answers.
+type mockQuestionAsker struct {
+	gotQuestions []tools.QuestionItem
+	answers      []string
+	err          error
+}
+
+func (m *mockQuestionAsker) Ask(_ context.Context, questions []tools.QuestionItem) ([]string, error) {
+	m.gotQuestions = append(m.gotQuestions, questions...)
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.answers, nil
+}
+
 func (s *scriptedLLM) Plan(ctx context.Context, prompt string) (string, error) {
 	_ = ctx
 	_ = prompt
@@ -304,6 +319,139 @@ func TestAgent_Run_ExecDenied_RepeatsThenStopsEarly(t *testing.T) {
 	}
 	if coreErr.Code != protocol.InvalidLLMOutput {
 		t.Fatalf("expected code %s, got %s", protocol.InvalidLLMOutput, coreErr.Code)
+	}
+}
+
+func TestAgent_Run_PlanMode_WriteGuard_BlocksNonPlanFile(t *testing.T) {
+	root := t.TempDir()
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	llmClient := &scriptedLLM{
+		steps: []string{
+			`{"type":"tool_call","tool":{"name":"fs.write","input":{"path":"bad.go","content":"package main"}}}`,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps: 10,
+		Mode:     ModePlan,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, res, err := ag.Run(context.Background(), nil, "write some code")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected result")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "bad.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("bad.go must not be created in plan mode")
+	}
+}
+
+func TestAgent_Run_PlanMode_WriteGuard_AllowsPlanMd(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".orchestra"), 0o755); err != nil {
+		t.Fatalf("mkdir .orchestra: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	llmClient := &scriptedLLM{
+		steps: []string{
+			`{"type":"tool_call","tool":{"name":"fs.write","input":{"path":".orchestra/plan.md","content":"# Plan\n","must_not_exist":true}}}`,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps: 10,
+		Mode:     ModePlan,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, res, err := ag.Run(context.Background(), nil, "write a plan")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected result")
+	}
+	content, readErr := os.ReadFile(filepath.Join(root, ".orchestra", "plan.md"))
+	if readErr != nil {
+		t.Fatalf(".orchestra/plan.md should have been created: %v", readErr)
+	}
+	if string(content) != "# Plan\n" {
+		t.Fatalf("unexpected plan.md content: %q", string(content))
+	}
+}
+
+func TestAgent_Run_QuestionTool_CallsAsker(t *testing.T) {
+	root := t.TempDir()
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	asker := &mockQuestionAsker{answers: []string{"option A"}}
+
+	llmClient := &scriptedLLM{
+		steps: []string{
+			`{"type":"tool_call","tool":{"name":"question","input":{"questions":[{"question":"Which approach?","options":["A","B"]}]}}}`,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps:      10,
+		Mode:          ModePlan,
+		QuestionAsker: asker,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, res, err := ag.Run(context.Background(), nil, "plan something")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected result")
+	}
+	if len(asker.gotQuestions) != 1 {
+		t.Fatalf("expected 1 question asked, got %d", len(asker.gotQuestions))
+	}
+	if asker.gotQuestions[0].Question != "Which approach?" {
+		t.Fatalf("unexpected question: %q", asker.gotQuestions[0].Question)
 	}
 }
 

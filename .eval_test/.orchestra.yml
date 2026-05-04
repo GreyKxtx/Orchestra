@@ -1,9 +1,5 @@
-project_root: D:\CursorProjects\Orchestra
+project_root: D:\CursorProjects\Orchestra\.eval_test
 exclude_dirs:
-    - .git
-    - node_modules
-    - dist
-    - build
     - .orchestra
 context_limit_kb: 64
 llm:

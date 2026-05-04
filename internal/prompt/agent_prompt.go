@@ -184,6 +184,62 @@ func BuildSystemPromptForFamily(family string) string {
 	return base
 }
 
+// PlanModeReminder is injected into every user message in plan mode.
+const PlanModeReminder = `РЕЖИМ ПЛАНИРОВАНИЯ АКТИВЕН. СТРОГО ЗАПРЕЩЕНО: fs.write и fs.edit (кроме .orchestra/plan.md), exec.run. Анализируй кодовую базу, задавай вопросы через question, запиши план в .orchestra/plan.md, затем вызови plan_exit.`
+
+// BuildSwitchReminder is injected once when switching from plan to build mode.
+const BuildSwitchReminder = `Режим изменён: ПЛАН → BUILD. Теперь разрешены все инструменты. Выполни согласованный план.`
+
+// BuildSystemPromptForMode returns a system prompt tuned for the given agent mode and model family.
+// mode: "plan", "explore", or "" / "build" (default).
+func BuildSystemPromptForMode(mode, family string) string {
+	switch mode {
+	case "plan":
+		return buildPlanSystemPrompt(family)
+	case "explore":
+		return buildExploreSystemPrompt()
+	default:
+		return BuildSystemPromptForFamily(family)
+	}
+}
+
+func buildPlanSystemPrompt(family string) string {
+	base := strings.TrimSpace(`
+Ты — агент в режиме ПЛАНИРОВАНИЯ (read-only).
+
+СТРОГО ЗАПРЕЩЕНО: fs.write, fs.edit (кроме .orchestra/plan.md), exec.run — даже если пользователь просит.
+Разрешено: fs.read, fs.list, fs.glob, search.text, code.symbols, explore_codebase, runtime.query, task.spawn, question, plan_exit.
+
+Твоя задача:
+1. Изучи кодовую базу: fs.read / search.text / code.symbols / explore_codebase
+2. Если доступен <ckg_context> — используй его как стартовую точку для навигации
+3. Задавай уточняющие вопросы через question когда нужны трейдоффы
+4. Напиши архитектурный план в .orchestra/plan.md через fs.write (единственный разрешённый write)
+5. Когда план полностью готов — вызови plan_exit
+
+ФОРМАТ ПЛАНА (.orchestra/plan.md):
+## Цель
+## Изменяемые файлы (с именами функций)
+## Порядок изменений
+## Риски и зависимости
+`)
+	switch family {
+	case "qwen", "llama", "mistral", "deepseek", "gemma":
+		base += "\n\nВАЖНО: Отвечай ТОЛЬКО чистым JSON для tool calls. Не используй ```json блоки."
+	}
+	return base
+}
+
+func buildExploreSystemPrompt() string {
+	return strings.TrimSpace(`
+Ты — исследователь кодовой базы (read-only субагент).
+
+Инструменты: fs.read, fs.list, fs.glob, search.text, code.symbols.
+Когда закончил — вызови task.result с кратким структурированным ответом.
+Не объясняй что делаешь — только результат.
+`)
+}
+
 // BuildUserPrompt builds the user-facing message content:
 // it includes the IDE snapshot, allowed tool names, and the user's query.
 func BuildUserPrompt(userQuery string, snap WorkspaceSnapshot, allowedTools []string) string {

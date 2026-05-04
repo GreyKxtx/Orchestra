@@ -48,6 +48,13 @@ type SubtaskResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// Agent mode constants.
+const (
+	ModeBuild   = "build"   // default: full tool access
+	ModePlan    = "plan"    // read-only + plan tools
+	ModeExplore = "explore" // grep/glob/read only (subagent)
+)
+
 type Options struct {
 	MaxSteps int
 	// MaxInvalidRetries is the number of extra attempts after an invalid JSON/schema output.
@@ -85,6 +92,18 @@ type Options struct {
 	ResponseFormat *llm.ResponseFormat
 	// PromptFamily selects model-family-specific system prompt. Auto-detected if empty.
 	PromptFamily string
+
+	// Mode selects the agent role: "build" (default), "plan" (read-only), "explore" (subagent).
+	// Empty string behaves identically to "build" for backward compatibility.
+	Mode string
+
+	// QuestionAsker, if non-nil, enables the question tool (interactive user Q&A).
+	// Use StdinQuestionAsker for direct CLI mode. Must be nil for orchestra core (stdio conflict).
+	QuestionAsker tools.QuestionAsker
+
+	// JustSwitchedFromPlan, when true, injects a one-shot build-switch reminder on the first step.
+	// Set by the caller when restarting an agent in build mode after plan approval.
+	JustSwitchedFromPlan bool
 
 	// OnEvent, if non-nil, is called synchronously for each streaming event during a step.
 	// Nil disables streaming (agent falls back to the blocking Complete path).
@@ -133,6 +152,10 @@ type Result struct {
 
 	// SubtaskResult is set when a child agent completed via task.result tool call.
 	SubtaskResult string
+
+	// SwitchToBuild is set when plan_exit was approved by the user.
+	// The caller should restart the agent in Mode "build" with JustSwitchedFromPlan=true.
+	SwitchToBuild bool
 }
 
 type Agent struct {
@@ -142,6 +165,10 @@ type Agent struct {
 	opts       Options
 	todos      []tools.TodoItem // current turn's working todo list
 	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
+
+	// justSwitchedFromPlan is true for the first nextStep call after plan→build switch.
+	// Cleared after the reminder is injected so it fires at most once.
+	justSwitchedFromPlan bool
 }
 
 func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, opts Options) (*Agent, error) {
@@ -176,10 +203,11 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		opts.LLMStepTimeout = 25 * time.Second
 	}
 	return &Agent{
-		llm:       llmClient,
-		validator: v,
-		tools:     toolRunner,
-		opts:      opts,
+		llm:                  llmClient,
+		validator:            v,
+		tools:                toolRunner,
+		opts:                 opts,
+		justSwitchedFromPlan: opts.JustSwitchedFromPlan,
 	}, nil
 }
 
@@ -341,6 +369,94 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				continue
 			}
 
+			// question: block until user answers via QuestionAsker.
+			if name == "question" {
+				var req struct {
+					Questions []tools.QuestionItem `json:"questions"`
+				}
+				if qErr := json.Unmarshal(step.Tool.Input, &req); qErr != nil || a.opts.QuestionAsker == nil {
+					msg := `{"error":"question tool unavailable"}`
+					if a.opts.QuestionAsker != nil {
+						msg = formatToolErrorJSON(name, step.Tool.Input, qErr)
+					}
+					history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: msg})
+					if cbErr := cb.RecordToolError(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+					continue
+				}
+				answers, qErr := a.opts.QuestionAsker.Ask(ctx, req.Questions)
+				var content string
+				if qErr != nil {
+					content = formatToolErrorJSON(name, step.Tool.Input, qErr)
+					if cbErr := cb.RecordToolError(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+				} else {
+					b, _ := json.Marshal(map[string]any{"answers": answers})
+					content = string(b)
+					cb.ResetToolErrors()
+				}
+				history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: content})
+				continue
+			}
+
+			// plan_exit: ask user approval, then signal mode switch or continue planning.
+			if name == "plan_exit" {
+				approved := false
+				if a.opts.QuestionAsker != nil {
+					answers, qErr := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{{
+						Question: "План готов. Переключиться в режим build для применения изменений?",
+						Options:  []string{"Да, переключить в build", "Нет, продолжить планирование"},
+					}})
+					if qErr == nil && len(answers) > 0 {
+						ans := strings.ToLower(strings.TrimSpace(answers[0]))
+						approved = ans == "1" || ans == "да" || ans == "yes" || strings.HasPrefix(ans, "да,")
+					}
+				} else {
+					approved = true // non-interactive (CI): auto-approve
+				}
+				if approved {
+					return history, &Result{Steps: steps, SwitchToBuild: true, Todos: a.todos}, nil
+				}
+				history = append(history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolCallID: toolCallID,
+					Content:    `{"status":"continue","message":"Продолжаем планирование. Доработай план и вызови plan_exit снова."}`,
+				})
+				continue
+			}
+
+			// plan_enter: stub — switching modes in-process is not supported yet.
+			if name == "plan_enter" {
+				history = append(history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolCallID: toolCallID,
+					Content:    `{"status":"not_supported","message":"plan_enter недоступен в текущем режиме. Запусти orchestra apply --mode plan для планирования."}`,
+				})
+				continue
+			}
+
+			// Plan-mode write guard: only .orchestra/plan.md writes are allowed.
+			if a.opts.Mode == ModePlan && (name == "fs.write" || name == "fs.edit") {
+				var pathReq struct {
+					Path string `json:"path"`
+				}
+				allowed := false
+				if json.Unmarshal(step.Tool.Input, &pathReq) == nil {
+					p := filepath.ToSlash(filepath.Clean(strings.TrimSpace(pathReq.Path)))
+					allowed = p == ".orchestra/plan.md"
+				}
+				if !allowed {
+					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "план-режим: запись разрешена только в .orchestra/plan.md")
+					history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+					if cbErr := cb.RecordDenied(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+					continue
+				}
+			}
+
 			// For exec.run with streaming enabled, forward output chunks via OnEvent.
 			callCtx := ctx
 			if name == "exec.run" && a.opts.OnEvent != nil {
@@ -497,15 +613,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 }
 
 // buildToolDefs returns the tool definitions for this agent run.
-// Uses CustomTools when set (child agents), otherwise picks from ListTools / ListToolsWithSubtasks
+// Uses CustomTools when set (child agents), otherwise picks based on Mode,
 // and appends ExtraTools (e.g. MCP server tools).
 func (a *Agent) buildToolDefs() []llm.ToolDef {
 	if len(a.opts.CustomTools) > 0 {
 		return a.opts.CustomTools
 	}
 	allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
+	hasSubtasks := a.opts.SubtaskRunner != nil
+	hasQA := a.opts.QuestionAsker != nil
+
 	var base []llm.ToolDef
-	if a.opts.SubtaskRunner != nil {
+	if a.opts.Mode != "" {
+		base = tools.ListToolsForMode(a.opts.Mode, allowExec, hasSubtasks, hasQA)
+	} else if hasSubtasks {
 		base = tools.ListToolsWithSubtasks(allowExec)
 	} else {
 		base = tools.ListTools(allowExec)
@@ -520,7 +641,7 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 // stepNum is the current step count (used for streaming event tagging).
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
-	systemPrompt := promptpkg.BuildSystemPromptForFamily(a.opts.PromptFamily)
+	systemPrompt := promptpkg.BuildSystemPromptForMode(a.opts.Mode, a.opts.PromptFamily)
 	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
 		systemPrompt += "\n\n" + memory
 	}
@@ -529,8 +650,13 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	if block := renderTodosBlock(a.todos); block != "" {
 		userPrompt = block + "\n" + userPrompt
 	}
+	// CKG context appended at end: attention-bias to recent content.
 	if a.ckgContext != "" {
-		userPrompt = a.ckgContext + "\n" + userPrompt
+		userPrompt += "\n\n" + a.ckgContext
+	}
+	// Mode reminder injected last (freshest in attention window).
+	if reminder := a.modeReminder(); reminder != "" {
+		userPrompt += "\n\n" + reminder
 	}
 
 	// Build messages: system + user (initial) + history (assistant tool calls + tool results)
@@ -1060,6 +1186,21 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 	default:
 		return nil, fmt.Errorf("unknown task tool: %s", name)
 	}
+}
+
+// modeReminder returns the reminder string to append to the user prompt for the current mode.
+// The build-switch reminder fires at most once (cleared after the first call).
+func (a *Agent) modeReminder() string {
+	switch a.opts.Mode {
+	case ModePlan:
+		return promptpkg.PlanModeReminder
+	case ModeBuild, "":
+		if a.justSwitchedFromPlan {
+			a.justSwitchedFromPlan = false
+			return promptpkg.BuildSwitchReminder
+		}
+	}
+	return ""
 }
 
 // execCommandFromInput extracts the command basename from exec.run JSON input.
