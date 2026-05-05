@@ -281,6 +281,103 @@ func findUnique(haystack string, needle string) (start int, end int, matches int
 	return start, end, matches
 }
 
+// lineTrimmedFind is a forgiving variant of findUnique that ignores trailing
+// whitespace on every line and CRLF/LF differences. It is called only when
+// strict findUnique returned 0 matches.
+//
+// Returns offsets into the *original* haystack so the resulting op stays
+// byte-accurate against the on-disk file. Counts up to 2 occurrences:
+// caller treats matches==0 as StaleContent and matches>1 as AmbiguousMatch,
+// exactly like findUnique.
+func lineTrimmedFind(haystack, needle string) (start, end, matches int) {
+	if needle == "" {
+		return 0, 0, 0
+	}
+	normHay, hayMap := normalizeTrailingWS(haystack)
+	normNeedle, _ := normalizeTrailingWS(needle)
+	if normNeedle == "" {
+		return 0, 0, 0
+	}
+
+	idx := 0
+	for {
+		j := strings.Index(normHay[idx:], normNeedle)
+		if j < 0 {
+			break
+		}
+		matches++
+		if matches == 1 {
+			start = hayMap[idx+j]
+			end = hayMap[idx+j+len(normNeedle)]
+		}
+		if matches > 1 {
+			return start, end, matches
+		}
+		idx = idx + j + max(1, len(normNeedle))
+	}
+	return start, end, matches
+}
+
+// normalizeTrailingWS returns:
+//   - normalized: a copy of s with `\r\n` collapsed to `\n` and trailing
+//     `[ \t]+` removed from each line.
+//   - origIdx: a slice of length len(normalized)+1 where origIdx[i] is the
+//     byte offset in s that the normalized byte at position i was copied
+//     from. origIdx[len(normalized)] == len(s) so callers can compute
+//     end-of-match offsets cleanly.
+func normalizeTrailingWS(s string) (normalized string, origIdx []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	origIdx = make([]int, 0, len(s)+1)
+
+	i := 0
+	for i < len(s) {
+		nl := strings.IndexByte(s[i:], '\n')
+		var lineEnd int
+		hasNL := false
+		if nl < 0 {
+			lineEnd = len(s)
+		} else {
+			lineEnd = i + nl
+			hasNL = true
+		}
+
+		// Compute trim point: walk backwards over space/tab from lineEnd.
+		// If the line ends with "\r\n", lineEnd points at the '\n', and we
+		// must also skip the '\r' before trimming whitespace.
+		contentEnd := lineEnd
+		if hasNL && contentEnd > i && s[contentEnd-1] == '\r' {
+			contentEnd-- // exclude the '\r' (collapse CRLF → LF)
+		}
+		for contentEnd > i {
+			c := s[contentEnd-1]
+			if c == ' ' || c == '\t' {
+				contentEnd--
+				continue
+			}
+			break
+		}
+
+		// Emit the trimmed line content with its original indices.
+		for k := i; k < contentEnd; k++ {
+			b.WriteByte(s[k])
+			origIdx = append(origIdx, k)
+		}
+		// Emit the '\n' if there was one.
+		if hasNL {
+			b.WriteByte('\n')
+			origIdx = append(origIdx, lineEnd) // record index of '\n' in s
+			i = lineEnd + 1
+		} else {
+			i = lineEnd
+		}
+	}
+
+	// Sentinel for end-of-string offset lookups.
+	origIdx = append(origIdx, len(s))
+	return b.String(), origIdx
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
