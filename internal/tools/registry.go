@@ -79,7 +79,7 @@ func toolFSRead() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        aliasFor("fs.read"),
-			Description: "Читает файл в workspace и возвращает content+sha256 (file_hash).",
+			Description: "Читает файл в workspace и возвращает content+sha256 (file_hash). Содержимое возвращается с префиксами номеров строк (`1: строка`) — только для ориентации. Префиксы не входят в файл: не включай их в поле `search` при редактировании.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -141,7 +141,7 @@ func toolFSEdit() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        aliasFor("fs.edit"),
-			Description: "Точечная замена в файле (search → replace). Строка поиска должна быть уникальна в файле. При неоднозначности — AmbiguousMatch; если не найдена — StaleContent. file_hash рекомендуется для защиты от гонок.",
+			Description: "Точечная замена в файле (search → replace). Строка поиска должна быть уникальна в файле. При неоднозначности — AmbiguousMatch; если не найдена — StaleContent. file_hash рекомендуется для защиты от гонок. Поле `search` должно содержать точный текст файла без префиксов номеров строк.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
