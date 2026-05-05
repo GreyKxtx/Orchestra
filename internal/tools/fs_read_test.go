@@ -1,7 +1,10 @@
 package tools
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,5 +66,57 @@ func TestAddLineNumbers(t *testing.T) {
 				t.Errorf("addLineNumbers(%q)\ngot:  %q\nwant: %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func newReadRunner(t *testing.T) (*Runner, string) {
+	t.Helper()
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { r.Close() })
+	return r, root
+}
+
+func TestFSReadLineNumbers(t *testing.T) {
+	r, root := newReadRunner(t)
+	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.FSRead(context.Background(), FSReadRequest{Path: "f.txt"})
+	if err != nil {
+		t.Fatalf("FSRead: %v", err)
+	}
+	want := "1: alpha\n2: beta\n"
+	if resp.Content != want {
+		t.Errorf("Content:\ngot:  %q\nwant: %q", resp.Content, want)
+	}
+}
+
+func TestFSReadHashUnchanged(t *testing.T) {
+	r, root := newReadRunner(t)
+	raw := []byte("line one\nline two\n")
+	if err := os.WriteFile(filepath.Join(root, "h.txt"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.FSRead(context.Background(), FSReadRequest{Path: "h.txt"})
+	if err != nil {
+		t.Fatalf("FSRead: %v", err)
+	}
+
+	// Hash must match the raw file bytes, not the numbered content.
+	wantHash, err := sha256File(filepath.Join(root, "h.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.SHA256 != wantHash {
+		t.Errorf("SHA256 mismatch:\ngot:  %s\nwant: %s", resp.SHA256, wantHash)
+	}
+	if resp.FileHash != wantHash {
+		t.Errorf("FileHash mismatch:\ngot:  %s\nwant: %s", resp.FileHash, wantHash)
 	}
 }

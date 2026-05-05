@@ -242,7 +242,7 @@ func (r *Runner) FSRead(ctx context.Context, req FSReadRequest) (*FSReadResponse
 
 	return &FSReadResponse{
 		Path:      relSlash,
-		Content:   content,
+		Content:   addLineNumbers(content),
 		SHA256:    hash,
 		FileHash:  hash,
 		MTimeUnix: mtimeUnix,
