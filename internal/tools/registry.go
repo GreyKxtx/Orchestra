@@ -55,7 +55,7 @@ func toolFSList() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "fs.list",
+			Name:        aliasFor("fs.list"),
 			Description: "Список файлов в workspace (с exclude правилами).",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -78,7 +78,7 @@ func toolFSRead() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "fs.read",
+			Name:        aliasFor("fs.read"),
 			Description: "Читает файл в workspace и возвращает content+sha256 (file_hash).",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -97,7 +97,7 @@ func toolFSGlob() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "fs.glob",
+			Name:        aliasFor("fs.glob"),
 			Description: "Поиск файлов по glob-паттерну (поддерживает ** для рекурсивного поиска).",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -118,8 +118,8 @@ func toolFSWrite() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "fs.write",
-			Description: "Атомарная запись файла (создание или перезапись). Для создания нового файла используй must_not_exist=true. Для перезаписи — file_hash текущей версии (из fs.read).",
+			Name:        aliasFor("fs.write"),
+			Description: "Атомарная запись файла (создание или перезапись). Для создания нового файла используй must_not_exist=true. Для перезаписи — file_hash текущей версии (из read).",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -140,7 +140,7 @@ func toolFSEdit() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "fs.edit",
+			Name:        aliasFor("fs.edit"),
 			Description: "Точечная замена в файле (search → replace). Строка поиска должна быть уникальна в файле. При неоднозначности — AmbiguousMatch; если не найдена — StaleContent. file_hash рекомендуется для защиты от гонок.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -162,7 +162,7 @@ func toolSearchText() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "search.text",
+			Name:        aliasFor("search.text"),
 			Description: "Текстовый поиск по проекту (можно ограничить paths).",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -192,7 +192,7 @@ func toolCodeSymbols() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "code.symbols",
+			Name:        aliasFor("code.symbols"),
 			Description: "Outline/символы файла (если доступно).",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -210,7 +210,7 @@ func toolExploreCodebase() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "explore_codebase",
+			Name:        aliasFor("explore_codebase"),
 			Description: "Поиск архитектурного контекста. Используй, чтобы найти код функции, структуры или интерфейса по имени, а также посмотреть, где они используются в проекте. НЕ используй для чтения целых файлов.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -231,7 +231,7 @@ func toolExecRun() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "exec.run",
+			Name:        aliasFor("exec.run"),
 			Description: "Запуск команды внутри workspace (sandboxed: timeout/output limit).",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -253,7 +253,7 @@ func toolTodoWrite() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "todo.write",
+			Name:        aliasFor("todo.write"),
 			Description: "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -283,7 +283,7 @@ func toolTodoRead() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "todo.read",
+			Name:        aliasFor("todo.read"),
 			Description: "Прочитать текущий список задач.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -379,8 +379,8 @@ func toolTaskSpawn() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.spawn",
-			Description: "Создать дочернюю задачу для независимого исследования. Возвращает task_id. Используй task.wait для получения результата.",
+			Name:        aliasFor("task.spawn"),
+			Description: "Создать дочернюю задачу для независимого исследования. Возвращает task_id. Используй task_wait для получения результата.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -399,7 +399,7 @@ func toolTaskWait() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.wait",
+			Name:        aliasFor("task.wait"),
 			Description: "Подождать завершения дочерней задачи и получить её результат.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -418,7 +418,7 @@ func toolTaskCancel() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.cancel",
+			Name:        aliasFor("task.cancel"),
 			Description: "Отменить дочернюю задачу.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -436,7 +436,7 @@ func toolTaskResult() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.result",
+			Name:        aliasFor("task.result"),
 			Description: "Сообщить результат исследования родительскому агенту. Вызови когда закончил анализ.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -454,7 +454,7 @@ func toolRuntimeQuery() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "runtime.query",
+			Name:        aliasFor("runtime.query"),
 			Description: "Получить spans OTel-трейса с привязкой к узлам CKG (code_file, code_lineno, node_fqn). Используй для диагностики багов по trace_id.",
 			Parameters: mustSchema(`{
   "type": "object",
