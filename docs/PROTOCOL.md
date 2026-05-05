@@ -6,12 +6,23 @@
 
 - **`protocol.ProtocolVersion`**: `1`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `1`
+- **`protocol.ToolsVersion`**: `3`
 
 Совместимость проверяется в `initialize`:
 
 - `protocol_version` **обязан** совпасть.
 - `ops_version` / `tools_version` — опциональны, но если переданы, то **должны** совпасть.
+
+### История ToolsVersion
+
+- **v3** (2026-05-05): имена tools переключены на короткие алиасы
+  (`read`/`ls`/`glob`/`write`/`edit`/`grep`/`symbols`/`bash`/`explore`/
+  `runtime`/`todowrite`/`todoread`/`task_spawn`/`task_wait`/`task_cancel`/
+  `task_result`). Канонические имена (`fs.read`, `search.text`, `exec.run`
+  и т.д.) по-прежнему принимаются в `tool.call` для обратной совместимости.
+- **v2**: добавлены `runtime.query`, `task.*`, `plan_enter`/`plan_exit`,
+  `question`.
+- **v1**: первоначальный набор `fs.*` / `search.*` / `code.*` / `exec.*`.
 
 ## Транспорт
 
