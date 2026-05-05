@@ -11,7 +11,7 @@ const (
 	OpsVersion = 1
 
 	// ToolsVersion is the version of tool interfaces (inputs/outputs).
-	ToolsVersion = 3
+	ToolsVersion = 4
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

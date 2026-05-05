@@ -6,7 +6,7 @@
 
 - **`protocol.ProtocolVersion`**: `1`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `3`
+- **`protocol.ToolsVersion`**: `4`
 
 Совместимость проверяется в `initialize`:
 
@@ -15,6 +15,10 @@
 
 ### История ToolsVersion
 
+- **v4** (2026-05-05): `fs.read` content field now prefixed with 1-based line
+  numbers (`1: line`, `2: line`). The `sha256`/`file_hash` fields are still
+  computed from the raw file bytes. Do NOT include line-number prefixes in
+  `fs.edit` search strings.
 - **v3** (2026-05-05): имена tools переключены на короткие алиасы
   (`read`/`ls`/`glob`/`write`/`edit`/`grep`/`symbols`/`bash`/`explore`/
   `runtime`/`todowrite`/`todoread`/`task_spawn`/`task_wait`/`task_cancel`/
