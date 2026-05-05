@@ -147,7 +147,7 @@ func BuildSystemPromptForFamily(family string) string {
 ИНСТРУМЕНТЫ (tool calls):
 Используй только реальные tool calls из схемы tools[]. Не имитируй вызовы в тексте.
 За один шаг — не более одного tool call.
-Доступные инструменты: fs.list, fs.read, fs.write, fs.edit, fs.glob, search.text, code.symbols и другие из tools[].
+Доступные инструменты: ls, read, write, edit, glob, grep, symbols и другие из tools[].
 
 ВАЖНО: file.write_atomic, file.search_replace, file.unified_diff — это НЕ tool calls!
 Это типы патчей в финальном PatchSet JSON.
@@ -166,12 +166,12 @@ func BuildSystemPromptForFamily(family string) string {
    {"patches":[{"type":"file.search_replace","path":"...","search":"...","replace":"...","file_hash":"sha256:..."}]}
 
 ТИПЫ ПАТЧЕЙ:
-- file.search_replace — точечная правка (нужен file_hash из fs.read)
+- file.search_replace — точечная правка (нужен file_hash из read)
 - file.write_atomic   — новый файл или полная перезапись
 - file.unified_diff   — крупный diff (только если search_replace не подходит)
 
 ПРАВИЛА:
-- Перед изменением существующего файла всегда делай fs.read и используй точный file_hash из ответа.
+- Перед изменением существующего файла всегда делай read и используй точный file_hash из ответа.
 - Не делай лишних tool calls — как только собрал нужное, отвечай.
 - {"patches":[]} — валидный ответ когда изменений не требуется.
 `)
@@ -185,7 +185,7 @@ func BuildSystemPromptForFamily(family string) string {
 }
 
 // PlanModeReminder is injected into every user message in plan mode.
-const PlanModeReminder = `РЕЖИМ ПЛАНИРОВАНИЯ АКТИВЕН. СТРОГО ЗАПРЕЩЕНО: fs.write и fs.edit (кроме .orchestra/plan.md), exec.run. Анализируй кодовую базу, задавай вопросы через question, запиши план в .orchestra/plan.md, затем вызови plan_exit.`
+const PlanModeReminder = `РЕЖИМ ПЛАНИРОВАНИЯ АКТИВЕН. СТРОГО ЗАПРЕЩЕНО: write и edit (кроме .orchestra/plan.md), bash. Анализируй кодовую базу, задавай вопросы через question, запиши план в .orchestra/plan.md, затем вызови plan_exit.`
 
 // BuildSwitchReminder is injected once when switching from plan to build mode.
 const BuildSwitchReminder = `Режим изменён: ПЛАН → BUILD. Теперь разрешены все инструменты. Выполни согласованный план.`
@@ -207,14 +207,14 @@ func buildPlanSystemPrompt(family string) string {
 	base := strings.TrimSpace(`
 Ты — агент в режиме ПЛАНИРОВАНИЯ (read-only).
 
-СТРОГО ЗАПРЕЩЕНО: fs.write, fs.edit (кроме .orchestra/plan.md), exec.run — даже если пользователь просит.
-Разрешено: fs.read, fs.list, fs.glob, search.text, code.symbols, explore_codebase, runtime.query, task.spawn, question, plan_exit.
+СТРОГО ЗАПРЕЩЕНО: write, edit (кроме .orchestra/plan.md), bash — даже если пользователь просит.
+Разрешено: read, ls, glob, grep, symbols, explore, runtime, task_spawn, question, plan_exit.
 
 Твоя задача:
-1. Изучи кодовую базу: fs.read / search.text / code.symbols / explore_codebase
+1. Изучи кодовую базу: read / grep / symbols / explore
 2. Если доступен <ckg_context> — используй его как стартовую точку для навигации
 3. Задавай уточняющие вопросы через question когда нужны трейдоффы
-4. Напиши архитектурный план в .orchestra/plan.md через fs.write (единственный разрешённый write)
+4. Напиши архитектурный план в .orchestra/plan.md через write (единственный разрешённый write)
 5. Когда план полностью готов — вызови plan_exit
 
 ФОРМАТ ПЛАНА (.orchestra/plan.md):
@@ -234,8 +234,8 @@ func buildExploreSystemPrompt() string {
 	return strings.TrimSpace(`
 Ты — исследователь кодовой базы (read-only субагент).
 
-Инструменты: fs.read, fs.list, fs.glob, search.text, code.symbols.
-Когда закончил — вызови task.result с кратким структурированным ответом.
+Инструменты: read, ls, glob, grep, symbols.
+Когда закончил — вызови task_result с кратким структурированным ответом.
 Не объясняй что делаешь — только результат.
 `)
 }
