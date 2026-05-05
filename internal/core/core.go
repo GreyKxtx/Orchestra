@@ -439,7 +439,9 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 
 	// Consent policy: exec.run is blocked by default (Confirm=true).
 	// Allowed when: Confirm=false (allow all), OR command is in exec.allow list.
-	if strings.TrimSpace(params.Name) == "exec.run" && c.cfg != nil {
+	// Normalize alias ("bash") to canonical so the gate cannot be bypassed.
+	canonicalName := tools.ResolveToolName(strings.TrimSpace(params.Name))
+	if canonicalName == "exec.run" && c.cfg != nil {
 		confirm := c.cfg.Exec.Confirm == nil || *c.cfg.Exec.Confirm
 		if confirm {
 			var execReq struct {

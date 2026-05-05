@@ -36,11 +36,16 @@ var canonicalToAlias = func() map[string]string {
 	return m
 }()
 
-// resolveToolName returns the canonical name for a tool, accepting either
+// ResolveToolName returns the canonical name for a tool, accepting either
 // an alias ("read") or the canonical name itself ("fs.read"). Unknown
 // names pass through unchanged so the dispatch switch can produce its
 // usual "unknown tool" error.
-func resolveToolName(name string) string {
+//
+// Exported for callers (agent loop, core consent gate) that need to
+// match the canonical form *before* dispatching, so that name-based
+// guards (exec consent, plan-mode write block, task/todo routing) are
+// not bypassed when the LLM uses an alias.
+func ResolveToolName(name string) string {
 	if canonical, ok := aliasToCanonical[name]; ok {
 		return canonical
 	}
