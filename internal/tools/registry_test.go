@@ -8,8 +8,10 @@ import (
 func TestToolRegistry_AllowExecFalse_NoExecRun(t *testing.T) {
 	defs := ListTools(false)
 	for _, d := range defs {
-		if d.Function.Name == "exec.run" {
-			t.Fatalf("exec.run must not be exposed when allowExec=false")
+		// "bash" is the LLM-facing alias for the canonical "exec.run" tool.
+		// Either name leaking when allowExec=false would be a bug.
+		if d.Function.Name == "bash" || d.Function.Name == "exec.run" {
+			t.Fatalf("exec tool must not be exposed when allowExec=false (got %q)", d.Function.Name)
 		}
 	}
 }

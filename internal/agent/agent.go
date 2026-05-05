@@ -260,6 +260,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				})
 				continue
 			}
+			// Normalize LLM-facing aliases (read, bash, edit, todowrite, task_result, …)
+			// to canonical names so every downstream name check (exec consent,
+			// plan-mode write guard, task/todo routing, post-tool hook) matches
+			// the form it was written against. Runner.Call applies the same
+			// resolution again, which is idempotent.
+			name = tools.ResolveToolName(name)
 
 			// Extract tool_call_id from response
 			toolCallID := ""

@@ -52,7 +52,7 @@ func TestApplyOps_Stdio_DryRun_NoWrite(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    2,
+		"tools_version":    protocol.ToolsVersion,
 		"ops_version":      1,
 	})
 
@@ -109,7 +109,7 @@ func TestApplyOps_Stdio_Apply_WithBackup(t *testing.T) {
 		"project_root":     proj,
 		"project_id":       projectID,
 		"protocol_version": protocolVersion,
-		"tools_version":    2,
+		"tools_version":    protocol.ToolsVersion,
 		"ops_version":      1,
 	})
 

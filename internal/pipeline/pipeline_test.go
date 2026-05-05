@@ -134,8 +134,8 @@ func TestBuildInvestigatorGoal_NoEvidence(t *testing.T) {
 	if strings.Contains(goal, "<runtime_evidence>") {
 		t.Error("goal should not contain runtime_evidence block when empty")
 	}
-	if !strings.Contains(goal, "task.result") {
-		t.Error("goal should mention task.result")
+	if !strings.Contains(goal, "task_result") {
+		t.Error("goal should mention task_result")
 	}
 }
 
@@ -162,8 +162,8 @@ func TestBuildCriticGoal_NoEvidence(t *testing.T) {
 	if strings.Contains(goal, "<runtime_evidence>") {
 		t.Error("goal should not contain runtime_evidence block when empty")
 	}
-	if !strings.Contains(goal, "task.result") {
-		t.Error("goal should mention task.result")
+	if !strings.Contains(goal, "task_result") {
+		t.Error("goal should mention task_result")
 	}
 }
 

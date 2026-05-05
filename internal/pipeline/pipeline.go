@@ -221,7 +221,7 @@ func runInvestigator(
 		ResponseFormat:       opts.ResponseFormat,
 		Debug:                opts.Debug,
 		AgentLogger:          opts.AgentLogger,
-		// Read-only + task.result + runtime.query for trace correlation.
+		// Read-only + task_result + runtime for trace correlation.
 		CustomTools: tools.ListToolsForInvestigator(),
 		OnEvent:     wrapOnEvent("investigator", opts.OnEvent),
 	})
@@ -290,7 +290,7 @@ func runCritic(
 		ResponseFormat:       opts.ResponseFormat,
 		Debug:                opts.Debug,
 		AgentLogger:          opts.AgentLogger,
-		// Read-only + task.result; no write tools.
+		// Read-only + task_result; no write tools.
 		CustomTools: tools.ListToolsForChild(),
 		OnEvent:     wrapOnEvent("critic", opts.OnEvent),
 	})
@@ -311,19 +311,19 @@ func buildInvestigatorGoal(query, runtimeEvidence string) string {
 	var b strings.Builder
 	b.WriteString(`Ты — Investigator. Твоя задача: исследовать кодовую базу и собрать всю информацию, необходимую для выполнения задачи ниже.
 
-Используй fs.read, fs.list, fs.glob, search.text, code.symbols для анализа.`)
+Используй read, ls, glob, grep, symbols для анализа.`)
 
 	if runtimeEvidence != "" {
 		b.WriteString("\n\n")
 		b.WriteString(runtimeEvidence)
 		b.WriteString("\n\nПрежде всего разбери <runtime_evidence>: найди в кодовой базе файлы и функции, " +
 			"соответствующие CKG-нодам из спанов с ошибками. " +
-			"Используй runtime.query для уточняющих запросов если нужно.")
+			"Используй runtime для уточняющих запросов если нужно.")
 	}
 
 	b.WriteString(`
 
-Когда закончишь — вызови task.result с подробным структурированным отчётом:
+Когда закончишь — вызови task_result с подробным структурированным отчётом:
 - Какие файлы затронуты
 - Какие функции/типы нужно изменить (с полными именами)
 - Зависимости между файлами
@@ -392,13 +392,13 @@ func buildCriticGoal(query, investigation, runtimeEvidence string, coderRes *age
 
 	b.WriteString(`
 
-Прочитай изменённые файлы через fs.read и оцени:
+Прочитай изменённые файлы через read и оцени:
 1. Решает ли реализация поставленную задачу?
 2. Есть ли логические ошибки или упущенные граничные случаи?
 3. Соответствует ли код конвенциям кодовой базы?
 4. Есть ли проблемы с производительностью или безопасностью?
 
-Когда закончишь анализ — вызови task.result с JSON-вердиктом:
+Когда закончишь анализ — вызови task_result с JSON-вердиктом:
 {"status":"accept","reason":"<краткое обоснование>"}
   — если реализация корректна
 {"status":"reject","reason":"<главная проблема>","issues":["<issue1>","<issue2>"]}
@@ -409,7 +409,7 @@ func buildCriticGoal(query, investigation, runtimeEvidence string, coderRes *age
 
 // --- helpers ---
 
-// parseVerdict interprets a Critic's task.result content.
+// parseVerdict interprets a Critic's task_result content.
 // Returns (accept, text).
 func parseVerdict(content string) (bool, string) {
 	content = strings.TrimSpace(content)

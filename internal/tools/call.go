@@ -23,7 +23,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 	// Accept both LLM-facing aliases (read, grep, bash, …) and legacy
 	// canonical names (fs.read, search.text, exec.run, …). Internal
 	// dispatch is keyed on the canonical form.
-	name = resolveToolName(name)
+	name = ResolveToolName(name)
 
 	switch name {
 	case "fs.list":
