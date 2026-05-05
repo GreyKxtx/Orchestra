@@ -15,10 +15,15 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		return nil, fmt.Errorf("tool name is empty")
 	}
 
-	// Route mcp:* calls to the registered MCP manager.
+	// Route mcp:* calls to the registered MCP manager (use original name).
 	if r.mcpCaller != nil && strings.HasPrefix(name, "mcp:") {
 		return r.mcpCaller.Call(ctx, name, input)
 	}
+
+	// Accept both LLM-facing aliases (read, grep, bash, …) and legacy
+	// canonical names (fs.read, search.text, exec.run, …). Internal
+	// dispatch is keyed on the canonical form.
+	name = resolveToolName(name)
 
 	switch name {
 	case "fs.list":
