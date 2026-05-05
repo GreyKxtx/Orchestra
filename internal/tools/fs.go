@@ -198,3 +198,41 @@ func readFileWithHash(absPath string, maxBytes int64) (content string, size int6
 	hash = "sha256:" + hex.EncodeToString(h.Sum(nil))
 	return b.String(), size, mtimeUnix, hash, truncated, nil
 }
+
+// addLineNumbers prefixes each line with its 1-based line number.
+// Width is padded to the digit count of the last line number so columns align.
+// A trailing newline in content is preserved; the empty "line" after it is not numbered.
+func addLineNumbers(content string) string {
+	if content == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	hasTrailing := strings.HasSuffix(content, "\n")
+
+	// Lines to number: exclude the empty string produced by a trailing \n.
+	numerable := lines
+	if hasTrailing {
+		numerable = lines[:len(lines)-1]
+	}
+	if len(numerable) == 0 {
+		return content
+	}
+
+	width := len(fmt.Sprintf("%d", len(numerable)))
+	format := fmt.Sprintf("%%%dd: ", width)
+
+	var b strings.Builder
+	b.Grow(len(content) + len(numerable)*(width+2))
+	for i, line := range numerable {
+		fmt.Fprintf(&b, format, i+1)
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	result := b.String()
+	if !hasTrailing {
+		result = result[:len(result)-1] // strip the extra \n we added for the last line
+	}
+	return result
+}
