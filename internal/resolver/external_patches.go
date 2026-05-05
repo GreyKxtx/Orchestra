@@ -91,11 +91,29 @@ func resolveSearchReplace(projectRoot string, p externalpatch.Patch) (ops.Replac
 
 	start, end, matches := findUnique(string(before), p.Search)
 	if matches == 0 {
-		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
-			"path":     p.Path,
-			"search":   preview(p.Search, 200),
-			"fileHash": store.ComputeSHA256(before),
-		})
+		// Forgiving fallback: retry ignoring trailing whitespace on every
+		// line and CRLF/LF differences. The op we build still references
+		// the *original* bytes via Expected, so the applier's strict
+		// re-check semantics are unchanged.
+		ltStart, ltEnd, ltMatches := lineTrimmedFind(string(before), p.Search)
+		switch ltMatches {
+		case 0:
+			return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+				"path":     p.Path,
+				"search":   preview(p.Search, 200),
+				"fileHash": store.ComputeSHA256(before),
+			})
+		case 1:
+			start, end = ltStart, ltEnd
+			// Fall through to position computation below using the
+			// recovered offsets. Expected is set from before[start:end].
+		default: // >1
+			return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (line-trimmed)", map[string]any{
+				"path":    p.Path,
+				"matches": ltMatches,
+				"search":  preview(p.Search, 200),
+			})
+		}
 	}
 	if matches > 1 {
 		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous", map[string]any{
@@ -127,7 +145,12 @@ func resolveSearchReplace(projectRoot string, p externalpatch.Patch) (ops.Replac
 			Start: startPos,
 			End:   endPos,
 		},
-		Expected:    p.Search,
+		// Expected must be the *verbatim* bytes from the file at the
+		// matched range (not p.Search): in the strict path they coincide,
+		// but in the forgiving path the file's bytes carry trailing
+		// whitespace / CRLF that p.Search lacks, and the applier's
+		// strict re-check would otherwise reject.
+		Expected:    string(before[start:end]),
 		Replacement: p.Replace,
 		Conditions: ops.Conditions{
 			FileHash:    p.FileHash,
