@@ -47,6 +47,11 @@ func TestAddLineNumbers(t *testing.T) {
 				" 6: x\n 7: x\n 8: x\n 9: x\n10: x\n",
 		},
 		{
+			name:  "only newline",
+			input: "\n",
+			want:  "1: \n",
+		},
+		{
 			name:  "padding at 100 lines",
 			input: strings.Repeat("x\n", 100),
 			want: func() string {
