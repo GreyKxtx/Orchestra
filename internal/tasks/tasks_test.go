@@ -30,7 +30,7 @@ func (m *mockTaskResultLLM) Complete(_ context.Context, _ llm.CompleteRequest) (
 					ID:   "call_1",
 					Type: "function",
 					Function: llm.ToolCallFunc{
-						Name:      "task.result",
+						Name:      "task_result",
 						Arguments: llm.ToolArguments(input),
 					},
 				},

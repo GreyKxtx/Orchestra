@@ -133,7 +133,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "runtime.query":
+	case "runtime_query":
 		var req RuntimeQueryRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err

@@ -22,7 +22,7 @@ func TestListTools_AllNamesPresent(t *testing.T) {
 	for _, d := range defs {
 		names[d.Function.Name] = true
 	}
-	want := []string{"ls", "read", "glob", "write", "edit", "grep", "symbols", "bash", "explore", "runtime.query", "todo.write", "todo.read"}
+	want := []string{"ls", "read", "glob", "write", "edit", "grep", "symbols", "bash", "explore", "runtime_query", "todowrite", "todoread"}
 	for _, n := range want {
 		if !names[n] {
 			t.Errorf("ListTools(allowExec=true): missing tool %q", n)

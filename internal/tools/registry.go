@@ -253,7 +253,7 @@ func toolTodoWrite() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "todo.write",
+			Name:        "todowrite",
 			Description: "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -283,7 +283,7 @@ func toolTodoRead() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "todo.read",
+			Name:        "todoread",
 			Description: "Прочитать текущий список задач.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -379,7 +379,7 @@ func toolTaskSpawn() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.spawn",
+			Name:        "task_spawn",
 			Description: "Создать дочернюю задачу для независимого исследования. Возвращает task_id. Используй task_wait для получения результата.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -399,7 +399,7 @@ func toolTaskWait() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.wait",
+			Name:        "task_wait",
 			Description: "Подождать завершения дочерней задачи и получить её результат.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -418,7 +418,7 @@ func toolTaskCancel() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.cancel",
+			Name:        "task_cancel",
 			Description: "Отменить дочернюю задачу.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -436,7 +436,7 @@ func toolTaskResult() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "task.result",
+			Name:        "task_result",
 			Description: "Сообщить результат исследования родительскому агенту. Вызови когда закончил анализ.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -454,7 +454,7 @@ func toolRuntimeQuery() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "runtime.query",
+			Name:        "runtime_query",
 			Description: "Получить spans OTel-трейса с привязкой к узлам CKG (code_file, code_lineno, node_fqn). Используй для диагностики багов по trace_id.",
 			Parameters: mustSchema(`{
   "type": "object",
@@ -482,7 +482,7 @@ func toolPlanEnter() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "plan.enter",
+			Name:        "plan_enter",
 			Description: "Переключиться в режим ПЛАНИРОВАНИЯ (read-only). Используй для детального анализа задачи перед внесением изменений.",
 			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
 		},
@@ -493,7 +493,7 @@ func toolPlanExit() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "plan.exit",
+			Name:        "plan_exit",
 			Description: "Завершить планирование и запросить переключение в build-режим. Вызывай только когда план в .orchestra/plan.md полностью готов.",
 			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
 		},
