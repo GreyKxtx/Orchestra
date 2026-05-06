@@ -2,7 +2,7 @@
 # Usage: .\benchmark.ps1
 
 $ErrorActionPreference = "Stop"
-$projectRoot = $PSScriptRoot
+$projectRoot = Split-Path $PSScriptRoot -Parent
 $benchCount = 5
 
 Write-Host "=== Orchestra Context Benchmarks (Go) ===" -ForegroundColor Cyan
