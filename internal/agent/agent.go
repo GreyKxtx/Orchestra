@@ -310,7 +310,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// task.result: child agent reports its answer and exits immediately.
-			if name == "task.result" {
+			if name == "task_result" {
 				var req struct {
 					Content string `json:"content"`
 				}
@@ -323,7 +323,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// task.spawn/wait/cancel are handled in-process via SubtaskRunner.
-			if a.opts.SubtaskRunner != nil && (name == "task.spawn" || name == "task.wait" || name == "task.cancel") {
+			if a.opts.SubtaskRunner != nil && (name == "task_spawn" || name == "task_wait" || name == "task_cancel") {
 				out, taskErr := a.handleTaskTool(ctx, name, step.Tool.Input)
 				var content string
 				if taskErr != nil {
@@ -347,7 +347,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// todo.write / todo.read are handled in-process (session state, no filesystem access).
-			if name == "todo.write" || name == "todo.read" {
+			if name == "todowrite" || name == "todoread" {
 				out, err := a.handleTodoTool(name, step.Tool.Input)
 				var content string
 				if err != nil {
@@ -403,7 +403,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// plan_exit: ask user approval, then signal mode switch or continue planning.
-			if name == "plan.exit" {
+			if name == "plan_exit" {
 				approved := false
 				if a.opts.QuestionAsker != nil {
 					answers, qErr := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{{
@@ -429,7 +429,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// plan_enter: stub — switching modes in-process is not supported yet.
-			if name == "plan.enter" {
+			if name == "plan_enter" {
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
@@ -1093,7 +1093,7 @@ func estimateMessageSize(msg llm.Message) int {
 // handleTodoTool handles todo.read and todo.write in-process (no runner involvement).
 func (a *Agent) handleTodoTool(name string, input json.RawMessage) (json.RawMessage, error) {
 	switch name {
-	case "todo.write":
+	case "todowrite":
 		var req tools.TodoWriteRequest
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("todo.write: invalid input: %w", err)
@@ -1101,7 +1101,7 @@ func (a *Agent) handleTodoTool(name string, input json.RawMessage) (json.RawMess
 		a.todos = req.Todos
 		resp, _ := json.Marshal(tools.TodoWriteResponse{Count: len(req.Todos)})
 		return resp, nil
-	case "todo.read":
+	case "todoread":
 		resp, _ := json.Marshal(tools.TodoReadResponse{Todos: a.todos})
 		return resp, nil
 	default:
@@ -1127,7 +1127,7 @@ func renderTodosBlock(todos []tools.TodoItem) string {
 // handleTaskTool handles task.spawn/task.wait/task.cancel in-process via SubtaskRunner.
 func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawMessage) (json.RawMessage, error) {
 	switch name {
-	case "task.spawn":
+	case "task_spawn":
 		var req struct {
 			Goal      string `json:"goal"`
 			MaxSteps  int    `json:"max_steps"`
@@ -1150,7 +1150,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 		resp, _ := json.Marshal(map[string]any{"task_id": taskID, "status": "spawned"})
 		return resp, nil
 
-	case "task.wait":
+	case "task_wait":
 		var req struct {
 			TaskID    string `json:"task_id"`
 			TimeoutMS int    `json:"timeout_ms"`
@@ -1168,7 +1168,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 		resp, _ := json.Marshal(result)
 		return resp, nil
 
-	case "task.cancel":
+	case "task_cancel":
 		var req struct {
 			TaskID string `json:"task_id"`
 		}

@@ -185,7 +185,7 @@ func BuildSystemPromptForFamily(family string) string {
 }
 
 // PlanModeReminder is injected into every user message in plan mode.
-const PlanModeReminder = `РЕЖИМ ПЛАНИРОВАНИЯ АКТИВЕН. СТРОГО ЗАПРЕЩЕНО: write и edit (кроме .orchestra/plan.md), bash. Анализируй кодовую базу, задавай вопросы через question, запиши план в .orchestra/plan.md, затем вызови plan.exit.`
+const PlanModeReminder = `РЕЖИМ ПЛАНИРОВАНИЯ АКТИВЕН. СТРОГО ЗАПРЕЩЕНО: write и edit (кроме .orchestra/plan.md), bash. Анализируй кодовую базу, задавай вопросы через question, запиши план в .orchestra/plan.md, затем вызови plan_exit.`
 
 // BuildSwitchReminder is injected once when switching from plan to build mode.
 const BuildSwitchReminder = `Режим изменён: ПЛАН → BUILD. Теперь разрешены все инструменты. Выполни согласованный план.`
@@ -208,14 +208,14 @@ func buildPlanSystemPrompt(family string) string {
 Ты — агент в режиме ПЛАНИРОВАНИЯ (read-only).
 
 СТРОГО ЗАПРЕЩЕНО: write, edit (кроме .orchestra/plan.md), bash — даже если пользователь просит.
-Разрешено: read, ls, glob, grep, symbols, explore, runtime, task.spawn, question, plan.exit.
+Разрешено: read, ls, glob, grep, symbols, explore, runtime_query, task_spawn, question, plan_exit.
 
 Твоя задача:
 1. Изучи кодовую базу: read / grep / symbols / explore
 2. Если доступен <ckg_context> — используй его как стартовую точку для навигации
 3. Задавай уточняющие вопросы через question когда нужны трейдоффы
 4. Напиши архитектурный план в .orchestra/plan.md через write (единственный разрешённый write)
-5. Когда план полностью готов — вызови plan.exit
+5. Когда план полностью готов — вызови plan_exit
 
 ФОРМАТ ПЛАНА (.orchestra/plan.md):
 ## Цель
