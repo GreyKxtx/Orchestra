@@ -53,9 +53,21 @@ func NewAnthropicClient(cfg config.LLMConfig) *AnthropicClient {
 type anthropicRequest struct {
 	Model     string             `json:"model"`
 	MaxTokens int                `json:"max_tokens"`
-	System    string             `json:"system,omitempty"`
+	System    any                `json:"system,omitempty"` // string OR []anthropicSystemBlock
 	Messages  []anthropicMessage `json:"messages"`
 	Tools     []anthropicTool    `json:"tools,omitempty"`
+}
+
+// anthropicSystemBlock is used when prompt caching is enabled.
+// Pass as []anthropicSystemBlock to System to attach cache_control.
+type anthropicSystemBlock struct {
+	Type         string                 `json:"type"` // "text"
+	Text         string                 `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
 }
 
 type anthropicMessage struct {
@@ -92,10 +104,22 @@ type anthropicResponse struct {
 func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*CompleteResponse, error) {
 	system, msgs := convertToAnthropic(req.Messages)
 
+	// Use structured system blocks with cache_control so Anthropic can cache the
+	// system prompt across turns. Cache writes cost ~25% more, but reads save ~90%.
+	// Over a 24-step session this is a net win from step 2 onward.
+	var systemField any = system
+	if system != "" {
+		systemField = []anthropicSystemBlock{{
+			Type:         "text",
+			Text:         system,
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		}}
+	}
+
 	body := anthropicRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
-		System:    system,
+		System:    systemField,
 		Messages:  msgs,
 		Tools:     convertTools(req.Tools),
 	}
@@ -112,6 +136,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*C
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", c.apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
+	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {

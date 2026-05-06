@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/applier"
@@ -36,6 +37,10 @@ type Runner struct {
 
 	ckgStore    *ckg.Store
 	ckgProvider *ckg.Provider
+
+	// seenInstructionDirs tracks which directories have already had their
+	// ORCHESTRA.md injected into a tool result (lazy discovery).
+	seenInstructionDirs sync.Map
 }
 
 type RunnerOptions struct {
@@ -240,15 +245,59 @@ func (r *Runner) FSRead(ctx context.Context, req FSReadRequest) (*FSReadResponse
 		return nil, err
 	}
 
+	numbered := addLineNumbers(content)
+	if reminder := r.discoverInstructions(filepath.Dir(absPath)); reminder != "" {
+		numbered = "<system-reminder>\n" + reminder + "\n</system-reminder>\n\n" + numbered
+	}
+
 	return &FSReadResponse{
 		Path:      relSlash,
-		Content:   addLineNumbers(content),
+		Content:   numbered,
 		SHA256:    hash,
 		FileHash:  hash,
 		MTimeUnix: mtimeUnix,
 		Size:      size,
 		Truncated: truncated,
 	}, nil
+}
+
+// discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
+// in directories not yet seen. Returns the combined text, or empty string if nothing new.
+func (r *Runner) discoverInstructions(dir string) string {
+	const instructionFile = "ORCHESTRA.md"
+	root := filepath.Clean(r.workspaceRoot)
+	dir = filepath.Clean(dir)
+
+	var parts []string
+	for {
+		// Only look inside the workspace.
+		if !strings.HasPrefix(dir+string(filepath.Separator), root+string(filepath.Separator)) && dir != root {
+			break
+		}
+
+		if _, loaded := r.seenInstructionDirs.LoadOrStore(dir, struct{}{}); !loaded {
+			// First time seeing this directory — check for ORCHESTRA.md.
+			candidate := filepath.Join(dir, instructionFile)
+			if data, err := os.ReadFile(candidate); err == nil {
+				text := strings.TrimSpace(string(data))
+				if text != "" {
+					rel, _ := filepath.Rel(root, candidate)
+					parts = append(parts, "Instructions from "+filepath.ToSlash(rel)+":\n"+text)
+				}
+			}
+		}
+
+		if dir == root {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 // --- fs.apply_ops ---

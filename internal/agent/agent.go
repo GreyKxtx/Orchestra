@@ -662,6 +662,10 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
 	systemPrompt := promptpkg.BuildSystemPromptForMode(a.opts.Mode, a.opts.PromptFamily)
+	// .orchestra/system.txt in the workspace root overrides the built-in system prompt.
+	if override := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); override != "" {
+		systemPrompt = override
+	}
 	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
 		systemPrompt += "\n\n" + memory
 	}
