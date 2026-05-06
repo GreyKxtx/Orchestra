@@ -12,7 +12,7 @@ func TestPrompt_IncludesUserInfo_Minimal(t *testing.T) {
 		WorkspaceRoot: "D:/proj",
 		IsGitRepo:     true,
 	}
-	base := BuildUserPrompt("сделай X", snap, []string{"fs.list", "fs.read"})
+	base := BuildUserPrompt("сделай X", snap, []string{"ls", "read"})
 	if !strings.Contains(base, "<user_info>") || !strings.Contains(base, "</user_info>") {
 		t.Fatalf("expected <user_info> block, got:\n%s", base)
 	}
@@ -29,7 +29,7 @@ func TestPrompt_IncludesUserInfo_Minimal(t *testing.T) {
 
 func TestPrompt_RespectsMaxPromptBytes_TruncatesOldestHistory(t *testing.T) {
 	snap := WorkspaceSnapshot{WorkspaceRoot: "D:/proj"}
-	base := BuildUserPrompt("сделай X", snap, []string{"fs.read"})
+	base := BuildUserPrompt("сделай X", snap, []string{"read"})
 
 	history := []string{
 		"OLD_1 " + strings.Repeat("a", 200),
@@ -51,8 +51,8 @@ func TestPrompt_RespectsMaxPromptBytes_TruncatesOldestHistory(t *testing.T) {
 
 func TestPrompt_DoesNotLeakDeniedTools(t *testing.T) {
 	snap := WorkspaceSnapshot{WorkspaceRoot: "D:/proj"}
-	base := BuildUserPrompt("сделай X", snap, []string{"fs.list", "fs.read", "search.text"})
-	if strings.Contains(base, "exec.run") {
+	base := BuildUserPrompt("сделай X", snap, []string{"ls", "read", "grep"})
+	if strings.Contains(base, "bash") {
 		t.Fatalf("did not expect denied tool name in prompt, got:\n%s", base)
 	}
 }

@@ -111,7 +111,7 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 
 	// tool.call should now work.
 	callParams, _ := json.Marshal(ToolCallParams{
-		Name:  "fs.list",
+		Name:  "ls",
 		Input: json.RawMessage(`{"limit":10}`),
 	})
 	out, err := h.Handle(context.Background(), "tool.call", callParams)
@@ -128,7 +128,7 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 
 	// exec.run via tool.call should be denied by default (requires consent).
 	execParams, _ := json.Marshal(ToolCallParams{
-		Name:  "exec.run",
+		Name:  "bash",
 		Input: json.RawMessage(`{"command":"echo","args":["hi"],"workdir":"."}`),
 	})
 	_, err = h.Handle(context.Background(), "tool.call", execParams)

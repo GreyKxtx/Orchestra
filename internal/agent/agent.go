@@ -262,11 +262,6 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 			// Normalize LLM-facing aliases (read, bash, edit, todowrite, task_result, …)
 			// to canonical names so every downstream name check (exec consent,
-			// plan-mode write guard, task/todo routing, post-tool hook) matches
-			// the form it was written against. Runner.Call applies the same
-			// resolution again, which is idempotent.
-			name = tools.ResolveToolName(name)
-
 			// Extract tool_call_id from response
 			toolCallID := ""
 			hasToolCalls := llmResp != nil && len(llmResp.Message.ToolCalls) > 0
@@ -294,7 +289,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// Consent policy: block exec.run unless AllowExec (all allowed) or per-command allowlist permits it.
-			if name == "exec.run" && !a.opts.AllowExec {
+			if name == "bash" && !a.opts.AllowExec {
 				cmd := execCommandFromInput(step.Tool.Input)
 				if !execCommandAllowed(cmd, a.opts.ExecAllow, a.opts.ExecDeny) {
 					msg := "exec.run requires user consent (use --allow-exec or configure exec.allow)"
@@ -408,7 +403,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// plan_exit: ask user approval, then signal mode switch or continue planning.
-			if name == "plan_exit" {
+			if name == "plan.exit" {
 				approved := false
 				if a.opts.QuestionAsker != nil {
 					answers, qErr := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{{
@@ -434,7 +429,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// plan_enter: stub — switching modes in-process is not supported yet.
-			if name == "plan_enter" {
+			if name == "plan.enter" {
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
@@ -444,7 +439,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			// Plan-mode write guard: only .orchestra/plan.md writes are allowed.
-			if a.opts.Mode == ModePlan && (name == "fs.write" || name == "fs.edit") {
+			if a.opts.Mode == ModePlan && (name == "write" || name == "edit") {
 				var pathReq struct {
 					Path string `json:"path"`
 				}
@@ -465,7 +460,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 
 			// For exec.run with streaming enabled, forward output chunks via OnEvent.
 			callCtx := ctx
-			if name == "exec.run" && a.opts.OnEvent != nil {
+			if name == "bash" && a.opts.OnEvent != nil {
 				capturedStep := steps
 				onEvent := a.opts.OnEvent
 				callCtx = tools.WithExecOutputCallback(ctx, func(chunk string) {
@@ -836,7 +831,7 @@ func buildBasePrompt(userQuery string, allowExec bool) string {
 
 Формат шага (AgentStep):
 1) Tool call:
-{"type":"tool_call","tool":{"name":"fs.list","input":{...}}}
+{"type":"tool_call","tool":{"name":"ls","input":{...}}}
 
 2) Final:
 {"type":"final","final":{"patches":[ ... ]}}

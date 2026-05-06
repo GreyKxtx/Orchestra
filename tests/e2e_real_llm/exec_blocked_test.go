@@ -26,7 +26,7 @@ func TestExecBlocked(t *testing.T) {
 	hasExecDenied := errorCode == string(protocol.ExecDenied) ||
 		strings.Contains(combined, string(protocol.ExecDenied)) ||
 		strings.Contains(strings.ToLower(combined), "exec denied") ||
-		strings.Contains(strings.ToLower(combined), "exec.run") ||
+		strings.Contains(strings.ToLower(combined), "bash") ||
 		exitCode != 0 // At least should fail
 
 	if !hasExecDenied && exitCode == 0 {

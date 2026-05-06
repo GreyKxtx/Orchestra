@@ -437,11 +437,10 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "tool name is empty", nil)
 	}
 
-	// Consent policy: exec.run is blocked by default (Confirm=true).
+	// Consent policy: bash is blocked by default (Confirm=true).
 	// Allowed when: Confirm=false (allow all), OR command is in exec.allow list.
-	// Normalize alias ("bash") to canonical so the gate cannot be bypassed.
-	canonicalName := tools.ResolveToolName(strings.TrimSpace(params.Name))
-	if canonicalName == "exec.run" && c.cfg != nil {
+	canonicalName := strings.TrimSpace(params.Name)
+	if canonicalName == "bash" && c.cfg != nil {
 		confirm := c.cfg.Exec.Confirm == nil || *c.cfg.Exec.Confirm
 		if confirm {
 			var execReq struct {
@@ -449,9 +448,9 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 			}
 			_ = json.Unmarshal(params.Input, &execReq)
 			if !c.cfg.Exec.IsCommandAllowed(execReq.Command) {
-				msg := "exec.run requires user consent (configure exec.allow or use --allow-exec)"
+				msg := "bash requires user consent (configure exec.allow or use --allow-exec)"
 				if len(c.cfg.Exec.Allow) > 0 {
-					msg = fmt.Sprintf("exec.run: command %q is not in the allowlist", execReq.Command)
+					msg = fmt.Sprintf("bash: command %q is not in the allowlist", execReq.Command)
 				}
 				return nil, protocol.NewError(protocol.ExecDenied, msg, map[string]any{
 					"tool":    params.Name,

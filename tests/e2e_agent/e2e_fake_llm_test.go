@@ -61,7 +61,7 @@ func TestAgent_E2E_FakeLLM_RewritesFile(t *testing.T) {
 					{
 						Type: "function",
 						Function: llm.ToolCallFunc{
-							Name:      "fs.read",
+							Name:      "read",
 							Arguments: llm.ToolArguments([]byte(`{"path":"a.txt"}`)),
 						},
 					},
