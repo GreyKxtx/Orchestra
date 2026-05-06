@@ -2,13 +2,16 @@ package benchmark
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/daemon"
-	"github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/search"
 )
 
@@ -25,6 +28,12 @@ const (
 )
 
 var benchExcludeDirs = []string{".git", "node_modules", "dist", "build", ".orchestra"}
+
+// fileSnippet is a file path + content pair used to build benchmark prompts.
+type fileSnippet struct {
+	Path    string
+	Content string
+}
 
 func BenchmarkContext_Direct_Small(b *testing.B) {
 	benchmarkDirect(b, projectRootSmall())
@@ -99,12 +108,11 @@ func benchmarkDirect(b *testing.B, projectRoot string) {
 	b.Helper()
 	b.ReportAllocs()
 
-	// Warmup once (exclude from timing).
 	res, err := buildDirect(projectRoot)
 	if err != nil {
 		b.Fatalf("direct warmup failed: %v", err)
 	}
-	sinkPrompt = res.Prompt
+	sinkPrompt = res
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -112,16 +120,11 @@ func benchmarkDirect(b *testing.B, projectRoot string) {
 		if err != nil {
 			b.Fatalf("direct failed: %v", err)
 		}
-		sinkPrompt = res.Prompt
-		sinkFiles = len(res.Files)
-		bytesTotal, trunc := statsFromSnippets(res.Files)
-		sinkBytes = bytesTotal
-		sinkTrunc = trunc
+		sinkPrompt = res
 	}
 }
 
-func buildDirect(projectRoot string) (*prompt.BuildResult, error) {
-	// Mimic CLI direct mode: search -> focus files -> BuildContext.
+func buildDirect(projectRoot string) (string, error) {
 	var focusFiles []string
 	searchOpts := search.DefaultOptions()
 	searchOpts.MaxMatchesPerFile = 2
@@ -143,12 +146,14 @@ func buildDirect(projectRoot string) (*prompt.BuildResult, error) {
 		}
 	}
 
-	return prompt.BuildContext(prompt.BuildParams{
-		ProjectRoot: projectRoot,
-		LimitKB:     benchLimitKB,
-		ExcludeDirs: benchExcludeDirs,
-		FocusFiles:  focusFiles,
-	}, benchQuery)
+	files, err := collectFiles(projectRoot, focusFiles, benchLimitKB*1024)
+	if err != nil {
+		return "", err
+	}
+	sinkFiles = len(files)
+	bytesTotal, _ := statsFromSnippets(files)
+	sinkBytes = bytesTotal
+	return buildCodePrompt(files, benchQuery), nil
 }
 
 func benchmarkDaemonInProc(b *testing.B, projectRoot string) {
@@ -156,12 +161,10 @@ func benchmarkDaemonInProc(b *testing.B, projectRoot string) {
 	b.ReportAllocs()
 
 	srv := newBenchServer(b, projectRoot)
-	// Warm scan/index before timing.
 	if _, err := srv.Refresh(context.Background()); err != nil {
 		b.Fatalf("daemon refresh failed: %v", err)
 	}
 
-	// Warmup once.
 	promptStr := buildViaDaemonInProc(b, srv)
 	sinkPrompt = promptStr
 
@@ -189,11 +192,11 @@ func buildViaDaemonInProc(b *testing.B, srv *daemon.Server) string {
 		b.Fatalf("daemon inproc context failed: %v", err)
 	}
 
-	files := make([]prompt.FileSnippet, 0, len(resp.Files))
+	files := make([]fileSnippet, 0, len(resp.Files))
 	bytesTotal := 0
 	trunc := 0
 	for _, f := range resp.Files {
-		files = append(files, prompt.FileSnippet{Path: f.Path, Content: f.Content})
+		files = append(files, fileSnippet{Path: f.Path, Content: f.Content})
 		bytesTotal += len(f.Content)
 		if f.Truncated {
 			trunc++
@@ -202,7 +205,7 @@ func buildViaDaemonInProc(b *testing.B, srv *daemon.Server) string {
 	sinkFiles = len(files)
 	sinkBytes = bytesTotal
 	sinkTrunc = trunc
-	return prompt.BuildCodePrompt(files, benchQuery)
+	return buildCodePrompt(files, benchQuery)
 }
 
 func benchmarkDaemonHTTP(b *testing.B, projectRoot string) {
@@ -214,7 +217,6 @@ func benchmarkDaemonHTTP(b *testing.B, projectRoot string) {
 
 	client := daemon.NewClientWithToken(baseURL, token)
 
-	// Warmup once (exclude from timing).
 	p := buildViaDaemonHTTP(b, client)
 	sinkPrompt = p
 
@@ -236,7 +238,6 @@ func startBenchDaemonHTTP(b *testing.B, projectRoot string) (baseURL string, tok
 		errCh <- srv.Run(ctx)
 	}()
 
-	// Wait for discovery file (avoids data races on srv.URL()).
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		info, ok, err := daemon.ReadDiscovery(projectRoot)
@@ -264,7 +265,6 @@ func startBenchDaemonHTTP(b *testing.B, projectRoot string) (baseURL string, tok
 func buildViaDaemonHTTP(b *testing.B, client *daemon.Client) string {
 	b.Helper()
 
-	// Mimic CLI-ish behavior: health + context.
 	if _, err := client.Health(context.Background()); err != nil {
 		b.Fatalf("daemon health failed: %v", err)
 	}
@@ -282,11 +282,11 @@ func buildViaDaemonHTTP(b *testing.B, client *daemon.Client) string {
 		b.Fatalf("daemon http context failed: %v", err)
 	}
 
-	files := make([]prompt.FileSnippet, 0, len(resp.Files))
+	files := make([]fileSnippet, 0, len(resp.Files))
 	bytesTotal := 0
 	trunc := 0
 	for _, f := range resp.Files {
-		files = append(files, prompt.FileSnippet{Path: f.Path, Content: f.Content})
+		files = append(files, fileSnippet{Path: f.Path, Content: f.Content})
 		bytesTotal += len(f.Content)
 		if f.Truncated {
 			trunc++
@@ -295,17 +295,16 @@ func buildViaDaemonHTTP(b *testing.B, client *daemon.Client) string {
 	sinkFiles = len(files)
 	sinkBytes = bytesTotal
 	sinkTrunc = trunc
-	return prompt.BuildCodePrompt(files, benchQuery)
+	return buildCodePrompt(files, benchQuery)
 }
 
 func newBenchServer(b *testing.B, projectRoot string) *daemon.Server {
 	b.Helper()
 
-	// Use a long scan interval so periodic scan doesn't skew timings.
 	srv, err := daemon.NewServer(daemon.ServerConfig{
 		ProjectRoot:       projectRoot,
 		Address:           "127.0.0.1",
-		Port:              0, // ephemeral
+		Port:              0,
 		ExcludeDirs:       benchExcludeDirs,
 		SkipBackups:       true,
 		ScanInterval:      24 * time.Hour,
@@ -319,10 +318,95 @@ func newBenchServer(b *testing.B, projectRoot string) *daemon.Server {
 	return srv
 }
 
-func statsFromSnippets(files []prompt.FileSnippet) (bytesTotal int, truncatedFiles int) {
-	// Direct mode doesn't report truncation per file; treat as 0.
+func statsFromSnippets(files []fileSnippet) (bytesTotal int, truncatedFiles int) {
 	for _, f := range files {
 		bytesTotal += len(f.Content)
 	}
 	return bytesTotal, 0
+}
+
+// collectFiles walks the project, prioritising focusFiles, up to limitBytes total.
+func collectFiles(projectRoot string, focusFiles []string, limitBytes int) ([]fileSnippet, error) {
+	projectRootAbs, _ := filepath.Abs(projectRoot)
+	focusSet := make(map[string]bool, len(focusFiles))
+	for _, f := range focusFiles {
+		var abs string
+		if filepath.IsAbs(f) {
+			abs = f
+		} else {
+			abs = filepath.Join(projectRootAbs, f)
+		}
+		abs, _ = filepath.Abs(abs)
+		focusSet[abs] = true
+	}
+
+	excludeMap := make(map[string]bool, len(benchExcludeDirs))
+	for _, d := range benchExcludeDirs {
+		excludeMap[d] = true
+	}
+
+	var focus, others []fileSnippet
+	err := filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			relPath, _ := filepath.Rel(projectRoot, path)
+			if excludeMap[filepath.Base(path)] || excludeMap[relPath] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".orchestra.bak") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		relPath, _ := filepath.Rel(projectRoot, path)
+		absPath, _ := filepath.Abs(path)
+		s := fileSnippet{Path: relPath, Content: string(data)}
+		if focusSet[absPath] {
+			focus = append(focus, s)
+		} else {
+			others = append(others, s)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk failed: %w", err)
+	}
+
+	sort.Slice(focus, func(i, j int) bool { return focus[i].Path < focus[j].Path })
+	sort.Slice(others, func(i, j int) bool { return others[i].Path < others[j].Path })
+
+	var out []fileSnippet
+	total := 0
+	for _, group := range [][]fileSnippet{focus, others} {
+		for _, f := range group {
+			if total >= limitBytes {
+				break
+			}
+			if total+len(f.Content) > limitBytes {
+				continue
+			}
+			out = append(out, f)
+			total += len(f.Content)
+		}
+	}
+	return out, nil
+}
+
+// buildCodePrompt formats files into the legacy v0.2 <<<BLOCK prompt style used by daemon benchmarks.
+func buildCodePrompt(files []fileSnippet, userQuery string) string {
+	var b strings.Builder
+	b.WriteString("Ты ассистент по коду.\nВот список файлов и их содержимое.\n\n")
+	for _, f := range files {
+		fmt.Fprintf(&b, "FILE: %s\n<<<CODE\n%s\n>>>CODE\n\n", f.Path, f.Content)
+	}
+	b.WriteString("Задача пользователя:\n")
+	b.WriteString(userQuery)
+	b.WriteString("\n")
+	return b.String()
 }
