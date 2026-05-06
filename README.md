@@ -20,6 +20,12 @@
 | MCP | JSON-RPC 2.0 stdio MCP-клиент, мульти-сервер менеджер | ✅ |
 | Providers | Anthropic API + OpenAI-совместимые провайдеры (LM Studio, vLLM…) | ✅ |
 | Eval | YAML-задачи, изолированные воркспейсы, `orchestra eval` | ✅ |
+| Prompt Pipeline | go:embed .txt промпты, маршрутизация по семейству модели (anthropic/gpt/gemini/kimi/local) | ✅ |
+| Agent Modes | 7 режимов: build, plan, explore, general, compaction, title, summary | ✅ |
+| Prompt Caching | Anthropic `cache_control: ephemeral` — экономия ~90% токенов с шага 2 | ✅ |
+| Lazy Instructions | Автоматическое обнаружение `ORCHESTRA.md` при чтении файлов | ✅ |
+| Line Numbers | `fs.read` возвращает контент с номерами строк для точных edit-ссылок | ✅ |
+| Forgiving Edit | Resolver делает второй проход (line-trimmed) перед StaleContent | ✅ |
 
 ---
 
@@ -137,6 +143,10 @@ go test ./tests/e2e_real_llm -v -count=1
 - [Changelog](docs/CHANGELOG.md)
 - [Protocol contract](docs/PROTOCOL.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Commands & architecture](docs/commands-and-modes.md)
+- [Agent modes](docs/modes.md)
+- [Tools & commands status](docs/tools-status.md)
+- [Architecture diagrams](docs/architecture-uml.md)
 
 ---
 
