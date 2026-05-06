@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
-const defaultMemoryCap = 2 * 1024 // 2 KB
+const defaultMemoryCap = 8 * 1024 // 8 KB
 
 // LoadProjectMemory reads project memory from the workspace and returns it
 // formatted for injection into the system prompt.
 //
-// Lookup order (first non-empty result wins):
+// All three sources are read and concatenated (additive):
 //  1. <workspace_root>/ORCHESTRA.md
 //  2. <workspace_root>/.orchestra/memory/*.md  (sorted, concatenated)
 //  3. ~/.orchestra/memory.md
@@ -23,7 +23,7 @@ func LoadProjectMemory(workspaceRoot string, maxBytes int) string {
 		maxBytes = defaultMemoryCap
 	}
 
-	content := readFirstSource(workspaceRoot)
+	content := readAllSources(workspaceRoot)
 	if content == "" {
 		return ""
 	}
@@ -36,11 +36,15 @@ func LoadProjectMemory(workspaceRoot string, maxBytes int) string {
 	return "<project_memory>\n" + content + "\n</project_memory>"
 }
 
-func readFirstSource(workspaceRoot string) string {
+func readAllSources(workspaceRoot string) string {
+	var parts []string
+
 	// 1. <workspace_root>/ORCHESTRA.md
 	if workspaceRoot != "" {
 		if data, err := os.ReadFile(filepath.Join(workspaceRoot, "ORCHESTRA.md")); err == nil {
-			return string(data)
+			if trimmed := strings.TrimSpace(string(data)); trimmed != "" {
+				parts = append(parts, trimmed)
+			}
 		}
 	}
 
@@ -48,18 +52,20 @@ func readFirstSource(workspaceRoot string) string {
 	if workspaceRoot != "" {
 		memDir := filepath.Join(workspaceRoot, ".orchestra", "memory")
 		if content := readMemoryDir(memDir); content != "" {
-			return content
+			parts = append(parts, content)
 		}
 	}
 
 	// 3. ~/.orchestra/memory.md
 	if home, err := os.UserHomeDir(); err == nil {
 		if data, err := os.ReadFile(filepath.Join(home, ".orchestra", "memory.md")); err == nil {
-			return string(data)
+			if trimmed := strings.TrimSpace(string(data)); trimmed != "" {
+				parts = append(parts, trimmed)
+			}
 		}
 	}
 
-	return ""
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 func readMemoryDir(dir string) string {

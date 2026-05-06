@@ -81,6 +81,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		ExcludeDirs:     cfg.ExcludeDirs,
 		ExecTimeout:     time.Duration(cfg.Exec.TimeoutS) * time.Second,
 		ExecOutputLimit: cfg.Exec.OutputLimitKB * 1024,
+		LSP:             cfg.LSP,
 	})
 	if err != nil {
 		return nil, err
@@ -285,6 +286,9 @@ type AgentRunParams struct {
 	AllowExec bool `json:"allow_exec,omitempty"`
 	Debug     bool `json:"debug,omitempty"`
 
+	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
+	Mode string `json:"mode,omitempty"`
+
 	// OnEvent is called for each agent streaming event (method + params).
 	// Not serialized — set programmatically by the RPC handler.
 	OnEvent func(method string, params any) `json:"-"`
@@ -306,6 +310,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	}
 	if strings.TrimSpace(params.Query) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "query is empty", nil)
+	}
+	if params.Mode != "" && !config.IsBuiltInMode(params.Mode) && c.cfg != nil && c.cfg.FindAgent(params.Mode) == nil {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput,
+			fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
 	}
 
 	// Build ResponseFormat from config (grammar-constrained sampling for local models).
@@ -384,22 +392,29 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		hooksRunner = hr
 	}
 
-	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
+	customOpts := c.resolveCustomAgentOpts(params.Mode, agentLogger)
+
+	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
 		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
 		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
 		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
 		MaxPromptBytes:       maxPromptBytes,
+		CompactThresholdPct:  c.cfg.Agent.CompactThresholdPct,
 		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
 		Apply:                params.Apply,
 		Backup:               params.Backup,
 		AllowExec:            allowExec,
 		ExecAllow:            execAllow,
 		ExecDeny:             execDeny,
+		PermissionRules:      c.cfg.Permissions.Rules,
 		Debug:                params.Debug || c.debug,
 		ResponseFormat:       respFmt,
 		PromptFamily:         promptFamily,
+		Mode:                 params.Mode,
+		SystemPromptOverride: customOpts.systemPromptOverride,
+		CustomTools:          customOpts.customTools,
 		OnEvent:              onEvent,
 		AgentLogger:          agentLogger,
 		SubtaskRunner:        taskRunner,
@@ -486,6 +501,53 @@ func (c *Core) mcpToolDefs() []llm.ToolDef {
 	return c.mcpManager.ListToolDefs()
 }
 
+// customAgentOpts holds resolved overrides for a custom agent.
+type customAgentOpts struct {
+	llmClient            llm.Client
+	systemPromptOverride string
+	customTools          []llm.ToolDef // nil = use mode-based selection
+}
+
+// resolveCustomAgentOpts looks up mode in agents: and builds the per-agent
+// overrides (model, system prompt, tool list). Falls back to c.llmClient and
+// no overrides when mode is empty or doesn't match a custom agent.
+//
+// MCP tools are appended to customTools automatically so custom agents get the
+// same MCP access as standard modes.
+func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) customAgentOpts {
+	result := customAgentOpts{llmClient: c.llmClient}
+	if c.cfg == nil || mode == "" {
+		return result
+	}
+	def := c.cfg.FindAgent(mode)
+	if def == nil {
+		return result
+	}
+
+	result.systemPromptOverride = def.SystemPrompt
+
+	if def.Model != "" {
+		overrideCfg := c.cfg.LLM
+		overrideCfg.Model = def.Model
+		overrideClient := llm.NewOpenAIClient(overrideCfg)
+		if agentLogger != nil {
+			overrideClient.SetLogger(agentLogger)
+		}
+		result.llmClient = overrideClient
+	}
+
+	if def.Tools != nil {
+		defs, err := tools.ResolveToolNames(def.Tools)
+		if err == nil {
+			// Auto-append MCP tools so custom agents retain MCP access.
+			defs = append(defs, c.mcpToolDefs()...)
+			result.customTools = defs
+		}
+	}
+
+	return result
+}
+
 // ── Session API ──────────────────────────────────────────────────────────────
 
 type SessionStartParams struct{}
@@ -514,6 +576,9 @@ type SessionMessageParams struct {
 	MaxSteps          int `json:"max_steps,omitempty"`
 	MaxInvalidRetries int `json:"max_invalid_retries,omitempty"`
 	MaxPromptBytes    int `json:"max_prompt_bytes,omitempty"`
+
+	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
+	Mode string `json:"mode,omitempty"`
 
 	// OnEvent is set programmatically by the RPC handler for streaming notifications.
 	OnEvent func(method string, params any) `json:"-"`
@@ -651,23 +716,30 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		sessHooksRunner = hr
 	}
 
-	ag, err := agent.New(c.llmClient, c.validator, c.tools, agent.Options{
+	sessCustomOpts := c.resolveCustomAgentOpts(params.Mode, sessAgentLogger)
+
+	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
 		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
 		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
 		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
 		MaxPromptBytes:       maxPromptBytes,
+		CompactThresholdPct:  c.cfg.Agent.CompactThresholdPct,
 		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
 		Apply:                agParams.Apply,
 		Backup:               agParams.Backup,
 		AllowExec:            sessAllowExec,
 		ExecAllow:            sessExecAllow,
 		ExecDeny:             sessExecDeny,
+		PermissionRules:      c.cfg.Permissions.Rules,
 		InitialTodos:         inTodos,
 		Debug:                c.debug,
 		ResponseFormat:       respFmt,
 		PromptFamily:         promptFamily,
+		Mode:                 params.Mode,
+		SystemPromptOverride: sessCustomOpts.systemPromptOverride,
+		CustomTools:          sessCustomOpts.customTools,
 		OnEvent:              onEvent,
 		AgentLogger:          sessAgentLogger,
 		SubtaskRunner:        sessTaskRunner,
@@ -748,9 +820,11 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 		Backup: params.Backup,
 	})
 	if err != nil {
-		// Restore pending so the user can retry.
+		// Restore pending so the user can retry. Prepend original ops to any
+		// newer ops that a concurrent turn may have added while we were applying.
 		sess.Lock()
-		sess.SetPending(pendingOps)
+		newer := sess.TakePending()
+		sess.SetPending(append(pendingOps, newer...))
 		sess.Unlock()
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
 	}

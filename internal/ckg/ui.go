@@ -58,14 +58,12 @@ func StartUIServer(store *Store, workspaceRoot string, port int) error {
 			http.Error(w, "missing params", http.StatusBadRequest)
 			return
 		}
-		// Normalize forward slashes to OS separators for filepath.Join
-		filePath = strings.ReplaceAll(filePath, "/", string(filepath.Separator))
-		// Security: prevent path traversal
-		if strings.Contains(filePath, "..") {
+		fullPath := filepath.Join(workspaceRoot, filepath.FromSlash(filePath))
+		rel, relErr := filepath.Rel(workspaceRoot, fullPath)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		fullPath := filepath.Join(workspaceRoot, filePath)
 		content, err := os.ReadFile(fullPath)
 		if err != nil {
 			http.Error(w, "file not found", http.StatusNotFound)

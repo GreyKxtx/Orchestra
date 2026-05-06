@@ -34,6 +34,7 @@ var (
 	noDaemon            bool
 	debugMode           bool
 	allowExec           bool
+	allowWeb            bool
 	viaCore             bool
 	agentMode           string // "plan", "build", or "" (default)
 	pipelineMode        bool
@@ -58,6 +59,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&noDaemon, "no-daemon", false, "Deprecated (vNext agent uses tools). Kept for compatibility.")
 	applyCmd.Flags().BoolVar(&debugMode, "debug", false, "Show performance metrics and debug information")
 	applyCmd.Flags().BoolVar(&allowExec, "allow-exec", false, "Allow exec.run tool (DANGEROUS; still sandboxed with limits)")
+	applyCmd.Flags().BoolVar(&allowWeb, "allow-web", false, "Allow webfetch tool (fetches external URLs; private IPs blocked)")
 	applyCmd.Flags().BoolVar(&viaCore, "via-core", false, "Run via JSON-RPC core subprocess (stdio)")
 	applyCmd.Flags().StringVar(&agentMode, "mode", "", "Agent mode: plan (read-only analysis) or build (default)")
 	applyCmd.Flags().BoolVar(&pipelineMode, "pipeline", false, "Run multi-agent pipeline: Investigator → Coder → Critic")
@@ -88,6 +90,10 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
+	}
+
+	if agentMode != "" && !config.IsBuiltInMode(agentMode) && cfg.FindAgent(agentMode) == nil {
+		return fmt.Errorf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", agentMode)
 	}
 
 	startedAt := time.Now()
@@ -134,6 +140,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	if cfg.Exec.Confirm != nil && !*cfg.Exec.Confirm {
 		allowExecEffective = true
 	}
+	// If web.confirm=false in config, we can allow webfetch without --allow-web.
+	allowWebEffective := allowWeb
+	if cfg.Web.Confirm != nil && !*cfg.Web.Confirm {
+		allowWebEffective = true
+	}
 	if debugMode {
 		fmt.Fprintf(os.Stderr, "[orchestra] debug: llm_timeout_s=%d\n", cfg.LLM.TimeoutS)
 	}
@@ -170,9 +181,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		plan.GeneratedAtUnix = time.Now().Unix()
 
 		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-			ExcludeDirs:     cfg.ExcludeDirs,
-			ExecTimeout:     time.Duration(cfg.Exec.TimeoutS) * time.Second,
-			ExecOutputLimit: cfg.Exec.OutputLimitKB * 1024,
+			ExcludeDirs:        cfg.ExcludeDirs,
+			ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
+			ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
+			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
+			WebMaxContentBytes: cfg.Web.MaxContentBytes,
+			LSP:                cfg.LSP,
 		})
 		if err != nil {
 			retErr = err
@@ -232,9 +246,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-			ExcludeDirs:     cfg.ExcludeDirs,
-			ExecTimeout:     time.Duration(cfg.Exec.TimeoutS) * time.Second,
-			ExecOutputLimit: cfg.Exec.OutputLimitKB * 1024,
+			ExcludeDirs:        cfg.ExcludeDirs,
+			ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
+			ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
+			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
+			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 		})
 		if err != nil {
 			retErr = err
@@ -285,12 +301,14 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
 			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
+			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			PromptFamily:         cfg.LLM.PromptFamily,
 			ResponseFormat:       respFmt,
 			Debug:                debugMode,
 			AgentLogger:          agentLogger,
 			OnEvent:              onPipelineEvent,
+			PermissionRules:      cfg.Permissions.Rules,
 		})
 		if err != nil {
 			retErr = err
@@ -343,9 +361,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-			ExcludeDirs:     cfg.ExcludeDirs,
-			ExecTimeout:     time.Duration(cfg.Exec.TimeoutS) * time.Second,
-			ExecOutputLimit: cfg.Exec.OutputLimitKB * 1024,
+			ExcludeDirs:        cfg.ExcludeDirs,
+			ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
+			ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
+			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
+			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 		})
 		if err != nil {
 			retErr = err
@@ -367,6 +387,31 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			agentLogger = openAIClient.GetLogger()
 		}
 
+		// Custom agent override: look up agentMode in agents: config block.
+		// MCP is not wired in direct mode; use --via-core for MCP + custom agents.
+		var systemPromptOverride string
+		var customAgentTools []llm.ToolDef
+		if agentMode != "" {
+			if def := cfg.FindAgent(agentMode); def != nil {
+				systemPromptOverride = def.SystemPrompt
+				if def.Model != "" && testLLMClient == nil {
+					overrideCfg := cfg.LLM
+					overrideCfg.Model = def.Model
+					overrideClient := llm.NewOpenAIClient(overrideCfg)
+					overrideClient.SetLogger(agentLogger)
+					llmClient = overrideClient
+				}
+				if def.Tools != nil {
+					var resolveErr error
+					customAgentTools, resolveErr = tools.ResolveToolNames(def.Tools)
+					if resolveErr != nil {
+						retErr = resolveErr
+						return retErr
+					}
+				}
+			}
+		}
+
 		ag, err := agent.New(llmClient, validator, runner, agent.Options{
 			MaxSteps:             cfg.Agent.MaxSteps,
 			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
@@ -374,14 +419,19 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
 			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
+			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			Apply:                !dryRun,
 			Backup:               backup,
 			AllowExec:            allowExecEffective,
+			AllowWeb:             allowWebEffective,
+			PermissionRules:      cfg.Permissions.Rules,
 			Debug:                debugMode,
 			ResponseFormat:       respFmt,
 			PromptFamily:         cfg.LLM.PromptFamily,
 			Mode:                 agentMode,
+			SystemPromptOverride: systemPromptOverride,
+			CustomTools:          customAgentTools,
 			QuestionAsker:        buildQuestionAsker(agentMode),
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
@@ -475,6 +525,7 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 		MaxPromptBytes:    cfg.Limits.ContextKB * 1024,
 		AllowExec:         allowExec,
 		Debug:             debugMode,
+		Mode:              agentMode,
 	}, &out)
 	if err != nil {
 		if rpcErr, ok := err.(*jsonrpc.RPCError); ok && rpcErr.Data != nil {

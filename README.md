@@ -25,7 +25,11 @@
 | Prompt Caching | Anthropic `cache_control: ephemeral` — экономия ~90% токенов с шага 2 | ✅ |
 | Lazy Instructions | Автоматическое обнаружение `ORCHESTRA.md` при чтении файлов | ✅ |
 | Line Numbers | `fs.read` возвращает контент с номерами строк для точных edit-ссылок | ✅ |
-| Forgiving Edit | Resolver делает второй проход (line-trimmed) перед StaleContent | ✅ |
+| Forgiving Edit | Resolver: Pass 2 line-trimmed + Pass 3 indent-flexible (tab↔space) перед StaleContent | ✅ |
+| WebFetch | `webfetch` — HTTP GET с SSRF-защитой (private/loopback/link-local заблокированы), HTML→text | ✅ |
+| Compaction | Авто-сжатие истории при достижении `compact_threshold_pct` от `MaxPromptBytes`; LLM-summary, non-fatal fallback | ✅ |
+| Memory tool | `memory_write` — агент записывает факты в `.orchestra/memory/agent.md`; `LoadProjectMemory` аддитивен (все 3 источника) | ✅ |
+| Permission Rules | `permissions.rules` — per-tool allow/deny с glob-паттернами; first-match-wins; `allow` — bypass `--allow-exec/web` для одного вызова | ✅ |
 
 ---
 
@@ -49,6 +53,9 @@ orchestra apply --apply "добавь логирование в main.go"
 
 # Разрешить выполнение команд через exec.run
 orchestra apply --apply --allow-exec "запусти go test и исправь ошибки"
+
+# Разрешить загрузку внешних URL через webfetch
+orchestra apply --allow-web "изучи документацию на https://pkg.go.dev/... и добавь пример"
 
 # Через subprocess core (JSON-RPC stdio, изолированный)
 orchestra apply --via-core "добавь функцию Sum"

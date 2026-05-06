@@ -5,10 +5,11 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
-	"github.com/orchestra/orchestra/internal/cache"
 )
 
 type FSWriteRequest struct {
@@ -20,9 +21,10 @@ type FSWriteRequest struct {
 }
 
 type FSWriteResponse struct {
-	Path         string `json:"path"`
-	FileHash     string `json:"file_hash"` // sha256 of written content
-	BytesWritten int    `json:"bytes_written"`
+	Path         string               `json:"path"`
+	FileHash     string               `json:"file_hash"` // sha256 of written content
+	BytesWritten int                  `json:"bytes_written"`
+	Diagnostics  []lsp.ToolDiagnostic `json:"diagnostics,omitempty"`
 }
 
 func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteResponse, error) {
@@ -66,9 +68,18 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 	}
 
 	contentHash := cache.ComputeSHA256([]byte(req.Content))
+
+	var diags []lsp.ToolDiagnostic
+	if r.lspManager != nil && !r.lspManager.IsEmpty() {
+		if _, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path); err == nil {
+			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, req.Content)
+		}
+	}
+
 	return &FSWriteResponse{
 		Path:         path,
 		FileHash:     contentHash,
 		BytesWritten: len(req.Content),
+		Diagnostics:  diags,
 	}, nil
 }

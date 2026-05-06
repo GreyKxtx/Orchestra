@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `1`
+- **`protocol.ProtocolVersion`**: `2`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `4`
 
@@ -12,6 +12,11 @@
 
 - `protocol_version` **обязан** совпасть.
 - `ops_version` / `tools_version` — опциональны, но если переданы, то **должны** совпасть.
+
+### История ProtocolVersion
+
+- **v2** (2026-05-06): добавлено опциональное поле `mode` в `agent.run` и `session.message` для custom-agents (Sub-project D).
+- **v1**: первоначальный набор методов.
 
 ### История ToolsVersion
 
@@ -137,7 +142,7 @@ Response `result`:
 {
   "status": "ok",
   "core_version": "vnext",
-  "protocol_version": 1,
+  "protocol_version": 2,
   "ops_version": 1,
   "tools_version": 1,
   "workspace_root": "...",
@@ -170,6 +175,7 @@ Response `result`:
 - `backup` (bool, optional)
 - `allow_exec` (bool, optional; default=false)
 - `debug` (bool, optional)
+- `mode` (string, optional) — имя built-in режима (`build`, `plan`, `explore`, …) или custom-агента, определённого в `agents:` в `.orchestra.yml`; пустая строка → поведение `build` по умолчанию.
 
 Лимиты (опционально):
 

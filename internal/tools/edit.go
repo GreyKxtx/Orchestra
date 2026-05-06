@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
@@ -19,8 +20,9 @@ type FSEditRequest struct {
 }
 
 type FSEditResponse struct {
-	Path     string `json:"path"`
-	FileHash string `json:"file_hash"` // sha256 of file after edit
+	Path        string               `json:"path"`
+	FileHash    string               `json:"file_hash"` // sha256 of file after edit
+	Diagnostics []lsp.ToolDiagnostic `json:"diagnostics,omitempty"`
 }
 
 func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse, error) {
@@ -58,15 +60,21 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 		return nil, err
 	}
 
-	// Read new hash from the written file.
+	// Read new content and hash from the written file.
 	absPath, relSlash, resolveErr := resolveWorkspacePath(r.workspaceRoot, path)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
-	_, _, _, newHash, _, readErr := readFileWithHash(absPath, -1)
+	content, _, _, newHash, _, readErr := readFileWithHash(absPath, -1)
 	if readErr != nil {
 		// Apply succeeded — return path without hash rather than failing.
 		return &FSEditResponse{Path: relSlash}, nil
 	}
-	return &FSEditResponse{Path: relSlash, FileHash: newHash}, nil
+
+	var diags []lsp.ToolDiagnostic
+	if r.lspManager != nil && !r.lspManager.IsEmpty() {
+		diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, content)
+	}
+
+	return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
 }

@@ -56,7 +56,7 @@ func TestLoadProjectMemory_NoSources(t *testing.T) {
 	}
 }
 
-func TestLoadProjectMemory_OrchestraMDTakesPriority(t *testing.T) {
+func TestLoadProjectMemory_AllSourcesCombined(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "ORCHESTRA.md"), []byte("from ORCHESTRA.md"), 0644); err != nil {
 		t.Fatal(err)
@@ -65,16 +65,20 @@ func TestLoadProjectMemory_OrchestraMDTakesPriority(t *testing.T) {
 	if err := os.MkdirAll(memDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(memDir, "other.md"), []byte("from memory dir"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(memDir, "agent.md"), []byte("from memory dir"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	result := LoadProjectMemory(dir, 2048)
+	result := LoadProjectMemory(dir, 8192)
 	if !strings.Contains(result, "from ORCHESTRA.md") {
-		t.Fatalf("expected ORCHESTRA.md priority, got: %q", result)
+		t.Fatalf("expected ORCHESTRA.md content in result, got: %q", result)
 	}
-	if strings.Contains(result, "from memory dir") {
-		t.Fatalf("should not include memory dir when ORCHESTRA.md present, got: %q", result)
+	if !strings.Contains(result, "from memory dir") {
+		t.Fatalf("expected memory dir content in result, got: %q", result)
+	}
+	// ORCHESTRA.md comes first
+	if strings.Index(result, "from ORCHESTRA.md") > strings.Index(result, "from memory dir") {
+		t.Fatal("expected ORCHESTRA.md content before memory dir content")
 	}
 }
 

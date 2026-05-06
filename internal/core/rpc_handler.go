@@ -161,7 +161,6 @@ func decodeParams(raw json.RawMessage, out any) error {
 		raw = []byte(`{}`)
 	}
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
 		return err
 	}
