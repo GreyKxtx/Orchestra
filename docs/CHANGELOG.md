@@ -8,6 +8,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Post Phase 9: Prompt pipeline, tool aliases, line numbers, forgiving resolver
+
+#### Prompt pipeline (`internal/prompt/`)
+
+- **go:embed промпты** — все промпты перенесены в `internal/prompt/files/*.txt` и встраиваются через `//go:embed files/*.txt`; никаких захардкоженных строк в Go-коде.
+- **Маршрутизация по семейству модели** — `BuildSystemPromptForMode(mode, family)` ищет `{mode}-{family}.txt → {mode}.txt → build.txt`; `DetectPromptFamily(modelName)` автоматически определяет семейство.
+- **Поддерживаемые семейства:** `anthropic`, `gpt`, `gemini`, `kimi` (Moonshot), `local` (qwen/llama/mistral/deepseek/phi).
+- **7 режимов агента** — добавлены константы `ModeGeneral`, `ModeCompaction`, `ModeTitle`, `ModeSummary` к уже существующим `ModeBuild`, `ModePlan`, `ModeExplore`; промпты для каждого встроены через embed.
+- **Max-steps reminder** — при достижении 2/3 лимита шагов в историю инжектируется синтетическое `role: assistant` сообщение из `max-steps.txt`, предотвращающее расходование последних шагов на исследование.
+- **Lazy ORCHESTRA.md discovery** — `Runner.discoverInstructions` обходит от директории читаемого файла до `workspaceRoot` и инжектирует `<system-reminder>` в ответ `fs.read`; `seenInstructionDirs sync.Map` исключает повторы в рамках сессии.
+- **Workspace system prompt override** — `.orchestra/system.txt` полностью заменяет встроенный системный промпт; `LoadSystemOverride(workspaceRoot)` читается в начале каждого шага.
+- **Промпты разделены по файлам** — `system.go`, `family.go`, `reminders.go`, `snapshot.go`, `user.go` вместо монолитного `agent_prompt.go`.
+
+#### Anthropic prompt caching (`internal/llm/anthropic.go`)
+
+- Системный промпт оборачивается в `[]anthropicSystemBlock` с `cache_control: {type:"ephemeral"}`.
+- Заголовок `anthropic-beta: prompt-caching-2024-07-31` добавлен к каждому запросу.
+- Экономия: кэш-запись стоит ~25% дороже, но кэш-чтение экономит ~90% токенов; на сессии из 24 шагов это окупается со шага 2.
+
+#### Tool aliases / short names (`internal/tools/registry.go`)
+
+- Переименованы tool-имена, видимые LLM, в соответствии с конвенцией OpenCode:
+  `fs.list` → `ls`, `fs.read` → `read`, `fs.glob` → `glob`, `fs.write` → `write`, `fs.edit` → `edit`, `search.text` → `grep`, `code.symbols` → `symbols`, `explore_codebase` → `explore`, `exec.run` → `bash`.
+- `task.spawn/wait/cancel/result` → `task_spawn/wait/cancel/result`.
+- `ToolsVersion` bumped `3 → 4`.
+
+#### fs.read line numbers (`internal/tools/fs_read.go`)
+
+- Каждая строка возвращается с префиксом `N: ` (例: `1: package main`).
+- Модель видит номера строк для точных ссылок в `edit`; сами префиксы не входят в файл.
+- `ToolsVersion` bumped `2 → 3`.
+
+#### Forgiving resolver (`internal/resolver/`)
+
+- При `StaleContent` резолвер делает второй проход с `lineTrimmedFind` (игнорирует хвостовые пробелы) перед тем как вернуть ошибку модели.
+- Сокращает число «рибаундов» к LLM при незначительных расхождениях форматирования, сохраняя `file_hash`-гарантию.
+
+#### Прочие изменения
+
+- **`.gitignore`** — паттерн `orchestra` заменён на `/orchestra` и `/orchestra.exe`, чтобы директория `cmd/orchestra/` не исключалась из git.
+- **`cmd/orchestra/main.go`** добавлен в tracking (ранее не коммитился из-за неверного gitignore).
+- Удалены легаси-пакеты: `internal/applier`, `internal/parser`, пустые переходные пакеты, `testdata/`, `.eval_test/`.
+
 ### Added — Phase 9: Eval harness & provider support
 
 - **Anthropic provider** (`internal/llm/anthropic.go`) — full OpenAI↔Anthropic message conversion; system prompt extracted separately; consecutive `role:tool` messages grouped into a single `tool_result` user message per API requirements; provider selected via `cfg.LLM.Provider = "anthropic"`.
