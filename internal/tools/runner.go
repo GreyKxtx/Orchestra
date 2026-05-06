@@ -14,6 +14,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/applier"
 	"github.com/orchestra/orchestra/internal/ckg"
+	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/search"
@@ -41,6 +43,12 @@ type Runner struct {
 	// seenInstructionDirs tracks which directories have already had their
 	// ORCHESTRA.md injected into a tool result (lazy discovery).
 	seenInstructionDirs sync.Map
+
+	// Web fetch settings.
+	webFetchTimeout    time.Duration
+	webMaxContentBytes int
+
+	lspManager *lsp.Manager
 }
 
 type RunnerOptions struct {
@@ -48,6 +56,11 @@ type RunnerOptions struct {
 
 	ExecTimeout     time.Duration
 	ExecOutputLimit int // bytes, combined stdout+stderr
+
+	WebFetchTimeout    time.Duration
+	WebMaxContentBytes int
+
+	LSP config.LSPConfig
 }
 
 func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
@@ -84,14 +97,52 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 	}
 	provider := ckg.NewProvider(store, rootAbs)
 
+	webTimeout := opts.WebFetchTimeout
+	if webTimeout <= 0 {
+		webTimeout = 30 * time.Second
+	}
+	webMaxBytes := opts.WebMaxContentBytes
+	if webMaxBytes <= 0 {
+		webMaxBytes = 512 * 1024
+	}
+
+	var lspMgr *lsp.Manager
+	if len(opts.LSP.Servers) > 0 {
+		mgr, _ := lsp.NewManager(rootAbs, convertLSPConfig(opts.LSP))
+		lspMgr = mgr
+	}
+
 	return &Runner{
-		workspaceRoot:   rootAbs,
-		excludeDirs:     exclude,
-		execTimeout:     timeout,
-		execOutputLimit: limit,
-		ckgStore:        store,
-		ckgProvider:     provider,
+		workspaceRoot:      rootAbs,
+		excludeDirs:        exclude,
+		execTimeout:        timeout,
+		execOutputLimit:    limit,
+		ckgStore:           store,
+		ckgProvider:        provider,
+		webFetchTimeout:    webTimeout,
+		webMaxContentBytes: webMaxBytes,
+		lspManager:         lspMgr,
 	}, nil
+}
+
+// convertLSPConfig translates config.LSPConfig to lsp.LSPConfig.
+func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
+	servers := make([]lsp.LSPServerConfig, len(c.Servers))
+	for i, s := range c.Servers {
+		servers[i] = lsp.LSPServerConfig{
+			Language:    s.Language,
+			Extensions:  s.Extensions,
+			Command:     s.Command,
+			Env:         s.Env,
+			Disabled:    s.Disabled,
+			InitOptions: s.InitOptions,
+		}
+	}
+	return lsp.LSPConfig{
+		Enabled:              c.Enabled,
+		Servers:              servers,
+		DiagnosticsTimeoutMS: c.DiagnosticsTimeoutMS,
+	}
 }
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
@@ -109,9 +160,13 @@ func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
 	return ckg.FormatNodesForPrompt(nodes, 800)
 }
 
-// Close releases resources held by the Runner (CKG store, etc).
+// Close releases resources held by the Runner (LSP manager, CKG store, etc).
 // Safe to call multiple times.
 func (r *Runner) Close() error {
+	if r.lspManager != nil {
+		r.lspManager.Close()
+		r.lspManager = nil
+	}
 	if r.ckgStore != nil {
 		err := r.ckgStore.Close()
 		r.ckgStore = nil
@@ -518,8 +573,6 @@ func collectContextLines(lines []string, currentLine int, contextLines int, befo
 }
 
 // --- code.symbols ---
-// Implemented in todo #5 (Tree-sitter + graceful degradation).
-// For now: Tier 3 (empty result).
 
 type CodeSymbolsRequest struct {
 	Path string `json:"path"`

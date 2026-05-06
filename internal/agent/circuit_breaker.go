@@ -69,7 +69,7 @@ func (cb *CircuitBreaker) RecordDenied(toolName string) *protocol.Error {
 // Successful tool calls should reset consecutive errors via ResetToolErrors.
 func (cb *CircuitBreaker) RecordToolError(toolName string) *protocol.Error {
 	cb.consecutiveToolErrs++
-	if cb.consecutiveToolErrs >= cb.maxToolErr {
+	if cb.consecutiveToolErrs > cb.maxToolErr {
 		return protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly produced failing tool calls", map[string]any{
 			"count":       cb.consecutiveToolErrs,
 			"max_repeats": cb.maxToolErr,
@@ -87,7 +87,7 @@ func (cb *CircuitBreaker) ResetToolErrors() {
 // RecordFinalFailure records a failed resolve/apply attempt and returns an error if the circuit trips.
 func (cb *CircuitBreaker) RecordFinalFailure(lastErr error) *protocol.Error {
 	cb.finalFailures++
-	if cb.finalFailures >= cb.maxFinal {
+	if cb.finalFailures > cb.maxFinal {
 		return protocol.NewError(protocol.InvalidLLMOutput, "failed to resolve/apply patches repeatedly", map[string]any{
 			"count":        cb.finalFailures,
 			"max_failures": cb.maxFinal,
@@ -105,7 +105,7 @@ func (cb *CircuitBreaker) ResetFinalFailures() {
 // RecordInvalid records an invalid LLM output and returns an error if the circuit trips.
 func (cb *CircuitBreaker) RecordInvalid() *protocol.Error {
 	cb.invalidOutputs++
-	if cb.invalidOutputs >= cb.maxInvalid {
+	if cb.invalidOutputs > cb.maxInvalid {
 		return protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly produced invalid output", map[string]any{
 			"count":   cb.invalidOutputs,
 			"max":     cb.maxInvalid,

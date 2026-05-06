@@ -45,6 +45,8 @@
 | Имя | Внутреннее | Статус | Что делает |
 |-----|-----------|--------|------------|
 | `bash` | `exec.run` | ✅ | Shell-команда, timeout + output cap; требует `--allow-exec` |
+| `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита (блокирует private/loopback/link-local IP); требует `--allow-web` |
+| `memory_write` | `memory.write` | ✅ | Записывает факт в `.orchestra/memory/agent.md` с timestamp; доступен в build/general режимах |
 
 ### Задачи и сессия
 
@@ -77,8 +79,7 @@
 
 | Инструмент | Источник | Приоритет |
 |-----------|---------|-----------|
-| `webfetch` | OpenCode | средний |
-| `websearch` | OpenCode | средний |
+| `websearch` | OpenCode | средний (нужен провайдер: Tavily/Brave/SearXNG) |
 | LSP diagnostics | OpenCode | средний (в перспективе — дополнение к CKG) |
 | GitHub / PR | OpenCode | низкий |
 | Менеджер ключей провайдеров | OpenCode `auth` | низкий |

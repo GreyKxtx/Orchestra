@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/ops"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
@@ -84,6 +85,16 @@ type Options struct {
 	// ExecDeny is a per-command denylist (takes precedence over ExecAllow).
 	ExecDeny []string
 
+	// AllowWeb enables the webfetch tool — equivalent to --allow-web.
+	AllowWeb bool
+
+	// PermissionRules is the ordered per-tool permission ruleset from config.permissions.
+	// Evaluated before the AllowExec / AllowWeb gates; first matching rule wins.
+	// allow → permit even without --allow-exec/--allow-web.
+	// deny  → always block with TOOL_DENIED.
+	// No match → fall through to existing gates.
+	PermissionRules []configpkg.PermissionRule
+
 	// InitialTodos is the model's task checklist loaded from the session at turn start.
 	InitialTodos []tools.TodoItem
 
@@ -101,6 +112,9 @@ type Options struct {
 	ResponseFormat *llm.ResponseFormat
 	// PromptFamily selects model-family-specific system prompt. Auto-detected if empty.
 	PromptFamily string
+	// SystemPromptOverride, if non-empty, replaces the built-in mode system prompt.
+	// .orchestra/system.txt still takes precedence when present.
+	SystemPromptOverride string
 
 	// Mode selects the agent role: "build" (default), "plan" (read-only), "explore" (subagent).
 	// Empty string behaves identically to "build" for backward compatibility.
@@ -135,6 +149,11 @@ type Options struct {
 
 	// HooksRunner, if non-nil, runs pre/post tool call hooks.
 	HooksRunner HooksRunner
+
+	// CompactThresholdPct, if > 0, triggers history compaction when total history size (in bytes)
+	// exceeds this percentage of MaxPromptBytes. 0 = disabled. Recommended: 70.
+	// Compaction failure is non-fatal: logs a warning and continues without compacting.
+	CompactThresholdPct int
 
 	Debug  bool
 	Logger *log.Logger
@@ -242,6 +261,22 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	for steps < a.opts.MaxSteps {
 		steps++
 
+		// Compaction: if history is getting large, summarise it before the next LLM call.
+		// Fires only at the top of the loop so history is always in a consistent state
+		// (no orphaned tool_calls without tool_results).
+		if a.opts.CompactThresholdPct > 0 && a.opts.MaxPromptBytes > 0 {
+			threshold := a.opts.MaxPromptBytes * a.opts.CompactThresholdPct / 100
+			if historyBytes(history) > threshold {
+				compacted, compactErr := a.compactHistory(ctx, userQuery, history)
+				if compactErr != nil {
+					a.logf("compaction failed (non-fatal), continuing with truncation: %v", compactErr)
+				} else {
+					a.logf("history compacted: %d bytes → %d bytes", historyBytes(history), historyBytes(compacted))
+					history = compacted
+				}
+			}
+		}
+
 		// Inject a step-limit warning as a synthetic assistant message once at 2/3 of MaxSteps.
 		if !maxStepsReminderSent && steps*3 >= a.opts.MaxSteps*2 {
 			maxStepsReminderSent = true
@@ -307,8 +342,34 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				a.logf("agent.tool_call WARNING: no tool_calls in response, history_len=%d", len(history))
 			}
 
+			// Permission ruleset: evaluated first; first matching rule wins.
+			// allow → bypasses the AllowExec/AllowWeb consent gates for this call only.
+			// deny  → TOOL_DENIED regardless of --allow-exec/--allow-web.
+			effectiveAllowExec := a.opts.AllowExec
+			effectiveAllowWeb := a.opts.AllowWeb
+			if len(a.opts.PermissionRules) > 0 {
+				subject := subjectForTool(name, step.Tool.Input)
+				if act, matched := checkPermissions(a.opts.PermissionRules, name, subject); matched {
+					if act == "deny" {
+						toolResult := formatToolDeniedJSON(name, step.Tool.Input, "tool call denied by permission ruleset")
+						history = append(history, llm.Message{
+							Role:       llm.RoleTool,
+							ToolCallID: toolCallID,
+							Content:    toolResult,
+						})
+						if cbErr := cb.RecordDenied(name); cbErr != nil {
+							return nil, nil, cbErr
+						}
+						continue
+					}
+					// act == "allow": grant consent for this call only.
+					effectiveAllowExec = true
+					effectiveAllowWeb = true
+				}
+			}
+
 			// Consent policy: block exec.run unless AllowExec (all allowed) or per-command allowlist permits it.
-			if name == "bash" && !a.opts.AllowExec {
+			if name == "bash" && !effectiveAllowExec {
 				cmd := execCommandFromInput(step.Tool.Input)
 				if !execCommandAllowed(cmd, a.opts.ExecAllow, a.opts.ExecDeny) {
 					msg := "exec.run requires user consent (use --allow-exec or configure exec.allow)"
@@ -326,6 +387,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					}
 					continue
 				}
+			}
+
+			// Consent policy: block webfetch unless AllowWeb.
+			if name == "webfetch" && !effectiveAllowWeb {
+				toolResult := formatToolDeniedJSON(name, step.Tool.Input, "webfetch requires user consent (use --allow-web)")
+				history = append(history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolCallID: toolCallID,
+					Content:    toolResult,
+				})
+				if cbErr := cb.RecordDenied(name); cbErr != nil {
+					return nil, nil, cbErr
+				}
+				continue
 			}
 
 			// task.result: child agent reports its answer and exits immediately.
@@ -640,16 +715,17 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 		return a.opts.CustomTools
 	}
 	allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
+	allowWeb := a.opts.AllowWeb
 	hasSubtasks := a.opts.SubtaskRunner != nil
 	hasQA := a.opts.QuestionAsker != nil
 
 	var base []llm.ToolDef
 	if a.opts.Mode != "" {
-		base = tools.ListToolsForMode(a.opts.Mode, allowExec, hasSubtasks, hasQA)
+		base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, hasSubtasks, hasQA)
 	} else if hasSubtasks {
-		base = tools.ListToolsWithSubtasks(allowExec)
+		base = tools.ListToolsWithSubtasks(allowExec, allowWeb)
 	} else {
-		base = tools.ListTools(allowExec)
+		base = tools.ListTools(allowExec, allowWeb)
 	}
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
@@ -662,7 +738,11 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
 	systemPrompt := promptpkg.BuildSystemPromptForMode(a.opts.Mode, a.opts.PromptFamily)
-	// .orchestra/system.txt in the workspace root overrides the built-in system prompt.
+	// Custom agent system_prompt overrides the built-in mode prompt.
+	if a.opts.SystemPromptOverride != "" {
+		systemPrompt = a.opts.SystemPromptOverride
+	}
+	// .orchestra/system.txt in the workspace root overrides everything.
 	if override := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); override != "" {
 		systemPrompt = override
 	}

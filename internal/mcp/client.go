@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const mcpProtocolVersion = "2024-11-05"
@@ -153,7 +154,14 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMe
 // Close stops the MCP server subprocess.
 func (c *Client) Close() error {
 	_ = c.stdin.Close()
-	<-c.done
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		<-c.done
+	}
 	return c.cmd.Wait()
 }
 

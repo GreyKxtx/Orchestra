@@ -499,3 +499,53 @@ func TestAgent_Run_FinalResolveFailure_RepeatsThenStopsEarly(t *testing.T) {
 		t.Fatalf("expected code %s, got %s", protocol.InvalidLLMOutput, coreErr.Code)
 	}
 }
+
+// capturingLLM records every CompleteRequest for inspection.
+type capturingLLM struct{ requests []llm.CompleteRequest }
+
+func (c *capturingLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
+func (c *capturingLLM) Complete(_ context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	c.requests = append(c.requests, req)
+	return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: `{"type":"final","final":{"patches":[]}}`}}, nil
+}
+
+func TestAgent_Run_SystemPromptOverride_ReachesLLM(t *testing.T) {
+	root := t.TempDir()
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	const wantPrompt = "you are a custom review agent"
+
+	cap := &capturingLLM{}
+	ag, err := New(cap, v, tr, Options{
+		MaxSteps:             10,
+		SystemPromptOverride: wantPrompt,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, _ = ag.Run(context.Background(), nil, "do something")
+
+	if len(cap.requests) == 0 {
+		t.Fatal("LLM was never called")
+	}
+	msgs := cap.requests[0].Messages
+	if len(msgs) == 0 {
+		t.Fatal("no messages in first LLM request")
+	}
+	if msgs[0].Role != llm.RoleSystem {
+		t.Fatalf("messages[0].Role = %q, want %q", msgs[0].Role, llm.RoleSystem)
+	}
+	if !strings.Contains(msgs[0].Content, wantPrompt) {
+		t.Errorf("system prompt = %q, want it to contain %q", msgs[0].Content, wantPrompt)
+	}
+}

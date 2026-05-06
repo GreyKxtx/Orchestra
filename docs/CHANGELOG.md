@@ -8,6 +8,150 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Sub-project G: Native LSP integration
+
+#### New package `internal/lsp`
+
+- **`framing.go`** — Content-Length framing: `ReadMessage(r *bufio.Reader) ([]byte, error)` and `WriteMessage(w io.Writer, body []byte) error`.
+- **`protocol.go`** — LSP wire types: `Position`, `Range`, `Location`, `LocationLink`, `Diagnostic`, `TextEdit`, `WorkspaceEdit`, `MarkupContent`, `DiagnosticSeverity` (1–4 with `String()`).
+- **`positions.go`** — Coordinate helpers: `PathToURI`, `URIToPath`, `ToolPosition` (1-based), `ToLSP`/`ToolPositionFrom` with UTF-16↔byte offset conversion.
+- **`client.go`** — `Client` — persistent LSP subprocess client over stdio JSON-RPC 2.0. Methods: `Start`, `StartFromConn`, `Request`, `Notify`, `DidOpen/DidChange/DidClose`, `Close`. `readLoop` routes responses to pending channels and notifications to `notifyCh`.
+- **`diagnostics.go`** — `DiagnosticsCache` — push-based diagnostics store. `Update/Get` for cached reads; `WaitForUpdate(ctx, uri)` channel-per-waiter pattern for async `publishDiagnostics` notifications.
+- **`manager.go`** — `Manager` — multi-server routing by file extension. Inline `LSPConfig`/`LSPServerConfig` (no import cycle). Methods: `Definition`, `References`, `Hover`, `GetDiagnostics`, `Rename`, `SyncAndDiagnose`. Returns `ToolLocation`, `ToolDiagnostic`, `ProposedEdit` output types. Graceful degradation if no server handles the file.
+
+#### New package `internal/lsp/lsptest`
+
+- **`server.go`** — `Server` — in-process mock LSP server for tests. `New(conn)` / `NewConn()`, `SetHandler(method, fn)`, `PushDiagnostics(uri, diags)`. Auto-handles `initialize` (returns `utf-8` posEncoding), `shutdown`, `exit`.
+
+#### New tools (5 LSP tools)
+
+- **`lsp.definition`** — jump to definition via LSP.
+- **`lsp.references`** — find all references via LSP.
+- **`lsp.hover`** — hover documentation/type via LSP.
+- **`lsp.diagnostics`** — get compiler/linter diagnostics for a file via LSP.
+- **`lsp.rename`** — project-wide rename; returns `[]ProposedEdit` for the agent to apply via `fs.edit`/`fs.write`.
+
+Added to: `listToolsBuild` (all 5), `listToolsPlan` / `listToolsExplore` (4, no rename), `listToolsGeneral` (all 5), `ListTools` base, `allToolDefsMap`. `ListToolsForChild` unchanged.
+
+#### Auto-diagnostics on write/edit
+
+- **`FSWriteResponse.Diagnostics []lsp.ToolDiagnostic`** — populated (when LSP is configured) by `SyncAndDiagnose` after every successful `fs.write`.
+- **`FSEditResponse.Diagnostics []lsp.ToolDiagnostic`** — same for `fs.edit`. Gives the agent immediate error feedback without an extra tool call.
+
+#### Config (`internal/config/config.go`)
+
+- **`LSPServerConfig`** — `language`, `extensions`, `command`, `env`, `disabled`, `init_options`.
+- **`LSPConfig`** — `enabled`, `servers`, `diagnostics_timeout_ms`.
+- **`LSP LSPConfig`** field added to `ProjectConfig`.
+- 5 LSP tool names added to `validAgentToolNames`.
+
+#### Protocol bump
+
+- `ToolsVersion` **4 → 5**: 5 new LSP tools + `diagnostics` field on write/edit responses.
+
+#### Init template
+
+- `orchestra init` now appends a commented-out `lsp:` block with gopls, typescript-language-server, pylsp, rust-analyzer examples.
+
+### Added — Sub-project D: Custom agents in `.orchestra.yml`
+
+#### Config (`internal/config/config.go`)
+
+- **`AgentDefinition`** struct — `name`, `system_prompt`, `tools []string`, `model` per agent.
+- **`agents:`** field on `ProjectConfig`; validated at `config.Load` time via `validateAgents()`:
+  - empty name → error; collision with built-in mode name → error; duplicate names → error.
+  - `tools: []` (explicit empty) → error ("omit to inherit"); `tools: null` → inherit full build toolset.
+  - unknown tool name → error (guards against typos without import cycle).
+- **`FindAgent(name) *AgentDefinition`** — O(n) lookup.
+- **`IsBuiltInMode(name) bool`** — public predicate over the reserved-names map.
+
+#### Tools registry (`internal/tools/registry.go`)
+
+- **`ResolveToolNames(names []string) ([]llm.ToolDef, error)`** — maps short tool names to `llm.ToolDef` slices; returns error on unknown name.
+
+#### Agent (`internal/agent/agent.go`)
+
+- **`Options.SystemPromptOverride string`** — when non-empty, replaces the built-in mode system prompt before `.orchestra/system.txt` override.
+
+#### Core (`internal/core/core.go`)
+
+- **`AgentRunParams.Mode` / `SessionMessageParams.Mode`** — new optional field; enables custom agent by name on the JSON-RPC path.
+- **`resolveCustomAgentOpts`** helper — centralises model override + tool resolution + MCP auto-append for both `AgentRun` and `SessionMessage`.
+- Unknown `Mode` → `InvalidLLMOutput` protocol error.
+
+#### CLI (`internal/cli/apply.go`)
+
+- `--mode X` validation: unknown mode that is neither built-in nor in `agents:` → early error with helpful message.
+- Direct mode: custom agent system_prompt + tool override + model override wired in.
+- `--via-core` path: `Mode` forwarded in `agent.run` params.
+
+#### Protocol bump
+
+- `ProtocolVersion` **1 → 2**: `mode` field added to `agent.run` and `session.message` params (additive, `omitempty`).
+
+#### Init template (`internal/cli/init.go`)
+
+- `.orchestra.yml` generated by `orchestra init` now includes a commented-out advisor example in `agents:`.
+
+### Added — Sub-project E: Permission ruleset per tool + glob
+
+#### `permissions:` config block (`internal/config/config.go`, `internal/agent/permissions.go`)
+
+- **`PermissionRule`** — ordered per-tool rule: `tool` (name or `*`), `pattern` (glob against subject), `action` (`allow` | `deny`).
+- **`PermissionsConfig`** — list of rules, added as `permissions:` to `ProjectConfig`.
+- **Subject table**: `bash` → command string; `webfetch` → URL; `write/edit/read/ls/grep/symbols` → file path; `glob` → glob pattern; `explore` → symbol name.
+- **Glob semantics**: file-path subjects use `path.Match` (`*` does not cross `/`); non-path subjects (bash, webfetch, explore) use a simple wildcard where `*` matches any sequence including `/`.
+- **First-match-wins** evaluation order (like iptables): rules are evaluated in order; the first matching rule's action wins.
+- **`allow` → bypasses `--allow-exec` / `--allow-web` gates for that specific call only** — does not mutate `agent.Options`.
+- **`deny` → always TOOL_DENIED**, regardless of `--allow-exec` / `--allow-web`.
+- **No rules → no change** in behavior (existing consent gates are unchanged).
+- Propagated through `apply.go`, `core.go`, `pipeline.go` (all three execution modes).
+
+Example config:
+```yaml
+permissions:
+  rules:
+    - tool: bash
+      pattern: "go test *"
+      action: allow
+    - tool: bash
+      action: deny
+    - tool: write
+      pattern: "*.go"
+      action: allow
+    - tool: write
+      action: deny
+```
+
+### Added — Sub-projects C+G: Compaction agent & Memory tool
+
+#### Memory tool (`internal/tools/memory_write.go`)
+
+- **`memory_write` tool** — агент записывает факты в `.orchestra/memory/agent.md` с ISO-timestamp. Файл создаётся автоматически; записи аппендятся.
+- **`LoadProjectMemory` — аддитивный режим** — теперь читает ВСЕ три источника (ORCHESTRA.md + `.orchestra/memory/*.md` + `~/.orchestra/memory.md`) и конкатенирует их (ранее первый непустой выигрывал). Лимит поднят с 2 KB до 8 KB.
+- `memory_write` добавлен в `ListTools`, `listToolsBuild`, `listToolsGeneral`.
+
+#### Compaction agent (`internal/agent/compact.go`)
+
+- **`historyBytes(history)`** — подсчёт размера истории в байтах (content + tool call args).
+- **`compactHistory(ctx, userQuery, history)`** — вызывает LLM в режиме `ModeCompaction` (`compaction.txt` промпт, до 600 слов), сжимает историю в один `user`-message. Сбой — non-fatal (fallback на truncation).
+- **`CompactThresholdPct int`** добавлен в `agent.Options` и `config.AgentConfig` (`compact_threshold_pct`). 0 = выключено, рекомендуется 70.
+- Триггер срабатывает **только в начале итерации цикла** (история в консистентном состоянии — нет orphan tool_calls без tool_results).
+- `CompactThresholdPct` пробрасывается через `cli/apply.go`, `internal/core/core.go`, `internal/pipeline/pipeline.go`.
+
+### Added — Sub-project F: WebFetch tool
+
+#### `webfetch` (`internal/tools/webfetch.go`)
+
+- **`webfetch` tool** — HTTP GET любого `http://` или `https://` URL; возвращает `{url, title, content, truncated}`.
+- **SSRF-защита** — custom `DialContext` резолвит DNS сам и блокирует private, loopback, link-local, multicast и unspecified адреса перед установкой соединения; raw IP-литералы проверяются напрямую.
+- **HTML → текст** — `golang.org/x/net/html` парсит DOM; пропускаются `<script>`, `<style>`, `<noscript>`, `<iframe>`, `<svg>`, `<canvas>`; `<title>` извлекается отдельно.
+- **Consent-гейт** — `--allow-web` CLI-флаг (зеркалит `--allow-exec`); дефолт `web.confirm: true`; отключается через `web.confirm: false` в `.orchestra.yml`.
+- **Лимиты** — `web.fetch_timeout_s` (дефолт 30 с), `web.max_content_bytes` (дефолт 512 КБ); оба настраиваемы в конфиге.
+- **`WebConfig`** добавлен в `internal/config/config.go`.
+- **`AllowWeb bool`** добавлен в `agent.Options`; защитный check в агент-луп аналогичен bash/AllowExec.
+- **`golang.org/x/net v0.53.0`** добавлен в go.mod.
+
 ### Added — Post Phase 9: Prompt pipeline, tool aliases, line numbers, forgiving resolver
 
 #### Prompt pipeline (`internal/prompt/`)
@@ -43,6 +187,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 #### Forgiving resolver (`internal/resolver/`)
 
 - При `StaleContent` резолвер делает второй проход с `lineTrimmedFind` (игнорирует хвостовые пробелы) перед тем как вернуть ошибку модели.
+- **Pass 3 — IndentationFlexible**: третий проход `indentFlexibleFind` нормализует ведущие отступы (табы → 4 пробела), закрывая разрыв когда файл использует `\t`, а LLM прислал пробелы или наоборот.
+- **Защита от ложных срабатываний**: совпадение принимается только если начинается на границе строки (`absJ==0 || normHay[absJ-1]=='\n'`), что не даёт 4-пробельной игле матчиться внутри 8-пробельной строки.
 - Сокращает число «рибаундов» к LLM при незначительных расхождениях форматирования, сохраняя `file_hash`-гарантию.
 
 #### Прочие изменения

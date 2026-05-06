@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/orchestra/orchestra/internal/llm"
@@ -9,7 +10,7 @@ import (
 
 // ListTools returns OpenAI-compatible tool definitions (JSON Schema), filtered by policy.
 // Only tools returned here may be exposed to the model.
-func ListTools(allowExec bool) []llm.ToolDef {
+func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(),
 		toolFSRead(),
@@ -22,22 +23,31 @@ func ListTools(allowExec bool) []llm.ToolDef {
 		toolRuntimeQuery(),
 		toolTodoWrite(),
 		toolTodoRead(),
+		toolMemoryWrite(),
+		toolLSPDefinition(),
+		toolLSPReferences(),
+		toolLSPHover(),
+		toolLSPDiagnostics(),
+		toolLSPRename(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+	}
+	if allowWeb {
+		out = append(out, toolWebFetch())
 	}
 	return out
 }
 
 // ListToolsWithMCP appends MCP server tools to the base tool list.
-func ListToolsWithMCP(allowExec bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListTools(allowExec)
+func ListToolsWithMCP(allowExec, allowWeb bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListTools(allowExec, allowWeb)
 	return append(out, mcpDefs...)
 }
 
 // ListToolsWithSubtasksAndMCP returns parent-agent tools including subtask and MCP tools.
-func ListToolsWithSubtasksAndMCP(allowExec bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListToolsWithSubtasks(allowExec)
+func ListToolsWithSubtasksAndMCP(allowExec, allowWeb bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListToolsWithSubtasks(allowExec, allowWeb)
 	return append(out, mcpDefs...)
 }
 
@@ -295,8 +305,8 @@ func toolTodoRead() llm.ToolDef {
 }
 
 // ListToolsWithSubtasks returns tools including task.spawn/wait/cancel for parent agents.
-func ListToolsWithSubtasks(allowExec bool) []llm.ToolDef {
-	out := ListTools(allowExec)
+func ListToolsWithSubtasks(allowExec, allowWeb bool) []llm.ToolDef {
+	out := ListTools(allowExec, allowWeb)
 	out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
 	return out
 }
@@ -322,29 +332,33 @@ func ListToolsForInvestigator() []llm.ToolDef {
 
 // ListToolsForMode returns tools for the given agent mode.
 // hasSubtasks enables task.spawn/wait/cancel; hasQuestionAsker enables question tool.
-func ListToolsForMode(mode string, allowExec, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+func ListToolsForMode(mode string, allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	switch mode {
 	case "plan":
 		return listToolsPlan(hasSubtasks, hasQuestionAsker)
 	case "explore":
 		return listToolsExplore()
 	case "general":
-		return listToolsGeneral(allowExec, hasSubtasks)
+		return listToolsGeneral(allowExec, allowWeb, hasSubtasks)
 	case "compaction", "title", "summary":
 		return []llm.ToolDef{} // pure LLM output, no tools needed
 	default: // "build" or ""
-		return listToolsBuild(allowExec, hasSubtasks, hasQuestionAsker)
+		return listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker)
 	}
 }
 
-func listToolsBuild(allowExec, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolPlanEnter(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+	}
+	if allowWeb {
+		out = append(out, toolWebFetch())
 	}
 	if hasSubtasks {
 		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
@@ -361,6 +375,8 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		// lsp.rename excluded: plan mode is read-only.
 	}
 	if hasSubtasks {
 		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
@@ -375,20 +391,26 @@ func listToolsExplore() []llm.ToolDef {
 	return []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(),
 		toolSearchText(), toolCodeSymbols(), toolTaskResult(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		// lsp.rename excluded: explore mode is read-only.
 	}
 }
 
 // listToolsGeneral returns tools for the "general" multi-step execution subagent.
 // It has full read+write access and reports results via task_result.
 // todowrite is intentionally excluded — general agents track progress internally.
-func listToolsGeneral(allowExec, hasSubtasks bool) []llm.ToolDef {
+func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
-		toolTodoRead(), toolTaskResult(),
+		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+	}
+	if allowWeb {
+		out = append(out, toolWebFetch())
 	}
 	if hasSubtasks {
 		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
@@ -545,6 +567,177 @@ func toolQuestion() llm.ToolDef {
         }
       }
     }
+  }
+}`),
+		},
+	}
+}
+
+func toolWebFetch() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "webfetch",
+			Description: "Загрузить URL и вернуть текстовое содержимое страницы. Поддерживаются только http/https. Приватные, loopback и link-local адреса заблокированы.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["url"],
+  "properties": {
+    "url": { "type": "string", "minLength": 1, "description": "Полный URL (http:// или https://)" },
+    "max_bytes": { "type": "integer", "minimum": 0, "description": "Максимальный размер ответа в байтах" }
+  }
+}`),
+		},
+	}
+}
+
+func toolMemoryWrite() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "memory_write",
+			Description: "Сохранить факт в постоянную память агента (.orchestra/memory/agent.md). Используй для запоминания важных решений, предпочтений пользователя или контекста, который нужен в следующих сессиях. Не используй для временных заметок — для этого todowrite.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["content"],
+  "properties": {
+    "content": { "type": "string", "minLength": 1, "description": "Факт или контекст для сохранения" }
+  }
+}`),
+		},
+	}
+}
+
+// allToolDefsMap returns a map of every known tool definition keyed by its
+// short canonical name (the name the LLM sees).
+func allToolDefsMap() map[string]llm.ToolDef {
+	all := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(),
+		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
+		toolPlanEnter(), toolPlanExit(), toolQuestion(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
+	}
+	m := make(map[string]llm.ToolDef, len(all))
+	for _, d := range all {
+		m[d.Function.Name] = d
+	}
+	return m
+}
+
+// ResolveToolNames maps short tool names to their ToolDef structs.
+// Returns an error if any name is unknown. The list of valid names is the same
+// set exposed in config.validAgentToolNames.
+func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
+	m := allToolDefsMap()
+	out := make([]llm.ToolDef, 0, len(names))
+	for _, name := range names {
+		d, ok := m[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown tool name: %q", name)
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+func toolLSPDefinition() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "lsp.definition",
+			Description: "Перейти к определению символа (функции, типа, переменной) в указанной позиции файла (1-based line/col). Использует gopls или другой настроенный LSP-сервер.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "line", "col"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1, "description": "Путь к файлу относительно workspace root" },
+    "line": { "type": "integer", "minimum": 1, "description": "Строка (1-based)" },
+    "col":  { "type": "integer", "minimum": 1, "description": "Колонка — байтовый offset (1-based)" }
+  }
+}`),
+		},
+	}
+}
+
+func toolLSPReferences() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "lsp.references",
+			Description: "Найти все места использования символа в проекте (1-based line/col). Использует LSP-сервер.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "line", "col"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1 },
+    "line": { "type": "integer", "minimum": 1 },
+    "col":  { "type": "integer", "minimum": 1 },
+    "include_declaration": { "type": "boolean", "description": "Включить объявление в результаты (default: false)" }
+  }
+}`),
+		},
+	}
+}
+
+func toolLSPHover() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "lsp.hover",
+			Description: "Получить документацию/тип символа в указанной позиции (hover-info). Использует LSP-сервер.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "line", "col"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1 },
+    "line": { "type": "integer", "minimum": 1 },
+    "col":  { "type": "integer", "minimum": 1 }
+  }
+}`),
+		},
+	}
+}
+
+func toolLSPDiagnostics() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "lsp.diagnostics",
+			Description: "Получить диагностические ошибки и предупреждения LSP-сервера для файла (аналог 'Problems' в IDE). Возвращает массив диагностик с позициями и уровнем severity.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1 }
+  }
+}`),
+		},
+	}
+}
+
+func toolLSPRename() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "lsp.rename",
+			Description: "Переименовать символ во всём проекте. Возвращает список предложенных правок (edits), которые нужно применить через fs.edit или fs.write.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "line", "col", "new_name"],
+  "properties": {
+    "path":     { "type": "string", "minLength": 1 },
+    "line":     { "type": "integer", "minimum": 1 },
+    "col":      { "type": "integer", "minimum": 1 },
+    "new_name": { "type": "string", "minLength": 1, "description": "Новое имя символа" }
   }
 }`),
 		},

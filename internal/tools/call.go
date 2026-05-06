@@ -133,12 +133,89 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "webfetch":
+		var req WebFetchRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.WebFetch(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "memory_write":
+		var req MemoryWriteRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.MemoryWrite(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	case "runtime_query":
 		var req RuntimeQueryRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
 		}
 		resp, err := r.RuntimeQuery(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "lsp.definition":
+		var req LSPDefinitionRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.LSPDefinition(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "lsp.references":
+		var req LSPReferencesRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.LSPReferences(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "lsp.hover":
+		var req LSPHoverRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.LSPHover(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "lsp.diagnostics":
+		var req LSPDiagnosticsRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.LSPDiagnostics(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "lsp.rename":
+		var req LSPRenameRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.LSPRename(ctx, req)
 		if err != nil {
 			return nil, err
 		}

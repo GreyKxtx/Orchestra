@@ -5,13 +5,16 @@ package protocol
 // These values are part of the stable client↔core contract.
 const (
 	// ProtocolVersion is the version of JSON-RPC methods / schemas.
-	ProtocolVersion = 1
+	// v2: added optional Mode field to agent.run and session/message params.
+	ProtocolVersion = 2
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1
 
 	// ToolsVersion is the version of tool interfaces (inputs/outputs).
-	ToolsVersion = 4
+	// v5: added lsp.definition, lsp.references, lsp.hover, lsp.diagnostics, lsp.rename;
+	//     added diagnostics field to fs.write and fs.edit responses.
+	ToolsVersion = 5
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -55,22 +54,4 @@ func CommitAll(root, message string) error {
 	}
 
 	return nil
-}
-
-// FindRepoRoot finds the git repository root starting from the given directory
-func FindRepoRoot(startDir string) (string, error) {
-	dir := filepath.Clean(startDir)
-
-	for {
-		if _, err := exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Output(); err == nil {
-			return dir, nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root
-			return "", fmt.Errorf("not a git repository")
-		}
-		dir = parent
-	}
 }

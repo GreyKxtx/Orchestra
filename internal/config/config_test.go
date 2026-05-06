@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestExecConfig_IsCommandAllowed(t *testing.T) {
 	cases := []struct {
@@ -90,5 +93,146 @@ func TestExecConfig_IsCommandAllowed(t *testing.T) {
 				t.Errorf("IsCommandAllowed(%q) = %v, want %v", tc.cmd, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateAgents(t *testing.T) {
+	baseValid := func() *ProjectConfig {
+		cfg := DefaultConfig("/tmp")
+		return cfg
+	}
+
+	cases := []struct {
+		name    string
+		agents  []AgentDefinition
+		wantErr string // substring of expected error; "" = no error
+	}{
+		{
+			name:    "no agents — valid",
+			agents:  nil,
+			wantErr: "",
+		},
+		{
+			name: "valid advisor agent",
+			agents: []AgentDefinition{
+				{Name: "advisor", SystemPrompt: "review", Tools: []string{"read", "grep"}},
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid agent with nil tools (inherits build set)",
+			agents: []AgentDefinition{
+				{Name: "helper", SystemPrompt: "help"},
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid agent with model override",
+			agents: []AgentDefinition{
+				{Name: "smart", Model: "claude-opus-4-7", Tools: []string{"read"}},
+			},
+			wantErr: "",
+		},
+		{
+			name: "empty name",
+			agents: []AgentDefinition{
+				{Name: ""},
+			},
+			wantErr: "name is required",
+		},
+		{
+			name: "collision with built-in mode build",
+			agents: []AgentDefinition{
+				{Name: "build"},
+			},
+			wantErr: "collides with a built-in agent mode",
+		},
+		{
+			name: "collision with built-in mode plan",
+			agents: []AgentDefinition{
+				{Name: "plan"},
+			},
+			wantErr: "collides with a built-in agent mode",
+		},
+		{
+			name: "duplicate names",
+			agents: []AgentDefinition{
+				{Name: "advisor"},
+				{Name: "advisor"},
+			},
+			wantErr: "duplicate agent name",
+		},
+		{
+			name: "empty tools list (not nil)",
+			agents: []AgentDefinition{
+				{Name: "myagent", Tools: []string{}},
+			},
+			wantErr: "tools list is empty",
+		},
+		{
+			name: "unknown tool name",
+			agents: []AgentDefinition{
+				{Name: "myagent", Tools: []string{"read", "fly"}},
+			},
+			wantErr: `unknown tool name "fly"`,
+		},
+		{
+			name: "multiple valid agents",
+			agents: []AgentDefinition{
+				{Name: "advisor", Tools: []string{"read", "grep"}},
+				{Name: "writer", Tools: []string{"write", "edit"}},
+			},
+			wantErr: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseValid()
+			cfg.Agents = tc.agents
+			err := cfg.validateAgents()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("expected error containing %q, got nil", tc.wantErr)
+				return
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestFindAgent(t *testing.T) {
+	cfg := &ProjectConfig{
+		Agents: []AgentDefinition{
+			{Name: "advisor", SystemPrompt: "review code"},
+			{Name: "writer", SystemPrompt: "write code"},
+		},
+	}
+
+	got := cfg.FindAgent("advisor")
+	if got == nil || got.SystemPrompt != "review code" {
+		t.Errorf("FindAgent(advisor) = %v, want advisor", got)
+	}
+
+	got = cfg.FindAgent("writer")
+	if got == nil || got.Name != "writer" {
+		t.Errorf("FindAgent(writer) = %v, want writer", got)
+	}
+
+	got = cfg.FindAgent("unknown")
+	if got != nil {
+		t.Errorf("FindAgent(unknown) = %v, want nil", got)
+	}
+
+	empty := &ProjectConfig{}
+	if empty.FindAgent("x") != nil {
+		t.Error("FindAgent on empty config should return nil")
 	}
 }

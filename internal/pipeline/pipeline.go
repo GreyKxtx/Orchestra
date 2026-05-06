@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/daemon"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
@@ -62,6 +63,8 @@ type Options struct {
 	MaxFinalFailures     int
 	LLMStepTimeout       time.Duration
 	MaxPromptBytes       int
+	CompactThresholdPct  int
+	PermissionRules      []configpkg.PermissionRule
 
 	// OnEvent, if non-nil, receives streaming events tagged with the stage name.
 	OnEvent func(stage string, ev agent.AgentEvent)
@@ -216,11 +219,13 @@ func runInvestigator(
 		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
 		MaxFinalFailures:     opts.MaxFinalFailures,
 		MaxPromptBytes:       opts.MaxPromptBytes,
+		CompactThresholdPct:  opts.CompactThresholdPct,
 		LLMStepTimeout:       opts.LLMStepTimeout,
 		PromptFamily:         opts.PromptFamily,
 		ResponseFormat:       opts.ResponseFormat,
 		Debug:                opts.Debug,
 		AgentLogger:          opts.AgentLogger,
+		PermissionRules:      opts.PermissionRules,
 		// Read-only + task_result + runtime for trace correlation.
 		CustomTools: tools.ListToolsForInvestigator(),
 		OnEvent:     wrapOnEvent("investigator", opts.OnEvent),
@@ -250,11 +255,13 @@ func runCoder(
 		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
 		MaxFinalFailures:     opts.MaxFinalFailures,
 		MaxPromptBytes:       opts.MaxPromptBytes,
+		CompactThresholdPct:  opts.CompactThresholdPct,
 		LLMStepTimeout:       opts.LLMStepTimeout,
 		PromptFamily:         opts.PromptFamily,
 		ResponseFormat:       opts.ResponseFormat,
 		Debug:                opts.Debug,
 		AgentLogger:          opts.AgentLogger,
+		PermissionRules:      opts.PermissionRules,
 		// Full build mode, always dry-run — pipeline applies at the end.
 		Apply:   false,
 		Backup:  false,
@@ -285,11 +292,13 @@ func runCritic(
 		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
 		MaxFinalFailures:     opts.MaxFinalFailures,
 		MaxPromptBytes:       opts.MaxPromptBytes,
+		CompactThresholdPct:  opts.CompactThresholdPct,
 		LLMStepTimeout:       opts.LLMStepTimeout,
 		PromptFamily:         opts.PromptFamily,
 		ResponseFormat:       opts.ResponseFormat,
 		Debug:                opts.Debug,
 		AgentLogger:          opts.AgentLogger,
+		PermissionRules:      opts.PermissionRules,
 		// Read-only + task_result; no write tools.
 		CustomTools: tools.ListToolsForChild(),
 		OnEvent:     wrapOnEvent("critic", opts.OnEvent),

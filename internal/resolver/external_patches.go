@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/patches"
@@ -73,10 +74,7 @@ func ResolveExternalPatches(projectRoot string, patchList []patches.Patch) ([]op
 }
 
 func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRangeOp, error) {
-	if strings.TrimSpace(p.Search) == "" && p.Search != "" {
-		// Empty-but-present is allowed; treat as explicit empty search (unsupported).
-	}
-	if p.Search == "" {
+	if strings.TrimSpace(p.Search) == "" {
 		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "search is empty", map[string]any{
 			"path": p.Path,
 			"type": p.Type,
@@ -91,22 +89,33 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 
 	start, end, matches := findUnique(string(before), p.Search)
 	if matches == 0 {
-		// Forgiving fallback: retry ignoring trailing whitespace on every
-		// line and CRLF/LF differences. The op we build still references
-		// the *original* bytes via Expected, so the applier's strict
-		// re-check semantics are unchanged.
+		// Pass 2: retry ignoring trailing whitespace on every line and
+		// CRLF/LF differences.
 		ltStart, ltEnd, ltMatches := lineTrimmedFind(string(before), p.Search)
 		switch ltMatches {
 		case 0:
-			return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
-				"path":     p.Path,
-				"search":   preview(p.Search, 200),
-				"fileHash": cache.ComputeSHA256(before),
-			})
+			// Pass 3: retry additionally normalising leading whitespace
+			// (tabs expanded to spaces). Handles tab↔space mismatches.
+			ifStart, ifEnd, ifMatches := indentFlexibleFind(string(before), p.Search)
+			switch ifMatches {
+			case 0:
+				return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+					"path":     p.Path,
+					"search":   preview(p.Search, 200),
+					"fileHash": cache.ComputeSHA256(before),
+				})
+			case 1:
+				start, end = ifStart, ifEnd
+			default:
+				return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (indent-flexible)", map[string]any{
+					"path":    p.Path,
+					"matches": ifMatches,
+					"search":  preview(p.Search, 200),
+				})
+			}
 		case 1:
 			start, end = ltStart, ltEnd
-			// Fall through to position computation below using the
-			// recovered offsets. Expected is set from before[start:end].
+			// Fall through to position computation below.
 		default: // >1
 			return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (line-trimmed)", map[string]any{
 				"path":    p.Path,
@@ -401,6 +410,124 @@ func normalizeTrailingWS(s string) (normalized string, origIdx []int) {
 	return b.String(), origIdx
 }
 
+// normalizeLeadingAndTrailingWS returns a copy of s with CRLF→LF, trailing
+// whitespace stripped per line, and leading tabs expanded to 4 spaces per tab.
+//
+// origIdx[i] is the byte offset in s that normalized byte i corresponds to.
+// When a single tab expands to 4 spaces, all 4 entries point to the tab's
+// original offset. origIdx[len(normalized)] == len(s) (end-of-match sentinel).
+func normalizeLeadingAndTrailingWS(s string) (normalized string, origIdx []int) {
+	var b strings.Builder
+	b.Grow(len(s) * 2)
+	origIdx = make([]int, 0, len(s)+1)
+
+	i := 0
+	for i < len(s) {
+		nl := strings.IndexByte(s[i:], '\n')
+		var lineEnd int
+		hasNL := false
+		if nl < 0 {
+			lineEnd = len(s)
+		} else {
+			lineEnd = i + nl
+			hasNL = true
+		}
+
+		// Strip trailing WS and CRLF.
+		contentEnd := lineEnd
+		if hasNL && contentEnd > i && s[contentEnd-1] == '\r' {
+			contentEnd--
+		}
+		for contentEnd > i {
+			c := s[contentEnd-1]
+			if c == ' ' || c == '\t' {
+				contentEnd--
+			} else {
+				break
+			}
+		}
+
+		// Find end of leading whitespace.
+		leadEnd := i
+		for leadEnd < contentEnd && (s[leadEnd] == ' ' || s[leadEnd] == '\t') {
+			leadEnd++
+		}
+
+		// Emit leading whitespace; expand tabs to 4 spaces.
+		for k := i; k < leadEnd; k++ {
+			if s[k] == '\t' {
+				for sp := 0; sp < 4; sp++ {
+					b.WriteByte(' ')
+					origIdx = append(origIdx, k)
+				}
+			} else {
+				b.WriteByte(s[k])
+				origIdx = append(origIdx, k)
+			}
+		}
+
+		// Emit the non-leading content verbatim.
+		for k := leadEnd; k < contentEnd; k++ {
+			b.WriteByte(s[k])
+			origIdx = append(origIdx, k)
+		}
+
+		if hasNL {
+			b.WriteByte('\n')
+			origIdx = append(origIdx, lineEnd)
+			i = lineEnd + 1
+		} else {
+			i = lineEnd
+		}
+	}
+
+	origIdx = append(origIdx, len(s))
+	return b.String(), origIdx
+}
+
+// indentFlexibleFind is a forgiving variant of lineTrimmedFind that also
+// normalises leading whitespace (tabs expanded to 4 spaces per tab). Called
+// only when both findUnique and lineTrimmedFind returned 0 matches.
+//
+// Matches are only accepted when they start at a line boundary (position 0 or
+// immediately after '\n' in the normalised haystack). This prevents false
+// positives such as a 1-tab-indented needle matching inside a 2-tab-indented
+// line (e.g. "    hello" found at offset 4 of "        hello").
+func indentFlexibleFind(haystack, needle string) (start, end, matches int) {
+	if needle == "" {
+		return 0, 0, 0
+	}
+	normHay, hayMap := normalizeLeadingAndTrailingWS(haystack)
+	normNeedle, _ := normalizeLeadingAndTrailingWS(needle)
+	if normNeedle == "" {
+		return 0, 0, 0
+	}
+
+	idx := 0
+	for {
+		j := strings.Index(normHay[idx:], normNeedle)
+		if j < 0 {
+			break
+		}
+		absJ := idx + j
+		// Reject matches that don't start at a line boundary.
+		if absJ != 0 && normHay[absJ-1] != '\n' {
+			idx = absJ + 1
+			continue
+		}
+		matches++
+		if matches == 1 {
+			start = hayMap[absJ]
+			end = hayMap[absJ+len(normNeedle)]
+		}
+		if matches > 1 {
+			return start, end, matches
+		}
+		idx = absJ + max(1, len(normNeedle))
+	}
+	return start, end, matches
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -595,13 +722,6 @@ func splitLines(s string) (lines []string, endsWithNewline bool) {
 }
 
 func atoi(s string) int {
-	n := 0
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c < '0' || c > '9' {
-			return n
-		}
-		n = n*10 + int(c-'0')
-	}
+	n, _ := strconv.Atoi(s)
 	return n
 }

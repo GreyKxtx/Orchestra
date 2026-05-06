@@ -52,6 +52,9 @@ type AgentConfig struct {
 	MaxToolErrors int `yaml:"max_tool_errors"`
 	// MaxDeniedRepeats is the max repeated calls to a denied tool before giving up.
 	MaxDeniedRepeats int `yaml:"max_denied_repeats"`
+	// CompactThresholdPct triggers history compaction when history exceeds this % of MaxPromptBytes.
+	// 0 = disabled (default). Recommended: 70.
+	CompactThresholdPct int `yaml:"compact_threshold_pct"`
 }
 
 // DaemonConfig contains local daemon settings (v0.3+).
@@ -112,6 +115,23 @@ type LanguagesConfig struct {
 	Enabled []string `yaml:"enabled"`
 }
 
+// LSPServerConfig configures a single language server process.
+type LSPServerConfig struct {
+	Language    string            `yaml:"language"`
+	Extensions  []string          `yaml:"extensions"`
+	Command     []string          `yaml:"command"`
+	Env         map[string]string `yaml:"env,omitempty"`
+	Disabled    bool              `yaml:"disabled,omitempty"`
+	InitOptions map[string]any    `yaml:"init_options,omitempty"`
+}
+
+// LSPConfig holds the native LSP integration settings.
+type LSPConfig struct {
+	Enabled              *bool             `yaml:"enabled,omitempty"`
+	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
+	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
+}
+
 // MCPServerConfig configures a single MCP server (Phase 8).
 type MCPServerConfig struct {
 	// Name is the server identifier — tools appear as mcp:<name>:<tool>.
@@ -127,6 +147,79 @@ type MCPServerConfig struct {
 // MCPConfig holds the list of MCP servers to connect to.
 type MCPConfig struct {
 	Servers []MCPServerConfig `yaml:"servers,omitempty"`
+}
+
+// WebConfig contains web fetch safety settings.
+type WebConfig struct {
+	// Confirm gates webfetch: true = require --allow-web flag (default). false = allow without flag.
+	Confirm         *bool `yaml:"confirm"`
+	FetchTimeoutS   int   `yaml:"fetch_timeout_s"`
+	MaxContentBytes int   `yaml:"max_content_bytes"`
+}
+
+// PermissionRule is a single entry in the permission ruleset.
+// Rules are evaluated in order; the first matching rule determines the outcome.
+//
+// - tool: canonical or alias tool name, or "*" to match any tool.
+// - pattern: glob against the tool's subject (command string for bash,
+//   URL for webfetch, file path for fs tools). Omit or set to "" to match any subject.
+//   Glob syntax: standard path.Match — '*' matches any sequence of non-separator chars,
+//   '?' matches a single non-separator char. '**' is NOT supported.
+// - action: "allow" or "deny".
+//
+// An explicit "allow" rule permits the tool call even when --allow-exec / --allow-web
+// are not set. An explicit "deny" always blocks the call with TOOL_DENIED.
+// If no rule matches, the call falls through to the existing consent gates.
+type PermissionRule struct {
+	Tool    string `yaml:"tool"`
+	Pattern string `yaml:"pattern,omitempty"`
+	Action  string `yaml:"action"` // "allow" | "deny"
+}
+
+// PermissionsConfig holds the ordered permission ruleset evaluated before
+// every tool call.
+type PermissionsConfig struct {
+	Rules []PermissionRule `yaml:"rules,omitempty"`
+}
+
+// AgentDefinition defines a custom named agent in .orchestra.yml.
+// Custom agents override the built-in "build" mode behaviour with a different
+// system prompt, tool set, and/or model — without breaking the two-layer patch
+// contract.
+type AgentDefinition struct {
+	// Name is required and must be unique; cannot collide with built-in modes.
+	Name string `yaml:"name"`
+	// SystemPrompt replaces the built-in mode system prompt for this agent.
+	// .orchestra/system.txt still takes precedence when present.
+	SystemPrompt string `yaml:"system_prompt,omitempty"`
+	// Tools is the explicit tool list.
+	//   nil (omitted) → inherit the full build toolset.
+	//   []  (empty)   → config load error (caught by validateAgents).
+	//   [ls, read, …] → exactly these tools are exposed to the model.
+	Tools []string `yaml:"tools,omitempty"`
+	// Model overrides the model name within the same provider (v1).
+	// Provider, api_base, and api_key are inherited from the top-level llm config.
+	Model string `yaml:"model,omitempty"`
+}
+
+// builtInAgentModes are reserved names that cannot be used for custom agents.
+var builtInAgentModes = map[string]bool{
+	"build": true, "plan": true, "explore": true, "general": true,
+	"compaction": true, "title": true, "summary": true,
+}
+
+// validAgentToolNames lists all short tool names that are valid in
+// AgentDefinition.Tools. Hardcoded here to avoid an import cycle between
+// config and tools (tools → llm → config).
+var validAgentToolNames = map[string]bool{
+	"ls": true, "read": true, "glob": true, "write": true, "edit": true,
+	"grep": true, "symbols": true, "explore": true, "bash": true,
+	"webfetch": true, "todowrite": true, "todoread": true,
+	"memory_write": true, "runtime_query": true,
+	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
+	"plan_enter": true, "plan_exit": true, "question": true,
+	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
+	"lsp.diagnostics": true, "lsp.rename": true,
 }
 
 // HooksConfig configures pre/post tool call hooks (Phase 6).
@@ -157,7 +250,21 @@ type ProjectConfig struct {
 	Exec         ExecConfig      `yaml:"exec"`
 	Hooks        HooksConfig     `yaml:"hooks"`
 	MCP          MCPConfig       `yaml:"mcp"`
-	Languages    LanguagesConfig `yaml:"languages"`
+	Web          WebConfig         `yaml:"web"`
+	Languages    LanguagesConfig   `yaml:"languages"`
+	Permissions  PermissionsConfig `yaml:"permissions,omitempty"`
+	Agents       []AgentDefinition `yaml:"agents,omitempty"`
+	LSP          LSPConfig         `yaml:"lsp,omitempty"`
+}
+
+// FindAgent looks up a custom agent by name. Returns nil when not found.
+func (c *ProjectConfig) FindAgent(name string) *AgentDefinition {
+	for i := range c.Agents {
+		if c.Agents[i].Name == name {
+			return &c.Agents[i]
+		}
+	}
+	return nil
 }
 
 // DefaultConfig creates a default configuration for the project root
@@ -205,6 +312,11 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			TimeoutS:      30,
 			OutputLimitKB: 100,
 		},
+		Web: WebConfig{
+			Confirm:         boolPtr(true),
+			FetchTimeoutS:   30,
+			MaxContentBytes: 512 * 1024,
+		},
 		Languages: LanguagesConfig{
 			Enabled: []string{"go"},
 		},
@@ -245,7 +357,7 @@ func Save(path string, cfg *ProjectConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -304,6 +416,17 @@ func (c *ProjectConfig) applyDefaults() {
 	// Hooks defaults
 	if c.Hooks.TimeoutMS <= 0 {
 		c.Hooks.TimeoutMS = 5000
+	}
+
+	// Web defaults
+	if c.Web.Confirm == nil {
+		c.Web.Confirm = boolPtr(true)
+	}
+	if c.Web.FetchTimeoutS <= 0 {
+		c.Web.FetchTimeoutS = 30
+	}
+	if c.Web.MaxContentBytes <= 0 {
+		c.Web.MaxContentBytes = 512 * 1024
 	}
 
 	// Languages defaults
@@ -381,5 +504,40 @@ func (c *ProjectConfig) Validate() error {
 		return fmt.Errorf("daemon.scan_interval must be >= 0")
 	}
 
+	if err := c.validateAgents(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// IsBuiltInMode reports whether name is a reserved built-in agent mode.
+func IsBuiltInMode(name string) bool { return builtInAgentModes[name] }
+
+// validateAgents checks all AgentDefinition entries for correctness.
+func (c *ProjectConfig) validateAgents() error {
+	seen := make(map[string]bool, len(c.Agents))
+	for i, a := range c.Agents {
+		if a.Name == "" {
+			return fmt.Errorf("agents[%d]: name is required", i)
+		}
+		if builtInAgentModes[a.Name] {
+			return fmt.Errorf("agents[%d]: name %q collides with a built-in agent mode", i, a.Name)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("agents[%d]: duplicate agent name %q", i, a.Name)
+		}
+		seen[a.Name] = true
+
+		// Tools == nil → inherit; len == 0 → programmer error (useless agent).
+		if a.Tools != nil && len(a.Tools) == 0 {
+			return fmt.Errorf("agents[%d] (%q): tools list is empty; omit the field to inherit the build toolset", i, a.Name)
+		}
+		for _, t := range a.Tools {
+			if !validAgentToolNames[t] {
+				return fmt.Errorf("agents[%d] (%q): unknown tool name %q", i, a.Name, t)
+			}
+		}
+	}
 	return nil
 }
