@@ -224,7 +224,7 @@ func (r *Runner) FSRead(ctx context.Context, req FSReadRequest) (*FSReadResponse
 	if path == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
 	}
-	// projectfs.ReadFile enforces traversal protection, but reads whole file. We need streaming + hash.
+	// fsutil.ReadFile enforces traversal protection, but reads whole file. We need streaming + hash.
 	absPath, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path)
 	if err != nil {
 		return nil, err

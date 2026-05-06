@@ -42,7 +42,7 @@ type RuntimeQueryResponse struct {
 	Spans   []RuntimeSpanResult `json:"spans"`
 }
 
-// RuntimeQuery executes the runtime.query tool against the Runner's CKG store.
+// RuntimeQuery executes the runtime.query tool against the Runner's CKG cache.
 func (r *Runner) RuntimeQuery(ctx context.Context, req RuntimeQueryRequest) (*RuntimeQueryResponse, error) {
 	if r.ckgStore == nil {
 		return nil, fmt.Errorf("runtime.query: CKG store not initialised")

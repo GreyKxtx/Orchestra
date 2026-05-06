@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/spf13/cobra"
 )
 
@@ -76,7 +76,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	})
 
 	// Initialize the core subprocess.
-	projectID, err := store.ComputeProjectID(workspace)
+	projectID, err := cache.ComputeProjectID(workspace)
 	if err != nil {
 		return err
 	}
@@ -271,14 +271,14 @@ func printChatEvent(params json.RawMessage) {
 }
 
 // printChatPatches shows each patch's type and path.
-func printChatPatches(patches []externalpatch.Patch) {
-	for i, p := range patches {
+func printChatPatches(patchList []patches.Patch) {
+	for i, p := range patchList {
 		fmt.Fprintf(os.Stderr, "[%d] %s: %s\n", i+1, p.Type, p.Path)
 		switch p.Type {
-		case externalpatch.TypeFileSearchReplace:
+		case patches.TypeFileSearchReplace:
 			fmt.Fprintf(os.Stderr, "  - %s\n", firstLine(p.Search))
 			fmt.Fprintf(os.Stderr, "  + %s\n", firstLine(p.Replace))
-		case externalpatch.TypeFileUnifiedDiff:
+		case patches.TypeFileUnifiedDiff:
 			fmt.Fprintln(os.Stderr, p.Diff)
 		}
 	}

@@ -13,12 +13,12 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
@@ -67,7 +67,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	projectID, err := store.ComputeProjectID(cfg.ProjectRoot)
+	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +294,7 @@ type AgentRunResult struct {
 	Steps   int  `json:"steps"`
 	Applied bool `json:"applied"`
 
-	Patches []externalpatch.Patch `json:"patches,omitempty"`
+	Patches []patches.Patch `json:"patches,omitempty"`
 	Ops     []ops.AnyOp           `json:"ops,omitempty"`
 
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
@@ -524,7 +524,7 @@ type SessionMessageResult struct {
 	Steps   int  `json:"steps"`
 	Applied bool `json:"applied"`
 
-	Patches       []externalpatch.Patch     `json:"patches,omitempty"`
+	Patches       []patches.Patch     `json:"patches,omitempty"`
 	Ops           []ops.AnyOp               `json:"ops,omitempty"`
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
 }

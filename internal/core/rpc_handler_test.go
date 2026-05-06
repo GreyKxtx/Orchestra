@@ -11,7 +11,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 // fixedLLM always returns the same scripted responses in order.
@@ -75,7 +75,7 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
-	projectID, err := store.ComputeProjectID(root)
+	projectID, err := cache.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID failed: %v", err)
 	}
@@ -160,7 +160,7 @@ func setupInitializedCore(t *testing.T, root string, llmOverride llm.Client) (*C
 	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
-	projectID, err := store.ComputeProjectID(root)
+	projectID, err := cache.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestSession_MessageUpdatesHistory(t *testing.T) {
 		t.Fatalf("write a.txt: %v", err)
 	}
 
-	fileHash := store.ComputeSHA256([]byte("hello\n"))
+	fileHash := cache.ComputeSHA256([]byte("hello\n"))
 	patch := `{"type":"file.search_replace","path":"a.txt","search":"hello","replace":"hello","file_hash":"` + fileHash + `"}`
 	finalResp := `{"type":"final","final":{"patches":[` + patch + `]}}`
 

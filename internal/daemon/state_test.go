@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func TestScanOnce_RehashesOnlyWhenMetadataChanged(t *testing.T) {
@@ -25,17 +25,17 @@ func TestScanOnce_RehashesOnlyWhenMetadataChanged(t *testing.T) {
 	size := st.Size()
 	mtime := st.ModTime().UnixNano()
 
-	pid, err := store.ComputeProjectID(root)
+	pid, err := cache.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID failed: %v", err)
 	}
-	cfgHash, err := store.ComputeConfigHash([]string{".git"}, true, DefaultMaxCacheFileBytes, ProtocolVersion)
+	cfgHash, err := cache.ComputeConfigHash([]string{".git"}, true, DefaultMaxCacheFileBytes, ProtocolVersion)
 	if err != nil {
 		t.Fatalf("ComputeConfigHash failed: %v", err)
 	}
 
 	// Seed with same size but different mtime -> should force re-hash.
-	seed := map[string]store.FileRef{
+	seed := map[string]cache.FileRef{
 		"a.txt": {Size: size, MTime: mtime - int64(time.Second), Hash: "sha256:bad"},
 	}
 	state, err := NewState(root, pid, cfgHash, []string{".git", ".orchestra"}, true, DefaultMaxCacheFileBytes, seed)
@@ -51,7 +51,7 @@ func TestScanOnce_RehashesOnlyWhenMetadataChanged(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a.txt in state")
 	}
-	expectedHash := store.ComputeSHA256(content)
+	expectedHash := cache.ComputeSHA256(content)
 	if f.Hash != expectedHash {
 		t.Fatalf("expected hash %q, got %q", expectedHash, f.Hash)
 	}

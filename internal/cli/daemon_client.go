@@ -8,7 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/daemon"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func getDaemonClient(ctx context.Context, cfg *config.ProjectConfig) (*daemon.Client, bool) {
@@ -40,7 +40,7 @@ func validateDaemonClient(ctx context.Context, client *daemon.Client, cfg *confi
 		return false
 	}
 
-	localID, err := store.ComputeProjectID(cfg.ProjectRoot)
+	localID, err := cache.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return false
 	}

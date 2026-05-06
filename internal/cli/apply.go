@@ -12,7 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/daemon"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/jsonrpc"
 	"github.com/orchestra/orchestra/internal/llm"
@@ -20,7 +20,7 @@ import (
 	"github.com/orchestra/orchestra/internal/pipeline"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -450,7 +450,7 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 
 	rpc := child.Client
 
-	projectID, err := store.ComputeProjectID(cfg.ProjectRoot)
+	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +499,7 @@ type planArtifact struct {
 	GeneratedAtUnix int64  `json:"generated_at_unix"`
 
 	// Optional: raw external patches from the model (if running with LLM).
-	Patches []externalpatch.Patch `json:"patches,omitempty"`
+	Patches []patches.Patch `json:"patches,omitempty"`
 	// Deterministic internal ops (apply --from-plan uses this).
 	Ops []ops.AnyOp `json:"ops,omitempty"`
 }

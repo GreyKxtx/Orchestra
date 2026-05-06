@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func TestApply_FromPlan_DryRun_And_Apply(t *testing.T) {
@@ -43,7 +43,7 @@ func TestApply_FromPlan_DryRun_And_Apply(t *testing.T) {
 	}
 
 	// Build a deterministic plan.json with ops (no LLM required).
-	h := store.ComputeSHA256(orig)
+	h := cache.ComputeSHA256(orig)
 	plan := map[string]any{
 		"protocol_version":  protocol.ProtocolVersion,
 		"ops_version":       protocol.OpsVersion,

@@ -7,7 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func TestApplyOps_StrictMatch_DryRun(t *testing.T) {
@@ -18,7 +18,7 @@ func TestApplyOps_StrictMatch_DryRun(t *testing.T) {
 	if err := os.WriteFile(testFile, []byte(original), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := store.ComputeSHA256([]byte(original))
+	h := cache.ComputeSHA256([]byte(original))
 
 	expected := "func b() { old }"
 	repl := "func b() { new }"
@@ -170,7 +170,7 @@ func TestApplyOps_FuzzyAmbiguous_ReturnsAmbiguousMatch(t *testing.T) {
 	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := store.ComputeSHA256([]byte(content))
+	h := cache.ComputeSHA256([]byte(content))
 
 	op := ops.ReplaceRangeOp{
 		Op:   ops.OpFileReplaceRange,
@@ -214,7 +214,7 @@ func TestApplyOps_PathTraversal_Rejected(t *testing.T) {
 		Expected:    "",
 		Replacement: "evil",
 		Conditions: ops.Conditions{
-			FileHash: store.ComputeSHA256(nil),
+			FileHash: cache.ComputeSHA256(nil),
 		},
 	}
 
@@ -234,7 +234,7 @@ func TestApplyOps_PathTraversal_Rejected(t *testing.T) {
 func TestApplyOps_CreateNewFile_FromEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	emptyHash := store.ComputeSHA256(nil)
+	emptyHash := cache.ComputeSHA256(nil)
 	op := ops.ReplaceRangeOp{
 		Op:   ops.OpFileReplaceRange,
 		Path: "new.go",
@@ -272,7 +272,7 @@ func TestApplyOps_Stale_DoesNotWriteOrBackup(t *testing.T) {
 		t.Fatalf("write failed: %v", err)
 	}
 
-	h := store.ComputeSHA256([]byte(original))
+	h := cache.ComputeSHA256([]byte(original))
 
 	// Wrong expected content -> strict fails; fuzzy disabled -> stale.
 	expected := "func b() { DOES_NOT_MATCH }"
@@ -334,7 +334,7 @@ func TestApplyOps_SymlinkEscape_Rejected(t *testing.T) {
 		Expected:    "",
 		Replacement: "package main\n",
 		Conditions: ops.Conditions{
-			FileHash: store.ComputeSHA256(nil),
+			FileHash: cache.ComputeSHA256(nil),
 		},
 	}
 

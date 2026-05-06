@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
@@ -58,7 +58,7 @@ func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, strin
 			return &step, jsonStr, nil
 		}
 		// Recommended final: PatchSet JSON.
-		var ps externalpatch.PatchSet
+		var ps patches.PatchSet
 		if coreErr := v.ValidateAndDecode(schema.KindExternalPatches, jsonStr, &ps); coreErr == nil {
 			step := Step{
 				Type: StepFinal,

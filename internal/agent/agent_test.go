@@ -11,7 +11,7 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -147,7 +147,7 @@ func TestAgent_Run_ToolCallThenFinal_Applies(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello old world\n"), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := store.ComputeSHA256([]byte("hello old world\n"))
+	h := cache.ComputeSHA256([]byte("hello old world\n"))
 
 	v, err := schema.NewValidator()
 	if err != nil {
@@ -194,7 +194,7 @@ func TestAgent_Run_ExecDenied_IsRetriedInsideNextStep_AndDoesNotBurnStep(t *test
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello old world\n"), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := store.ComputeSHA256([]byte("hello old world\n"))
+	h := cache.ComputeSHA256([]byte("hello old world\n"))
 
 	v, err := schema.NewValidator()
 	if err != nil {
@@ -250,7 +250,7 @@ func TestAgent_Run_InvalidJSON_Retries(t *testing.T) {
 	}
 	t.Cleanup(func() { tr.Close() })
 
-	fileHash := store.ComputeSHA256([]byte("x"))
+	fileHash := cache.ComputeSHA256([]byte("x"))
 	llm := &scriptedLLM{
 		steps: []string{
 			`not json`,

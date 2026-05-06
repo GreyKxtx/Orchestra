@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/applier"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func TestResolveExternalPatches_SearchReplace_ToOps_Apply(t *testing.T) {
@@ -20,11 +20,11 @@ func TestResolveExternalPatches_SearchReplace_ToOps_Apply(t *testing.T) {
 	if err := os.WriteFile(abs, []byte(before), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := store.ComputeSHA256([]byte(before))
+	h := cache.ComputeSHA256([]byte(before))
 
-	ops, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	ops, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:     externalpatch.TypeFileSearchReplace,
+			Type:     patches.TypeFileSearchReplace,
 			Path:     path,
 			Search:   "old",
 			Replace:  "new",
@@ -59,13 +59,13 @@ func TestResolveExternalPatches_SearchReplace_Ambiguous(t *testing.T) {
 		t.Fatalf("write failed: %v", err)
 	}
 
-	_, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	_, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:     externalpatch.TypeFileSearchReplace,
+			Type:     patches.TypeFileSearchReplace,
 			Path:     path,
 			Search:   "dup",
 			Replace:  "x",
-			FileHash: store.ComputeSHA256([]byte(before)),
+			FileHash: cache.ComputeSHA256([]byte(before)),
 		},
 	})
 	if err == nil {
@@ -95,12 +95,12 @@ func TestResolveExternalPatches_UnifiedDiff_ToOps_Apply(t *testing.T) {
 +BBB
 `
 
-	ops, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	ops, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:     externalpatch.TypeFileUnifiedDiff,
+			Type:     patches.TypeFileUnifiedDiff,
 			Path:     path,
 			Diff:     diff,
-			FileHash: store.ComputeSHA256([]byte(before)),
+			FileHash: cache.ComputeSHA256([]byte(before)),
 		},
 	})
 	if err != nil {
@@ -124,13 +124,13 @@ func TestResolveExternalPatches_UnifiedDiff_ToOps_Apply(t *testing.T) {
 func TestResolveExternalPatches_WriteAtomic_ToOps_Apply(t *testing.T) {
 	root := t.TempDir()
 
-	ops, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	ops, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:    externalpatch.TypeFileWriteAtomic,
+			Type:    patches.TypeFileWriteAtomic,
 			Path:    "new.txt",
 			Content: "hello\n",
 			Mode:    420,
-			Conditions: &externalpatch.WriteAtomicConditions{
+			Conditions: &patches.WriteAtomicConditions{
 				MustNotExist: true,
 			},
 		},
@@ -159,12 +159,12 @@ func TestResolveExternalPatches_WriteAtomic_ToOps_Apply(t *testing.T) {
 func TestResolveExternalPatches_WriteAtomic_PathTraversal_Rejected(t *testing.T) {
 	root := t.TempDir()
 
-	_, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	_, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:    externalpatch.TypeFileWriteAtomic,
+			Type:    patches.TypeFileWriteAtomic,
 			Path:    "../evil.txt",
 			Content: "nope",
-			Conditions: &externalpatch.WriteAtomicConditions{
+			Conditions: &patches.WriteAtomicConditions{
 				MustNotExist: true,
 			},
 		},
@@ -197,9 +197,9 @@ func TestResolveSearchReplace_Forgiving_TrailingWhitespace(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	got, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	got, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:    externalpatch.TypeFileSearchReplace,
+			Type:    patches.TypeFileSearchReplace,
 			Path:    path,
 			Search:  "x = 1\n",
 			Replace: "x = 2\n",
@@ -229,9 +229,9 @@ func TestResolveSearchReplace_Forgiving_CRLF(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	got, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	got, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:    externalpatch.TypeFileSearchReplace,
+			Type:    patches.TypeFileSearchReplace,
 			Path:    path,
 			Search:  "x := 1\n",
 			Replace: "x := 2\n",
@@ -255,9 +255,9 @@ func TestResolveSearchReplace_Forgiving_AmbiguousFails(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	_, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:    externalpatch.TypeFileSearchReplace,
+			Type:    patches.TypeFileSearchReplace,
 			Path:    path,
 			Search:  "y = 1",
 			Replace: "y = 2",
@@ -281,9 +281,9 @@ func TestResolveSearchReplace_Forgiving_StillStaleWhenUnrecoverable(t *testing.T
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := ResolveExternalPatches(root, []externalpatch.Patch{
+	_, err := ResolveExternalPatches(root, []patches.Patch{
 		{
-			Type:    externalpatch.TypeFileSearchReplace,
+			Type:    patches.TypeFileSearchReplace,
 			Path:    path,
 			Search:  "totally absent",
 			Replace: "...",

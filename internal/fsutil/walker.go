@@ -1,4 +1,4 @@
-package projectfs
+package fsutil
 
 import (
 	"fmt"

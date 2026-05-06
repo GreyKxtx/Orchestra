@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 type rpcError struct {
@@ -933,7 +933,7 @@ func TestApply_FromPlan_StaleDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plannedHash := store.ComputeSHA256(orig)
+	plannedHash := cache.ComputeSHA256(orig)
 
 	planPath := filepath.Join(proj, ".orchestra", "plan.json")
 	plan := map[string]any{
@@ -1008,7 +1008,7 @@ func TestCLI_Artifacts_PlanOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plannedHash := store.ComputeSHA256(orig)
+	plannedHash := cache.ComputeSHA256(orig)
 
 	planPath := filepath.Join(proj, ".orchestra", "plan.json")
 	plan := map[string]any{
@@ -1126,7 +1126,7 @@ func TestCLI_FromPlan_Apply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plannedHash := store.ComputeSHA256(orig)
+	plannedHash := cache.ComputeSHA256(orig)
 
 	planPath := filepath.Join(proj, ".orchestra", "plan.json")
 	plan := map[string]any{
