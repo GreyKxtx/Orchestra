@@ -39,7 +39,7 @@ func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
             "id": "call_1",
             "type": "function",
             "function": {
-              "name": "fs.read",
+              "name": "read",
               "arguments": "{\"path\":\"a.txt\",\"max_bytes\":123}"
             }
           }
@@ -69,7 +69,7 @@ func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
 			{
 				Type: "function",
 				Function: ToolFunctionDef{
-					Name:       "fs.read",
+					Name:       "read",
 					Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`),
 				},
 			},
@@ -88,7 +88,7 @@ func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
 	if tc.Type != "function" {
 		t.Fatalf("expected type=function, got %q", tc.Type)
 	}
-	if tc.Function.Name != "fs.read" {
+	if tc.Function.Name != "read" {
 		t.Fatalf("expected tool name fs.read, got %q", tc.Function.Name)
 	}
 	if string(tc.Function.Arguments.Raw()) != `{"path":"a.txt","max_bytes":123}` {

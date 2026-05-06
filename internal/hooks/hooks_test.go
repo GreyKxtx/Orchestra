@@ -41,7 +41,7 @@ func TestNew_EnabledWithCommand(t *testing.T) {
 
 func TestRunPreTool_NilRunner(t *testing.T) {
 	var r *Runner
-	err := r.RunPreTool(context.Background(), "fs.read", json.RawMessage(`{}`))
+	err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("nil runner should be no-op, got: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRunPreTool_Success(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "fs.write", json.RawMessage(`{"path":"foo.go"}`))
+	err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{"path":"foo.go"}`))
 	if err != nil {
 		t.Fatalf("expected nil error on exit 0, got: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestRunPreTool_Failure(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "fs.write", json.RawMessage(`{}`))
+	err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`))
 	if err == nil {
 		t.Fatal("expected error on exit 1")
 	}
@@ -81,7 +81,7 @@ func TestRunPostTool_FailureIsNoop(t *testing.T) {
 	}, t.TempDir())
 
 	// Should not panic or return error — errors are just logged.
-	r.RunPostTool(context.Background(), "fs.write", json.RawMessage(`{}`))
+	r.RunPostTool(context.Background(), "write", json.RawMessage(`{}`))
 }
 
 func TestRunPreTool_EnvVarsSet(t *testing.T) {
@@ -106,7 +106,7 @@ exit 0
 		TimeoutMS: 5000,
 	}, dir)
 
-	err := r.RunPreTool(context.Background(), "fs.read", json.RawMessage(`{}`))
+	err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("env vars not set: %v", err)
 	}
@@ -122,16 +122,16 @@ func TestRunPreTool_Timeout(t *testing.T) {
 		TimeoutMS: 50,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "fs.write", json.RawMessage(`{}`))
+	err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`))
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
 }
 
 func TestBuildEnv(t *testing.T) {
-	env := buildEnv("fs.read", json.RawMessage(`{"path":"x"}`), "/workspace")
+	env := buildEnv("read", json.RawMessage(`{"path":"x"}`), "/workspace")
 	want := map[string]bool{
-		"ORCH_TOOL_NAME=fs.read":          true,
+		"ORCH_TOOL_NAME=read":              true,
 		`ORCH_TOOL_INPUT={"path":"x"}`:    true,
 		"ORCH_WORKSPACE_ROOT=/workspace":  true,
 	}

@@ -39,7 +39,7 @@ func TestConvertToAnthropic_AssistantWithToolCalls(t *testing.T) {
 				ID:   "c1",
 				Type: "function",
 				Function: ToolCallFunc{
-					Name:      "fs.read",
+					Name:      "read",
 					Arguments: ToolArguments(json.RawMessage(`{"path":"a.txt"}`)),
 				},
 			},
@@ -57,7 +57,7 @@ func TestConvertToAnthropic_AssistantWithToolCalls(t *testing.T) {
 	if !ok || len(blocks) != 1 {
 		t.Fatalf("expected 1 block, got %v", asst.Content)
 	}
-	if blocks[0].Type != "tool_use" || blocks[0].Name != "fs.read" {
+	if blocks[0].Type != "tool_use" || blocks[0].Name != "read" {
 		t.Fatalf("unexpected block: %+v", blocks[0])
 	}
 }
@@ -66,8 +66,8 @@ func TestConvertToAnthropic_ToolResultsGrouped(t *testing.T) {
 	msgs := []Message{
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, ToolCalls: []ToolCall{
-			{ID: "c1", Type: "function", Function: ToolCallFunc{Name: "fs.read", Arguments: ToolArguments(json.RawMessage(`{"path":"a.txt"}`))}},
-			{ID: "c2", Type: "function", Function: ToolCallFunc{Name: "fs.read", Arguments: ToolArguments(json.RawMessage(`{"path":"b.txt"}`))}},
+			{ID: "c1", Type: "function", Function: ToolCallFunc{Name: "read", Arguments: ToolArguments(json.RawMessage(`{"path":"a.txt"}`))}},
+			{ID: "c2", Type: "function", Function: ToolCallFunc{Name: "read", Arguments: ToolArguments(json.RawMessage(`{"path":"b.txt"}`))}},
 		}},
 		{Role: RoleTool, ToolCallID: "c1", Content: "result1"},
 		{Role: RoleTool, ToolCallID: "c2", Content: "result2"},
@@ -100,11 +100,11 @@ func TestConvertToAnthropic_ToolResultsNotGroupedAcrossAssistant(t *testing.T) {
 	msgs := []Message{
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, ToolCalls: []ToolCall{
-			{ID: "c1", Type: "function", Function: ToolCallFunc{Name: "fs.read", Arguments: ToolArguments(json.RawMessage(`{}`))}},
+			{ID: "c1", Type: "function", Function: ToolCallFunc{Name: "read", Arguments: ToolArguments(json.RawMessage(`{}`))}},
 		}},
 		{Role: RoleTool, ToolCallID: "c1", Content: "r1"},
 		{Role: RoleAssistant, ToolCalls: []ToolCall{
-			{ID: "c2", Type: "function", Function: ToolCallFunc{Name: "fs.read", Arguments: ToolArguments(json.RawMessage(`{}`))}},
+			{ID: "c2", Type: "function", Function: ToolCallFunc{Name: "read", Arguments: ToolArguments(json.RawMessage(`{}`))}},
 		}},
 		{Role: RoleTool, ToolCallID: "c2", Content: "r2"},
 	}
@@ -134,7 +134,7 @@ func TestConvertFromAnthropic_TextOnly(t *testing.T) {
 func TestConvertFromAnthropic_ToolUse(t *testing.T) {
 	args := json.RawMessage(`{"path":"x.go"}`)
 	blocks := []anthropicBlock{
-		{Type: "tool_use", ID: "call_1", Name: "fs.read", Input: args},
+		{Type: "tool_use", ID: "call_1", Name: "read", Input: args},
 	}
 	msg := convertFromAnthropic(blocks)
 	if len(msg.ToolCalls) != 1 {
@@ -144,7 +144,7 @@ func TestConvertFromAnthropic_ToolUse(t *testing.T) {
 	if tc.ID != "call_1" {
 		t.Fatalf("expected id=call_1, got %q", tc.ID)
 	}
-	if tc.Function.Name != "fs.read" {
+	if tc.Function.Name != "read" {
 		t.Fatalf("expected name=fs.read, got %q", tc.Function.Name)
 	}
 	if string(tc.Function.Arguments.Raw()) != `{"path":"x.go"}` {
@@ -155,7 +155,7 @@ func TestConvertFromAnthropic_ToolUse(t *testing.T) {
 func TestConvertFromAnthropic_TextAndToolUse(t *testing.T) {
 	blocks := []anthropicBlock{
 		{Type: "text", Text: "I'll help"},
-		{Type: "tool_use", ID: "c1", Name: "fs.list", Input: json.RawMessage(`{}`)},
+		{Type: "tool_use", ID: "c1", Name: "ls", Input: json.RawMessage(`{}`)},
 	}
 	msg := convertFromAnthropic(blocks)
 	if msg.Content != "I'll help" {
@@ -191,13 +191,13 @@ func TestConvertTools_SetsDefaultSchema(t *testing.T) {
 func TestConvertTools_PreservesExistingSchema(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)
 	defs := []ToolDef{
-		{Type: "function", Function: ToolFunctionDef{Name: "fs.read", Description: "reads", Parameters: schema}},
+		{Type: "function", Function: ToolFunctionDef{Name: "read", Description: "reads", Parameters: schema}},
 	}
 	out := convertTools(defs)
 	if len(out) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(out))
 	}
-	if out[0].Name != "fs.read" {
+	if out[0].Name != "read" {
 		t.Fatalf("expected name=fs.read, got %q", out[0].Name)
 	}
 	if out[0].Description != "reads" {

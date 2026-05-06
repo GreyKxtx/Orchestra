@@ -20,13 +20,8 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		return r.mcpCaller.Call(ctx, name, input)
 	}
 
-	// Accept both LLM-facing aliases (read, grep, bash, …) and legacy
-	// canonical names (fs.read, search.text, exec.run, …). Internal
-	// dispatch is keyed on the canonical form.
-	name = ResolveToolName(name)
-
 	switch name {
-	case "fs.list":
+	case "ls":
 		var req FSListRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -37,7 +32,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "fs.read":
+	case "read":
 		var req FSReadRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -48,7 +43,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "fs.glob":
+	case "glob":
 		var req FSGlobRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -59,7 +54,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "fs.write":
+	case "write":
 		var req FSWriteRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -70,7 +65,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "fs.edit":
+	case "edit":
 		var req FSEditRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -94,7 +89,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "search.text":
+	case "grep":
 		var req SearchTextRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -105,7 +100,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "code.symbols":
+	case "symbols":
 		var req CodeSymbolsRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -116,7 +111,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "explore_codebase":
+	case "explore":
 		var req ExploreCodebaseRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
@@ -127,7 +122,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
-	case "exec.run":
+	case "bash":
 		var req ExecRunRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err

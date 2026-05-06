@@ -99,7 +99,7 @@ func (p *policyRetryLLM) Complete(ctx context.Context, req llm.CompleteRequest) 
 						ID:   "call_1",
 						Type: "function",
 						Function: llm.ToolCallFunc{
-							Name:      "exec.run",
+							Name:      "bash",
 							Arguments: llm.ToolArguments([]byte(`{"command":"echo","args":["hello"]}`)),
 						},
 					},
@@ -121,7 +121,7 @@ func (p *policyRetryLLM) Complete(ctx context.Context, req llm.CompleteRequest) 
 						ID:   "call_2",
 						Type: "function",
 						Function: llm.ToolCallFunc{
-							Name:      "fs.read",
+							Name:      "read",
 							Arguments: llm.ToolArguments([]byte(`{"path":"a.txt"}`)),
 						},
 					},
@@ -161,7 +161,7 @@ func TestAgent_Run_ToolCallThenFinal_Applies(t *testing.T) {
 
 	llm := &scriptedLLM{
 		steps: []string{
-			`{"type":"tool_call","tool":{"name":"fs.read","input":{"path":"a.txt"}}}`,
+			`{"type":"tool_call","tool":{"name":"read","input":{"path":"a.txt"}}}`,
 			`{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"a.txt","search":"old","replace":"new","file_hash":"` + h + `"}]}}`,
 		},
 	}
@@ -254,7 +254,7 @@ func TestAgent_Run_InvalidJSON_Retries(t *testing.T) {
 	llm := &scriptedLLM{
 		steps: []string{
 			`not json`,
-			`{"type":"tool_call","tool":{"name":"fs.list","input":{}}}`,
+			`{"type":"tool_call","tool":{"name":"ls","input":{}}}`,
 			fmt.Sprintf(`{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"a.txt","search":"x","replace":"y","file_hash":%q}]}}`, fileHash),
 		},
 	}
@@ -294,9 +294,9 @@ func TestAgent_Run_ExecDenied_RepeatsThenStopsEarly(t *testing.T) {
 
 	llm := &scriptedLLM{
 		steps: []string{
-			`{"type":"tool_call","tool":{"name":"exec.run","input":{"command":"echo","args":["hello"]}}}`,
-			`{"type":"tool_call","tool":{"name":"exec.run","input":{"command":"echo","args":["hello"]}}}`,
-			`{"type":"tool_call","tool":{"name":"exec.run","input":{"command":"echo","args":["hello"]}}}`,
+			`{"type":"tool_call","tool":{"name":"bash","input":{"command":"echo","args":["hello"]}}}`,
+			`{"type":"tool_call","tool":{"name":"bash","input":{"command":"echo","args":["hello"]}}}`,
+			`{"type":"tool_call","tool":{"name":"bash","input":{"command":"echo","args":["hello"]}}}`,
 		},
 	}
 
@@ -337,7 +337,7 @@ func TestAgent_Run_PlanMode_WriteGuard_BlocksNonPlanFile(t *testing.T) {
 
 	llmClient := &scriptedLLM{
 		steps: []string{
-			`{"type":"tool_call","tool":{"name":"fs.write","input":{"path":"bad.go","content":"package main"}}}`,
+			`{"type":"tool_call","tool":{"name":"write","input":{"path":"bad.go","content":"package main"}}}`,
 			`{"type":"final","final":{"patches":[]}}`,
 		},
 	}
@@ -380,7 +380,7 @@ func TestAgent_Run_PlanMode_WriteGuard_AllowsPlanMd(t *testing.T) {
 
 	llmClient := &scriptedLLM{
 		steps: []string{
-			`{"type":"tool_call","tool":{"name":"fs.write","input":{"path":".orchestra/plan.md","content":"# Plan\n","must_not_exist":true}}}`,
+			`{"type":"tool_call","tool":{"name":"write","input":{"path":".orchestra/plan.md","content":"# Plan\n","must_not_exist":true}}}`,
 			`{"type":"final","final":{"patches":[]}}`,
 		},
 	}

@@ -55,7 +55,7 @@ func TestInitializeRequired(t *testing.T) {
 	defer c.Close()
 
 	_, code := c.callExpectError(t, "tool.call", map[string]any{
-		"name":  "fs.list",
+		"name":  "ls",
 		"input": map[string]any{"limit": 1},
 	})
 	if code != string(protocol.NotInitialized) && !strings.Contains(code, string(protocol.NotInitialized)) {
