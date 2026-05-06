@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func newWriteRunner(t *testing.T) (*Runner, string) {
@@ -37,7 +37,7 @@ func TestFSWrite_CreateNewFile(t *testing.T) {
 	if resp.BytesWritten != len("hello world\n") {
 		t.Errorf("unexpected bytes_written: %d", resp.BytesWritten)
 	}
-	want := store.ComputeSHA256([]byte("hello world\n"))
+	want := cache.ComputeSHA256([]byte("hello world\n"))
 	if resp.FileHash != want {
 		t.Errorf("file_hash mismatch: got %s, want %s", resp.FileHash, want)
 	}
@@ -70,7 +70,7 @@ func TestFSWrite_OverwriteWithHash(t *testing.T) {
 	original := "original content\n"
 	_ = os.WriteFile(filepath.Join(root, "file.txt"), []byte(original), 0644)
 
-	fileHash := store.ComputeSHA256([]byte(original))
+	fileHash := cache.ComputeSHA256([]byte(original))
 
 	resp, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path:     "file.txt",
@@ -85,7 +85,7 @@ func TestFSWrite_OverwriteWithHash(t *testing.T) {
 	if string(data) != "updated content\n" {
 		t.Errorf("unexpected content after overwrite: %q", string(data))
 	}
-	want := store.ComputeSHA256([]byte("updated content\n"))
+	want := cache.ComputeSHA256([]byte("updated content\n"))
 	if resp.FileHash != want {
 		t.Errorf("file_hash after overwrite: got %s, want %s", resp.FileHash, want)
 	}

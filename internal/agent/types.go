@@ -7,7 +7,7 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 )
 
 type StepType string
@@ -29,5 +29,5 @@ type ToolCall struct {
 }
 
 type Final struct {
-	Patches []externalpatch.Patch `json:"patches"`
+	Patches []patches.Patch `json:"patches"`
 }

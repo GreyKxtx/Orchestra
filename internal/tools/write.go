@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/applier"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 type FSWriteRequest struct {
@@ -40,18 +40,18 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 			"fs.write requires file_hash (for overwrite) or must_not_exist=true (for create)", nil)
 	}
 
-	patch := externalpatch.Patch{
-		Type:    externalpatch.TypeFileWriteAtomic,
+	patch := patches.Patch{
+		Type:    patches.TypeFileWriteAtomic,
 		Path:    path,
 		Content: req.Content,
 	}
 	if req.MustNotExist {
-		patch.Conditions = &externalpatch.WriteAtomicConditions{MustNotExist: true}
+		patch.Conditions = &patches.WriteAtomicConditions{MustNotExist: true}
 	} else {
-		patch.Conditions = &externalpatch.WriteAtomicConditions{FileHash: fileHash}
+		patch.Conditions = &patches.WriteAtomicConditions{FileHash: fileHash}
 	}
 
-	opsList, err := resolver.ResolveExternalPatches(r.workspaceRoot, []externalpatch.Patch{patch})
+	opsList, err := resolver.ResolveExternalPatches(r.workspaceRoot, []patches.Patch{patch})
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 		return nil, err
 	}
 
-	contentHash := store.ComputeSHA256([]byte(req.Content))
+	contentHash := cache.ComputeSHA256([]byte(req.Content))
 	return &FSWriteResponse{
 		Path:         path,
 		FileHash:     contentHash,

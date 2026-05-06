@@ -1,4 +1,4 @@
-package externalpatch
+package patches
 
 type Type string
 

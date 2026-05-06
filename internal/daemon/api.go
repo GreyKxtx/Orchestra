@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 // Refresh rescans the project "now" and updates server metrics/cache.
@@ -22,7 +22,7 @@ func (s *Server) Refresh(ctx context.Context) (RefreshResponse, error) {
 	var cacheSaveMS int64
 	if s.cfg.CacheEnabled && res.Changed > 0 {
 		start = time.Now()
-		_ = store.SaveCache(s.cachePath, s.state.ToCache())
+		_ = cache.SaveCache(s.cachePath, s.state.ToCache())
 		cacheSaveMS = time.Since(start).Milliseconds()
 	}
 

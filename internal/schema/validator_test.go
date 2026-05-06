@@ -3,7 +3,7 @@ package schema
 import (
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 )
 
 func TestValidator_ExternalPatches_Valid(t *testing.T) {
@@ -24,7 +24,7 @@ func TestValidator_ExternalPatches_Valid(t *testing.T) {
   ]
 }`
 
-	var ps externalpatch.PatchSet
+	var ps patches.PatchSet
 	if coreErr := v.ValidateAndDecode(KindExternalPatches, raw, &ps); coreErr != nil {
 		t.Fatalf("ValidateAndDecode failed: %v", coreErr)
 	}
@@ -40,7 +40,7 @@ func TestValidator_ExternalPatches_InvalidSchema(t *testing.T) {
 	}
 
 	raw := `{"patches":[{"type":"file.search_replace","path":"a.go","search":"x","replace":"y"}]}`
-	var ps externalpatch.PatchSet
+	var ps patches.PatchSet
 	coreErr := v.ValidateAndDecode(KindExternalPatches, raw, &ps)
 	if coreErr == nil {
 		t.Fatalf("expected error, got nil")
@@ -54,7 +54,7 @@ func TestValidator_InvalidJSON(t *testing.T) {
 	}
 
 	raw := `{"patches":[`
-	var ps externalpatch.PatchSet
+	var ps patches.PatchSet
 	coreErr := v.ValidateAndDecode(KindExternalPatches, raw, &ps)
 	if coreErr == nil {
 		t.Fatalf("expected error, got nil")

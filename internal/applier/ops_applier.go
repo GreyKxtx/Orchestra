@@ -11,7 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 // ApplyOps applies Internal Ops v1 (compat wrapper for file.replace_range).
@@ -217,7 +217,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 				"path": rel,
 			})
 		}
-		actualHash := store.ComputeSHA256(fp.before)
+		actualHash := cache.ComputeSHA256(fp.before)
 		if strings.TrimSpace(wa.Conditions.FileHash) != "" && strings.TrimSpace(wa.Conditions.FileHash) != actualHash {
 			return nil, protocol.NewError(protocol.StaleContent, "cannot apply op: file_hash mismatch", map[string]any{
 				"path":          rel,
@@ -314,7 +314,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 }
 
 func applyReplaceRangeOps(relPath string, before []byte, fileOps []ops.ReplaceRangeOp) ([]byte, error) {
-	baseHash := store.ComputeSHA256(before)
+	baseHash := cache.ComputeSHA256(before)
 
 	// Apply from bottom to top so earlier edits don't shift later ranges.
 	sort.Slice(fileOps, func(i, j int) bool {
@@ -413,7 +413,7 @@ func applyOpsToFile(rootAbs, rootReal, relPath string, fileOps []ops.ReplaceRang
 		before = b
 	}
 
-	baseHash := store.ComputeSHA256(before)
+	baseHash := cache.ComputeSHA256(before)
 
 	// Apply from bottom to top so earlier edits don't shift later ranges.
 	sort.Slice(fileOps, func(i, j int) bool {

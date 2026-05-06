@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/projectfs"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 type FileState struct {
@@ -45,7 +45,7 @@ type ScanResult struct {
 	CacheHashed int // Files that needed hash computation
 }
 
-func NewState(projectRoot string, projectID string, configHash string, excludeDirs []string, skipBackups bool, maxCacheFileBytes int64, seed map[string]store.FileRef) (*State, error) {
+func NewState(projectRoot string, projectID string, configHash string, excludeDirs []string, skipBackups bool, maxCacheFileBytes int64, seed map[string]cache.FileRef) (*State, error) {
 	rootAbs, err := filepath.Abs(projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute project root: %w", err)
@@ -122,7 +122,7 @@ func (s *State) ReadFile(path string) ([]byte, FileMeta, error) {
 	s.mu.RUnlock()
 
 	// Read from disk (with traversal protection).
-	info, err := projectfs.ReadFile(s.projectRootAbs, filepath.FromSlash(key))
+	info, err := fsutil.ReadFile(s.projectRootAbs, filepath.FromSlash(key))
 	if err != nil {
 		return nil, FileMeta{}, err
 	}
@@ -219,7 +219,7 @@ func (s *State) ScanOnce(ctx context.Context) (ScanResult, error) {
 		if err != nil {
 			return nil
 		}
-		h := store.ComputeSHA256(data)
+		h := cache.ComputeSHA256(data)
 		cacheHashed++
 		fs := &FileState{Path: key, Size: size, MTime: mtime, Hash: h}
 		if size <= s.maxCacheFileBytes {
@@ -256,15 +256,15 @@ func (s *State) ScanOnce(ctx context.Context) (ScanResult, error) {
 	}, nil
 }
 
-func (s *State) ToCache() *store.Cache {
+func (s *State) ToCache() *cache.Cache {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	files := make(map[string]store.FileRef, len(s.files))
+	files := make(map[string]cache.FileRef, len(s.files))
 	for k, f := range s.files {
-		files[k] = store.FileRef{Size: f.Size, MTime: f.MTime, Hash: f.Hash}
+		files[k] = cache.FileRef{Size: f.Size, MTime: f.MTime, Hash: f.Hash}
 	}
-	return store.NewCache(s.projectRootAbs, s.projectID, s.configHash, files)
+	return cache.NewCache(s.projectRootAbs, s.projectID, s.configHash, files)
 }
 
 func normalizeRelPath(path string) (string, error) {

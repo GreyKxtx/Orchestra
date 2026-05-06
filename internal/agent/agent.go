@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/ops"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/protocol"
@@ -140,7 +140,7 @@ type AgentEvent struct {
 type Result struct {
 	Steps int
 
-	Patches []externalpatch.Patch
+	Patches []patches.Patch
 	Ops     []ops.AnyOp
 
 	Applied bool
@@ -541,13 +541,13 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					history = append(history, llmResp.Message)
 				}
 				return history, &Result{
-					Patches: []externalpatch.Patch{},
+					Patches: []patches.Patch{},
 					Applied: false,
 					Todos:   a.todos,
 				}, nil
 			}
 
-			patches := append([]externalpatch.Patch(nil), step.Final.Patches...)
+			patches := append([]patches.Patch(nil), step.Final.Patches...)
 			a.logf("final received patches=%d", len(patches))
 
 			start := time.Now()

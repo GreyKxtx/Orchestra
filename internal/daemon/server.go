@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 type ServerConfig struct {
@@ -75,11 +75,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		cfg.MaxCacheFileBytes = DefaultMaxCacheFileBytes
 	}
 
-	projectID, err := store.ComputeProjectID(rootAbs)
+	projectID, err := cache.ComputeProjectID(rootAbs)
 	if err != nil {
 		return nil, err
 	}
-	configHash, err := store.ComputeConfigHash(cfg.ExcludeDirs, cfg.SkipBackups, cfg.MaxCacheFileBytes, ProtocolVersion)
+	configHash, err := cache.ComputeConfigHash(cfg.ExcludeDirs, cfg.SkipBackups, cfg.MaxCacheFileBytes, ProtocolVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -91,11 +91,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		cachePath = filepath.Join(rootAbs, cachePath)
 	}
 
-	seed := map[string]store.FileRef{}
+	seed := map[string]cache.FileRef{}
 	var cacheLoadMS int64
 	if cfg.CacheEnabled {
 		start := time.Now()
-		if cached, ok, err := store.LoadCacheIfExists(cachePath); err == nil && ok {
+		if cached, ok, err := cache.LoadCacheIfExists(cachePath); err == nil && ok {
 			if cached.ProjectID == projectID && cached.ConfigHash == configHash {
 				seed = cached.Files
 			}
@@ -146,7 +146,7 @@ func (s *Server) Run(ctx context.Context) error {
 	var cacheSaveMS int64
 	if s.cfg.CacheEnabled {
 		start = time.Now()
-		_ = store.SaveCache(s.cachePath, s.state.ToCache())
+		_ = cache.SaveCache(s.cachePath, s.state.ToCache())
 		cacheSaveMS = time.Since(start).Milliseconds()
 	}
 
@@ -225,7 +225,7 @@ func (s *Server) scanLoop() {
 			var cacheSaveMS int64
 			if err == nil && s.cfg.CacheEnabled && res.Changed > 0 {
 				start = time.Now()
-				_ = store.SaveCache(s.cachePath, s.state.ToCache())
+				_ = cache.SaveCache(s.cachePath, s.state.ToCache())
 				cacheSaveMS = time.Since(start).Milliseconds()
 			}
 			if err == nil {

@@ -54,7 +54,7 @@ func TestFindRelevantNodes_Basic(t *testing.T) {
 	if err := s.SaveFileNodes(ctx, "tools.go", "h2", "go", "ex", "tools", nodes[2:3], nil); err != nil {
 		t.Fatalf("SaveFileNodes tools: %v", err)
 	}
-	if err := s.SaveFileNodes(ctx, "store.go", "h3", "go", "ex", "ckg", nodes[3:4], nil); err != nil {
+	if err := s.SaveFileNodes(ctx, "cache.go", "h3", "go", "ex", "ckg", nodes[3:4], nil); err != nil {
 		t.Fatalf("SaveFileNodes store: %v", err)
 	}
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/applier"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
 )
@@ -36,15 +36,15 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "search is empty", nil)
 	}
 
-	patch := externalpatch.Patch{
-		Type:     externalpatch.TypeFileSearchReplace,
+	patch := patches.Patch{
+		Type:     patches.TypeFileSearchReplace,
 		Path:     path,
 		Search:   req.Search,
 		Replace:  req.Replace,
 		FileHash: strings.TrimSpace(req.FileHash),
 	}
 
-	opsList, err := resolver.ResolveExternalPatches(r.workspaceRoot, []externalpatch.Patch{patch})
+	opsList, err := resolver.ResolveExternalPatches(r.workspaceRoot, []patches.Patch{patch})
 	if err != nil {
 		return nil, err
 	}

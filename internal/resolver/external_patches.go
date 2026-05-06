@@ -9,28 +9,28 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/ops"
-	"github.com/orchestra/orchestra/internal/projectfs"
+	"github.com/orchestra/orchestra/internal/fsutil"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 // ResolveExternalPatches converts External Patch objects into Internal Ops v1.
 //
 // It intentionally produces strict ops and relies on the applier's strict+fuzzy policy
 // for safe application.
-func ResolveExternalPatches(projectRoot string, patches []externalpatch.Patch) ([]ops.AnyOp, error) {
+func ResolveExternalPatches(projectRoot string, patchList []patches.Patch) ([]ops.AnyOp, error) {
 	if strings.TrimSpace(projectRoot) == "" {
 		return nil, fmt.Errorf("projectRoot is empty")
 	}
-	if len(patches) == 0 {
+	if len(patchList) == 0 {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "no patches provided", nil)
 	}
 
-	out := make([]ops.AnyOp, 0, len(patches))
+	out := make([]ops.AnyOp, 0, len(patchList))
 
-	for _, p := range patches {
+	for _, p := range patchList {
 		path, perr := normalizeRelPath(p.Path)
 		if perr != nil {
 			return nil, perr
@@ -38,7 +38,7 @@ func ResolveExternalPatches(projectRoot string, patches []externalpatch.Patch) (
 		p.Path = path
 
 		switch p.Type {
-		case externalpatch.TypeFileSearchReplace:
+		case patches.TypeFileSearchReplace:
 			op, err := resolveSearchReplace(projectRoot, p)
 			if err != nil {
 				return nil, err
@@ -46,7 +46,7 @@ func ResolveExternalPatches(projectRoot string, patches []externalpatch.Patch) (
 			rr := op
 			out = append(out, ops.AnyOp{Op: rr.Op, Path: rr.Path, ReplaceRange: &rr})
 
-		case externalpatch.TypeFileUnifiedDiff:
+		case patches.TypeFileUnifiedDiff:
 			op, err := resolveUnifiedDiff(projectRoot, p)
 			if err != nil {
 				return nil, err
@@ -54,7 +54,7 @@ func ResolveExternalPatches(projectRoot string, patches []externalpatch.Patch) (
 			rr := op
 			out = append(out, ops.AnyOp{Op: rr.Op, Path: rr.Path, ReplaceRange: &rr})
 
-		case externalpatch.TypeFileWriteAtomic:
+		case patches.TypeFileWriteAtomic:
 			anyOp, err := resolveWriteAtomic(projectRoot, p)
 			if err != nil {
 				return nil, err
@@ -72,7 +72,7 @@ func ResolveExternalPatches(projectRoot string, patches []externalpatch.Patch) (
 	return out, nil
 }
 
-func resolveSearchReplace(projectRoot string, p externalpatch.Patch) (ops.ReplaceRangeOp, error) {
+func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRangeOp, error) {
 	if strings.TrimSpace(p.Search) == "" && p.Search != "" {
 		// Empty-but-present is allowed; treat as explicit empty search (unsupported).
 	}
@@ -101,7 +101,7 @@ func resolveSearchReplace(projectRoot string, p externalpatch.Patch) (ops.Replac
 			return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
 				"path":     p.Path,
 				"search":   preview(p.Search, 200),
-				"fileHash": store.ComputeSHA256(before),
+				"fileHash": cache.ComputeSHA256(before),
 			})
 		case 1:
 			start, end = ltStart, ltEnd
@@ -160,7 +160,7 @@ func resolveSearchReplace(projectRoot string, p externalpatch.Patch) (ops.Replac
 	}, nil
 }
 
-func resolveUnifiedDiff(projectRoot string, p externalpatch.Patch) (ops.ReplaceRangeOp, error) {
+func resolveUnifiedDiff(projectRoot string, p patches.Patch) (ops.ReplaceRangeOp, error) {
 	if strings.TrimSpace(p.Diff) == "" {
 		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "diff is empty", map[string]any{
 			"path": p.Path,
@@ -206,7 +206,7 @@ func resolveUnifiedDiff(projectRoot string, p externalpatch.Patch) (ops.ReplaceR
 	}, nil
 }
 
-func resolveWriteAtomic(projectRoot string, p externalpatch.Patch) (ops.AnyOp, error) {
+func resolveWriteAtomic(projectRoot string, p patches.Patch) (ops.AnyOp, error) {
 	_ = projectRoot // resolution is path-only; apply phase enforces workspace safety.
 
 	// Guardrails: require at least one safety condition.
@@ -242,19 +242,19 @@ func resolveWriteAtomic(projectRoot string, p externalpatch.Patch) (ops.AnyOp, e
 }
 
 func readFileOrEmpty(projectRoot, relPath string) ([]byte, string, error) {
-	info, err := projectfs.ReadFile(projectRoot, filepath.FromSlash(relPath))
+	info, err := fsutil.ReadFile(projectRoot, filepath.FromSlash(relPath))
 	if err != nil {
 		// Path traversal gets mapped to a stable error code.
 		if strings.Contains(err.Error(), "invalid file path") {
 			return nil, "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{"path": relPath})
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, store.ComputeSHA256(nil), nil
+			return nil, cache.ComputeSHA256(nil), nil
 		}
 		return nil, "", err
 	}
 	b := []byte(info.Content)
-	return b, store.ComputeSHA256(b), nil
+	return b, cache.ComputeSHA256(b), nil
 }
 
 func normalizeRelPath(p string) (string, *protocol.Error) {

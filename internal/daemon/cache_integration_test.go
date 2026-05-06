@@ -4,22 +4,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/store"
+	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func TestNewServer_IgnoresCacheOnConfigHashMismatch(t *testing.T) {
 	root := t.TempDir()
 
-	pid, err := store.ComputeProjectID(root)
+	pid, err := cache.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID failed: %v", err)
 	}
 
 	cachePath := filepath.Join(root, ".orchestra", "cache.json")
-	c := store.NewCache(root, pid, "sha256:wrong-config", map[string]store.FileRef{
+	c := cache.NewCache(root, pid, "sha256:wrong-config", map[string]cache.FileRef{
 		"ghost.txt": {Size: 1, MTime: 1, Hash: "sha256:deadbeef"},
 	})
-	if err := store.SaveCache(cachePath, c); err != nil {
+	if err := cache.SaveCache(cachePath, c); err != nil {
 		t.Fatalf("SaveCache failed: %v", err)
 	}
 

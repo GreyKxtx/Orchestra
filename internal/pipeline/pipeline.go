@@ -21,7 +21,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/daemon"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/schema"
@@ -74,7 +74,7 @@ type StageResult struct {
 	Stage   string
 	Steps   int
 	Text    string // investigation text or critic verdict text
-	Patches []externalpatch.Patch
+	Patches []patches.Patch
 	Ops     []ops.AnyOp
 }
 
@@ -86,7 +86,7 @@ type Result struct {
 	FinalCritique string
 
 	StageResults []StageResult
-	Patches      []externalpatch.Patch
+	Patches      []patches.Patch
 	Ops          []ops.AnyOp
 	ApplyResponse *tools.FSApplyOpsResponse
 }
@@ -123,7 +123,7 @@ func Run(
 	saveArtifact(toolRunner.WorkspaceRoot(), "investigation.md", investigationText)
 
 	// --- Stage 2–3: Coder + Critic retry loop ---
-	var finalPatches []externalpatch.Patch
+	var finalPatches []patches.Patch
 	var finalOps []ops.AnyOp
 	var critique string
 
@@ -450,22 +450,22 @@ func parseVerdict(content string) (bool, string) {
 
 // summarizePatches produces a human-readable patch summary for the Critic prompt.
 // Truncated to avoid overwhelming the context.
-func summarizePatches(patches []externalpatch.Patch) string {
-	if len(patches) == 0 {
+func summarizePatches(patchList []patches.Patch) string {
+	if len(patchList) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	for i, p := range patches {
+	for i, p := range patchList {
 		if i >= 10 {
-			fmt.Fprintf(&b, "... and %d more patches\n", len(patches)-10)
+			fmt.Fprintf(&b, "... and %d more patches\n", len(patchList)-10)
 			break
 		}
 		switch p.Type {
-		case externalpatch.TypeFileSearchReplace:
+		case patches.TypeFileSearchReplace:
 			fmt.Fprintf(&b, "[search_replace] %s\n", p.Path)
-		case externalpatch.TypeFileUnifiedDiff:
+		case patches.TypeFileUnifiedDiff:
 			fmt.Fprintf(&b, "[unified_diff] %s\n", p.Path)
-		case externalpatch.TypeFileWriteAtomic:
+		case patches.TypeFileWriteAtomic:
 			fmt.Fprintf(&b, "[write_atomic] %s (%d bytes)\n", p.Path, len(p.Content))
 		default:
 			fmt.Fprintf(&b, "[%s] %s\n", p.Type, p.Path)

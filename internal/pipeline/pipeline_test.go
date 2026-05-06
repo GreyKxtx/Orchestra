@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/externalpatch"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -86,10 +86,10 @@ func TestBuildCoderGoal_RetryWithCritique(t *testing.T) {
 }
 
 func TestSummarizePatches(t *testing.T) {
-	patches := []externalpatch.Patch{
-		{Type: externalpatch.TypeFileSearchReplace, Path: "foo.go"},
-		{Type: externalpatch.TypeFileWriteAtomic, Path: "bar.go", Content: "package bar"},
-		{Type: externalpatch.TypeFileUnifiedDiff, Path: "baz.go"},
+	patches := []patches.Patch{
+		{Type: patches.TypeFileSearchReplace, Path: "foo.go"},
+		{Type: patches.TypeFileWriteAtomic, Path: "bar.go", Content: "package bar"},
+		{Type: patches.TypeFileUnifiedDiff, Path: "baz.go"},
 	}
 	summary := summarizePatches(patches)
 	if !strings.Contains(summary, "foo.go") {
