@@ -3,6 +3,8 @@ package prompt
 import (
 	"embed"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -54,4 +56,19 @@ func mustLoadPromptFile(name string) string {
 		panic(fmt.Sprintf("prompt: required file %q not found in embed", name))
 	}
 	return s
+}
+
+// LoadSystemOverride reads .orchestra/system.txt from workspaceRoot.
+// If the file exists and is non-empty, its content replaces the built-in system prompt entirely.
+// Returns empty string when no override is present.
+func LoadSystemOverride(workspaceRoot string) string {
+	if workspaceRoot == "" {
+		return ""
+	}
+	p := filepath.Join(workspaceRoot, ".orchestra", "system.txt")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }

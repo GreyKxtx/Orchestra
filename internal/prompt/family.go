@@ -4,12 +4,13 @@ import "strings"
 
 // DetectPromptFamily infers model family from the model name string.
 //
-// Returns one of: "anthropic", "gpt", "gemini", "local", "default".
+// Returns one of: "anthropic", "gpt", "gemini", "kimi", "local", "default".
 //   - "anthropic" — Claude models (Anthropic)
-//   - "gpt"       — GPT and O-series models (OpenAI)
+//   - "gpt"       — GPT-4 and O-series reasoning models (OpenAI); beast-mode autonomous execution
 //   - "gemini"    — Gemini models (Google)
-//   - "local"     — open-source/local models (Qwen, Llama, Mistral, DeepSeek, Gemma, Phi, Yi)
-//   - "default"   — unrecognized, uses the base build.txt prompt
+//   - "kimi"      — Kimi / Moonshot models
+//   - "local"     — open-source/local models: Qwen, Llama, Mistral, DeepSeek, Gemma, Phi, Yi
+//   - "default"   — unrecognized, falls back to build.txt
 func DetectPromptFamily(modelName string) string {
 	lower := strings.ToLower(modelName)
 	switch {
@@ -21,6 +22,8 @@ func DetectPromptFamily(modelName string) string {
 		return "gpt"
 	case strings.Contains(lower, "gemini"):
 		return "gemini"
+	case strings.Contains(lower, "kimi") || strings.Contains(lower, "moonshot"):
+		return "kimi"
 	case strings.Contains(lower, "qwen") ||
 		strings.Contains(lower, "llama") ||
 		strings.Contains(lower, "mistral") || strings.Contains(lower, "mixtral") ||
