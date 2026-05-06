@@ -53,6 +53,15 @@ const (
 	ModeBuild   = "build"   // default: full tool access
 	ModePlan    = "plan"    // read-only + plan tools
 	ModeExplore = "explore" // grep/glob/read only (subagent)
+
+	// ModeGeneral is a multi-step execution subagent: full read+write tools, returns via task_result.
+	ModeGeneral = "general"
+	// ModeCompaction is an internal agent that compresses conversation history into a summary.
+	ModeCompaction = "compaction"
+	// ModeTitle is an internal agent that generates a short task title from the user query.
+	ModeTitle = "title"
+	// ModeSummary is an internal agent that produces a brief summary of completed work.
+	ModeSummary = "summary"
 )
 
 type Options struct {
@@ -227,10 +236,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		history = make([]llm.Message, 0, 32)
 	}
 	steps := 0
+	maxStepsReminderSent := false
 	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 
 	for steps < a.opts.MaxSteps {
 		steps++
+
+		// Inject a step-limit warning as a synthetic assistant message once at 2/3 of MaxSteps.
+		if !maxStepsReminderSent && steps*3 >= a.opts.MaxSteps*2 {
+			maxStepsReminderSent = true
+			history = append(history, llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: promptpkg.MaxStepsReminder,
+			})
+		}
 
 		step, raw, llmResp, err := a.nextStep(ctx, userQuery, history, steps)
 		if err != nil {
