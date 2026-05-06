@@ -1,6 +1,6 @@
 # Binaries
-orchestra
-orchestra.exe
+/orchestra
+/orchestra.exe
 *.exe
 *.exe~
 *.dll
