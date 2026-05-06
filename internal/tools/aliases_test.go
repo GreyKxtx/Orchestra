@@ -3,6 +3,8 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/llm"
 )
 
 // TestListTools_NoDotsInCommodityNames verifies flat commodity tools have no dots.
@@ -28,6 +30,37 @@ func TestListTools_AllNamesPresent(t *testing.T) {
 			t.Errorf("ListTools(allowExec=true): missing tool %q", n)
 		}
 	}
+}
+
+// TestListToolsForMode_NewModes verifies tool sets for the four new agent modes.
+func TestListToolsForMode_NewModes(t *testing.T) {
+	// general: has write+edit+task_result, no todowrite
+	general := ListToolsForMode("general", false, false, false)
+	generalNames := toolNameSet(general)
+	for _, want := range []string{"read", "write", "edit", "grep", "task_result"} {
+		if !generalNames[want] {
+			t.Errorf("general mode: missing tool %q", want)
+		}
+	}
+	if generalNames["todowrite"] {
+		t.Error("general mode: must not include todowrite")
+	}
+
+	// compaction/title/summary: no tools at all
+	for _, mode := range []string{"compaction", "title", "summary"} {
+		defs := ListToolsForMode(mode, true, true, true)
+		if len(defs) != 0 {
+			t.Errorf("mode %q: expected 0 tools, got %d", mode, len(defs))
+		}
+	}
+}
+
+func toolNameSet(defs []llm.ToolDef) map[string]bool {
+	m := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		m[d.Function.Name] = true
+	}
+	return m
 }
 
 // TestListTools_ExecGating verifies bash is absent without allowExec.

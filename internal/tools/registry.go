@@ -321,7 +321,6 @@ func ListToolsForInvestigator() []llm.ToolDef {
 }
 
 // ListToolsForMode returns tools for the given agent mode.
-// mode: "build" (default, full access), "plan" (read-only + plan tools), "explore" (subagent).
 // hasSubtasks enables task.spawn/wait/cancel; hasQuestionAsker enables question tool.
 func ListToolsForMode(mode string, allowExec, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	switch mode {
@@ -329,6 +328,10 @@ func ListToolsForMode(mode string, allowExec, hasSubtasks, hasQuestionAsker bool
 		return listToolsPlan(hasSubtasks, hasQuestionAsker)
 	case "explore":
 		return listToolsExplore()
+	case "general":
+		return listToolsGeneral(allowExec, hasSubtasks)
+	case "compaction", "title", "summary":
+		return []llm.ToolDef{} // pure LLM output, no tools needed
 	default: // "build" or ""
 		return listToolsBuild(allowExec, hasSubtasks, hasQuestionAsker)
 	}
@@ -373,6 +376,24 @@ func listToolsExplore() []llm.ToolDef {
 		toolFSList(), toolFSRead(), toolFSGlob(),
 		toolSearchText(), toolCodeSymbols(), toolTaskResult(),
 	}
+}
+
+// listToolsGeneral returns tools for the "general" multi-step execution subagent.
+// It has full read+write access and reports results via task_result.
+// todowrite is intentionally excluded — general agents track progress internally.
+func listToolsGeneral(allowExec, hasSubtasks bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolTodoRead(), toolTaskResult(),
+	}
+	if allowExec {
+		out = append(out, toolExecRun())
+	}
+	if hasSubtasks {
+		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	}
+	return out
 }
 
 func toolTaskSpawn() llm.ToolDef {
