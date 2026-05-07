@@ -42,3 +42,84 @@ func TestSession_ZeroValue(t *testing.T) {
 		t.Errorf("zero-value Session should have nil Messages, got %v", s.Messages)
 	}
 }
+
+func TestSession_StartAndDeltaAssistant(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant()
+	s.AppendAssistantDelta("hel")
+	s.AppendAssistantDelta("lo")
+
+	if len(s.Messages) != 1 {
+		t.Fatalf("want 1 message, got %d", len(s.Messages))
+	}
+	if got := s.Messages[0].Text; got != "hello" {
+		t.Errorf("want 'hello', got %q", got)
+	}
+	if !s.Messages[0].Streaming {
+		t.Error("expected Streaming=true while active")
+	}
+}
+
+func TestSession_ToolBlockUpdate(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant()
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
+
+	if !s.UpdateToolBlock("t1", state.ToolBlockCompleted, "12 lines") {
+		t.Fatal("UpdateToolBlock returned false for known id")
+	}
+
+	blocks := s.Messages[0].ToolBlocks
+	if len(blocks) != 1 {
+		t.Fatalf("want 1 tool block, got %d", len(blocks))
+	}
+	if blocks[0].Status != state.ToolBlockCompleted {
+		t.Errorf("want Completed, got %s", blocks[0].Status)
+	}
+	if blocks[0].Result != "12 lines" {
+		t.Errorf("want '12 lines', got %q", blocks[0].Result)
+	}
+}
+
+func TestSession_UpdateToolBlock_UnknownID(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant()
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
+
+	if s.UpdateToolBlock("nonexistent", state.ToolBlockCompleted, "x") {
+		t.Error("UpdateToolBlock should return false for unknown id")
+	}
+}
+
+func TestSession_FinishAssistant(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant()
+	s.FinishAssistant()
+	if s.Messages[0].Streaming {
+		t.Error("expected Streaming=false after Finish")
+	}
+}
+
+func TestSession_AppendToolBlock_StartsAssistantIfNoneActive(t *testing.T) {
+	s := state.NewSession()
+	// No StartAssistant call.
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
+
+	if len(s.Messages) != 1 {
+		t.Fatalf("want 1 message (auto-started), got %d", len(s.Messages))
+	}
+	if s.Messages[0].Role != state.RoleAssistant {
+		t.Errorf("want assistant role, got %s", s.Messages[0].Role)
+	}
+	if len(s.Messages[0].ToolBlocks) != 1 {
+		t.Errorf("want 1 tool block, got %d", len(s.Messages[0].ToolBlocks))
+	}
+}
+
+func TestSession_AppendDeltaWithoutActiveAssistant_NoOp(t *testing.T) {
+	s := state.NewSession()
+	s.AppendAssistantDelta("orphan delta")
+	if len(s.Messages) != 0 {
+		t.Errorf("want 0 messages (no-op), got %d", len(s.Messages))
+	}
+}
