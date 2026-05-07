@@ -3,6 +3,7 @@ package instrument
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Detect scans dir for known manifest files and returns matching LangConfigs from candidates.
@@ -18,7 +19,15 @@ func Detect(dir string, candidates []LangConfig) []LangConfig {
 			continue
 		}
 		for _, f := range lc.DetectFiles {
-			if fileExists(filepath.Join(dir, f)) {
+			var matched bool
+			if strings.ContainsAny(f, "*?[") {
+				// Glob pattern — scan directory for matching files.
+				matches, _ := filepath.Glob(filepath.Join(dir, f))
+				matched = len(matches) > 0
+			} else {
+				matched = fileExists(filepath.Join(dir, f))
+			}
+			if matched {
 				found = append(found, lc)
 				seen[lc.Name] = true
 				break

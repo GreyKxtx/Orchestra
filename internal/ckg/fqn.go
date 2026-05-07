@@ -174,21 +174,147 @@ func JavaPackageFQN(pkgDecl string) string {
 // JavaFQN returns the FQN for a Java symbol.
 // Format: "com.example.pkg.ClassName.method"
 func JavaFQN(pkgDecl, container, symbol string) string {
-	var sb strings.Builder
-	if pkgDecl != "" {
-		sb.WriteString(pkgDecl)
+	return dotFQN(pkgDecl, container, symbol)
+}
+
+// ---- C / C++ ----
+
+// CFileFQN returns the file-level FQN for C/C++ (the relative path).
+func CFileFQN(rootDir, filePath string) string {
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filepath.Base(filePath)
 	}
+	return filepath.ToSlash(rel)
+}
+
+// CFQN returns the FQN for a C/C++ symbol.
+// Format: "rel/path/file.c::Container::symbol" or "rel/path/file.c::symbol"
+func CFQN(rootDir, filePath, container, symbol string) string {
+	mod := CFileFQN(rootDir, filePath)
 	if container != "" {
-		if sb.Len() > 0 {
-			sb.WriteByte('.')
-		}
-		sb.WriteString(container)
+		return mod + "::" + container + "::" + symbol
 	}
-	if symbol != "" {
+	return mod + "::" + symbol
+}
+
+// ---- C# ----
+
+// CSharpPackageFQN returns the namespace-level FQN for C#.
+func CSharpPackageFQN(namespace string) string {
+	return namespace
+}
+
+// CSharpFQN returns the FQN for a C# symbol.
+// Format: "Namespace.ClassName.method"
+func CSharpFQN(namespace, container, symbol string) string {
+	return dotFQN(namespace, container, symbol)
+}
+
+// ---- Kotlin ----
+
+// KotlinPackageFQN returns the package-level FQN for Kotlin.
+func KotlinPackageFQN(pkgDecl string) string {
+	return pkgDecl
+}
+
+// KotlinFQN returns the FQN for a Kotlin symbol.
+// Format: "com.example.ClassName.symbol"
+func KotlinFQN(pkgDecl, container, symbol string) string {
+	return dotFQN(pkgDecl, container, symbol)
+}
+
+// ---- Scala ----
+
+// ScalaPackageFQN returns the package-level FQN for Scala.
+func ScalaPackageFQN(pkgDecl string) string {
+	return pkgDecl
+}
+
+// ScalaFQN returns the FQN for a Scala symbol.
+// Format: "com.example.ClassName.symbol"
+func ScalaFQN(pkgDecl, container, symbol string) string {
+	return dotFQN(pkgDecl, container, symbol)
+}
+
+// ---- Ruby ----
+
+func rubyModuleKey(rootDir, filePath string) string {
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filepath.Base(filePath)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// RubyPackageFQN returns the file-level FQN for Ruby.
+func RubyPackageFQN(rootDir, filePath string) string {
+	return rubyModuleKey(rootDir, filePath)
+}
+
+// RubyFQN returns the FQN for a Ruby symbol.
+// Format: "rel/path/file.rb::Module::symbol"
+func RubyFQN(rootDir, filePath, container, symbol string) string {
+	mod := rubyModuleKey(rootDir, filePath)
+	if container != "" {
+		return mod + "::" + container + "::" + symbol
+	}
+	return mod + "::" + symbol
+}
+
+// ---- PHP ----
+
+// PhpPackageFQN returns the namespace-level FQN for PHP.
+func PhpPackageFQN(namespace string) string {
+	return namespace
+}
+
+// PhpFQN returns the FQN for a PHP symbol.
+// Format: "Namespace.ClassName.symbol"
+func PhpFQN(namespace, container, symbol string) string {
+	return dotFQN(namespace, container, symbol)
+}
+
+// ---- Elixir ----
+
+func elixirModuleKey(rootDir, filePath string) string {
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filepath.Base(filePath)
+	}
+	rel = filepath.ToSlash(rel)
+	rel = strings.TrimSuffix(rel, ".exs")
+	rel = strings.TrimSuffix(rel, ".ex")
+	return rel
+}
+
+// ElixirPackageFQN returns the file-level FQN for Elixir.
+func ElixirPackageFQN(rootDir, filePath string) string {
+	return elixirModuleKey(rootDir, filePath)
+}
+
+// ElixirFQN returns the FQN for an Elixir symbol.
+// When a module container is known, uses "Module.symbol"; otherwise "file_path::symbol".
+func ElixirFQN(rootDir, filePath, container, symbol string) string {
+	if container != "" {
+		return container + "." + symbol
+	}
+	return elixirModuleKey(rootDir, filePath) + "::" + symbol
+}
+
+// ---- shared helpers ----
+
+// dotFQN joins up to three dotted-namespace components, skipping empty ones.
+func dotFQN(pkgDecl, container, symbol string) string {
+	var sb strings.Builder
+	for _, p := range []string{pkgDecl, container, symbol} {
+		if p == "" {
+			continue
+		}
 		if sb.Len() > 0 {
 			sb.WriteByte('.')
 		}
-		sb.WriteString(symbol)
+		sb.WriteString(p)
 	}
 	return sb.String()
 }
