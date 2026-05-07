@@ -1,23 +1,27 @@
 // Package tui implements the Orchestra terminal UI client.
-// In Phase 1 it provides an echo-only skeleton; Phase 2 connects it
-// to orchestra core via JSON-RPC stdio.
+// Phase 2 connects to orchestra core via JSON-RPC stdio.
 package tui
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
 // Config carries one-time settings into the App.
 type Config struct {
-	Model string // for the header
-	Mode  string // for the header
-	CWD   string // for the header
+	Binary        string // path to orchestra binary for spawning core subprocess (empty → echo mode)
+	WorkspaceRoot string // project root passed to core
+	Model         string
+	Mode          string
+	CWD           string
 }
 
 // App is the root Bubble Tea Model.
@@ -32,21 +36,60 @@ type App struct {
 	width       int
 	height      int
 	initialized bool
+
+	rpc       *rpcclient.Client
+	rpcCancel context.CancelFunc
 }
 
-// NewApp constructs an App with the given config.
-func NewApp(cfg Config) *App {
-	return &App{
+// rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
+type rpcEventMsg rpcclient.Event
+
+// NewApp constructs an App with the given config. If cfg.Binary is non-empty,
+// spawns the core subprocess and runs the initialize handshake; on error,
+// returns it.
+func NewApp(cfg Config) (*App, error) {
+	a := &App{
 		cfg:     cfg,
 		header:  view.Header{Model: cfg.Model, Mode: cfg.Mode, CWD: cfg.CWD},
 		footer:  view.Footer{},
 		session: state.NewSession(),
 	}
+
+	if cfg.Binary != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		client, err := rpcclient.Spawn(ctx, rpcclient.Config{
+			Binary:        cfg.Binary,
+			WorkspaceRoot: cfg.WorkspaceRoot,
+		})
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		a.rpc = client
+		a.rpcCancel = cancel
+	}
+
+	return a, nil
 }
 
 // Init satisfies tea.Model.
 func (a *App) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, a.listenForEvents())
+}
+
+// listenForEvents returns a Cmd that reads one event from the rpc channel.
+func (a *App) listenForEvents() tea.Cmd {
+	if a.rpc == nil {
+		return nil
+	}
+	ch := a.rpc.Events()
+	return func() tea.Msg {
+		ev, ok := <-ch
+		if !ok {
+			return rpcEventMsg{Kind: rpcclient.EventConnectionClosed}
+		}
+		return rpcEventMsg(ev)
+	}
 }
 
 // Update routes incoming messages.
@@ -71,19 +114,69 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			a.session.AppendMessage(state.Message{Role: state.RoleUser, Text: text})
-			// Phase 1: synthesize an echo response so we can verify the round-trip.
-			a.session.AppendMessage(state.Message{Role: state.RoleAssistant, Text: "echo: " + text})
+			a.session.StartAssistant()
 			a.chat.SetMessages(a.session.Messages)
 			a.input.Reset()
+			if a.rpc != nil {
+				go func(query string) {
+					_ = a.rpc.AgentRun(context.Background(), query)
+				}(text)
+				return a, nil
+			}
+			// Echo fallback (tests).
+			a.session.AppendAssistantDelta("echo: " + text)
+			a.session.FinishAssistant()
+			a.chat.SetMessages(a.session.Messages)
 			return a, nil
 		}
+
+	case rpcEventMsg:
+		a.handleRPCEvent(rpcclient.Event(m))
+		return a, a.listenForEvents()
 	}
 
-	// Forward all other messages (most KeyMsg for typing, blink, etc.) to the textarea.
+	// Forward to textarea.
 	innerTA := a.input.Inner()
 	updatedTA, cmd := innerTA.Update(msg)
 	*innerTA = updatedTA
 	return a, cmd
+}
+
+func (a *App) handleRPCEvent(ev rpcclient.Event) {
+	switch ev.Kind {
+	case rpcclient.EventMessageDelta:
+		a.session.AppendAssistantDelta(ev.Content)
+	case rpcclient.EventToolCallStart:
+		a.session.AppendToolBlock(state.ToolBlock{
+			ID:     ev.ToolCallID,
+			Name:   ev.ToolCallName,
+			Status: state.ToolBlockRunning,
+		})
+	case rpcclient.EventToolCallCompleted:
+		status := state.ToolBlockCompleted
+		if strings.HasPrefix(ev.Content, "error: ") {
+			status = state.ToolBlockFailed
+		}
+		a.session.UpdateToolBlock(ev.ToolCallID, status, ev.Content)
+	case rpcclient.EventStepDone:
+		// Cosmetic for Phase 2.
+	case rpcclient.EventDone, rpcclient.EventAgentRunCompleted:
+		a.session.FinishAssistant()
+	case rpcclient.EventError, rpcclient.EventConnectionError:
+		a.session.AppendMessage(state.Message{
+			Role: state.RoleSystem,
+			Text: "[error] " + ev.Err,
+		})
+	case rpcclient.EventPendingOps:
+		if ev.PendingOps != nil {
+			count := len(ev.PendingOps.Ops)
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: fmt.Sprintf("[%d pending ops — apply with /apply (Phase 3)]", count),
+			})
+		}
+	}
+	a.chat.SetMessages(a.session.Messages)
 }
 
 // View renders the full screen layout.
@@ -95,12 +188,10 @@ func (a *App) View() string {
 }
 
 // layout recomputes child sizes based on current width/height.
-// Lazily initializes chat and input on first call.
 func (a *App) layout() {
 	a.header.SetSize(a.width)
 	a.footer.SetSize(a.width)
 
-	// Reserve: 1 line header, 1 line footer, 4 lines for input area (textarea + spacing).
 	chatHeight := a.height - 1 - 1 - 4
 	if chatHeight < 1 {
 		chatHeight = 1
@@ -118,8 +209,19 @@ func (a *App) layout() {
 
 // Run starts the tea program. Blocks until quit.
 func Run(cfg Config) error {
-	app := NewApp(cfg)
+	app, err := NewApp(cfg)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if app.rpc != nil {
+			_ = app.rpc.Close()
+		}
+		if app.rpcCancel != nil {
+			app.rpcCancel()
+		}
+	}()
 	p := tea.NewProgram(app, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }

@@ -16,8 +16,7 @@ var tuiCmd = &cobra.Command{
 	Short: "Open the interactive Orchestra terminal UI",
 	Long: `Open the Orchestra terminal UI.
 
-Phase 1: echo-only skeleton (no core connection yet). Use Ctrl+C to quit.
-
+Connects to a child 'orchestra core' subprocess via stdio JSON-RPC.
 Configure model and project_root via .orchestra.yml in the current
 directory (create with 'orchestra init').`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -26,19 +25,25 @@ directory (create with 'orchestra init').`,
 			return fmt.Errorf("getwd: %w", err)
 		}
 
+		// Find ourselves on disk so the spawned subprocess can be `orchestra core`.
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("cannot resolve own executable path: %w", err)
+		}
+
 		model := "(none)"
-		// Best-effort config load — TUI runs even without .orchestra.yml.
-		cfgPath := filepath.Join(cwd, ".orchestra.yml")
-		if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
+		if cfg, loadErr := config.Load(filepath.Join(cwd, ".orchestra.yml")); loadErr == nil && cfg != nil {
 			if cfg.LLM.Model != "" {
 				model = cfg.LLM.Model
 			}
 		}
 
 		return tui.Run(tui.Config{
-			Model: model,
-			Mode:  "code",
-			CWD:   filepath.Base(cwd),
+			Binary:        self,
+			WorkspaceRoot: cwd,
+			Model:         model,
+			Mode:          "code",
+			CWD:           filepath.Base(cwd),
 		})
 	},
 }
