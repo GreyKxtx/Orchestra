@@ -14,7 +14,10 @@ import (
 )
 
 func TestApp_EchoesUserInput(t *testing.T) {
-	app := tui.NewApp(tui.Config{Model: "test-model", Mode: "code", CWD: "test"})
+	app, err := tui.NewApp(tui.Config{Model: "test-model", Mode: "code", CWD: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
 
 	// Type "hello" and submit.
@@ -36,7 +39,10 @@ func TestApp_EchoesUserInput(t *testing.T) {
 }
 
 func TestApp_CtrlCQuits(t *testing.T) {
-	app := tui.NewApp(tui.Config{})
+	app, err := tui.NewApp(tui.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -44,7 +50,10 @@ func TestApp_CtrlCQuits(t *testing.T) {
 }
 
 func TestApp_EscResetsInput(t *testing.T) {
-	app := tui.NewApp(tui.Config{})
+	app, err := tui.NewApp(tui.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
 
 	// Type something then Esc to reset.
@@ -57,7 +66,10 @@ func TestApp_EscResetsInput(t *testing.T) {
 }
 
 func TestApp_EnterEmptyInputDoesNothing(t *testing.T) {
-	app := tui.NewApp(tui.Config{})
+	app, err := tui.NewApp(tui.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
 
 	// Press enter without typing anything.
