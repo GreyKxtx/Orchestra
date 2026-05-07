@@ -23,7 +23,7 @@ type Config struct {
 // App is the root Bubble Tea Model.
 type App struct {
 	cfg     Config
-	session state.Session
+	session *state.Session
 	header  view.Header
 	chat    view.Chat
 	input   view.Input
@@ -37,9 +37,10 @@ type App struct {
 // NewApp constructs an App with the given config.
 func NewApp(cfg Config) *App {
 	return &App{
-		cfg:    cfg,
-		header: view.Header{Model: cfg.Model, Mode: cfg.Mode, CWD: cfg.CWD},
-		footer: view.Footer{},
+		cfg:     cfg,
+		header:  view.Header{Model: cfg.Model, Mode: cfg.Mode, CWD: cfg.CWD},
+		footer:  view.Footer{},
+		session: state.NewSession(),
 	}
 }
 
