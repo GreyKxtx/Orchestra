@@ -1,12 +1,16 @@
 package ckg
 
 import (
+	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func makeSourceReq(file, start, end string) *http.Request {
@@ -118,6 +122,71 @@ func TestSourceHandler_OutOfBoundsClamped(t *testing.T) {
 	got := w.Body.String()
 	if !strings.Contains(got, "a") || !strings.Contains(got, "c") {
 		t.Errorf("clamped response missing content: %q", got)
+	}
+}
+
+// ---- StartUIServer ----
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
+
+func TestStartUIServer_ServesAPI(t *testing.T) {
+	store := newTestStore(t)
+	root := t.TempDir()
+	port := freePort(t)
+
+	go func() {
+		_ = StartUIServer(store, root, port)
+	}()
+
+	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	// Poll until the server is up (max 2 s).
+	var lastErr error
+	for i := 0; i < 40; i++ {
+		time.Sleep(50 * time.Millisecond)
+		resp, err := http.Get(addr + "/api/graph")
+		if err == nil {
+			resp.Body.Close()
+			lastErr = nil
+			break
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		t.Fatalf("server did not start: %v", lastErr)
+	}
+
+	// /api/graph should return valid JSON.
+	resp, err := http.Get(addr + "/api/graph")
+	if err != nil {
+		t.Fatalf("GET /api/graph: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/api/graph status = %d, want 200", resp.StatusCode)
+	}
+	var gd GraphData
+	if err := json.NewDecoder(resp.Body).Decode(&gd); err != nil {
+		t.Errorf("decode graph data: %v", err)
+	}
+
+	// / should return the HTML UI.
+	resp2, err := http.Get(addr + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer resp2.Body.Close()
+	if ct := resp2.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("/ Content-Type = %q, want text/html", ct)
 	}
 }
 

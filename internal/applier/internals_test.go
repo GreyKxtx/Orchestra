@@ -1,6 +1,7 @@
 package applier
 
 import (
+	"os"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/ops"
@@ -128,5 +129,220 @@ func TestPreview_Truncated(t *testing.T) {
 	}
 	if got[:5] != s[:5] {
 		t.Errorf("expected prefix %q, got %q", s[:5], got[:5])
+	}
+}
+
+// ---- max ----
+
+func TestMax_BGreaterThanA(t *testing.T) {
+	if got := max(1, 5); got != 5 {
+		t.Errorf("max(1,5) = %d, want 5", got)
+	}
+}
+
+func TestMax_AGreaterThanB(t *testing.T) {
+	if got := max(7, 3); got != 7 {
+		t.Errorf("max(7,3) = %d, want 7", got)
+	}
+}
+
+// ---- fuzzyFindInWindow negative window ----
+
+func TestFuzzyFindInWindow_NegativeWindow(t *testing.T) {
+	_, _, _, err := fuzzyFindInWindow([]byte("hello\n"), "hello", 0, -1)
+	if err == nil {
+		t.Fatal("expected error for negative window")
+	}
+}
+
+// ---- offsetForPos negative position ----
+
+func TestOffsetForPos_NegativePosition(t *testing.T) {
+	content := []byte("hello\n")
+	ls := computeLineStarts(content)
+	_, err := offsetForPos(ls, content, ops.Position{Line: -1, Col: 0})
+	if err == nil {
+		t.Fatal("expected error for negative line")
+	}
+	_, err = offsetForPos(ls, content, ops.Position{Line: 0, Col: -1})
+	if err == nil {
+		t.Fatal("expected error for negative col")
+	}
+}
+
+// ---- offsetsForRange end before start ----
+
+func TestOffsetsForRange_EndBeforeStart(t *testing.T) {
+	content := []byte("line0\nline1\nline2\n")
+	// End line 0 < Start line 2 — should fail.
+	_, _, err := offsetsForRange(content, ops.Range{
+		Start: ops.Position{Line: 2, Col: 0},
+		End:   ops.Position{Line: 0, Col: 0},
+	})
+	if err == nil {
+		t.Fatal("expected error when range end precedes start")
+	}
+}
+
+// ---- applyReplaceRangeOps error paths ----
+
+func TestApplyReplaceRangeOps_WrongOpType(t *testing.T) {
+	content := []byte("foo\nbar\n")
+	opList := []ops.ReplaceRangeOp{
+		{
+			Op:   "file.wrong_op",
+			Path: "x.go",
+			Range: ops.Range{
+				Start: ops.Position{Line: 0, Col: 0},
+				End:   ops.Position{Line: 0, Col: 3},
+			},
+			Expected:    "foo",
+			Replacement: "baz",
+		},
+	}
+	_, err := applyReplaceRangeOps("x.go", content, opList)
+	if err == nil {
+		t.Fatal("expected error for wrong op type")
+	}
+}
+
+func TestApplyReplaceRangeOps_EmptyPath(t *testing.T) {
+	content := []byte("foo\n")
+	opList := []ops.ReplaceRangeOp{
+		{
+			Op:   ops.OpFileReplaceRange,
+			Path: "",
+			Range: ops.Range{
+				Start: ops.Position{Line: 0, Col: 0},
+				End:   ops.Position{Line: 0, Col: 3},
+			},
+			Expected:    "foo",
+			Replacement: "bar",
+		},
+	}
+	_, err := applyReplaceRangeOps("x.go", content, opList)
+	if err == nil {
+		t.Fatal("expected error for empty op path")
+	}
+}
+
+func TestApplyReplaceRangeOps_NegativeRange(t *testing.T) {
+	content := []byte("foo\n")
+	opList := []ops.ReplaceRangeOp{
+		{
+			Op:   ops.OpFileReplaceRange,
+			Path: "x.go",
+			Range: ops.Range{
+				Start: ops.Position{Line: -1, Col: 0},
+				End:   ops.Position{Line: 0, Col: 3},
+			},
+			Expected:    "foo",
+			Replacement: "bar",
+		},
+	}
+	_, err := applyReplaceRangeOps("x.go", content, opList)
+	if err == nil {
+		t.Fatal("expected error for negative range")
+	}
+}
+
+func TestApplyReplaceRangeOps_FuzzyNotFound(t *testing.T) {
+	content := []byte("alpha\nbeta\n")
+	opList := []ops.ReplaceRangeOp{
+		{
+			Op:   ops.OpFileReplaceRange,
+			Path: "x.go",
+			Range: ops.Range{
+				Start: ops.Position{Line: 0, Col: 0},
+				End:   ops.Position{Line: 0, Col: 5},
+			},
+			Expected:    "ZZZNOMATCH",
+			Replacement: "new",
+			Conditions:  ops.Conditions{AllowFuzzy: true, FuzzyWindow: 5},
+		},
+	}
+	_, err := applyReplaceRangeOps("x.go", content, opList)
+	if err == nil {
+		t.Fatal("expected stale error when fuzzy finds no match")
+	}
+}
+
+// ---- atomicWriteFile ----
+
+func TestAtomicWriteFile_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/out.txt"
+	if err := atomicWriteFile(path, []byte("hello"), 0644, ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || string(b) != "hello" {
+		t.Fatalf("content: %q, err: %v", b, err)
+	}
+}
+
+func TestAtomicWriteFile_Overwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/out.txt"
+	_ = os.WriteFile(path, []byte("old"), 0644)
+	if err := atomicWriteFile(path, []byte("new"), 0644, ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b, _ := os.ReadFile(path)
+	if string(b) != "new" {
+		t.Errorf("content: %q, want %q", b, "new")
+	}
+}
+
+func TestAtomicWriteFile_WithRootCheck(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/sub/out.txt"
+	if err := atomicWriteFile(path, []byte("data"), 0644, dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b, _ := os.ReadFile(path)
+	if string(b) != "data" {
+		t.Errorf("content: %q", b)
+	}
+}
+
+func TestAtomicWriteFile_SymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	// Create a dir symlink inside root that points outside.
+	linkDir := root + "/linked"
+	if err := os.Symlink(outside, linkDir); err != nil {
+		t.Skipf("symlink not supported/allowed: %v", err)
+	}
+
+	path := linkDir + "/secret.txt"
+	err := atomicWriteFile(path, []byte("evil"), 0644, root)
+	if err == nil {
+		t.Fatal("expected error for symlink escape in atomicWriteFile")
+	}
+	// File should not exist outside root.
+	if _, statErr := os.Stat(outside + "/secret.txt"); !os.IsNotExist(statErr) {
+		t.Fatal("file should not be created outside workspace")
+	}
+}
+
+// ---- safeAbsPath: symlink file target ----
+
+func TestSafeAbsPath_SymlinkFileRejected(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	realFile := outside + "/real.go"
+	_ = os.WriteFile(realFile, []byte("x"), 0644)
+
+	linkFile := root + "/link.go"
+	if err := os.Symlink(realFile, linkFile); err != nil {
+		t.Skipf("symlink not supported/allowed: %v", err)
+	}
+
+	rootAbs := root
+	_, err := safeAbsPath(rootAbs, rootAbs, "link.go")
+	if err == nil {
+		t.Fatal("expected error for symlink file target")
 	}
 }
