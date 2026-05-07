@@ -10,15 +10,16 @@ import (
 
 // Client is a concurrent JSON-RPC 2.0 client using LSP-style framing.
 // Multiple calls may be in-flight simultaneously; responses are demuxed by ID.
-// Server-initiated notifications are delivered to an optional handler.
+// Server-initiated notifications and requests are delivered to optional handlers.
 type Client struct {
 	w   *Writer
 	wMu sync.Mutex
 
-	pMu      sync.Mutex
-	nextID   int
-	pending  map[string]chan clientMsg
-	onNotify func(method string, params json.RawMessage)
+	pMu       sync.Mutex
+	nextID    int
+	pending   map[string]chan clientMsg
+	onNotify  func(method string, params json.RawMessage)
+	onRequest func(ctx context.Context, method string, params json.RawMessage) (any, error)
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -62,6 +63,15 @@ func (c *Client) SetNotificationHandler(fn func(method string, params json.RawMe
 	c.pMu.Unlock()
 }
 
+// SetRequestHandler registers a function called for server-initiated requests.
+// The handler is invoked in a new goroutine per request; it may block.
+// Returning an error sends a JSON-RPC error response; returning a value sends a success response.
+func (c *Client) SetRequestHandler(fn func(ctx context.Context, method string, params json.RawMessage) (any, error)) {
+	c.pMu.Lock()
+	c.onRequest = fn
+	c.pMu.Unlock()
+}
+
 func (c *Client) readLoop(r *Reader) {
 	defer func() {
 		// Snapshot and clear pending before closing so new Calls see empty map.
@@ -88,6 +98,49 @@ func (c *Client) readLoop(r *Reader) {
 		}
 		var msg wireMsg
 		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+
+		// Server-initiated request: has method AND non-null id.
+		if msg.Method != "" && len(msg.ID) > 0 && string(msg.ID) != "null" {
+			c.pMu.Lock()
+			fn := c.onRequest
+			c.pMu.Unlock()
+			if fn == nil {
+				// No handler — return method-not-found error.
+				c.wMu.Lock()
+				_ = c.w.WriteMessage(Response{
+					JSONRPC: "2.0",
+					ID:      msg.ID,
+					Error:   &Error{Code: -32601, Message: "Method not found"},
+				})
+				c.wMu.Unlock()
+				continue
+			}
+			go func(id json.RawMessage, method string, params json.RawMessage) {
+				ctx := context.Background()
+				result, err := fn(ctx, method, params)
+				c.wMu.Lock()
+				defer c.wMu.Unlock()
+				if err != nil {
+					_ = c.w.WriteMessage(Response{
+						JSONRPC: "2.0",
+						ID:      id,
+						Error:   &Error{Code: -32603, Message: err.Error()},
+					})
+					return
+				}
+				var resultRaw json.RawMessage
+				if result != nil {
+					b, _ := json.Marshal(result)
+					resultRaw = b
+				}
+				_ = c.w.WriteMessage(Response{
+					JSONRPC: "2.0",
+					ID:      id,
+					Result:  resultRaw,
+				})
+			}(msg.ID, msg.Method, msg.Params)
 			continue
 		}
 

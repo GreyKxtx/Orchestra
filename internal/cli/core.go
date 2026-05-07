@@ -63,6 +63,7 @@ func runCore(cmd *cobra.Command, args []string) error {
 	handler := core.NewRPCHandler(c)
 	srv := jsonrpc.NewServer(handler, os.Stdin, os.Stdout)
 	handler.SetNotifier(srv)
+	handler.SetRequester(srv.Request)
 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()

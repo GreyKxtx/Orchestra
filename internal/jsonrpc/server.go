@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"sync"
 
 	"github.com/orchestra/orchestra/internal/protocol"
 )
@@ -19,13 +21,32 @@ type Server struct {
 	h Handler
 	r *Reader
 	w *Writer
+
+	pMu     sync.Mutex
+	nextID  int
+	pending map[string]chan clientReply
+}
+
+type clientReply struct {
+	result json.RawMessage
+	err    error
+}
+
+// srvWireMsg is used to detect client responses to server-initiated requests.
+type srvWireMsg struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+	Result json.RawMessage `json:"result"`
+	Error  *Error          `json:"error"`
 }
 
 func NewServer(h Handler, in io.Reader, out io.Writer) *Server {
 	return &Server{
-		h: h,
-		r: NewReader(in),
-		w: NewWriter(out),
+		h:       h,
+		r:       NewReader(in),
+		w:       NewWriter(out),
+		pending: make(map[string]chan clientReply),
 	}
 }
 
@@ -56,6 +77,27 @@ func (s *Server) Serve(ctx context.Context) error {
 				},
 			})
 			continue
+		}
+
+		// Intercept client responses to server-initiated requests (no method field + non-null id).
+		var probe srvWireMsg
+		if json.Unmarshal(msg, &probe) == nil && probe.Method == "" && len(probe.ID) > 0 && string(probe.ID) != "null" {
+			id := strings.Trim(string(probe.ID), `"`)
+			s.pMu.Lock()
+			ch, ok := s.pending[id]
+			if ok {
+				delete(s.pending, id)
+			}
+			s.pMu.Unlock()
+			if ok {
+				if probe.Error != nil {
+					ch <- clientReply{err: &RPCError{Code: probe.Error.Code, Message: probe.Error.Message, Data: probe.Error.Data}}
+				} else {
+					ch <- clientReply{result: probe.Result}
+				}
+				continue
+			}
+			// Stale or unknown response — fall through to parsePayload (will produce an error, which is fine).
 		}
 
 		req, perr := parsePayload(msg)
@@ -117,6 +159,62 @@ func (s *Server) Notify(method string, params any) error {
 		Params:  paramsRaw,
 		// no ID = notification per JSON-RPC 2.0 spec
 	})
+}
+
+// Request sends a server-initiated JSON-RPC request and waits for the client's response.
+// Safe to call concurrently with Serve.
+func (s *Server) Request(ctx context.Context, method string, params any, result any) error {
+	if s == nil {
+		return fmt.Errorf("jsonrpc: server is nil")
+	}
+	s.pMu.Lock()
+	s.nextID++
+	id := fmt.Sprintf("srv-%d", s.nextID)
+	ch := make(chan clientReply, 1)
+	s.pending[id] = ch
+	s.pMu.Unlock()
+
+	removePending := func() {
+		s.pMu.Lock()
+		delete(s.pending, id)
+		s.pMu.Unlock()
+	}
+
+	var paramsRaw json.RawMessage
+	if params != nil {
+		b, err := json.Marshal(params)
+		if err != nil {
+			removePending()
+			return fmt.Errorf("request marshal params: %w", err)
+		}
+		paramsRaw = b
+	}
+
+	idJSON, _ := json.Marshal(id)
+	req := Request{
+		JSONRPC: "2.0",
+		ID:      idJSON,
+		Method:  method,
+		Params:  paramsRaw,
+	}
+	if err := s.w.WriteMessage(req); err != nil {
+		removePending()
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+		removePending()
+		return ctx.Err()
+	case r := <-ch:
+		if r.err != nil {
+			return r.err
+		}
+		if result != nil && len(r.result) > 0 {
+			return json.Unmarshal(r.result, result)
+		}
+		return nil
+	}
 }
 
 func classifyID(id json.RawMessage) (isNotification bool, valid bool) {
