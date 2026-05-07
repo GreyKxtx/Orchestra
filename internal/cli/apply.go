@@ -9,18 +9,20 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/daemon"
-	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/git"
+	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/jsonrpc"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/pipeline"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -412,6 +414,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
+		taskRunner := tasks.New(llmClient, validator, runner)
+		var hooksRunner agent.HooksRunner
+		if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
+			hooksRunner = hr
+		}
+
 		ag, err := agent.New(llmClient, validator, runner, agent.Options{
 			MaxSteps:             cfg.Agent.MaxSteps,
 			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
@@ -435,6 +443,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			QuestionAsker:        buildQuestionAsker(agentMode),
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
+			SubtaskRunner:        taskRunner,
+			HooksRunner:          hooksRunner,
 		})
 		if err != nil {
 			retErr = err
