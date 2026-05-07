@@ -302,6 +302,31 @@ func ElixirFQN(rootDir, filePath, container, symbol string) string {
 	return elixirModuleKey(rootDir, filePath) + "::" + symbol
 }
 
+// ---- Swift ----
+
+func swiftModuleKey(rootDir, filePath string) string {
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filepath.Base(filePath)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// SwiftPackageFQN returns the file-level FQN for Swift.
+func SwiftPackageFQN(rootDir, filePath string) string {
+	return swiftModuleKey(rootDir, filePath)
+}
+
+// SwiftFQN returns the FQN for a Swift symbol.
+// Format: "rel/path/File.swift::Container.symbol" or "rel/path/File.swift::symbol"
+func SwiftFQN(rootDir, filePath, container, symbol string) string {
+	mod := swiftModuleKey(rootDir, filePath)
+	if container != "" {
+		return mod + "::" + container + "." + symbol
+	}
+	return mod + "::" + symbol
+}
+
 // ---- shared helpers ----
 
 // dotFQN joins up to three dotted-namespace components, skipping empty ones.
