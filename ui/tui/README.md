@@ -39,14 +39,29 @@ orchestra tui
 
 ## Статус по фазам
 
-- [x] **Фаза 1 — скелет** (текущая): раскладка, echo, базовая навигация
-- [ ] Фаза 2 — подключение к `orchestra core` через JSON-RPC stdio, streaming событий
-- [ ] Фаза 3 — collapsible tool blocks, inline-diff, pending ops action bar
+- [x] **Фаза 1 — скелет**: раскладка, echo, базовая навигация
+- [x] **Фаза 2 — подключение к ядру** (текущая): JSON-RPC stdio, streaming token deltas, tool blocks (collapsed)
+- [ ] Фаза 3 — collapsible tool blocks expand-on-Tab, inline-diff, pending ops action bar
 - [ ] Фаза 4 — slash-команды, @-mention, динамические footer hints
 - [ ] Фаза 5 — polish, snapshot tests расширенные
 
 ## Архитектура
 
-`ui/tui/app.go` — корневая Bubble Tea модель. Делегирует рендеринг в `view/{header,chat,input,footer}.go`. Состояние сессии (history) живёт в `state/session.go`. Phase 2 добавит `rpcclient/` для stdio JSON-RPC.
+`ui/tui/app.go` — корневая Bubble Tea модель. Делегирует рендеринг в `view/{header,chat,input,footer}.go`. Состояние сессии (history) живёт в `state/session.go`. Phase 2 добавил `rpcclient/` для stdio JSON-RPC.
 
 См. также: `docs/superpowers/specs/2026-05-07-tui-design.md` (общий дизайн TUI), `docs/PROTOCOL.md` (контракт ядра).
+
+## Подключение к ядру (Фаза 2)
+
+TUI спаунит `orchestra core --workspace-root <cwd>` как subprocess и общается через stdin/stdout JSON-RPC. На submit (Enter) вызывается `agent.run`; streaming события (`message_delta`, `tool_call_start/completed`, `pending_ops`) рендерятся в ленту по мере прихода.
+
+**Tool blocks** показываются свернутыми одной строкой:
+- `⋯ name` — выполняется
+- `▸ name → preview` — завершён успешно
+- `▸ name → error: ...` (красным) — упал
+
+**Pending ops** пока показываются placeholder-сообщением `[N pending ops — apply with /apply (Phase 3)]`. Реальный action bar (apply / discard / diff) — Фаза 3.
+
+**Если subprocess падает или initialize не проходит** — Run возвращает ошибку до запуска UI; на лету ошибки показываются как `[error] ...` в ленте.
+
+**Permission/request на bash пока не wired**: bash-вызовы будут отклонены статическим gate'ом (нужен `--allow-exec` или `exec.confirm: false` в `.orchestra.yml`). Modal-диалог появится в Фазе 3.
