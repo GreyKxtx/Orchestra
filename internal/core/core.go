@@ -357,6 +357,18 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 				})
 				return
 			}
+			if ev.Stream.Kind == llm.StreamEventPendingOps {
+				var data any
+				if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
+					notify("agent/event", map[string]any{
+						"step": ev.Step,
+						"type": "pending_ops",
+						"data": data,
+					})
+					return
+				}
+				// If unmarshal fails (defensive), fall through to generic mapping with content as string.
+			}
 			notify("agent/event", map[string]any{
 				"step":            ev.Step,
 				"type":            string(ev.Stream.Kind),
@@ -680,6 +692,18 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 					"chunk": ev.Stream.Content,
 				})
 				return
+			}
+			if ev.Stream.Kind == llm.StreamEventPendingOps {
+				var data any
+				if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
+					notify("agent/event", map[string]any{
+						"step": ev.Step,
+						"type": "pending_ops",
+						"data": data,
+					})
+					return
+				}
+				// If unmarshal fails (defensive), fall through to generic mapping with content as string.
 			}
 			notify("agent/event", map[string]any{
 				"step":            ev.Step,
