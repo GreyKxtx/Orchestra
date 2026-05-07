@@ -4,9 +4,9 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `2`
+- **`protocol.ProtocolVersion`**: `3`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `4`
+- **`protocol.ToolsVersion`**: `5`
 
 Совместимость проверяется в `initialize`:
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v3** (2026-05-07): добавлены agent-level streaming events (`tool_call_completed`, `step_done`, `pending_ops`, `recoverable_error`) и bidirectional `permission/request` method.
 - **v2** (2026-05-06): добавлено опциональное поле `mode` в `agent.run` и `session.message` для custom-agents (Sub-project D).
 - **v1**: первоначальный набор методов.
 
@@ -142,9 +143,9 @@ Response `result`:
 {
   "status": "ok",
   "core_version": "vnext",
-  "protocol_version": 2,
+  "protocol_version": 3,
   "ops_version": 1,
-  "tools_version": 1,
+  "tools_version": 5,
   "workspace_root": "...",
   "project_id": "sha256:..."
 }
@@ -342,6 +343,68 @@ Payload (в `error.data`) для ошибок из `internal/protocol`:
   "data": {"method":"agent.run"}
 }
 ```
+
+## Streaming events (server → client notifications)
+
+While `agent.run` or `session.message` is in progress, the core may emit
+JSON-RPC notifications to the client (no `id` field, one-way).
+
+### `agent/event`
+
+Generic envelope:
+
+| Field | Type | Description |
+|---|---|---|
+| `step` | int | Current agent loop step number |
+| `type` | string | One of the kinds below |
+| `content` | string | Type-specific payload (string), used for most kinds |
+| `data` | object | Type-specific structured payload, only for `pending_ops` |
+| `tool_call_id`, `tool_call_name`, `tool_call_index`, `args_delta` | optional | Set for tool-call-related kinds |
+
+### Event types
+
+| `type` | Emitted when | Notable fields |
+|---|---|---|
+| `message_delta` | LLM streamed a token of assistant text | `content` |
+| `tool_call_start` | LLM declared intent to call a tool | `tool_call_name`, `tool_call_id` |
+| `tool_call_delta` | More argument bytes for in-progress call | `args_delta` |
+| `tool_call_completed` | Agent loop finished `tools.Call` | `tool_call_name`, `tool_call_id`, `content` (truncated preview, 256 bytes) |
+| `step_done` | End of one agent loop iteration | `content` ∈ {tool_call, final, invalid, final_retry} |
+| `pending_ops` | Agent finalized patches (dry-run or pre-apply) | `data` = `{ops: [...], diff: [{path, before, after}], applied: bool}` |
+| `recoverable_error` | StaleContent / AmbiguousMatch / schema invalid; loop will retry | `content` (short message) |
+| `done` | LLM stream ended | (full assembled response in agent state) |
+| `error` | LLM-stream-level error (different from `recoverable_error`) | `content` |
+
+### `exec/output_chunk`
+
+Streamed during `bash` (alias for `exec.run`) tool execution.
+
+| Field | Type | Description |
+|---|---|---|
+| `step` | int | Current agent loop step |
+| `chunk` | string | Raw stdout/stderr chunk |
+
+## Server-initiated requests
+
+Requests where the server initiates and the client must respond. Use JSON-RPC `id` fields to correlate. Server uses `srv-N`-prefixed IDs to avoid collision with client-initiated requests.
+
+### `permission/request`
+
+Asks the user (via TUI/IDE) for interactive consent before running a sensitive tool.
+
+Params:
+
+```json
+{"tool": "bash", "description": "go test ./...", "reason": "to verify the fix"}
+```
+
+Expected response (`result`):
+
+```json
+{"approved": true, "reason": "ok"}
+```
+
+If no client request handler is registered (`Client.SetRequestHandler` not called), the client returns method-not-found and the server falls back to the static permission gate (config `exec.confirm` / `--allow-exec`).
 
 ---
 

@@ -5,8 +5,9 @@ package protocol
 // These values are part of the stable client↔core contract.
 const (
 	// ProtocolVersion is the version of JSON-RPC methods / schemas.
-	// v2: added optional Mode field to agent.run and session/message params.
-	ProtocolVersion = 2
+	// v3: added agent-level streaming events (tool_call_completed, step_done,
+	//     pending_ops, recoverable_error) and bidirectional permission/request.
+	ProtocolVersion = 3
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1
