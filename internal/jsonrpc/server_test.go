@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type testHandler struct{}
@@ -397,4 +399,46 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 	copy(p[:n], r.b[:n])
 	r.b = r.b[n:]
 	return n, nil
+}
+
+// TestServer_RequestRoundTrip verifies that Server.Request sends a server-initiated
+// JSON-RPC request to the client and correctly receives the client's response.
+func TestServer_RequestRoundTrip(t *testing.T) {
+	// Wire up bidirectional pipes: client-to-server and server-to-client.
+	// io.Pipe() returns (*PipeReader, *PipeWriter).
+	sFromC, cToS := io.Pipe() // server reads sFromC; client writes cToS
+	cFromS, sToC := io.Pipe() // client reads cFromS; server writes sToC
+
+	// Server reads from sFromC and writes to sToC.
+	srv := NewServer(testHandler{}, sFromC, sToC)
+	// Client reads from cFromS and writes to cToS.
+	cli := NewClient(cFromS, cToS)
+
+	// Client handles the server-initiated permission/request.
+	cli.SetRequestHandler(func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		if method != "permission/request" {
+			return nil, fmt.Errorf("unexpected method: %s", method)
+		}
+		return map[string]any{"approved": true}, nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Serve in background; stops when pipes are closed or context is done.
+	go func() { _ = srv.Serve(ctx) }()
+
+	var result map[string]any
+	err := srv.Request(ctx, "permission/request", map[string]any{"tool": "exec.run"}, &result)
+	if err != nil {
+		t.Fatalf("Server.Request: %v", err)
+	}
+	approved, ok := result["approved"].(bool)
+	if !ok || !approved {
+		t.Fatalf("expected approved=true, got %+v", result)
+	}
+
+	// Close the server's read pipe to stop the serve loop cleanly.
+	_ = cToS.Close()  // signals EOF to server's reader (sFromC)
+	_ = sToC.Close()  // clean up server's write end
 }

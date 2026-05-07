@@ -2,16 +2,18 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
-	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -500,6 +502,37 @@ func TestAgent_Run_FinalResolveFailure_RepeatsThenStopsEarly(t *testing.T) {
 	}
 }
 
+// eventCollector captures AgentEvents thread-safely.
+type eventCollector struct {
+	mu     sync.Mutex
+	events []AgentEvent
+}
+
+func (ec *eventCollector) Collect(ev AgentEvent) {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	ec.events = append(ec.events, ev)
+}
+
+func (ec *eventCollector) All() []AgentEvent {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	out := make([]AgentEvent, len(ec.events))
+	copy(out, ec.events)
+	return out
+}
+
+func (ec *eventCollector) ByKind(kind llm.StreamEventKind) []AgentEvent {
+	all := ec.All()
+	var out []AgentEvent
+	for _, e := range all {
+		if e.Stream.Kind == kind {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // capturingLLM records every CompleteRequest for inspection.
 type capturingLLM struct{ requests []llm.CompleteRequest }
 
@@ -548,4 +581,237 @@ func TestAgent_Run_SystemPromptOverride_ReachesLLM(t *testing.T) {
 	if !strings.Contains(msgs[0].Content, wantPrompt) {
 		t.Errorf("system prompt = %q, want it to contain %q", msgs[0].Content, wantPrompt)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0 streaming event tests
+// ---------------------------------------------------------------------------
+
+// TestAgent_OnEvent_ToolCallCompleted verifies that a StreamEventToolCallCompleted
+// event is emitted (with the correct ToolCallName) after every tools.Call.
+func TestAgent_OnEvent_ToolCallCompleted(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	// One tool call (read), then final-empty.
+	llmClient := &scriptedLLM{
+		steps: []string{
+			`{"type":"tool_call","tool":{"name":"read","input":{"path":"a.txt"}}}`,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ec := &eventCollector{}
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps: 10,
+		OnEvent:  ec.Collect,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "read the file")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	completed := ec.ByKind(llm.StreamEventToolCallCompleted)
+	if len(completed) == 0 {
+		t.Fatal("expected at least one StreamEventToolCallCompleted event, got none")
+	}
+	// The agent normalises "read" → the canonical fs.read tool name; accept either.
+	name := completed[0].Stream.ToolCallName
+	if name != "read" && name != "fs.read" {
+		t.Errorf("ToolCallName = %q, want \"read\" or \"fs.read\"", name)
+	}
+}
+
+// TestAgent_OnEvent_StepDone_Reasons verifies that exactly two StreamEventStepDone
+// events are emitted for a single tool_call → final-empty sequence, with reasons
+// "tool_call" and "final" respectively.
+func TestAgent_OnEvent_StepDone_Reasons(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	llmClient := &scriptedLLM{
+		steps: []string{
+			`{"type":"tool_call","tool":{"name":"read","input":{"path":"b.txt"}}}`,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ec := &eventCollector{}
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps: 10,
+		OnEvent:  ec.Collect,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "read and do nothing")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	stepDones := ec.ByKind(llm.StreamEventStepDone)
+	if len(stepDones) != 2 {
+		reasons := make([]string, len(stepDones))
+		for i, e := range stepDones {
+			reasons[i] = e.Stream.Content
+		}
+		t.Fatalf("expected exactly 2 step_done events, got %d: %v", len(stepDones), reasons)
+	}
+	if stepDones[0].Stream.Content != "tool_call" {
+		t.Errorf("step_done[0].Content = %q, want \"tool_call\"", stepDones[0].Stream.Content)
+	}
+	if stepDones[1].Stream.Content != "final" {
+		t.Errorf("step_done[1].Content = %q, want \"final\"", stepDones[1].Stream.Content)
+	}
+}
+
+// TestAgent_OnEvent_RecoverableError_StaleHash verifies that StreamEventRecoverableError
+// is emitted when a final patch carries a wrong file_hash (causing resolver/applier failure).
+func TestAgent_OnEvent_RecoverableError_StaleHash(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "c.txt"), []byte("hello world\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	// First final: valid search but stale (wrong) file_hash → recoverable error.
+	// Second final: empty patches → terminates normally.
+	badFinal := `{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"c.txt","search":"hello","replace":"hi","file_hash":"sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}]}}`
+
+	llmClient := &scriptedLLM{
+		steps: []string{
+			badFinal,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ec := &eventCollector{}
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps:         10,
+		MaxFinalFailures: 6,
+		OnEvent:          ec.Collect,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "replace hello with hi")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	recoverableErrors := ec.ByKind(llm.StreamEventRecoverableError)
+	if len(recoverableErrors) == 0 {
+		t.Fatal("expected at least one StreamEventRecoverableError event, got none")
+	}
+}
+
+// TestAgent_OnEvent_PendingOps verifies that exactly one StreamEventPendingOps event
+// is emitted in dry-run mode (Apply: false) after a successful patch resolution,
+// and that its Content is valid JSON with the expected shape.
+func TestAgent_OnEvent_PendingOps(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("hello old world\n")
+	if err := os.WriteFile(filepath.Join(root, "d.txt"), content, 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	h := cache.ComputeSHA256(content)
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	finalStep := fmt.Sprintf(
+		`{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"d.txt","search":"old","replace":"new","file_hash":%q}]}}`,
+		h,
+	)
+	llmClient := &scriptedLLM{steps: []string{finalStep}}
+
+	ec := &eventCollector{}
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps: 10,
+		Apply:    false, // dry-run
+		OnEvent:  ec.Collect,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "replace old with new")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	pendingOps := ec.ByKind(llm.StreamEventPendingOps)
+	if len(pendingOps) != 1 {
+		t.Fatalf("expected exactly 1 StreamEventPendingOps event, got %d", len(pendingOps))
+	}
+
+	// Parse the JSON payload and verify expected keys.
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(pendingOps[0].Stream.Content), &payload); err != nil {
+		t.Fatalf("StreamEventPendingOps Content is not valid JSON: %v\ncontent=%s", err, pendingOps[0].Stream.Content)
+	}
+	for _, key := range []string{"ops", "diff", "applied"} {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("StreamEventPendingOps payload missing key %q; keys=%v", key, keys(payload))
+		}
+	}
+	applied, _ := payload["applied"].(bool)
+	if applied {
+		t.Errorf("expected applied=false in dry-run mode, got true")
+	}
+}
+
+// keys returns the map keys as a sorted slice for error messages.
+func keys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
