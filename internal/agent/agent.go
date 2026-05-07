@@ -585,6 +585,33 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			start := time.Now()
 			out, err := a.tools.Call(callCtx, name, step.Tool.Input)
 			dur := time.Since(start).Milliseconds()
+
+			// Emit tool_call_completed event for streaming clients (TUI).
+			if a.opts.OnEvent != nil {
+				preview := ""
+				if len(out) > 0 {
+					const maxPreview = 256
+					if len(out) > maxPreview {
+						preview = string(out[:maxPreview]) + "...(truncated)"
+					} else {
+						preview = string(out)
+					}
+				}
+				if err != nil {
+					msg := "error: " + err.Error()
+					if len(msg) > 256 {
+						msg = msg[:256] + "...(truncated)"
+					}
+					preview = msg
+				}
+				a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+					Kind:         llm.StreamEventToolCallCompleted,
+					ToolCallName: name,
+					ToolCallID:   toolCallID,
+					Content:      preview,
+				}})
+			}
+
 			if err != nil {
 				a.logf("tool_call name=%s status=error duration_ms=%d err=%v", name, dur, err)
 				a.opts.AgentLogger.LogToolResult(name, 0, dur, err.Error())
