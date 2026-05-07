@@ -34,23 +34,8 @@ type GraphLink struct {
 	Relation string `json:"relation"` // in_file, calls, uses
 }
 
-// StartUIServer starts a lightweight HTTP server on the given port to serve the CKG visualization.
-func StartUIServer(store *Store, workspaceRoot string, port int) error {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/api/graph", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		data, err := buildGraphData(ctx, store)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data)
-	})
-
-	// Serve source code snippets
-	mux.HandleFunc("/api/source", func(w http.ResponseWriter, r *http.Request) {
+func sourceHandlerFunc(workspaceRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		filePath := r.URL.Query().Get("file")
 		startStr := r.URL.Query().Get("start")
 		endStr := r.URL.Query().Get("end")
@@ -74,12 +59,35 @@ func StartUIServer(store *Store, workspaceRoot string, port int) error {
 		end := len(lines)
 		fmt.Sscanf(startStr, "%d", &start)
 		fmt.Sscanf(endStr, "%d", &end)
-		if start < 1 { start = 1 }
-		if end > len(lines) { end = len(lines) }
+		if start < 1 {
+			start = 1
+		}
+		if end > len(lines) {
+			end = len(lines)
+		}
 		snippet := strings.Join(lines[start-1:end], "\n")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(snippet))
+	}
+}
+
+// StartUIServer starts a lightweight HTTP server on the given port to serve the CKG visualization.
+func StartUIServer(store *Store, workspaceRoot string, port int) error {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/graph", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		data, err := buildGraphData(ctx, store)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(data)
 	})
+
+	// Serve source code snippets
+	mux.HandleFunc("/api/source", sourceHandlerFunc(workspaceRoot))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		indexHtml, err := uiFS.ReadFile("ui/index.html")
