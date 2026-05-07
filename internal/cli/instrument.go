@@ -25,7 +25,7 @@ var instrumentCmd = &cobra.Command{
 			dir = args[0]
 		}
 
-		langs := instrument.Detect(dir, instrument.Phase1Langs)
+		langs := instrument.Detect(dir, instrument.AllLangs)
 		if len(langs) == 0 {
 			fmt.Println("No supported languages detected.")
 			return nil

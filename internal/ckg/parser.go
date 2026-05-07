@@ -7,11 +7,19 @@ import (
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/c"
+	"github.com/smacker/go-tree-sitter/cpp"
+	"github.com/smacker/go-tree-sitter/csharp"
+	"github.com/smacker/go-tree-sitter/elixir"
 	"github.com/smacker/go-tree-sitter/golang"
 	"github.com/smacker/go-tree-sitter/java"
 	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/kotlin"
+	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/python"
+	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
+	"github.com/smacker/go-tree-sitter/scala"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -31,10 +39,22 @@ func LanguageFromExt(ext string) string {
 		return "java"
 	case ".rs":
 		return "rust"
-	case ".c":
+	case ".c", ".h":
 		return "c"
-	case ".cpp":
+	case ".cpp", ".cc", ".cxx", ".hpp":
 		return "cpp"
+	case ".cs":
+		return "csharp"
+	case ".kt", ".kts":
+		return "kotlin"
+	case ".scala":
+		return "scala"
+	case ".rb":
+		return "ruby"
+	case ".php":
+		return "php"
+	case ".ex", ".exs":
+		return "elixir"
 	default:
 		return "unknown"
 	}
@@ -90,6 +110,22 @@ func sitterLanguageFor(ext string) *sitter.Language {
 		return rust.GetLanguage()
 	case ".java":
 		return java.GetLanguage()
+	case ".c", ".h":
+		return c.GetLanguage()
+	case ".cpp", ".cc", ".cxx", ".hpp":
+		return cpp.GetLanguage()
+	case ".cs":
+		return csharp.GetLanguage()
+	case ".kt", ".kts":
+		return kotlin.GetLanguage()
+	case ".scala":
+		return scala.GetLanguage()
+	case ".rb":
+		return ruby.GetLanguage()
+	case ".php":
+		return php.GetLanguage()
+	case ".ex", ".exs":
+		return elixir.GetLanguage()
 	default:
 		return nil
 	}
@@ -439,17 +475,51 @@ func parseGenericFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node
 // ---- Helpers ----
 
 // scanPkgDecl extracts the package/module declaration string for languages that have one.
-// Returns "" for languages that derive identity from file path (TS, JS, Python, Rust).
+// Returns "" for languages that derive identity from file path (TS, JS, Python, Rust, Ruby, Elixir).
 func scanPkgDecl(fc *fileCtx, root *sitter.Node) string {
-	if fc.ext != ".java" {
-		return ""
-	}
-	for _, qStr := range []string{
-		`(package_declaration (scoped_identifier) @path)`,
-		`(package_declaration (identifier) @path)`,
-	} {
-		if v := singleCapture(fc, root, qStr, "path"); v != "" {
-			return v
+	switch fc.ext {
+	case ".java":
+		for _, qStr := range []string{
+			`(package_declaration (scoped_identifier) @path)`,
+			`(package_declaration (identifier) @path)`,
+		} {
+			if v := singleCapture(fc, root, qStr, "path"); v != "" {
+				return v
+			}
+		}
+	case ".cs":
+		for _, qStr := range []string{
+			`(namespace_declaration name: (qualified_name) @path)`,
+			`(namespace_declaration name: (identifier) @path)`,
+		} {
+			if v := singleCapture(fc, root, qStr, "path"); v != "" {
+				return v
+			}
+		}
+	case ".kt", ".kts":
+		for _, qStr := range []string{
+			`(package_header (dot_qualified_expression) @path)`,
+			`(package_header (simple_identifier) @path)`,
+		} {
+			if v := singleCapture(fc, root, qStr, "path"); v != "" {
+				return v
+			}
+		}
+	case ".scala":
+		for _, qStr := range []string{
+			`(package_clause (package_identifier) @path)`,
+		} {
+			if v := singleCapture(fc, root, qStr, "path"); v != "" {
+				return v
+			}
+		}
+	case ".php":
+		for _, qStr := range []string{
+			`(namespace_definition (namespace_name) @path)`,
+		} {
+			if v := singleCapture(fc, root, qStr, "path"); v != "" {
+				return v
+			}
 		}
 	}
 	return ""
@@ -466,6 +536,20 @@ func filePkgFQN(fc *fileCtx, pkgDecl string) string {
 		return RustPackageFQN(fc.modulePath, fc.rootDir, fc.filePath)
 	case ".java":
 		return JavaPackageFQN(pkgDecl)
+	case ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp":
+		return CFileFQN(fc.rootDir, fc.filePath)
+	case ".cs":
+		return CSharpPackageFQN(pkgDecl)
+	case ".kt", ".kts":
+		return KotlinPackageFQN(pkgDecl)
+	case ".scala":
+		return ScalaPackageFQN(pkgDecl)
+	case ".rb":
+		return RubyPackageFQN(fc.rootDir, fc.filePath)
+	case ".php":
+		return PhpPackageFQN(pkgDecl)
+	case ".ex", ".exs":
+		return ElixirPackageFQN(fc.rootDir, fc.filePath)
 	default:
 		return ""
 	}
@@ -482,6 +566,20 @@ func fileSymFQN(fc *fileCtx, pkgDecl, container, symbol string) string {
 		return RustFQN(fc.modulePath, fc.rootDir, fc.filePath, container, symbol)
 	case ".java":
 		return JavaFQN(pkgDecl, container, symbol)
+	case ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp":
+		return CFQN(fc.rootDir, fc.filePath, container, symbol)
+	case ".cs":
+		return CSharpFQN(pkgDecl, container, symbol)
+	case ".kt", ".kts":
+		return KotlinFQN(pkgDecl, container, symbol)
+	case ".scala":
+		return ScalaFQN(pkgDecl, container, symbol)
+	case ".rb":
+		return RubyFQN(fc.rootDir, fc.filePath, container, symbol)
+	case ".php":
+		return PhpFQN(pkgDecl, container, symbol)
+	case ".ex", ".exs":
+		return ElixirFQN(fc.rootDir, fc.filePath, container, symbol)
 	default:
 		return symbol
 	}
@@ -615,6 +713,58 @@ func containerQueriesFor(ext string) []containerQuerySpec {
 			{q: `(annotation_type_declaration name: (identifier) @name) @def`, kind: "type", emitNode: true},
 			{q: `(record_declaration name: (identifier) @name) @def`, kind: "struct", emitNode: true},
 		}
+	case ".c", ".h":
+		return []containerQuerySpec{
+			{q: `(struct_specifier name: (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(union_specifier name: (type_identifier) @name) @def`, kind: "type", emitNode: true},
+			{q: `(enum_specifier name: (type_identifier) @name) @def`, kind: "type", emitNode: true},
+		}
+	case ".cpp", ".cc", ".cxx", ".hpp":
+		return []containerQuerySpec{
+			{q: `(class_specifier name: (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(struct_specifier name: (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(enum_specifier name: (type_identifier) @name) @def`, kind: "type", emitNode: true},
+		}
+	case ".cs":
+		return []containerQuerySpec{
+			{q: `(class_declaration name: (identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(interface_declaration name: (identifier) @name) @def`, kind: "interface", emitNode: true},
+			{q: `(struct_declaration name: (identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(enum_declaration name: (identifier) @name) @def`, kind: "type", emitNode: true},
+			{q: `(record_declaration name: (identifier) @name) @def`, kind: "struct", emitNode: true},
+		}
+	case ".kt", ".kts":
+		return []containerQuerySpec{
+			{q: `(class_declaration (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(interface_declaration (type_identifier) @name) @def`, kind: "interface", emitNode: true},
+			{q: `(object_declaration (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(enum_class (type_identifier) @name) @def`, kind: "type", emitNode: true},
+		}
+	case ".scala":
+		return []containerQuerySpec{
+			{q: `(class_definition name: (identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(trait_definition name: (identifier) @name) @def`, kind: "interface", emitNode: true},
+			{q: `(object_definition name: (identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(enum_definition name: (identifier) @name) @def`, kind: "type", emitNode: true},
+		}
+	case ".rb":
+		return []containerQuerySpec{
+			{q: `(class name: (constant) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(module name: (constant) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(singleton_class) @def`, kind: "struct", emitNode: false},
+		}
+	case ".php":
+		return []containerQuerySpec{
+			{q: `(class_declaration name: (name) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(interface_declaration name: (name) @name) @def`, kind: "interface", emitNode: true},
+			{q: `(trait_declaration name: (name) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(enum_declaration name: (name) @name) @def`, kind: "type", emitNode: true},
+		}
+	case ".ex", ".exs":
+		return []containerQuerySpec{
+			// defmodule MyApp.Module do ... end
+			{q: `(call target: (identifier) arguments: (arguments (alias) @name)) @def`, kind: "struct", emitNode: true},
+		}
 	}
 	return nil
 }
@@ -643,6 +793,44 @@ func defQueriesFor(ext string) []defQuerySpec {
 			{q: `(method_declaration name: (identifier) @name) @def`, kind: "method"},
 			{q: `(constructor_declaration name: (identifier) @name) @def`, kind: "func"},
 		}
+	case ".c", ".h":
+		return []defQuerySpec{
+			{q: `(function_definition declarator: (function_declarator declarator: (identifier) @name)) @def`, kind: "func"},
+		}
+	case ".cpp", ".cc", ".cxx", ".hpp":
+		return []defQuerySpec{
+			{q: `(function_definition declarator: (function_declarator declarator: (identifier) @name)) @def`, kind: "func"},
+			{q: `(function_definition declarator: (function_declarator declarator: (qualified_identifier name: (identifier) @name))) @def`, kind: "method"},
+		}
+	case ".cs":
+		return []defQuerySpec{
+			{q: `(method_declaration name: (identifier) @name) @def`, kind: "method"},
+			{q: `(constructor_declaration name: (identifier) @name) @def`, kind: "func"},
+			{q: `(local_function_statement name: (identifier) @name) @def`, kind: "func"},
+		}
+	case ".kt", ".kts":
+		return []defQuerySpec{
+			{q: `(function_declaration (simple_identifier) @name) @def`, kind: "func"},
+		}
+	case ".scala":
+		return []defQuerySpec{
+			{q: `(function_definition name: (identifier) @name) @def`, kind: "func"},
+		}
+	case ".rb":
+		return []defQuerySpec{
+			{q: `(method name: (identifier) @name) @def`, kind: "func"},
+			{q: `(singleton_method name: (identifier) @name) @def`, kind: "func"},
+		}
+	case ".php":
+		return []defQuerySpec{
+			{q: `(function_definition name: (name) @name) @def`, kind: "func"},
+			{q: `(method_declaration name: (name) @name) @def`, kind: "method"},
+		}
+	case ".ex", ".exs":
+		return []defQuerySpec{
+			// def/defp my_func(...) do...end — inner call target is the function name
+			{q: `(call target: (identifier) arguments: (arguments (call target: (identifier) @name))) @def`, kind: "func"},
+		}
 	}
 	return nil
 }
@@ -669,6 +857,30 @@ func importQueriesFor(ext string) []string {
 			`(import_declaration (scoped_identifier) @path)`,
 			`(import_declaration (identifier) @path)`,
 		}
+	case ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp":
+		return []string{
+			`(preproc_include path: (string_literal) @path)`,
+			`(preproc_include path: (system_lib_string) @path)`,
+		}
+	case ".cs":
+		return []string{
+			`(using_directive (qualified_name) @path)`,
+			`(using_directive (identifier) @path)`,
+		}
+	case ".kt", ".kts":
+		return []string{
+			`(import_header (dot_qualified_expression) @path)`,
+			`(import_header (simple_identifier) @path)`,
+		}
+	case ".scala":
+		return []string{
+			`(import_declaration (stable_identifier) @path)`,
+			`(import_declaration (identifier) @path)`,
+		}
+	case ".php":
+		return []string{
+			`(namespace_use_declaration (namespace_use_clause (qualified_name) @path))`,
+		}
 	}
 	return nil
 }
@@ -694,6 +906,36 @@ func callQueriesFor(ext string) []string {
 	case ".java":
 		return []string{
 			`(method_invocation name: (identifier) @called_name) @call`,
+		}
+	case ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp":
+		return []string{
+			`(call_expression function: (identifier) @called_name) @call`,
+		}
+	case ".cs":
+		return []string{
+			`(invocation_expression function: (identifier) @called_name) @call`,
+			`(invocation_expression function: (member_access_expression name: (identifier) @called_name)) @call`,
+		}
+	case ".kt", ".kts":
+		return []string{
+			`(call_expression (simple_identifier) @called_name) @call`,
+		}
+	case ".scala":
+		return []string{
+			`(call_expression (identifier) @called_name) @call`,
+		}
+	case ".rb":
+		return []string{
+			`(call method: (identifier) @called_name) @call`,
+		}
+	case ".php":
+		return []string{
+			`(function_call_expression function: (name) @called_name) @call`,
+			`(member_call_expression name: (name) @called_name) @call`,
+		}
+	case ".ex", ".exs":
+		return []string{
+			`(call target: (identifier) @called_name) @call`,
 		}
 	}
 	return nil
@@ -726,33 +968,99 @@ func complexityTypesFor(ext string) map[string]bool {
 		}
 	case ".py":
 		return map[string]bool{
-			"if_statement":   true,
-			"elif_clause":    true,
-			"for_statement":  true,
+			"if_statement":    true,
+			"elif_clause":     true,
+			"for_statement":   true,
 			"while_statement": true,
-			"except_clause":  true,
-			"with_statement": true,
+			"except_clause":   true,
+			"with_statement":  true,
 		}
 	case ".rs":
 		return map[string]bool{
-			"if_expression":         true,
-			"if_let_expression":     true,
-			"for_expression":        true,
-			"while_expression":      true,
-			"while_let_expression":  true,
-			"loop_expression":       true,
-			"match_arm":             true,
+			"if_expression":        true,
+			"if_let_expression":    true,
+			"for_expression":       true,
+			"while_expression":     true,
+			"while_let_expression": true,
+			"loop_expression":      true,
+			"match_arm":            true,
 		}
 	case ".java":
 		return map[string]bool{
-			"if_statement":            true,
-			"for_statement":           true,
-			"enhanced_for_statement":  true,
-			"while_statement":         true,
-			"do_statement":            true,
-			"catch_clause":            true,
-			"switch_label":            true,
-			"conditional_expression":  true,
+			"if_statement":           true,
+			"for_statement":          true,
+			"enhanced_for_statement": true,
+			"while_statement":        true,
+			"do_statement":           true,
+			"catch_clause":           true,
+			"switch_label":           true,
+			"conditional_expression": true,
+		}
+	case ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp":
+		return map[string]bool{
+			"if_statement":           true,
+			"for_statement":          true,
+			"while_statement":        true,
+			"do_statement":           true,
+			"case_statement":         true,
+			"conditional_expression": true,
+		}
+	case ".cs":
+		return map[string]bool{
+			"if_statement":           true,
+			"for_statement":          true,
+			"foreach_statement":      true,
+			"while_statement":        true,
+			"do_statement":           true,
+			"switch_section":         true,
+			"catch_clause":           true,
+			"conditional_expression": true,
+		}
+	case ".kt", ".kts":
+		return map[string]bool{
+			"if_expression":      true,
+			"for_statement":      true,
+			"while_statement":    true,
+			"do_while_statement": true,
+			"when_entry":         true,
+			"catch_block":        true,
+		}
+	case ".scala":
+		return map[string]bool{
+			"if_expression":    true,
+			"for_expression":   true,
+			"while_expression": true,
+			"case_clause":      true,
+			"catch_clause":     true,
+		}
+	case ".rb":
+		return map[string]bool{
+			"if":     true,
+			"elsif":  true,
+			"unless": true,
+			"while":  true,
+			"until":  true,
+			"for":    true,
+			"when":   true,
+			"rescue": true,
+		}
+	case ".php":
+		return map[string]bool{
+			"if_statement":           true,
+			"for_statement":          true,
+			"foreach_statement":      true,
+			"while_statement":        true,
+			"do_statement":           true,
+			"switch_statement":       true,
+			"catch_clause":           true,
+			"conditional_expression": true,
+		}
+	case ".ex", ".exs":
+		return map[string]bool{
+			"if":     true,
+			"unless": true,
+			"cond":   true,
+			"case":   true,
 		}
 	}
 	return nil
