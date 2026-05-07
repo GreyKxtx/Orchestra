@@ -22,7 +22,7 @@ Two independent subsystems: **CKG** (code graph / parser) and **OTel Instrumenta
 | Ruby | ✅ | ✅ | ✅ (class/module) | ✅ | ❌ (no import syntax) | ✅ | ✅ |
 | PHP | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Elixir | ✅ | ✅ | ✅ (defmodule) | ✅ (def/defp) | ❌ | ✅ | ✅ |
-| Swift | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Swift | ✅ | ✅ | ✅ (class/struct/protocol/enum/extension) | ✅ | ✅ | ✅ | ✅ |
 
 **Notes:**
 - Go has a dedicated parser (`parseGoFile`) with full type/interface/struct/method support
@@ -50,6 +50,8 @@ Two independent subsystems: **CKG** (code graph / parser) and **OTel Instrumenta
 | Ruby | ✅ (`Gemfile`) | ✅ `bundle add` | ✅ `lib/telemetry.rb` | ❌ (manual) | 3 ✅ |
 | PHP | ✅ (`composer.json`) | ✅ `composer require` | ✅ `src/Telemetry/OtelConfig.php` | ❌ (manual) | 3 ✅ |
 | Elixir | ✅ (`mix.exs`) | ✅ (instructions in file) | ✅ `lib/telemetry/otel.ex` | ❌ (manual) | 3 ✅ |
+| C | ✅ (`CMakeLists.txt`, `Makefile`) | ✅ (instructions in file) | ✅ `telemetry/otel.c` | ❌ (manual) | 3 ✅ |
+| C++ | ✅ (`CMakeLists.txt`, `vcpkg.json`) | ✅ (instructions in file) | ✅ `telemetry/otel.hpp` | ❌ (manual) | 3 ✅ |
 | Erlang | ❌ | ❌ | ❌ | ❌ | 4 ❌ |
 | Swift | ❌ | ❌ | ❌ | ❌ | 4 ❌ |
 | Dart | ❌ | ❌ | ❌ | ❌ | 4 ❌ |
@@ -72,11 +74,12 @@ Two independent subsystems: **CKG** (code graph / parser) and **OTel Instrumenta
 | Python | ✅ full | ✅ done |
 | Rust | ✅ full (CKG) | ✅ done |
 | Java | ✅ full (CKG) | ✅ done |
-| C / C++ | ✅ full (CKG) | ❌ not done |
+| C / C++ | ✅ full (CKG) | ✅ done |
 | C# | ✅ full (CKG) | ✅ done |
 | Kotlin | ✅ full (CKG) | ✅ done |
 | Scala | ✅ full (CKG) | ✅ done |
 | Ruby | ✅ full (CKG) | ✅ done |
 | PHP | ✅ full (CKG) | ✅ done |
 | Elixir | ✅ full (CKG) | ✅ done |
-| Swift / Dart / Erlang | ❌ not done | ❌ not done |
+| Swift | ✅ full (CKG) | ❌ not done |
+| Dart / Erlang | ❌ not done | ❌ not done |

@@ -20,6 +20,7 @@ import (
 	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
 	"github.com/smacker/go-tree-sitter/scala"
+	"github.com/smacker/go-tree-sitter/swift"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -55,6 +56,8 @@ func LanguageFromExt(ext string) string {
 		return "php"
 	case ".ex", ".exs":
 		return "elixir"
+	case ".swift":
+		return "swift"
 	default:
 		return "unknown"
 	}
@@ -126,6 +129,8 @@ func sitterLanguageFor(ext string) *sitter.Language {
 		return php.GetLanguage()
 	case ".ex", ".exs":
 		return elixir.GetLanguage()
+	case ".swift":
+		return swift.GetLanguage()
 	default:
 		return nil
 	}
@@ -550,6 +555,8 @@ func filePkgFQN(fc *fileCtx, pkgDecl string) string {
 		return PhpPackageFQN(pkgDecl)
 	case ".ex", ".exs":
 		return ElixirPackageFQN(fc.rootDir, fc.filePath)
+	case ".swift":
+		return SwiftPackageFQN(fc.rootDir, fc.filePath)
 	default:
 		return ""
 	}
@@ -580,6 +587,8 @@ func fileSymFQN(fc *fileCtx, pkgDecl, container, symbol string) string {
 		return PhpFQN(pkgDecl, container, symbol)
 	case ".ex", ".exs":
 		return ElixirFQN(fc.rootDir, fc.filePath, container, symbol)
+	case ".swift":
+		return SwiftFQN(fc.rootDir, fc.filePath, container, symbol)
 	default:
 		return symbol
 	}
@@ -765,6 +774,15 @@ func containerQueriesFor(ext string) []containerQuerySpec {
 			// defmodule MyApp.Module do ... end
 			{q: `(call target: (identifier) arguments: (arguments (alias) @name)) @def`, kind: "struct", emitNode: true},
 		}
+	case ".swift":
+		return []containerQuerySpec{
+			{q: `(class_declaration name: (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(struct_declaration name: (type_identifier) @name) @def`, kind: "struct", emitNode: true},
+			{q: `(protocol_declaration name: (type_identifier) @name) @def`, kind: "interface", emitNode: true},
+			{q: `(enum_declaration name: (type_identifier) @name) @def`, kind: "type", emitNode: true},
+			// extension blocks: used only for method association, not emitted as nodes
+			{q: `(extension_declaration (type_identifier) @name) @def`, kind: "struct", emitNode: false},
+		}
 	}
 	return nil
 }
@@ -831,6 +849,11 @@ func defQueriesFor(ext string) []defQuerySpec {
 			// def/defp my_func(...) do...end — inner call target is the function name
 			{q: `(call target: (identifier) arguments: (arguments (call target: (identifier) @name))) @def`, kind: "func"},
 		}
+	case ".swift":
+		return []defQuerySpec{
+			{q: `(function_declaration name: (simple_identifier) @name) @def`, kind: "func"},
+			{q: `(init_declaration) @def`, kind: "func"},
+		}
 	}
 	return nil
 }
@@ -880,6 +903,10 @@ func importQueriesFor(ext string) []string {
 	case ".php":
 		return []string{
 			`(namespace_use_declaration (namespace_use_clause (qualified_name) @path))`,
+		}
+	case ".swift":
+		return []string{
+			`(import_declaration (identifier) @path)`,
 		}
 	}
 	return nil
@@ -936,6 +963,11 @@ func callQueriesFor(ext string) []string {
 	case ".ex", ".exs":
 		return []string{
 			`(call target: (identifier) @called_name) @call`,
+		}
+	case ".swift":
+		return []string{
+			`(call_expression function: (simple_identifier) @called_name) @call`,
+			`(call_expression function: (navigation_expression (simple_identifier) @called_name)) @call`,
 		}
 	}
 	return nil
@@ -1061,6 +1093,18 @@ func complexityTypesFor(ext string) map[string]bool {
 			"unless": true,
 			"cond":   true,
 			"case":   true,
+		}
+	case ".swift":
+		return map[string]bool{
+			"if_statement":           true,
+			"guard_statement":        true,
+			"for_statement":          true,
+			"while_statement":        true,
+			"repeat_while_statement": true,
+			"switch_statement":       true,
+			"catch_block":            true,
+			"if_expression":          true,
+			"switch_expression":      true,
 		}
 	}
 	return nil
