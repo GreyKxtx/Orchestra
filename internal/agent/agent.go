@@ -760,6 +760,18 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			if llmResp != nil {
 				history = append(history, llmResp.Message)
 			}
+			if a.opts.OnEvent != nil && resp != nil {
+				payload := map[string]any{
+					"ops":     internalOps,
+					"diff":    resp.Diffs,
+					"applied": a.opts.Apply,
+				}
+				payloadJSON, _ := json.Marshal(payload)
+				a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+					Kind:    llm.StreamEventPendingOps,
+					Content: string(payloadJSON),
+				}})
+			}
 			emitStepDone("final")
 			return history, &Result{
 				Steps:         steps,
