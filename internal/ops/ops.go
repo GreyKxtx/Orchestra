@@ -130,15 +130,17 @@ func (o *AnyOp) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Normalize: allow "type" as alias for "op".
+	// Normalize: allow "type" as alias for "op"; always strip "type" so strict decoder doesn't reject it.
 	if _, hasOp := raw["op"]; !hasOp {
 		if tv, ok := raw["type"]; ok {
 			raw["op"] = tv
-			delete(raw, "type")
-			b, err := json.Marshal(raw)
-			if err == nil {
-				data = b
-			}
+		}
+	}
+	if _, hasType := raw["type"]; hasType {
+		delete(raw, "type")
+		b, err := json.Marshal(raw)
+		if err == nil {
+			data = b
 		}
 	}
 

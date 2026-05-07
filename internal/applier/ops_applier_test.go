@@ -355,3 +355,293 @@ func TestApplyOps_SymlinkEscape_Rejected(t *testing.T) {
 		t.Fatalf("expected no file created outside workspace")
 	}
 }
+
+// ---- ApplyAnyOps: file.write_atomic ----
+
+func TestApplyAnyOps_WriteAtomic_NewFile(t *testing.T) {
+	root := t.TempDir()
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "hello.go",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "hello.go",
+			Content: "package main\n",
+		},
+	}
+
+	result, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ChangedFiles) != 1 || result.ChangedFiles[0] != "hello.go" {
+		t.Errorf("ChangedFiles: %v", result.ChangedFiles)
+	}
+
+	b, err := os.ReadFile(filepath.Join(root, "hello.go"))
+	if err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if string(b) != "package main\n" {
+		t.Errorf("content: %q", string(b))
+	}
+}
+
+func TestApplyAnyOps_WriteAtomic_DryRun(t *testing.T) {
+	root := t.TempDir()
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "x.go",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "x.go",
+			Content: "package main\n",
+		},
+	}
+
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "x.go")); !os.IsNotExist(statErr) {
+		t.Fatal("file should not be created in dry-run")
+	}
+}
+
+func TestApplyAnyOps_WriteAtomic_MustNotExist_Fails(t *testing.T) {
+	root := t.TempDir()
+	existing := filepath.Join(root, "exists.go")
+	if err := os.WriteFile(existing, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "exists.go",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "exists.go",
+			Content: "new",
+			Conditions: ops.WriteAtomicConditions{
+				MustNotExist: true,
+			},
+		},
+	}
+
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: false})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	coreErr, ok := protocol.AsError(err)
+	if !ok {
+		t.Fatalf("expected protocol.Error, got %T: %v", err, err)
+	}
+	if coreErr.Code != protocol.AlreadyExists {
+		t.Errorf("expected AlreadyExists, got %s", coreErr.Code)
+	}
+}
+
+func TestApplyAnyOps_WriteAtomic_HashMismatch(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "f.go")
+	if err := os.WriteFile(f, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "f.go",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "f.go",
+			Content: "new content\n",
+			Conditions: ops.WriteAtomicConditions{
+				FileHash: "sha256:deadbeef",
+			},
+		},
+	}
+
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: false})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	coreErr, ok := protocol.AsError(err)
+	if !ok {
+		t.Fatalf("expected protocol.Error, got %T: %v", err, err)
+	}
+	if coreErr.Code != protocol.StaleContent {
+		t.Errorf("expected StaleContent, got %s", coreErr.Code)
+	}
+}
+
+func TestApplyAnyOps_ConflictingOps_SamePath(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "conflict.go")
+	if err := os.WriteFile(f, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	replaceOp := ops.AnyOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: "conflict.go",
+		ReplaceRange: &ops.ReplaceRangeOp{
+			Op:          ops.OpFileReplaceRange,
+			Path:        "conflict.go",
+			Range:       ops.Range{Start: ops.Position{Line: 0, Col: 0}, End: ops.Position{Line: 0, Col: 12}},
+			Expected:    "package main",
+			Replacement: "package foo",
+		},
+	}
+	writeOp := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "conflict.go",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "conflict.go",
+			Content: "package bar\n",
+		},
+	}
+
+	_, err := ApplyAnyOps(root, []ops.AnyOp{replaceOp, writeOp}, ApplyOptions{DryRun: false})
+	if err == nil {
+		t.Fatal("expected error for conflicting ops on same path")
+	}
+}
+
+// ---- ApplyAnyOps: file.mkdir_all ----
+
+func TestApplyAnyOps_MkdirAll_CreatesDir(t *testing.T) {
+	root := t.TempDir()
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileMkdirAll,
+		Path: "pkg/sub",
+		MkdirAll: &ops.MkdirAllOp{
+			Op:   ops.OpFileMkdirAll,
+			Path: "pkg/sub",
+		},
+	}
+
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	st, err := os.Stat(filepath.Join(root, "pkg", "sub"))
+	if err != nil || !st.IsDir() {
+		t.Fatalf("expected directory to be created: %v", err)
+	}
+}
+
+func TestApplyAnyOps_MkdirAll_DryRunSkipsCreate(t *testing.T) {
+	root := t.TempDir()
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileMkdirAll,
+		Path: "drydir",
+		MkdirAll: &ops.MkdirAllOp{
+			Op:   ops.OpFileMkdirAll,
+			Path: "drydir",
+		},
+	}
+
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "drydir")); !os.IsNotExist(statErr) {
+		t.Fatal("directory should not be created in dry-run")
+	}
+}
+
+// ---- Multiple replace_range on same file ----
+
+func TestApplyAnyOps_MultipleReplaceRange_SameFile(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "multi.go")
+	content := "line0\nline1\nline2\nline3\n"
+	if err := os.WriteFile(f, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two ops on different lines — must be applied bottom-to-top.
+	op1 := ops.AnyOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: "multi.go",
+		ReplaceRange: &ops.ReplaceRangeOp{
+			Op:          ops.OpFileReplaceRange,
+			Path:        "multi.go",
+			Range:       ops.Range{Start: ops.Position{Line: 1, Col: 0}, End: ops.Position{Line: 1, Col: 5}},
+			Expected:    "line1",
+			Replacement: "LINE1",
+		},
+	}
+	op2 := ops.AnyOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: "multi.go",
+		ReplaceRange: &ops.ReplaceRangeOp{
+			Op:          ops.OpFileReplaceRange,
+			Path:        "multi.go",
+			Range:       ops.Range{Start: ops.Position{Line: 3, Col: 0}, End: ops.Position{Line: 3, Col: 5}},
+			Expected:    "line3",
+			Replacement: "LINE3",
+		},
+	}
+
+	result, err := ApplyAnyOps(root, []ops.AnyOp{op1, op2}, ApplyOptions{DryRun: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ChangedFiles) != 1 {
+		t.Fatalf("expected 1 changed file, got %d", len(result.ChangedFiles))
+	}
+
+	b, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "line0\nLINE1\nline2\nLINE3\n"
+	if string(b) != want {
+		t.Errorf("content:\ngot  %q\nwant %q", string(b), want)
+	}
+}
+
+// ---- Backup on successful write ----
+
+func TestApplyOps_Backup_CreatedOnSuccess(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "src.go")
+	original := "package main\n\nfunc old() {}\n"
+	if err := os.WriteFile(f, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h := cache.ComputeSHA256([]byte(original))
+
+	op := ops.ReplaceRangeOp{
+		Op:          ops.OpFileReplaceRange,
+		Path:        "src.go",
+		Range:       ops.Range{Start: ops.Position{Line: 2, Col: 0}, End: ops.Position{Line: 2, Col: len("func old() {}")}},
+		Expected:    "func old() {}",
+		Replacement: "func new() {}",
+		Conditions:  ops.Conditions{FileHash: h},
+	}
+
+	_, err := ApplyOps(root, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: false, Backup: true, BackupSuffix: ".bak"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	bak, err := os.ReadFile(f + ".bak")
+	if err != nil {
+		t.Fatalf("backup not created: %v", err)
+	}
+	if string(bak) != original {
+		t.Errorf("backup content mismatch: %q", string(bak))
+	}
+
+	cur, _ := os.ReadFile(f)
+	if string(cur) == original {
+		t.Error("file was not modified after successful apply")
+	}
+}
