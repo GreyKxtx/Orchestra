@@ -292,6 +292,10 @@ type AgentRunParams struct {
 	// OnEvent is called for each agent streaming event (method + params).
 	// Not serialized — set programmatically by the RPC handler.
 	OnEvent func(method string, params any) `json:"-"`
+
+	// PermissionRequester, if non-nil, is consulted before exec.run/bash runs
+	// instead of (or before) the static AllowExec gate. Set programmatically by the RPC handler.
+	PermissionRequester PermissionRequester `json:"-"`
 }
 
 type AgentRunResult struct {
@@ -432,6 +436,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		SubtaskRunner:        taskRunner,
 		HooksRunner:          hooksRunner,
 		ExtraTools:           c.mcpToolDefs(),
+		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
 	})
 	if err != nil {
 		return nil, err
@@ -594,6 +599,10 @@ type SessionMessageParams struct {
 
 	// OnEvent is set programmatically by the RPC handler for streaming notifications.
 	OnEvent func(method string, params any) `json:"-"`
+
+	// PermissionRequester, if non-nil, is consulted before exec.run/bash runs.
+	// Set programmatically by the RPC handler.
+	PermissionRequester PermissionRequester `json:"-"`
 }
 
 type SessionMessageResult struct {
@@ -646,14 +655,15 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 
 	// Merge params with config defaults.
 	agParams := AgentRunParams{
-		Query:             params.Content,
-		Apply:             params.Apply,
-		Backup:            params.Backup,
-		AllowExec:         params.AllowExec,
-		MaxSteps:          params.MaxSteps,
-		MaxInvalidRetries: params.MaxInvalidRetries,
-		MaxPromptBytes:    params.MaxPromptBytes,
-		OnEvent:           params.OnEvent,
+		Query:               params.Content,
+		Apply:               params.Apply,
+		Backup:              params.Backup,
+		AllowExec:           params.AllowExec,
+		MaxSteps:            params.MaxSteps,
+		MaxInvalidRetries:   params.MaxInvalidRetries,
+		MaxPromptBytes:      params.MaxPromptBytes,
+		OnEvent:             params.OnEvent,
+		PermissionRequester: params.PermissionRequester,
 	}
 
 	// Build and run the agent (same setup as AgentRun).
@@ -769,6 +779,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		SubtaskRunner:        sessTaskRunner,
 		HooksRunner:          sessHooksRunner,
 		ExtraTools:           c.mcpToolDefs(),
+		PermissionRequester:  convertPermissionRequester(agParams.PermissionRequester),
 	})
 	if err != nil {
 		return nil, err
@@ -913,6 +924,26 @@ func (c *Core) SessionClose(params SessionCloseParams) error {
 	sess.Cancel()
 	c.sessions.Delete(params.SessionID)
 	return nil
+}
+
+// agentRequesterAdapter bridges core.PermissionRequester to agent.PermissionRequester.
+type agentRequesterAdapter struct {
+	inner PermissionRequester
+}
+
+func (a *agentRequesterAdapter) RequestPermission(ctx context.Context, req agent.PermissionRequest) (agent.PermissionResponse, error) {
+	inner := PermissionRequest{Tool: req.Tool, Description: req.Description, Reason: req.Reason}
+	resp, err := a.inner.RequestPermission(ctx, inner)
+	return agent.PermissionResponse{Approved: resp.Approved, Reason: resp.Reason}, err
+}
+
+// convertPermissionRequester wraps a core.PermissionRequester as an agent.PermissionRequester.
+// Returns nil when r is nil (CLI mode: falls back to static AllowExec gate).
+func convertPermissionRequester(r PermissionRequester) agent.PermissionRequester {
+	if r == nil {
+		return nil
+	}
+	return &agentRequesterAdapter{inner: r}
 }
 
 func samePath(a, b string) bool {

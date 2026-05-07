@@ -21,6 +21,25 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 )
 
+// PermissionRequester is the agent's view of an interactive consent provider.
+// Mirrors core.PermissionRequester (defined here to avoid import cycle).
+type PermissionRequester interface {
+	RequestPermission(ctx context.Context, req PermissionRequest) (PermissionResponse, error)
+}
+
+// PermissionRequest describes the tool action requiring consent.
+type PermissionRequest struct {
+	Tool        string
+	Description string
+	Reason      string
+}
+
+// PermissionResponse is the consent decision returned by the provider.
+type PermissionResponse struct {
+	Approved bool
+	Reason   string
+}
+
 // HooksRunner executes pre/post tool call hooks.
 type HooksRunner interface {
 	RunPreTool(ctx context.Context, toolName string, input json.RawMessage) error
@@ -149,6 +168,11 @@ type Options struct {
 
 	// HooksRunner, if non-nil, runs pre/post tool call hooks.
 	HooksRunner HooksRunner
+
+	// PermissionRequester, if non-nil, is consulted before bash/exec.run runs
+	// instead of (or before) the static AllowExec gate.
+	// Nil → fall through to existing AllowExec / ExecAllow gates (CLI mode).
+	PermissionRequester PermissionRequester
 
 	// CompactThresholdPct, if > 0, triggers history compaction when total history size (in bytes)
 	// exceeds this percentage of MaxPromptBytes. 0 = disabled. Recommended: 70.
@@ -378,6 +402,44 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					effectiveAllowExec = true
 					effectiveAllowWeb = true
 				}
+			}
+
+			// Interactive consent via PermissionRequester (TUI/IDE): checked before the static gate.
+			// Approved → effectiveAllowExec = true (static gate becomes a no-op for this call).
+			// Denied  → TOOL_DENIED using the same pathway as the static gate below.
+			// Error   → fall through to static gate (defensive).
+			if name == "bash" && !effectiveAllowExec && a.opts.PermissionRequester != nil {
+				cmdPreview := ""
+				if len(step.Tool.Input) > 0 {
+					cmdPreview = string(step.Tool.Input)
+					if len(cmdPreview) > 200 {
+						cmdPreview = cmdPreview[:200] + "..."
+					}
+				}
+				resp, permErr := a.opts.PermissionRequester.RequestPermission(ctx, PermissionRequest{
+					Tool:        "bash",
+					Description: cmdPreview,
+				})
+				if permErr == nil && resp.Approved {
+					effectiveAllowExec = true
+				} else if permErr == nil && !resp.Approved {
+					reason := "exec.run denied by interactive permission requester"
+					if resp.Reason != "" {
+						reason = resp.Reason
+					}
+					toolResult := formatToolDeniedJSON(name, step.Tool.Input, reason)
+					history = append(history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolCallID: toolCallID,
+						Content:    toolResult,
+					})
+					if cbErr := cb.RecordDenied(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+					emitStepDone("tool_call")
+					continue
+				}
+				// permErr != nil: fall through to static gate.
 			}
 
 			// Consent policy: block exec.run unless AllowExec (all allowed) or per-command allowlist permits it.

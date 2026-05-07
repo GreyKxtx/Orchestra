@@ -19,8 +19,9 @@ type Notifier interface {
 
 // RPCHandler adapts Core to the jsonrpc.Handler interface.
 type RPCHandler struct {
-	core     *Core
-	notifier Notifier // optional; nil = no streaming notifications
+	core      *Core
+	notifier  Notifier // optional; nil = no streaming notifications
+	requester func(ctx context.Context, method string, params any, result any) error
 }
 
 func NewRPCHandler(c *Core) *RPCHandler {
@@ -31,6 +32,12 @@ func NewRPCHandler(c *Core) *RPCHandler {
 // as JSON-RPC notifications. Call this after constructing both the Server and handler.
 func (h *RPCHandler) SetNotifier(n Notifier) {
 	h.notifier = n
+}
+
+// SetRequester attaches a request function so that agent.run can issue
+// server-initiated requests (e.g. permission/request) to the client.
+func (h *RPCHandler) SetRequester(fn func(ctx context.Context, method string, params any, result any) error) {
+	h.requester = fn
 }
 
 func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -72,6 +79,9 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 				_ = h.notifier.Notify(method, params)
 			}
 		}
+		if h.requester != nil {
+			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
+		}
 		return h.core.AgentRun(ctx, p)
 
 	case "tool.call":
@@ -112,6 +122,9 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			p.OnEvent = func(method string, params any) {
 				_ = h.notifier.Notify(method, params)
 			}
+		}
+		if h.requester != nil {
+			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
 		}
 		return h.core.SessionMessage(ctx, p)
 
