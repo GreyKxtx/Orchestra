@@ -6,6 +6,135 @@ import (
 	"testing"
 )
 
+// ---- TypeScript FQN ----
+
+func TestTsFQN_WithContainer(t *testing.T) {
+	root := "/repo"
+	got := TsFQN(root, "/repo/src/app.ts", "MyClass", "method")
+	want := "src/app.ts::MyClass.method"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTsFQN_NoContainer(t *testing.T) {
+	root := "/repo"
+	got := TsFQN(root, "/repo/src/app.ts", "", "topLevel")
+	want := "src/app.ts::topLevel"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTsPackageFQN(t *testing.T) {
+	root := "/repo"
+	got := TsPackageFQN(root, "/repo/src/utils.js")
+	want := "src/utils.js"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// ---- Python FQN ----
+
+func TestPyFQN_WithContainer(t *testing.T) {
+	root := "/repo"
+	got := PyFQN(root, "/repo/src/agent/runner.py", "Runner", "run")
+	want := "src.agent.runner::Runner.run"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPyFQN_NoContainer(t *testing.T) {
+	root := "/repo"
+	got := PyFQN(root, "/repo/src/agent/runner.py", "", "main")
+	want := "src.agent.runner::main"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestPyPackageFQN(t *testing.T) {
+	root := "/repo"
+	got := PyPackageFQN(root, "/repo/src/utils.py")
+	want := "src.utils"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// ---- Rust FQN ----
+
+func TestRustFQN_WithCrateAndContainer(t *testing.T) {
+	root := "/repo"
+	got := RustFQN("myapp", root, "/repo/src/parser.rs", "Parser", "parse")
+	want := "myapp::parser::Parser::parse"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRustFQN_LibFile(t *testing.T) {
+	root := "/repo"
+	got := RustFQN("myapp", root, "/repo/src/lib.rs", "", "init")
+	want := "myapp::init"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRustFQN_NoCrate(t *testing.T) {
+	root := "/repo"
+	got := RustFQN("", root, "/repo/src/parser.rs", "", "func")
+	want := "parser::func"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRustPackageFQN(t *testing.T) {
+	root := "/repo"
+	got := RustPackageFQN("myapp", root, "/repo/src/foo/bar.rs")
+	want := "myapp::foo::bar"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// ---- Java FQN ----
+
+func TestJavaFQN_Full(t *testing.T) {
+	got := JavaFQN("com.example.pkg", "MyClass", "myMethod")
+	want := "com.example.pkg.MyClass.myMethod"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestJavaFQN_NoPkg(t *testing.T) {
+	got := JavaFQN("", "MyClass", "myMethod")
+	want := "MyClass.myMethod"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestJavaFQN_NoContainer(t *testing.T) {
+	got := JavaFQN("com.example", "", "MyClass")
+	want := "com.example.MyClass"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestJavaPackageFQN(t *testing.T) {
+	got := JavaPackageFQN("com.example.pkg")
+	if got != "com.example.pkg" {
+		t.Errorf("got %q, want %q", got, "com.example.pkg")
+	}
+}
+
 func TestParseModulePath(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "go.mod"),

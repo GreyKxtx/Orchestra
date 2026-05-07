@@ -240,6 +240,41 @@ func TestAnyOp_MarshalJSON_Fallback(t *testing.T) {
 	}
 }
 
+// ---- strictUnmarshal ----
+
+func TestReplaceRangeOp_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	var r ReplaceRangeOp
+	if err := json.Unmarshal([]byte(`not-json`), &r); err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestAnyOp_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	var a AnyOp
+	if err := json.Unmarshal([]byte(`not-json`), &a); err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestStrictUnmarshal_TrailingJSON(t *testing.T) {
+	// Two concatenated JSON objects — the second is trailing content.
+	data := []byte(`{"op":"file.write_atomic","path":"b.go","content":"x"}{"extra":1}`)
+	var wa WriteAtomicOp
+	err := strictUnmarshal(data, &wa)
+	if err == nil {
+		t.Fatal("expected error for trailing JSON content")
+	}
+}
+
+func TestStrictUnmarshal_UnknownField(t *testing.T) {
+	data := []byte(`{"op":"file.write_atomic","path":"b.go","content":"x","surprise":true}`)
+	var wa WriteAtomicOp
+	err := strictUnmarshal(data, &wa)
+	if err == nil {
+		t.Fatal("expected error for unknown field")
+	}
+}
+
 // ---- WrapReplaceRangeOps ----
 
 func TestWrapReplaceRangeOps_Empty(t *testing.T) {

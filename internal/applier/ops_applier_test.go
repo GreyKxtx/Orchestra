@@ -555,6 +555,135 @@ func TestApplyAnyOps_MkdirAll_DryRunSkipsCreate(t *testing.T) {
 	}
 }
 
+// ---- ApplyAnyOps nil payload errors ----
+
+func TestApplyAnyOps_NilPayload_ReplaceRange(t *testing.T) {
+	root := t.TempDir()
+	anyOp := ops.AnyOp{Op: ops.OpFileReplaceRange, Path: "x.go", ReplaceRange: nil}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error for nil replace_range payload")
+	}
+}
+
+func TestApplyAnyOps_NilPayload_WriteAtomic(t *testing.T) {
+	root := t.TempDir()
+	anyOp := ops.AnyOp{Op: ops.OpFileWriteAtomic, Path: "x.go", WriteAtomic: nil}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error for nil write_atomic payload")
+	}
+}
+
+func TestApplyAnyOps_NilPayload_MkdirAll(t *testing.T) {
+	root := t.TempDir()
+	anyOp := ops.AnyOp{Op: ops.OpFileMkdirAll, Path: "pkg", MkdirAll: nil}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error for nil mkdir_all payload")
+	}
+}
+
+func TestApplyAnyOps_UnsupportedOp(t *testing.T) {
+	root := t.TempDir()
+	anyOp := ops.AnyOp{Op: "file.delete", Path: "x.go"}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error for unsupported op")
+	}
+	coreErr, ok := protocol.AsError(err)
+	if !ok {
+		t.Fatalf("expected protocol.Error, got %T: %v", err, err)
+	}
+	if coreErr.Code != protocol.InvalidLLMOutput {
+		t.Errorf("expected InvalidLLMOutput, got %s", coreErr.Code)
+	}
+}
+
+func TestApplyAnyOps_PathIsDirectory(t *testing.T) {
+	root := t.TempDir()
+	// "sub" is a directory inside root, not a file.
+	_ = os.MkdirAll(filepath.Join(root, "sub"), 0755)
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: "sub",
+		ReplaceRange: &ops.ReplaceRangeOp{
+			Op:          ops.OpFileReplaceRange,
+			Path:        "sub",
+			Range:       ops.Range{Start: ops.Position{Line: 0, Col: 0}, End: ops.Position{Line: 0, Col: 0}},
+			Expected:    "",
+			Replacement: "x",
+		},
+	}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error when path points to directory")
+	}
+}
+
+func TestApplyAnyOps_DuplicateWriteAtomic(t *testing.T) {
+	root := t.TempDir()
+	wa := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "dup.go",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "dup.go",
+			Content: "package main\n",
+		},
+	}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{wa, wa}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error for duplicate write_atomic")
+	}
+}
+
+func TestApplyAnyOps_ReplaceRange_WrongOpType(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "x.go")
+	_ = os.WriteFile(f, []byte("foo\nbar\n"), 0644)
+
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileReplaceRange,
+		Path: "x.go",
+		ReplaceRange: &ops.ReplaceRangeOp{
+			Op:   "file.bad_op",
+			Path: "x.go",
+			Range: ops.Range{
+				Start: ops.Position{Line: 0, Col: 0},
+				End:   ops.Position{Line: 0, Col: 3},
+			},
+			Expected:    "foo",
+			Replacement: "baz",
+		},
+	}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: true})
+	if err == nil {
+		t.Fatal("expected error for wrong op type inside replace_range")
+	}
+}
+
+func TestApplyAnyOps_WriteAtomic_Mode(t *testing.T) {
+	root := t.TempDir()
+	anyOp := ops.AnyOp{
+		Op:   ops.OpFileWriteAtomic,
+		Path: "exec.sh",
+		WriteAtomic: &ops.WriteAtomicOp{
+			Op:      ops.OpFileWriteAtomic,
+			Path:    "exec.sh",
+			Content: "#!/bin/sh\necho hi\n",
+			Mode:    0755,
+		},
+	}
+	_, err := ApplyAnyOps(root, []ops.AnyOp{anyOp}, ApplyOptions{DryRun: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "exec.sh")); err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+}
+
 // ---- Multiple replace_range on same file ----
 
 func TestApplyAnyOps_MultipleReplaceRange_SameFile(t *testing.T) {

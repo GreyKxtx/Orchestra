@@ -7,6 +7,32 @@ import (
 	"testing"
 )
 
+func TestLanguageFromExt(t *testing.T) {
+	cases := []struct {
+		ext  string
+		want string
+	}{
+		{".go", "go"},
+		{".py", "python"},
+		{".ts", "typescript"},
+		{".tsx", "typescript"},
+		{".js", "javascript"},
+		{".jsx", "javascript"},
+		{".java", "java"},
+		{".rs", "rust"},
+		{".c", "c"},
+		{".cpp", "cpp"},
+		{".md", "unknown"},
+		{"", "unknown"},
+	}
+	for _, tc := range cases {
+		got := LanguageFromExt(tc.ext)
+		if got != tc.want {
+			t.Errorf("LanguageFromExt(%q) = %q, want %q", tc.ext, got, tc.want)
+		}
+	}
+}
+
 func TestParseFile(t *testing.T) {
 	// Create a temporary Go file
 	tempDir, err := os.MkdirTemp("", "ckg_parser_test_*")
