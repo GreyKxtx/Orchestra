@@ -258,6 +258,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	maxStepsReminderSent := false
 	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 
+	emitStepDone := func(reason string) {
+		if a.opts.OnEvent != nil && reason != "" {
+			a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+				Kind:    llm.StreamEventStepDone,
+				Content: reason,
+			}})
+		}
+	}
+
 	for steps < a.opts.MaxSteps {
 		steps++
 
@@ -304,6 +313,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					Role:    llm.RoleUser,
 					Content: formatValidatorError("Invalid JSON format: tool is required", raw),
 				})
+				emitStepDone("invalid")
 				continue
 			}
 			name := strings.TrimSpace(step.Tool.Name)
@@ -312,6 +322,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					Role:    llm.RoleUser,
 					Content: formatValidatorError("Invalid JSON format: tool.name is empty", raw),
 				})
+				emitStepDone("invalid")
 				continue
 			}
 			// Normalize LLM-facing aliases (read, bash, edit, todowrite, task_result, …)
@@ -360,6 +371,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 						if cbErr := cb.RecordDenied(name); cbErr != nil {
 							return nil, nil, cbErr
 						}
+						emitStepDone("tool_call")
 						continue
 					}
 					// act == "allow": grant consent for this call only.
@@ -385,6 +397,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					if cbErr := cb.RecordDenied(name); cbErr != nil {
 						return nil, nil, cbErr
 					}
+					emitStepDone("tool_call")
 					continue
 				}
 			}
@@ -400,6 +413,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				if cbErr := cb.RecordDenied(name); cbErr != nil {
 					return nil, nil, cbErr
 				}
+				emitStepDone("tool_call")
 				continue
 			}
 
@@ -409,6 +423,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					Content string `json:"content"`
 				}
 				_ = json.Unmarshal(step.Tool.Input, &req)
+				emitStepDone("final")
 				return history, &Result{
 					Steps:         steps,
 					SubtaskResult: req.Content,
@@ -437,6 +452,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				} else {
 					cb.ResetToolErrors()
 				}
+				emitStepDone("tool_call")
 				continue
 			}
 
@@ -461,6 +477,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				} else {
 					cb.ResetToolErrors()
 				}
+				emitStepDone("tool_call")
 				continue
 			}
 
@@ -478,6 +495,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					if cbErr := cb.RecordToolError(name); cbErr != nil {
 						return nil, nil, cbErr
 					}
+					emitStepDone("tool_call")
 					continue
 				}
 				answers, qErr := a.opts.QuestionAsker.Ask(ctx, req.Questions)
@@ -493,6 +511,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					cb.ResetToolErrors()
 				}
 				history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: content})
+				emitStepDone("tool_call")
 				continue
 			}
 
@@ -512,6 +531,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					approved = true // non-interactive (CI): auto-approve
 				}
 				if approved {
+					emitStepDone("final")
 					return history, &Result{Steps: steps, SwitchToBuild: true, Todos: a.todos}, nil
 				}
 				history = append(history, llm.Message{
@@ -519,6 +539,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					ToolCallID: toolCallID,
 					Content:    `{"status":"continue","message":"Продолжаем планирование. Доработай план и вызови plan_exit снова."}`,
 				})
+				emitStepDone("tool_call")
 				continue
 			}
 
@@ -529,6 +550,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					ToolCallID: toolCallID,
 					Content:    `{"status":"not_supported","message":"plan_enter недоступен в текущем режиме. Запусти orchestra apply --mode plan для планирования."}`,
 				})
+				emitStepDone("tool_call")
 				continue
 			}
 
@@ -548,6 +570,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					if cbErr := cb.RecordDenied(name); cbErr != nil {
 						return nil, nil, cbErr
 					}
+					emitStepDone("tool_call")
 					continue
 				}
 			}
@@ -577,6 +600,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					if cbErr := cb.RecordDenied(name); cbErr != nil {
 						return nil, nil, cbErr
 					}
+					emitStepDone("tool_call")
 					continue
 				}
 			}
@@ -624,6 +648,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				if cbErr := cb.RecordToolError(name); cbErr != nil {
 					return nil, nil, cbErr
 				}
+				emitStepDone("tool_call")
 				continue
 			}
 			// Post-tool hook: errors logged but do not fail the tool.
@@ -640,6 +665,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
 			cb.ResetToolErrors()
 			cb.ResetFinalFailures() // successful tool call = model is making progress
+			emitStepDone("tool_call")
 			continue
 
 		case StepFinal:
@@ -648,6 +674,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					Role:    llm.RoleUser,
 					Content: formatValidatorError("Invalid JSON format: final is required", raw),
 				})
+				emitStepDone("invalid")
 				continue
 			}
 			// Empty patches is valid (no changes needed)
@@ -656,6 +683,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				if llmResp != nil {
 					history = append(history, llmResp.Message)
 				}
+				emitStepDone("final")
 				return history, &Result{
 					Patches: []patches.Patch{},
 					Applied: false,
@@ -678,6 +706,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
 					return nil, nil, cbErr
 				}
+				emitStepDone("final_retry")
 				continue
 			}
 			a.logf("resolve status=ok duration_ms=%d ops=%d", resolveMS, len(internalOps))
@@ -702,6 +731,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
 						return nil, nil, cbErr
 					}
+					emitStepDone("final_retry")
 					continue
 				}
 				a.logf("apply status=error duration_ms=%d err=%v", applyMS, err)
@@ -712,6 +742,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			if llmResp != nil {
 				history = append(history, llmResp.Message)
 			}
+			emitStepDone("final")
 			return history, &Result{
 				Steps:         steps,
 				Patches:       patches,
@@ -726,6 +757,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				Role:    llm.RoleUser,
 				Content: formatValidatorError("Invalid JSON format: unknown step type", raw),
 			})
+			emitStepDone("invalid")
 		}
 	}
 
