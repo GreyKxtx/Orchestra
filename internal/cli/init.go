@@ -6,8 +6,12 @@ import (
 	"path/filepath"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/instrument"
 	"github.com/spf13/cobra"
 )
+
+var initInstrument bool
+var initDryRun bool
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -17,6 +21,8 @@ var initCmd = &cobra.Command{
 }
 
 func init() {
+	initCmd.Flags().BoolVar(&initInstrument, "instrument", false, "автоматически добавить OTel SDK инструментацию в проект")
+	initCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "показать что будет сделано без записи файлов")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -89,5 +95,41 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Created .orchestra.yml with default settings.\n")
+
+	if initInstrument {
+		if err := runInstrument(cwd, initDryRun); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: instrument failed: %v\n", err)
+		}
+	}
+
 	return nil
+}
+
+func runInstrument(dir string, dryRun bool) error {
+	langs := instrument.Detect(dir, instrument.Phase1Langs)
+	if len(langs) == 0 {
+		fmt.Println("[instrument] No supported languages detected.")
+		return nil
+	}
+
+	prefix := ""
+	if dryRun {
+		prefix = "[dry-run] "
+	}
+
+	results, err := instrument.Instrument(dir, langs, dryRun)
+	for _, r := range results {
+		if r.Skipped {
+			fmt.Printf("[instrument] %s: skipped — %s\n", r.Lang, r.SkipReason)
+			continue
+		}
+		fmt.Printf("[instrument] %s%s: wrote %s\n", prefix, r.Lang, r.TelemetryFile)
+		if r.Patched {
+			fmt.Printf("[instrument] %s%s: patched %s\n", prefix, r.Lang, r.PatchedFile)
+		}
+		if r.InstallOutput != "" {
+			fmt.Printf("[instrument] %s%s: install output:\n%s\n", prefix, r.Lang, r.InstallOutput)
+		}
+	}
+	return err
 }

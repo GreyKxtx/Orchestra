@@ -1,6 +1,6 @@
 name: rename_func
 description: Rename a Go function from Add to Sum
-max_steps: 16
+max_steps: 48
 files:
   go.mod: |
     module testpkg

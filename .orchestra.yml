@@ -13,3 +13,7 @@ llm:
     max_tokens: 8192
     temperature: 0.2
     timeout_s: 180
+    extra_body:
+        num_ctx: 20000
+        chat_template_kwargs:
+            enable_thinking: false
