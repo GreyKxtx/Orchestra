@@ -17,6 +17,7 @@ import (
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/jsonrpc"
 	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/internal/mcp"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/pipeline"
@@ -377,6 +378,20 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		defer runner.Close()
 
+		// Wire MCP servers if configured.
+		var mcpExtraTools []llm.ToolDef
+		if len(cfg.MCP.Servers) > 0 {
+			mcpMgr, mcpErrs := mcp.NewManager(cmd.Context(), cfg.MCP)
+			for _, e := range mcpErrs {
+				fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", e)
+			}
+			if !mcpMgr.IsEmpty() {
+				runner.SetMCPCaller(mcpMgr)
+				mcpExtraTools = mcpMgr.ListToolDefs()
+				defer mcpMgr.Close()
+			}
+		}
+
 		var respFmt *llm.ResponseFormat
 		if cfg.LLM.ResponseFormatType != "" {
 			respFmt = &llm.ResponseFormat{Type: cfg.LLM.ResponseFormatType}
@@ -392,7 +407,6 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		// Custom agent override: look up agentMode in agents: config block.
-		// MCP is not wired in direct mode; use --via-core for MCP + custom agents.
 		var systemPromptOverride string
 		var customAgentTools []llm.ToolDef
 		if agentMode != "" {
@@ -442,6 +456,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Mode:                 agentMode,
 			SystemPromptOverride: systemPromptOverride,
 			CustomTools:          customAgentTools,
+			ExtraTools:           mcpExtraTools,
 			QuestionAsker:        buildQuestionAsker(agentMode),
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
