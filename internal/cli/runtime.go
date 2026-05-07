@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/spf13/cobra"
@@ -71,7 +74,59 @@ var runtimeIngestCmd = &cobra.Command{
 	},
 }
 
+var (
+	servePort          int
+	serveWorkspaceRoot string
+)
+
+var runtimeServeCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Запустить OTLP/HTTP приёмник трейсов (порт 4318 по умолчанию)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		absRoot, err := filepath.Abs(serveWorkspaceRoot)
+		if err != nil {
+			return err
+		}
+
+		dbPath := filepath.Join(absRoot, ".orchestra", "ckg.db")
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+			return fmt.Errorf("create .orchestra dir: %w", err)
+		}
+
+		store, err := ckg.NewStore("file:" + dbPath + "?cache=shared")
+		if err != nil {
+			return fmt.Errorf("open CKG store: %w", err)
+		}
+		defer store.Close()
+
+		addr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", servePort))
+		srv := ckg.NewOTLPServer(store, absRoot)
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- srv.ListenAndServe(addr)
+		}()
+
+		select {
+		case <-ctx.Done():
+			log.Println("[otlp] shutting down…")
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*1e9) // 5s
+			defer cancel()
+			return srv.Shutdown(shutCtx)
+		case err := <-errCh:
+			return err
+		}
+	},
+}
+
 func init() {
+	runtimeServeCmd.Flags().IntVar(&servePort, "port", 4318, "порт OTLP/HTTP приёмника")
+	runtimeServeCmd.Flags().StringVar(&serveWorkspaceRoot, "workspace-root", ".", "корень проекта (должен содержать .orchestra/)")
+
 	runtimeCmd.AddCommand(runtimeIngestCmd)
+	runtimeCmd.AddCommand(runtimeServeCmd)
 	rootCmd.AddCommand(runtimeCmd)
 }
