@@ -32,6 +32,19 @@ const (
 	StreamEventError StreamEventKind = "error"
 	// StreamEventExecOutput carries an incremental chunk of exec.run stdout/stderr output.
 	StreamEventExecOutput StreamEventKind = "exec_output"
+	// StreamEventToolCallCompleted is emitted by the agent loop after a tools.Call returns.
+	// Content holds a short result preview (truncated to 256 bytes).
+	// ToolCallID/ToolCallName identify the call.
+	StreamEventToolCallCompleted StreamEventKind = "tool_call_completed"
+	// StreamEventStepDone is emitted at the end of each agent loop iteration.
+	// Content holds the reason: "tool_call", "final", "invalid", "compaction".
+	StreamEventStepDone StreamEventKind = "step_done"
+	// StreamEventPendingOps is emitted when the agent produces final patches (dry-run or pre-apply).
+	// Content holds a JSON-encoded {ops: [...], diff: "...", applied: bool} payload.
+	StreamEventPendingOps StreamEventKind = "pending_ops"
+	// StreamEventRecoverableError is emitted when a non-fatal error (StaleContent, AmbiguousMatch,
+	// schema validation failure) occurs and the loop will retry. Content holds a short message.
+	StreamEventRecoverableError StreamEventKind = "recoverable_error"
 )
 
 // StreamEvent is one event emitted during a streaming completion.
