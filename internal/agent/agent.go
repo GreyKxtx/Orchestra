@@ -706,6 +706,18 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
 					return nil, nil, cbErr
 				}
+				if a.opts.OnEvent != nil {
+					var resolveMsg string
+					if pe, ok := protocol.AsError(err); ok {
+						resolveMsg = fmt.Sprintf("%s: %s", pe.Code, pe.Message)
+					} else {
+						resolveMsg = "resolve error: " + err.Error()
+					}
+					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+						Kind:    llm.StreamEventRecoverableError,
+						Content: resolveMsg,
+					}})
+				}
 				emitStepDone("final_retry")
 				continue
 			}
@@ -730,6 +742,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					})
 					if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
 						return nil, nil, cbErr
+					}
+					if a.opts.OnEvent != nil {
+						a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+							Kind:    llm.StreamEventRecoverableError,
+							Content: fmt.Sprintf("%s: %s", pe.Code, pe.Message),
+						}})
 					}
 					emitStepDone("final_retry")
 					continue
@@ -917,6 +935,14 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			// Truncate again if needed
 			if a.opts.MaxPromptBytes > 0 {
 				messages = truncateMessages(messages, a.opts.MaxPromptBytes)
+			}
+			if a.opts.OnEvent != nil {
+				msg := "schema invalid: " + lastInvalid.Message
+				msg = truncate(msg, 200)
+				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+					Kind:    llm.StreamEventRecoverableError,
+					Content: msg,
+				}})
 			}
 			continue
 		}
