@@ -34,14 +34,19 @@ orchestra tui
 |---|---|
 | Enter | отправить ввод |
 | Shift+Enter | новая строка в инпуте |
-| Esc | очистить инпут |
+| Tab | развернуть/свернуть последний tool block |
+| a | применить pending ops (если есть) |
+| d | показать/скрыть inline diff |
+| x | отменить pending ops |
+| y / n / Esc | разрешить/запретить exec.run (modal) |
+| Esc | очистить инпут (без modal) |
 | Ctrl+C | выйти |
 
 ## Статус по фазам
 
 - [x] **Фаза 1 — скелет**: раскладка, echo, базовая навигация
 - [x] **Фаза 2 — подключение к ядру** (текущая): JSON-RPC stdio, streaming token deltas, tool blocks (collapsed)
-- [ ] Фаза 3 — collapsible tool blocks expand-on-Tab, inline-diff, pending ops action bar
+- [x] **Фаза 3** — collapsible tool blocks (Tab expand), inline diff view, pending ops action bar ([a]pply / [d]iff / [x]discard), permission modal для exec.run
 - [ ] Фаза 4 — slash-команды, @-mention, динамические footer hints
 - [ ] Фаза 5 — polish, snapshot tests расширенные
 
@@ -60,8 +65,8 @@ TUI спаунит `orchestra core --workspace-root <cwd>` как subprocess и 
 - `▸ name → preview` — завершён успешно
 - `▸ name → error: ...` (красным) — упал
 
-**Pending ops** пока показываются placeholder-сообщением `[N pending ops — apply with /apply (Phase 3)]`. Реальный action bar (apply / discard / diff) — Фаза 3.
+**Pending ops** показываются action bar'ом в ленте: `⏵ N pending ops · [a]pply · [d]iff · [x]discard`. Нажатие `[a]` применяет ops через RPC `ops.apply` (без перезапуска LLM); `[d]` показывает inline diff; `[x]` отменяет.
 
 **Если subprocess падает или initialize не проходит** — Run возвращает ошибку до запуска UI; на лету ошибки показываются как `[error] ...` в ленте.
 
-**Permission/request на bash пока не wired**: bash-вызовы будут отклонены статическим gate'ом (нужен `--allow-exec` или `exec.confirm: false` в `.orchestra.yml`). Modal-диалог появится в Фазе 3.
+**Permission modal для exec.run**: при попытке модели вызвать `bash` без `--allow-exec` TUI показывает интерактивный диалог `[y] Allow / [n] Deny`. Ответ передаётся ядру через server-initiated JSON-RPC `permission/request`.
