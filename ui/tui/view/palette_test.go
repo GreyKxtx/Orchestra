@@ -87,3 +87,21 @@ func TestSlashPalette_Render_NotEmpty(t *testing.T) {
 		t.Errorf("rendered palette should contain /help, got:\n%s", out)
 	}
 }
+
+func TestMentionPalette_Render_NotEmpty(t *testing.T) {
+	p := view.NewMentionPalette(80)
+	p.SetItems([]string{"internal/resolver.go", "ui/tui/app.go", "go.mod"})
+	out := p.Render()
+	if !strings.Contains(out, "internal/resolver.go") {
+		t.Errorf("rendered mention palette should contain file path, got:\n%s", out)
+	}
+}
+
+func TestMentionPalette_Render_Empty(t *testing.T) {
+	p := view.NewMentionPalette(80)
+	p.SetItems(nil)
+	out := p.Render()
+	if out != "" {
+		t.Errorf("empty mention palette should render empty string, got:\n%s", out)
+	}
+}
