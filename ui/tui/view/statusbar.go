@@ -18,7 +18,11 @@ type StatusBar struct {
 	model      string
 	ctxPercent int    // 0 = unknown, 1–100 = percentage
 	errorMsg   string // non-empty → shows error instead of ready
+	hints      string // context-sensitive key hints; shown on left when set
 }
+
+// SetHints sets context-sensitive hint text shown on the left side of the bar.
+func (s *StatusBar) SetHints(h string) { s.hints = h }
 
 // SetWidth updates the bar width.
 func (s *StatusBar) SetWidth(w int) { s.width = w }
@@ -53,9 +57,11 @@ func (s StatusBar) Render() string {
 		Background(t.BackgroundSecondary()).
 		Foreground(t.TextMuted())
 
-	// Left: status indicator
+	// Left: context hints override status indicator when set.
 	var left string
 	switch {
+	case s.hints != "":
+		left = base.Foreground(t.TextMuted()).Render(s.hints)
 	case s.errorMsg != "":
 		errStyle := base.Foreground(t.Error())
 		left = errStyle.Render("✗  " + s.errorMsg)

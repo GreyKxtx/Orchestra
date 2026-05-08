@@ -1,5 +1,5 @@
 // Package tui implements the Orchestra terminal UI client.
-// Phase 2 connects to orchestra core via JSON-RPC stdio.
+// Phase 6: visual redesign + onboarding + Ctrl+K palette modal.
 package tui
 
 import (
@@ -8,12 +8,15 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
 
+	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/lmstudio"
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
@@ -21,11 +24,14 @@ import (
 
 // Config carries one-time settings into the App.
 type Config struct {
-	Binary        string // path to orchestra binary for spawning core subprocess (empty → echo mode)
-	WorkspaceRoot string // project root passed to core
-	Model         string
-	Mode          string
-	CWD           string
+	Binary          string // path to orchestra binary for spawning core subprocess (empty → echo mode)
+	WorkspaceRoot   string // project root passed to core
+	ProjectID       string // passed to initialize handshake
+	Model           string
+	Mode            string
+	CWD             string
+	NeedsOnboarding bool   // true when no model is configured
+	ConfigPath      string // path to .orchestra.yml for saving onboarding result
 }
 
 // App is the root Bubble Tea Model.
@@ -35,7 +41,7 @@ type App struct {
 	header  view.Header
 	chat    view.Chat
 	input   view.Input
-	footer  view.Footer
+	statusBar view.StatusBar // replaces footer
 
 	width       int
 	height      int
@@ -58,6 +64,12 @@ type App struct {
 	workspaceFiles []string // lazily populated on first @-mention
 
 	history *state.InputHistory
+
+	// Phase 6 additions
+	commandModal   *view.PaletteModal   // Ctrl+K modal
+	onboarding     *view.OnboardingView // 3-step wizard
+	showOnboarding bool
+	cursorBlink    bool // toggles every 500ms while agentBusy
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -69,6 +81,27 @@ type applyResultMsg struct {
 	count int
 }
 
+// tickMsg drives the spinner and streaming cursor animation.
+type tickMsg time.Time
+
+// modelsLoadedMsg carries model list fetched from LM Studio.
+type modelsLoadedMsg struct {
+	models []lmstudio.RemoteModel
+	err    error
+}
+
+// onboardingDoneMsg is sent when user completes onboarding and config is saved.
+type onboardingDoneMsg struct {
+	configPath string
+}
+
+// rpcSpawnedMsg is sent when RPC client is ready after onboarding.
+type rpcSpawnedMsg struct {
+	client *rpcclient.Client
+	cancel context.CancelFunc
+	err    error
+}
+
 // NewApp constructs an App with the given config. If cfg.Binary is non-empty,
 // spawns the core subprocess and runs the initialize handshake; on error,
 // returns it.
@@ -76,18 +109,25 @@ func NewApp(cfg Config) (*App, error) {
 	a := &App{
 		cfg:     cfg,
 		header:  view.Header{Model: cfg.Model, Mode: cfg.Mode, CWD: cfg.CWD},
-		footer:  view.Footer{},
 		session: state.NewSession(),
 	}
+	a.statusBar.SetModel(cfg.Model)
 	a.slashPalette = view.NewSlashPalette(0)   // width set in layout()
 	a.mentionPalette = view.NewMentionPalette(0) // width set in layout()
 	a.history = state.NewInputHistory(100)
+
+	if cfg.NeedsOnboarding {
+		a.showOnboarding = true
+		a.onboarding = view.NewOnboardingView(80, 24)
+		return a, nil
+	}
 
 	if cfg.Binary != "" {
 		ctx, cancel := context.WithCancel(context.Background())
 		client, err := rpcclient.Spawn(ctx, rpcclient.Config{
 			Binary:        cfg.Binary,
 			WorkspaceRoot: cfg.WorkspaceRoot,
+			ProjectID:     cfg.ProjectID,
 		})
 		if err != nil {
 			cancel()
@@ -102,7 +142,23 @@ func NewApp(cfg Config) (*App, error) {
 
 // Init satisfies tea.Model.
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, a.listenForEvents())
+	return tea.Batch(textarea.Blink, a.listenForEvents(), tickCmd())
+}
+
+// tickCmd schedules the next tick at 500ms for spinner/cursor animation.
+func tickCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+// fetchModelsCmd fetches models from the given LM Studio endpoint asynchronously.
+func fetchModelsCmd(endpoint string) tea.Cmd {
+	return func() tea.Msg {
+		client := lmstudio.NewClient(endpoint)
+		models, err := client.ListModels()
+		return modelsLoadedMsg{models: models, err: err}
+	}
 }
 
 // listenForEvents returns a Cmd that reads one event from the rpc channel.
@@ -129,7 +185,71 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.layout()
 		return a, nil
 
+	case tickMsg:
+		a.cursorBlink = !a.cursorBlink
+		a.statusBar.AdvanceSpin()
+		if a.agentBusy {
+			a.chat.SetStreamCursor(a.cursorBlink)
+			a.chat.SetMessages(a.session.Messages)
+		}
+		return a, tickCmd()
+
+	case modelsLoadedMsg:
+		if a.onboarding != nil {
+			a.onboarding.LoadingModels = false
+			if m.err != nil {
+				a.onboarding.ModelError = "LM Studio недоступен: " + m.err.Error()
+			} else {
+				a.onboarding.Models = m.models
+				a.onboarding.ModelError = ""
+			}
+		}
+		return a, nil
+
+	case onboardingDoneMsg:
+		a.showOnboarding = false
+		cfg, err := config.Load(m.configPath)
+		if err != nil {
+			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] failed to load config: " + err.Error()})
+			a.chat.SetMessages(a.session.Messages)
+			return a, nil
+		}
+		a.cfg.Model = cfg.LLM.Model
+		a.header.Model = cfg.LLM.Model
+		a.statusBar.SetModel(cfg.LLM.Model)
+		binary := a.cfg.Binary
+		workspaceRoot := a.cfg.WorkspaceRoot
+		projectID := a.cfg.ProjectID
+		return a, func() tea.Msg {
+			ctx, cancel := context.WithCancel(context.Background())
+			client, err := rpcclient.Spawn(ctx, rpcclient.Config{
+				Binary:        binary,
+				WorkspaceRoot: workspaceRoot,
+				ProjectID:     projectID,
+			})
+			return rpcSpawnedMsg{client: client, cancel: cancel, err: err}
+		}
+
+	case rpcSpawnedMsg:
+		if m.err != nil {
+			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] failed to connect to core: " + m.err.Error()})
+			a.chat.SetMessages(a.session.Messages)
+			return a, nil
+		}
+		a.rpc = m.client
+		a.rpcCancel = m.cancel
+		return a, a.listenForEvents()
+
 	case tea.KeyMsg:
+		// Handle onboarding flow input first.
+		if a.showOnboarding && a.onboarding != nil {
+			return a.updateOnboarding(m)
+		}
+		// Handle command modal input.
+		if a.commandModal != nil && a.commandModal.Active() {
+			return a.updateCommandModal(m)
+		}
+
 		switch m.String() {
 		case "up":
 			if a.paletteActive {
@@ -163,7 +283,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y":
 			if a.permModal != nil {
 				a.permModal = nil
-				a.updateFooter()
+				a.updateStatusHints()
 				if a.rpc != nil {
 					a.rpc.RespondPermission(true)
 				}
@@ -172,7 +292,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			if a.permModal != nil {
 				a.permModal = nil
-				a.updateFooter()
+				a.updateStatusHints()
 				if a.rpc != nil {
 					a.rpc.RespondPermission(false)
 				}
@@ -180,23 +300,41 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "ctrl+c":
 			return a, tea.Quit
+		case "ctrl+k":
+			if a.commandModal == nil {
+				a.commandModal = view.NewPaletteModal(a.width, a.height)
+			}
+			a.commandModal.SetActive(true)
+			return a, nil
+		case "ctrl+o":
+			if a.showOnboarding {
+				return a, nil
+			}
+			if a.onboarding == nil {
+				a.onboarding = view.NewOnboardingView(a.width, a.height)
+			}
+			a.onboarding.Step = view.OnboardingModel
+			a.onboarding.LoadingModels = true
+			a.showOnboarding = true
+			endpoint := "http://localhost:1234"
+			return a, fetchModelsCmd(endpoint)
 		case "esc":
 			if a.mentionActive {
 				a.mentionActive = false
 				a.layout()
-				a.updateFooter()
+				a.updateStatusHints()
 				return a, nil
 			}
 			if a.paletteActive {
 				a.paletteActive = false
 				a.input.Reset()
 				a.layout()
-				a.updateFooter()
+				a.updateStatusHints()
 				return a, nil
 			}
 			if a.permModal != nil {
 				a.permModal = nil
-				a.updateFooter()
+				a.updateStatusHints()
 				if a.rpc != nil {
 					a.rpc.RespondPermission(false)
 				}
@@ -211,11 +349,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.mentionActive = false
 					a.syncPalette()
 					a.layout()
-					a.updateFooter()
+					a.updateStatusHints()
 				}
 				return a, nil
 			}
-			// existing: toggle last tool block
+			// Toggle last tool block.
 			a.session.ToggleLastToolBlock()
 			a.chat.SetMessages(a.session.Messages)
 			return a, nil
@@ -231,7 +369,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				a.chat.SetMessages(a.session.Messages)
 				a.layout()
-				a.updateFooter()
+				a.updateStatusHints()
 				rpc := a.rpc
 				return a, func() tea.Msg {
 					return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
@@ -249,7 +387,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.diffShown = true
 				}
 				a.chat.SetMessages(a.session.Messages)
-				a.updateFooter()
 				return a, nil
 			}
 
@@ -262,7 +399,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				a.chat.SetMessages(a.session.Messages)
 				a.layout()
-				a.updateFooter()
+				a.updateStatusHints()
 				return a, nil
 			}
 
@@ -274,7 +411,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.mentionActive = false
 				a.syncPalette()
 				a.layout()
-				a.updateFooter()
+				a.updateStatusHints()
 				return a, nil
 			}
 			if a.paletteActive {
@@ -282,8 +419,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.paletteActive = false
 				a.input.Reset()
 				a.layout()
+				a.updateStatusHints()
 				cmd := a.executePaletteCmd(selectedCmd)
-				a.updateFooter()
 				return a, cmd
 			}
 			if a.agentBusy {
@@ -301,6 +438,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.input.Reset()
 			if a.rpc != nil {
 				a.agentBusy = true
+				a.statusBar.SetAgentBusy(true)
 				go func(query string) {
 					_ = a.rpc.AgentRun(context.Background(), query)
 				}(text)
@@ -334,7 +472,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Sync palette state after key events that may change input value.
 	if _, isKey := msg.(tea.KeyMsg); isKey {
 		a.syncPalette()
-		a.updateFooter()
+		a.updateStatusHints()
 		a.layout()
 	}
 	return a, taCmd
@@ -361,7 +499,14 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) {
 	case rpcclient.EventDone, rpcclient.EventAgentRunCompleted:
 		a.session.FinishAssistant()
 		a.agentBusy = false
+		a.statusBar.SetAgentBusy(false)
+		a.statusBar.ClearError()
+		a.chat.SetStreamCursor(false)
 	case rpcclient.EventError, rpcclient.EventConnectionError:
+		a.agentBusy = false
+		a.statusBar.SetAgentBusy(false)
+		a.statusBar.SetError(ev.Err)
+		a.chat.SetStreamCursor(false)
 		a.session.AppendMessage(state.Message{
 			Role: state.RoleSystem,
 			Text: "[error] " + ev.Err,
@@ -378,7 +523,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) {
 		}
 	}
 	a.chat.SetMessages(a.session.Messages)
-	a.updateFooter()
+	a.updateStatusHints()
 }
 
 // View renders the full screen layout.
@@ -386,6 +531,13 @@ func (a *App) View() string {
 	if a.width == 0 || a.height == 0 {
 		return ""
 	}
+
+	// Onboarding overlays everything.
+	if a.showOnboarding && a.onboarding != nil {
+		a.onboarding.SetScreenSize(a.width, a.height)
+		return a.onboarding.Render()
+	}
+
 	parts := []string{a.header.Render(), a.chat.Render()}
 	if a.pendingOps != nil {
 		parts = append(parts, a.renderActionBar())
@@ -401,8 +553,16 @@ func (a *App) View() string {
 	} else {
 		parts = append(parts, a.input.Render())
 	}
-	parts = append(parts, a.footer.Render())
-	return strings.Join(parts, "\n")
+	parts = append(parts, a.statusBar.Render())
+
+	screen := strings.Join(parts, "\n")
+
+	// Command modal overlaid on top.
+	if a.commandModal != nil && a.commandModal.Active() {
+		a.commandModal.SetScreenSize(a.width, a.height)
+		return a.commandModal.Render()
+	}
+	return screen
 }
 
 func (a *App) renderActionBar() string {
@@ -417,7 +577,10 @@ func (a *App) renderActionBar() string {
 // layout recomputes child sizes based on current width/height.
 func (a *App) layout() {
 	a.header.SetSize(a.width)
-	a.footer.SetSize(a.width)
+	a.statusBar.SetWidth(a.width)
+	if a.commandModal != nil {
+		a.commandModal.SetScreenSize(a.width, a.height)
+	}
 
 	actionBarRows := 0
 	if a.pendingOps != nil {
@@ -444,6 +607,7 @@ func (a *App) layout() {
 		modalRows = 5
 		a.permModal.SetSize(a.width)
 	}
+	// header(1) + statusbar(1) + input + actionBar + modal + palette
 	chatHeight := a.height - 1 - 1 - inputRows - actionBarRows - modalRows - paletteRows
 	if chatHeight < 1 {
 		chatHeight = 1
@@ -585,6 +749,147 @@ func replaceLastMention(text, replacement string) string {
 	return text[:lastAt] + replacement + rest[spaceIdx:]
 }
 
+// updateOnboarding handles keyboard input while the onboarding wizard is active.
+func (a *App) updateOnboarding(m tea.KeyMsg) (tea.Model, tea.Cmd) {
+	ob := a.onboarding
+	switch m.String() {
+	case "ctrl+c":
+		return a, tea.Quit
+	case "esc":
+		if ob.Step == view.OnboardingProvider {
+			return a, nil // can't go back from first step
+		}
+		ob.Step--
+		return a, nil
+	case "up":
+		switch ob.Step {
+		case view.OnboardingProvider:
+			ob.ProviderCursorUp()
+		case view.OnboardingModel:
+			ob.ModelCursorUp()
+		case view.OnboardingSettings:
+			ob.SettingsCursorUp()
+		}
+	case "down":
+		switch ob.Step {
+		case view.OnboardingProvider:
+			ob.ProviderCursorDown()
+		case view.OnboardingModel:
+			ob.ModelCursorDown()
+		case view.OnboardingSettings:
+			ob.SettingsCursorDown()
+		}
+	case "left":
+		if ob.Step == view.OnboardingSettings {
+			ob.AdjustSetting(-1)
+		}
+	case "right":
+		if ob.Step == view.OnboardingSettings {
+			ob.AdjustSetting(+1)
+		}
+	case "enter":
+		switch ob.Step {
+		case view.OnboardingProvider:
+			p := ob.SelectedProvider()
+			endpoint := p.Endpoint
+			if p.Name == "Custom" {
+				endpoint = ob.CustomEndpoint
+			}
+			ob.Step = view.OnboardingModel
+			ob.LoadingModels = true
+			ob.ModelError = ""
+			return a, fetchModelsCmd(endpoint)
+		case view.OnboardingModel:
+			if len(ob.Models) > 0 {
+				sel := ob.SelectedModel()
+				if sel.MaxContextLength > 0 {
+					ob.Settings.NumCtx = sel.MaxContextLength
+				}
+				ob.Step = view.OnboardingSettings
+			}
+		case view.OnboardingSettings:
+			return a, a.saveOnboardingConfig()
+		}
+	default:
+		// Custom URL typing when editing custom endpoint.
+		if ob.Step == view.OnboardingProvider && ob.IsEditingCustom() {
+			if m.String() == "backspace" {
+				ob.BackspaceCustomEndpoint()
+			} else if len(m.Runes) == 1 {
+				ob.TypeCustomEndpoint(m.Runes[0])
+			}
+		}
+	}
+	return a, nil
+}
+
+// saveOnboardingConfig writes the selected model and settings to .orchestra.yml.
+func (a *App) saveOnboardingConfig() tea.Cmd {
+	ob := a.onboarding
+	sel := ob.SelectedModel()
+	p := ob.SelectedProvider()
+	endpoint := p.Endpoint
+	if p.Name == "Custom" {
+		endpoint = ob.CustomEndpoint
+	}
+	cfgPath := a.cfg.ConfigPath
+	workspaceRoot := a.cfg.WorkspaceRoot
+
+	return func() tea.Msg {
+		cfg, err := config.Load(cfgPath)
+		if err != nil {
+			cfg = config.DefaultConfig(workspaceRoot)
+			cfg.ProjectRoot = workspaceRoot
+		}
+		cfg.LLM.APIBase = endpoint
+		cfg.LLM.Model = sel.ID
+		cfg.LLM.Temperature = ob.Settings.Temperature
+		cfg.LLM.MaxTokens = ob.Settings.MaxTokens
+		if cfg.LLM.ExtraBody == nil {
+			cfg.LLM.ExtraBody = map[string]any{}
+		}
+		cfg.LLM.ExtraBody["num_ctx"] = ob.Settings.NumCtx
+		if ob.Settings.EnableThinking {
+			cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": true}
+		} else {
+			delete(cfg.LLM.ExtraBody, "chat_template_kwargs")
+		}
+		if err := config.Save(cfgPath, cfg); err != nil {
+			return modelsLoadedMsg{err: fmt.Errorf("save config: %w", err)}
+		}
+		return onboardingDoneMsg{configPath: cfgPath}
+	}
+}
+
+// updateCommandModal handles keyboard input while the Ctrl+K modal is open.
+func (a *App) updateCommandModal(m tea.KeyMsg) (tea.Model, tea.Cmd) {
+	cm := a.commandModal
+	switch m.String() {
+	case "ctrl+c":
+		return a, tea.Quit
+	case "esc":
+		cm.SetActive(false)
+	case "up":
+		cm.CursorUp()
+	case "down":
+		cm.CursorDown()
+	case "enter":
+		selected := cm.Selected()
+		cm.SetActive(false)
+		if selected != "" {
+			cmd := a.executePaletteCmd(selected)
+			return a, cmd
+		}
+	case "backspace":
+		cm.Backspace()
+	default:
+		if len(m.Runes) == 1 {
+			cm.TypeRune(m.Runes[0])
+		}
+	}
+	return a, nil
+}
+
 const helpText = `Orchestra TUI — key bindings:
   Enter         send message
   Shift+Enter   newline in input
@@ -592,6 +897,8 @@ const helpText = `Orchestra TUI — key bindings:
   ↑ / ↓         input history (single-line mode)
   /             slash command palette
   @             file mention (fuzzy)
+  Ctrl+K        command palette modal
+  Ctrl+O        change model (onboarding)
   a             apply pending ops
   d             toggle diff
   x             discard pending ops
@@ -664,18 +971,19 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 	return nil
 }
 
-func (a *App) updateFooter() {
+// updateStatusHints updates the status bar hint text based on the current UI state.
+func (a *App) updateStatusHints() {
 	switch {
 	case a.paletteActive:
-		a.footer.SetHints("↑↓ select · Enter execute · Esc cancel")
+		a.statusBar.SetHints("↑↓ select · Enter execute · Esc cancel")
 	case a.mentionActive:
-		a.footer.SetHints("↑↓ select · Enter/Tab insert · Esc cancel")
+		a.statusBar.SetHints("↑↓ select · Enter/Tab insert · Esc cancel")
 	case a.permModal != nil:
-		a.footer.SetHints("[y]es allow · [n]o deny · Esc deny")
+		a.statusBar.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:
-		a.footer.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
+		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
 	default:
-		a.footer.SetHints("")
+		a.statusBar.SetHints("/ commands")
 	}
 }
 
