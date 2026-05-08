@@ -129,12 +129,12 @@ func TestApp_SlashPalette_OpensOnSlash(t *testing.T) {
 	}
 	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
 
-	// Typing "/" should open the palette and change the footer hint.
+	// Typing "/" should open the palette — verify a palette item appears.
 	tm.Type("/")
 	teatest.WaitFor(
 		t, tm.Output(),
 		func(b []byte) bool {
-			return bytes.Contains(b, []byte("Enter execute"))
+			return bytes.Contains(b, []byte("show available commands"))
 		},
 		teatest.WithCheckInterval(50*time.Millisecond),
 		teatest.WithDuration(2*time.Second),
@@ -155,16 +155,16 @@ func TestApp_EscClosesPalette(t *testing.T) {
 	tm.Type("/")
 	teatest.WaitFor(
 		t, tm.Output(),
-		func(b []byte) bool { return bytes.Contains(b, []byte("Enter execute")) },
+		func(b []byte) bool { return bytes.Contains(b, []byte("show available commands")) },
 		teatest.WithCheckInterval(50*time.Millisecond),
 		teatest.WithDuration(2*time.Second),
 	)
 
-	// Esc should close it; footer returns to default.
+	// Esc should close palette — palette item disappears.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 	teatest.WaitFor(
 		t, tm.Output(),
-		func(b []byte) bool { return bytes.Contains(b, []byte("/ commands")) },
+		func(b []byte) bool { return !bytes.Contains(b, []byte("show available commands")) },
 		teatest.WithCheckInterval(50*time.Millisecond),
 		teatest.WithDuration(2*time.Second),
 	)

@@ -26,17 +26,24 @@ func NewInput(width int) Input {
 	base := lipgloss.NewStyle()
 
 	ta := textarea.New()
-	ta.BlurredStyle.Base = base.Background(bgColor).Foreground(textColor)
-	ta.BlurredStyle.CursorLine = base.Background(bgColor)
-	ta.BlurredStyle.Placeholder = base.Background(bgColor).Foreground(textMutedColor)
-	ta.BlurredStyle.Text = base.Background(bgColor).Foreground(textColor)
-	ta.BlurredStyle.EndOfBuffer = base.Background(bgColor)
+	bgFill := base.Background(bgColor)
+	ta.BlurredStyle.Base = bgFill.Foreground(textColor)
+	ta.BlurredStyle.CursorLine = bgFill
+	ta.BlurredStyle.CursorLineNumber = bgFill
+	ta.BlurredStyle.LineNumber = bgFill
+	ta.BlurredStyle.Placeholder = bgFill.Foreground(textMutedColor)
+	ta.BlurredStyle.Prompt = bgFill
+	ta.BlurredStyle.Text = bgFill.Foreground(textColor)
+	ta.BlurredStyle.EndOfBuffer = bgFill
 
-	ta.FocusedStyle.Base = base.Background(bgColor).Foreground(textColor)
-	ta.FocusedStyle.CursorLine = base.Background(bgColor)
-	ta.FocusedStyle.Placeholder = base.Background(bgColor).Foreground(textMutedColor)
-	ta.FocusedStyle.Text = base.Background(bgColor).Foreground(textColor)
-	ta.FocusedStyle.EndOfBuffer = base.Background(bgColor)
+	ta.FocusedStyle.Base = bgFill.Foreground(textColor)
+	ta.FocusedStyle.CursorLine = bgFill
+	ta.FocusedStyle.CursorLineNumber = bgFill
+	ta.FocusedStyle.LineNumber = bgFill
+	ta.FocusedStyle.Placeholder = bgFill.Foreground(textMutedColor)
+	ta.FocusedStyle.Prompt = bgFill
+	ta.FocusedStyle.Text = bgFill.Foreground(textColor)
+	ta.FocusedStyle.EndOfBuffer = bgFill
 
 	ta.Placeholder = "Спроси Orchestra…"
 	ta.Prompt = " "

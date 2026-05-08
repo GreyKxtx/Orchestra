@@ -1,0 +1,1013 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>applier: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/orchestra/orchestra/internal/applier/ops_applier.go (79.2%)</option>
+				
+				<option value="file1">github.com/orchestra/orchestra/internal/ops/ops.go (89.9%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package applier
+
+import (
+        "bytes"
+        "fmt"
+        "os"
+        "path/filepath"
+        "runtime"
+        "sort"
+        "strings"
+
+        "github.com/orchestra/orchestra/internal/ops"
+        "github.com/orchestra/orchestra/internal/protocol"
+        "github.com/orchestra/orchestra/internal/cache"
+)
+
+// ApplyOps applies Internal Ops v1 (compat wrapper for file.replace_range).
+//
+// Safety properties (per spec):
+// - Path traversal is rejected.
+// - Each op checks `expected` strictly at `range` OR uses fuzzy fallback if enabled.
+// - `conditions.file_hash` participates in stale detection (used to guard against applying to changed files).
+func ApplyOps(root string, in []ops.ReplaceRangeOp, opts ApplyOptions) (*ApplyResult, error) <span class="cov8" title="1">{
+        return ApplyAnyOps(root, ops.WrapReplaceRangeOps(in), opts)
+}</span>
+
+// ApplyAnyOps applies a mixed set of ops (replace_range, write_atomic, mkdir_all).
+//
+// Policy: all-or-nothing for validation (no writes on error). If validation succeeds
+// and opts.DryRun=false, writes are applied in deterministic path order.
+func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, error) <span class="cov8" title="1">{
+        if strings.TrimSpace(root) == "" </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("root is empty")
+        }</span>
+        <span class="cov8" title="1">rootAbs, err := filepath.Abs(root)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("abs root: %w", err)
+        }</span>
+        <span class="cov8" title="1">rootReal := rootAbs
+        if rp, err := filepath.EvalSymlinks(rootAbs); err == nil </span><span class="cov8" title="1">{
+                rootReal = rp
+        }</span>
+
+        <span class="cov8" title="1">type filePlan struct {
+                rel    string
+                abs    string
+                exists bool
+                perm   os.FileMode
+                before []byte
+                after  []byte
+        }
+
+        // Collect ops by kind/path (using canonical slash paths for stable ordering).
+        replaceByPath := make(map[string][]ops.ReplaceRangeOp)
+        writeByPath := make(map[string]ops.WriteAtomicOp)
+        mkdirByPath := make(map[string]ops.MkdirAllOp)
+
+        absByRel := make(map[string]string)
+        getAbs := func(rel string) (string, error) </span><span class="cov8" title="1">{
+                if v, ok := absByRel[rel]; ok </span><span class="cov8" title="1">{
+                        return v, nil
+                }</span>
+                <span class="cov8" title="1">abs, err := safeAbsPath(rootAbs, rootReal, rel)
+                if err != nil </span><span class="cov8" title="1">{
+                        return "", err
+                }</span>
+                <span class="cov8" title="1">absByRel[rel] = abs
+                return abs, nil</span>
+        }
+
+        <span class="cov8" title="1">canonRel := func(p string) (string, error) </span><span class="cov8" title="1">{
+                rp := filepath.ToSlash(strings.TrimSpace(p))
+                if rp == "" </span><span class="cov0" title="0">{
+                        return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
+                }</span>
+                <span class="cov8" title="1">rp = filepath.Clean(filepath.FromSlash(rp))
+                rp = filepath.ToSlash(rp)
+                if rp == "." </span><span class="cov0" title="0">{
+                        return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
+                }</span>
+                <span class="cov8" title="1">return rp, nil</span>
+        }
+
+        <span class="cov8" title="1">for _, anyOp := range in </span><span class="cov8" title="1">{
+                opName := strings.TrimSpace(anyOp.Op)
+                switch opName </span>{
+                case ops.OpFileReplaceRange:<span class="cov8" title="1">
+                        if anyOp.ReplaceRange == nil </span><span class="cov0" title="0">{
+                                return nil, protocol.NewError(protocol.InvalidLLMOutput, "missing replace_range payload", map[string]any{"op": opName})
+                        }</span>
+                        <span class="cov8" title="1">rr := *anyOp.ReplaceRange
+                        if rr.Op == "" </span><span class="cov0" title="0">{
+                                rr.Op = ops.OpFileReplaceRange
+                        }</span>
+                        <span class="cov8" title="1">rel, err := canonRel(rr.Path)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                        <span class="cov8" title="1">rr.Path = rel
+                        if _, err := getAbs(rel); err != nil </span><span class="cov8" title="1">{
+                                return nil, err
+                        }</span>
+                        <span class="cov8" title="1">replaceByPath[rel] = append(replaceByPath[rel], rr)</span>
+
+                case ops.OpFileWriteAtomic:<span class="cov8" title="1">
+                        if anyOp.WriteAtomic == nil </span><span class="cov0" title="0">{
+                                return nil, protocol.NewError(protocol.InvalidLLMOutput, "missing write_atomic payload", map[string]any{"op": opName})
+                        }</span>
+                        <span class="cov8" title="1">wa := *anyOp.WriteAtomic
+                        if wa.Op == "" </span><span class="cov0" title="0">{
+                                wa.Op = ops.OpFileWriteAtomic
+                        }</span>
+                        <span class="cov8" title="1">rel, err := canonRel(wa.Path)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                        <span class="cov8" title="1">wa.Path = rel
+                        if _, ok := replaceByPath[rel]; ok </span><span class="cov8" title="1">{
+                                return nil, protocol.NewError(protocol.InvalidLLMOutput, "conflicting ops for same path", map[string]any{"path": rel})
+                        }</span>
+                        <span class="cov8" title="1">if _, exists := writeByPath[rel]; exists </span><span class="cov0" title="0">{
+                                return nil, protocol.NewError(protocol.InvalidLLMOutput, "duplicate write_atomic for path", map[string]any{"path": rel})
+                        }</span>
+                        <span class="cov8" title="1">if _, err := getAbs(rel); err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                        <span class="cov8" title="1">writeByPath[rel] = wa</span>
+
+                case ops.OpFileMkdirAll:<span class="cov8" title="1">
+                        if anyOp.MkdirAll == nil </span><span class="cov0" title="0">{
+                                return nil, protocol.NewError(protocol.InvalidLLMOutput, "missing mkdir_all payload", map[string]any{"op": opName})
+                        }</span>
+                        <span class="cov8" title="1">md := *anyOp.MkdirAll
+                        if md.Op == "" </span><span class="cov0" title="0">{
+                                md.Op = ops.OpFileMkdirAll
+                        }</span>
+                        <span class="cov8" title="1">rel, err := canonRel(md.Path)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                        <span class="cov8" title="1">md.Path = rel
+                        if _, err := getAbs(rel); err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                        <span class="cov8" title="1">mkdirByPath[rel] = md</span> // dedupe by canonical rel path
+
+                default:<span class="cov0" title="0">
+                        if opName == "" </span><span class="cov0" title="0">{
+                                opName = "&lt;empty&gt;"
+                        }</span>
+                        <span class="cov0" title="0">return nil, protocol.NewError(protocol.InvalidLLMOutput, "unsupported op", map[string]any{"op": opName})</span>
+                }
+        }
+
+        <span class="cov8" title="1">plans := make(map[string]*filePlan, len(replaceByPath)+len(writeByPath))
+        loadPlan := func(rel string) (*filePlan, error) </span><span class="cov8" title="1">{
+                if fp, ok := plans[rel]; ok </span><span class="cov0" title="0">{
+                        return fp, nil
+                }</span>
+                <span class="cov8" title="1">abs, err := getAbs(rel)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+
+                <span class="cov8" title="1">st, statErr := os.Stat(abs)
+                exists := false
+                perm := os.FileMode(0644)
+                var before []byte
+                if statErr == nil </span><span class="cov8" title="1">{
+                        if st.IsDir() </span><span class="cov0" title="0">{
+                                return nil, protocol.NewError(protocol.InvalidLLMOutput, "path is a directory", map[string]any{"path": rel})
+                        }</span>
+                        <span class="cov8" title="1">exists = true
+                        perm = st.Mode().Perm()
+                        b, rerr := os.ReadFile(abs)
+                        if rerr != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("failed to read file %s: %w", rel, rerr)
+                        }</span>
+                        <span class="cov8" title="1">before = b</span>
+                } else<span class="cov8" title="1"> if !os.IsNotExist(statErr) </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to stat file %s: %w", rel, statErr)
+                }</span>
+
+                <span class="cov8" title="1">fp := &amp;filePlan{
+                        rel:    rel,
+                        abs:    abs,
+                        exists: exists,
+                        perm:   perm,
+                        before: before,
+                        after:  append([]byte(nil), before...),
+                }
+                plans[rel] = fp
+                return fp, nil</span>
+        }
+
+        // Plan replace_range edits.
+        <span class="cov8" title="1">for rel, fileOps := range replaceByPath </span><span class="cov8" title="1">{
+                fp, err := loadPlan(rel)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">after, err := applyReplaceRangeOps(rel, fp.before, fileOps)
+                if err != nil </span><span class="cov8" title="1">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">fp.after = after</span>
+        }
+
+        // Plan write_atomic writes.
+        <span class="cov8" title="1">for rel, wa := range writeByPath </span><span class="cov8" title="1">{
+                fp, err := loadPlan(rel)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">if wa.Conditions.MustNotExist &amp;&amp; fp.exists </span><span class="cov8" title="1">{
+                        return nil, protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{
+                                "path": rel,
+                        })
+                }</span>
+                <span class="cov8" title="1">actualHash := cache.ComputeSHA256(fp.before)
+                if strings.TrimSpace(wa.Conditions.FileHash) != "" &amp;&amp; strings.TrimSpace(wa.Conditions.FileHash) != actualHash </span><span class="cov8" title="1">{
+                        return nil, protocol.NewError(protocol.StaleContent, "cannot apply op: file_hash mismatch", map[string]any{
+                                "path":          rel,
+                                "expected_hash": wa.Conditions.FileHash,
+                                "actual_hash":   actualHash,
+                        })
+                }</span>
+
+                <span class="cov8" title="1">perm := fp.perm
+                if wa.Mode != 0 </span><span class="cov0" title="0">{
+                        perm = os.FileMode(wa.Mode) &amp; os.ModePerm
+                }</span> else<span class="cov8" title="1"> if !fp.exists </span><span class="cov8" title="1">{
+                        perm = 0644
+                }</span>
+                <span class="cov8" title="1">fp.perm = perm
+                fp.after = []byte(wa.Content)</span>
+        }
+
+        // Prepare deterministic output.
+        <span class="cov8" title="1">paths := make([]string, 0, len(plans))
+        for p := range plans </span><span class="cov8" title="1">{
+                paths = append(paths, p)
+        }</span>
+        <span class="cov8" title="1">sort.Strings(paths)
+
+        result := &amp;ApplyResult{
+                Diffs:        make([]FileDiff, 0, len(paths)),
+                ChangedFiles: make([]string, 0, len(paths)),
+        }
+        for _, rel := range paths </span><span class="cov8" title="1">{
+                fp := plans[rel]
+                result.Diffs = append(result.Diffs, FileDiff{
+                        Path:   rel,
+                        Before: string(fp.before),
+                        After:  string(fp.after),
+                })
+                if !bytes.Equal(fp.before, fp.after) </span><span class="cov8" title="1">{
+                        result.ChangedFiles = append(result.ChangedFiles, rel)
+                }</span>
+        }
+
+        <span class="cov8" title="1">if opts.DryRun </span><span class="cov8" title="1">{
+                return result, nil
+        }</span>
+
+        // Apply mkdir_all (sorted for determinism).
+        <span class="cov8" title="1">mkdirPaths := make([]string, 0, len(mkdirByPath))
+        for p := range mkdirByPath </span><span class="cov8" title="1">{
+                mkdirPaths = append(mkdirPaths, p)
+        }</span>
+        <span class="cov8" title="1">sort.Strings(mkdirPaths)
+        for _, rel := range mkdirPaths </span><span class="cov8" title="1">{
+                md := mkdirByPath[rel]
+                abs, err := getAbs(rel)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">mode := os.FileMode(0755)
+                if md.Mode != 0 </span><span class="cov0" title="0">{
+                        mode = os.FileMode(md.Mode) &amp; os.ModePerm
+                }</span>
+                <span class="cov8" title="1">if err := os.MkdirAll(abs, mode); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to create directory %s: %w", rel, err)
+                }</span>
+                // Best-effort: ensure directory doesn't escape via symlink/junction.
+                <span class="cov8" title="1">if realDir, err := filepath.EvalSymlinks(abs); err == nil &amp;&amp; !isWithinRoot(rootReal, realDir) </span><span class="cov0" title="0">{
+                        return nil, protocol.NewError(protocol.PathTraversal, "path escapes workspace (via symlink/junction)", map[string]any{
+                                "path": rel,
+                        })
+                }</span>
+        }
+
+        // Apply file writes in deterministic path order.
+        <span class="cov8" title="1">for _, rel := range paths </span><span class="cov8" title="1">{
+                fp := plans[rel]
+                if bytes.Equal(fp.before, fp.after) </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                // Backup existing file if requested (never for new files).
+                <span class="cov8" title="1">if opts.Backup &amp;&amp; fp.exists &amp;&amp; opts.BackupSuffix != "" </span><span class="cov8" title="1">{
+                        backupPath := fp.abs + opts.BackupSuffix
+                        if err := atomicWriteFile(backupPath, fp.before, fp.perm, rootReal); err != nil </span><span class="cov0" title="0">{
+                                return nil, fmt.Errorf("failed to create backup: %w", err)
+                        }</span>
+                }
+
+                <span class="cov8" title="1">if err := atomicWriteFile(fp.abs, fp.after, fp.perm, rootReal); err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to write file: %w", err)
+                }</span>
+        }
+
+        <span class="cov8" title="1">return result, nil</span>
+}
+
+func applyReplaceRangeOps(relPath string, before []byte, fileOps []ops.ReplaceRangeOp) ([]byte, error) <span class="cov8" title="1">{
+        baseHash := cache.ComputeSHA256(before)
+
+        // Apply from bottom to top so earlier edits don't shift later ranges.
+        sort.Slice(fileOps, func(i, j int) bool </span><span class="cov8" title="1">{
+                a := fileOps[i].Range.Start
+                b := fileOps[j].Range.Start
+                if a.Line != b.Line </span><span class="cov8" title="1">{
+                        return a.Line &gt; b.Line
+                }</span>
+                <span class="cov0" title="0">return a.Col &gt; b.Col</span>
+        })
+
+        <span class="cov8" title="1">after := append([]byte(nil), before...)
+
+        for _, op := range fileOps </span><span class="cov8" title="1">{
+                if op.Op == "" </span><span class="cov0" title="0">{
+                        op.Op = ops.OpFileReplaceRange
+                }</span>
+                <span class="cov8" title="1">if op.Op != ops.OpFileReplaceRange </span><span class="cov0" title="0">{
+                        return nil, protocol.NewError(protocol.InvalidLLMOutput, "unsupported op", map[string]any{
+                                "op":   op.Op,
+                                "path": relPath,
+                        })
+                }</span>
+                <span class="cov8" title="1">if strings.TrimSpace(op.Path) == "" </span><span class="cov0" title="0">{
+                        return nil, protocol.NewError(protocol.InvalidLLMOutput, "op.path is empty", nil)
+                }</span>
+                <span class="cov8" title="1">if op.Range.Start.Line &lt; 0 || op.Range.Start.Col &lt; 0 || op.Range.End.Line &lt; 0 || op.Range.End.Col &lt; 0 </span><span class="cov0" title="0">{
+                        return nil, protocol.NewError(protocol.InvalidLLMOutput, "range must be non-negative", map[string]any{
+                                "path":  relPath,
+                                "range": op.Range,
+                        })
+                }</span>
+
+                // If the caller provided a file_hash condition, enforce it strictly.
+                // This makes --from-plan deterministic and prevents applying to a changed file.
+                <span class="cov8" title="1">if strings.TrimSpace(op.Conditions.FileHash) != "" &amp;&amp; strings.TrimSpace(op.Conditions.FileHash) != baseHash </span><span class="cov8" title="1">{
+                        return nil, staleContentErr(relPath, op, baseHash, "file_hash mismatch")
+                }</span>
+
+                <span class="cov8" title="1">allowFuzzy := op.Conditions.AllowFuzzy
+                fuzzyWindow := op.Conditions.FuzzyWindow
+                if allowFuzzy &amp;&amp; fuzzyWindow &lt;= 0 </span><span class="cov0" title="0">{
+                        fuzzyWindow = 2
+                }</span>
+
+                <span class="cov8" title="1">startOff, endOff, err := offsetsForRange(after, op.Range)
+                if err == nil &amp;&amp; startOff &lt;= endOff </span><span class="cov8" title="1">{
+                        // Strict check first.
+                        if bytes.Equal(after[startOff:endOff], []byte(op.Expected)) </span><span class="cov8" title="1">{
+                                after = replaceBytes(after, startOff, endOff, []byte(op.Replacement))
+                                continue</span>
+                        }
+                }
+
+                // Strict failed (range mismatch/out of bounds). Try fuzzy if allowed.
+                <span class="cov8" title="1">if allowFuzzy </span><span class="cov8" title="1">{
+                        matchStart, matchEnd, matches, findErr := fuzzyFindInWindow(after, op.Expected, op.Range.Start.Line, fuzzyWindow)
+                        if findErr != nil </span><span class="cov0" title="0">{
+                                return nil, staleContentErr(relPath, op, baseHash, findErr.Error())
+                        }</span>
+                        <span class="cov8" title="1">if matches == 0 </span><span class="cov0" title="0">{
+                                return nil, staleContentErr(relPath, op, baseHash, "fuzzy match not found")
+                        }</span>
+                        <span class="cov8" title="1">if matches &gt; 1 </span><span class="cov8" title="1">{
+                                return nil, protocol.NewError(protocol.AmbiguousMatch, "fuzzy match ambiguous", map[string]any{
+                                        "path":     relPath,
+                                        "matches":  matches,
+                                        "window":   fuzzyWindow,
+                                        "expected": preview(op.Expected, 200),
+                                })
+                        }</span>
+                        <span class="cov8" title="1">after = replaceBytes(after, matchStart, matchEnd, []byte(op.Replacement))
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">return nil, staleContentErr(relPath, op, baseHash, "strict match failed (and fuzzy disabled)")</span>
+        }
+
+        <span class="cov8" title="1">return after, nil</span>
+}
+
+func safeAbsPath(rootAbs, rootReal, relPath string) (string, error) <span class="cov8" title="1">{
+        rp := filepath.ToSlash(strings.TrimSpace(relPath))
+        if rp == "" </span><span class="cov0" title="0">{
+                return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
+        }</span>
+        <span class="cov8" title="1">rp = filepath.Clean(filepath.FromSlash(rp))
+        if rp == "." </span><span class="cov0" title="0">{
+                return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": relPath})
+        }</span>
+        <span class="cov8" title="1">abs := filepath.Join(rootAbs, rp)
+        abs = filepath.Clean(abs)
+
+        // Security: ensure path is within root (lexical).
+        rel, err := filepath.Rel(rootAbs, abs)
+        if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) </span><span class="cov8" title="1">{
+                return "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{
+                        "path": relPath,
+                })
+        }</span>
+
+        // Symlink/junction escape protection: validate the deepest existing parent directory.
+        <span class="cov8" title="1">dir := filepath.Dir(abs)
+        if realDir, ok, rerr := evalDeepestExistingDir(dir); rerr != nil </span><span class="cov0" title="0">{
+                return "", protocol.NewError(protocol.PathTraversal, "cannot resolve path (symlink/junction)", map[string]any{
+                        "path":  relPath,
+                        "error": rerr.Error(),
+                })
+        }</span> else<span class="cov8" title="1"> if ok </span><span class="cov8" title="1">{
+                if !isWithinRoot(rootReal, realDir) </span><span class="cov8" title="1">{
+                        return "", protocol.NewError(protocol.PathTraversal, "path escapes workspace (via symlink/junction)", map[string]any{
+                                "path": relPath,
+                        })
+                }</span>
+        }
+
+        // Refuse to write to symlink files (atomic rename would replace the symlink itself).
+        <span class="cov8" title="1">if fi, err := os.Lstat(abs); err == nil </span><span class="cov8" title="1">{
+                if fi.Mode()&amp;os.ModeSymlink != 0 </span><span class="cov0" title="0">{
+                        return "", protocol.NewError(protocol.PathTraversal, "path is a symlink", map[string]any{
+                                "path": relPath,
+                        })
+                }</span>
+        }
+        <span class="cov8" title="1">return abs, nil</span>
+}
+
+func evalDeepestExistingDir(dir string) (real string, ok bool, _ error) <span class="cov8" title="1">{
+        d := filepath.Clean(dir)
+        for </span><span class="cov8" title="1">{
+                st, err := os.Stat(d)
+                if err == nil &amp;&amp; st.IsDir() </span><span class="cov8" title="1">{
+                        rd, err := filepath.EvalSymlinks(d)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return "", false, err
+                        }</span>
+                        <span class="cov8" title="1">return rd, true, nil</span>
+                }
+                <span class="cov8" title="1">parent := filepath.Dir(d)
+                if parent == d || parent == "." || parent == string(os.PathSeparator) </span><span class="cov0" title="0">{
+                        return "", false, nil
+                }</span>
+                <span class="cov8" title="1">d = parent</span>
+        }
+}
+
+// isWithinRoot checks if targetAbs is within rootAbs using realpath comparison.
+// On Windows, handles case-insensitive comparison and extended paths (\\?\ prefix).
+func isWithinRoot(rootAbs, targetAbs string) bool <span class="cov8" title="1">{
+        // Normalize both paths
+        r := filepath.Clean(rootAbs)
+        t := filepath.Clean(targetAbs)
+
+        // Handle Windows extended paths (\\?\ prefix)
+        if runtime.GOOS == "windows" </span><span class="cov8" title="1">{
+                // Remove \\?\ prefix if present for comparison
+                r = strings.TrimPrefix(r, `\\?\`)
+                t = strings.TrimPrefix(t, `\\?\`)
+                // Case-insensitive comparison on Windows
+                r = strings.ToLower(r)
+                t = strings.ToLower(t)
+        }</span>
+
+        // Exact match
+        <span class="cov8" title="1">if r == t </span><span class="cov8" title="1">{
+                return true
+        }</span>
+
+        // Ensure root ends with separator for prefix check
+        <span class="cov8" title="1">sep := string(os.PathSeparator)
+        if !strings.HasSuffix(r, sep) </span><span class="cov8" title="1">{
+                r += sep
+        }</span>
+
+        // Check if target starts with root + separator
+        // This prevents false positives like "C:\repo2" matching "C:\repo"
+        <span class="cov8" title="1">return strings.HasPrefix(t, r)</span>
+}
+
+func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string) error <span class="cov8" title="1">{
+        dir := filepath.Dir(path)
+        base := filepath.Base(path)
+
+        if err := os.MkdirAll(dir, 0755); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create directory: %w", err)
+        }</span>
+        // Best-effort TOCTOU mitigation: after mkdir, ensure the real directory stays within root.
+        <span class="cov8" title="1">if strings.TrimSpace(rootReal) != "" </span><span class="cov8" title="1">{
+                if realDir, err := filepath.EvalSymlinks(dir); err == nil &amp;&amp; !isWithinRoot(rootReal, realDir) </span><span class="cov0" title="0">{
+                        return protocol.NewError(protocol.PathTraversal, "path escapes workspace (via symlink/junction)", map[string]any{
+                                "path": filepath.ToSlash(path),
+                        })
+                }</span>
+        }
+
+        <span class="cov8" title="1">tmp, err := os.CreateTemp(dir, base+".tmp-*")
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create temp file: %w", err)
+        }</span>
+        <span class="cov8" title="1">tmpName := tmp.Name()
+
+        cleanup := func() </span><span class="cov0" title="0">{
+                _ = tmp.Close()
+                _ = os.Remove(tmpName)
+        }</span>
+
+        <span class="cov8" title="1">if _, err := tmp.Write(data); err != nil </span><span class="cov0" title="0">{
+                cleanup()
+                return fmt.Errorf("failed to write temp file: %w", err)
+        }</span>
+        <span class="cov8" title="1">if err := tmp.Sync(); err != nil </span><span class="cov0" title="0">{
+                cleanup()
+                return fmt.Errorf("failed to sync temp file: %w", err)
+        }</span>
+        <span class="cov8" title="1">if err := tmp.Close(); err != nil </span><span class="cov0" title="0">{
+                _ = os.Remove(tmpName)
+                return fmt.Errorf("failed to close temp file: %w", err)
+        }</span>
+
+        // Best-effort atomic replace.
+        // Note: on Unix this is atomic within the same directory; on Windows replace is best-effort.
+        <span class="cov8" title="1">if err := os.Rename(tmpName, path); err == nil </span><span class="cov8" title="1">{
+                _ = os.Chmod(path, perm)
+                return nil
+        }</span>
+
+        // Windows: os.Rename fails if destination exists.
+        <span class="cov0" title="0">_ = os.Remove(path)
+        if err := os.Rename(tmpName, path); err != nil </span><span class="cov0" title="0">{
+                _ = os.Remove(tmpName)
+                return fmt.Errorf("failed to rename temp file: %w", err)
+        }</span>
+        <span class="cov0" title="0">_ = os.Chmod(path, perm)
+        return nil</span>
+}
+
+func staleContentErr(path string, op ops.ReplaceRangeOp, actualHash string, reason string) error <span class="cov8" title="1">{
+        return protocol.NewError(protocol.StaleContent, "cannot apply op: "+reason, map[string]any{
+                "path":          path,
+                "expected_hash": op.Conditions.FileHash,
+                "actual_hash":   actualHash,
+                "range":         op.Range,
+                "expected":      preview(op.Expected, 200),
+        })
+}</span>
+
+func preview(s string, max int) string <span class="cov8" title="1">{
+        s = strings.ReplaceAll(s, "\r\n", "\n")
+        if max &lt;= 0 || len(s) &lt;= max </span><span class="cov8" title="1">{
+                return s
+        }</span>
+        <span class="cov8" title="1">return s[:max] + "\n...(truncated)"</span>
+}
+
+func replaceBytes(in []byte, start, end int, replacement []byte) []byte <span class="cov8" title="1">{
+        out := make([]byte, 0, len(in)-max(0, end-start)+len(replacement))
+        out = append(out, in[:start]...)
+        out = append(out, replacement...)
+        out = append(out, in[end:]...)
+        return out
+}</span>
+
+func max(a, b int) int <span class="cov8" title="1">{
+        if a &gt; b </span><span class="cov0" title="0">{
+                return a
+        }</span>
+        <span class="cov8" title="1">return b</span>
+}
+
+func offsetsForRange(content []byte, r ops.Range) (start, end int, _ error) <span class="cov8" title="1">{
+        lineStarts := computeLineStarts(content)
+        start, err := offsetForPos(lineStarts, content, r.Start)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, 0, err
+        }</span>
+        <span class="cov8" title="1">end, err = offsetForPos(lineStarts, content, r.End)
+        if err != nil </span><span class="cov8" title="1">{
+                return 0, 0, err
+        }</span>
+        <span class="cov8" title="1">if end &lt; start </span><span class="cov0" title="0">{
+                return 0, 0, fmt.Errorf("range end precedes start")
+        }</span>
+        <span class="cov8" title="1">return start, end, nil</span>
+}
+
+func computeLineStarts(content []byte) []int <span class="cov8" title="1">{
+        // lineStarts contains the byte offset for each line start.
+        // line 0 always starts at offset 0, even for empty file.
+        starts := make([]int, 0, 64)
+        starts = append(starts, 0)
+        for i := 0; i &lt; len(content); i++ </span><span class="cov8" title="1">{
+                if content[i] == '\n' </span><span class="cov8" title="1">{
+                        starts = append(starts, i+1)
+                }</span>
+        }
+        <span class="cov8" title="1">return starts</span>
+}
+
+func offsetForPos(lineStarts []int, content []byte, p ops.Position) (int, error) <span class="cov8" title="1">{
+        if p.Line &lt; 0 || p.Col &lt; 0 </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("negative position")
+        }</span>
+        <span class="cov8" title="1">if p.Line &gt;= len(lineStarts) </span><span class="cov8" title="1">{
+                return 0, fmt.Errorf("line out of range")
+        }</span>
+        <span class="cov8" title="1">lineStart := lineStarts[p.Line]
+
+        // Find line end (exclusive, without '\n').
+        lineEnd := len(content)
+        if p.Line+1 &lt; len(lineStarts) </span><span class="cov8" title="1">{
+                // next line start - 1 is '\n' (or EOF)
+                lineEnd = lineStarts[p.Line+1] - 1
+                if lineEnd &lt; lineStart </span><span class="cov0" title="0">{
+                        lineEnd = lineStart
+                }</span>
+        }
+        <span class="cov8" title="1">lineLen := lineEnd - lineStart
+        if p.Col &gt; lineLen </span><span class="cov8" title="1">{
+                return 0, fmt.Errorf("col out of range")
+        }</span>
+        <span class="cov8" title="1">return lineStart + p.Col, nil</span>
+}
+
+func fuzzyFindInWindow(content []byte, expected string, startLine int, window int) (matchStart, matchEnd, matches int, _ error) <span class="cov8" title="1">{
+        if window &lt; 0 </span><span class="cov0" title="0">{
+                return 0, 0, 0, fmt.Errorf("invalid fuzzy window")
+        }</span>
+
+        <span class="cov8" title="1">lineStarts := computeLineStarts(content)
+        if len(lineStarts) == 0 </span><span class="cov0" title="0">{
+                lineStarts = []int{0}
+        }</span>
+        <span class="cov8" title="1">if startLine &lt; 0 </span><span class="cov0" title="0">{
+                startLine = 0
+        }</span>
+        <span class="cov8" title="1">if startLine &gt;= len(lineStarts) </span><span class="cov0" title="0">{
+                startLine = len(lineStarts) - 1
+        }</span>
+
+        <span class="cov8" title="1">startL := startLine - window
+        if startL &lt; 0 </span><span class="cov8" title="1">{
+                startL = 0
+        }</span>
+        <span class="cov8" title="1">endL := startLine + window
+        if endL &gt;= len(lineStarts) </span><span class="cov8" title="1">{
+                endL = len(lineStarts) - 1
+        }</span>
+
+        <span class="cov8" title="1">winStart := lineStarts[startL]
+        // endL is inclusive; take start offset of line endL+1 as the end, or EOF.
+        winEnd := len(content)
+        if endL+1 &lt; len(lineStarts) </span><span class="cov8" title="1">{
+                winEnd = lineStarts[endL+1]
+        }</span>
+        <span class="cov8" title="1">if winEnd &lt; winStart </span><span class="cov0" title="0">{
+                winEnd = winStart
+        }</span>
+
+        <span class="cov8" title="1">hay := content[winStart:winEnd]
+        needle := []byte(expected)
+
+        // Count occurrences (up to 2).
+        idx := 0
+        for </span><span class="cov8" title="1">{
+                j := bytes.Index(hay[idx:], needle)
+                if j &lt; 0 </span><span class="cov8" title="1">{
+                        break</span>
+                }
+                <span class="cov8" title="1">matches++
+                if matches &gt; 1 </span><span class="cov8" title="1">{
+                        return 0, 0, matches, nil
+                }</span>
+                <span class="cov8" title="1">matchStart = winStart + idx + j
+                matchEnd = matchStart + len(needle)
+                idx = idx + j + max(1, len(needle))</span>
+        }
+
+        <span class="cov8" title="1">return matchStart, matchEnd, matches, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package ops
+
+import (
+        "bytes"
+        "encoding/json"
+        "fmt"
+        "io"
+        "strings"
+)
+
+// Internal Ops v1
+
+const (
+        OpFileReplaceRange = "file.replace_range"
+        OpFileWriteAtomic  = "file.write_atomic"
+        OpFileMkdirAll     = "file.mkdir_all"
+)
+
+type Position struct {
+        Line int `json:"line"` // 0-based
+        Col  int `json:"col"`  // 0-based (UTF-8 byte offset within the line)
+}
+
+type Range struct {
+        Start Position `json:"start"`
+        End   Position `json:"end"`
+}
+
+type Conditions struct {
+        FileHash    string `json:"file_hash,omitempty"`   // sha256:&lt;hex&gt;
+        AllowFuzzy  bool   `json:"allow_fuzzy,omitempty"` // default: false
+        FuzzyWindow int    `json:"fuzzy_window,omitempty"`
+}
+
+// ReplaceRangeOp replaces an exact expected slice (strict) with a replacement.
+//
+// Coordinates use 0-based line/col and an end-exclusive range.
+type ReplaceRangeOp struct {
+        Op          string     `json:"op"`
+        Path        string     `json:"path"`
+        Range       Range      `json:"range"`
+        Expected    string     `json:"expected"`
+        Replacement string     `json:"replacement"`
+        Conditions  Conditions `json:"conditions,omitempty"`
+}
+
+// UnmarshalJSON implements custom unmarshaling to normalize common LLM mistakes.
+// Specifically, normalizes "type" field to "op" if "op" is missing.
+// This handles cases where LLM generates {"type": "file.replace_range"} instead of {"op": "file.replace_range"}.
+func (r *ReplaceRangeOp) UnmarshalJSON(data []byte) error <span class="cov8" title="1">{
+        // First, decode into a map to check for "type" field
+        var raw map[string]json.RawMessage
+        if err := json.Unmarshal(data, &amp;raw); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Normalize: if "op" is missing but "type" exists, use "type" as "op"
+        <span class="cov8" title="1">if _, hasOp := raw["op"]; !hasOp </span><span class="cov8" title="1">{
+                if typeVal, hasType := raw["type"]; hasType </span><span class="cov8" title="1">{
+                        raw["op"] = typeVal
+                        // Re-encode with normalized field
+                        data, _ = json.Marshal(raw)
+                }</span>
+        }
+
+        // Use type alias to avoid infinite recursion
+        <span class="cov8" title="1">type Alias ReplaceRangeOp
+        var alias Alias
+        if err := json.Unmarshal(data, &amp;alias); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov8" title="1">*r = ReplaceRangeOp(alias)
+        return nil</span>
+}
+
+type WriteAtomicConditions struct {
+        MustNotExist bool   `json:"must_not_exist,omitempty"`
+        FileHash     string `json:"file_hash,omitempty"` // sha256:&lt;hex&gt;
+}
+
+// WriteAtomicOp writes full file content atomically (create or replace).
+type WriteAtomicOp struct {
+        Op         string                `json:"op"`
+        Path       string                `json:"path"`
+        Content    string                `json:"content"`
+        Mode       int                   `json:"mode,omitempty"` // e.g. 420 = 0644
+        Conditions WriteAtomicConditions `json:"conditions,omitempty"`
+}
+
+// MkdirAllOp creates a directory path inside the workspace.
+type MkdirAllOp struct {
+        Op   string `json:"op"`
+        Path string `json:"path"`
+        Mode int    `json:"mode,omitempty"` // e.g. 493 = 0755
+}
+
+// AnyOp is a union of supported internal ops for fs.apply_ops.
+//
+// It keeps the raw "op" string for stable JSON and provides typed accessors.
+type AnyOp struct {
+        Op   string `json:"op"`
+        Path string `json:"path,omitempty"`
+
+        ReplaceRange *ReplaceRangeOp `json:"-"`
+        WriteAtomic  *WriteAtomicOp  `json:"-"`
+        MkdirAll     *MkdirAllOp     `json:"-"`
+}
+
+func (o AnyOp) MarshalJSON() ([]byte, error) <span class="cov8" title="1">{
+        switch </span>{
+        case o.ReplaceRange != nil:<span class="cov8" title="1">
+                return json.Marshal(o.ReplaceRange)</span>
+        case o.WriteAtomic != nil:<span class="cov8" title="1">
+                return json.Marshal(o.WriteAtomic)</span>
+        case o.MkdirAll != nil:<span class="cov8" title="1">
+                return json.Marshal(o.MkdirAll)</span>
+        default:<span class="cov8" title="1">
+                // Fallback: emit op/path only.
+                type minimal struct {
+                        Op   string `json:"op"`
+                        Path string `json:"path,omitempty"`
+                }
+                return json.Marshal(minimal{Op: o.Op, Path: o.Path})</span>
+        }
+}
+
+func (o *AnyOp) UnmarshalJSON(data []byte) error <span class="cov8" title="1">{
+        var raw map[string]json.RawMessage
+        if err := json.Unmarshal(data, &amp;raw); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Normalize: allow "type" as alias for "op"; always strip "type" so strict decoder doesn't reject it.
+        <span class="cov8" title="1">if _, hasOp := raw["op"]; !hasOp </span><span class="cov8" title="1">{
+                if tv, ok := raw["type"]; ok </span><span class="cov8" title="1">{
+                        raw["op"] = tv
+                }</span>
+        }
+        <span class="cov8" title="1">if _, hasType := raw["type"]; hasType </span><span class="cov8" title="1">{
+                delete(raw, "type")
+                b, err := json.Marshal(raw)
+                if err == nil </span><span class="cov8" title="1">{
+                        data = b
+                }</span>
+        }
+
+        <span class="cov8" title="1">var opName string
+        if v, ok := raw["op"]; ok </span><span class="cov8" title="1">{
+                _ = json.Unmarshal(v, &amp;opName)
+        }</span>
+        <span class="cov8" title="1">opName = strings.TrimSpace(opName)
+        if opName == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("missing op")
+        }</span>
+
+        <span class="cov8" title="1">switch opName </span>{
+        case OpFileReplaceRange:<span class="cov8" title="1">
+                var rr ReplaceRangeOp
+                if err := strictUnmarshal(data, &amp;rr); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+                <span class="cov8" title="1">*o = AnyOp{Op: rr.Op, Path: rr.Path, ReplaceRange: &amp;rr}
+                return nil</span>
+
+        case OpFileWriteAtomic:<span class="cov8" title="1">
+                var wa WriteAtomicOp
+                if err := strictUnmarshal(data, &amp;wa); err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+                <span class="cov8" title="1">*o = AnyOp{Op: wa.Op, Path: wa.Path, WriteAtomic: &amp;wa}
+                return nil</span>
+
+        case OpFileMkdirAll:<span class="cov8" title="1">
+                var md MkdirAllOp
+                if err := strictUnmarshal(data, &amp;md); err != nil </span><span class="cov8" title="1">{
+                        return err
+                }</span>
+                <span class="cov8" title="1">*o = AnyOp{Op: md.Op, Path: md.Path, MkdirAll: &amp;md}
+                return nil</span>
+
+        default:<span class="cov8" title="1">
+                return fmt.Errorf("unsupported op: %s", opName)</span>
+        }
+}
+
+func strictUnmarshal(data []byte, out any) error <span class="cov8" title="1">{
+        dec := json.NewDecoder(bytes.NewReader(data))
+        dec.DisallowUnknownFields()
+        if err := dec.Decode(out); err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+        <span class="cov8" title="1">var trailing any
+        if err := dec.Decode(&amp;trailing); err != io.EOF </span><span class="cov0" title="0">{
+                if err == nil </span><span class="cov0" title="0">{
+                        err = fmt.Errorf("unexpected trailing JSON")
+                }</span>
+                <span class="cov0" title="0">return err</span>
+        }
+        <span class="cov8" title="1">return nil</span>
+}
+
+func WrapReplaceRangeOps(in []ReplaceRangeOp) []AnyOp <span class="cov8" title="1">{
+        out := make([]AnyOp, 0, len(in))
+        for i := range in </span><span class="cov8" title="1">{
+                rr := in[i]
+                rrCopy := rr
+                out = append(out, AnyOp{Op: rrCopy.Op, Path: rrCopy.Path, ReplaceRange: &amp;rrCopy})
+        }</span>
+        <span class="cov8" title="1">return out</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

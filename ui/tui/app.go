@@ -1018,25 +1018,29 @@ func (a *App) renderWelcomeView() string {
 		boxWidth = 30
 	}
 
-	// Resize textarea to fit inside box (subtract border + padding).
+	// Resize textarea to fit inside box.
+	// Box: 1 (border) + 2 (left padding) + ta + 2 (right padding) = boxWidth
+	// → ta width = boxWidth - 5
 	savedW := a.input.TextareaWidth()
-	a.input.SetTextareaWidth(boxWidth - 4)
+	a.input.SetTextareaWidth(boxWidth - 5)
 	defer a.input.SetTextareaWidth(savedW)
 
 	// Logo (our ASCII art) — centered.
 	logo := view.RenderWelcomeLogo()
 
-	// Input box: grey bg + primary left border + textarea + mode line.
+	// Input box: grey bg + primary left border + textarea + (blank) + mode line.
 	bg := t.BackgroundSecondary()
 	taView := a.input.TextareaView()
 	modeLine := a.welcomeModeLine()
-	boxContent := lipgloss.JoinVertical(lipgloss.Left, taView, modeLine)
+	// Empty line between textarea and mode line — fill width with bg.
+	gap := lipgloss.NewStyle().Background(bg).Width(boxWidth - 5).Render("")
+	boxContent := lipgloss.JoinVertical(lipgloss.Left, taView, gap, modeLine)
 	inputBox := lipgloss.NewStyle().
 		Background(bg).
 		Border(lipgloss.NormalBorder(), false, false, false, true).
 		BorderForeground(t.Primary()).
 		BorderBackground(bg).
-		Padding(0, 1).
+		Padding(1, 2).
 		Width(boxWidth).
 		Render(boxContent)
 
@@ -1080,8 +1084,10 @@ func (a *App) renderWelcomeView() string {
 	}
 	centered := lipgloss.Place(a.width, contentH, lipgloss.Center, lipgloss.Center, block)
 
-	// Bottom status bar (reuses our regular bar — keeps hints + spinner + model).
-	bottom := a.statusBar.Render()
+	// Bottom status bar — OpenCode-style minimal: project name on left,
+	// version on right, both muted. Hints / spinner are NOT shown here in
+	// welcome mode (they live next to the input box already).
+	bottom := a.welcomeBottomBar()
 
 	out := centered
 	if paletteView != "" {
@@ -1136,6 +1142,29 @@ func (a *App) welcomeTip() string {
 	return bullet + label + muted.Render("Press ") + bold.Render("Ctrl+K") +
 		muted.Render(" to open commands, ") + bold.Render("Tab") +
 		muted.Render(" to switch agents")
+}
+
+// welcomeBottomBar — minimal status line: "<project>" left, "v0.6" right.
+func (a *App) welcomeBottomBar() string {
+	t := view.ThemeForApp()
+	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
+
+	left := a.cfg.CWD
+	if left == "" {
+		left = filepath.Base(a.cfg.WorkspaceRoot)
+	}
+	if left == "" {
+		left = "."
+	}
+	right := "v0.6"
+
+	leftR := muted.Render(left)
+	rightR := muted.Render(right)
+	pad := a.width - lipgloss.Width(leftR) - lipgloss.Width(rightR)
+	if pad < 1 {
+		pad = 1
+	}
+	return leftR + strings.Repeat(" ", pad) + rightR
 }
 
 // buildWelcomeInfo constructs the metadata shown on the welcome screen.
