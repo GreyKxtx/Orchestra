@@ -108,6 +108,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			a.input.Reset()
 			return a, nil
+		case "tab":
+			a.session.ToggleLastToolBlock()
+			a.chat.SetMessages(a.session.Messages)
+			return a, nil
 		case "enter":
 			text := strings.TrimSpace(a.input.Value())
 			if text == "" {
