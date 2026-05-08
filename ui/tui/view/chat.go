@@ -197,16 +197,16 @@ func renderMarkdown(text string, width int) string {
 	return strings.TrimSpace(out)
 }
 
-// ASCII art for the logo — figlet "standard" style, lowercase.
-const orchArt = "  ___           _               _            \n" +
-	" / _ \\_ __ ___| |__   ___  ___| |_ _ __ __ _\n" +
-	"| | | | '__/ __| '_ \\/ _ \\/ __| __| '__/ _`|\n" +
-	"| |_| | | | (__| | | |  __/\\__ \\ |_| | | (_| |\n" +
-	" \\___/|_|  \\___|_| |_|\\___||___/\\__|_|  \\__,_|"
+// ASCII art — Calvin S / box-drawing style.
+// ORCHESTRA: O R C H E S T R A (3 wide per letter, 1 space gap)
+const orchArt = "╔═╗ ╦═╗ ╔═╗ ╦ ╦ ╔═╗ ╔═╗ ╔╦╗ ╦═╗ ╔═╗\n" +
+	"║ ║ ╠╦╝ ║   ╠═╣ ╠═  ╚═╗  ║  ╠╦╝ ╠═╣\n" +
+	"╚═╝ ╩╚═ ╚═╝ ╩ ╩ ╚═╝ ╚═╝  ╩  ╩╚═ ╚ ╝"
 
-const codeArt = " ___ ___  __| | ___ \n" +
-	"/ __/ _ \\/ _`|/ _ \\\n" +
-	"\\__\\___/\\__,_|\\___|"
+// CODE: C O D E
+const codeArt = "╔═╗ ╔═╗ ╔╦╗ ╔═╗\n" +
+	"║   ║ ║ ║ ║ ╠═ \n" +
+	"╚═╝ ╚═╝ ╚╩╝ ╚═╝"
 
 // welcomeScreen returns a centered welcome block shown when chat is empty.
 func (c Chat) welcomeScreen() string {
