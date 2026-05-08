@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
@@ -39,6 +40,10 @@ type App struct {
 
 	rpc       *rpcclient.Client
 	rpcCancel context.CancelFunc
+
+	pendingOps *rpcclient.PendingOpsPayload // non-nil while ops await confirmation
+	diffShown  bool                          // true while diff messages are in session
+	agentBusy  bool                          // true while agent.run in flight
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -112,6 +117,64 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.session.ToggleLastToolBlock()
 			a.chat.SetMessages(a.session.Messages)
 			return a, nil
+
+		case "a":
+			if a.pendingOps != nil && a.rpc != nil {
+				ops := a.pendingOps.Ops
+				pending := a.pendingOps
+				a.pendingOps = nil
+				if a.diffShown {
+					a.session.RemoveDiff()
+					a.diffShown = false
+				}
+				a.chat.SetMessages(a.session.Messages)
+				a.layout()
+				a.updateFooter()
+				go func() {
+					if err := a.rpc.ApplyOps(context.Background(), ops); err != nil {
+						a.session.AppendMessage(state.Message{
+							Role: state.RoleSystem,
+							Text: "[apply failed] " + err.Error(),
+						})
+					} else {
+						a.session.AppendMessage(state.Message{
+							Role: state.RoleSystem,
+							Text: fmt.Sprintf("[applied %d ops]", len(pending.Ops)),
+						})
+					}
+					a.chat.SetMessages(a.session.Messages)
+				}()
+				return a, nil
+			}
+
+		case "d":
+			if a.pendingOps != nil {
+				if a.diffShown {
+					a.session.RemoveDiff()
+					a.diffShown = false
+				} else {
+					content := a.buildDiffContent()
+					a.session.AddDiff(content)
+					a.diffShown = true
+				}
+				a.chat.SetMessages(a.session.Messages)
+				a.updateFooter()
+				return a, nil
+			}
+
+		case "x":
+			if a.pendingOps != nil {
+				a.pendingOps = nil
+				if a.diffShown {
+					a.session.RemoveDiff()
+					a.diffShown = false
+				}
+				a.chat.SetMessages(a.session.Messages)
+				a.layout()
+				a.updateFooter()
+				return a, nil
+			}
+
 		case "enter":
 			text := strings.TrimSpace(a.input.Value())
 			if text == "" {
@@ -122,6 +185,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.SetMessages(a.session.Messages)
 			a.input.Reset()
 			if a.rpc != nil {
+				a.agentBusy = true
 				go func(query string) {
 					_ = a.rpc.AgentRun(context.Background(), query)
 				}(text)
@@ -166,21 +230,19 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) {
 		// Cosmetic for Phase 2.
 	case rpcclient.EventDone, rpcclient.EventAgentRunCompleted:
 		a.session.FinishAssistant()
+		a.agentBusy = false
 	case rpcclient.EventError, rpcclient.EventConnectionError:
 		a.session.AppendMessage(state.Message{
 			Role: state.RoleSystem,
 			Text: "[error] " + ev.Err,
 		})
 	case rpcclient.EventPendingOps:
-		if ev.PendingOps != nil {
-			count := len(ev.PendingOps.Ops)
-			a.session.AppendMessage(state.Message{
-				Role: state.RoleSystem,
-				Text: fmt.Sprintf("[%d pending ops — apply with /apply (Phase 3)]", count),
-			})
+		if ev.PendingOps != nil && !ev.PendingOps.Applied {
+			a.pendingOps = ev.PendingOps
 		}
 	}
 	a.chat.SetMessages(a.session.Messages)
+	a.updateFooter()
 }
 
 // View renders the full screen layout.
@@ -188,7 +250,21 @@ func (a *App) View() string {
 	if a.width == 0 || a.height == 0 {
 		return ""
 	}
-	return a.header.Render() + "\n" + a.chat.Render() + "\n" + a.input.Render() + "\n" + a.footer.Render()
+	parts := []string{a.header.Render(), a.chat.Render()}
+	if a.pendingOps != nil {
+		parts = append(parts, a.renderActionBar())
+	}
+	parts = append(parts, a.input.Render(), a.footer.Render())
+	return strings.Join(parts, "\n")
+}
+
+func (a *App) renderActionBar() string {
+	style := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#e0af68")).
+		Width(a.width).
+		Padding(0, 1)
+	count := len(a.pendingOps.Ops)
+	return style.Render(fmt.Sprintf("⏵ %d pending ops · [a]pply · [d]iff · [x]discard", count))
 }
 
 // layout recomputes child sizes based on current width/height.
@@ -196,7 +272,11 @@ func (a *App) layout() {
 	a.header.SetSize(a.width)
 	a.footer.SetSize(a.width)
 
-	chatHeight := a.height - 1 - 1 - 4
+	actionBarRows := 0
+	if a.pendingOps != nil {
+		actionBarRows = 1
+	}
+	chatHeight := a.height - 1 - 1 - 4 - actionBarRows
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
@@ -208,6 +288,26 @@ func (a *App) layout() {
 	} else {
 		a.chat.SetSize(a.width, chatHeight)
 		a.input.SetSize(a.width)
+	}
+}
+
+func (a *App) buildDiffContent() string {
+	if a.pendingOps == nil || len(a.pendingOps.Diff) == 0 {
+		return "(no diff available)"
+	}
+	diffs := make([]view.FileDiffView, len(a.pendingOps.Diff))
+	for i, fd := range a.pendingOps.Diff {
+		diffs[i] = view.FileDiffView{Path: fd.Path, Before: fd.Before, After: fd.After}
+	}
+	return view.RenderAllDiffs(diffs, a.width)
+}
+
+func (a *App) updateFooter() {
+	switch {
+	case a.pendingOps != nil:
+		a.footer.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
+	default:
+		a.footer.SetHints("")
 	}
 }
 

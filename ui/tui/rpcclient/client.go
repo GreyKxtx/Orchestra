@@ -128,6 +128,17 @@ func (c *Client) AgentRun(ctx context.Context, query string) error {
 	return err
 }
 
+// ApplyOps sends the given ops to the core for application (no LLM re-run).
+// rawOps is the slice of ops as received in PendingOpsPayload.Ops.
+func (c *Client) ApplyOps(ctx context.Context, rawOps []map[string]any) error {
+	params := map[string]any{
+		"ops":    rawOps,
+		"backup": true,
+	}
+	var result map[string]any
+	return c.rpc.Call(ctx, "ops.apply", params, &result)
+}
+
 // Close kills the subprocess and closes the events channel.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
