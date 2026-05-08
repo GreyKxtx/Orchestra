@@ -64,3 +64,6 @@ func (h *InputHistory) Reset() {
 	h.cursor = -1
 	h.draft = ""
 }
+
+// IsNavigating reports whether the user is currently navigating history.
+func (h *InputHistory) IsNavigating() bool { return h.cursor != -1 }

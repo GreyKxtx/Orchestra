@@ -139,7 +139,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.slashPalette.CursorDown()
 				return a, nil
 			}
-			if !strings.Contains(a.input.Value(), "\n") {
+			if !strings.Contains(a.input.Value(), "\n") && a.history.IsNavigating() {
 				text := a.history.Down()
 				a.input.SetValue(text)
 				return a, nil
