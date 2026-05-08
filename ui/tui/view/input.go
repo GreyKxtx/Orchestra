@@ -10,51 +10,58 @@ import (
 )
 
 // Input is the styled editor at the bottom of the screen.
-// It renders a labeled separator (with the current mode) above a
-// background-highlighted textarea with a primary-colored ">" prompt.
+// Mirrors OpenCode's approach: the "> " prompt lives inside the textarea
+// so the background color covers the full width without gaps.
 type Input struct {
 	ta    textarea.Model
 	mode  string
 	width int
 }
 
-// NewInput creates a sized input with theme-aware background styling.
+// promptStr is the fixed prompt prepended to every textarea line.
+const promptStr = " > "
+
+// NewInput creates a sized input with theme-aware background and prompt styling.
 func NewInput(width int) Input {
 	t := theme.CurrentTheme()
 	bg := t.BackgroundSecondary()
 	fg := t.Text()
 	fgMuted := t.TextMuted()
+	primary := t.Primary()
 
 	ta := textarea.New()
 	ta.Placeholder = "Спроси Orchestra…"
-	ta.SetWidth(width - 4) // leave 4 cols for " > " prompt
+	ta.SetWidth(width - len(promptStr))
 	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
-	ta.Prompt = ""
+	ta.Prompt = promptStr
 	ta.Focus()
 
 	base := lipgloss.NewStyle().Background(bg).Foreground(fg)
 	muted := lipgloss.NewStyle().Background(bg).Foreground(fgMuted)
+	prompt := lipgloss.NewStyle().Background(bg).Foreground(primary).Bold(true)
 
 	ta.FocusedStyle.Base = base
 	ta.FocusedStyle.CursorLine = base
 	ta.FocusedStyle.Text = base
 	ta.FocusedStyle.Placeholder = muted
+	ta.FocusedStyle.Prompt = prompt
 	ta.BlurredStyle.Base = base
 	ta.BlurredStyle.CursorLine = base
 	ta.BlurredStyle.Text = base
 	ta.BlurredStyle.Placeholder = muted
+	ta.BlurredStyle.Prompt = prompt
 
 	return Input{ta: ta, width: width}
 }
 
-// SetMode sets the current agent mode label shown in the separator bar.
+// SetMode sets the agent mode label shown in the separator bar.
 func (in *Input) SetMode(mode string) { in.mode = mode }
 
 // SetSize resizes the input.
 func (in *Input) SetSize(width int) {
 	in.width = width
-	in.ta.SetWidth(width - 4)
+	in.ta.SetWidth(width - len(promptStr))
 }
 
 // Value returns the current text.
@@ -69,49 +76,32 @@ func (in *Input) SetValue(s string) { in.ta.SetValue(s) }
 // Inner returns the underlying textarea so app.go can route key events.
 func (in *Input) Inner() *textarea.Model { return &in.ta }
 
-// Render draws the separator bar + highlighted input area.
+// Render draws a separator bar (with optional mode label) above the textarea.
+// The full width is always covered by BackgroundSecondary.
 func (in Input) Render() string {
 	t := theme.CurrentTheme()
 	bg := t.BackgroundSecondary()
-
 	sepColor := t.TextMuted()
 	modeColor := t.Primary()
 
-	// ── mode ──────────────── separator bar (1 row)
+	sepStyle := lipgloss.NewStyle().Background(bg).Foreground(sepColor)
+	modeStyle := lipgloss.NewStyle().Background(bg).Foreground(modeColor).Bold(true)
+
+	// Build separator: "──" + " mode " + "─────…"
 	var sepBar string
-	{
-		sepStyle := lipgloss.NewStyle().Background(bg).Foreground(sepColor)
-		if in.mode != "" {
-			modeStyle := lipgloss.NewStyle().Background(bg).Foreground(modeColor).Bold(true)
-			label := " " + in.mode + " "
-			labelW := lipgloss.Width(label)
-			// "── " + label + "─────..."
-			right := in.width - 3 - labelW
-			if right < 0 {
-				right = 0
-			}
-			sepBar = sepStyle.Render("── ") +
-				modeStyle.Render(label) +
-				sepStyle.Render(strings.Repeat("─", right))
-		} else {
-			sepBar = sepStyle.Render(strings.Repeat("─", in.width))
+	if in.mode != "" {
+		left := sepStyle.Render("──")
+		label := modeStyle.Render(" " + in.mode + " ")
+		remaining := in.width - lipgloss.Width(left) - lipgloss.Width(label)
+		if remaining < 0 {
+			remaining = 0
 		}
+		sepBar = left + label + sepStyle.Render(strings.Repeat("─", remaining))
+	} else {
+		sepBar = sepStyle.Render(strings.Repeat("─", in.width))
 	}
 
-	// " > " prompt + textarea (3 rows)
-	promptStyle := lipgloss.NewStyle().
-		Background(bg).
-		Foreground(modeColor).
-		Bold(true)
-	prompt := promptStyle.Render(" > ")
-
-	taArea := lipgloss.JoinHorizontal(lipgloss.Top, prompt, in.ta.View())
-
-	// Fill remaining width with background
-	areaStyle := lipgloss.NewStyle().Background(bg).Width(in.width)
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		sepBar,
-		areaStyle.Render(taArea),
-	)
+	// The textarea already fills (width - len(promptStr)) with background;
+	// the prompt " > " adds the remaining len(promptStr) chars — also with bg.
+	return lipgloss.JoinVertical(lipgloss.Left, sepBar, in.ta.View())
 }
