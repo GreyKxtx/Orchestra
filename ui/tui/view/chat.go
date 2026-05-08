@@ -227,7 +227,7 @@ func (c Chat) welcomeScreen() string {
 	sep := subtitleStyle.Render(strings.Repeat("─", sepWidth))
 
 	// ASCII logo
-	logo := lipgloss.JoinVertical(lipgloss.Left,
+	logo := lipgloss.JoinVertical(lipgloss.Center,
 		logoStyle.Render(orchArt),
 		codeStyle.Render(codeArt),
 	)
@@ -264,7 +264,7 @@ func (c Chat) welcomeScreen() string {
 	}
 	sessionsLine := labelStyle.Render("sessions ") + valueStyle.Render(sessionsText)
 
-	block := lipgloss.JoinVertical(lipgloss.Left,
+	block := lipgloss.JoinVertical(lipgloss.Center,
 		logo,
 		"",
 		version,
