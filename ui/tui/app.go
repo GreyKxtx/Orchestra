@@ -5,11 +5,14 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
@@ -50,6 +53,10 @@ type App struct {
 	slashPalette  *view.SlashPalette
 	paletteActive bool
 
+	mentionPalette *view.MentionPalette
+	mentionActive  bool
+	workspaceFiles []string // lazily populated on first @-mention
+
 	history *state.InputHistory
 }
 
@@ -72,7 +79,8 @@ func NewApp(cfg Config) (*App, error) {
 		footer:  view.Footer{},
 		session: state.NewSession(),
 	}
-	a.slashPalette = view.NewSlashPalette(0) // width set in layout()
+	a.slashPalette = view.NewSlashPalette(0)   // width set in layout()
+	a.mentionPalette = view.NewMentionPalette(0) // width set in layout()
 	a.history = state.NewInputHistory(100)
 
 	if cfg.Binary != "" {
@@ -128,6 +136,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.slashPalette.CursorUp()
 				return a, nil
 			}
+			if a.mentionActive {
+				a.mentionPalette.CursorUp()
+				return a, nil
+			}
 			// History navigation: only when input has no newline (single-line mode).
 			if !strings.Contains(a.input.Value(), "\n") {
 				text := a.history.Up(a.input.Value())
@@ -137,6 +149,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down":
 			if a.paletteActive {
 				a.slashPalette.CursorDown()
+				return a, nil
+			}
+			if a.mentionActive {
+				a.mentionPalette.CursorDown()
 				return a, nil
 			}
 			if !strings.Contains(a.input.Value(), "\n") && a.history.IsNavigating() {
@@ -165,6 +181,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return a, tea.Quit
 		case "esc":
+			if a.mentionActive {
+				a.mentionActive = false
+				a.layout()
+				a.updateFooter()
+				return a, nil
+			}
 			if a.paletteActive {
 				a.paletteActive = false
 				a.input.Reset()
@@ -183,6 +205,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.input.Reset()
 			return a, nil
 		case "tab":
+			if a.mentionActive {
+				if sel := a.mentionPalette.Selected(); sel != "" {
+					a.input.SetValue(replaceLastMention(a.input.Value(), sel))
+					a.mentionActive = false
+					a.syncPalette()
+					a.layout()
+					a.updateFooter()
+				}
+				return a, nil
+			}
+			// existing: toggle last tool block
 			a.session.ToggleLastToolBlock()
 			a.chat.SetMessages(a.session.Messages)
 			return a, nil
@@ -234,6 +267,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
+			if a.mentionActive {
+				if sel := a.mentionPalette.Selected(); sel != "" {
+					a.input.SetValue(replaceLastMention(a.input.Value(), sel))
+				}
+				a.mentionActive = false
+				a.syncPalette()
+				a.layout()
+				a.updateFooter()
+				return a, nil
+			}
 			if a.paletteActive {
 				selectedCmd := a.slashPalette.Selected()
 				a.paletteActive = false
@@ -350,6 +393,9 @@ func (a *App) View() string {
 	if a.paletteActive && len(a.slashPalette.Items) > 0 {
 		parts = append(parts, a.slashPalette.Render())
 	}
+	if a.mentionActive && len(a.mentionPalette.Items) > 0 {
+		parts = append(parts, a.mentionPalette.Render())
+	}
 	if a.permModal != nil {
 		parts = append(parts, a.permModal.Render())
 	} else {
@@ -384,6 +430,12 @@ func (a *App) layout() {
 			n = 6
 		}
 		paletteRows = n + 2 // +2 for rounded border lines
+	} else if a.mentionActive && len(a.mentionPalette.Items) > 0 {
+		n := len(a.mentionPalette.Items)
+		if n > 6 {
+			n = 6
+		}
+		paletteRows = n + 2
 	}
 	inputRows := 4
 	modalRows := 0
@@ -406,6 +458,7 @@ func (a *App) layout() {
 		a.input.SetSize(a.width)
 	}
 	a.slashPalette.SetSize(a.width)
+	a.mentionPalette.SetSize(a.width)
 }
 
 func (a *App) buildDiffContent() string {
@@ -425,9 +478,111 @@ func (a *App) syncPalette() {
 	if strings.HasPrefix(val, "/") {
 		a.slashPalette.Filter(val[1:])
 		a.paletteActive = len(a.slashPalette.Items) > 0
-	} else {
-		a.paletteActive = false
+		a.mentionActive = false
+		return
 	}
+	a.paletteActive = false
+	a.syncMention()
+}
+
+// syncMention checks if the input ends with an @-mention and updates the mention palette.
+func (a *App) syncMention() {
+	if !strings.Contains(a.input.Value(), "@") {
+		a.mentionActive = false
+		return
+	}
+	// Lazy-load workspace files.
+	if a.workspaceFiles == nil && a.cfg.WorkspaceRoot != "" {
+		a.workspaceFiles = listWorkspaceFiles(a.cfg.WorkspaceRoot, 4)
+	}
+
+	q := mentionQuery(a.input.Value())
+	lastAt := strings.LastIndex(a.input.Value(), "@")
+	if lastAt < 0 {
+		a.mentionActive = false
+		return
+	}
+
+	var items []string
+	if q == "" {
+		// Show first 10 files when just "@" is typed.
+		items = a.workspaceFiles
+		if len(items) > 10 {
+			items = items[:10]
+		}
+	} else {
+		matches := fuzzy.Find(q, a.workspaceFiles)
+		items = make([]string, 0, len(matches))
+		for _, m := range matches {
+			items = append(items, m.Str)
+			if len(items) >= 10 {
+				break
+			}
+		}
+	}
+	a.mentionPalette.SetItems(items)
+	a.mentionActive = len(items) > 0
+}
+
+// listWorkspaceFiles walks root up to maxDepth levels, skipping hidden dirs,
+// and returns relative POSIX paths. Result is capped at 500 entries.
+func listWorkspaceFiles(root string, maxDepth int) []string {
+	if root == "" {
+		return nil
+	}
+	var files []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			rel, _ := filepath.Rel(root, path)
+			depth := len(strings.Split(rel, string(filepath.Separator)))
+			if depth > maxDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		files = append(files, filepath.ToSlash(rel))
+		if len(files) >= 500 {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return files
+}
+
+// mentionQuery returns the text after @ in the last @word of the input,
+// or "" if the last word is not an @-mention or has no text after @.
+func mentionQuery(text string) string {
+	lastAt := strings.LastIndex(text, "@")
+	if lastAt < 0 {
+		return ""
+	}
+	word := text[lastAt+1:]
+	// If there's a space after @, it's not a single @word at the end.
+	if strings.IndexByte(word, ' ') >= 0 {
+		return ""
+	}
+	return word
+}
+
+// replaceLastMention replaces the last @word in text with replacement.
+func replaceLastMention(text, replacement string) string {
+	lastAt := strings.LastIndex(text, "@")
+	if lastAt < 0 {
+		return text
+	}
+	rest := text[lastAt+1:]
+	spaceIdx := strings.IndexByte(rest, ' ')
+	if spaceIdx < 0 {
+		return text[:lastAt] + replacement
+	}
+	return text[:lastAt] + replacement + rest[spaceIdx:]
 }
 
 const helpText = `Orchestra TUI — key bindings:
@@ -513,6 +668,8 @@ func (a *App) updateFooter() {
 	switch {
 	case a.paletteActive:
 		a.footer.SetHints("↑↓ select · Enter execute · Esc cancel")
+	case a.mentionActive:
+		a.footer.SetHints("↑↓ select · Enter/Tab insert · Esc cancel")
 	case a.permModal != nil:
 		a.footer.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:
