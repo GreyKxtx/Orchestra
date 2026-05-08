@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/ui/tui"
 )
@@ -25,25 +26,36 @@ directory (create with 'orchestra init').`,
 			return fmt.Errorf("getwd: %w", err)
 		}
 
-		// Find ourselves on disk so the spawned subprocess can be `orchestra core`.
 		self, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("cannot resolve own executable path: %w", err)
 		}
 
-		model := "(none)"
-		if cfg, loadErr := config.Load(filepath.Join(cwd, ".orchestra.yml")); loadErr == nil && cfg != nil {
-			if cfg.LLM.Model != "" {
-				model = cfg.LLM.Model
-			}
+		projectID, err := cache.ComputeProjectID(cwd)
+		if err != nil {
+			return fmt.Errorf("compute project_id: %w", err)
+		}
+
+		cfgPath := filepath.Join(cwd, ".orchestra.yml")
+		model := ""
+		needsOnboarding := false
+
+		if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
+			model = cfg.LLM.Model
+		}
+		if model == "" {
+			needsOnboarding = true
 		}
 
 		return tui.Run(tui.Config{
-			Binary:        self,
-			WorkspaceRoot: cwd,
-			Model:         model,
-			Mode:          "code",
-			CWD:           filepath.Base(cwd),
+			Binary:          self,
+			WorkspaceRoot:   cwd,
+			ProjectID:       projectID,
+			Model:           model,
+			Mode:            "code",
+			CWD:             filepath.Base(cwd),
+			NeedsOnboarding: needsOnboarding,
+			ConfigPath:      cfgPath,
 		})
 	},
 }
