@@ -7,61 +7,53 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// Input is the styled editor at the bottom of the screen.
-// Layout (OpenCode-style, top-down):
-//   row 1: " > " prompt + textarea (1 line, full-width BackgroundSecondary)
-//   row 2: " ⏵ <mode>  ·  tab agent  ·  ctrl+k commands  ·  ctrl+o model "
+// Input is the bottom editor — direct port of OpenCode's editor.View().
+//   style.Render(">") + textarea.View()
 type Input struct {
 	ta    textarea.Model
-	mode  string
 	width int
 }
 
-const promptStr = " > "
-
-// NewInput creates a sized input with theme-aware background and prompt styling.
+// NewInput creates a textarea styled like OpenCode's CreateTextArea.
 func NewInput(width int) Input {
 	t := theme.CurrentTheme()
-	bg := t.BackgroundSecondary()
-	fg := t.Text()
-	fgMuted := t.TextMuted()
-	primary := t.Primary()
+	bgColor := t.Background()
+	textColor := t.Text()
+	textMutedColor := t.TextMuted()
+
+	base := lipgloss.NewStyle()
 
 	ta := textarea.New()
+	ta.BlurredStyle.Base = base.Background(bgColor).Foreground(textColor)
+	ta.BlurredStyle.CursorLine = base.Background(bgColor)
+	ta.BlurredStyle.Placeholder = base.Background(bgColor).Foreground(textMutedColor)
+	ta.BlurredStyle.Text = base.Background(bgColor).Foreground(textColor)
+	ta.BlurredStyle.EndOfBuffer = base.Background(bgColor)
+
+	ta.FocusedStyle.Base = base.Background(bgColor).Foreground(textColor)
+	ta.FocusedStyle.CursorLine = base.Background(bgColor)
+	ta.FocusedStyle.Placeholder = base.Background(bgColor).Foreground(textMutedColor)
+	ta.FocusedStyle.Text = base.Background(bgColor).Foreground(textColor)
+	ta.FocusedStyle.EndOfBuffer = base.Background(bgColor)
+
 	ta.Placeholder = "Спроси Orchestra…"
-	ta.SetWidth(width - len(promptStr))
-	ta.SetHeight(1)
+	ta.Prompt = " "
 	ta.ShowLineNumbers = false
-	ta.Prompt = promptStr
+	ta.CharLimit = -1
+	ta.SetWidth(width - 2) // " >" prompt occupies 2 cols
+	ta.SetHeight(1)
+
 	ta.Focus()
-
-	base := lipgloss.NewStyle().Background(bg).Foreground(fg)
-	muted := lipgloss.NewStyle().Background(bg).Foreground(fgMuted)
-	prompt := lipgloss.NewStyle().Background(bg).Foreground(primary).Bold(true)
-
-	ta.FocusedStyle.Base = base
-	ta.FocusedStyle.CursorLine = base
-	ta.FocusedStyle.Text = base
-	ta.FocusedStyle.Placeholder = muted
-	ta.FocusedStyle.Prompt = prompt
-	ta.FocusedStyle.EndOfBuffer = base
-	ta.BlurredStyle.Base = base
-	ta.BlurredStyle.CursorLine = base
-	ta.BlurredStyle.Text = base
-	ta.BlurredStyle.Placeholder = muted
-	ta.BlurredStyle.Prompt = prompt
-	ta.BlurredStyle.EndOfBuffer = base
-
 	return Input{ta: ta, width: width}
 }
 
-// SetMode sets the agent mode label shown in the info bar.
-func (in *Input) SetMode(mode string) { in.mode = mode }
+// SetMode is a no-op kept for API compatibility (mode shown elsewhere now).
+func (in *Input) SetMode(mode string) {}
 
-// SetSize resizes the input.
+// SetSize resizes the textarea.
 func (in *Input) SetSize(width int) {
 	in.width = width
-	in.ta.SetWidth(width - len(promptStr))
+	in.ta.SetWidth(width - 2)
 }
 
 // Value returns the current text.
@@ -76,47 +68,12 @@ func (in *Input) SetValue(s string) { in.ta.SetValue(s) }
 // Inner returns the underlying textarea so app.go can route key events.
 func (in *Input) Inner() *textarea.Model { return &in.ta }
 
-// Render draws the textarea + a contextual info bar below it.
+// Render — direct port of OpenCode editorCmp.View().
 func (in Input) Render() string {
 	t := theme.CurrentTheme()
-	bg := t.BackgroundSecondary()
-
-	// Info bar below the textarea — full width, BackgroundSecondary fill.
-	infoBar := lipgloss.NewStyle().
-		Background(bg).
-		Foreground(t.TextMuted()).
-		Width(in.width).
-		Padding(0, 1).
-		Render(in.buildInfo())
-
-	return lipgloss.JoinVertical(lipgloss.Left, in.ta.View(), infoBar)
-}
-
-// buildInfo composes the mode label + keyboard hints shown under the input.
-func (in Input) buildInfo() string {
-	t := theme.CurrentTheme()
-	bg := t.BackgroundSecondary()
-
-	modeStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Primary()).Bold(true)
-	mutedStyle := lipgloss.NewStyle().Background(bg).Foreground(t.TextMuted())
-	dot := mutedStyle.Render(" · ")
-
-	parts := []string{}
-	if in.mode != "" {
-		parts = append(parts, modeStyle.Render("⏵ "+in.mode))
-	}
-	parts = append(parts,
-		mutedStyle.Render("tab agent"),
-		mutedStyle.Render("ctrl+k commands"),
-		mutedStyle.Render("ctrl+o model"),
-	)
-
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += dot
-		}
-		out += p
-	}
-	return out
+	style := lipgloss.NewStyle().
+		Padding(0, 0, 0, 1).
+		Bold(true).
+		Foreground(t.Primary())
+	return lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"), in.ta.View())
 }

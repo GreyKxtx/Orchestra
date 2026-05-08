@@ -448,6 +448,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.rpc != nil {
 				a.agentBusy = true
 				a.statusBar.SetAgentBusy(true)
+				a.chat.SetAgentBusy(true)
 				go func(query string) {
 					_ = a.rpc.AgentRun(context.Background(), query)
 				}(text)
@@ -509,11 +510,13 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) {
 		a.session.FinishAssistant()
 		a.agentBusy = false
 		a.statusBar.SetAgentBusy(false)
+		a.chat.SetAgentBusy(false)
 		a.statusBar.ClearError()
 		a.chat.SetStreamCursor(false)
 	case rpcclient.EventError, rpcclient.EventConnectionError:
 		a.agentBusy = false
 		a.statusBar.SetAgentBusy(false)
+		a.chat.SetAgentBusy(false)
 		a.statusBar.SetError(ev.Err)
 		a.chat.SetStreamCursor(false)
 		a.session.AppendMessage(state.Message{
@@ -609,7 +612,7 @@ func (a *App) layout() {
 		}
 		paletteRows = n + 2
 	}
-	inputRows := 2 // 1 line textarea + 1 line info bar
+	inputRows := 1 // OpenCode-style: just "> textarea", help line lives in chat
 	modalRows := 0
 	if a.permModal != nil {
 		inputRows = 0 // modal replaces input
