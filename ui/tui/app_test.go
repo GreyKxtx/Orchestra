@@ -83,6 +83,45 @@ func TestApp_EnterEmptyInputDoesNothing(t *testing.T) {
 	}
 }
 
+func TestApp_HistoryRecall(t *testing.T) {
+	app, err := tui.NewApp(tui.Config{Model: "test", Mode: "code", CWD: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
+
+	// Submit "hello" → history stores it.
+	tm.Type("hello")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Wait for echo.
+	teatest.WaitFor(
+		t, tm.Output(),
+		func(b []byte) bool { return bytes.Contains(b, []byte("echo: hello")) },
+		teatest.WithCheckInterval(50*time.Millisecond),
+		teatest.WithDuration(2*time.Second),
+	)
+
+	// Press ↑ to recall "hello" into input, then submit again.
+	tm.Send(tea.KeyMsg{Type: tea.KeyUp})
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// After the second submit the new rendered frame contains the second echo.
+	// We already confirmed the first echo; the incremental output here needs
+	// to contain at least one more "echo: hello".
+	teatest.WaitFor(
+		t, tm.Output(),
+		func(b []byte) bool {
+			return bytes.Contains(b, []byte("echo: hello"))
+		},
+		teatest.WithCheckInterval(50*time.Millisecond),
+		teatest.WithDuration(2*time.Second),
+	)
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
+}
+
 // readAll drains an io.Reader to a string, used for final output.
 func readAll(r io.Reader) string {
 	var b bytes.Buffer
