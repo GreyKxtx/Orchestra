@@ -53,6 +53,7 @@ flowchart LR
     subgraph User_side[" "]
         CLI["orchestra CLI<br/>(cobra)"]:::supported
         IDE["IDE plugin"]:::supported
+        TUI["orchestra tui<br/>(Bubble Tea)"]:::supported
     end
 
     subgraph Process[orchestra core process]
@@ -67,6 +68,7 @@ flowchart LR
 
     CLI -- "spawn + stdin/stdout" --> RPC
     IDE -- "stdio framing<br/>Content-Length" --> RPC
+    TUI -- "spawn + stdin/stdout" --> RPC
     RPC --> Core
     Core --> LLM
     Core --> Filesystem
