@@ -46,6 +46,9 @@ type App struct {
 	agentBusy  bool                          // true while agent.run in flight
 
 	permModal *view.Modal // non-nil while an exec.run permission request is pending
+
+	slashPalette  *view.SlashPalette
+	paletteActive bool
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -67,6 +70,7 @@ func NewApp(cfg Config) (*App, error) {
 		footer:  view.Footer{},
 		session: state.NewSession(),
 	}
+	a.slashPalette = view.NewSlashPalette(0) // width set in layout()
 
 	if cfg.Binary != "" {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -116,6 +120,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.String() {
+		case "up":
+			if a.paletteActive {
+				a.slashPalette.CursorUp()
+				return a, nil
+			}
+		case "down":
+			if a.paletteActive {
+				a.slashPalette.CursorDown()
+				return a, nil
+			}
 		case "y":
 			if a.permModal != nil {
 				a.permModal = nil
@@ -137,6 +151,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return a, tea.Quit
 		case "esc":
+			if a.paletteActive {
+				a.paletteActive = false
+				a.input.Reset()
+				a.layout()
+				a.updateFooter()
+				return a, nil
+			}
 			if a.permModal != nil {
 				a.permModal = nil
 				a.updateFooter()
@@ -199,6 +220,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
+			if a.paletteActive {
+				selectedCmd := a.slashPalette.Selected()
+				a.paletteActive = false
+				a.input.Reset()
+				a.layout()
+				cmd := a.executePaletteCmd(selectedCmd)
+				a.updateFooter()
+				return a, cmd
+			}
 			if a.agentBusy {
 				return a, nil
 			}
@@ -238,11 +268,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Forward to textarea.
+	// Forward all messages to textarea.
 	innerTA := a.input.Inner()
-	updatedTA, cmd := innerTA.Update(msg)
+	updatedTA, taCmd := innerTA.Update(msg)
 	*innerTA = updatedTA
-	return a, cmd
+	// Sync palette state after key events that may change input value.
+	if _, isKey := msg.(tea.KeyMsg); isKey {
+		a.syncPalette()
+		a.updateFooter()
+		a.layout()
+	}
+	return a, taCmd
 }
 
 func (a *App) handleRPCEvent(ev rpcclient.Event) {
@@ -295,6 +331,9 @@ func (a *App) View() string {
 	if a.pendingOps != nil {
 		parts = append(parts, a.renderActionBar())
 	}
+	if a.paletteActive && len(a.slashPalette.Items) > 0 {
+		parts = append(parts, a.slashPalette.Render())
+	}
 	if a.permModal != nil {
 		parts = append(parts, a.permModal.Render())
 	} else {
@@ -322,6 +361,14 @@ func (a *App) layout() {
 	if a.pendingOps != nil {
 		actionBarRows = 1
 	}
+	paletteRows := 0
+	if a.paletteActive && len(a.slashPalette.Items) > 0 {
+		n := len(a.slashPalette.Items)
+		if n > 6 {
+			n = 6
+		}
+		paletteRows = n + 2 // +2 for rounded border lines
+	}
 	inputRows := 4
 	modalRows := 0
 	if a.permModal != nil {
@@ -329,7 +376,7 @@ func (a *App) layout() {
 		modalRows = 5
 		a.permModal.SetSize(a.width)
 	}
-	chatHeight := a.height - 1 - 1 - inputRows - actionBarRows - modalRows
+	chatHeight := a.height - 1 - 1 - inputRows - actionBarRows - modalRows - paletteRows
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
@@ -342,6 +389,7 @@ func (a *App) layout() {
 		a.chat.SetSize(a.width, chatHeight)
 		a.input.SetSize(a.width)
 	}
+	a.slashPalette.SetSize(a.width)
 }
 
 func (a *App) buildDiffContent() string {
@@ -355,8 +403,100 @@ func (a *App) buildDiffContent() string {
 	return view.RenderAllDiffs(diffs, a.width)
 }
 
+// syncPalette checks the current input value and opens/closes the slash palette.
+func (a *App) syncPalette() {
+	val := a.input.Value()
+	if strings.HasPrefix(val, "/") {
+		a.slashPalette.Filter(val[1:])
+		a.paletteActive = len(a.slashPalette.Items) > 0
+	} else {
+		a.paletteActive = false
+	}
+}
+
+const helpText = `Orchestra TUI — key bindings:
+  Enter         send message
+  Shift+Enter   newline in input
+  Tab           expand/collapse last tool block
+  ↑ / ↓         input history (single-line mode)
+  /             slash command palette
+  @             file mention (fuzzy)
+  a             apply pending ops
+  d             toggle diff
+  x             discard pending ops
+  y / n / Esc   allow / deny exec.run permission
+  Ctrl+C        quit`
+
+// executePaletteCmd carries out the chosen slash command and returns a tea.Cmd
+// if the action requires async work, or nil.
+func (a *App) executePaletteCmd(cmd string) tea.Cmd {
+	switch cmd {
+	case "/help":
+		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: helpText})
+		a.chat.SetMessages(a.session.Messages)
+	case "/clear":
+		a.session.Clear()
+		a.chat.SetMessages(a.session.Messages)
+	case "/model":
+		model := a.cfg.Model
+		if model == "" {
+			model = "(not configured)"
+		}
+		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "Model: " + model})
+		a.chat.SetMessages(a.session.Messages)
+	case "/mode":
+		mode := a.cfg.Mode
+		if mode == "" {
+			mode = "(not configured)"
+		}
+		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "Mode: " + mode})
+		a.chat.SetMessages(a.session.Messages)
+	case "/diff":
+		if a.pendingOps != nil {
+			if a.diffShown {
+				a.session.RemoveDiff()
+				a.diffShown = false
+			} else {
+				content := a.buildDiffContent()
+				a.session.AddDiff(content)
+				a.diffShown = true
+			}
+			a.chat.SetMessages(a.session.Messages)
+		}
+	case "/apply":
+		if a.pendingOps != nil && a.rpc != nil {
+			rawOps := a.pendingOps.Ops
+			count := len(a.pendingOps.Ops)
+			a.pendingOps = nil
+			if a.diffShown {
+				a.session.RemoveDiff()
+				a.diffShown = false
+			}
+			a.chat.SetMessages(a.session.Messages)
+			rpc := a.rpc
+			return func() tea.Msg {
+				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
+			}
+		}
+	case "/discard":
+		if a.pendingOps != nil {
+			a.pendingOps = nil
+			if a.diffShown {
+				a.session.RemoveDiff()
+				a.diffShown = false
+			}
+			a.chat.SetMessages(a.session.Messages)
+		}
+	case "/quit":
+		return tea.Quit
+	}
+	return nil
+}
+
 func (a *App) updateFooter() {
 	switch {
+	case a.paletteActive:
+		a.footer.SetHints("↑↓ select · Enter execute · Esc cancel")
 	case a.permModal != nil:
 		a.footer.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:

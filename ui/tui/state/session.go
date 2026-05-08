@@ -127,6 +127,12 @@ func (s *Session) RemoveDiff() {
 	}
 }
 
+// Clear removes all messages and resets the active assistant.
+func (s *Session) Clear() {
+	s.Messages = nil
+	s.activeAssistant = -1
+}
+
 // HasDiff reports whether there is a diff message in history.
 func (s *Session) HasDiff() bool {
 	for _, m := range s.Messages {
