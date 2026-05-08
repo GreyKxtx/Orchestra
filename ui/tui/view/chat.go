@@ -197,46 +197,44 @@ func renderMarkdown(text string, width int) string {
 	return strings.TrimSpace(out)
 }
 
+// ASCII art for the logo — figlet "standard" style, lowercase.
+const orchArt = "  ___           _               _            \n" +
+	" / _ \\_ __ ___| |__   ___  ___| |_ _ __ __ _\n" +
+	"| | | | '__/ __| '_ \\/ _ \\/ __| __| '__/ _`|\n" +
+	"| |_| | | | (__| | | |  __/\\__ \\ |_| | | (_| |\n" +
+	" \\___/|_|  \\___|_| |_|\\___||___/\\__|_|  \\__,_|"
+
+const codeArt = " ___ ___  __| | ___ \n" +
+	"/ __/ _ \\/ _`|/ _ \\\n" +
+	"\\__\\___/\\__,_|\\___|"
+
 // welcomeScreen returns a centered welcome block shown when chat is empty.
 func (c Chat) welcomeScreen() string {
 	t := theme.CurrentTheme()
 	w := c.vp.Width
 	h := c.vp.Height
 
-	const blockWidth = 44
+	logoStyle := lipgloss.NewStyle().Foreground(t.Primary()).Bold(true)
+	codeStyle := lipgloss.NewStyle().Foreground(t.Secondary()).Bold(true)
+	subtitleStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	labelStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	valueStyle := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
+	pathStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	warnStyle := lipgloss.NewStyle().Foreground(t.Warning())
+	hintStyle := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true)
 
-	logoStyle := lipgloss.NewStyle().
-		Foreground(t.Primary()).
-		Bold(true)
+	const sepWidth = 48
+	sep := subtitleStyle.Render(strings.Repeat("─", sepWidth))
 
-	appNameStyle := lipgloss.NewStyle().
-		Foreground(t.Primary()).
-		Bold(true)
+	// ASCII logo
+	logo := lipgloss.JoinVertical(lipgloss.Left,
+		logoStyle.Render(orchArt),
+		codeStyle.Render(codeArt),
+	)
 
-	subtitleStyle := lipgloss.NewStyle().
-		Foreground(t.TextMuted())
+	version := subtitleStyle.Render("AI coding assistant  " + appVersion)
 
-	labelStyle := lipgloss.NewStyle().
-		Foreground(t.TextMuted())
-
-	valueStyle := lipgloss.NewStyle().
-		Foreground(t.Text())
-
-	warnStyle := lipgloss.NewStyle().
-		Foreground(t.Warning())
-
-	hintStyle := lipgloss.NewStyle().
-		Foreground(t.TextMuted()).
-		Italic(true)
-
-	sep := subtitleStyle.Render(strings.Repeat("─", blockWidth))
-
-	// Logo + name block
-	note := logoStyle.Render("  ♪")
-	name := appNameStyle.Render("  Orchestra Code")
-	version := subtitleStyle.Render("  AI coding assistant  " + appVersion)
-
-	// Project info
+	// Project: name bold + path muted on same line
 	projectPath := c.welcome.ProjectPath
 	if projectPath == "" {
 		projectPath = "."
@@ -245,37 +243,30 @@ func (c Chat) welcomeScreen() string {
 	if projectName == "" {
 		projectName = "unknown"
 	}
+	projectLine := labelStyle.Render("project  ") +
+		valueStyle.Render(projectName) +
+		pathStyle.Render("  " + projectPath)
 
-	projectLine := labelStyle.Render("  📁  ") + valueStyle.Render(projectName) +
-		subtitleStyle.Render("  "+projectPath)
-
-	// Model info
+	// Model
 	var modelLine string
 	if c.welcome.ModelName == "" {
-		modelLine = labelStyle.Render("  🤖  ") + warnStyle.Render("Модель не выбрана") +
-			subtitleStyle.Render("  — нажми Ctrl+O")
+		modelLine = labelStyle.Render("model    ") +
+			warnStyle.Render("не выбрана") +
+			hintStyle.Render("  ctrl+o")
 	} else {
-		modelLine = labelStyle.Render("  🤖  ") + valueStyle.Render(c.welcome.ModelName)
+		modelLine = labelStyle.Render("model    ") + valueStyle.Render(c.welcome.ModelName)
 	}
 
 	// Sessions
 	sessionsText := fmt.Sprintf("%d", c.welcome.SessionCount)
 	if c.welcome.SessionCount == 0 {
-		sessionsText = "нет"
+		sessionsText = "0"
 	}
-	sessionsLine := labelStyle.Render("  💬  ") + valueStyle.Render(sessionsText+" сессий")
-
-	// Start hint
-	var hint string
-	if c.welcome.ModelName == "" {
-		hint = hintStyle.Render("  Настрой модель через Ctrl+O для начала работы")
-	} else {
-		hint = hintStyle.Render("  Напиши сообщение чтобы начать…")
-	}
+	sessionsLine := labelStyle.Render("sessions ") + valueStyle.Render(sessionsText)
 
 	block := lipgloss.JoinVertical(lipgloss.Left,
-		note,
-		name,
+		logo,
+		"",
 		version,
 		"",
 		sep,
@@ -283,10 +274,6 @@ func (c Chat) welcomeScreen() string {
 		projectLine,
 		modelLine,
 		sessionsLine,
-		"",
-		sep,
-		"",
-		hint,
 	)
 
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)

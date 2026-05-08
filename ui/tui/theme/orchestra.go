@@ -9,8 +9,8 @@ func (t *OrchestraTheme) Background() lipgloss.Color        { return "#0d0d0d" }
 func (t *OrchestraTheme) BackgroundSecondary() lipgloss.Color { return "#1a1a1a" }
 func (t *OrchestraTheme) Primary() lipgloss.Color           { return "#9d7cd8" }
 func (t *OrchestraTheme) Secondary() lipgloss.Color         { return "#e0af68" }
-func (t *OrchestraTheme) Text() lipgloss.Color              { return "#c0caf5" }
-func (t *OrchestraTheme) TextMuted() lipgloss.Color         { return "#565f89" }
+func (t *OrchestraTheme) Text() lipgloss.Color              { return "#e0e0e0" }
+func (t *OrchestraTheme) TextMuted() lipgloss.Color         { return "#907090" }
 func (t *OrchestraTheme) Error() lipgloss.Color             { return "#f7768e" }
 func (t *OrchestraTheme) Success() lipgloss.Color           { return "#9ece6a" }
 func (t *OrchestraTheme) Warning() lipgloss.Color           { return "#e0af68" }
