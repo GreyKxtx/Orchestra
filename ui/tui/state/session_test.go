@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/ui/tui/state"
@@ -121,5 +122,54 @@ func TestSession_AppendDeltaWithoutActiveAssistant_NoOp(t *testing.T) {
 	s.AppendAssistantDelta("orphan delta")
 	if len(s.Messages) != 0 {
 		t.Errorf("want 0 messages (no-op), got %d", len(s.Messages))
+	}
+}
+
+func TestToggleLastToolBlock(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant()
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
+	s.UpdateToolBlock("t1", state.ToolBlockCompleted, "line1\nline2")
+	// auto-expand: 1 newline ≤ 10
+	if !s.Messages[0].ToolBlocks[0].Expanded {
+		t.Fatal("expected auto-expand for short result")
+	}
+	// toggle off
+	s.ToggleLastToolBlock()
+	if s.Messages[0].ToolBlocks[0].Expanded {
+		t.Fatal("expected toggle off")
+	}
+	// toggle on
+	s.ToggleLastToolBlock()
+	if !s.Messages[0].ToolBlocks[0].Expanded {
+		t.Fatal("expected toggle on")
+	}
+}
+
+func TestAutoExpandLongResult(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant()
+	s.AppendToolBlock(state.ToolBlock{ID: "t2", Name: "read", Status: state.ToolBlockRunning})
+	// 11 newlines = 12 lines → should NOT auto-expand
+	result := strings.Repeat("line\n", 11)
+	s.UpdateToolBlock("t2", state.ToolBlockCompleted, result)
+	if s.Messages[0].ToolBlocks[0].Expanded {
+		t.Fatal("expected no auto-expand for long result")
+	}
+}
+
+func TestAddRemoveDiff(t *testing.T) {
+	s := state.NewSession()
+	s.AppendMessage(state.Message{Role: state.RoleUser, Text: "hi"})
+	s.AddDiff("diff content")
+	if !s.HasDiff() {
+		t.Fatal("HasDiff should be true")
+	}
+	if s.Messages[len(s.Messages)-1].Role != state.RoleDiff {
+		t.Fatal("last message should be diff")
+	}
+	s.RemoveDiff()
+	if s.HasDiff() {
+		t.Fatal("HasDiff should be false after RemoveDiff")
 	}
 }
