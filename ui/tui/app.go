@@ -1024,7 +1024,6 @@ func (a *App) renderWelcomeView() string {
 
 	contentW := boxWidth - 5 // box: 1 border + 2 left pad + content + 2 right pad
 	bg := t.BackgroundSecondary()
-	bgFill := lipgloss.NewStyle().Background(bg).Width(contentW)
 
 	// Resize textarea to fit inside box content area.
 	savedW := a.input.TextareaWidth()
@@ -1034,11 +1033,12 @@ func (a *App) renderWelcomeView() string {
 	// Logo — centered.
 	logo := view.RenderWelcomeLogo()
 
-	// Input box rows. Wrap each row in a fixed-width bg fill so trailing
-	// whitespace gets the grey bg instead of falling back to terminal black.
-	taLine := bgFill.Render(a.input.TextareaView())
-	gapLine := bgFill.Render("")
-	modeLine := bgFill.Render(a.welcomeModeLine())
+	// Build each row of the input box. Manually pad with bg-styled spaces
+	// so that placeholder/text rendering (which uses its OWN ANSI codes)
+	// can't leak terminal-default black into the trailing area.
+	taLine := padLinesBg(a.input.TextareaView(), contentW, bg)
+	gapLine := padLinesBg("", contentW, bg)
+	modeLine := padLinesBg(a.welcomeModeLine(), contentW, bg)
 
 	boxContent := lipgloss.JoinVertical(lipgloss.Left, taLine, gapLine, modeLine)
 	inputBox := lipgloss.NewStyle().
@@ -1134,6 +1134,23 @@ func (a *App) welcomeTip() string {
 	return bullet + label + muted.Render("Press ") + bold.Render("Ctrl+K") +
 		muted.Render(" to open commands, ") + bold.Render("Tab") +
 		muted.Render(" to switch agents")
+}
+
+// padLinesBg appends bg-styled space padding to each line so the visible
+// width is exactly `width` cells. Use this when content has its own ANSI
+// codes (e.g. textarea placeholder, styled mode line) and lipgloss.Width
+// padding alone wouldn't extend the bg color past the styled content.
+func padLinesBg(s string, width int, bgColor lipgloss.Color) string {
+	pad := lipgloss.NewStyle().Background(bgColor)
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		visW := lipgloss.Width(l)
+		if visW >= width {
+			continue
+		}
+		lines[i] = l + pad.Render(strings.Repeat(" ", width-visW))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // agentModes lists the available agent modes cycled by Tab.
