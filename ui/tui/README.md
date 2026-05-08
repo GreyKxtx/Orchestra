@@ -41,13 +41,16 @@ orchestra tui
 | y / n / Esc | разрешить/запретить exec.run (modal) |
 | Esc | очистить инпут (без modal) |
 | Ctrl+C | выйти |
+| / | открыть slash-палитру команд |
+| @ | @-mention fuzzy-поиск файлов |
+| ↑ / ↓ | история ввода (single-line mode) |
 
 ## Статус по фазам
 
 - [x] **Фаза 1 — скелет**: раскладка, echo, базовая навигация
 - [x] **Фаза 2 — подключение к ядру** (текущая): JSON-RPC stdio, streaming token deltas, tool blocks (collapsed)
 - [x] **Фаза 3** — collapsible tool blocks (Tab expand), inline diff view, pending ops action bar ([a]pply / [d]iff / [x]discard), permission modal для exec.run
-- [ ] Фаза 4 — slash-команды, @-mention, динамические footer hints
+- [x] **Фаза 4** — slash-палитра (`/help` `/clear` `/model` `/mode` `/diff` `/apply` `/discard` `/quit`), @-mention fuzzy (`@`), история ввода ↑↓, динамические footer hints
 - [ ] Фаза 5 — polish, snapshot tests расширенные
 
 ## Архитектура
