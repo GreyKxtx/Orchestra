@@ -91,3 +91,20 @@ func TestHistory_DownWithoutUpReturnsCurrent(t *testing.T) {
 		t.Fatalf("Down without Up should return empty string, got %q", got)
 	}
 }
+
+func TestHistory_Reset(t *testing.T) {
+	h := state.NewInputHistory(10)
+	h.Push("a")
+	h.Push("b")
+	h.Up("draft")
+	h.Reset()
+	// After Reset, Up should save new draft and navigate normally.
+	got := h.Up("new_draft")
+	if got != "b" {
+		t.Fatalf("want 'b' after Reset+Up, got %q", got)
+	}
+	got = h.Down()
+	if got != "new_draft" {
+		t.Fatalf("want 'new_draft' restored after Down, got %q", got)
+	}
+}
