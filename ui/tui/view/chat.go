@@ -27,11 +27,17 @@ type Chat struct {
 	vp           viewport.Model
 	streamCursor bool        // when true, appends ▋ to last assistant token
 	welcome      WelcomeInfo // metadata for the empty-state screen
+	forceWelcome bool        // when true, always show welcome regardless of content
 }
 
 // SetWelcomeInfo updates the project metadata displayed on the welcome screen.
 func (c *Chat) SetWelcomeInfo(info WelcomeInfo) {
 	c.welcome = info
+}
+
+// SetForceWelcome controls whether the welcome screen is shown regardless of chat content.
+func (c *Chat) SetForceWelcome(v bool) {
+	c.forceWelcome = v
 }
 
 // NewChat creates an empty chat view sized to width × height.
@@ -52,11 +58,14 @@ func (c *Chat) SetStreamCursor(on bool) {
 }
 
 // SetMessages re-renders the viewport content from the session messages.
+// Any non-empty message list also dismisses the force-welcome overlay.
 func (c *Chat) SetMessages(msgs []state.Message) {
 	if len(msgs) == 0 {
 		c.vp.SetContent("")
 		return
 	}
+	// Dismiss the startup welcome as soon as real content appears.
+	c.forceWelcome = false
 
 	t := theme.CurrentTheme()
 	toolStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
@@ -286,12 +295,12 @@ func (c Chat) welcomeScreen() string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
 }
 
-// View returns the viewport's current view, or the welcome screen if empty.
+// View returns the viewport's current view, or the welcome screen if empty/forced.
 func (c Chat) View() string {
 	if c.vp.Width == 0 {
 		return ""
 	}
-	if c.vp.TotalLineCount() == 0 {
+	if c.forceWelcome || c.vp.TotalLineCount() == 0 {
 		return c.welcomeScreen()
 	}
 	return c.vp.View()
