@@ -29,46 +29,77 @@ func (c *Chat) SetSize(width, height int) {
 // SetMessages re-renders the viewport content from the session messages.
 func (c *Chat) SetMessages(msgs []state.Message) {
 	var b strings.Builder
-	userStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
-	asstStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
-	sysStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68")).Italic(true)
-	toolStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	userStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
+	asstStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
+	sysStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68")).Italic(true)
+	diffStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	toolStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 	toolErrStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
+	expandedHdr  := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	expandedBody := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
 
 	for i, m := range msgs {
 		switch m.Role {
 		case state.RoleUser:
 			b.WriteString(userStyle.Render("> ") + m.Text)
+
 		case state.RoleAssistant:
 			if m.Text != "" {
 				b.WriteString(asstStyle.Render(m.Text))
 			}
 			for _, tb := range m.ToolBlocks {
-				if m.Text != "" || len(b.String()) > 0 {
+				if m.Text != "" || b.Len() > 0 {
 					b.WriteString("\n")
 				}
 				style := toolStyle
 				if tb.Status == state.ToolBlockFailed {
 					style = toolErrStyle
 				}
-				marker := "▸"
-				if tb.Status == state.ToolBlockRunning {
-					marker = "⋯"
-				}
-				summary := fmt.Sprintf("%s %s", marker, tb.Name)
-				if tb.Result != "" && tb.Status != state.ToolBlockRunning {
-					preview := tb.Result
-					if len(preview) > 80 {
-						preview = preview[:80] + "…"
+				if tb.Expanded && tb.Status != state.ToolBlockRunning {
+					// Expanded: show ▾ header + full result body.
+					b.WriteString(expandedHdr.Render(fmt.Sprintf("▾ %s", tb.Name)))
+					if tb.Result != "" {
+						lines := strings.Split(tb.Result, "\n")
+						const maxLines = 50
+						shown := lines
+						truncated := 0
+						if len(lines) > maxLines {
+							shown = lines[:maxLines]
+							truncated = len(lines) - maxLines
+						}
+						for _, l := range shown {
+							b.WriteString("\n" + expandedBody.Render("  "+l))
+						}
+						if truncated > 0 {
+							b.WriteString("\n" + expandedBody.Render(fmt.Sprintf("  … %d more lines", truncated)))
+						}
 					}
-					preview = strings.ReplaceAll(preview, "\n", " ")
-					summary += " → " + preview
+				} else {
+					// Collapsed (default): single summary line.
+					marker := "▸"
+					if tb.Status == state.ToolBlockRunning {
+						marker = "⋯"
+					}
+					summary := fmt.Sprintf("%s %s", marker, tb.Name)
+					if tb.Result != "" && tb.Status != state.ToolBlockRunning {
+						preview := tb.Result
+						if len(preview) > 80 {
+							preview = preview[:80] + "…"
+						}
+						preview = strings.ReplaceAll(preview, "\n", " ")
+						summary += " → " + preview
+					}
+					b.WriteString(style.Render(summary))
 				}
-				b.WriteString(style.Render(summary))
 			}
+
 		case state.RoleSystem:
 			b.WriteString(sysStyle.Render(m.Text))
+
+		case state.RoleDiff:
+			b.WriteString(diffStyle.Render(m.Text))
 		}
+
 		if i < len(msgs)-1 {
 			b.WriteString("\n\n")
 		}
