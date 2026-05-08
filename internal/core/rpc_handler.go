@@ -137,6 +137,13 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionHistory(p)
 
+	case "ops.apply":
+		var p OpsApplyParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), nil)
+		}
+		return h.core.OpsApply(ctx, p)
+
 	case "session.cancel":
 		var p SessionCancelParams
 		if err := decodeParams(params, &p); err != nil {
