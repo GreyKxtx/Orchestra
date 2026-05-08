@@ -926,6 +926,40 @@ func (c *Core) SessionClose(params SessionCloseParams) error {
 	return nil
 }
 
+// OpsApplyParams holds the ops to apply.
+type OpsApplyParams struct {
+	Ops    []ops.AnyOp `json:"ops"`
+	Backup bool        `json:"backup"`
+}
+
+// OpsApplyResult reports the result of applying pending ops.
+type OpsApplyResult struct {
+	Applied      bool     `json:"applied"`
+	ChangedFiles []string `json:"changed_files"`
+}
+
+// OpsApply applies a list of internal ops against the workspace.
+// It is intended for TUI "confirm apply" flows: the client received the ops
+// via a pending_ops event, user confirmed, and now sends them back to apply.
+func (c *Core) OpsApply(ctx context.Context, p OpsApplyParams) (*OpsApplyResult, error) {
+	if !c.IsInitialized() {
+		return nil, protocol.NewError(protocol.NotInitialized, "initialize required", nil)
+	}
+	req := tools.FSApplyOpsRequest{
+		Ops:    p.Ops,
+		DryRun: false,
+		Backup: p.Backup,
+	}
+	resp, err := c.tools.FSApplyOps(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &OpsApplyResult{
+		Applied:      resp.Applied,
+		ChangedFiles: resp.ChangedFiles,
+	}, nil
+}
+
 // agentRequesterAdapter bridges core.PermissionRequester to agent.PermissionRequester.
 type agentRequesterAdapter struct {
 	inner PermissionRequester
