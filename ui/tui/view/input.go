@@ -31,6 +31,11 @@ func (in Input) Value() string { return in.ta.Value() }
 // Reset clears the input.
 func (in *Input) Reset() { in.ta.Reset() }
 
+// SetValue replaces the current text in the textarea.
+func (in *Input) SetValue(text string) {
+	in.ta.SetValue(text)
+}
+
 // Render returns the textarea view.
 func (in Input) Render() string { return in.ta.View() }
 

@@ -158,6 +158,24 @@ func TestAutoExpandLongResult(t *testing.T) {
 	}
 }
 
+func TestSession_Clear(t *testing.T) {
+	s := state.NewSession()
+	s.AppendMessage(state.Message{Role: state.RoleUser, Text: "hello"})
+	s.StartAssistant()
+	s.AppendAssistantDelta("hi")
+	s.Clear()
+	if len(s.Messages) != 0 {
+		t.Fatalf("want 0 messages after Clear, got %d", len(s.Messages))
+	}
+	// Should be safe to start a new assistant after Clear.
+	s.StartAssistant()
+	s.AppendAssistantDelta("ok")
+	s.FinishAssistant()
+	if s.Messages[0].Text != "ok" {
+		t.Fatalf("want 'ok', got %q", s.Messages[0].Text)
+	}
+}
+
 func TestAddRemoveDiff(t *testing.T) {
 	s := state.NewSession()
 	s.AppendMessage(state.Message{Role: state.RoleUser, Text: "hi"})
