@@ -12,20 +12,26 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-const asciiLogo = `
- ██████╗ ██████╗  ██████╗
-██╔═══██╗██╔══██╗██╔════╝
-██║   ██║██████╔╝██║
-██║   ██║██╔══██╗██║
-╚██████╔╝██║  ██║╚██████╗
- ╚═════╝ ╚═╝  ╚═╝ ╚═════╝`
-
 const appVersion = "v0.6"
+
+// WelcomeInfo contains project metadata shown on the empty-state welcome screen.
+type WelcomeInfo struct {
+	ProjectPath  string // full path to workspace root
+	ProjectName  string // display name (base of path)
+	ModelName    string // configured model, or "" if none
+	SessionCount int    // number of past sessions in this project
+}
 
 // Chat renders the scrollable history of messages.
 type Chat struct {
 	vp           viewport.Model
-	streamCursor bool // when true, appends ▋ to last assistant token
+	streamCursor bool        // when true, appends ▋ to last assistant token
+	welcome      WelcomeInfo // metadata for the empty-state screen
+}
+
+// SetWelcomeInfo updates the project metadata displayed on the welcome screen.
+func (c *Chat) SetWelcomeInfo(info WelcomeInfo) {
+	c.welcome = info
 }
 
 // NewChat creates an empty chat view sized to width × height.
@@ -191,32 +197,88 @@ func (c Chat) welcomeScreen() string {
 	w := c.vp.Width
 	h := c.vp.Height
 
+	const blockWidth = 44
+
 	logoStyle := lipgloss.NewStyle().
+		Foreground(t.Primary()).
+		Bold(true)
+
+	appNameStyle := lipgloss.NewStyle().
 		Foreground(t.Primary()).
 		Bold(true)
 
 	subtitleStyle := lipgloss.NewStyle().
 		Foreground(t.TextMuted())
 
-	versionStyle := lipgloss.NewStyle().
+	labelStyle := lipgloss.NewStyle().
 		Foreground(t.TextMuted())
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(t.Text())
+
+	warnStyle := lipgloss.NewStyle().
+		Foreground(t.Warning())
 
 	hintStyle := lipgloss.NewStyle().
 		Foreground(t.TextMuted()).
 		Italic(true)
 
-	logo := logoStyle.Render(asciiLogo)
-	version := versionStyle.Render("                           " + appVersion)
-	separator := subtitleStyle.Render(strings.Repeat("─", 34))
-	subtitle := subtitleStyle.Render("        AI coding assistant")
-	hint := hintStyle.Render("   Напиши сообщение чтобы начать…")
+	sep := subtitleStyle.Render(strings.Repeat("─", blockWidth))
+
+	// Logo + name block
+	note := logoStyle.Render("  ♪")
+	name := appNameStyle.Render("  Orchestra Code")
+	version := subtitleStyle.Render("  AI coding assistant  " + appVersion)
+
+	// Project info
+	projectPath := c.welcome.ProjectPath
+	if projectPath == "" {
+		projectPath = "."
+	}
+	projectName := c.welcome.ProjectName
+	if projectName == "" {
+		projectName = "unknown"
+	}
+
+	projectLine := labelStyle.Render("  📁  ") + valueStyle.Render(projectName) +
+		subtitleStyle.Render("  "+projectPath)
+
+	// Model info
+	var modelLine string
+	if c.welcome.ModelName == "" {
+		modelLine = labelStyle.Render("  🤖  ") + warnStyle.Render("Модель не выбрана") +
+			subtitleStyle.Render("  — нажми Ctrl+O")
+	} else {
+		modelLine = labelStyle.Render("  🤖  ") + valueStyle.Render(c.welcome.ModelName)
+	}
+
+	// Sessions
+	sessionsText := fmt.Sprintf("%d", c.welcome.SessionCount)
+	if c.welcome.SessionCount == 0 {
+		sessionsText = "нет"
+	}
+	sessionsLine := labelStyle.Render("  💬  ") + valueStyle.Render(sessionsText+" сессий")
+
+	// Start hint
+	var hint string
+	if c.welcome.ModelName == "" {
+		hint = hintStyle.Render("  Настрой модель через Ctrl+O для начала работы")
+	} else {
+		hint = hintStyle.Render("  Напиши сообщение чтобы начать…")
+	}
 
 	block := lipgloss.JoinVertical(lipgloss.Left,
-		logo,
+		note,
+		name,
 		version,
 		"",
-		separator,
-		subtitle,
+		sep,
+		"",
+		projectLine,
+		modelLine,
+		sessionsLine,
+		"",
+		sep,
 		"",
 		hint,
 	)

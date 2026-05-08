@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -217,6 +218,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cfg.Model = cfg.LLM.Model
 		a.header.Model = cfg.LLM.Model
 		a.statusBar.SetModel(cfg.LLM.Model)
+		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
 		binary := a.cfg.Binary
 		workspaceRoot := a.cfg.WorkspaceRoot
 		projectID := a.cfg.ProjectID
@@ -615,6 +617,7 @@ func (a *App) layout() {
 
 	if !a.initialized {
 		a.chat = view.NewChat(a.width, chatHeight)
+		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
 		a.input = view.NewInput(a.width)
 		a.initialized = true
 	} else {
@@ -969,6 +972,41 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		return tea.Quit
 	}
 	return nil
+}
+
+// buildWelcomeInfo constructs the metadata shown on the welcome screen.
+func (a *App) buildWelcomeInfo() view.WelcomeInfo {
+	projectPath := a.cfg.WorkspaceRoot
+	projectName := a.cfg.CWD
+	if projectName == "" && projectPath != "" {
+		projectName = filepath.Base(projectPath)
+	}
+	return view.WelcomeInfo{
+		ProjectPath:  projectPath,
+		ProjectName:  projectName,
+		ModelName:    a.cfg.Model,
+		SessionCount: countSessions(projectPath),
+	}
+}
+
+// countSessions returns the number of past agent sessions in this workspace.
+// It looks for JSONL run files in the .orchestra/ directory.
+func countSessions(workspaceRoot string) int {
+	orchDir := filepath.Join(workspaceRoot, ".orchestra")
+	entries, err := os.ReadDir(orchDir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			info, err := e.Info()
+			if err == nil && info.Size() > 0 {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 // updateStatusHints updates the status bar hint text based on the current UI state.
