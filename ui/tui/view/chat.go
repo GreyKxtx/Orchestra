@@ -221,12 +221,10 @@ func (c Chat) welcomeScreen() string {
 	valueStyle := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
 	pathStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
 	warnStyle := lipgloss.NewStyle().Foreground(t.Warning())
-	hintStyle := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true)
 
-	const sepWidth = 48
+	const sepWidth = 52
 	sep := subtitleStyle.Render(strings.Repeat("─", sepWidth))
 
-	// ASCII logo
 	logo := lipgloss.JoinVertical(lipgloss.Center,
 		logoStyle.Render(orchArt),
 		codeStyle.Render(codeArt),
@@ -234,7 +232,13 @@ func (c Chat) welcomeScreen() string {
 
 	version := subtitleStyle.Render("AI coding assistant  " + appVersion)
 
-	// Project: name bold + path muted on same line
+	// Info section — fixed-width labels + values, aligned column.
+	// Labels are right-padded to width 10 so values line up.
+	const labelW = 10
+	padLabel := func(s string) string {
+		return labelStyle.Render(lipgloss.NewStyle().Width(labelW).Render(s))
+	}
+
 	projectPath := c.welcome.ProjectPath
 	if projectPath == "" {
 		projectPath = "."
@@ -243,26 +247,27 @@ func (c Chat) welcomeScreen() string {
 	if projectName == "" {
 		projectName = "unknown"
 	}
-	projectLine := labelStyle.Render("project  ") +
-		valueStyle.Render(projectName) +
-		pathStyle.Render("  " + projectPath)
 
-	// Model
+	projectLine := padLabel("project") + valueStyle.Render(projectName)
+	cwdLine := padLabel("cwd") + pathStyle.Render(projectPath)
+
 	var modelLine string
 	if c.welcome.ModelName == "" {
-		modelLine = labelStyle.Render("model    ") +
-			warnStyle.Render("не выбрана") +
-			hintStyle.Render("  ctrl+o")
+		modelLine = padLabel("model") + warnStyle.Render("не выбрана  ") +
+			subtitleStyle.Render("(ctrl+o)")
 	} else {
-		modelLine = labelStyle.Render("model    ") + valueStyle.Render(c.welcome.ModelName)
+		modelLine = padLabel("model") + valueStyle.Render(c.welcome.ModelName)
 	}
 
-	// Sessions
 	sessionsText := fmt.Sprintf("%d", c.welcome.SessionCount)
-	if c.welcome.SessionCount == 0 {
-		sessionsText = "0"
-	}
-	sessionsLine := labelStyle.Render("sessions ") + valueStyle.Render(sessionsText)
+	sessionsLine := padLabel("sessions") + valueStyle.Render(sessionsText)
+
+	infoBlock := lipgloss.JoinVertical(lipgloss.Left,
+		projectLine,
+		cwdLine,
+		modelLine,
+		sessionsLine,
+	)
 
 	block := lipgloss.JoinVertical(lipgloss.Center,
 		logo,
@@ -271,9 +276,7 @@ func (c Chat) welcomeScreen() string {
 		"",
 		sep,
 		"",
-		projectLine,
-		modelLine,
-		sessionsLine,
+		infoBlock,
 	)
 
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
