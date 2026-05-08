@@ -1,6 +1,8 @@
 // Package state holds local session state for the TUI.
 package state
 
+import "strings"
+
 // Role identifies who produced a message.
 type Role string
 
@@ -74,6 +76,12 @@ func (s *Session) UpdateToolBlock(id string, status ToolBlockStatus, result stri
 		if blocks[i].ID == id {
 			blocks[i].Status = status
 			blocks[i].Result = result
+			// Hybrid rule: auto-expand completions with ≤ 10 lines.
+			if status == ToolBlockCompleted || status == ToolBlockFailed {
+				if strings.Count(result, "\n") <= 10 {
+					blocks[i].Expanded = true
+				}
+			}
 			return true
 		}
 	}
@@ -86,4 +94,45 @@ func (s *Session) FinishAssistant() {
 		s.Messages[s.activeAssistant].Streaming = false
 	}
 	s.activeAssistant = -1
+}
+
+// ToggleLastToolBlock toggles the Expanded flag on the most recently completed
+// or failed tool block across all messages. No-op if no such block exists.
+func (s *Session) ToggleLastToolBlock() {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		blocks := s.Messages[i].ToolBlocks
+		for j := len(blocks) - 1; j >= 0; j-- {
+			if blocks[j].Status != ToolBlockRunning {
+				s.Messages[i].ToolBlocks[j].Expanded = !s.Messages[i].ToolBlocks[j].Expanded
+				return
+			}
+		}
+	}
+}
+
+const RoleDiff Role = "diff"
+
+// AddDiff appends a diff display message to history.
+func (s *Session) AddDiff(content string) {
+	s.Messages = append(s.Messages, Message{Role: RoleDiff, Text: content})
+}
+
+// RemoveDiff removes the last diff message from history.
+func (s *Session) RemoveDiff() {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role == RoleDiff {
+			s.Messages = append(s.Messages[:i], s.Messages[i+1:]...)
+			return
+		}
+	}
+}
+
+// HasDiff reports whether there is a diff message in history.
+func (s *Session) HasDiff() bool {
+	for _, m := range s.Messages {
+		if m.Role == RoleDiff {
+			return true
+		}
+	}
+	return false
 }

@@ -17,7 +17,8 @@ type ToolBlock struct {
 	Name        string
 	ArgsPreview string
 	Status      ToolBlockStatus
-	Result      string // truncated preview
+	Result      string
+	Expanded    bool // true = show full result; toggled by Tab
 	StartedAt   time.Time
 	Duration    time.Duration
 }
