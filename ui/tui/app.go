@@ -1033,10 +1033,11 @@ func (a *App) renderWelcomeView() string {
 	// Logo — centered.
 	logo := view.RenderWelcomeLogo()
 
-	// Build each row of the input box. Manually pad with bg-styled spaces
-	// so that placeholder/text rendering (which uses its OWN ANSI codes)
-	// can't leak terminal-default black into the trailing area.
-	taLine := padLinesBg(a.input.TextareaView(), contentW, bg)
+	// Build each row of the input box. The textarea row is rendered manually
+	// (Input.WelcomeRender) — bubbles' own View() leaves un-styled trailing
+	// space after the placeholder, which leaks black through. Other rows
+	// get manual bg padding via padLinesBg.
+	taLine := a.input.WelcomeRender(contentW, a.cursorBlink)
 	gapLine := padLinesBg("", contentW, bg)
 	modeLine := padLinesBg(a.welcomeModeLine(), contentW, bg)
 

@@ -1,6 +1,8 @@
 package view
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -102,4 +104,54 @@ func (in Input) Render() string {
 		Bold(true).
 		Foreground(t.Primary())
 	return lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"), in.ta.View())
+}
+
+// WelcomeRender renders the input row for the welcome view ourselves,
+// bypassing bubbles textarea.View() — its placeholder padding doesn't
+// always carry our bg, leaving black gaps. By rendering manually we
+// control every cell with explicit lipgloss styles.
+//
+//	width    — target visible width of the row (matches box content area)
+//	blinkOn  — whether the cursor block is currently visible (animation)
+func (in Input) WelcomeRender(width int, blinkOn bool) string {
+	t := theme.CurrentTheme()
+	bg := t.BackgroundSecondary()
+
+	bgStyle := lipgloss.NewStyle().Background(bg)
+	textStyle := bgStyle.Foreground(t.Text())
+	mutedStyle := bgStyle.Foreground(t.TextMuted())
+	// Cursor block: primary bg, character in dark bg color (inverted feel).
+	cursorOn := lipgloss.NewStyle().Background(t.Primary()).Foreground(bg)
+
+	val := in.ta.Value()
+
+	var content string
+	switch {
+	case val == "":
+		// Show placeholder. When blink is on, first char becomes cursor block.
+		ph := []rune("Спроси Orchestra…")
+		if len(ph) == 0 {
+			content = ""
+			break
+		}
+		first, rest := string(ph[0]), string(ph[1:])
+		if blinkOn {
+			content = cursorOn.Render(first) + mutedStyle.Render(rest)
+		} else {
+			content = mutedStyle.Render(string(ph))
+		}
+	default:
+		// Show typed value; cursor block at end while blink is on.
+		content = textStyle.Render(val)
+		if blinkOn {
+			content += cursorOn.Render(" ")
+		}
+	}
+
+	// Pad the row to full width with bg-styled spaces — guarantees no gaps.
+	visW := lipgloss.Width(content)
+	if visW < width {
+		content += bgStyle.Render(strings.Repeat(" ", width-visW))
+	}
+	return content
 }
