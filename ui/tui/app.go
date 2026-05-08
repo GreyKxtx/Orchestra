@@ -70,6 +70,7 @@ type App struct {
 	commandModal   *view.PaletteModal   // Ctrl+K modal
 	onboarding     *view.OnboardingView // 3-step wizard
 	showOnboarding bool
+	showWelcome    bool // true on every startup until user sends first message
 	cursorBlink    bool // toggles every 500ms while agentBusy
 }
 
@@ -113,6 +114,7 @@ func NewApp(cfg Config) (*App, error) {
 		session: state.NewSession(),
 	}
 	a.statusBar.SetModel(cfg.Model)
+	a.showWelcome = true // always show welcome screen at startup
 	a.slashPalette = view.NewSlashPalette(0)   // width set in layout()
 	a.mentionPalette = view.NewMentionPalette(0) // width set in layout()
 	a.history = state.NewInputHistory(100)
@@ -432,6 +434,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				return a, nil
 			}
+			// Dismiss welcome screen on first message.
+			if a.showWelcome {
+				a.showWelcome = false
+				a.chat.SetForceWelcome(false)
+			}
 			a.session.AppendMessage(state.Message{Role: state.RoleUser, Text: text})
 			a.session.StartAssistant()
 			a.chat.SetMessages(a.session.Messages)
@@ -618,6 +625,7 @@ func (a *App) layout() {
 	if !a.initialized {
 		a.chat = view.NewChat(a.width, chatHeight)
 		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
+		a.chat.SetForceWelcome(a.showWelcome)
 		a.input = view.NewInput(a.width)
 		a.initialized = true
 	} else {
