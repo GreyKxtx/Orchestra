@@ -919,6 +919,9 @@ const helpText = `Orchestra TUI — key bindings:
 // executePaletteCmd carries out the chosen slash command and returns a tea.Cmd
 // if the action requires async work, or nil.
 func (a *App) executePaletteCmd(cmd string) tea.Cmd {
+	// Slash command execution always dismisses the startup welcome screen.
+	a.showWelcome = false
+	a.chat.SetForceWelcome(false)
 	switch cmd {
 	case "/help":
 		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: helpText})

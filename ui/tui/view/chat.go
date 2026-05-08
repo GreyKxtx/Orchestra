@@ -58,14 +58,11 @@ func (c *Chat) SetStreamCursor(on bool) {
 }
 
 // SetMessages re-renders the viewport content from the session messages.
-// Any non-empty message list also dismisses the force-welcome overlay.
 func (c *Chat) SetMessages(msgs []state.Message) {
 	if len(msgs) == 0 {
 		c.vp.SetContent("")
 		return
 	}
-	// Dismiss the startup welcome as soon as real content appears.
-	c.forceWelcome = false
 
 	t := theme.CurrentTheme()
 	toolStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
