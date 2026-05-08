@@ -24,6 +24,8 @@ const (
 	EventExecOutputChunk EventKind = "exec_output_chunk"
 
 	EventAgentRunCompleted EventKind = "agent_run_completed" // synthesized when AgentRun returns
+
+	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent
 )
 
 // Event is a TUI-side representation of a streaming event.
@@ -33,8 +35,9 @@ type Event struct {
 	Content      string
 	ToolCallID   string
 	ToolCallName string
-	PendingOps   *PendingOpsPayload // only set when Kind == EventPendingOps
-	Err          string             // only set on connection/agent error events
+	PendingOps   *PendingOpsPayload        // only set when Kind == EventPendingOps
+	PermReq      *PermissionRequestPayload // only set when Kind == EventPermissionRequest
+	Err          string                    // only set on connection/agent error events
 }
 
 // PendingOpsPayload mirrors the data sub-object in the pending_ops event.
@@ -49,4 +52,10 @@ type FileDiff struct {
 	Path   string `json:"path"`
 	Before string `json:"before"`
 	After  string `json:"after"`
+}
+
+// PermissionRequestPayload carries the exec.run consent request.
+type PermissionRequestPayload struct {
+	Tool        string `json:"tool"`
+	Description string `json:"description"`
 }

@@ -44,6 +44,8 @@ type App struct {
 	pendingOps *rpcclient.PendingOpsPayload // non-nil while ops await confirmation
 	diffShown  bool                          // true while diff messages are in session
 	agentBusy  bool                          // true while agent.run in flight
+
+	permModal *view.Modal // non-nil while an exec.run permission request is pending
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -108,9 +110,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.String() {
+		case "y":
+			if a.permModal != nil {
+				a.permModal = nil
+				a.updateFooter()
+				if a.rpc != nil {
+					a.rpc.RespondPermission(true)
+				}
+				return a, nil
+			}
+		case "n":
+			if a.permModal != nil {
+				a.permModal = nil
+				a.updateFooter()
+				if a.rpc != nil {
+					a.rpc.RespondPermission(false)
+				}
+				return a, nil
+			}
 		case "ctrl+c":
 			return a, tea.Quit
 		case "esc":
+			if a.permModal != nil {
+				a.permModal = nil
+				a.updateFooter()
+				if a.rpc != nil {
+					a.rpc.RespondPermission(false)
+				}
+				return a, nil
+			}
 			a.input.Reset()
 			return a, nil
 		case "tab":
@@ -240,6 +268,12 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) {
 		if ev.PendingOps != nil && !ev.PendingOps.Applied {
 			a.pendingOps = ev.PendingOps
 		}
+	case rpcclient.EventPermissionRequest:
+		if ev.PermReq != nil {
+			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
+			a.permModal.SetSize(a.width)
+			a.updateFooter()
+		}
 	}
 	a.chat.SetMessages(a.session.Messages)
 	a.updateFooter()
@@ -254,7 +288,12 @@ func (a *App) View() string {
 	if a.pendingOps != nil {
 		parts = append(parts, a.renderActionBar())
 	}
-	parts = append(parts, a.input.Render(), a.footer.Render())
+	if a.permModal != nil {
+		parts = append(parts, a.permModal.Render())
+	} else {
+		parts = append(parts, a.input.Render())
+	}
+	parts = append(parts, a.footer.Render())
 	return strings.Join(parts, "\n")
 }
 
@@ -276,7 +315,12 @@ func (a *App) layout() {
 	if a.pendingOps != nil {
 		actionBarRows = 1
 	}
-	chatHeight := a.height - 1 - 1 - 4 - actionBarRows
+	modalRows := 0
+	if a.permModal != nil {
+		modalRows = 5
+		a.permModal.SetSize(a.width)
+	}
+	chatHeight := a.height - 1 - 1 - 4 - actionBarRows - modalRows
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
@@ -304,6 +348,8 @@ func (a *App) buildDiffContent() string {
 
 func (a *App) updateFooter() {
 	switch {
+	case a.permModal != nil:
+		a.footer.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:
 		a.footer.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
 	default:

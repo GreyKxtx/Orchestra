@@ -35,6 +35,8 @@ type Client struct {
 	closeOnce sync.Once
 	mu        sync.Mutex
 	closed    bool
+
+	permCh chan bool // receives user's yes/no for pending permission/request
 }
 
 // Spawn starts the orchestra core subprocess and runs the initialize handshake.
@@ -73,6 +75,7 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 		stderr: stderr,
 		rpc:    jsonrpc.NewClient(stdout, stdin),
 		events: make(chan Event, 64),
+		permCh: make(chan bool, 1),
 	}
 
 	// Drain stderr to avoid pipe blocking.
@@ -87,6 +90,7 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 	}()
 
 	c.rpc.SetNotificationHandler(c.handleNotification)
+	c.rpc.SetRequestHandler(c.handleRequest)
 
 	c.send(Event{Kind: EventConnecting})
 	initParams := map[string]any{
@@ -215,4 +219,31 @@ func (c *Client) handleExecOutput(params json.RawMessage) {
 		return
 	}
 	c.send(Event{Kind: EventExecOutputChunk, Step: p.Step, Content: p.Chunk})
+}
+
+func (c *Client) handleRequest(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if method != "permission/request" {
+		return nil, fmt.Errorf("unsupported server request: %s", method)
+	}
+	var req PermissionRequestPayload
+	if err := json.Unmarshal(params, &req); err != nil {
+		return map[string]any{"approved": false}, nil
+	}
+	c.send(Event{Kind: EventPermissionRequest, PermReq: &req})
+	// Block until the UI calls RespondPermission.
+	select {
+	case approved := <-c.permCh:
+		return map[string]any{"approved": approved}, nil
+	case <-ctx.Done():
+		return map[string]any{"approved": false}, nil
+	}
+}
+
+// RespondPermission answers the pending permission/request from the core.
+// Must be called exactly once per EventPermissionRequest event.
+func (c *Client) RespondPermission(approved bool) {
+	select {
+	case c.permCh <- approved:
+	default:
+	}
 }
