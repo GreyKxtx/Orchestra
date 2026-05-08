@@ -627,6 +627,7 @@ func (a *App) layout() {
 		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
 		a.chat.SetForceWelcome(a.showWelcome)
 		a.input = view.NewInput(a.width)
+		a.input.SetMode(a.cfg.Mode)
 		a.initialized = true
 	} else {
 		a.chat.SetSize(a.width, chatHeight)
