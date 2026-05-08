@@ -49,6 +49,8 @@ type App struct {
 
 	slashPalette  *view.SlashPalette
 	paletteActive bool
+
+	history *state.InputHistory
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -71,6 +73,7 @@ func NewApp(cfg Config) (*App, error) {
 		session: state.NewSession(),
 	}
 	a.slashPalette = view.NewSlashPalette(0) // width set in layout()
+	a.history = state.NewInputHistory(100)
 
 	if cfg.Binary != "" {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -125,9 +128,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.slashPalette.CursorUp()
 				return a, nil
 			}
+			// History navigation: only when input has no newline (single-line mode).
+			if !strings.Contains(a.input.Value(), "\n") {
+				text := a.history.Up(a.input.Value())
+				a.input.SetValue(text)
+				return a, nil
+			}
 		case "down":
 			if a.paletteActive {
 				a.slashPalette.CursorDown()
+				return a, nil
+			}
+			if !strings.Contains(a.input.Value(), "\n") {
+				text := a.history.Down()
+				a.input.SetValue(text)
 				return a, nil
 			}
 		case "y":
@@ -239,6 +253,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.session.AppendMessage(state.Message{Role: state.RoleUser, Text: text})
 			a.session.StartAssistant()
 			a.chat.SetMessages(a.session.Messages)
+			a.history.Push(text)
+			a.history.Reset()
 			a.input.Reset()
 			if a.rpc != nil {
 				a.agentBusy = true
