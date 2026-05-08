@@ -51,13 +51,34 @@ orchestra tui
 - [x] **Фаза 2 — подключение к ядру** (текущая): JSON-RPC stdio, streaming token deltas, tool blocks (collapsed)
 - [x] **Фаза 3** — collapsible tool blocks (Tab expand), inline diff view, pending ops action bar ([a]pply / [d]iff / [x]discard), permission modal для exec.run
 - [x] **Фаза 4** — slash-палитра (`/help` `/clear` `/model` `/mode` `/diff` `/apply` `/discard` `/quit`), @-mention fuzzy (`@`), история ввода ↑↓, динамические footer hints
-- [ ] Фаза 5 — polish, snapshot tests расширенные
+- [x] **Фаза 5** — расширенные behavior tests (slash palette, /help, /clear, /quit, Esc), обновление документации
 
 ## Архитектура
 
-`ui/tui/app.go` — корневая Bubble Tea модель. Делегирует рендеринг в `view/{header,chat,input,footer}.go`. Состояние сессии (history) живёт в `state/session.go`. Phase 2 добавил `rpcclient/` для stdio JSON-RPC.
+```
+ui/tui/
+  app.go           ← корневая Bubble Tea модель (Update / View / Init)
+  mention_test.go  ← unit-тесты для @-mention helpers
+  view/
+    chat.go        ← viewport + сообщения + tool blocks + diff
+    input.go       ← textarea wrapper + SetValue
+    footer.go      ← hints line (динамические)
+    header.go      ← model · mode · cwd
+    modal.go       ← permission modal для exec.run
+    palette.go     ← SlashPalette + MentionPalette (fuzzy)
+    diff.go        ← LCS-based colored diff renderer
+  state/
+    session.go     ← Messages, ToolBlocks, RoleDiff
+    toolblock.go   ← ToolBlock lifecycle state
+    history.go     ← InputHistory (↑↓ recall)
+  rpcclient/
+    client.go      ← JSON-RPC stdio wrapper (Spawn, AgentRun, ApplyOps, RespondPermission)
+    events.go      ← Event types + kinds
+```
 
-См. также: `docs/superpowers/specs/2026-05-07-tui-design.md` (общий дизайн TUI), `docs/PROTOCOL.md` (контракт ядра).
+`app.go` координирует все состояния: `paletteActive` (slash), `mentionActive` (@), `agentBusy` (RPC), `permModal` (exec consent), `pendingOps` (apply/discard). Все мутации состояния — только в `Update()` goroutine.
+
+См. также: `docs/superpowers/specs/2026-05-07-tui-design.md` (дизайн), `docs/PROTOCOL.md` (контракт ядра), `docs/architecture-uml.md` (TUI в Containers diagram).
 
 ## Подключение к ядру (Фаза 2)
 
