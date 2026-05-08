@@ -28,6 +28,9 @@ type Chat struct {
 	streamCursor bool        // when true, appends ▋ to last assistant token
 	welcome      WelcomeInfo // metadata for the empty-state screen
 	forceWelcome bool        // when true, always show welcome regardless of content
+	agentBusy    bool        // affects the help line shown below messages
+	width        int
+	height       int
 }
 
 // SetWelcomeInfo updates the project metadata displayed on the welcome screen.
@@ -42,14 +45,20 @@ func (c *Chat) SetForceWelcome(v bool) {
 
 // NewChat creates an empty chat view sized to width × height.
 func NewChat(width, height int) Chat {
-	return Chat{vp: viewport.New(width, height)}
+	// reserve 1 row at the bottom for the help line
+	return Chat{vp: viewport.New(width, height-1), width: width, height: height}
 }
 
-// SetSize resizes the chat viewport.
+// SetSize resizes the chat viewport (1 row reserved for help line).
 func (c *Chat) SetSize(width, height int) {
+	c.width = width
+	c.height = height
 	c.vp.Width = width
-	c.vp.Height = height
+	c.vp.Height = height - 1
 }
+
+// SetAgentBusy controls the help line text shown below messages.
+func (c *Chat) SetAgentBusy(b bool) { c.agentBusy = b }
 
 // SetStreamCursor controls whether a blinking cursor is appended to
 // the last message (used while agent is streaming a response).
@@ -208,89 +217,150 @@ const codeArt = "╔═╗ ╔═╗ ╔╦╗ ╔═╗\n" +
 	"║   ║ ║ ║ ║ ╠═ \n" +
 	"╚═╝ ╚═╝ ╚╩╝ ╚═╝"
 
-// welcomeScreen returns a centered welcome block shown when chat is empty.
+// welcomeScreen — port of OpenCode initialScreen+header+lspsConfigured.
+// All elements are left-aligned at the top, full width. No centering.
 func (c Chat) welcomeScreen() string {
-	t := theme.CurrentTheme()
-	w := c.vp.Width
-	h := c.vp.Height
+	w := c.width
+	if w == 0 {
+		w = c.vp.Width
+	}
 
-	logoStyle := lipgloss.NewStyle().Foreground(t.Primary()).Bold(true)
-	codeStyle := lipgloss.NewStyle().Foreground(t.Secondary()).Bold(true)
-	subtitleStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
-	labelStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
-	valueStyle := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
-	pathStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
-	warnStyle := lipgloss.NewStyle().Foreground(t.Warning())
-
-	const sepWidth = 52
-	sep := subtitleStyle.Render(strings.Repeat("─", sepWidth))
-
-	logo := lipgloss.JoinVertical(lipgloss.Center,
-		logoStyle.Render(orchArt),
-		codeStyle.Render(codeArt),
+	return lipgloss.NewStyle().Width(w).Render(
+		lipgloss.JoinVertical(
+			lipgloss.Top,
+			c.welcomeLogo(w),
+			c.welcomeVersion(w),
+			"",
+			c.welcomeCwd(w),
+			"",
+			c.welcomeProjectInfo(w),
+		),
 	)
+}
 
-	version := subtitleStyle.Render("AI coding assistant  " + appVersion)
+// welcomeLogo renders the ORCHESTRA + CODE block, left-aligned, full width.
+func (c Chat) welcomeLogo(width int) string {
+	t := theme.CurrentTheme()
+	orch := lipgloss.NewStyle().Foreground(t.Primary()).Bold(true).Render(orchArt)
+	code := lipgloss.NewStyle().Foreground(t.Secondary()).Bold(true).Render(codeArt)
+	return lipgloss.NewStyle().Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left, orch, code),
+	)
+}
 
-	// Info section — fixed-width labels + values, aligned column.
-	// Labels are right-padded to width 10 so values line up.
-	const labelW = 10
-	padLabel := func(s string) string {
-		return labelStyle.Render(lipgloss.NewStyle().Width(labelW).Render(s))
+// welcomeVersion — single muted line "<version> · AI coding assistant".
+func (c Chat) welcomeVersion(width int) string {
+	t := theme.CurrentTheme()
+	return lipgloss.NewStyle().
+		Foreground(t.TextMuted()).
+		Width(width).
+		Render(appVersion + " · AI coding assistant")
+}
+
+// welcomeCwd — "cwd: <path>" muted, full-width (mirrors OpenCode cwd()).
+func (c Chat) welcomeCwd(width int) string {
+	t := theme.CurrentTheme()
+	path := c.welcome.ProjectPath
+	if path == "" {
+		path = "."
 	}
+	return lipgloss.NewStyle().
+		Foreground(t.TextMuted()).
+		Width(width).
+		Render("cwd: " + path)
+}
 
-	projectPath := c.welcome.ProjectPath
-	if projectPath == "" {
-		projectPath = "."
-	}
-	projectName := c.welcome.ProjectName
-	if projectName == "" {
-		projectName = "unknown"
-	}
+// welcomeProjectInfo — primary-bold title + bulleted lines (mirrors lspsConfigured).
+func (c Chat) welcomeProjectInfo(width int) string {
+	t := theme.CurrentTheme()
+	base := lipgloss.NewStyle()
 
-	projectLine := padLabel("project") + valueStyle.Render(projectName)
-	cwdLine := padLabel("cwd") + pathStyle.Render(projectPath)
+	title := base.
+		Width(width).
+		Foreground(t.Primary()).
+		Bold(true).
+		Render("Project")
+
+	name := c.welcome.ProjectName
+	if name == "" {
+		name = "(unknown)"
+	}
+	nameLine := base.Width(width).Render(
+		base.Foreground(t.Text()).Render("• ") +
+			base.Foreground(t.Text()).Render(name),
+	)
 
 	var modelLine string
 	if c.welcome.ModelName == "" {
-		modelLine = padLabel("model") + warnStyle.Render("не выбрана  ") +
-			subtitleStyle.Render("(ctrl+o)")
+		modelLine = base.Width(width).Render(
+			base.Foreground(t.Text()).Render("• model: ") +
+				base.Foreground(t.Warning()).Render("не выбрана ") +
+				base.Foreground(t.TextMuted()).Render("(ctrl+o)"),
+		)
 	} else {
-		modelLine = padLabel("model") + valueStyle.Render(c.welcome.ModelName)
+		modelLine = base.Width(width).Render(
+			base.Foreground(t.Text()).Render("• model: ") +
+				base.Foreground(t.Text()).Render(c.welcome.ModelName),
+		)
 	}
 
-	sessionsText := fmt.Sprintf("%d", c.welcome.SessionCount)
-	sessionsLine := padLabel("sessions") + valueStyle.Render(sessionsText)
-
-	infoBlock := lipgloss.JoinVertical(lipgloss.Left,
-		projectLine,
-		cwdLine,
-		modelLine,
-		sessionsLine,
+	sessLine := base.Width(width).Render(
+		base.Foreground(t.Text()).Render("• ") +
+			base.Foreground(t.Text()).Render(fmt.Sprintf("sessions: %d", c.welcome.SessionCount)),
 	)
 
-	block := lipgloss.JoinVertical(lipgloss.Center,
-		logo,
-		"",
-		version,
-		"",
-		sep,
-		"",
-		infoBlock,
+	return base.Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			title,
+			nameLine,
+			modelLine,
+			sessLine,
+		),
 	)
+}
 
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
+// helpLine — bottom-of-messages help text, mirrors OpenCode help().
+func (c Chat) helpLine() string {
+	t := theme.CurrentTheme()
+	base := lipgloss.NewStyle().Bold(true)
+
+	var text string
+	if c.agentBusy {
+		text = lipgloss.JoinHorizontal(lipgloss.Left,
+			base.Foreground(t.TextMuted()).Render("press "),
+			base.Foreground(t.Text()).Render("esc"),
+			base.Foreground(t.TextMuted()).Render(" to cancel"),
+		)
+	} else {
+		text = lipgloss.JoinHorizontal(lipgloss.Left,
+			base.Foreground(t.TextMuted()).Render("press "),
+			base.Foreground(t.Text()).Render("enter"),
+			base.Foreground(t.TextMuted()).Render(" to send the message,"),
+			base.Foreground(t.TextMuted()).Render(" write"),
+			base.Foreground(t.Text()).Render(" \\"),
+			base.Foreground(t.TextMuted()).Render(" and enter to add a new line"),
+		)
+	}
+	return lipgloss.NewStyle().Width(c.width).Render(text)
 }
 
 // View returns the viewport's current view, or the welcome screen if empty/forced.
+// A help line is appended at the bottom in both cases.
 func (c Chat) View() string {
 	if c.vp.Width == 0 {
 		return ""
 	}
+	var top string
 	if c.forceWelcome || c.vp.TotalLineCount() == 0 {
-		return c.welcomeScreen()
+		// Welcome takes height-1 rows, help line takes the last row.
+		top = lipgloss.NewStyle().
+			Width(c.width).
+			Height(c.height - 1).
+			Render(c.welcomeScreen())
+	} else {
+		top = c.vp.View()
 	}
-	return c.vp.View()
+	return lipgloss.JoinVertical(lipgloss.Left, top, c.helpLine())
 }
 
 // Render is an alias for View (keeps compatibility with app.go).
