@@ -24,7 +24,7 @@ func (f Footer) Render() string {
 		Padding(0, 1)
 	h := f.hints
 	if h == "" {
-		h = "↑↓ history · Enter send · Shift+Enter newline · Tab expand · Ctrl+C quit"
+		h = "↑↓ history · / commands · @ files · Tab expand · Enter send · Ctrl+C quit"
 	}
 	return style.Render(h)
 }
