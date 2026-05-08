@@ -52,7 +52,9 @@ func (p *SlashPalette) Filter(query string) {
 		}
 	}
 	p.Items = filtered
-	if p.Cursor >= len(p.Items) {
+	if len(p.Items) > 0 && p.Cursor >= len(p.Items) {
+		p.Cursor = len(p.Items) - 1
+	} else if len(p.Items) == 0 {
 		p.Cursor = 0
 	}
 }
@@ -96,11 +98,15 @@ func (p *SlashPalette) Render() string {
 		Foreground(lipgloss.Color("#c0caf5"))
 	descStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#565f89"))
+	w := p.width - 4
+	if w < 10 {
+		w = 10
+	}
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3d59a1")).
 		Padding(0, 1).
-		Width(p.width - 4)
+		Width(w)
 
 	var b strings.Builder
 	for i, item := range visible {
@@ -177,11 +183,15 @@ func (p *MentionPalette) Render() string {
 		Bold(true)
 	normalStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#c0caf5"))
+	w := p.width - 4
+	if w < 10 {
+		w = 10
+	}
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#41a6b5")).
 		Padding(0, 1).
-		Width(p.width - 4)
+		Width(w)
 
 	var b strings.Builder
 	for i, item := range visible {
