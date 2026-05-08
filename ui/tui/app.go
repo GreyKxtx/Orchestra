@@ -511,7 +511,7 @@ func (a *App) syncMention() {
 			items = items[:10]
 		}
 	} else {
-		matches := fuzzy.Find(q, a.workspaceFiles)
+		matches := fuzzy.Find(filepath.ToSlash(q), a.workspaceFiles)
 		items = make([]string, 0, len(matches))
 		for _, m := range matches {
 			items = append(items, m.Str)
