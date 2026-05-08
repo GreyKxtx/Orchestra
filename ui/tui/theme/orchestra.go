@@ -6,7 +6,7 @@ import "github.com/charmbracelet/lipgloss"
 type OrchestraTheme struct{}
 
 func (t *OrchestraTheme) Background() lipgloss.Color        { return "#0d0d0d" }
-func (t *OrchestraTheme) BackgroundSecondary() lipgloss.Color { return "#2a2a2a" }
+func (t *OrchestraTheme) BackgroundSecondary() lipgloss.Color { return "#3a3a3a" }
 func (t *OrchestraTheme) Primary() lipgloss.Color           { return "#9d7cd8" }
 func (t *OrchestraTheme) Secondary() lipgloss.Color         { return "#e0af68" }
 func (t *OrchestraTheme) Text() lipgloss.Color              { return "#e0e0e0" }
