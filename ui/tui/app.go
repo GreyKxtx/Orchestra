@@ -1042,9 +1042,10 @@ func (a *App) renderWelcomeView() string {
 	modeLine := padLinesBg(a.welcomeModeLine(), contentW, bg)
 
 	boxContent := lipgloss.JoinVertical(lipgloss.Left, taLine, gapLine, modeLine)
+	// Thick left bar (▌) instead of thin │ — matches OpenCode's accent strip.
 	inputBox := lipgloss.NewStyle().
 		Background(bg).
-		Border(lipgloss.NormalBorder(), false, false, false, true).
+		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
 		BorderForeground(t.Primary()).
 		BorderBackground(bg).
 		Padding(1, 2).
@@ -1061,14 +1062,20 @@ func (a *App) renderWelcomeView() string {
 	tip := a.welcomeTip()
 
 	// Slash/mention palette appears ABOVE the input box (when active),
-	// continuing into the input as a single visual unit.
+	// continuing into the input as a single visual unit. Match its width
+	// to the input box so the two read as one component.
 	var paletteView string
 	switch {
 	case a.paletteActive && len(a.slashPalette.Items) > 0:
+		a.slashPalette.SetSize(boxWidth)
 		paletteView = a.slashPalette.Render()
 	case a.mentionActive && len(a.mentionPalette.Items) > 0:
+		a.mentionPalette.SetSize(boxWidth)
 		paletteView = a.mentionPalette.Render()
 	}
+	// Restore full-width sizing for normal-mode rendering after this frame.
+	defer a.slashPalette.SetSize(a.width)
+	defer a.mentionPalette.SetSize(a.width)
 
 	// Build the centered block. Palette is inserted just above input box.
 	parts := []string{logo, "", ""}

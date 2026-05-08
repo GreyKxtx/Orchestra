@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
 // SlashCmd is one slash command shown in the palette.
@@ -81,46 +83,55 @@ func (p *SlashPalette) Selected() string {
 	return p.Items[p.Cursor].Cmd
 }
 
-// Render returns a styled popup listing visible items (max maxPaletteVisible).
+// Render returns the palette in OpenCode's completion-dialog style:
+// top-only NormalBorder in TextMuted, full input-width, theme-aware colors.
+// Selected item: Primary bg, Background fg.
 func (p *SlashPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
 	}
+	t := theme.CurrentTheme()
 	visible := p.Items
 	if len(visible) > maxPaletteVisible {
 		visible = visible[:maxPaletteVisible]
 	}
 
-	selStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#7aa2f7")).
-		Bold(true)
-	normalStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#c0caf5"))
-	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#565f89"))
-	w := p.width - 4
-	if w < 10 {
-		w = 10
+	w := p.width
+	if w < 20 {
+		w = 20
 	}
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3d59a1")).
-		Padding(0, 1).
-		Width(w)
+	innerW := w - 2 // accounts for 1-col padding on each side
+
+	cmdW := 12
+	selStyle := lipgloss.NewStyle().
+		Background(t.Primary()).
+		Foreground(t.Background()).
+		Bold(true).
+		Width(innerW)
+	cmdStyle := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
 
 	var b strings.Builder
 	for i, item := range visible {
-		cmd := fmt.Sprintf("%-12s", item.Cmd)
+		padCmd := fmt.Sprintf("%-*s", cmdW, item.Cmd)
+		var line string
 		if i == p.Cursor {
-			b.WriteString(selStyle.Render(cmd) + " " + descStyle.Render(item.Desc))
+			line = selStyle.Render(" " + padCmd + " " + item.Desc)
 		} else {
-			b.WriteString(normalStyle.Render(cmd) + " " + descStyle.Render(item.Desc))
+			line = " " + cmdStyle.Render(padCmd) + " " + descStyle.Render(item.Desc)
 		}
+		b.WriteString(line)
 		if i < len(visible)-1 {
 			b.WriteString("\n")
 		}
 	}
-	return borderStyle.Render(b.String())
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), true, false, false, false).
+		BorderForeground(t.TextMuted()).
+		BorderBackground(t.Background()).
+		Width(w).
+		Render(b.String())
 }
 
 // MentionPalette renders a filtered list of file paths for @-mention completion.
@@ -168,41 +179,49 @@ func (p *MentionPalette) Selected() string {
 	return p.Items[p.Cursor]
 }
 
-// Render returns a styled popup listing visible file paths.
+// Render returns a styled popup listing visible file paths — same OpenCode
+// completion style as SlashPalette.
 func (p *MentionPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
 	}
+	t := theme.CurrentTheme()
 	visible := p.Items
 	if len(visible) > maxPaletteVisible {
 		visible = visible[:maxPaletteVisible]
 	}
 
-	selStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#9ece6a")).
-		Bold(true)
-	normalStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#c0caf5"))
-	w := p.width - 4
-	if w < 10 {
-		w = 10
+	w := p.width
+	if w < 20 {
+		w = 20
 	}
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#41a6b5")).
-		Padding(0, 1).
-		Width(w)
+	innerW := w - 2
+
+	selStyle := lipgloss.NewStyle().
+		Background(t.Primary()).
+		Foreground(t.Background()).
+		Bold(true).
+		Width(innerW)
+	itemStyle := lipgloss.NewStyle().Foreground(t.Text())
 
 	var b strings.Builder
 	for i, item := range visible {
+		var line string
 		if i == p.Cursor {
-			b.WriteString(selStyle.Render(item))
+			line = selStyle.Render(" " + item)
 		} else {
-			b.WriteString(normalStyle.Render(item))
+			line = " " + itemStyle.Render(item)
 		}
+		b.WriteString(line)
 		if i < len(visible)-1 {
 			b.WriteString("\n")
 		}
 	}
-	return borderStyle.Render(b.String())
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), true, false, false, false).
+		BorderForeground(t.TextMuted()).
+		BorderBackground(t.Background()).
+		Width(w).
+		Render(b.String())
 }
