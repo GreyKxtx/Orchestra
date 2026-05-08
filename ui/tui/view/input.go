@@ -45,6 +45,12 @@ func NewInput(width int) Input {
 	ta.FocusedStyle.Text = bgFill.Foreground(textColor)
 	ta.FocusedStyle.EndOfBuffer = bgFill
 
+	// Cursor — without explicit styling it renders as terminal-default reverse
+	// video (black bg) which leaks through our grey input box. Set both the
+	// "on" Style and the "under cursor" TextStyle to use our bg.
+	ta.Cursor.Style = lipgloss.NewStyle().Background(t.Primary()).Foreground(bgColor)
+	ta.Cursor.TextStyle = lipgloss.NewStyle().Background(bgColor).Foreground(textColor)
+
 	ta.Placeholder = "Спроси Orchestra…"
 	ta.Prompt = " "
 	ta.ShowLineNumbers = false
