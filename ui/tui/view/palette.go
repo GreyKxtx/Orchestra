@@ -83,14 +83,15 @@ func (p *SlashPalette) Selected() string {
 	return p.Items[p.Cursor].Cmd
 }
 
-// Render returns the palette as a continuation of the input box: same thick
-// left bar (▌ in Primary), no top/bottom/right borders. Visually merges
-// with the input below it into one component.
+// Render returns the palette as a continuation of the input box: thick left
+// bar (▌ in Primary), grey BackgroundSecondary fill matching the input.
+// Border bg + interior bg + every row are all bg-filled so no black gaps.
 func (p *SlashPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
 	}
 	t := theme.CurrentTheme()
+	bg := t.BackgroundSecondary()
 	visible := p.Items
 	if len(visible) > maxPaletteVisible {
 		visible = visible[:maxPaletteVisible]
@@ -109,8 +110,9 @@ func (p *SlashPalette) Render() string {
 		Foreground(t.Background()).
 		Bold(true).
 		Width(innerW)
-	cmdStyle := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	cmdStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Text()).Bold(true)
+	descStyle := lipgloss.NewStyle().Background(bg).Foreground(t.TextMuted())
+	bgPad := lipgloss.NewStyle().Background(bg)
 
 	var b strings.Builder
 	for i, item := range visible {
@@ -119,7 +121,11 @@ func (p *SlashPalette) Render() string {
 		if i == p.Cursor {
 			line = selStyle.Render(padCmd + " " + item.Desc)
 		} else {
-			line = cmdStyle.Render(padCmd) + " " + descStyle.Render(item.Desc)
+			raw := cmdStyle.Render(padCmd) + bgPad.Render(" ") + descStyle.Render(item.Desc)
+			if visW := lipgloss.Width(raw); visW < innerW {
+				raw += bgPad.Render(strings.Repeat(" ", innerW-visW))
+			}
+			line = raw
 		}
 		b.WriteString(line)
 		if i < len(visible)-1 {
@@ -128,9 +134,10 @@ func (p *SlashPalette) Render() string {
 	}
 
 	return lipgloss.NewStyle().
+		Background(bg).
 		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
 		BorderForeground(t.Primary()).
-		BorderBackground(t.Background()).
+		BorderBackground(bg).
 		Padding(0, 2).
 		Width(w).
 		Render(b.String())
@@ -181,13 +188,13 @@ func (p *MentionPalette) Selected() string {
 	return p.Items[p.Cursor]
 }
 
-// Render returns a styled popup listing visible file paths — same continuation
-// style as SlashPalette (thick left bar ▌, merges with input below).
+// Render — same continuation style as SlashPalette with grey bg fill.
 func (p *MentionPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
 	}
 	t := theme.CurrentTheme()
+	bg := t.BackgroundSecondary()
 	visible := p.Items
 	if len(visible) > maxPaletteVisible {
 		visible = visible[:maxPaletteVisible]
@@ -204,7 +211,8 @@ func (p *MentionPalette) Render() string {
 		Foreground(t.Background()).
 		Bold(true).
 		Width(innerW)
-	itemStyle := lipgloss.NewStyle().Foreground(t.Text())
+	itemStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Text())
+	bgPad := lipgloss.NewStyle().Background(bg)
 
 	var b strings.Builder
 	for i, item := range visible {
@@ -212,7 +220,11 @@ func (p *MentionPalette) Render() string {
 		if i == p.Cursor {
 			line = selStyle.Render(item)
 		} else {
-			line = itemStyle.Render(item)
+			raw := itemStyle.Render(item)
+			if visW := lipgloss.Width(raw); visW < innerW {
+				raw += bgPad.Render(strings.Repeat(" ", innerW-visW))
+			}
+			line = raw
 		}
 		b.WriteString(line)
 		if i < len(visible)-1 {
@@ -221,9 +233,10 @@ func (p *MentionPalette) Render() string {
 	}
 
 	return lipgloss.NewStyle().
+		Background(bg).
 		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
 		BorderForeground(t.Primary()).
-		BorderBackground(t.Background()).
+		BorderBackground(bg).
 		Padding(0, 2).
 		Width(w).
 		Render(b.String())
