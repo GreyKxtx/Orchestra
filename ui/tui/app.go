@@ -609,7 +609,7 @@ func (a *App) layout() {
 		}
 		paletteRows = n + 2
 	}
-	inputRows := 4
+	inputRows := 2 // 1 line textarea + 1 line info bar
 	modalRows := 0
 	if a.permModal != nil {
 		inputRows = 0 // modal replaces input
