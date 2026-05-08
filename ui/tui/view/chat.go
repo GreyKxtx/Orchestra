@@ -5,14 +5,27 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/orchestra/orchestra/ui/tui/state"
+	"github.com/orchestra/orchestra/ui/tui/theme"
 )
+
+const asciiLogo = `
+ ██████╗ ██████╗  ██████╗
+██╔═══██╗██╔══██╗██╔════╝
+██║   ██║██████╔╝██║
+██║   ██║██╔══██╗██║
+╚██████╔╝██║  ██║╚██████╗
+ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝`
+
+const appVersion = "v0.6"
 
 // Chat renders the scrollable history of messages.
 type Chat struct {
-	vp viewport.Model
+	vp           viewport.Model
+	streamCursor bool // when true, appends ▋ to last assistant token
 }
 
 // NewChat creates an empty chat view sized to width × height.
@@ -26,38 +39,50 @@ func (c *Chat) SetSize(width, height int) {
 	c.vp.Height = height
 }
 
+// SetStreamCursor controls whether a blinking cursor is appended to
+// the last message (used while agent is streaming a response).
+func (c *Chat) SetStreamCursor(on bool) {
+	c.streamCursor = on
+}
+
 // SetMessages re-renders the viewport content from the session messages.
 func (c *Chat) SetMessages(msgs []state.Message) {
-	var b strings.Builder
-	userStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
-	asstStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
-	sysStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68")).Italic(true)
-	diffStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
-	toolStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	toolErrStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
-	expandedHdr  := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	expandedBody := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
+	if len(msgs) == 0 {
+		c.vp.SetContent("")
+		return
+	}
 
+	t := theme.CurrentTheme()
+	toolStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	toolErrStyle := lipgloss.NewStyle().Foreground(t.Error())
+	expandedHdr := lipgloss.NewStyle().Foreground(t.TextMuted())
+	expandedBody := lipgloss.NewStyle().Foreground(t.Text())
+	sysStyle := lipgloss.NewStyle().Foreground(t.Warning()).Italic(true)
+	diffStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+
+	width := c.vp.Width
+
+	var b strings.Builder
 	for i, m := range msgs {
 		switch m.Role {
 		case state.RoleUser:
-			b.WriteString(userStyle.Render("> ") + m.Text)
+			b.WriteString(renderMessage(m.Text, true, width, ""))
 
 		case state.RoleAssistant:
-			if m.Text != "" {
-				b.WriteString(asstStyle.Render(m.Text))
+			text := m.Text
+			// Append streaming cursor to last assistant message.
+			if c.streamCursor && i == len(msgs)-1 {
+				text += "▋"
 			}
+			// Build tool block section.
+			var toolLines strings.Builder
 			for _, tb := range m.ToolBlocks {
-				if m.Text != "" || b.Len() > 0 {
-					b.WriteString("\n")
-				}
 				style := toolStyle
 				if tb.Status == state.ToolBlockFailed {
 					style = toolErrStyle
 				}
 				if tb.Expanded && tb.Status != state.ToolBlockRunning {
-					// Expanded: show ▾ header + full result body.
-					b.WriteString(expandedHdr.Render(fmt.Sprintf("▾ %s", tb.Name)))
+					toolLines.WriteString(expandedHdr.Render(fmt.Sprintf("▾ %s", tb.Name)))
 					if tb.Result != "" {
 						lines := strings.Split(tb.Result, "\n")
 						const maxLines = 50
@@ -68,14 +93,13 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 							truncated = len(lines) - maxLines
 						}
 						for _, l := range shown {
-							b.WriteString("\n" + expandedBody.Render("  "+l))
+							toolLines.WriteString("\n" + expandedBody.Render("  "+l))
 						}
 						if truncated > 0 {
-							b.WriteString("\n" + expandedBody.Render(fmt.Sprintf("  … %d more lines", truncated)))
+							toolLines.WriteString("\n" + expandedBody.Render(fmt.Sprintf("  … %d more lines", truncated)))
 						}
 					}
 				} else {
-					// Collapsed (default): single summary line.
 					marker := "▸"
 					if tb.Status == state.ToolBlockRunning {
 						marker = "⋯"
@@ -89,9 +113,11 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 						preview = strings.ReplaceAll(preview, "\n", " ")
 						summary += " → " + preview
 					}
-					b.WriteString(style.Render(summary))
+					toolLines.WriteString(style.Render(summary))
 				}
+				toolLines.WriteString("\n")
 			}
+			b.WriteString(renderMessage(text, false, width, toolLines.String()))
 
 		case state.RoleSystem:
 			b.WriteString(sysStyle.Render(m.Text))
@@ -108,7 +134,106 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 	c.vp.GotoBottom()
 }
 
-// Render returns the viewport's current view.
-func (c Chat) Render() string {
+// renderMessage renders a single message with a thick left border.
+// isUser=true → yellow (Secondary), isUser=false → purple (Primary).
+// extra is appended below content (e.g. tool blocks).
+func renderMessage(text string, isUser bool, width int, extra string) string {
+	t := theme.CurrentTheme()
+
+	borderColor := t.Primary()
+	if isUser {
+		borderColor = t.Secondary()
+	}
+
+	innerWidth := width - 4
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	rendered := renderMarkdown(text, innerWidth)
+	content := rendered
+	if extra != "" {
+		content = lipgloss.JoinVertical(lipgloss.Left, rendered, extra)
+	}
+
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(borderColor).
+		PaddingLeft(1).
+		PaddingRight(1).
+		Width(width - 2).
+		Render(content)
+}
+
+// renderMarkdown renders text through glamour with dark styling.
+func renderMarkdown(text string, width int) string {
+	if width < 10 {
+		width = 10
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return text
+	}
+	out, err := r.Render(text)
+	if err != nil {
+		return text
+	}
+	return strings.TrimSpace(out)
+}
+
+// welcomeScreen returns a centered welcome block shown when chat is empty.
+func (c Chat) welcomeScreen() string {
+	t := theme.CurrentTheme()
+	w := c.vp.Width
+	h := c.vp.Height
+
+	logoStyle := lipgloss.NewStyle().
+		Foreground(t.Primary()).
+		Bold(true)
+
+	subtitleStyle := lipgloss.NewStyle().
+		Foreground(t.TextMuted())
+
+	versionStyle := lipgloss.NewStyle().
+		Foreground(t.TextMuted())
+
+	hintStyle := lipgloss.NewStyle().
+		Foreground(t.TextMuted()).
+		Italic(true)
+
+	logo := logoStyle.Render(asciiLogo)
+	version := versionStyle.Render("                           " + appVersion)
+	separator := subtitleStyle.Render(strings.Repeat("─", 34))
+	subtitle := subtitleStyle.Render("        AI coding assistant")
+	hint := hintStyle.Render("   Напиши сообщение чтобы начать…")
+
+	block := lipgloss.JoinVertical(lipgloss.Left,
+		logo,
+		version,
+		"",
+		separator,
+		subtitle,
+		"",
+		hint,
+	)
+
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
+}
+
+// View returns the viewport's current view, or the welcome screen if empty.
+func (c Chat) View() string {
+	if c.vp.Width == 0 {
+		return ""
+	}
+	if c.vp.TotalLineCount() == 0 {
+		return c.welcomeScreen()
+	}
 	return c.vp.View()
 }
+
+// Render is an alias for View (keeps compatibility with app.go).
+func (c Chat) Render() string { return c.View() }
