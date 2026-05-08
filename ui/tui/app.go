@@ -51,6 +51,12 @@ type App struct {
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
 type rpcEventMsg rpcclient.Event
 
+// applyResultMsg is returned by the ops-apply Cmd to keep session writes on the Update goroutine.
+type applyResultMsg struct {
+	err   error
+	count int
+}
+
 // NewApp constructs an App with the given config. If cfg.Binary is non-empty,
 // spawns the core subprocess and runs the initialize handshake; on error,
 // returns it.
@@ -148,8 +154,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "a":
 			if a.pendingOps != nil && a.rpc != nil {
-				ops := a.pendingOps.Ops
-				pending := a.pendingOps
+				rawOps := a.pendingOps.Ops
+				count := len(a.pendingOps.Ops)
 				a.pendingOps = nil
 				if a.diffShown {
 					a.session.RemoveDiff()
@@ -158,21 +164,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.chat.SetMessages(a.session.Messages)
 				a.layout()
 				a.updateFooter()
-				go func() {
-					if err := a.rpc.ApplyOps(context.Background(), ops); err != nil {
-						a.session.AppendMessage(state.Message{
-							Role: state.RoleSystem,
-							Text: "[apply failed] " + err.Error(),
-						})
-					} else {
-						a.session.AppendMessage(state.Message{
-							Role: state.RoleSystem,
-							Text: fmt.Sprintf("[applied %d ops]", len(pending.Ops)),
-						})
-					}
-					a.chat.SetMessages(a.session.Messages)
-				}()
-				return a, nil
+				rpc := a.rpc
+				return a, func() tea.Msg {
+					return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
+				}
 			}
 
 		case "d":
@@ -204,6 +199,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
+			if a.agentBusy {
+				return a, nil
+			}
 			text := strings.TrimSpace(a.input.Value())
 			if text == "" {
 				return a, nil
@@ -229,6 +227,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case rpcEventMsg:
 		a.handleRPCEvent(rpcclient.Event(m))
 		return a, a.listenForEvents()
+
+	case applyResultMsg:
+		if m.err != nil {
+			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[apply failed] " + m.err.Error()})
+		} else {
+			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: fmt.Sprintf("[applied %d ops]", m.count)})
+		}
+		a.chat.SetMessages(a.session.Messages)
+		return a, nil
 	}
 
 	// Forward to textarea.
@@ -267,12 +274,12 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) {
 	case rpcclient.EventPendingOps:
 		if ev.PendingOps != nil && !ev.PendingOps.Applied {
 			a.pendingOps = ev.PendingOps
+			a.layout()
 		}
 	case rpcclient.EventPermissionRequest:
 		if ev.PermReq != nil {
 			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
-			a.permModal.SetSize(a.width)
-			a.updateFooter()
+			a.layout()
 		}
 	}
 	a.chat.SetMessages(a.session.Messages)
@@ -315,12 +322,14 @@ func (a *App) layout() {
 	if a.pendingOps != nil {
 		actionBarRows = 1
 	}
+	inputRows := 4
 	modalRows := 0
 	if a.permModal != nil {
+		inputRows = 0 // modal replaces input
 		modalRows = 5
 		a.permModal.SetSize(a.width)
 	}
-	chatHeight := a.height - 1 - 1 - 4 - actionBarRows - modalRows
+	chatHeight := a.height - 1 - 1 - inputRows - actionBarRows - modalRows
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
