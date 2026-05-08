@@ -83,9 +83,9 @@ func (p *SlashPalette) Selected() string {
 	return p.Items[p.Cursor].Cmd
 }
 
-// Render returns the palette in OpenCode's completion-dialog style:
-// top-only NormalBorder in TextMuted, full input-width, theme-aware colors.
-// Selected item: Primary bg, Background fg.
+// Render returns the palette as a continuation of the input box: same thick
+// left bar (▌ in Primary), no top/bottom/right borders. Visually merges
+// with the input below it into one component.
 func (p *SlashPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
@@ -100,7 +100,8 @@ func (p *SlashPalette) Render() string {
 	if w < 20 {
 		w = 20
 	}
-	innerW := w - 2 // accounts for 1-col padding on each side
+	// Box: 1 (left border ▌) + 2 (left padding) + content + 2 (right padding) = w
+	innerW := w - 5
 
 	cmdW := 12
 	selStyle := lipgloss.NewStyle().
@@ -116,9 +117,9 @@ func (p *SlashPalette) Render() string {
 		padCmd := fmt.Sprintf("%-*s", cmdW, item.Cmd)
 		var line string
 		if i == p.Cursor {
-			line = selStyle.Render(" " + padCmd + " " + item.Desc)
+			line = selStyle.Render(padCmd + " " + item.Desc)
 		} else {
-			line = " " + cmdStyle.Render(padCmd) + " " + descStyle.Render(item.Desc)
+			line = cmdStyle.Render(padCmd) + " " + descStyle.Render(item.Desc)
 		}
 		b.WriteString(line)
 		if i < len(visible)-1 {
@@ -127,9 +128,10 @@ func (p *SlashPalette) Render() string {
 	}
 
 	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(t.TextMuted()).
+		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
+		BorderForeground(t.Primary()).
 		BorderBackground(t.Background()).
+		Padding(0, 2).
 		Width(w).
 		Render(b.String())
 }
@@ -179,8 +181,8 @@ func (p *MentionPalette) Selected() string {
 	return p.Items[p.Cursor]
 }
 
-// Render returns a styled popup listing visible file paths — same OpenCode
-// completion style as SlashPalette.
+// Render returns a styled popup listing visible file paths — same continuation
+// style as SlashPalette (thick left bar ▌, merges with input below).
 func (p *MentionPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
@@ -195,7 +197,7 @@ func (p *MentionPalette) Render() string {
 	if w < 20 {
 		w = 20
 	}
-	innerW := w - 2
+	innerW := w - 5
 
 	selStyle := lipgloss.NewStyle().
 		Background(t.Primary()).
@@ -208,9 +210,9 @@ func (p *MentionPalette) Render() string {
 	for i, item := range visible {
 		var line string
 		if i == p.Cursor {
-			line = selStyle.Render(" " + item)
+			line = selStyle.Render(item)
 		} else {
-			line = " " + itemStyle.Render(item)
+			line = itemStyle.Render(item)
 		}
 		b.WriteString(line)
 		if i < len(visible)-1 {
@@ -219,9 +221,10 @@ func (p *MentionPalette) Render() string {
 	}
 
 	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(t.TextMuted()).
+		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
+		BorderForeground(t.Primary()).
 		BorderBackground(t.Background()).
+		Padding(0, 2).
 		Width(w).
 		Render(b.String())
 }
