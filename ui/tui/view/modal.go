@@ -32,7 +32,7 @@ func (m *Modal) Render() string {
 	title := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#f7768e")).
 		Bold(true).
-		Render("! exec.run permission request")
+		Render("⚠ exec.run permission request")
 
 	desc := m.Description
 	if len(desc) > 200 {
