@@ -357,7 +357,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return a, nil
 			}
-			// Toggle last tool block.
+			// Cycle through agent modes (build → ask → plan → build).
+			a.cycleAgentMode()
+			return a, nil
+		case "ctrl+t":
+			// Toggle last tool block (moved from Tab to Ctrl+T).
 			a.session.ToggleLastToolBlock()
 			a.chat.SetMessages(a.session.Messages)
 			return a, nil
@@ -1009,32 +1013,34 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 func (a *App) renderWelcomeView() string {
 	t := view.ThemeForApp()
 
-	// Box width — clamped to terminal width.
-	boxWidth := 60
+	// Box width — wider than before (~80), clamped to terminal width.
+	boxWidth := 80
 	if a.width < boxWidth+8 {
 		boxWidth = a.width - 8
 	}
-	if boxWidth < 30 {
-		boxWidth = 30
+	if boxWidth < 40 {
+		boxWidth = 40
 	}
 
-	// Resize textarea to fit inside box.
-	// Box: 1 (border) + 2 (left padding) + ta + 2 (right padding) = boxWidth
-	// → ta width = boxWidth - 5
+	contentW := boxWidth - 5 // box: 1 border + 2 left pad + content + 2 right pad
+	bg := t.BackgroundSecondary()
+	bgFill := lipgloss.NewStyle().Background(bg).Width(contentW)
+
+	// Resize textarea to fit inside box content area.
 	savedW := a.input.TextareaWidth()
-	a.input.SetTextareaWidth(boxWidth - 5)
+	a.input.SetTextareaWidth(contentW)
 	defer a.input.SetTextareaWidth(savedW)
 
-	// Logo (our ASCII art) — centered.
+	// Logo — centered.
 	logo := view.RenderWelcomeLogo()
 
-	// Input box: grey bg + primary left border + textarea + (blank) + mode line.
-	bg := t.BackgroundSecondary()
-	taView := a.input.TextareaView()
-	modeLine := a.welcomeModeLine()
-	// Empty line between textarea and mode line — fill width with bg.
-	gap := lipgloss.NewStyle().Background(bg).Width(boxWidth - 5).Render("")
-	boxContent := lipgloss.JoinVertical(lipgloss.Left, taView, gap, modeLine)
+	// Input box rows. Wrap each row in a fixed-width bg fill so trailing
+	// whitespace gets the grey bg instead of falling back to terminal black.
+	taLine := bgFill.Render(a.input.TextareaView())
+	gapLine := bgFill.Render("")
+	modeLine := bgFill.Render(a.welcomeModeLine())
+
+	boxContent := lipgloss.JoinVertical(lipgloss.Left, taLine, gapLine, modeLine)
 	inputBox := lipgloss.NewStyle().
 		Background(bg).
 		Border(lipgloss.NormalBorder(), false, false, false, true).
@@ -1044,56 +1050,42 @@ func (a *App) renderWelcomeView() string {
 		Width(boxWidth).
 		Render(boxContent)
 
-	// Right-aligned hints, same width as box.
-	hintsStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	// Right-aligned hints below box.
+	hintsMuted := lipgloss.NewStyle().Foreground(t.TextMuted())
 	hintsBold := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
-	hintsText := hintsBold.Render("tab") + hintsStyle.Render(" agents  ") +
-		hintsBold.Render("ctrl+k") + hintsStyle.Render(" commands")
+	hintsText := hintsBold.Render("tab") + hintsMuted.Render(" agents  ") +
+		hintsBold.Render("ctrl+k") + hintsMuted.Render(" commands")
 	hints := lipgloss.NewStyle().Width(boxWidth).Align(lipgloss.Right).Render(hintsText)
 
-	// Tip line.
 	tip := a.welcomeTip()
 
-	block := lipgloss.JoinVertical(lipgloss.Center,
-		logo,
-		"",
-		"",
-		inputBox,
-		hints,
-		"",
-		"",
-		tip,
-	)
-
-	// Reserve rows for any active palette / modal / action bar.
-	paletteRows := 0
+	// Slash/mention palette appears ABOVE the input box (when active),
+	// continuing into the input as a single visual unit.
 	var paletteView string
 	switch {
 	case a.paletteActive && len(a.slashPalette.Items) > 0:
 		paletteView = a.slashPalette.Render()
-		paletteRows = lipgloss.Height(paletteView)
 	case a.mentionActive && len(a.mentionPalette.Items) > 0:
 		paletteView = a.mentionPalette.Render()
-		paletteRows = lipgloss.Height(paletteView)
 	}
 
-	// Center the whole block in the screen above status bar (and palette).
-	contentH := a.height - 1 - paletteRows
+	// Build the centered block. Palette is inserted just above input box.
+	parts := []string{logo, "", ""}
+	if paletteView != "" {
+		parts = append(parts, paletteView)
+	}
+	parts = append(parts, inputBox, hints, "", "", tip)
+	block := lipgloss.JoinVertical(lipgloss.Center, parts...)
+
+	// Bottom: blank row above status bar (lifts it up slightly), then bar.
+	contentH := a.height - 2
 	if contentH < 1 {
 		contentH = 1
 	}
 	centered := lipgloss.Place(a.width, contentH, lipgloss.Center, lipgloss.Center, block)
-
-	// Bottom status bar — OpenCode-style minimal: project name on left,
-	// version on right, both muted. Hints / spinner are NOT shown here in
-	// welcome mode (they live next to the input box already).
 	bottom := a.welcomeBottomBar()
 
-	out := centered
-	if paletteView != "" {
-		out += "\n" + paletteView
-	}
-	out += "\n" + bottom
+	out := centered + "\n" + bottom
 
 	// Command modal overlays everything else.
 	if a.commandModal != nil && a.commandModal.Active() {
@@ -1144,7 +1136,29 @@ func (a *App) welcomeTip() string {
 		muted.Render(" to switch agents")
 }
 
-// welcomeBottomBar — minimal status line: "<project>" left, "v0.6" right.
+// agentModes lists the available agent modes cycled by Tab.
+var agentModes = []string{"build", "ask", "plan"}
+
+// cycleAgentMode advances cfg.Mode to the next mode in agentModes.
+func (a *App) cycleAgentMode() {
+	cur := a.cfg.Mode
+	if cur == "" {
+		cur = agentModes[0]
+	}
+	idx := -1
+	for i, m := range agentModes {
+		if m == cur {
+			idx = i
+			break
+		}
+	}
+	a.cfg.Mode = agentModes[(idx+1)%len(agentModes)]
+	a.input.SetMode(a.cfg.Mode)
+	a.header.Mode = a.cfg.Mode
+}
+
+// welcomeBottomBar — minimal status line with side padding:
+// "  <project name>                                              v0.6  "
 func (a *App) welcomeBottomBar() string {
 	t := view.ThemeForApp()
 	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
@@ -1158,13 +1172,18 @@ func (a *App) welcomeBottomBar() string {
 	}
 	right := "v0.6"
 
+	const sidePad = 2
 	leftR := muted.Render(left)
 	rightR := muted.Render(right)
-	pad := a.width - lipgloss.Width(leftR) - lipgloss.Width(rightR)
-	if pad < 1 {
-		pad = 1
+
+	inner := a.width - sidePad*2
+	mid := inner - lipgloss.Width(leftR) - lipgloss.Width(rightR)
+	if mid < 1 {
+		mid = 1
 	}
-	return leftR + strings.Repeat(" ", pad) + rightR
+	return strings.Repeat(" ", sidePad) + leftR +
+		strings.Repeat(" ", mid) +
+		rightR + strings.Repeat(" ", sidePad)
 }
 
 // buildWelcomeInfo constructs the metadata shown on the welcome screen.
