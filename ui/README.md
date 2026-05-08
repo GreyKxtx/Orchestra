@@ -4,7 +4,7 @@
 
 | Каталог | Стек | Статус |
 |---|---|---|
-| `tui/` | Go + Bubble Tea | в разработке (Фаза 1) |
+| `tui/` | Go + Bubble Tea + Lipgloss | реализован (Фазы 0-4: streaming · tool blocks · slash-палитра · @-mention · история) |
 | `vscode/` | TypeScript / Node | планируется (Этап 2 product roadmap) |
 | `desktop/` | TBD (Tauri или Electron) | планируется (Этап 3 product roadmap) |
 
