@@ -217,6 +217,18 @@ const codeArt = "╔═╗ ╔═╗ ╔╦╗ ╔═╗\n" +
 	"║   ║ ║ ║ ║ ╠═ \n" +
 	"╚═╝ ╚═╝ ╚╩╝ ╚═╝"
 
+// ThemeForApp exposes the current theme to app.go callers.
+func ThemeForApp() theme.Theme { return theme.CurrentTheme() }
+
+// RenderWelcomeLogo returns the colored ORCHESTRA + CODE block,
+// vertically stacked. Used by the welcome view.
+func RenderWelcomeLogo() string {
+	t := theme.CurrentTheme()
+	orch := lipgloss.NewStyle().Foreground(t.Primary()).Bold(true).Render(orchArt)
+	code := lipgloss.NewStyle().Foreground(t.Secondary()).Bold(true).Render(codeArt)
+	return lipgloss.JoinVertical(lipgloss.Center, orch, code)
+}
+
 // welcomeScreen — port of OpenCode initialScreen+header+lspsConfigured.
 // All elements are left-aligned at the top, full width. No centering.
 func (c Chat) welcomeScreen() string {

@@ -550,6 +550,11 @@ func (a *App) View() string {
 		return a.onboarding.Render()
 	}
 
+	// OpenCode-style welcome layout: centered logo + input box + tip.
+	if a.showWelcome {
+		return a.renderWelcomeView()
+	}
+
 	parts := []string{a.header.Render(), a.chat.Render()}
 	if a.pendingOps != nil {
 		parts = append(parts, a.renderActionBar())
@@ -987,6 +992,150 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		return tea.Quit
 	}
 	return nil
+}
+
+// renderWelcomeView renders the OpenCode-style centered welcome layout.
+// Layout (centered both axes, except status bar at bottom):
+//
+//	{ASCII logo}
+//	{empty}
+//	┃ {textarea}                           ← grey box, primary left border
+//	┃ {mode · model · provider}            ← inside same box
+//	          {tab agents  ctrl+k commands} ← right-aligned, below box
+//	{empty}
+//	● Tip {keybind hint}                    ← centered tip
+//
+//	{cwd:branch}                {version}   ← thin status bar at very bottom
+func (a *App) renderWelcomeView() string {
+	t := view.ThemeForApp()
+
+	// Box width — clamped to terminal width.
+	boxWidth := 60
+	if a.width < boxWidth+8 {
+		boxWidth = a.width - 8
+	}
+	if boxWidth < 30 {
+		boxWidth = 30
+	}
+
+	// Resize textarea to fit inside box (subtract border + padding).
+	savedW := a.input.TextareaWidth()
+	a.input.SetTextareaWidth(boxWidth - 4)
+	defer a.input.SetTextareaWidth(savedW)
+
+	// Logo (our ASCII art) — centered.
+	logo := view.RenderWelcomeLogo()
+
+	// Input box: grey bg + primary left border + textarea + mode line.
+	bg := t.BackgroundSecondary()
+	taView := a.input.TextareaView()
+	modeLine := a.welcomeModeLine()
+	boxContent := lipgloss.JoinVertical(lipgloss.Left, taView, modeLine)
+	inputBox := lipgloss.NewStyle().
+		Background(bg).
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(t.Primary()).
+		BorderBackground(bg).
+		Padding(0, 1).
+		Width(boxWidth).
+		Render(boxContent)
+
+	// Right-aligned hints, same width as box.
+	hintsStyle := lipgloss.NewStyle().Foreground(t.TextMuted())
+	hintsBold := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
+	hintsText := hintsBold.Render("tab") + hintsStyle.Render(" agents  ") +
+		hintsBold.Render("ctrl+k") + hintsStyle.Render(" commands")
+	hints := lipgloss.NewStyle().Width(boxWidth).Align(lipgloss.Right).Render(hintsText)
+
+	// Tip line.
+	tip := a.welcomeTip()
+
+	block := lipgloss.JoinVertical(lipgloss.Center,
+		logo,
+		"",
+		"",
+		inputBox,
+		hints,
+		"",
+		"",
+		tip,
+	)
+
+	// Reserve rows for any active palette / modal / action bar.
+	paletteRows := 0
+	var paletteView string
+	switch {
+	case a.paletteActive && len(a.slashPalette.Items) > 0:
+		paletteView = a.slashPalette.Render()
+		paletteRows = lipgloss.Height(paletteView)
+	case a.mentionActive && len(a.mentionPalette.Items) > 0:
+		paletteView = a.mentionPalette.Render()
+		paletteRows = lipgloss.Height(paletteView)
+	}
+
+	// Center the whole block in the screen above status bar (and palette).
+	contentH := a.height - 1 - paletteRows
+	if contentH < 1 {
+		contentH = 1
+	}
+	centered := lipgloss.Place(a.width, contentH, lipgloss.Center, lipgloss.Center, block)
+
+	// Bottom status bar (reuses our regular bar — keeps hints + spinner + model).
+	bottom := a.statusBar.Render()
+
+	out := centered
+	if paletteView != "" {
+		out += "\n" + paletteView
+	}
+	out += "\n" + bottom
+
+	// Command modal overlays everything else.
+	if a.commandModal != nil && a.commandModal.Active() {
+		a.commandModal.SetScreenSize(a.width, a.height)
+		return a.commandModal.Render()
+	}
+	return out
+}
+
+// welcomeModeLine renders "<mode> · <model> · <provider>" inside the input box.
+func (a *App) welcomeModeLine() string {
+	t := view.ThemeForApp()
+	bg := t.BackgroundSecondary()
+
+	modeStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Primary()).Bold(true)
+	bold := lipgloss.NewStyle().Background(bg).Foreground(t.Text()).Bold(true)
+	muted := lipgloss.NewStyle().Background(bg).Foreground(t.TextMuted())
+	dot := muted.Render(" · ")
+
+	mode := a.cfg.Mode
+	if mode == "" {
+		mode = "build"
+	}
+	model := a.cfg.Model
+	if model == "" {
+		model = "no model"
+	}
+	provider := "LM Studio"
+
+	return modeStyle.Render(mode) + dot + bold.Render(model) + dot + muted.Render(provider)
+}
+
+// welcomeTip renders the "● Tip <hint>" line below the input.
+func (a *App) welcomeTip() string {
+	t := view.ThemeForApp()
+
+	bullet := lipgloss.NewStyle().Foreground(t.Warning()).Render("● ")
+	label := lipgloss.NewStyle().Foreground(t.Primary()).Bold(true).Render("Tip ")
+	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
+	bold := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
+
+	if a.cfg.Model == "" {
+		return bullet + label + muted.Render("Press ") + bold.Render("Ctrl+O") +
+			muted.Render(" to choose your model and start coding")
+	}
+	return bullet + label + muted.Render("Press ") + bold.Render("Ctrl+K") +
+		muted.Render(" to open commands, ") + bold.Render("Tab") +
+		muted.Render(" to switch agents")
 }
 
 // buildWelcomeInfo constructs the metadata shown on the welcome screen.
