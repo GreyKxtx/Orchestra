@@ -15,9 +15,11 @@ type Input struct {
 }
 
 // NewInput creates a textarea styled like OpenCode's CreateTextArea.
+// The textarea uses BackgroundSecondary so the grey input box stands out
+// against the main BG (#0d0d0d vs #1a1a1a) — same visual as OpenCode.
 func NewInput(width int) Input {
 	t := theme.CurrentTheme()
-	bgColor := t.Background()
+	bgColor := t.BackgroundSecondary()
 	textColor := t.Text()
 	textMutedColor := t.TextMuted()
 
@@ -55,6 +57,17 @@ func (in *Input) SetSize(width int) {
 	in.width = width
 	in.ta.SetWidth(width - 2)
 }
+
+// SetTextareaWidth lets external renderers (e.g. welcome view) set the
+// textarea width without touching the input's own width tracking.
+func (in *Input) SetTextareaWidth(w int) { in.ta.SetWidth(w) }
+
+// TextareaWidth returns the current textarea width.
+func (in Input) TextareaWidth() int { return in.ta.Width() }
+
+// TextareaView renders just the underlying textarea (no "> " prompt).
+// Used by the welcome view which renders the input inside a styled box.
+func (in Input) TextareaView() string { return in.ta.View() }
 
 // Value returns the current text.
 func (in Input) Value() string { return in.ta.Value() }
