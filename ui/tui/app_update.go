@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -60,6 +61,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.SetStreamCursor(a.cursorBlink)
 			a.chat.SetMessages(a.session.Messages)
 			a.chatDirty = false
+		}
+		if a.toastTick > 0 {
+			a.toastTick--
+			if a.toastTick == 0 {
+				a.toastText = ""
+			}
 		}
 		return a, tickCmd()
 
@@ -185,13 +192,31 @@ func (a *App) sendKeyToTA(kt tea.KeyType) tea.Cmd {
 	return cmd
 }
 
+// showToast displays a temporary notification for ~1.5 seconds (15 ticks at 10fps).
+func (a *App) showToast(text string) {
+	a.toastText = text
+	a.toastTick = 15
+}
+
 // routeKey is the central key-handler dispatcher for the main chat view.
 // Overlays (dialog stack, onboarding, command modal) get first dibs; if none
 // claim the key, the per-key switch fires. Returns handled=false to let the
 // outer Update fall through to textarea.
 func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
-	// Ctrl+C always quits, regardless of which overlay is on top.
+	// Ctrl+C: copy selection to clipboard if active, otherwise quit.
 	if m.String() == "ctrl+c" {
+		if a.input.HasSelection() {
+			lo, hi, _ := a.input.SelectionRange()
+			runes := []rune(a.input.Value())
+			if hi > len(runes) {
+				hi = len(runes)
+			}
+			selected := string(runes[lo:hi])
+			_ = clipboard.WriteAll(selected)
+			a.input.ClearSelection()
+			a.showToast("Скопировано")
+			return a, nil, true
+		}
 		return a, tea.Quit, true
 	}
 	// Dialog stack takes priority over everything else.
