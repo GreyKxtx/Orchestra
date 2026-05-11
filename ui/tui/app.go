@@ -101,6 +101,11 @@ type App struct {
 
 	toastText string // non-empty while toast is visible
 	toastTick int    // countdown ticks until toast clears
+
+	// Mouse state for click-to-cursor and drag selection.
+	inputRowY int  // absolute screen row of textarea content
+	inputColX int  // absolute screen column where textarea content starts
+	mouseDown bool // true while left button held in input area
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -222,7 +227,7 @@ func Run(cfg Config) error {
 			app.rpcCancel()
 		}
 	}()
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	_, err = p.Run()
 	return err
 }

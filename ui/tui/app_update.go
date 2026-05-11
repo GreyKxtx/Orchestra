@@ -139,13 +139,37 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.applySavedSettings(m)
 
 	case tea.MouseMsg:
-		// Mouse wheel scrolls the chat viewport. Clicks/motion are ignored.
-		switch m.Type {
-		case tea.MouseWheelUp:
+		switch {
+		case m.Button == tea.MouseButtonWheelUp && m.Action == tea.MouseActionPress:
 			a.chat.ScrollUp(3)
 			return a, nil
-		case tea.MouseWheelDown:
+		case m.Button == tea.MouseButtonWheelDown && m.Action == tea.MouseActionPress:
 			a.chat.ScrollDown(3)
+			return a, nil
+		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
+			// Click in input row → position cursor + start potential drag selection.
+			if m.Y == a.inputRowY {
+				charPos := a.mouseXToCharPos(m.X)
+				a.moveCursorToPos(charPos)
+				a.mouseDown = true
+				a.input.ClearSelection()
+				a.input.SetAnchor(charPos)
+			}
+			return a, nil
+		case m.Action == tea.MouseActionRelease:
+			if a.mouseDown {
+				a.mouseDown = false
+				// If anchor == cursor pos, it was just a click (no drag) — clear selection.
+				if lo, hi, ok := a.input.SelectionRange(); ok && lo == hi {
+					a.input.ClearSelection()
+				}
+			}
+			return a, nil
+		case m.Action == tea.MouseActionMotion:
+			if a.mouseDown && m.Y == a.inputRowY {
+				charPos := a.mouseXToCharPos(m.X)
+				a.moveCursorToPos(charPos)
+			}
 			return a, nil
 		}
 		return a, nil
@@ -196,6 +220,34 @@ func (a *App) sendKeyToTA(kt tea.KeyType) tea.Cmd {
 func (a *App) showToast(text string) {
 	a.toastText = text
 	a.toastTick = 15
+}
+
+// mouseXToCharPos converts a screen X coordinate to a rune index in the input.
+func (a *App) mouseXToCharPos(screenX int) int {
+	charPos := screenX - a.inputColX
+	runes := []rune(a.input.Value())
+	if charPos < 0 {
+		charPos = 0
+	}
+	if charPos > len(runes) {
+		charPos = len(runes)
+	}
+	return charPos
+}
+
+// moveCursorToPos moves the textarea cursor to the given rune index.
+// Strategy: reset value (preserves text) then send Left keys from end to targetPos.
+func (a *App) moveCursorToPos(targetPos int) {
+	val := a.input.Value()
+	a.input.SetValue(val) // resets cursor to end
+	runes := []rune(val)
+	endPos := len(runes)
+	steps := endPos - targetPos
+	innerTA := a.input.Inner()
+	for i := 0; i < steps; i++ {
+		updated, _ := innerTA.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		*innerTA = updated
+	}
 }
 
 // routeKey is the central key-handler dispatcher for the main chat view.
