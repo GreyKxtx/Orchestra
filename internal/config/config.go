@@ -38,6 +38,22 @@ type LLMConfig struct {
 	//     chat_template_kwargs:
 	//       enable_thinking: false
 	ExtraBody map[string]any `yaml:"extra_body,omitempty"`
+
+	// ModelPresets remembers per-model settings so switching back to a
+	// previously-used model restores its temperature/num_ctx/etc.
+	// Keyed by model id.
+	ModelPresets map[string]ModelPreset `yaml:"model_presets,omitempty"`
+}
+
+// ModelPreset captures the settings associated with one model id, so that
+// switching providers/models in the TUI restores prior tuning automatically.
+type ModelPreset struct {
+	Provider       string  `yaml:"provider,omitempty"`
+	APIBase        string  `yaml:"api_base,omitempty"`
+	Temperature    float32 `yaml:"temperature,omitempty"`
+	MaxTokens      int     `yaml:"max_tokens,omitempty"`
+	NumCtx         int64   `yaml:"num_ctx,omitempty"`
+	EnableThinking *bool   `yaml:"enable_thinking,omitempty"`
 }
 
 // AgentConfig controls the agent loop retry and step limits.
@@ -236,6 +252,14 @@ type HooksConfig struct {
 	TimeoutMS int `yaml:"timeout_ms"`
 }
 
+// UIConfig holds TUI-only presentation preferences. Currently just theme
+// selection; future fields can include layout density, font ramps, etc.
+type UIConfig struct {
+	// Theme is a registered theme name (see ui/tui/theme). Empty / unknown
+	// values fall back to the default ("neutral").
+	Theme string `yaml:"theme,omitempty"`
+}
+
 // ProjectConfig represents the Orchestra configuration
 type ProjectConfig struct {
 	ProjectRoot string   `yaml:"project_root"`
@@ -255,6 +279,7 @@ type ProjectConfig struct {
 	Permissions  PermissionsConfig `yaml:"permissions,omitempty"`
 	Agents       []AgentDefinition `yaml:"agents,omitempty"`
 	LSP          LSPConfig         `yaml:"lsp,omitempty"`
+	UI           UIConfig          `yaml:"ui,omitempty"`
 }
 
 // FindAgent looks up a custom agent by name. Returns nil when not found.
