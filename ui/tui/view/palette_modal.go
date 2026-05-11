@@ -12,20 +12,28 @@ import (
 
 // ModalCommand is a single entry in the command palette modal.
 type ModalCommand struct {
-	Name string // e.g. "/help"
-	Desc string // e.g. "show key bindings"
+	Name     string // e.g. "/help"
+	Desc     string // e.g. "show key bindings"
+	Category string // e.g. "Agent"; rows are grouped under bold headers in render
 }
 
 // DefaultModalCommands is the full command list for the Ctrl+K palette.
+// Order here defines render order: items grouped by Category, groups appear
+// in declaration order.
 var DefaultModalCommands = []ModalCommand{
-	{"/help", "show key bindings"},
-	{"/clear", "clear chat history"},
-	{"/model", "show current model"},
-	{"/mode", "show current mode"},
-	{"/diff", "toggle diff view"},
-	{"/apply", "apply pending ops"},
-	{"/discard", "discard pending ops"},
-	{"/quit", "exit Orchestra"},
+	// Agent
+	{"/provider", "switch LLM provider", "Agent"},
+	{"/model", "switch model and tune settings", "Agent"},
+	{"/mode", "show current mode", "Agent"},
+	// Session
+	{"/sessions", "open past sessions", "Session"},
+	{"/apply", "apply pending ops", "Session"},
+	{"/clear", "clear chat history", "Session"},
+	{"/diff", "toggle diff view", "Session"},
+	{"/discard", "discard pending ops", "Session"},
+	// System
+	{"/help", "show key bindings", "System"},
+	{"/quit", "exit Orchestra", "System"},
 }
 
 // PaletteModal is a centered command palette modal (Ctrl+K).
@@ -113,69 +121,138 @@ func (m *PaletteModal) applyFilter() {
 		names[i] = c.Name
 	}
 	matches := fuzzy.Find(m.filter, names)
+	// Preserve fuzzy relevance order — best match first.
+	// Category grouping only applies when filter is empty (see branch above).
 	m.filtered = make([]ModalCommand, 0, len(matches))
-	for _, match := range matches {
-		m.filtered = append(m.filtered, m.all[match.Index])
+	for _, mt := range matches {
+		m.filtered = append(m.filtered, m.all[mt.Index])
 	}
 }
 
-// Render returns the modal string (centered on screen).
+// Render returns the modal string centered on screen, opencode DialogSelect
+// style: borderless block, "Commands" / "esc" header row, plain filter input
+// (no ">" prefix or separator lines), full-width primary-bg selected row,
+// muted hint row at the bottom.
 func (m *PaletteModal) Render() string {
 	if !m.active {
 		return ""
 	}
 	t := theme.CurrentTheme()
+	bg := t.BackgroundSecondary()
 
-	base := lipgloss.NewStyle().
-		Background(t.BackgroundSecondary()).
-		Foreground(t.Text())
+	// Width: ≈70% of screen, clamped [56, 90].
+	modalW := m.screenW * 70 / 100
+	if modalW < 56 {
+		modalW = 56
+	}
+	if modalW > 90 {
+		modalW = 90
+	}
+	if maxW := m.screenW - 4; modalW > maxW {
+		modalW = maxW
+	}
+	if modalW < 30 {
+		modalW = 30
+	}
+	inner := modalW - 8 // outer padding 4 each side
 
-	titleStyle := base.Bold(true).Foreground(t.Primary())
-	filterStyle := base.Foreground(t.Text())
-	selectedStyle := base.
+	base := lipgloss.NewStyle().Background(bg)
+	titleStyle := base.Foreground(t.Text()).Bold(true)
+	mutedStyle := base.Foreground(t.TextMuted())
+	primStyle := base.Foreground(t.Primary())
+	cmdStyle := base.Foreground(t.Text())
+	descStyle := base.Foreground(t.TextMuted())
+	selStyle := lipgloss.NewStyle().
 		Background(t.Primary()).
 		Foreground(t.Background()).
-		Bold(true)
-	normalStyle := base.Foreground(t.Text())
-	descStyle := base.Foreground(t.TextMuted())
-	hintStyle := base.Foreground(t.TextMuted()).Italic(true)
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(t.TextMuted()).
-		Background(t.BackgroundSecondary()).
-		Padding(0, 1)
+		Bold(true).
+		Width(inner)
 
-	const modalWidth = 44
+	padBg := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return base.Render(strings.Repeat(" ", n))
+	}
+	fitInner := func(s string) string {
+		if visW := lipgloss.Width(s); visW < inner {
+			return s + padBg(inner-visW)
+		}
+		return s
+	}
 
-	var sb strings.Builder
-	sb.WriteString(titleStyle.Width(modalWidth).Render("  Commands"))
-	sb.WriteString("\n")
-	sb.WriteString(filterStyle.Width(modalWidth).Render("  > " + m.filter + "▋"))
-	sb.WriteString("\n")
-	sb.WriteString(base.Foreground(t.TextMuted()).Width(modalWidth).Render(strings.Repeat("─", modalWidth)))
-	sb.WriteString("\n")
+	// Header row: "Commands" left, "esc" right.
+	title := titleStyle.Render("Commands")
+	esc := mutedStyle.Render("esc")
+	gap := inner - lipgloss.Width(title) - lipgloss.Width(esc)
+	if gap < 1 {
+		gap = 1
+	}
+	header := title + padBg(gap) + esc
 
-	if len(m.filtered) == 0 {
-		sb.WriteString(descStyle.Width(modalWidth).Render("  no commands match"))
-		sb.WriteString("\n")
+	// Filter row: chevron + filter text + cursor (or muted placeholder).
+	chev := primStyle.Render("› ")
+	var filter string
+	if m.filter == "" {
+		filter = fitInner(chev + mutedStyle.Render("Search..."))
 	} else {
-		for i, cmd := range m.filtered {
-			if i == m.cursor {
-				line := fmt.Sprintf("  %-10s %s", cmd.Name, cmd.Desc)
-				sb.WriteString(selectedStyle.Width(modalWidth).Render(line))
-			} else {
-				namePart := normalStyle.Render(fmt.Sprintf("  %-10s ", cmd.Name))
-				descPart := descStyle.Render(cmd.Desc)
-				sb.WriteString(lipgloss.NewStyle().Width(modalWidth).Background(t.BackgroundSecondary()).Render(namePart + descPart))
+		filter = fitInner(chev + base.Foreground(t.Text()).Render(m.filter) + primStyle.Render("▋"))
+	}
+
+	blank := padBg(inner)
+
+	// List rows (or empty-state). Items are grouped by Category: a bold
+	// header row precedes each group; groups separated by a blank row.
+	var listLines []string
+	if len(m.filtered) == 0 {
+		listLines = append(listLines, fitInner(mutedStyle.Render("  No results found")))
+	} else {
+		// Dynamic cmd-column width across filtered items (kept global so
+		// descriptions align across groups).
+		maxCmd := 0
+		for _, c := range m.filtered {
+			if cw := lipgloss.Width(c.Name); cw > maxCmd {
+				maxCmd = cw
 			}
-			sb.WriteString("\n")
+		}
+		cmdCol := maxCmd + 2
+		const inset = "  "
+		accentStyle := base.Foreground(t.Secondary()).Bold(true)
+
+		prevCategory := ""
+		for i, c := range m.filtered {
+			if c.Category != prevCategory {
+				if prevCategory != "" {
+					listLines = append(listLines, blank)
+				}
+				if c.Category != "" {
+					listLines = append(listLines, fitInner(accentStyle.Render(c.Category)))
+				}
+				prevCategory = c.Category
+			}
+			padCmd := fmt.Sprintf("%-*s", cmdCol, c.Name)
+			if i == m.cursor {
+				listLines = append(listLines, selStyle.Render(inset+padCmd+c.Desc))
+			} else {
+				row := cmdStyle.Render(inset+padCmd) + descStyle.Render(c.Desc)
+				listLines = append(listLines, fitInner(row))
+			}
 		}
 	}
 
-	sb.WriteString(base.Foreground(t.TextMuted()).Width(modalWidth).Render(strings.Repeat("─", modalWidth)))
-	sb.WriteString("\n")
-	sb.WriteString(hintStyle.Width(modalWidth).Render("  ↑↓ navigate · Enter run · Esc close"))
+	// Hint row.
+	hint := fitInner(mutedStyle.Render("↑↓ navigate · Enter run · Esc close"))
 
-	content := borderStyle.Render(sb.String())
-	return lipgloss.Place(m.screenW, m.screenH, lipgloss.Center, lipgloss.Center, content)
+	sections := []string{blank, header, blank, filter, blank}
+	sections = append(sections, listLines...)
+	sections = append(sections, blank, hint, blank)
+	body := lipgloss.JoinVertical(lipgloss.Left, sections...)
+
+	box := lipgloss.NewStyle().
+		Background(bg).
+		Padding(0, 4).
+		Width(modalW).
+		Render(body)
+
+	return lipgloss.Place(m.screenW, m.screenH, lipgloss.Center, lipgloss.Center, box)
 }
