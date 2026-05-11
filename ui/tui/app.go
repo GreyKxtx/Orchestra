@@ -1,25 +1,31 @@
 // Package tui implements the Orchestra terminal UI client.
-// Phase 6: visual redesign + onboarding + Ctrl+K palette modal.
+//
+// The code is split into focused files for maintainability:
+//
+//	app.go            — Config, App struct, tea.Msg types, NewApp, Init,
+//	                    tick/fetch cmds, Run entry-point.
+//	app_update.go     — Update + routeKey + handleEnter.
+//	app_view.go       — View dispatcher, layout, renderInputBox, renderThinkingLine,
+//	                    cycleAgentMode, updateStatusHints.
+//	app_welcome.go    — welcome view + welcomeModeLine + bottom bar.
+//	app_rpc.go        — RPC stream handlers, <think>...</think> splitter.
+//	app_dialogs.go    — dialog stack + handleDialogResult + settings/respawn.
+//	app_palette.go    — slash/mention palettes, command modal, executePaletteCmd.
+//	app_onboarding.go — provider/model/settings wizard.
+//	app_session.go    — session record persist/load.
 package tui
 
 import (
 	"context"
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/sahilm/fuzzy"
 
-	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lmstudio"
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
+	"github.com/orchestra/orchestra/ui/tui/theme"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
@@ -33,15 +39,15 @@ type Config struct {
 	CWD             string
 	NeedsOnboarding bool   // true when no model is configured
 	ConfigPath      string // path to .orchestra.yml for saving onboarding result
+	Theme           string // registered theme name; empty → default
 }
 
 // App is the root Bubble Tea Model.
 type App struct {
-	cfg     Config
-	session *state.Session
-	header  view.Header
-	chat    view.Chat
-	input   view.Input
+	cfg       Config
+	session   *state.Session
+	chat      view.Chat
+	input     view.Input
 	statusBar view.StatusBar // replaces footer
 
 	width       int
@@ -52,8 +58,8 @@ type App struct {
 	rpcCancel context.CancelFunc
 
 	pendingOps *rpcclient.PendingOpsPayload // non-nil while ops await confirmation
-	diffShown  bool                          // true while diff messages are in session
-	agentBusy  bool                          // true while agent.run in flight
+	diffShown  bool                         // true while diff messages are in session
+	agentBusy  bool                         // true while agent.run in flight
 
 	permModal *view.Modal // non-nil while an exec.run permission request is pending
 
@@ -66,12 +72,35 @@ type App struct {
 
 	history *state.InputHistory
 
-	// Phase 6 additions
 	commandModal   *view.PaletteModal   // Ctrl+K modal
 	onboarding     *view.OnboardingView // 3-step wizard
 	showOnboarding bool
-	showWelcome    bool // true on every startup until user sends first message
-	cursorBlink    bool // toggles every 500ms while agentBusy
+	showWelcome    bool      // true on every startup until user sends first message
+	cursorBlink    bool      // toggles every ~500ms while agentBusy
+	spinFrame      int       // monotonically increments every tick — drives all spinners
+	turnStartedAt  time.Time // moment the current agent.run was kicked off
+
+	// dialogStack holds dialogs opened from the Ctrl+K palette
+	// (/provider → ProviderDialog → ModelDialog → SettingsDialog).
+	// Top of stack receives input and is rendered on top of everything else.
+	dialogStack []view.Dialog
+
+	// reasoning routes streamed assistant text into reasoning vs message
+	// buffers based on `<think>...</think>` tags. State persists across
+	// deltas so a tag straddling two chunks is still recognized.
+	reasoning state.ReasoningSplitter
+
+	// currentSessionID is the on-disk id of the in-flight chat. Empty until
+	// the first user message is sent (and the session record is created).
+	currentSessionID string
+
+	// chatDirty is set by handleRPCEvent whenever a streaming delta has been
+	// recorded into the session, and cleared by the next tick that flushes
+	// it to chat.SetMessages. Lets us avoid full re-renders on quiet ticks.
+	chatDirty bool
+
+	toastText string // non-empty while toast is visible
+	toastTick int    // countdown ticks until toast clears
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -104,18 +133,31 @@ type rpcSpawnedMsg struct {
 	err    error
 }
 
+// settingsSavedMsg is emitted by the dialog flow when a SettingsDialog
+// completes successfully and the new config has been written to disk.
+type settingsSavedMsg struct {
+	provider view.ProviderEntry
+	model    view.ModelEntry
+	err      error
+}
+
 // NewApp constructs an App with the given config. If cfg.Binary is non-empty,
 // spawns the core subprocess and runs the initialize handshake; on error,
 // returns it.
 func NewApp(cfg Config) (*App, error) {
+	// Apply theme as early as possible so every styled component built below
+	// reads from the right palette.
+	if cfg.Theme != "" {
+		theme.SetTheme(theme.ByName(cfg.Theme))
+	}
 	a := &App{
 		cfg:     cfg,
-		header:  view.Header{Model: cfg.Model, Mode: cfg.Mode, CWD: cfg.CWD},
 		session: state.NewSession(),
 	}
 	a.statusBar.SetModel(cfg.Model)
-	a.showWelcome = true // always show welcome screen at startup
-	a.slashPalette = view.NewSlashPalette(0)   // width set in layout()
+	a.statusBar.SetProject(cfg.CWD)
+	a.showWelcome = true
+	a.slashPalette = view.NewSlashPalette(0)     // width set in layout()
 	a.mentionPalette = view.NewMentionPalette(0) // width set in layout()
 	a.history = state.NewInputHistory(100)
 
@@ -148,9 +190,11 @@ func (a *App) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, a.listenForEvents(), tickCmd())
 }
 
-// tickCmd schedules the next tick at 500ms for spinner/cursor animation.
+// tickCmd schedules the next tick at 100ms — fast enough for a smooth spinner
+// (10 fps). Cursor blink toggles every 5 ticks (≈500ms) so the textarea cursor
+// behavior stays the same.
 func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -161,1104 +205,6 @@ func fetchModelsCmd(endpoint string) tea.Cmd {
 		client := lmstudio.NewClient(endpoint)
 		models, err := client.ListModels()
 		return modelsLoadedMsg{models: models, err: err}
-	}
-}
-
-// listenForEvents returns a Cmd that reads one event from the rpc channel.
-func (a *App) listenForEvents() tea.Cmd {
-	if a.rpc == nil {
-		return nil
-	}
-	ch := a.rpc.Events()
-	return func() tea.Msg {
-		ev, ok := <-ch
-		if !ok {
-			return rpcEventMsg{Kind: rpcclient.EventConnectionClosed}
-		}
-		return rpcEventMsg(ev)
-	}
-}
-
-// Update routes incoming messages.
-func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch m := msg.(type) {
-	case tea.WindowSizeMsg:
-		a.width = m.Width
-		a.height = m.Height
-		a.layout()
-		return a, nil
-
-	case tickMsg:
-		a.cursorBlink = !a.cursorBlink
-		a.statusBar.AdvanceSpin()
-		if a.agentBusy {
-			a.chat.SetStreamCursor(a.cursorBlink)
-			a.chat.SetMessages(a.session.Messages)
-		}
-		return a, tickCmd()
-
-	case modelsLoadedMsg:
-		if a.onboarding != nil {
-			a.onboarding.LoadingModels = false
-			if m.err != nil {
-				a.onboarding.ModelError = "LM Studio недоступен: " + m.err.Error()
-			} else {
-				a.onboarding.Models = m.models
-				a.onboarding.ModelError = ""
-			}
-		}
-		return a, nil
-
-	case onboardingDoneMsg:
-		a.showOnboarding = false
-		cfg, err := config.Load(m.configPath)
-		if err != nil {
-			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] failed to load config: " + err.Error()})
-			a.chat.SetMessages(a.session.Messages)
-			return a, nil
-		}
-		a.cfg.Model = cfg.LLM.Model
-		a.header.Model = cfg.LLM.Model
-		a.statusBar.SetModel(cfg.LLM.Model)
-		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
-		binary := a.cfg.Binary
-		workspaceRoot := a.cfg.WorkspaceRoot
-		projectID := a.cfg.ProjectID
-		return a, func() tea.Msg {
-			ctx, cancel := context.WithCancel(context.Background())
-			client, err := rpcclient.Spawn(ctx, rpcclient.Config{
-				Binary:        binary,
-				WorkspaceRoot: workspaceRoot,
-				ProjectID:     projectID,
-			})
-			return rpcSpawnedMsg{client: client, cancel: cancel, err: err}
-		}
-
-	case rpcSpawnedMsg:
-		if m.err != nil {
-			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] failed to connect to core: " + m.err.Error()})
-			a.chat.SetMessages(a.session.Messages)
-			return a, nil
-		}
-		a.rpc = m.client
-		a.rpcCancel = m.cancel
-		return a, a.listenForEvents()
-
-	case tea.KeyMsg:
-		// Handle onboarding flow input first.
-		if a.showOnboarding && a.onboarding != nil {
-			return a.updateOnboarding(m)
-		}
-		// Handle command modal input.
-		if a.commandModal != nil && a.commandModal.Active() {
-			return a.updateCommandModal(m)
-		}
-
-		switch m.String() {
-		case "up":
-			if a.paletteActive {
-				a.slashPalette.CursorUp()
-				return a, nil
-			}
-			if a.mentionActive {
-				a.mentionPalette.CursorUp()
-				return a, nil
-			}
-			// History navigation: only when input has no newline (single-line mode).
-			if !strings.Contains(a.input.Value(), "\n") {
-				text := a.history.Up(a.input.Value())
-				a.input.SetValue(text)
-				return a, nil
-			}
-		case "down":
-			if a.paletteActive {
-				a.slashPalette.CursorDown()
-				return a, nil
-			}
-			if a.mentionActive {
-				a.mentionPalette.CursorDown()
-				return a, nil
-			}
-			if !strings.Contains(a.input.Value(), "\n") && a.history.IsNavigating() {
-				text := a.history.Down()
-				a.input.SetValue(text)
-				return a, nil
-			}
-		case "y":
-			if a.permModal != nil {
-				a.permModal = nil
-				a.updateStatusHints()
-				if a.rpc != nil {
-					a.rpc.RespondPermission(true)
-				}
-				return a, nil
-			}
-		case "n":
-			if a.permModal != nil {
-				a.permModal = nil
-				a.updateStatusHints()
-				if a.rpc != nil {
-					a.rpc.RespondPermission(false)
-				}
-				return a, nil
-			}
-		case "ctrl+c":
-			return a, tea.Quit
-		case "ctrl+k":
-			if a.commandModal == nil {
-				a.commandModal = view.NewPaletteModal(a.width, a.height)
-			}
-			a.commandModal.SetActive(true)
-			return a, nil
-		case "ctrl+o":
-			if a.showOnboarding {
-				return a, nil
-			}
-			if a.onboarding == nil {
-				a.onboarding = view.NewOnboardingView(a.width, a.height)
-			}
-			a.onboarding.Step = view.OnboardingModel
-			a.onboarding.LoadingModels = true
-			a.showOnboarding = true
-			endpoint := "http://localhost:1234"
-			return a, fetchModelsCmd(endpoint)
-		case "esc":
-			if a.mentionActive {
-				a.mentionActive = false
-				a.layout()
-				a.updateStatusHints()
-				return a, nil
-			}
-			if a.paletteActive {
-				a.paletteActive = false
-				a.input.Reset()
-				a.layout()
-				a.updateStatusHints()
-				return a, nil
-			}
-			if a.permModal != nil {
-				a.permModal = nil
-				a.updateStatusHints()
-				if a.rpc != nil {
-					a.rpc.RespondPermission(false)
-				}
-				return a, nil
-			}
-			a.input.Reset()
-			return a, nil
-		case "tab":
-			if a.mentionActive {
-				if sel := a.mentionPalette.Selected(); sel != "" {
-					a.input.SetValue(replaceLastMention(a.input.Value(), sel))
-					a.mentionActive = false
-					a.syncPalette()
-					a.layout()
-					a.updateStatusHints()
-				}
-				return a, nil
-			}
-			// Cycle through agent modes (build → ask → plan → build).
-			a.cycleAgentMode()
-			return a, nil
-		case "ctrl+t":
-			// Toggle last tool block (moved from Tab to Ctrl+T).
-			a.session.ToggleLastToolBlock()
-			a.chat.SetMessages(a.session.Messages)
-			return a, nil
-
-		case "a":
-			if a.pendingOps != nil && a.rpc != nil {
-				rawOps := a.pendingOps.Ops
-				count := len(a.pendingOps.Ops)
-				a.pendingOps = nil
-				if a.diffShown {
-					a.session.RemoveDiff()
-					a.diffShown = false
-				}
-				a.chat.SetMessages(a.session.Messages)
-				a.layout()
-				a.updateStatusHints()
-				rpc := a.rpc
-				return a, func() tea.Msg {
-					return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
-				}
-			}
-
-		case "d":
-			if a.pendingOps != nil {
-				if a.diffShown {
-					a.session.RemoveDiff()
-					a.diffShown = false
-				} else {
-					content := a.buildDiffContent()
-					a.session.AddDiff(content)
-					a.diffShown = true
-				}
-				a.chat.SetMessages(a.session.Messages)
-				return a, nil
-			}
-
-		case "x":
-			if a.pendingOps != nil {
-				a.pendingOps = nil
-				if a.diffShown {
-					a.session.RemoveDiff()
-					a.diffShown = false
-				}
-				a.chat.SetMessages(a.session.Messages)
-				a.layout()
-				a.updateStatusHints()
-				return a, nil
-			}
-
-		case "enter":
-			if a.mentionActive {
-				if sel := a.mentionPalette.Selected(); sel != "" {
-					a.input.SetValue(replaceLastMention(a.input.Value(), sel))
-				}
-				a.mentionActive = false
-				a.syncPalette()
-				a.layout()
-				a.updateStatusHints()
-				return a, nil
-			}
-			if a.paletteActive {
-				selectedCmd := a.slashPalette.Selected()
-				a.paletteActive = false
-				a.input.Reset()
-				a.layout()
-				a.updateStatusHints()
-				cmd := a.executePaletteCmd(selectedCmd)
-				return a, cmd
-			}
-			if a.agentBusy {
-				return a, nil
-			}
-			text := strings.TrimSpace(a.input.Value())
-			if text == "" {
-				return a, nil
-			}
-			// Dismiss welcome screen on first message.
-			if a.showWelcome {
-				a.showWelcome = false
-				a.chat.SetForceWelcome(false)
-			}
-			a.session.AppendMessage(state.Message{Role: state.RoleUser, Text: text})
-			a.session.StartAssistant()
-			a.chat.SetMessages(a.session.Messages)
-			a.history.Push(text)
-			a.history.Reset()
-			a.input.Reset()
-			if a.rpc != nil {
-				a.agentBusy = true
-				a.statusBar.SetAgentBusy(true)
-				a.chat.SetAgentBusy(true)
-				go func(query string) {
-					_ = a.rpc.AgentRun(context.Background(), query)
-				}(text)
-				return a, nil
-			}
-			// Echo fallback (tests).
-			a.session.AppendAssistantDelta("echo: " + text)
-			a.session.FinishAssistant()
-			a.chat.SetMessages(a.session.Messages)
-			return a, nil
-		}
-
-	case rpcEventMsg:
-		a.handleRPCEvent(rpcclient.Event(m))
-		return a, a.listenForEvents()
-
-	case applyResultMsg:
-		if m.err != nil {
-			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[apply failed] " + m.err.Error()})
-		} else {
-			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: fmt.Sprintf("[applied %d ops]", m.count)})
-		}
-		a.chat.SetMessages(a.session.Messages)
-		return a, nil
-	}
-
-	// Forward all messages to textarea.
-	innerTA := a.input.Inner()
-	updatedTA, taCmd := innerTA.Update(msg)
-	*innerTA = updatedTA
-	// Sync palette state after key events that may change input value.
-	if _, isKey := msg.(tea.KeyMsg); isKey {
-		a.syncPalette()
-		a.updateStatusHints()
-		a.layout()
-	}
-	return a, taCmd
-}
-
-func (a *App) handleRPCEvent(ev rpcclient.Event) {
-	switch ev.Kind {
-	case rpcclient.EventMessageDelta:
-		a.session.AppendAssistantDelta(ev.Content)
-	case rpcclient.EventToolCallStart:
-		a.session.AppendToolBlock(state.ToolBlock{
-			ID:     ev.ToolCallID,
-			Name:   ev.ToolCallName,
-			Status: state.ToolBlockRunning,
-		})
-	case rpcclient.EventToolCallCompleted:
-		status := state.ToolBlockCompleted
-		if strings.HasPrefix(ev.Content, "error: ") {
-			status = state.ToolBlockFailed
-		}
-		a.session.UpdateToolBlock(ev.ToolCallID, status, ev.Content)
-	case rpcclient.EventStepDone:
-		// Cosmetic for Phase 2.
-	case rpcclient.EventDone, rpcclient.EventAgentRunCompleted:
-		a.session.FinishAssistant()
-		a.agentBusy = false
-		a.statusBar.SetAgentBusy(false)
-		a.chat.SetAgentBusy(false)
-		a.statusBar.ClearError()
-		a.chat.SetStreamCursor(false)
-	case rpcclient.EventError, rpcclient.EventConnectionError:
-		a.agentBusy = false
-		a.statusBar.SetAgentBusy(false)
-		a.chat.SetAgentBusy(false)
-		a.statusBar.SetError(ev.Err)
-		a.chat.SetStreamCursor(false)
-		a.session.AppendMessage(state.Message{
-			Role: state.RoleSystem,
-			Text: "[error] " + ev.Err,
-		})
-	case rpcclient.EventPendingOps:
-		if ev.PendingOps != nil && !ev.PendingOps.Applied {
-			a.pendingOps = ev.PendingOps
-			a.layout()
-		}
-	case rpcclient.EventPermissionRequest:
-		if ev.PermReq != nil {
-			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
-			a.layout()
-		}
-	}
-	a.chat.SetMessages(a.session.Messages)
-	a.updateStatusHints()
-}
-
-// View renders the full screen layout.
-func (a *App) View() string {
-	if a.width == 0 || a.height == 0 {
-		return ""
-	}
-
-	// Onboarding overlays everything.
-	if a.showOnboarding && a.onboarding != nil {
-		a.onboarding.SetScreenSize(a.width, a.height)
-		return a.onboarding.Render()
-	}
-
-	// OpenCode-style welcome layout: centered logo + input box + tip.
-	if a.showWelcome {
-		return a.renderWelcomeView()
-	}
-
-	parts := []string{a.header.Render(), a.chat.Render()}
-	if a.pendingOps != nil {
-		parts = append(parts, a.renderActionBar())
-	}
-	if a.paletteActive && len(a.slashPalette.Items) > 0 {
-		parts = append(parts, a.slashPalette.Render())
-	}
-	if a.mentionActive && len(a.mentionPalette.Items) > 0 {
-		parts = append(parts, a.mentionPalette.Render())
-	}
-	if a.permModal != nil {
-		parts = append(parts, a.permModal.Render())
-	} else {
-		parts = append(parts, a.input.Render())
-	}
-	parts = append(parts, a.statusBar.Render())
-
-	screen := strings.Join(parts, "\n")
-
-	// Command modal overlaid on top.
-	if a.commandModal != nil && a.commandModal.Active() {
-		a.commandModal.SetScreenSize(a.width, a.height)
-		return a.commandModal.Render()
-	}
-	return screen
-}
-
-func (a *App) renderActionBar() string {
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#e0af68")).
-		Width(a.width).
-		Padding(0, 1)
-	count := len(a.pendingOps.Ops)
-	return style.Render(fmt.Sprintf("⏵ %d pending ops · [a]pply · [d]iff · [x]discard", count))
-}
-
-// layout recomputes child sizes based on current width/height.
-func (a *App) layout() {
-	a.header.SetSize(a.width)
-	a.statusBar.SetWidth(a.width)
-	if a.commandModal != nil {
-		a.commandModal.SetScreenSize(a.width, a.height)
-	}
-
-	actionBarRows := 0
-	if a.pendingOps != nil {
-		actionBarRows = 1
-	}
-	paletteRows := 0
-	if a.paletteActive && len(a.slashPalette.Items) > 0 {
-		n := len(a.slashPalette.Items)
-		if n > 6 {
-			n = 6
-		}
-		paletteRows = n + 2 // +2 for rounded border lines
-	} else if a.mentionActive && len(a.mentionPalette.Items) > 0 {
-		n := len(a.mentionPalette.Items)
-		if n > 6 {
-			n = 6
-		}
-		paletteRows = n + 2
-	}
-	inputRows := 1 // OpenCode-style: just "> textarea", help line lives in chat
-	modalRows := 0
-	if a.permModal != nil {
-		inputRows = 0 // modal replaces input
-		modalRows = 5
-		a.permModal.SetSize(a.width)
-	}
-	// header(1) + statusbar(1) + input + actionBar + modal + palette
-	chatHeight := a.height - 1 - 1 - inputRows - actionBarRows - modalRows - paletteRows
-	if chatHeight < 1 {
-		chatHeight = 1
-	}
-
-	if !a.initialized {
-		a.chat = view.NewChat(a.width, chatHeight)
-		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
-		a.chat.SetForceWelcome(a.showWelcome)
-		a.input = view.NewInput(a.width)
-		a.input.SetMode(a.cfg.Mode)
-		a.initialized = true
-	} else {
-		a.chat.SetSize(a.width, chatHeight)
-		a.input.SetSize(a.width)
-	}
-	a.slashPalette.SetSize(a.width)
-	a.mentionPalette.SetSize(a.width)
-}
-
-func (a *App) buildDiffContent() string {
-	if a.pendingOps == nil || len(a.pendingOps.Diff) == 0 {
-		return "(no diff available)"
-	}
-	diffs := make([]view.FileDiffView, len(a.pendingOps.Diff))
-	for i, fd := range a.pendingOps.Diff {
-		diffs[i] = view.FileDiffView{Path: fd.Path, Before: fd.Before, After: fd.After}
-	}
-	return view.RenderAllDiffs(diffs, a.width)
-}
-
-// syncPalette checks the current input value and opens/closes the slash palette.
-func (a *App) syncPalette() {
-	val := a.input.Value()
-	if strings.HasPrefix(val, "/") {
-		a.slashPalette.Filter(val[1:])
-		a.paletteActive = len(a.slashPalette.Items) > 0
-		a.mentionActive = false
-		return
-	}
-	a.paletteActive = false
-	a.syncMention()
-}
-
-// syncMention checks if the input ends with an @-mention and updates the mention palette.
-func (a *App) syncMention() {
-	if !strings.Contains(a.input.Value(), "@") {
-		a.mentionActive = false
-		return
-	}
-	// Lazy-load workspace files.
-	if a.workspaceFiles == nil && a.cfg.WorkspaceRoot != "" {
-		a.workspaceFiles = listWorkspaceFiles(a.cfg.WorkspaceRoot, 4)
-	}
-
-	q := mentionQuery(a.input.Value())
-	lastAt := strings.LastIndex(a.input.Value(), "@")
-	if lastAt < 0 {
-		a.mentionActive = false
-		return
-	}
-
-	var items []string
-	if q == "" {
-		// Show first 10 files when just "@" is typed.
-		items = a.workspaceFiles
-		if len(items) > 10 {
-			items = items[:10]
-		}
-	} else {
-		matches := fuzzy.Find(filepath.ToSlash(q), a.workspaceFiles)
-		items = make([]string, 0, len(matches))
-		for _, m := range matches {
-			items = append(items, m.Str)
-			if len(items) >= 10 {
-				break
-			}
-		}
-	}
-	a.mentionPalette.SetItems(items)
-	a.mentionActive = len(items) > 0
-}
-
-// listWorkspaceFiles walks root up to maxDepth levels, skipping hidden dirs,
-// and returns relative POSIX paths. Result is capped at 500 entries.
-func listWorkspaceFiles(root string, maxDepth int) []string {
-	if root == "" {
-		return nil
-	}
-	var files []string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			rel, _ := filepath.Rel(root, path)
-			depth := len(strings.Split(rel, string(filepath.Separator)))
-			if depth > maxDepth {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		files = append(files, filepath.ToSlash(rel))
-		if len(files) >= 500 {
-			return filepath.SkipDir
-		}
-		return nil
-	})
-	return files
-}
-
-// mentionQuery returns the text after @ in the last @word of the input,
-// or "" if the last word is not an @-mention or has no text after @.
-func mentionQuery(text string) string {
-	lastAt := strings.LastIndex(text, "@")
-	if lastAt < 0 {
-		return ""
-	}
-	word := text[lastAt+1:]
-	// If there's a space after @, it's not a single @word at the end.
-	if strings.IndexByte(word, ' ') >= 0 {
-		return ""
-	}
-	return word
-}
-
-// replaceLastMention replaces the last @word in text with replacement.
-func replaceLastMention(text, replacement string) string {
-	lastAt := strings.LastIndex(text, "@")
-	if lastAt < 0 {
-		return text
-	}
-	rest := text[lastAt+1:]
-	spaceIdx := strings.IndexByte(rest, ' ')
-	if spaceIdx < 0 {
-		return text[:lastAt] + replacement
-	}
-	return text[:lastAt] + replacement + rest[spaceIdx:]
-}
-
-// updateOnboarding handles keyboard input while the onboarding wizard is active.
-func (a *App) updateOnboarding(m tea.KeyMsg) (tea.Model, tea.Cmd) {
-	ob := a.onboarding
-	switch m.String() {
-	case "ctrl+c":
-		return a, tea.Quit
-	case "esc":
-		if ob.Step == view.OnboardingProvider {
-			return a, nil // can't go back from first step
-		}
-		ob.Step--
-		return a, nil
-	case "up":
-		switch ob.Step {
-		case view.OnboardingProvider:
-			ob.ProviderCursorUp()
-		case view.OnboardingModel:
-			ob.ModelCursorUp()
-		case view.OnboardingSettings:
-			ob.SettingsCursorUp()
-		}
-	case "down":
-		switch ob.Step {
-		case view.OnboardingProvider:
-			ob.ProviderCursorDown()
-		case view.OnboardingModel:
-			ob.ModelCursorDown()
-		case view.OnboardingSettings:
-			ob.SettingsCursorDown()
-		}
-	case "left":
-		if ob.Step == view.OnboardingSettings {
-			ob.AdjustSetting(-1)
-		}
-	case "right":
-		if ob.Step == view.OnboardingSettings {
-			ob.AdjustSetting(+1)
-		}
-	case "enter":
-		switch ob.Step {
-		case view.OnboardingProvider:
-			p := ob.SelectedProvider()
-			endpoint := p.Endpoint
-			if p.Name == "Custom" {
-				endpoint = ob.CustomEndpoint
-			}
-			ob.Step = view.OnboardingModel
-			ob.LoadingModels = true
-			ob.ModelError = ""
-			return a, fetchModelsCmd(endpoint)
-		case view.OnboardingModel:
-			if len(ob.Models) > 0 {
-				sel := ob.SelectedModel()
-				if sel.MaxContextLength > 0 {
-					ob.Settings.NumCtx = sel.MaxContextLength
-				}
-				ob.Step = view.OnboardingSettings
-			}
-		case view.OnboardingSettings:
-			return a, a.saveOnboardingConfig()
-		}
-	default:
-		// Custom URL typing when editing custom endpoint.
-		if ob.Step == view.OnboardingProvider && ob.IsEditingCustom() {
-			if m.String() == "backspace" {
-				ob.BackspaceCustomEndpoint()
-			} else if len(m.Runes) == 1 {
-				ob.TypeCustomEndpoint(m.Runes[0])
-			}
-		}
-	}
-	return a, nil
-}
-
-// saveOnboardingConfig writes the selected model and settings to .orchestra.yml.
-func (a *App) saveOnboardingConfig() tea.Cmd {
-	ob := a.onboarding
-	sel := ob.SelectedModel()
-	p := ob.SelectedProvider()
-	endpoint := p.Endpoint
-	if p.Name == "Custom" {
-		endpoint = ob.CustomEndpoint
-	}
-	cfgPath := a.cfg.ConfigPath
-	workspaceRoot := a.cfg.WorkspaceRoot
-
-	return func() tea.Msg {
-		cfg, err := config.Load(cfgPath)
-		if err != nil {
-			cfg = config.DefaultConfig(workspaceRoot)
-			cfg.ProjectRoot = workspaceRoot
-		}
-		cfg.LLM.APIBase = endpoint
-		cfg.LLM.Model = sel.ID
-		cfg.LLM.Temperature = ob.Settings.Temperature
-		cfg.LLM.MaxTokens = ob.Settings.MaxTokens
-		if cfg.LLM.ExtraBody == nil {
-			cfg.LLM.ExtraBody = map[string]any{}
-		}
-		cfg.LLM.ExtraBody["num_ctx"] = ob.Settings.NumCtx
-		if ob.Settings.EnableThinking {
-			cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": true}
-		} else {
-			delete(cfg.LLM.ExtraBody, "chat_template_kwargs")
-		}
-		if err := config.Save(cfgPath, cfg); err != nil {
-			return modelsLoadedMsg{err: fmt.Errorf("save config: %w", err)}
-		}
-		return onboardingDoneMsg{configPath: cfgPath}
-	}
-}
-
-// updateCommandModal handles keyboard input while the Ctrl+K modal is open.
-func (a *App) updateCommandModal(m tea.KeyMsg) (tea.Model, tea.Cmd) {
-	cm := a.commandModal
-	switch m.String() {
-	case "ctrl+c":
-		return a, tea.Quit
-	case "esc":
-		cm.SetActive(false)
-	case "up":
-		cm.CursorUp()
-	case "down":
-		cm.CursorDown()
-	case "enter":
-		selected := cm.Selected()
-		cm.SetActive(false)
-		if selected != "" {
-			cmd := a.executePaletteCmd(selected)
-			return a, cmd
-		}
-	case "backspace":
-		cm.Backspace()
-	default:
-		if len(m.Runes) == 1 {
-			cm.TypeRune(m.Runes[0])
-		}
-	}
-	return a, nil
-}
-
-const helpText = `Orchestra TUI — key bindings:
-  Enter         send message
-  Shift+Enter   newline in input
-  Tab           expand/collapse last tool block
-  ↑ / ↓         input history (single-line mode)
-  /             slash command palette
-  @             file mention (fuzzy)
-  Ctrl+K        command palette modal
-  Ctrl+O        change model (onboarding)
-  a             apply pending ops
-  d             toggle diff
-  x             discard pending ops
-  y / n / Esc   allow / deny exec.run permission
-  Ctrl+C        quit`
-
-// executePaletteCmd carries out the chosen slash command and returns a tea.Cmd
-// if the action requires async work, or nil.
-func (a *App) executePaletteCmd(cmd string) tea.Cmd {
-	// Slash command execution always dismisses the startup welcome screen.
-	a.showWelcome = false
-	a.chat.SetForceWelcome(false)
-	switch cmd {
-	case "/help":
-		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: helpText})
-		a.chat.SetMessages(a.session.Messages)
-	case "/clear":
-		a.session.Clear()
-		a.chat.SetMessages(a.session.Messages)
-	case "/model":
-		model := a.cfg.Model
-		if model == "" {
-			model = "(not configured)"
-		}
-		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "Model: " + model})
-		a.chat.SetMessages(a.session.Messages)
-	case "/mode":
-		mode := a.cfg.Mode
-		if mode == "" {
-			mode = "(not configured)"
-		}
-		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "Mode: " + mode})
-		a.chat.SetMessages(a.session.Messages)
-	case "/diff":
-		if a.pendingOps != nil {
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			} else {
-				content := a.buildDiffContent()
-				a.session.AddDiff(content)
-				a.diffShown = true
-			}
-			a.chat.SetMessages(a.session.Messages)
-		}
-	case "/apply":
-		if a.pendingOps != nil && a.rpc != nil {
-			rawOps := a.pendingOps.Ops
-			count := len(a.pendingOps.Ops)
-			a.pendingOps = nil
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			}
-			a.chat.SetMessages(a.session.Messages)
-			rpc := a.rpc
-			return func() tea.Msg {
-				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
-			}
-		}
-	case "/discard":
-		if a.pendingOps != nil {
-			a.pendingOps = nil
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			}
-			a.chat.SetMessages(a.session.Messages)
-		}
-	case "/quit":
-		return tea.Quit
-	}
-	return nil
-}
-
-// renderWelcomeView renders the OpenCode-style centered welcome layout.
-// Layout (centered both axes, except status bar at bottom):
-//
-//	{ASCII logo}
-//	{empty}
-//	┃ {textarea}                           ← grey box, primary left border
-//	┃ {mode · model · provider}            ← inside same box
-//	          {tab agents  ctrl+k commands} ← right-aligned, below box
-//	{empty}
-//	● Tip {keybind hint}                    ← centered tip
-//
-//	{cwd:branch}                {version}   ← thin status bar at very bottom
-func (a *App) renderWelcomeView() string {
-	t := view.ThemeForApp()
-
-	// Box width — wider than before (~80), clamped to terminal width.
-	boxWidth := 80
-	if a.width < boxWidth+8 {
-		boxWidth = a.width - 8
-	}
-	if boxWidth < 40 {
-		boxWidth = 40
-	}
-
-	contentW := boxWidth - 5 // box: 1 border + 2 left pad + content + 2 right pad
-	bg := t.BackgroundSecondary()
-
-	// Resize textarea to fit inside box content area.
-	savedW := a.input.TextareaWidth()
-	a.input.SetTextareaWidth(contentW)
-	defer a.input.SetTextareaWidth(savedW)
-
-	// Logo — centered.
-	logo := view.RenderWelcomeLogo()
-
-	// Build each row of the input box. The textarea row is rendered manually
-	// (Input.WelcomeRender) — bubbles' own View() leaves un-styled trailing
-	// space after the placeholder, which leaks black through. Other rows
-	// get manual bg padding via padLinesBg.
-	taLine := a.input.WelcomeRender(contentW, a.cursorBlink)
-	gapLine := padLinesBg("", contentW, bg)
-	modeLine := padLinesBg(a.welcomeModeLine(), contentW, bg)
-
-	boxContent := lipgloss.JoinVertical(lipgloss.Left, taLine, gapLine, modeLine)
-	// Thick left bar (▌) instead of thin │ — matches OpenCode's accent strip.
-	inputBox := lipgloss.NewStyle().
-		Background(bg).
-		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
-		BorderForeground(t.Primary()).
-		BorderBackground(bg).
-		Padding(1, 2).
-		Width(boxWidth).
-		Render(boxContent)
-
-	// Right-aligned hints below box.
-	hintsMuted := lipgloss.NewStyle().Foreground(t.TextMuted())
-	hintsBold := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
-	hintsText := hintsBold.Render("tab") + hintsMuted.Render(" agents  ") +
-		hintsBold.Render("ctrl+k") + hintsMuted.Render(" commands")
-	hints := lipgloss.NewStyle().Width(boxWidth).Align(lipgloss.Right).Render(hintsText)
-
-	tip := a.welcomeTip()
-
-	// Slash/mention palette appears ABOVE the input box (when active),
-	// continuing into the input as a single visual unit. Match its width
-	// to the input box so the two read as one component.
-	var paletteView string
-	switch {
-	case a.paletteActive && len(a.slashPalette.Items) > 0:
-		a.slashPalette.SetSize(boxWidth)
-		paletteView = a.slashPalette.Render()
-	case a.mentionActive && len(a.mentionPalette.Items) > 0:
-		a.mentionPalette.SetSize(boxWidth)
-		paletteView = a.mentionPalette.Render()
-	}
-	// Restore full-width sizing for normal-mode rendering after this frame.
-	defer a.slashPalette.SetSize(a.width)
-	defer a.mentionPalette.SetSize(a.width)
-
-	// Build the centered block. Palette is inserted just above input box.
-	parts := []string{logo, "", ""}
-	if paletteView != "" {
-		parts = append(parts, paletteView)
-	}
-	parts = append(parts, inputBox, hints, "", "", tip)
-	block := lipgloss.JoinVertical(lipgloss.Center, parts...)
-
-	// Bottom: blank row above status bar (lifts it up slightly), then bar.
-	contentH := a.height - 2
-	if contentH < 1 {
-		contentH = 1
-	}
-	centered := lipgloss.Place(a.width, contentH, lipgloss.Center, lipgloss.Center, block)
-	bottom := a.welcomeBottomBar()
-
-	out := centered + "\n" + bottom
-
-	// Command modal overlays everything else.
-	if a.commandModal != nil && a.commandModal.Active() {
-		a.commandModal.SetScreenSize(a.width, a.height)
-		return a.commandModal.Render()
-	}
-	return out
-}
-
-// welcomeModeLine renders "<mode> · <model> · <provider>" inside the input box.
-func (a *App) welcomeModeLine() string {
-	t := view.ThemeForApp()
-	bg := t.BackgroundSecondary()
-
-	modeStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Primary()).Bold(true)
-	bold := lipgloss.NewStyle().Background(bg).Foreground(t.Text()).Bold(true)
-	muted := lipgloss.NewStyle().Background(bg).Foreground(t.TextMuted())
-	dot := muted.Render(" · ")
-
-	mode := a.cfg.Mode
-	if mode == "" {
-		mode = "build"
-	}
-	model := a.cfg.Model
-	if model == "" {
-		model = "no model"
-	}
-	provider := "LM Studio"
-
-	return modeStyle.Render(mode) + dot + bold.Render(model) + dot + muted.Render(provider)
-}
-
-// welcomeTip renders the "● Tip <hint>" line below the input.
-func (a *App) welcomeTip() string {
-	t := view.ThemeForApp()
-
-	bullet := lipgloss.NewStyle().Foreground(t.Warning()).Render("● ")
-	label := lipgloss.NewStyle().Foreground(t.Primary()).Bold(true).Render("Tip ")
-	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
-	bold := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
-
-	if a.cfg.Model == "" {
-		return bullet + label + muted.Render("Press ") + bold.Render("Ctrl+O") +
-			muted.Render(" to choose your model and start coding")
-	}
-	return bullet + label + muted.Render("Press ") + bold.Render("Ctrl+K") +
-		muted.Render(" to open commands, ") + bold.Render("Tab") +
-		muted.Render(" to switch agents")
-}
-
-// padLinesBg appends bg-styled space padding to each line so the visible
-// width is exactly `width` cells. Use this when content has its own ANSI
-// codes (e.g. textarea placeholder, styled mode line) and lipgloss.Width
-// padding alone wouldn't extend the bg color past the styled content.
-func padLinesBg(s string, width int, bgColor lipgloss.Color) string {
-	pad := lipgloss.NewStyle().Background(bgColor)
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		visW := lipgloss.Width(l)
-		if visW >= width {
-			continue
-		}
-		lines[i] = l + pad.Render(strings.Repeat(" ", width-visW))
-	}
-	return strings.Join(lines, "\n")
-}
-
-// agentModes lists the available agent modes cycled by Tab.
-var agentModes = []string{"build", "ask", "plan"}
-
-// cycleAgentMode advances cfg.Mode to the next mode in agentModes.
-func (a *App) cycleAgentMode() {
-	cur := a.cfg.Mode
-	if cur == "" {
-		cur = agentModes[0]
-	}
-	idx := -1
-	for i, m := range agentModes {
-		if m == cur {
-			idx = i
-			break
-		}
-	}
-	a.cfg.Mode = agentModes[(idx+1)%len(agentModes)]
-	a.input.SetMode(a.cfg.Mode)
-	a.header.Mode = a.cfg.Mode
-}
-
-// welcomeBottomBar — minimal status line with side padding:
-// "  <project name>                                              v0.6  "
-func (a *App) welcomeBottomBar() string {
-	t := view.ThemeForApp()
-	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
-
-	left := a.cfg.CWD
-	if left == "" {
-		left = filepath.Base(a.cfg.WorkspaceRoot)
-	}
-	if left == "" {
-		left = "."
-	}
-	right := "v0.6"
-
-	const sidePad = 2
-	leftR := muted.Render(left)
-	rightR := muted.Render(right)
-
-	inner := a.width - sidePad*2
-	mid := inner - lipgloss.Width(leftR) - lipgloss.Width(rightR)
-	if mid < 1 {
-		mid = 1
-	}
-	return strings.Repeat(" ", sidePad) + leftR +
-		strings.Repeat(" ", mid) +
-		rightR + strings.Repeat(" ", sidePad)
-}
-
-// buildWelcomeInfo constructs the metadata shown on the welcome screen.
-func (a *App) buildWelcomeInfo() view.WelcomeInfo {
-	projectPath := a.cfg.WorkspaceRoot
-	projectName := a.cfg.CWD
-	if projectName == "" && projectPath != "" {
-		projectName = filepath.Base(projectPath)
-	}
-	return view.WelcomeInfo{
-		ProjectPath:  projectPath,
-		ProjectName:  projectName,
-		ModelName:    a.cfg.Model,
-		SessionCount: countSessions(projectPath),
-	}
-}
-
-// countSessions returns the number of past agent sessions in this workspace.
-// It looks for JSONL run files in the .orchestra/ directory.
-func countSessions(workspaceRoot string) int {
-	orchDir := filepath.Join(workspaceRoot, ".orchestra")
-	entries, err := os.ReadDir(orchDir)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
-			info, err := e.Info()
-			if err == nil && info.Size() > 0 {
-				count++
-			}
-		}
-	}
-	return count
-}
-
-// updateStatusHints updates the status bar hint text based on the current UI state.
-func (a *App) updateStatusHints() {
-	switch {
-	case a.paletteActive:
-		a.statusBar.SetHints("↑↓ select · Enter execute · Esc cancel")
-	case a.mentionActive:
-		a.statusBar.SetHints("↑↓ select · Enter/Tab insert · Esc cancel")
-	case a.permModal != nil:
-		a.statusBar.SetHints("[y]es allow · [n]o deny · Esc deny")
-	case a.pendingOps != nil:
-		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
-	default:
-		a.statusBar.SetHints("/ commands")
 	}
 }
 
@@ -1276,7 +222,7 @@ func Run(cfg Config) error {
 			app.rpcCancel()
 		}
 	}()
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
 }
