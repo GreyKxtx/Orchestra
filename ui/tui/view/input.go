@@ -130,17 +130,17 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	runes := []rune(val)
 
 	if val == "" {
-		ph := "Спроси Orchestra…"
 		if blinkOn {
-			return padLine(bar+mutedStyle.Render(ph), width, bgStyle)
+			return padLine(bar, width, bgStyle)
 		}
-		return padLine(mutedStyle.Render(ph), width, bgStyle)
+		return padLine(mutedStyle.Render("Спроси Orchestra…"), width, bgStyle)
 	}
 
 	info := in.ta.LineInfo()
 	pos := clampPos(info.CharOffset, len(runes))
 
 	var b strings.Builder
+	b.Grow(len(runes) * 20)
 	for i, r := range runes {
 		ch := string(r)
 		if blinkOn && i == pos {
