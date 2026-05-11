@@ -12,9 +12,10 @@ import (
 // Input is the bottom editor — direct port of OpenCode's editor.View().
 //   style.Render(">") + textarea.View()
 type Input struct {
-	ta    textarea.Model
-	width int
-	mode  string // current agent mode; drives prompt color
+	ta        textarea.Model
+	width     int
+	mode      string // current agent mode; drives prompt color
+	selAnchor int    // -1 = no selection; ≥0 = rune index where selection started
 }
 
 // NewInput creates a textarea styled like OpenCode's CreateTextArea.
@@ -62,7 +63,7 @@ func NewInput(width int) Input {
 	ta.SetHeight(1)
 
 	ta.Focus()
-	return Input{ta: ta, width: width}
+	return Input{ta: ta, width: width, selAnchor: -1}
 }
 
 // SetMode stores the agent mode so the prompt prefix can be colored to match
@@ -97,6 +98,44 @@ func (in *Input) SetValue(s string) { in.ta.SetValue(s) }
 
 // Inner returns the underlying textarea so app.go can route key events.
 func (in *Input) Inner() *textarea.Model { return &in.ta }
+
+// HasSelection reports whether a selection range is active.
+func (in Input) HasSelection() bool { return in.selAnchor >= 0 }
+
+// SelectionRange returns the [min, max) rune indices of the current selection
+// and ok=true. Returns 0, 0, false when no selection is active.
+func (in Input) SelectionRange() (min, max int, ok bool) {
+	if in.selAnchor < 0 {
+		return 0, 0, false
+	}
+	runes := []rune(in.ta.Value())
+	cursor := clampPos(in.ta.LineInfo().CharOffset, len(runes))
+	a := in.selAnchor
+	if a <= cursor {
+		return a, cursor, true
+	}
+	return cursor, a, true
+}
+
+// SetAnchor pins the selection start to pos (call before moving cursor).
+func (in *Input) SetAnchor(pos int) { in.selAnchor = pos }
+
+// ClearSelection removes any active selection.
+func (in *Input) ClearSelection() { in.selAnchor = -1 }
+
+// DeleteSelection removes the selected rune range from the textarea value
+// and clears the selection. Returns true if anything was deleted.
+func (in *Input) DeleteSelection() bool {
+	lo, hi, ok := in.SelectionRange()
+	if !ok || lo == hi {
+		return false
+	}
+	runes := []rune(in.ta.Value())
+	newVal := string(runes[:lo]) + string(runes[hi:])
+	in.ta.SetValue(newVal)
+	in.selAnchor = -1
+	return true
+}
 
 // Render — direct port of OpenCode editorCmp.View(). The ">" prompt takes
 // the current agent-mode color so the prompt, the welcome input bar, and
@@ -139,13 +178,22 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	info := in.ta.LineInfo()
 	pos := clampPos(info.CharOffset, len(runes))
 
+	selStyle := lipgloss.NewStyle().Background(t.BorderNormal()).Foreground(t.Text())
+	selMin, selMax, hasSel := in.SelectionRange()
+
 	var b strings.Builder
 	b.Grow(len(runes) * 20)
 	for i, r := range runes {
 		ch := string(r)
-		if blinkOn && i == pos {
+		isCursor   := blinkOn && i == pos
+		isSelected := hasSel && i >= selMin && i < selMax
+
+		switch {
+		case isCursor:
 			b.WriteString(cursorStyle.Render(ch))
-		} else {
+		case isSelected:
+			b.WriteString(selStyle.Render(ch))
+		default:
 			b.WriteString(textStyle.Render(ch))
 		}
 	}
