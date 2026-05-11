@@ -236,7 +236,12 @@ func TestAgent_Run_ExecDenied_IsRetriedInsideNextStep_AndDoesNotBurnStep(t *test
 	}
 }
 
-func TestAgent_Run_InvalidJSON_Retries(t *testing.T) {
+func TestAgent_Run_PlainTextIsFinal(t *testing.T) {
+	// Plain-text responses (no tool_calls, no JSON envelope) now terminate
+	// the agent loop with an empty-patches final — mirrors opencode's
+	// contract: absence of tool_calls = done. The agent must NOT retry
+	// the LLM hoping for JSON; that wedge used to leave the spinner
+	// spinning forever on conversational replies.
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
@@ -252,32 +257,94 @@ func TestAgent_Run_InvalidJSON_Retries(t *testing.T) {
 	}
 	t.Cleanup(func() { tr.Close() })
 
-	fileHash := cache.ComputeSHA256([]byte("x"))
 	llm := &scriptedLLM{
 		steps: []string{
-			`not json`,
-			`{"type":"tool_call","tool":{"name":"ls","input":{}}}`,
-			fmt.Sprintf(`{"type":"final","final":{"patches":[{"type":"file.search_replace","path":"a.txt","search":"x","replace":"y","file_hash":%q}]}}`, fileHash),
+			`Hello! How can I help you today?`,
 		},
 	}
 
 	ag, err := New(llm, v, tr, Options{
 		MaxSteps:          10,
 		MaxInvalidRetries: 3,
-		Apply:             true,
 	})
 	if err != nil {
 		t.Fatalf("New agent failed: %v", err)
 	}
 
-	_, _, err = ag.Run(context.Background(), nil, "change x to y")
+	_, res, err := ag.Run(context.Background(), nil, "say hi")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
+	if res == nil {
+		t.Fatal("expected non-nil result for plain-text final")
+	}
+	if len(res.Patches) != 0 {
+		t.Fatalf("expected empty patches on plain-text final, got %d", len(res.Patches))
+	}
+	if res.Applied {
+		t.Fatal("plain-text final should not flag Applied=true")
+	}
 
+	// File untouched.
 	after, _ := os.ReadFile(filepath.Join(root, "a.txt"))
-	if string(after) != "y" {
-		t.Fatalf("unexpected content: %q", string(after))
+	if string(after) != "x" {
+		t.Fatalf("file unexpectedly mutated: %q", string(after))
+	}
+}
+
+func TestAgent_Run_MalformedJSON_IsFinal(t *testing.T) {
+	// Malformed JSON that looks intentional but fails schema validation must
+	// also terminate the agent loop cleanly (no retry, no error) rather than
+	// spinning forever. The same plain-text-as-final contract applies: if the
+	// model can't produce valid tool_calls or a PatchSet, the answer is its
+	// natural-language output — no file mutations.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	cases := []struct {
+		name string
+		resp string
+	}{
+		{"truncated_json", `{"type":"final","final":{`},
+		{"bad_schema", `{"not_a_valid_agent_step": true}`},
+		{"json_in_prose", `Here is my answer: {"patches": "not_an_array"} done.`},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			llm := &scriptedLLM{steps: []string{tc.resp}}
+			ag, err := New(llm, v, tr, Options{MaxSteps: 5, MaxInvalidRetries: 2})
+			if err != nil {
+				t.Fatalf("New agent failed: %v", err)
+			}
+			_, res, err := ag.Run(context.Background(), nil, "do something")
+			if err != nil {
+				t.Fatalf("Run returned error on malformed JSON (%s): %v", tc.name, err)
+			}
+			if res == nil {
+				t.Fatalf("expected non-nil result (%s)", tc.name)
+			}
+			if len(res.Patches) != 0 {
+				t.Fatalf("expected zero patches (%s), got %d", tc.name, len(res.Patches))
+			}
+			after, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+			if string(after) != "x" {
+				t.Fatalf("file unexpectedly mutated (%s): %q", tc.name, string(after))
+			}
+		})
 	}
 }
 
