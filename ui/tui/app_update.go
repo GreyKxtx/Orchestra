@@ -147,19 +147,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.ScrollDown(3)
 			return a, nil
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
-			// Click in input row → position cursor + start potential drag selection.
 			if m.Y == a.inputRowY {
-				charPos := a.mouseXToCharPos(m.X)
-				a.moveCursorToPos(charPos)
-				a.mouseDown = true
+				charPos := a.mouseXToAbsolutePos(m.X)
 				a.input.ClearSelection()
 				a.input.SetAnchor(charPos)
+				a.input.SetMouseCaret(charPos)
+				a.mouseDown = true
 			}
 			return a, nil
 		case m.Action == tea.MouseActionRelease:
 			if a.mouseDown {
 				a.mouseDown = false
-				// If anchor == cursor pos, it was just a click (no drag) — clear selection.
+				caret := a.input.MouseCaret()
+				a.moveCursorToPos(caret)
+				a.input.ClearMouseCaret()
 				if lo, hi, ok := a.input.SelectionRange(); ok && lo == hi {
 					a.input.ClearSelection()
 				}
@@ -167,8 +168,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		case m.Action == tea.MouseActionMotion:
 			if a.mouseDown && m.Y == a.inputRowY {
-				charPos := a.mouseXToCharPos(m.X)
-				a.moveCursorToPos(charPos)
+				charPos := a.mouseXToAbsolutePos(m.X)
+				a.input.SetMouseCaret(charPos)
+			}
+			return a, nil
+		case m.Button == tea.MouseButtonRight && m.Action == tea.MouseActionPress:
+			if a.input.HasSelection() {
+				lo, hi, _ := a.input.SelectionRange()
+				runes := []rune(a.input.Value())
+				if hi > len(runes) {
+					hi = len(runes)
+				}
+				_ = clipboard.WriteAll(string(runes[lo:hi]))
+				a.showToast("Скопировано")
 			}
 			return a, nil
 		}
@@ -222,17 +234,37 @@ func (a *App) showToast(text string) {
 	a.toastTick = 15
 }
 
-// mouseXToCharPos converts a screen X coordinate to a rune index in the input.
-func (a *App) mouseXToCharPos(screenX int) int {
-	charPos := screenX - a.inputColX
-	runes := []rune(a.input.Value())
-	if charPos < 0 {
-		charPos = 0
+// mouseXToAbsolutePos converts a screen X coordinate to an absolute rune index in the input.
+// For multi-line text, adds the lengths of lines before the current visible line.
+func (a *App) mouseXToAbsolutePos(screenX int) int {
+	colOffset := screenX - a.inputColX
+	if colOffset < 0 {
+		colOffset = 0
 	}
-	if charPos > len(runes) {
-		charPos = len(runes)
+	// Account for multi-line: current row offset from LineInfo
+	info := a.input.Inner().LineInfo()
+	lines := strings.Split(a.input.Value(), "\n")
+	absPos := 0
+	for i := 0; i < info.RowOffset && i < len(lines); i++ {
+		absPos += len([]rune(lines[i])) + 1 // +1 for '\n'
 	}
-	return charPos
+	// Clamp colOffset to current line length
+	if info.RowOffset < len(lines) {
+		lineLen := len([]rune(lines[info.RowOffset]))
+		if colOffset > lineLen {
+			colOffset = lineLen
+		}
+	} else {
+		// last line or beyond
+		total := len([]rune(a.input.Value()))
+		if absPos+colOffset > total {
+			colOffset = total - absPos
+		}
+	}
+	if colOffset < 0 {
+		colOffset = 0
+	}
+	return absPos + colOffset
 }
 
 // moveCursorToPos moves the textarea cursor to the given rune index.
@@ -292,85 +324,37 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	switch m.String() {
 	case "shift+left":
 		if !a.input.HasSelection() {
-			pos := a.input.Inner().LineInfo().CharOffset
-			runes := []rune(a.input.Value())
-			if pos < 0 {
-				pos = 0
-			}
-			if pos > len(runes) {
-				pos = len(runes)
-			}
-			a.input.SetAnchor(pos)
+			a.input.SetAnchor(a.input.AbsolutePos())
 		}
 		return a, a.sendKeyToTA(tea.KeyLeft), true
 
 	case "shift+right":
 		if !a.input.HasSelection() {
-			pos := a.input.Inner().LineInfo().CharOffset
-			runes := []rune(a.input.Value())
-			if pos < 0 {
-				pos = 0
-			}
-			if pos > len(runes) {
-				pos = len(runes)
-			}
-			a.input.SetAnchor(pos)
+			a.input.SetAnchor(a.input.AbsolutePos())
 		}
 		return a, a.sendKeyToTA(tea.KeyRight), true
 
 	case "ctrl+shift+left":
 		if !a.input.HasSelection() {
-			pos := a.input.Inner().LineInfo().CharOffset
-			runes := []rune(a.input.Value())
-			if pos < 0 {
-				pos = 0
-			}
-			if pos > len(runes) {
-				pos = len(runes)
-			}
-			a.input.SetAnchor(pos)
+			a.input.SetAnchor(a.input.AbsolutePos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
 
 	case "ctrl+shift+right":
 		if !a.input.HasSelection() {
-			pos := a.input.Inner().LineInfo().CharOffset
-			runes := []rune(a.input.Value())
-			if pos < 0 {
-				pos = 0
-			}
-			if pos > len(runes) {
-				pos = len(runes)
-			}
-			a.input.SetAnchor(pos)
+			a.input.SetAnchor(a.input.AbsolutePos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
 	case "alt+shift+left":
 		if !a.input.HasSelection() {
-			pos := a.input.Inner().LineInfo().CharOffset
-			runes := []rune(a.input.Value())
-			if pos < 0 {
-				pos = 0
-			}
-			if pos > len(runes) {
-				pos = len(runes)
-			}
-			a.input.SetAnchor(pos)
+			a.input.SetAnchor(a.input.AbsolutePos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
 
 	case "alt+shift+right":
 		if !a.input.HasSelection() {
-			pos := a.input.Inner().LineInfo().CharOffset
-			runes := []rune(a.input.Value())
-			if pos < 0 {
-				pos = 0
-			}
-			if pos > len(runes) {
-				pos = len(runes)
-			}
-			a.input.SetAnchor(pos)
+			a.input.SetAnchor(a.input.AbsolutePos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 

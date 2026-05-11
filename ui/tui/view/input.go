@@ -16,6 +16,9 @@ type Input struct {
 	width     int
 	mode      string // current agent mode; drives prompt color
 	selAnchor int    // -1 = no selection; ≥0 = rune index where selection started
+	// Mouse drag caret: when mouseCaretActive, renders at mouseCaret instead of ta cursor.
+	mouseCaret       int
+	mouseCaretActive bool
 }
 
 // NewInput creates a textarea styled like OpenCode's CreateTextArea.
@@ -99,6 +102,9 @@ func (in *Input) SetValue(s string) { in.ta.SetValue(s) }
 // Inner returns the underlying textarea so app.go can route key events.
 func (in *Input) Inner() *textarea.Model { return &in.ta }
 
+// AbsolutePos returns the absolute rune index of the textarea cursor across all lines.
+func (in Input) AbsolutePos() int { return absolutePos(in.ta) }
+
 // HasSelection reports whether a selection range is active.
 func (in Input) HasSelection() bool { return in.selAnchor >= 0 }
 
@@ -108,8 +114,13 @@ func (in Input) SelectionRange() (min, max int, ok bool) {
 	if in.selAnchor < 0 {
 		return 0, 0, false
 	}
-	runes := []rune(in.ta.Value())
-	cursor := clampPos(in.ta.LineInfo().CharOffset, len(runes))
+	var cursor int
+	if in.mouseCaretActive {
+		cursor = in.mouseCaret
+	} else {
+		runes := []rune(in.ta.Value())
+		cursor = clampPos(absolutePos(in.ta), len(runes))
+	}
 	a := in.selAnchor
 	if a <= cursor {
 		return a, cursor, true
@@ -122,6 +133,18 @@ func (in *Input) SetAnchor(pos int) { in.selAnchor = pos }
 
 // ClearSelection removes any active selection.
 func (in *Input) ClearSelection() { in.selAnchor = -1 }
+
+// SetMouseCaret sets the visual cursor to pos during mouse drag, bypassing textarea cursor.
+func (in *Input) SetMouseCaret(pos int) {
+	in.mouseCaret = pos
+	in.mouseCaretActive = true
+}
+
+// MouseCaret returns the current mouse caret position.
+func (in Input) MouseCaret() int { return in.mouseCaret }
+
+// ClearMouseCaret deactivates the mouse caret, restoring textarea cursor display.
+func (in *Input) ClearMouseCaret() { in.mouseCaretActive = false }
 
 // DeleteSelection removes the selected rune range from the textarea value
 // and clears the selection. Returns true if anything was deleted.
@@ -175,8 +198,12 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 		return padLine(mutedStyle.Render("Спроси Orchestra…"), width, bgStyle)
 	}
 
-	info := in.ta.LineInfo()
-	pos := clampPos(info.CharOffset, len(runes))
+	var pos int
+	if in.mouseCaretActive {
+		pos = clampPos(in.mouseCaret, len(runes))
+	} else {
+		pos = clampPos(absolutePos(in.ta), len(runes))
+	}
 
 	selStyle := lipgloss.NewStyle().Background(t.BorderNormal()).Foreground(t.Text())
 	selMin, selMax, hasSel := in.SelectionRange()
@@ -210,6 +237,21 @@ func padLine(s string, width int, bgStyle lipgloss.Style) string {
 		s += bgStyle.Render(strings.Repeat(" ", diff))
 	}
 	return s
+}
+
+// absolutePos computes the absolute rune index of the textarea cursor,
+// accounting for multiple lines (each separated by '\n').
+func absolutePos(ta textarea.Model) int {
+	info := ta.LineInfo()
+	if info.RowOffset == 0 {
+		return info.CharOffset
+	}
+	lines := strings.Split(ta.Value(), "\n")
+	pos := 0
+	for i := 0; i < info.RowOffset && i < len(lines); i++ {
+		pos += len([]rune(lines[i])) + 1 // +1 for '\n'
+	}
+	return pos + info.CharOffset
 }
 
 // clampPos returns pos clamped to [0, max].
