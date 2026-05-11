@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"time"
 )
 
@@ -153,7 +153,7 @@ func (l *Logger) appendLog(entry LLMLogEntry) {
 		return
 	}
 
-	file, err := os.OpenFile(l.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(l.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return
 	}
@@ -175,7 +175,7 @@ func (l *Logger) writeLastError(errorData map[string]interface{}) {
 	}
 	data = append(data, '\n')
 
-	os.WriteFile(l.errorPath, data, 0644) // Best-effort
+	os.WriteFile(l.errorPath, data, 0600) // Best-effort
 }
 
 // truncateAndSanitize truncates string and removes API keys
@@ -186,37 +186,16 @@ func truncateAndSanitize(s string, maxBytes int) string {
 	return sanitizeSecrets(s[:maxBytes]) + "...(truncated)"
 }
 
-// sanitizeSecrets removes API keys and sensitive data from strings
-func sanitizeSecrets(s string) string {
-	// Remove Bearer tokens
-	s = regexReplaceAll(s, `(?i)bearer\s+[a-zA-Z0-9_-]+`, "Bearer ***")
-	// Remove api_key fields
-	s = regexReplaceAll(s, `(?i)"api_key"\s*:\s*"[^"]*"`, `"api_key":"***"`)
-	s = regexReplaceAll(s, `(?i)'api_key'\s*:\s*'[^']*'`, `'api_key':'***'`)
-	return s
-}
+var (
+	reBearer     = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-]+`)
+	reAPIKeyDbl  = regexp.MustCompile(`(?i)("api_key"\s*:\s*")[^"]*("?)`)
+	reAPIKeySgl  = regexp.MustCompile(`(?i)('api_key'\s*:\s*')[^']*('?)`)
+)
 
-// Simple regex replacement (avoid importing regexp for minimal logging)
-func regexReplaceAll(s, pattern, repl string) string {
-	// For now, just do simple string replacements
-	// Full regex would require importing regexp, which we want to avoid for minimal logging
-	if strings.Contains(strings.ToLower(s), "bearer") {
-		// Best-effort: find and replace common patterns
-		lines := strings.Split(s, "\n")
-		for i, line := range lines {
-			if strings.Contains(strings.ToLower(line), "bearer") {
-				parts := strings.SplitN(line, " ", 3)
-				if len(parts) >= 2 && strings.ToLower(parts[0]) == "bearer" {
-					lines[i] = "Bearer ***"
-				}
-			}
-			if strings.Contains(strings.ToLower(line), "api_key") {
-				if idx := strings.Index(line, ":"); idx > 0 {
-					lines[i] = line[:idx+1] + " \"***\""
-				}
-			}
-		}
-		s = strings.Join(lines, "\n")
-	}
+// sanitizeSecrets removes Bearer tokens and api_key values from strings.
+func sanitizeSecrets(s string) string {
+	s = reBearer.ReplaceAllString(s, "${1}***")
+	s = reAPIKeyDbl.ReplaceAllString(s, "${1}***${2}")
+	s = reAPIKeySgl.ReplaceAllString(s, "${1}***${2}")
 	return s
 }
