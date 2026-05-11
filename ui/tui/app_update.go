@@ -251,7 +251,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			a.input.SetAnchor(pos)
 		}
-		return a, a.sendKeyToTA(tea.KeyLeft), true
+		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
 
 	case "ctrl+shift+right":
 		if !a.input.HasSelection() {
@@ -265,7 +265,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			a.input.SetAnchor(pos)
 		}
-		return a, a.sendKeyToTA(tea.KeyRight), true
+		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
 	case "up":
 		if a.paletteActive {
