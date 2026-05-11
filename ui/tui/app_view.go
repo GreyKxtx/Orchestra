@@ -201,6 +201,20 @@ func (a *App) layout() {
 	}
 	a.slashPalette.SetSize(inputW)
 	a.mentionPalette.SetSize(inputW)
+
+	// Track input box position for mouse click-to-cursor.
+	if !a.showWelcome {
+		const inputBoxHeight = 5
+		a.inputRowY = a.height - 1 - inputBoxHeight + 1 // textarea content row
+		a.inputColX = chatSidePad + 1 + 2               // sidePad + border(▌) + leftPad
+	} else {
+		// Welcome view: rough estimate
+		a.inputRowY = a.height / 2
+		a.inputColX = (a.width-80)/2 + 3
+		if a.inputColX < 3 {
+			a.inputColX = 3
+		}
+	}
 }
 
 // buildDiffContent renders the diff for the current pending-ops set as a
