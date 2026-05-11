@@ -294,6 +294,34 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
+	case "alt+shift+left":
+		if !a.input.HasSelection() {
+			pos := a.input.Inner().LineInfo().CharOffset
+			runes := []rune(a.input.Value())
+			if pos < 0 {
+				pos = 0
+			}
+			if pos > len(runes) {
+				pos = len(runes)
+			}
+			a.input.SetAnchor(pos)
+		}
+		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
+
+	case "alt+shift+right":
+		if !a.input.HasSelection() {
+			pos := a.input.Inner().LineInfo().CharOffset
+			runes := []rune(a.input.Value())
+			if pos < 0 {
+				pos = 0
+			}
+			if pos > len(runes) {
+				pos = len(runes)
+			}
+			a.input.SetAnchor(pos)
+		}
+		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
+
 	case "up":
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
@@ -475,7 +503,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	// Clear selection when a non-shift navigation key falls through to textarea.
 	switch m.String() {
-	case "left", "right", "ctrl+left", "ctrl+right", "home", "end", "up", "down":
+	case "left", "right", "ctrl+left", "ctrl+right", "alt+left", "alt+right", "home", "end", "up", "down":
 		a.input.ClearSelection()
 	}
 	return a, nil, false
