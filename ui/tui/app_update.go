@@ -168,6 +168,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updatedTA, taCmd := innerTA.Update(msg)
 	*innerTA = updatedTA
 	if _, isKey := msg.(tea.KeyMsg); isKey {
+		// Any key that reaches textarea clears selection (user typed a character).
+		a.input.ClearSelection()
 		a.syncPalette()
 		a.updateStatusHints()
 		a.layout()
@@ -437,6 +439,12 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.updateStatusHints()
 			return a, nil, true
 		}
+	case "backspace":
+		if a.input.HasSelection() {
+			a.input.DeleteSelection()
+			return a, nil, true
+		}
+		return a, nil, false
 	case "enter":
 		return a.handleEnter()
 	}
