@@ -14,6 +14,7 @@ import (
 type Input struct {
 	ta    textarea.Model
 	width int
+	mode  string // current agent mode; drives prompt color
 }
 
 // NewInput creates a textarea styled like OpenCode's CreateTextArea.
@@ -64,8 +65,9 @@ func NewInput(width int) Input {
 	return Input{ta: ta, width: width}
 }
 
-// SetMode is a no-op kept for API compatibility (mode shown elsewhere now).
-func (in *Input) SetMode(mode string) {}
+// SetMode stores the agent mode so the prompt prefix can be colored to match
+// the mode label elsewhere in the UI.
+func (in *Input) SetMode(mode string) { in.mode = mode }
 
 // SetSize resizes the textarea.
 func (in *Input) SetSize(width int) {
@@ -96,13 +98,14 @@ func (in *Input) SetValue(s string) { in.ta.SetValue(s) }
 // Inner returns the underlying textarea so app.go can route key events.
 func (in *Input) Inner() *textarea.Model { return &in.ta }
 
-// Render — direct port of OpenCode editorCmp.View().
+// Render — direct port of OpenCode editorCmp.View(). The ">" prompt takes
+// the current agent-mode color so the prompt, the welcome input bar, and
+// the mode label all share one accent across views.
 func (in Input) Render() string {
-	t := theme.CurrentTheme()
 	style := lipgloss.NewStyle().
 		Padding(0, 0, 0, 1).
 		Bold(true).
-		Foreground(t.Primary())
+		Foreground(ModeColor(in.mode))
 	return lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"), in.ta.View())
 }
 
@@ -112,7 +115,7 @@ func (in Input) Render() string {
 // control every cell with explicit lipgloss styles.
 //
 //	width    — target visible width of the row (matches box content area)
-//	blinkOn  — whether the cursor block is currently visible (animation)
+//	blinkOn  — whether the cursor is currently visible (animation)
 func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	t := theme.CurrentTheme()
 	bg := t.BackgroundSecondary()
@@ -120,38 +123,54 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	bgStyle := lipgloss.NewStyle().Background(bg)
 	textStyle := bgStyle.Foreground(t.Text())
 	mutedStyle := bgStyle.Foreground(t.TextMuted())
-	// Cursor block: primary bg, character in dark bg color (inverted feel).
-	cursorOn := lipgloss.NewStyle().Background(t.Primary()).Foreground(bg)
+	cursorStyle := lipgloss.NewStyle().Background(t.Primary()).Foreground(t.Background())
+	bar := lipgloss.NewStyle().Background(bg).Foreground(t.Primary()).Bold(true).Render("│")
 
 	val := in.ta.Value()
+	runes := []rune(val)
 
-	var content string
-	switch {
-	case val == "":
-		// Show placeholder. When blink is on, first char becomes cursor block.
-		ph := []rune("Спроси Orchestra…")
-		if len(ph) == 0 {
-			content = ""
-			break
-		}
-		first, rest := string(ph[0]), string(ph[1:])
+	if val == "" {
+		ph := "Спроси Orchestra…"
 		if blinkOn {
-			content = cursorOn.Render(first) + mutedStyle.Render(rest)
+			return padLine(bar+mutedStyle.Render(ph), width, bgStyle)
+		}
+		return padLine(mutedStyle.Render(ph), width, bgStyle)
+	}
+
+	info := in.ta.LineInfo()
+	pos := clampPos(info.CharOffset, len(runes))
+
+	var b strings.Builder
+	for i, r := range runes {
+		ch := string(r)
+		if blinkOn && i == pos {
+			b.WriteString(cursorStyle.Render(ch))
 		} else {
-			content = mutedStyle.Render(string(ph))
+			b.WriteString(textStyle.Render(ch))
 		}
-	default:
-		// Show typed value; cursor block at end while blink is on.
-		content = textStyle.Render(val)
-		if blinkOn {
-			content += cursorOn.Render(" ")
-		}
+	}
+	if blinkOn && pos == len(runes) {
+		b.WriteString(bar)
 	}
 
-	// Pad the row to full width with bg-styled spaces — guarantees no gaps.
-	visW := lipgloss.Width(content)
-	if visW < width {
-		content += bgStyle.Render(strings.Repeat(" ", width-visW))
+	return padLine(b.String(), width, bgStyle)
+}
+
+// padLine pads s to exactly width visible cells using bgStyle-filled spaces.
+func padLine(s string, width int, bgStyle lipgloss.Style) string {
+	if diff := width - lipgloss.Width(s); diff > 0 {
+		s += bgStyle.Render(strings.Repeat(" ", diff))
 	}
-	return content
+	return s
+}
+
+// clampPos returns pos clamped to [0, max].
+func clampPos(pos, max int) int {
+	if pos < 0 {
+		return 0
+	}
+	if pos > max {
+		return max
+	}
+	return pos
 }
