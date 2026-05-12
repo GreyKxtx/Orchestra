@@ -494,6 +494,13 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		return a, a.sendKeyToTA(tea.KeyDown), true
 
+	case "ctrl+left":
+		a.input.ClearSelection()
+		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
+	case "ctrl+right":
+		a.input.ClearSelection()
+		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
+
 	case "up":
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
@@ -503,12 +510,15 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorUp()
 			return a, nil, true
 		}
-		// History navigation: only when input has no newline (single-line mode).
-		if !strings.Contains(a.input.Value(), "\n") {
-			text := a.history.Up(a.input.Value())
-			a.input.SetValue(text)
-			return a, nil, true
+		// Multi-row input (logical newlines or soft-wrap) → cursor up.
+		// Single visual row → history navigation.
+		if a.input.VisualLineCount(a.input.Inner().Width()) > 1 {
+			a.input.ClearSelection()
+			return a, a.sendKeyToTA(tea.KeyUp), true
 		}
+		text := a.history.Up(a.input.Value())
+		a.input.SetValue(text)
+		return a, nil, true
 	case "down":
 		if a.paletteActive {
 			a.slashPalette.CursorDown()
@@ -518,7 +528,11 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorDown()
 			return a, nil, true
 		}
-		if !strings.Contains(a.input.Value(), "\n") && a.history.IsNavigating() {
+		if a.input.VisualLineCount(a.input.Inner().Width()) > 1 {
+			a.input.ClearSelection()
+			return a, a.sendKeyToTA(tea.KeyDown), true
+		}
+		if a.history.IsNavigating() {
 			text := a.history.Down()
 			a.input.SetValue(text)
 			return a, nil, true
