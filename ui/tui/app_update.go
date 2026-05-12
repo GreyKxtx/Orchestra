@@ -510,11 +510,15 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorUp()
 			return a, nil, true
 		}
-		// Multi-row input (logical newlines or soft-wrap) → cursor up.
-		// Single visual row → history navigation.
-		if a.input.VisualLineCount(a.input.Inner().Width()) > 1 {
+		// Multi-row input (logical newlines or soft-wrap) → cursor up
+		// by one visual row using our own navigation (bubbles' CursorUp
+		// has quirky soft-wrap semantics that can skip rows). Single
+		// visual row → history navigation.
+		w := a.input.Inner().Width()
+		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
-			return a, a.sendKeyToTA(tea.KeyUp), true
+			a.input.MoveCursorVisualUp(w)
+			return a, nil, true
 		}
 		text := a.history.Up(a.input.Value())
 		a.input.SetValue(text)
@@ -528,9 +532,11 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorDown()
 			return a, nil, true
 		}
-		if a.input.VisualLineCount(a.input.Inner().Width()) > 1 {
+		w := a.input.Inner().Width()
+		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
-			return a, a.sendKeyToTA(tea.KeyDown), true
+			a.input.MoveCursorVisualDown(w)
+			return a, nil, true
 		}
 		if a.history.IsNavigating() {
 			text := a.history.Down()
