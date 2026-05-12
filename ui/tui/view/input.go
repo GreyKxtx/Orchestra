@@ -280,6 +280,14 @@ func (in Input) absoluteToRowCol(pos int) (row, col int) {
 // moveCursorAbs positions the textarea cursor at the given absolute rune index.
 // Strategy: navigate from the current row to the target row via CursorUp/Down,
 // then SetCursor(col) for column-within-line. Clamped to [0, len(value)].
+//
+// Caveat: ta.Line() and CursorUp/Down count visual rows. When the value is a
+// single logical line, this is equivalent to logical rows and works exactly.
+// When the value has multiple '\n'-separated logical lines AND at least one
+// logical line soft-wraps to multiple visual rows, the visual-vs-logical
+// delta diverges and the cursor may land on the wrong row. For chat input
+// in Phase 2 this is acceptable because typical lines fit within textarea
+// width; revisit if Shift+Enter usage exposes the mismatch in practice.
 func (in *Input) moveCursorAbs(pos int) {
 	runes := []rune(in.ta.Value())
 	if pos < 0 {
