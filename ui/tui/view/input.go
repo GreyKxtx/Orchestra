@@ -346,15 +346,49 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	}
 	selMin, selMax, hasSel := in.SelectionRange()
 
-	lines := strings.Split(val, "\n")
-	rendered := make([]string, 0, len(lines))
+	// Build visual chunks: each logical line is further split into rows
+	// of up to `width` runes (soft-wrap). Track the absolute rune offset
+	// of each chunk's first rune and whether it's the LAST chunk of its
+	// logical line (so the bar cursor at end-of-chunk is drawn only on
+	// real line endings, never on a wrap continuation).
+	type chunk struct {
+		absStart       int
+		runes          []rune
+		endOfLogical   bool
+	}
+	wrapW := width
+	if wrapW < 1 {
+		wrapW = 1
+	}
+	logical := strings.Split(val, "\n")
+	chunks := make([]chunk, 0, len(logical))
 	absOffset := 0
-	for _, line := range lines {
+	for _, line := range logical {
 		runes := []rune(line)
+		if len(runes) == 0 {
+			chunks = append(chunks, chunk{absStart: absOffset, runes: nil, endOfLogical: true})
+		} else {
+			for i := 0; i < len(runes); i += wrapW {
+				end := i + wrapW
+				if end > len(runes) {
+					end = len(runes)
+				}
+				chunks = append(chunks, chunk{
+					absStart:     absOffset + i,
+					runes:        runes[i:end],
+					endOfLogical: end == len(runes),
+				})
+			}
+		}
+		absOffset += len(runes) + 1 // +1 for '\n'
+	}
+
+	rendered := make([]string, 0, len(chunks))
+	for _, c := range chunks {
 		var b strings.Builder
-		b.Grow(len(runes) * 20)
-		for i, r := range runes {
-			absIdx := absOffset + i
+		b.Grow(len(c.runes) * 20)
+		for i, r := range c.runes {
+			absIdx := c.absStart + i
 			ch := string(r)
 			isCursor := blinkOn && absIdx == cursorPos
 			isSelected := hasSel && absIdx >= selMin && absIdx < selMax
@@ -367,13 +401,15 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 				b.WriteString(textStyle.Render(ch))
 			}
 		}
-		// Bar cursor at end of THIS line iff overall cursor sits there.
-		endOfLineAbs := absOffset + len(runes)
-		if blinkOn && cursorPos == endOfLineAbs {
+		// Bar cursor at end of THIS chunk iff cursor sits there AND
+		// this chunk is the end of a logical line — otherwise the
+		// position equals the start of the next chunk (continuation
+		// wrap), where the block cursor will be drawn instead.
+		endOfChunkAbs := c.absStart + len(c.runes)
+		if blinkOn && cursorPos == endOfChunkAbs && c.endOfLogical {
 			b.WriteString(bar)
 		}
 		rendered = append(rendered, padLine(b.String(), width, bgStyle))
-		absOffset += len(runes) + 1 // +1 for '\n'
 	}
 
 	return strings.Join(rendered, "\n")
@@ -388,22 +424,27 @@ func padLine(s string, width int, bgStyle lipgloss.Style) string {
 }
 
 // absolutePos computes the absolute rune index of the textarea cursor,
-// accounting for multiple logical lines (each separated by '\n').
-// Uses ta.Line() for logical row index; info.CharOffset is the column
-// within the current visual line (which equals column within the logical
-// line when there is no soft-wrap — the typical case for our usage).
+// accounting for both logical lines (separated by '\n') and soft-wrap
+// (a single logical line that exceeds textarea width and wraps to
+// multiple visual rows).
+//
+// LineInfo.StartColumn is the column-within-logical-line where the
+// current wrapped visual row starts; LineInfo.CharOffset is the visual
+// column within that wrapped row. Their sum is the column within the
+// current logical line — correct regardless of soft-wrap.
 func absolutePos(ta textarea.Model) int {
 	info := ta.LineInfo()
 	row := ta.Line()
+	colInLogicalLine := info.StartColumn + info.CharOffset
 	if row == 0 {
-		return info.CharOffset
+		return colInLogicalLine
 	}
 	lines := strings.Split(ta.Value(), "\n")
 	pos := 0
 	for i := 0; i < row && i < len(lines); i++ {
 		pos += len([]rune(lines[i])) + 1 // +1 for '\n'
 	}
-	return pos + info.CharOffset
+	return pos + colInLogicalLine
 }
 
 // absoluteToRowCol converts an absolute rune index to (logical row, col on row).
@@ -597,13 +638,48 @@ func (in *Input) InsertNewline() {
 	in.ta.InsertRune('\n')
 }
 
-// SyncHeight caps the textarea height to LineCount, clamped to [1, max].
-// Call after any value mutation that may add or remove '\n' so the visible
-// rows match the actual content (up to max).
+// VisualLineCount returns the total number of visual rows the value
+// would occupy when soft-wrapped to the given width. Each '\n' starts
+// a new logical line; each logical line wraps to ceil(len/width) rows
+// (minimum 1 even for an empty line).
+func (in Input) VisualLineCount(width int) int {
+	if width < 1 {
+		width = 1
+	}
+	val := in.ta.Value()
+	if val == "" {
+		return 1
+	}
+	total := 0
+	for _, line := range strings.Split(val, "\n") {
+		rl := len([]rune(line))
+		if rl == 0 {
+			total++
+			continue
+		}
+		total += (rl + width - 1) / width
+	}
+	if total < 1 {
+		return 1
+	}
+	return total
+}
+
+// SyncHeight caps the textarea height to the visual line count given
+// the current textarea wrap width, clamped to [1, max]. Call after any
+// value mutation so the visible rows match the actual content (including
+// soft-wrap, not just '\n' splits).
 func (in *Input) SyncHeight(max int) {
-	h := in.ta.LineCount()
+	w := in.ta.Width()
+	if w < 1 {
+		w = 80
+	}
+	h := in.VisualLineCount(w)
 	if h < 1 {
 		h = 1
+	}
+	if max < 1 {
+		max = 1
 	}
 	if h > max {
 		h = max

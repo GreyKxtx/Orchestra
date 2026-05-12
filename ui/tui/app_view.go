@@ -186,6 +186,13 @@ func (a *App) layout() {
 	if inputW < 40 {
 		inputW = 40
 	}
+	// Content width inside the box: subtract left border + 2*padding.
+	// SyncHeight / soft-wrap and WelcomeRender both read ta.Width(),
+	// so we set it here to match what renderInputBox actually renders.
+	contentW := inputW - 5
+	if contentW < 20 {
+		contentW = 20
+	}
 
 	if !a.initialized {
 		a.chat = view.NewChat(chatW, chatHeight)
@@ -193,12 +200,17 @@ func (a *App) layout() {
 		a.chat.SetForceWelcome(a.showWelcome)
 		a.chat.SetMeta(a.cfg.Mode, a.cfg.Model)
 		a.input = view.NewInput(inputW)
+		a.input.SetTextareaWidth(contentW)
 		a.input.SetMode(a.cfg.Mode)
 		a.initialized = true
 	} else {
 		a.chat.SetSize(chatW, chatHeight)
 		a.input.SetSize(inputW)
+		a.input.SetTextareaWidth(contentW)
 	}
+	// After (re)sizing, recompute soft-wrap visual height so the box
+	// grows immediately on resize without waiting for the next keystroke.
+	a.input.SyncHeight(5)
 	a.slashPalette.SetSize(inputW)
 	a.mentionPalette.SetSize(inputW)
 
