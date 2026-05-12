@@ -367,6 +367,23 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
+	case "ctrl+a":
+		a.input.SelectAll()
+		return a, nil, true
+	case "ctrl+x":
+		if a.input.HasSelection() {
+			s := a.input.Cut()
+			_ = clipboard.WriteAll(s)
+			a.showToast("Вырезано")
+		}
+		return a, nil, true
+	case "ctrl+v":
+		txt, err := clipboard.ReadAll()
+		if err == nil && txt != "" {
+			a.input.Paste(txt)
+		}
+		return a, nil, true
+
 	case "up":
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
