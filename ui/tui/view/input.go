@@ -135,6 +135,9 @@ func (in *Input) SetAnchor(pos int) { in.selAnchor = pos }
 // ClearSelection removes any active selection.
 func (in *Input) ClearSelection() { in.selAnchor = -1 }
 
+// MoveCursorAbs positions the cursor at the absolute rune index.
+func (in *Input) MoveCursorAbs(pos int) { in.moveCursorAbs(pos) }
+
 // SelectAll selects the entire value: anchor at 0, cursor at end.
 // No-op if the value is empty.
 func (in *Input) SelectAll() {
