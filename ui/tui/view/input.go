@@ -370,16 +370,20 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	selMin, selMax, hasSel := in.SelectionRange()
 
 	// Build visual chunks: each logical line is further split into rows
-	// of up to `width` runes (soft-wrap). Track the absolute rune offset
-	// of each chunk's first rune and whether it's the LAST chunk of its
-	// logical line (so the bar cursor at end-of-chunk is drawn only on
-	// real line endings, never on a wrap continuation).
+	// of up to `wrapW` runes. wrapW is bubbles' INTERNAL wrap width
+	// (in.WrapWidth()), NOT the outer box width — so our row breakdown
+	// matches bubbles' so CursorUp/CursorDown land on the same visual
+	// row our render shows. `width` is still used by padLine to pad
+	// each rendered row to the outer box width.
 	type chunk struct {
-		absStart       int
-		runes          []rune
-		endOfLogical   bool
+		absStart     int
+		runes        []rune
+		endOfLogical bool
 	}
-	wrapW := width
+	wrapW := in.WrapWidth()
+	if wrapW < 1 {
+		wrapW = width
+	}
 	if wrapW < 1 {
 		wrapW = 1
 	}
@@ -686,15 +690,13 @@ func (in Input) VisualLineCount(width int) int {
 	return total
 }
 
-// WrapWidth returns the outer width last set via SetTextareaWidth — the
-// same value renderInputBox uses as contentW. Prefer this over
-// in.ta.Width() / Inner().Width(): bubbles' SetWidth post-decrements
-// m.width by the prompt width, so a save+restore dance drifts the value
-// by 1 cell per render.
+// WrapWidth returns the wrap width bubbles textarea actually uses
+// internally (= outer width minus prompt width minus borders). Use
+// this for any wrap-aware computation (VisualLineCount, WelcomeRender
+// chunking) so our row breakdown matches bubbles' own — otherwise the
+// rendered cursor and the cursor bubbles moves with KeyUp/KeyDown
+// disagree about which visual row the cursor sits on.
 func (in Input) WrapWidth() int {
-	if in.taWidth > 0 {
-		return in.taWidth
-	}
 	return in.ta.Width()
 }
 
