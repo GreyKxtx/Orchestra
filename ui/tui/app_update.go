@@ -15,6 +15,24 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
+// isNoiseKey reports whether a key event is a terminal-side-effect artifact
+// (cmd.exe emits stray NUL/Alt+NUL events around modifier presses that
+// must not reach the textarea — otherwise NUL bytes pollute the value).
+func isNoiseKey(km tea.KeyMsg) bool {
+	if km.Type != tea.KeyRunes {
+		return false
+	}
+	if len(km.Runes) == 0 {
+		return true
+	}
+	for _, r := range km.Runes {
+		if r != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // Update routes incoming messages to the appropriate sub-handler.
 //
 // The big switch covers every tea.Msg variant we care about:
@@ -27,6 +45,12 @@ import (
 //
 // Anything not handled here falls through to the textarea.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Drop terminal-side-effect noise events (cmd.exe emits stray NUL key
+	// presses around modifier keys; they pollute the textarea value).
+	if km, ok := msg.(tea.KeyMsg); ok && isNoiseKey(km) {
+		return a, nil
+	}
+
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = m.Width
@@ -651,7 +675,10 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.input.SyncHeight(5)
 		a.layout()
 		return a, nil, true
-	case "shift+enter":
+	case "shift+enter", "ctrl+j":
+		// shift+enter works in Windows Terminal / xterm; ctrl+j is the
+		// universal fallback (literal newline char \n) for terminals
+		// like cmd.exe that don't distinguish Shift+Enter from Enter.
 		a.input.InsertNewline()
 		a.input.SyncHeight(5)
 		a.layout()
