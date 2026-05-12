@@ -306,12 +306,11 @@ func (in Input) Render() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"), in.ta.View())
 }
 
-// WelcomeRender renders the input row for the welcome view ourselves,
-// bypassing bubbles textarea.View() — its placeholder padding doesn't
-// always carry our bg, leaving black gaps. By rendering manually we
-// control every cell with explicit lipgloss styles.
+// WelcomeRender renders the input rows for the welcome view and chat box
+// ourselves, bypassing bubbles textarea.View(). Renders each logical line
+// (split by '\n') on its own row with consistent overlay (cursor + selection).
 //
-//	width    — target visible width of the row (matches box content area)
+//	width    — target visible width of each row (matches box content area)
 //	blinkOn  — whether the cursor is currently visible (animation)
 func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	t := theme.CurrentTheme()
@@ -321,11 +320,13 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	textStyle := bgStyle.Foreground(t.Text())
 	mutedStyle := bgStyle.Foreground(t.TextMuted())
 	cursorStyle := lipgloss.NewStyle().Background(t.Primary()).Foreground(t.Background())
+	selStyle := lipgloss.NewStyle().Background(t.BorderNormal()).Foreground(t.Text())
 	bar := lipgloss.NewStyle().Background(bg).Foreground(t.Primary()).Bold(true).Render("│")
 
 	val := in.ta.Value()
-	runes := []rune(val)
+	totalRunes := len([]rune(val))
 
+	// Empty input — single-line placeholder.
 	if val == "" {
 		if blinkOn {
 			return padLine(bar, width, bgStyle)
@@ -333,37 +334,46 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 		return padLine(mutedStyle.Render("Спроси Orchestra…"), width, bgStyle)
 	}
 
-	var pos int
+	// Resolve cursor absolute position (mouse-caret override during drag).
+	var cursorPos int
 	if in.mouseCaretActive {
-		pos = clampPos(in.mouseCaret, len(runes))
+		cursorPos = clampPos(in.mouseCaret, totalRunes)
 	} else {
-		pos = clampPos(absolutePos(in.ta), len(runes))
+		cursorPos = clampPos(absolutePos(in.ta), totalRunes)
 	}
-
-	selStyle := lipgloss.NewStyle().Background(t.BorderNormal()).Foreground(t.Text())
 	selMin, selMax, hasSel := in.SelectionRange()
 
-	var b strings.Builder
-	b.Grow(len(runes) * 20)
-	for i, r := range runes {
-		ch := string(r)
-		isCursor   := blinkOn && i == pos
-		isSelected := hasSel && i >= selMin && i < selMax
-
-		switch {
-		case isCursor:
-			b.WriteString(cursorStyle.Render(ch))
-		case isSelected:
-			b.WriteString(selStyle.Render(ch))
-		default:
-			b.WriteString(textStyle.Render(ch))
+	lines := strings.Split(val, "\n")
+	rendered := make([]string, 0, len(lines))
+	absOffset := 0
+	for li, line := range lines {
+		runes := []rune(line)
+		var b strings.Builder
+		b.Grow(len(runes) * 20)
+		for i, r := range runes {
+			absIdx := absOffset + i
+			ch := string(r)
+			isCursor := blinkOn && absIdx == cursorPos
+			isSelected := hasSel && absIdx >= selMin && absIdx < selMax
+			switch {
+			case isCursor:
+				b.WriteString(cursorStyle.Render(ch))
+			case isSelected:
+				b.WriteString(selStyle.Render(ch))
+			default:
+				b.WriteString(textStyle.Render(ch))
+			}
 		}
-	}
-	if blinkOn && pos == len(runes) {
-		b.WriteString(bar)
+		// Bar cursor at end of THIS line iff overall cursor sits there.
+		endOfLineAbs := absOffset + len(runes)
+		if blinkOn && cursorPos == endOfLineAbs && li == len(lines)-1 {
+			b.WriteString(bar)
+		}
+		rendered = append(rendered, padLine(b.String(), width, bgStyle))
+		absOffset += len(runes) + 1 // +1 for '\n'
 	}
 
-	return padLine(b.String(), width, bgStyle)
+	return strings.Join(rendered, "\n")
 }
 
 // padLine pads s to exactly width visible cells using bgStyle-filled spaces.
