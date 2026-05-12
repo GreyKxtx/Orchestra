@@ -206,6 +206,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Type-to-replace: printable input while a selection is active replaces
+	// the selection rather than appending alongside it.
+	if km, ok := msg.(tea.KeyMsg); ok && a.input.HasSelection() && isPrintableKey(km) {
+		a.input.ReplaceSelection(string(km.Runes))
+		a.syncPalette()
+		a.updateStatusHints()
+		a.layout()
+		return a, nil
+	}
 	// Forward all messages to textarea (default fall-through for unhandled keys).
 	innerTA := a.input.Inner()
 	updatedTA, taCmd := innerTA.Update(msg)
@@ -610,4 +619,10 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 	a.session.FinishAssistant()
 	a.chat.SetMessages(a.session.Messages)
 	return a, saveCmd, true
+}
+
+// isPrintableKey reports whether a key message represents printable input
+// (regular typing or a bracketed paste from the terminal).
+func isPrintableKey(km tea.KeyMsg) bool {
+	return km.Type == tea.KeyRunes && len(km.Runes) > 0
 }
