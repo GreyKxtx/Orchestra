@@ -336,32 +336,51 @@ func (a *App) mouseXToAbsolutePos(screenX int) int {
 	return a.mouseXYToAbsolutePos(screenX, 0)
 }
 
-// mouseXYToAbsolutePos converts (screenX, rowOffset) to an absolute rune
-// index. rowOffset is 0 for the topmost input row, 1 for the second, etc.
-// Clamps to the bounds of the logical line at that row.
+// mouseXYToAbsolutePos converts (screenX, visualRowOffset) to an absolute
+// rune index. visualRowOffset is 0 for the topmost input row, 1 for the
+// second visual row, etc. — covers BOTH logical-line breaks and soft-wrap
+// continuations. Clamps to the bounds of the visual row at that offset.
 func (a *App) mouseXYToAbsolutePos(screenX, rowOffset int) int {
 	colOffset := screenX - a.inputColX
 	if colOffset < 0 {
 		colOffset = 0
 	}
-	lines := strings.Split(a.input.Value(), "\n")
 	if rowOffset < 0 {
 		rowOffset = 0
 	}
-	if rowOffset >= len(lines) {
-		// Beyond last line — clamp to end of value.
-		total := len([]rune(a.input.Value()))
-		return total
+	wrapW := a.input.WrapWidth()
+	if wrapW < 1 {
+		wrapW = 80
 	}
+	val := a.input.Value()
 	absPos := 0
-	for i := 0; i < rowOffset; i++ {
-		absPos += len([]rune(lines[i])) + 1
+	rowsLeft := rowOffset
+	for _, line := range strings.Split(val, "\n") {
+		runes := []rune(line)
+		rl := len(runes)
+		// How many visual rows does this logical line occupy?
+		rowsInLine := rl / wrapW
+		if rl == 0 || rl%wrapW != 0 {
+			rowsInLine++
+		}
+		if rowsLeft < rowsInLine {
+			// Target visual row sits inside this logical line.
+			lineRowStart := rowsLeft * wrapW
+			lineRowEnd := lineRowStart + wrapW
+			if lineRowEnd > rl {
+				lineRowEnd = rl
+			}
+			c := lineRowStart + colOffset
+			if c > lineRowEnd {
+				c = lineRowEnd
+			}
+			return absPos + c
+		}
+		rowsLeft -= rowsInLine
+		absPos += rl + 1 // +1 for the '\n' separator
 	}
-	lineLen := len([]rune(lines[rowOffset]))
-	if colOffset > lineLen {
-		colOffset = lineLen
-	}
-	return absPos + colOffset
+	// Beyond last visual row — clamp to end of value.
+	return len([]rune(val))
 }
 
 // routeKey is the central key-handler dispatcher for the main chat view.
@@ -510,9 +529,6 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorUp()
 			return a, nil, true
 		}
-		// Multi-row input → delegate cursor up to bubbles textarea
-		// (its CursorUp handles soft-wrap and sticky desired column
-		// via m.lastCharOffset). Single visual row → history nav.
 		w := a.input.WrapWidth()
 		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
