@@ -510,11 +510,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorUp()
 			return a, nil, true
 		}
-		// Multi-row input (logical newlines or soft-wrap) → cursor up
-		// by one visual row using our own navigation (bubbles' CursorUp
-		// has quirky soft-wrap semantics that can skip rows). Single
-		// visual row → history navigation.
-		w := a.input.Inner().Width()
+		w := a.input.WrapWidth()
 		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
 			a.input.MoveCursorVisualUp(w)
@@ -532,7 +528,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.mentionPalette.CursorDown()
 			return a, nil, true
 		}
-		w := a.input.Inner().Width()
+		w := a.input.WrapWidth()
 		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
 			a.input.MoveCursorVisualDown(w)

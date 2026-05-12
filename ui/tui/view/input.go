@@ -16,6 +16,7 @@ import (
 type Input struct {
 	ta        textarea.Model
 	width     int
+	taWidth   int    // outer width last passed to SetTextareaWidth (≠ in.ta.Width())
 	mode      string // current agent mode; drives prompt color
 	selAnchor int    // -1 = no selection; ≥0 = rune index where selection started
 	// Mouse drag caret: when mouseCaretActive, renders at mouseCaret instead of ta cursor.
@@ -74,7 +75,7 @@ func NewInput(width int) Input {
 	ta.KeyMap.WordForward = key.NewBinding(key.WithKeys("alt+right", "alt+f", "ctrl+right"))
 
 	ta.Focus()
-	return Input{ta: ta, width: width, selAnchor: -1}
+	return Input{ta: ta, width: width, taWidth: width - 2, selAnchor: -1}
 }
 
 // SetMode stores the agent mode so the prompt prefix can be colored to match
@@ -84,15 +85,29 @@ func (in *Input) SetMode(mode string) { in.mode = mode }
 // SetSize resizes the textarea.
 func (in *Input) SetSize(width int) {
 	in.width = width
+	in.taWidth = width - 2
 	in.ta.SetWidth(width - 2)
 }
 
 // SetTextareaWidth lets external renderers (e.g. welcome view) set the
 // textarea width without touching the input's own width tracking.
-func (in *Input) SetTextareaWidth(w int) { in.ta.SetWidth(w) }
+// We remember the EXACT width we were asked for so TextareaWidth can
+// return it later — bubbles' internal m.width is post-decremented by
+// the prompt width, which would otherwise cause save/restore dances
+// (renderInputBox does one) to drift the width by 1 cell per render.
+func (in *Input) SetTextareaWidth(w int) {
+	in.taWidth = w
+	in.ta.SetWidth(w)
+}
 
-// TextareaWidth returns the current textarea width.
-func (in Input) TextareaWidth() int { return in.ta.Width() }
+// TextareaWidth returns the width that was last passed to SetTextareaWidth
+// (i.e. the OUTER width including prompt), suitable for restoration.
+func (in Input) TextareaWidth() int {
+	if in.taWidth > 0 {
+		return in.taWidth
+	}
+	return in.ta.Width()
+}
 
 // TextareaView renders just the underlying textarea (no "> " prompt).
 // Used by the welcome view which renders the input inside a styled box.
@@ -597,6 +612,15 @@ func absToVisualRowCol(val string, absPos, width int) (vRow, vCol int) {
 		rl := len([]rune(line))
 		if absPos <= offset+rl {
 			posInLine := absPos - offset
+			// Edge case: cursor exactly at end of line on a wrap-row
+			// boundary — visually it sits at the END of the previous
+			// visual row (col = width), not at the start of a phantom
+			// next visual row (col = 0).
+			if posInLine == rl && rl > 0 && posInLine%width == 0 {
+				vRow += (posInLine / width) - 1
+				vCol = width
+				return
+			}
 			vRow += posInLine / width
 			vCol = posInLine % width
 			return
@@ -776,12 +800,24 @@ func (in Input) VisualLineCount(width int) int {
 	return total
 }
 
+// WrapWidth returns the outer width last set via SetTextareaWidth — the
+// same value renderInputBox uses as contentW. Prefer this over
+// in.ta.Width() / Inner().Width(): bubbles' SetWidth post-decrements
+// m.width by the prompt width, so a save+restore dance drifts the value
+// by 1 cell per render.
+func (in Input) WrapWidth() int {
+	if in.taWidth > 0 {
+		return in.taWidth
+	}
+	return in.ta.Width()
+}
+
 // SyncHeight caps the textarea height to the visual line count given
 // the current textarea wrap width, clamped to [1, max]. Call after any
 // value mutation so the visible rows match the actual content (including
 // soft-wrap, not just '\n' splits).
 func (in *Input) SyncHeight(max int) {
-	w := in.ta.Width()
+	w := in.WrapWidth()
 	if w < 1 {
 		w = 80
 	}
