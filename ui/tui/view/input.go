@@ -478,3 +478,115 @@ func clampPos(pos, max int) int {
 	}
 	return pos
 }
+
+// WordRange returns the absolute [lo, hi) bounds of the word containing
+// or adjacent to pos. Word chars are letters, digits, and underscore.
+// If pos is on a non-word char with no adjacent word, returns (pos, pos).
+func (in Input) WordRange(pos int) (lo, hi int) {
+	runes := []rune(in.ta.Value())
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	// pos at end-of-value: check the rune to the left.
+	if pos == len(runes) {
+		if pos > 0 && isWordChar(runes[pos-1]) {
+			lo = pos - 1
+			for lo > 0 && isWordChar(runes[lo-1]) {
+				lo--
+			}
+			return lo, pos
+		}
+		return pos, pos
+	}
+	// pos on a non-word char: try the rune to the left as a fallback.
+	if !isWordChar(runes[pos]) {
+		if pos > 0 && isWordChar(runes[pos-1]) {
+			lo = pos - 1
+			for lo > 0 && isWordChar(runes[lo-1]) {
+				lo--
+			}
+			return lo, pos
+		}
+		return pos, pos
+	}
+	// pos on a word char: expand both directions.
+	lo = pos
+	for lo > 0 && isWordChar(runes[lo-1]) {
+		lo--
+	}
+	hi = pos + 1
+	for hi < len(runes) && isWordChar(runes[hi]) {
+		hi++
+	}
+	return lo, hi
+}
+
+// LineRange returns the absolute [lo, hi) bounds of the logical line
+// containing pos. Wrapper around currentLineRange for the public API.
+func (in Input) LineRange(pos int) (lo, hi int) {
+	return in.currentLineRange(pos)
+}
+
+// SelectedText returns the currently selected runes as a string, or ""
+// if there is no selection.
+func (in Input) SelectedText() string {
+	lo, hi, ok := in.SelectionRange()
+	if !ok {
+		return ""
+	}
+	runes := []rune(in.ta.Value())
+	if hi > len(runes) {
+		hi = len(runes)
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	return string(runes[lo:hi])
+}
+
+// Cut returns the selected text and removes it from the value. Returns
+// "" if there is no selection.
+func (in *Input) Cut() string {
+	if !in.HasSelection() {
+		return ""
+	}
+	s := in.SelectedText()
+	in.DeleteSelection()
+	return s
+}
+
+// Paste inserts text at the cursor, replacing any active selection.
+// Returns false if text is empty.
+func (in *Input) Paste(text string) bool {
+	if text == "" {
+		return false
+	}
+	in.ReplaceSelection(text)
+	return true
+}
+
+// InsertNewline inserts '\n' at the cursor, replacing any active selection.
+func (in *Input) InsertNewline() {
+	if in.HasSelection() {
+		in.ReplaceSelection("\n")
+		return
+	}
+	in.ta.InsertRune('\n')
+}
+
+// SyncHeight caps the textarea height to LineCount, clamped to [1, max].
+// Call after any value mutation that may add or remove '\n' so the visible
+// rows match the actual content (up to max).
+func (in *Input) SyncHeight(max int) {
+	h := in.ta.LineCount()
+	if h < 1 {
+		h = 1
+	}
+	if h > max {
+		h = max
+	}
+	in.ta.SetHeight(h)
+}
