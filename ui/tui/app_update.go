@@ -508,6 +508,10 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		endpoint := "http://localhost:1234"
 		return a, fetchModelsCmd(endpoint), true
 	case "esc":
+		if a.input.HasSelection() {
+			a.input.ClearSelection()
+			return a, nil, true
+		}
 		if a.mentionActive {
 			a.mentionActive = false
 			a.layout()
