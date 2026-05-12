@@ -147,48 +147,54 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.ScrollDown(3)
 			return a, nil
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
-			if m.Y == a.inputRowY {
-				charPos := a.mouseXToAbsolutePos(m.X)
-				if m.Shift {
-					a.input.ExtendSelectionTo(charPos)
-					a.mouseLastClickAt = time.Time{} // reset double-click chain
-					a.mouseClickCount = 0
-					return a, nil
+			inputH := a.input.Inner().Height()
+			if inputH < 1 {
+				inputH = 1
+			}
+			if m.Y < a.inputRowY || m.Y >= a.inputRowY+inputH {
+				return a, nil
+			}
+			rowOff := m.Y - a.inputRowY
+			charPos := a.mouseXYToAbsolutePos(m.X, rowOff)
+			if m.Shift {
+				a.input.ExtendSelectionTo(charPos)
+				a.mouseLastClickAt = time.Time{} // reset double-click chain
+				a.mouseClickCount = 0
+				return a, nil
+			}
+			now := time.Now()
+			absDiff := charPos - a.mouseLastClickPos
+			if absDiff < 0 {
+				absDiff = -absDiff
+			}
+			if now.Sub(a.mouseLastClickAt) <= 400*time.Millisecond && absDiff <= 2 {
+				a.mouseClickCount++
+				if a.mouseClickCount > 3 {
+					a.mouseClickCount = 3
 				}
-				now := time.Now()
-				absDiff := charPos - a.mouseLastClickPos
-				if absDiff < 0 {
-					absDiff = -absDiff
-				}
-				if now.Sub(a.mouseLastClickAt) <= 400*time.Millisecond && absDiff <= 2 {
-					a.mouseClickCount++
-					if a.mouseClickCount > 3 {
-						a.mouseClickCount = 3
-					}
-				} else {
-					a.mouseClickCount = 1
-				}
-				a.mouseLastClickAt = now
-				a.mouseLastClickPos = charPos
+			} else {
+				a.mouseClickCount = 1
+			}
+			a.mouseLastClickAt = now
+			a.mouseLastClickPos = charPos
 
-				switch a.mouseClickCount {
-				case 1:
-					a.input.ClearSelection()
-					a.input.SetAnchor(charPos)
-					a.input.SetMouseCaret(charPos)
-					a.mouseDown = true
-				case 2:
-					lo, hi := a.input.WordRange(charPos)
-					if lo != hi {
-						a.input.SetAnchor(lo)
-						a.input.MoveCursorAbs(hi)
-					}
-				case 3:
-					lo, hi := a.input.LineRange(charPos)
-					if lo != hi {
-						a.input.SetAnchor(lo)
-						a.input.MoveCursorAbs(hi)
-					}
+			switch a.mouseClickCount {
+			case 1:
+				a.input.ClearSelection()
+				a.input.SetAnchor(charPos)
+				a.input.SetMouseCaret(charPos)
+				a.mouseDown = true
+			case 2:
+				lo, hi := a.input.WordRange(charPos)
+				if lo != hi {
+					a.input.SetAnchor(lo)
+					a.input.MoveCursorAbs(hi)
+				}
+			case 3:
+				lo, hi := a.input.LineRange(charPos)
+				if lo != hi {
+					a.input.SetAnchor(lo)
+					a.input.MoveCursorAbs(hi)
 				}
 			}
 			return a, nil
@@ -196,7 +202,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.mouseDown {
 				a.mouseDown = false
 				caret := a.input.MouseCaret()
-				a.moveCursorToPos(caret)
+				a.input.MoveCursorAbs(caret)
 				a.input.ClearMouseCaret()
 				if lo, hi, ok := a.input.SelectionRange(); ok && lo == hi {
 					a.input.ClearSelection()
@@ -329,21 +335,6 @@ func (a *App) mouseXYToAbsolutePos(screenX, rowOffset int) int {
 		colOffset = lineLen
 	}
 	return absPos + colOffset
-}
-
-// moveCursorToPos moves the textarea cursor to the given rune index.
-// Strategy: reset value (preserves text) then send Left keys from end to targetPos.
-func (a *App) moveCursorToPos(targetPos int) {
-	val := a.input.Value()
-	a.input.SetValue(val) // resets cursor to end
-	runes := []rune(val)
-	endPos := len(runes)
-	steps := endPos - targetPos
-	innerTA := a.input.Inner()
-	for i := 0; i < steps; i++ {
-		updated, _ := innerTA.Update(tea.KeyMsg{Type: tea.KeyLeft})
-		*innerTA = updated
-	}
 }
 
 // routeKey is the central key-handler dispatcher for the main chat view.
