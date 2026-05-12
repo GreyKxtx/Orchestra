@@ -538,11 +538,11 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return a, nil, true
 		}
 	case "backspace":
-		if a.input.HasSelection() {
-			a.input.DeleteSelection()
-			return a, nil, true
-		}
-		return a, nil, false
+		a.input.DeleteBackward()
+		return a, nil, true
+	case "delete":
+		a.input.DeleteForward()
+		return a, nil, true
 	case "enter":
 		return a.handleEnter()
 	}
