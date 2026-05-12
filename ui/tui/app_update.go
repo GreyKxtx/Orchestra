@@ -261,6 +261,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the selection rather than appending alongside it.
 	if km, ok := msg.(tea.KeyMsg); ok && a.input.HasSelection() && isPrintableKey(km) {
 		a.input.ReplaceSelection(string(km.Runes))
+		a.input.SyncHeight(5)
 		a.syncPalette()
 		a.updateStatusHints()
 		a.layout()
@@ -435,6 +436,8 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		txt, err := clipboard.ReadAll()
 		if err == nil && txt != "" {
 			a.input.Paste(txt)
+			a.input.SyncHeight(5)
+			a.layout()
 		}
 		return a, nil, true
 	case "shift+home":
@@ -647,9 +650,13 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 	case "backspace":
 		a.input.DeleteBackward()
+		a.input.SyncHeight(5)
+		a.layout()
 		return a, nil, true
 	case "delete":
 		a.input.DeleteForward()
+		a.input.SyncHeight(5)
+		a.layout()
 		return a, nil, true
 	case "shift+enter":
 		a.input.InsertNewline()
