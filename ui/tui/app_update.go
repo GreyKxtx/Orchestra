@@ -171,6 +171,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.ScrollDown(3)
 			return a, nil
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
+			// Any mouse click ends the sticky-col Up/Down sequence.
+			a.lastVisualCol = -1
 			inputH := a.input.Inner().Height()
 			if inputH < 1 {
 				inputH = 1
@@ -369,6 +371,11 @@ func (a *App) mouseXYToAbsolutePos(screenX, rowOffset int) int {
 // claim the key, the per-key switch fires. Returns handled=false to let the
 // outer Update fall through to textarea.
 func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	// Sticky desired column: any key that is NOT a vertical nav step ends
+	// the current Up/Down sequence so the next one captures a fresh column.
+	if s := m.String(); s != "up" && s != "down" {
+		a.lastVisualCol = -1
+	}
 	// Ctrl+C: copy selection to clipboard if active, otherwise quit.
 	if m.String() == "ctrl+c" {
 		if a.input.HasSelection() {
@@ -513,7 +520,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		w := a.input.WrapWidth()
 		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
-			a.input.MoveCursorVisualUp(w)
+			a.lastVisualCol = a.input.MoveCursorVisualUp(w, a.lastVisualCol)
 			return a, nil, true
 		}
 		text := a.history.Up(a.input.Value())
@@ -531,7 +538,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		w := a.input.WrapWidth()
 		if a.input.VisualLineCount(w) > 1 {
 			a.input.ClearSelection()
-			a.input.MoveCursorVisualDown(w)
+			a.lastVisualCol = a.input.MoveCursorVisualDown(w, a.lastVisualCol)
 			return a, nil, true
 		}
 		if a.history.IsNavigating() {
