@@ -304,6 +304,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, isKey := msg.(tea.KeyMsg); isKey {
 		// Any key that reaches textarea clears selection (user typed a character).
 		a.input.ClearSelection()
+		// Resync visible height — every keystroke may have changed the
+		// number of soft-wrapped visual rows (typing past width boundary).
+		a.input.SyncHeight(5)
 		a.syncPalette()
 		a.updateStatusHints()
 		a.layout()
