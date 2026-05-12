@@ -2,6 +2,7 @@ package view
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
@@ -102,8 +103,8 @@ func (in *Input) SetValue(s string) { in.ta.SetValue(s) }
 // Inner returns the underlying textarea so app.go can route key events.
 func (in *Input) Inner() *textarea.Model { return &in.ta }
 
-// AbsolutePos returns the absolute rune index of the textarea cursor across all lines.
-func (in Input) AbsolutePos() int { return absolutePos(in.ta) }
+// CursorPos returns the absolute rune index of the textarea cursor across all lines.
+func (in Input) CursorPos() int { return absolutePos(in.ta) }
 
 // HasSelection reports whether a selection range is active.
 func (in Input) HasSelection() bool { return in.selAnchor >= 0 }
@@ -252,6 +253,80 @@ func absolutePos(ta textarea.Model) int {
 		pos += len([]rune(lines[i])) + 1 // +1 for '\n'
 	}
 	return pos + info.CharOffset
+}
+
+// absoluteToRowCol converts an absolute rune index to (logical row, col on row).
+// Lines are split by '\n'. Out-of-range pos is clamped to [0, len].
+func (in Input) absoluteToRowCol(pos int) (row, col int) {
+	runes := []rune(in.ta.Value())
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	row = 0
+	last := 0
+	for i := 0; i < pos; i++ {
+		if runes[i] == '\n' {
+			row++
+			last = i + 1
+		}
+	}
+	col = pos - last
+	return row, col
+}
+
+// moveCursorAbs positions the textarea cursor at the given absolute rune index.
+// Strategy: navigate from the current row to the target row via CursorUp/Down,
+// then SetCursor(col) for column-within-line. Clamped to [0, len(value)].
+func (in *Input) moveCursorAbs(pos int) {
+	runes := []rune(in.ta.Value())
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	row, col := in.absoluteToRowCol(pos)
+	currentRow := in.ta.Line()
+	delta := row - currentRow
+	if delta > 0 {
+		for i := 0; i < delta; i++ {
+			in.ta.CursorDown()
+		}
+	} else if delta < 0 {
+		for i := 0; i < -delta; i++ {
+			in.ta.CursorUp()
+		}
+	}
+	in.ta.SetCursor(col)
+}
+
+// currentLineRange returns the absolute [lo, hi) bounds of the logical line
+// containing pos. Lines are split by '\n'.
+func (in Input) currentLineRange(pos int) (lo, hi int) {
+	runes := []rune(in.ta.Value())
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	lo = pos
+	for lo > 0 && runes[lo-1] != '\n' {
+		lo--
+	}
+	hi = pos
+	for hi < len(runes) && runes[hi] != '\n' {
+		hi++
+	}
+	return lo, hi
+}
+
+// isWordChar — letter, digit, or underscore.
+func isWordChar(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 // clampPos returns pos clamped to [0, max].
