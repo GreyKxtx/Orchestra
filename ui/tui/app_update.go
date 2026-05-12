@@ -324,37 +324,37 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	switch m.String() {
 	case "shift+left":
 		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.AbsolutePos())
+			a.input.SetAnchor(a.input.CursorPos())
 		}
 		return a, a.sendKeyToTA(tea.KeyLeft), true
 
 	case "shift+right":
 		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.AbsolutePos())
+			a.input.SetAnchor(a.input.CursorPos())
 		}
 		return a, a.sendKeyToTA(tea.KeyRight), true
 
 	case "ctrl+shift+left":
 		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.AbsolutePos())
+			a.input.SetAnchor(a.input.CursorPos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
 
 	case "ctrl+shift+right":
 		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.AbsolutePos())
+			a.input.SetAnchor(a.input.CursorPos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
 	case "alt+shift+left":
 		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.AbsolutePos())
+			a.input.SetAnchor(a.input.CursorPos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
 
 	case "alt+shift+right":
 		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.AbsolutePos())
+			a.input.SetAnchor(a.input.CursorPos())
 		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
