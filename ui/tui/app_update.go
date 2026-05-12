@@ -429,6 +429,8 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if a.input.HasSelection() {
 			s := a.input.Cut()
 			_ = clipboard.WriteAll(s)
+			a.input.SyncHeight(5)
+			a.layout()
 			a.showToast("Вырезано")
 		}
 		return a, nil, true
