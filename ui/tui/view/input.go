@@ -135,6 +135,76 @@ func (in *Input) SetAnchor(pos int) { in.selAnchor = pos }
 // ClearSelection removes any active selection.
 func (in *Input) ClearSelection() { in.selAnchor = -1 }
 
+// SelectAll selects the entire value: anchor at 0, cursor at end.
+// No-op if the value is empty.
+func (in *Input) SelectAll() {
+	runes := []rune(in.ta.Value())
+	if len(runes) == 0 {
+		return
+	}
+	in.selAnchor = 0
+	in.moveCursorAbs(len(runes))
+}
+
+// SelectToLineStart extends the selection (or starts one at the current
+// cursor) to the start of the current logical line.
+func (in *Input) SelectToLineStart() {
+	pos := in.CursorPos()
+	if !in.HasSelection() {
+		in.selAnchor = pos
+	}
+	lo, _ := in.currentLineRange(pos)
+	in.moveCursorAbs(lo)
+}
+
+// SelectToLineEnd extends the selection to the end of the current logical line.
+func (in *Input) SelectToLineEnd() {
+	pos := in.CursorPos()
+	if !in.HasSelection() {
+		in.selAnchor = pos
+	}
+	_, hi := in.currentLineRange(pos)
+	in.moveCursorAbs(hi)
+}
+
+// SelectToDocStart extends the selection to the start of the entire value.
+func (in *Input) SelectToDocStart() {
+	pos := in.CursorPos()
+	if !in.HasSelection() {
+		in.selAnchor = pos
+	}
+	in.moveCursorAbs(0)
+}
+
+// SelectToDocEnd extends the selection to the end of the entire value.
+func (in *Input) SelectToDocEnd() {
+	pos := in.CursorPos()
+	if !in.HasSelection() {
+		in.selAnchor = pos
+	}
+	runes := []rune(in.ta.Value())
+	in.moveCursorAbs(len(runes))
+}
+
+// SelectToPos extends the selection to absolute pos, anchoring at the
+// current cursor if no selection is active yet.
+func (in *Input) SelectToPos(pos int) {
+	if !in.HasSelection() {
+		in.selAnchor = in.CursorPos()
+	}
+	in.moveCursorAbs(pos)
+}
+
+// ExtendSelectionTo keeps the existing anchor and moves the cursor to pos.
+// If no anchor exists yet, sets it to the current cursor first. Used by
+// Shift+click and similar gestures.
+func (in *Input) ExtendSelectionTo(pos int) {
+	if !in.HasSelection() {
+		in.selAnchor = in.CursorPos()
+	}
+	in.moveCursorAbs(pos)
+}
+
 // SetMouseCaret sets the visual cursor to pos during mouse drag, bypassing textarea cursor.
 func (in *Input) SetMouseCaret(pos int) {
 	in.mouseCaret = pos
