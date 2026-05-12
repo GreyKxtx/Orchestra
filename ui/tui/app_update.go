@@ -149,6 +149,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
 			if m.Y == a.inputRowY {
 				charPos := a.mouseXToAbsolutePos(m.X)
+				if m.Shift {
+					a.input.ExtendSelectionTo(charPos)
+					a.mouseLastClickAt = time.Time{} // reset double-click chain
+					a.mouseClickCount = 0
+					return a, nil
+				}
 				now := time.Now()
 				absDiff := charPos - a.mouseLastClickPos
 				if absDiff < 0 {
