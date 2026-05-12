@@ -346,7 +346,7 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	lines := strings.Split(val, "\n")
 	rendered := make([]string, 0, len(lines))
 	absOffset := 0
-	for li, line := range lines {
+	for _, line := range lines {
 		runes := []rune(line)
 		var b strings.Builder
 		b.Grow(len(runes) * 20)
@@ -366,7 +366,7 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 		}
 		// Bar cursor at end of THIS line iff overall cursor sits there.
 		endOfLineAbs := absOffset + len(runes)
-		if blinkOn && cursorPos == endOfLineAbs && li == len(lines)-1 {
+		if blinkOn && cursorPos == endOfLineAbs {
 			b.WriteString(bar)
 		}
 		rendered = append(rendered, padLine(b.String(), width, bgStyle))
