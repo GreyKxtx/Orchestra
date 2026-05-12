@@ -147,8 +147,9 @@ func (in Input) MouseCaret() int { return in.mouseCaret }
 // ClearMouseCaret deactivates the mouse caret, restoring textarea cursor display.
 func (in *Input) ClearMouseCaret() { in.mouseCaretActive = false }
 
-// DeleteSelection removes the selected rune range from the textarea value
-// and clears the selection. Returns true if anything was deleted.
+// DeleteSelection removes the selected rune range, clears the selection,
+// and positions the cursor at the start of the deleted range. Returns true
+// if anything was deleted.
 func (in *Input) DeleteSelection() bool {
 	lo, hi, ok := in.SelectionRange()
 	if !ok || lo == hi {
@@ -158,7 +159,67 @@ func (in *Input) DeleteSelection() bool {
 	newVal := string(runes[:lo]) + string(runes[hi:])
 	in.ta.SetValue(newVal)
 	in.selAnchor = -1
+	in.moveCursorAbs(lo)
 	return true
+}
+
+// InsertText inserts s at the current cursor position via the native
+// textarea InsertString (preserves cursor positioning).
+func (in *Input) InsertText(s string) {
+	if s == "" {
+		return
+	}
+	in.ta.InsertString(s)
+}
+
+// ReplaceSelection removes the selected range, inserts s in its place,
+// and leaves the cursor just after the inserted text. If there is no
+// selection, behaves like InsertText. Returns true if anything was
+// replaced (selection existed).
+func (in *Input) ReplaceSelection(s string) bool {
+	if !in.HasSelection() {
+		in.InsertText(s)
+		return false
+	}
+	lo, hi, _ := in.SelectionRange()
+	runes := []rune(in.ta.Value())
+	newVal := string(runes[:lo]) + s + string(runes[hi:])
+	in.ta.SetValue(newVal)
+	in.selAnchor = -1
+	in.moveCursorAbs(lo + len([]rune(s)))
+	return true
+}
+
+// DeleteForward deletes the active selection if any, otherwise deletes
+// one rune to the right of the cursor.
+func (in *Input) DeleteForward() {
+	if in.DeleteSelection() {
+		return
+	}
+	pos := in.CursorPos()
+	runes := []rune(in.ta.Value())
+	if pos >= len(runes) {
+		return
+	}
+	newVal := string(runes[:pos]) + string(runes[pos+1:])
+	in.ta.SetValue(newVal)
+	in.moveCursorAbs(pos)
+}
+
+// DeleteBackward deletes the active selection if any, otherwise deletes
+// one rune to the left of the cursor.
+func (in *Input) DeleteBackward() {
+	if in.DeleteSelection() {
+		return
+	}
+	pos := in.CursorPos()
+	if pos <= 0 {
+		return
+	}
+	runes := []rune(in.ta.Value())
+	newVal := string(runes[:pos-1]) + string(runes[pos:])
+	in.ta.SetValue(newVal)
+	in.moveCursorAbs(pos - 1)
 }
 
 // Render — direct port of OpenCode editorCmp.View(). The ">" prompt takes
