@@ -204,9 +204,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		case m.Action == tea.MouseActionMotion:
-			if a.mouseDown && m.Y == a.inputRowY {
-				charPos := a.mouseXToAbsolutePos(m.X)
-				a.input.SetMouseCaret(charPos)
+			if a.mouseDown {
+				inputH := a.input.Inner().Height()
+				if inputH < 1 {
+					inputH = 1
+				}
+				if m.Y >= a.inputRowY && m.Y < a.inputRowY+inputH {
+					rowOff := m.Y - a.inputRowY
+					charPos := a.mouseXYToAbsolutePos(m.X, rowOff)
+					a.input.SetMouseCaret(charPos)
+				} else if m.Y < a.inputRowY {
+					// Above input — clamp to position 0 of first row.
+					a.input.SetMouseCaret(0)
+				} else {
+					// Below input — clamp to end of value.
+					runes := []rune(a.input.Value())
+					a.input.SetMouseCaret(len(runes))
+				}
 			}
 			return a, nil
 		case m.Button == tea.MouseButtonRight && m.Action == tea.MouseActionPress:
@@ -280,35 +294,38 @@ func (a *App) showToast(text string) {
 	a.toastTick = 15
 }
 
-// mouseXToAbsolutePos converts a screen X coordinate to an absolute rune index in the input.
-// For multi-line text, adds the lengths of lines before the current visible line.
+// mouseXToAbsolutePos converts a screen X coordinate to an absolute rune
+// index in the input, assuming the click is on the first visible row of
+// the input box. Kept as a thin wrapper around mouseXYToAbsolutePos for
+// existing single-row call sites.
 func (a *App) mouseXToAbsolutePos(screenX int) int {
+	return a.mouseXYToAbsolutePos(screenX, 0)
+}
+
+// mouseXYToAbsolutePos converts (screenX, rowOffset) to an absolute rune
+// index. rowOffset is 0 for the topmost input row, 1 for the second, etc.
+// Clamps to the bounds of the logical line at that row.
+func (a *App) mouseXYToAbsolutePos(screenX, rowOffset int) int {
 	colOffset := screenX - a.inputColX
 	if colOffset < 0 {
 		colOffset = 0
 	}
-	// Account for multi-line: current row offset from LineInfo
-	info := a.input.Inner().LineInfo()
 	lines := strings.Split(a.input.Value(), "\n")
-	absPos := 0
-	for i := 0; i < info.RowOffset && i < len(lines); i++ {
-		absPos += len([]rune(lines[i])) + 1 // +1 for '\n'
+	if rowOffset < 0 {
+		rowOffset = 0
 	}
-	// Clamp colOffset to current line length
-	if info.RowOffset < len(lines) {
-		lineLen := len([]rune(lines[info.RowOffset]))
-		if colOffset > lineLen {
-			colOffset = lineLen
-		}
-	} else {
-		// last line or beyond
+	if rowOffset >= len(lines) {
+		// Beyond last line — clamp to end of value.
 		total := len([]rune(a.input.Value()))
-		if absPos+colOffset > total {
-			colOffset = total - absPos
-		}
+		return total
 	}
-	if colOffset < 0 {
-		colOffset = 0
+	absPos := 0
+	for i := 0; i < rowOffset; i++ {
+		absPos += len([]rune(lines[i])) + 1
+	}
+	lineLen := len([]rune(lines[rowOffset]))
+	if colOffset > lineLen {
+		colOffset = lineLen
 	}
 	return absPos + colOffset
 }
