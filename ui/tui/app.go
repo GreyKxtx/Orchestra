@@ -90,6 +90,11 @@ type App struct {
 	// deltas so a tag straddling two chunks is still recognized.
 	reasoning state.ReasoningSplitter
 
+	// stepTextLen tracks the byte length of the active assistant's Text at
+	// the start of the current LLM step. On EventStepDone("tool_call") the
+	// text is truncated back to this value to discard pre-tool-call chatter.
+	stepTextLen int
+
 	// currentSessionID is the on-disk id of the in-flight chat. Empty until
 	// the first user message is sent (and the session record is created).
 	currentSessionID string
@@ -230,7 +235,7 @@ func Run(cfg Config) error {
 			app.rpcCancel()
 		}
 	}()
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
 }

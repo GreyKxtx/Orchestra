@@ -46,7 +46,7 @@ func TestSession_ZeroValue(t *testing.T) {
 
 func TestSession_StartAndDeltaAssistant(t *testing.T) {
 	s := state.NewSession()
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.AppendAssistantDelta("hel")
 	s.AppendAssistantDelta("lo")
 
@@ -63,7 +63,7 @@ func TestSession_StartAndDeltaAssistant(t *testing.T) {
 
 func TestSession_ToolBlockUpdate(t *testing.T) {
 	s := state.NewSession()
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
 
 	if !s.UpdateToolBlock("t1", state.ToolBlockCompleted, "12 lines") {
@@ -82,19 +82,35 @@ func TestSession_ToolBlockUpdate(t *testing.T) {
 	}
 }
 
-func TestSession_UpdateToolBlock_UnknownID(t *testing.T) {
+func TestSession_UpdateToolBlock_UnknownID_FallsBackToRunning(t *testing.T) {
+	// When the agent synthesizes an ID at completion time that doesn't match
+	// the empty/different ID emitted on tool_call_start, UpdateToolBlock
+	// promotes the first still-running block to completed instead of failing.
 	s := state.NewSession()
-	s.StartAssistant()
-	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
+	s.StartAssistant("", "")
+	s.AppendToolBlock(state.ToolBlock{ID: "", Name: "read", Status: state.ToolBlockRunning})
+
+	if !s.UpdateToolBlock("synthesized-id", state.ToolBlockCompleted, "x") {
+		t.Fatal("UpdateToolBlock should fall back to the first running block when id mismatches")
+	}
+	if got := s.Messages[0].ToolBlocks[0].Status; got != state.ToolBlockCompleted {
+		t.Fatalf("status not updated: got %v, want completed", got)
+	}
+}
+
+func TestSession_UpdateToolBlock_NoRunning(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant("", "")
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockCompleted})
 
 	if s.UpdateToolBlock("nonexistent", state.ToolBlockCompleted, "x") {
-		t.Error("UpdateToolBlock should return false for unknown id")
+		t.Error("UpdateToolBlock should return false when no running blocks exist for fallback")
 	}
 }
 
 func TestSession_FinishAssistant(t *testing.T) {
 	s := state.NewSession()
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.FinishAssistant()
 	if s.Messages[0].Streaming {
 		t.Error("expected Streaming=false after Finish")
@@ -127,48 +143,47 @@ func TestSession_AppendDeltaWithoutActiveAssistant_NoOp(t *testing.T) {
 
 func TestToggleLastToolBlock(t *testing.T) {
 	s := state.NewSession()
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
 	s.UpdateToolBlock("t1", state.ToolBlockCompleted, "line1\nline2")
-	// auto-expand: 1 newline ≤ 10
-	if !s.Messages[0].ToolBlocks[0].Expanded {
-		t.Fatal("expected auto-expand for short result")
-	}
-	// toggle off
-	s.ToggleLastToolBlock()
+	// No auto-expand — tools start collapsed regardless of result size.
 	if s.Messages[0].ToolBlocks[0].Expanded {
-		t.Fatal("expected toggle off")
+		t.Fatal("expected tool block to stay collapsed after completion")
 	}
 	// toggle on
 	s.ToggleLastToolBlock()
 	if !s.Messages[0].ToolBlocks[0].Expanded {
 		t.Fatal("expected toggle on")
 	}
+	// toggle off
+	s.ToggleLastToolBlock()
+	if s.Messages[0].ToolBlocks[0].Expanded {
+		t.Fatal("expected toggle off")
+	}
 }
 
-func TestAutoExpandLongResult(t *testing.T) {
+func TestNoAutoExpandLongResult(t *testing.T) {
 	s := state.NewSession()
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t2", Name: "read", Status: state.ToolBlockRunning})
-	// 11 newlines = 12 lines → should NOT auto-expand
 	result := strings.Repeat("line\n", 11)
 	s.UpdateToolBlock("t2", state.ToolBlockCompleted, result)
 	if s.Messages[0].ToolBlocks[0].Expanded {
-		t.Fatal("expected no auto-expand for long result")
+		t.Fatal("expected no auto-expand")
 	}
 }
 
 func TestSession_Clear(t *testing.T) {
 	s := state.NewSession()
 	s.AppendMessage(state.Message{Role: state.RoleUser, Text: "hello"})
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.AppendAssistantDelta("hi")
 	s.Clear()
 	if len(s.Messages) != 0 {
 		t.Fatalf("want 0 messages after Clear, got %d", len(s.Messages))
 	}
 	// Should be safe to start a new assistant after Clear.
-	s.StartAssistant()
+	s.StartAssistant("", "")
 	s.AppendAssistantDelta("ok")
 	s.FinishAssistant()
 	if s.Messages[0].Text != "ok" {

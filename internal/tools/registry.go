@@ -36,7 +36,34 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 	if allowWeb {
 		out = append(out, toolWebFetch())
 	}
-	return out
+	return applyParallelFlags(out)
+}
+
+// applyParallelFlags decorates each ToolDef with ParallelSafe / Mutating flags
+// based on the tool's name. Centralised so adding a new tool means updating
+// only this switch — the rest of the agent infrastructure reads the flags
+// declaratively without knowing tool names.
+//
+// Default (unknown name) is the conservative pair {ParallelSafe=false,
+// Mutating=false}: such a tool gets executed serially (no parallel batching)
+// but isn't classed as a permission-bearing mutation either. MCP/plugin tools
+// land in this default bucket until explicitly classified.
+func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
+	for i := range defs {
+		switch defs[i].Function.Name {
+		// Pure reads — safe to fan out concurrently.
+		case "ls", "read", "glob", "grep", "symbols", "explore",
+			"todoread", "task.result", "runtime.query", "webfetch",
+			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics":
+			defs[i].ParallelSafe = true
+		// State-mutating tools — must run one at a time.
+		case "write", "edit", "bash", "todowrite", "memory_write",
+			"lsp.rename", "plan.enter", "plan.exit",
+			"task.spawn", "task.wait", "task.cancel", "question":
+			defs[i].Mutating = true
+		}
+	}
+	return defs
 }
 
 // ListToolsWithMCP appends MCP server tools to the base tool list.
@@ -308,26 +335,26 @@ func toolTodoRead() llm.ToolDef {
 func ListToolsWithSubtasks(allowExec, allowWeb bool) []llm.ToolDef {
 	out := ListTools(allowExec, allowWeb)
 	out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
-	return out
+	return applyParallelFlags(out)
 }
 
 // ListToolsForChild returns a restricted read-only tool set for child agents plus task.result.
 // Child agents cannot write files, run commands, or spawn further subtasks.
 func ListToolsForChild() []llm.ToolDef {
-	return []llm.ToolDef{
+	return applyParallelFlags([]llm.ToolDef{
 		toolFSList(),
 		toolFSRead(),
 		toolFSGlob(),
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolTaskResult(),
-	}
+	})
 }
 
 // ListToolsForInvestigator returns the Investigator tool set: read-only tools + task.result + runtime.query.
 // The Investigator can call runtime.query to correlate trace spans with CKG nodes.
 func ListToolsForInvestigator() []llm.ToolDef {
-	return append(ListToolsForChild(), toolRuntimeQuery())
+	return applyParallelFlags(append(ListToolsForChild(), toolRuntimeQuery()))
 }
 
 // ListToolsForMode returns tools for the given agent mode.
@@ -366,7 +393,7 @@ func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []l
 	if hasQuestionAsker {
 		out = append(out, toolQuestion())
 	}
-	return out
+	return applyParallelFlags(out)
 }
 
 func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
@@ -384,16 +411,16 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	if hasQuestionAsker {
 		out = append(out, toolQuestion())
 	}
-	return out
+	return applyParallelFlags(out)
 }
 
 func listToolsExplore() []llm.ToolDef {
-	return []llm.ToolDef{
+	return applyParallelFlags([]llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(),
 		toolSearchText(), toolCodeSymbols(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
 		// lsp.rename excluded: explore mode is read-only.
-	}
+	})
 }
 
 // listToolsGeneral returns tools for the "general" multi-step execution subagent.
@@ -415,7 +442,7 @@ func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	if hasSubtasks {
 		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
 	}
-	return out
+	return applyParallelFlags(out)
 }
 
 func toolTaskSpawn() llm.ToolDef {

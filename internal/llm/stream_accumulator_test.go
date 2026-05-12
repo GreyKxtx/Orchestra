@@ -179,8 +179,10 @@ func TestParseSSEStream_NoDONE(t *testing.T) {
 	}
 }
 
-// TestParseSSEStream_MultiToolCall checks that two parallel tool calls are assembled
-// correctly when their chunks interleave by index.
+// TestParseSSEStream_MultiToolCall checks that two parallel tool calls are
+// assembled correctly when their chunks interleave by index. Both calls are
+// surfaced as separate start/delta events so the agent layer can either fan
+// them out concurrently (when ParallelSafe) or fall back to serial.
 func TestParseSSEStream_MultiToolCall(t *testing.T) {
 	// Two tool calls at index 0 and 1; arguments arrive in later chunks.
 	fixture := strings.NewReader(

@@ -339,7 +339,8 @@ func (a *App) mouseXToAbsolutePos(screenX int) int {
 // mouseXYToAbsolutePos converts (screenX, visualRowOffset) to an absolute
 // rune index. visualRowOffset is 0 for the topmost input row, 1 for the
 // second visual row, etc. — covers BOTH logical-line breaks and soft-wrap
-// continuations. Clamps to the bounds of the visual row at that offset.
+// continuations. Uses the same word-aware grid as the renderer so a click
+// lands on the rune the user actually sees under the cursor.
 func (a *App) mouseXYToAbsolutePos(screenX, rowOffset int) int {
 	colOffset := screenX - a.inputColX
 	if colOffset < 0 {
@@ -352,35 +353,20 @@ func (a *App) mouseXYToAbsolutePos(screenX, rowOffset int) int {
 	if wrapW < 1 {
 		wrapW = 80
 	}
-	val := a.input.Value()
-	absPos := 0
-	rowsLeft := rowOffset
-	for _, line := range strings.Split(val, "\n") {
-		runes := []rune(line)
-		rl := len(runes)
-		// How many visual rows does this logical line occupy?
-		rowsInLine := rl / wrapW
-		if rl == 0 || rl%wrapW != 0 {
-			rowsInLine++
-		}
-		if rowsLeft < rowsInLine {
-			// Target visual row sits inside this logical line.
-			lineRowStart := rowsLeft * wrapW
-			lineRowEnd := lineRowStart + wrapW
-			if lineRowEnd > rl {
-				lineRowEnd = rl
-			}
-			c := lineRowStart + colOffset
-			if c > lineRowEnd {
-				c = lineRowEnd
-			}
-			return absPos + c
-		}
-		rowsLeft -= rowsInLine
-		absPos += rl + 1 // +1 for the '\n' separator
+	rows := a.input.VisualRows(wrapW)
+	if len(rows) == 0 {
+		return 0
 	}
-	// Beyond last visual row — clamp to end of value.
-	return len([]rune(val))
+	if rowOffset >= len(rows) {
+		return len([]rune(a.input.Value()))
+	}
+	r := rows[rowOffset]
+	rowLen := len(r.Runes)
+	c := colOffset
+	if c > rowLen {
+		c = rowLen
+	}
+	return r.AbsStart + c
 }
 
 // routeKey is the central key-handler dispatcher for the main chat view.
@@ -773,6 +759,7 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 	})
 	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
 	a.reasoning.Reset()
+	a.stepTextLen = 0
 	a.turnStartedAt = time.Now()
 	a.chat.ScrollToBottom()
 	a.chat.SetMessages(a.session.Messages)

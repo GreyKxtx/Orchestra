@@ -20,9 +20,27 @@ type diffLine struct {
 	text string
 }
 
-// computeDiff returns an edit script between a and b using LCS.
+// maxLCSCells caps the LCS DP table size at ~4 million cells (~32MB int).
+// Beyond that, the O(n*m) algorithm becomes a perceptible UI hitch when the
+// user toggles the diff view, so we degrade to a coarse "removed all / added
+// all" rendering instead — still informative, never blocking.
+const maxLCSCells = 4_000_000
+
+// computeDiff returns an edit script between a and b using LCS. For huge
+// files where the full DP table would be too expensive, falls back to a
+// trivial "remove everything in a, add everything in b" diff.
 func computeDiff(a, b []string) []diffLine {
 	n, m := len(a), len(b)
+	if int64(n+1)*int64(m+1) > maxLCSCells {
+		result := make([]diffLine, 0, n+m)
+		for _, line := range a {
+			result = append(result, diffLine{lineRemoved, line})
+		}
+		for _, line := range b {
+			result = append(result, diffLine{lineAdded, line})
+		}
+		return result
+	}
 	// dp[i][j] = LCS length of a[:i] and b[:j]
 	dp := make([][]int, n+1)
 	for i := range dp {

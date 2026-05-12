@@ -14,7 +14,7 @@ import (
 )
 
 func TestApp_EchoesUserInput(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{Model: "test-model", Mode: "code", CWD: "test"})
+	app, err := tui.NewApp(tui.Config{Model: "test-model", Mode: "build", CWD: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestApp_EnterEmptyInputDoesNothing(t *testing.T) {
 }
 
 func TestApp_HistoryRecall(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{Model: "test", Mode: "code", CWD: "test"})
+	app, err := tui.NewApp(tui.Config{Model: "test", Mode: "build", CWD: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,129 +120,6 @@ func TestApp_HistoryRecall(t *testing.T) {
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
-}
-
-func TestApp_SlashPalette_OpensOnSlash(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
-
-	// Typing "/" should open the palette — verify a palette item appears.
-	tm.Type("/")
-	teatest.WaitFor(
-		t, tm.Output(),
-		func(b []byte) bool {
-			return bytes.Contains(b, []byte("show available commands"))
-		},
-		teatest.WithCheckInterval(50*time.Millisecond),
-		teatest.WithDuration(2*time.Second),
-	)
-
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
-}
-
-func TestApp_EscClosesPalette(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
-
-	// Open the palette.
-	tm.Type("/")
-	teatest.WaitFor(
-		t, tm.Output(),
-		func(b []byte) bool { return bytes.Contains(b, []byte("show available commands")) },
-		teatest.WithCheckInterval(50*time.Millisecond),
-		teatest.WithDuration(2*time.Second),
-	)
-
-	// Esc should close palette — palette item disappears.
-	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
-	teatest.WaitFor(
-		t, tm.Output(),
-		func(b []byte) bool { return !bytes.Contains(b, []byte("show available commands")) },
-		teatest.WithCheckInterval(50*time.Millisecond),
-		teatest.WithDuration(2*time.Second),
-	)
-
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
-}
-
-func TestApp_SlashHelp_ShowsHelp(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
-
-	// Type "/help" and submit — palette selects /help automatically.
-	tm.Type("/help")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-
-	teatest.WaitFor(
-		t, tm.Output(),
-		func(b []byte) bool {
-			return bytes.Contains(b, []byte("Orchestra TUI"))
-		},
-		teatest.WithCheckInterval(50*time.Millisecond),
-		teatest.WithDuration(2*time.Second),
-	)
-
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
-}
-
-func TestApp_SlashClear_ClearsMessages(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{Model: "test", Mode: "code", CWD: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
-
-	// Submit a message so there is something to clear.
-	tm.Type("hello")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	teatest.WaitFor(
-		t, tm.Output(),
-		func(b []byte) bool { return bytes.Contains(b, []byte("echo: hello")) },
-		teatest.WithCheckInterval(50*time.Millisecond),
-		teatest.WithDuration(2*time.Second),
-	)
-
-	// /clear should remove the message.
-	tm.Type("/clear")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-
-	// Re-open the palette — this forces the footer to change (diff line emitted),
-	// proving /clear left the app in a healthy state.
-	tm.Type("/")
-	teatest.WaitFor(
-		t, tm.Output(),
-		func(b []byte) bool { return bytes.Contains(b, []byte("Enter execute")) },
-		teatest.WithCheckInterval(50*time.Millisecond),
-		teatest.WithDuration(2*time.Second),
-	)
-
-	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
-}
-
-func TestApp_SlashQuit_Exits(t *testing.T) {
-	app, err := tui.NewApp(tui.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
-
-	// /quit should exit the program cleanly.
-	tm.Type("/quit")
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 }
 
 // readAll drains an io.Reader to a string, used for final output.

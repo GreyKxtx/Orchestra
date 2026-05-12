@@ -6,8 +6,38 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"sync"
 )
+
+// sseDebugWriter, when non-nil, receives every raw SSE "data: …" line so we can
+// inspect what the provider actually sends. Activated when ORCH_STREAM_DEBUG is
+// non-empty: it points at a path that will be appended to.
+var (
+	sseDebugMu     sync.Mutex
+	sseDebugWriter *os.File
+	sseDebugOnce   sync.Once
+)
+
+func sseDebugLog(line string) {
+	sseDebugOnce.Do(func() {
+		path := os.Getenv("ORCH_STREAM_DEBUG")
+		if path == "" {
+			return
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			sseDebugWriter = f
+		}
+	})
+	if sseDebugWriter == nil {
+		return
+	}
+	sseDebugMu.Lock()
+	defer sseDebugMu.Unlock()
+	_, _ = sseDebugWriter.WriteString(line + "\n")
+}
 
 // Streamer is a streaming interface for LLM providers that support SSE.
 // It deliberately does NOT embed Client so that existing test mocks (which only
@@ -73,9 +103,14 @@ type StreamEvent struct {
 type sseChunk struct {
 	Choices []struct {
 		Delta struct {
-			Role      string `json:"role"`
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+			// ReasoningContent / ThinkingContent carry chain-of-thought text emitted
+			// by reasoning models (Qwen3, DeepSeek-R1 via LM Studio, etc.) as a
+			// dedicated field instead of inline <think> tags.
+			ReasoningContent string `json:"reasoning_content"`
+			ThinkingContent  string `json:"thinking_content"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Type     string `json:"type"`
@@ -110,6 +145,12 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 		// file.write_atomic) don't exceed bufio's default 64 KB line limit.
 		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 
+		// inReasoning tracks whether we are currently streaming dedicated reasoning
+		// content (reasoning_content / thinking_content fields). Used to emit
+		// synthetic <think>…</think> wrappers so the TUI's ReasoningSplitter can
+		// route this text into Message.Reasoning without any additional plumbing.
+		inReasoning := false
+
 		for scanner.Scan() {
 			if ctx.Err() != nil {
 				ch <- StreamEvent{Kind: StreamEventError, Err: ctx.Err()}
@@ -120,7 +161,12 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 				continue // skip comment lines, event: lines, empty lines
 			}
 			data := strings.TrimPrefix(line, "data: ")
+			sseDebugLog(data)
 			if strings.TrimSpace(data) == "[DONE]" {
+				if inReasoning {
+					acc.AppendContent("</think>")
+					ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: "</think>"}
+				}
 				ch <- StreamEvent{Kind: StreamEventDone, Response: acc.BuildResponse()}
 				return
 			}
@@ -139,7 +185,28 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 
 			delta := chunk.Choices[0].Delta
 
+			// Dedicated reasoning field (Qwen3, DeepSeek-R1 via LM Studio, etc.).
+			// Wrap in <think>…</think> so the TUI ReasoningSplitter picks it up.
+			rc := delta.ReasoningContent
+			if rc == "" {
+				rc = delta.ThinkingContent
+			}
+			if rc != "" {
+				if !inReasoning {
+					rc = "<think>" + rc
+					inReasoning = true
+				}
+				acc.AppendContent(rc)
+				ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: rc}
+			}
+
 			if delta.Content != "" {
+				if inReasoning {
+					// Close the think block before the actual answer starts.
+					acc.AppendContent("</think>")
+					ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: "</think>"}
+					inReasoning = false
+				}
 				acc.AppendContent(delta.Content)
 				ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: delta.Content}
 			}
@@ -170,6 +237,10 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			return
 		}
 		// Scanner exhausted without a [DONE] line — some proxies strip it.
+		if inReasoning {
+			acc.AppendContent("</think>")
+			ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: "</think>"}
+		}
 		ch <- StreamEvent{Kind: StreamEventDone, Response: acc.BuildResponse()}
 	}()
 	return ch

@@ -2,7 +2,8 @@
 
 <capabilities>
 Инструменты из tools[]: ls, read, write, edit, glob, grep, symbols, explore, bash, todowrite, todoread и другие.
-Ровно один tool call за шаг. Не имитируй вызовы в тексте.
+За шаг возвращай НЕСКОЛЬКО tool_calls если они независимы. Read-only (read, ls, glob, grep, symbols, explore) выполняются ПАРАЛЛЕЛЬНО — это сильно быстрее последовательных шагов. Mutating (write, edit, bash) — только ПО ОДНОМУ за шаг, не смешивай с другими.
+Не имитируй вызовы в тексте.
 </capabilities>
 
 <patch_types>

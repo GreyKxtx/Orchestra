@@ -35,6 +35,7 @@ type Event struct {
 	Content      string
 	ToolCallID   string
 	ToolCallName string
+	ArgsDelta    string                    // only set on tool_call_delta — partial JSON of arguments
 	PendingOps   *PendingOpsPayload        // only set when Kind == EventPendingOps
 	PermReq      *PermissionRequestPayload // only set when Kind == EventPermissionRequest
 	Err          string                    // only set on connection/agent error events
