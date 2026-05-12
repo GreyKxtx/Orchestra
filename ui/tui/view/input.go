@@ -326,12 +326,15 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	val := in.ta.Value()
 	totalRunes := len([]rune(val))
 
-	// Empty input — single-line placeholder.
+	// Empty input — placeholder is always visible; only the bar cursor in
+	// front of it blinks (replaced with a same-width space when off) so the
+	// placeholder text itself doesn't flicker on/off with each frame.
 	if val == "" {
+		ph := mutedStyle.Render("Спроси Orchestra…")
 		if blinkOn {
-			return padLine(bar, width, bgStyle)
+			return padLine(bar+ph, width, bgStyle)
 		}
-		return padLine(mutedStyle.Render("Спроси Orchestra…"), width, bgStyle)
+		return padLine(bgStyle.Render(" ")+ph, width, bgStyle)
 	}
 
 	// Resolve cursor absolute position (mouse-caret override during drag).
