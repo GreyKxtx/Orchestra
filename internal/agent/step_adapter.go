@@ -12,10 +12,26 @@ import (
 // NormalizeLLM converts an OpenAI-style completion into the Agent's internal Step.
 //
 // Supported inputs:
-// - OpenAI tool calls (message.tool_calls) -> StepToolCall (single tool call only)
+// - OpenAI tool calls (message.tool_calls) -> StepToolCall (single or parallel batch)
 // - Plain JSON (legacy): AgentStep {"type":"tool_call"|"final", ...}
 // - Plain JSON (recommended final): PatchSet {"patches":[...]}
+// - Plain text (no tool_calls, no JSON envelope): treated as final-with-no-patches.
+//
+// Parallel-batch selection: when the response carries ≥2 tool_calls AND every
+// tool name maps to a ParallelSafe definition (per parallelSafeNames), the step
+// is populated as a batch (Step.Tools). The agent fans these out concurrently.
+// Otherwise the legacy single-tool path is used (Step.Tool = first call); any
+// remaining parallel calls are silently dropped so the model isn't stuck in
+// invalid-retry loops emitting the same parallel batch over and over.
 func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, string, error) {
+	return NormalizeLLMWithDefs(v, resp, nil)
+}
+
+// NormalizeLLMWithDefs is the flag-aware variant used by the agent so it can
+// classify batched tool_calls. defs is the active tool registry slice — when
+// non-nil it lets us look up each call's ParallelSafe flag. Passing nil
+// reproduces the legacy "first-call wins" behaviour.
+func NormalizeLLMWithDefs(v *schema.Validator, resp *llm.CompleteResponse, defs []llm.ToolDef) (*Step, string, error) {
 	if resp == nil {
 		return nil, "", protocol.NewError(protocol.InvalidLLMOutput, "LLM response is nil", nil)
 	}
@@ -23,11 +39,32 @@ func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, strin
 
 	// Tool calling path (preferred).
 	if len(msg.ToolCalls) > 0 {
-		if len(msg.ToolCalls) != 1 {
-			return nil, strings.TrimSpace(msg.Content), protocol.NewError(protocol.InvalidLLMOutput, "model returned multiple tool calls; only one is supported per step", map[string]any{
-				"count": len(msg.ToolCalls),
-			})
+		// Parallel batch fast-path: every call must be ParallelSafe per the
+		// registry. If even one isn't (e.g. write/edit/bash), we fall back to
+		// the legacy serial path (execute the first call, drop the rest).
+		if len(msg.ToolCalls) > 1 && allParallelSafe(msg.ToolCalls, defs) {
+			tools := make([]ToolCall, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				name := strings.TrimSpace(tc.Function.Name)
+				if name == "" {
+					continue
+				}
+				tools = append(tools, ToolCall{
+					ID:    tc.ID,
+					Name:  name,
+					Input: tc.Function.Arguments.Raw(),
+				})
+			}
+			if len(tools) >= 2 {
+				return &Step{Type: StepToolCall, Tools: tools}, strings.TrimSpace(msg.Content), nil
+			}
 		}
+
+		// Serial path: take the first tool call, ignore the rest. Returning an
+		// error on parallel mixed batches would force a retry, but the model
+		// usually retries with the same shape — that's a budget burn with no
+		// progress. Better to make progress on the first call and let the next
+		// step re-request whatever else is still needed.
 		tc := msg.ToolCalls[0]
 		name := strings.TrimSpace(tc.Function.Name)
 		if name == "" {
@@ -36,6 +73,7 @@ func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, strin
 		step := Step{
 			Type: StepToolCall,
 			Tool: &ToolCall{
+				ID:    tc.ID,
 				Name:  name,
 				Input: tc.Function.Arguments.Raw(),
 			},
@@ -70,14 +108,42 @@ func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, strin
 		}
 	}
 
-	// Truncate for error message
-	rawTruncated := raw
-	if len(rawTruncated) > 400 {
-		rawTruncated = rawTruncated[:400] + "..."
+	// Plain-text response with no tool_calls and no parseable JSON envelope.
+	// Treat as a final step with no patches — same model opencode uses:
+	// absence of tool_calls means the agent is done, the natural-language
+	// answer was already streamed to the user via message_delta events.
+	//
+	// This applies to every mode (Build / Plan / Ask / Explore / etc): if the
+	// model wants to make changes it emits tool_calls or the JSON envelope,
+	// otherwise plain prose is its final answer. No more "expected JSON" retry
+	// loop that left the spinner spinning forever on conversational replies.
+	step := Step{
+		Type:  StepFinal,
+		Final: &Final{Patches: nil},
 	}
-	return nil, raw, protocol.NewError(protocol.InvalidLLMOutput, "invalid assistant output: expected tool_call, AgentStep JSON, or PatchSet JSON", map[string]any{
-		"raw": rawTruncated,
-	})
+	return &step, raw, nil
+}
+
+// allParallelSafe returns true iff every tool_call in calls maps to a
+// ParallelSafe entry in defs. Used by NormalizeLLMWithDefs to decide whether
+// a batched response can fan out concurrently. An unknown tool (not in defs)
+// counts as NOT parallel-safe — the conservative default protects against
+// accidentally racing on a tool whose semantics aren't classified yet.
+func allParallelSafe(calls []llm.ToolCall, defs []llm.ToolDef) bool {
+	if len(defs) == 0 {
+		return false
+	}
+	flag := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		flag[d.Function.Name] = d.ParallelSafe
+	}
+	for _, c := range calls {
+		name := strings.TrimSpace(c.Function.Name)
+		if !flag[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // extractJSON extracts the last valid JSON object from text.

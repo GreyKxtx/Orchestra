@@ -8,6 +8,104 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Parallel tool execution (2026-05-13)
+
+The agent now executes ParallelSafe tool calls (read-only: `ls`, `read`, `glob`, `grep`, `symbols`, `explore`, `lsp.*`, `todoread`, `task.result`, `runtime.query`, `webfetch`) **concurrently** when the model emits several in a single response. On read-heavy "analyze the project" turns this collapses what used to be 10-20 sequential LLM round-trips into a single batch with a worker-pool fan-out — typically 5-10× speedup.
+
+#### `llm.ToolDef` — declarative concurrency flags
+
+- **`ParallelSafe bool`** — pure reads with no shared-state risk; can run alongside other ParallelSafe tools in one batch.
+- **`Mutating bool`** — has observable side effects (file writes, shell commands); always runs one-at-a-time.
+
+Both fields are in-process metadata (`json:"-"`) — the wire format is unchanged.
+
+#### `internal/tools/registry.go` — central classifier
+
+- **`applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef`** — switch keyed on tool name; called by every `ListToolsXXX` constructor. Single source of truth — adding a new tool means one switch update, not edits across every list function.
+- Read-only set (ParallelSafe): `ls`, `read`, `glob`, `grep`, `symbols`, `explore`, `todoread`, `task.result`, `runtime.query`, `webfetch`, `lsp.definition`, `lsp.references`, `lsp.hover`, `lsp.diagnostics`.
+- Mutating set: `write`, `edit`, `bash`, `todowrite`, `memory_write`, `lsp.rename`, `plan.enter`, `plan.exit`, `task.spawn`, `task.wait`, `task.cancel`, `question`.
+
+#### `internal/agent/types.go` — `Step.Tools`
+
+- **`Step.Tools []ToolCall`** — parallel batch slot. Populated by `NormalizeLLMWithDefs` only when the response carries ≥2 calls **and** every one is ParallelSafe.
+- **`Step.Tool *ToolCall`** — preserved for the legacy single-tool serial path; also used as fallback when a batch mixes read-only with mutating (we execute the first call and drop the rest).
+- **`ToolCall.ID string`** — now propagated through the type so per-tool replies use the original `tool_call_id`.
+
+#### `internal/agent/step_adapter.go`
+
+- **`NormalizeLLMWithDefs(v, resp, defs []llm.ToolDef)`** — new flag-aware variant. Picks parallel-batch path when `allParallelSafe(calls, defs)` holds, else falls back to first-tool-only.
+- **`NormalizeLLM`** — thin wrapper for callers that don't have a tool definition slice.
+- **`allParallelSafe(calls, defs)`** — defensive default (unknown tool ⇒ NOT parallel-safe) so MCP/plugin tools never get raced unintentionally.
+
+#### `internal/agent/agent.go` — `runParallelToolBatch`
+
+- Worker pool capped by **`parallelBatchWorkerLimit = 16`** (`chan struct{}` semaphore).
+- **PreTool hooks run SERIALLY** before the parallel fan-out. Most hooks aren't reentrant (shared log file, slow subprocess startup); 16 concurrent `powershell -Command Add-Content` invocations would file-lock against each other and time out at the 5 s hook timeout. Serial hooks + parallel tools keeps correctness while still capturing the I/O speedup that actually matters.
+- Results collected by index → tool replies are stitched into history in the same order as the assistant message's `tool_calls`, satisfying the OpenAI contract.
+
+#### `internal/agent/agent.go` — serial-fallback orphan cleanup
+
+When the model emits a mixed batch (e.g. `[read, read, edit]`), `NormalizeLLM` keeps only the first call. The SSE parser already surfaced `tool_call_start` for every call, so the TUI would have stranded "running" blocks for the dropped extras. The agent emits synthetic `tool_call_completed` events with a `"skipped: …"` prefix for those orphans (see `ToolBlockSkipped` below).
+
+#### `internal/llm/stream.go` — full tool-call surfacing
+
+- Removed `primaryToolIdx` suppression that hid all but the first parallel `tool_call`. The stream now emits `tool_call_start`/`tool_call_delta` for every call so the TUI can render the full batch.
+- Added **`reasoning_content` / `thinking_content` field parsing** for reasoning models (Qwen3, DeepSeek-R1 via LM Studio). When present, the parser wraps these chunks in synthetic `<think>…</think>` tags and feeds them into the same `MessageDelta` channel the TUI's `ReasoningSplitter` already understands — no new event kind needed.
+- Added `ORCH_STREAM_DEBUG=path/to/file` env-flag SSE-tap for diagnosing what providers actually send.
+
+#### Prompt updates (`internal/prompt/files/build*.txt`)
+
+- All six build-mode prompts (`build.txt`, `build-local.txt`, `build-anthropic.txt`, `build-gemini.txt`, `build-gpt.txt`, `build-kimi.txt`) rewritten: **explicit encouragement of multi-call batches** for independent reads, with the rule "mutating (write/edit/bash) — strictly one per step, don't mix with other tools in the same batch". Replaces the old "не более одного tool call за шаг" wording that prevented the model from using the new parallel path.
+
+### Changed — TUI: visual polish & UX (2026-05-12 / 2026-05-13)
+
+#### Tool rendering (`ui/tui/view/`)
+
+- **`renderBlockTool`** — removed `BackgroundSecondary` fill from completed exec/write tool panels. Now a plain left `┃` thick-border in `TextMuted` with no panel chrome. Body lines truncated to 20 (was 50).
+- **`renderBlockTool`** — title is `<icon> <preview>`, not `# <preview>`.
+- **`isBlockStyleTool(tb, streaming)`** — stricter: only `exec.run`, `fs.write`, `file.write_atomic` ever get block style; only when not streaming and not currently running. `read`/`list`/`search`/`symbols`/`glob` stay inline forever — their preview already carries a useful summary (`(N entries)`, `(N matches)`).
+- **`renderToolGroup`** — collapsed view shows the **inline per-tool list** plus a compact muted footer (`└ N toolcalls · 7.0s · 1 failed · 2 skipped`); the "Build Task — query" header removed (the user's request panel above already shows the query).
+- **`renderInlineTool`** — when `tb.Status == ToolBlockSkipped`, the label renders muted + `Faint` + `Strikethrough` so the user immediately recognizes "intentionally not executed" vs "errored".
+- **`renderReasoning`** — wraps the "Thinking: …" block in a muted thick `┃` left-border (no fill) matching the user-message panel style.
+- **Icon set unified** (`toolIcon`) — every tool's icon is a single-width single-rune from the same stylistic family. Glyph map: `→` read, `≡` list, `←` write, `✱` grep, `✦` glob (new), `◈` symbols, `$` exec, `▣` task, `•` unknown (was `⚙`). Added Claude-Code aliases to `toolKind` (`Read`, `Write`, `Edit`, `MultiEdit`, `Glob`, `LS`, `TodoWrite`).
+
+#### Render cache (`ui/tui/view/render_cache.go`)
+
+- **`renderCache.delete(key int64)`** — new method. `Chat.ExpandTurn` now invalidates the cached entry for that turn so Ctrl+T actually re-renders with the new expand state. Before this fix, Ctrl+T on a non-last completed assistant message was a visual no-op because the cache returned the old un-expanded render.
+- **`Chat.SetMessages`** — expanded turns are never cached. Previously the cache would store an expanded render then return it after the user collapsed.
+
+#### Streaming cursor removed (`view/message_assistant.go`)
+
+- Dropped the `▋` cursor appended to the last assistant token while streaming. With `cursorBlink` toggling every ~500 ms, the cursor would alternately push text past the wrap point and back, causing visible screen jitter on every blink. The status bar's animated busy block now signals "agent is working" without reflowing chat content.
+
+#### Text-from-non-final-step truncation (`app_rpc.go`)
+
+- **`stepTextLen int`** field on `App` tracks the assistant text length at the start of each LLM step. On `EventStepDone(reason != "final")` the assistant message's `Text` is truncated back to `stepTextLen`, dropping pre-tool chatter and invalid-retry scratch output. Previously, when the model said "let me check that" then made a tool call then said "actually here's the answer", both texts ended up concatenated.
+- Critical ordering fix: `stepTextLen` is updated in `EventStepDone` **after** truncation, not in `EventDone` (which fires earlier in the stream lifecycle).
+
+#### Status bar redesign (`view/statusbar.go`)
+
+- Two-row layout: top row is a blank gap (visual breathing room from the input box), bottom row is the actual status content.
+- Left side reserved for live agent state — info parts (project, tokens, ctx) when idle, **OpenCode-style busy block** (`⠋ ▰▱▱ Read internal/agent/agent.go`) when `agentBusy`. Three accent glyphs cycle in/out with `spinFrame % 3` for a moving-block animation.
+- Right side now hosts the context-sensitive hint ("Ctrl+K commands", "Esc cancel", …) — previously these took over the entire bar.
+- **`SetActiveTool(name, path string)`** — `app_rpc.go` calls this on `EventToolCallStart`/`EventToolCallDelta` and clears it on `EventToolCallCompleted` / `EventStepDone`.
+
+#### Chat area gutter (`app_view.go`)
+
+- New `chatVerticalPad = 1` constant — 1-row blank gutter above and below the chat viewport so the first message doesn't kiss the top edge and the last message has breathing room from the input box. `layout()` subtracts `2*chatVerticalPad` from `chatHeight` so the input box doesn't get pushed off-screen.
+
+#### Mouse wheel scroll (`ui/tui/app.go`)
+
+- `tea.NewProgram` now starts with `tea.WithMouseCellMotion()`. The `MouseMsg` handler was already wired (`ScrollUp(3)` / `ScrollDown(3)` on wheel-up/down), it just never received events because the program wasn't subscribed to mouse motion.
+
+### Added — Session `ToolBlockSkipped` status
+
+- **`state.ToolBlockSkipped ToolBlockStatus = "skipped"`** — distinct from `Failed`. Set when `tool_call_completed.content` starts with `"skipped: "` (the prefix the agent uses for serial-fallback orphan extras). The TUI renders these muted + strikethrough so the user distinguishes "intentionally not executed" from "errored out".
+- Removed the legacy auto-expand logic in `Session.UpdateToolBlock` that set `Expanded = true` on any tool whose result had ≤10 lines. With the new compact inline list as the default view, auto-expanding short results just put noise back in the chat.
+- New helpers: `Session.TruncateAssistantText(n)`, `Session.AssistantTextLen()`, `Session.FindToolBlock(id)`, `renderCache.delete(key)`.
+
+---
+
 ### Added — Sub-project G: Native LSP integration
 
 #### New package `internal/lsp`

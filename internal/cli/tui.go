@@ -38,10 +38,12 @@ directory (create with 'orchestra init').`,
 
 		cfgPath := filepath.Join(cwd, ".orchestra.yml")
 		model := ""
+		themeName := ""
 		needsOnboarding := false
 
 		if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
 			model = cfg.LLM.Model
+			themeName = cfg.UI.Theme
 		}
 		if model == "" {
 			needsOnboarding = true
@@ -52,10 +54,11 @@ directory (create with 'orchestra init').`,
 			WorkspaceRoot:   cwd,
 			ProjectID:       projectID,
 			Model:           model,
-			Mode:            "code",
+			Mode:            "build",
 			CWD:             filepath.Base(cwd),
 			NeedsOnboarding: needsOnboarding,
 			ConfigPath:      cfgPath,
+			Theme:           themeName,
 		})
 	},
 }

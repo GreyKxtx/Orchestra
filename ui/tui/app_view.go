@@ -18,12 +18,19 @@ import (
 // bug). Welcome view has its own centered layout — unaffected.
 const chatSidePad = 1
 
+// chatVerticalPad is the blank-line gutter above and below the chat scrollback
+// so the first message doesn't touch the top edge and the last message has
+// breathing room from the input box below.
+const chatVerticalPad = 1
+
 // padChat adds chatSidePad cells of horizontal margin around the rendered
 // chat viewport so messages don't hug the terminal edges. Multi-line content
 // already laid out by the viewport keeps its internal width; we just add a
 // blank gutter on each side.
 func (a *App) padChat(content string) string {
 	return lipgloss.NewStyle().
+		PaddingTop(chatVerticalPad).
+		PaddingBottom(chatVerticalPad).
 		PaddingLeft(chatSidePad).
 		PaddingRight(chatSidePad).
 		Render(content)
@@ -172,9 +179,10 @@ func (a *App) layout() {
 		modalRows = 5
 		a.permModal.SetSize(a.width)
 	}
-	// Thinking placeholder is rendered inline inside the in-flight assistant
-	// message now; no dedicated row is reserved here.
-	chatHeight := a.height - 1 - inputRows - actionBarRows - modalRows - paletteRows
+	// Status bar now reserves 2 rows (1 gap + 1 content) for breathing room
+	// between the input box and the status text.
+	const statusBarRows = 2
+	chatHeight := a.height - statusBarRows - inputRows - actionBarRows - modalRows - paletteRows - 2*chatVerticalPad
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
@@ -189,7 +197,23 @@ func (a *App) layout() {
 	// Content width inside the box: subtract left border + 2*padding.
 	// SyncHeight / soft-wrap and WelcomeRender both read ta.Width(),
 	// so we set it here to match what renderInputBox actually renders.
-	contentW := inputW - 5
+	//
+	// CRITICAL: welcome view renders the box at a FIXED width (80, clamped
+	// to terminal width) — different from chat-mode's full-width input.
+	// If we leave the textarea at chat width, ta.Width() between View()
+	// calls disagrees with what was on screen, and bubbles' CursorUp/Down
+	// uses the wrong wrap → cursor jumps to the wrong visual row.
+	boxW := inputW
+	if a.showWelcome {
+		boxW = 80
+		if a.width < boxW+8 {
+			boxW = a.width - 8
+		}
+		if boxW < 40 {
+			boxW = 40
+		}
+	}
+	contentW := boxW - 5
 	if contentW < 20 {
 		contentW = 20
 	}

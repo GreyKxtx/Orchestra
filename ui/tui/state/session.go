@@ -2,7 +2,6 @@
 package state
 
 import (
-	"strings"
 	"time"
 )
 
@@ -110,6 +109,40 @@ func (s *Session) AppendAssistantDelta(delta string) {
 	s.Messages[s.activeAssistant].Text += delta
 }
 
+// TruncateAssistantText truncates the active assistant's Text to n bytes.
+// Used to discard pre-tool-call chatter when a step ends with a tool call.
+func (s *Session) TruncateAssistantText(n int) {
+	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return
+	}
+	m := &s.Messages[s.activeAssistant]
+	if len(m.Text) > n {
+		m.Text = m.Text[:n]
+	}
+}
+
+// AssistantTextLen returns the current byte length of the active assistant's Text.
+func (s *Session) AssistantTextLen() int {
+	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return 0
+	}
+	return len(s.Messages[s.activeAssistant].Text)
+}
+
+// FindToolBlock looks up a tool block by its id in the active assistant message.
+func (s *Session) FindToolBlock(id string) (ToolBlock, bool) {
+	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return ToolBlock{}, false
+	}
+	for _, tb := range s.Messages[s.activeAssistant].ToolBlocks {
+		if tb.ID == id {
+			return tb, true
+		}
+	}
+	return ToolBlock{}, false
+}
+
+
 // AppendToolBlock attaches a tool block to the active assistant message.
 // If no active assistant exists, starts one with empty mode/model — caller
 // should normally have called StartAssistant first so the turn's mode/model
@@ -182,11 +215,6 @@ func (s *Session) UpdateToolBlock(id string, status ToolBlockStatus, result stri
 	}
 	blocks[idx].Status = status
 	blocks[idx].Result = result
-	if status == ToolBlockCompleted || status == ToolBlockFailed {
-		if strings.Count(result, "\n") <= 10 {
-			blocks[idx].Expanded = true
-		}
-	}
 	return true
 }
 

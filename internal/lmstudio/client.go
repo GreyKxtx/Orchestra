@@ -77,7 +77,13 @@ func (c *Client) listV0() ([]RemoteModel, error) {
 	}
 	var result []RemoteModel
 	for _, m := range out.Data {
-		if m.Object != "model" || m.Type != "llm" {
+		if m.Object != "model" {
+			continue
+		}
+		// Accept generation-capable models. Older LM Studio versions may
+		// omit Type — treat empty as a generation model. Only embeddings
+		// are filtered out (they can't generate text).
+		if m.Type == "embeddings" {
 			continue
 		}
 		result = append(result, RemoteModel{

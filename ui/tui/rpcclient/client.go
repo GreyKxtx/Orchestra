@@ -118,10 +118,18 @@ func (c *Client) Events() <-chan Event {
 
 // AgentRun calls agent.run on the core. Streaming events arrive via Events().
 // Returns when the agent.run RPC completes (final result returned).
-func (c *Client) AgentRun(ctx context.Context, query string) error {
+//
+// mode propagates the active TUI agent mode (build/plan/explore/...) so the
+// agent loop can apply mode-specific output rules — most importantly, accept
+// plain-text answers as final in read-only modes instead of looping on
+// invalid-JSON retries.
+func (c *Client) AgentRun(ctx context.Context, query, mode string) error {
 	params := map[string]any{
 		"query": query,
 		"apply": false, // Phase 2: dry-run only
+	}
+	if mode != "" {
+		params["mode"] = mode
 	}
 	var result map[string]any
 	err := c.rpc.Call(ctx, "agent.run", params, &result)
@@ -189,6 +197,7 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 		Content      string          `json:"content"`
 		ToolCallID   string          `json:"tool_call_id"`
 		ToolCallName string          `json:"tool_call_name"`
+		ArgsDelta    string          `json:"args_delta"`
 		Data         json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -200,6 +209,7 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 		Content:      p.Content,
 		ToolCallID:   p.ToolCallID,
 		ToolCallName: p.ToolCallName,
+		ArgsDelta:    p.ArgsDelta,
 	}
 	if EventKind(p.Type) == EventPendingOps && len(p.Data) > 0 {
 		var payload PendingOpsPayload

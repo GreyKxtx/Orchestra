@@ -30,6 +30,9 @@
 | Compaction | Авто-сжатие истории при достижении `compact_threshold_pct` от `MaxPromptBytes`; LLM-summary, non-fatal fallback | ✅ |
 | Memory tool | `memory_write` — агент записывает факты в `.orchestra/memory/agent.md`; `LoadProjectMemory` аддитивен (все 3 источника) | ✅ |
 | Permission Rules | `permissions.rules` — per-tool allow/deny с glob-паттернами; first-match-wins; `allow` — bypass `--allow-exec/web` для одного вызова | ✅ |
+| Parallel Tool Calls | `ParallelSafe`/`Mutating` флаги в `llm.ToolDef`; read-only тулы (`ls`/`read`/`glob`/`grep`/`symbols`/`explore`/`lsp.*`/`webfetch`) выполняются конкурентно в одной пачке через worker-pool (16); mutating (`write`/`edit`/`bash`) — серийно. Pre-tool hooks серийны до fan-out'а чтобы не race'ить по shared-state | ✅ |
+| Reasoning Stream | Парсинг `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 через LM Studio); автоматическое заворачивание в `<think>…</think>` для `ReasoningSplitter`; SSE-tap по env-флагу `ORCH_STREAM_DEBUG` | ✅ |
+| TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy-indicator в статус-баре, mouse wheel scroll, "Thinking:" блок с `┃` бордером, render-cache invalidation на Ctrl+T, mode-aware accent colors | ✅ |
 
 ---
 
@@ -143,6 +146,10 @@ $env:ORCH_E2E_LLM = "1"
 go test ./tests/e2e_real_llm -v -count=1
 ```
 
+Запуск приложения 
+
+ & "D:\CursorProjects\Orchestra\orchestra.exe" tui
+ 
 ---
 
 ## Документация

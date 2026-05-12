@@ -30,9 +30,24 @@ type Message struct {
 }
 
 // ToolDef describes a callable tool in OpenAI "tools" format.
+//
+// ParallelSafe and Mutating are out-of-band metadata used by the agent loop
+// to decide whether several tool calls in a single LLM response can run
+// concurrently. They are NOT serialised on the wire — they only travel inside
+// the process from the registry to the agent scheduler.
 type ToolDef struct {
 	Type     string          `json:"type"` // must be "function"
 	Function ToolFunctionDef `json:"function"`
+
+	// ParallelSafe is true when this tool can be invoked concurrently with
+	// other ParallelSafe tools without ordering or shared-state risks. Pure
+	// reads (fs.read, fs.list, search.text, code.symbols, glob) are safe.
+	ParallelSafe bool `json:"-"`
+
+	// Mutating is true when invoking this tool has observable side effects
+	// (writes to disk, runs shell commands). Mutating tools always execute
+	// one-at-a-time even within a single LLM-response batch.
+	Mutating bool `json:"-"`
 }
 
 // ToolFunctionDef is a tool signature (name + JSON Schema parameters).

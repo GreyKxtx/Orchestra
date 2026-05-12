@@ -7,6 +7,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	configpkg "github.com/orchestra/orchestra/internal/config"
@@ -331,6 +332,18 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 
 		switch step.Type {
 		case StepToolCall:
+			// Parallel batch fast-path. Set when NormalizeLLM saw multiple
+			// tool_calls and every one of them is registry-flagged ParallelSafe.
+			// We bypass the rich serial pipeline (per-tool permissions, exec
+			// auth, todo/task dispatcher, …) because read-only tools never hit
+			// those code paths anyway — only the generic tools.Call + the
+			// PreTool hook + audit log. See runParallelToolBatch.
+			if len(step.Tools) >= 2 {
+				history = a.runParallelToolBatch(ctx, history, step.Tools, llmResp, steps)
+				emitStepDone("tool_call")
+				continue
+			}
+
 			if step.Tool == nil {
 				// Add validation error as user message for retry
 				history = append(history, llm.Message{
@@ -356,6 +369,22 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			hasToolCalls := llmResp != nil && len(llmResp.Message.ToolCalls) > 0
 			if hasToolCalls {
 				toolCallID = llmResp.Message.ToolCalls[0].ID
+			}
+			// Serial-fallback cleanup: when the LLM emitted several parallel
+			// tool_calls but the batch contained a Mutating tool, NormalizeLLM
+			// kept only the first call (Step.Tool) and dropped the rest. The
+			// SSE stream already pushed tool_call_start events for every entry,
+			// so the TUI now has orphan running blocks for the dropped ones.
+			// Emit synthetic "skipped" completions so they don't stay stuck.
+			if hasToolCalls && len(llmResp.Message.ToolCalls) > 1 && a.opts.OnEvent != nil {
+				for _, extra := range llmResp.Message.ToolCalls[1:] {
+					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+						Kind:         llm.StreamEventToolCallCompleted,
+						ToolCallID:   extra.ID,
+						ToolCallName: extra.Function.Name,
+						Content:      "skipped: only the first tool call in a mixed batch is executed",
+					}})
+				}
 			}
 			if toolCallID == "" {
 				// Fallback: generate a synthetic ID if not provided (for legacy JSON format)
@@ -990,7 +1019,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		if err != nil {
 			return nil, "", nil, err
 		}
-		step, raw, nerr := NormalizeLLM(a.validator, resp)
+		step, raw, nerr := NormalizeLLMWithDefs(a.validator, resp, toolDefs)
 		lastRaw = raw
 
 		if nerr != nil {
@@ -1532,4 +1561,121 @@ func formatToolErrorJSON(name string, input json.RawMessage, err error) string {
 		return fmt.Sprintf(`{"status":"error","tool":"%s","error":"%s"}`, name, err.Error())
 	}
 	return string(b)
+}
+
+// parallelBatchWorkerLimit caps simultaneous goroutines fanned out from a
+// single parallel tool batch. Sized to keep file-handle and LSP-query
+// pressure reasonable on big batches while still finishing well below the
+// per-step LLM timeout for typical read-heavy turns.
+const parallelBatchWorkerLimit = 16
+
+// runParallelToolBatch executes a batch of read-only tool calls concurrently
+// (capped by parallelBatchWorkerLimit) and appends the assistant + tool
+// messages to history in their original order. The OpenAI tool-calling
+// protocol requires that every tool_call_id from the assistant message has
+// exactly one matching tool message reply, so we preserve ordering even when
+// individual calls finish out-of-order.
+//
+// Only ParallelSafe tools reach this path — see NormalizeLLMWithDefs. The
+// rich per-tool serial pipeline (exec consent, plan-mode write guard, todo
+// dispatcher, …) is therefore not exercised here; we go straight through
+// PreTool hook + audit log + a.tools.Call.
+//
+// Hook safety: PreTool hooks run SERIALLY before the parallel fan-out. Most
+// real-world hooks aren't thread-safe (they append to log files, mutate
+// external state, or take 0.5-1s of process start-up that compounds badly
+// under 16-way concurrency). The actual tool execution (file I/O) is where
+// the latency is, so parallelism there is what matters.
+func (a *Agent) runParallelToolBatch(ctx context.Context, history []llm.Message, calls []ToolCall, llmResp *llm.CompleteResponse, stepNum int) []llm.Message {
+	// 1) Append the assistant message that requested the batch. OpenAI's
+	//    protocol requires the assistant message with tool_calls to precede
+	//    the per-tool replies; reuse the original ToolCalls slice unchanged.
+	if llmResp != nil {
+		history = append(history, llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   "",
+			ToolCalls: llmResp.Message.ToolCalls,
+		})
+	}
+
+	results := make([]string, len(calls))
+	// denied[i] is true when the pre-tool hook rejected call i — we'll skip
+	// the parallel tool execution for that index and just emit the denial.
+	denied := make([]bool, len(calls))
+
+	// 2) PreTool hooks: run serially. Most hooks aren't reentrant (they spawn
+	//    a subprocess that writes to a shared log file). Spawning 16 of them
+	//    concurrently turns each call into a 5-second timeout because of
+	//    file-lock contention and OS process-startup pressure.
+	if a.opts.HooksRunner != nil {
+		for i, call := range calls {
+			if hookErr := a.opts.HooksRunner.RunPreTool(ctx, call.Name, call.Input); hookErr != nil {
+				denied[i] = true
+				results[i] = formatToolDeniedJSON(call.Name, call.Input, "pre-tool hook denied: "+hookErr.Error())
+				if a.opts.OnEvent != nil {
+					a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+						Kind:         llm.StreamEventToolCallCompleted,
+						ToolCallID:   call.ID,
+						ToolCallName: call.Name,
+						Content:      "error: pre-tool hook denied",
+					}})
+				}
+			}
+		}
+	}
+
+	// 3) Fan out tool execution. Results are collected by index so the tool
+	//    reply order matches the assistant message's tool_calls order.
+	sem := make(chan struct{}, parallelBatchWorkerLimit)
+	var wg sync.WaitGroup
+
+	for i, tc := range calls {
+		if denied[i] {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, call ToolCall) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if a.opts.AgentLogger != nil {
+				a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input))
+			}
+
+			out, err := a.tools.Call(ctx, call.Name, call.Input)
+			if err != nil {
+				results[idx] = formatToolErrorJSON(call.Name, call.Input, err)
+				if a.opts.OnEvent != nil {
+					a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+						Kind:         llm.StreamEventToolCallCompleted,
+						ToolCallID:   call.ID,
+						ToolCallName: call.Name,
+						Content:      "error: " + truncate(err.Error(), 200),
+					}})
+				}
+				return
+			}
+			results[idx] = string(out)
+			if a.opts.OnEvent != nil {
+				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+					Kind:         llm.StreamEventToolCallCompleted,
+					ToolCallID:   call.ID,
+					ToolCallName: call.Name,
+					Content:      truncate(string(out), 256),
+				}})
+			}
+		}(i, tc)
+	}
+	wg.Wait()
+
+	// 4) Stitch tool replies into history in original order.
+	for i, tc := range calls {
+		history = append(history, llm.Message{
+			Role:       llm.RoleTool,
+			ToolCallID: tc.ID,
+			Content:    results[i],
+		})
+	}
+	return history
 }

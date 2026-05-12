@@ -16,18 +16,82 @@ type SlashCmd struct {
 }
 
 // AllSlashCmds is the complete list shown in the slash palette.
+// Sorted alphabetically — opencode style.
 var AllSlashCmds = []SlashCmd{
-	{"/help", "show available commands"},
+	{"/apply", "apply pending ops"},
 	{"/clear", "clear chat history"},
 	{"/diff", "toggle diff view"},
-	{"/apply", "apply pending ops"},
 	{"/discard", "discard pending ops"},
-	{"/model", "show current model"},
+	{"/help", "show available commands"},
 	{"/mode", "show current mode"},
+	{"/model", "show current model"},
 	{"/quit", "exit Orchestra TUI"},
 }
 
 const maxPaletteVisible = 6
+
+// splitBorder mimics opencode's SplitBorder: thick ┃ on left and right only,
+// no top/bottom/corners. Reads as a discrete menu element rather than a
+// continuation of the input box.
+var splitBorder = lipgloss.Border{
+	Left:  "┃",
+	Right: "┃",
+}
+
+// paletteCursor encapsulates the cursor-up/down/clamp logic shared by every
+// palette. The struct keeps Cursor exported so the existing tests that probe
+// internal state continue to work.
+type paletteCursor struct {
+	Cursor int
+}
+
+func (p *paletteCursor) cursorUp() {
+	if p.Cursor > 0 {
+		p.Cursor--
+	}
+}
+
+func (p *paletteCursor) cursorDown(max int) {
+	if p.Cursor < max-1 {
+		p.Cursor++
+	}
+}
+
+// renderPaletteList returns a JoinVertical of one rendered row per visible
+// item. rowFor returns the rendered, full-width row for item i (with cursor
+// highlight applied when i == cursor). Caller is responsible for slicing
+// visible items themselves before passing length.
+func renderPaletteList(length int, cursor int, rowFor func(i int) string) string {
+	if length <= 0 {
+		return ""
+	}
+	if length > maxPaletteVisible {
+		length = maxPaletteVisible
+	}
+	var b strings.Builder
+	for i := 0; i < length; i++ {
+		b.WriteString(rowFor(i))
+		if i < length-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// paletteBox wraps inner content in the opencode SplitBorder shell. Returns
+// the boxed string ready for placement above the input.
+func paletteBox(inner string, width int) string {
+	t := theme.CurrentTheme()
+	bg := t.BackgroundSecondary()
+	return lipgloss.NewStyle().
+		Background(bg).
+		Border(splitBorder, false, true, false, true).
+		BorderForeground(t.Primary()).
+		BorderBackground(bg).
+		Padding(0, 1).
+		Width(width).
+		Render(inner)
+}
 
 // SlashPalette renders a filtered list of slash commands.
 type SlashPalette struct {
@@ -83,9 +147,9 @@ func (p *SlashPalette) Selected() string {
 	return p.Items[p.Cursor].Cmd
 }
 
-// Render returns the palette as a continuation of the input box: thick left
-// bar (▌ in Primary), grey BackgroundSecondary fill matching the input.
-// Border bg + interior bg + every row are all bg-filled so no black gaps.
+// Render returns the palette as a discrete floating menu: thick ┃ bars on
+// both sides (opencode SplitBorder), grey BackgroundSecondary fill, dynamic
+// cmd-column width so descriptions align across all visible items.
 func (p *SlashPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
@@ -101,10 +165,16 @@ func (p *SlashPalette) Render() string {
 	if w < 20 {
 		w = 20
 	}
-	// Box: 1 (left border ▌) + 2 (left padding) + content + 2 (right padding) = w
-	innerW := w - 5
+	innerW := w - 4
 
-	cmdW := 12
+	maxCmd := 0
+	for _, it := range visible {
+		if cw := lipgloss.Width(it.Cmd); cw > maxCmd {
+			maxCmd = cw
+		}
+	}
+	cmdW := maxCmd + 2
+
 	selStyle := lipgloss.NewStyle().
 		Background(t.Primary()).
 		Foreground(t.Background()).
@@ -114,33 +184,19 @@ func (p *SlashPalette) Render() string {
 	descStyle := lipgloss.NewStyle().Background(bg).Foreground(t.TextMuted())
 	bgPad := lipgloss.NewStyle().Background(bg)
 
-	var b strings.Builder
-	for i, item := range visible {
+	rows := renderPaletteList(len(visible), p.Cursor, func(i int) string {
+		item := visible[i]
 		padCmd := fmt.Sprintf("%-*s", cmdW, item.Cmd)
-		var line string
 		if i == p.Cursor {
-			line = selStyle.Render(padCmd + " " + item.Desc)
-		} else {
-			raw := cmdStyle.Render(padCmd) + bgPad.Render(" ") + descStyle.Render(item.Desc)
-			if visW := lipgloss.Width(raw); visW < innerW {
-				raw += bgPad.Render(strings.Repeat(" ", innerW-visW))
-			}
-			line = raw
+			return selStyle.Render(padCmd + item.Desc)
 		}
-		b.WriteString(line)
-		if i < len(visible)-1 {
-			b.WriteString("\n")
+		raw := cmdStyle.Render(padCmd) + descStyle.Render(item.Desc)
+		if visW := lipgloss.Width(raw); visW < innerW {
+			raw += bgPad.Render(strings.Repeat(" ", innerW-visW))
 		}
-	}
-
-	return lipgloss.NewStyle().
-		Background(bg).
-		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
-		BorderForeground(t.Primary()).
-		BorderBackground(bg).
-		Padding(0, 2).
-		Width(w).
-		Render(b.String())
+		return raw
+	})
+	return paletteBox(rows, w)
 }
 
 // MentionPalette renders a filtered list of file paths for @-mention completion.
@@ -188,7 +244,7 @@ func (p *MentionPalette) Selected() string {
 	return p.Items[p.Cursor]
 }
 
-// Render — same continuation style as SlashPalette with grey bg fill.
+// Render — same opencode SplitBorder style as SlashPalette.
 func (p *MentionPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
@@ -204,7 +260,7 @@ func (p *MentionPalette) Render() string {
 	if w < 20 {
 		w = 20
 	}
-	innerW := w - 5
+	innerW := w - 4
 
 	selStyle := lipgloss.NewStyle().
 		Background(t.Primary()).
@@ -214,30 +270,16 @@ func (p *MentionPalette) Render() string {
 	itemStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Text())
 	bgPad := lipgloss.NewStyle().Background(bg)
 
-	var b strings.Builder
-	for i, item := range visible {
-		var line string
+	rows := renderPaletteList(len(visible), p.Cursor, func(i int) string {
+		item := visible[i]
 		if i == p.Cursor {
-			line = selStyle.Render(item)
-		} else {
-			raw := itemStyle.Render(item)
-			if visW := lipgloss.Width(raw); visW < innerW {
-				raw += bgPad.Render(strings.Repeat(" ", innerW-visW))
-			}
-			line = raw
+			return selStyle.Render(item)
 		}
-		b.WriteString(line)
-		if i < len(visible)-1 {
-			b.WriteString("\n")
+		raw := itemStyle.Render(item)
+		if visW := lipgloss.Width(raw); visW < innerW {
+			raw += bgPad.Render(strings.Repeat(" ", innerW-visW))
 		}
-	}
-
-	return lipgloss.NewStyle().
-		Background(bg).
-		Border(lipgloss.OuterHalfBlockBorder(), false, false, false, true).
-		BorderForeground(t.Primary()).
-		BorderBackground(bg).
-		Padding(0, 2).
-		Width(w).
-		Render(b.String())
+		return raw
+	})
+	return paletteBox(rows, w)
 }

@@ -51,3 +51,7 @@ test_analysis_report.md
 _opencode/
 opencode/
 
+# Screenshots, debug logs, transient assets (not part of source)
+*.png
+sse.log
+.playwright-mcp/
