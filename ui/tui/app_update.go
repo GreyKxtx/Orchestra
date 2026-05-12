@@ -406,6 +406,17 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.input.MoveCursorAbs(len(runes))
 		return a, nil, true
 
+	case "shift+up":
+		if !a.input.HasSelection() {
+			a.input.SetAnchor(a.input.CursorPos())
+		}
+		return a, a.sendKeyToTA(tea.KeyUp), true
+	case "shift+down":
+		if !a.input.HasSelection() {
+			a.input.SetAnchor(a.input.CursorPos())
+		}
+		return a, a.sendKeyToTA(tea.KeyDown), true
+
 	case "up":
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
