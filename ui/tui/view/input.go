@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -65,6 +66,12 @@ func NewInput(width int) Input {
 	ta.CharLimit = -1
 	ta.SetWidth(width - 2) // " >" prompt occupies 2 cols
 	ta.SetHeight(1)
+
+	// Extend word-jump bindings so Ctrl+Left/Right also trigger word
+	// navigation (bubbles defaults only bind Alt+Left/B and Alt+Right/F,
+	// which doesn't match the desktop-editor convention users expect).
+	ta.KeyMap.WordBackward = key.NewBinding(key.WithKeys("alt+left", "alt+b", "ctrl+left"))
+	ta.KeyMap.WordForward = key.NewBinding(key.WithKeys("alt+right", "alt+f", "ctrl+right"))
 
 	ta.Focus()
 	return Input{ta: ta, width: width, selAnchor: -1}
@@ -137,6 +144,41 @@ func (in *Input) ClearSelection() { in.selAnchor = -1 }
 
 // MoveCursorAbs positions the cursor at the absolute rune index.
 func (in *Input) MoveCursorAbs(pos int) { in.moveCursorAbs(pos) }
+
+// MoveCursorVisualUp moves the cursor up by one visual row, preserving
+// the visual column when possible. Soft-wrap aware: a long logical line
+// that wraps to multiple visual rows navigates row-by-row within the
+// wrap. No-op if already on the top visual row.
+func (in *Input) MoveCursorVisualUp(width int) {
+	if width < 1 {
+		width = 1
+	}
+	val := in.ta.Value()
+	pos := in.CursorPos()
+	vRow, vCol := absToVisualRowCol(val, pos, width)
+	if vRow == 0 {
+		return
+	}
+	newPos := visualRowColToAbs(val, vRow-1, vCol, width)
+	in.moveCursorAbs(newPos)
+}
+
+// MoveCursorVisualDown moves the cursor down by one visual row, preserving
+// the visual column when possible. No-op if already on the bottom row.
+func (in *Input) MoveCursorVisualDown(width int) {
+	if width < 1 {
+		width = 1
+	}
+	val := in.ta.Value()
+	pos := in.CursorPos()
+	vRow, vCol := absToVisualRowCol(val, pos, width)
+	totalRows := in.VisualLineCount(width)
+	if vRow >= totalRows-1 {
+		return
+	}
+	newPos := visualRowColToAbs(val, vRow+1, vCol, width)
+	in.moveCursorAbs(newPos)
+}
 
 // SelectAll selects the entire value: anchor at 0, cursor at end.
 // No-op if the value is empty.
@@ -538,6 +580,75 @@ func clampPos(pos, max int) int {
 		return max
 	}
 	return pos
+}
+
+// absToVisualRowCol converts an absolute rune index into visual coordinates
+// (row, col) given soft-wrap width. Logical lines are separated by '\n';
+// each logical line wraps to ceil(len/width) visual rows (minimum 1).
+func absToVisualRowCol(val string, absPos, width int) (vRow, vCol int) {
+	if width < 1 {
+		width = 1
+	}
+	if absPos < 0 {
+		absPos = 0
+	}
+	offset := 0
+	for _, line := range strings.Split(val, "\n") {
+		rl := len([]rune(line))
+		if absPos <= offset+rl {
+			posInLine := absPos - offset
+			vRow += posInLine / width
+			vCol = posInLine % width
+			return
+		}
+		rowsInLine := rl / width
+		if rl == 0 || rl%width != 0 {
+			rowsInLine++
+		}
+		vRow += rowsInLine
+		offset += rl + 1
+	}
+	return
+}
+
+// visualRowColToAbs converts visual coordinates back to an absolute rune
+// index, clamping vCol to the actual line length on the target row.
+func visualRowColToAbs(val string, vRow, vCol, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	if vRow < 0 {
+		vRow = 0
+	}
+	if vCol < 0 {
+		vCol = 0
+	}
+	abs := 0
+	rowsLeft := vRow
+	for _, line := range strings.Split(val, "\n") {
+		rl := len([]rune(line))
+		rowsInLine := rl / width
+		if rl == 0 || rl%width != 0 {
+			rowsInLine++
+		}
+		if rowsLeft < rowsInLine {
+			// Target row sits inside this logical line.
+			lineRowStart := rowsLeft * width
+			colInLine := lineRowStart + vCol
+			lineRowEnd := lineRowStart + width
+			if lineRowEnd > rl {
+				lineRowEnd = rl
+			}
+			if colInLine > lineRowEnd {
+				colInLine = lineRowEnd
+			}
+			return abs + colInLine
+		}
+		rowsLeft -= rowsInLine
+		abs += rl + 1
+	}
+	runes := []rune(val)
+	return len(runes)
 }
 
 // WordRange returns the absolute [lo, hi) bounds of the word containing
