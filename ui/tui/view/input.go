@@ -385,15 +385,19 @@ func padLine(s string, width int, bgStyle lipgloss.Style) string {
 }
 
 // absolutePos computes the absolute rune index of the textarea cursor,
-// accounting for multiple lines (each separated by '\n').
+// accounting for multiple logical lines (each separated by '\n').
+// Uses ta.Line() for logical row index; info.CharOffset is the column
+// within the current visual line (which equals column within the logical
+// line when there is no soft-wrap — the typical case for our usage).
 func absolutePos(ta textarea.Model) int {
 	info := ta.LineInfo()
-	if info.RowOffset == 0 {
+	row := ta.Line()
+	if row == 0 {
 		return info.CharOffset
 	}
 	lines := strings.Split(ta.Value(), "\n")
 	pos := 0
-	for i := 0; i < info.RowOffset && i < len(lines); i++ {
+	for i := 0; i < row && i < len(lines); i++ {
 		pos += len([]rune(lines[i])) + 1 // +1 for '\n'
 	}
 	return pos + info.CharOffset
