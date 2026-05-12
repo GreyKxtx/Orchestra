@@ -156,6 +156,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if now.Sub(a.mouseLastClickAt) <= 400*time.Millisecond && absDiff <= 2 {
 					a.mouseClickCount++
+					if a.mouseClickCount > 3 {
+						a.mouseClickCount = 3
+					}
 				} else {
 					a.mouseClickCount = 1
 				}
