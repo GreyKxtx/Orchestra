@@ -160,53 +160,6 @@ func (in *Input) ClearSelection() { in.selAnchor = -1 }
 // MoveCursorAbs positions the cursor at the absolute rune index.
 func (in *Input) MoveCursorAbs(pos int) { in.moveCursorAbs(pos) }
 
-// MoveCursorVisualUp moves the cursor up by one visual row, preserving
-// the visual column. `desiredCol` lets the caller pass a sticky "desired
-// column" across a sequence of Up/Down presses so the cursor doesn't
-// permanently lose its column when stepping through a short row.
-// Pass desiredCol < 0 to capture the current column. Returns the
-// effective column used for the move (caller persists it for the next
-// step). No-op if already on the top visual row.
-func (in *Input) MoveCursorVisualUp(width, desiredCol int) int {
-	if width < 1 {
-		width = 1
-	}
-	val := in.ta.Value()
-	pos := in.CursorPos()
-	vRow, vCol := absToVisualRowCol(val, pos, width)
-	targetCol := vCol
-	if desiredCol >= 0 {
-		targetCol = desiredCol
-	}
-	if vRow == 0 {
-		return targetCol
-	}
-	newPos := visualRowColToAbs(val, vRow-1, targetCol, width)
-	in.moveCursorAbs(newPos)
-	return targetCol
-}
-
-// MoveCursorVisualDown moves the cursor down by one visual row. See
-// MoveCursorVisualUp for desiredCol semantics.
-func (in *Input) MoveCursorVisualDown(width, desiredCol int) int {
-	if width < 1 {
-		width = 1
-	}
-	val := in.ta.Value()
-	pos := in.CursorPos()
-	vRow, vCol := absToVisualRowCol(val, pos, width)
-	targetCol := vCol
-	if desiredCol >= 0 {
-		targetCol = desiredCol
-	}
-	totalRows := in.VisualLineCount(width)
-	if vRow >= totalRows-1 {
-		return targetCol
-	}
-	newPos := visualRowColToAbs(val, vRow+1, targetCol, width)
-	in.moveCursorAbs(newPos)
-	return targetCol
-}
 
 // SelectAll selects the entire value: anchor at 0, cursor at end.
 // No-op if the value is empty.
@@ -494,18 +447,16 @@ func padLine(s string, width int, bgStyle lipgloss.Style) string {
 }
 
 // absolutePos computes the absolute rune index of the textarea cursor,
-// accounting for both logical lines (separated by '\n') and soft-wrap
-// (a single logical line that exceeds textarea width and wraps to
-// multiple visual rows).
+// accounting for both logical lines (separated by '\n') and soft-wrap.
 //
-// LineInfo.StartColumn is the column-within-logical-line where the
-// current wrapped visual row starts; LineInfo.CharOffset is the visual
-// column within that wrapped row. Their sum is the column within the
-// current logical line — correct regardless of soft-wrap.
+// StartColumn is the rune index within the current logical line where
+// the current wrapped visual row starts; ColumnOffset is the rune offset
+// from StartColumn to the cursor. Both are in RUNE units. (CharOffset
+// would be visual-cell units via uniseg.StringWidth, wrong for adding.)
 func absolutePos(ta textarea.Model) int {
 	info := ta.LineInfo()
 	row := ta.Line()
-	colInLogicalLine := info.StartColumn + info.CharOffset
+	colInLogicalLine := info.StartColumn + info.ColumnOffset
 	if row == 0 {
 		return colInLogicalLine
 	}
@@ -608,84 +559,6 @@ func clampPos(pos, max int) int {
 		return max
 	}
 	return pos
-}
-
-// absToVisualRowCol converts an absolute rune index into visual coordinates
-// (row, col) given soft-wrap width. Logical lines are separated by '\n';
-// each logical line wraps to ceil(len/width) visual rows (minimum 1).
-func absToVisualRowCol(val string, absPos, width int) (vRow, vCol int) {
-	if width < 1 {
-		width = 1
-	}
-	if absPos < 0 {
-		absPos = 0
-	}
-	offset := 0
-	for _, line := range strings.Split(val, "\n") {
-		rl := len([]rune(line))
-		if absPos <= offset+rl {
-			posInLine := absPos - offset
-			// Edge case: cursor exactly at end of line on a wrap-row
-			// boundary — visually it sits at the END of the previous
-			// visual row (col = width), not at the start of a phantom
-			// next visual row (col = 0).
-			if posInLine == rl && rl > 0 && posInLine%width == 0 {
-				vRow += (posInLine / width) - 1
-				vCol = width
-				return
-			}
-			vRow += posInLine / width
-			vCol = posInLine % width
-			return
-		}
-		rowsInLine := rl / width
-		if rl == 0 || rl%width != 0 {
-			rowsInLine++
-		}
-		vRow += rowsInLine
-		offset += rl + 1
-	}
-	return
-}
-
-// visualRowColToAbs converts visual coordinates back to an absolute rune
-// index, clamping vCol to the actual line length on the target row.
-func visualRowColToAbs(val string, vRow, vCol, width int) int {
-	if width < 1 {
-		width = 1
-	}
-	if vRow < 0 {
-		vRow = 0
-	}
-	if vCol < 0 {
-		vCol = 0
-	}
-	abs := 0
-	rowsLeft := vRow
-	for _, line := range strings.Split(val, "\n") {
-		rl := len([]rune(line))
-		rowsInLine := rl / width
-		if rl == 0 || rl%width != 0 {
-			rowsInLine++
-		}
-		if rowsLeft < rowsInLine {
-			// Target row sits inside this logical line.
-			lineRowStart := rowsLeft * width
-			colInLine := lineRowStart + vCol
-			lineRowEnd := lineRowStart + width
-			if lineRowEnd > rl {
-				lineRowEnd = rl
-			}
-			if colInLine > lineRowEnd {
-				colInLine = lineRowEnd
-			}
-			return abs + colInLine
-		}
-		rowsLeft -= rowsInLine
-		abs += rl + 1
-	}
-	runes := []rune(val)
-	return len(runes)
 }
 
 // WordRange returns the absolute [lo, hi) bounds of the word containing
