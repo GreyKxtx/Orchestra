@@ -396,6 +396,16 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.input.SelectToDocEnd()
 		return a, nil, true
 
+	case "ctrl+home":
+		a.input.ClearSelection()
+		a.input.MoveCursorAbs(0)
+		return a, nil, true
+	case "ctrl+end":
+		a.input.ClearSelection()
+		runes := []rune(a.input.Value())
+		a.input.MoveCursorAbs(len(runes))
+		return a, nil, true
+
 	case "up":
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
