@@ -204,9 +204,14 @@ func (a *App) layout() {
 
 	// Track input box position for mouse click-to-cursor.
 	if !a.showWelcome {
-		const inputBoxHeight = 5
-		a.inputRowY = a.height - 1 - inputBoxHeight + 1 // textarea content row
-		a.inputColX = chatSidePad + 1 + 2               // sidePad + border(▌) + leftPad
+		// Box layout: 1 top border + 1 top pad + ta.Height() + 1 gap + 1 modeLine + 1 bottom pad = 5 + (ta.Height()-1).
+		taH := a.input.Inner().Height()
+		if taH < 1 {
+			taH = 1
+		}
+		inputBoxHeight := 4 + taH
+		a.inputRowY = a.height - 1 - inputBoxHeight + 2 // textarea content row (skip top border + top pad)
+		a.inputColX = chatSidePad + 1 + 2                // sidePad + border(▌) + leftPad
 	} else {
 		// Welcome view: rough estimate
 		a.inputRowY = a.height / 2
