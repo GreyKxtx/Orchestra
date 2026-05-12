@@ -651,6 +651,11 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case "delete":
 		a.input.DeleteForward()
 		return a, nil, true
+	case "shift+enter":
+		a.input.InsertNewline()
+		a.input.SyncHeight(5)
+		a.layout()
+		return a, nil, true
 	case "enter":
 		return a.handleEnter()
 	}
