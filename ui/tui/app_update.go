@@ -149,10 +149,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
 			if m.Y == a.inputRowY {
 				charPos := a.mouseXToAbsolutePos(m.X)
-				a.input.ClearSelection()
-				a.input.SetAnchor(charPos)
-				a.input.SetMouseCaret(charPos)
-				a.mouseDown = true
+				now := time.Now()
+				absDiff := charPos - a.mouseLastClickPos
+				if absDiff < 0 {
+					absDiff = -absDiff
+				}
+				if now.Sub(a.mouseLastClickAt) <= 400*time.Millisecond && absDiff <= 2 {
+					a.mouseClickCount++
+				} else {
+					a.mouseClickCount = 1
+				}
+				a.mouseLastClickAt = now
+				a.mouseLastClickPos = charPos
+
+				switch a.mouseClickCount {
+				case 1:
+					a.input.ClearSelection()
+					a.input.SetAnchor(charPos)
+					a.input.SetMouseCaret(charPos)
+					a.mouseDown = true
+				case 2:
+					lo, hi := a.input.WordRange(charPos)
+					if lo != hi {
+						a.input.SetAnchor(lo)
+						a.input.MoveCursorAbs(hi)
+					}
+				case 3:
+					lo, hi := a.input.LineRange(charPos)
+					if lo != hi {
+						a.input.SetAnchor(lo)
+						a.input.MoveCursorAbs(hi)
+					}
+				}
 			}
 			return a, nil
 		case m.Action == tea.MouseActionRelease:
