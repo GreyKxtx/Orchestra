@@ -383,6 +383,18 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.input.Paste(txt)
 		}
 		return a, nil, true
+	case "shift+home":
+		a.input.SelectToLineStart()
+		return a, nil, true
+	case "shift+end":
+		a.input.SelectToLineEnd()
+		return a, nil, true
+	case "ctrl+shift+home":
+		a.input.SelectToDocStart()
+		return a, nil, true
+	case "ctrl+shift+end":
+		a.input.SelectToDocEnd()
+		return a, nil, true
 
 	case "up":
 		if a.paletteActive {
