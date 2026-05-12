@@ -161,38 +161,51 @@ func (in *Input) ClearSelection() { in.selAnchor = -1 }
 func (in *Input) MoveCursorAbs(pos int) { in.moveCursorAbs(pos) }
 
 // MoveCursorVisualUp moves the cursor up by one visual row, preserving
-// the visual column when possible. Soft-wrap aware: a long logical line
-// that wraps to multiple visual rows navigates row-by-row within the
-// wrap. No-op if already on the top visual row.
-func (in *Input) MoveCursorVisualUp(width int) {
+// the visual column. `desiredCol` lets the caller pass a sticky "desired
+// column" across a sequence of Up/Down presses so the cursor doesn't
+// permanently lose its column when stepping through a short row.
+// Pass desiredCol < 0 to capture the current column. Returns the
+// effective column used for the move (caller persists it for the next
+// step). No-op if already on the top visual row.
+func (in *Input) MoveCursorVisualUp(width, desiredCol int) int {
 	if width < 1 {
 		width = 1
 	}
 	val := in.ta.Value()
 	pos := in.CursorPos()
 	vRow, vCol := absToVisualRowCol(val, pos, width)
-	if vRow == 0 {
-		return
+	targetCol := vCol
+	if desiredCol >= 0 {
+		targetCol = desiredCol
 	}
-	newPos := visualRowColToAbs(val, vRow-1, vCol, width)
+	if vRow == 0 {
+		return targetCol
+	}
+	newPos := visualRowColToAbs(val, vRow-1, targetCol, width)
 	in.moveCursorAbs(newPos)
+	return targetCol
 }
 
-// MoveCursorVisualDown moves the cursor down by one visual row, preserving
-// the visual column when possible. No-op if already on the bottom row.
-func (in *Input) MoveCursorVisualDown(width int) {
+// MoveCursorVisualDown moves the cursor down by one visual row. See
+// MoveCursorVisualUp for desiredCol semantics.
+func (in *Input) MoveCursorVisualDown(width, desiredCol int) int {
 	if width < 1 {
 		width = 1
 	}
 	val := in.ta.Value()
 	pos := in.CursorPos()
 	vRow, vCol := absToVisualRowCol(val, pos, width)
+	targetCol := vCol
+	if desiredCol >= 0 {
+		targetCol = desiredCol
+	}
 	totalRows := in.VisualLineCount(width)
 	if vRow >= totalRows-1 {
-		return
+		return targetCol
 	}
-	newPos := visualRowColToAbs(val, vRow+1, vCol, width)
+	newPos := visualRowColToAbs(val, vRow+1, targetCol, width)
 	in.moveCursorAbs(newPos)
+	return targetCol
 }
 
 // SelectAll selects the entire value: anchor at 0, cursor at end.

@@ -109,6 +109,12 @@ type App struct {
 	mouseLastClickAt  time.Time
 	mouseLastClickPos int
 	mouseClickCount   int
+
+	// Sticky desired column for vertical (Up/Down) navigation. -1 means
+	// "not in a vertical nav sequence" — the next Up/Down captures the
+	// current visual column. Reset to -1 on any non-vertical action so
+	// the sequence ends and a fresh column is captured next time.
+	lastVisualCol int
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -159,8 +165,9 @@ func NewApp(cfg Config) (*App, error) {
 		theme.SetTheme(theme.ByName(cfg.Theme))
 	}
 	a := &App{
-		cfg:     cfg,
-		session: state.NewSession(),
+		cfg:           cfg,
+		session:       state.NewSession(),
+		lastVisualCol: -1,
 	}
 	a.statusBar.SetModel(cfg.Model)
 	a.statusBar.SetProject(cfg.CWD)
