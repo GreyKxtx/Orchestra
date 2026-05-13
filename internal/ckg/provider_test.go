@@ -2,6 +2,8 @@ package ckg
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -87,6 +89,55 @@ func TestExploreSymbolAmbiguousShortName(t *testing.T) {
 	}
 	if !strings.Contains(out, "ex/a.Run") || !strings.Contains(out, "ex/b.Run") {
 		t.Fatalf("expected both FQNs listed, got: %s", out)
+	}
+}
+
+// TestExploreSymbol_FQNPrefixFallback verifies that explore finds a symbol when
+// the model passes a package-prefixed form ("agent.Agent.Run", "internal/agent.Agent.Run")
+// instead of the bare short name ("Agent.Run"). IsLikelyFQN is true for these inputs,
+// so without the fallback they would fail exact FQN match and report "not found".
+func TestExploreSymbol_FQNPrefixFallback(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	node := Node{
+		FQN:       "github.com/example/internal/agent.Agent.Run",
+		ShortName: "Agent.Run",
+		Kind:      "method",
+		LineStart: 1, LineEnd: 10,
+	}
+	if err := s.SaveFileNodes(ctx, "internal/agent/agent.go", "h1", "go",
+		"github.com/example", "agent", []Node{node}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	// Create the source file so ExploreSymbol can read it and include the FQN header.
+	srcDir := filepath.Join(root, "internal", "agent")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "package agent\n\nfunc (a *Agent) Run() {}\n"
+	if err := os.WriteFile(filepath.Join(srcDir, "agent.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewProvider(s, root)
+
+	for _, query := range []string{
+		"agent.Agent.Run",          // two dots → IsLikelyFQN=true
+		"internal/agent.Agent.Run", // slash → IsLikelyFQN=true
+	} {
+		out, err := p.ExploreSymbol(ctx, query)
+		if err != nil {
+			t.Fatalf("ExploreSymbol(%q): unexpected error: %v", query, err)
+		}
+		if strings.Contains(out, "не найден") {
+			t.Errorf("ExploreSymbol(%q): got 'not found', expected symbol to be found; output:\n%s", query, out)
+		}
+		if !strings.Contains(out, "Agent.Run") {
+			t.Errorf("ExploreSymbol(%q): expected output to mention Agent.Run; output:\n%s", query, out)
+		}
 	}
 }
 

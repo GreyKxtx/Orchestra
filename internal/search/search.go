@@ -28,7 +28,7 @@ func DefaultOptions() Options {
 	return Options{
 		MaxMatchesPerFile: 10,
 		CaseInsensitive:   false,
-		ContextLines:      2,
+		ContextLines:      3,
 	}
 }
 
@@ -61,8 +61,13 @@ func SearchInProject(root string, query string, excludeDirs []string, opts Optio
 			return nil
 		}
 
-		// Skip backup files
-		if strings.HasSuffix(path, ".orchestra.bak") {
+		// Skip backup files and known binary/generated extensions.
+		if strings.HasSuffix(path, ".orchestra.bak") || isBinaryExt(filepath.Ext(path)) {
+			return nil
+		}
+
+		// Skip large files (> 1 MB) — binaries and generated assets.
+		if info.Size() > 1<<20 {
 			return nil
 		}
 
@@ -70,6 +75,11 @@ func SearchInProject(root string, query string, excludeDirs []string, opts Optio
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil // Skip files we can't read
+		}
+
+		// Skip files whose first 512 bytes contain a null byte — binary content.
+		if hasBinaryContent(data) {
+			return nil
 		}
 
 		// Search in file
@@ -151,4 +161,34 @@ func collectContext(lines []string, currentLine int, contextLines int, before bo
 	}
 
 	return context
+}
+
+// isBinaryExt reports whether the file extension belongs to a binary or
+// generated file that should never be text-searched.
+func isBinaryExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj",
+		".bin", ".dat", ".db", ".sqlite", ".sqlite3",
+		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx",
+		".wasm", ".class", ".pyc", ".pyo":
+		return true
+	}
+	return false
+}
+
+// hasBinaryContent reports whether the first 512 bytes of data contain a null byte,
+// which is a reliable indicator of binary (non-text) content.
+func hasBinaryContent(data []byte) bool {
+	check := data
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	for _, b := range check {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
 }

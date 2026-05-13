@@ -147,11 +147,29 @@ func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
 
+// WarmupCKG launches a background incremental scan of the CKG store so that
+// the first explore or FetchCKGContext call doesn't pay the full scan cost.
+// The goroutine is bound to ctx and exits silently on completion or cancellation.
+func (r *Runner) WarmupCKG(ctx context.Context) {
+	if r.ckgStore == nil {
+		return
+	}
+	go func() {
+		orch := ckg.NewOrchestrator(r.ckgStore, r.workspaceRoot)
+		_ = orch.UpdateGraph(ctx)
+	}()
+}
+
 // FetchCKGContext returns a <ckg_context> block of up to 12 nodes relevant to
 // the query, or an empty string if the CKG store is unavailable or has no matches.
 func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
 	if r.ckgStore == nil {
 		return ""
+	}
+	// Ensure the graph is populated before querying (same as ExploreCodebase does).
+	orch := ckg.NewOrchestrator(r.ckgStore, r.workspaceRoot)
+	if err := orch.UpdateGraph(ctx); err != nil {
+		return "" // non-fatal: empty context is better than crashing
 	}
 	nodes, err := r.ckgStore.FindRelevantNodes(ctx, query, 12)
 	if err != nil || len(nodes) == 0 {
@@ -300,6 +318,22 @@ func (r *Runner) FSRead(ctx context.Context, req FSReadRequest) (*FSReadResponse
 		return nil, err
 	}
 
+	// For .go source files: redirect model to explore() instead of dumping raw code.
+	// The file_hash is returned correctly so patches still work.
+	if strings.HasSuffix(relSlash, ".go") && r.ckgStore != nil {
+		if redirect := r.goFileRedirect(ctx, relSlash, hash); redirect != "" {
+			return &FSReadResponse{
+				Path:      relSlash,
+				Content:   redirect,
+				SHA256:    hash,
+				FileHash:  hash,
+				MTimeUnix: mtimeUnix,
+				Size:      size,
+				Truncated: false,
+			}, nil
+		}
+	}
+
 	numbered := addLineNumbers(content)
 	if reminder := r.discoverInstructions(filepath.Dir(absPath)); reminder != "" {
 		numbered = "<system-reminder>\n" + reminder + "\n</system-reminder>\n\n" + numbered
@@ -314,6 +348,27 @@ func (r *Runner) FSRead(ctx context.Context, req FSReadRequest) (*FSReadResponse
 		Size:      size,
 		Truncated: truncated,
 	}, nil
+}
+
+// goFileRedirect builds a symbol-list response for .go files so the model uses
+// explore() instead of reading raw source. Returns "" if CKG has no data for
+// this file (fall through to normal read).
+func (r *Runner) goFileRedirect(ctx context.Context, relSlash, hash string) string {
+	syms, err := r.ckgStore.SymbolsInFile(ctx, relSlash)
+	if err != nil || len(syms) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("⚠️  Чтение .go файлов через read неэффективно — файл может быть тысячи строк.\n")
+	sb.WriteString("Используй explore() для чтения кода. file_hash ниже — для патчей.\n\n")
+	sb.WriteString("file_hash: " + hash + "\n\n")
+	sb.WriteString("Символы в " + relSlash + ":\n")
+	for _, s := range syms {
+		sb.WriteString(fmt.Sprintf("  • %s (%s, строки %d-%d) → explore(\"%s\")\n",
+			s.ShortName, s.Kind, s.LineStart, s.LineEnd, s.ShortName))
+	}
+	sb.WriteString("\nЕсли нужен конкретный кусок кода для патча — вызови explore(\"ИмяСимвола\").\n")
+	return sb.String()
 }
 
 // discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
@@ -415,6 +470,9 @@ type SearchTextMatch struct {
 	LineText      string   `json:"line_text"`
 	ContextBefore []string `json:"context_before"`
 	ContextAfter  []string `json:"context_after"`
+	// SymbolFQN is the FQN of the innermost symbol containing this line (CKG).
+	// Empty for non-Go files or when CKG has no data.
+	SymbolFQN string `json:"symbol_fqn,omitempty"`
 }
 
 type SearchTextResponse struct {
@@ -492,13 +550,20 @@ func (r *Runner) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 			rel = m.FilePath
 		}
 		rel = filepath.ToSlash(rel)
-		out = append(out, SearchTextMatch{
+		sm := SearchTextMatch{
 			Path:          rel,
 			Line:          m.Line,
 			LineText:      m.LineText,
 			ContextBefore: m.ContextBefore,
 			ContextAfter:  m.ContextAfter,
-		})
+		}
+		// Enrich .go matches with the containing symbol FQN from CKG.
+		if strings.HasSuffix(rel, ".go") && r.ckgStore != nil {
+			if fqn, fqnErr := r.ckgStore.FQNAtLine(ctx, rel, m.Line); fqnErr == nil && fqn != "" {
+				sm.SymbolFQN = fqn
+			}
+		}
+		out = append(out, sm)
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -512,6 +577,87 @@ func (r *Runner) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 	}
 
 	return &SearchTextResponse{Matches: out}, nil
+}
+
+// formatSearchResults renders grep output as human-readable text.
+// The explicit count + "(исчерпывающий поиск)" label prevents the model from
+// retrying after seeing a low match count — it knows the list is complete.
+func formatSearchResults(query string, resp *SearchTextResponse) string {
+	if resp == nil || len(resp.Matches) == 0 {
+		return fmt.Sprintf("Совпадений для %q в проекте не найдено (исчерпывающий поиск).", query)
+	}
+
+	var sb strings.Builder
+	n := len(resp.Matches)
+	sb.WriteString(fmt.Sprintf("Найдено %d совпадени", n))
+	switch {
+	case n == 1:
+		sb.WriteString("е")
+	case n < 5:
+		sb.WriteString("я")
+	default:
+		sb.WriteString("й")
+	}
+	sb.WriteString(fmt.Sprintf(" для %q (исчерпывающий поиск по всему проекту):\n", query))
+
+	for _, m := range resp.Matches {
+		sb.WriteString("\n")
+
+		// Classify the match so the model knows immediately what it's looking at.
+		kind := classifyMatch(m.Path, m.LineText, query, m.SymbolFQN)
+
+		// Strip full module path — show only "pkg.Type.Method" for readability.
+		fqn := m.SymbolFQN
+		if idx := strings.LastIndex(fqn, "/"); idx >= 0 {
+			fqn = fqn[idx+1:]
+		}
+
+		if fqn != "" {
+			sb.WriteString(fmt.Sprintf("%s:%d  [в: %s]  %s\n", m.Path, m.Line, fqn, kind))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s:%d  %s\n", m.Path, m.Line, kind))
+		}
+		for _, c := range m.ContextBefore {
+			sb.WriteString("    " + c + "\n")
+		}
+		sb.WriteString(">   " + m.LineText + "\n")
+		for _, c := range m.ContextAfter {
+			sb.WriteString("    " + c + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// classifyMatch returns a short label describing what kind of match a grep line is.
+// This lets the model immediately tell a call site from a definition or comment.
+func classifyMatch(filePath, lineText, query, symbolFQN string) string {
+	// Non-code files: docs, prompts, configs — not actual call sites.
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".md", ".txt", ".rst", ".adoc", ".json", ".yaml", ".yml", ".toml":
+		return "[документация/конфиг]"
+	}
+
+	trimmed := strings.TrimSpace(lineText)
+	// Comment line.
+	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+		return "[комментарий]"
+	}
+	// Function/method definition containing the query name.
+	if strings.Contains(trimmed, "func ") && strings.Contains(trimmed, query) {
+		return "[определение]"
+	}
+	// Match is inside the method that defines the query symbol — likely definition body.
+	if symbolFQN != "" {
+		lastSeg := symbolFQN
+		if idx := strings.LastIndex(symbolFQN, "/"); idx >= 0 {
+			lastSeg = symbolFQN[idx+1:]
+		}
+		if strings.HasSuffix(lastSeg, "."+query) || lastSeg == query {
+			return "[тело определения]"
+		}
+	}
+	return "[вызов]"
 }
 
 func searchInSingleFile(filePath string, content string, query string, queryLower string, opts search.Options) []search.Match {

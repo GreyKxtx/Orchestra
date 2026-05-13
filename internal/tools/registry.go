@@ -200,7 +200,7 @@ func toolSearchText() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "grep",
-			Description: "Текстовый поиск по проекту (можно ограничить paths).",
+			Description: "Текстовый поиск по проекту. Возвращает исчерпывающий список всех совпадений — если показано N результатов, других нет. Каждый матч в .go файле содержит поле [в: Receiver.Method] — это метод/функция где найдена строка. Не повторяй запрос если результат уже получен.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -248,7 +248,7 @@ func toolExploreCodebase() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "explore",
-			Description: "Поиск архитектурного контекста. Используй, чтобы найти код функции, структуры или интерфейса по имени, а также посмотреть, где они используются в проекте. НЕ используй для чтения целых файлов.",
+			Description: "Три уровня глубины — выбираются автоматически по форме запроса:\n• Пакет: explore(\"internal/agent\") → все типы, методы, функции без кода тел\n• Тип: explore(\"Agent\") → определение struct/interface + полный список методов\n• Символ: explore(\"Agent.Run\") → полный код метода/функции + callers + callees\nДля метода пиши 'Agent.Run', не просто 'Run'. При неоднозначности — используй FQN из ответа.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -256,7 +256,7 @@ func toolExploreCodebase() llm.ToolDef {
   "properties": {
     "symbol_name": {
       "type": "string",
-      "description": "Точное имя функции, класса или интерфейса (например: UpsertFile или UserRepository)"
+      "description": "Пакет: 'internal/agent'. Тип: 'Agent'. Метод: 'Agent.Run'. Функция: 'ResolveExternalPatches'. FQN: 'internal/agent.Agent.Run'."
     }
   }
 }`),
