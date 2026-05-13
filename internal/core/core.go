@@ -127,6 +127,12 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}, nil
 }
 
+// WarmupCKG starts a background CKG scan bound to ctx. Call once after New
+// so the graph is populated before the first agent run or explore call.
+func (c *Core) WarmupCKG(ctx context.Context) {
+	c.tools.WarmupCKG(ctx)
+}
+
 func (c *Core) Health() protocol.Health {
 	return protocol.Health{
 		Status:          "ok",

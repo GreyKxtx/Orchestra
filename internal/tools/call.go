@@ -98,7 +98,7 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		if err != nil {
 			return nil, err
 		}
-		return mustJSON(resp)
+		return json.RawMessage(formatSearchResults(req.Query, resp)), nil
 
 	case "symbols":
 		var req CodeSymbolsRequest

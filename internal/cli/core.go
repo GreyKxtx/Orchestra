@@ -68,6 +68,10 @@ func runCore(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
+	// Pre-populate the CKG in the background so the first explore/FetchCKGContext
+	// call doesn't pay the full initial scan cost.
+	c.WarmupCKG(ctx)
+
 	// Optional HTTP debug server.
 	if coreHTTP {
 		// Clean up stale discovery file before starting.
