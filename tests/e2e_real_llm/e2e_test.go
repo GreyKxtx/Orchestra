@@ -3,6 +3,7 @@ package e2e_real_llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,12 +11,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/lmstudio"
 	"github.com/orchestra/orchestra/internal/protocol"
 )
 
 const (
-	envE2ELLM = "ORCH_E2E_LLM"
+	envE2ELLM    = "ORCH_E2E_LLM"
+	wantNumCtx   = 20000
 )
+
+// TestMain ensures the model is loaded with a 20k context window before any
+// test runs. If LM Studio's load endpoint is unavailable (non-LM Studio host),
+// the step is silently skipped.
+func TestMain(m *testing.M) {
+	if os.Getenv(envE2ELLM) == "1" {
+		ensureModelLoaded()
+	}
+	os.Exit(m.Run())
+}
+
+// ensureModelLoaded calls LM Studio's /api/v1/models/load so the model is
+// always running with wantNumCtx tokens of context.
+func ensureModelLoaded() {
+	apiBase := getLLMAPIBase()   // e.g. "http://10.5.0.2:1234/v1"
+	model := getLLMModel()
+
+	// Derive the LM Studio endpoint from the OpenAI-compat api_base.
+	endpoint := strings.TrimSuffix(strings.TrimSuffix(apiBase, "/v1"), "/")
+
+	lms := lmstudio.NewClient(endpoint)
+	resp, err := lms.LoadModel(model, wantNumCtx)
+	if err != nil {
+		fmt.Printf("[e2e setup] could not load model via LM Studio API: %v — continuing anyway\n", err)
+		return
+	}
+	if resp == nil {
+		fmt.Println("[e2e setup] LM Studio load endpoint not available — skipping model reload")
+		return
+	}
+	ctx := wantNumCtx
+	if resp.LoadConfig != nil {
+		ctx = resp.LoadConfig.ContextLength
+	}
+	fmt.Printf("[e2e setup] model %q loaded, context_length=%d\n", model, ctx)
+}
 
 // requireE2ELLM skips test if ORCH_E2E_LLM is not set to "1"
 func requireE2ELLM(t *testing.T) {
@@ -86,6 +125,7 @@ func setupTestProject(t *testing.T) string {
 			"model":       getLLMModel(),
 			"max_tokens":  8000,
 			"temperature": 0.0, // Deterministic for tests
+			"extra_body":  map[string]interface{}{"num_ctx": wantNumCtx},
 		},
 		"agent": map[string]interface{}{
 			"max_steps":           15, // Increased for real LLM which may need more steps
