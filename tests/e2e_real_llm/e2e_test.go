@@ -30,30 +30,39 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// ensureModelLoaded calls LM Studio's /api/v1/models/load so the model is
-// always running with wantNumCtx tokens of context.
+// ensureModelLoaded checks whether the model is already loaded in LM Studio.
+// If it is, the reload is skipped entirely so tests don't re-initialise the
+// model between runs. If the model isn't loaded yet it is loaded with full GPU
+// offload and wantNumCtx context.
 func ensureModelLoaded() {
-	apiBase := getLLMAPIBase()   // e.g. "http://10.5.0.2:1234/v1"
+	apiBase := getLLMAPIBase() // e.g. "http://10.5.0.2:1234/v1"
 	model := getLLMModel()
 
 	// Derive the LM Studio endpoint from the OpenAI-compat api_base.
 	endpoint := strings.TrimSuffix(strings.TrimSuffix(apiBase, "/v1"), "/")
 
 	lms := lmstudio.NewClient(endpoint)
+
+	// Skip reload if the model is already running (e.g. loaded manually in LM Studio).
+	if lms.IsModelLoaded(model) {
+		fmt.Printf("[e2e setup] model %q already loaded — skipping reload\n", model)
+		return
+	}
+
 	resp, err := lms.LoadModel(model, wantNumCtx)
 	if err != nil {
 		fmt.Printf("[e2e setup] could not load model via LM Studio API: %v — continuing anyway\n", err)
 		return
 	}
 	if resp == nil {
-		fmt.Println("[e2e setup] LM Studio load endpoint not available — skipping model reload")
+		fmt.Printf("[e2e setup] model %q already loaded or endpoint unavailable — skipping reload\n", model)
 		return
 	}
 	ctx := wantNumCtx
 	if resp.LoadConfig != nil {
 		ctx = resp.LoadConfig.ContextLength
 	}
-	fmt.Printf("[e2e setup] model %q loaded, context_length=%d\n", model, ctx)
+	fmt.Printf("[e2e setup] model %q loaded with full GPU offload, context_length=%d\n", model, ctx)
 }
 
 // requireE2ELLM skips test if ORCH_E2E_LLM is not set to "1"

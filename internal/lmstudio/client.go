@@ -53,10 +53,17 @@ type v1Response struct {
 	Data []v1Model `json:"data"`
 }
 
+// GPUOffloadConfig controls how many model layers run on GPU.
+// Ratio "max" offloads all layers; a float in [0,1] offloads that fraction.
+type GPUOffloadConfig struct {
+	Ratio interface{} `json:"ratio"` // "max" or float64
+}
+
 // LoadModelRequest is the body sent to POST /api/v1/models/load.
 type LoadModelRequest struct {
-	Model         string `json:"model"`
-	ContextLength int    `json:"context_length,omitempty"`
+	Model         string            `json:"model"`
+	ContextLength int               `json:"context_length,omitempty"`
+	GPUOffload    *GPUOffloadConfig `json:"gpu_offload,omitempty"`
 }
 
 // LoadModelResponse is the LM Studio /api/v1/models/load response.
@@ -68,14 +75,31 @@ type LoadModelResponse struct {
 	} `json:"load_config,omitempty"`
 }
 
+// IsModelLoaded reports whether modelID is currently loaded in LM Studio.
+// Returns false (no error) when the model list cannot be fetched.
+func (c *Client) IsModelLoaded(modelID string) bool {
+	models, err := c.ListModels()
+	if err != nil {
+		return false
+	}
+	for _, m := range models {
+		if m.ID == modelID && m.IsLoaded {
+			return true
+		}
+	}
+	return false
+}
+
 // LoadModel calls POST /api/v1/models/load to ensure the given model is
-// loaded with the requested context length. A dedicated HTTP client with a
-// 10-minute timeout is used because large models can take minutes to load.
+// loaded with the requested context length and full GPU offload.
+// A dedicated HTTP client with a 10-minute timeout is used because large
+// models can take minutes to load.
 // Returns nil if the server does not support the endpoint (non-LM Studio hosts).
 func (c *Client) LoadModel(modelID string, contextLength int) (*LoadModelResponse, error) {
 	body, _ := json.Marshal(LoadModelRequest{
 		Model:         modelID,
 		ContextLength: contextLength,
+		GPUOffload:    &GPUOffloadConfig{Ratio: "max"},
 	})
 	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/v1/models/load", bytes.NewReader(body))
 	if err != nil {
@@ -91,6 +115,9 @@ func (c *Client) LoadModel(modelID string, contextLength int) (*LoadModelRespons
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil // endpoint not supported — not an LM Studio host
+	}
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, nil // model already loaded — LM Studio returns 400 on reload attempt
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("load model returned %d", resp.StatusCode)

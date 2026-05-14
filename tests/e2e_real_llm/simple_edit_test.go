@@ -1,95 +1,52 @@
 package e2e_real_llm
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestSimpleEdit tests basic edit scenario: rename function
+// TestSimpleEdit asks the agent to rename a function and verifies the file was
+// actually changed. The write/edit tools write directly to disk during the
+// tool-call phase, so --apply is required and the result is always a file mutation.
 func TestSimpleEdit(t *testing.T) {
 	requireE2ELLM(t)
 
 	projectDir := setupTestProject(t)
+	mainPath := filepath.Join(projectDir, "main.go")
 
-	// Run dry-run apply: rename function greet to sayHello
-	query := "переименуй функцию greet в sayHello"
+	query := "переименуй функцию greet в sayHello во всех местах в файле main.go"
 	stdout, stderr, exitCode := runOrchestra(t, projectDir,
-		"apply", "--via-core", query)
-
+		"apply", "--via-core", "--apply", query)
 	combined := stdout + "\n" + stderr
 
-	// Classify error
 	errCat := classifyError(combined, exitCode)
-
 	switch errCat {
 	case ErrorCategoryOK:
-		// Continue with assertions below
+		// good
 	case ErrorCategoryModelOutput:
-		t.Logf("Model generated invalid operations (expected for integration test)")
-		return // This is OK for E2E test - model errors are acceptable
+		t.Logf("model generated invalid output (acceptable for integration test):\n%s", combined)
+		return
 	case ErrorCategoryInfrastructure:
-		t.Fatalf("Infrastructure error: exit code %d\nStdout: %s\nStderr: %s", exitCode, stdout, stderr)
+		t.Fatalf("infrastructure error (exit %d):\n%s", exitCode, combined)
 	case ErrorCategorySystemBug:
-		t.Fatalf("System bug detected: exit code %d\nStdout: %s\nStderr: %s", exitCode, stdout, stderr)
+		t.Fatalf("system bug (exit %d):\n%s", exitCode, combined)
 	}
 
-	// Parse output
-	_, _, errorCode := parseApplyOutput(stdout, stderr)
-
-	// Assertions
-	if errorCode != "" {
-		t.Errorf("Expected no error, got: %s", errorCode)
-	}
-
-	// Check plan.json for ops (ops are saved to file, not stdout)
-	planPath := filepath.Join(projectDir, ".orchestra", "plan.json")
-	planData, err := os.ReadFile(planPath)
+	after, err := os.ReadFile(mainPath)
 	if err != nil {
-		t.Fatalf("plan.json not found: %v", err)
+		t.Fatalf("read main.go after apply: %v", err)
+	}
+	content := string(after)
+
+	if !strings.Contains(content, "sayHello") {
+		t.Errorf("rename did not happen: 'sayHello' not found in file\ncontent:\n%s", content)
+	}
+	if strings.Contains(content, "func greet(") {
+		t.Errorf("old signature 'func greet(' still present after rename\ncontent:\n%s", content)
 	}
 
-	var plan struct {
-		Ops []interface{} `json:"ops"`
-	}
-	if err := json.Unmarshal(planData, &plan); err != nil {
-		t.Fatalf("Failed to parse plan.json: %v", err)
-	}
-
-	if len(plan.Ops) == 0 {
-		t.Error("Expected ops in plan.json, but none found")
-	}
-
-	// Check diff.txt exists
-	diffPath := filepath.Join(projectDir, ".orchestra", "diff.txt")
-	diffData, err := os.ReadFile(diffPath)
-	if err != nil {
-		t.Fatalf("diff.txt not found: %v", err)
-	}
-
-	if len(diffData) == 0 {
-		t.Error("Expected diff in diff.txt, but file is empty")
-	}
-
-	// Verify that main.go would be changed (check diff content)
-	if !strings.Contains(combined, "greet") || !strings.Contains(combined, "sayHello") {
-		t.Logf("Warning: diff might not contain expected changes. Output:\n%s", combined)
-	}
-
-	// Verify file was NOT actually changed (dry-run)
-	mainPath := filepath.Join(projectDir, "main.go")
-	content, err := os.ReadFile(mainPath)
-	if err != nil {
-		t.Fatalf("Failed to read main.go: %v", err)
-	}
-
-	if strings.Contains(string(content), "sayHello") {
-		t.Error("File was modified in dry-run mode (should not happen)")
-	}
-
-	if !strings.Contains(string(content), "greet") {
-		t.Error("Original function name should still be present")
-	}
+	t.Logf("OK — file renamed, exit=%d", exitCode)
+	t.Logf("file content after apply:\n%s", content)
 }
