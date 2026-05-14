@@ -114,10 +114,15 @@ type jsonSchemaSpec struct {
 	Strict bool            `json:"strict"`
 }
 
-// chatCompletionResponse represents OpenAI chat completion response
+// chatCompletionResponse represents OpenAI chat completion response.
+// The inner messageWithReasoning type captures the reasoning_content field
+// that reasoning models (qwen3.6-27b, deepseek-r1) return alongside content.
 type chatCompletionResponse struct {
 	Choices []struct {
-		Message Message `json:"message"`
+		Message struct {
+			Message
+			ReasoningContent string `json:"reasoning_content,omitempty"`
+		} `json:"message"`
 	} `json:"choices"`
 	Error struct {
 		Message string `json:"message"`
@@ -262,7 +267,15 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 		return nil, fmt.Errorf("no choices in response")
 	}
 
-	return &CompleteResponse{Message: apiResp.Choices[0].Message}, nil
+	choice := apiResp.Choices[0]
+	msg := choice.Message.Message
+	// Fold reasoning_content into content when the model returns blank content alongside
+	// its thinking (qwen3.6-27b in LM Studio, deepseek-r1, etc.). Only fold when
+	// there are no tool_calls — if the model is calling a tool, blank content is normal.
+	if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(choice.Message.ReasoningContent) != "" && len(msg.ToolCalls) == 0 {
+		msg.Content = strings.TrimSpace(choice.Message.ReasoningContent)
+	}
+	return &CompleteResponse{Message: msg}, nil
 }
 
 // Plan generates a plan from LLM (same API as Complete, but with different prompt expectations)

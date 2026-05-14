@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -100,6 +101,27 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 			metas, _ := sessionstore.List(a.cfg.WorkspaceRoot)
 			a.popDialog()
 			a.pushDialog(view.NewSessionsDialog(metas))
+			return a, nil
+		}
+	case "message_action":
+		switch m.Action {
+		case "cancel":
+			a.popDialog()
+			return a, nil
+		case "copy":
+			if text, ok := m.Data.(string); ok && text != "" {
+				_ = clipboard.WriteAll(text)
+				a.showToast("Скопировано")
+			}
+			a.popDialog()
+			return a, nil
+		case "edit":
+			if text, ok := m.Data.(string); ok && text != "" {
+				a.input.SetValue(text)
+				a.input.SyncHeight(5)
+				a.layout()
+			}
+			a.popDialog()
 			return a, nil
 		}
 	}

@@ -523,3 +523,51 @@ func (s *Store) FindNodeAtLine(ctx context.Context, filePath string, lineno int)
 	}
 	return id, nil
 }
+
+// FQNAtLine returns the FQN of the innermost (narrowest line range) non-package
+// node that contains the given 1-based line number in filePath.
+// Returns "" when no node covers the line.
+func (s *Store) FQNAtLine(ctx context.Context, filePath string, lineno int) (string, error) {
+	var fqn string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT n.fqn
+		FROM nodes n JOIN files f ON f.id = n.file_id
+		WHERE f.path = ? AND n.line_start <= ? AND n.line_end >= ?
+		  AND n.kind != 'package'
+		ORDER BY (n.line_end - n.line_start) ASC
+		LIMIT 1`, filePath, lineno, lineno).Scan(&fqn)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return fqn, err
+}
+
+// FileSymbol is a lightweight descriptor of a symbol used for file-level listing.
+type FileSymbol struct {
+	ShortName string
+	Kind      string
+	LineStart int
+	LineEnd   int
+}
+
+// SymbolsInFile returns all non-package symbols in a file, ordered by line.
+func (s *Store) SymbolsInFile(ctx context.Context, filePath string) ([]FileSymbol, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT n.short_name, n.kind, n.line_start, n.line_end
+		FROM nodes n JOIN files f ON f.id = n.file_id
+		WHERE f.path = ? AND n.kind != 'package'
+		ORDER BY n.line_start`, filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileSymbol
+	for rows.Next() {
+		var s FileSymbol
+		if err := rows.Scan(&s.ShortName, &s.Kind, &s.LineStart, &s.LineEnd); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

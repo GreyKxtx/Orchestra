@@ -251,6 +251,9 @@ func (a *App) layout() {
 		inputBoxHeight := 4 + taH
 		a.inputRowY = a.height - inputBoxHeight // first textarea row inside the box
 		a.inputColX = chatSidePad + 1 + 2        // sidePad + border(▌) + leftPad
+		// chatTopY: padChat adds PaddingTop(chatVerticalPad) above the viewport,
+		// so the first viewport content row is at screen row chatVerticalPad.
+		a.chatTopY = chatVerticalPad
 	} else {
 		// Welcome view: rough estimate
 		a.inputRowY = a.height / 2
@@ -341,6 +344,8 @@ func (a *App) cycleAgentMode() {
 // updateStatusHints updates the status bar hint text based on the current UI state.
 func (a *App) updateStatusHints() {
 	switch {
+	case a.mousePassthrough:
+		a.statusBar.SetHints("Выделение мышью · Ctrl+G для возврата")
 	case a.paletteActive:
 		a.statusBar.SetHints("↑↓ select · Enter execute · Esc cancel")
 	case a.mentionActive:
@@ -350,7 +355,7 @@ func (a *App) updateStatusHints() {
 	case a.pendingOps != nil:
 		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
 	default:
-		a.statusBar.SetHints("Ctrl+K commands")
+		a.statusBar.SetHints("Ctrl+G выделение · Ctrl+K команды")
 	}
 }
 

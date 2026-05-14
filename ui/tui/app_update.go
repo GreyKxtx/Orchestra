@@ -171,11 +171,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.ScrollDown(3)
 			return a, nil
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
+			// In passthrough mode mouse reporting is disabled — this event won't arrive.
 			inputH := a.input.Inner().Height()
 			if inputH < 1 {
 				inputH = 1
 			}
 			if m.Y < a.inputRowY || m.Y >= a.inputRowY+inputH {
+				// Click is outside the input box — check if it's in the chat viewport.
+				topY := a.chatTopY
+				if topY <= 0 {
+					topY = chatVerticalPad
+				}
+				if m.Y >= topY && m.Y < a.inputRowY && !a.agentBusy && !a.showWelcome {
+					contentY := a.chat.ViewportYOffset() + (m.Y - topY)
+					role, text, ok := a.chat.MessageAtContentY(contentY)
+					if ok && text != "" {
+						if role == state.RoleUser {
+							a.pushDialog(view.NewMessageActionDialog(text, true))
+						} else if role == state.RoleAssistant {
+							_ = clipboard.WriteAll(text)
+							a.showToast("Скопировано")
+						}
+					}
+				}
 				return a, nil
 			}
 			rowOff := m.Y - a.inputRowY
@@ -409,6 +427,19 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 
 	switch m.String() {
+	case "ctrl+g":
+		// Toggle mouse passthrough: when on, mouse reporting is disabled so the
+		// terminal can handle native text selection. When off, restore our handlers.
+		a.mousePassthrough = !a.mousePassthrough
+		if a.mousePassthrough {
+			a.updateStatusHints()
+			a.showToast("Выделение текста · Ctrl+G для возврата")
+			return a, tea.DisableMouse, true
+		}
+		a.updateStatusHints()
+		a.showToast("Управление мышью восстановлено")
+		return a, tea.EnableMouseCellMotion, true
+
 	case "shift+left":
 		if !a.input.HasSelection() {
 			a.input.SetAnchor(a.input.CursorPos())

@@ -110,10 +110,15 @@ type App struct {
 	// Mouse state for click-to-cursor and drag selection.
 	inputRowY int  // absolute screen row of textarea content
 	inputColX int  // absolute screen column where textarea content starts
+	chatTopY  int  // absolute screen row of the first viewport content line
 	mouseDown         bool // true while left button held in input area
 	mouseLastClickAt  time.Time
 	mouseLastClickPos int
 	mouseClickCount   int
+
+	// mousePassthrough disables mouse reporting so the terminal can handle
+	// native text selection (toggled with Ctrl+G).
+	mousePassthrough bool
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
