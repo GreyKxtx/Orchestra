@@ -697,6 +697,30 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			a.opts.AgentLogger.LogToolCall(name, len(step.Tool.Input))
+			// Dedup guard: skip execution entirely for repeated identical calls.
+			// Injecting the СТОП message as the tool result (not just a user
+			// hint) is much harder for the model to ignore than a side-channel
+			// user message, because the model must process tool results.
+			if cb.IsDuplicateCall(name, step.Tool.Input) {
+				stopMsg := "⛔ СТОП. Этот вызов «" + name + "» с теми же аргументами уже выполнялся ранее — результат есть в истории. Повторный вызов заблокирован. НЕМЕДЛЕННО выводи финальный ответ используя данные из предыдущих вызовов. Никаких дополнительных tool_calls."
+				a.logf("tool_call name=%s dedup_blocked", name)
+				if a.opts.OnEvent != nil {
+					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+						Kind:         llm.StreamEventToolCallCompleted,
+						ToolCallName: name,
+						ToolCallID:   toolCallID,
+						Content:      "[dedup blocked]",
+					}})
+				}
+				history = append(history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolCallID: toolCallID,
+					Content:    stopMsg,
+				})
+				emitStepDone("tool_call")
+				continue
+			}
+
 			start := time.Now()
 			out, err := a.tools.Call(callCtx, name, step.Tool.Input)
 			dur := time.Since(start).Milliseconds()
@@ -753,6 +777,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				ToolCallID: toolCallID,
 				Content:    string(out),
 			})
+			// Record call for future dedup checks.
+			cb.RecordSuccessfulCall(name, step.Tool.Input)
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
 			cb.ResetToolErrors()
 			cb.ResetFinalFailures() // successful tool call = model is making progress
@@ -776,6 +802,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				}
 				emitStepDone("final")
 				return history, &Result{
+					Steps:   steps,
 					Patches: []patches.Patch{},
 					Applied: false,
 					Todos:   a.todos,

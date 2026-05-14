@@ -83,7 +83,11 @@ func NormalizeLLMWithDefs(v *schema.Validator, resp *llm.CompleteResponse, defs 
 
 	raw := strings.TrimSpace(msg.Content)
 	if raw == "" {
-		return nil, "", protocol.NewError(protocol.InvalidLLMOutput, "empty assistant message content", nil)
+		// Empty content with no tool_calls: model is done (no changes needed).
+		// This handles reasoning models that return blank content when they finish
+		// (e.g. qwen3.6-27b after thinking — reasoning_content was already folded
+		// into content upstream; if it's still empty, the agent is simply done).
+		return &Step{Type: StepFinal, Final: &Final{Patches: nil}}, "", nil
 	}
 
 	// Extract JSON from text (some models add markdown or extra text)

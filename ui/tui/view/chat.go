@@ -21,6 +21,14 @@ import (
 // reasoning indicators, and the "Thinking…" line. Mirrors OpenCode's frames.
 var SpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+// msgYRange records the content-line span of one rendered message.
+type msgYRange struct {
+	role  state.Role
+	text  string // plain text for copy/edit
+	start int    // first content line (inclusive)
+	end   int    // last content line (inclusive)
+}
+
 // Chat renders the scrollable history of messages.
 type Chat struct {
 	vp            viewport.Model
@@ -34,6 +42,7 @@ type Chat struct {
 	userScrolled  bool            // true while user is reading scrolled-back history
 	expandedTurns map[int64]bool  // assistant msg keys (StartedAt.UnixNano) the user expanded
 	cache         renderCache     // per-message render cache for completed assistant turns
+	msgRanges     []msgYRange     // content-line ranges for click-to-action detection
 	width         int
 	height        int
 }
@@ -131,6 +140,7 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 		c.vp.SetContent("")
 		c.userScrolled = false // cleared chat → next stream should auto-scroll
 		c.cache.purge()
+		c.msgRanges = c.msgRanges[:0]
 		return
 	}
 
@@ -152,11 +162,17 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 		}
 	}
 
+	c.msgRanges = c.msgRanges[:0]
+	lineCount := 0
+
 	var b strings.Builder
 	for i, m := range msgs {
+		start := lineCount
+		var rendered string
+
 		switch m.Role {
 		case state.RoleUser:
-			b.WriteString(c.renderUserMessage(m, width))
+			rendered = c.renderUserMessage(m, width)
 
 		case state.RoleAssistant:
 			isLast := i == lastAssistantIdx
@@ -169,27 +185,41 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 			expanded := c.expandedTurns[key]
 			if !m.Streaming && !isLast && !expanded {
 				if cached, ok := c.cache.get(key, width); ok {
-					b.WriteString(cached)
+					rendered = cached
 				} else {
-					rendered := c.renderAssistantMessage(m, key, width, false, userQueryFor[i])
+					rendered = c.renderAssistantMessage(m, key, width, false, userQueryFor[i])
 					c.cache.put(key, width, rendered)
-					b.WriteString(rendered)
 				}
 			} else {
-				b.WriteString(c.renderAssistantMessage(m, key, width, isLast, userQueryFor[i]))
+				rendered = c.renderAssistantMessage(m, key, width, isLast, userQueryFor[i])
 			}
 
 		case state.RoleSystem:
 			s := CurrentStyles()
-			b.WriteString(s.Warning.Italic(true).PaddingLeft(2).Render(m.Text))
+			rendered = s.Warning.Italic(true).PaddingLeft(2).Render(m.Text)
 
 		case state.RoleDiff:
 			s := CurrentStyles()
-			b.WriteString(s.Muted.PaddingLeft(2).Render(m.Text))
+			rendered = s.Muted.PaddingLeft(2).Render(m.Text)
 		}
+
+		b.WriteString(rendered)
+		linesAdded := strings.Count(rendered, "\n") + 1
+		end := start + linesAdded - 1
+
+		if m.Role == state.RoleUser || m.Role == state.RoleAssistant {
+			c.msgRanges = append(c.msgRanges, msgYRange{
+				role:  m.Role,
+				text:  m.Text,
+				start: start,
+				end:   end,
+			})
+		}
+		lineCount = end + 1
 
 		if i < len(msgs)-1 {
 			b.WriteString("\n\n")
+			lineCount += 2
 		}
 	}
 	// bubbles' viewport.SetContent resets YOffset to 0; when the user is
@@ -223,3 +253,18 @@ func (c Chat) View() string {
 
 // Render is an alias for View (keeps compatibility with app.go).
 func (c Chat) Render() string { return c.View() }
+
+// ViewportYOffset returns the current scroll offset in content lines.
+func (c Chat) ViewportYOffset() int { return c.vp.YOffset }
+
+// MessageAtContentY returns the role and plain text of the message whose
+// rendered lines include content-line y. Returns ok=false for blank gaps
+// between messages or when no messages have been rendered yet.
+func (c Chat) MessageAtContentY(y int) (role state.Role, text string, ok bool) {
+	for _, r := range c.msgRanges {
+		if y >= r.start && y <= r.end {
+			return r.role, r.text, true
+		}
+	}
+	return "", "", false
+}

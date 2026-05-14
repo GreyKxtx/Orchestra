@@ -26,6 +26,9 @@ type CircuitBreaker struct {
 	consecutiveToolErrs int
 	finalFailures       int
 	invalidOutputs      int
+
+	// successfulCallKeys tracks (tool+argsHash) → count for dedup detection.
+	successfulCallKeys map[string]int
 }
 
 // NewCircuitBreaker creates a CircuitBreaker with the given limits.
@@ -44,11 +47,12 @@ func NewCircuitBreaker(maxDenied, maxToolErr, maxFinal, maxInvalid int) *Circuit
 		maxInvalid = 3
 	}
 	return &CircuitBreaker{
-		maxDenied:     maxDenied,
-		maxToolErr:    maxToolErr,
-		maxFinal:      maxFinal,
-		maxInvalid:    maxInvalid,
-		deniedPerTool: make(map[string]int, 4),
+		maxDenied:          maxDenied,
+		maxToolErr:         maxToolErr,
+		maxFinal:           maxFinal,
+		maxInvalid:         maxInvalid,
+		deniedPerTool:      make(map[string]int, 4),
+		successfulCallKeys: make(map[string]int, 8),
 	}
 }
 
@@ -100,6 +104,27 @@ func (cb *CircuitBreaker) RecordFinalFailure(lastErr error) *protocol.Error {
 // ResetFinalFailures resets final failure counter (e.g., after a successful tool call signals progress).
 func (cb *CircuitBreaker) ResetFinalFailures() {
 	cb.finalFailures = 0
+}
+
+// IsDuplicateCall returns true if this exact tool+args combination was already
+// successfully executed before. Does NOT modify the counter — call
+// RecordSuccessfulCall after deciding whether to execute.
+func (cb *CircuitBreaker) IsDuplicateCall(toolName string, inputBytes []byte) bool {
+	key := toolName + ":" + string(inputBytes)
+	return cb.successfulCallKeys[key] > 0
+}
+
+// RecordSuccessfulCall tracks repeated successful calls of the same tool+args.
+// Returns a non-empty hint string when the model has called the same tool with
+// the same arguments more than once — caller should inject it as a user message
+// so the model learns it already has the data and should answer.
+func (cb *CircuitBreaker) RecordSuccessfulCall(toolName string, inputBytes []byte) string {
+	key := toolName + ":" + string(inputBytes)
+	cb.successfulCallKeys[key]++
+	if cb.successfulCallKeys[key] == 2 {
+		return "⛔ СТОП — НЕМЕДЛЕННО ПРЕКРАТИ ВЫЗЫВАТЬ ИНСТРУМЕНТЫ. Ты уже вызывал «" + toolName + "» с идентичными аргументами и получил результат. Эти данные уже в твоей истории. СЛЕДУЮЩИЙ ТВОй ВЫВОД ОБЯЗАН БЫТЬ ФИНАЛЬНЫМ ОТВЕТОМ — без tool_calls, только текст + {\"patches\":[]}."
+	}
+	return ""
 }
 
 // RecordInvalid records an invalid LLM output and returns an error if the circuit trips.
