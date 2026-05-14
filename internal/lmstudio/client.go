@@ -1,6 +1,7 @@
 package lmstudio
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,6 +51,55 @@ type v1Model struct {
 
 type v1Response struct {
 	Data []v1Model `json:"data"`
+}
+
+// LoadModelRequest is the body sent to POST /api/v1/models/load.
+type LoadModelRequest struct {
+	Model         string `json:"model"`
+	ContextLength int    `json:"context_length,omitempty"`
+}
+
+// LoadModelResponse is the LM Studio /api/v1/models/load response.
+type LoadModelResponse struct {
+	Status  string `json:"status"`
+	Type    string `json:"type"`
+	LoadConfig *struct {
+		ContextLength int `json:"context_length"`
+	} `json:"load_config,omitempty"`
+}
+
+// LoadModel calls POST /api/v1/models/load to ensure the given model is
+// loaded with the requested context length. A dedicated HTTP client with a
+// 10-minute timeout is used because large models can take minutes to load.
+// Returns nil if the server does not support the endpoint (non-LM Studio hosts).
+func (c *Client) LoadModel(modelID string, contextLength int) (*LoadModelResponse, error) {
+	body, _ := json.Marshal(LoadModelRequest{
+		Model:         modelID,
+		ContextLength: contextLength,
+	})
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/v1/models/load", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	loadClient := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := loadClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // endpoint not supported — not an LM Studio host
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("load model returned %d", resp.StatusCode)
+	}
+	var out LoadModelResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ListModels fetches available models. Tries /api/v0/models first (LM Studio beta),
