@@ -122,6 +122,82 @@ func TestApp_HistoryRecall(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
 }
 
+func TestApp_SlashPaletteOpensOnSlash(t *testing.T) {
+	app, err := tui.NewApp(tui.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
+
+	// Typing "/" should open the inline slash palette.
+	tm.Type("/")
+
+	// The palette renders command names above the input box.
+	// At minimum /help and /clear must appear in the rendered output.
+	teatest.WaitFor(
+		t, tm.Output(),
+		func(b []byte) bool {
+			s := string(b)
+			return strings.Contains(s, "/help") && strings.Contains(s, "/clear")
+		},
+		teatest.WithCheckInterval(50*time.Millisecond),
+		teatest.WithDuration(2*time.Second),
+	)
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
+}
+
+func TestApp_SlashPaletteFiltersOnType(t *testing.T) {
+	app, err := tui.NewApp(tui.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
+
+	// Typing "/cl" should filter to /clear (contains "cl" in the name).
+	tm.Type("/cl")
+
+	teatest.WaitFor(
+		t, tm.Output(),
+		func(b []byte) bool {
+			return bytes.Contains(b, []byte("/clear"))
+		},
+		teatest.WithCheckInterval(50*time.Millisecond),
+		teatest.WithDuration(2*time.Second),
+	)
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
+}
+
+func TestApp_SlashPaletteClosesOnSpace(t *testing.T) {
+	app, err := tui.NewApp(tui.Config{Model: "test-model", Mode: "build", CWD: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := teatest.NewTestModel(t, app, teatest.WithInitialTermSize(80, 24))
+
+	// Type "/clear " (with trailing space) — palette should close.
+	// Then Enter should send "/clear" as a regular chat message (not execute
+	// the command). Echo mode returns "echo: /clear" proving the palette was
+	// NOT active when Enter was pressed.
+	tm.Type("/clear ")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	teatest.WaitFor(
+		t, tm.Output(),
+		func(b []byte) bool {
+			return bytes.Contains(b, []byte("echo: /clear"))
+		},
+		teatest.WithCheckInterval(50*time.Millisecond),
+		teatest.WithDuration(2*time.Second),
+	)
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(time.Second))
+}
+
 // readAll drains an io.Reader to a string, used for final output.
 func readAll(r io.Reader) string {
 	var b bytes.Buffer

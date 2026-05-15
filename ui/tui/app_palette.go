@@ -15,10 +15,19 @@ import (
 )
 
 // syncPalette refreshes the slash-palette and mention-palette state to match
-// the current input value. The legacy inline slash palette is now disabled
-// (Ctrl+K is the canonical command surface); only mention completion remains.
+// the current input value. When the input starts with "/" and contains no
+// space, the slash palette is shown above the input box (filtered in real
+// time). Typing "/" alone shows all commands; "/cl" narrows to /clear, etc.
+// A space after the slash prefix closes the palette (user is typing a message).
 func (a *App) syncPalette() {
-	a.paletteActive = false
+	val := a.input.Value()
+	if strings.HasPrefix(val, "/") && !strings.Contains(val, " ") {
+		query := val[1:] // text after the leading "/"
+		a.slashPalette.Filter(query)
+		a.paletteActive = len(a.slashPalette.Items) > 0
+	} else {
+		a.paletteActive = false
+	}
 	a.syncMention()
 }
 
