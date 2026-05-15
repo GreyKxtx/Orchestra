@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/patches"
 )
 
 func newDryRunRunner(t *testing.T) *Runner {
@@ -126,6 +127,81 @@ func TestStaging_EditDryRun(t *testing.T) {
 	}
 	if stagedOps[0].WriteAtomic == nil || !strings.Contains(stagedOps[0].WriteAtomic.Content, "world") {
 		t.Fatalf("staged content wrong: %+v", stagedOps[0].WriteAtomic)
+	}
+}
+
+func TestStaging_ApplyPatchesToStaged_SearchReplace(t *testing.T) {
+	r := newDryRunRunner(t)
+	p := filepath.Join(r.workspaceRoot, "src.go")
+	if err := os.WriteFile(p, []byte("func hello() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.ApplyPatchesToStaged([]patches.Patch{{
+		Type:    patches.TypeFileSearchReplace,
+		Path:    "src.go",
+		Search:  "hello",
+		Replace: "world",
+	}})
+	if err != nil {
+		t.Fatalf("ApplyPatchesToStaged: %v", err)
+	}
+
+	content, _, ok := r.stagedContent("src.go")
+	if !ok {
+		t.Fatal("expected file to be staged")
+	}
+	if !strings.Contains(content, "world") || strings.Contains(content, "hello") {
+		t.Fatalf("unexpected staged content: %q", content)
+	}
+	if got, err := os.ReadFile(p); err != nil || string(got) != "func hello() {}\n" {
+		t.Fatalf("disk was modified: %q", string(got))
+	}
+}
+
+func TestStaging_ApplyPatchesToStaged_WriteAtomic(t *testing.T) {
+	r := newDryRunRunner(t)
+
+	err := r.ApplyPatchesToStaged([]patches.Patch{{
+		Type:    patches.TypeFileWriteAtomic,
+		Path:    "newfile.txt",
+		Content: "brand new content",
+	}})
+	if err != nil {
+		t.Fatalf("ApplyPatchesToStaged: %v", err)
+	}
+
+	content, _, ok := r.stagedContent("newfile.txt")
+	if !ok {
+		t.Fatal("expected file to be staged")
+	}
+	if content != "brand new content" {
+		t.Fatalf("unexpected content: %q", content)
+	}
+	if _, err := os.Stat(filepath.Join(r.workspaceRoot, "newfile.txt")); err == nil {
+		t.Fatal("file should not exist on disk in dry-run")
+	}
+}
+
+func TestStaging_ApplyPatchesToStaged_StaleFileHash(t *testing.T) {
+	r := newDryRunRunner(t)
+	p := filepath.Join(r.workspaceRoot, "file.txt")
+	if err := os.WriteFile(p, []byte("actual content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.ApplyPatchesToStaged([]patches.Patch{{
+		Type:     patches.TypeFileSearchReplace,
+		Path:     "file.txt",
+		Search:   "actual",
+		Replace:  "modified",
+		FileHash: "sha256:deadbeef000000000000000000000000000000000000000000000000deadbeef",
+	}})
+	if err == nil {
+		t.Fatal("expected StaleContent error, got nil")
+	}
+	if !strings.Contains(err.Error(), "StaleContent") && !strings.Contains(err.Error(), "stale") && !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("expected stale error, got: %v", err)
 	}
 }
 

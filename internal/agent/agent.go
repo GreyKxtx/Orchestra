@@ -795,7 +795,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				continue
 			}
 
-			finalPatches := append([]patches.Patch(nil), step.Final.Patches...)
+			finalPatches := append([]patches.Patch{}, step.Final.Patches...)
 			var internalOps []ops.AnyOp
 			var applyResp *tools.FSApplyOpsResponse
 
