@@ -383,7 +383,7 @@ func ListToolsForMode(mode string, allowExec, allowWeb, hasSubtasks, hasQuestion
 
 func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
@@ -435,7 +435,7 @@ func listToolsExplore() []llm.ToolDef {
 // todowrite is intentionally excluded — general agents track progress internally.
 func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
@@ -648,7 +648,7 @@ func toolMemoryWrite() llm.ToolDef {
 // short canonical name (the name the LLM sees).
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
