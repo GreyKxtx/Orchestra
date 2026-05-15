@@ -34,6 +34,7 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 		toolLSPRename(),
 		toolGitStatus(),
 		toolGitLog(),
+		toolGitDiff(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
@@ -390,7 +391,7 @@ func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []l
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(),
+		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
@@ -443,7 +444,7 @@ func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(),
+		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
@@ -659,7 +660,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(),
+		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
 	m := make(map[string]llm.ToolDef, len(all))
 	for _, d := range all {
@@ -867,6 +868,25 @@ func toolGitLog() llm.ToolDef {
     "ref":     { "type": "string", "description": "Branch, tag, or commit hash." },
     "path":    { "type": "string", "description": "Limit to commits touching this workspace-relative path." },
     "oneline": { "type": "boolean", "description": "Compact single-line format." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGitDiff() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.diff",
+			Description: "Show diff of uncommitted changes. staged=true shows staged (--cached) changes. ref compares against a specific commit or branch.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "staged": { "type": "boolean", "description": "Show staged (--cached) changes instead of unstaged." },
+    "ref":    { "type": "string", "description": "Compare against this commit, branch, or tag." },
+    "path":   { "type": "string", "description": "Limit diff to this workspace-relative file or directory." }
   }
 }`),
 		},

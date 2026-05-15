@@ -186,6 +186,59 @@ func (r *Runner) GitLog(ctx context.Context, req GitLogRequest) (*GitLogResponse
 	return &GitLogResponse{Output: stdout, Truncated: truncated}, nil
 }
 
+// ─── git.diff ────────────────────────────────────────────────────────────────
+
+// GitDiffRequest is the input for the git.diff tool.
+type GitDiffRequest struct {
+	Staged bool   `json:"staged,omitempty"`
+	Ref    string `json:"ref,omitempty"`
+	Path   string `json:"path,omitempty"`
+}
+
+// GitDiffResponse is the output of the git.diff tool.
+type GitDiffResponse struct {
+	Output    string `json:"output"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// GitDiff returns the diff of uncommitted changes.
+func (r *Runner) GitDiff(ctx context.Context, req GitDiffRequest) (*GitDiffResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runner is nil")
+	}
+	args := []string{"diff"}
+	if req.Staged {
+		args = append(args, "--cached")
+	}
+	if req.Ref != "" {
+		if !isGitSafeRef(req.Ref) {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput,
+				"invalid ref — only alphanumeric / - _ . ~ ^ @ { } allowed",
+				map[string]any{"ref": req.Ref})
+		}
+		args = append(args, req.Ref)
+	}
+	if req.Path != "" {
+		_, relSlash, pathErr := resolveWorkspacePath(r.workspaceRoot, req.Path)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		args = append(args, "--", relSlash)
+	}
+
+	stdout, stderr, code, err := r.runGit(ctx, 30*time.Second, args...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, protocol.NewError(protocol.ExecFailed, "git diff failed",
+			map[string]any{"stderr": stderr, "exit": code})
+	}
+
+	truncated := strings.HasSuffix(stdout, "[output truncated]")
+	return &GitDiffResponse{Output: stdout, Truncated: truncated}, nil
+}
+
 // parseBranchFromStatusLine extracts the branch name from the first line of
 // `git status --short --branch` output (after stripping the "## " prefix).
 // Handles: "main", "main...origin/main", "HEAD (no branch)",
