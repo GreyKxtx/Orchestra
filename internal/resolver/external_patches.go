@@ -725,3 +725,65 @@ func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
 }
+
+// ApplySearchReplace applies search→replace on content using the 3-pass matching algorithm
+// (exact → line-trimmed → indent-flexible). Returns new content, or StaleContent /
+// AmbiguousMatch protocol error if the search block is not found or ambiguous.
+func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) {
+	if search == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "search is empty", nil)
+	}
+	s := string(content)
+
+	start, end, matches := findUnique(s, search)
+	if matches == 0 {
+		ltStart, ltEnd, ltMatches := lineTrimmedFind(s, search)
+		switch ltMatches {
+		case 0:
+			ifStart, ifEnd, ifMatches := indentFlexibleFind(s, search)
+			switch ifMatches {
+			case 0:
+				return nil, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+					"search":   preview(search, 200),
+					"fileHash": cache.ComputeSHA256(content),
+				})
+			case 1:
+				start, end = ifStart, ifEnd
+			default:
+				return nil, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (indent-flexible)", map[string]any{
+					"matches": ifMatches,
+					"search":  preview(search, 200),
+				})
+			}
+		case 1:
+			start, end = ltStart, ltEnd
+		default:
+			return nil, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (line-trimmed)", map[string]any{
+				"matches": ltMatches,
+				"search":  preview(search, 200),
+			})
+		}
+	}
+	if matches > 1 {
+		return nil, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous", map[string]any{
+			"matches": matches,
+			"search":  preview(search, 200),
+		})
+	}
+
+	var buf strings.Builder
+	buf.WriteString(s[:start])
+	buf.WriteString(replace)
+	buf.WriteString(s[end:])
+	return []byte(buf.String()), nil
+}
+
+// ApplyUnifiedDiff applies a unified diff to content. Returns new content, or an error
+// if the diff cannot be applied.
+func ApplyUnifiedDiff(content []byte, diffText string) ([]byte, error) {
+	result, err := applyUnifiedDiff(string(content), diffText)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(result), nil
+}

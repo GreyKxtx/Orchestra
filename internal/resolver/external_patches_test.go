@@ -472,6 +472,43 @@ func TestResolveSearchReplace_IndentFlexible_TabVsSpaces(t *testing.T) {
 	}
 }
 
+func TestApplySearchReplace_Basic(t *testing.T) {
+	content := []byte("func main() {\n\tfmt.Println(\"hello\")\n}\n")
+	got, err := ApplySearchReplace(content, "fmt.Println(\"hello\")", "fmt.Println(\"world\")")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "func main() {\n\tfmt.Println(\"world\")\n}\n"
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", string(got), want)
+	}
+}
+
+func TestApplySearchReplace_NotFound(t *testing.T) {
+	content := []byte("hello world\n")
+	_, err := ApplySearchReplace(content, "goodbye", "hello")
+	if err == nil {
+		t.Fatal("expected error for not-found search")
+	}
+	pe, ok := protocol.AsError(err)
+	if !ok || pe.Code != protocol.StaleContent {
+		t.Fatalf("expected StaleContent, got %v", err)
+	}
+}
+
+func TestApplyUnifiedDiff_Basic(t *testing.T) {
+	original := "line1\nline2\nline3\n"
+	diff := "@@ -1,3 +1,3 @@\n line1\n-line2\n+LINE2\n line3\n"
+	got, err := ApplyUnifiedDiff([]byte(original), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "line1\nLINE2\nline3\n"
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", string(got), want)
+	}
+}
+
 func TestResolveSearchReplace_IndentFlexible_AmbiguousFails(t *testing.T) {
 	root := t.TempDir()
 	path := "dup_indent.go"
