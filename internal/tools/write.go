@@ -42,6 +42,29 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 			"fs.write requires file_hash (for overwrite) or must_not_exist=true (for create)", nil)
 	}
 
+	// Dry-run: stage content in memory instead of writing to disk.
+	if r.dryRun {
+		_, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path)
+		if err != nil {
+			return nil, err
+		}
+		if req.MustNotExist && r.currentHash(relSlash) != "" {
+			return nil, protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{"path": relSlash})
+		}
+		if fileHash != "" {
+			if current := r.currentHash(relSlash); current != fileHash {
+				return nil, protocol.NewError(protocol.StaleContent, "file hash mismatch", map[string]any{
+					"path":     relSlash,
+					"expected": fileHash,
+					"actual":   current,
+				})
+			}
+		}
+		contentHash := cache.ComputeSHA256([]byte(req.Content))
+		r.stageFile(relSlash, req.Content, contentHash)
+		return &FSWriteResponse{Path: relSlash, FileHash: contentHash, BytesWritten: len(req.Content)}, nil
+	}
+
 	patch := patches.Patch{
 		Type:    patches.TypeFileWriteAtomic,
 		Path:    path,
