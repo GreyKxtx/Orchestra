@@ -49,6 +49,12 @@ type Runner struct {
 	webMaxContentBytes int
 
 	lspManager *lsp.Manager
+
+	// Dry-run staging: when dryRun=true, FSWrite/FSEdit accumulate changes in staged
+	// instead of writing to disk. FSRead serves staged content back to the model.
+	dryRun   bool
+	staged   map[string]*stagedFile
+	stagedMu sync.Mutex
 }
 
 type RunnerOptions struct {
@@ -61,6 +67,10 @@ type RunnerOptions struct {
 	WebMaxContentBytes int
 
 	LSP config.LSPConfig
+
+	// DryRun enables staging mode: write/edit accumulate in memory instead of disk.
+	// FSRead serves staged content. StagedOps() returns write_atomic ops for plan.json.
+	DryRun bool
 }
 
 func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
@@ -122,7 +132,19 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		webFetchTimeout:    webTimeout,
 		webMaxContentBytes: webMaxBytes,
 		lspManager:         lspMgr,
+		dryRun:             opts.DryRun,
+		staged:             make(map[string]*stagedFile),
 	}, nil
+}
+
+// SetDryRun enables or disables staging mode. Disabling clears all staged state.
+func (r *Runner) SetDryRun(v bool) {
+	r.stagedMu.Lock()
+	defer r.stagedMu.Unlock()
+	r.dryRun = v
+	if !v {
+		r.staged = make(map[string]*stagedFile)
+	}
 }
 
 // convertLSPConfig translates config.LSPConfig to lsp.LSPConfig.
@@ -306,6 +328,21 @@ func (r *Runner) FSRead(ctx context.Context, req FSReadRequest) (*FSReadResponse
 	absPath, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path)
 	if err != nil {
 		return nil, err
+	}
+
+	// Staging overlay: serve staged content in dry-run mode.
+	if r.dryRun {
+		if stagedContent, stagedHash, ok := r.stagedContent(relSlash); ok {
+			numbered := addLineNumbers(stagedContent)
+			return &FSReadResponse{
+				Path:      relSlash,
+				Content:   numbered,
+				SHA256:    stagedHash,
+				FileHash:  stagedHash,
+				MTimeUnix: 0,
+				Size:      int64(len(stagedContent)),
+			}, nil
+		}
 	}
 
 	maxBytes := req.MaxBytes
