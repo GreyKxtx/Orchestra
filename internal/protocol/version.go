@@ -16,7 +16,9 @@ const (
 	// v5: added lsp.definition, lsp.references, lsp.hover, lsp.diagnostics, lsp.rename;
 	//     added diagnostics field to fs.write and fs.edit responses.
 	// v6: added diff.preview tool.
-	ToolsVersion = 6
+	// v7: added fs.delete, fs.rename; git.status, git.log, git.diff (read, always);
+	//     git.commit, git.branch, git.checkout, git.push (write, allowExec-gated).
+	ToolsVersion = 7
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"
