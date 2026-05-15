@@ -6,7 +6,7 @@
 
 - **`protocol.ProtocolVersion`**: `3`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `5`
+- **`protocol.ToolsVersion`**: `6`
 
 Совместимость проверяется в `initialize`:
 
@@ -21,6 +21,8 @@
 
 ### История ToolsVersion
 
+- **v6** (2026-05-15): добавлен инструмент `diff.preview`.
+- **v5**: добавлены `lsp.definition`, `lsp.references`, `lsp.hover`, `lsp.diagnostics`, `lsp.rename`; поле `diagnostics` в ответах `fs.write` и `fs.edit`.
 - **v4** (2026-05-05): `fs.read` content field now prefixed with 1-based line
   numbers (`1: line`, `2: line`). The `sha256`/`file_hash` fields are still
   computed from the raw file bytes. Do NOT include line-number prefixes in
@@ -145,7 +147,7 @@ Response `result`:
   "core_version": "vnext",
   "protocol_version": 3,
   "ops_version": 1,
-  "tools_version": 5,
+  "tools_version": 6,
   "workspace_root": "...",
   "project_id": "sha256:..."
 }

@@ -15,7 +15,8 @@ const (
 	// ToolsVersion is the version of tool interfaces (inputs/outputs).
 	// v5: added lsp.definition, lsp.references, lsp.hover, lsp.diagnostics, lsp.rename;
 	//     added diagnostics field to fs.write and fs.edit responses.
-	ToolsVersion = 5
+	// v6: added diff.preview tool.
+	ToolsVersion = 6
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"
