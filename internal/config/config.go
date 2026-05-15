@@ -228,7 +228,7 @@ var builtInAgentModes = map[string]bool{
 // AgentDefinition.Tools. Hardcoded here to avoid an import cycle between
 // config and tools (tools → llm → config).
 var validAgentToolNames = map[string]bool{
-	"ls": true, "read": true, "glob": true, "write": true, "edit": true, "fs.delete": true,
+	"ls": true, "read": true, "glob": true, "write": true, "edit": true, "fs.delete": true, "fs.rename": true,
 	"grep": true, "symbols": true, "explore": true, "bash": true,
 	"webfetch": true, "todowrite": true, "todoread": true,
 	"memory_write": true, "runtime_query": true,

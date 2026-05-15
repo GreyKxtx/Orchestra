@@ -98,3 +98,68 @@ func TestFSDelete_EmptyPath(t *testing.T) {
 		t.Fatal("expected error for empty path")
 	}
 }
+
+func TestFSRename_File(t *testing.T) {
+	r, root := newFSExtraRunner(t)
+
+	if err := os.WriteFile(filepath.Join(root, "before.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.FSRename(context.Background(), FSRenameRequest{Path: "before.txt", NewPath: "after.txt"})
+	if err != nil {
+		t.Fatalf("FSRename: %v", err)
+	}
+	if resp.Path != "before.txt" || resp.NewPath != "after.txt" {
+		t.Errorf("unexpected resp: %+v", resp)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "before.txt")); !os.IsNotExist(statErr) {
+		t.Error("old path still exists")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "after.txt")); statErr != nil {
+		t.Errorf("new path doesn't exist: %v", statErr)
+	}
+}
+
+func TestFSRename_CreatesParentDirs(t *testing.T) {
+	r, root := newFSExtraRunner(t)
+
+	if err := os.WriteFile(filepath.Join(root, "src.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.FSRename(context.Background(), FSRenameRequest{Path: "src.txt", NewPath: "newdir/dst.txt"})
+	if err != nil {
+		t.Fatalf("FSRename: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "newdir", "dst.txt")); statErr != nil {
+		t.Errorf("new path doesn't exist: %v", statErr)
+	}
+}
+
+func TestFSRename_PathTraversal_Src(t *testing.T) {
+	r, _ := newFSExtraRunner(t)
+	_, err := r.FSRename(context.Background(), FSRenameRequest{Path: "../out.txt", NewPath: "dst.txt"})
+	if err == nil {
+		t.Fatal("expected path traversal error on src")
+	}
+}
+
+func TestFSRename_PathTraversal_Dst(t *testing.T) {
+	r, root := newFSExtraRunner(t)
+	if err := os.WriteFile(filepath.Join(root, "src.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.FSRename(context.Background(), FSRenameRequest{Path: "src.txt", NewPath: "../escape.txt"})
+	if err == nil {
+		t.Fatal("expected path traversal error on dst")
+	}
+}
+
+func TestFSRename_SrcNotExist(t *testing.T) {
+	r, _ := newFSExtraRunner(t)
+	_, err := r.FSRename(context.Background(), FSRenameRequest{Path: "nope.txt", NewPath: "out.txt"})
+	if err == nil {
+		t.Fatal("expected error when src does not exist")
+	}
+}

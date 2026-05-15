@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/protocol"
@@ -59,4 +60,64 @@ func (r *Runner) FSDelete(ctx context.Context, req FSDeleteRequest) (*FSDeleteRe
 	}
 
 	return &FSDeleteResponse{Path: relSlash}, nil
+}
+
+// FSRenameRequest is the input for the fs.rename tool.
+type FSRenameRequest struct {
+	Path    string `json:"path"`
+	NewPath string `json:"new_path"`
+}
+
+// FSRenameResponse is the output of the fs.rename tool.
+type FSRenameResponse struct {
+	Path    string `json:"path"`
+	NewPath string `json:"new_path"`
+}
+
+// FSRename moves or renames a file or directory within the workspace.
+// Parent directories of new_path are created automatically.
+// In dry-run mode the operation is a no-op (returns success without touching disk).
+func (r *Runner) FSRename(ctx context.Context, req FSRenameRequest) (*FSRenameResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runner is nil")
+	}
+	src := strings.TrimSpace(req.Path)
+	dst := strings.TrimSpace(req.NewPath)
+	if src == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
+	}
+	if dst == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "new_path is empty", nil)
+	}
+
+	absSrc, relSrc, err := resolveWorkspacePath(r.workspaceRoot, src)
+	if err != nil {
+		return nil, err
+	}
+	absDst, relDst, err := resolveWorkspacePath(r.workspaceRoot, dst)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, statErr := os.Stat(absSrc); os.IsNotExist(statErr) {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "source path does not exist",
+			map[string]any{"path": relSrc})
+	}
+
+	if r.dryRun {
+		return &FSRenameResponse{Path: relSrc, NewPath: relDst}, nil
+	}
+
+	if mkErr := os.MkdirAll(filepath.Dir(absDst), 0o755); mkErr != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "failed to create parent directories",
+			map[string]any{"new_path": relDst, "error": mkErr.Error()})
+	}
+
+	if renameErr := os.Rename(absSrc, absDst); renameErr != nil {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			fmt.Sprintf("rename failed: %s", renameErr),
+			map[string]any{"path": relSrc, "new_path": relDst})
+	}
+
+	return &FSRenameResponse{Path: relSrc, NewPath: relDst}, nil
 }
