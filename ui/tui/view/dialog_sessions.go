@@ -96,8 +96,36 @@ func (d *SessionsDialog) visible() []sessionstore.SessionMeta {
 // Render implements Dialog.
 func (d *SessionsDialog) Render(screenW, screenH int) string {
 	visible := d.visible()
-	items := make([]listDialogItem, 0, len(visible))
-	for _, m := range visible {
+
+	// Fixed overhead inside renderListDialog: blank+header+blank+filter+blank +
+	// blank+hint+blank = 8 rows. Subtract a 2-row safety margin for centering.
+	const fixedRows = 10
+	maxVisible := screenH - fixedRows
+	if maxVisible < 3 {
+		maxVisible = 3
+	}
+
+	// Compute scroll offset so cursor stays inside the visible window.
+	scroll := 0
+	if d.cursor >= maxVisible {
+		scroll = d.cursor - maxVisible + 1
+	}
+	if scroll+maxVisible > len(visible) {
+		scroll = len(visible) - maxVisible
+		if scroll < 0 {
+			scroll = 0
+		}
+	}
+
+	// Slice to the scroll window.
+	end := scroll + maxVisible
+	if end > len(visible) {
+		end = len(visible)
+	}
+	window := visible[scroll:end]
+
+	items := make([]listDialogItem, 0, len(window))
+	for _, m := range window {
 		desc := relativeTime(m.UpdatedAt)
 		if m.MsgCount > 0 {
 			desc += fmt.Sprintf("  ·  %d msgs", m.MsgCount)
@@ -110,18 +138,23 @@ func (d *SessionsDialog) Render(screenW, screenH int) string {
 			Description: desc,
 		})
 	}
+
 	hint := "↑↓ navigate · Enter/→ open · Ctrl+D delete · Esc/← back"
 	if d.confirmDel {
 		hint = "Press Enter again to confirm delete · Esc cancel"
 	}
+	// Show position when the list is longer than the window.
 	title := "Sessions"
 	if len(d.all) == 0 {
 		title = "Sessions — none yet"
+	} else if len(visible) > maxVisible {
+		title = fmt.Sprintf("Sessions  %d/%d", d.cursor+1, len(visible))
 	}
+
 	return renderListDialog(
 		title,
 		items,
-		d.cursor,
+		d.cursor-scroll, // cursor relative to the window
 		d.filter,
 		"Search sessions",
 		hint,
