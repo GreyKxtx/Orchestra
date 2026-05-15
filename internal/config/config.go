@@ -236,6 +236,7 @@ var validAgentToolNames = map[string]bool{
 	"plan_enter": true, "plan_exit": true, "question": true,
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
 	"lsp.diagnostics": true, "lsp.rename": true,
+	"diff.preview": true,
 }
 
 // HooksConfig configures pre/post tool call hooks (Phase 6).
