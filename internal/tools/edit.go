@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
@@ -36,6 +38,31 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 	}
 	if req.Search == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "search is empty", nil)
+	}
+
+	// Dry-run: apply search/replace against overlay or disk, stage result.
+	if r.dryRun {
+		absPath, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path)
+		if err != nil {
+			return nil, err
+		}
+		var currentContent []byte
+		if staged, _, ok := r.stagedContent(relSlash); ok {
+			currentContent = []byte(staged)
+		} else {
+			b, readErr := os.ReadFile(absPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				return nil, readErr
+			}
+			currentContent = b
+		}
+		newContent, err := resolver.ApplySearchReplace(currentContent, req.Search, req.Replace)
+		if err != nil {
+			return nil, err
+		}
+		newHash := cache.ComputeSHA256(newContent)
+		r.stageFile(relSlash, string(newContent), newHash)
+		return &FSEditResponse{Path: relSlash, FileHash: newHash}, nil
 	}
 
 	patch := patches.Patch{
