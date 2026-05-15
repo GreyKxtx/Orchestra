@@ -188,3 +188,69 @@ func TestGitStatus_EmptyRepo(t *testing.T) {
 		t.Errorf("empty repo branch = %q, want %q", resp.Branch, "main")
 	}
 }
+
+func TestGitDiff_UnstagedChange(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	if err := os.WriteFile(filepath.Join(root, "readme.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.GitDiff(context.Background(), GitDiffRequest{})
+	if err != nil {
+		t.Fatalf("GitDiff: %v", err)
+	}
+	if !strings.Contains(resp.Output, "readme.txt") {
+		t.Errorf("expected readme.txt in diff, got: %q", resp.Output)
+	}
+}
+
+func TestGitDiff_Staged(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	if err := os.WriteFile(filepath.Join(root, "readme.txt"), []byte("staged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stagecmd := exec.Command("git", "add", "readme.txt")
+	stagecmd.Dir = root
+	if err := stagecmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.GitDiff(context.Background(), GitDiffRequest{Staged: true})
+	if err != nil {
+		t.Fatalf("GitDiff staged: %v", err)
+	}
+	if !strings.Contains(resp.Output, "readme.txt") {
+		t.Errorf("expected readme.txt in staged diff, got: %q", resp.Output)
+	}
+}
+
+func TestGitDiff_NoChanges(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	resp, err := r.GitDiff(context.Background(), GitDiffRequest{})
+	if err != nil {
+		t.Fatalf("GitDiff: %v", err)
+	}
+	if strings.TrimSpace(resp.Output) != "" {
+		t.Errorf("expected empty diff for clean repo, got: %q", resp.Output)
+	}
+}
+
+func TestGitDiff_InvalidRef(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	_, err := r.GitDiff(context.Background(), GitDiffRequest{Ref: "$(evil)"})
+	if err == nil {
+		t.Fatal("expected error for invalid ref")
+	}
+}

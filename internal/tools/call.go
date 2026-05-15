@@ -276,6 +276,17 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "git.diff":
+		var req GitDiffRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GitDiff(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
