@@ -54,7 +54,7 @@ type Runner struct {
 	// instead of writing to disk. FSRead serves staged content back to the model.
 	dryRun   bool
 	staged   map[string]*stagedFile
-	stagedMu sync.Mutex
+	stagedMu sync.RWMutex
 }
 
 type RunnerOptions struct {

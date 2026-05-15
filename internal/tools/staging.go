@@ -53,8 +53,8 @@ func (r *Runner) stageFileLocked(relSlash, content, hash string) {
 
 // stagedContent returns staged content and hash for relSlash, or ok=false if not staged.
 func (r *Runner) stagedContent(relSlash string) (content, hash string, ok bool) {
-	r.stagedMu.Lock()
-	defer r.stagedMu.Unlock()
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
 	sf, ok := r.staged[relSlash]
 	if !ok {
 		return "", "", false
@@ -80,8 +80,8 @@ func (r *Runner) currentHash(relSlash string) string {
 // Each op carries original disk conditions (must_not_exist or file_hash)
 // so --from-plan replay detects stale files correctly.
 func (r *Runner) StagedOps() []ops.AnyOp {
-	r.stagedMu.Lock()
-	defer r.stagedMu.Unlock()
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
 	if len(r.staged) == 0 {
 		return nil
 	}
@@ -96,9 +96,6 @@ func (r *Runner) StagedOps() []ops.AnyOp {
 				FileHash:     sf.diskHash,
 			},
 		}
-		if sf.isNew {
-			wa.Conditions.FileHash = ""
-		}
 		waCopy := wa
 		out = append(out, ops.AnyOp{Op: waCopy.Op, Path: waCopy.Path, WriteAtomic: &waCopy})
 	}
@@ -108,8 +105,8 @@ func (r *Runner) StagedOps() []ops.AnyOp {
 // StagedFileContent returns a snapshot of the staging overlay as a path→content map.
 // Used by the agent to pass overlay to patch resolvers.
 func (r *Runner) StagedFileContent() map[string]string {
-	r.stagedMu.Lock()
-	defer r.stagedMu.Unlock()
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
 	if len(r.staged) == 0 {
 		return nil
 	}
@@ -143,6 +140,19 @@ func (r *Runner) ApplyPatchesToStaged(patchList []patches.Patch) error {
 			currentContent = b
 		}
 
+		// Validate file_hash before applying (belt-and-suspenders: search/replace
+		// and unified_diff already fail on content mismatch; write_atomic does not).
+		if p.FileHash != "" {
+			current := r.currentHash(relSlash)
+			if current != "" && current != p.FileHash {
+				return protocol.NewError(protocol.StaleContent, "file hash mismatch", map[string]any{
+					"path":     relSlash,
+					"expected": p.FileHash,
+					"actual":   current,
+				})
+			}
+		}
+
 		var newContent []byte
 		var err error
 		switch p.Type {
@@ -151,6 +161,21 @@ func (r *Runner) ApplyPatchesToStaged(patchList []patches.Patch) error {
 		case patches.TypeFileUnifiedDiff:
 			newContent, err = resolver.ApplyUnifiedDiff(currentContent, p.Diff)
 		case patches.TypeFileWriteAtomic:
+			if p.Conditions != nil {
+				if p.Conditions.MustNotExist && r.currentHash(relSlash) != "" {
+					return protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{"path": relSlash})
+				}
+				if p.Conditions.FileHash != "" {
+					current := r.currentHash(relSlash)
+					if current != "" && current != p.Conditions.FileHash {
+						return protocol.NewError(protocol.StaleContent, "file hash mismatch in write_atomic conditions", map[string]any{
+							"path":     relSlash,
+							"expected": p.Conditions.FileHash,
+							"actual":   current,
+						})
+					}
+				}
+			}
 			newContent = []byte(p.Content)
 		default:
 			return protocol.NewError(protocol.InvalidLLMOutput, "unsupported patch type", map[string]any{"type": p.Type})
@@ -174,7 +199,7 @@ func (r *Runner) ClearStaged() {
 
 // HasStagedChanges reports whether any files have been staged.
 func (r *Runner) HasStagedChanges() bool {
-	r.stagedMu.Lock()
-	defer r.stagedMu.Unlock()
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
 	return len(r.staged) > 0
 }
