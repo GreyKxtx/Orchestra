@@ -190,6 +190,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
 			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 			LSP:                cfg.LSP,
+			DryRun:             dryRun,
 		})
 		if err != nil {
 			retErr = err
@@ -255,6 +256,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
 			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 			LSP:                cfg.LSP,
+			DryRun:             dryRun,
 		})
 		if err != nil {
 			retErr = err
@@ -371,6 +373,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
 			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 			LSP:                cfg.LSP,
+			DryRun:             dryRun,
 		})
 		if err != nil {
 			retErr = err
