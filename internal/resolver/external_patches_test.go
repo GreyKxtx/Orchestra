@@ -496,6 +496,18 @@ func TestApplySearchReplace_NotFound(t *testing.T) {
 	}
 }
 
+func TestApplySearchReplace_Ambiguous(t *testing.T) {
+	content := []byte("hello\nhello\n")
+	_, err := ApplySearchReplace(content, "hello", "world")
+	if err == nil {
+		t.Fatal("expected error for ambiguous search")
+	}
+	pe, ok := protocol.AsError(err)
+	if !ok || pe.Code != protocol.AmbiguousMatch {
+		t.Fatalf("expected AmbiguousMatch, got %v", err)
+	}
+}
+
 func TestApplyUnifiedDiff_Basic(t *testing.T) {
 	original := "line1\nline2\nline3\n"
 	diff := "@@ -1,3 +1,3 @@\n line1\n-line2\n+LINE2\n line3\n"
