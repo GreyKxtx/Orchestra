@@ -20,6 +20,7 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
+		toolDiffPreview(),
 		toolRuntimeQuery(),
 		toolTodoWrite(),
 		toolTodoRead(),
@@ -54,7 +55,8 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 		// Pure reads — safe to fan out concurrently.
 		case "ls", "read", "glob", "grep", "symbols", "explore",
 			"todoread", "task.result", "runtime.query", "webfetch",
-			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics":
+			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
+			"diff.preview":
 			defs[i].ParallelSafe = true
 		// State-mutating tools — must run one at a time.
 		case "write", "edit", "bash", "todowrite", "memory_write",
@@ -377,7 +379,7 @@ func ListToolsForMode(mode string, allowExec, allowWeb, hasSubtasks, hasQuestion
 func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 	}
@@ -400,7 +402,7 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	// fs.write is kept so the model can write .orchestra/plan.md — enforced at runtime.
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
 		// lsp.rename excluded: plan mode is read-only.
@@ -429,7 +431,7 @@ func listToolsExplore() []llm.ToolDef {
 func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 	}
@@ -642,7 +644,7 @@ func toolMemoryWrite() llm.ToolDef {
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolRuntimeQuery(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
@@ -765,6 +767,26 @@ func toolLSPRename() llm.ToolDef {
     "line":     { "type": "integer", "minimum": 1 },
     "col":      { "type": "integer", "minimum": 1 },
     "new_name": { "type": "string", "minLength": 1, "description": "Новое имя символа" }
+  }
+}`),
+		},
+	}
+}
+
+func toolDiffPreview() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "diff.preview",
+			Description: "Предварительный просмотр изменений: применяет search→replace в памяти и возвращает unified diff без записи на диск. Используй перед edit чтобы убедиться что замена правильная.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "search", "replace"],
+  "properties": {
+    "path":    { "type": "string", "minLength": 1, "description": "Путь к файлу относительно workspace root" },
+    "search":  { "type": "string", "minLength": 1, "description": "Текст для поиска (как в edit)" },
+    "replace": { "type": "string", "description": "Текст замены" }
   }
 }`),
 		},

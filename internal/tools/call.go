@@ -122,6 +122,17 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "diff.preview":
+		var req FSPreviewRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.FSPreview(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	case "bash":
 		var req ExecRunRequest
 		if err := decodeToolInput(input, &req); err != nil {
