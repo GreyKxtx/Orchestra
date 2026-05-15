@@ -38,6 +38,7 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
@@ -395,6 +396,7 @@ func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []l
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
@@ -448,6 +450,7 @@ func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
@@ -661,6 +664,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
+		toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush(),
 	}
 	m := make(map[string]llm.ToolDef, len(all))
 	for _, d := range all {
@@ -868,6 +872,84 @@ func toolGitLog() llm.ToolDef {
     "ref":     { "type": "string", "description": "Branch, tag, or commit hash." },
     "path":    { "type": "string", "description": "Limit to commits touching this workspace-relative path." },
     "oneline": { "type": "boolean", "description": "Compact single-line format." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGitCommit() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.commit",
+			Description: "Stage files and create a git commit. Use add=[\".\"] to stage all changes.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["message"],
+  "properties": {
+    "message":     { "type": "string", "minLength": 1, "description": "Commit message." },
+    "add":         { "type": "array", "items": {"type":"string"}, "description": "Workspace-relative paths to git add. Use [\".\"] for all changes." },
+    "allow_empty": { "type": "boolean", "description": "Allow commit with no staged changes." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGitBranch() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.branch",
+			Description: "List, create, or delete a local branch. Defaults to listing when no option is set.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "list":   { "type": "boolean", "description": "List local branches (default)." },
+    "create": { "type": "string",  "description": "Create a branch with this name." },
+    "delete": { "type": "string",  "description": "Delete a branch with this name." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGitCheckout() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.checkout",
+			Description: "Switch to a branch/commit or restore specific files. new_branch creates and switches (-b).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ref":        { "type": "string", "description": "Branch, tag, or commit to switch to." },
+    "paths":      { "type": "array",  "items": {"type":"string"}, "description": "Workspace-relative paths to restore from HEAD." },
+    "new_branch": { "type": "string", "description": "Create this branch and switch to it (-b)." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGitPush() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.push",
+			Description: "Push current branch to remote. force=true uses --force-with-lease (safer than --force). Default remote is 'origin'.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "remote":       { "type": "string",  "description": "Remote name. Default 'origin'." },
+    "branch":       { "type": "string",  "description": "Branch to push. Default: current branch." },
+    "set_upstream": { "type": "boolean", "description": "Set upstream tracking (-u)." },
+    "force":        { "type": "boolean", "description": "Push with --force-with-lease." }
   }
 }`),
 		},

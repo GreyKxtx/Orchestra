@@ -254,3 +254,139 @@ func TestGitDiff_InvalidRef(t *testing.T) {
 		t.Fatal("expected error for invalid ref")
 	}
 }
+
+func TestGitCommit_Basic(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	if err := os.WriteFile(filepath.Join(root, "new.txt"), []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.GitCommit(context.Background(), GitCommitRequest{
+		Message: "add new.txt",
+		Add:     []string{"new.txt"},
+	})
+	if err != nil {
+		t.Fatalf("GitCommit: %v", err)
+	}
+	if resp.Hash == "" {
+		t.Error("expected non-empty commit hash")
+	}
+	if !strings.Contains(resp.Output, "add new.txt") {
+		t.Errorf("expected commit message in output, got: %q", resp.Output)
+	}
+}
+
+func TestGitCommit_EmptyMessageFails(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+	_, err := r.GitCommit(context.Background(), GitCommitRequest{Message: ""})
+	if err == nil {
+		t.Fatal("expected error for empty commit message")
+	}
+}
+
+func TestGitBranch_List(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	resp, err := r.GitBranch(context.Background(), GitBranchRequest{List: true})
+	if err != nil {
+		t.Fatalf("GitBranch list: %v", err)
+	}
+	found := false
+	for _, b := range resp.Branches {
+		if b == "main" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'main' in branches: %v", resp.Branches)
+	}
+	if resp.Current != "main" {
+		t.Errorf("expected current='main', got %q", resp.Current)
+	}
+}
+
+func TestGitBranch_Create(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	_, err := r.GitBranch(context.Background(), GitBranchRequest{Create: "feature/test"})
+	if err != nil {
+		t.Fatalf("GitBranch create: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", root, "branch", "--list", "feature/test").Output()
+	if !strings.Contains(string(out), "feature/test") {
+		t.Error("branch 'feature/test' was not created")
+	}
+}
+
+func TestGitBranch_InvalidNameFails(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	_, err := r.GitBranch(context.Background(), GitBranchRequest{Create: "bad name!"})
+	if err == nil {
+		t.Fatal("expected error for invalid branch name")
+	}
+}
+
+func TestGitCheckout_SwitchBranch(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	branchCmd := exec.Command("git", "branch", "other")
+	branchCmd.Dir = root
+	if err := branchCmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := r.GitCheckout(context.Background(), GitCheckoutRequest{Ref: "other"})
+	if err != nil {
+		t.Fatalf("GitCheckout: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", root, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "other" {
+		t.Errorf("expected branch 'other', got %q", string(out))
+	}
+}
+
+func TestGitCheckout_NewBranch(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	_, err := r.GitCheckout(context.Background(), GitCheckoutRequest{
+		Ref:       "main",
+		NewBranch: "feature/new",
+	})
+	if err != nil {
+		t.Fatalf("GitCheckout -b: %v", err)
+	}
+
+	out, _ := exec.Command("git", "-C", root, "branch", "--show-current").Output()
+	if strings.TrimSpace(string(out)) != "feature/new" {
+		t.Errorf("expected branch 'feature/new', got %q", string(out))
+	}
+}
+
+func TestGitCheckout_InvalidRefFails(t *testing.T) {
+	skipIfNoGit(t)
+	r, root := newGitRunner(t)
+	initGitRepo(t, root)
+
+	_, err := r.GitCheckout(context.Background(), GitCheckoutRequest{Ref: "; rm -rf"})
+	if err == nil {
+		t.Fatal("expected error for invalid ref")
+	}
+}

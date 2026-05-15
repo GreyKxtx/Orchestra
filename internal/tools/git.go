@@ -239,6 +239,271 @@ func (r *Runner) GitDiff(ctx context.Context, req GitDiffRequest) (*GitDiffRespo
 	return &GitDiffResponse{Output: stdout, Truncated: truncated}, nil
 }
 
+// ─── git.commit ───────────────────────────────────────────────────────────────
+
+type GitCommitRequest struct {
+	Message    string   `json:"message"`
+	Add        []string `json:"add,omitempty"`
+	AllowEmpty bool     `json:"allow_empty,omitempty"`
+}
+
+type GitCommitResponse struct {
+	Output string `json:"output"`
+	Hash   string `json:"hash,omitempty"`
+}
+
+func (r *Runner) GitCommit(ctx context.Context, req GitCommitRequest) (*GitCommitResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runner is nil")
+	}
+	msg := strings.TrimSpace(req.Message)
+	if msg == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "commit message is empty", nil)
+	}
+
+	for _, p := range req.Add {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		addArgs := []string{"add"}
+		if p == "." {
+			addArgs = append(addArgs, ".")
+		} else {
+			_, relSlash, pathErr := resolveWorkspacePath(r.workspaceRoot, p)
+			if pathErr != nil {
+				return nil, pathErr
+			}
+			addArgs = append(addArgs, relSlash)
+		}
+		if _, stderr, code, runErr := r.runGit(ctx, 30*time.Second, addArgs...); runErr != nil || code != 0 {
+			if runErr != nil {
+				return nil, runErr
+			}
+			return nil, protocol.NewError(protocol.ExecFailed, "git add failed",
+				map[string]any{"path": p, "stderr": stderr, "exit": code})
+		}
+	}
+
+	commitArgs := []string{"commit", "-m", msg}
+	if req.AllowEmpty {
+		commitArgs = append(commitArgs, "--allow-empty")
+	}
+
+	stdout, stderr, code, err := r.runGit(ctx, 30*time.Second, commitArgs...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, protocol.NewError(protocol.ExecFailed, "git commit failed",
+			map[string]any{"stderr": stderr, "stdout": stdout, "exit": code})
+	}
+
+	hash := ""
+	for _, line := range strings.Split(stdout+"\n"+stderr, "\n") {
+		if idx := strings.Index(line, "["); idx >= 0 {
+			inner := line[idx+1:]
+			if ci := strings.Index(inner, "]"); ci >= 0 {
+				parts := strings.Fields(inner[:ci])
+				if len(parts) >= 2 {
+					hash = parts[1]
+				}
+			}
+			break
+		}
+	}
+
+	return &GitCommitResponse{Output: stdout + stderr, Hash: hash}, nil
+}
+
+// ─── git.branch ───────────────────────────────────────────────────────────────
+
+type GitBranchRequest struct {
+	List   bool   `json:"list,omitempty"`
+	Create string `json:"create,omitempty"`
+	Delete string `json:"delete,omitempty"`
+}
+
+type GitBranchResponse struct {
+	Output   string   `json:"output"`
+	Branches []string `json:"branches,omitempty"`
+	Current  string   `json:"current,omitempty"`
+}
+
+func (r *Runner) GitBranch(ctx context.Context, req GitBranchRequest) (*GitBranchResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runner is nil")
+	}
+
+	if req.Delete != "" {
+		if !isGitSafeRef(req.Delete) {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "invalid branch name",
+				map[string]any{"branch": req.Delete})
+		}
+		stdout, stderr, code, err := r.runGit(ctx, 15*time.Second, "branch", "-d", req.Delete)
+		if err != nil {
+			return nil, err
+		}
+		if code != 0 {
+			return nil, protocol.NewError(protocol.ExecFailed, "git branch delete failed",
+				map[string]any{"stderr": stderr, "exit": code})
+		}
+		return &GitBranchResponse{Output: stdout + stderr}, nil
+	}
+
+	if req.Create != "" {
+		if !isGitSafeRef(req.Create) {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "invalid branch name",
+				map[string]any{"branch": req.Create})
+		}
+		stdout, stderr, code, err := r.runGit(ctx, 15*time.Second, "branch", req.Create)
+		if err != nil {
+			return nil, err
+		}
+		if code != 0 {
+			return nil, protocol.NewError(protocol.ExecFailed, "git branch create failed",
+				map[string]any{"stderr": stderr, "exit": code})
+		}
+		return &GitBranchResponse{Output: stdout + stderr}, nil
+	}
+
+	stdout, stderr, code, err := r.runGit(ctx, 15*time.Second, "branch", "--list")
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, protocol.NewError(protocol.ExecFailed, "git branch list failed",
+			map[string]any{"stderr": stderr, "exit": code})
+	}
+
+	var branches []string
+	current := ""
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "* ") {
+			current = strings.TrimPrefix(line, "* ")
+			branches = append(branches, current)
+		} else {
+			branches = append(branches, line)
+		}
+	}
+
+	return &GitBranchResponse{Output: stdout, Branches: branches, Current: current}, nil
+}
+
+// ─── git.checkout ─────────────────────────────────────────────────────────────
+
+type GitCheckoutRequest struct {
+	Ref       string   `json:"ref,omitempty"`
+	Paths     []string `json:"paths,omitempty"`
+	NewBranch string   `json:"new_branch,omitempty"`
+}
+
+type GitCheckoutResponse struct {
+	Output string `json:"output"`
+}
+
+func (r *Runner) GitCheckout(ctx context.Context, req GitCheckoutRequest) (*GitCheckoutResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runner is nil")
+	}
+	if req.Ref == "" && len(req.Paths) == 0 && req.NewBranch == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "ref, paths, or new_branch required", nil)
+	}
+	if req.Ref != "" && !isGitSafeRef(req.Ref) {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "invalid ref",
+			map[string]any{"ref": req.Ref})
+	}
+	if req.NewBranch != "" && !isGitSafeRef(req.NewBranch) {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "invalid new_branch name",
+			map[string]any{"new_branch": req.NewBranch})
+	}
+
+	args := []string{"checkout"}
+	if req.NewBranch != "" {
+		args = append(args, "-b", req.NewBranch)
+	}
+	if req.Ref != "" {
+		args = append(args, req.Ref)
+	}
+	if len(req.Paths) > 0 {
+		args = append(args, "--")
+		for _, p := range req.Paths {
+			_, relSlash, pathErr := resolveWorkspacePath(r.workspaceRoot, p)
+			if pathErr != nil {
+				return nil, pathErr
+			}
+			args = append(args, relSlash)
+		}
+	}
+
+	stdout, stderr, code, err := r.runGit(ctx, 30*time.Second, args...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, protocol.NewError(protocol.ExecFailed, "git checkout failed",
+			map[string]any{"stderr": stderr, "exit": code})
+	}
+	return &GitCheckoutResponse{Output: stdout + stderr}, nil
+}
+
+// ─── git.push ─────────────────────────────────────────────────────────────────
+
+type GitPushRequest struct {
+	Remote      string `json:"remote,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	SetUpstream bool   `json:"set_upstream,omitempty"`
+	Force       bool   `json:"force,omitempty"`
+}
+
+type GitPushResponse struct {
+	Output string `json:"output"`
+}
+
+func (r *Runner) GitPush(ctx context.Context, req GitPushRequest) (*GitPushResponse, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runner is nil")
+	}
+	remote := strings.TrimSpace(req.Remote)
+	if remote == "" {
+		remote = "origin"
+	}
+	if !isGitSafeRef(remote) {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "invalid remote name",
+			map[string]any{"remote": remote})
+	}
+	if req.Branch != "" && !isGitSafeRef(req.Branch) {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "invalid branch name",
+			map[string]any{"branch": req.Branch})
+	}
+
+	args := []string{"push"}
+	if req.SetUpstream {
+		args = append(args, "-u")
+	}
+	if req.Force {
+		args = append(args, "--force-with-lease")
+	}
+	args = append(args, remote)
+	if req.Branch != "" {
+		args = append(args, req.Branch)
+	}
+
+	stdout, stderr, code, err := r.runGit(ctx, 60*time.Second, args...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, protocol.NewError(protocol.ExecFailed, "git push failed",
+			map[string]any{"stderr": stderr, "exit": code})
+	}
+	return &GitPushResponse{Output: stdout + stderr}, nil
+}
+
 // parseBranchFromStatusLine extracts the branch name from the first line of
 // `git status --short --branch` output (after stripping the "## " prefix).
 // Handles: "main", "main...origin/main", "HEAD (no branch)",
