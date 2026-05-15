@@ -18,6 +18,7 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 		toolFSWrite(),
 		toolFSEdit(),
 		toolFSDelete(),
+		toolFSRename(),
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
@@ -383,7 +384,7 @@ func ListToolsForMode(mode string, allowExec, allowWeb, hasSubtasks, hasQuestion
 
 func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(),
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
@@ -435,7 +436,7 @@ func listToolsExplore() []llm.ToolDef {
 // todowrite is intentionally excluded — general agents track progress internally.
 func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(),
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
@@ -648,7 +649,7 @@ func toolMemoryWrite() llm.ToolDef {
 // short canonical name (the name the LLM sees).
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(),
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
@@ -811,6 +812,25 @@ func toolFSDelete() llm.ToolDef {
   "properties": {
     "path":      { "type": "string", "minLength": 1, "description": "Workspace-relative путь для удаления." },
     "recursive": { "type": "boolean", "description": "Рекурсивно удалить непустую директорию. По умолчанию false." }
+  }
+}`),
+		},
+	}
+}
+
+func toolFSRename() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "fs.rename",
+			Description: "Переместить или переименовать файл/директорию внутри workspace. Родительские директории new_path создаются автоматически.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "new_path"],
+  "properties": {
+    "path":     { "type": "string", "minLength": 1, "description": "Workspace-relative путь источника." },
+    "new_path": { "type": "string", "minLength": 1, "description": "Workspace-relative путь назначения." }
   }
 }`),
 		},
