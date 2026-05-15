@@ -69,10 +69,10 @@ func (a *App) View() string {
 		parts = append(parts, a.renderActionBar())
 	}
 	if a.paletteActive && len(a.slashPalette.Items) > 0 {
-		parts = append(parts, a.slashPalette.Render())
+		parts = append(parts, lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(a.slashPalette.Render()))
 	}
 	if a.mentionActive && len(a.mentionPalette.Items) > 0 {
-		parts = append(parts, a.mentionPalette.Render())
+		parts = append(parts, lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(a.mentionPalette.Render()))
 	}
 	if a.permModal != nil {
 		parts = append(parts, a.permModal.Render())
@@ -235,8 +235,11 @@ func (a *App) layout() {
 	// After (re)sizing, recompute soft-wrap visual height so the box
 	// grows immediately on resize without waiting for the next keystroke.
 	a.input.SyncHeight(5)
-	a.slashPalette.SetSize(inputW)
-	a.mentionPalette.SetSize(inputW)
+	// +1 compensates for the palette's border+padding footprint (4 cells) vs
+	// the input box's border+padding footprint (5 cells), keeping their left
+	// edges aligned after PaddingLeft(chatSidePad) is applied in View().
+	a.slashPalette.SetSize(inputW + 1)
+	a.mentionPalette.SetSize(inputW + 1)
 
 	// Track input box position for mouse click-to-cursor.
 	if !a.showWelcome {
