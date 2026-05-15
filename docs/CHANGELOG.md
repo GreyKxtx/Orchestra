@@ -8,6 +8,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Staging overlay: dry-run write/edit safety (2026-05-15)
+
+До этого `write`/`edit` писали напрямую на диск даже в режиме `--plan-only`, обходя `--apply`-флаг. Теперь в dry-run режиме все записи накапливаются в памяти (overlay) и на диск не попадают.
+
+#### Архитектура (Variant C — full staging)
+
+- **`internal/tools/staging.go`** (новый файл) — `stagedFile`, методы `stageFile`, `stagedContent`, `currentHash`, `StagedOps`, `ApplyPatchesToStaged`, `ClearStaged`, `HasStagedChanges`. `sync.RWMutex` — read-методы используют `RLock`.
+- **`internal/tools/runner.go`** — поля `dryRun bool`, `staged map[string]*stagedFile`, `stagedMu sync.RWMutex`; опция `RunnerOptions.DryRun`; метод `SetDryRun`; в `FSRead` — overlay-check перед чтением диска.
+- **`internal/tools/write.go`** — dry-run ветка: проверяет `must_not_exist` и `file_hash` в overlay, пишет в `staged`.
+- **`internal/tools/edit.go`** — dry-run ветка: читает из overlay или диска, применяет search/replace через `resolver.ApplySearchReplace`, пишет результат в `staged`.
+- **`internal/agent/agent.go`** — `StepFinal` разделён на два пути:
+  - **DRY-RUN:** `ApplyPatchesToStaged(finalPatches)` → `StagedOps()` → `FSApplyOps(DryRun=true)`. `plan.json` получает `write_atomic` ops с `diskHash`-условиями для stale-detection при `--from-plan`.
+  - **APPLY:** старый путь `ResolveExternalPatches` → `FSApplyOps(DryRun=false)`.
+- **`internal/cli/apply.go`** — `DryRun: dryRun` передаётся во все три `NewRunner`-вызова (from-plan, via-core, direct).
+- **`internal/core/core.go`** — перед каждым `agent.Run`: `SetDryRun(!params.Apply)` + `ClearStaged()`.
+
+#### Что проверяется
+
+- `--plan-only` создаёт `plan.json` с `ops` (не пустой) и НЕ изменяет файлы на диске.
+- `--from-plan --apply` применяет план; повторный вызов даёт `StaleContent` без побочных эффектов.
+- `TestRealLLMMinimalFlow` и `TestStaleScenario` — оба проходят с реальной моделью.
+
+---
+
+### Added — LSP включён + полное тестовое покрытие инструментов (2026-05-15)
+
+#### LSP (gopls)
+
+- **`.orchestra.yml`** — добавлена секция `lsp.servers` с gopls: `command: ["gopls", "serve"]`, extensions `[".go"]`, `diagnostics_timeout_ms: 5000`. Агент теперь может использовать все 5 LSP-инструментов на реальном gopls.
+
+#### Новые тесты
+
+**`internal/tools/webfetch_test.go`:**
+- Пустой URL, неверная схема (`ftp://`)
+- SSRF блокировка: `127.0.0.1` (loopback), `10.x` (private A), `192.168.x` (private C), `[::1]` (IPv6 loopback), `169.254.x` (link-local)
+- HTML extraction (`extractTextFromHTML`) — script-теги вырезаются, `<title>` извлекается
+- `isLikelyHTML` — 6 cases (html/doctype/head/body vs JSON/plain text)
+
+**`internal/tools/lsp_tools_test.go`** (с реальным gopls, skip при `-short`):
+- `TestLSP_NoServerConfigured_ReturnsError` — без конфига → "no servers configured"
+- `TestLSP_Definition` → возвращает позицию объявления функции `Greet`
+- `TestLSP_Hover` → возвращает сигнатуру и doc-комментарий
+- `TestLSP_References` → 2 локации (объявление + вызов)
+- `TestLSP_Diagnostics_ValidFile` → 0 error-диагностик на корректном файле
+- `TestLSP_Diagnostics_BrokenFile` → compiler error на type mismatch
+- `TestLSP_Rename` → edits для переименования `Add` → `Sum`
+
+#### Покрытие инструментов после этой сессии
+
+Все инструменты покрыты тестами. Единственный пробел — `question` (интерактивный stdin, тест невозможен без рефакторинга).
+
+---
+
 ### Added — Parallel tool execution (2026-05-13)
 
 The agent now executes ParallelSafe tool calls (read-only: `ls`, `read`, `glob`, `grep`, `symbols`, `explore`, `lsp.*`, `todoread`, `task.result`, `runtime.query`, `webfetch`) **concurrently** when the model emits several in a single response. On read-heavy "analyze the project" turns this collapses what used to be 10-20 sequential LLM round-trips into a single batch with a worker-pool fan-out — typically 5-10× speedup.
