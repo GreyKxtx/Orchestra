@@ -150,3 +150,57 @@ func lastSegment(fqn string) string {
 	}
 	return fqn
 }
+
+func TestExplorePackage_ImportsSection(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	savePackage := func(file, pkgFQN string, edges []Edge) {
+		t.Helper()
+		nodes := []Node{{FQN: pkgFQN, ShortName: lastSegment(pkgFQN), Kind: "package", LineStart: 1, LineEnd: 1}}
+		if err := s.SaveFileNodes(ctx, file, "h", "go", "ex", "pkg", nodes, edges); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// auth imports nothing; api and svc import auth.
+	savePackage("ex/auth/auth.go", "ex/auth", nil)
+	savePackage("ex/api/api.go", "ex/api", []Edge{
+		{SourceFQN: "ex/api", TargetFQN: "ex/auth", Relation: "imports"},
+		{SourceFQN: "ex/api", TargetFQN: "ex/utils", Relation: "imports"},
+	})
+	savePackage("ex/svc/svc.go", "ex/svc", []Edge{
+		{SourceFQN: "ex/svc", TargetFQN: "ex/auth", Relation: "imports"},
+	})
+
+	p := NewProvider(s, "/tmp")
+
+	// Explore auth: should show importers (api, svc), no outgoing imports.
+	authResult, err := p.ExploreSymbol(ctx, "ex/auth")
+	if err != nil {
+		t.Fatalf("ExploreSymbol(ex/auth): %v", err)
+	}
+	if !strings.Contains(authResult, "Используется в") {
+		t.Errorf("expected 'Используется в' in auth result:\n%s", authResult)
+	}
+	if !strings.Contains(authResult, "ex/api") {
+		t.Errorf("expected 'ex/api' importer in auth result:\n%s", authResult)
+	}
+	if !strings.Contains(authResult, "ex/svc") {
+		t.Errorf("expected 'ex/svc' importer in auth result:\n%s", authResult)
+	}
+
+	// Explore api: should show outgoing imports (auth, utils), no importers.
+	apiResult, err := p.ExploreSymbol(ctx, "ex/api")
+	if err != nil {
+		t.Fatalf("ExploreSymbol(ex/api): %v", err)
+	}
+	if !strings.Contains(apiResult, "Импортирует") {
+		t.Errorf("expected 'Импортирует' in api result:\n%s", apiResult)
+	}
+	if !strings.Contains(apiResult, "ex/auth") {
+		t.Errorf("expected 'ex/auth' in api imports:\n%s", apiResult)
+	}
+	if !strings.Contains(apiResult, "ex/utils") {
+		t.Errorf("expected 'ex/utils' in api imports:\n%s", apiResult)
+	}
+}
