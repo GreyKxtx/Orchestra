@@ -15,5 +15,9 @@ llm:
     timeout_s: 180
     extra_body:
         num_ctx: 20000
-        chat_template_kwargs:
-            enable_thinking: false
+lsp:
+    servers:
+        - language: go
+          extensions: [".go"]
+          command: ["gopls", "serve"]
+    diagnostics_timeout_ms: 5000
