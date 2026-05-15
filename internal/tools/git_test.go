@@ -142,3 +142,49 @@ func TestGitLog_InvalidRef(t *testing.T) {
 		t.Fatal("expected error for invalid ref")
 	}
 }
+
+func TestGitSafeRef_RejectsLeadingDash(t *testing.T) {
+	bad := []string{"-n5", "--all", "-p", "--"}
+	for _, s := range bad {
+		if isGitSafeRef(s) {
+			t.Errorf("isGitSafeRef(%q) = true, want false", s)
+		}
+	}
+	good := []string{"main", "origin/main", "v1.0.0", "HEAD~1", "abc123"}
+	for _, s := range good {
+		if !isGitSafeRef(s) {
+			t.Errorf("isGitSafeRef(%q) = false, want true", s)
+		}
+	}
+}
+
+func TestGitStatus_EmptyRepo(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	defer r.Close()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, execErr := cmd.CombinedOutput()
+		if execErr != nil {
+			t.Fatalf("git %v: %v\n%s", args, execErr, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+
+	resp, statusErr := r.GitStatus(context.Background(), GitStatusRequest{})
+	if statusErr != nil {
+		t.Fatalf("GitStatus on empty repo: %v", statusErr)
+	}
+	if resp.Branch != "main" {
+		t.Errorf("empty repo branch = %q, want %q", resp.Branch, "main")
+	}
+}
