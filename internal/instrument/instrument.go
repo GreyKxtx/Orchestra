@@ -225,16 +225,17 @@ func patchEntryPoint(path, insertAfter, initCall, importLine string) error {
 	}
 	content := string(data)
 
+	// Verify marker exists before writing any files.
+	idx := strings.Index(content, insertAfter)
+	if idx == -1 {
+		return fmt.Errorf("marker %q not found in %s", insertAfter, path)
+	}
+
 	// Backup original.
 	if err := os.WriteFile(path+".orchestra.bak", data, 0o644); err != nil {
 		return fmt.Errorf("write backup: %w", err)
 	}
 
-	// Insert init call after the marker line.
-	idx := strings.Index(content, insertAfter)
-	if idx == -1 {
-		return fmt.Errorf("marker %q not found in %s", insertAfter, path)
-	}
 	insertAt := idx + len(insertAfter)
 	content = content[:insertAt] + initCall + content[insertAt:]
 

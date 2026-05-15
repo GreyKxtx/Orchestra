@@ -105,6 +105,9 @@ func TestInstrument_Go_WritesTelemetryFile(t *testing.T) {
 	if !strings.Contains(content, "localhost:4318") {
 		t.Errorf("expected OTLP endpoint in telemetry file, got:\n%s", content)
 	}
+	if results[0].Patched {
+		t.Error("expected Patched=false when MainPatch is empty")
+	}
 }
 
 func TestInstrument_Go_PatchesMainGo(t *testing.T) {
@@ -131,8 +134,8 @@ func TestInstrument_Go_PatchesMainGo(t *testing.T) {
 	if !strings.Contains(content, "InitTracer") {
 		t.Errorf("expected InitTracer call in patched main.go, got:\n%s", content)
 	}
-	if !strings.Contains(content, "internal/telemetry") {
-		t.Errorf("expected import injection in patched main.go, got:\n%s", content)
+	if !strings.Contains(content, "example.com/myapp/internal/telemetry") {
+		t.Errorf("expected full module import path in patched main.go, got:\n%s", content)
 	}
 }
 
@@ -263,6 +266,10 @@ func TestPatchEntryPoint_MarkerNotFound_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected 'not found' in error, got: %v", err)
+	}
+	// Backup must NOT exist when patching fails (marker check is now before backup write).
+	if _, statErr := os.Stat(mainPath + ".orchestra.bak"); statErr == nil {
+		t.Error("backup must not be written when marker is not found")
 	}
 }
 
