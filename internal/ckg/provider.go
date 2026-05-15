@@ -289,6 +289,72 @@ func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, err
 	return fmt.Sprintf("Символ '%s' не найден точно. Похожие:\n%s", query, strings.Join(sugg, "\n")), nil
 }
 
+// appendImportsSection appends a "### Зависимости" section to sb for pkgPath.
+// Silently skips if no import data is available.
+func (p *Provider) appendImportsSection(ctx context.Context, sb *strings.Builder, pkgPath string) {
+	// Find the full package FQN from a package-kind node in the package files.
+	row := p.store.db.QueryRowContext(ctx, `
+		SELECT DISTINCT n.fqn FROM nodes n JOIN files f ON n.file_id = f.id
+		WHERE n.kind = 'package'
+		  AND f.path LIKE ?
+		  AND f.path NOT LIKE ?
+		LIMIT 1`,
+		pkgPath+"/%",
+		pkgPath+"/%/%",
+	)
+	var pkgFQN string
+	if err := row.Scan(&pkgFQN); err != nil {
+		return
+	}
+
+	// Outgoing imports: what this package imports.
+	outRows, err := p.store.db.QueryContext(ctx, `
+		SELECT DISTINCT e.target_fqn FROM edges e
+		JOIN nodes n ON e.source_id = n.id
+		WHERE n.fqn = ? AND e.relation = 'imports'
+		ORDER BY e.target_fqn`,
+		pkgFQN,
+	)
+	if err != nil {
+		return
+	}
+	defer outRows.Close()
+	var outImports []string
+	for outRows.Next() {
+		var s string
+		if err := outRows.Scan(&s); err != nil {
+			return
+		}
+		outImports = append(outImports, s)
+	}
+	_ = outRows.Err()
+
+	// Incoming imports: who imports this package.
+	importers, err := p.Importers(ctx, pkgFQN)
+	if err != nil {
+		importers = nil
+	}
+
+	if len(outImports) == 0 && len(importers) == 0 {
+		return
+	}
+
+	sb.WriteString("### Зависимости\n")
+	if len(outImports) > 0 {
+		sb.WriteString("**Импортирует:**\n")
+		for _, imp := range outImports {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", imp))
+		}
+	}
+	if len(importers) > 0 {
+		sb.WriteString("**Используется в:**\n")
+		for _, imp := range importers {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", imp))
+		}
+	}
+	sb.WriteString("\n")
+}
+
 // isPackagePath returns true when query looks like a directory/package path:
 // contains "/" and the part after the last "/" has no "." (not a symbol FQN).
 func isPackagePath(query string) bool {
@@ -341,6 +407,18 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 	}
 
 	if len(all) == 0 {
+		// Package may still be known (only a package-kind node, no symbols).
+		// Try to show imports section before reporting "not found".
+		var sb strings.Builder
+		p.appendImportsSection(ctx, &sb, pkgPath)
+		if sb.Len() > 0 {
+			var out strings.Builder
+			out.WriteString(fmt.Sprintf("## Пакет `%s` (нет символов)\n\n", pkgPath))
+			out.WriteString(sb.String())
+			out.WriteString("---\n")
+			out.WriteString(fmt.Sprintf("→ Конкретный поиск: grep(\"паттерн\", paths=[\"%s\"])\n", pkgPath))
+			return out.String(), nil
+		}
 		return fmt.Sprintf("Пакет '%s' не найден в графе или пуст.\nПоказать список известных пакетов: glob(\"**/*.go\").", pkgPath), nil
 	}
 
@@ -450,6 +528,9 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 			sb.WriteString("- " + strings.Join(methods, ", ") + "\n\n")
 		}
 	}
+
+	// Зависимости (imports / imported-by).
+	p.appendImportsSection(ctx, &sb, pkgPath)
 
 	sb.WriteString("---\n")
 	sb.WriteString(fmt.Sprintf("→ Детали типа: explore(\"Agent\") · Метод целиком: explore(\"Agent.Run\") · Конкретный поиск: grep(\"паттерн\", paths=[\"%s\"])\n", pkgPath))
