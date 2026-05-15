@@ -50,14 +50,14 @@ func (a *App) renderWelcomeView() string {
 	var paletteView string
 	switch {
 	case a.paletteActive && len(a.slashPalette.Items) > 0:
-		a.slashPalette.SetSize(boxWidth - 1)
+		a.slashPalette.SetSize(boxWidth)
 		paletteView = a.slashPalette.Render()
 	case a.mentionActive && len(a.mentionPalette.Items) > 0:
-		a.mentionPalette.SetSize(boxWidth - 1)
+		a.mentionPalette.SetSize(boxWidth)
 		paletteView = a.mentionPalette.Render()
 	}
-	defer a.slashPalette.SetSize(a.width - 2*chatSidePad - 1)
-	defer a.mentionPalette.SetSize(a.width - 2*chatSidePad - 1)
+	defer a.slashPalette.SetSize(a.width - 2*chatSidePad)
+	defer a.mentionPalette.SetSize(a.width - 2*chatSidePad)
 
 	parts := []string{logo, "", ""}
 	if paletteView != "" {
