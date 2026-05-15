@@ -254,6 +254,28 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "git.status":
+		var req GitStatusRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GitStatus(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "git.log":
+		var req GitLogRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GitLog(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}

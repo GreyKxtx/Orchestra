@@ -32,6 +32,8 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 		toolLSPHover(),
 		toolLSPDiagnostics(),
 		toolLSPRename(),
+		toolGitStatus(),
+		toolGitLog(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
@@ -388,6 +390,7 @@ func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []l
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
+		toolGitStatus(), toolGitLog(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
@@ -440,6 +443,7 @@ func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
 		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
+		toolGitStatus(), toolGitLog(),
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
@@ -655,6 +659,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
+		toolGitStatus(), toolGitLog(),
 	}
 	m := make(map[string]llm.ToolDef, len(all))
 	for _, d := range all {
@@ -831,6 +836,37 @@ func toolFSRename() llm.ToolDef {
   "properties": {
     "path":     { "type": "string", "minLength": 1, "description": "Workspace-relative путь источника." },
     "new_path": { "type": "string", "minLength": 1, "description": "Workspace-relative путь назначения." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGitStatus() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.status",
+			Description: "Show current git working-tree status — staged/unstaged changes, untracked files, current branch.",
+			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
+		},
+	}
+}
+
+func toolGitLog() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.log",
+			Description: "Show commit history. n limits the count (default 20, max 200). Optionally filtered by ref or path.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "n":       { "type": "integer", "minimum": 1, "maximum": 200, "description": "Max commits to show. Default 20." },
+    "ref":     { "type": "string", "description": "Branch, tag, or commit hash." },
+    "path":    { "type": "string", "description": "Limit to commits touching this workspace-relative path." },
+    "oneline": { "type": "boolean", "description": "Compact single-line format." }
   }
 }`),
 		},

@@ -237,6 +237,7 @@ var validAgentToolNames = map[string]bool{
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
 	"lsp.diagnostics": true, "lsp.rename": true,
 	"diff.preview": true,
+	"git.status": true, "git.log": true,
 }
 
 // HooksConfig configures pre/post tool call hooks (Phase 6).
