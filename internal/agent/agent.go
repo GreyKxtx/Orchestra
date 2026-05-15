@@ -794,94 +794,182 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				emitStepDone("invalid")
 				continue
 			}
-			// Empty patches is valid (no changes needed)
-			if len(step.Final.Patches) == 0 {
-				a.logf("final received empty patches (no changes needed)")
-				if llmResp != nil {
-					history = append(history, llmResp.Message)
-				}
-				emitStepDone("final")
-				return history, &Result{
-					Steps:   steps,
-					Patches: []patches.Patch{},
-					Applied: false,
-					Todos:   a.todos,
-				}, nil
-			}
 
-			patches := append([]patches.Patch(nil), step.Final.Patches...)
-			a.logf("final received patches=%d", len(patches))
+			finalPatches := append([]patches.Patch(nil), step.Final.Patches...)
+			var internalOps []ops.AnyOp
+			var applyResp *tools.FSApplyOpsResponse
 
-			start := time.Now()
-			internalOps, err := resolver.ResolveExternalPatches(a.tools.WorkspaceRoot(), patches)
-			resolveMS := time.Since(start).Milliseconds()
-			if err != nil {
-				a.logf("resolve status=error duration_ms=%d err=%v", resolveMS, err)
-				history = append(history, llm.Message{
-					Role:    llm.RoleUser,
-					Content: formatResolveErrorCompact(err),
-				})
-				if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
-					return nil, nil, cbErr
-				}
-				if a.opts.OnEvent != nil {
-					var resolveMsg string
-					if pe, ok := protocol.AsError(err); ok {
-						resolveMsg = fmt.Sprintf("%s: %s", pe.Code, pe.Message)
-					} else {
-						resolveMsg = "resolve error: " + err.Error()
+			if !a.opts.Apply {
+				// ── DRY-RUN PATH ─────────────────────────────────────────────────────────
+				// Apply final.patches to the staging overlay (if any), then collect staged ops.
+				if len(finalPatches) > 0 {
+					a.logf("final received patches=%d → applying to staging overlay", len(finalPatches))
+					start := time.Now()
+					if err := a.tools.ApplyPatchesToStaged(finalPatches); err != nil {
+						resolveMS := time.Since(start).Milliseconds()
+						a.logf("staged-apply status=error duration_ms=%d err=%v", resolveMS, err)
+						history = append(history, llm.Message{
+							Role:    llm.RoleUser,
+							Content: formatResolveErrorCompact(err),
+						})
+						if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+							return nil, nil, cbErr
+						}
+						if a.opts.OnEvent != nil {
+							var msg string
+							if pe, ok := protocol.AsError(err); ok {
+								msg = fmt.Sprintf("%s: %s", pe.Code, pe.Message)
+							} else {
+								msg = "staged-apply error: " + err.Error()
+							}
+							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+								Kind:    llm.StreamEventRecoverableError,
+								Content: msg,
+							}})
+						}
+						emitStepDone("final_retry")
+						continue
 					}
-					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-						Kind:    llm.StreamEventRecoverableError,
-						Content: resolveMsg,
-					}})
 				}
-				emitStepDone("final_retry")
-				continue
-			}
-			a.logf("resolve status=ok duration_ms=%d ops=%d", resolveMS, len(internalOps))
 
-			applyReq := tools.FSApplyOpsRequest{
-				Ops:    internalOps,
-				DryRun: !a.opts.Apply,
-				Backup: a.opts.Backup && a.opts.Apply,
-			}
+				stagedOps := a.tools.StagedOps()
+				if len(stagedOps) == 0 {
+					a.logf("final: no staged ops (no changes needed)")
+					if llmResp != nil {
+						history = append(history, llmResp.Message)
+					}
+					emitStepDone("final")
+					return history, &Result{
+						Steps:   steps,
+						Patches: finalPatches,
+						Applied: false,
+						Todos:   a.todos,
+					}, nil
+				}
+				internalOps = stagedOps
+				a.logf("final staged_ops=%d → FSApplyOps dry_run=true", len(internalOps))
 
-			start = time.Now()
-			resp, err := a.tools.FSApplyOps(ctx, applyReq)
-			applyMS := time.Since(start).Milliseconds()
-			if err != nil {
-				// StaleContent/AmbiguousMatch are recoverable: keep looping.
-				if pe, ok := protocol.AsError(err); ok && (pe.Code == protocol.StaleContent || pe.Code == protocol.AmbiguousMatch) {
-					a.logf("apply status=recoverable_error duration_ms=%d err=%v", applyMS, err)
+				start := time.Now()
+				resp, err := a.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
+					Ops:    internalOps,
+					DryRun: true,
+					Backup: false,
+				})
+				applyMS := time.Since(start).Milliseconds()
+				if err != nil {
+					if pe, ok := protocol.AsError(err); ok && (pe.Code == protocol.StaleContent || pe.Code == protocol.AmbiguousMatch) {
+						a.logf("staged-fsapply status=recoverable_error duration_ms=%d err=%v", applyMS, err)
+						history = append(history, llm.Message{
+							Role:    llm.RoleUser,
+							Content: formatApplyErrorCompact(err, pe.Code),
+						})
+						if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+							return nil, nil, cbErr
+						}
+						if a.opts.OnEvent != nil {
+							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+								Kind:    llm.StreamEventRecoverableError,
+								Content: fmt.Sprintf("%s: %s", pe.Code, pe.Message),
+							}})
+						}
+						emitStepDone("final_retry")
+						continue
+					}
+					a.logf("staged-fsapply status=error duration_ms=%d err=%v", applyMS, err)
+					return nil, nil, err
+				}
+				a.logf("staged-apply status=ok duration_ms=%d diffs=%d", applyMS, len(resp.Diffs))
+				applyResp = resp
+
+			} else {
+				// ── APPLY PATH ───────────────────────────────────────────────────────────
+				// Existing behavior: resolve patches → FSApplyOps with DryRun=false.
+				if len(finalPatches) == 0 {
+					a.logf("final received empty patches (no changes needed)")
+					if llmResp != nil {
+						history = append(history, llmResp.Message)
+					}
+					emitStepDone("final")
+					return history, &Result{
+						Steps:   steps,
+						Patches: []patches.Patch{},
+						Applied: false,
+						Todos:   a.todos,
+					}, nil
+				}
+
+				a.logf("final received patches=%d", len(finalPatches))
+				start := time.Now()
+				resolvedOps, err := resolver.ResolveExternalPatches(a.tools.WorkspaceRoot(), finalPatches)
+				resolveMS := time.Since(start).Milliseconds()
+				if err != nil {
+					a.logf("resolve status=error duration_ms=%d err=%v", resolveMS, err)
 					history = append(history, llm.Message{
 						Role:    llm.RoleUser,
-						Content: formatApplyErrorCompact(err, pe.Code),
+						Content: formatResolveErrorCompact(err),
 					})
 					if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
 						return nil, nil, cbErr
 					}
 					if a.opts.OnEvent != nil {
+						var resolveMsg string
+						if pe, ok := protocol.AsError(err); ok {
+							resolveMsg = fmt.Sprintf("%s: %s", pe.Code, pe.Message)
+						} else {
+							resolveMsg = "resolve error: " + err.Error()
+						}
 						a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
 							Kind:    llm.StreamEventRecoverableError,
-							Content: fmt.Sprintf("%s: %s", pe.Code, pe.Message),
+							Content: resolveMsg,
 						}})
 					}
 					emitStepDone("final_retry")
 					continue
 				}
-				a.logf("apply status=error duration_ms=%d err=%v", applyMS, err)
-				return nil, nil, err
-			}
-			a.logf("apply status=ok duration_ms=%d diffs=%d dry_run=%v", applyMS, len(resp.Diffs), applyReq.DryRun)
+				a.logf("resolve status=ok duration_ms=%d ops=%d", resolveMS, len(resolvedOps))
 
+				start = time.Now()
+				resp, err := a.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
+					Ops:    resolvedOps,
+					DryRun: false,
+					Backup: a.opts.Backup && a.opts.Apply,
+				})
+				applyMS := time.Since(start).Milliseconds()
+				if err != nil {
+					if pe, ok := protocol.AsError(err); ok && (pe.Code == protocol.StaleContent || pe.Code == protocol.AmbiguousMatch) {
+						a.logf("apply status=recoverable_error duration_ms=%d err=%v", applyMS, err)
+						history = append(history, llm.Message{
+							Role:    llm.RoleUser,
+							Content: formatApplyErrorCompact(err, pe.Code),
+						})
+						if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+							return nil, nil, cbErr
+						}
+						if a.opts.OnEvent != nil {
+							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+								Kind:    llm.StreamEventRecoverableError,
+								Content: fmt.Sprintf("%s: %s", pe.Code, pe.Message),
+							}})
+						}
+						emitStepDone("final_retry")
+						continue
+					}
+					a.logf("apply status=error duration_ms=%d err=%v", applyMS, err)
+					return nil, nil, err
+				}
+				a.logf("apply status=ok duration_ms=%d diffs=%d", applyMS, len(resp.Diffs))
+				internalOps = resolvedOps
+				applyResp = resp
+			}
+
+			// ── COMMON TAIL ──────────────────────────────────────────────────────────
 			if llmResp != nil {
 				history = append(history, llmResp.Message)
 			}
-			if a.opts.OnEvent != nil && resp != nil {
+			if a.opts.OnEvent != nil && applyResp != nil {
 				payload := map[string]any{
 					"ops":     internalOps,
-					"diff":    resp.Diffs,
+					"diff":    applyResp.Diffs,
 					"applied": a.opts.Apply,
 				}
 				payloadJSON, _ := json.Marshal(payload)
@@ -893,10 +981,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			emitStepDone("final")
 			return history, &Result{
 				Steps:         steps,
-				Patches:       patches,
+				Patches:       finalPatches,
 				Ops:           internalOps,
 				Applied:       a.opts.Apply,
-				ApplyResponse: resp,
+				ApplyResponse: applyResp,
 				Todos:         a.todos,
 			}, nil
 
