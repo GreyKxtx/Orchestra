@@ -64,6 +64,9 @@ func isGitSafeRef(s string) bool {
 	if s == "" {
 		return false
 	}
+	if s[0] == '-' {
+		return false
+	}
 	for _, c := range s {
 		ok := (c >= 'a' && c <= 'z') ||
 			(c >= 'A' && c <= 'Z') ||
@@ -107,11 +110,7 @@ func (r *Runner) GitStatus(ctx context.Context, _ GitStatusRequest) (*GitStatusR
 	lines := strings.SplitN(stdout, "\n", 2)
 	if len(lines) > 0 && strings.HasPrefix(lines[0], "## ") {
 		bl := strings.TrimPrefix(lines[0], "## ")
-		if idx := strings.IndexAny(bl, ". "); idx >= 0 {
-			branch = bl[:idx]
-		} else {
-			branch = bl
-		}
+		branch = parseBranchFromStatusLine(bl)
 	}
 
 	rest := ""
@@ -185,4 +184,24 @@ func (r *Runner) GitLog(ctx context.Context, req GitLogRequest) (*GitLogResponse
 
 	truncated := strings.HasSuffix(stdout, "[output truncated]")
 	return &GitLogResponse{Output: stdout, Truncated: truncated}, nil
+}
+
+// parseBranchFromStatusLine extracts the branch name from the first line of
+// `git status --short --branch` output (after stripping the "## " prefix).
+// Handles: "main", "main...origin/main", "HEAD (no branch)",
+// "No commits yet on main", "Initial commit on main" (older git).
+func parseBranchFromStatusLine(bl string) string {
+	for _, pfx := range []string{"No commits yet on ", "Initial commit on "} {
+		if strings.HasPrefix(bl, pfx) {
+			b := strings.TrimPrefix(bl, pfx)
+			if idx := strings.IndexAny(b, ". "); idx >= 0 {
+				return b[:idx]
+			}
+			return strings.TrimSpace(b)
+		}
+	}
+	if idx := strings.IndexAny(bl, ". "); idx >= 0 {
+		return bl[:idx]
+	}
+	return bl
 }
