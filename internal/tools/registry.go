@@ -349,6 +349,7 @@ func ListToolsForChild() []llm.ToolDef {
 		toolFSGlob(),
 		toolSearchText(),
 		toolCodeSymbols(),
+		toolDiffPreview(),
 		toolTaskResult(),
 	})
 }
