@@ -17,6 +17,7 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 		toolFSGlob(),
 		toolFSWrite(),
 		toolFSEdit(),
+		toolFSDelete(),
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
@@ -56,12 +57,15 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 		case "ls", "read", "glob", "grep", "symbols", "explore",
 			"todoread", "task.result", "runtime.query", "webfetch",
 			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
-			"diff.preview":
+			"diff.preview",
+			"git.status", "git.diff", "git.log":
 			defs[i].ParallelSafe = true
 		// State-mutating tools — must run one at a time.
 		case "write", "edit", "bash", "todowrite", "memory_write",
 			"lsp.rename", "plan.enter", "plan.exit",
-			"task.spawn", "task.wait", "task.cancel", "question":
+			"task.spawn", "task.wait", "task.cancel", "question",
+			"fs.delete", "fs.rename",
+			"git.commit", "git.branch", "git.checkout", "git.push":
 			defs[i].Mutating = true
 		}
 	}
@@ -788,6 +792,25 @@ func toolDiffPreview() llm.ToolDef {
     "path":    { "type": "string", "minLength": 1, "description": "Путь к файлу относительно workspace root" },
     "search":  { "type": "string", "minLength": 1, "description": "Текст для поиска (как в edit)" },
     "replace": { "type": "string", "description": "Текст замены" }
+  }
+}`),
+		},
+	}
+}
+
+func toolFSDelete() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "fs.delete",
+			Description: "Удалить файл или директорию по workspace-relative пути. Для непустых директорий требуется recursive=true.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path"],
+  "properties": {
+    "path":      { "type": "string", "minLength": 1, "description": "Workspace-relative путь для удаления." },
+    "recursive": { "type": "boolean", "description": "Рекурсивно удалить непустую директорию. По умолчанию false." }
   }
 }`),
 		},
