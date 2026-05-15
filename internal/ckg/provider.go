@@ -327,7 +327,9 @@ func (p *Provider) appendImportsSection(ctx context.Context, sb *strings.Builder
 		}
 		outImports = append(outImports, s)
 	}
-	_ = outRows.Err()
+	if err := outRows.Err(); err != nil {
+		return
+	}
 
 	// Incoming imports: who imports this package.
 	importers, err := p.Importers(ctx, pkgFQN)
