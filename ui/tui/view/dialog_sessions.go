@@ -13,15 +13,51 @@ import (
 // SessionsDialog lists past saved sessions with fuzzy filter. Enter selects;
 // 'd' deletes the highlighted session after a confirm step.
 type SessionsDialog struct {
-	all       []sessionstore.SessionMeta
-	cursor    int
-	filter    string
-	confirmDel bool // when true, next 'd' or Enter deletes
+	all        []sessionstore.SessionMeta
+	cursor     int
+	scroll     int
+	filter     string
+	confirmDel bool
+	screenH    int // updated every Render; used by Update to keep cursor in view
 }
 
 // NewSessionsDialog seeds with already-loaded session metadata.
 func NewSessionsDialog(metas []sessionstore.SessionMeta) *SessionsDialog {
-	return &SessionsDialog{all: metas}
+	return &SessionsDialog{all: metas, screenH: 24}
+}
+
+// maxVisible computes how many list rows fit on screen given fixed overhead.
+// Fixed overhead in renderListDialog (with filter row): 8 rows; add 4 safety.
+func (d *SessionsDialog) maxVisible() int {
+	n := d.screenH - 12
+	if n < 3 {
+		n = 3
+	}
+	return n
+}
+
+// clampScroll ensures scroll puts cursor inside the visible window.
+func (d *SessionsDialog) clampScroll(totalVisible int) {
+	mv := d.maxVisible()
+	// Scroll down if cursor is below the window.
+	if d.cursor >= d.scroll+mv {
+		d.scroll = d.cursor - mv + 1
+	}
+	// Scroll up if cursor is above the window.
+	if d.cursor < d.scroll {
+		d.scroll = d.cursor
+	}
+	// Clamp scroll so we don't show empty rows at the bottom.
+	maxScroll := totalVisible - mv
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if d.scroll > maxScroll {
+		d.scroll = maxScroll
+	}
+	if d.scroll < 0 {
+		d.scroll = 0
+	}
 }
 
 // Update implements Dialog.
@@ -35,11 +71,13 @@ func (d *SessionsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	case "up", "ctrl+p":
 		if d.cursor > 0 {
 			d.cursor--
+			d.clampScroll(len(visible))
 		}
 		d.confirmDel = false
 	case "down", "ctrl+n":
 		if d.cursor < len(visible)-1 {
 			d.cursor++
+			d.clampScroll(len(visible))
 		}
 		d.confirmDel = false
 	case "esc", "left":
@@ -65,12 +103,14 @@ func (d *SessionsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		if len(d.filter) > 0 {
 			d.filter = d.filter[:len(d.filter)-1]
 			d.cursor = 0
+			d.scroll = 0
 		}
 		d.confirmDel = false
 	default:
 		if len(km.Runes) == 1 {
 			d.filter += string(km.Runes[0])
 			d.cursor = 0
+			d.scroll = 0
 			d.confirmDel = false
 		}
 	}
@@ -95,34 +135,19 @@ func (d *SessionsDialog) visible() []sessionstore.SessionMeta {
 
 // Render implements Dialog.
 func (d *SessionsDialog) Render(screenW, screenH int) string {
+	d.screenH = screenH
+
 	visible := d.visible()
-
-	// Fixed overhead inside renderListDialog: blank+header+blank+filter+blank +
-	// blank+hint+blank = 8 rows. Subtract a 2-row safety margin for centering.
-	const fixedRows = 10
-	maxVisible := screenH - fixedRows
-	if maxVisible < 3 {
-		maxVisible = 3
-	}
-
-	// Compute scroll offset so cursor stays inside the visible window.
-	scroll := 0
-	if d.cursor >= maxVisible {
-		scroll = d.cursor - maxVisible + 1
-	}
-	if scroll+maxVisible > len(visible) {
-		scroll = len(visible) - maxVisible
-		if scroll < 0 {
-			scroll = 0
-		}
-	}
+	mv := d.maxVisible()
+	d.clampScroll(len(visible))
 
 	// Slice to the scroll window.
-	end := scroll + maxVisible
+	start := d.scroll
+	end := start + mv
 	if end > len(visible) {
 		end = len(visible)
 	}
-	window := visible[scroll:end]
+	window := visible[start:end]
 
 	items := make([]listDialogItem, 0, len(window))
 	for _, m := range window {
@@ -143,18 +168,18 @@ func (d *SessionsDialog) Render(screenW, screenH int) string {
 	if d.confirmDel {
 		hint = "Press Enter again to confirm delete · Esc cancel"
 	}
-	// Show position when the list is longer than the window.
+
 	title := "Sessions"
 	if len(d.all) == 0 {
 		title = "Sessions — none yet"
-	} else if len(visible) > maxVisible {
+	} else if len(visible) > mv {
 		title = fmt.Sprintf("Sessions  %d/%d", d.cursor+1, len(visible))
 	}
 
 	return renderListDialog(
 		title,
 		items,
-		d.cursor-scroll, // cursor relative to the window
+		d.cursor-d.scroll,
 		d.filter,
 		"Search sessions",
 		hint,
