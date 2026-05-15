@@ -73,7 +73,7 @@ func TestDetect_TypeScriptBeatsJS(t *testing.T) {
 	dir := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte("{}"), 0644))
 	must(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644))
-	got := Detect(dir, AllLangs)
+	got := Detect(dir, []LangConfig{tsLang, jsLang})
 	names := langNames(got)
 	for _, n := range names {
 		if n == "javascript" {
@@ -92,7 +92,7 @@ func TestDetect_GoAndPython(t *testing.T) {
 	dir := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/foo\n\ngo 1.21\n"), 0644))
 	must(t, os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask\n"), 0644))
-	got := Detect(dir, AllLangs)
+	got := Detect(dir, []LangConfig{goLang, pythonLang})
 	names := langNames(got)
 	if !containsStr(names, "go") || !containsStr(names, "python") {
 		t.Fatalf("expected both go and python detected, got %v", names)
