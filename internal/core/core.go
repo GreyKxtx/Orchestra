@@ -416,6 +416,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 
 	customOpts := c.resolveCustomAgentOpts(params.Mode, agentLogger)
 
+	// Configure staging mode: dry-run when not applying; clear any stale state from prior runs.
+	c.tools.SetDryRun(!params.Apply)
+	c.tools.ClearStaged()
+
 	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
