@@ -74,20 +74,18 @@ func TestRealLLMMinimalFlow(t *testing.T) {
 	}
 
 	// Verify plan has ops (required for --from-plan).
-	// Tool-based models (write/edit tools) write directly to disk and produce
-	// no final patches, so plan.json ends up with no ops — skip gracefully.
+	// With staging architecture, tool-based writes are also captured in plan.json.
 	if len(plan.Ops) == 0 {
-		t.Skipf("plan.json has no ops (tool-based model used direct writes); --from-plan flow not testable")
+		t.Fatalf("plan.json has no ops — staging architecture should capture all writes (patches=%d)", len(plan.Patches))
 	}
 
-	// Log whether the file was modified during plan-only — tool-based writes
-	// can happen even without --apply, so this is informational only.
+	// Verify file was NOT modified during --plan-only (staging must protect disk).
 	afterPlanOnly, err := os.ReadFile(mainPath)
 	if err != nil {
 		t.Fatalf("Failed to read main.go after plan-only: %v", err)
 	}
 	if !bytes.Equal(origContent, afterPlanOnly) {
-		t.Logf("Note: file was modified during plan-only (tool-based writes bypass dry-run flag)")
+		t.Fatalf("File was modified during --plan-only (staging must protect disk); got:\n%s", string(afterPlanOnly))
 	}
 
 	// Verify diff artifact exists
