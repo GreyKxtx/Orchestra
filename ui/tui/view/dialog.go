@@ -34,6 +34,21 @@ type listDialogItem struct {
 	Disabled    bool   // greyed and skipped on cursor moves
 }
 
+// truncRunes truncates s to at most maxR visible runes, appending "…" if cut.
+func truncRunes(s string, maxR int) string {
+	if maxR <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= maxR {
+		return s
+	}
+	if maxR == 1 {
+		return "…"
+	}
+	return string(r[:maxR-1]) + "…"
+}
+
 // renderListDialog renders a borderless opencode-style modal containing a
 // title row ("Title … esc"), filter input, optionally grouped item list, and
 // a hint footer. Cursor index addresses items in the order they appear.
@@ -85,8 +100,9 @@ func renderListDialog(
 		return base.Render(strings.Repeat(" ", n))
 	}
 	fitInner := func(s string) string {
-		if visW := lipgloss.Width(s); visW < inner {
-			return s + padBg(inner-visW)
+		w := lipgloss.Width(s)
+		if w < inner {
+			return s + padBg(inner-w)
 		}
 		return s
 	}
@@ -117,13 +133,29 @@ func renderListDialog(
 	if len(items) == 0 {
 		listLines = append(listLines, fitInner(mutedStyle.Render("  No results found")))
 	} else {
+		// Cap title column so long titles don't push descriptions off screen.
+		// Title gets at most 40% of inner; description gets the rest minus inset.
+		maxTitleW := inner * 40 / 100
+		if maxTitleW < 10 {
+			maxTitleW = 10
+		}
 		maxTitle := 0
 		for _, it := range items {
-			if w := lipgloss.Width(it.Title); w > maxTitle {
+			w := lipgloss.Width(it.Title)
+			if w > maxTitle {
 				maxTitle = w
 			}
 		}
+		if maxTitle > maxTitleW {
+			maxTitle = maxTitleW
+		}
 		titleCol := maxTitle + 2
+		// Maximum description width: inner minus inset(2) minus titleCol.
+		maxDescW := inner - 2 - titleCol
+		if maxDescW < 5 {
+			maxDescW = 5
+		}
+
 		const inset = "  "
 		prevCategory := ""
 		for i, it := range items {
@@ -136,17 +168,34 @@ func renderListDialog(
 				}
 				prevCategory = it.Category
 			}
-			padTitle := fmt.Sprintf("%-*s", titleCol, it.Title)
+			// Truncate title and description to guaranteed-fit widths.
+			rowTitle := truncRunes(it.Title, maxTitle)
+			rowDesc := truncRunes(it.Description, maxDescW)
+			padTitle := fmt.Sprintf("%-*s", titleCol, rowTitle)
 			switch {
 			case it.Disabled:
-				row := disabledStyle.Render(inset+padTitle) + disabledStyle.Render(it.Description)
+				row := disabledStyle.Render(inset+padTitle) + disabledStyle.Render(rowDesc)
 				listLines = append(listLines, fitInner(row))
 			case i == cursor:
-				listLines = append(listLines, selStyle.Render(inset+padTitle+it.Description))
+				listLines = append(listLines, selStyle.Render(inset+padTitle+rowDesc))
 			default:
-				row := cmdStyle.Render(inset+padTitle) + descStyle.Render(it.Description)
+				row := cmdStyle.Render(inset+padTitle) + descStyle.Render(rowDesc)
 				listLines = append(listLines, fitInner(row))
 			}
+		}
+	}
+
+	// Hard-cap list height so the box never overflows the screen.
+	// Fixed overhead: blank+header+blank [+filter+blank] + blank+hint+blank = 8–10 rows.
+	const overhead = 10
+	maxListRows := screenH - overhead
+	if maxListRows < 3 {
+		maxListRows = 3
+	}
+	if len(listLines) > maxListRows {
+		listLines = listLines[:maxListRows]
+		if cursor >= len(listLines) {
+			cursor = len(listLines) - 1
 		}
 	}
 
