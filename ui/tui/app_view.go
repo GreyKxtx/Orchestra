@@ -235,12 +235,10 @@ func (a *App) layout() {
 	// After (re)sizing, recompute soft-wrap visual height so the box
 	// grows immediately on resize without waiting for the next keystroke.
 	a.input.SyncHeight(5)
-	// Width() in lipgloss is content+padding (borders add on top).
-	// palette.Render() total = SetSize + 2 borders; renderInputBox total = Width + 1 border.
-	// After PaddingLeft(1): palette = 1+SetSize+2, input = 1+inputW+1.
-	// For equality: SetSize + 2 = inputW + 1 → SetSize = inputW - 1.
-	a.slashPalette.SetSize(inputW - 1)
-	a.mentionPalette.SetSize(inputW - 1)
+	// Width() excludes borders. palette now has 1 left border (▌) matching input box.
+	// palette total = SetSize + 1; input total = inputW + 1. After PaddingLeft(1): both = inputW + 2.
+	a.slashPalette.SetSize(inputW)
+	a.mentionPalette.SetSize(inputW)
 
 	// Track input box position for mouse click-to-cursor.
 	if !a.showWelcome {

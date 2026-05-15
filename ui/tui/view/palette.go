@@ -26,16 +26,15 @@ var AllSlashCmds = []SlashCmd{
 	{"/mode", "show current mode"},
 	{"/model", "show current model"},
 	{"/quit", "exit Orchestra TUI"},
+	{"/sessions", "browse saved sessions"},
 }
 
 const maxPaletteVisible = 6
 
-// splitBorder mimics opencode's SplitBorder: thick ┃ on left and right only,
-// no top/bottom/corners. Reads as a discrete menu element rather than a
-// continuation of the input box.
+// splitBorder — only a left accent bar matching the input box style (▌),
+// no right border. Appears as a seamless extension of the input box above it.
 var splitBorder = lipgloss.Border{
-	Left:  "┃",
-	Right: "┃",
+	Left: "▌",
 }
 
 // paletteCursor encapsulates the cursor-up/down/clamp logic shared by every
@@ -78,15 +77,16 @@ func renderPaletteList(length int, cursor int, rowFor func(i int) string) string
 	return b.String()
 }
 
-// paletteBox wraps inner content in the opencode SplitBorder shell. Returns
-// the boxed string ready for placement above the input.
-func paletteBox(inner string, width int) string {
+// paletteBox wraps inner content in a left-only accent bar (▌), matching the
+// input box style. No right border — the palette appears as a seamless block
+// floating above the input.
+func paletteBox(inner string, width int, borderColor lipgloss.Color) string {
 	t := theme.CurrentTheme()
 	bg := t.BackgroundSecondary()
 	return lipgloss.NewStyle().
 		Background(bg).
-		Border(splitBorder, false, true, false, true).
-		BorderForeground(t.Primary()).
+		Border(splitBorder, false, false, false, true).
+		BorderForeground(borderColor).
 		BorderBackground(bg).
 		Padding(0, 1).
 		Width(width).
@@ -98,6 +98,7 @@ type SlashPalette struct {
 	Items  []SlashCmd
 	Cursor int
 	width  int
+	scroll int // index of the first visible item
 }
 
 // NewSlashPalette creates a palette sized to the given width.
@@ -118,24 +119,27 @@ func (p *SlashPalette) Filter(query string) {
 		}
 	}
 	p.Items = filtered
-	if len(p.Items) > 0 && p.Cursor >= len(p.Items) {
-		p.Cursor = len(p.Items) - 1
-	} else if len(p.Items) == 0 {
-		p.Cursor = 0
-	}
+	p.Cursor = 0
+	p.scroll = 0
 }
 
-// CursorUp moves the cursor toward the top, clamping at 0.
+// CursorUp moves the cursor toward the top, scrolling the window if needed.
 func (p *SlashPalette) CursorUp() {
 	if p.Cursor > 0 {
 		p.Cursor--
+		if p.Cursor < p.scroll {
+			p.scroll = p.Cursor
+		}
 	}
 }
 
-// CursorDown moves the cursor toward the bottom, clamping at len-1.
+// CursorDown moves the cursor toward the bottom, scrolling the window if needed.
 func (p *SlashPalette) CursorDown() {
 	if p.Cursor < len(p.Items)-1 {
 		p.Cursor++
+		if p.Cursor-p.scroll >= maxPaletteVisible {
+			p.scroll = p.Cursor - maxPaletteVisible + 1
+		}
 	}
 }
 
@@ -147,25 +151,31 @@ func (p *SlashPalette) Selected() string {
 	return p.Items[p.Cursor].Cmd
 }
 
-// Render returns the palette as a discrete floating menu: thick ┃ bars on
-// both sides (opencode SplitBorder), grey BackgroundSecondary fill, dynamic
-// cmd-column width so descriptions align across all visible items.
+// Render returns the palette as a discrete floating menu: ▌ accent bar on
+// left only (matching input box style), grey BackgroundSecondary fill,
+// dynamic cmd-column width so descriptions align across all visible items.
 func (p *SlashPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
 	}
 	t := theme.CurrentTheme()
 	bg := t.BackgroundSecondary()
-	visible := p.Items
-	if len(visible) > maxPaletteVisible {
-		visible = visible[:maxPaletteVisible]
+
+	// Apply scroll window.
+	end := p.scroll + maxPaletteVisible
+	if end > len(p.Items) {
+		end = len(p.Items)
 	}
+	visible := p.Items[p.scroll:end]
+	cursorInView := p.Cursor - p.scroll
 
 	w := p.width
 	if w < 20 {
 		w = 20
 	}
-	innerW := w - 4
+	// innerW = Width(w) content area: Width excludes borders, Padding(0,1) adds
+	// 1 left + 1 right → content = w - 2.
+	innerW := w - 2
 
 	maxCmd := 0
 	for _, it := range visible {
@@ -184,10 +194,10 @@ func (p *SlashPalette) Render() string {
 	descStyle := lipgloss.NewStyle().Background(bg).Foreground(t.TextMuted())
 	bgPad := lipgloss.NewStyle().Background(bg)
 
-	rows := renderPaletteList(len(visible), p.Cursor, func(i int) string {
+	rows := renderPaletteList(len(visible), cursorInView, func(i int) string {
 		item := visible[i]
 		padCmd := fmt.Sprintf("%-*s", cmdW, item.Cmd)
-		if i == p.Cursor {
+		if i == cursorInView {
 			return selStyle.Render(padCmd + item.Desc)
 		}
 		raw := cmdStyle.Render(padCmd) + descStyle.Render(item.Desc)
@@ -196,7 +206,7 @@ func (p *SlashPalette) Render() string {
 		}
 		return raw
 	})
-	return paletteBox(rows, w)
+	return paletteBox(rows, w, t.Primary())
 }
 
 // MentionPalette renders a filtered list of file paths for @-mention completion.
@@ -204,6 +214,7 @@ type MentionPalette struct {
 	Items  []string
 	Cursor int
 	width  int
+	scroll int
 }
 
 // NewMentionPalette creates a mention palette sized to the given width.
@@ -217,22 +228,27 @@ func (p *MentionPalette) SetSize(width int) { p.width = width }
 // SetItems replaces the item list and resets the cursor.
 func (p *MentionPalette) SetItems(items []string) {
 	p.Items = items
-	if p.Cursor >= len(p.Items) {
-		p.Cursor = 0
-	}
+	p.Cursor = 0
+	p.scroll = 0
 }
 
-// CursorUp moves the cursor toward the top, clamping at 0.
+// CursorUp moves the cursor toward the top, scrolling the window if needed.
 func (p *MentionPalette) CursorUp() {
 	if p.Cursor > 0 {
 		p.Cursor--
+		if p.Cursor < p.scroll {
+			p.scroll = p.Cursor
+		}
 	}
 }
 
-// CursorDown moves the cursor toward the bottom, clamping at len-1.
+// CursorDown moves the cursor toward the bottom, scrolling the window if needed.
 func (p *MentionPalette) CursorDown() {
 	if p.Cursor < len(p.Items)-1 {
 		p.Cursor++
+		if p.Cursor-p.scroll >= maxPaletteVisible {
+			p.scroll = p.Cursor - maxPaletteVisible + 1
+		}
 	}
 }
 
@@ -244,23 +260,26 @@ func (p *MentionPalette) Selected() string {
 	return p.Items[p.Cursor]
 }
 
-// Render — same opencode SplitBorder style as SlashPalette.
+// Render — same left-only ▌ accent style as SlashPalette.
 func (p *MentionPalette) Render() string {
 	if len(p.Items) == 0 {
 		return ""
 	}
 	t := theme.CurrentTheme()
 	bg := t.BackgroundSecondary()
-	visible := p.Items
-	if len(visible) > maxPaletteVisible {
-		visible = visible[:maxPaletteVisible]
+
+	end := p.scroll + maxPaletteVisible
+	if end > len(p.Items) {
+		end = len(p.Items)
 	}
+	visible := p.Items[p.scroll:end]
+	cursorInView := p.Cursor - p.scroll
 
 	w := p.width
 	if w < 20 {
 		w = 20
 	}
-	innerW := w - 4
+	innerW := w - 2
 
 	selStyle := lipgloss.NewStyle().
 		Background(t.Primary()).
@@ -270,9 +289,9 @@ func (p *MentionPalette) Render() string {
 	itemStyle := lipgloss.NewStyle().Background(bg).Foreground(t.Text())
 	bgPad := lipgloss.NewStyle().Background(bg)
 
-	rows := renderPaletteList(len(visible), p.Cursor, func(i int) string {
+	rows := renderPaletteList(len(visible), cursorInView, func(i int) string {
 		item := visible[i]
-		if i == p.Cursor {
+		if i == cursorInView {
 			return selStyle.Render(item)
 		}
 		raw := itemStyle.Render(item)
@@ -281,5 +300,5 @@ func (p *MentionPalette) Render() string {
 		}
 		return raw
 	})
-	return paletteBox(rows, w)
+	return paletteBox(rows, w, t.Primary())
 }
