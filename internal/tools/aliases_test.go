@@ -102,3 +102,31 @@ func TestListTools_WebGating(t *testing.T) {
 		t.Error("ListTools(allowWeb=true) must include webfetch")
 	}
 }
+
+// TestListTools_NewToolsPresent verifies all v7 tools are registered.
+func TestListTools_NewToolsPresent(t *testing.T) {
+	// Read-only git tools + fs extras are always present (no allowExec needed).
+	always := ListTools(false, false)
+	alwaysNames := toolNameSet(always)
+	for _, name := range []string{"fs.delete", "fs.rename", "git.status", "git.log", "git.diff"} {
+		if !alwaysNames[name] {
+			t.Errorf("ListTools(allowExec=false): missing tool %q", name)
+		}
+	}
+
+	// Write git tools require allowExec=true.
+	withExec := ListTools(true, false)
+	withExecNames := toolNameSet(withExec)
+	for _, name := range []string{"git.commit", "git.branch", "git.checkout", "git.push"} {
+		if !withExecNames[name] {
+			t.Errorf("ListTools(allowExec=true): missing tool %q", name)
+		}
+	}
+
+	// Write git tools must NOT appear without allowExec.
+	for _, name := range []string{"git.commit", "git.branch", "git.checkout", "git.push"} {
+		if alwaysNames[name] {
+			t.Errorf("ListTools(allowExec=false): must not include %q", name)
+		}
+	}
+}
