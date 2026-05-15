@@ -235,11 +235,11 @@ func (a *App) layout() {
 	// After (re)sizing, recompute soft-wrap visual height so the box
 	// grows immediately on resize without waiting for the next keystroke.
 	a.input.SyncHeight(5)
-	// +1 compensates for the palette's border+padding footprint (4 cells) vs
-	// the input box's border+padding footprint (5 cells), keeping their left
-	// edges aligned after PaddingLeft(chatSidePad) is applied in View().
-	a.slashPalette.SetSize(inputW + 1)
-	a.mentionPalette.SetSize(inputW + 1)
+	// Palette total rendered width = SetSize value (Width() includes borders in lipgloss).
+	// Input box: PaddingLeft(1) + renderInputBox(inputW) = 1 + inputW.
+	// Palette: PaddingLeft(1) + palette.Render() = 1 + inputW → SetSize = inputW.
+	a.slashPalette.SetSize(inputW)
+	a.mentionPalette.SetSize(inputW)
 
 	// Track input box position for mouse click-to-cursor.
 	if !a.showWelcome {
