@@ -730,7 +730,7 @@ func atoi(s string) int {
 // (exact → line-trimmed → indent-flexible). Returns new content, or StaleContent /
 // AmbiguousMatch protocol error if the search block is not found or ambiguous.
 func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) {
-	if search == "" {
+	if strings.TrimSpace(search) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "search is empty", nil)
 	}
 	s := string(content)
@@ -778,12 +778,14 @@ func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) 
 	return []byte(buf.String()), nil
 }
 
-// ApplyUnifiedDiff applies a unified diff to content. Returns new content, or an error
-// if the diff cannot be applied.
+// ApplyUnifiedDiff applies a unified diff to content. Returns new content, or a
+// StaleContent protocol error if the diff cannot be applied.
 func ApplyUnifiedDiff(content []byte, diffText string) ([]byte, error) {
 	result, err := applyUnifiedDiff(string(content), diffText)
 	if err != nil {
-		return nil, err
+		return nil, protocol.NewError(protocol.StaleContent, "failed to apply unified diff", map[string]any{
+			"error": err.Error(),
+		})
 	}
 	return []byte(result), nil
 }
