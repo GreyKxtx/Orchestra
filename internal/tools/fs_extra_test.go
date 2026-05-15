@@ -163,3 +163,51 @@ func TestFSRename_SrcNotExist(t *testing.T) {
 		t.Fatal("expected error when src does not exist")
 	}
 }
+
+func TestFSRename_SrcEqualsDst(t *testing.T) {
+	r, root := newFSExtraRunner(t)
+	if err := os.WriteFile(filepath.Join(root, "same.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.FSRename(context.Background(), FSRenameRequest{Path: "same.txt", NewPath: "same.txt"})
+	if err == nil {
+		t.Fatal("expected error when src == dst")
+	}
+}
+
+func TestFSRename_DstExists(t *testing.T) {
+	r, root := newFSExtraRunner(t)
+	if err := os.WriteFile(filepath.Join(root, "src.txt"), []byte("src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dst.txt"), []byte("dst"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.FSRename(context.Background(), FSRenameRequest{Path: "src.txt", NewPath: "dst.txt"})
+	if err == nil {
+		t.Fatal("expected error when destination already exists")
+	}
+}
+
+func TestFSRename_DryRun(t *testing.T) {
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	defer r.Close()
+	if err := os.WriteFile(filepath.Join(root, "orig.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := r.FSRename(context.Background(), FSRenameRequest{Path: "orig.txt", NewPath: "moved.txt"})
+	if err != nil {
+		t.Fatalf("FSRename dry-run: %v", err)
+	}
+	if resp.Path != "orig.txt" || resp.NewPath != "moved.txt" {
+		t.Errorf("unexpected resp: %+v", resp)
+	}
+	// File should still exist (dry-run)
+	if _, statErr := os.Stat(filepath.Join(root, "orig.txt")); statErr != nil {
+		t.Error("orig.txt should still exist in dry-run mode")
+	}
+}

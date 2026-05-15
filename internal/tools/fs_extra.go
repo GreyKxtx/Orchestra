@@ -99,9 +99,19 @@ func (r *Runner) FSRename(ctx context.Context, req FSRenameRequest) (*FSRenameRe
 		return nil, err
 	}
 
+	if absSrc == absDst {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "source and destination paths are identical",
+			map[string]any{"path": relSrc})
+	}
+
 	if _, statErr := os.Stat(absSrc); os.IsNotExist(statErr) {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "source path does not exist",
 			map[string]any{"path": relSrc})
+	}
+
+	if _, statErr := os.Stat(absDst); statErr == nil {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "destination path already exists",
+			map[string]any{"new_path": relDst})
 	}
 
 	if r.dryRun {
