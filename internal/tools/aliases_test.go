@@ -130,3 +130,30 @@ func TestListTools_NewToolsPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestListTools_BrowserGating verifies browser tools are absent without allowBrowser.
+func TestListTools_BrowserGating(t *testing.T) {
+	browserTools := []string{
+		"browser.navigate", "browser.snapshot", "browser.screenshot",
+		"browser.click", "browser.type", "browser.fill",
+		"browser.select", "browser.eval", "browser.wait", "browser.close",
+	}
+
+	// Without allowBrowser: browser tools must not appear.
+	without := ListTools(false, false, false)
+	withoutNames := toolNameSet(without)
+	for _, name := range browserTools {
+		if withoutNames[name] {
+			t.Errorf("ListTools(allowBrowser=false): must not include %q", name)
+		}
+	}
+
+	// With allowBrowser: all browser tools must appear.
+	with := ListTools(false, false, true)
+	withNames := toolNameSet(with)
+	for _, name := range browserTools {
+		if !withNames[name] {
+			t.Errorf("ListTools(allowBrowser=true): missing tool %q", name)
+		}
+	}
+}
