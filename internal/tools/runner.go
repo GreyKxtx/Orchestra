@@ -574,7 +574,26 @@ func (r *Runner) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 	}
 
 	var matches []search.Match
-	if len(req.Paths) == 0 {
+	if search.HasRipgrep() {
+		// Build absolute scope paths for ripgrep (nil = whole project).
+		var scopePaths []string
+		for _, p := range req.Paths {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			abs, _, err := resolveWorkspacePath(r.workspaceRoot, p)
+			if err != nil {
+				return nil, err
+			}
+			scopePaths = append(scopePaths, abs)
+		}
+		m, err := search.SearchWithRipgrep(r.workspaceRoot, query, exclude, opts, scopePaths)
+		if err != nil {
+			return nil, err
+		}
+		matches = m
+	} else if len(req.Paths) == 0 {
 		m, err := search.SearchInProject(r.workspaceRoot, query, exclude, opts)
 		if err != nil {
 			return nil, err
@@ -603,7 +622,6 @@ func (r *Runner) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 				matches = append(matches, m...)
 				continue
 			}
-			// File scope: search only within this file.
 			b, err := os.ReadFile(abs)
 			if err != nil {
 				return nil, err
