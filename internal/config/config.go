@@ -173,6 +173,15 @@ type WebConfig struct {
 	MaxContentBytes int   `yaml:"max_content_bytes"`
 }
 
+// BrowserConfig contains Playwright browser automation settings.
+type BrowserConfig struct {
+	Headless       bool `yaml:"headless"`
+	TimeoutMS      int  `yaml:"timeout_ms"`
+	ViewportWidth  int  `yaml:"viewport_width"`
+	ViewportHeight int  `yaml:"viewport_height"`
+	AllowEval      bool `yaml:"allow_eval"`
+}
+
 // PermissionRule is a single entry in the permission ruleset.
 // Rules are evaluated in order; the first matching rule determines the outcome.
 //
@@ -239,6 +248,9 @@ var validAgentToolNames = map[string]bool{
 	"diff.preview": true,
 	"git.status": true, "git.log": true, "git.diff": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
+	"browser.navigate": true, "browser.snapshot": true, "browser.screenshot": true,
+	"browser.click": true, "browser.type": true, "browser.fill": true,
+	"browser.select": true, "browser.eval": true, "browser.wait": true, "browser.close": true,
 }
 
 // HooksConfig configures pre/post tool call hooks (Phase 6).
@@ -278,6 +290,7 @@ type ProjectConfig struct {
 	Hooks        HooksConfig     `yaml:"hooks"`
 	MCP          MCPConfig       `yaml:"mcp"`
 	Web          WebConfig         `yaml:"web"`
+	Browser      BrowserConfig     `yaml:"browser"`
 	Languages    LanguagesConfig   `yaml:"languages"`
 	Permissions  PermissionsConfig `yaml:"permissions,omitempty"`
 	Agents       []AgentDefinition `yaml:"agents,omitempty"`
@@ -344,6 +357,13 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			Confirm:         boolPtr(true),
 			FetchTimeoutS:   30,
 			MaxContentBytes: 512 * 1024,
+		},
+		Browser: BrowserConfig{
+			Headless:       true,
+			TimeoutMS:      30000,
+			ViewportWidth:  1280,
+			ViewportHeight: 720,
+			AllowEval:      false,
 		},
 		Languages: LanguagesConfig{
 			Enabled: []string{"go"},
