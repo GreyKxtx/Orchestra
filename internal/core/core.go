@@ -78,10 +78,13 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 
 	tr, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-		ExcludeDirs:     cfg.ExcludeDirs,
-		ExecTimeout:     time.Duration(cfg.Exec.TimeoutS) * time.Second,
-		ExecOutputLimit: cfg.Exec.OutputLimitKB * 1024,
-		LSP:             cfg.LSP,
+		ExcludeDirs:        cfg.ExcludeDirs,
+		ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
+		ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
+		WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
+		WebMaxContentBytes: cfg.Web.MaxContentBytes,
+		WebSearch:          cfg.Web.Search,
+		LSP:                cfg.LSP,
 	})
 	if err != nil {
 		return nil, err
