@@ -108,6 +108,9 @@ type Options struct {
 	// AllowWeb enables the webfetch tool — equivalent to --allow-web.
 	AllowWeb bool
 
+	// AllowBrowser enables browser.* tools — equivalent to --allow-browser.
+	AllowBrowser bool
+
 	// PermissionRules is the ordered per-tool permission ruleset from config.permissions.
 	// Evaluated before the AllowExec / AllowWeb gates; first matching rule wins.
 	// allow → permit even without --allow-exec/--allow-web.
@@ -1011,16 +1014,17 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 	}
 	allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
 	allowWeb := a.opts.AllowWeb
+	allowBrowser := a.opts.AllowBrowser
 	hasSubtasks := a.opts.SubtaskRunner != nil
 	hasQA := a.opts.QuestionAsker != nil
 
 	var base []llm.ToolDef
 	if a.opts.Mode != "" {
-		base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, false, hasSubtasks, hasQA)
+		base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, allowBrowser, hasSubtasks, hasQA)
 	} else if hasSubtasks {
-		base = tools.ListToolsWithSubtasks(allowExec, allowWeb, false)
+		base = tools.ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
 	} else {
-		base = tools.ListTools(allowExec, allowWeb, false)
+		base = tools.ListTools(allowExec, allowWeb, allowBrowser)
 	}
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
