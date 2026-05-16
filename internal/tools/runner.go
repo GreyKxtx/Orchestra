@@ -49,6 +49,11 @@ type Runner struct {
 	webFetchTimeout    time.Duration
 	webMaxContentBytes int
 
+	// Web search settings.
+	webSearchCfg            config.WebSearchConfig
+	webSearchTavilyEndpoint string // override for tests; empty → real Tavily URL
+	webSearchBraveEndpoint  string // override for tests; empty → real Brave URL
+
 	lspManager *lsp.Manager
 
 	browserClient    *browser.Client
@@ -69,6 +74,8 @@ type RunnerOptions struct {
 
 	WebFetchTimeout    time.Duration
 	WebMaxContentBytes int
+
+	WebSearch config.WebSearchConfig
 
 	LSP config.LSPConfig
 
@@ -149,6 +156,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		ckgProvider:        provider,
 		webFetchTimeout:    webTimeout,
 		webMaxContentBytes: webMaxBytes,
+		webSearchCfg:       opts.WebSearch,
 		lspManager:         lspMgr,
 		browserClient:      browserCli,
 		allowBrowserEval:   opts.Browser.AllowEval,

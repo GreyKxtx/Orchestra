@@ -42,6 +42,7 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
+		out = append(out, toolWebSearch())
 	}
 	if allowBrowser {
 		out = append(out,
@@ -67,7 +68,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 		switch defs[i].Function.Name {
 		// Pure reads — safe to fan out concurrently.
 		case "ls", "read", "glob", "grep", "symbols", "explore",
-			"todoread", "task.result", "runtime.query", "webfetch",
+			"todoread", "task.result", "runtime.query", "webfetch", "websearch",
 			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
 			"diff.preview",
 			"git.status", "git.diff", "git.log",
@@ -410,6 +411,7 @@ func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionA
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
+		out = append(out, toolWebSearch())
 	}
 	if allowBrowser {
 		out = append(out,
@@ -471,6 +473,7 @@ func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
+		out = append(out, toolWebSearch())
 	}
 	if allowBrowser {
 		out = append(out,
@@ -659,6 +662,25 @@ func toolWebFetch() llm.ToolDef {
 	}
 }
 
+func toolWebSearch() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "websearch",
+			Description: "Поиск в интернете. Возвращает список результатов с заголовком, URL и сниппетом. Требует настройки web.search.provider и web.search.api_key в .orchestra.yml.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query":       { "type": "string", "minLength": 1, "description": "Поисковый запрос." },
+    "max_results": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Максимум результатов. По умолчанию из конфига (5)." }
+  }
+}`),
+		},
+	}
+}
+
 func toolMemoryWrite() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
@@ -683,7 +705,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(), toolWebSearch(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),

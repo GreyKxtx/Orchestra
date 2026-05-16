@@ -155,6 +155,17 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "websearch":
+		var req WebSearchRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.WebSearch(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	case "memory_write":
 		var req MemoryWriteRequest
 		if err := decodeToolInput(input, &req); err != nil {
