@@ -60,11 +60,11 @@ type rawEntry struct {
 // scopePaths are absolute paths to scope the search to (files or dirs).
 // Pass nil to search the entire root.
 func SearchWithRipgrep(root, query string, excludeDirs []string, opts Options, scopePaths []string) ([]Match, error) {
-	if !HasRipgrep() {
-		return nil, fmt.Errorf("ripgrep not available")
-	}
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
+	}
+	if !HasRipgrep() {
+		return nil, fmt.Errorf("ripgrep not available")
 	}
 
 	args := []string{"--json"}
