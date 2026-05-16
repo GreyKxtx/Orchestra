@@ -6,7 +6,7 @@ import (
 )
 
 func TestToolRegistry_AllowExecFalse_NoExecRun(t *testing.T) {
-	defs := ListTools(false, false)
+	defs := ListTools(false, false, false)
 	for _, d := range defs {
 		if d.Function.Name == "bash" {
 			t.Fatalf("bash must not be exposed when allowExec=false (got %q)", d.Function.Name)
@@ -63,7 +63,7 @@ func TestResolveToolNames_PreservesOrder(t *testing.T) {
 }
 
 func TestToolRegistry_SchemasAreValidJSON(t *testing.T) {
-	defs := ListTools(true, true)
+	defs := ListTools(true, true, false)
 	for _, d := range defs {
 		if d.Type != "function" {
 			t.Fatalf("unexpected tool type %q for %s", d.Type, d.Function.Name)

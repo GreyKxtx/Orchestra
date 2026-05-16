@@ -1016,11 +1016,11 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 
 	var base []llm.ToolDef
 	if a.opts.Mode != "" {
-		base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, hasSubtasks, hasQA)
+		base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, false, hasSubtasks, hasQA)
 	} else if hasSubtasks {
-		base = tools.ListToolsWithSubtasks(allowExec, allowWeb)
+		base = tools.ListToolsWithSubtasks(allowExec, allowWeb, false)
 	} else {
-		base = tools.ListTools(allowExec, allowWeb)
+		base = tools.ListTools(allowExec, allowWeb, false)
 	}
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
