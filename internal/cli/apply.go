@@ -38,6 +38,7 @@ var (
 	debugMode           bool
 	allowExec           bool
 	allowWeb            bool
+	allowBrowser        bool
 	viaCore             bool
 	agentMode           string // "plan", "build", or "" (default)
 	pipelineMode        bool
@@ -63,6 +64,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&debugMode, "debug", false, "Show performance metrics and debug information")
 	applyCmd.Flags().BoolVar(&allowExec, "allow-exec", false, "Allow exec.run tool (DANGEROUS; still sandboxed with limits)")
 	applyCmd.Flags().BoolVar(&allowWeb, "allow-web", false, "Allow webfetch tool (fetches external URLs; private IPs blocked)")
+	applyCmd.Flags().BoolVar(&allowBrowser, "allow-browser", false, "Allow browser.* tools (requires Node.js and npx)")
 	applyCmd.Flags().BoolVar(&viaCore, "via-core", false, "Run via JSON-RPC core subprocess (stdio)")
 	applyCmd.Flags().StringVar(&agentMode, "mode", "", "Agent mode: plan (read-only analysis) or build (default)")
 	applyCmd.Flags().BoolVar(&pipelineMode, "pipeline", false, "Run multi-agent pipeline: Investigator → Coder → Critic")
@@ -148,6 +150,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	if cfg.Web.Confirm != nil && !*cfg.Web.Confirm {
 		allowWebEffective = true
 	}
+	allowBrowserEffective := allowBrowser
+	// (no config override for browser — always requires explicit flag)
 	if debugMode {
 		fmt.Fprintf(os.Stderr, "[orchestra] debug: llm_timeout_s=%d\n", cfg.LLM.TimeoutS)
 	}
@@ -191,6 +195,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 			LSP:                cfg.LSP,
 			DryRun:             dryRun,
+			Browser:            cfg.Browser,
+			AllowBrowser:       allowBrowserEffective,
 		})
 		if err != nil {
 			retErr = err
@@ -257,6 +263,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 			LSP:                cfg.LSP,
 			DryRun:             dryRun,
+			Browser:            cfg.Browser,
+			AllowBrowser:       allowBrowserEffective,
 		})
 		if err != nil {
 			retErr = err
@@ -374,6 +382,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			WebMaxContentBytes: cfg.Web.MaxContentBytes,
 			LSP:                cfg.LSP,
 			DryRun:             dryRun,
+			Browser:            cfg.Browser,
+			AllowBrowser:       allowBrowserEffective,
 		})
 		if err != nil {
 			retErr = err
@@ -452,6 +462,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Backup:               backup,
 			AllowExec:            allowExecEffective,
 			AllowWeb:             allowWebEffective,
+			AllowBrowser:         allowBrowserEffective,
 			PermissionRules:      cfg.Permissions.Rules,
 			Debug:                debugMode,
 			ResponseFormat:       respFmt,
