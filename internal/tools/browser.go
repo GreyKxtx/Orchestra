@@ -186,6 +186,10 @@ func (r *Runner) BrowserFill(ctx context.Context, req BrowserFillRequest) (*Brow
 	}
 	mcpFields := make([]map[string]any, 0, len(req.Fields))
 	for _, f := range req.Fields {
+		if f.Element == "" && f.Ref == "" {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput,
+				"each field requires element or ref", nil)
+		}
 		mf := map[string]any{"value": f.Value}
 		if f.Ref != "" {
 			mf["ref"] = f.Ref
@@ -220,6 +224,9 @@ func (r *Runner) BrowserSelect(ctx context.Context, req BrowserSelectRequest) (*
 	}
 	if req.Element == "" && req.Ref == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "element or ref is required", nil)
+	}
+	if req.Value == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "value is required", nil)
 	}
 	args := map[string]any{"values": []string{req.Value}}
 	if req.Element != "" {
