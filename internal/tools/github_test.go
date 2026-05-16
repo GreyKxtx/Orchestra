@@ -38,9 +38,10 @@ func TestGHPRList_SkipNoGH(t *testing.T) {
 		t.Skip("gh not in PATH")
 	}
 	r := &Runner{workspaceRoot: t.TempDir()}
-	// Running in a temp dir (not a git repo) — gh should return an error,
-	// but the function must not panic.
-	_, _ = r.GHPRList(context.Background(), GHPRListRequest{})
+	_, err := r.GHPRList(context.Background(), GHPRListRequest{})
+	if err == nil {
+		t.Error("expected error when running outside a git repo, got nil")
+	}
 }
 
 func TestGHIssueList_SkipNoGH(t *testing.T) {
@@ -48,5 +49,8 @@ func TestGHIssueList_SkipNoGH(t *testing.T) {
 		t.Skip("gh not in PATH")
 	}
 	r := &Runner{workspaceRoot: t.TempDir()}
-	_, _ = r.GHIssueList(context.Background(), GHIssueListRequest{})
+	_, err := r.GHIssueList(context.Background(), GHIssueListRequest{})
+	if err == nil {
+		t.Error("expected error when running outside a git repo, got nil")
+	}
 }
