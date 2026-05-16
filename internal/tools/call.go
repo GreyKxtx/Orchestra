@@ -452,6 +452,61 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "gh.pr.list":
+		var req GHPRListRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GHPRList(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "gh.pr.create":
+		var req GHPRCreateRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GHPRCreate(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "gh.pr.view":
+		var req GHPRViewRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GHPRView(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "gh.issue.list":
+		var req GHIssueListRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GHIssueList(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "gh.issue.view":
+		var req GHIssueViewRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.GHIssueView(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}

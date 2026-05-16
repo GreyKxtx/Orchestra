@@ -22,7 +22,8 @@ const (
 	//     browser.type, browser.fill, browser.select, browser.eval, browser.wait,
 	//     browser.close (all allowBrowser-gated).
 	// v9: added search.websearch tool.
-	ToolsVersion = 9
+	// v10: added gh.pr.list, gh.pr.create, gh.pr.view, gh.issue.list, gh.issue.view (allowExec-gated).
+	ToolsVersion = 10
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

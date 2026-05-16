@@ -257,6 +257,8 @@ var validAgentToolNames = map[string]bool{
 	"diff.preview": true,
 	"git.status": true, "git.log": true, "git.diff": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
+	"gh.pr.list": true, "gh.pr.create": true, "gh.pr.view": true,
+	"gh.issue.list": true, "gh.issue.view": true,
 	"browser.navigate": true, "browser.snapshot": true, "browser.screenshot": true,
 	"browser.click": true, "browser.type": true, "browser.fill": true,
 	"browser.select": true, "browser.eval": true, "browser.wait": true, "browser.close": true,

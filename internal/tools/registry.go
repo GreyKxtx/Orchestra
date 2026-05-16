@@ -39,6 +39,10 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 	if allowExec {
 		out = append(out, toolExecRun())
 		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
+		out = append(out,
+			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
+			toolGHIssueList(), toolGHIssueView(),
+		)
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
@@ -72,7 +76,8 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
 			"diff.preview",
 			"git.status", "git.diff", "git.log",
-			"browser.snapshot", "browser.screenshot":
+			"browser.snapshot", "browser.screenshot",
+			"gh.pr.list", "gh.pr.view", "gh.issue.list", "gh.issue.view":
 			defs[i].ParallelSafe = true
 		// State-mutating tools — must run one at a time.
 		case "write", "edit", "bash", "todowrite", "memory_write",
@@ -80,6 +85,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 			"task.spawn", "task.wait", "task.cancel", "question",
 			"fs.delete", "fs.rename",
 			"git.commit", "git.branch", "git.checkout", "git.push",
+			"gh.pr.create",
 			"browser.navigate", "browser.click", "browser.type", "browser.fill",
 			"browser.select", "browser.eval", "browser.wait", "browser.close":
 			defs[i].Mutating = true
@@ -408,6 +414,10 @@ func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionA
 	if allowExec {
 		out = append(out, toolExecRun())
 		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
+		out = append(out,
+			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
+			toolGHIssueList(), toolGHIssueView(),
+		)
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
@@ -470,6 +480,10 @@ func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm
 	if allowExec {
 		out = append(out, toolExecRun())
 		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
+		out = append(out,
+			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
+			toolGHIssueList(), toolGHIssueView(),
+		)
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
@@ -711,6 +725,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 		toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush(),
+		toolGHPRList(), toolGHPRCreate(), toolGHPRView(), toolGHIssueList(), toolGHIssueView(),
 		toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
 		toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
 		toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
@@ -1212,6 +1227,100 @@ func toolBrowserClose() llm.ToolDef {
   "type": "object",
   "additionalProperties": false,
   "properties": {}
+}`),
+		},
+	}
+}
+
+func toolGHPRList() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "gh.pr.list",
+			Description: "List pull requests in the current GitHub repository. Requires gh CLI installed and authenticated.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "state":  { "type": "string", "enum": ["open","closed","merged","all"], "description": "Filter by PR state. Default: open." },
+    "limit":  { "type": "integer", "minimum": 1, "maximum": 100, "description": "Max PRs to return. Default: 20." },
+    "base":   { "type": "string", "description": "Filter by base branch name." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGHPRCreate() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "gh.pr.create",
+			Description: "Create a pull request from the current branch. Requires gh CLI installed and authenticated.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "description": "PR title." },
+    "body":  { "type": "string", "description": "PR description (markdown)." },
+    "base":  { "type": "string", "description": "Base branch. Defaults to repo default branch." },
+    "draft": { "type": "boolean", "description": "Create as draft PR." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGHPRView() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "gh.pr.view",
+			Description: "View details of a pull request including description and comments. number=0 uses the current branch's PR.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "number": { "type": "integer", "minimum": 0, "description": "PR number. Omit or 0 = current branch's PR." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGHIssueList() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "gh.issue.list",
+			Description: "List issues in the current GitHub repository. Requires gh CLI installed and authenticated.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "state":  { "type": "string", "enum": ["open","closed","all"], "description": "Filter by state. Default: open." },
+    "labels": { "type": "array", "items": { "type": "string" }, "description": "Filter by label names." },
+    "limit":  { "type": "integer", "minimum": 1, "maximum": 100, "description": "Max issues to return. Default: 20." }
+  }
+}`),
+		},
+	}
+}
+
+func toolGHIssueView() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "gh.issue.view",
+			Description: "View details of a GitHub issue including description and comments.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["number"],
+  "properties": {
+    "number": { "type": "integer", "minimum": 1, "description": "Issue number." }
+  }
 }`),
 		},
 	}
