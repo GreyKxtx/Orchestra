@@ -103,6 +103,15 @@ func TestParseRipgrepJSON_ContextDoesNotCrossFiles(t *testing.T) {
 
 // --- SearchWithRipgrep integration tests (skipped if rg not in PATH) ---
 
+func TestSearchWithRipgrep_EmptyQuery(t *testing.T) {
+	dir := t.TempDir()
+	opts := DefaultOptions()
+	_, err := SearchWithRipgrep(dir, "", nil, opts, nil)
+	if err == nil {
+		t.Error("expected error for empty query, got nil")
+	}
+}
+
 func TestSearchWithRipgrep_Basic(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg not in PATH")
@@ -185,6 +194,9 @@ func TestSearchWithRipgrep_ExcludeDirs(t *testing.T) {
 		if filepath.Base(filepath.Dir(m.FilePath)) == "vendor" {
 			t.Errorf("vendor dir should be excluded, got match in %s", m.FilePath)
 		}
+	}
+	if len(matches) == 0 {
+		t.Error("expected at least one match in root.go")
 	}
 }
 

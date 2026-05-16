@@ -63,6 +63,9 @@ func SearchWithRipgrep(root, query string, excludeDirs []string, opts Options, s
 	if !HasRipgrep() {
 		return nil, fmt.Errorf("ripgrep not available")
 	}
+	if query == "" {
+		return nil, fmt.Errorf("query cannot be empty")
+	}
 
 	args := []string{"--json"}
 	if opts.CaseInsensitive {
@@ -87,15 +90,16 @@ func SearchWithRipgrep(root, query string, excludeDirs []string, opts Options, s
 
 	cmd := exec.Command(rgBin, args...)
 	cmd.Dir = root
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return nil, nil // exit 1 = no matches found, not an error
 		}
-		return nil, fmt.Errorf("ripgrep: %w", err)
+		return nil, fmt.Errorf("ripgrep: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	return parseRipgrepJSON(root, stdout.Bytes(), opts.ContextLines), nil
