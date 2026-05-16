@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/browser"
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lsp"
@@ -50,6 +51,9 @@ type Runner struct {
 
 	lspManager *lsp.Manager
 
+	browserClient    *browser.Client
+	allowBrowserEval bool
+
 	// Dry-run staging: when dryRun=true, FSWrite/FSEdit accumulate changes in staged
 	// instead of writing to disk. FSRead serves staged content back to the model.
 	dryRun   bool
@@ -67,6 +71,9 @@ type RunnerOptions struct {
 	WebMaxContentBytes int
 
 	LSP config.LSPConfig
+
+	Browser      config.BrowserConfig
+	AllowBrowser bool
 
 	// DryRun enables staging mode: write/edit accumulate in memory instead of disk.
 	// FSRead serves staged content. StagedOps() returns write_atomic ops for plan.json.
@@ -122,6 +129,17 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		lspMgr = mgr
 	}
 
+	var browserCli *browser.Client
+	if opts.AllowBrowser {
+		browserCli = browser.New(browser.Config{
+			Headless:       opts.Browser.Headless,
+			TimeoutMS:      opts.Browser.TimeoutMS,
+			ViewportWidth:  opts.Browser.ViewportWidth,
+			ViewportHeight: opts.Browser.ViewportHeight,
+			AllowEval:      opts.Browser.AllowEval,
+		})
+	}
+
 	return &Runner{
 		workspaceRoot:      rootAbs,
 		excludeDirs:        exclude,
@@ -132,6 +150,8 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		webFetchTimeout:    webTimeout,
 		webMaxContentBytes: webMaxBytes,
 		lspManager:         lspMgr,
+		browserClient:      browserCli,
+		allowBrowserEval:   opts.Browser.AllowEval,
 		dryRun:             opts.DryRun,
 		staged:             make(map[string]*stagedFile),
 	}, nil
@@ -203,6 +223,10 @@ func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).
 // Safe to call multiple times.
 func (r *Runner) Close() error {
+	if r.browserClient != nil {
+		_ = r.browserClient.Close()
+		r.browserClient = nil
+	}
 	if r.lspManager != nil {
 		r.lspManager.Close()
 		r.lspManager = nil
