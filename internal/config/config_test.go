@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestExecConfig_IsCommandAllowed(t *testing.T) {
@@ -234,5 +236,36 @@ func TestFindAgent(t *testing.T) {
 	empty := &ProjectConfig{}
 	if empty.FindAgent("x") != nil {
 		t.Error("FindAgent on empty config should return nil")
+	}
+}
+
+func TestWebSearchConfig_DefaultProvider(t *testing.T) {
+	cfg := &ProjectConfig{}
+	cfg.applyDefaults()
+	if cfg.Web.Search.Provider != "" {
+		t.Errorf("Web.Search.Provider = %q, want empty string", cfg.Web.Search.Provider)
+	}
+}
+
+func TestWebSearchConfig_YAML(t *testing.T) {
+	raw := `
+web:
+  search:
+    provider: tavily
+    api_key: tvly-test123
+    max_results: 10
+`
+	var cfg ProjectConfig
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if cfg.Web.Search.Provider != "tavily" {
+		t.Errorf("Provider = %q, want %q", cfg.Web.Search.Provider, "tavily")
+	}
+	if cfg.Web.Search.APIKey != "tvly-test123" {
+		t.Errorf("APIKey = %q, want %q", cfg.Web.Search.APIKey, "tvly-test123")
+	}
+	if cfg.Web.Search.MaxResults != 10 {
+		t.Errorf("MaxResults = %d, want %d", cfg.Web.Search.MaxResults, 10)
 	}
 }

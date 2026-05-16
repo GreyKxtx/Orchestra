@@ -165,12 +165,21 @@ type MCPConfig struct {
 	Servers []MCPServerConfig `yaml:"servers,omitempty"`
 }
 
+// WebSearchConfig configures the web.search tool provider.
+// Supported providers: "tavily", "brave".
+type WebSearchConfig struct {
+	Provider   string `yaml:"provider,omitempty"`
+	APIKey     string `yaml:"api_key,omitempty"`
+	MaxResults int    `yaml:"max_results,omitempty"`
+}
+
 // WebConfig contains web fetch safety settings.
 type WebConfig struct {
 	// Confirm gates webfetch: true = require --allow-web flag (default). false = allow without flag.
-	Confirm         *bool `yaml:"confirm"`
-	FetchTimeoutS   int   `yaml:"fetch_timeout_s"`
-	MaxContentBytes int   `yaml:"max_content_bytes"`
+	Confirm         *bool           `yaml:"confirm"`
+	FetchTimeoutS   int             `yaml:"fetch_timeout_s"`
+	MaxContentBytes int             `yaml:"max_content_bytes"`
+	Search          WebSearchConfig `yaml:"search,omitempty"`
 }
 
 // BrowserConfig contains Playwright browser automation settings.
@@ -251,6 +260,7 @@ var validAgentToolNames = map[string]bool{
 	"browser.navigate": true, "browser.snapshot": true, "browser.screenshot": true,
 	"browser.click": true, "browser.type": true, "browser.fill": true,
 	"browser.select": true, "browser.eval": true, "browser.wait": true, "browser.close": true,
+	"websearch": true,
 }
 
 // HooksConfig configures pre/post tool call hooks (Phase 6).
