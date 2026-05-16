@@ -18,7 +18,10 @@ const (
 	// v6: added diff.preview tool.
 	// v7: added fs.delete, fs.rename; git.status, git.log, git.diff (read, always);
 	//     git.commit, git.branch, git.checkout, git.push (write, allowExec-gated).
-	ToolsVersion = 7
+	// v8: added browser.navigate, browser.snapshot, browser.screenshot, browser.click,
+	//     browser.type, browser.fill, browser.select, browser.eval, browser.wait,
+	//     browser.close (all allowBrowser-gated).
+	ToolsVersion = 8
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"
