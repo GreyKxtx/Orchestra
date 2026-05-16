@@ -180,9 +180,7 @@ func (r *Runner) GHPRCreate(ctx context.Context, req GHPRCreateRequest) (*GHPRCr
 		"--title", req.Title,
 		"--json", "number,url,title",
 	}
-	if req.Body != "" {
-		args = append(args, "--body", req.Body)
-	}
+	args = append(args, "--body", req.Body)
 	if req.Base != "" {
 		args = append(args, "--base", req.Base)
 	}
