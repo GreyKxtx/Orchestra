@@ -175,6 +175,9 @@ func (c *Client) ensureStarted(ctx context.Context) error {
 
 func (c *Client) handshake(ctx context.Context) error {
 	timeout := time.Duration(c.cfg.TimeoutMS) * time.Millisecond
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	type res struct {
 		err error
 	}
@@ -212,8 +215,10 @@ func (c *Client) handshake(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		c.killSubprocess()
 		return protocol.NewError(protocol.ExecTimeout, "browser initialize timed out", nil)
-	case <-time.After(timeout):
+	case <-timer.C:
+		c.killSubprocess()
 		return protocol.NewError(protocol.ExecTimeout, "browser initialize timed out", nil)
 	case r := <-ch:
 		if r.err != nil {
@@ -253,6 +258,8 @@ func (c *Client) doCall(ctx context.Context, toolName string, args any) (*MCPRes
 		Params:  map[string]any{"name": toolName, "arguments": args},
 	}
 	timeout := time.Duration(c.cfg.TimeoutMS) * time.Millisecond
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
 	type res struct {
 		result *MCPResult
@@ -295,8 +302,12 @@ func (c *Client) doCall(ctx context.Context, toolName string, args any) (*MCPRes
 
 	select {
 	case <-ctx.Done():
+		c.killSubprocess()
+		c.ready = false
 		return nil, protocol.NewError(protocol.ExecTimeout, "browser operation timed out", nil)
-	case <-time.After(timeout):
+	case <-timer.C:
+		c.killSubprocess()
+		c.ready = false
 		return nil, protocol.NewError(protocol.ExecTimeout, "browser operation timed out", nil)
 	case r := <-ch:
 		return r.result, r.err
@@ -304,7 +315,10 @@ func (c *Client) doCall(ctx context.Context, toolName string, args any) (*MCPRes
 }
 
 func (c *Client) isSubprocessDead() bool {
-	return c.cmd == nil || c.cmd.ProcessState != nil
+	if c.cmd == nil || c.cmd.Process == nil {
+		return true
+	}
+	return c.cmd.ProcessState != nil
 }
 
 func (c *Client) killSubprocess() {
