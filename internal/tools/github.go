@@ -55,7 +55,11 @@ func runGH(ctx context.Context, workdir string, args ...string) ([]byte, error) 
 		if len(msg) > 512 {
 			msg = msg[:512]
 		}
-		return nil, fmt.Errorf("gh %s: %s", args[0], msg)
+		subcmd := ""
+		if len(args) > 0 {
+			subcmd = args[0]
+		}
+		return nil, fmt.Errorf("gh %s: %s", subcmd, msg)
 	}
 
 	out := stdout.Bytes()
@@ -174,8 +178,10 @@ func (r *Runner) GHPRCreate(ctx context.Context, req GHPRCreateRequest) (*GHPRCr
 	args := []string{
 		"pr", "create",
 		"--title", req.Title,
-		"--body", req.Body,
 		"--json", "number,url,title",
+	}
+	if req.Body != "" {
+		args = append(args, "--body", req.Body)
 	}
 	if req.Base != "" {
 		args = append(args, "--base", req.Base)
@@ -225,13 +231,11 @@ type GHPRViewResponse struct {
 
 // GHPRView returns details of a pull request. Number=0 uses the current branch's PR.
 func (r *Runner) GHPRView(ctx context.Context, req GHPRViewRequest) (*GHPRViewResponse, error) {
-	args := []string{
-		"pr", "view",
-		"--json", "number,title,body,state,url,author,baseRefName,headRefName,comments",
-	}
+	args := []string{"pr", "view"}
 	if req.Number > 0 {
 		args = append(args, fmt.Sprintf("%d", req.Number))
 	}
+	args = append(args, "--json", "number,title,body,state,url,author,baseRefName,headRefName,comments")
 
 	out, err := runGH(ctx, r.workspaceRoot, args...)
 	if err != nil {
