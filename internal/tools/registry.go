@@ -10,7 +10,7 @@ import (
 
 // ListTools returns OpenAI-compatible tool definitions (JSON Schema), filtered by policy.
 // Only tools returned here may be exposed to the model.
-func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
+func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(),
 		toolFSRead(),
@@ -43,6 +43,13 @@ func ListTools(allowExec, allowWeb bool) []llm.ToolDef {
 	if allowWeb {
 		out = append(out, toolWebFetch())
 	}
+	if allowBrowser {
+		out = append(out,
+			toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
+			toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
+			toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
+		)
+	}
 	return applyParallelFlags(out)
 }
 
@@ -63,14 +70,17 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 			"todoread", "task.result", "runtime.query", "webfetch",
 			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
 			"diff.preview",
-			"git.status", "git.diff", "git.log":
+			"git.status", "git.diff", "git.log",
+			"browser.snapshot", "browser.screenshot":
 			defs[i].ParallelSafe = true
 		// State-mutating tools — must run one at a time.
 		case "write", "edit", "bash", "todowrite", "memory_write",
 			"lsp.rename", "plan.enter", "plan.exit",
 			"task.spawn", "task.wait", "task.cancel", "question",
 			"fs.delete", "fs.rename",
-			"git.commit", "git.branch", "git.checkout", "git.push":
+			"git.commit", "git.branch", "git.checkout", "git.push",
+			"browser.navigate", "browser.click", "browser.type", "browser.fill",
+			"browser.select", "browser.eval", "browser.wait", "browser.close":
 			defs[i].Mutating = true
 		}
 	}
@@ -78,14 +88,14 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 }
 
 // ListToolsWithMCP appends MCP server tools to the base tool list.
-func ListToolsWithMCP(allowExec, allowWeb bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListTools(allowExec, allowWeb)
+func ListToolsWithMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListTools(allowExec, allowWeb, allowBrowser)
 	return append(out, mcpDefs...)
 }
 
 // ListToolsWithSubtasksAndMCP returns parent-agent tools including subtask and MCP tools.
-func ListToolsWithSubtasksAndMCP(allowExec, allowWeb bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListToolsWithSubtasks(allowExec, allowWeb)
+func ListToolsWithSubtasksAndMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
 	return append(out, mcpDefs...)
 }
 
@@ -343,8 +353,8 @@ func toolTodoRead() llm.ToolDef {
 }
 
 // ListToolsWithSubtasks returns tools including task.spawn/wait/cancel for parent agents.
-func ListToolsWithSubtasks(allowExec, allowWeb bool) []llm.ToolDef {
-	out := ListTools(allowExec, allowWeb)
+func ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
+	out := ListTools(allowExec, allowWeb, allowBrowser)
 	out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
 	return applyParallelFlags(out)
 }
@@ -371,22 +381,22 @@ func ListToolsForInvestigator() []llm.ToolDef {
 
 // ListToolsForMode returns tools for the given agent mode.
 // hasSubtasks enables task.spawn/wait/cancel; hasQuestionAsker enables question tool.
-func ListToolsForMode(mode string, allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+func ListToolsForMode(mode string, allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	switch mode {
 	case "plan":
 		return listToolsPlan(hasSubtasks, hasQuestionAsker)
 	case "explore":
 		return listToolsExplore()
 	case "general":
-		return listToolsGeneral(allowExec, allowWeb, hasSubtasks)
+		return listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks)
 	case "compaction", "title", "summary":
 		return []llm.ToolDef{} // pure LLM output, no tools needed
 	default: // "build" or ""
-		return listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker)
+		return listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionAsker)
 	}
 }
 
-func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
@@ -400,6 +410,13 @@ func listToolsBuild(allowExec, allowWeb, hasSubtasks, hasQuestionAsker bool) []l
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
+	}
+	if allowBrowser {
+		out = append(out,
+			toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
+			toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
+			toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
+		)
 	}
 	if hasSubtasks {
 		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
@@ -440,7 +457,7 @@ func listToolsExplore() []llm.ToolDef {
 // listToolsGeneral returns tools for the "general" multi-step execution subagent.
 // It has full read+write access and reports results via task_result.
 // todowrite is intentionally excluded — general agents track progress internally.
-func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
+func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
@@ -454,6 +471,13 @@ func listToolsGeneral(allowExec, allowWeb, hasSubtasks bool) []llm.ToolDef {
 	}
 	if allowWeb {
 		out = append(out, toolWebFetch())
+	}
+	if allowBrowser {
+		out = append(out,
+			toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
+			toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
+			toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
+		)
 	}
 	if hasSubtasks {
 		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
@@ -665,6 +689,9 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 		toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush(),
+		toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
+		toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
+		toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
 	}
 	m := make(map[string]llm.ToolDef, len(all))
 	for _, d := range all {
@@ -970,6 +997,198 @@ func toolGitDiff() llm.ToolDef {
     "ref":    { "type": "string", "description": "Compare against this commit, branch, or tag." },
     "path":   { "type": "string", "description": "Limit diff to this workspace-relative file or directory." }
   }
+}`),
+		},
+	}
+}
+
+func toolBrowserNavigate() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.navigate",
+			Description: "Открыть URL в браузере и дождаться загрузки страницы.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["url"],
+  "properties": {
+    "url": { "type": "string", "minLength": 1 },
+    "wait_until": { "type": "string", "enum": ["load", "domcontentloaded", "networkidle"] }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserSnapshot() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.snapshot",
+			Description: "Вернуть accessibility-дерево текущей страницы (структурированный текст с ref-идентификаторами для кликов).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}`),
+		},
+	}
+}
+
+func toolBrowserScreenshot() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.screenshot",
+			Description: "Снять скриншот текущей страницы (base64 PNG).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "full_page": { "type": "boolean" }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserClick() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.click",
+			Description: "Нажать на элемент по имени или ref из snapshot.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "element": { "type": "string" },
+    "ref": { "type": "string" }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserType() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.type",
+			Description: "Ввести текст в поле ввода (по имени или ref из snapshot).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text"],
+  "properties": {
+    "element": { "type": "string" },
+    "ref": { "type": "string" },
+    "text": { "type": "string" },
+    "clear": { "type": "boolean" }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserFill() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.fill",
+			Description: "Заполнить несколько полей формы за один вызов.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fields"],
+  "properties": {
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "properties": {
+          "element": { "type": "string" },
+          "ref": { "type": "string" },
+          "value": { "type": "string" }
+        }
+      }
+    }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserSelect() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.select",
+			Description: "Выбрать опцию в выпадающем списке <select>.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["value"],
+  "properties": {
+    "element": { "type": "string" },
+    "ref": { "type": "string" },
+    "value": { "type": "string" }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserEval() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.eval",
+			Description: "Выполнить JavaScript в контексте страницы. Требует allow_eval: true в конфигурации.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["expression"],
+  "properties": {
+    "expression": { "type": "string", "minLength": 1 }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserWait() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.wait",
+			Description: "Ждать условие: совпадение URL, появление CSS-селектора или текста на странице.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "url": { "type": "string" },
+    "selector": { "type": "string" },
+    "text": { "type": "string" },
+    "timeout_ms": { "type": "integer", "minimum": 0 }
+  }
+}`),
+		},
+	}
+}
+
+func toolBrowserClose() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "browser.close",
+			Description: "Закрыть текущую страницу (браузер остаётся запущенным для повторного использования).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
 }`),
 		},
 	}
