@@ -28,6 +28,10 @@ type Config struct {
 	AllowEval      bool
 	// CmdOverride replaces "npx @playwright/mcp" — for tests only.
 	CmdOverride []string
+	// EnvOverride sets cmd.Env on the subprocess — for tests only.
+	// When non-empty, replaces the inherited environment entirely.
+	// Pass append(os.Environ(), "KEY=val") to extend the parent env.
+	EnvOverride []string
 }
 
 // MCPContent is one item in an MCP tool result's content array.
@@ -116,19 +120,26 @@ type mcpResponse struct {
 }
 
 func (c *Client) makeCmd() *exec.Cmd {
+	var cmd *exec.Cmd
 	if len(c.cfg.CmdOverride) > 0 {
 		if len(c.cfg.CmdOverride) == 1 {
-			return exec.Command(c.cfg.CmdOverride[0])
+			cmd = exec.Command(c.cfg.CmdOverride[0])
+		} else {
+			cmd = exec.Command(c.cfg.CmdOverride[0], c.cfg.CmdOverride[1:]...)
 		}
-		return exec.Command(c.cfg.CmdOverride[0], c.cfg.CmdOverride[1:]...)
+	} else {
+		args := []string{"--yes", "@playwright/mcp@latest"}
+		if c.cfg.Headless {
+			args = append(args, "--headless")
+		}
+		args = append(args, "--viewport-size",
+			fmt.Sprintf("%d,%d", c.cfg.ViewportWidth, c.cfg.ViewportHeight))
+		cmd = exec.Command("npx", args...)
 	}
-	args := []string{"--yes", "@playwright/mcp@latest"}
-	if c.cfg.Headless {
-		args = append(args, "--headless")
+	if len(c.cfg.EnvOverride) > 0 {
+		cmd.Env = c.cfg.EnvOverride
 	}
-	args = append(args, "--viewport-size",
-		fmt.Sprintf("%d,%d", c.cfg.ViewportWidth, c.cfg.ViewportHeight))
-	return exec.Command("npx", args...)
+	return cmd
 }
 
 // ensureStarted starts the subprocess and performs the MCP initialize handshake.

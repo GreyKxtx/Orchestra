@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,9 +90,9 @@ func newMockClient(t *testing.T) *Client {
 		ViewportWidth:  1280,
 		ViewportHeight: 720,
 		CmdOverride:    []string{exe, "-test.run=^TestMain$", "-test.v=false"},
+		EnvOverride:    append(os.Environ(), "BE_MOCK_MCP_SERVER=1"),
 	}
 	c := New(cfg)
-	t.Setenv("BE_MOCK_MCP_SERVER", "1")
 	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
@@ -105,8 +106,8 @@ func TestClient_Navigate(t *testing.T) {
 		t.Fatalf("Call: %v", err)
 	}
 	text := res.TextContent()
-	if text == "" {
-		t.Error("expected non-empty text content")
+	if !strings.Contains(text, "Navigated") {
+		t.Errorf("expected text to contain 'Navigated', got %q", text)
 	}
 }
 
@@ -119,8 +120,8 @@ func TestClient_Snapshot(t *testing.T) {
 		t.Fatalf("Call: %v", err)
 	}
 	text := res.TextContent()
-	if text == "" {
-		t.Error("expected non-empty snapshot")
+	if !strings.Contains(text, "heading") {
+		t.Errorf("expected snapshot to contain 'heading', got %q", text)
 	}
 }
 
@@ -145,8 +146,8 @@ func TestClient_TimeoutReturnsError(t *testing.T) {
 		Headless:    true,
 		TimeoutMS:   1, // 1ms — will always time out
 		CmdOverride: []string{exe, "-test.run=^TestMain$", "-test.v=false"},
+		EnvOverride: append(os.Environ(), "BE_MOCK_MCP_SERVER=1"),
 	}
-	t.Setenv("BE_MOCK_MCP_SERVER", "1")
 	c := New(cfg)
 	defer func() { _ = c.Close() }()
 
@@ -161,7 +162,7 @@ func TestClient_FailsIfNpxMissing(t *testing.T) {
 	cfg := Config{
 		Headless:    true,
 		TimeoutMS:   5000,
-		CmdOverride: []string{"/nonexistent/binary/that/does/not/exist"},
+		CmdOverride: []string{"orchestra-nonexistent-binary-xyz"},
 	}
 	c := New(cfg)
 	defer func() { _ = c.Close() }()
