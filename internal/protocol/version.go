@@ -21,7 +21,8 @@ const (
 	// v8: added browser.navigate, browser.snapshot, browser.screenshot, browser.click,
 	//     browser.type, browser.fill, browser.select, browser.eval, browser.wait,
 	//     browser.close (all allowBrowser-gated).
-	ToolsVersion = 8
+	// v9: added search.websearch tool.
+	ToolsVersion = 9
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"
