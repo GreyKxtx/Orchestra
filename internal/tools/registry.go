@@ -1107,6 +1107,7 @@ func toolBrowserFill() llm.ToolDef {
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["value"],
         "properties": {
           "element": { "type": "string" },
