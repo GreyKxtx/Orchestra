@@ -182,6 +182,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		err error
 	}
 	ch := make(chan res, 1)
+	enc, dec := c.enc, c.dec
 
 	go func() {
 		id := c.nextID.Add(1)
@@ -195,12 +196,12 @@ func (c *Client) handshake(ctx context.Context) error {
 				"clientInfo":      map[string]any{"name": "orchestra", "version": "1"},
 			},
 		}
-		if err := c.enc.Encode(req); err != nil {
+		if err := enc.Encode(req); err != nil {
 			ch <- res{err: fmt.Errorf("encode initialize: %w", err)}
 			return
 		}
 		var resp mcpResponse
-		if err := c.dec.Decode(&resp); err != nil {
+		if err := dec.Decode(&resp); err != nil {
 			ch <- res{err: fmt.Errorf("decode initialize response: %w", err)}
 			return
 		}
@@ -209,7 +210,7 @@ func (c *Client) handshake(ctx context.Context) error {
 			return
 		}
 		// Send notifications/initialized (no response expected).
-		_ = c.enc.Encode(mcpRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
+		_ = enc.Encode(mcpRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 		ch <- res{}
 	}()
 
@@ -266,15 +267,16 @@ func (c *Client) doCall(ctx context.Context, toolName string, args any) (*MCPRes
 		err    error
 	}
 	ch := make(chan res, 1)
+	enc, dec := c.enc, c.dec
 
 	go func() {
-		if err := c.enc.Encode(req); err != nil {
+		if err := enc.Encode(req); err != nil {
 			ch <- res{err: protocol.NewError(protocol.ExecFailed,
 				fmt.Sprintf("encode request: %v", err), nil)}
 			return
 		}
 		var resp mcpResponse
-		if err := c.dec.Decode(&resp); err != nil {
+		if err := dec.Decode(&resp); err != nil {
 			ch <- res{err: protocol.NewError(protocol.ExecFailed,
 				fmt.Sprintf("decode response: %v", err), nil)}
 			return
