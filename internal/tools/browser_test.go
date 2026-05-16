@@ -162,6 +162,78 @@ func TestBrowserFill_RejectsEmptyFields(t *testing.T) {
 	}
 }
 
+func TestBrowserType_RejectsEmptyText(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	_, err := r.BrowserType(ctx, BrowserTypeRequest{Element: "input", Text: ""})
+	if err == nil {
+		t.Fatal("expected error for empty text")
+	}
+}
+
+func TestBrowserType_RejectsNoTarget(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	_, err := r.BrowserType(ctx, BrowserTypeRequest{Text: "hello"})
+	if err == nil {
+		t.Fatal("expected error when element and ref both empty")
+	}
+}
+
+func TestBrowserSelect_RejectsNoTarget(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	_, err := r.BrowserSelect(ctx, BrowserSelectRequest{Value: "option1"})
+	if err == nil {
+		t.Fatal("expected error when element and ref both empty")
+	}
+}
+
+func TestBrowserSelect_RejectsEmptyValue(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	_, err := r.BrowserSelect(ctx, BrowserSelectRequest{Element: "select", Value: ""})
+	if err == nil {
+		t.Fatal("expected error for empty value")
+	}
+}
+
+func TestBrowserFill_RejectsFieldWithoutTarget(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	// Field has value but no element or ref — should be rejected
+	_, err := r.BrowserFill(ctx, BrowserFillRequest{
+		Fields: []BrowserFillField{{Value: "alice"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for field without element or ref")
+	}
+}
+
+func TestBrowserClose_CallsClient(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	res, err := r.BrowserClose(ctx, BrowserCloseRequest{})
+	if err != nil {
+		t.Fatalf("BrowserClose: %v", err)
+	}
+	if !res.Closed {
+		t.Error("expected Closed=true")
+	}
+}
+
+func TestBrowserScreenshot_CallsClient(t *testing.T) {
+	r := newBrowserRunner(t, false)
+	ctx := context.Background()
+	res, err := r.BrowserScreenshot(ctx, BrowserScreenshotRequest{})
+	if err != nil {
+		t.Fatalf("BrowserScreenshot: %v", err)
+	}
+	if res.Image == "" {
+		t.Error("expected non-empty image/result")
+	}
+}
+
 func TestBrowserNavigate_CallsClient(t *testing.T) {
 	r := newBrowserRunner(t, false)
 	ctx := context.Background()
