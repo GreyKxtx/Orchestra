@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Skills follow-ups: user-global, $ARGUMENTS, skill_invoke (2026-05-18)
+
+- `Discover` now scans both `<userHome>/.orchestra/skills/` and `<project>/.orchestra/skills/`; project skills override user skills with the same `name`. Internal: `DiscoverFrom(userDir, projectDir)` is the testable entry point.
+- `$ARGUMENTS` in a skill body is replaced with the user query (`--skill` flow) or with the `task` parameter (`skill_invoke` flow). Skills without the marker are unchanged.
+- New `skill_invoke` tool: when any skill is discovered, every `apply` run exposes `skill_invoke{skill, task}` to the model and advertises available skills in the system prompt via a `<available_skills>` block. The handler runs a fresh child agent synchronously with the skill's prompt + tool filter + model + provider, returning its result. Child runs with no SubtaskRunner / SkillRunner (no recursion).
+- `internal/cli/skill_runner.go` — `cliSkillRunner` implementing `agent.SkillRunner`; resolves per-skill LLM client via `cfg.FindProvider` + `llm.NewClient`, mirroring the `--skill`/`--agent` model/provider override semantics.
+- `internal/tools/registry.go` — `ToolSkillInvoke(names)` builds the JSON-Schema with an `enum` of allowed skill names (when supplied), tagged Mutating.
+- No ToolsVersion bump: `skill_invoke` is registered dynamically per-run (only when skills exist) and is dispatched in-process — it never crosses the JSON-RPC tools surface.
+
 ### Added — Skills loader (2026-05-17)
 
 File-based, discoverable agent skills loaded from `<project>/.orchestra/skills/*.md`. A skill is a Markdown file with a YAML frontmatter header (`name`, `description`, `tools`, `model`, `provider`) and a Markdown body used as the agent system prompt. Skills are the shareable, file-based form of the inline `agents:` block in `.orchestra.yml` — same merge semantics into `agent.Options`.

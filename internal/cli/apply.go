@@ -24,6 +24,7 @@ import (
 	"github.com/orchestra/orchestra/internal/pipeline"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
+	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/spf13/cobra"
@@ -494,6 +495,17 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			hooksRunner = hr
 		}
 
+		// Discover skills once; expose skill_invoke when any are present.
+		// Skipped silently on error so a malformed skill file doesn't kill
+		// regular apply flow — the error will resurface on `orchestra skills list`.
+		discoveredSkills, _ := skills.Discover(cfg.ProjectRoot)
+		var skillRunner agent.SkillRunner
+		var skillSpecsList []agent.SkillSpec
+		if len(discoveredSkills) > 0 {
+			skillRunner = newCLISkillRunner(cfg, discoveredSkills, llmClient, validator, runner, agentLogger, cfg.Agent.MaxSteps)
+			skillSpecsList = skillSpecs(discoveredSkills)
+		}
+
 		ag, err := agent.New(llmClient, validator, runner, agent.Options{
 			MaxSteps:             cfg.Agent.MaxSteps,
 			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
@@ -520,6 +532,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
 			SubtaskRunner:        taskRunner,
+			Skills:               skillSpecsList,
+			SkillRunner:          skillRunner,
 			HooksRunner:          hooksRunner,
 		})
 		if err != nil {

@@ -4,7 +4,12 @@ A *skill* is a reusable bundle of (system prompt + allowed tools + optional mode
 
 ## Location
 
-`<project_root>/.orchestra/skills/<name>.md`
+Skills are discovered from two directories (both optional):
+
+- `<user_home>/.orchestra/skills/<name>.md` — shared across all your projects.
+- `<project_root>/.orchestra/skills/<name>.md` — project-local; overrides a user skill with the same `name`.
+
+Use the project dir for repo-specific guidance, the user dir for skills you want to reuse everywhere.
 
 A skill file:
 
@@ -24,9 +29,40 @@ Make small, focused edits. Run tests after each change.
 
 | Command | Effect |
 |---|---|
-| `orchestra skills list` | List skills found under `.orchestra/skills/`. |
+| `orchestra skills list` | List skills found in either skills dir. |
 | `orchestra skills show <name>` | Print metadata + system prompt body. |
 | `orchestra apply --skill <name> "<task>"` | Run apply with this skill's prompt + tool filter + model/provider overrides. |
+
+## `$ARGUMENTS` substitution
+
+If the body contains the literal token `$ARGUMENTS`, it is replaced with the user query before the body becomes the system prompt. Useful for templated skills:
+
+```markdown
+---
+name: refactor
+description: Refactor a single file.
+tools: [read, edit, write]
+---
+Refactor the following file with small, focused edits, then run tests:
+$ARGUMENTS
+```
+
+`orchestra apply --skill refactor "internal/foo.go"` → the system prompt becomes `Refactor the following file ... internal/foo.go`. Skills without the marker pass the query through unchanged as the regular user message.
+
+## LLM-invokable skills (`skill_invoke`)
+
+When `.orchestra/skills/` is non-empty, every `orchestra apply` run automatically exposes a `skill_invoke` tool to the model and lists available skills in the system prompt:
+
+```
+<available_skills>
+- refactor — Refactor a single file.
+- review — Review changes for risks.
+</available_skills>
+```
+
+The model invokes a skill mid-run with `skill_invoke{skill: "<name>", task: "<text>"}`. A fresh child agent is spawned synchronously with that skill's body as the system prompt (with `$ARGUMENTS` substituted from `task`), its tools as the tool filter, and its `model`/`provider` overrides applied. The child cannot recursively spawn skills or subtasks. The tool returns the child's final result text.
+
+Use `--skill <name>` (CLI-driven) when you want to commit a whole run to one skill from the start; use the in-process `skill_invoke` tool when the *parent* agent should orchestrate and only delegate certain subtasks.
 
 ## Rules
 
@@ -40,4 +76,6 @@ Make small, focused edits. Run tests after each change.
 
 ## Implementation notes
 
-Internally a skill is materialised as a `config.AgentDefinition` and appended to `cfg.Agents` for the duration of the run, then resolved through the same code path that handles `--mode <name>` for inline custom agents. There is no separate "skill runtime" — same `agent.Options.SystemPromptOverride`, same `CustomTools` filter, same `--provider`/`Model` override semantics.
+- CLI path (`--skill`) materialises the skill as a `config.AgentDefinition`, appends it to `cfg.Agents` for the run, and resolves it through the same code as `--mode <name>` for inline custom agents.
+- In-process path (`skill_invoke`) uses `agent.SkillRunner` (impl in `internal/cli/skill_runner.go`) to spawn a child agent with the skill's prompt/tools/model/provider, returning the result synchronously. The child runs with `SubtaskRunner=nil` and `SkillRunner=nil` to prevent recursive spawning.
+- Tool-name validation is shared via `config.ValidAgentTool`.

@@ -87,7 +87,8 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 			"git.commit", "git.branch", "git.checkout", "git.push",
 			"gh.pr.create",
 			"browser.navigate", "browser.click", "browser.type", "browser.fill",
-			"browser.select", "browser.eval", "browser.wait", "browser.close":
+			"browser.select", "browser.eval", "browser.wait", "browser.close",
+			"skill_invoke":
 			defs[i].Mutating = true
 		}
 	}
@@ -104,6 +105,42 @@ func ListToolsWithMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.Tool
 func ListToolsWithSubtasksAndMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
 	out := ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
 	return append(out, mcpDefs...)
+}
+
+// ToolSkillInvoke returns the skill_invoke tool definition with the
+// caller-supplied list of valid skill names embedded in the JSON Schema
+// enum. This narrows the model's choice and gives strict-schema providers
+// the metadata to reject invalid skill names early.
+func ToolSkillInvoke(skillNames []string) llm.ToolDef {
+	skillProp := map[string]any{
+		"type":        "string",
+		"description": "Name of the skill to invoke (must match an available skill).",
+	}
+	if len(skillNames) > 0 {
+		skillProp["enum"] = skillNames
+	}
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"skill": skillProp,
+			"task": map[string]any{
+				"type":        "string",
+				"description": "Task description / arguments passed to the skill. Becomes the user message and replaces $ARGUMENTS in the skill body.",
+			},
+		},
+		"required":             []string{"skill", "task"},
+		"additionalProperties": false,
+	}
+	raw, _ := json.Marshal(schema)
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "skill_invoke",
+			Description: "Run a named skill synchronously as a child agent and return its result. Skills are reusable agent bundles (prompt + tools + model) loaded from .orchestra/skills/. Use this when a subtask matches an available skill's description.",
+			Parameters:  raw,
+		},
+		Mutating: true,
+	}
 }
 
 // ToolNames returns tool function names for prompt/debug usage.
