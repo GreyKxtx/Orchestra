@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Skills loader (2026-05-17)
+
+File-based, discoverable agent skills loaded from `<project>/.orchestra/skills/*.md`. A skill is a Markdown file with a YAML frontmatter header (`name`, `description`, `tools`, `model`, `provider`) and a Markdown body used as the agent system prompt. Skills are the shareable, file-based form of the inline `agents:` block in `.orchestra.yml` — same merge semantics into `agent.Options`.
+
+- `internal/skills/` — `Skill` struct, `Parse(source, r)`, `Load(path)`, `Discover(projectRoot)`, `Find`. Discovery validates required `name` and rejects duplicate names across files.
+- `orchestra skills list` — prints discovered skills as a NAME/DESCRIPTION table.
+- `orchestra skills show <name>` — prints full metadata + prompt body.
+- `orchestra apply --skill <name> "<task>"` — runs apply with the skill's prompt, tool filter, model and provider overrides. Mutually exclusive with `--mode`.
+- Tool names in a skill's `tools:` list are validated against the same allow-list used by inline `agents:` (new exported `config.ValidAgentTool`).
+- No protocol/tools version bump — skills are a CLI-side loader on top of existing `agent.Options`; the LLM tool surface is unchanged.
+
+See `docs/skills.md`.
+
 ### Added — Staging overlay: dry-run write/edit safety (2026-05-15)
 
 До этого `write`/`edit` писали напрямую на диск даже в режиме `--plan-only`, обходя `--apply`-флаг. Теперь в dry-run режиме все записи накапливаются в памяти (overlay) и на диск не попадают.
