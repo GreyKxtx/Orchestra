@@ -37,6 +37,87 @@ func (m *mockQuestionAsker) Ask(_ context.Context, questions []tools.QuestionIte
 	return m.answers, nil
 }
 
+func TestExtractLSPErrors_Nil(t *testing.T) {
+	if got := extractLSPErrors(nil); got != "" {
+		t.Errorf("nil input: expected empty string, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_EmptyObject(t *testing.T) {
+	if got := extractLSPErrors(json.RawMessage(`{}`)); got != "" {
+		t.Errorf("empty object: expected empty string, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_NoDiagnostics(t *testing.T) {
+	out := json.RawMessage(`{"path":"a.go","file_hash":"abc123"}`)
+	if got := extractLSPErrors(out); got != "" {
+		t.Errorf("no diagnostics field: expected empty string, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_OnlyWarnings(t *testing.T) {
+	out := json.RawMessage(`{"diagnostics":[{"severity":"warning","message":"unused import","start_line":1,"start_col":1}]}`)
+	if got := extractLSPErrors(out); got != "" {
+		t.Errorf("warning-only: expected empty string, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_SingleError(t *testing.T) {
+	out := json.RawMessage(`{"diagnostics":[{"severity":"error","message":"undefined: Foo","start_line":3,"start_col":5}]}`)
+	got := extractLSPErrors(out)
+	if got == "" {
+		t.Fatal("expected non-empty hint for error diagnostic")
+	}
+	if !strings.Contains(got, "line 3:5") {
+		t.Errorf("expected 'line 3:5' in hint, got %q", got)
+	}
+	if !strings.Contains(got, "undefined: Foo") {
+		t.Errorf("expected error message in hint, got %q", got)
+	}
+	if !strings.Contains(got, "LSP_ERRORS") {
+		t.Errorf("expected 'LSP_ERRORS' prefix in hint, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_MixedSeverity(t *testing.T) {
+	out := json.RawMessage(`{"diagnostics":[
+		{"severity":"warning","message":"unused var","start_line":1,"start_col":1},
+		{"severity":"error","message":"type mismatch","start_line":5,"start_col":3},
+		{"severity":"information","message":"consider renaming","start_line":7,"start_col":1}
+	]}`)
+	got := extractLSPErrors(out)
+	if !strings.Contains(got, "type mismatch") {
+		t.Errorf("expected error message in hint, got %q", got)
+	}
+	if strings.Contains(got, "unused var") {
+		t.Errorf("warning should not appear in hint, got %q", got)
+	}
+	if strings.Contains(got, "consider renaming") {
+		t.Errorf("information should not appear in hint, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_MultipleErrors(t *testing.T) {
+	out := json.RawMessage(`{"diagnostics":[
+		{"severity":"error","message":"first error","start_line":2,"start_col":1},
+		{"severity":"error","message":"second error","start_line":4,"start_col":3}
+	]}`)
+	got := extractLSPErrors(out)
+	if !strings.Contains(got, "first error") {
+		t.Errorf("expected first error in hint, got %q", got)
+	}
+	if !strings.Contains(got, "second error") {
+		t.Errorf("expected second error in hint, got %q", got)
+	}
+}
+
+func TestExtractLSPErrors_InvalidJSON(t *testing.T) {
+	if got := extractLSPErrors(json.RawMessage(`not json at all`)); got != "" {
+		t.Errorf("invalid JSON: expected empty string, got %q", got)
+	}
+}
+
 func (s *scriptedLLM) Plan(ctx context.Context, prompt string) (string, error) {
 	_ = ctx
 	_ = prompt
