@@ -64,6 +64,10 @@ type Runner struct {
 	dryRun   bool
 	staged   map[string]*stagedFile
 	stagedMu sync.RWMutex
+
+	// forceDiagnosticsForTest is appended to every write/edit diagnostic response.
+	// Only used in tests — nil in production.
+	forceDiagnosticsForTest []lsp.ToolDiagnostic
 }
 
 type RunnerOptions struct {
@@ -85,6 +89,10 @@ type RunnerOptions struct {
 	// DryRun enables staging mode: write/edit accumulate in memory instead of disk.
 	// FSRead serves staged content. StagedOps() returns write_atomic ops for plan.json.
 	DryRun bool
+
+	// ForceDiagnosticsForTest, if non-nil, is appended to every FSWrite/FSEdit
+	// diagnostic response. Only for use in tests.
+	ForceDiagnosticsForTest []lsp.ToolDiagnostic
 }
 
 func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
@@ -157,11 +165,12 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		webFetchTimeout:    webTimeout,
 		webMaxContentBytes: webMaxBytes,
 		webSearchCfg:       opts.WebSearch,
-		lspManager:         lspMgr,
-		browserClient:      browserCli,
-		allowBrowserEval:   opts.Browser.AllowEval,
-		dryRun:             opts.DryRun,
-		staged:             make(map[string]*stagedFile),
+		lspManager:              lspMgr,
+		browserClient:           browserCli,
+		allowBrowserEval:        opts.Browser.AllowEval,
+		dryRun:                  opts.DryRun,
+		staged:                  make(map[string]*stagedFile),
+		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
 	}, nil
 }
 
