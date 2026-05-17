@@ -308,6 +308,9 @@ type ProjectConfig struct {
 	Agents       []AgentDefinition `yaml:"agents,omitempty"`
 	LSP          LSPConfig         `yaml:"lsp,omitempty"`
 	UI           UIConfig          `yaml:"ui,omitempty"`
+	// Providers is an optional map of named LLM provider configurations.
+	// Use in agents: via provider: <name> or with --provider <name> CLI flag.
+	Providers map[string]LLMConfig `yaml:"providers,omitempty"`
 }
 
 // FindAgent looks up a custom agent by name. Returns nil when not found.
@@ -318,6 +321,16 @@ func (c *ProjectConfig) FindAgent(name string) *AgentDefinition {
 		}
 	}
 	return nil
+}
+
+// FindProvider looks up a named provider from the providers: map.
+// Returns (LLMConfig{}, false) when not found or when the map is nil.
+func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
+	if c.Providers == nil {
+		return LLMConfig{}, false
+	}
+	cfg, ok := c.Providers[name]
+	return cfg, ok
 }
 
 // DefaultConfig creates a default configuration for the project root

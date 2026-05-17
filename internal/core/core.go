@@ -92,14 +92,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 
 	llmClient := opts.LLMClient
 	if llmClient == nil {
-		switch strings.ToLower(cfg.LLM.Provider) {
-		case "anthropic":
-			llmClient = llm.NewAnthropicClient(cfg.LLM)
-		default:
-			oc := llm.NewOpenAIClient(cfg.LLM)
-			logger := llm.NewLogger(rootAbs)
-			oc.SetLogger(logger)
-			llmClient = oc
+		llmClient = llm.NewClient(cfg.LLM)
+		if oc, ok := llmClient.(*llm.OpenAIClient); ok {
+			oc.SetLogger(llm.NewLogger(rootAbs))
 		}
 	}
 
@@ -559,11 +554,11 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) cust
 	if def.Model != "" {
 		overrideCfg := c.cfg.LLM
 		overrideCfg.Model = def.Model
-		overrideClient := llm.NewOpenAIClient(overrideCfg)
-		if agentLogger != nil {
-			overrideClient.SetLogger(agentLogger)
+		newClient := llm.NewClient(overrideCfg)
+		if oc, ok := newClient.(*llm.OpenAIClient); ok && agentLogger != nil {
+			oc.SetLogger(agentLogger)
 		}
-		result.llmClient = overrideClient
+		result.llmClient = newClient
 	}
 
 	if def.Tools != nil {
