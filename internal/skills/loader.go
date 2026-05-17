@@ -76,13 +76,54 @@ func Load(path string) (*Skill, error) {
 	return Parse(path, f)
 }
 
-// Discover scans <projectRoot>/.orchestra/skills/*.md and returns all
-// parsed skills sorted by Name. A missing directory is not an error
-// (returns nil, nil). Files with extensions other than .md are ignored.
-// Returns an error if any skill has a missing Name, has invalid YAML,
-// or if two skills share the same Name.
+// Discover scans the user-global skills dir (<userHome>/.orchestra/skills/)
+// and the project-local dir (<projectRoot>/.orchestra/skills/), and returns
+// all parsed skills sorted by Name. Missing directories are not an error.
+// Project skills with the same Name override user skills (the user one is
+// dropped silently). Duplicate Name within the SAME root is still an error.
+// Files with extensions other than .md are ignored. The user dir is skipped
+// when os.UserHomeDir returns an error (no panic).
 func Discover(projectRoot string) ([]*Skill, error) {
-	dir := filepath.Join(projectRoot, SkillsDir)
+	var userDir string
+	if home, err := os.UserHomeDir(); err == nil {
+		userDir = filepath.Join(home, SkillsDir)
+	}
+	return DiscoverFrom(userDir, filepath.Join(projectRoot, SkillsDir))
+}
+
+// DiscoverFrom is the testable form of Discover. Either dir may be "" to
+// skip it. project overrides user on Name collision.
+func DiscoverFrom(userDir, projectDir string) ([]*Skill, error) {
+	userSkills, err := scanDir(userDir)
+	if err != nil {
+		return nil, err
+	}
+	projectSkills, err := scanDir(projectDir)
+	if err != nil {
+		return nil, err
+	}
+
+	merged := make(map[string]*Skill, len(userSkills)+len(projectSkills))
+	for _, s := range userSkills {
+		merged[s.Name] = s
+	}
+	for _, s := range projectSkills {
+		merged[s.Name] = s // project wins
+	}
+	out := make([]*Skill, 0, len(merged))
+	for _, s := range merged {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// scanDir reads .md skill files from a single directory and validates
+// uniqueness within that directory.
+func scanDir(dir string) ([]*Skill, error) {
+	if dir == "" {
+		return nil, nil
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -111,7 +152,6 @@ func Discover(projectRoot string) ([]*Skill, error) {
 		seen[s.Name] = p
 		out = append(out, s)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

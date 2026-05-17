@@ -134,6 +134,69 @@ func TestDiscover_MissingNameIsError(t *testing.T) {
 	}
 }
 
+func TestDiscoverFrom_MergesUserAndProject(t *testing.T) {
+	userDir := t.TempDir()
+	projDir := t.TempDir()
+	os.WriteFile(filepath.Join(userDir, "a.md"), []byte(
+		"---\nname: a\ndescription: user-a\n---\nuser body\n"), 0o644)
+	os.WriteFile(filepath.Join(userDir, "b.md"), []byte(
+		"---\nname: b\ndescription: user-b\n---\nuser body\n"), 0o644)
+	os.WriteFile(filepath.Join(projDir, "a.md"), []byte(
+		"---\nname: a\ndescription: project-a\n---\nproject body\n"), 0o644)
+	os.WriteFile(filepath.Join(projDir, "c.md"), []byte(
+		"---\nname: c\ndescription: project-c\n---\nproject body\n"), 0o644)
+
+	all, err := DiscoverFrom(userDir, projDir)
+	if err != nil {
+		t.Fatalf("DiscoverFrom: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d, want 3 (a,b,c): %+v", len(all), names(all))
+	}
+	got := names(all)
+	want := []string{"a", "b", "c"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sort: got %v want %v", got, want)
+		}
+	}
+	a := Find(all, "a")
+	if a.Description != "project-a" {
+		t.Errorf("project should override user: got %q", a.Description)
+	}
+}
+
+func TestDiscoverFrom_EmptyDirsAreOK(t *testing.T) {
+	all, err := DiscoverFrom("", "")
+	if err != nil {
+		t.Fatalf("DiscoverFrom(\"\", \"\"): %v", err)
+	}
+	if len(all) != 0 {
+		t.Errorf("expected empty, got %v", names(all))
+	}
+}
+
+func TestDiscoverFrom_OnlyUser(t *testing.T) {
+	userDir := t.TempDir()
+	os.WriteFile(filepath.Join(userDir, "x.md"), []byte(
+		"---\nname: x\ndescription: D\n---\n"), 0o644)
+	all, err := DiscoverFrom(userDir, "")
+	if err != nil {
+		t.Fatalf("DiscoverFrom: %v", err)
+	}
+	if len(all) != 1 || all[0].Name != "x" {
+		t.Errorf("got %v", names(all))
+	}
+}
+
+func names(ss []*Skill) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = s.Name
+	}
+	return out
+}
+
 func TestFind(t *testing.T) {
 	a := &Skill{Name: "a"}
 	b := &Skill{Name: "b"}

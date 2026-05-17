@@ -115,7 +115,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if agentMode != "" {
 			return fmt.Errorf("--skill and --mode are mutually exclusive")
 		}
-		def, err := resolveSkillAgent(cfg.ProjectRoot, applySkill)
+		def, err := resolveSkillAgent(cfg.ProjectRoot, applySkill, query)
 		if err != nil {
 			return err
 		}

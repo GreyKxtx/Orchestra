@@ -2,16 +2,24 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/skills"
 )
 
-// resolveSkillAgent loads the named skill from <projectRoot>/.orchestra/skills/
-// and converts it into a config.AgentDefinition that can be appended to
-// cfg.Agents and used via the existing --mode resolution path. Tool names
-// are validated against config.ValidAgentTool.
-func resolveSkillAgent(projectRoot, name string) (*config.AgentDefinition, error) {
+// argumentsMarker is replaced in a skill's body with the user-supplied
+// task text when the skill is invoked. When the marker is absent, the
+// task text is unchanged (still passed as the agent's user message by
+// the regular apply flow).
+const argumentsMarker = "$ARGUMENTS"
+
+// resolveSkillAgent loads the named skill from .orchestra/skills/ (user
+// + project, project wins) and converts it into a config.AgentDefinition
+// that can be appended to cfg.Agents and used via the existing --mode
+// resolution path. Tool names are validated against config.ValidAgentTool.
+// When the skill body contains $ARGUMENTS, it is replaced with arguments.
+func resolveSkillAgent(projectRoot, name, arguments string) (*config.AgentDefinition, error) {
 	all, err := skills.Discover(projectRoot)
 	if err != nil {
 		return nil, err
@@ -28,9 +36,10 @@ func resolveSkillAgent(projectRoot, name string) (*config.AgentDefinition, error
 	if config.IsBuiltInMode(s.Name) {
 		return nil, fmt.Errorf("skill %q: name collides with a built-in agent mode", s.Name)
 	}
+	body := strings.ReplaceAll(s.Body, argumentsMarker, arguments)
 	return &config.AgentDefinition{
 		Name:         s.Name,
-		SystemPrompt: s.Body,
+		SystemPrompt: body,
 		Tools:        s.Tools,
 		Model:        s.Model,
 		Provider:     s.Provider,
