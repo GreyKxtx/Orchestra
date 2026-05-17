@@ -269,3 +269,49 @@ web:
 		t.Errorf("MaxResults = %d, want %d", cfg.Web.Search.MaxResults, 10)
 	}
 }
+
+func TestFindProvider_Found(t *testing.T) {
+	cfg := &ProjectConfig{
+		Providers: map[string]LLMConfig{
+			"anthropic": {Provider: "anthropic", APIKey: "sk-ant-test"},
+		},
+	}
+	prov, ok := cfg.FindProvider("anthropic")
+	if !ok {
+		t.Fatal("FindProvider: expected true for 'anthropic'")
+	}
+	if prov.Provider != "anthropic" {
+		t.Fatalf("FindProvider: expected Provider='anthropic', got %q", prov.Provider)
+	}
+	if prov.APIKey != "sk-ant-test" {
+		t.Fatalf("FindProvider: expected APIKey='sk-ant-test', got %q", prov.APIKey)
+	}
+}
+
+func TestFindProvider_NotFound(t *testing.T) {
+	cfg := &ProjectConfig{}
+	_, ok := cfg.FindProvider("missing")
+	if ok {
+		t.Fatal("FindProvider: expected false for missing provider")
+	}
+}
+
+func TestFindProvider_NilMap(t *testing.T) {
+	cfg := &ProjectConfig{Providers: nil}
+	_, ok := cfg.FindProvider("any")
+	if ok {
+		t.Fatal("FindProvider: expected false when Providers is nil")
+	}
+}
+
+func TestFindProvider_EmptyName(t *testing.T) {
+	cfg := &ProjectConfig{
+		Providers: map[string]LLMConfig{
+			"anthropic": {Provider: "anthropic"},
+		},
+	}
+	_, ok := cfg.FindProvider("")
+	if ok {
+		t.Fatal("FindProvider: empty name should not match any provider")
+	}
+}

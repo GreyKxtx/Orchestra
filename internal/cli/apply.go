@@ -244,10 +244,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if testLLMClient != nil {
 			llmClient = testLLMClient
 		} else {
-			llmClient = llm.NewOpenAIClient(cfg.LLM)
-			if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
-				logger := llm.NewLogger(cfg.ProjectRoot)
-				openAIClient.SetLogger(logger)
+			llmClient = llm.NewClient(cfg.LLM)
+			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
+				oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 			}
 		}
 
@@ -363,11 +362,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if testLLMClient != nil {
 			llmClient = testLLMClient
 		} else {
-			llmClient = llm.NewOpenAIClient(cfg.LLM)
-			// Set logger for LLM requests
-			if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
-				logger := llm.NewLogger(cfg.ProjectRoot)
-				openAIClient.SetLogger(logger)
+			llmClient = llm.NewClient(cfg.LLM)
+			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
+				oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 			}
 		}
 
@@ -431,9 +428,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				if def.Model != "" && testLLMClient == nil {
 					overrideCfg := cfg.LLM
 					overrideCfg.Model = def.Model
-					overrideClient := llm.NewOpenAIClient(overrideCfg)
-					overrideClient.SetLogger(agentLogger)
-					llmClient = overrideClient
+					newClient := llm.NewClient(overrideCfg)
+					if oc, ok := newClient.(*llm.OpenAIClient); ok {
+						oc.SetLogger(agentLogger)
+					}
+					llmClient = newClient
 				}
 				if def.Tools != nil {
 					var resolveErr error
