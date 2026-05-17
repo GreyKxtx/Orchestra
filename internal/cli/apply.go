@@ -46,6 +46,7 @@ var (
 	pipelineMaxAttempts int
 	pipelineTraceID     string
 	applyProvider       string
+	applySkill          string
 )
 
 var applyCmd = &cobra.Command{
@@ -73,6 +74,7 @@ func init() {
 	applyCmd.Flags().IntVar(&pipelineMaxAttempts, "pipeline-attempts", 2, "Max Coder→Critic cycles in pipeline mode")
 	applyCmd.Flags().StringVar(&pipelineTraceID, "trace-id", "", "Trace ID for runtime evidence pre-fetch in pipeline mode")
 	applyCmd.Flags().StringVar(&applyProvider, "provider", "", "Use a named provider from .orchestra.yml providers: section")
+	applyCmd.Flags().StringVar(&applySkill, "skill", "", "Run with the named skill from .orchestra/skills/")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -107,6 +109,21 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				applyProvider, providerNames(cfg))
 		}
 		cfg.LLM = provCfg
+	}
+
+	if applySkill != "" {
+		if agentMode != "" {
+			return fmt.Errorf("--skill and --mode are mutually exclusive")
+		}
+		def, err := resolveSkillAgent(cfg.ProjectRoot, applySkill)
+		if err != nil {
+			return err
+		}
+		if cfg.FindAgent(def.Name) != nil {
+			return fmt.Errorf("--skill %q: name collides with an existing entry in agents: in .orchestra.yml", def.Name)
+		}
+		cfg.Agents = append(cfg.Agents, *def)
+		agentMode = def.Name
 	}
 
 	if agentMode != "" && !config.IsBuiltInMode(agentMode) && cfg.FindAgent(agentMode) == nil {
