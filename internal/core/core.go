@@ -35,8 +35,9 @@ type Core struct {
 	initialized   bool
 	initParams    *InitializeParams
 
-	cfg       *config.ProjectConfig
-	llmClient llm.Client
+	cfg               *config.ProjectConfig
+	llmClient         llm.Client
+	llmClientInjected bool // true when LLMClient was set via Options (test/DI mode)
 
 	validator  *schema.Validator
 	tools      *tools.Runner
@@ -90,6 +91,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		return nil, err
 	}
 
+	injected := opts.LLMClient != nil
 	llmClient := opts.LLMClient
 	if llmClient == nil {
 		llmClient = llm.NewClient(cfg.LLM)
@@ -113,15 +115,16 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 
 	return &Core{
-		workspaceRoot: rootAbs,
-		projectID:     projectID,
-		debug:         opts.Debug,
-		cfg:           cfg,
-		llmClient:     llmClient,
-		validator:     v,
-		tools:         tr,
-		sessions:      coresession.NewManager(),
-		mcpManager:    mcpMgr,
+		workspaceRoot:     rootAbs,
+		projectID:         projectID,
+		debug:             opts.Debug,
+		cfg:               cfg,
+		llmClient:         llmClient,
+		llmClientInjected: injected,
+		validator:         v,
+		tools:             tr,
+		sessions:          coresession.NewManager(),
+		mcpManager:        mcpMgr,
 	}, nil
 }
 
@@ -412,7 +415,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		hooksRunner = hr
 	}
 
-	customOpts := c.resolveCustomAgentOpts(params.Mode, agentLogger)
+	customOpts, err := c.resolveCustomAgentOpts(params.Mode, agentLogger)
+	if err != nil {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
+	}
 
 	// Configure staging mode: dry-run when not applying; clear any stale state from prior runs.
 	c.tools.SetDryRun(!params.Apply)
@@ -539,40 +545,43 @@ type customAgentOpts struct {
 //
 // MCP tools are appended to customTools automatically so custom agents get the
 // same MCP access as standard modes.
-func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) customAgentOpts {
+func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (customAgentOpts, error) {
 	result := customAgentOpts{llmClient: c.llmClient}
 	if c.cfg == nil || mode == "" {
-		return result
+		return result, nil
 	}
 	def := c.cfg.FindAgent(mode)
 	if def == nil {
-		return result
+		return result, nil
 	}
 
 	result.systemPromptOverride = def.SystemPrompt
 
-	if def.Provider != "" {
-		if provCfg, ok := c.cfg.FindProvider(def.Provider); ok {
-			if def.Model != "" {
-				provCfg.Model = def.Model
+	// In test/DI mode (injected client), skip provider/model overrides so the
+	// test client is preserved across custom agent runs.
+	if !c.llmClientInjected {
+		if def.Provider != "" {
+			if provCfg, ok := c.cfg.FindProvider(def.Provider); ok {
+				if def.Model != "" {
+					provCfg.Model = def.Model
+				}
+				newClient := llm.NewClient(provCfg)
+				if oc, ok2 := newClient.(*llm.OpenAIClient); ok2 && agentLogger != nil {
+					oc.SetLogger(agentLogger)
+				}
+				result.llmClient = newClient
+			} else {
+				return result, fmt.Errorf("agent %q: provider %q not found in providers: section", def.Name, def.Provider)
 			}
-			newClient := llm.NewClient(provCfg)
-			if oc, ok2 := newClient.(*llm.OpenAIClient); ok2 && agentLogger != nil {
+		} else if def.Model != "" {
+			overrideCfg := c.cfg.LLM
+			overrideCfg.Model = def.Model
+			newClient := llm.NewClient(overrideCfg)
+			if oc, ok := newClient.(*llm.OpenAIClient); ok && agentLogger != nil {
 				oc.SetLogger(agentLogger)
 			}
 			result.llmClient = newClient
-		} else {
-			fmt.Fprintf(os.Stderr, "orchestra: agent %q: provider %q not found in providers:, using default\n",
-				def.Name, def.Provider)
 		}
-	} else if def.Model != "" {
-		overrideCfg := c.cfg.LLM
-		overrideCfg.Model = def.Model
-		newClient := llm.NewClient(overrideCfg)
-		if oc, ok := newClient.(*llm.OpenAIClient); ok && agentLogger != nil {
-			oc.SetLogger(agentLogger)
-		}
-		result.llmClient = newClient
 	}
 
 	if def.Tools != nil {
@@ -584,7 +593,7 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) cust
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // ── Session API ──────────────────────────────────────────────────────────────
@@ -772,7 +781,10 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		sessHooksRunner = hr
 	}
 
-	sessCustomOpts := c.resolveCustomAgentOpts(params.Mode, sessAgentLogger)
+	sessCustomOpts, err := c.resolveCustomAgentOpts(params.Mode, sessAgentLogger)
+	if err != nil {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
+	}
 
 	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,

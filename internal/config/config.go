@@ -615,6 +615,13 @@ func (c *ProjectConfig) validateAgents() error {
 				return fmt.Errorf("agents[%d] (%q): unknown tool name %q", i, a.Name, t)
 			}
 		}
+
+		// Validate provider reference exists in providers: map.
+		if a.Provider != "" {
+			if _, ok := c.Providers[a.Provider]; !ok {
+				return fmt.Errorf("agent %q: provider %q not defined in providers:", a.Name, a.Provider)
+			}
+		}
 	}
 	return nil
 }

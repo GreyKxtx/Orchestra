@@ -431,19 +431,19 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 							provCfg.Model = def.Model
 						}
 						newClient := llm.NewClient(provCfg)
-						if oc, ok2 := newClient.(*llm.OpenAIClient); ok2 {
+						if oc, ok2 := newClient.(*llm.OpenAIClient); ok2 && agentLogger != nil {
 							oc.SetLogger(agentLogger)
 						}
 						llmClient = newClient
 					} else {
-						fmt.Fprintf(os.Stderr, "orchestra: agent %q: provider %q not found in providers:, using default\n",
-							agentMode, def.Provider)
+						retErr = fmt.Errorf("agent %q: provider %q not found in providers: section", agentMode, def.Provider)
+						return retErr
 					}
 				} else if def.Model != "" && testLLMClient == nil {
 					overrideCfg := cfg.LLM
 					overrideCfg.Model = def.Model
 					newClient := llm.NewClient(overrideCfg)
-					if oc, ok := newClient.(*llm.OpenAIClient); ok {
+					if oc, ok := newClient.(*llm.OpenAIClient); ok && agentLogger != nil {
 						oc.SetLogger(agentLogger)
 					}
 					llmClient = newClient
