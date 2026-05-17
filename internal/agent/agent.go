@@ -61,6 +61,21 @@ type SubtaskSpawnRequest struct {
 	TimeoutMS int
 }
 
+// SkillSpec is a thin summary of a discovered skill, used for system-prompt
+// advertisement and validation of skill_invoke calls. The full skill body
+// is not embedded here — SkillRunner.InvokeSkill resolves it by name.
+type SkillSpec struct {
+	Name        string
+	Description string
+}
+
+// SkillRunner runs a named skill synchronously as a child agent and
+// returns its result text. Returns an error if the skill is unknown or
+// the child agent fails.
+type SkillRunner interface {
+	InvokeSkill(ctx context.Context, name, task string) (string, error)
+}
+
 // SubtaskResult is the result returned by a completed child agent task.
 type SubtaskResult struct {
 	TaskID string `json:"task_id"`
@@ -169,6 +184,15 @@ type Options struct {
 
 	// SubtaskRunner, if non-nil, enables task.spawn/task.wait/task.cancel tools.
 	SubtaskRunner SubtaskRunner
+
+	// Skills are the file-based skills discovered for this run. When non-empty
+	// AND SkillRunner is non-nil, the agent exposes the skill_invoke tool and
+	// lists available skills in the system prompt.
+	Skills []SkillSpec
+
+	// SkillRunner, if non-nil, is invoked synchronously by the skill_invoke tool
+	// to run a child agent with the named skill's prompt/tools/model/provider.
+	SkillRunner SkillRunner
 
 	// HooksRunner, if non-nil, runs pre/post tool call hooks.
 	HooksRunner HooksRunner
@@ -523,6 +547,31 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					SubtaskResult: req.Content,
 					Todos:         a.todos,
 				}, nil
+			}
+
+			// skill_invoke is handled in-process via SkillRunner (synchronous).
+			if a.opts.SkillRunner != nil && name == "skill_invoke" {
+				out, skillErr := a.handleSkillInvoke(ctx, step.Tool.Input)
+				var content string
+				if skillErr != nil {
+					content = formatToolErrorJSON(name, step.Tool.Input, skillErr)
+				} else {
+					content = string(out)
+				}
+				history = append(history, llm.Message{
+					Role:       llm.RoleTool,
+					ToolCallID: toolCallID,
+					Content:    content,
+				})
+				if skillErr != nil {
+					if cbErr := cb.RecordToolError(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+				} else {
+					cb.ResetToolErrors()
+				}
+				emitStepDone("tool_call")
+				continue
 			}
 
 			// task.spawn/wait/cancel are handled in-process via SubtaskRunner.
@@ -1045,7 +1094,31 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
 	}
+	if a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {
+		names := make([]string, len(a.opts.Skills))
+		for i, s := range a.opts.Skills {
+			names[i] = s.Name
+		}
+		base = append(base, tools.ToolSkillInvoke(names))
+	}
 	return base
+}
+
+// skillsAdvertisement returns a system-prompt block describing the
+// skills available to the model. Empty when no skills are configured
+// or no SkillRunner is wired.
+func (a *Agent) skillsAdvertisement() string {
+	if a.opts.SkillRunner == nil || len(a.opts.Skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n<available_skills>\n")
+	b.WriteString("You can invoke a skill via the skill_invoke tool when a subtask matches one. Pass {skill: <name>, task: <description>}; the result is returned synchronously.\n")
+	for _, s := range a.opts.Skills {
+		fmt.Fprintf(&b, "- %s — %s\n", s.Name, s.Description)
+	}
+	b.WriteString("</available_skills>")
+	return b.String()
 }
 
 // nextStep returns the next step, raw response, full LLM response, and error.
@@ -1064,6 +1137,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
 		systemPrompt += "\n\n" + memory
 	}
+	systemPrompt += a.skillsAdvertisement()
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
 	if block := renderTodosBlock(a.todos); block != "" {
@@ -1580,6 +1654,44 @@ func renderTodosBlock(todos []tools.TodoItem) string {
 	}
 	b.WriteString("</todo_list>\n")
 	return b.String()
+}
+
+// handleSkillInvoke handles skill_invoke in-process via SkillRunner.
+// Validates the requested skill name against Options.Skills before running.
+func (a *Agent) handleSkillInvoke(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+	var req struct {
+		Skill string `json:"skill"`
+		Task  string `json:"task"`
+	}
+	if err := json.Unmarshal(input, &req); err != nil {
+		return nil, fmt.Errorf("skill_invoke: invalid input: %w", err)
+	}
+	if strings.TrimSpace(req.Skill) == "" {
+		return nil, fmt.Errorf("skill_invoke: skill is required")
+	}
+	if strings.TrimSpace(req.Task) == "" {
+		return nil, fmt.Errorf("skill_invoke: task is required")
+	}
+	known := false
+	for _, s := range a.opts.Skills {
+		if s.Name == req.Skill {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return nil, fmt.Errorf("skill_invoke: unknown skill %q", req.Skill)
+	}
+	result, err := a.opts.SkillRunner.InvokeSkill(ctx, req.Skill, req.Task)
+	if err != nil {
+		return nil, fmt.Errorf("skill_invoke: %w", err)
+	}
+	resp, _ := json.Marshal(map[string]any{
+		"skill":  req.Skill,
+		"status": "done",
+		"result": result,
+	})
+	return resp, nil
 }
 
 // handleTaskTool handles task.spawn/task.wait/task.cancel in-process via SubtaskRunner.
