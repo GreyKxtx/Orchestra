@@ -98,6 +98,7 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, req.Content)
 		}
 	}
+	diags = append(diags, r.forceDiagnosticsForTest...)
 
 	return &FSWriteResponse{
 		Path:         path,

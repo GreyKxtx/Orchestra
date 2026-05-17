@@ -102,6 +102,7 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 	if r.lspManager != nil && !r.lspManager.IsEmpty() {
 		diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, content)
 	}
+	diags = append(diags, r.forceDiagnosticsForTest...)
 
 	return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
 }

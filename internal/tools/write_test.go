@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/lsp"
 )
 
 func newWriteRunner(t *testing.T) (*Runner, string) {
@@ -144,5 +145,33 @@ func TestFSWrite_CreatesParentDirs(t *testing.T) {
 	}
 	if string(data) != "package sub\n" {
 		t.Errorf("unexpected content: %q", string(data))
+	}
+}
+
+func TestFSWrite_ForceDiagnosticsForTest(t *testing.T) {
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{
+		ForceDiagnosticsForTest: []lsp.ToolDiagnostic{
+			{StartLine: 2, StartCol: 1, Severity: "error", Message: "undefined: Bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { r.Close() })
+
+	resp, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path:         "a.go",
+		Content:      "package main\n",
+		MustNotExist: true,
+	})
+	if err != nil {
+		t.Fatalf("FSWrite: %v", err)
+	}
+	if len(resp.Diagnostics) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d", len(resp.Diagnostics))
+	}
+	if resp.Diagnostics[0].Severity != "error" || resp.Diagnostics[0].Message != "undefined: Bar" {
+		t.Errorf("unexpected diagnostic: %+v", resp.Diagnostics[0])
 	}
 }
