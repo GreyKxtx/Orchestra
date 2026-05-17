@@ -4,12 +4,13 @@ A *skill* is a reusable bundle of (system prompt + allowed tools + optional mode
 
 ## Location
 
-Skills are discovered from two directories (both optional):
+Skills are discovered from three sources (all optional, override precedence high → low):
 
-- `<user_home>/.orchestra/skills/<name>.md` — shared across all your projects.
-- `<project_root>/.orchestra/skills/<name>.md` — project-local; overrides a user skill with the same `name`.
+1. `<project_root>/.orchestra/skills/<name>.md` — project-local.
+2. `<user_home>/.orchestra/skills/<name>.md` — shared across all your projects.
+3. `<user_home>/.orchestra/packs/<pack-id>/**/<name>.md` — installed third-party packs.
 
-Use the project dir for repo-specific guidance, the user dir for skills you want to reuse everywhere.
+Use the project dir for repo-specific guidance, the user dir for skills you want everywhere, packs for skills shared by a team or community.
 
 A skill file:
 
@@ -29,9 +30,19 @@ Make small, focused edits. Run tests after each change.
 
 | Command | Effect |
 |---|---|
-| `orchestra skills list` | List skills found in either skills dir. |
+| `orchestra skills list` | List skills with `NAME / ORIGIN / DESCRIPTION` columns. |
 | `orchestra skills show <name>` | Print metadata + system prompt body. |
 | `orchestra apply --skill <name> "<task>"` | Run apply with this skill's prompt + tool filter + model/provider overrides. |
+| `orchestra skills install <git\|archive\|path> [--yes]` | Fetch a third-party pack to `~/.orchestra/packs/`, review each skill interactively (`--yes` to skip prompts; dangerous). |
+| `orchestra skills uninstall <pack-id>` | Remove an installed pack. |
+
+## Security — packs
+
+A skill body becomes the system prompt of a child agent with full tool access. **Installing a pack is equivalent to letting its author write your agent's instructions**, similar in trust level to running an `npm install` postinstall script (and arguably worse because the LLM can do more with tool budget than a sandboxed script).
+
+`install` therefore prompts you per skill, showing the full body before it goes live. Vet by hand on first install of any pack you don't already trust. `--yes` exists for automation but emits a `WARNING:` line.
+
+Packs live under their own pack id (`pack:<id>` in `skills list`), separate from the user/project dirs — so audit trails stay clean.
 
 ## `$ARGUMENTS` substitution
 

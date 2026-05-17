@@ -15,6 +15,16 @@ import (
 const (
 	frontmatterDelim = "---"
 	SkillsDir        = ".orchestra/skills"
+	// PacksDir is the user-global root where installed third-party packs
+	// are materialised. Each pack lives in its own subdirectory; *.md
+	// files anywhere under that subdir are loaded as skills.
+	PacksDir = ".orchestra/packs"
+)
+
+// Origin tags for Skill.Origin.
+const (
+	OriginProject = "project"
+	OriginUser    = "user"
 )
 
 // Parse reads a single skill from r. The source argument is recorded on
@@ -76,34 +86,60 @@ func Load(path string) (*Skill, error) {
 	return Parse(path, f)
 }
 
-// Discover scans the user-global skills dir (<userHome>/.orchestra/skills/)
-// and the project-local dir (<projectRoot>/.orchestra/skills/), and returns
-// all parsed skills sorted by Name. Missing directories are not an error.
-// Project skills with the same Name override user skills (the user one is
-// dropped silently). Duplicate Name within the SAME root is still an error.
-// Files with extensions other than .md are ignored. The user dir is skipped
-// when os.UserHomeDir returns an error (no panic).
+// Discover scans installed pack subdirs (<userHome>/.orchestra/packs/*/),
+// the user-global skills dir (<userHome>/.orchestra/skills/), and the
+// project-local dir (<projectRoot>/.orchestra/skills/). Returns all parsed
+// skills sorted by Name. Missing directories are not an error.
+//
+// Override precedence (highest wins on Name collision):
+//
+//	project > user > pack
+//
+// Duplicate Name within the SAME root is still an error. Files with
+// extensions other than .md are ignored. The user dir is skipped when
+// os.UserHomeDir returns an error (no panic).
 func Discover(projectRoot string) ([]*Skill, error) {
-	var userDir string
+	var userDir, packsRoot string
 	if home, err := os.UserHomeDir(); err == nil {
 		userDir = filepath.Join(home, SkillsDir)
+		packsRoot = filepath.Join(home, PacksDir)
 	}
-	return DiscoverFrom(userDir, filepath.Join(projectRoot, SkillsDir))
+	return DiscoverFromAll(packsRoot, userDir, filepath.Join(projectRoot, SkillsDir))
 }
 
-// DiscoverFrom is the testable form of Discover. Either dir may be "" to
-// skip it. project overrides user on Name collision.
+// DiscoverFrom is the legacy two-tier entry point (user + project).
+// Kept for back-compat with tests written before pack support.
 func DiscoverFrom(userDir, projectDir string) ([]*Skill, error) {
+	return DiscoverFromAll("", userDir, projectDir)
+}
+
+// DiscoverFromAll is the testable form. Any dir may be "" to skip it.
+// packsRoot is the parent dir; each subdir of packsRoot is treated as
+// one pack source.
+func DiscoverFromAll(packsRoot, userDir, projectDir string) ([]*Skill, error) {
+	packSkills, err := scanPacks(packsRoot)
+	if err != nil {
+		return nil, err
+	}
 	userSkills, err := scanDir(userDir)
 	if err != nil {
 		return nil, err
+	}
+	for _, s := range userSkills {
+		s.Origin = OriginUser
 	}
 	projectSkills, err := scanDir(projectDir)
 	if err != nil {
 		return nil, err
 	}
+	for _, s := range projectSkills {
+		s.Origin = OriginProject
+	}
 
-	merged := make(map[string]*Skill, len(userSkills)+len(projectSkills))
+	merged := make(map[string]*Skill, len(packSkills)+len(userSkills)+len(projectSkills))
+	for _, s := range packSkills {
+		merged[s.Name] = s
+	}
 	for _, s := range userSkills {
 		merged[s.Name] = s
 	}
@@ -115,6 +151,57 @@ func DiscoverFrom(userDir, projectDir string) ([]*Skill, error) {
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// scanPacks walks <packsRoot>/<pack-id>/ subdirs and scans each one
+// recursively for .md skill files. Each skill's Origin is set to
+// "pack:<pack-id>". A missing packsRoot is not an error.
+func scanPacks(packsRoot string) ([]*Skill, error) {
+	if packsRoot == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(packsRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read packs root %s: %w", packsRoot, err)
+	}
+	var out []*Skill
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		packID := e.Name()
+		packDir := filepath.Join(packsRoot, packID)
+		seen := make(map[string]string)
+		walkErr := filepath.Walk(packDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() || filepath.Ext(info.Name()) != ".md" {
+				return nil
+			}
+			s, lerr := Load(path)
+			if lerr != nil {
+				return lerr
+			}
+			if s.Name == "" {
+				return fmt.Errorf("skill %s: name is required", path)
+			}
+			if prev, ok := seen[s.Name]; ok {
+				return fmt.Errorf("duplicate skill name %q in pack %s: %s and %s", s.Name, packID, prev, path)
+			}
+			seen[s.Name] = path
+			s.Origin = "pack:" + packID
+			out = append(out, s)
+			return nil
+		})
+		if walkErr != nil {
+			return nil, walkErr
+		}
+	}
 	return out, nil
 }
 
