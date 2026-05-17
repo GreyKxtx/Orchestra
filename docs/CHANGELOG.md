@@ -8,6 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Background bash: run_in_background, bash.output, bash.kill (2026-05-18)
+
+Long-running commands (build, test loops, dev servers, watch processes) no longer block the agent. The existing `bash` tool gains an optional `run_in_background: true` parameter; when set, it returns immediately with a `bg_id` instead of waiting for completion.
+
+- `bash {run_in_background: true, command, args, workdir, timeout_ms}` — spawns under context cancellation, registers in a per-Runner registry, returns `{bg_id, status, command, started}`.
+- `bash.output {bg_id, peek}` — returns *new* stdout/stderr since the last poll (per-process cursor), plus current status (`running`/`done`/`killed`/`timed_out`/`error`), exit code when finished, and per-stream truncation flags. `peek: true` reads without advancing the cursor.
+- `bash.kill {bg_id}` — terminates the process; no-op (returns current status) when already finished.
+- Per-stream buffer cap: 256 KB (truncates oldest content, flagged in response).
+- `Runner.Close()` kills every still-running background process — no leaks between runs.
+- All three tools gated by `--allow-exec` (same as `bash` itself).
+- No protocol/tools version bump: pure additive extension, same `bash` schema with one new optional field.
+
 ### Added — Skills follow-ups: user-global, $ARGUMENTS, skill_invoke (2026-05-18)
 
 - `Discover` now scans both `<userHome>/.orchestra/skills/` and `<project>/.orchestra/skills/`; project skills override user skills with the same `name`. Internal: `DiscoverFrom(userDir, projectDir)` is the testable entry point.

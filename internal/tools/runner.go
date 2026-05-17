@@ -68,6 +68,10 @@ type Runner struct {
 	// forceDiagnosticsForTest is appended to every write/edit diagnostic response.
 	// Only used in tests — nil in production.
 	forceDiagnosticsForTest []lsp.ToolDiagnostic
+
+	// bg holds all background processes launched via bash run_in_background=true.
+	// Lazily created on first use. Killed on Close().
+	bg *bgRegistry
 }
 
 type RunnerOptions struct {
@@ -240,6 +244,7 @@ func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).
 // Safe to call multiple times.
 func (r *Runner) Close() error {
+	r.closeBg()
 	if r.browserClient != nil {
 		_ = r.browserClient.Close()
 		r.browserClient = nil

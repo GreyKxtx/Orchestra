@@ -62,7 +62,9 @@
 
 | Имя | Внутреннее | Статус | Что делает |
 |-----|-----------|--------|------------|
-| `bash` | `exec.run` | ✅ | Shell-команда, timeout + output cap; требует `--allow-exec` |
+| `bash` | `exec.run` | ✅ | Shell-команда, timeout + output cap; требует `--allow-exec`. С `run_in_background: true` — возвращает `bg_id` сразу |
+| `bash.output` | — | ✅ | Новый stdout/stderr с прошлого опроса + статус/exit code для bg-процесса; `peek: true` без сдвига курсора |
+| `bash.kill` | — | ✅ | Терминирует bg-процесс |
 | `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита; требует `--allow-web` |
 | `websearch` | `web.search` | ✅ | Поиск через Tavily / Brave (provider в `.orchestra.yml`); требует `--allow-web` |
 | `memory_write` | `memory.write` | ✅ | Записывает факт в `.orchestra/memory/agent.md` с timestamp |

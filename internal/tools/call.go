@@ -134,11 +134,46 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		return mustJSON(resp)
 
 	case "bash":
+		// run_in_background is parsed from raw input to keep the request struct
+		// focused on the foreground contract.
+		var probe struct {
+			RunInBackground bool `json:"run_in_background"`
+		}
+		_ = decodeToolInput(input, &probe)
 		var req ExecRunRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
 		}
+		if probe.RunInBackground {
+			resp, err := r.ExecBashBackground(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+			return mustJSON(resp)
+		}
 		resp, err := r.ExecRun(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "bash.output":
+		var req ExecBashOutputRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.ExecBashOutput(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
+	case "bash.kill":
+		var req ExecBashKillRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.ExecBashKill(ctx, req)
 		if err != nil {
 			return nil, err
 		}
