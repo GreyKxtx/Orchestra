@@ -269,6 +269,14 @@ var validAgentToolNames = map[string]bool{
 	"websearch": true,
 }
 
+// ValidAgentTool reports whether name is a valid short tool name usable
+// in AgentDefinition.Tools or in a skill's tools: list. Exported so the
+// skills loader (outside this package) can validate without forking the
+// allow-list.
+func ValidAgentTool(name string) bool {
+	return validAgentToolNames[name]
+}
+
 // HooksConfig configures pre/post tool call hooks (Phase 6).
 type HooksConfig struct {
 	// Enabled gates all hook execution. Hooks are disabled by default.
