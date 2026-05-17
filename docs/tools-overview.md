@@ -116,6 +116,34 @@
 | Инструмент | Что делает | Лучше всего когда |
 |---|---|---|
 | `webfetch` | Загрузить URL, вернуть текст | Нужна документация библиотеки, спецификация API |
+| `websearch` | Поиск через Tavily / Brave (configurable provider) | Нужны актуальные ссылки или контекст которого нет в кодовой базе |
+
+---
+
+## Git и GitHub
+
+| Инструмент | Что делает | Лучше всего когда |
+|---|---|---|
+| `git.status` / `git.diff` / `git.log` | Read-only git | Понять текущее состояние веток / истории |
+| `git.commit` / `git.branch` / `git.checkout` / `git.push` | Mutating git (требует `--allow-exec`) | Управляемый workflow с подтверждениями |
+| `gh.pr.list` / `gh.pr.view` / `gh.issue.list` / `gh.issue.view` | Read-only `gh` | Контекст из GitHub без выхода в браузер |
+| `gh.pr.create` | Создать PR (требует `--allow-exec`) | Завершение задачи в git workflow |
+
+---
+
+## Браузер (Playwright MCP)
+
+Регистрируются только при `--allow-browser` (нужны Node.js + `npx`). Полный набор: `browser.navigate`, `snapshot`, `screenshot`, `click`, `type`, `fill`, `select`, `eval`, `wait`, `close`. Используй для скриптинга реальных веб-проверок, e2e-flow в браузере, debug визуальных регрессий.
+
+---
+
+## Скиллы — переиспользуемые агент-бандлы ✅
+
+| Инструмент | Что делает | Лучше всего когда |
+|---|---|---|
+| `skill_invoke` | Синхронно вызвать именованный скилл из `.orchestra/skills/` как child-agent с его prompt/tools/model/provider | Подзадача чётко описывается одним из доступных скиллов (видны в `<available_skills>` блоке системного промпта); хочешь делегировать только её, оставив родительский контекст |
+
+Скилл — это `.md` файл с YAML frontmatter (`name`, `description`, `tools`, `model`, `provider`) и Markdown-body как system prompt. Поддерживается `$ARGUMENTS` подстановка. Подробности — `docs/skills.md`.
 
 ---
 
