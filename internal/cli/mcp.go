@@ -37,6 +37,7 @@ var mcpListToolsCmd = &cobra.Command{
 	Use:   "list-tools",
 	Short: "List all tools from configured MCP servers",
 	Long:  "Connect to all enabled MCP servers and list their available tools.",
+	Args:  cobra.NoArgs,
 	RunE:  runMCPListTools,
 }
 
@@ -54,15 +55,15 @@ func runMCPListTools(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w (run 'orchestra init' first)", err)
 	}
-	return printMCPTools(cmd.OutOrStdout(), cfg.MCP)
+	return printMCPTools(cmd.Context(), cmd.OutOrStdout(), cfg.MCP)
 }
 
-func printMCPTools(w io.Writer, cfg config.MCPConfig) error {
+func printMCPTools(ctx context.Context, w io.Writer, cfg config.MCPConfig) error {
 	if len(cfg.Servers) == 0 {
 		fmt.Fprintln(w, "No MCP servers configured in .orchestra.yml")
-		fmt.Fprintln(w, "")
+		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Add servers under the 'mcp:' section:")
-		fmt.Fprintln(w, "")
+		fmt.Fprintln(w)
 		fmt.Fprintln(w, "  mcp:")
 		fmt.Fprintln(w, "    servers:")
 		fmt.Fprintln(w, "      - name: myserver")
@@ -70,7 +71,7 @@ func printMCPTools(w io.Writer, cfg config.MCPConfig) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	mgr, errs := mcp.NewManager(ctx, cfg)
@@ -90,8 +91,12 @@ func printMCPTools(w io.Writer, cfg config.MCPConfig) error {
 
 	// Print servers in config order.
 	for _, srv := range cfg.Servers {
-		if srv.Disabled || len(srv.Command) == 0 {
+		if srv.Disabled {
 			fmt.Fprintf(w, "▷ %s [disabled]\n\n", srv.Name)
+			continue
+		}
+		if len(srv.Command) == 0 {
+			fmt.Fprintf(w, "▷ %s [misconfigured: no command]\n\n", srv.Name)
 			continue
 		}
 		tools := byServer[srv.Name]

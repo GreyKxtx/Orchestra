@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 
 func TestPrintMCPTools_NoServers(t *testing.T) {
 	var buf bytes.Buffer
-	err := printMCPTools(&buf, config.MCPConfig{})
+	err := printMCPTools(context.Background(), &buf, config.MCPConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -27,7 +28,7 @@ func TestPrintMCPTools_DisabledOnly(t *testing.T) {
 			{Name: "myserver", Disabled: true, Command: []string{"fake"}},
 		},
 	}
-	err := printMCPTools(&buf, cfg)
+	err := printMCPTools(context.Background(), &buf, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
