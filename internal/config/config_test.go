@@ -315,3 +315,28 @@ func TestFindProvider_EmptyName(t *testing.T) {
 		t.Fatal("FindProvider: empty name should not match any provider")
 	}
 }
+
+func TestFindAgent_WithProvider(t *testing.T) {
+	cfg := &ProjectConfig{
+		Providers: map[string]LLMConfig{
+			"anthropic": {Provider: "anthropic", APIKey: "key"},
+		},
+		Agents: []AgentDefinition{
+			{Name: "reviewer", Provider: "anthropic", Model: "claude-3-5-sonnet-20241022"},
+		},
+	}
+	agent := cfg.FindAgent("reviewer")
+	if agent == nil {
+		t.Fatal("FindAgent: expected to find 'reviewer'")
+	}
+	if agent.Provider != "anthropic" {
+		t.Fatalf("expected Provider='anthropic', got %q", agent.Provider)
+	}
+	prov, ok := cfg.FindProvider(agent.Provider)
+	if !ok {
+		t.Fatal("FindProvider: expected to find provider referenced by agent")
+	}
+	if prov.APIKey != "key" {
+		t.Fatalf("expected APIKey='key', got %q", prov.APIKey)
+	}
+}

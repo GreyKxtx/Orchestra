@@ -551,7 +551,21 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) cust
 
 	result.systemPromptOverride = def.SystemPrompt
 
-	if def.Model != "" {
+	if def.Provider != "" {
+		if provCfg, ok := c.cfg.FindProvider(def.Provider); ok {
+			if def.Model != "" {
+				provCfg.Model = def.Model
+			}
+			newClient := llm.NewClient(provCfg)
+			if oc, ok2 := newClient.(*llm.OpenAIClient); ok2 && agentLogger != nil {
+				oc.SetLogger(agentLogger)
+			}
+			result.llmClient = newClient
+		} else {
+			fmt.Fprintf(os.Stderr, "orchestra: agent %q: provider %q not found in providers:, using default\n",
+				def.Name, def.Provider)
+		}
+	} else if def.Model != "" {
 		overrideCfg := c.cfg.LLM
 		overrideCfg.Model = def.Model
 		newClient := llm.NewClient(overrideCfg)

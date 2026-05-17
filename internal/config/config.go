@@ -234,6 +234,10 @@ type AgentDefinition struct {
 	// Model overrides the model name within the same provider (v1).
 	// Provider, api_base, and api_key are inherited from the top-level llm config.
 	Model string `yaml:"model,omitempty"`
+	// Provider references a named entry in the top-level providers: map.
+	// When set, the agent uses that provider's full LLMConfig (api_base, api_key, etc.)
+	// instead of the global llm: config. Model (above) still overrides the provider model.
+	Provider string `yaml:"provider,omitempty"`
 }
 
 // builtInAgentModes are reserved names that cannot be used for custom agents.
