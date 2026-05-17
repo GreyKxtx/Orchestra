@@ -445,16 +445,17 @@ OpenCode имеет `tool/lsp.ts` + интеграцию в `edit.ts` (диаг�
 plan как объект, CKG). Если совсем грубо: они дальше «вглубь UX», мы дальше
 «вглубь корректности и аудита». Ни у кого нет «всего» — это разные ставки.
 
-**Топ-5 заимствований, которые имеют смысл нам сделать без потери своей
-философии:**
-1. **Короткие алиасы тулов** в `ListToolsForMode` (`read`/`glob`/`grep`/
-   `bash`/`edit`/`apply_patch`/`write`) — поверх namespaced API.
-2. **LineTrimmed + IndentationFlexible fallback** в резолвере — после
-   первого `StaleContent`, прежде чем возвращать ошибку модели.
-3. **Префикс номеров строк** в `fs.read` (опционально через флаг).
-4. **ripgrep-detection** в `search.text` — использовать `rg`, если есть.
-5. **LSP-тул** как комплимент к CKG — для feedback-loop сразу после edit'а
-   (не замена CKG, а второй сигнал).
+**Топ-5 заимствований — ВСЕ ЗАКРЫТЫ ✅** (см. CHANGELOG за 2026-05):
+
+1. ✅ **Короткие алиасы тулов** — `internal/tools/aliases.go`, ToolsVersion 3.
+2. ✅ **LineTrimmed + IndentationFlexible fallback** в резолвере (`internal/resolver/external_patches.go`, three-pass matching).
+3. ✅ **Префикс номеров строк** в `fs.read` — возвращается в response.
+4. ✅ **ripgrep-detection** в `search.text` — авто-fallback на `rg` если в PATH (`internal/search/`).
+5. ✅ **LSP-тул** — 5 функций (`lsp.definition/references/hover/diagnostics/rename`); диагностика авто-инжектится в history после `edit`/`write`.
+
+**Competitive gap roadmap 1–6 (2026-05) — ВСЕ ЗАКРЫТЫ ✅**: ripgrep, GitHub tools, LSP diagnostics, MCP-CLI (`orchestra mcp list-tools`), multi-provider auth (`providers:` map + `--provider` флаг + per-agent provider), skills (CLI `--skill`/`skills list|show` + LLM-invokable `skill_invoke` + `$ARGUMENTS` + user-global `~/.orchestra/skills/`).
+
+Compare-таблицы выше написаны до закрытия roadmap'ов — на момент 2026-05-18 пункты «ripgrep по умолчанию», «LSP feedback после правки», «Skill для UX чтения файла», «Forgiving edit» больше не являются преимуществом OpenCode. Двухслойная архитектура патчей, `file_hash` контракт, plan-as-artefact, CKG/Runtime Bridge — по-прежнему уникальны для Orchestra.
 
 ---
 

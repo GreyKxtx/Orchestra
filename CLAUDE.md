@@ -44,8 +44,12 @@ orchestra apply --via-core "..."             # run agent inside subprocess core
 orchestra apply --plan-only "..."            # plan only, no LLM-driven edits
 orchestra apply --from-plan plan.json        # replay a saved plan with no LLM call
 orchestra apply --apply --allow-exec "..."   # allow exec.run (off by default)
+orchestra apply --skill <name> "..."         # run apply with a file-based skill
+orchestra apply --provider <name> "..."      # override LLM provider for the run
 orchestra llm-ping                           # smoke-check the configured LLM
 orchestra search "regex"                     # text search using project excludes
+orchestra skills list|show <name>            # introspect file-based skills
+orchestra mcp list-tools                     # list tools from configured MCP servers
 orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced to 127.0.0.1)
 ```
 
@@ -68,7 +72,19 @@ orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced t
 
 **Core / RPC** (`internal/core`, `internal/jsonrpc`, `internal/protocol`): `Core` owns `cfg`, `llmClient`, `tools.Runner`, `schema.Validator`. `RPCHandler` exposes `core.health`, `initialize`, `agent.run`, `tool.call`. Pre-`initialize`, only `core.health` and `initialize` are allowed (others return `NotInitialized`). `initialize` is idempotent for the same params and hard-fails on mismatched `protocol_version` / `ops_version` / `tools_version` / `project_root` / `project_id`. Versions live in `internal/protocol/version.go` — bump them together when the contract changes and update `docs/PROTOCOL.md`.
 
-**Tools** (`internal/tools`): `fs.list`, `fs.read`, `search.text`, `code.symbols`, `exec.run`. `ListTools(allowExec)` is the single source of truth for what the model sees; `exec.run` is *only* added when `allowExec=true`. `Runner` enforces `project_root` containment and `exec.run` timeout/output caps.
+**Tools** (`internal/tools`): the model-facing surface is large and grows by feature flag. `ListTools(allowExec, allowWeb, allowBrowser)` in `registry.go` is the single source of truth; per-mode variants (`ListToolsForMode`, `ListToolsWithSubtasks`, `ListToolsForChild`, …) layer on top. Full per-tool status: `docs/tools-status.md`. Headline groups:
+
+- **Filesystem**: `ls/read/glob/write/edit/fs.delete/fs.rename/diff.preview`. `write`/`edit` write to a per-run **staging overlay** in dry-run mode (`internal/tools/staging.go`) — disk is only touched when `--apply` is set or `agent.run apply: true`.
+- **Search/nav**: `grep` (auto-fallback to `rg`), `symbols`, `explore` (CKG: package / type / symbol level).
+- **LSP**: `lsp.definition/references/hover/diagnostics/rename`; diagnostics auto-injected into agent history after successful `edit`/`write`.
+- **Exec / web**: `bash` (`exec.run`, gated by `--allow-exec` or `exec.confirm:false`), `webfetch`, `websearch` (`--allow-web`).
+- **Git / GitHub**: read-only `git.status/log/diff`, mutating `git.commit/branch/checkout/push` (allowExec-gated), `gh.pr.list/view/create`, `gh.issue.list/view`.
+- **Browser**: 10 Playwright-MCP tools registered only under `--allow-browser`.
+- **Subagents/session**: `task_spawn/wait/cancel/result`, `todowrite/todoread`, `memory_write`, `plan_enter/exit`, `question`, `runtime_query`.
+- **Skills** (`internal/skills/`): file-based agent bundles in `~/.orchestra/skills/` (user-global) and `<project>/.orchestra/skills/` (project overrides user). Invokable two ways — CLI `apply --skill <name>` (whole run uses the skill), or in-process `skill_invoke{skill, task}` (model delegates a subtask synchronously). When any skill is discovered, the agent advertises them in a `<available_skills>` block and gets the `skill_invoke` tool. `$ARGUMENTS` in a skill body is substituted with the user query / task arg. See `docs/skills.md`.
+- **MCP**: external server tools appear as `mcp:<server>:<tool>`; `orchestra mcp list-tools` introspects.
+
+`Runner` enforces `project_root` containment, `exec.run` timeout/output caps, and per-tool permission rules from `cfg.Permissions.Rules` (allow/deny by tool name + glob path).
 
 **Safety invariants** (from `.cursor/rules/projectrules.mdc` — treat as binding):
 - All disk writes are atomic: temp file → fsync → rename. Use `daemon.AtomicWriteFile` for artifacts; the ops applier handles file content.
