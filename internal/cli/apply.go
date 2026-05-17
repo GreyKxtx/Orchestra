@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ var (
 	pipelineMode        bool
 	pipelineMaxAttempts int
 	pipelineTraceID     string
+	applyProvider       string
 )
 
 var applyCmd = &cobra.Command{
@@ -70,6 +72,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&pipelineMode, "pipeline", false, "Run multi-agent pipeline: Investigator → Coder → Critic")
 	applyCmd.Flags().IntVar(&pipelineMaxAttempts, "pipeline-attempts", 2, "Max Coder→Critic cycles in pipeline mode")
 	applyCmd.Flags().StringVar(&pipelineTraceID, "trace-id", "", "Trace ID for runtime evidence pre-fetch in pipeline mode")
+	applyCmd.Flags().StringVar(&applyProvider, "provider", "", "Use a named provider from .orchestra.yml providers: section")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -95,6 +98,15 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
+	}
+
+	if applyProvider != "" {
+		provCfg, ok := cfg.FindProvider(applyProvider)
+		if !ok {
+			return fmt.Errorf("--provider %q: not found in .orchestra.yml providers: section\nAvailable: %s",
+				applyProvider, providerNames(cfg))
+		}
+		cfg.LLM = provCfg
 	}
 
 	if agentMode != "" && !config.IsBuiltInMode(agentMode) && cfg.FindAgent(agentMode) == nil {
@@ -760,6 +772,20 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	_ = daemon.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600)
 
 	return nil
+}
+
+// providerNames returns a sorted, comma-separated list of provider names from cfg.
+// Used in error messages for --provider flag validation.
+func providerNames(cfg *config.ProjectConfig) string {
+	if len(cfg.Providers) == 0 {
+		return "(none configured)"
+	}
+	names := make([]string, 0, len(cfg.Providers))
+	for k := range cfg.Providers {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 // buildCLIRenderer returns an OnEvent callback that renders streaming events to stderr

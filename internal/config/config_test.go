@@ -316,6 +316,20 @@ func TestFindProvider_EmptyName(t *testing.T) {
 	}
 }
 
+func TestValidate_AgentProviderNotDefined(t *testing.T) {
+	cfg := DefaultConfig(".")
+	cfg.Agents = []AgentDefinition{
+		{Name: "myagent", Provider: "nonexistent"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for agent with undefined provider, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Fatalf("expected error to mention provider name, got: %v", err)
+	}
+}
+
 func TestFindAgent_WithProvider(t *testing.T) {
 	cfg := &ProjectConfig{
 		Providers: map[string]LLMConfig{
