@@ -780,6 +780,16 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				ToolCallID: toolCallID,
 				Content:    string(out),
 			})
+			// Inject LSP error hint so the model fixes compile errors in the next step.
+			if name == "write" || name == "edit" {
+				if hint := extractLSPErrors(out); hint != "" {
+					a.logf("lsp_hint name=%s injecting diagnostic hint", name)
+					history = append(history, llm.Message{
+						Role:    llm.RoleUser,
+						Content: hint,
+					})
+				}
+			}
 			// Record call for future dedup checks.
 			cb.RecordSuccessfulCall(name, step.Tool.Input)
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)

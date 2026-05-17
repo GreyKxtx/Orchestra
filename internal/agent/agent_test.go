@@ -12,6 +12,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -962,4 +963,92 @@ func keys(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// lspHintLLM scripts two steps:
+//  1. Call the "write" tool.
+//  2. Verify a user message with "LSP_ERRORS" was injected, then return final.
+type lspHintLLM struct {
+	step     int
+	fileHash string
+	hintSeen bool
+}
+
+func (l *lspHintLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
+
+func (l *lspHintLLM) Complete(_ context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	switch l.step {
+	case 0:
+		l.step++
+		// Ask the agent to call write on "a.go".
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call_write_1",
+				Type: "function",
+				Function: llm.ToolCallFunc{
+					Name: "write",
+					Arguments: llm.ToolArguments([]byte(
+						`{"path":"a.go","content":"package main\n","file_hash":"` + l.fileHash + `"}`,
+					)),
+				},
+			}},
+		}}, nil
+	default:
+		l.step++
+		// Check that a user message with LSP_ERRORS was injected after the tool result.
+		for _, m := range req.Messages {
+			if m.Role == llm.RoleUser && strings.Contains(m.Content, "LSP_ERRORS") {
+				l.hintSeen = true
+				break
+			}
+		}
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: `{"type":"final","final":{"patches":[]}}`,
+		}}, nil
+	}
+}
+
+func TestAgent_Run_LSPErrors_HintInjected(t *testing.T) {
+	root := t.TempDir()
+	// Pre-create the file with known content so we have its hash.
+	content := "package main\n"
+	h := cache.ComputeSHA256([]byte(content))
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{
+		ForceDiagnosticsForTest: []lsp.ToolDiagnostic{
+			{StartLine: 1, StartCol: 1, Severity: "error", Message: "undefined: Bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	mockLLM := &lspHintLLM{fileHash: h}
+
+	ag, err := New(mockLLM, v, tr, Options{
+		MaxSteps: 10,
+		Apply:    true,
+		Backup:   false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "write a.go with package main")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !mockLLM.hintSeen {
+		t.Error("expected LSP_ERRORS hint in LLM messages after write tool call")
+	}
 }
