@@ -197,6 +197,70 @@ func names(ss []*Skill) []string {
 	return out
 }
 
+func TestDiscoverFromAll_PrecedenceProjectOverUserOverPack(t *testing.T) {
+	packsRoot := t.TempDir()
+	pack := filepath.Join(packsRoot, "github_com_foo_bar")
+	os.MkdirAll(pack, 0o755)
+	os.WriteFile(filepath.Join(pack, "a.md"), []byte("---\nname: a\ndescription: pack-a\n---\nbody\n"), 0o644)
+
+	userDir := t.TempDir()
+	os.WriteFile(filepath.Join(userDir, "a.md"), []byte("---\nname: a\ndescription: user-a\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(userDir, "b.md"), []byte("---\nname: b\ndescription: user-b\n---\n"), 0o644)
+
+	projDir := t.TempDir()
+	os.WriteFile(filepath.Join(projDir, "a.md"), []byte("---\nname: a\ndescription: proj-a\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(projDir, "c.md"), []byte("---\nname: c\ndescription: proj-c\n---\n"), 0o644)
+
+	all, err := DiscoverFromAll(packsRoot, userDir, projDir)
+	if err != nil {
+		t.Fatalf("DiscoverFromAll: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d, want 3: %v", len(all), names(all))
+	}
+	a := Find(all, "a")
+	if a.Description != "proj-a" {
+		t.Errorf("project should win: got %q", a.Description)
+	}
+	if a.Origin != OriginProject {
+		t.Errorf("origin: %q", a.Origin)
+	}
+	b := Find(all, "b")
+	if b.Origin != OriginUser {
+		t.Errorf("b origin: %q", b.Origin)
+	}
+}
+
+func TestDiscoverFromAll_PackOnlySkill(t *testing.T) {
+	packsRoot := t.TempDir()
+	pack := filepath.Join(packsRoot, "mypack")
+	os.MkdirAll(filepath.Join(pack, "nested"), 0o755)
+	os.WriteFile(filepath.Join(pack, "nested", "deep.md"), []byte("---\nname: deep\ndescription: D\n---\n"), 0o644)
+
+	all, err := DiscoverFromAll(packsRoot, "", "")
+	if err != nil {
+		t.Fatalf("DiscoverFromAll: %v", err)
+	}
+	if len(all) != 1 || all[0].Name != "deep" {
+		t.Fatalf("got %v", names(all))
+	}
+	if all[0].Origin != "pack:mypack" {
+		t.Errorf("origin: %q", all[0].Origin)
+	}
+}
+
+func TestDiscoverFromAll_DuplicateInSamePack(t *testing.T) {
+	packsRoot := t.TempDir()
+	pack := filepath.Join(packsRoot, "p")
+	os.MkdirAll(pack, 0o755)
+	os.WriteFile(filepath.Join(pack, "a.md"), []byte("---\nname: dup\ndescription: x\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(pack, "b.md"), []byte("---\nname: dup\ndescription: y\n---\n"), 0o644)
+	_, err := DiscoverFromAll(packsRoot, "", "")
+	if err == nil {
+		t.Fatal("expected duplicate error")
+	}
+}
+
 func TestFind(t *testing.T) {
 	a := &Skill{Name: "a"}
 	b := &Skill{Name: "b"}

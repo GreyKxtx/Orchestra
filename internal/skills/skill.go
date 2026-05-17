@@ -5,7 +5,10 @@
 package skills
 
 // Skill is a parsed skill definition. Source is the absolute file path
-// the skill was loaded from (empty when constructed in tests).
+// the skill was loaded from (empty when constructed in tests). Origin
+// classifies where the file came from (project / user / pack-<id>) and
+// is shown in `orchestra skills list` so the user can audit which
+// skills are home-grown vs installed from third parties.
 type Skill struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
@@ -15,4 +18,5 @@ type Skill struct {
 
 	Body   string `yaml:"-"`
 	Source string `yaml:"-"`
+	Origin string `yaml:"-"`
 }

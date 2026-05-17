@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Skill packs: install/uninstall + per-skill review (2026-05-18)
+
+Third-party skill bundles can be installed from git URLs, HTTP(S) zip/tar archives, or local directories. Installed packs live under `~/.orchestra/packs/<id>/`; `Discover` adds a third tier (project > user > pack) and tags each skill with its `Origin`.
+
+**Security gate** — a skill body becomes a system prompt for a child agent with full tool access. Install therefore prints every skill's metadata + full body and prompts `y/N` per skill. `--yes` bypasses the prompt with a visible warning.
+
+- `internal/packs/` — `ParseSource` (git/http/local), `Fetch` (git clone --depth 1, http archive download with zip + tar/tar.gz support and zip-slip guard, local recursive copy that skips .git and symlinks). Deterministic `Source.ID()` via sanitised name + SHA1 prefix.
+- `internal/skills/` — `Skill.Origin` field; `DiscoverFromAll(packsRoot, userDir, projectDir)`; project > user > pack precedence; per-pack duplicate-name check; recursive `*.md` scan inside each pack.
+- `orchestra skills install <source> [--yes]` — fetch, validate, per-skill review.
+- `orchestra skills uninstall <pack-id>` — `rm -rf` the pack dir.
+- `orchestra skills list` now has an `ORIGIN` column (`project` / `user` / `pack:<id>`).
+- Out-of-scope follow-ups: `update` (git pull + re-confirm changed skills), version pinning, integrity hashes, signature verification.
+
 ### Added — Image input: --image flag + browser.screenshot pipe (2026-05-18)
 
 The agent now accepts images. Two entry points:
