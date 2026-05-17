@@ -194,6 +194,17 @@ type Options struct {
 	// to run a child agent with the named skill's prompt/tools/model/provider.
 	SkillRunner SkillRunner
 
+	// UserImages are PartImage entries attached to the *initial* user message.
+	// When non-empty the user message switches from string Content to
+	// multimodal Parts (the rendered userPrompt becomes a PartText, followed
+	// by each image). Requires the configured LLM to be multimodal.
+	UserImages []llm.ContentPart
+
+	// MultimodalLLM is set true when the configured LLM accepts image
+	// content. Gates browser.screenshot piping (image bytes returned by
+	// the tool are converted to PartImage and injected into history).
+	MultimodalLLM bool
+
 	// HooksRunner, if non-nil, runs pre/post tool call hooks.
 	HooksRunner HooksRunner
 
@@ -829,6 +840,22 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				ToolCallID: toolCallID,
 				Content:    string(out),
 			})
+			// Multimodal pipe: browser.screenshot returns base64 PNG. When the
+			// configured LLM is multimodal, inject a synthetic user message
+			// carrying the image as a PartImage so the model can "see" it on
+			// the next step (tool result alone is just a JSON-wrapped base64
+			// string the model can't decode without explicit support).
+			if a.opts.MultimodalLLM && name == "browser.screenshot" {
+				if part, ok := extractScreenshotImagePart(out); ok {
+					history = append(history, llm.Message{
+						Role: llm.RoleUser,
+						Parts: []llm.ContentPart{
+							{Kind: llm.PartText, Text: "Screenshot returned by browser.screenshot:"},
+							part,
+						},
+					})
+				}
+			}
 			// Inject LSP error hint so the model fixes compile errors in the next step.
 			if name == "write" || name == "edit" {
 				if hint := extractLSPErrors(out); hint != "" {
@@ -1158,10 +1185,17 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		Role:    llm.RoleSystem,
 		Content: systemPrompt,
 	})
-	messages = append(messages, llm.Message{
-		Role:    llm.RoleUser,
-		Content: userPrompt,
-	})
+	if len(a.opts.UserImages) > 0 {
+		parts := make([]llm.ContentPart, 0, 1+len(a.opts.UserImages))
+		parts = append(parts, llm.ContentPart{Kind: llm.PartText, Text: userPrompt})
+		parts = append(parts, a.opts.UserImages...)
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Parts: parts})
+	} else {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: userPrompt,
+		})
+	}
 	messages = append(messages, history...)
 
 	// Debug: log history length before truncation
@@ -1181,7 +1215,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	if a.opts.Debug {
 		totalBytes := 0
 		for _, m := range messages {
-			totalBytes += len(m.Content)
+			totalBytes += m.TextLen()
 		}
 		// Build roles string for debug logging
 		roles := make([]string, 0, len(messages))
@@ -1604,9 +1638,17 @@ func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 }
 
 // estimateMessageSize estimates the byte size of a message for truncation purposes.
-// Accounts for Content, ToolCalls (JSON serialization overhead), and ToolCallID.
+// Accounts for Content/Parts text, ToolCalls (JSON serialization overhead), and ToolCallID.
+// Image bytes are counted with a fixed per-image penalty rather than their raw
+// base64 length — huge image payloads would otherwise dominate the budget and
+// force compaction to evict useful tool results.
 func estimateMessageSize(msg llm.Message) int {
-	size := len(msg.Content)
+	size := msg.TextLen()
+	for _, p := range msg.Parts {
+		if p.Kind == llm.PartImage {
+			size += 4096 // fixed image budget per part
+		}
+	}
 	if msg.ToolCallID != "" {
 		// ToolCallID adds to JSON size (field name + value)
 		size += len(msg.ToolCallID) + 20 // approximate overhead for "tool_call_id":"..."
