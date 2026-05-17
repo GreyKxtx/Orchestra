@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/lsp"
 )
 
 func newEditRunner(t *testing.T) (*Runner, string) {
@@ -162,5 +163,35 @@ func TestFSEdit_DeleteLine(t *testing.T) {
 	got := readTestFile(t, root, "f.go")
 	if got != "line1\nline3\n" {
 		t.Errorf("unexpected content after delete: %q", got)
+	}
+}
+
+func TestFSEdit_ForceDiagnosticsForTest(t *testing.T) {
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{
+		ForceDiagnosticsForTest: []lsp.ToolDiagnostic{
+			{StartLine: 2, StartCol: 1, Severity: "error", Message: "undefined: Bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { r.Close() })
+
+	writeTestFile(t, root, "a.go", "package main\n")
+
+	resp, err := r.FSEdit(context.Background(), FSEditRequest{
+		Path:    "a.go",
+		Search:  "main",
+		Replace: "mainX",
+	})
+	if err != nil {
+		t.Fatalf("FSEdit: %v", err)
+	}
+	if len(resp.Diagnostics) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d", len(resp.Diagnostics))
+	}
+	if resp.Diagnostics[0].Severity != "error" || resp.Diagnostics[0].Message != "undefined: Bar" {
+		t.Errorf("unexpected diagnostic: %+v", resp.Diagnostics[0])
 	}
 }
