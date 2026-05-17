@@ -18,6 +18,7 @@ func TestMain(m *testing.M) {
 		runFakeMCPServer()
 		os.Exit(0)
 	}
+	os.Unsetenv("ORCH_TEST_MCP_SERVER") // prevent inherited env from infecting child processes
 	os.Exit(m.Run())
 }
 
@@ -47,7 +48,7 @@ func runFakeMCPServer() {
 		case "initialize":
 			_ = enc.Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(idRaw),
+				"id":      idRaw,
 				"result": map[string]any{
 					"protocolVersion": "2024-11-05",
 					"capabilities":    map[string]any{"tools": map[string]any{}},
@@ -57,7 +58,7 @@ func runFakeMCPServer() {
 		case "tools/list":
 			_ = enc.Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(idRaw),
+				"id":      idRaw,
 				"result": map[string]any{
 					"tools": []any{
 						map[string]any{
@@ -79,19 +80,25 @@ func runFakeMCPServer() {
 			})
 		case "tools/call":
 			var params struct {
-				Arguments map[string]string `json:"arguments"`
+				Arguments map[string]any `json:"arguments"`
 			}
 			_ = json.Unmarshal(req["params"], &params)
-			msg := params.Arguments["message"]
+			msg, _ := params.Arguments["message"].(string)
 			_ = enc.Encode(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(idRaw),
+				"id":      idRaw,
 				"result": map[string]any{
 					"content": []any{
 						map[string]any{"type": "text", "text": "echo: " + msg},
 					},
 					"isError": false,
 				},
+			})
+		default:
+			_ = enc.Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      idRaw,
+				"error":   map[string]any{"code": -32601, "message": "method not found: " + method},
 			})
 		}
 	}
