@@ -38,6 +38,7 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+		out = append(out, toolExecBashOutput(), toolExecBashKill())
 		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
 		out = append(out,
 			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
@@ -80,7 +81,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 			"gh.pr.list", "gh.pr.view", "gh.issue.list", "gh.issue.view":
 			defs[i].ParallelSafe = true
 		// State-mutating tools — must run one at a time.
-		case "write", "edit", "bash", "todowrite", "memory_write",
+		case "write", "edit", "bash", "bash.output", "bash.kill", "todowrite", "memory_write",
 			"lsp.rename", "plan.enter", "plan.exit",
 			"task.spawn", "task.wait", "task.cancel", "question",
 			"fs.delete", "fs.rename",
@@ -334,7 +335,7 @@ func toolExecRun() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "bash",
-			Description: "Запуск команды внутри workspace (sandboxed: timeout/output limit).",
+			Description: "Запуск команды внутри workspace (sandboxed: timeout/output limit). Установи run_in_background=true для длительных задач (build/test/dev-server) — вернётся bg_id, который можно опрашивать через bash.output и убивать через bash.kill.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -344,7 +345,45 @@ func toolExecRun() llm.ToolDef {
     "args": { "type": "array", "items": { "type": "string" } },
     "workdir": { "type": "string" },
     "timeout_ms": { "type": "integer", "minimum": 0 },
-    "output_limit_kb": { "type": "integer", "minimum": 0 }
+    "output_limit_kb": { "type": "integer", "minimum": 0 },
+    "run_in_background": { "type": "boolean" }
+  }
+}`),
+		},
+	}
+}
+
+func toolExecBashOutput() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "bash.output",
+			Description: "Возвращает накопленный с прошлого опроса stdout/stderr и статус (running/done/killed/timed_out) фонового процесса. Установи peek=true чтобы прочитать не сдвигая курсор.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bg_id"],
+  "properties": {
+    "bg_id": { "type": "string", "minLength": 1 },
+    "peek": { "type": "boolean" }
+  }
+}`),
+		},
+	}
+}
+
+func toolExecBashKill() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "bash.kill",
+			Description: "Терминирует фоновый процесс по bg_id. Уже завершённый процесс — no-op с актуальным статусом.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bg_id"],
+  "properties": {
+    "bg_id": { "type": "string", "minLength": 1 }
   }
 }`),
 		},
@@ -450,6 +489,7 @@ func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionA
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+		out = append(out, toolExecBashOutput(), toolExecBashKill())
 		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
 		out = append(out,
 			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
@@ -516,6 +556,7 @@ func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm
 	}
 	if allowExec {
 		out = append(out, toolExecRun())
+		out = append(out, toolExecBashOutput(), toolExecBashKill())
 		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
 		out = append(out,
 			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
@@ -756,7 +797,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolWebFetch(), toolWebSearch(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
