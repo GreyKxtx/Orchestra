@@ -108,7 +108,7 @@ func printMCPTools(ctx context.Context, w io.Writer, cfg config.MCPConfig) error
 		for _, line := range tools {
 			fmt.Fprintln(w, line)
 		}
-		fmt.Fprintln(w, "")
+		fmt.Fprintln(w)
 	}
 
 	for _, e := range errs {
