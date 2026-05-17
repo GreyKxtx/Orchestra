@@ -1399,7 +1399,7 @@ func extractLSPErrors(out json.RawMessage) string {
 	}
 	return "LSP_ERRORS: файл записан с ошибками компиляции:\n" +
 		strings.Join(errs, "\n") +
-		"\nИсправь ошибки и примени изменения снова."
+		"\nИсправь ошибки и вызови edit или write ещё раз — не используй patches."
 }
 
 func formatErr(err error) string {
