@@ -1354,6 +1354,38 @@ func formatApplyErrorCompact(err error, code protocol.ErrorCode) string {
 	return "APPLY_ERROR code=unknown\nerror=" + formatErr(err)
 }
 
+// extractLSPErrors parses a write/edit tool response JSON and returns a
+// user-facing hint if diagnostics with severity "error" are present.
+// Returns "" if there are no errors (warnings and info are silently ignored).
+func extractLSPErrors(out json.RawMessage) string {
+	if len(out) == 0 {
+		return ""
+	}
+	var resp struct {
+		Diagnostics []struct {
+			Severity  string `json:"severity"`
+			Message   string `json:"message"`
+			StartLine int    `json:"start_line"`
+			StartCol  int    `json:"start_col"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil || len(resp.Diagnostics) == 0 {
+		return ""
+	}
+	var errs []string
+	for _, d := range resp.Diagnostics {
+		if d.Severity == "error" {
+			errs = append(errs, fmt.Sprintf("  line %d:%d: %s", d.StartLine, d.StartCol, d.Message))
+		}
+	}
+	if len(errs) == 0 {
+		return ""
+	}
+	return "LSP_ERRORS: файл записан с ошибками компиляции:\n" +
+		strings.Join(errs, "\n") +
+		"\nИсправь ошибки и примени изменения снова."
+}
+
 func formatErr(err error) string {
 	if err == nil {
 		return ""
