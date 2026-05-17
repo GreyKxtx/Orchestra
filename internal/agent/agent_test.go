@@ -1052,3 +1052,91 @@ func TestAgent_Run_LSPErrors_HintInjected(t *testing.T) {
 		t.Error("expected LSP_ERRORS hint in LLM messages after write tool call")
 	}
 }
+
+// lspHintEditLLM scripts two steps:
+//  1. Call the "edit" tool.
+//  2. Verify a user message with "LSP_ERRORS" was injected, then return final.
+type lspHintEditLLM struct {
+	step     int
+	fileHash string
+	hintSeen bool
+}
+
+func (l *lspHintEditLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
+
+func (l *lspHintEditLLM) Complete(_ context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	switch l.step {
+	case 0:
+		l.step++
+		// Ask the agent to call edit on "a.go".
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call_edit_1",
+				Type: "function",
+				Function: llm.ToolCallFunc{
+					Name: "edit",
+					Arguments: llm.ToolArguments([]byte(
+						`{"path":"a.go","search":"main","replace":"mainX","file_hash":"` + l.fileHash + `"}`,
+					)),
+				},
+			}},
+		}}, nil
+	default:
+		l.step++
+		// Check that a user message with LSP_ERRORS was injected after the tool result.
+		for _, m := range req.Messages {
+			if m.Role == llm.RoleUser && strings.Contains(m.Content, "LSP_ERRORS") {
+				l.hintSeen = true
+				break
+			}
+		}
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: `{"type":"final","final":{"patches":[]}}`,
+		}}, nil
+	}
+}
+
+func TestAgent_Run_LSPErrors_HintInjected_Edit(t *testing.T) {
+	root := t.TempDir()
+	// Pre-create the file with known content so we have its hash.
+	content := "package main\n"
+	h := cache.ComputeSHA256([]byte(content))
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{
+		ForceDiagnosticsForTest: []lsp.ToolDiagnostic{
+			{StartLine: 1, StartCol: 1, Severity: "error", Message: "undefined: Bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	mockLLM := &lspHintEditLLM{fileHash: h}
+
+	ag, err := New(mockLLM, v, tr, Options{
+		MaxSteps: 10,
+		Apply:    true,
+		Backup:   false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "edit a.go replacing main with mainX")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !mockLLM.hintSeen {
+		t.Error("expected LSP_ERRORS hint in LLM messages after edit tool call")
+	}
+}

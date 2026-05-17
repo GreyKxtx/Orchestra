@@ -788,6 +788,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 						Role:    llm.RoleUser,
 						Content: hint,
 					})
+					if a.opts.OnEvent != nil {
+						a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+							Kind:    llm.StreamEventRecoverableError,
+							Content: "lsp_errors: " + name,
+						}})
+					}
 				}
 			}
 			// Record call for future dedup checks.
