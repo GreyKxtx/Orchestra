@@ -134,17 +134,11 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		return mustJSON(resp)
 
 	case "bash":
-		// run_in_background is parsed from raw input to keep the request struct
-		// focused on the foreground contract.
-		var probe struct {
-			RunInBackground bool `json:"run_in_background"`
-		}
-		_ = decodeToolInput(input, &probe)
 		var req ExecRunRequest
 		if err := decodeToolInput(input, &req); err != nil {
 			return nil, err
 		}
-		if probe.RunInBackground {
+		if req.RunInBackground {
 			resp, err := r.ExecBashBackground(ctx, req)
 			if err != nil {
 				return nil, err
