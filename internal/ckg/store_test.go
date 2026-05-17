@@ -17,14 +17,19 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestMigrateToV3(t *testing.T) {
+func TestMigrateToV4(t *testing.T) {
 	s := newTestStore(t)
 	var v int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		t.Fatal(err)
 	}
-	if v != 3 {
-		t.Fatalf("user_version = %d, want 3", v)
+	if v != 4 {
+		t.Fatalf("user_version = %d, want 4", v)
+	}
+	// node_embeddings table exists.
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='node_embeddings'`).Scan(&name); err != nil {
+		t.Fatalf("node_embeddings table missing: %v", err)
 	}
 
 	// Schema sanity: nodes.fqn column exists.

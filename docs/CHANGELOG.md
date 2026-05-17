@@ -8,6 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Semantic search over CKG (sub-project 4 of CKG roadmap, 2026-05-18)
+
+Long-tail concept search complements text grep and CKG explore. Embed all
+function/method/type nodes, then query by natural-language concept:
+
+- `internal/embed/` — OpenAI-compatible embeddings HTTP client (works
+  with OpenAI, Ollama, LM Studio, Voyage) + cosine similarity helper.
+- `internal/ckg/embed_store.go` — `node_embeddings(node_id, model, dim,
+  vector BLOB)` table; `SaveEmbeddings`/`SearchSimilar`/`MissingEmbeddings`
+  with brute-force cosine. Schema bumped v3→v4 (drop+recreate as before,
+  local cache rebuilds).
+- `orchestra ckg embed` (`--rebuild`, `--limit`, `--batch-size`) — reads
+  the source range of every indexable node and embeds it in batches.
+- `semantic_search {query, top_k, snippet}` tool — embeds the query,
+  returns top-K nearest CKG nodes (`fqn`, `kind`, `path`, line range,
+  cosine score, optional snippet). Registered only when `embed.model`
+  is set in `.orchestra.yml`.
+- New config block: `embed: {api_base, api_key, model, dimensions,
+  batch_size, timeout_s}`.
+
+Closes CKG runtime roadmap sub-project 4 (Vector DB / semantic search).
+
 ### Added — Background bash: run_in_background, bash.output, bash.kill (2026-05-18)
 
 Long-running commands (build, test loops, dev servers, watch processes) no longer block the agent. The existing `bash` tool gains an optional `run_in_background: true` parameter; when set, it returns immediately with a `bg_id` instead of waiting for completion.

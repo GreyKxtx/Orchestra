@@ -86,6 +86,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		WebMaxContentBytes: cfg.Web.MaxContentBytes,
 		WebSearch:          cfg.Web.Search,
 		LSP:                cfg.LSP,
+		Embed:              cfg.Embed,
 	})
 	if err != nil {
 		return nil, err

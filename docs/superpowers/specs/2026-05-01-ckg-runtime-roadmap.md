@@ -108,7 +108,7 @@ API для агентов. Здесь критично разделить **дв
 | **1** | Полиглот (Python, TypeScript, Rust, Java + complexity) | ✅ **DONE** 2026-05-04 | `42c7ce1` |
 | **2** | Runtime Observability Bridge MVP (OTel ingestion, span→CKG резолвер, `runtime.query` tool) | ✅ **DONE** 2026-05-04 | `87b078b` |
 | **3** | Multi-agent оркестрация | ✅ **DONE** 2026-05-04 | см. ниже |
-| **4** | Vector DB / семантический поиск | ⏳ **В очереди** | — |
+| **4** | Vector DB / семантический поиск | ✅ **DONE** 2026-05-18 | OpenAI-compatible embed-клиент + node_embeddings (SQLite v4) + brute-force cosine + `orchestra ckg embed` + `semantic_search` tool |
 
 ### Под-проект 3 — детали
 
