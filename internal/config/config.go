@@ -26,6 +26,12 @@ type LLMConfig struct {
 	// Supported: "openai" (default), "qwen", "llama", "mistral", "deepseek".
 	PromptFamily string `yaml:"prompt_family"`
 
+	// Multimodal must be set true for this LLM to receive image content
+	// (--image CLI flag or browser.screenshot piping). When false (default),
+	// the multimodal paths are no-ops to avoid sending image payloads to a
+	// text-only model and getting an opaque error from the server.
+	Multimodal bool `yaml:"multimodal,omitempty"`
+
 	// ResponseFormatType requests structured output from the provider.
 	// "" (default) — no constraint; "json_object" — valid JSON output;
 	// "json_schema" — strict schema-constrained JSON (requires provider support).

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -18,15 +19,126 @@ const (
 )
 
 // Message is an OpenAI-compatible chat message (subset).
+//
+// Multimodal: when Parts is non-empty, OpenAI-compatible clients serialise
+// the message's content as the array form ([{type:"text",...},
+// {type:"image_url",...}]) and the Content string is ignored on the wire.
+// When Parts is empty, the string Content path is used (back-compat).
 type Message struct {
-	Role    Role   `json:"role"`
-	Content string `json:"content,omitempty"`
+	Role    Role          `json:"role"`
+	Content string        `json:"content,omitempty"`
+	Parts   []ContentPart `json:"-"`
 
 	// ToolCallID is required for messages with role="tool".
 	ToolCallID string `json:"tool_call_id,omitempty"`
 
 	// ToolCalls is returned by the model when it wants to call tools.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// ContentPartKind enumerates the kinds of content a multimodal message
+// can carry. New kinds (audio, file) are added here as providers grow.
+type ContentPartKind string
+
+const (
+	PartText  ContentPartKind = "text"
+	PartImage ContentPartKind = "image"
+)
+
+// ContentPart is one fragment of a multimodal message. For PartText the
+// Text field carries the content. For PartImage either ImageURL (remote
+// or data: URI) or ImageData (raw bytes + MIME) is set; the client
+// serialises whichever is non-empty as a data: URI when bytes are given.
+type ContentPart struct {
+	Kind ContentPartKind
+
+	// Text is set for PartText.
+	Text string
+
+	// ImageURL is set for PartImage when the caller supplies a URL or
+	// already-encoded data URI.
+	ImageURL string
+
+	// ImageData and ImageMIME are set for PartImage when raw bytes
+	// should be inlined as a data: URI by the client.
+	ImageData []byte
+	ImageMIME string
+}
+
+// TextLen returns the number of text bytes carried by Parts (image
+// content is not counted). Used by compaction/truncation heuristics so
+// huge base64 payloads don't blow up the budget calculation.
+func (m Message) TextLen() int {
+	if len(m.Parts) == 0 {
+		return len(m.Content)
+	}
+	n := 0
+	for _, p := range m.Parts {
+		if p.Kind == PartText {
+			n += len(p.Text)
+		}
+	}
+	return n
+}
+
+// HasImages reports whether the message carries any PartImage entries.
+func (m Message) HasImages() bool {
+	for _, p := range m.Parts {
+		if p.Kind == PartImage {
+			return true
+		}
+	}
+	return false
+}
+
+// MarshalJSON emits the OpenAI multimodal array form when Parts is
+// non-empty; otherwise it falls back to the default struct serialisation
+// (Content as a string).
+func (m Message) MarshalJSON() ([]byte, error) {
+	if len(m.Parts) == 0 {
+		type alias Message
+		return json.Marshal(alias(m))
+	}
+	type imageURL struct {
+		URL string `json:"url"`
+	}
+	type wirePart struct {
+		Type     string    `json:"type"`
+		Text     string    `json:"text,omitempty"`
+		ImageURL *imageURL `json:"image_url,omitempty"`
+	}
+	wire := make([]wirePart, 0, len(m.Parts))
+	for _, p := range m.Parts {
+		switch p.Kind {
+		case PartText:
+			wire = append(wire, wirePart{Type: "text", Text: p.Text})
+		case PartImage:
+			url := p.ImageURL
+			if url == "" && len(p.ImageData) > 0 {
+				mime := p.ImageMIME
+				if mime == "" {
+					mime = "image/png"
+				}
+				url = fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(p.ImageData))
+			}
+			if url == "" {
+				continue
+			}
+			wire = append(wire, wirePart{Type: "image_url", ImageURL: &imageURL{URL: url}})
+		}
+	}
+	out := struct {
+		Role       Role       `json:"role"`
+		Content    []wirePart `json:"content"`
+		ToolCallID string     `json:"tool_call_id,omitempty"`
+		ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	}{
+		Role:       m.Role,
+		Content:    wire,
+		ToolCallID: m.ToolCallID,
+		ToolCalls:  m.ToolCalls,
+	}
+	return json.Marshal(out)
 }
 
 // ToolDef describes a callable tool in OpenAI "tools" format.

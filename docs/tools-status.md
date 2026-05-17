@@ -8,7 +8,7 @@
 |---------|--------|------------|
 | `orchestra init` | ✅ | Создаёт `.orchestra.yml` в cwd |
 | `orchestra core` | ✅ | JSON-RPC 2.0 stdio сервер; `--http` отладочный режим |
-| `orchestra apply` | ✅ | Dry-run / `--apply` / `--via-core` / `--from-plan` / `--pipeline` / `--mode` / `--provider` / `--skill` |
+| `orchestra apply` | ✅ | Dry-run / `--apply` / `--via-core` / `--from-plan` / `--pipeline` / `--mode` / `--provider` / `--skill` / `--image` (multimodal) |
 | `orchestra chat` | ✅ | Интерактивный REPL поверх `orchestra core` |
 | `orchestra search` | ✅ | Regex-поиск с учётом `exclude_dirs` |
 | `orchestra llm-ping` | ✅ | Smoke-test LLM, пишет результат в `.orchestra/` |
@@ -96,7 +96,7 @@
 |-----|--------|
 | `browser.navigate` | ✅ |
 | `browser.snapshot` | ✅ |
-| `browser.screenshot` | ✅ |
+| `browser.screenshot` | ✅ + pipe в history когда `llm.multimodal: true` |
 | `browser.click` | ✅ |
 | `browser.type` | ✅ |
 | `browser.fill` | ✅ |

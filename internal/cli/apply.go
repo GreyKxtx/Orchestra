@@ -48,6 +48,7 @@ var (
 	pipelineTraceID     string
 	applyProvider       string
 	applySkill          string
+	applyImages         []string
 )
 
 var applyCmd = &cobra.Command{
@@ -76,6 +77,7 @@ func init() {
 	applyCmd.Flags().StringVar(&pipelineTraceID, "trace-id", "", "Trace ID for runtime evidence pre-fetch in pipeline mode")
 	applyCmd.Flags().StringVar(&applyProvider, "provider", "", "Use a named provider from .orchestra.yml providers: section")
 	applyCmd.Flags().StringVar(&applySkill, "skill", "", "Run with the named skill from .orchestra/skills/")
+	applyCmd.Flags().StringSliceVar(&applyImages, "image", nil, "Image file(s) to attach to the user message (PNG/JPEG/GIF/WebP). Repeatable. Requires a multimodal LLM.")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -500,6 +502,16 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
+		imageParts, err := loadImageParts(applyImages)
+		if err != nil {
+			retErr = err
+			return retErr
+		}
+		if len(imageParts) > 0 && !cfg.LLM.Multimodal {
+			retErr = fmt.Errorf("--image: configured LLM is not marked multimodal in .orchestra.yml (set llm.multimodal: true after switching to a VL model)")
+			return retErr
+		}
+
 		taskRunner := tasks.New(llmClient, validator, runner)
 		var hooksRunner agent.HooksRunner
 		if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
@@ -546,6 +558,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Skills:               skillSpecsList,
 			SkillRunner:          skillRunner,
 			HooksRunner:          hooksRunner,
+			UserImages:           imageParts,
+			MultimodalLLM:        cfg.LLM.Multimodal,
 		})
 		if err != nil {
 			retErr = err

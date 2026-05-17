@@ -8,6 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Image input: --image flag + browser.screenshot pipe (2026-05-18)
+
+The agent now accepts images. Two entry points:
+
+1. **CLI: `orchestra apply --image foo.png "what's wrong here?"`** — repeatable flag, supports PNG/JPEG/GIF/WebP, attached to the first user message as multimodal Parts.
+2. **`browser.screenshot` pipe** — when the configured LLM is multimodal, the base64 PNG returned by `browser.screenshot` is automatically injected as a `PartImage` in a synthetic follow-up user message, so the model can actually "see" the page on the next step.
+
+- `llm.Message` gains `Parts []ContentPart`; when non-empty, OpenAI-compatible clients serialise the array form (`[{type:"text"}, {type:"image_url"}]`) via a custom `MarshalJSON`. Existing text-only path unchanged.
+- `llm.ContentPart{Kind, Text, ImageURL, ImageData, ImageMIME}` — PartImage accepts either a remote/data URI or raw bytes (the client builds the data URI).
+- `Message.TextLen()` + `HasImages()` — compaction/truncation count text bytes only; image parts get a fixed 4 KB per-part budget so massive base64 doesn't dominate `estimateMessageSize`.
+- `config.LLMConfig.Multimodal bool` — must be set true for image flows to fire; CLI fails fast on `--image` against a text-only LLM.
+- `agent.Options.UserImages []llm.ContentPart` + `MultimodalLLM bool` — agent gates both initial-message images and screenshot piping on the flag.
+- Anthropic encoding, TUI clipboard paste, and other multimodal tool returns are documented follow-ups.
+
 ### Added — Semantic search over CKG (sub-project 4 of CKG roadmap, 2026-05-18)
 
 Long-tail concept search complements text grep and CKG explore. Embed all
