@@ -849,6 +849,11 @@ type ExecRunRequest struct {
 
 	TimeoutMS     int `json:"timeout_ms,omitempty"`
 	OutputLimitKB int `json:"output_limit_kb,omitempty"`
+
+	// RunInBackground switches dispatch to the background path: the call
+	// returns a bg_id immediately and the process keeps running. Polled
+	// via bash.output and terminated via bash.kill.
+	RunInBackground bool `json:"run_in_background,omitempty"`
 }
 
 type ExecRunResponse struct {
