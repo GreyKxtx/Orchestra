@@ -73,7 +73,7 @@ func runLLMPing(cmd *cobra.Command, args []string) error {
 	if testLLMClient != nil {
 		llmClient = testLLMClient
 	} else {
-		llmClient = llm.NewOpenAIClient(cfg.LLM)
+		llmClient = llm.NewClient(cfg.LLM)
 	}
 
 	// Prepare minimal request
