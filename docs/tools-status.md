@@ -18,6 +18,7 @@
 | `orchestra demo tiny-go` | ✅ | Smoke-test пайплайна патчей без LLM |
 | `orchestra daemon` | ✅ (legacy) | HTTP v0.3 демон, только loopback |
 | `orchestra mcp list-tools` | ✅ | Перечень тулов всех enabled MCP-серверов |
+| `orchestra ckg embed` | ✅ | Индексирует CKG-узлы в эмбеддинги для `semantic_search`; `--rebuild` / `--limit` / `--batch-size` |
 | `orchestra skills list \| show` | ✅ | Скиллы из `.orchestra/skills/` (user + project) |
 | `orchestra instrument` | ✅ | Авто-инструментация OTel для проекта |
 
@@ -47,6 +48,7 @@
 | `grep` | `search.text` | ✅ | Regex-поиск; авто-fallback на ripgrep если есть в PATH |
 | `symbols` | `code.symbols` | ✅ | Символы / outline файла |
 | `explore` | `explore_codebase` | ✅ | CKG: пакет / тип / символ — авто-выбор уровня по форме запроса |
+| `semantic_search` | — | ✅ | Cosine-поиск по эмбеддингам CKG-узлов; требует `embed.model` в config + `orchestra ckg embed` для индексации |
 
 ### LSP (feedback после правок)
 

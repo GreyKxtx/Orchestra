@@ -63,7 +63,7 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("migrate: read user_version: %w", err)
 	}
 
-	const targetVersion = 3 // bump for each new schema version
+	const targetVersion = 4 // bump for each new schema version
 
 	if version > targetVersion {
 		return fmt.Errorf("ckg store: database schema version %d is newer than supported %d; upgrade the binary", version, targetVersion)
@@ -75,6 +75,7 @@ func (s *Store) migrate() error {
 
 	// Local cache — drop+recreate is acceptable. Incremental scan rebuilds quickly.
 	drop := `
+        DROP TABLE IF EXISTS node_embeddings;
         DROP TABLE IF EXISTS spans;
         DROP TABLE IF EXISTS traces;
         DROP TABLE IF EXISTS edges;
@@ -153,24 +154,33 @@ func (s *Store) migrate() error {
     CREATE INDEX idx_spans_trace_id    ON spans(trace_id);
     CREATE INDEX idx_spans_ckg_node_id ON spans(ckg_node_id);
     CREATE INDEX idx_spans_code_file   ON spans(code_file);
+
+    CREATE TABLE node_embeddings (
+        node_id INTEGER PRIMARY KEY,
+        model   TEXT NOT NULL,
+        dim     INTEGER NOT NULL,
+        vector  BLOB NOT NULL,
+        FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_node_embeddings_model ON node_embeddings(model);
     `
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v3: begin tx: %w", err)
+		return fmt.Errorf("migrate v%d: begin tx: %w", targetVersion, err)
 	}
 	if _, err := tx.Exec(drop); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("migrate v3: drop old: %w", err)
+		return fmt.Errorf("migrate v%d: drop old: %w", targetVersion, err)
 	}
 	if _, err := tx.Exec(ddl); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("migrate v3: apply schema: %w", err)
+		return fmt.Errorf("migrate v%d: apply schema: %w", targetVersion, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v3: commit: %w", err)
+		return fmt.Errorf("migrate v%d: commit: %w", targetVersion, err)
 	}
-	if _, err := s.db.Exec("PRAGMA user_version = 3"); err != nil {
-		return fmt.Errorf("migrate v3: set user_version: %w", err)
+	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", targetVersion)); err != nil {
+		return fmt.Errorf("migrate v%d: set user_version: %w", targetVersion, err)
 	}
 	return nil
 }

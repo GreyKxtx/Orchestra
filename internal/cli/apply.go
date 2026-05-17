@@ -228,6 +228,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			DryRun:             dryRun,
 			Browser:            cfg.Browser,
 			AllowBrowser:       allowBrowserEffective,
+			Embed:              cfg.Embed,
 		})
 		if err != nil {
 			retErr = err
@@ -296,6 +297,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			DryRun:             dryRun,
 			Browser:            cfg.Browser,
 			AllowBrowser:       allowBrowserEffective,
+			Embed:              cfg.Embed,
 		})
 		if err != nil {
 			retErr = err
@@ -414,6 +416,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			DryRun:             dryRun,
 			Browser:            cfg.Browser,
 			AllowBrowser:       allowBrowserEffective,
+			Embed:              cfg.Embed,
 		})
 		if err != nil {
 			retErr = err
@@ -433,6 +436,14 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				mcpExtraTools = mcpMgr.ListToolDefs()
 				defer mcpMgr.Close()
 			}
+		}
+
+		// Expose semantic_search only when an embedding model is configured.
+		// The tool short-circuits with a clear error if the CKG index is empty;
+		// gating just by config keeps the model from "discovering" it on every
+		// run that doesn't have embeddings set up.
+		if cfg.Embed.Model != "" {
+			mcpExtraTools = append(mcpExtraTools, tools.ToolSemanticSearch())
 		}
 
 		var respFmt *llm.ResponseFormat

@@ -173,6 +173,19 @@ type WebSearchConfig struct {
 	MaxResults int    `yaml:"max_results,omitempty"`
 }
 
+// EmbedConfig configures the embeddings provider used to index CKG nodes
+// for semantic_search. OpenAI-compatible HTTP shape — works with OpenAI,
+// Ollama (/v1/embeddings), LM Studio, Voyage. When Model is empty the
+// embed CLI / semantic_search tool refuse to run.
+type EmbedConfig struct {
+	APIBase    string `yaml:"api_base,omitempty"`
+	APIKey     string `yaml:"api_key,omitempty"`
+	Model      string `yaml:"model,omitempty"`
+	Dimensions int    `yaml:"dimensions,omitempty"`
+	BatchSize  int    `yaml:"batch_size,omitempty"`
+	TimeoutS   int    `yaml:"timeout_s,omitempty"`
+}
+
 // WebConfig contains web fetch safety settings.
 type WebConfig struct {
 	// Confirm gates webfetch: true = require --allow-web flag (default). false = allow without flag.
@@ -254,6 +267,7 @@ var validAgentToolNames = map[string]bool{
 	"grep": true, "symbols": true, "explore": true, "bash": true,
 	"webfetch": true, "todowrite": true, "todoread": true,
 	"bash.output": true, "bash.kill": true,
+	"semantic_search": true,
 	"memory_write": true, "runtime_query": true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
 	"plan_enter": true, "plan_exit": true, "question": true,
@@ -321,6 +335,7 @@ type ProjectConfig struct {
 	Agents       []AgentDefinition `yaml:"agents,omitempty"`
 	LSP          LSPConfig         `yaml:"lsp,omitempty"`
 	UI           UIConfig          `yaml:"ui,omitempty"`
+	Embed        EmbedConfig       `yaml:"embed,omitempty"`
 	// Providers is an optional map of named LLM provider configurations.
 	// Use in agents: via provider: <name> or with --provider <name> CLI flag.
 	Providers map[string]LLMConfig `yaml:"providers,omitempty"`

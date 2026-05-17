@@ -72,7 +72,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 	for i := range defs {
 		switch defs[i].Function.Name {
 		// Pure reads — safe to fan out concurrently.
-		case "ls", "read", "glob", "grep", "symbols", "explore",
+		case "ls", "read", "glob", "grep", "symbols", "explore", "semantic_search",
 			"todoread", "task.result", "runtime.query", "webfetch", "websearch",
 			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
 			"diff.preview",
@@ -106,6 +106,30 @@ func ListToolsWithMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.Tool
 func ListToolsWithSubtasksAndMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
 	out := ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
 	return append(out, mcpDefs...)
+}
+
+// ToolSemanticSearch returns the semantic_search tool definition. Only
+// added to the agent's tool list when embed.model is configured AND a
+// CKG store is wired into the Runner.
+func ToolSemanticSearch() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "semantic_search",
+			Description: "Поиск по смыслу: эмбеддит query и возвращает top-K CKG-узлов (функции/методы/типы) по cosine similarity. Используй когда text-поиск (grep) не находит — например, ищешь концепт без точного имени. Требует индекса: orchestra ckg embed.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query":   { "type": "string", "minLength": 1 },
+    "top_k":   { "type": "integer", "minimum": 1, "maximum": 50 },
+    "snippet": { "type": "boolean", "description": "Включить фрагмент кода (первые 40 строк) каждого узла" }
+  }
+}`),
+		},
+		ParallelSafe: true,
+	}
 }
 
 // ToolSkillInvoke returns the skill_invoke tool definition with the
@@ -797,7 +821,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
