@@ -16,6 +16,13 @@ type Skill struct {
 	Model       string   `yaml:"model,omitempty"`
 	Provider    string   `yaml:"provider,omitempty"`
 
+	// CompletionMarkers lists strings the workflow runner watches for in the
+	// final output to detect stage completion (e.g. "## RESEARCH COMPLETE",
+	// "## ISSUES FOUND"). Order is significant only as documentation — the
+	// runner reports the first marker it finds. Omitted for skills run
+	// outside a workflow (apply --skill, skill_invoke).
+	CompletionMarkers []string `yaml:"completion_markers,omitempty"`
+
 	Body   string `yaml:"-"`
 	Source string `yaml:"-"`
 	Origin string `yaml:"-"`

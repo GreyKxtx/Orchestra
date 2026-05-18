@@ -1,0 +1,36 @@
+name: feature
+description: Full GSD-style pipeline для новой фичи — research → plan → verify_plan (loop) → execute → verify.
+
+stages:
+  - id: research
+    skill: researcher
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: plan
+    skill: roadmapper
+    depends_on: [research]
+    inputs:
+      - "Исходная задача:\n$ARGUMENTS\n\nFindings от researcher:\n{research.output}"
+
+  - id: verify_plan
+    skill: plan_verifier
+    depends_on: [plan]
+    inputs:
+      - "Исходная задача:\n$ARGUMENTS\n\nFindings:\n{research.output}\n\nRoadmap:\n{plan.output}"
+    loop_until_marker: "## VERIFICATION PASSED"
+    on_marker:
+      "## ISSUES FOUND": "redo:plan"
+    max_attempts: 3
+
+  - id: execute
+    skill: executor
+    depends_on: [verify_plan]
+    inputs:
+      - "Исходная задача:\n$ARGUMENTS\n\nRoadmap:\n{plan.output}"
+
+  - id: verify
+    skill: verifier
+    depends_on: [execute]
+    inputs:
+      - "Исходная задача:\n$ARGUMENTS\n\nRoadmap:\n{plan.output}\n\nExecutor summary:\n{execute.output}"
