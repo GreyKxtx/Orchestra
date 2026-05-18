@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -73,10 +74,17 @@ func runExec(parent context.Context, workspaceRoot string, defaultTimeout time.D
 
 	start := time.Now()
 
+	// LLMs reflexively send `command: "git status"` (one shell-style string)
+	// instead of `command: "git", args: ["status"]`. exec.Command takes the
+	// command name LITERALLY, so a name with spaces / shell metachars never
+	// resolves. Auto-detect that case and route through the host shell.
+	cmdName, argList, viaShell := maybeShellExec(cmdName, req.Args)
+
 	// Non-interactive: stdin is nil (reads as EOF).
-	cmd := exec.CommandContext(ctx, cmdName, req.Args...)
+	cmd := exec.CommandContext(ctx, cmdName, argList...)
 	cmd.Dir = absDir
 	cmd.Stdin = nil
+	_ = viaShell // reserved for future telemetry / debug surfacing
 
 	streamCB := execOutputCBFromCtx(parent)
 	lim := &outputLimiter{limit: limit}
@@ -155,6 +163,49 @@ func runExec(parent context.Context, workspaceRoot string, defaultTimeout time.D
 		DurationMS: dur,
 		Truncated:  lim.truncated,
 	}, nil
+}
+
+// maybeShellExec decides whether to dispatch the call through a shell.
+//
+// LLMs frequently send `command: "git status"` (single string) instead of
+// `command: "git", args: ["status"]`. They also send compound commands like
+// `command: "go build && go test"`. Plain exec.Command treats `command` as
+// the literal program name — it never resolves either of those.
+//
+// Heuristic:
+//   - If `cmdName` contains any shell metachar (` `, `|`, `&`, `;`, `<`, `>`,
+//     `(`, `*`, `?`, backtick, `$`) OR `args` is empty AND `cmdName` is in
+//     the form `<word> <rest…>` → route through the host shell.
+//   - Otherwise leave as a direct exec (preserves the documented behaviour for
+//     callers that did pass a clean program name + args).
+//
+// Returned values are the resolved program, its args, and a bool indicating
+// whether the dispatch was rewritten.
+func maybeShellExec(cmdName string, args []string) (string, []string, bool) {
+	needsShell := false
+	for _, r := range cmdName {
+		switch r {
+		case ' ', '\t', '|', '&', ';', '<', '>', '(', ')', '*', '?', '`', '$', '"', '\'':
+			needsShell = true
+		}
+		if needsShell {
+			break
+		}
+	}
+	if !needsShell {
+		return cmdName, args, false
+	}
+	// Reassemble the full command line: cmdName + space-joined args.
+	full := cmdName
+	if len(args) > 0 {
+		full = full + " " + strings.Join(args, " ")
+	}
+	if runtime.GOOS == "windows" {
+		// `cmd /c "<full>"` runs the whole thing through cmd.exe. Quoting is
+		// preserved by passing the full line as a single arg.
+		return "cmd", []string{"/c", full}, true
+	}
+	return "sh", []string{"-c", full}, true
 }
 
 type outputLimiter struct {

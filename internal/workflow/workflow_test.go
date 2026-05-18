@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func writeWF(t *testing.T, dir, name, body string) string {
@@ -246,6 +247,131 @@ func TestRun_Parallel_JoinsOutputs(t *testing.T) {
 	}
 	if !strings.Contains(res.Outputs["r"], "---") {
 		t.Fatalf("parallel output should have separator: %q", res.Outputs["r"])
+	}
+}
+
+func TestRun_CohortParallel_IndependentStagesRunConcurrently(t *testing.T) {
+	// DAG: a → b, a → c (b and c are siblings, both depend on a). After a
+	// completes, b and c form a single cohort and must execute concurrently.
+	// We verify concurrency by having both block on a shared channel until
+	// the second goroutine arrives.
+	w := &Workflow{Name: "w", Stages: []Stage{
+		{ID: "a", Skill: "sa"},
+		{ID: "b", Skill: "sb", DependsOn: []string{"a"}},
+		{ID: "c", Skill: "sc", DependsOn: []string{"a"}},
+	}}
+	if err := Validate(w); err != nil {
+		t.Fatal(err)
+	}
+
+	startedB := make(chan struct{}, 1)
+	startedC := make(chan struct{}, 1)
+	inv := &cohortProbeInvoker{
+		startedB: startedB,
+		startedC: startedC,
+	}
+	res, err := Run(context.Background(), w, inv, func(string) []string { return nil },
+		RunOptions{Arguments: "x"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Outputs["b"] != "B" || res.Outputs["c"] != "C" {
+		t.Fatalf("outputs: %+v", res.Outputs)
+	}
+	if !inv.bAndCConcurrent {
+		t.Fatal("b and c did not overlap — cohort parallelism broken")
+	}
+}
+
+type cohortProbeInvoker struct {
+	mu              sync.Mutex
+	bStarted        bool
+	cStarted        bool
+	bAndCConcurrent bool
+	startedB        chan struct{}
+	startedC        chan struct{}
+}
+
+func (c *cohortProbeInvoker) Invoke(_ context.Context, skill, _ string) (string, error) {
+	switch skill {
+	case "sa":
+		return "A", nil
+	case "sb":
+		c.mu.Lock()
+		c.bStarted = true
+		bothStarted := c.cStarted
+		c.mu.Unlock()
+		c.startedB <- struct{}{}
+		select {
+		case <-c.startedC:
+			c.mu.Lock()
+			c.bAndCConcurrent = true
+			c.mu.Unlock()
+		case <-time.After(2 * time.Second):
+			// timeout — concurrency failed
+		}
+		_ = bothStarted
+		return "B", nil
+	case "sc":
+		c.mu.Lock()
+		c.cStarted = true
+		c.mu.Unlock()
+		c.startedC <- struct{}{}
+		select {
+		case <-c.startedB:
+			c.mu.Lock()
+			c.bAndCConcurrent = true
+			c.mu.Unlock()
+		case <-time.After(2 * time.Second):
+		}
+		return "C", nil
+	}
+	return "", nil
+}
+
+func TestRun_RedoResetsDescendants(t *testing.T) {
+	// a → b → c. b emits redo:a on attempt 1, advance on attempt 2.
+	// Expectation: a runs twice (initial + after redo), c runs once (only
+	// after b finally advances). b runs twice (initial + after a's redo).
+	w := &Workflow{Name: "w", Stages: []Stage{
+		{ID: "a", Skill: "sa"},
+		{ID: "b", Skill: "sb", DependsOn: []string{"a"},
+			LoopUntilMarker: "## OK",
+			OnMarker:        map[string]string{"## REDO": "redo:a"},
+			MaxAttempts:     3,
+		},
+		{ID: "c", Skill: "sc", DependsOn: []string{"b"}},
+	}}
+	if err := Validate(w); err != nil {
+		t.Fatal(err)
+	}
+	inv := &fakeInvoker{
+		outputs: map[string][]string{
+			"sa": {"a-v1", "a-v2"},
+			"sb": {"## REDO", "## OK"},
+			"sc": {"c-out"},
+		},
+		calls: map[string]int{},
+	}
+	_, err := Run(context.Background(), w, inv,
+		func(s string) []string {
+			if s == "sb" {
+				return []string{"## OK", "## REDO"}
+			}
+			return nil
+		},
+		RunOptions{Arguments: "x"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if inv.calls["sa"] != 2 {
+		t.Errorf("sa should have re-run after redo: got %d, want 2", inv.calls["sa"])
+	}
+	if inv.calls["sb"] != 2 {
+		t.Errorf("sb should have run twice (initial + after a's redo): got %d, want 2", inv.calls["sb"])
+	}
+	if inv.calls["sc"] != 1 {
+		t.Errorf("sc should have run exactly once after b advanced: got %d, want 1", inv.calls["sc"])
 	}
 }
 
