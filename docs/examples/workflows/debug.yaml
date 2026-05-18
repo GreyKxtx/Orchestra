@@ -1,0 +1,24 @@
+name: debug
+description: Iterative bug investigation — debugger loops until ROOT CAUSE FOUND, then executor fixes and verifier confirms.
+
+stages:
+  - id: diagnose
+    skill: debugger
+    inputs:
+      - "$ARGUMENTS"
+    loop_until_marker: "## ROOT CAUSE FOUND"
+    on_marker:
+      "## DEBUG BLOCKED": "fail"
+    max_attempts: 3
+
+  - id: execute
+    skill: executor
+    depends_on: [diagnose]
+    inputs:
+      - "Bug:\n$ARGUMENTS\n\nDiagnosis:\n{diagnose.output}\n\nFix the root cause identified above. Do not touch anything outside its scope."
+
+  - id: verify
+    skill: verifier
+    depends_on: [execute]
+    inputs:
+      - "Original bug:\n$ARGUMENTS\n\nDiagnosis:\n{diagnose.output}\n\nExecutor summary:\n{execute.output}\n\nConfirm the bug is fixed AND no regression was introduced."
