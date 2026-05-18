@@ -30,8 +30,13 @@ stages:
       "## TESTS FLAKY": "fail"
     max_attempts: 3
 
+  # review runs in PARALLEL with verify_tests — both depend only on execute,
+  # not on each other. reviewer reads code directly via tools; it does not
+  # need the test verdict. If verify_tests emits redo:execute, the new
+  # workflow runner resets review along with execute (transitive descendants),
+  # so a re-executed code will get re-reviewed automatically.
   - id: review
     skill: code_reviewer
-    depends_on: [verify_tests]
+    depends_on: [execute]
     inputs:
-      - "Spec:\n{spec.output}\n\nTests:\n{tests.output}\n\nExecutor summary:\n{execute.output}\n\nTest verdict:\n{verify_tests.output}"
+      - "Spec:\n{spec.output}\n\nTests:\n{tests.output}\n\nExecutor summary:\n{execute.output}"
