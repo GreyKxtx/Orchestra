@@ -96,6 +96,11 @@ type defQuerySpec struct {
 	kind string // "func" or "method"; overridden to "method" when inside a container
 }
 
+// SitterLanguageFor is the exported variant of sitterLanguageFor, intended for
+// other internal packages (e.g. astedit) that need to drive tree-sitter
+// against the same languages CKG supports.
+func SitterLanguageFor(ext string) *sitter.Language { return sitterLanguageFor(ext) }
+
 // sitterLanguageFor returns the tree-sitter Language for the file extension.
 func sitterLanguageFor(ext string) *sitter.Language {
 	switch ext {

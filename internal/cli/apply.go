@@ -49,6 +49,7 @@ var (
 	applyProvider       string
 	applySkill          string
 	applyImages         []string
+	applyStream         bool
 )
 
 var applyCmd = &cobra.Command{
@@ -78,6 +79,7 @@ func init() {
 	applyCmd.Flags().StringVar(&applyProvider, "provider", "", "Use a named provider from .orchestra.yml providers: section")
 	applyCmd.Flags().StringVar(&applySkill, "skill", "", "Run with the named skill from .orchestra/skills/")
 	applyCmd.Flags().StringSliceVar(&applyImages, "image", nil, "Image file(s) to attach to the user message (PNG/JPEG/GIF/WebP). Repeatable. Requires a multimodal LLM.")
+	applyCmd.Flags().BoolVar(&applyStream, "stream", false, "Stream assistant tokens to stdout as they arrive (works in non-TTY pipes too)")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -295,6 +297,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
 				oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 			}
+			llmClient = llm.MaybeWrapRouter(llmClient, cfg)
 		}
 
 		validator, err := schema.NewValidator()
@@ -417,6 +420,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
 				oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 			}
+			llmClient = llm.MaybeWrapRouter(llmClient, cfg)
 		}
 
 		validator, err := schema.NewValidator()
@@ -868,26 +872,33 @@ func providerNames(cfg *config.ProjectConfig) string {
 // when stdout is an interactive terminal. Returns nil (disables streaming display) when
 // stdout is piped, redirected, or NO_COLOR is set.
 func buildCLIRenderer() func(agent.AgentEvent) {
-	if !isTTY() {
+	if !isTTY() && !applyStream {
 		return nil
 	}
+	// In --stream mode, route deltas to stdout so they're pipeable; otherwise
+	// keep them on stderr where the TTY renderer originally wrote.
+	dst := os.Stderr
+	if applyStream {
+		dst = os.Stdout
+	}
+	_ = dst // explicit no-op to keep dst in scope when callers below use it
 	var lastStep int
 	return func(ev agent.AgentEvent) {
 		switch ev.Stream.Kind {
 		case llm.StreamEventMessageDelta:
-			fmt.Fprint(os.Stderr, ev.Stream.Content)
+			fmt.Fprint(dst, ev.Stream.Content)
 		case llm.StreamEventToolCallStart:
 			if ev.Step != lastStep {
-				fmt.Fprintln(os.Stderr)
+				fmt.Fprintln(dst)
 				lastStep = ev.Step
 			}
-			fmt.Fprintf(os.Stderr, "\n→ %s", ev.Stream.ToolCallName)
+			fmt.Fprintf(dst, "\n→ %s", ev.Stream.ToolCallName)
 		case llm.StreamEventDone:
 			if ev.Stream.Response != nil && ev.Stream.Response.Message.Content != "" {
-				fmt.Fprintln(os.Stderr) // newline after streamed text
+				fmt.Fprintln(dst) // newline after streamed text
 			}
 		case llm.StreamEventExecOutput:
-			fmt.Fprint(os.Stderr, ev.Stream.Content)
+			fmt.Fprint(dst, ev.Stream.Content)
 		}
 	}
 }

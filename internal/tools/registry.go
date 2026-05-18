@@ -19,6 +19,7 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 		toolFSEdit(),
 		toolFSDelete(),
 		toolFSRename(),
+		ToolASTRename(),
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
@@ -85,7 +86,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 		case "write", "edit", "bash", "bash.output", "bash.kill", "todowrite", "memory_write",
 			"lsp.rename", "plan.enter", "plan.exit",
 			"task.spawn", "task.wait", "task.cancel", "question",
-			"fs.delete", "fs.rename",
+			"fs.delete", "fs.rename", "ast_rename",
 			"git.commit", "git.branch", "git.checkout", "git.push",
 			"gh.pr.create",
 			"browser.navigate", "browser.click", "browser.type", "browser.fill",
@@ -130,6 +131,30 @@ func ToolSemanticSearch() llm.ToolDef {
 }`),
 		},
 		ParallelSafe: true,
+	}
+}
+
+// ToolASTRename returns the ast_rename tool definition. Uses tree-sitter to
+// rename a single identifier across one file, skipping hits inside strings,
+// comments, and substrings of longer identifiers. Safer than a text edit when
+// the target name is a common substring.
+func ToolASTRename() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "ast_rename",
+			Description: "AST-aware rename идентификатора в одном файле через tree-sitter. Пропускает строки/комментарии/подстроки. Поддерживает все языки, которые есть в CKG (go/ts/py/rs/java/...). Маршрутизируется через ту же staging/file_hash логику, что fs.write. Когда нужно — используй вместо edit для имён, которые встречаются и как подстроки.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["path", "old_name", "new_name"],
+  "properties": {
+    "path":     { "type": "string", "minLength": 1 },
+    "old_name": { "type": "string", "minLength": 1 },
+    "new_name": { "type": "string", "minLength": 1 }
+  }
+}`),
+		},
 	}
 }
 
@@ -845,7 +870,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), ToolASTRename(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),

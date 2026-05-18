@@ -49,6 +49,18 @@ type LLMConfig struct {
 	// previously-used model restores its temperature/num_ctx/etc.
 	// Keyed by model id.
 	ModelPresets map[string]ModelPreset `yaml:"model_presets,omitempty"`
+
+	// Router opts the client into prompt-size-based auto-routing between this
+	// main model and a named fast provider (looked up in providers:).
+	Router RouterConfig `yaml:"router,omitempty"`
+}
+
+// RouterConfig configures llm.RouterClient. Disabled when Enabled is false
+// or FastProvider is empty.
+type RouterConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	FastProvider   string `yaml:"fast_provider"`
+	ThresholdBytes int    `yaml:"threshold_bytes"`
 }
 
 // ModelPreset captures the settings associated with one model id, so that
@@ -273,7 +285,7 @@ var validAgentToolNames = map[string]bool{
 	"grep": true, "symbols": true, "explore": true, "bash": true,
 	"webfetch": true, "todowrite": true, "todoread": true,
 	"bash.output": true, "bash.kill": true,
-	"semantic_search": true, "repo_map": true,
+	"semantic_search": true, "repo_map": true, "ast_rename": true,
 	"memory_write": true, "runtime_query": true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
 	"plan_enter": true, "plan_exit": true, "question": true,
