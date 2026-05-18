@@ -144,10 +144,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		GeneratedAtUnix: startedAt.Unix(),
 	}
 	var applyResp *tools.FSApplyOpsResponse
+	usageTracker := newUsageTracker("apply", cfg)
 
 	defer func() {
 		// Always write artifacts once we know projectRoot.
 		_ = writeApplyArtifacts(cfg.ProjectRoot, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr)
+		finalizeUsage(usageTracker, cfg)
 		if retErr != nil {
 			if pe, ok := protocol.AsError(retErr); ok {
 				fmt.Fprintf(os.Stderr, "error_code=%s reason=%s\n", pe.Code, pe.Message)
@@ -257,6 +259,18 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
+		if out.Usage != nil {
+			// Child already wrote its own usage.jsonl record; just surface the
+			// totals to the user. Parent tracker stays empty so finalizeUsage
+			// is a no-op.
+			base := fmt.Sprintf("tokens: %d in + %d out = %d (%d call%s)",
+				out.Usage.PromptTokens, out.Usage.CompletionTokens,
+				out.Usage.TotalTokens, out.Usage.Calls, pluralS(out.Usage.Calls))
+			if out.Usage.CostUSD > 0 {
+				base = fmt.Sprintf("%s | $%.4f", base, out.Usage.CostUSD)
+			}
+			fmt.Fprintf(os.Stderr, "[usage] %s\n", base)
+		}
 		steps = out.Steps
 		plan = planArtifact{
 			ProtocolVersion: protocol.ProtocolVersion,
@@ -340,6 +354,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		pipeRes, err := pipeline.Run(cmd.Context(), llmClient, validator, runner, query, pipeline.Options{
+			UsageTracker:         usageTracker,
+			ProviderLabel:        providerLabelFor(cfg, applyProvider),
+			ModelLabel:           cfg.LLM.Model,
 			MaxCoderAttempts:     pipelineMaxAttempts,
 			Apply:                !dryRun,
 			Backup:               backup,
@@ -530,6 +547,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		ag, err := agent.New(llmClient, validator, runner, agent.Options{
+			UsageTracker:         usageTracker,
+			ProviderLabel:        providerLabelFor(cfg, applyProvider),
+			ModelLabel:           cfg.LLM.Model,
 			MaxSteps:             cfg.Agent.MaxSteps,
 			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
 			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,

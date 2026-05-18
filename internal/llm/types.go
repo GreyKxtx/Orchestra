@@ -256,4 +256,15 @@ type CompleteRequest struct {
 // CompleteResponse is a single assistant turn (content and/or tool calls).
 type CompleteResponse struct {
 	Message Message
+	// Usage carries token accounting reported by the provider for this turn.
+	// Nil when the provider did not return usage info (some local servers omit it).
+	Usage *TokenUsage
+}
+
+// TokenUsage is provider-reported token accounting for a single completion.
+// Fields mirror OpenAI's "usage" object; other providers map their equivalents.
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }

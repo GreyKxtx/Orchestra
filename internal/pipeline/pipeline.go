@@ -70,6 +70,14 @@ type Options struct {
 	OnEvent func(stage string, ev agent.AgentEvent)
 
 	AgentLogger *llm.Logger
+
+	// UsageTracker, if non-nil, receives token-usage records from every stage's
+	// agent.Run call. Same instance is shared across stages so the persisted
+	// record covers the whole pipeline.
+	UsageTracker agent.UsageRecorder
+	// ProviderLabel / ModelLabel are recorded with each usage tick.
+	ProviderLabel string
+	ModelLabel    string
 }
 
 // StageResult holds the outcome of a single pipeline stage.
@@ -227,8 +235,11 @@ func runInvestigator(
 		AgentLogger:          opts.AgentLogger,
 		PermissionRules:      opts.PermissionRules,
 		// Read-only + task_result + runtime for trace correlation.
-		CustomTools: tools.ListToolsForInvestigator(),
-		OnEvent:     wrapOnEvent("investigator", opts.OnEvent),
+		CustomTools:   tools.ListToolsForInvestigator(),
+		OnEvent:       wrapOnEvent("investigator", opts.OnEvent),
+		UsageTracker:  opts.UsageTracker,
+		ProviderLabel: opts.ProviderLabel,
+		ModelLabel:    opts.ModelLabel,
 	})
 	if err != nil {
 		return "", 0, err
@@ -263,9 +274,12 @@ func runCoder(
 		AgentLogger:          opts.AgentLogger,
 		PermissionRules:      opts.PermissionRules,
 		// Full build mode, always dry-run — pipeline applies at the end.
-		Apply:   false,
-		Backup:  false,
-		OnEvent: wrapOnEvent("coder", opts.OnEvent),
+		Apply:         false,
+		Backup:        false,
+		OnEvent:       wrapOnEvent("coder", opts.OnEvent),
+		UsageTracker:  opts.UsageTracker,
+		ProviderLabel: opts.ProviderLabel,
+		ModelLabel:    opts.ModelLabel,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -300,8 +314,11 @@ func runCritic(
 		AgentLogger:          opts.AgentLogger,
 		PermissionRules:      opts.PermissionRules,
 		// Read-only + task_result; no write tools.
-		CustomTools: tools.ListToolsForChild(),
-		OnEvent:     wrapOnEvent("critic", opts.OnEvent),
+		CustomTools:   tools.ListToolsForChild(),
+		OnEvent:       wrapOnEvent("critic", opts.OnEvent),
+		UsageTracker:  opts.UsageTracker,
+		ProviderLabel: opts.ProviderLabel,
+		ModelLabel:    opts.ModelLabel,
 	})
 	if err != nil {
 		return false, "", 0, err

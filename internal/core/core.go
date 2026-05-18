@@ -20,6 +20,7 @@ import (
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/usage"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
@@ -314,6 +315,21 @@ type AgentRunResult struct {
 	Ops     []ops.AnyOp           `json:"ops,omitempty"`
 
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+
+	// Usage summarises token consumption for this run. Nil when the provider
+	// did not return usage info (some local servers omit it).
+	Usage *UsageSnapshot `json:"usage,omitempty"`
+}
+
+// UsageSnapshot is the totals view of one run's token consumption, returned
+// over JSON-RPC so the caller (CLI) can display a summary without re-reading
+// usage.jsonl.
+type UsageSnapshot struct {
+	Calls            int     `json:"calls"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
 }
 
 func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunResult, error) {
@@ -425,6 +441,8 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	c.tools.SetDryRun(!params.Apply)
 	c.tools.ClearStaged()
 
+	usageTracker := newAgentUsageTracker(c.cfg, "agent.run")
+
 	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
@@ -452,6 +470,9 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		HooksRunner:          hooksRunner,
 		ExtraTools:           c.mcpToolDefs(),
 		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
+		UsageTracker:         usageTracker,
+		ProviderLabel:        providerLabelOf(c.cfg),
+		ModelLabel:           c.cfg.LLM.Model,
 	})
 	if err != nil {
 		return nil, err
@@ -461,6 +482,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if err != nil {
 		return nil, err
 	}
+	finalizeAgentUsage(usageTracker, c.workspaceRoot)
 
 	return &AgentRunResult{
 		Steps:         res.Steps,
@@ -468,7 +490,61 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Patches:       res.Patches,
 		Ops:           res.Ops,
 		ApplyResponse: res.ApplyResponse,
+		Usage:         usageSnapshotFrom(usageTracker),
 	}, nil
+}
+
+// providerLabelOf falls back to "openai" when the config doesn't name a provider.
+func providerLabelOf(cfg *config.ProjectConfig) string {
+	if cfg == nil {
+		return "openai"
+	}
+	if cfg.LLM.Provider != "" {
+		return cfg.LLM.Provider
+	}
+	return "openai"
+}
+
+// newAgentUsageTracker wires a Tracker pre-loaded with the project's pricing.
+func newAgentUsageTracker(cfg *config.ProjectConfig, label string) *usage.Tracker {
+	pricing := usage.Pricing(nil)
+	if cfg != nil && len(cfg.Pricing) > 0 {
+		pricing = make(usage.Pricing, len(cfg.Pricing))
+		for prov, models := range cfg.Pricing {
+			bucket := make(map[string]usage.ModelPricing, len(models))
+			for m, mp := range models {
+				bucket[m] = usage.ModelPricing{InputPer1M: mp.InputPer1M, OutputPer1M: mp.OutputPer1M}
+			}
+			pricing[prov] = bucket
+		}
+	}
+	runID := time.Now().UTC().Format("20060102T150405.000Z")
+	return usage.NewTracker(runID, label, pricing)
+}
+
+// finalizeAgentUsage best-effort persists usage. Errors are swallowed; the RPC
+// caller still gets the in-memory totals via UsageSnapshot in the response.
+func finalizeAgentUsage(t *usage.Tracker, workspaceRoot string) {
+	if t == nil || t.Empty() {
+		return
+	}
+	_, _, _ = t.Finalize(workspaceRoot)
+}
+
+// usageSnapshotFrom flattens tracker totals into a wire-friendly struct for
+// JSON-RPC responses. Returns nil when no calls were recorded.
+func usageSnapshotFrom(t *usage.Tracker) *UsageSnapshot {
+	if t == nil || t.Empty() {
+		return nil
+	}
+	calls, prompt, completion, total, cost := t.Total()
+	return &UsageSnapshot{
+		Calls:            calls,
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		TotalTokens:      total,
+		CostUSD:          cost,
+	}
 }
 
 type ToolCallParams struct {
@@ -644,6 +720,8 @@ type SessionMessageResult struct {
 	Patches       []patches.Patch     `json:"patches,omitempty"`
 	Ops           []ops.AnyOp               `json:"ops,omitempty"`
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+	// Usage summarises token consumption for this turn.
+	Usage *UsageSnapshot `json:"usage,omitempty"`
 }
 
 // SessionMessage runs one agent turn in the named session, streaming events via OnEvent.
@@ -787,7 +865,12 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
 	}
 
+	sessUsageTracker := newAgentUsageTracker(c.cfg, "session.turn")
+
 	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, agent.Options{
+		UsageTracker:         sessUsageTracker,
+		ProviderLabel:        providerLabelOf(c.cfg),
+		ModelLabel:           c.cfg.LLM.Model,
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
 		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
@@ -824,6 +907,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err != nil {
 		return nil, err
 	}
+	finalizeAgentUsage(sessUsageTracker, c.workspaceRoot)
 
 	// Update session history and todos with the results of this turn.
 	newMsgs := outHistory[len(inHistory):]
@@ -851,6 +935,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Patches:       res.Patches,
 		Ops:           res.Ops,
 		ApplyResponse: res.ApplyResponse,
+		Usage:         usageSnapshotFrom(sessUsageTracker),
 	}, nil
 }
 
