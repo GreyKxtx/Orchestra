@@ -26,7 +26,21 @@ const (
 	EventAgentRunCompleted EventKind = "agent_run_completed" // synthesized when AgentRun returns
 
 	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent
+
+	// Workflow stage events (Protocol v4+).
+	EventWorkflowStageStart EventKind = "workflow.stage_start"
+	EventWorkflowStageDone  EventKind = "workflow.stage_done"
 )
+
+// WorkflowStagePayload carries the data for workflow.stage_start / .stage_done.
+type WorkflowStagePayload struct {
+	Name     string `json:"name"`
+	StageID  string `json:"stage_id"`
+	Attempt  int    `json:"attempt"`
+	Marker   string `json:"marker,omitempty"`
+	Action   string `json:"action,omitempty"`
+	OutputKB int    `json:"output_kb,omitempty"`
+}
 
 // Event is a TUI-side representation of a streaming event.
 type Event struct {
@@ -38,6 +52,7 @@ type Event struct {
 	ArgsDelta    string                    // only set on tool_call_delta — partial JSON of arguments
 	PendingOps   *PendingOpsPayload        // only set when Kind == EventPendingOps
 	PermReq      *PermissionRequestPayload // only set when Kind == EventPermissionRequest
+	Stage        *WorkflowStagePayload     // only set when Kind == EventWorkflowStageStart / EventWorkflowStageDone
 	Err          string                    // only set on connection/agent error events
 }
 

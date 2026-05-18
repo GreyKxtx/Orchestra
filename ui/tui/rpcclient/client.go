@@ -140,6 +140,114 @@ func (c *Client) AgentRun(ctx context.Context, query, mode string) error {
 	return err
 }
 
+// WorkflowSummary is a lightweight view of a workflow returned by
+// workflow.list. Mirrors core.WorkflowSummary.
+type WorkflowSummary struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Stages      []string `json:"stages"`
+	Source      string   `json:"source,omitempty"`
+}
+
+// WorkflowList calls workflow.list on the core and returns the list.
+func (c *Client) WorkflowList(ctx context.Context) ([]WorkflowSummary, error) {
+	var res struct {
+		Workflows []WorkflowSummary `json:"workflows"`
+	}
+	if err := c.rpc.Call(ctx, "workflow.list", map[string]any{}, &res); err != nil {
+		return nil, err
+	}
+	return res.Workflows, nil
+}
+
+// WorkflowRunOptions controls a workflow.run call.
+type WorkflowRunOptions struct {
+	Apply        bool
+	AllowExec    bool
+	AllowWeb     bool
+	AllowBrowser bool
+}
+
+// WorkflowRunResult mirrors core.WorkflowRunResult.
+type WorkflowRunResult struct {
+	Name          string            `json:"name"`
+	Outputs       map[string]string `json:"outputs"`
+	FinalStage    string            `json:"final_stage,omitempty"`
+	FailureReason string            `json:"failure_reason,omitempty"`
+	DurationMS    int64             `json:"duration_ms"`
+}
+
+// WorkflowRun invokes workflow.run on the core. Streaming stage events
+// arrive via Events() (EventWorkflowStageStart / EventWorkflowStageDone).
+func (c *Client) WorkflowRun(ctx context.Context, name, arguments string, opts WorkflowRunOptions) (*WorkflowRunResult, error) {
+	params := map[string]any{
+		"name":          name,
+		"arguments":     arguments,
+		"apply":         opts.Apply,
+		"allow_exec":    opts.AllowExec,
+		"allow_web":     opts.AllowWeb,
+		"allow_browser": opts.AllowBrowser,
+	}
+	var res WorkflowRunResult
+	if err := c.rpc.Call(ctx, "workflow.run", params, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// SkillSummary mirrors core.SkillSummary.
+type SkillSummary struct {
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	Tools             []string `json:"tools,omitempty"`
+	Provider          string   `json:"provider,omitempty"`
+	Model             string   `json:"model,omitempty"`
+	CompletionMarkers []string `json:"completion_markers,omitempty"`
+	Origin            string   `json:"origin,omitempty"`
+}
+
+// SkillList calls skill.list on the core and returns the list.
+func (c *Client) SkillList(ctx context.Context) ([]SkillSummary, error) {
+	var res struct {
+		Skills []SkillSummary `json:"skills"`
+	}
+	if err := c.rpc.Call(ctx, "skill.list", map[string]any{}, &res); err != nil {
+		return nil, err
+	}
+	return res.Skills, nil
+}
+
+// SkillInvokeOptions controls a skill.invoke call.
+type SkillInvokeOptions struct {
+	AllowExec    bool
+	AllowWeb     bool
+	AllowBrowser bool
+}
+
+// SkillInvokeResult mirrors core.SkillInvokeResult.
+type SkillInvokeResult struct {
+	Skill  string `json:"skill"`
+	Output string `json:"output"`
+	Marker string `json:"marker,omitempty"`
+	Steps  int    `json:"steps"`
+}
+
+// SkillInvoke calls skill.invoke on the core.
+func (c *Client) SkillInvoke(ctx context.Context, name, arguments string, opts SkillInvokeOptions) (*SkillInvokeResult, error) {
+	params := map[string]any{
+		"name":          name,
+		"arguments":     arguments,
+		"allow_exec":    opts.AllowExec,
+		"allow_web":     opts.AllowWeb,
+		"allow_browser": opts.AllowBrowser,
+	}
+	var res SkillInvokeResult
+	if err := c.rpc.Call(ctx, "skill.invoke", params, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
 // ApplyOps sends the given ops to the core for application (no LLM re-run).
 // rawOps is the slice of ops as received in PendingOpsPayload.Ops.
 func (c *Client) ApplyOps(ctx context.Context, rawOps []map[string]any) error {
@@ -187,7 +295,19 @@ func (c *Client) handleNotification(method string, params json.RawMessage) {
 		c.handleAgentEvent(params)
 	case "exec/output_chunk":
 		c.handleExecOutput(params)
+	case "workflow.stage_start":
+		c.handleWorkflowStage(EventWorkflowStageStart, params)
+	case "workflow.stage_done":
+		c.handleWorkflowStage(EventWorkflowStageDone, params)
 	}
+}
+
+func (c *Client) handleWorkflowStage(kind EventKind, params json.RawMessage) {
+	var p WorkflowStagePayload
+	if err := json.Unmarshal(params, &p); err != nil {
+		return
+	}
+	c.send(Event{Kind: kind, Stage: &p})
 }
 
 func (c *Client) handleAgentEvent(params json.RawMessage) {

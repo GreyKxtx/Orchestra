@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,6 +10,8 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
+
+func itoa(i int) string { return strconv.Itoa(i) }
 
 // listenForEvents returns a Cmd that reads one event from the rpc channel.
 func (a *App) listenForEvents() tea.Cmd {
@@ -143,6 +146,27 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		if ev.PermReq != nil {
 			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
 			a.layout()
+		}
+	case rpcclient.EventWorkflowStageStart:
+		if ev.Stage != nil {
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: "[workflow:" + ev.Stage.Name + "] → stage " + ev.Stage.StageID +
+					" (attempt " + itoa(ev.Stage.Attempt) + ")",
+			})
+		}
+	case rpcclient.EventWorkflowStageDone:
+		if ev.Stage != nil {
+			marker := ev.Stage.Marker
+			if marker == "" {
+				marker = "(no marker)"
+			}
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: "[workflow:" + ev.Stage.Name + "] ← stage " + ev.Stage.StageID +
+					" done: marker=" + marker + ", action=" + ev.Stage.Action +
+					", " + itoa(ev.Stage.OutputKB) + "KB out",
+			})
 		}
 	}
 	if !skipRender {
