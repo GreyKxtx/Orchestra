@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
@@ -22,6 +21,7 @@ import (
 type cliSkillRunner struct {
 	cfg         *config.ProjectConfig
 	skills      []*skills.Skill
+	refs        map[string]string
 	baseClient  llm.Client
 	validator   *schema.Validator
 	toolRunner  *tools.Runner
@@ -32,6 +32,7 @@ type cliSkillRunner struct {
 func newCLISkillRunner(
 	cfg *config.ProjectConfig,
 	discovered []*skills.Skill,
+	refs map[string]string,
 	baseClient llm.Client,
 	validator *schema.Validator,
 	toolRunner *tools.Runner,
@@ -44,6 +45,7 @@ func newCLISkillRunner(
 	return &cliSkillRunner{
 		cfg:         cfg,
 		skills:      discovered,
+		refs:        refs,
 		baseClient:  baseClient,
 		validator:   validator,
 		toolRunner:  toolRunner,
@@ -67,7 +69,10 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 		}
 	}
 
-	systemPrompt := strings.ReplaceAll(s.Body, argumentsMarker, task)
+	systemPrompt, err := skills.PrepareBody(s.Body, task, r.refs)
+	if err != nil {
+		return "", fmt.Errorf("skill %q: %w", name, err)
+	}
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {
