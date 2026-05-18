@@ -22,6 +22,7 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 		toolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
+		ToolRepoMap(),
 		toolDiffPreview(),
 		toolRuntimeQuery(),
 		toolTodoWrite(),
@@ -72,7 +73,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 	for i := range defs {
 		switch defs[i].Function.Name {
 		// Pure reads — safe to fan out concurrently.
-		case "ls", "read", "glob", "grep", "symbols", "explore", "semantic_search",
+		case "ls", "read", "glob", "grep", "symbols", "explore", "semantic_search", "repo_map",
 			"todoread", "task.result", "runtime.query", "webfetch", "websearch",
 			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
 			"diff.preview",
@@ -125,6 +126,29 @@ func ToolSemanticSearch() llm.ToolDef {
     "query":   { "type": "string", "minLength": 1 },
     "top_k":   { "type": "integer", "minimum": 1, "maximum": 50 },
     "snippet": { "type": "boolean", "description": "Включить фрагмент кода (первые 40 строк) каждого узла" }
+  }
+}`),
+		},
+		ParallelSafe: true,
+	}
+}
+
+// ToolRepoMap returns the repo_map tool definition. Always available — it has
+// no external dependencies beyond the tree-sitter grammars baked into the
+// binary. Returns a compact outline of the workspace fitting an optional byte
+// budget so the model can pick interesting files without first listing them.
+func ToolRepoMap() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "repo_map",
+			Description: "Быстрая карта репозитория: per-file outline (функции/типы/методы) по всем поддерживаемым языкам. Не требует индекса. Полезно для первичной ориентации перед ls/glob. budget_bytes ограничивает размер вывода (default 8192).",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "budget_bytes":  { "type": "integer", "minimum": 256, "maximum": 65536, "description": "Max bytes of output. Smaller = pruned aggressively. Default 8192." },
+    "max_files":     { "type": "integer", "minimum": 1, "maximum": 5000, "description": "Hard cap on files scanned. 0/omit = no cap." }
   }
 }`),
 		},
@@ -821,7 +845,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),

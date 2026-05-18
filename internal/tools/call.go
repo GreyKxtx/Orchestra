@@ -184,6 +184,17 @@ func (r *Runner) Call(ctx context.Context, name string, input json.RawMessage) (
 		}
 		return mustJSON(resp)
 
+	case "repo_map":
+		var req RepoMapRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.RepoMap(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	case "webfetch":
 		var req WebFetchRequest
 		if err := decodeToolInput(input, &req); err != nil {
