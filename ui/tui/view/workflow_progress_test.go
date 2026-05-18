@@ -3,6 +3,8 @@ package view
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TestWorkflowProgress_Lifecycle drives the widget through a typical
@@ -61,6 +63,28 @@ func TestWorkflowProgress_Failure(t *testing.T) {
 	w.StageDone("a", "fail")
 	if got := stripStyling(w.Render()); !strings.Contains(got, "✗ a") {
 		t.Errorf("fail glyph missing: %q", got)
+	}
+}
+
+// TestWorkflowProgress_TruncationFitsWidth packs many stages into a narrow
+// widget and asserts every rendered line stays within the configured width.
+// Regression cover for an off-by-one where the trim loop terminated when
+// width <= innerW and then appended "…", producing innerW+1 cells.
+func TestWorkflowProgress_TruncationFitsWidth(t *testing.T) {
+	const wantW = 40
+	w := NewWorkflowProgress(wantW)
+	w.Begin("very_long_workflow_name_that_eats_width")
+	// Twenty stages with long ids — guaranteed to overflow 40 cells.
+	for i := 0; i < 20; i++ {
+		id := "stage_with_a_long_identifier_" + string(rune('a'+i%26))
+		w.StageStart(id)
+		w.StageDone(id, "advance")
+	}
+	out := w.Render()
+	for _, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > wantW {
+			t.Errorf("rendered line %d cells > width %d: %q", got, wantW, line)
+		}
 	}
 }
 

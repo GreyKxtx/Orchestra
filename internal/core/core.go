@@ -95,6 +95,11 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		WebSearch:          cfg.Web.Search,
 		LSP:                cfg.LSP,
 		Embed:              cfg.Embed,
+		// JSON-RPC core makes a hard "no side effects in dry-run" promise to
+		// remote clients (TUI / IDE / web). Block bash bypassing the staging
+		// overlay. CLI's plan-mode uses its own Runner without this flag so
+		// bash inspection (git status, go test) keeps working in plan mode.
+		BlockExecInDryRun: true,
 	})
 	if err != nil {
 		return nil, err

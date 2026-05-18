@@ -154,11 +154,19 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	// Serialise against any concurrent agent.run / skill.invoke / ops.apply
 	// that would otherwise race on the shared Runner's dry-run flag / staged
 	// ops. Also wire params.Apply into runner-level staging so workflow
-	// stages honour the dry-run/apply contract that AgentRun establishes.
+	// stages honour the dry-run/apply contract.
+	//
+	// Restore the prior dry-run flag on exit: WorkflowRun's Apply selection
+	// is per-call, not a long-lived mode change. Without restore, a direct
+	// tool.call right after a dry-run workflow would be spuriously blocked.
 	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	prevDry := c.tools.DryRun()
 	c.tools.SetDryRun(!params.Apply)
 	c.tools.ClearStaged()
+	defer func() {
+		c.tools.SetDryRun(prevDry)
+		c.runMu.Unlock()
+	}()
 
 	markersFor := func(skillName string) []string {
 		s := skills.Find(discoveredSkills, skillName)

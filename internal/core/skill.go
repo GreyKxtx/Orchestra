@@ -174,11 +174,17 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	// Serialise against concurrent agent.run / workflow.run / ops.apply so a
 	// neighbour cannot flip the shared Runner's dry-run flag mid-skill.
 	// skill.invoke is always dry-run (it has no Apply parameter): pin the flag
-	// to dryRun=true for the duration of this call.
+	// to dryRun=true for the duration of this call, then restore the previous
+	// value so a subsequent direct `tool.call(bash)` doesn't get spuriously
+	// blocked by stale state from a one-off skill.invoke.
 	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	prevDry := c.tools.DryRun()
 	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
+	defer func() {
+		c.tools.SetDryRun(prevDry)
+		c.runMu.Unlock()
+	}()
 
 	history, res, runErr := ag.Run(ctx, nil, params.Arguments)
 	if runErr != nil {
