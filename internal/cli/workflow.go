@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/skills"
+	"github.com/orchestra/orchestra/internal/stageinvoke"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/workflow"
 	"github.com/spf13/cobra"
@@ -222,23 +222,22 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 		hooksRunner = hr
 	}
 
-	inv := &workflowStageInvoker{
-		cfg:           cfg,
-		skills:        discoveredSkills,
-		refs:          discoveredRefs,
-		allowExec:     allowExecEffective,
-		allowWeb:      allowWebEffective,
-		allowBrowser:  allowBrowserEffective,
-		llmClient:     llmClient,
-		validator:     validator,
-		runner:        runner,
-		agentLogger:   agentLogger,
-		hooksRunner:   hooksRunner,
-		usageTracker:  usageTracker,
-		providerLabel: providerLabelFor(cfg, ""),
-		modelLabel:    cfg.LLM.Model,
-		maxSteps:      cfg.Agent.MaxSteps,
-	}
+	inv := stageinvoke.New(stageinvoke.Config{
+		Cfg:           cfg,
+		Skills:        discoveredSkills,
+		Refs:          discoveredRefs,
+		Client:        llmClient,
+		Validator:     validator,
+		Runner:        runner,
+		AllowExec:     allowExecEffective,
+		AllowWeb:      allowWebEffective,
+		AllowBrowser:  allowBrowserEffective,
+		AgentLogger:   agentLogger,
+		HooksRunner:   hooksRunner,
+		UsageTracker:  usageTracker,
+		ProviderLabel: providerLabelFor(cfg, ""),
+		ModelLabel:    cfg.LLM.Model,
+	})
 
 	markersFor := func(skillName string) []string {
 		s := skills.Find(discoveredSkills, skillName)
@@ -285,126 +284,3 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// workflowStageInvoker spawns a fresh agent per stage invocation using the
-// skill's body as system prompt and the skill's tools list as the tool
-// allow-list. Mirrors cliSkillRunner's mechanics but exposes the agent's
-// last assistant message text (not just SubtaskResult) so completion markers
-// embedded in the model's final content are visible to the workflow runner.
-type workflowStageInvoker struct {
-	cfg           *config.ProjectConfig
-	skills        []*skills.Skill
-	refs          map[string]string
-	allowExec     bool
-	allowWeb      bool
-	allowBrowser  bool
-	llmClient     llm.Client
-	validator     *schema.Validator
-	runner        *tools.Runner
-	agentLogger   *llm.Logger
-	hooksRunner   agent.HooksRunner
-	usageTracker  agent.UsageRecorder
-	providerLabel string
-	modelLabel    string
-	maxSteps      int
-}
-
-func (inv *workflowStageInvoker) Invoke(ctx context.Context, skillName, userQuery string) (string, error) {
-	s := skills.Find(inv.skills, skillName)
-	if s == nil {
-		return "", fmt.Errorf("unknown skill %q", skillName)
-	}
-	for _, t := range s.Tools {
-		if !config.ValidAgentTool(t) {
-			return "", fmt.Errorf("skill %q: invalid tool name %q", skillName, t)
-		}
-	}
-
-	systemPrompt, err := skills.PrepareBody(s.Body, userQuery, inv.refs)
-	if err != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, err)
-	}
-
-	var childTools []llm.ToolDef
-	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, inv.allowExec, inv.allowWeb, inv.allowBrowser)
-		if err != nil {
-			return "", fmt.Errorf("skill %q: resolve tools: %w", skillName, err)
-		}
-		childTools = resolved
-	} else {
-		childTools = tools.ListToolsForChild()
-	}
-
-	childClient := inv.llmClient
-	if s.Provider != "" {
-		provCfg, ok := inv.cfg.FindProvider(s.Provider)
-		if !ok {
-			return "", fmt.Errorf("skill %q: provider %q not found", skillName, s.Provider)
-		}
-		if s.Model != "" {
-			provCfg.Model = s.Model
-		}
-		childClient = llm.NewClient(provCfg)
-	} else if s.Model != "" {
-		over := inv.cfg.LLM
-		over.Model = s.Model
-		childClient = llm.NewClient(over)
-	}
-	if oc, ok := childClient.(*llm.OpenAIClient); ok && inv.agentLogger != nil {
-		oc.SetLogger(inv.agentLogger)
-	}
-
-	maxSteps := inv.maxSteps
-	if maxSteps <= 0 {
-		maxSteps = 24
-	}
-
-	ag, err := agent.New(childClient, inv.validator, inv.runner, agent.Options{
-		MaxSteps:             maxSteps,
-		MaxInvalidRetries:    inv.cfg.Agent.MaxInvalidRetries,
-		MaxDeniedToolRepeats: inv.cfg.Agent.MaxDeniedRepeats,
-		MaxToolErrorRepeats:  inv.cfg.Agent.MaxToolErrors,
-		MaxFinalFailures:     inv.cfg.Agent.MaxFinalFailures,
-		MaxPromptBytes:       inv.cfg.Limits.ContextKB * 1024,
-		CompactThresholdPct:  inv.cfg.Agent.CompactThresholdPct,
-		LLMStepTimeout:       time.Duration(inv.cfg.LLM.TimeoutS) * time.Second,
-		AllowExec:            inv.allowExec,
-		AllowWeb:             inv.allowWeb,
-		AllowBrowser:         inv.allowBrowser,
-		CustomTools:          childTools,
-		SystemPromptOverride: systemPrompt,
-		PermissionRules:      inv.cfg.Permissions.Rules,
-		AgentLogger:          inv.agentLogger,
-		HooksRunner:          inv.hooksRunner,
-		UsageTracker:         inv.usageTracker,
-		ProviderLabel:        inv.providerLabel,
-		ModelLabel:           inv.modelLabel,
-		// SubtaskRunner and SkillRunner intentionally nil — workflow runner
-		// is the single source of orchestration; stages can't spawn their own.
-	})
-	if err != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, err)
-	}
-
-	history, res, runErr := ag.Run(ctx, nil, userQuery)
-	if runErr != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, runErr)
-	}
-	// Preference order for the stage output:
-	//   1. SubtaskResult (set when skill ends with task_result tool),
-	//   2. Last assistant message with non-empty content (markers + XML live here),
-	//   3. Synthetic patch count summary as a last resort.
-	if res != nil && res.SubtaskResult != "" {
-		return res.SubtaskResult, nil
-	}
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role == llm.RoleAssistant && strings.TrimSpace(history[i].Content) != "" {
-			return history[i].Content, nil
-		}
-	}
-	patchCount := 0
-	if res != nil {
-		patchCount = len(res.Patches)
-	}
-	return fmt.Sprintf("skill %q finished (no text output; %d patch(es))", skillName, patchCount), nil
-}

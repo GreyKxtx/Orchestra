@@ -132,6 +132,9 @@ func (a *App) cmdRunWorkflow(name, args string) tea.Cmd {
 	a.agentBusy = true
 	a.statusBar.SetAgentBusy(true)
 	a.chat.SetAgentBusy(true)
+	if a.workflowProgress != nil {
+		a.workflowProgress.Begin(name)
+	}
 	a.layout()
 	return func() tea.Msg {
 		res, err := rpc.WorkflowRun(context.Background(), name, args, rpcclient.WorkflowRunOptions{
@@ -172,6 +175,9 @@ func (a *App) handleWorkflowResult(m workflowResultMsg) tea.Cmd {
 	a.agentBusy = false
 	a.statusBar.SetAgentBusy(false)
 	a.chat.SetAgentBusy(false)
+	if a.workflowProgress != nil {
+		a.workflowProgress.End()
+	}
 	a.layout()
 	if m.err != nil {
 		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] workflow.run: " + m.err.Error()})
