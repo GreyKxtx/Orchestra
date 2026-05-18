@@ -303,6 +303,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.chat.SetMessages(a.session.Messages)
 		return a, nil
+
+	case systemMsgMsg:
+		return a, a.handleSystemMsg(m)
+
+	case workflowResultMsg:
+		return a, a.handleWorkflowResult(m)
+
+	case skillResultMsg:
+		return a, a.handleSkillResult(m)
 	}
 
 	// Type-to-replace: printable input while a selection is active replaces
@@ -788,15 +797,26 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		Mode:  a.cfg.Mode,
 		Model: a.cfg.Model,
 	})
+	a.history.Push(text)
+	a.history.Reset()
+	a.input.Reset()
+
+	// Intercept skill/workflow commands BEFORE the generic agent.run path.
+	// "/workflows" and "/skills" (no args) list available items.
+	// "/workflow <name> <args>" runs the named workflow with the rest as
+	// arguments. Same for "/skill <name> <args>". Anything else falls
+	// through to the regular agent.run flow.
+	if cmd := a.maybeRunSkillOrWorkflow(text); cmd != nil {
+		a.chat.SetMessages(a.session.Messages)
+		return a, cmd, true
+	}
+
 	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
 	a.reasoning.Reset()
 	a.stepTextLen = 0
 	a.turnStartedAt = time.Now()
 	a.chat.ScrollToBottom()
 	a.chat.SetMessages(a.session.Messages)
-	a.history.Push(text)
-	a.history.Reset()
-	a.input.Reset()
 	saveCmd := a.persistSessionCmd()
 	if a.rpc != nil {
 		a.agentBusy = true

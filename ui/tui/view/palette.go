@@ -27,6 +27,10 @@ var AllSlashCmds = []SlashCmd{
 	{"/model", "show current model"},
 	{"/quit", "exit Orchestra TUI"},
 	{"/sessions", "browse saved sessions"},
+	{"/skill", "invoke a single skill"},
+	{"/skills", "list available skills"},
+	{"/workflow", "run a multi-stage workflow"},
+	{"/workflows", "list available workflows"},
 }
 
 const maxPaletteVisible = 6
