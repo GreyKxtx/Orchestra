@@ -1,0 +1,21 @@
+name: security_audit
+description: Read-only security audit — parallel researchers fan out, then security_auditor consolidates and roadmapper plans fixes.
+
+stages:
+  - id: research
+    skill: researcher
+    parallel: 3
+    inputs:
+      - "$ARGUMENTS\n\nFocus on attack surface: handlers, file IO, exec, deserialisation, crypto, auth."
+
+  - id: audit
+    skill: security_auditor
+    depends_on: [research]
+    inputs:
+      - "Audit scope:\n$ARGUMENTS\n\nParallel research passes:\n{research.output}"
+
+  - id: plan_fixes
+    skill: roadmapper
+    depends_on: [audit]
+    inputs:
+      - "Audit findings:\n{audit.output}\n\nPlan fixes — order by severity (critical > high > medium > low). Each finding = one phase with success_criteria 'vulnerability X no longer exploitable'."

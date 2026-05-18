@@ -1,0 +1,26 @@
+name: release
+description: Pre-release hygiene — clean history → update docs → test → write PR. Read-only-ish (only docs writes).
+
+stages:
+  - id: curate
+    skill: git_curator
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: docs
+    skill: docs_writer
+    depends_on: [curate]
+    inputs:
+      - "Sync README and CHANGELOG with the current state of the code. Branch context:\n{curate.output}"
+
+  - id: test
+    skill: test_runner
+    depends_on: [docs]
+    inputs:
+      - "Run the full test suite. Branch:\n{curate.output}"
+
+  - id: pr
+    skill: pr_writer
+    depends_on: [test]
+    inputs:
+      - "History curated:\n{curate.output}\n\nDocs:\n{docs.output}\n\nTest results:\n{test.output}\n\nDraft release PR."
