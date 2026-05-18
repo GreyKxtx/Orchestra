@@ -171,6 +171,50 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return nil, h.core.SessionClose(p)
 
+	case "workflow.list":
+		var p WorkflowListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+		}
+		return h.core.WorkflowList(p)
+
+	case "workflow.run":
+		var p WorkflowRunParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+		}
+		if h.notifier != nil {
+			p.OnEvent = func(method string, params any) {
+				_ = h.notifier.Notify(method, params)
+			}
+		}
+		if h.requester != nil {
+			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
+		}
+		return h.core.WorkflowRun(ctx, p)
+
+	case "skill.list":
+		var p SkillListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+		}
+		return h.core.SkillList(p)
+
+	case "skill.invoke":
+		var p SkillInvokeParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+		}
+		if h.notifier != nil {
+			p.OnEvent = func(method string, params any) {
+				_ = h.notifier.Notify(method, params)
+			}
+		}
+		if h.requester != nil {
+			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
+		}
+		return h.core.SkillInvoke(ctx, p)
+
 	default:
 		return nil, jsonrpc.MethodNotFound(method)
 	}

@@ -376,6 +376,12 @@ func TestRun_RedoResetsDescendants(t *testing.T) {
 }
 
 func TestDiscover_ProjectAndUser(t *testing.T) {
+	// Isolate user-global discovery — developer machines often have a
+	// populated ~/.orchestra/workflows/ that bleeds into this test.
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+
 	root := t.TempDir()
 	writeWF(t, filepath.Join(root, ".orchestra", "workflows"), "p.yaml",
 		"name: p\nstages:\n  - id: a\n    skill: x\n")
@@ -384,6 +390,14 @@ func TestDiscover_ProjectAndUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ws) != 1 || ws[0].Name != "p" {
-		t.Fatalf("got: %v", ws)
+		t.Fatalf("got %d workflows, names=%v", len(ws), wfNames(ws))
 	}
+}
+
+func wfNames(ws []*Workflow) []string {
+	out := make([]string, len(ws))
+	for i, w := range ws {
+		out[i] = w.Name
+	}
+	return out
 }
