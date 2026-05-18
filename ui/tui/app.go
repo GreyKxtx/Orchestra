@@ -75,6 +75,13 @@ type App struct {
 	// EventWorkflowStageStart/Done events; cleared on workflowResultMsg.
 	workflowProgress *view.WorkflowProgress
 
+	// activeCancel cancels the currently in-flight long-running RPC
+	// (agent.run / workflow.run / skill.invoke). Set when the call starts,
+	// cleared when it completes. Bound to Esc while agentBusy so the user
+	// can abort a stuck run; the rpcclient's Call sends $/cancelRequest to
+	// the core so the server-side ctx is cancelled too.
+	activeCancel context.CancelFunc
+
 	history *state.InputHistory
 
 	commandModal   *view.PaletteModal   // Ctrl+K modal

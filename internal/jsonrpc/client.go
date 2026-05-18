@@ -231,6 +231,11 @@ func (c *Client) Call(ctx context.Context, method string, params any, result any
 	select {
 	case <-ctx.Done():
 		removePending()
+		// Best-effort cancel notification — server may be mid-call on this id.
+		// Fire-and-forget: if the write fails (broken pipe, closed conn), we
+		// still return ctx.Err() so the caller unwinds. The server's handler
+		// for $/cancelRequest is a notification (no response expected).
+		_ = c.notifyCancel(idStr)
 		return ctx.Err()
 	case r := <-ch:
 		if r.err != nil {
@@ -243,4 +248,23 @@ func (c *Client) Call(ctx context.Context, method string, params any, result any
 	case <-c.closed:
 		return fmt.Errorf("jsonrpc: connection closed")
 	}
+}
+
+// notifyCancel sends a JSON-RPC `$/cancelRequest` notification for the given
+// in-flight request id. The server uses it to cancel the per-request ctx of
+// the matching dispatched call. Returns the write error so the caller can
+// log if it likes; cancellation is best-effort and never blocks unwinding.
+func (c *Client) notifyCancel(id string) error {
+	if c == nil {
+		return nil
+	}
+	params, _ := json.Marshal(map[string]any{"id": id})
+	req := Request{
+		JSONRPC: "2.0",
+		Method:  "$/cancelRequest",
+		Params:  params,
+	}
+	c.wMu.Lock()
+	defer c.wMu.Unlock()
+	return c.w.WriteMessage(req)
 }

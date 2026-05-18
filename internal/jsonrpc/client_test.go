@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 )
 
 // serverPipe wires a Server and Client together via in-process pipes.
@@ -66,6 +67,49 @@ func TestClient_ContextCancel(t *testing.T) {
 		t.Fatal("expected error after cancel, got nil")
 	}
 	close(blocked) // unblock handler so server can clean up
+}
+
+// TestServer_CancelRequest_AbortsInFlight verifies the full $/cancelRequest
+// round-trip: client cancels its ctx, the rpcclient auto-sends the cancel
+// notification, server cancels the per-request ctx, and the handler returns
+// promptly via ctx.Err() instead of waiting for `blocked` to close.
+func TestServer_CancelRequest_AbortsInFlight(t *testing.T) {
+	blocked := make(chan struct{})
+	defer close(blocked) // closed at end so handler never strands
+	h := blockingHandler{blocked: blocked}
+	srv, cli := serverPipe(t, h)
+
+	srvCtx, srvCancel := context.WithCancel(context.Background())
+	defer srvCancel()
+	go func() { _ = srv.Serve(srvCtx) }()
+
+	callCtx, callCancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cli.Call(callCtx, "block", nil, nil)
+	}()
+
+	// Give the request a moment to register on the server side, then cancel.
+	// Without this, callCancel may race ahead of the dispatch goroutine and
+	// the server hasn't recorded the in-flight id yet.
+	deadline := make(chan struct{})
+	go func() {
+		// 50ms is enough for the pipe round-trip + dispatch in-process.
+		t := time.NewTimer(50 * time.Millisecond)
+		<-t.C
+		close(deadline)
+	}()
+	<-deadline
+	callCancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error after cancel, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Call did not unblock after cancel — $/cancelRequest path broken")
+	}
 }
 
 func TestClient_Notification(t *testing.T) {
