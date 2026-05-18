@@ -19,14 +19,17 @@ import (
 // final SubtaskResult or a concise patch-count summary if it produced
 // patches instead of explicit results.
 type cliSkillRunner struct {
-	cfg         *config.ProjectConfig
-	skills      []*skills.Skill
-	refs        map[string]string
-	baseClient  llm.Client
-	validator   *schema.Validator
-	toolRunner  *tools.Runner
-	agentLogger *llm.Logger
-	maxSteps    int
+	cfg          *config.ProjectConfig
+	skills       []*skills.Skill
+	refs         map[string]string
+	baseClient   llm.Client
+	validator    *schema.Validator
+	toolRunner   *tools.Runner
+	agentLogger  *llm.Logger
+	maxSteps     int
+	allowExec    bool
+	allowWeb     bool
+	allowBrowser bool
 }
 
 func newCLISkillRunner(
@@ -38,19 +41,23 @@ func newCLISkillRunner(
 	toolRunner *tools.Runner,
 	agentLogger *llm.Logger,
 	maxSteps int,
+	allowExec, allowWeb, allowBrowser bool,
 ) *cliSkillRunner {
 	if maxSteps <= 0 {
 		maxSteps = 12
 	}
 	return &cliSkillRunner{
-		cfg:         cfg,
-		skills:      discovered,
-		refs:        refs,
-		baseClient:  baseClient,
-		validator:   validator,
-		toolRunner:  toolRunner,
-		agentLogger: agentLogger,
-		maxSteps:    maxSteps,
+		cfg:          cfg,
+		skills:       discovered,
+		refs:         refs,
+		baseClient:   baseClient,
+		validator:    validator,
+		toolRunner:   toolRunner,
+		agentLogger:  agentLogger,
+		maxSteps:     maxSteps,
+		allowExec:    allowExec,
+		allowWeb:     allowWeb,
+		allowBrowser: allowBrowser,
 	}
 }
 
@@ -76,7 +83,7 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNames(s.Tools)
+		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, r.allowExec, r.allowWeb, r.allowBrowser)
 		if err != nil {
 			return "", fmt.Errorf("skill %q: resolve tools: %w", name, err)
 		}

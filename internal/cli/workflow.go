@@ -45,10 +45,18 @@ var workflowRunCmd = &cobra.Command{
 	RunE:  runWorkflowRun,
 }
 
-var workflowApplyFlag bool
+var (
+	workflowApplyFlag        bool
+	workflowAllowExecFlag    bool
+	workflowAllowWebFlag     bool
+	workflowAllowBrowserFlag bool
+)
 
 func init() {
 	workflowRunCmd.Flags().BoolVar(&workflowApplyFlag, "apply", false, "Allow workflow stages to write files (default: dry-run; ops are staged in-memory)")
+	workflowRunCmd.Flags().BoolVar(&workflowAllowExecFlag, "allow-exec", false, "Allow bash/git.commit/git.push in workflow stages (DANGEROUS)")
+	workflowRunCmd.Flags().BoolVar(&workflowAllowWebFlag, "allow-web", false, "Allow webfetch/websearch in workflow stages")
+	workflowRunCmd.Flags().BoolVar(&workflowAllowBrowserFlag, "allow-browser", false, "Allow browser.* tools in workflow stages")
 	workflowCmd.AddCommand(workflowListCmd, workflowShowCmd, workflowRunCmd)
 	rootCmd.AddCommand(workflowCmd)
 }
@@ -169,6 +177,12 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	}
 
 	dryRun := !workflowApplyFlag
+	allowExecEffective := workflowAllowExecFlag
+	if cfg.Exec.Confirm != nil && !*cfg.Exec.Confirm {
+		allowExecEffective = true
+	}
+	allowWebEffective := workflowAllowWebFlag
+	allowBrowserEffective := workflowAllowBrowserFlag
 	usageTracker := newUsageTracker("workflow:"+w.Name, cfg)
 
 	llmClient := llm.NewClient(cfg.LLM)
@@ -212,6 +226,9 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 		cfg:           cfg,
 		skills:        discoveredSkills,
 		refs:          discoveredRefs,
+		allowExec:     allowExecEffective,
+		allowWeb:      allowWebEffective,
+		allowBrowser:  allowBrowserEffective,
 		llmClient:     llmClient,
 		validator:     validator,
 		runner:        runner,
@@ -277,6 +294,9 @@ type workflowStageInvoker struct {
 	cfg           *config.ProjectConfig
 	skills        []*skills.Skill
 	refs          map[string]string
+	allowExec     bool
+	allowWeb      bool
+	allowBrowser  bool
 	llmClient     llm.Client
 	validator     *schema.Validator
 	runner        *tools.Runner
@@ -306,7 +326,7 @@ func (inv *workflowStageInvoker) Invoke(ctx context.Context, skillName, userQuer
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNames(s.Tools)
+		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, inv.allowExec, inv.allowWeb, inv.allowBrowser)
 		if err != nil {
 			return "", fmt.Errorf("skill %q: resolve tools: %w", skillName, err)
 		}

@@ -61,6 +61,12 @@ func BuildUserPrompt(userQuery string, snap WorkspaceSnapshot, allowedTools []st
 	}
 	b.WriteString("</user_info>\n\n")
 
+	if len(allowedTools) > 0 {
+		b.WriteString("<available_tools>\n")
+		b.WriteString(strings.Join(allowedTools, ", "))
+		b.WriteString("\n</available_tools>\n\n")
+	}
+
 	b.WriteString("<user_query>\n")
 	b.WriteString(strings.TrimSpace(userQuery))
 	b.WriteString("\n</user_query>\n")
