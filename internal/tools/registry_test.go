@@ -49,6 +49,41 @@ func TestResolveToolNames(t *testing.T) {
 	}
 }
 
+func TestResolveToolNamesWithPolicy_DropsGatedTools(t *testing.T) {
+	// Skill requests bash + webfetch + read, but runtime denies exec and web.
+	// Expect only `read` to remain; no error for the dropped ones.
+	got, err := ResolveToolNamesWithPolicy(
+		[]string{"bash", "webfetch", "read"},
+		false, false, false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Function.Name != "read" {
+		t.Fatalf("expected only [read], got %d tools: %+v", len(got), got)
+	}
+}
+
+func TestResolveToolNamesWithPolicy_AllAllowed(t *testing.T) {
+	got, err := ResolveToolNamesWithPolicy(
+		[]string{"bash", "webfetch", "read", "git.commit"},
+		true, true, true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("expected all 4 tools, got %d", len(got))
+	}
+}
+
+func TestResolveToolNamesWithPolicy_UnknownStillErrors(t *testing.T) {
+	_, err := ResolveToolNamesWithPolicy([]string{"read", "no-such-tool"}, true, true, true)
+	if err == nil {
+		t.Fatal("expected error for unknown tool")
+	}
+}
+
 func TestResolveToolNames_PreservesOrder(t *testing.T) {
 	names := []string{"write", "read", "grep"}
 	defs, err := ResolveToolNames(names)

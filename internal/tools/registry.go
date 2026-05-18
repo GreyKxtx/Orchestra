@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/orchestra/orchestra/internal/llm"
 )
@@ -892,6 +893,18 @@ func allToolDefsMap() map[string]llm.ToolDef {
 // Returns an error if any name is unknown. The list of valid names is the same
 // set exposed in config.validAgentToolNames.
 func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
+	return ResolveToolNamesWithPolicy(names, true, true, true)
+}
+
+// ResolveToolNamesWithPolicy is like ResolveToolNames but silently drops
+// tools the runtime would deny by policy (allowExec / allowWeb /
+// allowBrowser). This keeps the model from advertising tools it cannot
+// actually call — without it, the skill loop wastes turns retrying
+// denied tool calls until MaxDeniedToolRepeats trips.
+//
+// Unknown names still produce an error. Names that are present but
+// gated-off are silently omitted.
+func ResolveToolNamesWithPolicy(names []string, allowExec, allowWeb, allowBrowser bool) ([]llm.ToolDef, error) {
 	m := allToolDefsMap()
 	out := make([]llm.ToolDef, 0, len(names))
 	for _, name := range names {
@@ -899,9 +912,35 @@ func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
 		if !ok {
 			return nil, fmt.Errorf("unknown tool name: %q", name)
 		}
+		if !allowExec && isExecGated(name) {
+			continue
+		}
+		if !allowWeb && isWebGated(name) {
+			continue
+		}
+		if !allowBrowser && isBrowserGated(name) {
+			continue
+		}
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+func isExecGated(name string) bool {
+	switch name {
+	case "bash", "exec.run", "bash_output", "bash_kill",
+		"git.commit", "git.branch", "git.checkout", "git.push":
+		return true
+	}
+	return false
+}
+
+func isWebGated(name string) bool {
+	return name == "webfetch" || name == "websearch"
+}
+
+func isBrowserGated(name string) bool {
+	return strings.HasPrefix(name, "browser.") || strings.HasPrefix(name, "browser_")
 }
 
 func toolLSPDefinition() llm.ToolDef {

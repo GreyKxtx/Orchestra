@@ -514,7 +514,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				}
 				if def.Tools != nil {
 					var resolveErr error
-					customAgentTools, resolveErr = tools.ResolveToolNames(def.Tools)
+					customAgentTools, resolveErr = tools.ResolveToolNamesWithPolicy(def.Tools, allowExecEffective, allowWebEffective, allowBrowserEffective)
 					if resolveErr != nil {
 						retErr = resolveErr
 						return retErr
@@ -547,7 +547,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		var skillRunner agent.SkillRunner
 		var skillSpecsList []agent.SkillSpec
 		if len(discoveredSkills) > 0 {
-			skillRunner = newCLISkillRunner(cfg, discoveredSkills, discoveredRefs, llmClient, validator, runner, agentLogger, cfg.Agent.MaxSteps)
+			skillRunner = newCLISkillRunner(cfg, discoveredSkills, discoveredRefs, llmClient, validator, runner, agentLogger, cfg.Agent.MaxSteps, allowExecEffective, allowWebEffective, allowBrowserEffective)
 			skillSpecsList = skillSpecs(discoveredSkills)
 		}
 
