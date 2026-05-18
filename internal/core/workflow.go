@@ -63,8 +63,8 @@ type WorkflowRunParams struct {
 
 	// OnEvent receives streaming events. Set programmatically by the RPC
 	// handler; not serialised. Events:
-	//   "workflow.stage_start" {name, stage_id, attempt}
-	//   "workflow.stage_done"  {name, stage_id, attempt, marker, action, output_kb}
+	//   "workflow/stage_start" {name, stage_id, attempt}
+	//   "workflow/stage_done"  {name, stage_id, attempt, marker, action, output_kb}
 	OnEvent func(method string, params any) `json:"-"`
 
 	// PermissionRequester, if non-nil, gates exec.run interactively. Set
@@ -94,10 +94,10 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
 	if strings.TrimSpace(params.Name) == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "workflow name is empty", nil)
+		return nil, protocol.NewError(protocol.InvalidParams, "workflow name is empty", nil)
 	}
 	if strings.TrimSpace(params.Arguments) == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "workflow arguments are empty", nil)
+		return nil, protocol.NewError(protocol.InvalidParams, "workflow arguments are empty", nil)
 	}
 
 	ws, err := workflow.Discover(c.workspaceRoot)
@@ -106,7 +106,7 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	}
 	w := workflow.Find(ws, params.Name)
 	if w == nil {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput,
+		return nil, protocol.NewError(protocol.NotFound,
 			fmt.Sprintf("workflow %q not found", params.Name), nil)
 	}
 
@@ -120,9 +120,17 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	}
 	for _, stage := range w.Stages {
 		if skills.Find(discoveredSkills, stage.Skill) == nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput,
+			return nil, protocol.NewError(protocol.NotFound,
 				fmt.Sprintf("workflow %q: stage %q references unknown skill %q", w.Name, stage.ID, stage.Skill), nil)
 		}
+	}
+	if err := workflow.ValidateAgainstSkills(w, func(name string) []string {
+		if s := skills.Find(discoveredSkills, name); s != nil {
+			return s.CompletionMarkers
+		}
+		return nil
+	}); err != nil {
+		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
 
 	allowExec := params.AllowExec
@@ -143,6 +151,15 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 		PermissionRequester: convertPermissionRequester(params.PermissionRequester),
 	})
 
+	// Serialise against any concurrent agent.run / skill.invoke / ops.apply
+	// that would otherwise race on the shared Runner's dry-run flag / staged
+	// ops. Also wire params.Apply into runner-level staging so workflow
+	// stages honour the dry-run/apply contract that AgentRun establishes.
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	c.tools.SetDryRun(!params.Apply)
+	c.tools.ClearStaged()
+
 	markersFor := func(skillName string) []string {
 		s := skills.Find(discoveredSkills, skillName)
 		if s == nil {
@@ -159,14 +176,14 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	opts := workflow.RunOptions{
 		Arguments: params.Arguments,
 		OnStageStart: func(stageID string, attempt int) {
-			emit("workflow.stage_start", map[string]any{
+			emit("workflow/stage_start", map[string]any{
 				"name":     w.Name,
 				"stage_id": stageID,
 				"attempt":  attempt,
 			})
 		},
 		OnStageDone: func(stageID string, attempt int, output, marker, nextAction string) {
-			emit("workflow.stage_done", map[string]any{
+			emit("workflow/stage_done", map[string]any{
 				"name":      w.Name,
 				"stage_id":  stageID,
 				"attempt":   attempt,

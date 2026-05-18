@@ -182,11 +182,11 @@ func (w *WorkflowProgress) Render() string {
 	// Truncate if the joined line exceeds available width; lipgloss handles
 	// ANSI-aware width here.
 	if lipgloss.Width(inner) > innerW {
-		// Crude trim by visible width — drop bytes from the tail until it fits.
-		// Stages are normally short (3-8 chars each), so this only fires in
-		// pathological cases (many stages on a narrow terminal).
+		// Crude trim by visible width — drop bytes from the tail until the
+		// remainder PLUS the trailing ellipsis fits. Without the -1 margin
+		// the rendered line ends up innerW+1 wide and overflows the box.
 		runes := []rune(stripStyling(inner))
-		for lipgloss.Width(string(runes)) > innerW && len(runes) > 0 {
+		for len(runes) > 0 && lipgloss.Width(string(runes))+1 > innerW {
 			runes = runes[:len(runes)-1]
 		}
 		inner = textStyle.Render(string(runes) + "…")

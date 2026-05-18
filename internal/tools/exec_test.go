@@ -89,7 +89,10 @@ func TestExecRun_Timeout_ReturnsExecTimeout(t *testing.T) {
 }
 
 func TestMaybeShellExec_PlainCommandPassesThrough(t *testing.T) {
-	cmd, args, viaShell := maybeShellExec("git", []string{"status"})
+	cmd, args, viaShell, err := maybeShellExec("git", []string{"status"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
 	if viaShell {
 		t.Error("plain command should not be routed via shell")
 	}
@@ -99,7 +102,10 @@ func TestMaybeShellExec_PlainCommandPassesThrough(t *testing.T) {
 }
 
 func TestMaybeShellExec_CommandWithSpacesGoesToShell(t *testing.T) {
-	cmd, args, viaShell := maybeShellExec("go version", nil)
+	cmd, args, viaShell, err := maybeShellExec("go version", nil)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
 	if !viaShell {
 		t.Fatal("command with space should be routed via shell")
 	}
@@ -115,12 +121,25 @@ func TestMaybeShellExec_CommandWithSpacesGoesToShell(t *testing.T) {
 }
 
 func TestMaybeShellExec_CompoundCommandGoesToShell(t *testing.T) {
-	_, args, viaShell := maybeShellExec("go build && go test", nil)
+	_, args, viaShell, err := maybeShellExec("go build && go test", nil)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
 	if !viaShell {
 		t.Fatal("compound command should be routed via shell")
 	}
 	if args[1] != "go build && go test" {
 		t.Errorf("compound preserved? got %q", args[1])
+	}
+}
+
+// Args supplied alongside a shell-requiring command must be rejected — splicing
+// them into the shell expression would be an injection sink. The caller has to
+// put the whole shell expression in `command`.
+func TestMaybeShellExec_RefusesArgsWhenShellRouting(t *testing.T) {
+	_, _, _, err := maybeShellExec("git log", []string{"$(rm -rf ~)"})
+	if err == nil {
+		t.Fatal("expected error when shell-routing with non-empty args")
 	}
 }
 

@@ -17,6 +17,12 @@ const (
 	ExecDenied         ErrorCode = "ExecDenied"
 	ExecTimeout        ErrorCode = "ExecTimeout"
 	ExecFailed         ErrorCode = "ExecFailed"
+	// InvalidParams maps to the standard JSON-RPC "Invalid params" (-32602).
+	// Use for malformed / missing required parameters before any work begins.
+	InvalidParams ErrorCode = "InvalidParams"
+	// NotFound is for "named thing does not exist" — e.g. unknown workflow,
+	// unknown skill, unknown session. Maps to -32012 (impl-defined).
+	NotFound ErrorCode = "NotFound"
 )
 
 // RPCCode maps an internal ErrorCode to a JSON-RPC server error code.
@@ -46,6 +52,10 @@ func (c ErrorCode) RPCCode() int {
 		return -32005
 	case ExecFailed:
 		return -32006
+	case InvalidParams:
+		return -32602 // JSON-RPC standard "Invalid params"
+	case NotFound:
+		return -32012
 	default:
 		return -32099
 	}

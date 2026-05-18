@@ -8,7 +8,7 @@ const (
 	// v3: added agent-level streaming events (tool_call_completed, step_done,
 	//     pending_ops, recoverable_error) and bidirectional permission/request.
 	// v4: added workflow.list, workflow.run, skill.list, skill.invoke methods
-	//     plus workflow.stage_start / workflow.stage_done notification events.
+	//     plus workflow/stage_start / workflow/stage_done notification events.
 	ProtocolVersion = 4
 
 	// OpsVersion is the version of Internal Ops.

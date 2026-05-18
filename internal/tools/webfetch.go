@@ -153,6 +153,12 @@ func ssrfSafeDialer() func(ctx context.Context, network, addr string) (net.Conn,
 	}
 }
 
+// cgnatNet is the carrier-grade NAT range (RFC 6598). Go's net.IP.IsPrivate
+// covers RFC 1918 (10/8, 172.16/12, 192.168/16) and ULA fc00::/7 but NOT
+// 100.64.0.0/10, which is used by ISPs for shared customer address space and
+// is internal-only from the agent's point of view.
+var cgnatNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
 // isBlockedIP reports whether ip is private, loopback, link-local, or otherwise
 // unsuitable for outbound requests from an AI agent.
 func isBlockedIP(ip net.IP) bool {
@@ -161,7 +167,8 @@ func isBlockedIP(ip net.IP) bool {
 		ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() ||
-		ip.IsMulticast()
+		ip.IsMulticast() ||
+		cgnatNet.Contains(ip)
 }
 
 // extractTextFromHTML parses HTML and returns (title, body-text).

@@ -27,12 +27,13 @@ const (
 
 	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent
 
-	// Workflow stage events (Protocol v4+).
-	EventWorkflowStageStart EventKind = "workflow.stage_start"
-	EventWorkflowStageDone  EventKind = "workflow.stage_done"
+	// Workflow stage events (Protocol v4+). Note the `/` separator — matches
+	// LSP-style notification naming used by agent/event, exec/output_chunk, etc.
+	EventWorkflowStageStart EventKind = "workflow/stage_start"
+	EventWorkflowStageDone  EventKind = "workflow/stage_done"
 )
 
-// WorkflowStagePayload carries the data for workflow.stage_start / .stage_done.
+// WorkflowStagePayload carries the data for workflow/stage_start / stage_done.
 type WorkflowStagePayload struct {
 	Name     string `json:"name"`
 	StageID  string `json:"stage_id"`

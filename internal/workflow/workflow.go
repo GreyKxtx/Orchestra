@@ -152,6 +152,29 @@ func Validate(w *Workflow) error {
 	return nil
 }
 
+// ValidateAgainstSkills cross-checks a workflow against the resolved skill
+// catalogue. It assumes `Validate(w)` already passed. `markersFor(skillName)`
+// returns the skill's completion markers, or nil when the skill is unknown
+// (caller should have rejected unknown skills upstream).
+//
+// Rejects:
+//   - any stage with `loop_until_marker` set whose referenced skill exposes
+//     no CompletionMarkers — such a stage would loop until `max_attempts`
+//     and then fail, wasting LLM budget on a guaranteed dead-end.
+func ValidateAgainstSkills(w *Workflow, markersFor func(skillName string) []string) error {
+	for _, s := range w.Stages {
+		if s.LoopUntilMarker == "" {
+			continue
+		}
+		markers := markersFor(s.Skill)
+		if len(markers) == 0 {
+			return fmt.Errorf("workflow %q: stage %q has loop_until_marker=%q but skill %q exposes no completion_markers — the loop can never satisfy its exit condition",
+				w.Name, s.ID, s.LoopUntilMarker, s.Skill)
+		}
+	}
+	return nil
+}
+
 // TopoSort returns stage IDs in dependency order. Errors out on cycles.
 func TopoSort(w *Workflow) ([]string, error) {
 	indeg := make(map[string]int, len(w.Stages))

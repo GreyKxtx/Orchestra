@@ -93,6 +93,7 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 	}
 
 	childClient := r.baseClient
+	overridden := false
 	if s.Provider != "" {
 		provCfg, ok := r.cfg.FindProvider(s.Provider)
 		if !ok {
@@ -102,13 +103,21 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 			provCfg.Model = s.Model
 		}
 		childClient = llm.NewClient(provCfg)
+		overridden = true
 	} else if s.Model != "" {
 		overrideCfg := r.cfg.LLM
 		overrideCfg.Model = s.Model
 		childClient = llm.NewClient(overrideCfg)
+		overridden = true
 	}
-	if oc, ok := childClient.(*llm.OpenAIClient); ok && r.agentLogger != nil {
-		oc.SetLogger(r.agentLogger)
+	// Only attach the logger when we built a fresh override client. The shared
+	// baseClient already has its logger set once at construction time; calling
+	// SetLogger on it here is a plain pointer write that races with any
+	// concurrent caller of the same client (e.g. parallel workflow cohorts).
+	if overridden {
+		if oc, ok := childClient.(*llm.OpenAIClient); ok && r.agentLogger != nil {
+			oc.SetLogger(r.agentLogger)
+		}
 	}
 
 	ag, err := agent.New(childClient, r.validator, r.toolRunner, agent.Options{
