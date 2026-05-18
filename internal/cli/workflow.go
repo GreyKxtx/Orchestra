@@ -156,6 +156,10 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("workflow: discover skills: %w", err)
 	}
+	discoveredRefs, err := skills.DiscoverRefs(cfg.ProjectRoot)
+	if err != nil {
+		return fmt.Errorf("workflow: discover refs: %w", err)
+	}
 
 	// Validate every stage's skill exists before doing any LLM work.
 	for _, stage := range w.Stages {
@@ -207,6 +211,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	inv := &workflowStageInvoker{
 		cfg:           cfg,
 		skills:        discoveredSkills,
+		refs:          discoveredRefs,
 		llmClient:     llmClient,
 		validator:     validator,
 		runner:        runner,
@@ -271,6 +276,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 type workflowStageInvoker struct {
 	cfg           *config.ProjectConfig
 	skills        []*skills.Skill
+	refs          map[string]string
 	llmClient     llm.Client
 	validator     *schema.Validator
 	runner        *tools.Runner
@@ -293,7 +299,10 @@ func (inv *workflowStageInvoker) Invoke(ctx context.Context, skillName, userQuer
 		}
 	}
 
-	systemPrompt := strings.ReplaceAll(s.Body, argumentsMarker, userQuery)
+	systemPrompt, err := skills.PrepareBody(s.Body, userQuery, inv.refs)
+	if err != nil {
+		return "", fmt.Errorf("skill %q: %w", skillName, err)
+	}
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {

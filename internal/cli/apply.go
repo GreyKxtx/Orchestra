@@ -543,10 +543,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		// Skipped silently on error so a malformed skill file doesn't kill
 		// regular apply flow — the error will resurface on `orchestra skills list`.
 		discoveredSkills, _ := skills.Discover(cfg.ProjectRoot)
+		discoveredRefs, _ := skills.DiscoverRefs(cfg.ProjectRoot)
 		var skillRunner agent.SkillRunner
 		var skillSpecsList []agent.SkillSpec
 		if len(discoveredSkills) > 0 {
-			skillRunner = newCLISkillRunner(cfg, discoveredSkills, llmClient, validator, runner, agentLogger, cfg.Agent.MaxSteps)
+			skillRunner = newCLISkillRunner(cfg, discoveredSkills, discoveredRefs, llmClient, validator, runner, agentLogger, cfg.Agent.MaxSteps)
 			skillSpecsList = skillSpecs(discoveredSkills)
 		}
 

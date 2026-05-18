@@ -1,0 +1,32 @@
+name: bugfix
+description: Targeted bug fix — reproduce + diagnose → fix → independent verification + review.
+
+stages:
+  - id: diagnose
+    skill: debugger
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: plan
+    skill: roadmapper
+    depends_on: [diagnose]
+    inputs:
+      - "Bug to fix (from user):\n$ARGUMENTS\n\nDebugger diagnosis:\n{diagnose.output}"
+
+  - id: execute
+    skill: executor
+    depends_on: [plan]
+    inputs:
+      - "Bug:\n$ARGUMENTS\n\nDiagnosis:\n{diagnose.output}\n\nRoadmap:\n{plan.output}"
+
+  - id: verify
+    skill: verifier
+    depends_on: [execute]
+    inputs:
+      - "Original bug:\n$ARGUMENTS\n\nDiagnosis:\n{diagnose.output}\n\nExecutor summary:\n{execute.output}"
+
+  - id: review
+    skill: code_reviewer
+    depends_on: [execute]
+    inputs:
+      - "Context: bug fix.\nDiagnosis:\n{diagnose.output}\n\nExecutor summary:\n{execute.output}"

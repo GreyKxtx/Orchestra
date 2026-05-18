@@ -1,0 +1,36 @@
+name: refactor
+description: Refactor of an existing area — map → plan → verify_plan (loop) → execute → independent review.
+
+stages:
+  - id: map
+    skill: codebase_mapper
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: plan
+    skill: roadmapper
+    depends_on: [map]
+    inputs:
+      - "Refactor goal:\n$ARGUMENTS\n\nCodebase map:\n{map.output}"
+
+  - id: verify_plan
+    skill: plan_verifier
+    depends_on: [plan]
+    inputs:
+      - "Refactor goal:\n$ARGUMENTS\n\nCodebase map:\n{map.output}\n\nRoadmap:\n{plan.output}"
+    loop_until_marker: "## VERIFICATION PASSED"
+    on_marker:
+      "## ISSUES FOUND": "redo:plan"
+    max_attempts: 3
+
+  - id: execute
+    skill: executor
+    depends_on: [verify_plan]
+    inputs:
+      - "Refactor goal:\n$ARGUMENTS\n\nRoadmap:\n{plan.output}"
+
+  - id: review
+    skill: code_reviewer
+    depends_on: [execute]
+    inputs:
+      - "Context: refactor of an existing area.\nGoal:\n$ARGUMENTS\n\nRoadmap:\n{plan.output}\n\nExecutor summary:\n{execute.output}"

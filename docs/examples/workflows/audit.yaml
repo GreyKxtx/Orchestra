@@ -1,0 +1,15 @@
+name: audit
+description: Read-only audit — parallel researchers fan out, then a single reviewer synthesises findings against the rubric.
+
+stages:
+  - id: research
+    skill: researcher
+    parallel: 3
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: review
+    skill: code_reviewer
+    depends_on: [research]
+    inputs:
+      - "Audit scope:\n$ARGUMENTS\n\nIndependent research passes (joined):\n{research.output}"

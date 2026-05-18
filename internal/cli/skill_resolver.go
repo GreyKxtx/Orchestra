@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/skills"
@@ -36,7 +35,14 @@ func resolveSkillAgent(projectRoot, name, arguments string) (*config.AgentDefini
 	if config.IsBuiltInMode(s.Name) {
 		return nil, fmt.Errorf("skill %q: name collides with a built-in agent mode", s.Name)
 	}
-	body := strings.ReplaceAll(s.Body, argumentsMarker, arguments)
+	refs, err := skills.DiscoverRefs(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("skill %q: discover refs: %w", name, err)
+	}
+	body, err := skills.PrepareBody(s.Body, arguments, refs)
+	if err != nil {
+		return nil, fmt.Errorf("skill %q: %w", name, err)
+	}
 	return &config.AgentDefinition{
 		Name:         s.Name,
 		SystemPrompt: body,
