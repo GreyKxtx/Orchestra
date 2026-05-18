@@ -81,6 +81,9 @@ func TestDiscover_ScansSkillsDir(t *testing.T) {
 	writeSkill("b.md", "---\nname: b\ndescription: B\n---\nbody B\n")
 	writeSkill("not-a-skill.txt", "ignored")
 
+	// Isolate user-global discovery so populated ~/.orchestra/skills/ on the
+	// developer machine doesn't bleed into this test.
+	isolateUserHome(t)
 	skills, err := Discover(root)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -94,6 +97,7 @@ func TestDiscover_ScansSkillsDir(t *testing.T) {
 }
 
 func TestDiscover_MissingDirReturnsEmpty(t *testing.T) {
+	isolateUserHome(t)
 	root := t.TempDir()
 	skills, err := Discover(root)
 	if err != nil {
@@ -102,6 +106,15 @@ func TestDiscover_MissingDirReturnsEmpty(t *testing.T) {
 	if len(skills) != 0 {
 		t.Errorf("expected empty, got %d", len(skills))
 	}
+}
+
+// isolateUserHome redirects os.UserHomeDir() to a per-test tempdir so the
+// developer's real ~/.orchestra/skills/ doesn't interfere with assertions.
+func isolateUserHome(t *testing.T) {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp) // Windows
 }
 
 func TestDiscover_DuplicateNameIsError(t *testing.T) {
