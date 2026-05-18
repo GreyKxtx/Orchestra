@@ -1,0 +1,32 @@
+name: perf_optimize
+description: Perf cycle — measure baseline → design fix → execute → re-measure (must show predicted gain).
+
+stages:
+  - id: baseline
+    skill: perf_analyst
+    inputs:
+      - "Measure baseline and identify hot paths.\n$ARGUMENTS"
+
+  - id: design
+    skill: architect
+    depends_on: [baseline]
+    inputs:
+      - "Baseline analysis:\n{baseline.output}\n\nDesign the optimisation. Pick ONE highest-ROI win; trade-offs explicit."
+
+  - id: plan
+    skill: roadmapper
+    depends_on: [design]
+    inputs:
+      - "Baseline:\n{baseline.output}\n\nDesign:\n{design.output}\n\nPlan minimal phases."
+
+  - id: execute
+    skill: executor
+    depends_on: [plan]
+    inputs:
+      - "Roadmap:\n{plan.output}\n\nBaseline numbers:\n{baseline.output}"
+
+  - id: remeasure
+    skill: perf_analyst
+    depends_on: [execute]
+    inputs:
+      - "Re-measure after change.\nOriginal baseline:\n{baseline.output}\n\nExecutor summary:\n{execute.output}\n\nDid the actual gain match the predicted gain? If gain < 5% of metric we targeted — recommend revert."

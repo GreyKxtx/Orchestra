@@ -1,0 +1,26 @@
+name: ci_recovery
+description: CI failed — ci_doctor diagnoses → debugger digs if root cause unclear → executor fixes → verify.
+
+stages:
+  - id: diagnose
+    skill: ci_doctor
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: deep_debug
+    skill: debugger
+    depends_on: [diagnose]
+    inputs:
+      - "CI diagnosis:\n{diagnose.output}\n\nIf the diagnosis identified a clear root cause, just confirm it briefly. Otherwise dig into the code paths the diagnosis pointed at."
+
+  - id: execute
+    skill: executor
+    depends_on: [deep_debug]
+    inputs:
+      - "CI failure context:\n$ARGUMENTS\n\nDiagnosis:\n{diagnose.output}\n\nRoot cause:\n{deep_debug.output}\n\nFix the root cause. Do not touch anything outside its scope."
+
+  - id: verify
+    skill: verifier
+    depends_on: [execute]
+    inputs:
+      - "Original CI failure:\n$ARGUMENTS\n\nDiagnosis:\n{diagnose.output}\n\nExecutor summary:\n{execute.output}\n\nConfirm the fix addresses the root cause AND introduces no regression."

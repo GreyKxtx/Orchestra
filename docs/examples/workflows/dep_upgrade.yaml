@@ -1,0 +1,36 @@
+name: dep_upgrade
+description: Audit deps → plan upgrades (with migration_specialist for breaking) → execute → test → review.
+
+stages:
+  - id: audit
+    skill: dependency_analyst
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: migration_plan
+    skill: migration_specialist
+    depends_on: [audit]
+    inputs:
+      - "Dependency audit:\n{audit.output}\n\nFor each non-patch upgrade, classify (online-safe / requires-downtime / forbidden) and plan stages. Patch bumps can be batched."
+
+  - id: execute
+    skill: executor
+    depends_on: [migration_plan]
+    inputs:
+      - "Migration plan:\n{migration_plan.output}\n\nApply patch bumps first (safe batch). Then handle each major per the staged plan."
+
+  - id: test
+    skill: test_runner
+    depends_on: [execute]
+    inputs:
+      - "Run the full test suite after dep upgrade. Watch for: changed signatures, removed methods, new compile errors."
+    loop_until_marker: "## TESTS PASSED"
+    on_marker:
+      "## TESTS FAILED": "fail"
+    max_attempts: 2
+
+  - id: review
+    skill: code_reviewer
+    depends_on: [test]
+    inputs:
+      - "Dep upgrade context:\n{audit.output}\n\nExecutor summary:\n{execute.output}\n\nTest results:\n{test.output}"

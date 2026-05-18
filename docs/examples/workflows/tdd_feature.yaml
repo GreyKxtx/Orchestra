@@ -1,0 +1,37 @@
+name: tdd_feature
+description: TDD pipeline — spec → tests written first → execute to green → review.
+
+stages:
+  - id: spec
+    skill: spec_writer
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: tests
+    skill: test_writer
+    depends_on: [spec]
+    inputs:
+      - "Write failing tests for this spec BEFORE any implementation exists.\nSpec:\n{spec.output}"
+
+  - id: execute
+    skill: executor
+    depends_on: [tests]
+    inputs:
+      - "Spec:\n{spec.output}\n\nTests already written by test_writer:\n{tests.output}\n\nYour job: implement the minimum code to make these tests pass. Do NOT modify the tests."
+
+  - id: verify_tests
+    skill: test_runner
+    depends_on: [execute]
+    inputs:
+      - "Run the tests written for this spec. Spec:\n{spec.output}\n\nTests:\n{tests.output}"
+    loop_until_marker: "## TESTS PASSED"
+    on_marker:
+      "## TESTS FAILED": "redo:execute"
+      "## TESTS FLAKY": "fail"
+    max_attempts: 3
+
+  - id: review
+    skill: code_reviewer
+    depends_on: [verify_tests]
+    inputs:
+      - "Spec:\n{spec.output}\n\nTests:\n{tests.output}\n\nExecutor summary:\n{execute.output}\n\nTest verdict:\n{verify_tests.output}"

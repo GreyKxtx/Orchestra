@@ -1,0 +1,60 @@
+name: spec_to_pr
+description: Full pipeline — vague user request → spec → research → design → plan (loop) → execute → test → review → PR text.
+
+stages:
+  - id: spec
+    skill: spec_writer
+    inputs:
+      - "$ARGUMENTS"
+
+  - id: research
+    skill: researcher
+    depends_on: [spec]
+    inputs:
+      - "Spec:\n{spec.output}\n\nInvestigate codebase for relevant existing patterns, constraints, and risks."
+
+  - id: design
+    skill: architect
+    depends_on: [research]
+    inputs:
+      - "Spec:\n{spec.output}\n\nFindings:\n{research.output}\n\nIf the task is trivial (no architectural choice), emit ## DESIGN BLOCKED and the next stage will skip your output."
+
+  - id: plan
+    skill: roadmapper
+    depends_on: [design]
+    inputs:
+      - "Spec:\n{spec.output}\n\nFindings:\n{research.output}\n\nDesign (may be skipped):\n{design.output}"
+
+  - id: verify_plan
+    skill: plan_verifier
+    depends_on: [plan]
+    inputs:
+      - "Spec:\n{spec.output}\n\nRoadmap:\n{plan.output}"
+    loop_until_marker: "## VERIFICATION PASSED"
+    on_marker:
+      "## ISSUES FOUND": "redo:plan"
+    max_attempts: 3
+
+  - id: execute
+    skill: executor
+    depends_on: [verify_plan]
+    inputs:
+      - "Spec:\n{spec.output}\n\nRoadmap:\n{plan.output}"
+
+  - id: test
+    skill: test_runner
+    depends_on: [execute]
+    inputs:
+      - "Run the relevant test scope for this change. Spec:\n{spec.output}"
+
+  - id: review
+    skill: code_reviewer
+    depends_on: [execute]
+    inputs:
+      - "Spec:\n{spec.output}\n\nRoadmap:\n{plan.output}\n\nExecutor summary:\n{execute.output}"
+
+  - id: pr
+    skill: pr_writer
+    depends_on: [test, review]
+    inputs:
+      - "Spec:\n{spec.output}\n\nTest results:\n{test.output}\n\nReview:\n{review.output}"
