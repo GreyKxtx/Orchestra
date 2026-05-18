@@ -74,7 +74,7 @@ func isInsideStringOrComment(n *sitter.Node) bool {
 // Returns the rewritten source and a Result describing what changed. When the
 // file's extension has no tree-sitter grammar, returns an error so the caller
 // can decide whether to fall back to plain text edit.
-func RenameInFile(_ context.Context, path string, src []byte, oldName, newName string) (*RenameResult, error) {
+func RenameInFile(ctx context.Context, path string, src []byte, oldName, newName string) (*RenameResult, error) {
 	if strings.TrimSpace(oldName) == "" {
 		return nil, fmt.Errorf("astedit: old_name is empty")
 	}
@@ -93,7 +93,7 @@ func RenameInFile(_ context.Context, path string, src []byte, oldName, newName s
 
 	parser := sitter.NewParser()
 	parser.SetLanguage(lang)
-	tree, err := parser.ParseCtx(nil, nil, src)
+	tree, err := parser.ParseCtx(ctx, nil, src)
 	if err != nil {
 		return nil, fmt.Errorf("astedit: parse %s: %w", path, err)
 	}
