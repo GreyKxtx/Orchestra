@@ -70,6 +70,11 @@ type App struct {
 	mentionActive  bool
 	workspaceFiles []string // lazily populated on first @-mention
 
+	// workflowProgress renders a sticky one-line widget above the input that
+	// shows per-stage status while a workflow.run is in flight. Driven by
+	// EventWorkflowStageStart/Done events; cleared on workflowResultMsg.
+	workflowProgress *view.WorkflowProgress
+
 	history *state.InputHistory
 
 	commandModal   *view.PaletteModal   // Ctrl+K modal
@@ -175,8 +180,9 @@ func NewApp(cfg Config) (*App, error) {
 	a.statusBar.SetModel(cfg.Model)
 	a.statusBar.SetProject(cfg.CWD)
 	a.showWelcome = true
-	a.slashPalette = view.NewSlashPalette(0)     // width set in layout()
-	a.mentionPalette = view.NewMentionPalette(0) // width set in layout()
+	a.slashPalette = view.NewSlashPalette(0)         // width set in layout()
+	a.mentionPalette = view.NewMentionPalette(0)     // width set in layout()
+	a.workflowProgress = view.NewWorkflowProgress(0) // width set in layout()
 	a.history = state.NewInputHistory(100)
 
 	if cfg.NeedsOnboarding {

@@ -149,14 +149,24 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		}
 	case rpcclient.EventWorkflowStageStart:
 		if ev.Stage != nil {
+			if a.workflowProgress != nil {
+				if !a.workflowProgress.Active() {
+					a.workflowProgress.Begin(ev.Stage.Name)
+				}
+				a.workflowProgress.StageStart(ev.Stage.StageID)
+			}
 			a.session.AppendMessage(state.Message{
 				Role: state.RoleSystem,
 				Text: "[workflow:" + ev.Stage.Name + "] → stage " + ev.Stage.StageID +
 					" (attempt " + itoa(ev.Stage.Attempt) + ")",
 			})
+			a.layout()
 		}
 	case rpcclient.EventWorkflowStageDone:
 		if ev.Stage != nil {
+			if a.workflowProgress != nil {
+				a.workflowProgress.StageDone(ev.Stage.StageID, ev.Stage.Action)
+			}
 			marker := ev.Stage.Marker
 			if marker == "" {
 				marker = "(no marker)"

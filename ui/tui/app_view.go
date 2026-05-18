@@ -74,6 +74,9 @@ func (a *App) View() string {
 	if a.mentionActive && len(a.mentionPalette.Items) > 0 {
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(a.mentionPalette.Render()))
 	}
+	if a.workflowProgress != nil && a.workflowProgress.Active() {
+		parts = append(parts, lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(a.workflowProgress.Render()))
+	}
 	if a.permModal != nil {
 		parts = append(parts, a.permModal.Render())
 	} else {
@@ -148,6 +151,10 @@ func (a *App) layout() {
 	if a.pendingOps != nil {
 		actionBarRows = 1
 	}
+	progressRows := 0
+	if a.workflowProgress != nil && a.workflowProgress.Active() {
+		progressRows = 1
+	}
 	paletteRows := 0
 	if a.paletteActive && len(a.slashPalette.Items) > 0 {
 		n := len(a.slashPalette.Items)
@@ -182,7 +189,7 @@ func (a *App) layout() {
 	// Status bar now reserves 2 rows (1 gap + 1 content) for breathing room
 	// between the input box and the status text.
 	const statusBarRows = 2
-	chatHeight := a.height - statusBarRows - inputRows - actionBarRows - modalRows - paletteRows - 2*chatVerticalPad
+	chatHeight := a.height - statusBarRows - inputRows - actionBarRows - modalRows - paletteRows - progressRows - 2*chatVerticalPad
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
@@ -239,6 +246,9 @@ func (a *App) layout() {
 	// palette total = SetSize + 1; input total = inputW + 1. After PaddingLeft(1): both = inputW + 2.
 	a.slashPalette.SetSize(inputW)
 	a.mentionPalette.SetSize(inputW)
+	if a.workflowProgress != nil {
+		a.workflowProgress.SetSize(inputW)
+	}
 
 	// Track input box position for mouse click-to-cursor.
 	if !a.showWelcome {

@@ -6,12 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/skills"
-	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/stageinvoke"
 	"github.com/orchestra/orchestra/internal/workflow"
 )
 
@@ -133,15 +130,18 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 		allowExec = true
 	}
 
-	inv := &coreStageInvoker{
-		core:         c,
-		skills:       discoveredSkills,
-		refs:         discoveredRefs,
-		allowExec:    allowExec,
-		allowWeb:     params.AllowWeb,
-		allowBrowser: params.AllowBrowser,
-		permReq:      params.PermissionRequester,
-	}
+	inv := stageinvoke.New(stageinvoke.Config{
+		Cfg:                 c.cfg,
+		Skills:              discoveredSkills,
+		Refs:                discoveredRefs,
+		Client:              c.llmClient,
+		Validator:           c.validator,
+		Runner:              c.tools,
+		AllowExec:           allowExec,
+		AllowWeb:            params.AllowWeb,
+		AllowBrowser:        params.AllowBrowser,
+		PermissionRequester: convertPermissionRequester(params.PermissionRequester),
+	})
 
 	markersFor := func(skillName string) []string {
 		s := skills.Find(discoveredSkills, skillName)
@@ -207,91 +207,3 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	return out, nil
 }
 
-// coreStageInvoker implements workflow.StageInvoker by spawning a fresh
-// child agent per stage. Mirrors cli/workflow.go::workflowStageInvoker
-// but uses Core's existing cfg/llmClient/validator/tools rather than
-// allocating its own.
-type coreStageInvoker struct {
-	core         *Core
-	skills       []*skills.Skill
-	refs         map[string]string
-	allowExec    bool
-	allowWeb     bool
-	allowBrowser bool
-	permReq      PermissionRequester
-}
-
-func (inv *coreStageInvoker) Invoke(ctx context.Context, skillName, userQuery string) (string, error) {
-	s := skills.Find(inv.skills, skillName)
-	if s == nil {
-		return "", fmt.Errorf("unknown skill %q", skillName)
-	}
-	for _, t := range s.Tools {
-		if !config.ValidAgentTool(t) {
-			return "", fmt.Errorf("skill %q: invalid tool name %q", skillName, t)
-		}
-	}
-
-	systemPrompt, err := skills.PrepareBody(s.Body, userQuery, inv.refs)
-	if err != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, err)
-	}
-
-	var childTools []llm.ToolDef
-	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, inv.allowExec, inv.allowWeb, inv.allowBrowser)
-		if err != nil {
-			return "", fmt.Errorf("skill %q: resolve tools: %w", skillName, err)
-		}
-		childTools = resolved
-	} else {
-		childTools = tools.ListToolsForChild()
-	}
-
-	childClient := inv.core.llmClient
-	if s.Provider != "" && inv.core.cfg != nil {
-		provCfg, ok := inv.core.cfg.FindProvider(s.Provider)
-		if !ok {
-			return "", fmt.Errorf("skill %q: provider %q not found", skillName, s.Provider)
-		}
-		if s.Model != "" {
-			provCfg.Model = s.Model
-		}
-		childClient = llm.NewClient(provCfg)
-	} else if s.Model != "" && inv.core.cfg != nil {
-		overrideCfg := inv.core.cfg.LLM
-		overrideCfg.Model = s.Model
-		childClient = llm.NewClient(overrideCfg)
-	}
-
-	maxSteps := 24
-	if inv.core.cfg != nil && inv.core.cfg.Agent.MaxSteps > 0 {
-		maxSteps = inv.core.cfg.Agent.MaxSteps
-	}
-
-	ag, err := agent.New(childClient, inv.core.validator, inv.core.tools, agent.Options{
-		MaxSteps:             maxSteps,
-		AllowExec:            inv.allowExec,
-		AllowWeb:             inv.allowWeb,
-		AllowBrowser:         inv.allowBrowser,
-		CustomTools:          childTools,
-		SystemPromptOverride: systemPrompt,
-		PermissionRequester:  convertPermissionRequester(inv.permReq),
-	})
-	if err != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, err)
-	}
-	history, res, runErr := ag.Run(ctx, nil, userQuery)
-	if runErr != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, runErr)
-	}
-	if res.SubtaskResult != "" {
-		return res.SubtaskResult, nil
-	}
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role == llm.RoleAssistant && strings.TrimSpace(history[i].Content) != "" {
-			return history[i].Content, nil
-		}
-	}
-	return fmt.Sprintf("skill %q completed with %d patch(es)", skillName, len(res.Patches)), nil
-}
