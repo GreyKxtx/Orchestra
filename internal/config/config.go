@@ -273,7 +273,7 @@ var validAgentToolNames = map[string]bool{
 	"grep": true, "symbols": true, "explore": true, "bash": true,
 	"webfetch": true, "todowrite": true, "todoread": true,
 	"bash.output": true, "bash.kill": true,
-	"semantic_search": true,
+	"semantic_search": true, "repo_map": true,
 	"memory_write": true, "runtime_query": true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
 	"plan_enter": true, "plan_exit": true, "question": true,
