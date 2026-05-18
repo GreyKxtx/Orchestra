@@ -171,6 +171,11 @@ func Run(ctx context.Context, w *Workflow, inv StageInvoker, markersFor func(ski
 		case <-waitDone:
 			close(resultsCh)
 		case <-ctx.Done():
+			// Orphaned cohort goroutines keep writing into the buffered
+			// resultsCh (cap=len(cohort)) until they exit; the channel is
+			// GC'd when the last writer releases it, so no leak. We don't
+			// close here because closing while writers still hold the
+			// channel would panic on send.
 			result.FailureReason = "cancelled: " + ctx.Err().Error()
 			return result, ctx.Err()
 		}

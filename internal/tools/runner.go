@@ -67,9 +67,10 @@ type Runner struct {
 
 	// Dry-run staging: when dryRun=true, FSWrite/FSEdit accumulate changes in staged
 	// instead of writing to disk. FSRead serves staged content back to the model.
-	dryRun   bool
-	staged   map[string]*stagedFile
-	stagedMu sync.RWMutex
+	dryRun            bool
+	blockExecInDryRun bool // see RunnerOptions.BlockExecInDryRun
+	staged            map[string]*stagedFile
+	stagedMu          sync.RWMutex
 
 	// forceDiagnosticsForTest is appended to every write/edit diagnostic response.
 	// Only used in tests — nil in production.
@@ -101,6 +102,17 @@ type RunnerOptions struct {
 	// DryRun enables staging mode: write/edit accumulate in memory instead of disk.
 	// FSRead serves staged content. StagedOps() returns write_atomic ops for plan.json.
 	DryRun bool
+
+	// BlockExecInDryRun, when true, refuses ExecRun calls while r.dryRun is set.
+	// This closes the "exec.run bypasses the staging overlay" hole that lets a
+	// model `echo > file` / `rm` its way around the dry-run contract.
+	//
+	// Off by default to preserve the CLI plan-mode UX: `orchestra apply` without
+	// `--apply` constructs a dry-run Runner so write/edit are staged, but the
+	// agent legitimately needs `git status`, `go test`, etc. for inspection.
+	// Core's JSON-RPC entry (where the staging contract is a hard promise to
+	// remote clients) enables this — see `internal/core/core.go::New`.
+	BlockExecInDryRun bool
 
 	// ForceDiagnosticsForTest, if non-nil, is appended to every FSWrite/FSEdit
 	// diagnostic response. Only for use in tests.
@@ -182,9 +194,19 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		browserClient:           browserCli,
 		allowBrowserEval:        opts.Browser.AllowEval,
 		dryRun:                  opts.DryRun,
+		blockExecInDryRun:       opts.BlockExecInDryRun,
 		staged:                  make(map[string]*stagedFile),
 		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
 	}, nil
+}
+
+// DryRun reports the current staging-mode flag. Cheap (RLock); callers that
+// need to save / restore the flag across a one-shot pin (e.g. SkillInvoke)
+// read it before SetDryRun and restore it before unlocking.
+func (r *Runner) DryRun() bool {
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
+	return r.dryRun
 }
 
 // SetDryRun enables or disables staging mode. Disabling clears all staged state.
@@ -881,17 +903,20 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 	if r == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
 	}
-	// Honour the dry-run contract: exec.run can do arbitrary disk side
-	// effects (rm, mv, > redirect, build scripts that write files), which
-	// would silently bypass the staging overlay used by write/edit/etc.
-	// In dry-run we refuse exec.run outright with a clear error so the
-	// agent surfaces it; the caller can re-issue with --apply if intended.
+	// Honour the dry-run contract for callers that opted in via
+	// BlockExecInDryRun (currently only the JSON-RPC core, where the staging
+	// contract is a hard promise to remote clients). exec.run can do arbitrary
+	// disk side effects (rm, mv, > redirect) which would silently bypass the
+	// staging overlay used by write/edit. CLI plan-mode leaves the gate off
+	// because the agent legitimately needs read-only bash (`git status`,
+	// `go test`, `ls`) during inspection.
 	r.stagedMu.RLock()
 	dry := r.dryRun
+	block := r.blockExecInDryRun
 	r.stagedMu.RUnlock()
-	if dry {
+	if dry && block {
 		return nil, protocol.NewError(protocol.ExecFailed,
-			"exec.run disabled in dry-run: use --apply (CLI) or agent.run apply:true (RPC) to allow disk side effects",
+			"exec.run disabled in dry-run: use agent.run apply:true (RPC) to allow disk side effects",
 			map[string]any{"command": req.Command})
 	}
 	// Implementation in exec.go

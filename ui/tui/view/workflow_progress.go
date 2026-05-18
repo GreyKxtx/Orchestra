@@ -177,7 +177,11 @@ func (w *WorkflowProgress) Render() string {
 	if w0 < 20 {
 		w0 = 20
 	}
-	innerW := w0 - 2 // 1 border + 1 left pad
+	// lipgloss `Width(n)` defines the content+padding frame width but does NOT
+	// include the border; the border adds 1 cell on top. So to keep total
+	// visible width ≤ w0, the styled frame must be w0-1 wide.
+	frameW := w0 - 1
+	innerW := frameW - 1 // 1 left pad
 
 	// Truncate if the joined line exceeds available width; lipgloss handles
 	// ANSI-aware width here.
@@ -204,7 +208,7 @@ func (w *WorkflowProgress) Render() string {
 		BorderForeground(t.Primary()).
 		BorderBackground(bg).
 		PaddingLeft(1).
-		Width(w0).
+		Width(frameW).
 		Render(inner)
 }
 
