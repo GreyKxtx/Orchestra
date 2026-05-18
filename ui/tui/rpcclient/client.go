@@ -295,9 +295,9 @@ func (c *Client) handleNotification(method string, params json.RawMessage) {
 		c.handleAgentEvent(params)
 	case "exec/output_chunk":
 		c.handleExecOutput(params)
-	case "workflow.stage_start":
+	case "workflow/stage_start":
 		c.handleWorkflowStage(EventWorkflowStageStart, params)
-	case "workflow.stage_done":
+	case "workflow/stage_done":
 		c.handleWorkflowStage(EventWorkflowStageDone, params)
 	}
 }

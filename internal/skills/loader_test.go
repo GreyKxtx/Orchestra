@@ -123,8 +123,8 @@ func TestDiscover_DuplicateNameIsError(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: dup\ndescription: x\n---\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "b.md"), []byte("---\nname: dup\ndescription: y\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: dup\ndescription: x\n---\nbody\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.md"), []byte("---\nname: dup\ndescription: y\n---\nbody\n"), 0o644)
 	_, err := Discover(root)
 	if err == nil {
 		t.Fatal("expected duplicate-name error")
@@ -192,7 +192,7 @@ func TestDiscoverFrom_EmptyDirsAreOK(t *testing.T) {
 func TestDiscoverFrom_OnlyUser(t *testing.T) {
 	userDir := t.TempDir()
 	os.WriteFile(filepath.Join(userDir, "x.md"), []byte(
-		"---\nname: x\ndescription: D\n---\n"), 0o644)
+		"---\nname: x\ndescription: D\n---\nbody\n"), 0o644)
 	all, err := DiscoverFrom(userDir, "")
 	if err != nil {
 		t.Fatalf("DiscoverFrom: %v", err)
@@ -217,12 +217,12 @@ func TestDiscoverFromAll_PrecedenceProjectOverUserOverPack(t *testing.T) {
 	os.WriteFile(filepath.Join(pack, "a.md"), []byte("---\nname: a\ndescription: pack-a\n---\nbody\n"), 0o644)
 
 	userDir := t.TempDir()
-	os.WriteFile(filepath.Join(userDir, "a.md"), []byte("---\nname: a\ndescription: user-a\n---\n"), 0o644)
-	os.WriteFile(filepath.Join(userDir, "b.md"), []byte("---\nname: b\ndescription: user-b\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(userDir, "a.md"), []byte("---\nname: a\ndescription: user-a\n---\nbody\n"), 0o644)
+	os.WriteFile(filepath.Join(userDir, "b.md"), []byte("---\nname: b\ndescription: user-b\n---\nbody\n"), 0o644)
 
 	projDir := t.TempDir()
-	os.WriteFile(filepath.Join(projDir, "a.md"), []byte("---\nname: a\ndescription: proj-a\n---\n"), 0o644)
-	os.WriteFile(filepath.Join(projDir, "c.md"), []byte("---\nname: c\ndescription: proj-c\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(projDir, "a.md"), []byte("---\nname: a\ndescription: proj-a\n---\nbody\n"), 0o644)
+	os.WriteFile(filepath.Join(projDir, "c.md"), []byte("---\nname: c\ndescription: proj-c\n---\nbody\n"), 0o644)
 
 	all, err := DiscoverFromAll(packsRoot, userDir, projDir)
 	if err != nil {
@@ -248,7 +248,7 @@ func TestDiscoverFromAll_PackOnlySkill(t *testing.T) {
 	packsRoot := t.TempDir()
 	pack := filepath.Join(packsRoot, "mypack")
 	os.MkdirAll(filepath.Join(pack, "nested"), 0o755)
-	os.WriteFile(filepath.Join(pack, "nested", "deep.md"), []byte("---\nname: deep\ndescription: D\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(pack, "nested", "deep.md"), []byte("---\nname: deep\ndescription: D\n---\nbody\n"), 0o644)
 
 	all, err := DiscoverFromAll(packsRoot, "", "")
 	if err != nil {
@@ -266,8 +266,8 @@ func TestDiscoverFromAll_DuplicateInSamePack(t *testing.T) {
 	packsRoot := t.TempDir()
 	pack := filepath.Join(packsRoot, "p")
 	os.MkdirAll(pack, 0o755)
-	os.WriteFile(filepath.Join(pack, "a.md"), []byte("---\nname: dup\ndescription: x\n---\n"), 0o644)
-	os.WriteFile(filepath.Join(pack, "b.md"), []byte("---\nname: dup\ndescription: y\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(pack, "a.md"), []byte("---\nname: dup\ndescription: x\n---\nbody\n"), 0o644)
+	os.WriteFile(filepath.Join(pack, "b.md"), []byte("---\nname: dup\ndescription: y\n---\nbody\n"), 0o644)
 	_, err := DiscoverFromAll(packsRoot, "", "")
 	if err == nil {
 		t.Fatal("expected duplicate error")

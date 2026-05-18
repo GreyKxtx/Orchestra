@@ -156,8 +156,24 @@ func Run(ctx context.Context, w *Workflow, inv StageInvoker, markersFor func(ski
 				resultsCh <- stageResult{id: s.ID, attempt: attempt, out: out, marker: marker, action: action}
 			}()
 		}
-		wg.Wait()
-		close(resultsCh)
+		// Cancel-aware wait: a non-ctx-honouring stage shouldn't be able to
+		// hang the whole workflow. We still block on wg in a goroutine (we
+		// can't actually force a runaway goroutine to stop) but the cohort
+		// loop returns immediately on ctx.Done so the caller isn't stuck.
+		// Any in-flight stages keep running orphaned until they finish or
+		// crash; an inv implementation that respects ctx will unwind quickly.
+		waitDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitDone)
+		}()
+		select {
+		case <-waitDone:
+			close(resultsCh)
+		case <-ctx.Done():
+			result.FailureReason = "cancelled: " + ctx.Err().Error()
+			return result, ctx.Err()
+		}
 
 		// Collect & route.
 		var redoTargets []string

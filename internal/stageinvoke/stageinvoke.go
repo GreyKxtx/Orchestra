@@ -95,12 +95,30 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 		if err != nil {
 			return "", fmt.Errorf("skill %q: resolve tools: %w", skillName, err)
 		}
+		// Defensive: when policy filtering removes every tool a skill requested
+		// (e.g. a skill whose only tools are bash + git.commit run without
+		// --allow-exec), an empty tool slice leaves the child agent with no
+		// way to act. It will burn through MaxFinalFailures retries and exit
+		// with an opaque error. Fall back to the default child tool-set with
+		// an unmistakable error so the operator sees the real cause.
+		if len(resolved) == 0 {
+			return "", fmt.Errorf("skill %q: every tool in `tools: %v` is disabled by current policy "+
+				"(allow_exec=%v allow_web=%v allow_browser=%v) — re-run with the appropriate --allow-* flag or drop the gated tools from the skill",
+				skillName, s.Tools, c.AllowExec, c.AllowWeb, c.AllowBrowser)
+		}
 		childTools = resolved
 	} else {
 		childTools = tools.ListToolsForChild()
 	}
 
+	// childClient: by default we inherit the shared client (whose logger was
+	// configured once at construction time). Only when the skill requests a
+	// provider or model override do we build a NEW client — and only on that
+	// fresh client may we call SetLogger, because the shared client is used
+	// concurrently by parallel cohort stages and SetLogger is a plain pointer
+	// write (data race under the race detector if called from goroutines).
 	childClient := c.Client
+	overridden := false
 	if s.Provider != "" && c.Cfg != nil {
 		provCfg, ok := c.Cfg.FindProvider(s.Provider)
 		if !ok {
@@ -110,13 +128,23 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 			provCfg.Model = s.Model
 		}
 		childClient = llm.NewClient(provCfg)
+		overridden = true
 	} else if s.Model != "" && c.Cfg != nil {
 		over := c.Cfg.LLM
 		over.Model = s.Model
 		childClient = llm.NewClient(over)
+		overridden = true
 	}
-	if oc, ok := childClient.(*llm.OpenAIClient); ok && c.AgentLogger != nil {
-		oc.SetLogger(c.AgentLogger)
+	if overridden {
+		if oc, ok := childClient.(*llm.OpenAIClient); ok && c.AgentLogger != nil {
+			oc.SetLogger(c.AgentLogger)
+		}
+		// Preserve router-fallback semantics: the base shared Client passed in
+		// was already wrapped via MaybeWrapRouter by the caller (cli/workflow
+		// run-up). A fresh per-skill client built from provider/model overrides
+		// would otherwise lose that wrap, silently disabling the fast-path /
+		// fallback routing for that stage. Re-wrap so behaviour is consistent.
+		childClient = llm.MaybeWrapRouter(childClient, c.Cfg)
 	}
 
 	opts := buildAgentOptions(c, childTools, systemPrompt)

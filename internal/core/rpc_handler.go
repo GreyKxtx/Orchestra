@@ -1,4 +1,4 @@
-package core
+﻿package core
 
 import (
 	"context"
@@ -60,7 +60,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "initialize":
 		var p InitializeParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -69,7 +69,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "agent.run":
 		var p AgentRunParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -87,7 +87,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "tool.call":
 		var p ToolCallParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -105,7 +105,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "session.start":
 		var p SessionStartParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -114,7 +114,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "session.message":
 		var p SessionMessageParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -131,7 +131,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "session.history":
 		var p SessionHistoryParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -140,14 +140,14 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "ops.apply":
 		var p OpsApplyParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), nil)
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), nil)
 		}
 		return h.core.OpsApply(ctx, p)
 
 	case "session.cancel":
 		var p SessionCancelParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -156,7 +156,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "session.apply_pending":
 		var p SessionApplyPendingParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -165,7 +165,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "session.close":
 		var p SessionCloseParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
 				"method": method,
 			})
 		}
@@ -174,14 +174,14 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "workflow.list":
 		var p WorkflowListParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
 		}
 		return h.core.WorkflowList(p)
 
 	case "workflow.run":
 		var p WorkflowRunParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
 		}
 		if h.notifier != nil {
 			p.OnEvent = func(method string, params any) {
@@ -196,14 +196,14 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	case "skill.list":
 		var p SkillListParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
 		}
 		return h.core.SkillList(p)
 
 	case "skill.invoke":
 		var p SkillInvokeParams
 		if err := decodeParams(params, &p); err != nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
 		}
 		if h.notifier != nil {
 			p.OnEvent = func(method string, params any) {

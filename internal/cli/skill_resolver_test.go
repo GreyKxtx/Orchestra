@@ -46,7 +46,7 @@ func TestResolveSkillAgent_InvalidTool(t *testing.T) {
 	dir := filepath.Join(root, ".orchestra", "skills")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "bad.md"), []byte(
-		"---\nname: bad\ndescription: D\ntools: [definitely-not-a-real-tool]\n---\n"), 0o644)
+		"---\nname: bad\ndescription: D\ntools: [definitely-not-a-real-tool]\n---\nbody\n"), 0o644)
 	_, err := resolveSkillAgent(root, "bad", "")
 	if err == nil || !strings.Contains(err.Error(), "definitely-not-a-real-tool") {
 		t.Fatalf("expected invalid-tool error, got %v", err)
@@ -92,7 +92,7 @@ func TestResolveSkillAgent_BuiltinNameCollides(t *testing.T) {
 	dir := filepath.Join(root, ".orchestra", "skills")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "plan.md"), []byte(
-		"---\nname: plan\ndescription: D\n---\n"), 0o644)
+		"---\nname: plan\ndescription: D\n---\nbody\n"), 0o644)
 	_, err := resolveSkillAgent(root, "plan", "")
 	if err == nil || !strings.Contains(err.Error(), "built-in") {
 		t.Fatalf("expected built-in collision error, got %v", err)

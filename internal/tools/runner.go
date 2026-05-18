@@ -881,6 +881,19 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 	if r == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
 	}
+	// Honour the dry-run contract: exec.run can do arbitrary disk side
+	// effects (rm, mv, > redirect, build scripts that write files), which
+	// would silently bypass the staging overlay used by write/edit/etc.
+	// In dry-run we refuse exec.run outright with a clear error so the
+	// agent surfaces it; the caller can re-issue with --apply if intended.
+	r.stagedMu.RLock()
+	dry := r.dryRun
+	r.stagedMu.RUnlock()
+	if dry {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			"exec.run disabled in dry-run: use --apply (CLI) or agent.run apply:true (RPC) to allow disk side effects",
+			map[string]any{"command": req.Command})
+	}
 	// Implementation in exec.go
 	return runExec(ctx, r.workspaceRoot, r.execTimeout, r.execOutputLimit, req)
 }

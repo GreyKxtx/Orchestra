@@ -32,8 +32,8 @@ func TestReviewPack_AcceptsAll(t *testing.T) {
 
 func TestReviewPack_RejectsOne(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: a\ndescription: D\n---\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "b.md"), []byte("---\nname: b\ndescription: D\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: a\ndescription: D\n---\nbody\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.md"), []byte("---\nname: b\ndescription: D\n---\nbody\n"), 0o644)
 
 	var out bytes.Buffer
 	in := strings.NewReader("n\ny\n")
@@ -50,7 +50,7 @@ func TestReviewPack_RejectsOne(t *testing.T) {
 
 func TestReviewPack_AllRejected_RemovesPackDir(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: a\ndescription: D\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: a\ndescription: D\n---\nbody\n"), 0o644)
 
 	var out bytes.Buffer
 	in := strings.NewReader("n\n")
@@ -78,7 +78,7 @@ func TestReviewPack_NoSkills_RemovesPackDir(t *testing.T) {
 
 func TestReviewPack_AutoYes(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: a\ndescription: D\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nname: a\ndescription: D\n---\nbody\n"), 0o644)
 
 	var out bytes.Buffer
 	in := strings.NewReader("") // no input — autoYes shouldn't read it
@@ -96,7 +96,7 @@ func TestReviewPack_AutoYes(t *testing.T) {
 func TestReviewPack_SkipsInvalidSkill(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.md"), []byte("not frontmatter\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "good.md"), []byte("---\nname: good\ndescription: D\n---\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "good.md"), []byte("---\nname: good\ndescription: D\n---\nbody\n"), 0o644)
 
 	var out bytes.Buffer
 	in := strings.NewReader("y\n")

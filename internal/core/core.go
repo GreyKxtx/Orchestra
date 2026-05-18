@@ -40,8 +40,15 @@ type Core struct {
 	llmClient         llm.Client
 	llmClientInjected bool // true when LLMClient was set via Options (test/DI mode)
 
-	validator  *schema.Validator
-	tools      *tools.Runner
+	validator *schema.Validator
+	tools     *tools.Runner
+	// runMu serialises every RPC entry point that mutates shared Runner state
+	// (SetDryRun, ClearStaged, staged-overlay writes). Without this, two
+	// concurrent agent.run / workflow.run / skill.invoke / ops.apply calls
+	// race over the dry-run flag and can leak staged ops between requests,
+	// silently turning a dry-run request into a real disk write when another
+	// request flips the flag mid-flight.
+	runMu      sync.Mutex
 	sessions   *coresession.Manager
 	mcpManager *mcp.Manager
 }
@@ -438,6 +445,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	}
 
 	// Configure staging mode: dry-run when not applying; clear any stale state from prior runs.
+	// runMu serialises this whole call so a concurrent agent.run/workflow.run/
+	// skill.invoke/ops.apply cannot flip dry-run mid-flight on our shared Runner.
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
 	c.tools.SetDryRun(!params.Apply)
 	c.tools.ClearStaged()
 
@@ -1070,6 +1081,8 @@ func (c *Core) OpsApply(ctx context.Context, p OpsApplyParams) (*OpsApplyResult,
 		DryRun: false,
 		Backup: p.Backup,
 	}
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
 	resp, err := c.tools.FSApplyOps(ctx, req)
 	if err != nil {
 		return nil, err

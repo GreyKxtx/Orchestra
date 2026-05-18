@@ -73,6 +73,13 @@ func Parse(source string, r io.Reader) (*Skill, error) {
 	}
 	s.Body = strings.TrimLeft(string(bodyBytes), "\r\n")
 	s.Source = source
+	// A skill whose body is empty is almost always a copy-paste mistake — the
+	// agent would receive an empty system prompt and produce gibberish. Catch
+	// it at load time so workflow.run / skill.invoke fail with a clear error
+	// before any LLM tokens are spent.
+	if strings.TrimSpace(s.Body) == "" {
+		return nil, fmt.Errorf("skill %s: body is empty (no system prompt content after frontmatter)", source)
+	}
 	return &s, nil
 }
 

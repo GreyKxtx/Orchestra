@@ -83,10 +83,10 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
 	if strings.TrimSpace(params.Name) == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "skill name is empty", nil)
+		return nil, protocol.NewError(protocol.InvalidParams, "skill name is empty", nil)
 	}
 	if strings.TrimSpace(params.Arguments) == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "skill arguments are empty", nil)
+		return nil, protocol.NewError(protocol.InvalidParams, "skill arguments are empty", nil)
 	}
 
 	ss, err := skills.Discover(c.workspaceRoot)
@@ -95,7 +95,7 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	}
 	s := skills.Find(ss, params.Name)
 	if s == nil {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput,
+		return nil, protocol.NewError(protocol.NotFound,
 			fmt.Sprintf("skill %q not found", params.Name), nil)
 	}
 	for _, t := range s.Tools {
@@ -123,6 +123,14 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, allowExec, params.AllowWeb, params.AllowBrowser)
 		if err != nil {
 			return nil, fmt.Errorf("skill %q: resolve tools: %w", params.Name, err)
+		}
+		// Empty after policy filter → skill is unusable as configured. Fail
+		// loud rather than starve the agent. See stageinvoke.Invoke for the
+		// same guard on the workflow path.
+		if len(resolved) == 0 {
+			return nil, fmt.Errorf("skill %q: every tool in `tools: %v` is disabled by current policy "+
+				"(allow_exec=%v allow_web=%v allow_browser=%v)",
+				params.Name, s.Tools, allowExec, params.AllowWeb, params.AllowBrowser)
 		}
 		childTools = resolved
 	} else {
@@ -162,6 +170,16 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	if err != nil {
 		return nil, fmt.Errorf("skill %q: %w", params.Name, err)
 	}
+
+	// Serialise against concurrent agent.run / workflow.run / ops.apply so a
+	// neighbour cannot flip the shared Runner's dry-run flag mid-skill.
+	// skill.invoke is always dry-run (it has no Apply parameter): pin the flag
+	// to dryRun=true for the duration of this call.
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	c.tools.SetDryRun(true)
+	c.tools.ClearStaged()
+
 	history, res, runErr := ag.Run(ctx, nil, params.Arguments)
 	if runErr != nil {
 		return nil, fmt.Errorf("skill %q: %w", params.Name, runErr)

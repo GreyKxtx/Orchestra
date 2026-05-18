@@ -78,7 +78,10 @@ func runExec(parent context.Context, workspaceRoot string, defaultTimeout time.D
 	// instead of `command: "git", args: ["status"]`. exec.Command takes the
 	// command name LITERALLY, so a name with spaces / shell metachars never
 	// resolves. Auto-detect that case and route through the host shell.
-	cmdName, argList, viaShell := maybeShellExec(cmdName, req.Args)
+	cmdName, argList, viaShell, shellErr := maybeShellExec(cmdName, req.Args)
+	if shellErr != nil {
+		return nil, shellErr
+	}
 
 	// Non-interactive: stdin is nil (reads as EOF).
 	cmd := exec.CommandContext(ctx, cmdName, argList...)
@@ -174,14 +177,19 @@ func runExec(parent context.Context, workspaceRoot string, defaultTimeout time.D
 //
 // Heuristic:
 //   - If `cmdName` contains any shell metachar (` `, `|`, `&`, `;`, `<`, `>`,
-//     `(`, `*`, `?`, backtick, `$`) OR `args` is empty AND `cmdName` is in
-//     the form `<word> <rest…>` → route through the host shell.
-//   - Otherwise leave as a direct exec (preserves the documented behaviour for
-//     callers that did pass a clean program name + args).
+//     `(`, `*`, `?`, backtick, `$`, `"`, `'`) → route through the host shell.
+//   - Otherwise leave as a direct exec.
 //
-// Returned values are the resolved program, its args, and a bool indicating
-// whether the dispatch was rewritten.
-func maybeShellExec(cmdName string, args []string) (string, []string, bool) {
+// Safety: when we route through the shell, `args` MUST be empty. Splicing
+// caller-supplied args into a `sh -c "<cmd> <arg1> <arg2>"` string without
+// shell-quoting is a command-injection sink — an arg containing `$(rm -rf ~)`,
+// `;`, `&&`, etc. executes as a separate shell command. We refuse this
+// combination and force the caller to put the whole shell expression in
+// `command`. The error message tells the LLM how to fix the call.
+//
+// Returned values: resolved program, its args, bool=routed-through-shell,
+// and a non-nil error iff the args+shell combination is rejected.
+func maybeShellExec(cmdName string, args []string) (string, []string, bool, error) {
 	needsShell := false
 	for _, r := range cmdName {
 		switch r {
@@ -193,19 +201,19 @@ func maybeShellExec(cmdName string, args []string) (string, []string, bool) {
 		}
 	}
 	if !needsShell {
-		return cmdName, args, false
+		return cmdName, args, false, nil
 	}
-	// Reassemble the full command line: cmdName + space-joined args.
-	full := cmdName
 	if len(args) > 0 {
-		full = full + " " + strings.Join(args, " ")
+		return "", nil, true, protocol.NewError(protocol.InvalidLLMOutput,
+			"command needs shell interpretation but `args` is non-empty; "+
+				"put the whole shell expression in `command` and leave `args` empty "+
+				"(splicing args into a shell line is unsafe)",
+			map[string]any{"command": cmdName, "args": args})
 	}
 	if runtime.GOOS == "windows" {
-		// `cmd /c "<full>"` runs the whole thing through cmd.exe. Quoting is
-		// preserved by passing the full line as a single arg.
-		return "cmd", []string{"/c", full}, true
+		return "cmd", []string{"/c", cmdName}, true, nil
 	}
-	return "sh", []string{"-c", full}, true
+	return "sh", []string{"-c", cmdName}, true, nil
 }
 
 type outputLimiter struct {

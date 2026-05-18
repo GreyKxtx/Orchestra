@@ -175,6 +175,15 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("workflow %q: stage %q references unknown skill %q\nRun `orchestra skills list` to see available skills.", w.Name, stage.ID, stage.Skill)
 		}
 	}
+	// loop_until_marker must reference a skill with at least one completion marker.
+	if err := workflow.ValidateAgainstSkills(w, func(name string) []string {
+		if s := skills.Find(discoveredSkills, name); s != nil {
+			return s.CompletionMarkers
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 
 	dryRun := !workflowApplyFlag
 	allowExecEffective := workflowAllowExecFlag

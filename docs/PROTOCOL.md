@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v4** (2026-05-18): добавлены методы `workflow.list`, `workflow.run`, `skill.list`, `skill.invoke`; streaming events `workflow/stage_start` и `workflow/stage_done`.
 - **v3** (2026-05-07): добавлены agent-level streaming events (`tool_call_completed`, `step_done`, `pending_ops`, `recoverable_error`) и bidirectional `permission/request` method.
 - **v2** (2026-05-06): добавлено опциональное поле `mode` в `agent.run` и `session.message` для custom-agents (Sub-project D).
 - **v1**: первоначальный набор методов.
@@ -337,6 +338,11 @@ Orchestra использует диапазон `-32000..-32099`.
 | `ExecFailed` | `-32006` |
 | `NotInitialized` | `-32007` |
 | `ExecDenied` | `-32008` |
+| `AlreadyInitialized` | `-32009` |
+| `ProtocolMismatch` | `-32010` |
+| `AlreadyExists` | `-32011` |
+| `NotFound` | `-32012` |
+| `InvalidParams` | `-32602` (JSON-RPC standard) |
 | (прочее) | `-32099` |
 
 Payload (в `error.data`) для ошибок из `internal/protocol`:
@@ -345,6 +351,99 @@ Payload (в `error.data`) для ошибок из `internal/protocol`:
 {
   "code": "NotInitialized",
   "data": {"method":"agent.run"}
+}
+```
+
+## Workflow methods (v4+)
+
+Workflows orchestrate skills as a DAG of stages defined by YAML in
+`.orchestra/workflows/<name>.yaml` (project) or `~/.orchestra/workflows/`
+(user). The runner executes stages in cohort-parallel topological order
+with marker-based completion routing (advance / loop / fail / redo:<id>).
+
+### `workflow.list`
+
+`params`: `{}` (or omit)
+
+Response `result`:
+
+```json
+{
+  "workflows": [
+    {"name": "tdd_feature", "description": "...", "stages": ["spec","tests","execute"], "source": "/path/to/file.yaml"}
+  ]
+}
+```
+
+### `workflow.run`
+
+`params`:
+
+- `name` (string, required) — workflow name as registered by `workflow.list`.
+- `arguments` (string, required) — user task; passed to every stage as the initial `$ARGUMENTS`.
+- `apply` (bool, optional, default false) — when true, stages write to disk; otherwise they run dry-run with the staging overlay.
+- `allow_exec` / `allow_web` / `allow_browser` (bool, optional) — per-call policy that filters the tool list each stage may invoke.
+
+Errors:
+
+- `NotFound` (-32012) — workflow or one of its stages' skills is unknown.
+- `InvalidParams` (-32602) — empty name/arguments, or `loop_until_marker` references a skill without `completion_markers`.
+
+Response `result`:
+
+```json
+{
+  "name": "tdd_feature",
+  "outputs": {"spec": "...", "tests": "...", "execute": "..."},
+  "final_stage": "execute",
+  "failure_reason": "",
+  "stages": [{"stage_id":"spec","attempt":1,"marker":"PLAN READY","action":"advance","output_kb":2}],
+  "duration_ms": 41213
+}
+```
+
+Streaming: emits `workflow/stage_start` and `workflow/stage_done` notifications.
+
+### `skill.list`
+
+`params`: `{}` (or omit)
+
+Response `result`:
+
+```json
+{
+  "skills": [
+    {
+      "name": "spec_writer", "description": "...", "tools": ["read","grep"],
+      "provider": "", "model": "", "completion_markers": ["PLAN READY"],
+      "origin": "project"
+    }
+  ]
+}
+```
+
+### `skill.invoke`
+
+Runs a single skill end-to-end as one child agent turn. Always dry-run
+(stages write to the in-memory overlay). Useful for one-shot subtasks
+without spinning up a full workflow.
+
+`params`:
+
+- `name` (string, required)
+- `arguments` (string, required)
+- `allow_exec` / `allow_web` / `allow_browser` (bool, optional)
+
+Errors: `NotFound` (-32012), `InvalidParams` (-32602).
+
+Response `result`:
+
+```json
+{
+  "skill": "debugger",
+  "output": "...assistant final text or task_result payload...",
+  "marker": "ROOT CAUSE",
+  "steps": 6
 }
 ```
 
@@ -387,6 +486,29 @@ Streamed during `bash` (alias for `exec.run`) tool execution.
 |---|---|---|
 | `step` | int | Current agent loop step |
 | `chunk` | string | Raw stdout/stderr chunk |
+
+### `workflow/stage_start` (v4+)
+
+Emitted right before a stage begins execution (including each redo iteration).
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Workflow name |
+| `stage_id` | string | Stage id from the YAML |
+| `attempt` | int | 1-based lifetime attempt counter for this stage |
+
+### `workflow/stage_done` (v4+)
+
+Emitted after the stage's child agent has produced output and the runner has decided the next action.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Workflow name |
+| `stage_id` | string | Stage id |
+| `attempt` | int | Attempt that just finished |
+| `marker` | string | Completion marker matched in the output, or "" |
+| `action` | string | "advance" / "loop" / "fail" / "redo:<id>" |
+| `output_kb` | int | Output size in KB (rounded up) |
 
 ## Server-initiated requests
 
