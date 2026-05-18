@@ -9,10 +9,11 @@ context_limit_kb: 64
 llm:
     api_base: http://10.5.0.2:1234
     api_key: "lm-studio"
-    model: openai/gpt-oss-20b
+    model: qwen/qwen3.6-27b
     max_tokens: 8192
     temperature: 0.2
     timeout_s: 180
+    multimodal: true
     extra_body:
         num_ctx: 20000
 providers:

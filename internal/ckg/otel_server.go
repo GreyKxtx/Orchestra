@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const otlpMaxBodyBytes = 10 * 1024 * 1024 // 10 MB
@@ -18,9 +19,11 @@ const otlpMaxBodyBytes = 10 * 1024 * 1024 // 10 MB
 // them into the CKG store. Only JSON encoding is supported (not protobuf).
 // Bind to 127.0.0.1 by default — never expose to the network.
 type OTLPServer struct {
-	store    *Store
-	rootDir  string
-	httpSrv  *http.Server
+	store   *Store
+	rootDir string
+	httpSrv *http.Server
+
+	mu       sync.RWMutex
 	listener net.Listener
 }
 
@@ -40,17 +43,23 @@ func (s *OTLPServer) ListenAndServe(addr string) error {
 	if err != nil {
 		return fmt.Errorf("otlp server: listen %s: %w", addr, err)
 	}
+	s.mu.Lock()
 	s.listener = ln
+	s.mu.Unlock()
 	log.Printf("[otlp] listening on http://%s/v1/traces (JSON only; set OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json)", ln.Addr())
 	return s.httpSrv.Serve(ln)
 }
 
 // Addr returns the network address the server is bound to, or "" if not started.
+// Safe to call concurrently with ListenAndServe.
 func (s *OTLPServer) Addr() string {
-	if s.listener == nil {
+	s.mu.RLock()
+	ln := s.listener
+	s.mu.RUnlock()
+	if ln == nil {
 		return ""
 	}
-	return s.listener.Addr().String()
+	return ln.Addr().String()
 }
 
 // Shutdown gracefully stops the server.
