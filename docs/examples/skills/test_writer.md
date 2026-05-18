@@ -22,6 +22,8 @@ completion_markers:
 
 2. **Понять test conventions проекта.** Прочитай 1-2 существующих test файла из той же области. Test framework (стандартный testing, testify, gomock), naming (`TestX_WhenY_DoesZ`), фикстуры, helpers. Не изобретай.
 
+   **Go-specific:** Если функция под тестом в `package main` — пиши тест в том же package (`package main`, файл `main_test.go` в той же директории). НЕ используй `package main_test` с `import "<module>"` — `main` нельзя импортировать. Same-package тесты — дефолт, кроме случаев когда ты явно тестируешь public API extern'но.
+
 3. **Один behaviour = один test.** Для каждой acceptance criterion напиши минимальный test. Не складывай несколько проверок в один — bisect-friendliness важнее DRY в тестах.
 
 4. **Test must be able to fail.** Implementation ещё не существует или не имеет нужного поведения → test ДОЛЖЕН failить с конкретным ожидаемым сообщением. Сформулируй это сообщение явно (`Expected fail: "undefined: NewCache"` или `Expected fail: "assertion: got 0, want 5"`).
