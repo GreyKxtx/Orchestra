@@ -122,6 +122,13 @@ type sseChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	// Usage is sent in the final SSE chunk when stream_options.include_usage=true.
+	// Most chunks omit it; only the last one carries totals.
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 	Error struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -178,6 +185,13 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			if chunk.Error.Message != "" {
 				ch <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf("stream error: %s", chunk.Error.Message)}
 				return
+			}
+			if chunk.Usage != nil {
+				acc.SetUsage(&TokenUsage{
+					PromptTokens:     chunk.Usage.PromptTokens,
+					CompletionTokens: chunk.Usage.CompletionTokens,
+					TotalTokens:      chunk.Usage.TotalTokens,
+				})
 			}
 			if len(chunk.Choices) == 0 {
 				continue

@@ -17,8 +17,9 @@ type toolCallState struct {
 // The chunk's "index" field is the stable key; id may be absent on later chunks.
 type toolCallAccumulator struct {
 	content strings.Builder
-	calls   []*toolCallState  // ordered by first-seen index
+	calls   []*toolCallState // ordered by first-seen index
 	byIndex map[int]*toolCallState
+	usage   *TokenUsage // populated from the final SSE chunk if the provider sent stream_options.include_usage
 }
 
 func newToolCallAccumulator() *toolCallAccumulator {
@@ -80,5 +81,10 @@ func (a *toolCallAccumulator) BuildResponse() *CompleteResponse {
 			},
 		})
 	}
-	return &CompleteResponse{Message: msg}
+	return &CompleteResponse{Message: msg, Usage: a.usage}
+}
+
+// SetUsage records the provider-reported usage block from the final SSE chunk.
+func (a *toolCallAccumulator) SetUsage(u *TokenUsage) {
+	a.usage = u
 }

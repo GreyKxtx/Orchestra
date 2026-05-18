@@ -93,7 +93,13 @@ type anthropicTool struct {
 
 type anthropicResponse struct {
 	Content []anthropicBlock `json:"content"`
-	Error   struct {
+	Usage   *struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	} `json:"usage,omitempty"`
+	Error struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
@@ -166,7 +172,16 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*C
 	}
 
 	msg := convertFromAnthropic(apiResp.Content)
-	return &CompleteResponse{Message: msg}, nil
+	out := &CompleteResponse{Message: msg}
+	if apiResp.Usage != nil {
+		prompt := apiResp.Usage.InputTokens + apiResp.Usage.CacheCreationInputTokens + apiResp.Usage.CacheReadInputTokens
+		out.Usage = &TokenUsage{
+			PromptTokens:     prompt,
+			CompletionTokens: apiResp.Usage.OutputTokens,
+			TotalTokens:      prompt + apiResp.Usage.OutputTokens,
+		}
+	}
+	return out, nil
 }
 
 // Plan implements llm.Client (same as Complete with a simple user message).

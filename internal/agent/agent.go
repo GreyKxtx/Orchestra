@@ -220,6 +220,27 @@ type Options struct {
 
 	Debug  bool
 	Logger *log.Logger
+
+	// UsageTracker, if non-nil, receives token-usage records after every LLM
+	// completion (both Complete and CompleteStream paths). Wired by the CLI
+	// `apply` entry-point and shared across pipeline stages / subagents so
+	// the final usage.jsonl record covers the whole run.
+	UsageTracker UsageRecorder
+
+	// ProviderLabel is the human label for the active provider/model recorded
+	// alongside each usage tick (e.g. "openai" / "fast" / "anthropic"). When
+	// empty, "openai" is used.
+	ProviderLabel string
+	// ModelLabel is the active model id reported to the tracker. When empty,
+	// "unknown" is used. Custom agents / pipeline stages can override this.
+	ModelLabel string
+}
+
+// UsageRecorder is the agent's view of the usage tracker. Mirrors
+// *usage.Tracker.Record to keep the agent package free of a hard import on
+// internal/usage.
+type UsageRecorder interface {
+	Record(provider, model string, prompt, completion int)
 }
 
 // AgentEvent wraps a streaming event with agent-level context.
@@ -1261,6 +1282,10 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		}
 		if err != nil {
 			return nil, "", nil, err
+		}
+		if a.opts.UsageTracker != nil && resp != nil && resp.Usage != nil {
+			a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,
+				resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 		}
 		step, raw, nerr := NormalizeLLMWithDefs(a.validator, resp, toolDefs)
 		lastRaw = raw

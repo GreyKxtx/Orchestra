@@ -101,6 +101,13 @@ type chatCompletionRequest struct {
 	Temperature    *float32            `json:"temperature,omitempty"`
 	ResponseFormat *responseFormatWire `json:"response_format,omitempty"`
 	Stream         bool                `json:"stream,omitempty"`
+	StreamOptions  *streamOptions      `json:"stream_options,omitempty"`
+}
+
+// streamOptions toggles OpenAI streaming extras. include_usage asks the server
+// to emit a final chunk containing the totals object (token accounting).
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type responseFormatWire struct {
@@ -124,6 +131,11 @@ type chatCompletionResponse struct {
 			ReasoningContent string `json:"reasoning_content,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 	Error struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -275,7 +287,15 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 	if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(choice.Message.ReasoningContent) != "" && len(msg.ToolCalls) == 0 {
 		msg.Content = strings.TrimSpace(choice.Message.ReasoningContent)
 	}
-	return &CompleteResponse{Message: msg}, nil
+	out := &CompleteResponse{Message: msg}
+	if apiResp.Usage != nil {
+		out.Usage = &TokenUsage{
+			PromptTokens:     apiResp.Usage.PromptTokens,
+			CompletionTokens: apiResp.Usage.CompletionTokens,
+			TotalTokens:      apiResp.Usage.TotalTokens,
+		}
+	}
+	return out, nil
 }
 
 // Plan generates a plan from LLM (same API as Complete, but with different prompt expectations)
@@ -305,11 +325,12 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 	url := baseURL + "/chat/completions"
 
 	reqBody := chatCompletionRequest{
-		Model:     c.model,
-		Messages:  req.Messages,
-		MaxTokens: c.maxTokens,
-		Tools:     req.Tools,
-		Stream:    true,
+		Model:         c.model,
+		Messages:      req.Messages,
+		MaxTokens:     c.maxTokens,
+		Tools:         req.Tools,
+		Stream:        true,
+		StreamOptions: &streamOptions{IncludeUsage: true},
 	}
 	if c.temperature != 0 {
 		temp := c.temperature

@@ -345,7 +345,20 @@ type ProjectConfig struct {
 	// Providers is an optional map of named LLM provider configurations.
 	// Use in agents: via provider: <name> or with --provider <name> CLI flag.
 	Providers map[string]LLMConfig `yaml:"providers,omitempty"`
+	// Pricing maps provider → model → per-1M-token USD rates for cost telemetry.
+	// Optional; when missing, .orchestra/usage.jsonl records only token counts.
+	Pricing PricingConfig `yaml:"pricing,omitempty"`
 }
+
+// ModelPricing is the per-1M-token USD price for one model.
+type ModelPricing struct {
+	InputPer1M  float64 `yaml:"input_per_1m"`
+	OutputPer1M float64 `yaml:"output_per_1m"`
+}
+
+// PricingConfig is the nested provider→model pricing map.
+// Use "default" as the provider key for fallbacks shared across providers.
+type PricingConfig map[string]map[string]ModelPricing
 
 // FindAgent looks up a custom agent by name. Returns nil when not found.
 func (c *ProjectConfig) FindAgent(name string) *AgentDefinition {
