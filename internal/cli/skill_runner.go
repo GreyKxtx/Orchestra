@@ -113,6 +113,9 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 
 	ag, err := agent.New(childClient, r.validator, r.toolRunner, agent.Options{
 		MaxSteps:             r.maxSteps,
+		AllowExec:            r.allowExec,
+		AllowWeb:             r.allowWeb,
+		AllowBrowser:         r.allowBrowser,
 		CustomTools:          childTools,
 		SystemPromptOverride: systemPrompt,
 		// SubtaskRunner intentionally nil: no recursive spawning.
