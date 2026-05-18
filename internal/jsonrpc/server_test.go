@@ -184,11 +184,15 @@ func TestServer_MultipleMessages_OneResponsePerRequest(t *testing.T) {
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 responses (2 requests, 1 notification), got %d: %v", len(ids), ids)
 	}
-	if ids[0] != "1" || codes[0] != 0 {
-		t.Fatalf("unexpected first response: id=%s code=%d", ids[0], codes[0])
+	// Handler dispatch is async (so $/cancelRequest can interrupt long-running
+	// calls), so response order is not guaranteed. Map ids → codes and assert
+	// each request's outcome independently.
+	got := map[string]int{ids[0]: codes[0], ids[1]: codes[1]}
+	if c, ok := got["1"]; !ok || c != 0 {
+		t.Fatalf("expected id=1 success (code=0), got %v in %v", c, got)
 	}
-	if ids[1] != "2" || codes[1] != -32601 {
-		t.Fatalf("unexpected second response: id=%s code=%d", ids[1], codes[1])
+	if c, ok := got["2"]; !ok || c != -32601 {
+		t.Fatalf("expected id=2 MethodNotFound (-32601), got %v in %v", c, got)
 	}
 }
 

@@ -25,6 +25,20 @@ type Server struct {
 	pMu     sync.Mutex
 	nextID  int
 	pending map[string]chan clientReply
+
+	// inFlightMu guards inFlight, which maps a normalised in-flight client
+	// request id ("42" or `"abc"` with quotes stripped) to its dispatch ctx
+	// CancelFunc. Populated when Serve dispatches a non-notification request,
+	// drained when Handle returns. A `$/cancelRequest` notification looks up
+	// the id here and calls the cancel.
+	inFlightMu sync.Mutex
+	inFlight   map[string]context.CancelFunc
+
+	// dispatchWG tracks goroutines spawned for non-notification requests.
+	// Serve waits on it before returning (EOF or ctx done) so callers that
+	// drive Serve to completion with a finite input still see every response
+	// written before Serve exits.
+	dispatchWG sync.WaitGroup
 }
 
 type clientReply struct {
@@ -43,17 +57,34 @@ type srvWireMsg struct {
 
 func NewServer(h Handler, in io.Reader, out io.Writer) *Server {
 	return &Server{
-		h:       h,
-		r:       NewReader(in),
-		w:       NewWriter(out),
-		pending: make(map[string]chan clientReply),
+		h:        h,
+		r:        NewReader(in),
+		w:        NewWriter(out),
+		pending:  make(map[string]chan clientReply),
+		inFlight: make(map[string]context.CancelFunc),
 	}
+}
+
+// normalizeID renders a JSON-RPC id RawMessage to a canonical map key:
+// strings lose their quotes ("42" -> 42, `"abc"` -> abc), numbers keep
+// their textual form. Used by both the client-response interceptor and the
+// $/cancelRequest handler so they look up the same id under the same key.
+func normalizeID(raw json.RawMessage) string {
+	s := strings.TrimSpace(string(raw))
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 func (s *Server) Serve(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+	// Wait for any in-flight Handle goroutines before returning, so callers
+	// driving Serve to completion with a finite input still observe every
+	// response that the spawned dispatcher wrote.
+	defer s.dispatchWG.Wait()
 	for {
 		select {
 		case <-ctx.Done():
@@ -82,7 +113,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		// Intercept client responses to server-initiated requests (no method field + non-null id).
 		var probe srvWireMsg
 		if json.Unmarshal(msg, &probe) == nil && probe.Method == "" && len(probe.ID) > 0 && string(probe.ID) != "null" {
-			id := strings.Trim(string(probe.ID), `"`)
+			id := normalizeID(probe.ID)
 			s.pMu.Lock()
 			ch, ok := s.pending[id]
 			if ok {
@@ -116,26 +147,81 @@ func (s *Server) Serve(ctx context.Context) error {
 
 		// Notifications: no response.
 		if req.IsNotification {
+			// $/cancelRequest is consumed by the server itself — it cancels the
+			// per-request context for an in-flight call so handlers that honour
+			// ctx (agent.run, workflow.run, skill.invoke, agent loop tools)
+			// unwind promptly. Unknown ids are silently ignored, matching LSP.
+			if req.Method == "$/cancelRequest" {
+				s.handleCancelRequest(req.Params)
+				continue
+			}
 			_, _ = s.h.Handle(ctx, req.Method, req.Params)
 			continue
 		}
 
-		res, callErr := s.h.Handle(ctx, req.Method, req.Params)
-		if callErr != nil {
-			rpcErr := toRPCError(callErr)
+		// Per-request cancellable ctx — registered before dispatch so a
+		// $/cancelRequest arriving mid-call can cancel it, deregistered
+		// after dispatch so a late cancel notification is a no-op.
+		//
+		// Handle runs in its own goroutine so the Serve loop keeps reading.
+		// Without this, a long-running call (agent.run for minutes) would
+		// block the reader and `$/cancelRequest` would sit in the pipe
+		// until the call finishes — defeating the entire point of
+		// cancellation. Writer is mutex-protected, so concurrent response
+		// writes from multiple in-flight handlers are safe.
+		reqCtx, cancel := context.WithCancel(ctx)
+		idKey := normalizeID(req.ID)
+		s.inFlightMu.Lock()
+		s.inFlight[idKey] = cancel
+		s.inFlightMu.Unlock()
+
+		s.dispatchWG.Add(1)
+		go func(req parsedRequest, reqCtx context.Context, cancel context.CancelFunc, idKey string) {
+			defer s.dispatchWG.Done()
+			res, callErr := s.h.Handle(reqCtx, req.Method, req.Params)
+
+			s.inFlightMu.Lock()
+			delete(s.inFlight, idKey)
+			s.inFlightMu.Unlock()
+			cancel()
+
+			if callErr != nil {
+				_ = s.w.WriteMessage(Response{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error:   toRPCError(callErr),
+				})
+				return
+			}
 			_ = s.w.WriteMessage(Response{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Error:   rpcErr,
+				Result:  res,
 			})
-			continue
-		}
+		}(req, reqCtx, cancel, idKey)
+	}
+}
 
-		_ = s.w.WriteMessage(Response{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  res,
-		})
+// handleCancelRequest interprets the params of `$/cancelRequest` and cancels
+// the matching in-flight request's context. The id field accepts the same
+// shape (string or number) the server sees on the wire; missing/unknown ids
+// are silently ignored, matching LSP semantics.
+func (s *Server) handleCancelRequest(params json.RawMessage) {
+	var p struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil || len(p.ID) == 0 {
+		return
+	}
+	idKey := normalizeID(p.ID)
+	s.inFlightMu.Lock()
+	cancel, ok := s.inFlight[idKey]
+	if ok {
+		delete(s.inFlight, idKey)
+	}
+	s.inFlightMu.Unlock()
+	if ok {
+		cancel()
 	}
 }
 

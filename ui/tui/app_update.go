@@ -669,6 +669,21 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			return a, nil, true
 		}
+		// While a long-running RPC is in flight, Esc cancels it. The local
+		// context cancel unblocks the rpcclient.Call which auto-sends
+		// `$/cancelRequest` to the server — the server then cancels its
+		// per-request ctx so agent.run / workflow.run / skill.invoke unwind
+		// promptly. The visible "busy" state clears via the result/error
+		// event path (EventAgentRunCompleted, workflowResultMsg, etc.).
+		if a.agentBusy && a.activeCancel != nil {
+			a.clearActiveCancel()
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: "[cancelled by user]",
+			})
+			a.chat.SetMessages(a.session.Messages)
+			return a, nil, true
+		}
 		a.input.Reset()
 		return a, nil, true
 	case "tab":
@@ -822,9 +837,12 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		a.agentBusy = true
 		a.statusBar.SetAgentBusy(true)
 		a.chat.SetAgentBusy(true)
+		ctx, cancel := context.WithCancel(context.Background())
+		a.activeCancel = cancel
 		a.layout()
+		a.updateStatusHints()
 		go func(query, mode string) {
-			_ = a.rpc.AgentRun(context.Background(), query, mode)
+			_ = a.rpc.AgentRun(ctx, query, mode)
 		}(text, a.cfg.Mode)
 		return a, saveCmd, true
 	}

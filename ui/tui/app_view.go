@@ -366,6 +366,8 @@ func (a *App) updateStatusHints() {
 		a.statusBar.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:
 		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
+	case a.agentBusy && a.activeCancel != nil:
+		a.statusBar.SetHints("Esc отменить · Ctrl+C выйти")
 	default:
 		a.statusBar.SetHints("Ctrl+G выделение · Ctrl+K команды")
 	}

@@ -109,6 +109,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.reasoning.Reset()
 	case rpcclient.EventAgentRunCompleted:
 		// Real end of the user turn. Now we finalize.
+		a.clearActiveCancel()
 		// Carry is always flushed to TEXT here — a stranded carry inside an
 		// unclosed `<think>` block at end-of-run means the provider never
 		// emitted `</think>`, so treating it as reasoning would hide it
@@ -129,6 +130,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.agentBusy = false
 		a.statusBar.SetAgentBusy(false)
 		a.chat.SetAgentBusy(false)
+		a.clearActiveCancel()
 		a.layout()
 		a.statusBar.SetError(ev.Err)
 		a.chat.SetStreamCursor(false)

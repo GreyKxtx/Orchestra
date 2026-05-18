@@ -132,6 +132,32 @@ Top-level JSON массив (**batch**) **не поддерживается**.
 
 ## Методы
 
+### `$/cancelRequest`
+
+Client-initiated notification (no `id` field) that asks the server to cancel
+an in-flight request. Matches LSP semantics: unknown / already-completed
+ids are silently ignored.
+
+`params`:
+
+- `id` (string | number, required) — the `id` of the original request to cancel.
+
+The server cancels the per-request `context.Context` it derived for the
+target dispatch. Handlers that honour ctx (`agent.run`, `workflow.run`,
+`skill.invoke`, every tool inside the agent loop) unwind promptly and the
+original request returns a response — typically an error wrapping
+`context.Canceled` or an `ExecFailed` / domain-specific code.
+
+The reference TUI client wires this automatically: cancelling the Go ctx
+passed to `Client.Call` fires `$/cancelRequest` on the wire as the call
+returns `ctx.Err()`. Custom clients should follow the same pattern.
+
+Dispatch is asynchronous on the server side specifically so a cancel
+notification arriving mid-call is read and processed without waiting for
+the long-running handler to return. Response order is therefore not
+guaranteed to match request order — multiple in-flight requests may
+complete in any order.
+
 ### `core.health`
 
 Request:

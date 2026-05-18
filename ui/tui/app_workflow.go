@@ -135,9 +135,12 @@ func (a *App) cmdRunWorkflow(name, args string) tea.Cmd {
 	if a.workflowProgress != nil {
 		a.workflowProgress.Begin(name)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.activeCancel = cancel
 	a.layout()
+	a.updateStatusHints()
 	return func() tea.Msg {
-		res, err := rpc.WorkflowRun(context.Background(), name, args, rpcclient.WorkflowRunOptions{
+		res, err := rpc.WorkflowRun(ctx, name, args, rpcclient.WorkflowRunOptions{
 			// TODO: thread --apply / --allow-exec from TUI settings once we add
 			// those toggles. Default: dry-run + no exec.
 		})
@@ -150,10 +153,22 @@ func (a *App) cmdInvokeSkill(name, args string) tea.Cmd {
 	a.agentBusy = true
 	a.statusBar.SetAgentBusy(true)
 	a.chat.SetAgentBusy(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	a.activeCancel = cancel
 	a.layout()
+	a.updateStatusHints()
 	return func() tea.Msg {
-		res, err := rpc.SkillInvoke(context.Background(), name, args, rpcclient.SkillInvokeOptions{})
+		res, err := rpc.SkillInvoke(ctx, name, args, rpcclient.SkillInvokeOptions{})
 		return skillResultMsg{res: res, err: err}
+	}
+}
+
+// clearActiveCancel releases the cancellable ctx of the in-flight long-running
+// RPC (agent.run / workflow.run / skill.invoke). Safe to call repeatedly.
+func (a *App) clearActiveCancel() {
+	if a.activeCancel != nil {
+		a.activeCancel()
+		a.activeCancel = nil
 	}
 }
 
@@ -178,7 +193,9 @@ func (a *App) handleWorkflowResult(m workflowResultMsg) tea.Cmd {
 	if a.workflowProgress != nil {
 		a.workflowProgress.End()
 	}
+	a.clearActiveCancel()
 	a.layout()
+	a.updateStatusHints()
 	if m.err != nil {
 		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] workflow.run: " + m.err.Error()})
 		a.chat.SetMessages(a.session.Messages)
@@ -201,7 +218,9 @@ func (a *App) handleSkillResult(m skillResultMsg) tea.Cmd {
 	a.agentBusy = false
 	a.statusBar.SetAgentBusy(false)
 	a.chat.SetAgentBusy(false)
+	a.clearActiveCancel()
 	a.layout()
+	a.updateStatusHints()
 	if m.err != nil {
 		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] skill.invoke: " + m.err.Error()})
 		a.chat.SetMessages(a.session.Messages)
