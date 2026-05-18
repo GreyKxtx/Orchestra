@@ -65,10 +65,19 @@ type StageExecution struct {
 	OutputKB int    // size of the output text in KB, for logging
 }
 
-// Run executes the workflow stages in topological order, threading outputs
-// forward via {ID.output} substitution and looping on completion markers when
-// configured. ctx is checked between stages; long-running stage internals
-// must honour context themselves (the invoker takes ctx).
+// Run executes the workflow as a DAG: at each step every stage whose
+// dependencies are satisfied runs concurrently (a "cohort"). Each stage's
+// completion marker is mapped to advance / loop / redo:<id> / fail. A redo
+// resets the target stage and every transitive descendant, so cohort siblings
+// that already finished are also re-executed if they depend on the redo
+// target.
+//
+// max_attempts is counted per stage across its whole lifetime, not per
+// redo cycle — that means a loop_until_marker stage with max_attempts=3 can
+// fire at most 3 times total even if its redos keep happening.
+//
+// ctx is checked between cohorts; long-running stage internals must honour
+// ctx themselves (the invoker takes it).
 func Run(ctx context.Context, w *Workflow, inv StageInvoker, markersFor func(skill string) []string, opts RunOptions) (*RunResult, error) {
 	if w == nil {
 		return nil, errors.New("workflow: nil workflow")
@@ -81,123 +90,203 @@ func Run(ctx context.Context, w *Workflow, inv StageInvoker, markersFor func(ski
 		return nil, err
 	}
 	byID := make(map[string]*Stage, len(w.Stages))
+	topoIdx := make(map[string]int, len(w.Stages))
 	for i := range w.Stages {
 		byID[w.Stages[i].ID] = &w.Stages[i]
 	}
+	for i, id := range order {
+		topoIdx[id] = i
+	}
+	descendants := buildDescendants(w)
 
 	result := &RunResult{Outputs: make(map[string]string, len(w.Stages))}
+	done := make(map[string]bool, len(w.Stages))
+	attempts := make(map[string]int, len(w.Stages))
 
-	// We walk in topo order but allow "redo:<id>" to splice us back. To make
-	// that predictable we use an index pointer and only honour redos that go
-	// strictly backwards (a forward redo is a config error caught by Validate).
-	idx := 0
-	for idx < len(order) {
+	for {
 		if ctx.Err() != nil {
 			result.FailureReason = "cancelled: " + ctx.Err().Error()
 			return result, ctx.Err()
 		}
-		stageID := order[idx]
-		stage := byID[stageID]
-
-		// Build user query: join all interpolated inputs with newlines.
-		query := buildQuery(stage, result.Outputs, opts.Arguments)
-
-		maxAttempts := stage.MaxAttempts
-		if maxAttempts == 0 && stage.LoopUntilMarker != "" {
-			maxAttempts = 3
+		if len(done) == len(w.Stages) {
+			return result, nil
 		}
-		if maxAttempts == 0 {
-			maxAttempts = 1
+
+		cohort := readyCohort(w, done)
+		if len(cohort) == 0 {
+			// Should never happen: TopoSort would've caught a cycle. Defensive.
+			result.FailureReason = "internal: no ready stages but workflow not complete"
+			return result, errors.New(result.FailureReason)
 		}
-		markers := markersFor(stage.Skill)
 
-		var lastOutput, lastMarker, nextAction string
-		var redoTarget string
-
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			if opts.OnStageStart != nil {
-				opts.OnStageStart(stageID, attempt)
-			}
-			out, err := runStage(ctx, inv, stage, query)
-			if err != nil {
-				result.FailureReason = fmt.Sprintf("stage %q attempt %d failed: %v", stageID, attempt, err)
-				return result, fmt.Errorf("stage %q: %w", stageID, err)
-			}
-			lastOutput = out
-			lastMarker = detectMarker(out, markers, stage.OnMarker, stage.LoopUntilMarker)
-			nextAction = "advance"
-
-			// Decide next routing.
-			if stage.LoopUntilMarker != "" {
-				if lastMarker == stage.LoopUntilMarker {
-					nextAction = "advance"
-				} else if action, ok := stage.OnMarker[lastMarker]; ok {
-					nextAction = action
-				} else if attempt < maxAttempts {
-					nextAction = "loop"
-				} else {
-					nextAction = "fail"
+		// Run cohort concurrently.
+		type stageResult struct {
+			id      string
+			attempt int
+			out     string
+			marker  string
+			action  string
+			err     error
+		}
+		resultsCh := make(chan stageResult, len(cohort))
+		var wg sync.WaitGroup
+		for _, s := range cohort {
+			s := s
+			attempts[s.ID]++
+			attempt := attempts[s.ID]
+			query := buildQuery(s, result.Outputs, opts.Arguments)
+			maxAttempts := effectiveMaxAttempts(s)
+			markers := markersFor(s.Skill)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if opts.OnStageStart != nil {
+					opts.OnStageStart(s.ID, attempt)
 				}
-			}
+				out, runErr := runStage(ctx, inv, s, query)
+				if runErr != nil {
+					resultsCh <- stageResult{id: s.ID, attempt: attempt, err: runErr}
+					return
+				}
+				marker := detectMarker(out, markers, s.OnMarker, s.LoopUntilMarker)
+				action := decideAction(s, marker, attempt, maxAttempts)
+				if opts.OnStageDone != nil {
+					opts.OnStageDone(s.ID, attempt, out, marker, action)
+				}
+				resultsCh <- stageResult{id: s.ID, attempt: attempt, out: out, marker: marker, action: action}
+			}()
+		}
+		wg.Wait()
+		close(resultsCh)
 
-			if opts.OnStageDone != nil {
-				opts.OnStageDone(stageID, attempt, lastOutput, lastMarker, nextAction)
+		// Collect & route.
+		var redoTargets []string
+		for r := range resultsCh {
+			if r.err != nil {
+				result.FailureReason = fmt.Sprintf("stage %q attempt %d failed: %v", r.id, r.attempt, r.err)
+				return result, fmt.Errorf("stage %q: %w", r.id, r.err)
 			}
 			result.StagesExecuted = append(result.StagesExecuted, StageExecution{
-				StageID: stageID, Attempt: attempt, Marker: lastMarker,
-				Action: nextAction, OutputKB: (len(lastOutput) + 1023) / 1024,
+				StageID: r.id, Attempt: r.attempt, Marker: r.marker,
+				Action: r.action, OutputKB: (len(r.out) + 1023) / 1024,
 			})
-
-			if nextAction == "advance" {
-				break
+			result.Outputs[r.id] = r.out
+			// FinalStage tracks the highest-topo-index stage we've completed.
+			if cur, ok := topoIdx[result.FinalStage]; !ok || topoIdx[r.id] > cur {
+				result.FinalStage = r.id
 			}
-			if nextAction == "loop" {
-				// Re-run same stage with the same inputs; the skill is expected
-				// to converge on subsequent attempts via internal state.
-				continue
-			}
-			if strings.HasPrefix(nextAction, "redo:") {
-				redoTarget = strings.TrimPrefix(nextAction, "redo:")
-				// Carry forward this stage's output so the redo target's
-				// {stage.output} substitution sees the latest critique.
-				result.Outputs[stageID] = lastOutput
-				break
-			}
-			if nextAction == "fail" {
-				result.Outputs[stageID] = lastOutput
+			switch {
+			case r.action == "advance":
+				done[r.id] = true
+			case r.action == "loop":
+				// Stay not-done; it will reappear in the next cohort because
+				// its deps are still satisfied. attempts[] enforces the cap.
+			case r.action == "fail":
 				result.FailureReason = fmt.Sprintf("stage %q: emitted %q (action=fail) after %d attempt(s)",
-					stageID, lastMarker, attempt)
+					r.id, r.marker, r.attempt)
 				return result, errors.New(result.FailureReason)
+			case strings.HasPrefix(r.action, "redo:"):
+				redoTargets = append(redoTargets, strings.TrimPrefix(r.action, "redo:"))
+				done[r.id] = true
 			}
 		}
 
-		result.Outputs[stageID] = lastOutput
-		result.FinalStage = stageID
+		// Apply redos: reset target + transitive descendants (which includes
+		// the redo emitter, so it re-runs after the target).
+		for _, tgt := range redoTargets {
+			if _, ok := byID[tgt]; !ok {
+				result.FailureReason = fmt.Sprintf("redo target %q not in workflow", tgt)
+				return result, errors.New(result.FailureReason)
+			}
+			delete(done, tgt)
+			for _, d := range descendants[tgt] {
+				delete(done, d)
+			}
+		}
+	}
+}
 
-		if redoTarget != "" {
-			// Find redoTarget in order; splice idx back to it.
-			found := -1
-			for i, id := range order {
-				if id == redoTarget {
-					found = i
-					break
-				}
-			}
-			if found < 0 {
-				// Validator should have caught this; defensive.
-				result.FailureReason = fmt.Sprintf("redo target %q not in topo order", redoTarget)
-				return result, errors.New(result.FailureReason)
-			}
-			if found >= idx {
-				result.FailureReason = fmt.Sprintf("forward redo target %q (must be a prior stage)", redoTarget)
-				return result, errors.New(result.FailureReason)
-			}
-			idx = found
+// readyCohort returns every stage whose dependencies are all in `done`
+// and that isn't itself done. Order is deterministic by topo index.
+func readyCohort(w *Workflow, done map[string]bool) []*Stage {
+	out := make([]*Stage, 0, 4)
+	for i := range w.Stages {
+		s := &w.Stages[i]
+		if done[s.ID] {
 			continue
 		}
-		idx++
+		ready := true
+		for _, dep := range s.DependsOn {
+			if !done[dep] {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			out = append(out, s)
+		}
 	}
-	return result, nil
+	return out
+}
+
+// buildDescendants returns, for each stage id, the list of all stages that
+// transitively depend on it (children, grandchildren, …). Used by redo to
+// know which downstream cohort siblings must also be reset.
+func buildDescendants(w *Workflow) map[string][]string {
+	children := make(map[string][]string, len(w.Stages))
+	for _, s := range w.Stages {
+		for _, dep := range s.DependsOn {
+			children[dep] = append(children[dep], s.ID)
+		}
+	}
+	out := make(map[string][]string, len(w.Stages))
+	for _, s := range w.Stages {
+		seen := map[string]bool{}
+		var walk func(id string)
+		walk = func(id string) {
+			for _, c := range children[id] {
+				if seen[c] {
+					continue
+				}
+				seen[c] = true
+				walk(c)
+			}
+		}
+		walk(s.ID)
+		desc := make([]string, 0, len(seen))
+		for c := range seen {
+			desc = append(desc, c)
+		}
+		out[s.ID] = desc
+	}
+	return out
+}
+
+func effectiveMaxAttempts(s *Stage) int {
+	m := s.MaxAttempts
+	if m == 0 && s.LoopUntilMarker != "" {
+		m = 3
+	}
+	if m == 0 {
+		m = 1
+	}
+	return m
+}
+
+func decideAction(s *Stage, marker string, attempt, maxAttempts int) string {
+	if s.LoopUntilMarker == "" {
+		return "advance"
+	}
+	if marker == s.LoopUntilMarker {
+		return "advance"
+	}
+	if act, ok := s.OnMarker[marker]; ok {
+		return act
+	}
+	if attempt < maxAttempts {
+		return "loop"
+	}
+	return "fail"
 }
 
 // runStage executes the stage, honouring Parallel > 1 by fanning out.
