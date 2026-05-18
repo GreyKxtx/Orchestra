@@ -16,17 +16,21 @@ type ExploreCodebaseResponse struct {
 }
 
 func (r *Runner) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest) (*ExploreCodebaseResponse, error) {
-	if r.ckgStore == nil || r.ckgProvider == nil {
+	r.ckgMu.RLock()
+	store := r.ckgStore
+	provider := r.ckgProvider
+	r.ckgMu.RUnlock()
+	if store == nil || provider == nil {
 		return nil, fmt.Errorf("ckg store not initialized")
 	}
 
 	// Update graph incrementally on every call (millisecond if no changes).
-	orch := ckg.NewOrchestrator(r.ckgStore, r.workspaceRoot)
+	orch := ckg.NewOrchestrator(store, r.workspaceRoot)
 	if err := orch.UpdateGraph(ctx); err != nil {
 		return nil, fmt.Errorf("update ckg: %w", err)
 	}
 
-	content, err := r.ckgProvider.ExploreSymbol(ctx, req.SymbolName)
+	content, err := provider.ExploreSymbol(ctx, req.SymbolName)
 	if err != nil {
 		return nil, fmt.Errorf("explore symbol: %w", err)
 	}

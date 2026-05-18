@@ -38,6 +38,11 @@ type Runner struct {
 
 	mcpCaller MCPCaller
 
+	// ckgMu guards ckgStore + ckgProvider against concurrent
+	// FetchCKGContext / ExploreCodebase readers and Close writers
+	// (child subagent goroutines outlive their parent's t.Cleanup,
+	// so reads can race with the cleanup-time Close).
+	ckgMu       sync.RWMutex
 	ckgStore    *ckg.Store
 	ckgProvider *ckg.Provider
 
@@ -218,11 +223,14 @@ func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
 // the first explore or FetchCKGContext call doesn't pay the full scan cost.
 // The goroutine is bound to ctx and exits silently on completion or cancellation.
 func (r *Runner) WarmupCKG(ctx context.Context) {
-	if r.ckgStore == nil {
+	r.ckgMu.RLock()
+	store := r.ckgStore
+	r.ckgMu.RUnlock()
+	if store == nil {
 		return
 	}
 	go func() {
-		orch := ckg.NewOrchestrator(r.ckgStore, r.workspaceRoot)
+		orch := ckg.NewOrchestrator(store, r.workspaceRoot)
 		_ = orch.UpdateGraph(ctx)
 	}()
 }
@@ -230,15 +238,18 @@ func (r *Runner) WarmupCKG(ctx context.Context) {
 // FetchCKGContext returns a <ckg_context> block of up to 12 nodes relevant to
 // the query, or an empty string if the CKG store is unavailable or has no matches.
 func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
-	if r.ckgStore == nil {
+	r.ckgMu.RLock()
+	store := r.ckgStore
+	r.ckgMu.RUnlock()
+	if store == nil {
 		return ""
 	}
 	// Ensure the graph is populated before querying (same as ExploreCodebase does).
-	orch := ckg.NewOrchestrator(r.ckgStore, r.workspaceRoot)
+	orch := ckg.NewOrchestrator(store, r.workspaceRoot)
 	if err := orch.UpdateGraph(ctx); err != nil {
 		return "" // non-fatal: empty context is better than crashing
 	}
-	nodes, err := r.ckgStore.FindRelevantNodes(ctx, query, 12)
+	nodes, err := store.FindRelevantNodes(ctx, query, 12)
 	if err != nil || len(nodes) == 0 {
 		return ""
 	}
@@ -257,11 +268,13 @@ func (r *Runner) Close() error {
 		r.lspManager.Close()
 		r.lspManager = nil
 	}
-	if r.ckgStore != nil {
-		err := r.ckgStore.Close()
-		r.ckgStore = nil
-		r.ckgProvider = nil
-		return err
+	r.ckgMu.Lock()
+	store := r.ckgStore
+	r.ckgStore = nil
+	r.ckgProvider = nil
+	r.ckgMu.Unlock()
+	if store != nil {
+		return store.Close()
 	}
 	return nil
 }
