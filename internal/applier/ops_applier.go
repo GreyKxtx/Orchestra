@@ -38,13 +38,27 @@ func ApplyOps(root string, in []ops.ReplaceRangeOp, opts ApplyOptions) (*ApplyRe
 // Policy: all-or-nothing for validation (no writes on error). If validation succeeds
 // and opts.DryRun=false, writes are applied in deterministic path order.
 //
-// Serialised across in-process callers via applyMu so concurrent apply runs
-// don't clobber each other's `.orchestra.bak` backups. See applyMu doc.
+// Concurrency safety (H9 in audit ledger):
+//   - applyMu serialises in-process callers so concurrent apply runs in the
+//     same Orchestra process don't clobber each other's `.orchestra.bak`.
+//   - acquireProjectLock takes an exclusive POSIX flock / Windows LockFileEx
+//     on `<project>/.orchestra/apply.lock` so two SEPARATE Orchestra
+//     processes (e.g. CLI + TUI core, two TUIs, CI parallel jobs) wait
+//     on each other instead of racing the same files.
 func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, error) {
 	applyMu.Lock()
 	defer applyMu.Unlock()
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("root is empty")
+	}
+	if !opts.DryRun {
+		// Only acquire the cross-process lock when we're actually going to
+		// mutate disk. Dry-run callers (preview, plan) should never block.
+		release, err := acquireProjectLock(root)
+		if err != nil {
+			return nil, fmt.Errorf("acquire project apply lock: %w", err)
+		}
+		defer release()
 	}
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
