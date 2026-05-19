@@ -450,6 +450,12 @@ func (m *Manager) DocumentSymbols(ctx context.Context, relPath string) ([]ToolSy
 
 // SyncAndDiagnose notifies the server of new file content and waits for diagnostics.
 // Returns nil (not an error) if no server handles the file or on timeout.
+//
+// M17 in audit ledger: DidChange / DidOpen errors are logged at the
+// Manager level (via the caller's stderr through fmt.Errorf) so the
+// operator at least sees them in the agent logs — the function still
+// returns nil to keep the diagnostics-empty contract intact for callers
+// that treat "no diagnostics" as "all clean".
 func (m *Manager) SyncAndDiagnose(ctx context.Context, relPath, content string) []ToolDiagnostic {
 	s, err := m.serverForPath(relPath)
 	if err != nil {
@@ -464,11 +470,13 @@ func (m *Manager) SyncAndDiagnose(ctx context.Context, relPath, content string) 
 
 	if s.client.IsOpen(uri) {
 		if err := s.client.DidChange(tctx, uri, content); err != nil {
+			fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: DidChange %s: %v\n", relPath, err)
 			return nil
 		}
 	} else {
 		langID := langIDFromExt(filepath.Ext(relPath))
 		if err := s.client.DidOpen(tctx, uri, langID, content); err != nil {
+			fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: DidOpen %s: %v\n", relPath, err)
 			return nil
 		}
 	}
@@ -486,7 +494,15 @@ func (m *Manager) locsToTool(locs []Location) []ToolLocation {
 		}
 		relPath, err := filepath.Rel(m.workspaceRoot, absPath)
 		if err != nil {
-			relPath = absPath
+			continue
+		}
+		// M20 in audit ledger: drop out-of-workspace results (stdlib defs,
+		// dependency sources at $GOPATH/pkg/mod, …). Their paths come back
+		// as `../../usr/local/go/src/fmt/print.go` which downstream tools
+		// reject as path-traversal. The model would see them and try to
+		// `fs.read` — guaranteed failure. Better to omit than to mislead.
+		if relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+			continue
 		}
 		out = append(out, ToolLocation{
 			Path:      filepath.ToSlash(relPath),

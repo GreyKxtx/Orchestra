@@ -32,6 +32,10 @@ type Client struct {
 
 	notifyCh  chan rpcMessage
 	closeOnce sync.Once
+	// readDone is closed by readLoop on exit so Close can join cleanly
+	// instead of returning while in-flight callers still block on their
+	// own ctx. M21 in audit ledger.
+	readDone chan struct{}
 
 	dead atomic.Bool
 
@@ -40,8 +44,62 @@ type Client struct {
 	docMu       sync.Mutex
 	docVersions map[string]int // uri → current version
 
+	// stderrMu guards stderrBuf (M18 in audit ledger). drainStderr appends;
+	// StderrTail and Close both read.
+	stderrMu  sync.Mutex
+	stderrBuf []byte
+
+	// notifyDropped counts publishDiagnostics / etc. notifications that were
+	// dropped because notifyCh was full (M19). Read via DroppedNotifications.
+	notifyDropped atomic.Uint64
+
 	// Set by Manager after construction.
 	DiagCache *DiagnosticsCache
+}
+
+// stderrRingSize caps the per-Client stderr ring buffer (M18). 64 KiB
+// preserves the most recent server output for debugging without unbounded
+// growth across long sessions.
+const stderrRingSize = 64 * 1024
+
+// drainStderr reads the server's stderr in a loop and keeps the most
+// recent stderrRingSize bytes in a ring buffer. Runs in its own goroutine
+// for the lifetime of the connection. Empty no-op if r is nil.
+func (c *Client) drainStderr(r io.Reader) {
+	if r == nil {
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			c.stderrMu.Lock()
+			c.stderrBuf = append(c.stderrBuf, buf[:n]...)
+			if len(c.stderrBuf) > stderrRingSize {
+				drop := len(c.stderrBuf) - stderrRingSize
+				c.stderrBuf = c.stderrBuf[drop:]
+			}
+			c.stderrMu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// StderrTail returns the last <=64 KiB of the server's stderr output.
+// Use for diagnostics surfacing — e.g. logging when the server crashes.
+func (c *Client) StderrTail() string {
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	return string(c.stderrBuf)
+}
+
+// DroppedNotifications reports how many publishDiagnostics / etc. messages
+// were silently discarded because notifyCh was full. Non-zero indicates a
+// slow consumer or a notification storm during workspace init (M19).
+func (c *Client) DroppedNotifications() uint64 {
+	return c.notifyDropped.Load()
 }
 
 func newClient(name string, cmd *exec.Cmd, r io.Reader, w io.WriteCloser) *Client {
@@ -53,6 +111,7 @@ func newClient(name string, cmd *exec.Cmd, r io.Reader, w io.WriteCloser) *Clien
 		notifyCh:    make(chan rpcMessage, 256),
 		posEncoding: "utf-16", // conservative default until initialize
 		docVersions: make(map[string]int),
+		readDone:    make(chan struct{}),
 	}
 	go c.readLoop()
 	return c
@@ -83,12 +142,24 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 	if err != nil {
 		return nil, fmt.Errorf("lsp: stdout pipe for %q: %w", name, err)
 	}
-	cmd.Stderr = io.Discard
+	// M18 in audit ledger: pipe stderr to a 64 KiB ring buffer instead of
+	// discarding. Gopls / tsserver crash dumps, "missing go.mod" notices,
+	// license messages were previously invisible — operator had no way to
+	// see why the server failed. The ring buffer keeps the last ~64 KiB
+	// available via Client.StderrTail() for surfacing in core.health or
+	// debug logs without unbounded growth.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("lsp: stderr pipe for %q: %w", name, err)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("lsp: start %q: %w", name, err)
 	}
 
 	c := newClient(name, cmd, stdout, stdin)
+	// Drain stderr into the ring buffer in its own goroutine so the
+	// subprocess's stderr pipe never fills and blocks the server.
+	go c.drainStderr(stderrPipe)
 	if err := c.initialize(ctx, rootURI, initOptions); err != nil {
 		_ = c.Close()
 		return nil, fmt.Errorf("lsp: initialize %q: %w", name, err)
@@ -200,9 +271,15 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 	return c.notify(ctx, method, params)
 }
 
-func (c *Client) notify(_ context.Context, method string, params any) error {
+func (c *Client) notify(ctx context.Context, method string, params any) error {
 	if c.dead.Load() {
 		return fmt.Errorf("lsp: server %q is dead", c.name)
+	}
+	// M23 in audit ledger: respect caller's ctx even before we attempt
+	// the (potentially blocking) write. Useful when the LSP server has
+	// stopped reading stdin — the writer would block on wMu otherwise.
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	paramsRaw, err := json.Marshal(params)
 	if err != nil {
@@ -302,12 +379,21 @@ func (c *Client) Close() error {
 			_ = c.cmd.Process.Kill()
 		}
 	}
+	// M21 in audit ledger: wait for readLoop to fully exit so any in-flight
+	// request that's racing on its own ctx sees the drained "server died"
+	// error before Close returns to the caller. Bounded by 1s — in normal
+	// operation readLoop returns the moment c.r returns EOF after w.Close.
+	select {
+	case <-c.readDone:
+	case <-time.After(time.Second):
+	}
 	return nil
 }
 
 func (c *Client) readLoop() {
 	defer func() {
 		c.dead.Store(true)
+		close(c.readDone)
 		c.closeOnce.Do(func() { close(c.notifyCh) })
 		// Wake all pending requests with an error.
 		c.pending.Range(func(key, value any) bool {
@@ -354,7 +440,10 @@ func (c *Client) readLoop() {
 			select {
 			case c.notifyCh <- msg:
 			default:
-				// Drop oldest and retry.
+				// M19 in audit ledger: count drops so operators can detect
+				// a slow consumer (or workspace-init notification storm) via
+				// DroppedNotifications(). Drop oldest and retry.
+				c.notifyDropped.Add(1)
 				select {
 				case <-c.notifyCh:
 				default:

@@ -164,7 +164,14 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 
 	var lspMgr *lsp.Manager
 	if len(opts.LSP.Servers) > 0 {
-		mgr, _ := lsp.NewManager(rootAbs, convertLSPConfig(opts.LSP))
+		mgr, lspErrs := lsp.NewManager(rootAbs, convertLSPConfig(opts.LSP))
+		// M22 in audit ledger: surface per-server LSP start errors via
+		// stderr instead of silently dropping them. Without this, an
+		// operator with a misconfigured gopls saw "no LSP" with zero
+		// indication why.
+		for _, e := range lspErrs {
+			fmt.Fprintf(os.Stderr, "orchestra: lsp startup warning: %v\n", e)
+		}
 		lspMgr = mgr
 	}
 
