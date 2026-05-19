@@ -168,7 +168,13 @@ type Options struct {
 
 	// OnEvent, if non-nil, is called synchronously for each streaming event during a step.
 	// Nil disables streaming (agent falls back to the blocking Complete path).
-	// The callback must not block; use a goroutine or buffered channel if you need async processing.
+	//
+	// Contract: the callback (a) must not block, and (b) MUST be goroutine-safe.
+	// runParallelToolBatch fires events from up to parallelBatchWorkerLimit
+	// worker goroutines concurrently, so a sink that mutates shared state
+	// (UI buffer, log file, channel) needs its own mutex or buffered channel.
+	// A panicking callback is recovered (see safeRun) so a buggy sink can't
+	// take down the agent loop, but the event is then dropped silently.
 	OnEvent func(AgentEvent)
 
 	// AgentLogger, if non-nil, writes tool_call / tool_result events to llm_log.jsonl.
@@ -247,6 +253,12 @@ type Options struct {
 // UsageRecorder is the agent's view of the usage tracker. Mirrors
 // *usage.Tracker.Record to keep the agent package free of a hard import on
 // internal/usage.
+//
+// M5 in audit ledger: Record may be invoked concurrently from the main
+// agent loop AND from in-process child agents (skill_invoke, task_spawn)
+// that share the same tracker — implementations MUST be goroutine-safe.
+// usage.Tracker satisfies this via an internal mutex; custom recorders
+// (test fakes, alternative metrics sinks) need to as well.
 type UsageRecorder interface {
 	Record(provider, model string, prompt, completion int)
 }
@@ -362,6 +374,14 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	for steps < a.opts.MaxSteps {
 		steps++
 
+		// M3 in audit ledger: honour parent ctx cancellation at the top of
+		// every loop iteration so $/cancelRequest unwinds the run even
+		// before the next LLM call sees it. Without this, the loop kept
+		// running compaction + nextStep before noticing the cancel.
+		if err := ctx.Err(); err != nil {
+			return history, nil, err
+		}
+
 		// Compaction: if history is getting large, summarise it before the next LLM call.
 		// Fires only at the top of the loop so history is always in a consistent state
 		// (no orphaned tool_calls without tool_results).
@@ -432,6 +452,13 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			if step.Tool == nil {
+				// M7+M8 in audit ledger: count invalid steps toward the
+				// MaxInvalidRetries cap via RecordInvalid (was dead code).
+				// Without this, a model stuck emitting malformed JSON could
+				// only be bounded by MaxSteps.
+				if cbErr := cb.RecordInvalid(); cbErr != nil {
+					return nil, nil, cbErr
+				}
 				// Add validation error as user message for retry
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
@@ -442,6 +469,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 			name := strings.TrimSpace(step.Tool.Name)
 			if name == "" {
+				if cbErr := cb.RecordInvalid(); cbErr != nil {
+					return nil, nil, cbErr
+				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
 					Content: formatValidatorError("Invalid JSON format: tool.name is empty", raw),
@@ -953,7 +983,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			cb.RecordSuccessfulCall(name, step.Tool.Input)
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
 			cb.ResetToolErrors()
-			cb.ResetFinalFailures() // successful tool call = model is making progress
+			// M6 in audit ledger: a successful tool call resets the final-
+			// failure counter on the rationale that the model is making
+			// progress between apply attempts. This makes MaxFinalFailures
+			// "consecutive failures with no intervening tool success" rather
+			// than "lifetime failures". Trade-off: a model in a
+			// fail→read→fail loop only trips on MaxSteps, not MaxFinalFailures.
+			// Accept by design: MaxSteps caps every loop shape; this cap
+			// targets a narrower "no progress at all" failure mode.
+			cb.ResetFinalFailures()
 			emitStepDone("tool_call")
 			continue
 
@@ -1161,6 +1199,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}, nil
 
 		default:
+			// M7+M8 in audit ledger: unknown step type counts toward the
+			// MaxInvalidRetries cap so a model emitting persistently bogus
+			// step shapes can't loop forever within MaxSteps.
+			if cbErr := cb.RecordInvalid(); cbErr != nil {
+				return nil, nil, cbErr
+			}
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
 				Content: formatValidatorError("Invalid JSON format: unknown step type", raw),
@@ -1339,9 +1383,17 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		if err != nil {
 			return nil, "", nil, err
 		}
-		if a.opts.UsageTracker != nil && resp != nil && resp.Usage != nil {
-			a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,
-				resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+		if a.opts.UsageTracker != nil && resp != nil {
+			if resp.Usage != nil {
+				a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,
+					resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+			} else {
+				// M4 in audit ledger: log when the provider returned no
+				// usage payload so usage.jsonl silently understating tokens
+				// is at least visible to the operator. Common with local
+				// LLM proxies and some streaming back-ends.
+				a.logf("usage: provider %q returned nil Usage; this run undercounts tokens for one step", a.opts.ProviderLabel)
+			}
 		}
 		step, raw, nerr := NormalizeLLMWithDefs(a.validator, resp, toolDefs)
 		lastRaw = raw
@@ -1812,6 +1864,12 @@ func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 // Image bytes are counted with a fixed per-image penalty rather than their raw
 // base64 length — huge image payloads would otherwise dominate the budget and
 // force compaction to evict useful tool results.
+//
+// M2 in audit ledger: the raw size estimate consistently undercounts real
+// serialised JSON (per-tool-call overhead, role/content key names, escapes
+// in strings). We apply a ×1.2 safety margin so the truncation budget
+// stays below the real prompt size — overshooting MaxPromptBytes triggers
+// LLM context-length errors that are hard to debug.
 func estimateMessageSize(msg llm.Message) int {
 	size := msg.TextLen()
 	for _, p := range msg.Parts {
@@ -1831,7 +1889,10 @@ func estimateMessageSize(msg llm.Message) int {
 			size += len(tc.Function.Arguments.Raw()) + 50 // JSON structure overhead
 		}
 	}
-	return size
+	// Safety margin: real JSON serialisation adds role keys, content keys,
+	// escapes, and per-message envelope. Without this ×1.2, truncate's
+	// "fits in budget" picks atoms that actually overflow on the wire.
+	return size * 12 / 10
 }
 
 // handleTodoTool handles todo.read and todo.write in-process (no runner involvement).
