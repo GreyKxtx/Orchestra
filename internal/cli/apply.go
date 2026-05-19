@@ -290,8 +290,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		mode = "pipeline"
 
 		var llmClient llm.Client
-		if testLLMClient != nil {
-			llmClient = testLLMClient
+		if getTestLLMClient() != nil {
+			llmClient = getTestLLMClient()
 		} else {
 			llmClient = llm.NewClient(cfg.LLM)
 			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -413,8 +413,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 
 		// LLM client: use test client if set, otherwise create real client.
 		var llmClient llm.Client
-		if testLLMClient != nil {
-			llmClient = testLLMClient
+		if getTestLLMClient() != nil {
+			llmClient = getTestLLMClient()
 		} else {
 			llmClient = llm.NewClient(cfg.LLM)
 			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -489,7 +489,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if agentMode != "" {
 			if def := cfg.FindAgent(agentMode); def != nil {
 				systemPromptOverride = def.SystemPrompt
-				if def.Provider != "" && testLLMClient == nil {
+				if def.Provider != "" && getTestLLMClient() == nil {
 					if provCfg, ok := cfg.FindProvider(def.Provider); ok {
 						if def.Model != "" {
 							provCfg.Model = def.Model
@@ -503,7 +503,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 						retErr = fmt.Errorf("agent %q: provider %q not found in providers: section", agentMode, def.Provider)
 						return retErr
 					}
-				} else if def.Model != "" && testLLMClient == nil {
+				} else if def.Model != "" && getTestLLMClient() == nil {
 					overrideCfg := cfg.LLM
 					overrideCfg.Model = def.Model
 					newClient := llm.NewClient(overrideCfg)

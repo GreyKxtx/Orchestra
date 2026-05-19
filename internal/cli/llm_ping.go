@@ -70,8 +70,8 @@ func runLLMPing(cmd *cobra.Command, args []string) error {
 
 	// Create LLM client (use test client if set, otherwise create real client)
 	var llmClient llm.Client
-	if testLLMClient != nil {
-		llmClient = testLLMClient
+	if getTestLLMClient() != nil {
+		llmClient = getTestLLMClient()
 	} else {
 		llmClient = llm.NewClient(cfg.LLM)
 	}
