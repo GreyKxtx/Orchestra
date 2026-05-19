@@ -112,6 +112,7 @@ Adds a tests file covering both glob match and the custom-agent allowlist regres
 
 **Files:** `internal/agent/agent.go:1496-1503` (`formatApplyErrorCompact`)
 **Effort:** S
+**Closed by:** `ee7d21e`
 
 Resolver errors (`StaleContent`, `AmbiguousMatch`) carry rich payload: `path`, `range`, `expected_hash`, `actual_hash`, `matches`, `search` preview. The hint that reaches the model is literally `"Файл изменился. Перечитай файл (fs.read) и обнови патч с новым file_hash."` — no path. On a multi-file patch the model cannot tell *which* file changed and re-reads everything (or guesses wrong). One of the largest causes of retry loops in real workflows.
 
@@ -121,6 +122,7 @@ Resolver errors (`StaleContent`, `AmbiguousMatch`) carry rich payload: `path`, `
 
 **Files:** `internal/agent/agent.go:1509-1535`
 **Effort:** S
+**Closed by:** `ee7d21e`
 
 A syntax error that cascades into 1000+ parser errors (TS / Go on a stale generated file) produces hundreds of KB of diagnostics injected as a single user message. `MaxPromptBytes` truncation then evicts useful context. Both the user and the model lose.
 
@@ -130,6 +132,7 @@ A syntax error that cascades into 1000+ parser errors (TS / Go on a stale genera
 
 **Files:** `internal/lsp/client.go:65-67`, similar pattern in `internal/mcp/client.go:266-272`
 **Effort:** S
+**Closed by:** `751da53` (LSP only — MCP already inherited os.Environ correctly)
 
 `cmd.Env = append(cmd.Env, k+"="+v)` produces an `Env` with ONLY user-supplied entries when `env:` is set — stripping `PATH`, `HOME`, `GOPATH`. Most LSP servers fail to start (no `PATH` for spawned helpers, no `HOME` for cache). When `env:` is empty, `cmd.Env` stays nil and inherits — works. The moment a user sets even one var, everything else vanishes.
 
@@ -139,6 +142,7 @@ A syntax error that cascades into 1000+ parser errors (TS / Go on a stale genera
 
 **Files:** `internal/lsp/manager.go:209,235,265,313` (all call `pos.ToLSP(encoding, "")`), `internal/lsp/positions.go:38-53`
 **Effort:** M
+**Closed by:** `751da53`
 
 UTF-16 column conversion (the LSP default) requires the actual line text. Passing `""` falls through unchanged → Orchestra sends UTF-8 byte offsets to a server expecting UTF-16. ASCII-only files happen to work. Any file with non-ASCII identifiers, strings, or comments before the target column gets the wrong column → definition/references/hover/rename hit the wrong span.
 
@@ -148,6 +152,7 @@ UTF-16 column conversion (the LSP default) requires the actual line text. Passin
 
 **Files:** `internal/lsp/manager.go:354-379`, `internal/lsp/diagnostics.go:83-92`
 **Effort:** M
+**Closed by:** `751da53`
 
 After `DidChange` (version N+1), `WaitForUpdate` returns the next `publishDiagnostics` push — which can be a stale push the server queued from version N before processing the change. First post-edit diagnostic call returns the wrong errors.
 
@@ -157,6 +162,7 @@ After `DidChange` (version N+1), `WaitForUpdate` returns the next `publishDiagno
 
 **Files:** `internal/lsp/manager.go:107,175` (`serverForPath` returns "no server configured" once `IsDead()`)
 **Effort:** M
+**Closed by:** `751da53`
 
 A gopls / tsserver crash mid-session loses LSP for the rest of the run. No retry. Combined with C4 (no timeout), a flaky language server perma-degrades the session.
 
@@ -166,6 +172,7 @@ A gopls / tsserver crash mid-session loses LSP for the rest of the run. No retry
 
 **Files:** `internal/tools/fs_extra.go:27-63` (FSDelete), `:80-133` (FSRename) — neither talks to LSP
 **Effort:** S
+**Closed by:** `751da53`
 
 The LSP server keeps a stale open document for a deleted file. Subsequent `definition` / `hover` returns cached old content. Diagnostics for the deleted file persist in `DiagnosticsCache.entries` indefinitely (also a memory leak).
 
@@ -175,6 +182,7 @@ The LSP server keeps a stale open document for a deleted file. Subsequent `defin
 
 **Files:** `internal/resolver/external_patches.go:239-248`, `internal/applier/ops_applier.go:236`
 **Effort:** S
+**Closed by:** `a073aa6`
 
 A 2 GB malicious / buggy patch `{type:"file.write_atomic", content:"…"}` is read straight into `[]byte` and written. No cap anywhere. Realistic attack vector: prompt-injected `fs.write` with a giant blob.
 
@@ -184,6 +192,7 @@ A 2 GB malicious / buggy patch `{type:"file.write_atomic", content:"…"}` is re
 
 **Files:** `internal/applier/ops_applier.go:301-310`, `:497-552`
 **Effort:** M
+**Closed by:** `a073aa6` (in-process mutex + safer cross-FS fallback; per-project file lock deferred)
 
 Two concurrent `apply` invocations on the same file each rename their temp into `path+".orchestra.bak"` — the second clobbers the first. The original-before-first-edit is permanently lost. Cross-FS rename fallback (`ops_applier.go:545-547`) is also non-atomic (`Remove → Rename`); a second failure means the target is gone with no recovery.
 
@@ -193,6 +202,7 @@ Two concurrent `apply` invocations on the same file each rename their temp into 
 
 **Files:** `internal/resolver/external_patches.go:577-578` (CRLF→LF collapse), `:673-707` (`oldCount`/`newCount` parsed but ignored, `_ = oldCount; _ = newCount` is explicit dead code at `:706-707`), `:638-639` (`\ No newline at end of file` skipped, not honoured)
 **Effort:** M
+**Closed by:** `a073aa6`
 
 Three related bugs in `applyUnifiedDiff`:
 - File-on-disk CRLF gets silently converted to LF on every apply → spurious diffs in the next commit.
@@ -205,6 +215,7 @@ Three related bugs in `applyUnifiedDiff`:
 
 **Files:** `internal/agent/agent.go:571-582`
 **Effort:** S
+**Closed by:** `ee7d21e` + `a48d044` (spawn-site IsChild wiring)
 
 The `task_result` tool returns `Result{SubtaskResult: req.Content}` unconditionally — no guard that the agent is a child (subtask / skill). A confused main-mode model can terminate the run by emitting `task_result`, and the caller sees only that string as the answer. The system prompt advises against it but nothing enforces it.
 
@@ -214,6 +225,7 @@ The `task_result` tool returns `Result{SubtaskResult: req.Content}` unconditiona
 
 **Files:** `internal/mcp/manager.go:111-118` (`parseMCPToolName`), `internal/config/config.go:170-179` (no validation)
 **Effort:** S
+**Closed by:** `e4b3d92`
 
 `parseMCPToolName` uses `SplitN(name, ":", 3)` and trusts the middle field as the server name. A user-supplied `name: "ns:foo"` produces tool `mcp:ns:foo:bar` → parsed as server `ns`, tool `foo:bar`, `findClient("ns")` returns nil, every call fails with `"mcp server "ns" not found"` — but `Tools()` still advertises the bogus name to the model, which keeps trying.
 
@@ -223,6 +235,7 @@ The `task_result` tool returns `Result{SubtaskResult: req.Content}` unconditiona
 
 **Files:** `internal/mcp/client.go:161` (and any future LSP shutdown that uses `Process.Kill`)
 **Effort:** M
+**Closed by:** `e4b3d92` (MCP only — LSP shutdown still uses Process.Kill; tracked as follow-up)
 
 `npx -y @modelcontextprotocol/server-foo` spawns `node` underneath. Killing `npx.cmd` leaves an orphan `node.exe` on Windows. No `JobObject` wiring. Linux has the same shape if a server spawns its own children — `exec.Cmd` does not set `Setpgid` here.
 
@@ -232,6 +245,7 @@ The `task_result` tool returns `Result{SubtaskResult: req.Content}` unconditiona
 
 **Files:** `internal/ops/ops.go:22` (says "0-based UTF-8 byte offset"), `internal/resolver/external_patches.go:549` (uses byte offsets), prompt files `internal/prompt/files/*.txt`
 **Effort:** S
+**Closed by:** verified N/A — LLM never emits `Position.Col` directly; resolver derives all positions from text matching (`internal/resolver/external_patches.go:549` only consumes its own offset output). No prompt change needed for current architecture.
 
 Resolver uses byte offsets correctly. But if the LLM-facing prompt does not explicitly state "byte offset, not rune offset," a 4-byte emoji at column 0 in the file becomes column 4 in the op the LLM produces. Resolver applies the op → file corrupts.
 
@@ -241,6 +255,7 @@ Resolver uses byte offsets correctly. But if the LLM-facing prompt does not expl
 
 **Files:** `internal/agent/agent.go:360-371` (`compactHistory` call site), `internal/agent/compact.go`
 **Effort:** M
+**Closed by:** `ee7d21e` (min-shrink ≥20% guard + fall through to truncateMessages on non-convergence)
 
 After `compactHistory` returns, the synthetic summary message is not marked as already-compacted. If the summary itself still exceeds `MaxPromptBytes * pct/100`, the next loop iteration compacts again — summary-of-summary every step, each burning an LLM call for no progress until `MaxSteps` trips. No minimum-shrink check either (line 367 logs the regression but uses the result anyway).
 
@@ -326,11 +341,10 @@ Grouped by subsystem to make sprint-planning easy.
 
 ## Suggested execution order
 
-1. **Sprint 1 (this week, ~2 days):** all CRITICAL (C1–C7) — they cluster around three themes (timeouts, panic safety, permissions) that share code paths.
-2. **Sprint 2 (~3 days):** H1, H2 (LLM efficiency), H3, H4 (config / non-ASCII correctness), H7 (LSP doc sync), H8, H9, H10 (data-safety in applier), H11 (`task_result` guard).
-3. **Sprint 3 (~2 days):** H5, H6 (LSP version + restart), H12–H14 (MCP naming + Windows zombies + prompt contract), H15 (compaction convergence).
-4. **MEDIUM** items rolled into ongoing maintenance — pick up alongside related feature work.
-5. **LOW** when touching the file for unrelated reasons.
+1. **Sprint 1 (~2 days):** all CRITICAL (C1–C7) — they cluster around three themes (timeouts, panic safety, permissions) that share code paths. **DONE — see commits `16a1d8b`, `ef174ce`, `38a47f8`, `c11d98c`.**
+2. **Sprint 2 (~3 days):** all HIGH (H1–H15) — five thematic clusters (LLM efficiency, applier data-safety, agent contracts, LSP correctness, MCP cross-cutting). **DONE — see commits `ee7d21e`, `a073aa6`, `a48d044`, `751da53`, `e4b3d92`.** H14 verified N/A.
+3. **MEDIUM** items rolled into ongoing maintenance — pick up alongside related feature work.
+4. **LOW** when touching the file for unrelated reasons.
 
 ## Out of scope for this plan
 
