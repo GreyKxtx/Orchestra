@@ -88,3 +88,79 @@ func TestTruncateMessages_AssistantWithToolCallsRequiresReplies(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateMessages_StripsOrphanedToolCalls is the N4 regression
+// (Sprint 6 in audit ledger). When the input history contains an
+// assistant opening N tool_calls but only M<N replies arrived (partial
+// API response, mid-batch error), truncation must filter the orphan IDs
+// out of the assistant's ToolCalls so the surviving history is self-
+// consistent. Without sanitize, every subsequent LLM call fails with
+// "tool_call_id not found" and the run dies.
+func TestTruncateMessages_StripsOrphanedToolCalls(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "init"},
+		// Assistant opens THREE tool_calls.
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{
+				{ID: "A", Type: "function", Function: llm.ToolCallFunc{Name: "read"}},
+				{ID: "B", Type: "function", Function: llm.ToolCallFunc{Name: "read"}},
+				{ID: "C", Type: "function", Function: llm.ToolCallFunc{Name: "read"}},
+			},
+		},
+		// Only TWO replies arrive — C is orphaned.
+		{Role: llm.RoleTool, ToolCallID: "A", Content: "okA"},
+		{Role: llm.RoleTool, ToolCallID: "B", Content: "okB"},
+		// A later, unrelated assistant turn closes the orphan atom.
+		{Role: llm.RoleUser, Content: "follow up"},
+	}
+	got := truncateMessages(msgs, 100_000) // huge budget — no eviction by size
+
+	var sawAssistant bool
+	for _, m := range got {
+		if m.Role != llm.RoleAssistant || len(m.ToolCalls) == 0 {
+			continue
+		}
+		sawAssistant = true
+		for _, tc := range m.ToolCalls {
+			if tc.ID == "C" {
+				t.Fatalf("orphan tool_call %q survived sanitize: %+v", tc.ID, m.ToolCalls)
+			}
+		}
+		if len(m.ToolCalls) != 2 {
+			t.Fatalf("expected 2 surviving tool_calls (A, B), got %d: %+v", len(m.ToolCalls), m.ToolCalls)
+		}
+	}
+	if !sawAssistant {
+		t.Fatal("assistant message was wrongly dropped (it still has valid tool_calls)")
+	}
+}
+
+// TestTruncateMessages_DropsAssistantWhenAllToolCallsOrphaned —
+// companion case to the above: if ALL of an assistant's tool_calls
+// are orphans AND it has no other content, drop the assistant message
+// entirely so we don't emit an empty turn.
+func TestTruncateMessages_DropsAssistantWhenAllToolCallsOrphaned(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "init"},
+		// Assistant with two tool_calls, both orphans, no text.
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{
+				{ID: "X", Type: "function", Function: llm.ToolCallFunc{Name: "read"}},
+				{ID: "Y", Type: "function", Function: llm.ToolCallFunc{Name: "read"}},
+			},
+		},
+		// No tool replies — both orphaned. Followed by a user message that closes the atom.
+		{Role: llm.RoleUser, Content: "follow up"},
+	}
+	got := truncateMessages(msgs, 100_000)
+
+	for _, m := range got {
+		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+			t.Fatalf("empty-content assistant with all-orphan tool_calls survived: %+v", m)
+		}
+	}
+}
