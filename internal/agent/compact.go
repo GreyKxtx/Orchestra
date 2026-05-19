@@ -28,7 +28,7 @@ func historyBytes(history []llm.Message) int {
 // On failure, returns an error so the caller can fall back to truncation.
 func (a *Agent) compactHistory(ctx context.Context, userQuery string, history []llm.Message) ([]llm.Message, error) {
 	family := a.opts.PromptFamily
-	sysprompt := promptpkg.BuildSystemPromptForMode(ModeCompaction, family)
+	sysprompt := promptpkg.BuildSystemPromptForMode(string(ModeCompaction), family)
 
 	// Serialize history as a plain-text conversation for the compaction LLM call.
 	var sb strings.Builder
