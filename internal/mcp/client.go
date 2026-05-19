@@ -50,6 +50,15 @@ type rpcError struct {
 }
 
 // Client manages a single MCP server subprocess.
+//
+// Mutex split (C6 in audit ledger): `mu` guards the `pending` request map.
+// `writeMu` independently guards `stdin.Write`. Previously a single mutex
+// covered both, and `send` held that mutex across a blocking pipe write —
+// if the server was slow to read its stdin (pipe buffer ~64 KiB), the write
+// blocked while holding mu, queuing every other `Call` and even `readLoop`'s
+// response dispatch on the same mutex → classic deadlock when stdout was
+// also full. Splitting the mutexes lets the reader keep dispatching
+// responses (which unblock the writer) even when stdin is back-pressured.
 type Client struct {
 	name    string
 	cmd     *exec.Cmd
@@ -58,17 +67,24 @@ type Client struct {
 	tools   []MCPTool
 	idSeq   atomic.Int64
 	mu      sync.Mutex
+	writeMu sync.Mutex
 	pending map[int64]chan rpcResponse
 	done    chan struct{}
 }
 
 // Start spawns the MCP server and performs the initialize handshake.
+// Start launches the MCP subprocess and runs the initialize + tools/list
+// handshake. The passed `ctx` scopes ONLY the handshake (so callers can apply
+// a startup timeout that doesn't accidentally kill the long-lived process).
+// The subprocess lives until c.Close — use that for shutdown. Was previously
+// `exec.CommandContext(ctx, ...)`, which bound process lifetime to the
+// startup ctx and made startup timeouts unsafe (cancel killed the server).
 func Start(ctx context.Context, name string, command []string, env map[string]string) (*Client, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("mcp %q: command is empty", name)
 	}
 
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = buildEnv(env)
 
 	stdin, err := cmd.StdinPipe()
@@ -234,9 +250,12 @@ func (c *Client) send(req rpcRequest) error {
 		return err
 	}
 	b = append(b, '\n')
-	c.mu.Lock()
+	// writeMu (NOT mu) serialises actual stdin.Write — see Client doc.
+	// Holding mu here would deadlock against readLoop's mu acquisition for
+	// response dispatch when the server is back-pressured.
+	c.writeMu.Lock()
 	_, err = c.stdin.Write(b)
-	c.mu.Unlock()
+	c.writeMu.Unlock()
 	return err
 }
 

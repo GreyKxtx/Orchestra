@@ -99,12 +99,20 @@ func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 	rootURI := PathToURI(workspaceRoot)
 	var errs []error
 
+	// C4 (audit ledger): cap LSP init at 30s per server so a hung gopls /
+	// tsserver / pyright cannot block Core / apply / TUI startup forever.
+	// A timed-out server is reported as a non-fatal start error and skipped;
+	// the rest of Orchestra runs without LSP support for that language.
+	const lspStartTimeout = 30 * time.Second
+
 	for _, sc := range cfg.Servers {
 		if sc.Disabled || len(sc.Command) == 0 {
 			continue
 		}
 		diags := NewDiagnosticsCache()
-		c, err := Start(context.Background(), sc.Language, sc.Command, sc.Env, rootURI, sc.InitOptions)
+		startCtx, cancel := context.WithTimeout(context.Background(), lspStartTimeout)
+		c, err := Start(startCtx, sc.Language, sc.Command, sc.Env, rootURI, sc.InitOptions)
+		cancel()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("lsp server %q: %w", sc.Language, err))
 			continue
