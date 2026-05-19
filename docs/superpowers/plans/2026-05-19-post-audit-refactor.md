@@ -267,6 +267,20 @@ After `compactHistory` returns, the synthetic summary message is not marked as a
 
 Grouped by subsystem to make sprint-planning easy.
 
+**Sprint 3 closure summary (all 33 MEDIUM items triaged):**
+
+| Cluster | Closed | Deferred (with rationale) | Commit |
+|---|---|---|---|
+| Agent (M1–M8) | M1, M2, M3, M4, M5, M6, M7, M8 | — | `d46e10f` |
+| Resolver/Applier (M9–M16) | M9, M10, M11, M12, M14, M15, M16 | M13 (partial via H1; full needs `findUnique` refactor) | `27a335a` |
+| LSP (M17–M24) | M17, M18, M19, M20, M21, M22, M23 | M24 (already closed by H7) | `ebaa992` |
+| MCP (M25–M33) | M25 (via H12), M28, M29, M30, M32, M33 | M26 (auto-restart needs design), M27 (per-call timeout — config schema work), M31 (per-tool allowlist — config schema work) | `10d6f96` |
+
+The detailed per-item entries below are the original audit findings and
+remain for traceability — they aren't individually annotated to keep the
+doc readable. Reference the commit hashes above and the per-commit
+messages for the exact code changes.
+
 ### Agent layer
 
 | ID | File:line | Issue | Effort |
@@ -343,7 +357,7 @@ Grouped by subsystem to make sprint-planning easy.
 
 1. **Sprint 1 (~2 days):** all CRITICAL (C1–C7) — they cluster around three themes (timeouts, panic safety, permissions) that share code paths. **DONE — see commits `16a1d8b`, `ef174ce`, `38a47f8`, `c11d98c`.**
 2. **Sprint 2 (~3 days):** all HIGH (H1–H15) — five thematic clusters (LLM efficiency, applier data-safety, agent contracts, LSP correctness, MCP cross-cutting). **DONE — see commits `ee7d21e`, `a073aa6`, `a48d044`, `751da53`, `e4b3d92`.** H14 verified N/A.
-3. **MEDIUM** items rolled into ongoing maintenance — pick up alongside related feature work.
+3. **Sprint 3 (~1 day):** all MEDIUM (M1–M33) except four deferred. **DONE — see commits `d46e10f`, `27a335a`, `ebaa992`, `10d6f96`.** Deferred: M13 (partial), M26, M27, M31.
 4. **LOW** when touching the file for unrelated reasons.
 
 ## Out of scope for this plan
