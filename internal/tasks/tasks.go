@@ -90,6 +90,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID, goal string, maxSteps
 	ag, err := agent.New(r.llmClient, r.validator, r.toolRunner, agent.Options{
 		MaxSteps:    maxSteps,
 		CustomTools: childTools,
+		IsChild:     true, // expects task_result termination
 		// SubtaskRunner intentionally nil — prevents recursive spawning
 	})
 	if err != nil {

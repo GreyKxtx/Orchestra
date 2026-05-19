@@ -127,6 +127,7 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 		AllowBrowser:         r.allowBrowser,
 		CustomTools:          childTools,
 		SystemPromptOverride: systemPrompt,
+		IsChild:              true,
 		// SubtaskRunner intentionally nil: no recursive spawning.
 		// SkillRunner intentionally nil: no recursive skill_invoke.
 	})
