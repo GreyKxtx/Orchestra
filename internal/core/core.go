@@ -935,7 +935,10 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	finalizeAgentUsage(sessUsageTracker, c.workspaceRoot)
 
-	// Update session history and todos with the results of this turn.
+	// Update session history, todos, and pending-ops with this turn's
+	// results, then snapshot to disk so a core restart can pick up where
+	// we left off. C1+C4 in architecture audit consolidated this into
+	// one critical section.
 	newMsgs := outHistory[len(inHistory):]
 	sess.Lock()
 	if len(newMsgs) > 0 {
@@ -944,14 +947,16 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if res != nil {
 		sess.SetTodos(res.Todos)
 	}
-	sess.Unlock()
-
-	// Store ops for potential later apply; clear if already applied or no ops.
-	sess.Lock()
 	if !params.Apply && len(res.Ops) > 0 {
 		sess.SetPending(res.Ops)
 	} else {
 		sess.SetPending(nil)
+	}
+	if snapErr := sess.Snapshot(c.workspaceRoot); snapErr != nil {
+		// Best effort — log but don't fail the request. A failed snapshot
+		// only costs the in-progress crash-recovery story for this turn;
+		// the result itself is still valid.
+		fmt.Fprintf(os.Stderr, "core: session %s snapshot failed: %v\n", sess.ID, snapErr)
 	}
 	sess.Unlock()
 
