@@ -1108,24 +1108,12 @@ func (c *Core) OpsApply(ctx context.Context, p OpsApplyParams) (*OpsApplyResult,
 	}, nil
 }
 
-// agentRequesterAdapter bridges core.PermissionRequester to agent.PermissionRequester.
-type agentRequesterAdapter struct {
-	inner PermissionRequester
-}
-
-func (a *agentRequesterAdapter) RequestPermission(ctx context.Context, req agent.PermissionRequest) (agent.PermissionResponse, error) {
-	inner := PermissionRequest{Tool: req.Tool, Description: req.Description, Reason: req.Reason}
-	resp, err := a.inner.RequestPermission(ctx, inner)
-	return agent.PermissionResponse{Approved: resp.Approved, Reason: resp.Reason}, err
-}
-
-// convertPermissionRequester wraps a core.PermissionRequester as an agent.PermissionRequester.
-// Returns nil when r is nil (CLI mode: falls back to static AllowExec gate).
+// convertPermissionRequester is a no-op identity now that both core
+// and agent share the same Requester type (internal/permission). Kept
+// as a thin wrapper so existing call sites don't all change at once.
+// H6 in architecture audit eliminated the previous adapter pattern.
 func convertPermissionRequester(r PermissionRequester) agent.PermissionRequester {
-	if r == nil {
-		return nil
-	}
-	return &agentRequesterAdapter{inner: r}
+	return r
 }
 
 func samePath(a, b string) bool {
