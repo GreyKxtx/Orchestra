@@ -1304,6 +1304,47 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	return base
 }
 
+// buildSystemPrompt assembles the system message handed to the LLM each
+// step. The pipeline has five distinct stages — the first that fires
+// becomes the *base*, the rest *append* on top:
+//
+//  1. BASE candidate: promptpkg.BuildSystemPromptForMode(Mode, PromptFamily)
+//     — the built-in prompt for the agent's mode.
+//  2. BASE override: Options.SystemPromptOverride
+//     — when a custom agent declares a system_prompt in .orchestra.yml,
+//     it REPLACES the mode default.
+//  3. BASE override (highest precedence): .orchestra/system.txt in the
+//     workspace root, loaded via promptpkg.LoadSystemOverride. If this
+//     file exists it REPLACES whatever was selected above, including the
+//     custom-agent prompt — file-system wins over config.
+//  4. APPEND: project memory (ORCHESTRA.md + .orchestra/memory/*.md +
+//     ~/.orchestra/memory.md) capped at 2 KiB.
+//  5. APPEND: the <available_skills> block (when a SkillRunner is wired).
+//
+// M10 in architecture audit: this used to live as five ad-hoc if-checks
+// inline in nextStep. The replace-vs-append asymmetry (1/2/3 replace,
+// 4/5 append) was implicit and easy to mis-order on edit. Moving it to
+// a method documents the contract and centralises the order so a new
+// prompt source can be added in one place.
+func (a *Agent) buildSystemPrompt() string {
+	// 1+2+3: base — first non-empty replacement wins (.orchestra/system.txt
+	// > Options.SystemPromptOverride > mode default).
+	prompt := promptpkg.BuildSystemPromptForMode(a.opts.Mode, a.opts.PromptFamily)
+	if a.opts.SystemPromptOverride != "" {
+		prompt = a.opts.SystemPromptOverride
+	}
+	if fs := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); fs != "" {
+		prompt = fs
+	}
+	// 4: append project memory.
+	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
+		prompt += "\n\n" + memory
+	}
+	// 5: append skills advertisement.
+	prompt += a.skillsAdvertisement()
+	return prompt
+}
+
 // skillsAdvertisement returns a system-prompt block describing the
 // skills available to the model. Empty when no skills are configured
 // or no SkillRunner is wired.
@@ -1325,19 +1366,7 @@ func (a *Agent) skillsAdvertisement() string {
 // stepNum is the current step count (used for streaming event tagging).
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
-	systemPrompt := promptpkg.BuildSystemPromptForMode(a.opts.Mode, a.opts.PromptFamily)
-	// Custom agent system_prompt overrides the built-in mode prompt.
-	if a.opts.SystemPromptOverride != "" {
-		systemPrompt = a.opts.SystemPromptOverride
-	}
-	// .orchestra/system.txt in the workspace root overrides everything.
-	if override := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); override != "" {
-		systemPrompt = override
-	}
-	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
-		systemPrompt += "\n\n" + memory
-	}
-	systemPrompt += a.skillsAdvertisement()
+	systemPrompt := a.buildSystemPrompt()
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
 	if block := renderTodosBlock(a.todos); block != "" {
