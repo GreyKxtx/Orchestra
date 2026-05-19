@@ -73,10 +73,26 @@ func appendCapabilityTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
 	return out
 }
 
-// ListTools returns OpenAI-compatible tool definitions (JSON Schema),
-// filtered by policy. Only tools returned here may be exposed to the
-// model. M5 in architecture audit: parameter list collapsed from three
-// bools (allowExec/Web/Browser) into a Capabilities struct.
+// ListTools returns the MAXIMAL set of tools a top-level agent could
+// use — used by agent.computeToolDefs when no specific mode applies and
+// no subtasks are configured, and by the parallel-flags safety test as
+// the surface to enumerate.
+//
+// Differs from listToolsBuild (the build-mode set) by including
+// ast_rename and repo_map but excluding plan_enter. The differences
+// are intentional: ListTools is the "no mode preference" surface,
+// listToolsBuild is the "actively coding" surface that includes the
+// plan-to-build transition tool.
+//
+// Other ListTools* surfaces in this file are intentionally distinct:
+//   - ListToolsWithSubtasks → ListTools + task_spawn/wait/cancel
+//   - ListToolsForMode      → mode-aware dispatch (build/plan/explore/general)
+//   - ListToolsForChild     → restricted read-only set + task_result
+//   - ListToolsForInvestigator → child + runtime_query
+//
+// MCP / Custom / Extra / Skill tools are layered on top by
+// agent.computeToolDefs, NOT here. M5 in architecture audit collapsed
+// the parameter list from three bools to a Capabilities struct.
 func ListTools(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(),
@@ -167,17 +183,11 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 	return defs
 }
 
-// ListToolsWithMCP appends MCP server tools to the base tool list.
-func ListToolsWithMCP(caps Capabilities, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListTools(caps)
-	return append(out, mcpDefs...)
-}
-
-// ListToolsWithSubtasksAndMCP returns parent-agent tools including subtask and MCP tools.
-func ListToolsWithSubtasksAndMCP(caps Capabilities, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListToolsWithSubtasks(caps)
-	return append(out, mcpDefs...)
-}
+// H2 in architecture audit: ListToolsWithMCP and ListToolsWithSubtasks
+// AndMCP were dead code (no callers in production or tests beyond their
+// own definitions). MCP composition now happens by appending mcpDefs in
+// the agent layer (agent.computeToolDefs) after one of the surviving
+// ListTools* functions returns the base set. Removed in this audit.
 
 // ToolSemanticSearch returns the semantic_search tool definition. Only
 // added to the agent's tool list when embed.model is configured AND a
