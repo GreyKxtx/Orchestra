@@ -9,6 +9,19 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 )
 
+// Capabilities is the bundle of capability flags every tool-listing
+// function needs. M5 in architecture audit: previously these were three
+// independent bool parameters threaded through 7+ signatures, so a 4th
+// capability would have forced every call site to grow. Pass-by-value
+// is cheap (a 3-bool struct) and the field names make the intent
+// readable at call sites — `Capabilities{Exec: true}` is clearer than
+// `(true, false, false)`.
+type Capabilities struct {
+	Exec    bool
+	Web     bool
+	Browser bool
+}
+
 // appendExecTools adds bash + git-mutating + gh-mutating tools to out.
 // Extracted in S3 (audit ledger, Sprint 6) so ListTools / listToolsBuild /
 // listToolsGeneral share one definition instead of three copies that
@@ -45,23 +58,26 @@ func appendSubtaskTools(out []llm.ToolDef) []llm.ToolDef {
 
 // appendCapabilityTools layers exec / web / browser conditionally — the
 // flag pattern repeated across ListTools, listToolsBuild and
-// listToolsGeneral collapses to one call. S3 in audit ledger.
-func appendCapabilityTools(out []llm.ToolDef, allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
-	if allowExec {
+// listToolsGeneral collapses to one call. S3 in audit ledger; M5 swapped
+// the three bool args for a Capabilities struct.
+func appendCapabilityTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
+	if caps.Exec {
 		out = appendExecTools(out)
 	}
-	if allowWeb {
+	if caps.Web {
 		out = appendWebTools(out)
 	}
-	if allowBrowser {
+	if caps.Browser {
 		out = appendBrowserTools(out)
 	}
 	return out
 }
 
-// ListTools returns OpenAI-compatible tool definitions (JSON Schema), filtered by policy.
-// Only tools returned here may be exposed to the model.
-func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
+// ListTools returns OpenAI-compatible tool definitions (JSON Schema),
+// filtered by policy. Only tools returned here may be exposed to the
+// model. M5 in architecture audit: parameter list collapsed from three
+// bools (allowExec/Web/Browser) into a Capabilities struct.
+func ListTools(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(),
 		toolFSRead(),
@@ -89,7 +105,7 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 		toolGitLog(),
 		toolGitDiff(),
 	}
-	out = appendCapabilityTools(out, allowExec, allowWeb, allowBrowser)
+	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
 }
 
@@ -152,14 +168,14 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 }
 
 // ListToolsWithMCP appends MCP server tools to the base tool list.
-func ListToolsWithMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListTools(allowExec, allowWeb, allowBrowser)
+func ListToolsWithMCP(caps Capabilities, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListTools(caps)
 	return append(out, mcpDefs...)
 }
 
 // ListToolsWithSubtasksAndMCP returns parent-agent tools including subtask and MCP tools.
-func ListToolsWithSubtasksAndMCP(allowExec, allowWeb, allowBrowser bool, mcpDefs []llm.ToolDef) []llm.ToolDef {
-	out := ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
+func ListToolsWithSubtasksAndMCP(caps Capabilities, mcpDefs []llm.ToolDef) []llm.ToolDef {
+	out := ListToolsWithSubtasks(caps)
 	return append(out, mcpDefs...)
 }
 
@@ -562,8 +578,8 @@ func toolTodoRead() llm.ToolDef {
 }
 
 // ListToolsWithSubtasks returns tools including task.spawn/wait/cancel for parent agents.
-func ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
-	out := ListTools(allowExec, allowWeb, allowBrowser)
+func ListToolsWithSubtasks(caps Capabilities) []llm.ToolDef {
+	out := ListTools(caps)
 	out = appendSubtaskTools(out)
 	return applyParallelFlags(out)
 }
@@ -590,22 +606,22 @@ func ListToolsForInvestigator() []llm.ToolDef {
 
 // ListToolsForMode returns tools for the given agent mode.
 // hasSubtasks enables task.spawn/wait/cancel; hasQuestionAsker enables question tool.
-func ListToolsForMode(mode string, allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	switch mode {
 	case "plan":
 		return listToolsPlan(hasSubtasks, hasQuestionAsker)
 	case "explore":
 		return listToolsExplore()
 	case "general":
-		return listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks)
+		return listToolsGeneral(caps, hasSubtasks)
 	case "compaction", "title", "summary":
 		return []llm.ToolDef{} // pure LLM output, no tools needed
 	default: // "build" or ""
-		return listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionAsker)
+		return listToolsBuild(caps, hasSubtasks, hasQuestionAsker)
 	}
 }
 
-func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
@@ -613,7 +629,7 @@ func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionA
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
-	out = appendCapabilityTools(out, allowExec, allowWeb, allowBrowser)
+	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
 	}
@@ -653,7 +669,7 @@ func listToolsExplore() []llm.ToolDef {
 // listToolsGeneral returns tools for the "general" multi-step execution subagent.
 // It has full read+write access and reports results via task_result.
 // todowrite is intentionally excluded — general agents track progress internally.
-func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm.ToolDef {
+func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
@@ -661,7 +677,7 @@ func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
-	out = appendCapabilityTools(out, allowExec, allowWeb, allowBrowser)
+	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
 	}
@@ -907,7 +923,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 // Returns an error if any name is unknown. The list of valid names is the same
 // set exposed in config.validAgentToolNames.
 func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
-	return ResolveToolNamesWithPolicy(names, true, true, true)
+	return ResolveToolNamesWithPolicy(names, Capabilities{Exec: true, Web: true, Browser: true})
 }
 
 // ResolveToolNamesWithPolicy is like ResolveToolNames but silently drops
@@ -918,7 +934,7 @@ func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
 //
 // Unknown names still produce an error. Names that are present but
 // gated-off are silently omitted.
-func ResolveToolNamesWithPolicy(names []string, allowExec, allowWeb, allowBrowser bool) ([]llm.ToolDef, error) {
+func ResolveToolNamesWithPolicy(names []string, caps Capabilities) ([]llm.ToolDef, error) {
 	m := allToolDefsMap()
 	out := make([]llm.ToolDef, 0, len(names))
 	for _, name := range names {
@@ -926,13 +942,13 @@ func ResolveToolNamesWithPolicy(names []string, allowExec, allowWeb, allowBrowse
 		if !ok {
 			return nil, fmt.Errorf("unknown tool name: %q", name)
 		}
-		if !allowExec && isExecGated(name) {
+		if !caps.Exec && isExecGated(name) {
 			continue
 		}
-		if !allowWeb && isWebGated(name) {
+		if !caps.Web && isWebGated(name) {
 			continue
 		}
-		if !allowBrowser && isBrowserGated(name) {
+		if !caps.Browser && isBrowserGated(name) {
 			continue
 		}
 		out = append(out, d)

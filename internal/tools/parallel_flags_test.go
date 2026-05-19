@@ -19,10 +19,10 @@ func TestParallelFlags_AllBuiltinsClassified(t *testing.T) {
 	// plus subtask and question-asker tools, plus conditional tools that
 	// are only added when their feature is enabled (semantic_search,
 	// skill_invoke).
-	maximal := ListTools(true, true, true)
-	maximal = append(maximal, ListToolsWithSubtasks(true, true, true)...)
+	maximal := ListTools(Capabilities{Exec: true, Web: true, Browser: true})
+	maximal = append(maximal, ListToolsWithSubtasks(Capabilities{Exec: true, Web: true, Browser: true})...)
 	for _, mode := range []string{"build", "plan", "explore", "general"} {
-		maximal = append(maximal, ListToolsForMode(mode, true, true, true, true, true)...)
+		maximal = append(maximal, ListToolsForMode(mode, Capabilities{Exec: true, Web: true, Browser: true}, true, true)...)
 	}
 	maximal = append(maximal, ToolSemanticSearch())
 	maximal = append(maximal, ToolSkillInvoke([]string{"sample"}))

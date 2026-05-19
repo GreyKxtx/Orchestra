@@ -83,7 +83,11 @@ func (r *cliSkillRunner) InvokeSkill(ctx context.Context, name, task string) (st
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, r.allowExec, r.allowWeb, r.allowBrowser)
+		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, tools.Capabilities{
+			Exec:    r.allowExec,
+			Web:     r.allowWeb,
+			Browser: r.allowBrowser,
+		})
 		if err != nil {
 			return "", fmt.Errorf("skill %q: resolve tools: %w", name, err)
 		}

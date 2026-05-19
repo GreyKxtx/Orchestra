@@ -120,7 +120,11 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, allowExec, params.AllowWeb, params.AllowBrowser)
+		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, tools.Capabilities{
+			Exec:    allowExec,
+			Web:     params.AllowWeb,
+			Browser: params.AllowBrowser,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("skill %q: resolve tools: %w", params.Name, err)
 		}

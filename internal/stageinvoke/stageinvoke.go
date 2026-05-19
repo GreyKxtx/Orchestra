@@ -91,7 +91,11 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 
 	var childTools []llm.ToolDef
 	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, c.AllowExec, c.AllowWeb, c.AllowBrowser)
+		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, tools.Capabilities{
+			Exec:    c.AllowExec,
+			Web:     c.AllowWeb,
+			Browser: c.AllowBrowser,
+		})
 		if err != nil {
 			return "", fmt.Errorf("skill %q: resolve tools: %w", skillName, err)
 		}

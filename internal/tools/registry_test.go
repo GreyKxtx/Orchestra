@@ -6,7 +6,7 @@ import (
 )
 
 func TestToolRegistry_AllowExecFalse_NoExecRun(t *testing.T) {
-	defs := ListTools(false, false, false)
+	defs := ListTools(Capabilities{Exec: false, Web: false, Browser: false})
 	for _, d := range defs {
 		if d.Function.Name == "bash" {
 			t.Fatalf("bash must not be exposed when allowExec=false (got %q)", d.Function.Name)
@@ -54,7 +54,7 @@ func TestResolveToolNamesWithPolicy_DropsGatedTools(t *testing.T) {
 	// Expect only `read` to remain; no error for the dropped ones.
 	got, err := ResolveToolNamesWithPolicy(
 		[]string{"bash", "webfetch", "read"},
-		false, false, false,
+		Capabilities{Exec: false, Web: false, Browser: false},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestResolveToolNamesWithPolicy_DropsGatedTools(t *testing.T) {
 func TestResolveToolNamesWithPolicy_AllAllowed(t *testing.T) {
 	got, err := ResolveToolNamesWithPolicy(
 		[]string{"bash", "webfetch", "read", "git.commit"},
-		true, true, true,
+		Capabilities{Exec: true, Web: true, Browser: true},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestResolveToolNamesWithPolicy_AllAllowed(t *testing.T) {
 }
 
 func TestResolveToolNamesWithPolicy_UnknownStillErrors(t *testing.T) {
-	_, err := ResolveToolNamesWithPolicy([]string{"read", "no-such-tool"}, true, true, true)
+	_, err := ResolveToolNamesWithPolicy([]string{"read", "no-such-tool"}, Capabilities{Exec: true, Web: true, Browser: true})
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
@@ -98,7 +98,7 @@ func TestResolveToolNames_PreservesOrder(t *testing.T) {
 }
 
 func TestToolRegistry_SchemasAreValidJSON(t *testing.T) {
-	defs := ListTools(true, true, false)
+	defs := ListTools(Capabilities{Exec: true, Web: true, Browser: false})
 	for _, d := range defs {
 		if d.Type != "function" {
 			t.Fatalf("unexpected tool type %q for %s", d.Type, d.Function.Name)
