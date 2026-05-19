@@ -815,3 +815,67 @@ func TestApplyOps_Backup_CreatedOnSuccess(t *testing.T) {
 		t.Error("file was not modified after successful apply")
 	}
 }
+
+// TestApplyOps_ParallelBackups_AllFilesGetBak verifies that the P4
+// parallel backup phase (Sprint 6 in audit ledger) writes a .bak for
+// every existing file that gets modified, even when the batch is
+// larger than the worker pool cap (maxParallel=8).
+func TestApplyOps_ParallelBackups_AllFilesGetBak(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// 16 files (> maxParallel=8 to exercise the worker queue).
+	const N = 16
+	type spec struct {
+		rel    string
+		before string
+		after  string
+	}
+	specs := make([]spec, N)
+	anyOps := make([]ops.AnyOp, 0, N)
+	for i := 0; i < N; i++ {
+		rel := filepath.Join("dir", "file"+string(rune('A'+i))+".txt")
+		before := "v1 " + rel + "\n"
+		after := "v2 " + rel + "\n"
+		full := filepath.Join(tmpDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(before), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		specs[i] = spec{rel: rel, before: before, after: after}
+		wa := ops.WriteAtomicOp{
+			Op:         ops.OpFileWriteAtomic,
+			Path:       filepath.ToSlash(rel),
+			Content:    after,
+			Conditions: ops.WriteAtomicConditions{FileHash: cache.ComputeSHA256([]byte(before))},
+		}
+		anyOps = append(anyOps, ops.AnyOp{Op: ops.OpFileWriteAtomic, WriteAtomic: &wa})
+	}
+
+	_, err := ApplyAnyOps(tmpDir, anyOps, ApplyOptions{
+		DryRun:       false,
+		Backup:       true,
+		BackupSuffix: ".orchestra.bak",
+	})
+	if err != nil {
+		t.Fatalf("ApplyAnyOps: %v", err)
+	}
+
+	for _, s := range specs {
+		bak := filepath.Join(tmpDir, s.rel+".orchestra.bak")
+		got, err := os.ReadFile(bak)
+		if err != nil {
+			t.Errorf("missing .bak for %s: %v", s.rel, err)
+			continue
+		}
+		if string(got) != s.before {
+			t.Errorf("backup mismatch for %s: got %q, want %q", s.rel, got, s.before)
+		}
+		// And the main file got the new content.
+		main, _ := os.ReadFile(filepath.Join(tmpDir, s.rel))
+		if string(main) != s.after {
+			t.Errorf("main file not updated %s: got %q", s.rel, main)
+		}
+	}
+}

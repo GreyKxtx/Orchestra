@@ -376,19 +376,40 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 		}
 	}
 
-	// Apply file writes in deterministic path order.
+	// Phase 1: write backups in parallel for files that need them.
+	//
+	// P4 in audit ledger (Sprint 6): backups were written sequentially on
+	// the hot path, one atomicWriteFile per file before each main write.
+	// For a 1-3 file batch that was already fine; for larger batches the
+	// sync I/O accumulated. Backups are independent — a parallel fan-out
+	// (capped at 8 to avoid disk saturation) preserves the
+	// "backup-before-write" invariant without changing the main-write
+	// loop's determinism.
+	if opts.Backup && opts.BackupSuffix != "" {
+		var backupTargets []backupSpec
+		for _, rel := range paths {
+			fp := plans[rel]
+			if fp.exists && !bytes.Equal(fp.before, fp.after) {
+				backupTargets = append(backupTargets, backupSpec{
+					rel:  rel,
+					abs:  fp.abs,
+					data: fp.before,
+					perm: fp.perm,
+				})
+			}
+		}
+		if err := writeBackupsParallel(backupTargets, opts.BackupSuffix, rootReal); err != nil {
+			return nil, err
+		}
+	}
+
+	// Phase 2: apply file writes in deterministic path order. Sequential
+	// because writes carry order-sensitive correctness (e.g. an mkdir
+	// preceding a file write within the same batch).
 	for _, rel := range paths {
 		fp := plans[rel]
 		if bytes.Equal(fp.before, fp.after) {
 			continue
-		}
-
-		// Backup existing file if requested (never for new files).
-		if opts.Backup && fp.exists && opts.BackupSuffix != "" {
-			backupPath := fp.abs + opts.BackupSuffix
-			if err := atomicWriteFile(backupPath, fp.before, fp.perm, rootReal); err != nil {
-				return nil, fmt.Errorf("failed to create backup: %w", err)
-			}
 		}
 
 		if err := atomicWriteFile(fp.abs, fp.after, fp.perm, rootReal); err != nil {
@@ -397,6 +418,74 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	}
 
 	return result, nil
+}
+
+// backupSpec is the minimum data writeBackupsParallel needs from a
+// filePlan. Decoupled because filePlan is a function-local type inside
+// ApplyAnyOps and writeBackupsParallel is a package-level helper.
+type backupSpec struct {
+	rel  string
+	abs  string
+	data []byte
+	perm os.FileMode
+}
+
+// writeBackupsParallel fans out atomic backup writes with bounded
+// concurrency. Returns the first error from any worker (subsequent
+// errors are silently dropped — the caller bails on the first anyway).
+// Order-of-backup doesn't affect correctness because each backup is
+// independent.
+func writeBackupsParallel(targets []backupSpec, suffix, rootReal string) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	if len(targets) == 1 {
+		// Fast path: avoid goroutine overhead for the common case.
+		fp := targets[0]
+		if err := atomicWriteFile(fp.abs+suffix, fp.data, fp.perm, rootReal); err != nil {
+			return fmt.Errorf("failed to create backup: %w", err)
+		}
+		return nil
+	}
+	const maxParallel = 8
+	workers := len(targets)
+	if workers > maxParallel {
+		workers = maxParallel
+	}
+	jobs := make(chan backupSpec, len(targets))
+	for _, fp := range targets {
+		jobs <- fp
+	}
+	close(jobs)
+
+	var (
+		wg      sync.WaitGroup
+		firstMu sync.Mutex
+		first   error
+	)
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for fp := range jobs {
+				firstMu.Lock()
+				had := first != nil
+				firstMu.Unlock()
+				if had {
+					return // sibling already failed — stop early
+				}
+				if werr := atomicWriteFile(fp.abs+suffix, fp.data, fp.perm, rootReal); werr != nil {
+					firstMu.Lock()
+					if first == nil {
+						first = fmt.Errorf("failed to create backup for %s: %w", fp.rel, werr)
+					}
+					firstMu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return first
 }
 
 func applyReplaceRangeOps(relPath string, before []byte, fileOps []ops.ReplaceRangeOp) ([]byte, error) {
