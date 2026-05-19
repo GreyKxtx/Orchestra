@@ -173,3 +173,38 @@ func TestCheckPermissions(t *testing.T) {
 		})
 	}
 }
+
+// TestRuleToolMatches_GlobsAcrossMCPAndGit verifies the C7 fix that lifts
+// the old "literal `*` only" wildcard to a full glob: `mcp:fs:*` matches
+// every tool from the `fs` MCP server, `mcp:*` matches every MCP tool at
+// all, and `git.*` matches every git.<verb> tool — none of which worked
+// before. Case-insensitive on both sides.
+func TestRuleToolMatches_GlobsAcrossMCPAndGit(t *testing.T) {
+	cases := []struct {
+		ruleTool string
+		toolName string
+		want     bool
+	}{
+		{"*", "anything", true},
+		{"mcp:*", "mcp:fs:read", true},
+		{"mcp:*", "mcp:gh:list", true},
+		{"mcp:*", "bash", false},
+		{"mcp:fs:*", "mcp:fs:read", true},
+		{"mcp:fs:*", "mcp:fs:write", true},
+		{"mcp:fs:*", "mcp:gh:list", false},
+		{"git.*", "git.status", true},
+		{"git.*", "git.commit", true},
+		{"git.*", "gh.pr.list", false},
+		{"BASH", "bash", true}, // case-insensitive
+		{"bash", "BASH", true},
+		{"bash", "bash", true},
+		{"bash", "read", false},
+	}
+	for _, c := range cases {
+		t.Run(c.ruleTool+"="+c.toolName, func(t *testing.T) {
+			if got := ruleToolMatches(c.ruleTool, c.toolName); got != c.want {
+				t.Errorf("ruleToolMatches(%q,%q) = %v, want %v", c.ruleTool, c.toolName, got, c.want)
+			}
+		})
+	}
+}
