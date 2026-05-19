@@ -134,10 +134,16 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 		}
 	}
 	if matches > 1 {
+		// M13 in audit ledger: surface up to 5 line numbers so the model
+		// can tell which spans collide and pick disambiguating context.
+		// Re-scans the file (findUnique returned early at matches==2);
+		// cost is amortised — only fires on the ambiguous path.
+		lines := findAllMatchLines(string(before), p.Search, 5)
 		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous", map[string]any{
-			"path":    p.Path,
-			"matches": matches,
-			"search":  preview(p.Search, 200),
+			"path":        p.Path,
+			"matches":     matches,
+			"match_lines": lines,
+			"search":      preview(p.Search, 200),
 		})
 	}
 
@@ -310,6 +316,32 @@ func preview(s string, max int) string {
 		return s
 	}
 	return s[:max] + "\n...(truncated)"
+}
+
+// findAllMatchLines returns the 1-based line numbers of up to `cap`
+// occurrences of needle in haystack (strict byte match). M13 in audit
+// ledger: feeds into AmbiguousMatch error data so the LLM hint can name
+// exactly which lines collide instead of just "ambiguous, N matches".
+// Cap kept small (5 in callers) — listing 50 line numbers would bloat
+// the hint past usefulness.
+func findAllMatchLines(haystack, needle string, cap int) []int {
+	if needle == "" || cap <= 0 {
+		return nil
+	}
+	out := make([]int, 0, cap)
+	idx := 0
+	for len(out) < cap {
+		j := strings.Index(haystack[idx:], needle)
+		if j < 0 {
+			break
+		}
+		absOff := idx + j
+		// 1-based line number = 1 + number of '\n' in haystack[:absOff].
+		line := 1 + strings.Count(haystack[:absOff], "\n")
+		out = append(out, line)
+		idx = absOff + max(1, len(needle))
+	}
+	return out
 }
 
 func findUnique(haystack string, needle string) (start int, end int, matches int) {

@@ -1639,6 +1639,34 @@ func errorDataInt(pe *protocol.Error, key string) int {
 	return 0
 }
 
+// errorDataInts pulls an []int field (possibly serialised as []float64
+// after a JSON round-trip). Used for the AmbiguousMatch match_lines list.
+func errorDataInts(pe *protocol.Error, key string) []int {
+	if pe == nil || pe.Data == nil {
+		return nil
+	}
+	m, ok := pe.Data.(map[string]any)
+	if !ok {
+		return nil
+	}
+	switch v := m[key].(type) {
+	case []int:
+		return v
+	case []any:
+		out := make([]int, 0, len(v))
+		for _, x := range v {
+			switch n := x.(type) {
+			case int:
+				out = append(out, n)
+			case float64:
+				out = append(out, int(n))
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // formatResolveErrorCompact returns a compact resolve error message. H1
 // fix: include path from the resolver's Data payload so the model knows
 // which file to re-read instead of guessing across a multi-file patch.
@@ -1680,10 +1708,20 @@ func formatApplyErrorCompact(err error, code protocol.ErrorCode) string {
 			"\nFile changed on disk. Re-read it (fs.read) and update the patch with the new file_hash."
 	case protocol.AmbiguousMatch:
 		matches := errorDataInt(pe, "matches")
-		if matches > 0 {
-			return fmt.Sprintf("APPLY_ERROR code=AmbiguousMatch%s matches=%d\nSearch block matched %d locations. Disambiguate: add 2-3 lines of context before or after the existing search.", pathSuffix, matches, matches)
+		linesPart := ""
+		if lines := errorDataInts(pe, "match_lines"); len(lines) > 0 {
+			// M13 in audit ledger: surface first N match line numbers so
+			// the LLM picks disambiguating context from the actual hits.
+			parts := make([]string, 0, len(lines))
+			for _, ln := range lines {
+				parts = append(parts, fmt.Sprintf("%d", ln))
+			}
+			linesPart = " lines=" + strings.Join(parts, ",")
 		}
-		return "APPLY_ERROR code=AmbiguousMatch" + pathSuffix +
+		if matches > 0 {
+			return fmt.Sprintf("APPLY_ERROR code=AmbiguousMatch%s matches=%d%s\nSearch block matched %d locations. Disambiguate: add 2-3 lines of context before or after the existing search.", pathSuffix, matches, linesPart, matches)
+		}
+		return "APPLY_ERROR code=AmbiguousMatch" + pathSuffix + linesPart +
 			"\nSearch block is ambiguous. Add more surrounding context to make it unique."
 	}
 	return "APPLY_ERROR code=unknown\nerror=" + formatErr(err)
