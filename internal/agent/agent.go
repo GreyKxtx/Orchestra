@@ -995,8 +995,17 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					}
 				}
 			}
-			// Record call for future dedup checks.
-			cb.RecordSuccessfulCall(name, step.Tool.Input)
+			// Record call for future dedup checks. N6 (audit ledger,
+			// Sprint 6): RecordSuccessfulCall returns a strong "you already
+			// did this" hint when the same (tool, args) succeeds twice.
+			// Inject it as a user message so the model sees an imperative
+			// nudge before it can call the same tool again — previously
+			// this return value was discarded, leaving only the next-step
+			// dedup tool-result block (which catches a 3rd repeat but
+			// silently accepts the 2nd).
+			if dupHint := cb.RecordSuccessfulCall(name, step.Tool.Input); dupHint != "" {
+				history = append(history, llm.Message{Role: llm.RoleUser, Content: dupHint})
+			}
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
 			cb.ResetToolErrors()
 			// N3 (audit ledger, Sprint 6): clear stale denial counter for
@@ -1777,9 +1786,13 @@ func extractLSPErrors(out json.RawMessage) string {
 	if total > maxLSPErrorsInjected {
 		body += fmt.Sprintf("\n  …и ещё %d ошибок (показаны первые %d)", total-maxLSPErrorsInjected, maxLSPErrorsInjected)
 	}
-	return "LSP_ERRORS: файл записан с ошибками компиляции:\n" +
+	// N6 in audit ledger (Sprint 6): framed as a denial-style hint so the
+	// model treats it as a constraint, not a side note. Identical re-call
+	// is also blocked at the dedup gate (agent.go:885), but the soft form
+	// here nudges the model to think before retrying with cosmetic tweaks.
+	return "LSP_ERRORS — следующий write/edit на тот же файл с теми же ошибками будет заблокирован. Файл записан, но имеет ошибки компиляции:\n" +
 		body +
-		"\nИсправь ошибки и вызови edit или write ещё раз — не используй patches."
+		"\nДиагностируй причину (read + lsp.hover / lsp.references), исправь её и только затем — write/edit. Косметические правки тех же строк не помогут."
 }
 
 func formatErr(err error) string {
