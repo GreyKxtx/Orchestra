@@ -77,7 +77,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		c, err := core.New(workspaceRoot, core.Options{LLMClient: testLLMClient})
+		c, err := core.New(workspaceRoot, core.Options{LLMClient: getTestLLMClient()})
 		if err != nil {
 			return 0, fmt.Errorf("core: %w", err)
 		}
