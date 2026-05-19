@@ -1,11 +1,15 @@
-// Package workflow orchestrates multi-stage agent pipelines defined as YAML
-// files in .orchestra/workflows/. Each stage invokes a named skill, captures
-// its final output, and feeds it forward into downstream stages via
-// {stage.output} substitution. Loops on completion markers (e.g. plan
-// verifier re-routing back to planner on `## ISSUES FOUND`) are first-class.
+// Package workflow orchestrates multi-stage agent pipelines defined as
+// YAML files in .orchestra/workflows/. Each stage invokes a named skill,
+// captures its final output, and feeds it forward into downstream stages
+// via {stage.output} substitution. Loops on completion markers (e.g.
+// plan verifier re-routing back to planner on `## ISSUES FOUND`) are
+// first-class.
 //
-// Workflows generalise internal/pipeline (which hard-codes Investigator →
-// Coder → Critic) to arbitrary user-defined graphs without writing Go code.
+// This package is the CANONICAL orchestration layer for new multi-stage
+// flows. internal/pipeline exists alongside as a hardcoded special case
+// (Investigator → Coder → Critic) preserved for the --pipeline CLI flag
+// and predates this package. M2 in architecture audit: when a feature
+// could land in either place, it goes here.
 package workflow
 
 import (
