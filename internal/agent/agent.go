@@ -1904,6 +1904,13 @@ func sanitizeOrphanedToolCalls(msgs []llm.Message, orphans map[string]bool) []ll
 //
 // This replaces an earlier per-message loop that could keep a lone `tool`
 // message when its paired assistant exceeded the budget (C1 in the audit).
+//
+// Complexity: O(n) in the number of messages. estimateMessageSize is called
+// exactly once per message during atom-build and the cached atom.size is
+// reused by the greedy-pick. The sanitize path re-estimates only the atoms
+// that had orphan tool_calls — typically zero. P2 in audit ledger (Sprint 6)
+// flagged a suspected double estimate; on re-reading the code, the second
+// pass it claimed doesn't exist.
 func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 	if maxBytes <= 0 || len(messages) <= 2 {
 		return messages
