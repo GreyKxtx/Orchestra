@@ -32,6 +32,7 @@ Several findings cluster on the same underlying gap. Fix them as one work-item t
 
 **Files:** `internal/agent/agent.go:1644-1650`
 **Effort:** S
+**Closed by:** `16a1d8b`
 
 `truncateMessages` evicts the paired `assistant` message but can keep its `tool` reply alone when the pair-size budget is exceeded but the single-tool size fits. OpenAI/Anthropic both reject `role:"tool"` with no preceding `assistant` carrying matching `tool_call_id` → next LLM call hard-fails the **whole run**, not just the step.
 
@@ -41,6 +42,7 @@ Several findings cluster on the same underlying gap. Fix them as one work-item t
 
 **Files:** `internal/agent/agent.go:1935-2027` (`runParallelToolBatch`)
 **Effort:** M
+**Closed by:** `16a1d8b`
 
 `runParallelToolBatch` never calls `RecordToolError`, `ResetToolErrors`, `RecordSuccessfulCall`, `IsDuplicateCall`, or `RecordDenied`. Model can spam 16 identical parallel `read` calls forever; 16 erroring tools per step still don't trip `MaxToolErrorRepeats`. Only `MaxSteps` saves the run. Hook denials inside the batch (line 1959) don't increment `deniedPerTool` either.
 
@@ -50,6 +52,7 @@ Several findings cluster on the same underlying gap. Fix them as one work-item t
 
 **Files:** `internal/agent/agent.go:809,855,1958,1992,760,830-836,1995-2002,2006-2013` (and any tool / hook / event sink callsite)
 **Effort:** M
+**Closed by:** `16a1d8b`
 
 `grep -r 'recover()' internal/` returns zero hits. A `panic` in a tool implementation, a `HooksRunner.RunPreTool/Post`, or any `OnEvent` callback (TUI / CLI / IDE) propagates out of the goroutine that hosts it — for `runParallelToolBatch` that is a child goroutine, so the panic kills the process. Trivial DoS from a buggy tool or UI sink.
 
@@ -59,6 +62,7 @@ Several findings cluster on the same underlying gap. Fix them as one work-item t
 
 **Files:** `internal/lsp/manager.go:107` (calls `Start(context.Background(), …)`), `internal/lsp/client.go:100` (the inner `request("initialize", ...)`)
 **Effort:** S
+**Closed by:** `ef174ce`
 
 `Manager.NewManager` calls `Start` with `context.Background()`. A gopls hanging on init (large monorepo without `go.mod`, mis-configured GOPATH, etc.) blocks Runner construction, which blocks `core` / `apply` / `tui` startup. `Close`'s 3s timeout doesn't help because `Close` is never reached.
 
@@ -68,6 +72,7 @@ Several findings cluster on the same underlying gap. Fix them as one work-item t
 
 **Files:** `internal/mcp/manager.go:23-33`, `internal/mcp/client.go:174,182,195`
 **Effort:** S
+**Closed by:** `ef174ce` (also parallelised server start via WaitGroup)
 
 Same shape as C4 but for MCP. Compounded by serial start (BUG-2): three slow MCP servers stack to 90+ seconds. `internal/cli/mcp.go:74` already demonstrates the fix (`30*time.Second` wrap) — generalise.
 
@@ -77,6 +82,7 @@ Same shape as C4 but for MCP. Compounded by serial start (BUG-2): three slow MCP
 
 **Files:** `internal/mcp/client.go:231-241` (`send`), `:199` (`Call` re-locks), `:254` (`readLoop` re-locks)
 **Effort:** M
+**Closed by:** `ef174ce`
 
 If the MCP server is slow to read its stdin (pipe buffer ~64 KiB), `stdin.Write` blocks while holding `c.mu`. Concurrent `Call`s queue on the same mutex. `readLoop`'s response dispatch also needs `c.mu` to look up the pending channel — so the response that would unblock the writer cannot land. Classic deadlock.
 
@@ -86,6 +92,7 @@ If the MCP server is slow to read its stdin (pipe buffer ~64 KiB), `stdin.Write`
 
 **Files:** `internal/agent/permissions.go:70-143` (no MCP awareness), `internal/core/core.go:680-687` and `internal/cli/apply.go:577-578` (unconditional MCP injection into `CustomTools`)
 **Effort:** M
+**Closed by:** `38a47f8`
 
 Two related holes:
 1. `subjectForTool` returns "" for any `mcp:*` name (line 73 short-circuits), and `ruleToolMatches` only supports literal `*` — so deny rules like `{tool: "mcp:server:*"}` never match. The only way to deny one MCP tool is to spell its full name exactly.
