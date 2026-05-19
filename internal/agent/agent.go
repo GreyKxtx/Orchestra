@@ -1277,18 +1277,20 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		// are still appended below.
 		base = append(base, a.opts.CustomTools...)
 	} else {
-		allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
-		allowWeb := a.opts.AllowWeb
-		allowBrowser := a.opts.AllowBrowser
+		caps := tools.Capabilities{
+			Exec:    a.opts.AllowExec || len(a.opts.ExecAllow) > 0,
+			Web:     a.opts.AllowWeb,
+			Browser: a.opts.AllowBrowser,
+		}
 		hasSubtasks := a.opts.SubtaskRunner != nil
 		hasQA := a.opts.QuestionAsker != nil
 		switch {
 		case a.opts.Mode != "":
-			base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, allowBrowser, hasSubtasks, hasQA)
+			base = tools.ListToolsForMode(a.opts.Mode, caps, hasSubtasks, hasQA)
 		case hasSubtasks:
-			base = tools.ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
+			base = tools.ListToolsWithSubtasks(caps)
 		default:
-			base = tools.ListTools(allowExec, allowWeb, allowBrowser)
+			base = tools.ListTools(caps)
 		}
 	}
 	if len(a.opts.ExtraTools) > 0 {

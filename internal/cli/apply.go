@@ -514,7 +514,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				}
 				if def.Tools != nil {
 					var resolveErr error
-					customAgentTools, resolveErr = tools.ResolveToolNamesWithPolicy(def.Tools, allowExecEffective, allowWebEffective, allowBrowserEffective)
+					customAgentTools, resolveErr = tools.ResolveToolNamesWithPolicy(def.Tools, tools.Capabilities{
+						Exec:    allowExecEffective,
+						Web:     allowWebEffective,
+						Browser: allowBrowserEffective,
+					})
 					if resolveErr != nil {
 						retErr = resolveErr
 						return retErr

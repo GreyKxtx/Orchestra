@@ -19,7 +19,7 @@ func TestListTools_NoDotsInCommodityNames(t *testing.T) {
 
 // TestListTools_AllNamesPresent verifies ListTools returns expected names.
 func TestListTools_AllNamesPresent(t *testing.T) {
-	defs := ListTools(true, false, false)
+	defs := ListTools(Capabilities{Exec: true, Web: false, Browser: false})
 	names := make(map[string]bool, len(defs))
 	for _, d := range defs {
 		names[d.Function.Name] = true
@@ -35,7 +35,7 @@ func TestListTools_AllNamesPresent(t *testing.T) {
 // TestListToolsForMode_NewModes verifies tool sets for the four new agent modes.
 func TestListToolsForMode_NewModes(t *testing.T) {
 	// general: has write+edit+task_result, no todowrite
-	general := ListToolsForMode("general", false, false, false, false, false)
+	general := ListToolsForMode("general", Capabilities{Exec: false, Web: false, Browser: false}, false, false)
 	generalNames := toolNameSet(general)
 	for _, want := range []string{"read", "write", "edit", "grep", "task_result"} {
 		if !generalNames[want] {
@@ -48,7 +48,7 @@ func TestListToolsForMode_NewModes(t *testing.T) {
 
 	// compaction/title/summary: no tools at all
 	for _, mode := range []string{"compaction", "title", "summary"} {
-		defs := ListToolsForMode(mode, true, true, false, true, true)
+		defs := ListToolsForMode(mode, Capabilities{Exec: true, Web: true, Browser: false}, true, true)
 		if len(defs) != 0 {
 			t.Errorf("mode %q: expected 0 tools, got %d", mode, len(defs))
 		}
@@ -65,13 +65,13 @@ func toolNameSet(defs []llm.ToolDef) map[string]bool {
 
 // TestListTools_ExecGating verifies bash is absent without allowExec.
 func TestListTools_ExecGating(t *testing.T) {
-	without := ListTools(false, false, false)
+	without := ListTools(Capabilities{Exec: false, Web: false, Browser: false})
 	for _, d := range without {
 		if d.Function.Name == "bash" {
 			t.Error("ListTools(allowExec=false) must not include bash")
 		}
 	}
-	with := ListTools(true, false, false)
+	with := ListTools(Capabilities{Exec: true, Web: false, Browser: false})
 	found := false
 	for _, d := range with {
 		if d.Function.Name == "bash" {
@@ -85,13 +85,13 @@ func TestListTools_ExecGating(t *testing.T) {
 
 // TestListTools_WebGating verifies webfetch is absent without allowWeb.
 func TestListTools_WebGating(t *testing.T) {
-	without := ListTools(false, false, false)
+	without := ListTools(Capabilities{Exec: false, Web: false, Browser: false})
 	for _, d := range without {
 		if d.Function.Name == "webfetch" {
 			t.Error("ListTools(allowWeb=false) must not include webfetch")
 		}
 	}
-	with := ListTools(false, true, false)
+	with := ListTools(Capabilities{Exec: false, Web: true, Browser: false})
 	found := false
 	for _, d := range with {
 		if d.Function.Name == "webfetch" {
@@ -106,7 +106,7 @@ func TestListTools_WebGating(t *testing.T) {
 // TestListTools_NewToolsPresent verifies all v7 tools are registered.
 func TestListTools_NewToolsPresent(t *testing.T) {
 	// Read-only git tools + fs extras are always present (no allowExec needed).
-	always := ListTools(false, false, false)
+	always := ListTools(Capabilities{Exec: false, Web: false, Browser: false})
 	alwaysNames := toolNameSet(always)
 	for _, name := range []string{"fs.delete", "fs.rename", "git.status", "git.log", "git.diff"} {
 		if !alwaysNames[name] {
@@ -115,7 +115,7 @@ func TestListTools_NewToolsPresent(t *testing.T) {
 	}
 
 	// Write git tools require allowExec=true.
-	withExec := ListTools(true, false, false)
+	withExec := ListTools(Capabilities{Exec: true, Web: false, Browser: false})
 	withExecNames := toolNameSet(withExec)
 	for _, name := range []string{"git.commit", "git.branch", "git.checkout", "git.push"} {
 		if !withExecNames[name] {
@@ -140,7 +140,7 @@ func TestListTools_BrowserGating(t *testing.T) {
 	}
 
 	// Without allowBrowser: browser tools must not appear.
-	without := ListTools(false, false, false)
+	without := ListTools(Capabilities{Exec: false, Web: false, Browser: false})
 	withoutNames := toolNameSet(without)
 	for _, name := range browserTools {
 		if withoutNames[name] {
@@ -149,7 +149,7 @@ func TestListTools_BrowserGating(t *testing.T) {
 	}
 
 	// With allowBrowser: all browser tools must appear.
-	with := ListTools(false, false, true)
+	with := ListTools(Capabilities{Exec: false, Web: false, Browser: true})
 	withNames := toolNameSet(with)
 	for _, name := range browserTools {
 		if !withNames[name] {
