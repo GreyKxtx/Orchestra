@@ -70,10 +70,11 @@ type ProposedEdit struct {
 }
 
 type serverEntry struct {
-	cfg    LSPServerConfig
-	client *Client
-	diags  *DiagnosticsCache
-	exts   map[string]bool
+	cfg          LSPServerConfig
+	client       *Client
+	diags        *DiagnosticsCache
+	exts         map[string]bool
+	restartCount int // H6 in audit ledger: bounded lazy restart on crash
 }
 
 // Manager manages one LSP client per language, routing by file extension.
@@ -174,15 +175,42 @@ func dispatchNotifications(c *Client, diags *DiagnosticsCache) {
 	}
 }
 
+// maxLSPRestarts caps how many times serverForPath will try to lazily
+// restart a dead server per Core lifetime. After this, the language is
+// considered unsupported for the rest of the session. H6 in audit ledger.
+const maxLSPRestarts = 3
+
 func (m *Manager) serverForPath(relPath string) (*serverEntry, error) {
 	if m.IsEmpty() {
 		return nil, fmt.Errorf("lsp: no servers configured (add lsp.servers to .orchestra.yml)")
 	}
 	ext := strings.ToLower(filepath.Ext(relPath))
 	for _, s := range m.servers {
-		if s.exts[ext] && s.client != nil && !s.client.IsDead() {
+		if !s.exts[ext] {
+			continue
+		}
+		if s.client != nil && !s.client.IsDead() {
 			return s, nil
 		}
+		// Dead client — attempt one lazy restart (within budget). On
+		// success the entry's client is replaced and returned.
+		if s.restartCount >= maxLSPRestarts {
+			continue
+		}
+		s.restartCount++
+		rootURI := PathToURI(m.workspaceRoot)
+		startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		fresh, err := Start(startCtx, s.cfg.Language, s.cfg.Command, s.cfg.Env, rootURI, s.cfg.InitOptions)
+		cancel()
+		if err != nil {
+			// Mark this entry permanently dead by exhausting the budget.
+			s.restartCount = maxLSPRestarts
+			continue
+		}
+		fresh.DiagCache = s.diags
+		go dispatchNotifications(fresh, s.diags)
+		s.client = fresh
+		return s, nil
 	}
 	return nil, fmt.Errorf("lsp: no server configured for %q files (ext=%q)", relPath, ext)
 }
@@ -200,6 +228,67 @@ func (m *Manager) ensureOpen(ctx context.Context, s *serverEntry, relPath string
 	return s.client.DidOpen(ctx, uri, langIDFromExt(filepath.Ext(relPath)), string(content))
 }
 
+// DidClose sends textDocument/didClose for every server that has the
+// document at relPath open, and forgets cached diagnostics for that URI.
+// H7 in audit ledger: previously fs.delete / fs.rename did nothing on the
+// LSP side, leaving stale open-document state for the deleted file and
+// stale diagnostics in DiagnosticsCache forever. Safe to call even when
+// the document isn't open on any server (silent no-op).
+func (m *Manager) DidClose(ctx context.Context, relPath string) {
+	if m.IsEmpty() {
+		return
+	}
+	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
+	uri := PathToURI(absPath)
+	for _, s := range m.servers {
+		if s.client == nil || s.client.IsDead() {
+			continue
+		}
+		if !s.client.IsOpen(uri) {
+			continue
+		}
+		_ = s.client.DidClose(ctx, uri)
+		if s.diags != nil {
+			s.diags.Forget(uri)
+		}
+	}
+}
+
+// readLineText returns the raw text of `line` (0-based) from the file at
+// relPath. Returns "" on any read or out-of-range error — callers pass the
+// result to pos.ToLSP where "" simply means "fall through unchanged", which
+// is safe for ASCII columns. H4 in audit ledger: previously every ToLSP
+// callsite passed "" hard-coded, so non-ASCII columns sent to UTF-16
+// servers were wrong by the number of multi-byte runes before them.
+func (m *Manager) readLineText(relPath string, line int) string {
+	if line < 0 {
+		return ""
+	}
+	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return ""
+	}
+	// Walk for the Nth line manually so we don't allocate the full split
+	// slice for a single-line lookup.
+	cur := 0
+	start := 0
+	for i := 0; i < len(content); i++ {
+		if content[i] != '\n' {
+			continue
+		}
+		if cur == line {
+			return string(content[start:i])
+		}
+		cur++
+		start = i + 1
+	}
+	if cur == line { // last line (no trailing newline)
+		return string(content[start:])
+	}
+	return ""
+}
+
 // Definition returns the definition location(s) of the symbol at pos.
 func (m *Manager) Definition(ctx context.Context, relPath string, pos ToolPosition) ([]ToolLocation, error) {
 	s, err := m.serverForPath(relPath)
@@ -214,7 +303,7 @@ func (m *Manager) Definition(ctx context.Context, relPath string, pos ToolPositi
 
 	raw, err := s.client.Request(ctx, "textDocument/definition", map[string]any{
 		"textDocument": map[string]string{"uri": uri},
-		"position":     pos.ToLSP(s.client.PosEncoding(), ""),
+		"position":     pos.ToLSP(s.client.PosEncoding(), m.readLineText(relPath, pos.Line)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("lsp.definition: %w", err)
@@ -240,7 +329,7 @@ func (m *Manager) References(ctx context.Context, relPath string, pos ToolPositi
 
 	raw, err := s.client.Request(ctx, "textDocument/references", map[string]any{
 		"textDocument": map[string]string{"uri": uri},
-		"position":     pos.ToLSP(s.client.PosEncoding(), ""),
+		"position":     pos.ToLSP(s.client.PosEncoding(), m.readLineText(relPath, pos.Line)),
 		"context":      map[string]bool{"includeDeclaration": includeDecl},
 	})
 	if err != nil {
@@ -270,7 +359,7 @@ func (m *Manager) Hover(ctx context.Context, relPath string, pos ToolPosition) (
 
 	raw, err := s.client.Request(ctx, "textDocument/hover", map[string]any{
 		"textDocument": map[string]string{"uri": uri},
-		"position":     pos.ToLSP(s.client.PosEncoding(), ""),
+		"position":     pos.ToLSP(s.client.PosEncoding(), m.readLineText(relPath, pos.Line)),
 	})
 	if err != nil {
 		return "", fmt.Errorf("lsp.hover: %w", err)
@@ -318,7 +407,7 @@ func (m *Manager) Rename(ctx context.Context, relPath string, pos ToolPosition, 
 
 	raw, err := s.client.Request(ctx, "textDocument/rename", map[string]any{
 		"textDocument": map[string]string{"uri": uri},
-		"position":     pos.ToLSP(s.client.PosEncoding(), ""),
+		"position":     pos.ToLSP(s.client.PosEncoding(), m.readLineText(relPath, pos.Line)),
 		"newName":      newName,
 	})
 	if err != nil {

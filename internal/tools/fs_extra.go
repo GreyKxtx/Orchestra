@@ -59,6 +59,12 @@ func (r *Runner) FSDelete(ctx context.Context, req FSDeleteRequest) (*FSDeleteRe
 			map[string]any{"path": relSlash, "recursive": req.Recursive})
 	}
 
+	// H7 in audit ledger: tell LSP servers the document is gone so they
+	// drop stale didOpen state + cached diagnostics. Best-effort.
+	if r.lspManager != nil {
+		r.lspManager.DidClose(ctx, relSlash)
+	}
+
 	return &FSDeleteResponse{Path: relSlash}, nil
 }
 
@@ -127,6 +133,13 @@ func (r *Runner) FSRename(ctx context.Context, req FSRenameRequest) (*FSRenameRe
 		return nil, protocol.NewError(protocol.ExecFailed,
 			fmt.Sprintf("rename failed: %s", renameErr),
 			map[string]any{"path": relSrc, "new_path": relDst})
+	}
+
+	// H7 in audit ledger: close the old URI on every server that had it
+	// open; the next lsp.* tool that touches the new path will didOpen
+	// it lazily via ensureOpen.
+	if r.lspManager != nil {
+		r.lspManager.DidClose(ctx, relSrc)
 	}
 
 	return &FSRenameResponse{Path: relSrc, NewPath: relDst}, nil
