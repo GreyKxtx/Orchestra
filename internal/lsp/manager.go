@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,10 +71,16 @@ type ProposedEdit struct {
 }
 
 type serverEntry struct {
-	cfg          LSPServerConfig
+	cfg   LSPServerConfig
+	diags *DiagnosticsCache
+	exts  map[string]bool
+
+	// mu guards client + restartCount on the slow / restart path.
+	// The fast path (alive client) reads client without the lock and is
+	// safe because client is never set to nil after construction — only
+	// replaced atomically while mu is held. N1 in audit ledger (Sprint 6).
+	mu           sync.Mutex
 	client       *Client
-	diags        *DiagnosticsCache
-	exts         map[string]bool
 	restartCount int // H6 in audit ledger: bounded lazy restart on crash
 }
 
@@ -189,30 +196,49 @@ func (m *Manager) serverForPath(relPath string) (*serverEntry, error) {
 		if !s.exts[ext] {
 			continue
 		}
-		if s.client != nil && !s.client.IsDead() {
+		// Fast path: alive client, no lock.
+		if c := s.client; c != nil && !c.IsDead() {
 			return s, nil
 		}
-		// Dead client — attempt one lazy restart (within budget). On
-		// success the entry's client is replaced and returned.
-		if s.restartCount >= maxLSPRestarts {
-			continue
+		// Slow path: serialize restart attempts for this entry so that
+		// concurrent calls don't both increment restartCount past the cap
+		// and don't both spawn a fresh subprocess. N1 in audit ledger.
+		if ok := s.tryRestart(m.workspaceRoot); ok {
+			return s, nil
 		}
-		s.restartCount++
-		rootURI := PathToURI(m.workspaceRoot)
-		startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		fresh, err := Start(startCtx, s.cfg.Language, s.cfg.Command, s.cfg.Env, rootURI, s.cfg.InitOptions)
-		cancel()
-		if err != nil {
-			// Mark this entry permanently dead by exhausting the budget.
-			s.restartCount = maxLSPRestarts
-			continue
-		}
-		fresh.DiagCache = s.diags
-		go dispatchNotifications(fresh, s.diags)
-		s.client = fresh
-		return s, nil
 	}
 	return nil, fmt.Errorf("lsp: no server configured for %q files (ext=%q)", relPath, ext)
+}
+
+// tryRestart serializes lazy-restart attempts for one serverEntry. Returns
+// true if the entry has an alive client when it returns (either someone
+// else restarted while we waited, or we restarted successfully).
+func (s *serverEntry) tryRestart(workspaceRoot string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-check under the lock: another goroutine may have already
+	// restarted while we were blocked on Lock.
+	if s.client != nil && !s.client.IsDead() {
+		return true
+	}
+	if s.restartCount >= maxLSPRestarts {
+		return false
+	}
+	s.restartCount++
+	rootURI := PathToURI(workspaceRoot)
+	startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	fresh, err := Start(startCtx, s.cfg.Language, s.cfg.Command, s.cfg.Env, rootURI, s.cfg.InitOptions)
+	cancel()
+	if err != nil {
+		// Mark this entry permanently dead by exhausting the budget.
+		s.restartCount = maxLSPRestarts
+		return false
+	}
+	fresh.DiagCache = s.diags
+	go dispatchNotifications(fresh, s.diags)
+	s.client = fresh
+	return true
 }
 
 func (m *Manager) ensureOpen(ctx context.Context, s *serverEntry, relPath string) error {
