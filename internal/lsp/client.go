@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -63,8 +64,16 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 		return nil, fmt.Errorf("lsp: empty command for server %q", name)
 	}
 	cmd := exec.Command(command[0], command[1:]...) //nolint:gosec
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
+	// H3 in audit ledger: inherit the parent's environment FIRST, then layer
+	// user-supplied overrides on top. Without this, the moment a user sets
+	// even one `env:` entry in .orchestra.yml, PATH/HOME/GOPATH disappear
+	// and most LSP servers fail to start (no PATH for spawned tools, no
+	// HOME for cache).
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), nil...) // copy
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

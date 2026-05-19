@@ -18,7 +18,7 @@ func TestDiagnosticsCache_NilBeforeUpdate(t *testing.T) {
 func TestDiagnosticsCache_UpdateAndGet(t *testing.T) {
 	dc := lsp.NewDiagnosticsCache()
 	diags := []lsp.Diagnostic{{Message: "test error"}}
-	dc.Update("file:///foo.go", diags)
+	dc.Update("file:///foo.go", 0, diags)
 	got := dc.Get("file:///foo.go")
 	if len(got) != 1 || got[0].Message != "test error" {
 		t.Fatalf("unexpected: %v", got)
@@ -27,7 +27,7 @@ func TestDiagnosticsCache_UpdateAndGet(t *testing.T) {
 
 func TestDiagnosticsCache_NilBecomesEmpty(t *testing.T) {
 	dc := lsp.NewDiagnosticsCache()
-	dc.Update("file:///foo.go", nil)
+	dc.Update("file:///foo.go", 0, nil)
 	got := dc.Get("file:///foo.go")
 	if got == nil {
 		t.Fatal("expected empty slice, not nil")
@@ -49,7 +49,7 @@ func TestDiagnosticsCache_WaitForUpdate(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	dc.Update("file:///foo.go", diags)
+	dc.Update("file:///foo.go", 0, diags)
 
 	got := <-done
 	if len(got) != 1 || got[0].Message != "async error" {
@@ -89,7 +89,7 @@ func TestDiagnosticsCache_MultipleWaiters(t *testing.T) {
 		}()
 	}
 	time.Sleep(10 * time.Millisecond)
-	dc.Update("file:///multi.go", []lsp.Diagnostic{{Message: "x"}})
+	dc.Update("file:///multi.go", 0, []lsp.Diagnostic{{Message: "x"}})
 	// Only one waiter receives the update.
 	select {
 	case got := <-results:
