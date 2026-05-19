@@ -236,6 +236,19 @@ func resolveWriteAtomic(projectRoot string, p patches.Patch) (ops.AnyOp, error) 
 		})
 	}
 
+	// H8 in audit ledger: cap Content size so a malicious or buggy patch
+	// can't OOM the process. 32 MiB easily covers every legitimate file
+	// edit (generated lockfiles, large fixtures); anything beyond probably
+	// reflects prompt-injection rather than real intent.
+	const writeAtomicMaxBytes = 32 * 1024 * 1024
+	if len(p.Content) > writeAtomicMaxBytes {
+		return ops.AnyOp{}, protocol.NewError(protocol.InvalidLLMOutput, "write_atomic content exceeds 32 MiB limit", map[string]any{
+			"path":      p.Path,
+			"size":      len(p.Content),
+			"max_bytes": writeAtomicMaxBytes,
+		})
+	}
+
 	wa := ops.WriteAtomicOp{
 		Op:      ops.OpFileWriteAtomic,
 		Path:    p.Path,
@@ -574,6 +587,12 @@ type hunk struct {
 var hunkHeaderRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
 func applyUnifiedDiff(original string, diffText string) (string, error) {
+	// H10 in audit ledger: preserve the original file's line-ending
+	// convention. Previously we normalised everything to LF and emitted
+	// LF — silently converting CRLF files on every apply, churning every
+	// subsequent commit. Detect CRLF on input, normalise for matching,
+	// re-apply at the end.
+	originalCRLF := strings.Contains(original, "\r\n")
 	original = strings.ReplaceAll(original, "\r\n", "\n")
 	diffText = strings.ReplaceAll(diffText, "\r\n", "\n")
 
@@ -652,6 +671,12 @@ func applyUnifiedDiff(original string, diffText string) (string, error) {
 	if origHasNL && original == "" && res == "" {
 		res = "\n"
 	}
+	// Restore CRLF if the original file used it. The hunk-line bodies
+	// never contained \r (we stripped it at the top), and \n we added
+	// between lines + at EOF gets bumped up to \r\n.
+	if originalCRLF {
+		res = strings.ReplaceAll(res, "\n", "\r\n")
+	}
 	return res, nil
 }
 
@@ -696,6 +721,37 @@ func parseUnifiedDiff(diffText string) ([]hunk, error) {
 			i++
 		}
 
+		// H10 in audit ledger: enforce that the actual `-`/` ` and
+		// `+`/` ` line counts inside the hunk match the header's
+		// oldCount/newCount declarations. A malformed hunk with
+		// "-3 +1" header but 5 actual `-` lines previously applied
+		// anyway and silently corrupted the file. `\ No newline at
+		// end of file` and entirely empty lines (some diff tools
+		// emit them) do not count toward either side.
+		var gotOld, gotNew int
+		for _, l := range hLines {
+			if l == "" || strings.HasPrefix(l, "\\") {
+				continue
+			}
+			switch l[0] {
+			case ' ':
+				gotOld++
+				gotNew++
+			case '-':
+				gotOld++
+			case '+':
+				gotNew++
+			}
+		}
+		if gotOld != oldCount {
+			return nil, fmt.Errorf("hunk header @@-%d,%d +%d,%d@@ declares %d `-`/` ` lines but body has %d",
+				oldStart, oldCount, newStart, newCount, oldCount, gotOld)
+		}
+		if gotNew != newCount {
+			return nil, fmt.Errorf("hunk header @@-%d,%d +%d,%d@@ declares %d `+`/` ` lines but body has %d",
+				oldStart, oldCount, newStart, newCount, newCount, gotNew)
+		}
+
 		hunks = append(hunks, hunk{
 			oldStart: oldStart,
 			oldCount: oldCount,
@@ -703,8 +759,6 @@ func parseUnifiedDiff(diffText string) ([]hunk, error) {
 			newCount: newCount,
 			lines:    hLines,
 		})
-		_ = oldCount
-		_ = newCount
 	}
 
 	return hunks, nil
