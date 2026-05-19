@@ -24,6 +24,73 @@ import (
 // ledger notes that a real fix would need a per-project file lock.
 var applyMu sync.Mutex
 
+// filePlan is the per-file planning record built up during ApplyAnyOps:
+// the canonical relative path, its absolute path (after symlink/junction
+// validation), the original content (`before`), the post-apply content
+// (`after`), whether the file already exists on disk and its permission
+// mode. Hoisted out of ApplyAnyOps so writeBackupsParallel and other
+// helpers can refer to the same shape without re-declaring it.
+type filePlan struct {
+	rel    string
+	abs    string
+	exists bool
+	perm   os.FileMode
+	before []byte
+	after  []byte
+}
+
+// pathResolver caches absolute-path lookups for a single ApplyAnyOps run
+// and centralises the workspace-rel canonicalisation. The cache is keyed
+// on the canonical relative path so the same op kind doesn't pay
+// safeAbsPath's symlink-resolution cost twice. Not safe for concurrent
+// use — one resolver per ApplyAnyOps invocation.
+type pathResolver struct {
+	rootAbs  string
+	rootReal string
+	absByRel map[string]string
+}
+
+func newPathResolver(rootAbs, rootReal string) *pathResolver {
+	return &pathResolver{
+		rootAbs:  rootAbs,
+		rootReal: rootReal,
+		absByRel: make(map[string]string),
+	}
+}
+
+// getAbs returns the validated absolute path for rel, memoising the
+// safeAbsPath result.
+func (r *pathResolver) getAbs(rel string) (string, error) {
+	if v, ok := r.absByRel[rel]; ok {
+		return v, nil
+	}
+	abs, err := safeAbsPath(r.rootAbs, r.rootReal, rel)
+	if err != nil {
+		return "", err
+	}
+	r.absByRel[rel] = abs
+	return abs, nil
+}
+
+// canonRel canonicalises a user/LLM-supplied path into the workspace-
+// relative slash form used as map keys and op identifiers. Empty / "."
+// inputs are rejected; ".." escapes are NOT rejected here — that check
+// lives in safeAbsPath, which compares the resolved absolute path against
+// rootReal. Splitting the check this way lets a rel path like
+// `foo/../bar.go` resolve to `bar.go` (cleaned) without rejection.
+func (r *pathResolver) canonRel(p string) (string, error) {
+	rp := filepath.ToSlash(strings.TrimSpace(p))
+	if rp == "" {
+		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
+	}
+	rp = filepath.Clean(filepath.FromSlash(rp))
+	rp = filepath.ToSlash(rp)
+	if rp == "." {
+		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
+	}
+	return rp, nil
+}
+
 // ApplyOps applies Internal Ops v1 (compat wrapper for file.replace_range).
 //
 // Safety properties (per spec):
@@ -69,46 +136,12 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	if rp, err := filepath.EvalSymlinks(rootAbs); err == nil {
 		rootReal = rp
 	}
-
-	type filePlan struct {
-		rel    string
-		abs    string
-		exists bool
-		perm   os.FileMode
-		before []byte
-		after  []byte
-	}
+	resolver := newPathResolver(rootAbs, rootReal)
 
 	// Collect ops by kind/path (using canonical slash paths for stable ordering).
 	replaceByPath := make(map[string][]ops.ReplaceRangeOp)
 	writeByPath := make(map[string]ops.WriteAtomicOp)
 	mkdirByPath := make(map[string]ops.MkdirAllOp)
-
-	absByRel := make(map[string]string)
-	getAbs := func(rel string) (string, error) {
-		if v, ok := absByRel[rel]; ok {
-			return v, nil
-		}
-		abs, err := safeAbsPath(rootAbs, rootReal, rel)
-		if err != nil {
-			return "", err
-		}
-		absByRel[rel] = abs
-		return abs, nil
-	}
-
-	canonRel := func(p string) (string, error) {
-		rp := filepath.ToSlash(strings.TrimSpace(p))
-		if rp == "" {
-			return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
-		}
-		rp = filepath.Clean(filepath.FromSlash(rp))
-		rp = filepath.ToSlash(rp)
-		if rp == "." {
-			return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
-		}
-		return rp, nil
-	}
 
 	for _, anyOp := range in {
 		opName := strings.TrimSpace(anyOp.Op)
@@ -121,12 +154,12 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			if rr.Op == "" {
 				rr.Op = ops.OpFileReplaceRange
 			}
-			rel, err := canonRel(rr.Path)
+			rel, err := resolver.canonRel(rr.Path)
 			if err != nil {
 				return nil, err
 			}
 			rr.Path = rel
-			if _, err := getAbs(rel); err != nil {
+			if _, err := resolver.getAbs(rel); err != nil {
 				return nil, err
 			}
 			replaceByPath[rel] = append(replaceByPath[rel], rr)
@@ -139,7 +172,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			if wa.Op == "" {
 				wa.Op = ops.OpFileWriteAtomic
 			}
-			rel, err := canonRel(wa.Path)
+			rel, err := resolver.canonRel(wa.Path)
 			if err != nil {
 				return nil, err
 			}
@@ -150,7 +183,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			if _, exists := writeByPath[rel]; exists {
 				return nil, protocol.NewError(protocol.InvalidLLMOutput, "duplicate write_atomic for path", map[string]any{"path": rel})
 			}
-			if _, err := getAbs(rel); err != nil {
+			if _, err := resolver.getAbs(rel); err != nil {
 				return nil, err
 			}
 			writeByPath[rel] = wa
@@ -163,12 +196,12 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			if md.Op == "" {
 				md.Op = ops.OpFileMkdirAll
 			}
-			rel, err := canonRel(md.Path)
+			rel, err := resolver.canonRel(md.Path)
 			if err != nil {
 				return nil, err
 			}
 			md.Path = rel
-			if _, err := getAbs(rel); err != nil {
+			if _, err := resolver.getAbs(rel); err != nil {
 				return nil, err
 			}
 			// M16 in audit ledger: dedupe by canonical rel path BUT reject
@@ -195,7 +228,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 		if fp, ok := plans[rel]; ok {
 			return fp, nil
 		}
-		abs, err := getAbs(rel)
+		abs, err := resolver.getAbs(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -357,7 +390,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	sort.Strings(mkdirPaths)
 	for _, rel := range mkdirPaths {
 		md := mkdirByPath[rel]
-		abs, err := getAbs(rel)
+		abs, err := resolver.getAbs(rel)
 		if err != nil {
 			return nil, err
 		}
