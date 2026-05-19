@@ -202,7 +202,11 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		permRules = c.Cfg.Permissions.Rules
 	}
 
+	// Workflow stages are child agents — they end by calling task_result with
+	// the marker/output the runner expects. Without IsChild=true, the
+	// main-agent guard rejects task_result as invalid.
 	return agent.Options{
+		IsChild: true,
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxInvalid,
 		MaxDeniedToolRepeats: maxDenied,

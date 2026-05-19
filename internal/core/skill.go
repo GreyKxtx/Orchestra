@@ -165,6 +165,7 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		AllowBrowser:         params.AllowBrowser,
 		CustomTools:          childTools,
 		SystemPromptOverride: systemPrompt,
+		IsChild:              true,
 		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
 	})
 	if err != nil {
