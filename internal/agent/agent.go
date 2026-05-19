@@ -1823,6 +1823,40 @@ func truncateID(id string, maxLen int) string {
 	return id[:maxLen] + "..."
 }
 
+// sanitizeOrphanedToolCalls returns a copy of msgs where every tool_call
+// whose ID is in orphans is removed from the first message (the assistant
+// opener of an atom). If that leaves the assistant with no tool_calls AND
+// no other content, the assistant message is dropped entirely so we don't
+// emit an empty turn to the LLM. Subsequent messages in msgs are returned
+// unchanged.
+//
+// N4 in audit ledger (Sprint 6): without this, an assistant that opens
+// three tool_calls but only receives two replies (network glitch, mid-
+// batch error) would keep the orphan in history forever, hard-failing
+// every subsequent LLM step with "tool_call_id not found".
+func sanitizeOrphanedToolCalls(msgs []llm.Message, orphans map[string]bool) []llm.Message {
+	if len(msgs) == 0 || len(orphans) == 0 {
+		return msgs
+	}
+	head := msgs[0]
+	if head.Role != llm.RoleAssistant || len(head.ToolCalls) == 0 {
+		return msgs
+	}
+	kept := make([]llm.ToolCall, 0, len(head.ToolCalls))
+	for _, tc := range head.ToolCalls {
+		if !orphans[tc.ID] {
+			kept = append(kept, tc)
+		}
+	}
+	head.ToolCalls = kept
+	out := make([]llm.Message, 0, len(msgs))
+	if len(kept) > 0 || head.TextLen() > 0 || len(head.Parts) > 0 {
+		out = append(out, head)
+	}
+	out = append(out, msgs[1:]...)
+	return out
+}
+
 // truncateMessages truncates message history to fit within byte budget.
 // Always keeps system and first user message, then keeps as many history
 // messages as possible from the tail, preserving every assistant↔tool group
@@ -1867,7 +1901,23 @@ func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 		size int
 	}
 	atoms := make([]atom, 0, len(messages)-2)
-	flush := func(a *atom) {
+	// flush appends cur to atoms. If openCalls is non-empty when the atom
+	// closes (some tool_call_ids never received a matching tool result —
+	// partial API response, mid-batch failure), strip those orphaned IDs
+	// from the assistant message so the surviving history stays self-
+	// consistent. Otherwise the next LLM call would reject the prompt
+	// with "tool_call_id not found". N4 in audit ledger (Sprint 6).
+	flush := func(a *atom, openCalls map[string]bool) {
+		if len(a.msgs) == 0 {
+			return
+		}
+		if len(openCalls) > 0 {
+			a.msgs = sanitizeOrphanedToolCalls(a.msgs, openCalls)
+			a.size = 0
+			for _, mm := range a.msgs {
+				a.size += estimateMessageSize(mm)
+			}
+		}
 		if len(a.msgs) > 0 {
 			atoms = append(atoms, *a)
 		}
@@ -1884,19 +1934,19 @@ func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 			cur.size += ms
 			delete(openCalls, m.ToolCallID)
 		case m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0:
-			flush(&cur)
+			flush(&cur, openCalls)
 			cur = atom{msgs: []llm.Message{m}, size: ms}
 			openCalls = map[string]bool{}
 			for _, tc := range m.ToolCalls {
 				openCalls[tc.ID] = true
 			}
 		default:
-			flush(&cur)
+			flush(&cur, openCalls)
 			cur = atom{msgs: []llm.Message{m}, size: ms}
 			openCalls = map[string]bool{}
 		}
 	}
-	flush(&cur)
+	flush(&cur, openCalls)
 
 	// Greedy-pick atoms from the tail forward until budget is exhausted.
 	// We iterate backwards so the most recent context survives; the partial-
