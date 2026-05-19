@@ -88,6 +88,22 @@ func (cb *CircuitBreaker) ResetToolErrors() {
 	cb.consecutiveToolErrs = 0
 }
 
+// ResetDeniedForTool clears the per-tool denial counter for toolName.
+//
+// N3 in audit ledger (Sprint 6): the denial counter was asymmetric vs
+// consecutiveToolErrs — it never reset on success, so when a permission
+// rule changed mid-run (e.g. skill_invoke with --allow-exec, or a new
+// allow rule loaded from config), an old denial streak could trip the
+// circuit on the very first now-allowed call. Resetting on success
+// makes the counter track "currently struggling with this tool", not
+// "ever struggled".
+func (cb *CircuitBreaker) ResetDeniedForTool(toolName string) {
+	if cb.deniedPerTool == nil {
+		return
+	}
+	delete(cb.deniedPerTool, toolName)
+}
+
 // RecordFinalFailure records a failed resolve/apply attempt and returns an error if the circuit trips.
 func (cb *CircuitBreaker) RecordFinalFailure(lastErr error) *protocol.Error {
 	cb.finalFailures++

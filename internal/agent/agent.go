@@ -999,6 +999,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			cb.RecordSuccessfulCall(name, step.Tool.Input)
 			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
 			cb.ResetToolErrors()
+			// N3 (audit ledger, Sprint 6): clear stale denial counter for
+			// this tool — a successful call means whatever was blocking it
+			// (permission rule, missing capability flag) is gone.
+			cb.ResetDeniedForTool(name)
 			// M6 in audit ledger: a successful tool call resets the final-
 			// failure counter on the rationale that the model is making
 			// progress between apply attempts. This makes MaxFinalFailures
@@ -2343,6 +2347,9 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				// recording each success means the NEXT step will detect a
 				// repeat of these args.
 				_ = cb.RecordSuccessfulCall(call.Name, call.Input)
+				// N3 (audit ledger, Sprint 6): clear stale denial counter for
+				// this tool — successful call means the block is gone.
+				cb.ResetDeniedForTool(call.Name)
 			}
 		}
 		if !anyErr && len(calls) > 0 {
