@@ -134,10 +134,22 @@ func checkPermissions(rules []config.PermissionRule, name, subject string) (acti
 }
 
 // ruleToolMatches reports whether the rule's Tool field applies to the given
-// resolved tool name. Accepts "*" as a wildcard and is case-insensitive.
+// resolved tool name. Accepts glob patterns via `*` (matches any sequence
+// including `:` and `.` so `mcp:server:*`, `mcp:*`, `git.*`, `browser.*`
+// all behave as expected). Case-insensitive on both sides.
+//
+// C7 in audit ledger: previously only the literal `*` token was a wildcard;
+// the user had no way to deny a whole MCP server's tools or every git.*
+// command short of spelling each name. Now full glob (via matchSimpleGlob,
+// the same engine bash/url/explore subjects use).
 func ruleToolMatches(ruleTool, name string) bool {
-	if ruleTool == "*" {
+	rt := strings.ToLower(strings.TrimSpace(ruleTool))
+	n := strings.ToLower(strings.TrimSpace(name))
+	if rt == "*" {
 		return true
 	}
-	return strings.EqualFold(strings.TrimSpace(ruleTool), name)
+	if !strings.Contains(rt, "*") {
+		return rt == n
+	}
+	return matchSimpleGlob(rt, n)
 }

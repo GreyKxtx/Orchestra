@@ -680,8 +680,18 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (cus
 	if def.Tools != nil {
 		defs, err := tools.ResolveToolNames(def.Tools)
 		if err == nil {
-			// Auto-append MCP tools so custom agents retain MCP access.
-			defs = append(defs, c.mcpToolDefs()...)
+			// C7 in audit ledger: only inject MCP tools when the custom agent
+			// explicitly opts in via the `mcp:*` wildcard in its tools list.
+			// Previously every MCP tool was appended unconditionally, so a
+			// restricted "reviewer" agent declared as `[read, grep]` got the
+			// whole MCP surface regardless. Opt-in semantics make the tool
+			// list an actual allowlist.
+			for _, name := range def.Tools {
+				if name == "mcp:*" || name == "*" {
+					defs = append(defs, c.mcpToolDefs()...)
+					break
+				}
+			}
 			result.customTools = defs
 		}
 	}

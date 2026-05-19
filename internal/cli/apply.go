@@ -519,6 +519,17 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 						retErr = resolveErr
 						return retErr
 					}
+					// C7 in audit ledger: opt-in MCP for custom agents. When
+					// the agent declares `mcp:*` or `*` in its tools list it
+					// gets the live MCP tool definitions appended; otherwise
+					// MCP stays out (agent.Options.ExtraTools is ignored when
+					// CustomTools is set, so this is the only injection point).
+					for _, name := range def.Tools {
+						if name == "mcp:*" || name == "*" {
+							customAgentTools = append(customAgentTools, mcpExtraTools...)
+							break
+						}
+					}
 				}
 			}
 		}
