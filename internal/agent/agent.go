@@ -398,7 +398,11 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			// those code paths anyway — only the generic tools.Call + the
 			// PreTool hook + audit log. See runParallelToolBatch.
 			if len(step.Tools) >= 2 {
-				history = a.runParallelToolBatch(ctx, history, step.Tools, llmResp, steps)
+				var cbErr *protocol.Error
+				history, cbErr = a.runParallelToolBatch(ctx, cb, history, step.Tools, llmResp, steps)
+				if cbErr != nil {
+					return nil, nil, cbErr
+				}
 				emitStepDone("tool_call")
 				continue
 			}
@@ -763,9 +767,14 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				})
 			}
 
-			// Pre-tool hook: non-zero exit denies the tool call.
+			// Pre-tool hook: non-zero exit denies the tool call. Wrapped in
+			// safeRunErr so a panicking hook becomes a denial (with a
+			// synthesised error message) instead of killing the goroutine.
 			if a.opts.HooksRunner != nil {
-				if hookErr := a.opts.HooksRunner.RunPreTool(callCtx, name, step.Tool.Input); hookErr != nil {
+				hookErr := safeRunErr("PreTool hook "+name, func() error {
+					return a.opts.HooksRunner.RunPreTool(callCtx, name, step.Tool.Input)
+				})
+				if hookErr != nil {
 					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "pre-tool hook denied: "+hookErr.Error())
 					history = append(history, llm.Message{
 						Role:       llm.RoleTool,
@@ -850,9 +859,14 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				emitStepDone("tool_call")
 				continue
 			}
-			// Post-tool hook: errors logged but do not fail the tool.
+			// Post-tool hook: errors logged but do not fail the tool. Panic
+			// converted to error by safeRunErr so a flaky logger hook can't
+			// take down the agent loop.
 			if a.opts.HooksRunner != nil {
-				a.opts.HooksRunner.RunPostTool(callCtx, name, out)
+				_ = safeRunErr("PostTool hook "+name, func() error {
+					a.opts.HooksRunner.RunPostTool(callCtx, name, out)
+					return nil
+				})
 			}
 			a.logf("tool_call name=%s status=ok duration_ms=%d output_bytes=%d", name, dur, len(out))
 			a.opts.AgentLogger.LogToolResult(name, len(out), dur, "")
@@ -1577,8 +1591,20 @@ func truncateID(id string, maxLen int) string {
 }
 
 // truncateMessages truncates message history to fit within byte budget.
-// Always keeps system and first user message, then keeps as many history messages as possible.
-// Optimized to preserve assistant+tool pairs and account for tool_calls/ToolCallID overhead.
+// Always keeps system and first user message, then keeps as many history
+// messages as possible from the tail, preserving every assistant↔tool group
+// as one atom.
+//
+// "Atom" semantics: an assistant message that carries `tool_calls` MUST stay
+// together with every subsequent `tool` message whose `tool_call_id` matches
+// one of those calls — splitting them produces an orphaned `tool` (or a
+// dangling assistant whose calls have no replies), which OpenAI / Anthropic
+// reject with "tool_call_id not found", hard-failing the next LLM call and
+// killing the whole run. We therefore build atoms first, then greedy-pick
+// the most recent atoms whole.
+//
+// This replaces an earlier per-message loop that could keep a lone `tool`
+// message when its paired assistant exceeded the budget (C1 in the audit).
 func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 	if maxBytes <= 0 || len(messages) <= 2 {
 		return messages
@@ -1592,73 +1618,72 @@ func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 	}
 
 	if requiredSize >= maxBytes {
-		// Worst case: return only required messages
+		// Worst case: return only required messages.
 		return required
 	}
 
 	budget := maxBytes - requiredSize
-	var selected []llm.Message
-	size := 0
-	used := make(map[int]bool, len(messages)) // Track which messages we've already added
 
-	// Keep history messages from the end (most recent first)
-	// Try to preserve assistant+tool pairs together
-	// Note: In history, order is: assistant (with tool_calls) -> tool (with result)
-	for i := len(messages) - 1; i >= 2; i-- {
-		if used[i] {
-			continue // Already added as part of a pair
+	// Walk forward from index 2 building atoms. An assistant with `ToolCalls`
+	// opens a group; every following `tool` message whose `ToolCallID` matches
+	// any open call joins the group; any other message (or a `tool` with no
+	// matching open call — defensive: shouldn't happen in valid history)
+	// closes the group and becomes its own atom.
+	type atom struct {
+		msgs []llm.Message
+		size int
+	}
+	atoms := make([]atom, 0, len(messages)-2)
+	flush := func(a *atom) {
+		if len(a.msgs) > 0 {
+			atoms = append(atoms, *a)
 		}
-
-		msg := messages[i]
-		msgSize := estimateMessageSize(msg)
-
-		// If this is a tool message, try to include its corresponding assistant message
-		// In history, assistant comes BEFORE tool, so we check i-1
-		if msg.Role == llm.RoleTool && i > 2 && !used[i-1] {
-			// Check if previous message is assistant with matching tool_call
-			prevMsg := messages[i-1]
-			if prevMsg.Role == llm.RoleAssistant && len(prevMsg.ToolCalls) > 0 {
-				// Check if tool_call_id matches
-				if msg.ToolCallID != "" {
-					for _, tc := range prevMsg.ToolCalls {
-						if tc.ID == msg.ToolCallID {
-							// Include both as a pair
-							// We're iterating backwards, so we add: tool, then assistant
-							// After reverse: assistant, then tool (correct order)
-							pairSize := estimateMessageSize(prevMsg) + msgSize
-							if size+pairSize <= budget {
-								selected = append(selected, msg)     // tool first (will be last after reverse)
-								selected = append(selected, prevMsg) // assistant second (will be first after reverse)
-								size += pairSize
-								used[i] = true
-								used[i-1] = true
-								i-- // Skip assistant message in next iteration
-								continue
-							}
-						}
-					}
-				}
+	}
+	cur := atom{}
+	openCalls := map[string]bool{}
+	for i := 2; i < len(messages); i++ {
+		m := messages[i]
+		ms := estimateMessageSize(m)
+		switch {
+		case m.Role == llm.RoleTool && m.ToolCallID != "" && openCalls[m.ToolCallID]:
+			// Belongs to the in-progress assistant↔tool group.
+			cur.msgs = append(cur.msgs, m)
+			cur.size += ms
+			delete(openCalls, m.ToolCallID)
+		case m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0:
+			flush(&cur)
+			cur = atom{msgs: []llm.Message{m}, size: ms}
+			openCalls = map[string]bool{}
+			for _, tc := range m.ToolCalls {
+				openCalls[tc.ID] = true
 			}
+		default:
+			flush(&cur)
+			cur = atom{msgs: []llm.Message{m}, size: ms}
+			openCalls = map[string]bool{}
 		}
+	}
+	flush(&cur)
 
-		// Single message (or pair didn't fit)
-		if size+msgSize > budget {
+	// Greedy-pick atoms from the tail forward until budget is exhausted.
+	// We iterate backwards so the most recent context survives; the partial-
+	// fit atom and everything before it are dropped wholesale (preserving the
+	// "no orphaned tool" invariant).
+	tailStart := len(atoms)
+	size := 0
+	for i := len(atoms) - 1; i >= 0; i-- {
+		if size+atoms[i].size > budget {
 			break
 		}
-		selected = append(selected, msg)
-		size += msgSize
-		used[i] = true
+		size += atoms[i].size
+		tailStart = i
 	}
 
-	// Reverse to restore chronological order
-	// After reverse: assistant messages come before their corresponding tool messages
-	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
-		selected[i], selected[j] = selected[j], selected[i]
-	}
-
-	result := make([]llm.Message, 0, len(required)+len(selected))
+	result := make([]llm.Message, 0, len(required)+len(messages)-2)
 	result = append(result, required...)
-	result = append(result, selected...)
+	for i := tailStart; i < len(atoms); i++ {
+		result = append(result, atoms[i].msgs...)
+	}
 	return result
 }
 
@@ -1932,7 +1957,12 @@ const parallelBatchWorkerLimit = 16
 // external state, or take 0.5-1s of process start-up that compounds badly
 // under 16-way concurrency). The actual tool execution (file I/O) is where
 // the latency is, so parallelism there is what matters.
-func (a *Agent) runParallelToolBatch(ctx context.Context, history []llm.Message, calls []ToolCall, llmResp *llm.CompleteResponse, stepNum int) []llm.Message {
+// runParallelToolBatch returns the updated history AND a non-nil *protocol.Error
+// when one of the circuit breakers tripped during result bookkeeping
+// (e.g. parallel batch of 16 denied tools blows MaxDeniedToolRepeats).
+// The caller must propagate the error out of Run, exactly like the serial
+// path does. C2 in docs/superpowers/plans/2026-05-19-post-audit-refactor.md.
+func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, history []llm.Message, calls []ToolCall, llmResp *llm.CompleteResponse, stepNum int) ([]llm.Message, *protocol.Error) {
 	// 1) Append the assistant message that requested the batch. OpenAI's
 	//    protocol requires the assistant message with tool_calls to precede
 	//    the per-tool replies; reuse the original ToolCalls slice unchanged.
@@ -1948,6 +1978,9 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, history []llm.Message,
 	// denied[i] is true when the pre-tool hook rejected call i — we'll skip
 	// the parallel tool execution for that index and just emit the denial.
 	denied := make([]bool, len(calls))
+	// errored[i] is true when a.tools.Call returned a non-nil error for call i.
+	// Used after wg.Wait to drive circuit-breaker bookkeeping in order.
+	errored := make([]bool, len(calls))
 
 	// 2) PreTool hooks: run serially. Most hooks aren't reentrant (they spawn
 	//    a subprocess that writes to a shared log file). Spawning 16 of them
@@ -1955,16 +1988,21 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, history []llm.Message,
 	//    file-lock contention and OS process-startup pressure.
 	if a.opts.HooksRunner != nil {
 		for i, call := range calls {
-			if hookErr := a.opts.HooksRunner.RunPreTool(ctx, call.Name, call.Input); hookErr != nil {
+			hookErr := safeRunErr("PreTool hook "+call.Name, func() error {
+				return a.opts.HooksRunner.RunPreTool(ctx, call.Name, call.Input)
+			})
+			if hookErr != nil {
 				denied[i] = true
 				results[i] = formatToolDeniedJSON(call.Name, call.Input, "pre-tool hook denied: "+hookErr.Error())
 				if a.opts.OnEvent != nil {
-					a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
-						Kind:         llm.StreamEventToolCallCompleted,
-						ToolCallID:   call.ID,
-						ToolCallName: call.Name,
-						Content:      "error: pre-tool hook denied",
-					}})
+					_ = safeRun("OnEvent ToolCallCompleted (pre-deny)", func() {
+						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+							Kind:         llm.StreamEventToolCallCompleted,
+							ToolCallID:   call.ID,
+							ToolCallName: call.Name,
+							Content:      "error: pre-tool hook denied",
+						}})
+					})
 				}
 			}
 		}
@@ -1985,31 +2023,47 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, history []llm.Message,
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if a.opts.AgentLogger != nil {
-				a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input))
-			}
-
-			out, err := a.tools.Call(ctx, call.Name, call.Input)
+			// Worker is wrapped in recover so a panicking tool implementation
+			// kills only this one call, not the whole process. A.Run sees the
+			// synthesised error via results[idx] and the circuit breaker
+			// counts it like any other tool error.
+			err := safeRunErr("parallel tool "+call.Name, func() error {
+				if a.opts.AgentLogger != nil {
+					a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input))
+				}
+				out, callErr := a.tools.Call(ctx, call.Name, call.Input)
+				if callErr != nil {
+					return callErr
+				}
+				results[idx] = string(out)
+				if a.opts.OnEvent != nil {
+					// OnEvent in its own recover so a buggy UI sink doesn't take
+					// down the worker mid-success. Recovered value is dropped —
+					// next event will retry.
+					_ = safeRun("OnEvent ToolCallCompleted", func() {
+						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+							Kind:         llm.StreamEventToolCallCompleted,
+							ToolCallID:   call.ID,
+							ToolCallName: call.Name,
+							Content:      truncate(string(out), 256),
+						}})
+					})
+				}
+				return nil
+			})
 			if err != nil {
+				errored[idx] = true
 				results[idx] = formatToolErrorJSON(call.Name, call.Input, err)
 				if a.opts.OnEvent != nil {
-					a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
-						Kind:         llm.StreamEventToolCallCompleted,
-						ToolCallID:   call.ID,
-						ToolCallName: call.Name,
-						Content:      "error: " + truncate(err.Error(), 200),
-					}})
+					_ = safeRun("OnEvent ToolCallCompleted (err)", func() {
+						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+							Kind:         llm.StreamEventToolCallCompleted,
+							ToolCallID:   call.ID,
+							ToolCallName: call.Name,
+							Content:      "error: " + truncate(err.Error(), 200),
+						}})
+					})
 				}
-				return
-			}
-			results[idx] = string(out)
-			if a.opts.OnEvent != nil {
-				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
-					Kind:         llm.StreamEventToolCallCompleted,
-					ToolCallID:   call.ID,
-					ToolCallName: call.Name,
-					Content:      truncate(string(out), 256),
-				}})
 			}
 		}(i, tc)
 	}
@@ -2023,5 +2077,39 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, history []llm.Message,
 			Content:    results[i],
 		})
 	}
-	return history
+
+	// 5) Circuit-breaker bookkeeping — runs single-threaded after fan-out so
+	//    the unsynchronised CB counters stay consistent. Order matches the
+	//    original calls slice so a stable "first trip wins" decision is taken.
+	//    The model spamming 16 parallel denied/erroring tools must stop the
+	//    run on the same step it stopped on serially. Mirrors the serial
+	//    pipeline at agent.go:483-686.
+	if cb != nil {
+		anyErr := false
+		for i, call := range calls {
+			switch {
+			case denied[i]:
+				if cbErr := cb.RecordDenied(call.Name); cbErr != nil {
+					return history, cbErr
+				}
+			case errored[i]:
+				anyErr = true
+				if cbErr := cb.RecordToolError(call.Name); cbErr != nil {
+					return history, cbErr
+				}
+			default:
+				// Successful call. Track for cross-step duplicate detection.
+				// IsDuplicateCall is intentionally NOT consulted here: the
+				// LLM emitted N parallel calls in one step, so dedupe of
+				// within-batch repeats is the model's responsibility — but
+				// recording each success means the NEXT step will detect a
+				// repeat of these args.
+				_ = cb.RecordSuccessfulCall(call.Name, call.Input)
+			}
+		}
+		if !anyErr && len(calls) > 0 {
+			cb.ResetToolErrors()
+		}
+	}
+	return history, nil
 }
