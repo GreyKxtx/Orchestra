@@ -8,11 +8,20 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/cache"
 )
+
+// applyMu serialises all in-process apply runs so concurrent ApplyAnyOps
+// calls on the same project can't clobber each other's `.orchestra.bak`
+// backups (a second writer's atomic rename would overwrite the first
+// writer's backup, permanently losing the pre-edit version of files in
+// both runs). Cross-process races are still possible; H9 in the audit
+// ledger notes that a real fix would need a per-project file lock.
+var applyMu sync.Mutex
 
 // ApplyOps applies Internal Ops v1 (compat wrapper for file.replace_range).
 //
@@ -28,7 +37,12 @@ func ApplyOps(root string, in []ops.ReplaceRangeOp, opts ApplyOptions) (*ApplyRe
 //
 // Policy: all-or-nothing for validation (no writes on error). If validation succeeds
 // and opts.DryRun=false, writes are applied in deterministic path order.
+//
+// Serialised across in-process callers via applyMu so concurrent apply runs
+// don't clobber each other's `.orchestra.bak` backups. See applyMu doc.
 func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, error) {
+	applyMu.Lock()
+	defer applyMu.Unlock()
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("root is empty")
 	}
@@ -541,12 +555,21 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string
 		return nil
 	}
 
-	// Windows: os.Rename fails if destination exists.
-	_ = os.Remove(path)
-	if err := os.Rename(tmpName, path); err != nil {
+	// H9 in audit ledger: the previous fallback was `os.Remove(path) +
+	// os.Rename(tmp, path)`, which deletes the target before the second
+	// rename — if THAT rename also fails (cross-device, locked handle on
+	// Windows, FS full), the original file is permanently gone. Safer:
+	// re-write the contents directly to the target via os.WriteFile. Not
+	// atomic with respect to readers, but the target is never absent
+	// between the two ops — concurrent readers see either the old bytes
+	// or the new bytes, never ENOENT. Backup (.orchestra.bak) was already
+	// written earlier in ApplyAnyOps for any pre-existing file, so a
+	// crash here is recoverable from .bak.
+	if err := os.WriteFile(path, data, perm); err != nil {
 		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to rename temp file: %w", err)
+		return fmt.Errorf("rename failed and direct overwrite also failed: %w", err)
 	}
+	_ = os.Remove(tmpName) // best-effort cleanup of the orphan temp
 	_ = os.Chmod(path, perm)
 	return nil
 }
