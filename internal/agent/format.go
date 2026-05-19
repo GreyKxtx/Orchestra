@@ -39,12 +39,12 @@ func formatValidatorError(msg string, raw string) string {
 
 // formatValidatorErrorCompact returns a compact error message without raw JSON to avoid prompt bloat.
 func formatValidatorErrorCompact(msg string) string {
-	return "VALIDATION_ERROR\nmessage=" + msg + "\nИсправь формат JSON согласно схеме (tool call или PatchSet)."
+	return "VALIDATION_ERROR\nmessage=" + msg + "\nFix the JSON to match the schema (tool call or PatchSet)."
 }
 
 // formatPolicyDeniedCompact returns a compact policy denial message.
 func formatPolicyDeniedCompact(toolName string) string {
-	return fmt.Sprintf("TOOL_DENIED %s\nreason=требует явного разрешения\nИспользуй только доступные инструменты из списка.", toolName)
+	return fmt.Sprintf("TOOL_DENIED %s\nreason=requires explicit permission\nUse only tools from the advertised list.", toolName)
 }
 
 func formatResolveError(err error) string {
@@ -218,15 +218,15 @@ func extractLSPErrors(out json.RawMessage) string {
 	}
 	body := strings.Join(errs, "\n")
 	if total > maxLSPErrorsInjected {
-		body += fmt.Sprintf("\n  …и ещё %d ошибок (показаны первые %d)", total-maxLSPErrorsInjected, maxLSPErrorsInjected)
+		body += fmt.Sprintf("\n  ...and %d more errors (showing first %d)", total-maxLSPErrorsInjected, maxLSPErrorsInjected)
 	}
 	// N6 in audit ledger (Sprint 6): framed as a denial-style hint so the
 	// model treats it as a constraint, not a side note. Identical re-call
 	// is also blocked at the dedup gate (agent.go:885), but the soft form
 	// here nudges the model to think before retrying with cosmetic tweaks.
-	return "LSP_ERRORS — следующий write/edit на тот же файл с теми же ошибками будет заблокирован. Файл записан, но имеет ошибки компиляции:\n" +
+	return "LSP_ERRORS — the next write/edit on this file with the same errors will be blocked. File was written but has compilation errors:\n" +
 		body +
-		"\nДиагностируй причину (read + lsp.hover / lsp.references), исправь её и только затем — write/edit. Косметические правки тех же строк не помогут."
+		"\nDiagnose the cause (read + lsp.hover / lsp.references) and fix it before another write/edit. Cosmetic re-writes on the same lines will not help."
 }
 
 func formatErr(err error) string {

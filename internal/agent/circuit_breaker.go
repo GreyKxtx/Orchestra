@@ -138,7 +138,7 @@ func (cb *CircuitBreaker) RecordSuccessfulCall(toolName string, inputBytes []byt
 	key := toolName + ":" + string(inputBytes)
 	cb.successfulCallKeys[key]++
 	if cb.successfulCallKeys[key] == 2 {
-		return "⛔ СТОП — НЕМЕДЛЕННО ПРЕКРАТИ ВЫЗЫВАТЬ ИНСТРУМЕНТЫ. Ты уже вызывал «" + toolName + "» с идентичными аргументами и получил результат. Эти данные уже в твоей истории. СЛЕДУЮЩИЙ ТВОй ВЫВОД ОБЯЗАН БЫТЬ ФИНАЛЬНЫМ ОТВЕТОМ — без tool_calls, только текст + {\"patches\":[]}."
+		return "⛔ STOP — STOP CALLING TOOLS. You have already called «" + toolName + "» with identical arguments and got the result. That data is in your history. YOUR NEXT OUTPUT MUST BE THE FINAL ANSWER — no tool_calls, just text + {\"patches\":[]}."
 	}
 	return ""
 }

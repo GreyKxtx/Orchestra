@@ -72,11 +72,11 @@ func TestExtractLSPErrors_CapsToTwentyWithSummary(t *testing.T) {
 	if hint == "" {
 		t.Fatal("expected non-empty hint")
 	}
-	// Should mention 20 lines + summary "...и ещё 80 ошибок".
+	// Should mention 20 lines + summary "...and 80 more errors".
 	if strings.Count(hint, "line ") != maxLSPErrorsInjected {
 		t.Errorf("expected %d line entries, got %d in %q", maxLSPErrorsInjected, strings.Count(hint, "line "), hint)
 	}
-	if !strings.Contains(hint, "ещё 80") {
+	if !strings.Contains(hint, "80 more") {
 		t.Errorf("summary missing: %q", hint)
 	}
 }
@@ -89,10 +89,8 @@ func TestExtractLSPErrors_BelowCapNoSummary(t *testing.T) {
 	}
 	payload, _ := json.Marshal(map[string]any{"diagnostics": diags})
 	hint := extractLSPErrors(payload)
-	// The "ещё N ошибок" tail is the summary we want to assert is absent —
-	// match the prefix to avoid false-positives against "ещё раз" in the
-	// generic call-to-action footer.
-	if strings.Contains(hint, "ещё 0") || strings.Contains(hint, "и ещё") && strings.Contains(hint, "ошибок") {
+	// The "N more errors" tail is the summary we want to assert is absent.
+	if strings.Contains(hint, "more errors") {
 		t.Errorf("unexpected summary line for small error list: %q", hint)
 	}
 }
