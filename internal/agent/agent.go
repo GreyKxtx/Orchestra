@@ -808,12 +808,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				approved := false
 				if a.opts.QuestionAsker != nil {
 					answers, qErr := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{{
-						Question: "План готов. Переключиться в режим build для применения изменений?",
-						Options:  []string{"Да, переключить в build", "Нет, продолжить планирование"},
+						Question: "Plan complete. Switch to build mode to apply changes?",
+						Options:  []string{"Yes, switch to build", "No, keep planning"},
 					}})
 					if qErr == nil && len(answers) > 0 {
 						ans := strings.ToLower(strings.TrimSpace(answers[0]))
-						approved = ans == "1" || ans == "да" || ans == "yes" || strings.HasPrefix(ans, "да,")
+						approved = ans == "1" || ans == "yes" || ans == "y" || strings.HasPrefix(ans, "yes,") || ans == "да" || strings.HasPrefix(ans, "да,")
 					}
 				} else {
 					// L2 in audit ledger: when no QuestionAsker is available we
@@ -824,7 +824,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					history = append(history, llm.Message{
 						Role:       llm.RoleTool,
 						ToolCallID: toolCallID,
-						Content:    `{"status":"refused","message":"plan_exit недоступен в non-interactive режиме. Заверши шаг финальным ответом — пользователь сам переключит режим, если нужно."}`,
+						Content:    `{"status":"refused","message":"plan_exit is unavailable in non-interactive mode. Finish with a final answer — the user will switch modes manually if needed."}`,
 					})
 					emitStepDone("tool_call")
 					continue
@@ -836,7 +836,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				history = append(history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
-					Content:    `{"status":"continue","message":"Продолжаем планирование. Доработай план и вызови plan_exit снова."}`,
+					Content:    `{"status":"continue","message":"Continue planning. Refine the plan and call plan_exit again when ready."}`,
 				})
 				emitStepDone("tool_call")
 				continue
@@ -864,7 +864,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					allowed = p == ".orchestra/plan.md"
 				}
 				if !allowed {
-					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "план-режим: запись разрешена только в .orchestra/plan.md")
+					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "plan mode: writes are allowed only to .orchestra/plan.md")
 					history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 					if cbErr := cb.RecordDenied(name); cbErr != nil {
 						return nil, nil, cbErr
@@ -920,7 +920,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			// hint) is much harder for the model to ignore than a side-channel
 			// user message, because the model must process tool results.
 			if cb.IsDuplicateCall(name, step.Tool.Input) {
-				stopMsg := "⛔ СТОП. Этот вызов «" + name + "» с теми же аргументами уже выполнялся ранее — результат есть в истории. Повторный вызов заблокирован. НЕМЕДЛЕННО выводи финальный ответ используя данные из предыдущих вызовов. Никаких дополнительных tool_calls."
+				stopMsg := "⛔ STOP. The tool «" + name + "» was already called with these exact arguments — the result is in your history. This duplicate call is blocked. Produce the final answer using the data from the previous result. No more tool_calls."
 				a.logf("tool_call name=%s dedup_blocked", name)
 				if a.opts.OnEvent != nil {
 					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
@@ -1029,7 +1029,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					path := extractWriteOrEditPath(step.Tool.Input)
 					streak := a.diags.Observe(path, fingerprintLSPErrors(out))
 					if streak >= 2 && path != "" {
-						hint = "LSP_ERRORS — твоя последняя правка на " + path + " не изменила диагностику (тот же набор ошибок №" + fmt.Sprint(streak) + "). Прекрати трогать этот файл write/edit'ом и сначала разберись в причине через lsp.references / lsp.hover / read.\n" + hint
+						hint = "LSP_ERRORS — your last edit on " + path + " did not change diagnostics (same error set, attempt #" + fmt.Sprint(streak) + "). Stop write/edit'ing this file and diagnose the cause via lsp.references / lsp.hover / read.\n" + hint
 					}
 					a.logf("lsp_hint name=%s path=%s streak=%d injecting diagnostic hint", name, path, streak)
 					history = append(history, llm.Message{
