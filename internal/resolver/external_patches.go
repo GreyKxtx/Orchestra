@@ -548,6 +548,14 @@ func max(a, b int) int {
 	return b
 }
 
+// posFromOffset converts a byte offset within `content` to a Position
+// (0-based line, 0-based UTF-8 byte column). `off == len(content)` is valid
+// — it returns the position one past the last byte, which equates to "end
+// of the last line" (or "start of phantom new line" when content ends in
+// `\n`). Both representations are accepted by applier.offsetForPos.
+//
+// M9 in audit ledger: the EOF behaviour is subtle; the unit test below
+// pins the contract so future refactors don't drift.
 func posFromOffset(content []byte, off int) (ops.Position, error) {
 	if off < 0 || off > len(content) {
 		return ops.Position{}, fmt.Errorf("offset out of range")
@@ -671,6 +679,15 @@ func applyUnifiedDiff(original string, diffText string) (string, error) {
 	if origHasNL && original == "" && res == "" {
 		res = "\n"
 	}
+	// M15 in audit ledger: when adding lines to a previously-empty file,
+	// `origHasNL` is false (no newline to detect) so the trailing-newline
+	// rule above doesn't fire and the new file ends without `\n`. Almost
+	// every text format expects a trailing newline; add one when we wrote
+	// content into a brand-new file. The diff-as-creation path here is
+	// triggered by `oldStart == 0` (see hunk loop above).
+	if !origHasNL && original == "" && res != "" && !strings.HasSuffix(res, "\n") {
+		res += "\n"
+	}
 	// Restore CRLF if the original file used it. The hunk-line bodies
 	// never contained \r (we stripped it at the top), and \n we added
 	// between lines + at EOF gets bumped up to \r\n.
@@ -683,6 +700,17 @@ func applyUnifiedDiff(original string, diffText string) (string, error) {
 func parseUnifiedDiff(diffText string) ([]hunk, error) {
 	lines := strings.Split(diffText, "\n")
 	var hunks []hunk
+
+	// M14 in audit ledger: each `file.unified_diff` patch targets exactly
+	// one file (p.Path). Multi-file diffs would silently merge hunks across
+	// files since the per-hunk parser ignores `--- file` / `+++ file`
+	// markers. Reject upfront so a misuse fails with a clear error rather
+	// than corrupting the target file.
+	for _, l := range lines {
+		if strings.HasPrefix(l, "diff --git ") {
+			return nil, fmt.Errorf("multi-file unified diff is not supported in a single patch; provide one file.unified_diff patch per file")
+		}
+	}
 
 	i := 0
 	for i < len(lines) {
