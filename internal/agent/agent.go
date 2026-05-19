@@ -779,7 +779,18 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 						approved = ans == "1" || ans == "да" || ans == "yes" || strings.HasPrefix(ans, "да,")
 					}
 				} else {
-					approved = true // non-interactive (CI): auto-approve
+					// L2 in audit ledger: when no QuestionAsker is available we
+					// CANNOT silently flip to build mode — the caller asked for
+					// plan mode and expects to stay there. Refuse the mode
+					// switch and tell the model so it returns a normal final
+					// answer with the plan instead.
+					history = append(history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolCallID: toolCallID,
+						Content:    `{"status":"refused","message":"plan_exit недоступен в non-interactive режиме. Заверши шаг финальным ответом — пользователь сам переключит режим, если нужно."}`,
+					})
+					emitStepDone("tool_call")
+					continue
 				}
 				if approved {
 					emitStepDone("final")
@@ -861,7 +872,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				}
 			}
 
-			a.opts.AgentLogger.LogToolCall(name, len(step.Tool.Input))
+			// L1 in audit ledger: nil-guard symmetry with the parallel-batch
+			// path (line ~2213). Without this, a nil AgentLogger caused an NPE
+			// in serial mode.
+			if a.opts.AgentLogger != nil {
+				a.opts.AgentLogger.LogToolCall(name, len(step.Tool.Input))
+			}
 			// Dedup guard: skip execution entirely for repeated identical calls.
 			// Injecting the СТОП message as the tool result (not just a user
 			// hint) is much harder for the model to ignore than a side-channel
@@ -1626,15 +1642,18 @@ func errorDataInt(pe *protocol.Error, key string) int {
 // formatResolveErrorCompact returns a compact resolve error message. H1
 // fix: include path from the resolver's Data payload so the model knows
 // which file to re-read instead of guessing across a multi-file patch.
+// L3 in audit ledger: hints are English — most chat-tuned LLMs respond
+// more reliably to English error contexts. The path/code tokens are
+// the load-bearing structural fields.
 func formatResolveErrorCompact(err error) string {
 	if pe, ok := protocol.AsError(err); ok {
 		path := errorDataString(pe, "path")
 		if path != "" {
-			return fmt.Sprintf("RESOLVE_ERROR code=%s path=%s\nПеречитай файл (fs.read) и обнови file_hash в патче.", pe.Code, path)
+			return fmt.Sprintf("RESOLVE_ERROR code=%s path=%s\nRe-read the file (fs.read) and update file_hash in the patch.", pe.Code, path)
 		}
-		return fmt.Sprintf("RESOLVE_ERROR code=%s\nПеречитай файл (fs.read) и обнови file_hash в патче.", pe.Code)
+		return fmt.Sprintf("RESOLVE_ERROR code=%s\nRe-read the file (fs.read) and update file_hash in the patch.", pe.Code)
 	}
-	return "RESOLVE_ERROR code=unknown\nerror=" + err.Error() + "\nПеречитай файл (fs.read) и обнови file_hash в патче."
+	return "RESOLVE_ERROR code=unknown\nerror=" + err.Error() + "\nRe-read the file (fs.read) and update file_hash in the patch."
 }
 
 func formatApplyError(err error) string {
@@ -1658,14 +1677,14 @@ func formatApplyErrorCompact(err error, code protocol.ErrorCode) string {
 	switch code {
 	case protocol.StaleContent:
 		return "APPLY_ERROR code=StaleContent" + pathSuffix +
-			"\nФайл изменился. Перечитай файл (fs.read) и обнови патч с новым file_hash."
+			"\nFile changed on disk. Re-read it (fs.read) and update the patch with the new file_hash."
 	case protocol.AmbiguousMatch:
 		matches := errorDataInt(pe, "matches")
 		if matches > 0 {
-			return fmt.Sprintf("APPLY_ERROR code=AmbiguousMatch%s matches=%d\nПоиск неоднозначен (%d совпадений). Уточни search-блок: добавь 2-3 строки контекста до или после.", pathSuffix, matches, matches)
+			return fmt.Sprintf("APPLY_ERROR code=AmbiguousMatch%s matches=%d\nSearch block matched %d locations. Disambiguate: add 2-3 lines of context before or after the existing search.", pathSuffix, matches, matches)
 		}
 		return "APPLY_ERROR code=AmbiguousMatch" + pathSuffix +
-			"\nПоиск неоднозначен. Уточни search-блок в патче (добавь больше контекста)."
+			"\nSearch block is ambiguous. Add more surrounding context to make it unique."
 	}
 	return "APPLY_ERROR code=unknown\nerror=" + formatErr(err)
 }
