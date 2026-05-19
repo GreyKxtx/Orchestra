@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/fsutil"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/relpath"
 )
 
 // ResolveExternalPatches converts External Patch objects into Internal Ops v1.
@@ -294,20 +295,12 @@ func readFileOrEmpty(projectRoot, relPath string) ([]byte, string, error) {
 	return b, cache.ComputeSHA256(b), nil
 }
 
+// normalizeRelPath is a thin wrapper around relpath.Normalize kept so
+// existing callers in this file don't need to change. S5 in audit ledger
+// (Sprint 6) — duplicate of the previously local implementation now lives
+// in internal/relpath and is also used by applier.safeAbsPath.
 func normalizeRelPath(p string) (string, *protocol.Error) {
-	p = filepath.ToSlash(strings.TrimSpace(p))
-	if p == "" {
-		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
-	}
-	p = filepath.Clean(filepath.FromSlash(p))
-	p = filepath.ToSlash(p)
-	if p == "." {
-		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
-	}
-	if p == ".." || strings.HasPrefix(p, "../") {
-		return "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{"path": p})
-	}
-	return p, nil
+	return relpath.Normalize(p)
 }
 
 func preview(s string, max int) string {

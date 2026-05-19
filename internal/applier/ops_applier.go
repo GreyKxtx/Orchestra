@@ -13,6 +13,7 @@ import (
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/internal/relpath"
 )
 
 // applyMu serialises all in-process apply runs so concurrent ApplyAnyOps
@@ -482,18 +483,20 @@ func applyReplaceRangeOps(relPath string, before []byte, fileOps []ops.ReplaceRa
 }
 
 func safeAbsPath(rootAbs, rootReal, relPath string) (string, error) {
-	rp := filepath.ToSlash(strings.TrimSpace(relPath))
-	if rp == "" {
-		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
+	// S5 in audit ledger (Sprint 6): lexical validation (empty / "." /
+	// "..") is shared with resolver via internal/relpath. Symlink/junction
+	// checks below stay here — they need rootAbs/rootReal context that
+	// relpath doesn't know about.
+	rp, perr := relpath.Normalize(relPath)
+	if perr != nil {
+		return "", perr
 	}
-	rp = filepath.Clean(filepath.FromSlash(rp))
-	if rp == "." {
-		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": relPath})
-	}
-	abs := filepath.Join(rootAbs, rp)
+	abs := filepath.Join(rootAbs, filepath.FromSlash(rp))
 	abs = filepath.Clean(abs)
 
-	// Security: ensure path is within root (lexical).
+	// Defensive lexical recheck after filepath.Join — Windows drive-letter
+	// shenanigans (`C:foo.go`) can sneak past relpath.Normalize because
+	// Clean alone doesn't detect them.
 	rel, err := filepath.Rel(rootAbs, abs)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{
