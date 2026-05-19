@@ -1,13 +1,24 @@
-// Package pipeline implements a deterministic multi-agent orchestration pipeline.
-// The pipeline runs three roles sequentially: Investigator → Coder → Critic.
-// Go code controls the sequencing; each role is a plain agent.Agent run.
+// Package pipeline implements a deterministic multi-agent orchestration
+// pipeline. The pipeline runs three roles sequentially:
+// Investigator → Coder → Critic. Go code controls the sequencing; each
+// role is a plain agent.Agent run.
 //
 // State transfer between stages is via in-memory text injection:
 //   - Investigator result is injected into the Coder goal as <investigation>.
 //   - Critic feedback is injected into the next Coder attempt as <critique>.
 //
-// Coder always runs dry-run internally; the pipeline applies ops once at the end
-// when the Critic accepts (or max attempts are exhausted).
+// Coder always runs dry-run internally; the pipeline applies ops once at
+// the end when the Critic accepts (or max attempts are exhausted).
+//
+// Relationship to internal/workflow (M2 in architecture audit):
+// internal/workflow is the GENERAL form — arbitrary stage graphs defined
+// in YAML with skill-based dispatch, loop markers, dependency ordering.
+// pipeline is a HARDCODED special case of that pattern, kept because
+// (a) it predates workflow, (b) it has a stable CLI flag (--pipeline)
+// that callers depend on, and (c) it doesn't need the YAML round-trip.
+// New orchestration features should go through internal/workflow; this
+// package is closed to growth and may eventually be re-expressed as a
+// built-in workflow preset.
 package pipeline
 
 import (
