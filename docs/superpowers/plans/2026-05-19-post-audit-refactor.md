@@ -192,7 +192,7 @@ A 2 GB malicious / buggy patch `{type:"file.write_atomic", content:"…"}` is re
 
 **Files:** `internal/applier/ops_applier.go:301-310`, `:497-552`
 **Effort:** M
-**Closed by:** `a073aa6` (in-process mutex + safer cross-FS fallback; per-project file lock deferred)
+**Closed by:** `a073aa6` (in-process mutex + safer cross-FS fallback) + `18bb68d` (cross-process flock / LockFileEx)
 
 Two concurrent `apply` invocations on the same file each rename their temp into `path+".orchestra.bak"` — the second clobbers the first. The original-before-first-edit is permanently lost. Cross-FS rename fallback (`ops_applier.go:545-547`) is also non-atomic (`Remove → Rename`); a second failure means the target is gone with no recovery.
 
@@ -267,14 +267,14 @@ After `compactHistory` returns, the synthetic summary message is not marked as a
 
 Grouped by subsystem to make sprint-planning easy.
 
-**Sprint 3 closure summary (all 33 MEDIUM items triaged):**
+**Sprint 3+5 closure summary (all 33 MEDIUM items closed):**
 
-| Cluster | Closed | Deferred (with rationale) | Commit |
-|---|---|---|---|
-| Agent (M1–M8) | M1, M2, M3, M4, M5, M6, M7, M8 | — | `d46e10f` |
-| Resolver/Applier (M9–M16) | M9, M10, M11, M12, M14, M15, M16 | M13 (partial via H1; full needs `findUnique` refactor) | `27a335a` |
-| LSP (M17–M24) | M17, M18, M19, M20, M21, M22, M23 | M24 (already closed by H7) | `ebaa992` |
-| MCP (M25–M33) | M25 (via H12), M28, M29, M30, M32, M33 | M26 (auto-restart needs design), M27 (per-call timeout — config schema work), M31 (per-tool allowlist — config schema work) | `10d6f96` |
+| Cluster | Closed | Commit(s) |
+|---|---|---|
+| Agent (M1–M8) | M1, M2, M3, M4, M5, M6, M7, M8 | `d46e10f` |
+| Resolver/Applier (M9–M16) | M9, M10, M11, M12, M14, M15, M16 (sprint 3) + M13 (sprint 5) | `27a335a`, `5bc939d` |
+| LSP (M17–M24) | M17, M18, M19, M20, M21, M22, M23 + M24 (already via H7) | `ebaa992` |
+| MCP (M25–M33) | M25 (via H12), M28, M29, M30, M32, M33 (sprint 3) + M26, M27, M31 (sprint 5) | `10d6f96`, `36af31a` |
 
 The detailed per-item entries below are the original audit findings and
 remain for traceability — they aren't individually annotated to keep the
@@ -363,24 +363,22 @@ messages for the exact code changes.
 2. **Sprint 2 (~3 days):** all HIGH (H1–H15) — five thematic clusters (LLM efficiency, applier data-safety, agent contracts, LSP correctness, MCP cross-cutting). **DONE — see commits `ee7d21e`, `a073aa6`, `a48d044`, `751da53`, `e4b3d92`.** H14 verified N/A.
 3. **Sprint 3 (~1 day):** all MEDIUM (M1–M33) except four deferred. **DONE — see commits `d46e10f`, `27a335a`, `ebaa992`, `10d6f96`.** Deferred: M13 (partial), M26, M27, M31.
 4. **Sprint 4 (~½ day):** all LOW (L1–L10) plus the H13 LSP parity follow-up. **DONE — see commits `fd3888b`, `4df2797`, `9983b92`, `cd45af9`.**
+5. **Sprint 5 (~½ day):** the four MEDIUM follow-ups deferred from sprint 3 + the H9 cross-process follow-up deferred from sprint 2. **DONE — see commits `5bc939d`, `36af31a`, `18bb68d`.**
 
-## Final audit closure (2026-05-19)
+## Final audit closure (2026-05-19, end of sprint 5)
 
-| Severity | Items | Closed | Verified N/A | Deferred |
+| Severity | Items | Closed | Verified N/A | Open |
 |---|---:|---:|---:|---:|
 | CRITICAL | 7 | 7 | 0 | 0 |
 | HIGH | 15 | 14 | 1 (H14) | 0 |
-| MEDIUM | 33 | 28 | 1 (M24 via H7) | 4 (M13 partial, M26, M27, M31) |
+| MEDIUM | 33 | 32 | 1 (M24 via H7) | 0 |
 | LOW | 10 | 10 | 0 | 0 |
-| **TOTAL** | **65** | **59** | **2** | **4** |
+| **TOTAL** | **65** | **63** | **2** | **0** |
 
-**Outstanding follow-ups** (tracked in this doc, not blockers):
-
-- **M13** — full per-match line numbers in `AmbiguousMatch` hint needs a `findUnique` refactor to return every match's offset (currently returns first + count only).
-- **M26** — MCP server crash detection + auto-restart. Design needs to address state-replay (cached `c.tools` may go stale before the restart).
-- **M27** — Per-call MCP timeout knob (`MCPServerConfig.CallTimeoutS`). Config schema work.
-- **M31** — Per-tool MCP allowlist field on `MCPServerConfig` (currently only the whole server can be `Disabled: true`; permission rules + C7 globs are the workaround).
-- **H9 cross-process** — per-project file lock (POSIX `flock`, Windows `LockFileEx`) so two Orchestra processes against the same project don't clobber each other's `.bak`. In-process race already closed via `applyMu`.
+**No open audit items remain.** Every CRITICAL / HIGH / MEDIUM / LOW
+finding from the four C-phase reviewers is either closed by a tracked
+commit or verified N/A. The ledger above can be used by any future
+auditor to cross-check what was actually shipped.
 
 ## Out of scope for this plan
 
