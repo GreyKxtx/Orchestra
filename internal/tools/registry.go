@@ -93,37 +93,58 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 	return applyParallelFlags(out)
 }
 
-// applyParallelFlags decorates each ToolDef with ParallelSafe / Mutating flags
-// based on the tool's name. Centralised so adding a new tool means updating
-// only this switch — the rest of the agent infrastructure reads the flags
-// declaratively without knowing tool names.
+// parallelSafeTools and mutatingTools are the per-name classification
+// of every built-in tool the agent ships. applyParallelFlags consults
+// the two maps to decorate each ToolDef with ParallelSafe / Mutating.
 //
-// Default (unknown name) is the conservative pair {ParallelSafe=false,
-// Mutating=false}: such a tool gets executed serially (no parallel batching)
-// but isn't classed as a permission-bearing mutation either. MCP/plugin tools
-// land in this default bucket until explicitly classified.
+// H1 in architecture audit: the previous design embedded these two
+// lists in a switch statement inside applyParallelFlags. Tools missing
+// from both lists silently fell into the conservative-default bucket
+// (serial execution, not classed as a mutation) with no test failure.
+// Hoisting to maps lets TestParallelFlags_AllBuiltinsClassified
+// (registry_test.go) iterate every built-in constructor and assert it
+// appears in exactly one map — a new tool added without registration
+// fails the test immediately.
+//
+// MCP / plugin tools arriving via ExtraTools intentionally bypass this
+// classification and keep the conservative default until explicitly
+// added.
+var parallelSafeTools = map[string]bool{
+	"ls": true, "read": true, "glob": true, "grep": true,
+	"symbols": true, "explore": true, "repo_map": true,
+	"todoread": true, "runtime_query": true, "task_result": true,
+	"semantic_search": true,
+	"webfetch": true, "websearch": true,
+	"lsp.definition": true, "lsp.references": true, "lsp.hover": true, "lsp.diagnostics": true,
+	"diff.preview": true,
+	"git.status": true, "git.diff": true, "git.log": true,
+	"browser.snapshot": true, "browser.screenshot": true,
+	"gh.pr.list": true, "gh.pr.view": true, "gh.issue.list": true, "gh.issue.view": true,
+}
+
+var mutatingTools = map[string]bool{
+	"write": true, "edit": true,
+	"bash": true, "bash.output": true, "bash.kill": true,
+	"todowrite": true, "memory_write": true,
+	"lsp.rename": true,
+	"plan_enter": true, "plan_exit": true,
+	"task_spawn": true, "task_wait": true, "task_cancel": true,
+	"question": true,
+	"fs.delete": true, "fs.rename": true, "ast_rename": true,
+	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
+	"gh.pr.create": true,
+	"browser.navigate": true, "browser.click": true, "browser.type": true,
+	"browser.fill": true, "browser.select": true, "browser.eval": true,
+	"browser.wait": true, "browser.close": true,
+	"skill_invoke": true,
+}
+
 func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 	for i := range defs {
-		switch defs[i].Function.Name {
-		// Pure reads — safe to fan out concurrently.
-		case "ls", "read", "glob", "grep", "symbols", "explore", "semantic_search", "repo_map",
-			"todoread", "task.result", "runtime.query", "webfetch", "websearch",
-			"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics",
-			"diff.preview",
-			"git.status", "git.diff", "git.log",
-			"browser.snapshot", "browser.screenshot",
-			"gh.pr.list", "gh.pr.view", "gh.issue.list", "gh.issue.view":
+		switch n := defs[i].Function.Name; {
+		case parallelSafeTools[n]:
 			defs[i].ParallelSafe = true
-		// State-mutating tools — must run one at a time.
-		case "write", "edit", "bash", "bash.output", "bash.kill", "todowrite", "memory_write",
-			"lsp.rename", "plan.enter", "plan.exit",
-			"task.spawn", "task.wait", "task.cancel", "question",
-			"fs.delete", "fs.rename", "ast_rename",
-			"git.commit", "git.branch", "git.checkout", "git.push",
-			"gh.pr.create",
-			"browser.navigate", "browser.click", "browser.type", "browser.fill",
-			"browser.select", "browser.eval", "browser.wait", "browser.close",
-			"skill_invoke":
+		case mutatingTools[n]:
 			defs[i].Mutating = true
 		}
 	}
