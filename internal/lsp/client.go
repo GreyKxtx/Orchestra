@@ -134,6 +134,10 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
+	// H13 parity (audit ledger): start the LSP server in its own process
+	// group so killProcessTree (in Close) reaches every descendant. tsserver,
+	// pyright, etc. spawn helpers that would otherwise survive shutdown.
+	setProcessGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("lsp: stdin pipe for %q: %w", name, err)
@@ -179,7 +183,11 @@ func StartFromConn(name string, conn io.ReadWriteCloser, rootURI string, initOpt
 
 func (c *Client) initialize(ctx context.Context, rootURI string, initOptions any) error {
 	params := map[string]any{
-		"processId":  0,
+		// L7 in audit ledger: send the real parent PID so servers can
+		// monitor it and exit when Orchestra crashes without Close. The
+		// spec says integer-or-null; `0` was an invalid placeholder that
+		// stricter servers (pyright's older versions) rejected outright.
+		"processId":  os.Getpid(),
 		"clientInfo": map[string]string{"name": "orchestra", "version": "vnext"},
 		"rootUri":    rootURI,
 		"workspaceFolders": []map[string]string{
@@ -376,7 +384,9 @@ func (c *Client) Close() error {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			_ = c.cmd.Process.Kill()
+			// H13 parity (audit ledger): kill the process tree so helpers
+			// the LSP server spawned (tsc, builders) don't survive.
+			killProcessTree(c.cmd)
 		}
 	}
 	// M21 in audit ledger: wait for readLoop to fully exit so any in-flight
@@ -391,6 +401,16 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) readLoop() {
+	// L10 in audit ledger: panic recovery so a malformed server payload
+	// that explodes inside json.Unmarshal (or any future parser bug)
+	// doesn't crash the whole process. Mark the client dead and let the
+	// deferred cleanup drain pending requests with the standard "died"
+	// error.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "lsp: server %q readLoop panicked: %v\n", c.name, r)
+		}
+	}()
 	defer func() {
 		c.dead.Store(true)
 		close(c.readDone)
@@ -432,8 +452,33 @@ func (c *Client) readLoop() {
 
 		if msg.Method != "" {
 			if msg.ID != nil {
-				// Server → client request: respond with null (we handle very few).
-				resp := rpcMessage{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`null`)}
+				// Server → client request: reply with a method-specific shape.
+				// L8 in audit ledger: workspace/configuration expects an
+				// array (one entry per ConfigurationItem the server asked
+				// about); replying `null` made strict servers crash.
+				// Default for unknown methods stays `null` (we don't
+				// implement workspace/applyEdit, window/showMessageRequest,
+				// etc. yet — those servers fall back gracefully).
+				var result json.RawMessage = json.RawMessage(`null`)
+				if msg.Method == "workspace/configuration" {
+					// Return one null per requested item — gopls / tsserver
+					// both accept this as "no client-side config".
+					var p struct {
+						Items []json.RawMessage `json:"items"`
+					}
+					n := 1
+					if json.Unmarshal(msg.Params, &p) == nil && len(p.Items) > 0 {
+						n = len(p.Items)
+					}
+					arr := make([]json.RawMessage, n)
+					for i := range arr {
+						arr[i] = json.RawMessage(`null`)
+					}
+					if b, err := json.Marshal(arr); err == nil {
+						result = b
+					}
+				}
+				resp := rpcMessage{JSONRPC: "2.0", ID: msg.ID, Result: result}
 				_ = c.writeMsg(resp)
 			}
 			// Forward all method messages as notifications for side-effects.

@@ -2,21 +2,40 @@ package lsp
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
 
 // PathToURI converts an absolute filesystem path to a file:// URI.
+//
+// L6 in audit ledger: percent-encode reserved characters in each path
+// segment so paths containing spaces, `#`, `?`, etc. produce a valid URI.
+// Gopls tolerates unescaped spaces; some other servers don't.
 func PathToURI(absPath string) string {
 	slashPath := filepath.ToSlash(absPath)
-	if runtime.GOOS == "windows" && len(slashPath) >= 2 && slashPath[1] == ':' {
-		return "file:///" + slashPath
+	segments := strings.Split(slashPath, "/")
+	for i, seg := range segments {
+		// Skip the empty leading segment (rooted POSIX paths) and the
+		// drive-letter segment on Windows.
+		if seg == "" {
+			continue
+		}
+		if runtime.GOOS == "windows" && i == 0 && len(seg) >= 2 && seg[1] == ':' {
+			continue
+		}
+		segments[i] = url.PathEscape(seg)
 	}
-	return "file://" + slashPath
+	encoded := strings.Join(segments, "/")
+	if runtime.GOOS == "windows" && len(encoded) >= 2 && encoded[1] == ':' {
+		return "file:///" + encoded
+	}
+	return "file://" + encoded
 }
 
 // URIToPath converts a file:// URI to an absolute filesystem path.
+// Reverses PathToURI: percent-decode each segment.
 func URIToPath(uri string) (string, error) {
 	if !strings.HasPrefix(uri, "file://") {
 		return "", fmt.Errorf("lsp: URI scheme is not file: %q", uri)
@@ -25,6 +44,9 @@ func URIToPath(uri string) (string, error) {
 	if runtime.GOOS == "windows" {
 		// "///C:/path" → "C:/path"
 		path = strings.TrimPrefix(path, "/")
+	}
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
 	}
 	return filepath.FromSlash(path), nil
 }
