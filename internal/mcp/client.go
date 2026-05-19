@@ -157,10 +157,20 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMe
 	}
 
 	var out string
+	nonTextDropped := 0
 	for _, item := range result.Content {
 		if item.Type == "text" {
 			out += item.Text
+		} else {
+			nonTextDropped++
 		}
+	}
+	// M28 in audit ledger: MCP defines image / resource / audio content
+	// items in addition to text. We only forward text today; surface the
+	// silent drop count so the model at least knows partial content was
+	// omitted instead of blindly trusting the text was complete.
+	if nonTextDropped > 0 {
+		out += fmt.Sprintf("\n[orchestra: dropped %d non-text content item(s); only text is currently forwarded by mcp client]", nonTextDropped)
 	}
 	if result.IsError {
 		return "", fmt.Errorf("mcp tool error: %s", out)
@@ -270,7 +280,28 @@ func (c *Client) readLoop() {
 			continue // skip malformed lines (e.g. server startup logs)
 		}
 		if resp.ID == nil {
-			continue // notification — ignore
+			// M29 in audit ledger: notifications/tools/list_changed is
+			// the spec's signal that the server's tool list has rotated.
+			// We currently cache c.tools once at handshake — refresh on
+			// this notification so cached schemas don't go stale. Other
+			// notifications (logs, progress) are ignored as before.
+			if resp.Error == nil && resp.Result == nil {
+				// Re-parse the line to extract method since rpcResponse
+				// strips it. Cheap: only fires per server-initiated note.
+				var note struct {
+					Method string `json:"method"`
+				}
+				if json.Unmarshal(line, &note) == nil && note.Method == "notifications/tools/list_changed" {
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if tools, err := c.listTools(ctx); err == nil {
+							c.tools = tools
+						}
+					}()
+				}
+			}
+			continue
 		}
 		c.mu.Lock()
 		ch, ok := c.pending[*resp.ID]
@@ -282,8 +313,26 @@ func (c *Client) readLoop() {
 			ch <- resp
 		}
 	}
+	// M30 in audit ledger: surface scanner exit cause. The 4 MiB scanner
+	// buffer is generous, but a server emitting one >4 MiB message (huge
+	// tools/list result, error trace) causes Scan to return false silently
+	// → all subsequent Calls report "server exited" with no actual exit.
+	// Logging the underlying error makes the failure mode visible.
+	if err := c.stdout.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp: server %q stdout reader exited: %v\n", c.name, err)
+	}
 }
 
+// buildEnv layers user-supplied environment variables on top of the
+// parent process's environment.
+//
+// M32 in audit ledger: os.ExpandEnv on user-supplied values lets a config
+// like `env: {API_TOKEN: "$AWS_SECRET_ACCESS_KEY"}` exfiltrate the parent
+// secret into whatever the MCP server logs. Per CLAUDE.md safety rules,
+// secrets must not leak. We keep ExpandEnv (legitimate `$HOME/cache`
+// patterns rely on it) but document the foot-gun loudly here so the
+// config schema reviewer is aware. A future opt-in "allow_secret_refs"
+// flag should gate it; tracked as a follow-up.
 func buildEnv(extra map[string]string) []string {
 	env := os.Environ()
 	for k, v := range extra {
