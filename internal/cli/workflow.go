@@ -160,7 +160,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("workflow %q: missing arguments (the user task)", w.Name)
 	}
 
-	discoveredSkills, err := skills.Discover(cfg.ProjectRoot)
+	discoveredSkills, err := skills.DiscoverCached(cfg.ProjectRoot)
 	if err != nil {
 		return fmt.Errorf("workflow: discover skills: %w", err)
 	}

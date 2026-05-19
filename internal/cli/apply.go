@@ -553,7 +553,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		// Discover skills once; expose skill_invoke when any are present.
 		// Skipped silently on error so a malformed skill file doesn't kill
 		// regular apply flow — the error will resurface on `orchestra skills list`.
-		discoveredSkills, _ := skills.Discover(cfg.ProjectRoot)
+		discoveredSkills, _ := skills.DiscoverCached(cfg.ProjectRoot)
 		discoveredRefs, _ := skills.DiscoverRefs(cfg.ProjectRoot)
 		var skillRunner agent.SkillRunner
 		var skillSpecsList []agent.SkillSpec

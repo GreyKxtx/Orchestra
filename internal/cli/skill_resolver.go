@@ -19,7 +19,7 @@ const argumentsMarker = "$ARGUMENTS"
 // resolution path. Tool names are validated against config.ValidAgentTool.
 // When the skill body contains $ARGUMENTS, it is replaced with arguments.
 func resolveSkillAgent(projectRoot, name, arguments string) (*config.AgentDefinition, error) {
-	all, err := skills.Discover(projectRoot)
+	all, err := skills.DiscoverCached(projectRoot)
 	if err != nil {
 		return nil, err
 	}
