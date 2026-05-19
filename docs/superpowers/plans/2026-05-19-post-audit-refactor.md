@@ -338,18 +338,22 @@ messages for the exact code changes.
 
 ## 🟢 LOW — when convenient
 
-| ID | File:line | Issue |
-|---|---|---|
-| L1 | `agent.go:783` | `AgentLogger.LogToolCall` deref without nil guard in serial path (parallel path guards). Confirm `*llm.Logger.LogToolCall` is nil-safe. |
-| L2 | `agent.go:706` | `plan_exit` auto-approves when `QuestionAsker == nil`. CI runs with `--plan-only` could silently flip mode. |
-| L3 | `agent.go:1498,1501` | Russian-language hints; model may be tuned to English. Internationalise or move to `internal/prompt/files`. |
-| L4 | `external_patches.go:83` | `search_replace` with `Search == Replace` is a no-op accepted silently. Reject as invalid. |
-| L5 | `ops_applier.go:540,550` | `os.Chmod` is best-effort and a no-op on Windows. Document. |
-| L6 | `lsp/positions.go:11-17` | `PathToURI` doesn't URL-escape spaces / `#` / `?`. Gopls tolerates spaces; some servers don't. |
-| L7 | `lsp/client.go:101` | `"processId": 0` in `initialize`. LSP spec says integer or null. Use `os.Getpid()` so servers can monitor parent death. |
-| L8 | `lsp/client.go:339-342` | Server→client requests answered with `null`. `workspace/configuration` expects an array — special-case it. |
-| L9 | `mcp/client.go:74-81` | MCP server stderr inherited by Orchestra process. Mixes with TUI / JSON-RPC over stdout. Capture or redirect. |
-| L10 | `lsp/client.go:299-359` (`readLoop` panic) | No `recover()` — covered by C3 if implemented uniformly. |
+**Sprint 4 closed all 10 LOW items + the H13 LSP parity follow-up.**
+
+| ID | File:line | Issue | Closed by |
+|---|---|---|---|
+| L1 | `agent.go:783` | `AgentLogger.LogToolCall` deref without nil guard in serial path (parallel path guards). | `fd3888b` |
+| L2 | `agent.go:706` | `plan_exit` auto-approves when `QuestionAsker == nil`. CI runs with `--plan-only` could silently flip mode. | `fd3888b` (refuses instead of auto-approving) |
+| L3 | `agent.go:1498,1501` | Russian-language hints; model may be tuned to English. | `fd3888b` (translated to English) |
+| L4 | `external_patches.go:83` | `search_replace` with `Search == Replace` is a no-op accepted silently. Reject as invalid. | `4df2797` |
+| L5 | `ops_applier.go:540,550` | `os.Chmod` is best-effort and a no-op on Windows. Document. | `4df2797` (in-code comment) |
+| L6 | `lsp/positions.go:11-17` | `PathToURI` doesn't URL-escape spaces / `#` / `?`. | `9983b92` (url.PathEscape per segment) |
+| L7 | `lsp/client.go:101` | `"processId": 0` in `initialize`. LSP spec says integer or null. | `9983b92` (os.Getpid) |
+| L8 | `lsp/client.go:339-342` | Server→client requests answered with `null`. `workspace/configuration` expects an array — special-case it. | `9983b92` |
+| L9 | `mcp/client.go:74-81` | MCP server stderr inherited by Orchestra process. Mixes with TUI / JSON-RPC over stdout. | `cd45af9` (drainStderr + StderrTail mirror of LSP M18) |
+| L10 | `lsp/client.go:299-359` (`readLoop` panic) | No `recover()`. | `9983b92` (panic guard in readLoop) |
+
+**Bonus:** `9983b92` also closed the H13 LSP parity follow-up — `internal/lsp/{proc_unix.go,proc_windows.go}` mirror the MCP helpers, and `Client.Close` now uses `killProcessTree` to reap tsserver/gopls child processes (tsc, builders, etc.) that previously leaked as orphans on Windows.
 
 ---
 
@@ -358,7 +362,25 @@ messages for the exact code changes.
 1. **Sprint 1 (~2 days):** all CRITICAL (C1–C7) — they cluster around three themes (timeouts, panic safety, permissions) that share code paths. **DONE — see commits `16a1d8b`, `ef174ce`, `38a47f8`, `c11d98c`.**
 2. **Sprint 2 (~3 days):** all HIGH (H1–H15) — five thematic clusters (LLM efficiency, applier data-safety, agent contracts, LSP correctness, MCP cross-cutting). **DONE — see commits `ee7d21e`, `a073aa6`, `a48d044`, `751da53`, `e4b3d92`.** H14 verified N/A.
 3. **Sprint 3 (~1 day):** all MEDIUM (M1–M33) except four deferred. **DONE — see commits `d46e10f`, `27a335a`, `ebaa992`, `10d6f96`.** Deferred: M13 (partial), M26, M27, M31.
-4. **LOW** when touching the file for unrelated reasons.
+4. **Sprint 4 (~½ day):** all LOW (L1–L10) plus the H13 LSP parity follow-up. **DONE — see commits `fd3888b`, `4df2797`, `9983b92`, `cd45af9`.**
+
+## Final audit closure (2026-05-19)
+
+| Severity | Items | Closed | Verified N/A | Deferred |
+|---|---:|---:|---:|---:|
+| CRITICAL | 7 | 7 | 0 | 0 |
+| HIGH | 15 | 14 | 1 (H14) | 0 |
+| MEDIUM | 33 | 28 | 1 (M24 via H7) | 4 (M13 partial, M26, M27, M31) |
+| LOW | 10 | 10 | 0 | 0 |
+| **TOTAL** | **65** | **59** | **2** | **4** |
+
+**Outstanding follow-ups** (tracked in this doc, not blockers):
+
+- **M13** — full per-match line numbers in `AmbiguousMatch` hint needs a `findUnique` refactor to return every match's offset (currently returns first + count only).
+- **M26** — MCP server crash detection + auto-restart. Design needs to address state-replay (cached `c.tools` may go stale before the restart).
+- **M27** — Per-call MCP timeout knob (`MCPServerConfig.CallTimeoutS`). Config schema work.
+- **M31** — Per-tool MCP allowlist field on `MCPServerConfig` (currently only the whole server can be `Disabled: true`; permission rules + C7 globs are the workaround).
+- **H9 cross-process** — per-project file lock (POSIX `flock`, Windows `LockFileEx`) so two Orchestra processes against the same project don't clobber each other's `.bak`. In-process race already closed via `applyMu`.
 
 ## Out of scope for this plan
 
