@@ -22,10 +22,15 @@ var (
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Start local Orchestra daemon",
-	Long:  "Starts a local daemon for a single project_root (v0.3)",
-	Args:  cobra.NoArgs,
-	RunE:  runDaemon,
+	Short: "Start local Orchestra daemon (DEPRECATED — use 'orchestra core')",
+	Long: `Starts a legacy local HTTP daemon for a single project_root (v0.3 transport).
+
+DEPRECATED: the supported transport is JSON-RPC over stdio via 'orchestra core'.
+The daemon is kept for compatibility with older clients and may be removed in
+a future release. See docs/PROTOCOL.md for the current contract. H4 in
+architecture audit.`,
+	Args: cobra.NoArgs,
+	RunE: runDaemon,
 }
 
 func init() {
@@ -39,6 +44,8 @@ func init() {
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(os.Stderr, "[orchestra] WARNING: 'orchestra daemon' is DEPRECATED — use 'orchestra core' (JSON-RPC stdio). See docs/PROTOCOL.md.")
+
 	projectRoot := daemonProjectRoot
 
 	// Load config from project root
