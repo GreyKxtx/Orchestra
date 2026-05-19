@@ -80,6 +80,15 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 			"type": p.Type,
 		})
 	}
+	// L4 in audit ledger: reject no-op `search == replace`. Such a patch is
+	// either a model bug or wasted LLM cycles — surface as InvalidLLMOutput
+	// so the model has to re-think instead of "succeeding" on a no-op.
+	if p.Search == p.Replace {
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.InvalidLLMOutput, "search and replace are identical (no-op patch)", map[string]any{
+			"path": p.Path,
+			"type": p.Type,
+		})
+	}
 	// replace can be empty (deletion).
 
 	before, _, err := readFileOrEmpty(projectRoot, p.Path)

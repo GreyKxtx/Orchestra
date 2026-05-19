@@ -567,6 +567,9 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string
 	// Best-effort atomic replace.
 	// Note: on Unix this is atomic within the same directory; on Windows replace is best-effort.
 	if err := os.Rename(tmpName, path); err == nil {
+		// L5 in audit ledger: os.Chmod on Windows only flips the read-only
+		// bit (everything else is ignored). Patch authors who care about
+		// exact perms need a POSIX host — documented as a known limitation.
 		_ = os.Chmod(path, perm)
 		// M10 in audit ledger: fsync the parent directory so the rename's
 		// metadata change is durable across a power loss on POSIX. No-op
