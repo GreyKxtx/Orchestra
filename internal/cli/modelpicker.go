@@ -1,6 +1,4 @@
-// Package tui provides terminal UI components built with Bubble Tea.
-// This is the foundation for the full Orchestra TUI (Phase 2).
-package tui
+package cli
 
 import (
 	"encoding/json"
@@ -15,15 +13,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// ModelInfo is one model returned by the LM Studio /v1/models endpoint.
-type ModelInfo struct {
+// modelInfo is one model returned by the LM Studio /v1/models endpoint.
+type modelInfo struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	OwnedBy string `json:"owned_by"`
 }
 
-// FetchModels calls GET <apiBase>/v1/models and returns the list.
-func FetchModels(apiBase, apiKey string) ([]ModelInfo, error) {
+// fetchModels calls GET <apiBase>/v1/models and returns the list.
+func fetchModels(apiBase, apiKey string) ([]modelInfo, error) {
 	url := strings.TrimRight(apiBase, "/") + "/v1/models"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -40,7 +38,7 @@ func FetchModels(apiBase, apiKey string) ([]ModelInfo, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var payload struct {
-		Data []ModelInfo `json:"data"`
+		Data []modelInfo `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("unexpected response: %w", err)
@@ -48,33 +46,30 @@ func FetchModels(apiBase, apiKey string) ([]ModelInfo, error) {
 	return payload.Data, nil
 }
 
-// PickerResult is what the model picker returns on completion.
-type PickerResult struct {
-	Model      string
-	NumCtx     int
-	Cancelled  bool
+// pickerResult is what the model picker returns on completion.
+type pickerResult struct {
+	Model     string
+	NumCtx    int
+	Cancelled bool
 }
-
-// --- Bubble Tea model ---
 
 type pickerState int
 
 const (
-	stateList  pickerState = iota // selecting model from list
-	stateCtx                      // entering context length
+	stateList pickerState = iota
+	stateCtx
 	stateDone
 )
 
 type pickerModel struct {
-	models      []ModelInfo
-	cursor      int
-	current     string // currently configured model
-	currentCtx  int
-	ctxInput    string
-	state       pickerState
-	result      PickerResult
+	models     []modelInfo
+	cursor     int
+	current    string
+	currentCtx int
+	ctxInput   string
+	state      pickerState
+	result     pickerResult
 
-	// styles
 	styleTitle    lipgloss.Style
 	styleSelected lipgloss.Style
 	styleNormal   lipgloss.Style
@@ -83,8 +78,7 @@ type pickerModel struct {
 	stylePrompt   lipgloss.Style
 }
 
-func newPickerModel(models []ModelInfo, currentModel string, currentCtx int) pickerModel {
-	// Pre-select current model in list.
+func newPickerModel(models []modelInfo, currentModel string, currentCtx int) pickerModel {
 	cursor := 0
 	for i, m := range models {
 		if m.ID == currentModel {
@@ -128,7 +122,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m pickerModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q", "esc":
-		m.result = PickerResult{Cancelled: true}
+		m.result = pickerResult{Cancelled: true}
 		m.state = stateDone
 		return m, tea.Quit
 	case "up", "k":
@@ -148,7 +142,7 @@ func (m pickerModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m pickerModel) updateCtx(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		m.result = PickerResult{Cancelled: true}
+		m.result = pickerResult{Cancelled: true}
 		m.state = stateDone
 		return m, tea.Quit
 	case "esc":
@@ -159,7 +153,7 @@ func (m pickerModel) updateCtx(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ctxInput = strconv.Itoa(m.currentCtx)
 			return m, nil
 		}
-		m.result = PickerResult{
+		m.result = pickerResult{
 			Model:  m.models[m.cursor].ID,
 			NumCtx: ctx,
 		}
@@ -183,15 +177,14 @@ func (m pickerModel) View() string {
 	}
 
 	var b strings.Builder
-
-	b.WriteString(m.styleTitle.Render("Orchestra — выбор модели") + "\n")
+	b.WriteString(m.styleTitle.Render("Orchestra — model picker") + "\n")
 
 	if m.state == stateList {
-		b.WriteString(m.styleDim.Render("↑↓ выбрать   Enter подтвердить   q выйти") + "\n\n")
+		b.WriteString(m.styleDim.Render("↑↓ select   Enter confirm   q quit") + "\n\n")
 		for i, model := range m.models {
 			label := model.ID
 			if model.ID == m.current {
-				label += m.styleDim.Render("  ← текущая")
+				label += m.styleDim.Render("  ← current")
 			}
 			if i == m.cursor {
 				b.WriteString(m.styleSelected.Render("▶ "+label) + "\n")
@@ -203,22 +196,22 @@ func (m pickerModel) View() string {
 		}
 	} else if m.state == stateCtx {
 		selected := m.models[m.cursor].ID
-		b.WriteString(fmt.Sprintf("Модель: %s\n\n", m.stylePrompt.Render(selected)))
-		b.WriteString(m.stylePrompt.Render("Контекст (токены): "))
+		b.WriteString(fmt.Sprintf("Model: %s\n\n", m.stylePrompt.Render(selected)))
+		b.WriteString(m.stylePrompt.Render("Context (tokens): "))
 		b.WriteString(m.ctxInput + "█\n")
-		b.WriteString(m.styleDim.Render("\nEnter подтвердить   Esc назад") + "\n")
+		b.WriteString(m.styleDim.Render("\nEnter confirm   Esc back") + "\n")
 	}
 
 	return b.String()
 }
 
-// RunModelPicker displays the interactive model picker and returns the result.
-func RunModelPicker(models []ModelInfo, currentModel string, currentCtx int) (PickerResult, error) {
+// runModelPicker displays the interactive model picker and returns the result.
+func runModelPicker(models []modelInfo, currentModel string, currentCtx int) (pickerResult, error) {
 	m := newPickerModel(models, currentModel, currentCtx)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
-		return PickerResult{}, err
+		return pickerResult{}, err
 	}
 	return final.(pickerModel).result, nil
 }

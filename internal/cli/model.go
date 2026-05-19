@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/tui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -64,7 +63,7 @@ func runModelSelect(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Получаю список моделей из %s...\n", cfg.LLM.APIBase)
-	models, err := tui.FetchModels(cfg.LLM.APIBase, cfg.LLM.APIKey)
+	models, err := fetchModels(cfg.LLM.APIBase, cfg.LLM.APIKey)
 	if err != nil {
 		return fmt.Errorf("не удалось получить список моделей: %w\n\nПроверь что LM Studio запущен и API включён.", err)
 	}
@@ -77,7 +76,7 @@ func runModelSelect(cmd *cobra.Command, args []string) error {
 		currentCtx = 4096
 	}
 
-	result, err := tui.RunModelPicker(models, cfg.LLM.Model, currentCtx)
+	result, err := runModelPicker(models, cfg.LLM.Model, currentCtx)
 	if err != nil {
 		return err
 	}
