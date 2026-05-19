@@ -156,6 +156,15 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			if _, err := getAbs(rel); err != nil {
 				return nil, err
 			}
+			// M16 in audit ledger: dedupe by canonical rel path BUT reject
+			// conflicting Mode values for the same path. Previously last-
+			// write-wins silently picked one Mode, hiding patch bugs that
+			// emit the same directory with different perms.
+			if existing, ok := mkdirByPath[rel]; ok && existing.Mode != 0 && md.Mode != 0 && existing.Mode != md.Mode {
+				return nil, protocol.NewError(protocol.InvalidLLMOutput,
+					"conflicting mkdir_all mode for same path",
+					map[string]any{"path": rel, "mode_a": existing.Mode, "mode_b": md.Mode})
+			}
 			mkdirByPath[rel] = md // dedupe by canonical rel path
 
 		default:
@@ -263,10 +272,17 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	}
 	for _, rel := range paths {
 		fp := plans[rel]
+		// M11 + M12 in audit ledger: cap each side of the diff at 64 KiB
+		// and refuse binary content (NUL byte in first 8 KiB). A 100 MB
+		// file with a 1-line change otherwise produced 200 MB of strings
+		// in the JSON-RPC response; a binary edit silently corrupted on
+		// non-UTF8 byte sequences during JSON encoding. Mutations still
+		// land on disk — the cap only affects the preview payload returned
+		// to the caller.
 		result.Diffs = append(result.Diffs, FileDiff{
 			Path:   rel,
-			Before: string(fp.before),
-			After:  string(fp.after),
+			Before: diffPreviewBytes(fp.before),
+			After:  diffPreviewBytes(fp.after),
 		})
 		if !bytes.Equal(fp.before, fp.after) {
 			result.ChangedFiles = append(result.ChangedFiles, rel)
@@ -552,6 +568,10 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string
 	// Note: on Unix this is atomic within the same directory; on Windows replace is best-effort.
 	if err := os.Rename(tmpName, path); err == nil {
 		_ = os.Chmod(path, perm)
+		// M10 in audit ledger: fsync the parent directory so the rename's
+		// metadata change is durable across a power loss on POSIX. No-op
+		// on Windows.
+		_ = syncDir(dir)
 		return nil
 	}
 
@@ -590,6 +610,30 @@ func preview(s string, max int) string {
 		return s
 	}
 	return s[:max] + "\n...(truncated)"
+}
+
+// diffPreviewSize caps each side of a FileDiff. 64 KiB is enough to show a
+// few hundred lines of context — anything beyond is noise on the wire.
+const diffPreviewSize = 64 * 1024
+
+// diffPreviewBytes converts raw file bytes to a JSON-safe preview string
+// for FileDiff. Binary files (NUL byte in first 8 KiB) are reported as a
+// placeholder so a downstream JSON encoder doesn't choke on non-UTF8
+// bytes. M11 + M12 in audit ledger.
+func diffPreviewBytes(b []byte) string {
+	sniff := 8 * 1024
+	if sniff > len(b) {
+		sniff = len(b)
+	}
+	for i := 0; i < sniff; i++ {
+		if b[i] == 0 {
+			return "<binary file omitted from diff preview>"
+		}
+	}
+	if len(b) <= diffPreviewSize {
+		return string(b)
+	}
+	return string(b[:diffPreviewSize]) + "\n...(truncated; full file written to disk)"
 }
 
 func replaceBytes(in []byte, start, end int, replacement []byte) []byte {
