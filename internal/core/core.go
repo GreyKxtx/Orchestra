@@ -762,7 +762,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "content is empty", nil)
 	}
 
-	sess, err := c.sessions.Get(params.SessionID)
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
 	}
@@ -988,7 +988,7 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 	if strings.TrimSpace(params.SessionID) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
 	}
-	sess, err := c.sessions.Get(params.SessionID)
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
 	}
@@ -1031,7 +1031,7 @@ func (c *Core) SessionHistory(params SessionHistoryParams) (*SessionHistoryResul
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	sess, err := c.sessions.Get(params.SessionID)
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
 	}
@@ -1067,13 +1067,16 @@ func (c *Core) SessionClose(params SessionCloseParams) error {
 	if c == nil {
 		return protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	sess, err := c.sessions.Get(params.SessionID)
-	if err != nil {
-		// Already gone — not an error.
-		return nil
+	if sess, err := c.sessions.Get(params.SessionID); err == nil {
+		sess.Cancel()
+		c.sessions.Delete(params.SessionID)
 	}
-	sess.Cancel()
-	c.sessions.Delete(params.SessionID)
+	// Remove any on-disk snapshot too — close is idempotent across
+	// memory and disk, otherwise "closed" sessions would resurrect on
+	// the next core restart.
+	if err := coresession.DeleteSnapshot(c.workspaceRoot, params.SessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s snapshot delete failed: %v\n", params.SessionID, err)
+	}
 	return nil
 }
 

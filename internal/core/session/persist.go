@@ -75,6 +75,19 @@ func (s *Session) Snapshot(workspaceRoot string) error {
 	return fsutil.AtomicWriteFile(snapshotPath(workspaceRoot, s.ID), data, 0o600)
 }
 
+// DeleteSnapshot removes the on-disk snapshot for id. Returns nil if
+// the file doesn't exist (close is idempotent). Other errors (perm
+// issues etc.) are surfaced so callers can log them.
+func DeleteSnapshot(workspaceRoot, id string) error {
+	if workspaceRoot == "" || id == "" {
+		return nil
+	}
+	if err := os.Remove(snapshotPath(workspaceRoot, id)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // LoadFromDisk reads a snapshot file and constructs a fresh Session
 // from it. The returned session has no cancelFn (it's idle).
 //
@@ -114,6 +127,39 @@ func LoadFromDisk(workspaceRoot, id string) (*Session, error) {
 		pendingOps:   snap.PendingOps,
 		todos:        snap.Todos,
 	}, nil
+}
+
+// GetOrLoad returns an in-memory session if present, otherwise loads
+// it from disk and caches it. Returns the original "session not found"
+// error if neither memory nor disk has it — strict semantics for
+// handlers that must reject unknown IDs (SessionMessage, op.apply
+// pending lookup, etc.), distinct from LoadOrCreate's permissive
+// fallback used at reconnection time.
+func (m *Manager) GetOrLoad(workspaceRoot, id string) (*Session, error) {
+	if id == "" {
+		return nil, fmt.Errorf("session not found: %s", id)
+	}
+	m.mu.Lock()
+	if s, ok := m.sessions[id]; ok {
+		m.mu.Unlock()
+		return s, nil
+	}
+	m.mu.Unlock()
+
+	if workspaceRoot == "" {
+		return nil, fmt.Errorf("session not found: %s", id)
+	}
+	s, err := LoadFromDisk(workspaceRoot, id)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("session not found: %s", id)
+		}
+		return nil, err
+	}
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+	return s, nil
 }
 
 // LoadOrCreate returns an existing session if a snapshot is present,
