@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/daemon"
+	"github.com/orchestra/orchestra/internal/fsutil"
 	"github.com/orchestra/orchestra/internal/jsonrpc"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/spf13/cobra"
@@ -134,7 +134,7 @@ func runCore(cmd *cobra.Command, args []string) error {
 			WrittenAtUnix:   nowUnix,
 		}, "", "  "); err == nil {
 			b = append(b, '\n')
-			_ = daemon.AtomicWriteFile(discPath, b, 0600)
+			_ = fsutil.AtomicWriteFile(discPath, b, 0600)
 			defer func() { _ = os.Remove(discPath) }()
 		}
 		fmt.Fprintf(os.Stderr, "[orchestra] HTTP debug server enabled: %s (discovery: %s)\n", baseURL, discPath)

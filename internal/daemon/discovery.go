@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/orchestra/orchestra/internal/fsutil"
 )
 
 func discoveryPath(projectRoot string) string {
@@ -60,55 +62,14 @@ func RemoveDiscovery(projectRoot string) error {
 	return nil
 }
 
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-	// Best-effort: lock down .orchestra/ directory on Unix.
-	_ = os.Chmod(dir, 0700)
-
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpName, path); err == nil {
-		_ = os.Chmod(path, perm)
-		return nil
-	}
-	// Windows: os.Rename fails if destination exists.
-	_ = os.Remove(path)
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-	_ = os.Chmod(path, perm)
-	return nil
+// AtomicWriteFile delegates to fsutil.AtomicWriteFile. Kept as a
+// re-export so existing callers don't need to change yet; the
+// implementation lives in internal/fsutil now (H4 in architecture
+// audit). New callers should import fsutil directly.
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	return fsutil.AtomicWriteFile(path, data, perm)
 }
 
-// AtomicWriteFile writes data to path atomically (best-effort across platforms).
-//
-// It is used for small local "discovery" files, where partial writes would break clients.
-func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	return atomicWriteFile(path, data, perm)
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	return fsutil.AtomicWriteFile(path, data, perm)
 }

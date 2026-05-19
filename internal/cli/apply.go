@@ -13,7 +13,7 @@ import (
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/daemon"
+	"github.com/orchestra/orchestra/internal/fsutil"
 	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/jsonrpc"
@@ -772,7 +772,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	planJSON, err := json.MarshalIndent(plan, "", "  ")
 	if err == nil {
 		planJSON = append(planJSON, '\n')
-		_ = daemon.AtomicWriteFile(planPath, planJSON, 0600)
+		_ = fsutil.AtomicWriteFile(planPath, planJSON, 0600)
 	}
 
 	// Build a human-readable diff file (best-effort).
@@ -795,7 +795,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 			diffText.WriteString("\n")
 		}
 	}
-	_ = daemon.AtomicWriteFile(diffPath, []byte(diffText.String()), 0600)
+	_ = fsutil.AtomicWriteFile(diffPath, []byte(diffText.String()), 0600)
 
 	changed := []string(nil)
 	if applyResp != nil {
@@ -821,7 +821,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	}
 	if b, err := json.MarshalIndent(lr, "", "  "); err == nil {
 		b = append(b, '\n')
-		_ = daemon.AtomicWriteFile(resultPath, b, 0600)
+		_ = fsutil.AtomicWriteFile(resultPath, b, 0600)
 	}
 
 	// last_run.jsonl (always, minimal event log).
@@ -865,7 +865,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 		jsonl.Write(b)
 		jsonl.WriteByte('\n')
 	}
-	_ = daemon.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600)
+	_ = fsutil.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600)
 
 	return nil
 }
