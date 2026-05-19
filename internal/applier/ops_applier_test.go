@@ -736,6 +736,47 @@ func TestApplyAnyOps_MultipleReplaceRange_SameFile(t *testing.T) {
 	}
 }
 
+// TestApplyOps_TOCTOU_StaleHashRejected covers the StaleContent path the
+// N2 re-validation pass relies on (Sprint 6 in audit ledger): when the
+// LLM-supplied file_hash differs from what the applier reads on disk,
+// the run is rejected with StaleContent and the file is left untouched.
+//
+// The pure between-plan-and-write race needs an in-process hook to
+// reproduce, but this test pins the surrounding contract: any drift
+// surfaces as StaleContent, never as a silent overwrite.
+func TestApplyOps_TOCTOU_StaleHashRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	original := "v1 content\n"
+	if err := os.WriteFile(testFile, []byte(original), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	h := cache.ComputeSHA256([]byte(original))
+
+	wa := ops.WriteAtomicOp{
+		Op:         ops.OpFileWriteAtomic,
+		Path:       "test.txt",
+		Content:    "v3 content\n",
+		Conditions: ops.WriteAtomicConditions{FileHash: h},
+	}
+	if err := os.WriteFile(testFile, []byte("v2 content\n"), 0644); err != nil {
+		t.Fatalf("mutate: %v", err)
+	}
+	_, err := ApplyAnyOps(tmpDir,
+		[]ops.AnyOp{{Op: ops.OpFileWriteAtomic, WriteAtomic: &wa}},
+		ApplyOptions{DryRun: false, Backup: false})
+	if err == nil {
+		t.Fatal("expected StaleContent error after external modification")
+	}
+	if pe, ok := err.(*protocol.Error); !ok || pe.Code != protocol.StaleContent {
+		t.Fatalf("expected StaleContent, got %T %v", err, err)
+	}
+	b, _ := os.ReadFile(testFile)
+	if string(b) != "v2 content\n" {
+		t.Fatalf("file was modified by failed apply: %q", b)
+	}
+}
+
 // ---- Backup on successful write ----
 
 func TestApplyOps_Backup_CreatedOnSuccess(t *testing.T) {
