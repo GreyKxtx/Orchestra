@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/llm"
@@ -15,21 +17,54 @@ type Manager struct {
 	clients []*Client
 }
 
-// NewManager starts all enabled MCP servers from the config.
-// Non-fatal errors (individual server startup failures) are logged but don't abort.
+// mcpStartTimeout caps each server's initialize+listTools handshake so a
+// stuck server cannot block Core / apply startup. C5 in audit ledger.
+const mcpStartTimeout = 30 * time.Second
+
+// NewManager starts all enabled MCP servers from the config in parallel.
+// Each server gets its own 30s timeout — a single stuck server no longer
+// blocks the rest (was: serial start, no timeout = N stuck servers = hang
+// for N×infinity). Non-fatal errors (individual server startup failures)
+// are returned for the caller to log; they don't abort Core construction.
 func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 	m := &Manager{}
-	var errs []error
+	type startRes struct {
+		idx int
+		c   *Client
+		err error
+	}
+	var enabled []config.MCPServerConfig
 	for _, srv := range cfg.Servers {
 		if srv.Disabled || len(srv.Command) == 0 {
 			continue
 		}
-		c, err := Start(ctx, srv.Name, srv.Command, srv.Env)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("mcp server %q: %w", srv.Name, err))
+		enabled = append(enabled, srv)
+	}
+	if len(enabled) == 0 {
+		return m, nil
+	}
+
+	results := make([]startRes, len(enabled))
+	var wg sync.WaitGroup
+	for i, srv := range enabled {
+		wg.Add(1)
+		go func(idx int, srv config.MCPServerConfig) {
+			defer wg.Done()
+			startCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
+			defer cancel()
+			c, err := Start(startCtx, srv.Name, srv.Command, srv.Env)
+			results[idx] = startRes{idx: idx, c: c, err: err}
+		}(i, srv)
+	}
+	wg.Wait()
+
+	var errs []error
+	for i, r := range results {
+		if r.err != nil {
+			errs = append(errs, fmt.Errorf("mcp server %q: %w", enabled[i].Name, r.err))
 			continue
 		}
-		m.clients = append(m.clients, c)
+		m.clients = append(m.clients, r.c)
 	}
 	return m, errs
 }
