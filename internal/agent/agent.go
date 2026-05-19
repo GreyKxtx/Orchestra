@@ -20,26 +20,20 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 
 	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/internal/permission"
 )
 
-// PermissionRequester is the agent's view of an interactive consent provider.
-// Mirrors core.PermissionRequester (defined here to avoid import cycle).
-type PermissionRequester interface {
-	RequestPermission(ctx context.Context, req PermissionRequest) (PermissionResponse, error)
-}
-
-// PermissionRequest describes the tool action requiring consent.
-type PermissionRequest struct {
-	Tool        string
-	Description string
-	Reason      string
-}
-
-// PermissionResponse is the consent decision returned by the provider.
-type PermissionResponse struct {
-	Approved bool
-	Reason   string
-}
+// PermissionRequester / PermissionRequest / PermissionResponse are
+// re-exported aliases of internal/permission so existing callers
+// (agent.Options.PermissionRequester, every comparison against
+// PermissionResponse{Approved:false}) compile unchanged. H6 in
+// architecture audit moved the canonical declarations into
+// internal/permission to remove a copy in core that needed an adapter.
+type (
+	PermissionRequester = permission.Requester
+	PermissionRequest   = permission.Request
+	PermissionResponse  = permission.Response
+)
 
 // HooksRunner executes pre/post tool call hooks.
 type HooksRunner interface {

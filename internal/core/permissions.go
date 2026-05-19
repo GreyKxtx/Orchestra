@@ -1,38 +1,34 @@
 package core
 
-import "context"
+import (
+	"context"
 
-// PermissionRequester asks the connected client (TUI/IDE) for interactive
-// consent before running a sensitive tool (e.g. exec.run).
-type PermissionRequester interface {
-	RequestPermission(ctx context.Context, req PermissionRequest) (PermissionResponse, error)
-}
+	"github.com/orchestra/orchestra/internal/permission"
+)
 
-// PermissionRequest describes the tool action requiring consent.
-type PermissionRequest struct {
-	Tool        string `json:"tool"`
-	Description string `json:"description"`
-	Reason      string `json:"reason,omitempty"`
-}
+// PermissionRequester / PermissionRequest / PermissionResponse are
+// aliases of internal/permission so external callers that referenced
+// core.PermissionRequester before H6 (architecture audit) continue to
+// compile. New code should depend on internal/permission directly.
+type (
+	PermissionRequester = permission.Requester
+	PermissionRequest   = permission.Request
+	PermissionResponse  = permission.Response
+)
 
-// PermissionResponse is the client's consent decision.
-type PermissionResponse struct {
-	Approved bool   `json:"approved"`
-	Reason   string `json:"reason,omitempty"`
-}
-
-// rpcPermissionRequester routes PermissionRequest through a server-initiated request function.
+// rpcPermissionRequester routes a PermissionRequest through the
+// server-initiated request function the RPC handler injects.
 type rpcPermissionRequester struct {
 	requestFn func(ctx context.Context, method string, params any, result any) error
 }
 
-func (r *rpcPermissionRequester) RequestPermission(ctx context.Context, req PermissionRequest) (PermissionResponse, error) {
-	var resp PermissionResponse
+func (r *rpcPermissionRequester) RequestPermission(ctx context.Context, req permission.Request) (permission.Response, error) {
+	var resp permission.Response
 	if r.requestFn == nil {
-		return PermissionResponse{Approved: false}, nil
+		return permission.Response{Approved: false}, nil
 	}
 	if err := r.requestFn(ctx, "permission/request", req, &resp); err != nil {
-		return PermissionResponse{Approved: false}, err
+		return permission.Response{Approved: false}, err
 	}
 	return resp, nil
 }
