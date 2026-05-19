@@ -640,6 +640,33 @@ func (c *ProjectConfig) Validate() error {
 		return err
 	}
 
+	if err := c.validateMCP(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMCP enforces MCP server-name invariants used by routing.
+// H12 in audit ledger: a server name containing `:` produces a tool name
+// like `mcp:foo:bar:baz` which `parseMCPToolName` splits as server=foo
+// tool=bar:baz, then findClient("foo") returns nil and every call fails.
+// Duplicate names silently make the second server's tools unroutable.
+func (c *ProjectConfig) validateMCP() error {
+	seen := map[string]bool{}
+	for i, srv := range c.MCP.Servers {
+		name := strings.TrimSpace(srv.Name)
+		if name == "" {
+			return fmt.Errorf("mcp.servers[%d]: name is required", i)
+		}
+		if strings.Contains(name, ":") {
+			return fmt.Errorf("mcp.servers[%d]: name %q must not contain ':' (tool routing splits on ':')", i, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("mcp.servers[%d]: duplicate name %q (each MCP server name must be unique within the project)", i, name)
+		}
+		seen[name] = true
+	}
 	return nil
 }
 
