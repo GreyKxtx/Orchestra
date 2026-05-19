@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,21 +61,28 @@ type rpcError struct {
 // also full. Splitting the mutexes lets the reader keep dispatching
 // responses (which unblock the writer) even when stdin is back-pressured.
 type Client struct {
-	name    string
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Scanner
-	tools   []MCPTool
-	idSeq   atomic.Int64
-	mu      sync.Mutex
-	writeMu sync.Mutex
-	pending map[int64]chan rpcResponse
-	done    chan struct{}
+	name        string
+	cmd         *exec.Cmd
+	stdin       io.WriteCloser
+	stdout      *bufio.Scanner
+	tools       []MCPTool
+	callTimeout time.Duration // 0 = no per-call timeout; M27 in audit ledger
+	idSeq       atomic.Int64
+	mu          sync.Mutex
+	writeMu     sync.Mutex
+	pending     map[int64]chan rpcResponse
+	done        chan struct{}
 
 	// stderrMu guards stderrBuf — drainStderr appends, StderrTail reads.
 	// L9 in audit ledger.
 	stderrMu  sync.Mutex
 	stderrBuf []byte
+
+	// allowedTools, if non-empty, restricts which tools from this server
+	// are advertised via Tools() and accepted in Call. Patterns support
+	// path.Match globs (`fs.*`). nil/empty = expose every tool.
+	// M31 in audit ledger.
+	allowedTools []string
 }
 
 const stderrRingSize = 64 * 1024
@@ -119,7 +127,16 @@ func (c *Client) StderrTail() string {
 // The subprocess lives until c.Close — use that for shutdown. Was previously
 // `exec.CommandContext(ctx, ...)`, which bound process lifetime to the
 // startup ctx and made startup timeouts unsafe (cancel killed the server).
-func Start(ctx context.Context, name string, command []string, env map[string]string) (*Client, error) {
+// StartOptions bundles per-server tunables that aren't part of the bare
+// process spawn so the Start signature stays additive.
+type StartOptions struct {
+	// CallTimeout caps a single tools/call. 0 = no per-call timeout.
+	CallTimeout time.Duration
+}
+
+// Start launches the MCP subprocess and runs the initialize + tools/list
+// handshake. See Client.callTimeout for the M27 timeout semantics.
+func Start(ctx context.Context, name string, command []string, env map[string]string, opts ...StartOptions) (*Client, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("mcp %q: command is empty", name)
 	}
@@ -148,13 +165,18 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 		return nil, fmt.Errorf("mcp %q: start: %w", name, err)
 	}
 
+	var so StartOptions
+	if len(opts) > 0 {
+		so = opts[0]
+	}
 	c := &Client{
-		name:    name,
-		cmd:     cmd,
-		stdin:   stdin,
-		stdout:  bufio.NewScanner(stdoutPipe),
-		pending: make(map[int64]chan rpcResponse),
-		done:    make(chan struct{}),
+		name:        name,
+		cmd:         cmd,
+		stdin:       stdin,
+		stdout:      bufio.NewScanner(stdoutPipe),
+		callTimeout: so.CallTimeout,
+		pending:     make(map[int64]chan rpcResponse),
+		done:        make(chan struct{}),
 	}
 	// Set a generous scan buffer for large tool descriptions.
 	c.stdout.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
@@ -179,14 +201,77 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 	return c, nil
 }
 
-// Tools returns the tools advertised by this server.
-func (c *Client) Tools() []MCPTool { return c.tools }
+// SetAllowedTools sets a per-server tool allowlist. Names are bare MCP
+// tool names (no mcp:server: prefix) and may use path.Match globs.
+// Empty / nil = expose every tool. Must be called BEFORE Tools() is read
+// by external callers; intended for invocation right after Start.
+func (c *Client) SetAllowedTools(names []string) {
+	c.allowedTools = names
+}
+
+// toolAllowed reports whether a tool name passes the allowlist (or no
+// allowlist is configured).
+func (c *Client) toolAllowed(name string) bool {
+	if len(c.allowedTools) == 0 {
+		return true
+	}
+	for _, pat := range c.allowedTools {
+		if pat == name {
+			return true
+		}
+		if ok, _ := path.Match(pat, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Tools returns the tools advertised by this server, filtered by the
+// per-server allowlist (if any).
+func (c *Client) Tools() []MCPTool {
+	if len(c.allowedTools) == 0 {
+		return c.tools
+	}
+	out := make([]MCPTool, 0, len(c.tools))
+	for _, t := range c.tools {
+		if c.toolAllowed(t.Name) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 // ServerName returns the configured name of this server.
 func (c *Client) ServerName() string { return c.name }
 
+// IsDead reports whether the underlying subprocess has exited (readLoop
+// closed c.done). Manager.Call consults this before issuing a tool call
+// so a dead server triggers an auto-restart attempt instead of producing
+// the cryptic "mcp server X exited" we used to return. M26 in audit ledger.
+func (c *Client) IsDead() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // Call invokes a tool on the MCP server and returns the combined text output.
+// M27 in audit ledger: when configured with a per-server CallTimeoutS, the
+// caller's ctx is wrapped so a hung tool can't tie up the entire agent step.
+// M31 in audit ledger: tools outside the per-server AllowedTools allowlist
+// are refused — defence in depth, since the allowlist also filters Tools()
+// so the agent shouldn't even be aware of disallowed tools.
 func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMessage) (string, error) {
+	if !c.toolAllowed(toolName) {
+		return "", fmt.Errorf("mcp tool %q is not in this server's allowed_tools list", toolName)
+	}
+	if c.callTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.callTimeout)
+		defer cancel()
+	}
 	params := map[string]any{
 		"name":      toolName,
 		"arguments": json.RawMessage(arguments),
