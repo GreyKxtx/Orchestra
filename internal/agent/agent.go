@@ -301,6 +301,15 @@ type Agent struct {
 	// justSwitchedFromPlan is true for the first nextStep call after plan→build switch.
 	// Cleared after the reminder is injected so it fires at most once.
 	justSwitchedFromPlan bool
+
+	// toolDefsCache memoises buildToolDefs result. Inputs (opts.Mode,
+	// AllowExec/Web/Browser, SubtaskRunner, QuestionAsker, Skills,
+	// ExtraTools, CustomTools) are fixed at agent construction time, so
+	// the slice is identical across every nextStep call. P1 in audit
+	// ledger (Sprint 6): previously rebuilt every step — ~50 tool defs
+	// × N steps re-serialised on each LLM request.
+	toolDefsOnce  sync.Once
+	toolDefsCache []llm.ToolDef
 }
 
 func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, opts Options) (*Agent, error) {
@@ -1250,10 +1259,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 // buildToolDefs returns the tool definitions for this agent run.
 // Uses CustomTools when set (child agents), otherwise picks based on Mode,
 // and appends ExtraTools (e.g. MCP server tools).
+// buildToolDefs returns the tool surface advertised to the LLM. Memoised
+// via toolDefsOnce because every input is fixed at agent construction
+// (mode, capability flags, skills, subtasks). P1 in audit ledger (Sprint 6).
 func (a *Agent) buildToolDefs() []llm.ToolDef {
 	if len(a.opts.CustomTools) > 0 {
 		return a.opts.CustomTools
 	}
+	a.toolDefsOnce.Do(func() {
+		a.toolDefsCache = a.computeToolDefs()
+	})
+	return a.toolDefsCache
+}
+
+func (a *Agent) computeToolDefs() []llm.ToolDef {
 	allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
 	allowWeb := a.opts.AllowWeb
 	allowBrowser := a.opts.AllowBrowser
