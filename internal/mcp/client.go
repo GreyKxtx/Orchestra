@@ -86,6 +86,7 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = buildEnv(env)
+	setProcessGroup(cmd) // see proc_unix.go / proc_windows.go for H13 details
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -167,15 +168,16 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMe
 	return out, nil
 }
 
-// Close stops the MCP server subprocess.
+// Close stops the MCP server subprocess. After a 5s wait for graceful exit
+// (the server should react to stdin EOF) we kill the entire process tree —
+// see killProcessTree / setProcessGroup for the H13 rationale (npx → node
+// orphans on Windows, unkilled children on Unix without Setpgid).
 func (c *Client) Close() error {
 	_ = c.stdin.Close()
 	select {
 	case <-c.done:
 	case <-time.After(5 * time.Second):
-		if c.cmd.Process != nil {
-			_ = c.cmd.Process.Kill()
-		}
+		killProcessTree(c.cmd)
 		<-c.done
 	}
 	return c.cmd.Wait()
