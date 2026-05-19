@@ -194,6 +194,14 @@ type Options struct {
 	// to run a child agent with the named skill's prompt/tools/model/provider.
 	SkillRunner SkillRunner
 
+	// IsChild signals that this agent was spawned from another agent via
+	// task.spawn or skill_invoke and is expected to finish by emitting a
+	// `task_result` tool call. Main agents (set by CLI apply, JSON-RPC
+	// agent.run) leave this false — a `task_result` emitted by a main
+	// agent is treated as an invalid call (with a hint to the model) rather
+	// than terminating the run. H11 in audit ledger.
+	IsChild bool
+
 	// UserImages are PartImage entries attached to the *initial* user message.
 	// When non-empty the user message switches from string Content to
 	// multimodal Parts (the rendered userPrompt becomes a PartText, followed
@@ -357,15 +365,31 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		// Compaction: if history is getting large, summarise it before the next LLM call.
 		// Fires only at the top of the loop so history is always in a consistent state
 		// (no orphaned tool_calls without tool_results).
+		//
+		// H15 in audit ledger: convergence guard. The previous loop kept calling
+		// compactHistory every step when the summary itself still exceeded the
+		// threshold — each step burning an LLM call to produce a slightly larger
+		// summary-of-summary until MaxSteps tripped. We now (a) refuse to use a
+		// "compacted" result that didn't actually shrink history by at least 20%,
+		// and (b) fall back to plain truncateMessages when compaction declines
+		// to converge, breaking the loop on the very next step.
 		if a.opts.CompactThresholdPct > 0 && a.opts.MaxPromptBytes > 0 {
 			threshold := a.opts.MaxPromptBytes * a.opts.CompactThresholdPct / 100
 			if historyBytes(history) > threshold {
+				before := historyBytes(history)
 				compacted, compactErr := a.compactHistory(ctx, userQuery, history)
 				if compactErr != nil {
 					a.logf("compaction failed (non-fatal), continuing with truncation: %v", compactErr)
+					history = truncateMessages(history, a.opts.MaxPromptBytes)
 				} else {
-					a.logf("history compacted: %d bytes → %d bytes", historyBytes(history), historyBytes(compacted))
-					history = compacted
+					after := historyBytes(compacted)
+					if after*5 >= before*4 { // < 20% shrink
+						a.logf("compaction did not converge: %d → %d bytes (≥80%% retained); falling back to truncation", before, after)
+						history = truncateMessages(history, a.opts.MaxPromptBytes)
+					} else {
+						a.logf("history compacted: %d bytes → %d bytes", before, after)
+						history = compacted
+					}
 				}
 			}
 		}
@@ -573,6 +597,24 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 
 			// task.result: child agent reports its answer and exits immediately.
 			if name == "task_result" {
+				// H11 in audit ledger: task_result terminates the run with
+				// the supplied string. That's only valid for child agents
+				// (subtask / skill spawn). A main agent emitting task_result
+				// is a confused model trying to short-circuit — instead of
+				// terminating, push a hint back so it produces a normal
+				// final response on the next step.
+				if !a.opts.IsChild {
+					history = append(history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolCallID: toolCallID,
+						Content:    formatToolErrorJSON(name, step.Tool.Input, fmt.Errorf("task_result is only valid in subtask / skill_invoke child agents; main agents must emit a normal final response with patches")),
+					})
+					if cbErr := cb.RecordToolError(name); cbErr != nil {
+						return nil, nil, cbErr
+					}
+					emitStepDone("tool_call")
+					continue
+				}
 				var req struct {
 					Content string `json:"content"`
 				}
@@ -1494,9 +1536,50 @@ func formatResolveError(err error) string {
 	return "RESOLVE_ERROR\nerror=" + formatErr(err)
 }
 
-// formatResolveErrorCompact returns a compact resolve error message.
+// errorDataString pulls a string field out of a protocol.Error's Data
+// payload. Returns "" when the field is missing or not a string. Used by
+// the compact error formatters to surface the resolver's structured
+// context (path, matches count, hash) to the LLM.
+func errorDataString(pe *protocol.Error, key string) string {
+	if pe == nil || pe.Data == nil {
+		return ""
+	}
+	m, ok := pe.Data.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func errorDataInt(pe *protocol.Error, key string) int {
+	if pe == nil || pe.Data == nil {
+		return 0
+	}
+	m, ok := pe.Data.(map[string]any)
+	if !ok {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
+// formatResolveErrorCompact returns a compact resolve error message. H1
+// fix: include path from the resolver's Data payload so the model knows
+// which file to re-read instead of guessing across a multi-file patch.
 func formatResolveErrorCompact(err error) string {
 	if pe, ok := protocol.AsError(err); ok {
+		path := errorDataString(pe, "path")
+		if path != "" {
+			return fmt.Sprintf("RESOLVE_ERROR code=%s path=%s\nПеречитай файл (fs.read) и обнови file_hash в патче.", pe.Code, path)
+		}
 		return fmt.Sprintf("RESOLVE_ERROR code=%s\nПеречитай файл (fs.read) и обнови file_hash в патче.", pe.Code)
 	}
 	return "RESOLVE_ERROR code=unknown\nerror=" + err.Error() + "\nПеречитай файл (fs.read) и обнови file_hash в патче."
@@ -1506,19 +1589,47 @@ func formatApplyError(err error) string {
 	return "APPLY_ERROR\nerror=" + formatErr(err)
 }
 
-// formatApplyErrorCompact returns a compact apply error message with actionable hint.
+// formatApplyErrorCompact returns a compact apply error message with
+// actionable hint. H1 fix (audit ledger): include path + matches count
+// from the resolver's structured Data payload so the LLM gets to pinpoint
+// the failing file in a multi-file patch and knows how many ambiguous
+// hits it needs to disambiguate. Previously the hint was a single
+// "файл изменился" line with zero specifics — the biggest single driver
+// of retry-loop bloat in observed runs.
 func formatApplyErrorCompact(err error, code protocol.ErrorCode) string {
-	if code == protocol.StaleContent {
-		return "APPLY_ERROR code=StaleContent\nФайл изменился. Перечитай файл (fs.read) и обнови патч с новым file_hash."
+	pe, _ := protocol.AsError(err)
+	path := errorDataString(pe, "path")
+	pathSuffix := ""
+	if path != "" {
+		pathSuffix = " path=" + path
 	}
-	if code == protocol.AmbiguousMatch {
-		return "APPLY_ERROR code=AmbiguousMatch\nПоиск неоднозначен. Уточни search-блок в патче (добавь больше контекста)."
+	switch code {
+	case protocol.StaleContent:
+		return "APPLY_ERROR code=StaleContent" + pathSuffix +
+			"\nФайл изменился. Перечитай файл (fs.read) и обнови патч с новым file_hash."
+	case protocol.AmbiguousMatch:
+		matches := errorDataInt(pe, "matches")
+		if matches > 0 {
+			return fmt.Sprintf("APPLY_ERROR code=AmbiguousMatch%s matches=%d\nПоиск неоднозначен (%d совпадений). Уточни search-блок: добавь 2-3 строки контекста до или после.", pathSuffix, matches, matches)
+		}
+		return "APPLY_ERROR code=AmbiguousMatch" + pathSuffix +
+			"\nПоиск неоднозначен. Уточни search-блок в патче (добавь больше контекста)."
 	}
 	return "APPLY_ERROR code=unknown\nerror=" + formatErr(err)
 }
 
+// maxLSPErrorsInjected caps how many diagnostics are pasted back into the
+// agent's history after a write/edit. A syntax error that cascades into
+// hundreds of parser errors (large generated TS file, broken Go go.mod)
+// would otherwise blow MaxPromptBytes and force aggressive truncation —
+// the model loses useful context and the diagnostics themselves still
+// don't all fit. H2 in audit ledger.
+const maxLSPErrorsInjected = 20
+
 // extractLSPErrors parses a write/edit tool response JSON and returns a
 // user-facing hint if diagnostics with severity "error" are present.
+// Capped at maxLSPErrorsInjected entries — additional errors are
+// summarised as "...N more" so the model knows the report is partial.
 // Returns "" if there are no errors (warnings and info are silently ignored).
 func extractLSPErrors(out json.RawMessage) string {
 	if len(out) == 0 {
@@ -1536,16 +1647,25 @@ func extractLSPErrors(out json.RawMessage) string {
 		return ""
 	}
 	var errs []string
+	total := 0
 	for _, d := range resp.Diagnostics {
-		if d.Severity == "error" {
+		if d.Severity != "error" {
+			continue
+		}
+		total++
+		if len(errs) < maxLSPErrorsInjected {
 			errs = append(errs, fmt.Sprintf("  line %d:%d: %s", d.StartLine, d.StartCol, d.Message))
 		}
 	}
-	if len(errs) == 0 {
+	if total == 0 {
 		return ""
 	}
+	body := strings.Join(errs, "\n")
+	if total > maxLSPErrorsInjected {
+		body += fmt.Sprintf("\n  …и ещё %d ошибок (показаны первые %d)", total-maxLSPErrorsInjected, maxLSPErrorsInjected)
+	}
 	return "LSP_ERRORS: файл записан с ошибками компиляции:\n" +
-		strings.Join(errs, "\n") +
+		body +
 		"\nИсправь ошибки и вызови edit или write ещё раз — не используй patches."
 }
 
