@@ -87,7 +87,7 @@ orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced t
 `Runner` enforces `project_root` containment, `exec.run` timeout/output caps, and per-tool permission rules from `cfg.Permissions.Rules` (allow/deny by tool name + glob path).
 
 **Safety invariants** (from `.cursor/rules/projectrules.mdc` — treat as binding):
-- All disk writes are atomic: temp file → fsync → rename. Use `daemon.AtomicWriteFile` for artifacts; the ops applier handles file content.
+- All disk writes are atomic: temp file → fsync → rename. Use `fsutil.AtomicWriteFile` for artifacts; the ops applier handles file content.
 - Never read or write outside `project_root`. Resolve symlinks/junctions and fail closed on escape.
 - `file.replace_range` requires `before_anchor` + `after_anchor`; mismatched/ambiguous → fail with diagnostic, not best-effort.
 - `apply` is dry-run unless `--apply` (or `agent.run` `apply: true`); on write, backup to `*.orchestra.bak` by default.

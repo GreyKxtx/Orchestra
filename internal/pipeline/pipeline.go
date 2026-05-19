@@ -32,7 +32,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	configpkg "github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/daemon"
+	"github.com/orchestra/orchestra/internal/fsutil"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
@@ -529,7 +529,7 @@ func saveArtifact(workspaceRoot, name, content string) {
 	dir := filepath.Join(workspaceRoot, ".orchestra")
 	_ = os.MkdirAll(dir, 0o755)
 	path := filepath.Join(dir, name)
-	_ = daemon.AtomicWriteFile(path, []byte(content), 0o644)
+	_ = fsutil.AtomicWriteFile(path, []byte(content), 0o644)
 }
 
 // formatRuntimeEvidence converts a RuntimeQueryResponse into a <runtime_evidence> prompt block.
