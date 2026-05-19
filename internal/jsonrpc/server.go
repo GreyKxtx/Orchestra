@@ -22,15 +22,24 @@ type Server struct {
 	r *Reader
 	w *Writer
 
+	// pending tracks server-initiated requests awaiting a client reply.
+	// Keys are sequential `nextID`s (server's own namespace), values are
+	// the channel the Notify-or-Call caller blocks on. Used by srvWireMsg
+	// interception in Serve to route client responses back to their
+	// originator.
 	pMu     sync.Mutex
 	nextID  int
 	pending map[string]chan clientReply
 
-	// inFlightMu guards inFlight, which maps a normalised in-flight client
-	// request id ("42" or `"abc"` with quotes stripped) to its dispatch ctx
-	// CancelFunc. Populated when Serve dispatches a non-notification request,
-	// drained when Handle returns. A `$/cancelRequest` notification looks up
-	// the id here and calls the cancel.
+	// inFlight tracks client-initiated requests currently being handled.
+	// Keys are normalised ids the CLIENT chose (its namespace), values are
+	// the per-request CancelFunc that `$/cancelRequest` invokes.
+	//
+	// S4 in audit ledger (Sprint 6): pending and inFlight live in DIFFERENT
+	// id namespaces — merging them into one map would couple unrelated
+	// lifecycles and let a client id collide with a server-allocated id.
+	// They're deliberately kept separate; the only cost is an extra mutex
+	// that's never held during dispatch.
 	inFlightMu sync.Mutex
 	inFlight   map[string]context.CancelFunc
 
