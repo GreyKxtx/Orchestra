@@ -55,3 +55,43 @@ func TestCircuitBreaker_BatchMixedSuccessResetsErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestCircuitBreaker_ResetDeniedForTool — N3 in audit ledger (Sprint 6).
+// A successful call must reset that tool's denial counter so a permission
+// rule change (skill_invoke --allow-exec, runtime config reload) doesn't
+// inherit an old denial streak.
+func TestCircuitBreaker_ResetDeniedForTool(t *testing.T) {
+	cb := NewCircuitBreaker(2, 6, 6, 3)
+
+	if err := cb.RecordDenied("exec.run"); err != nil {
+		t.Fatalf("1st denial trip: %v", err)
+	}
+	if err := cb.RecordDenied("exec.run"); err != nil {
+		t.Fatalf("2nd denial trip: %v", err)
+	}
+	// Simulate the rule being lifted and a successful call:
+	cb.ResetDeniedForTool("exec.run")
+
+	// Now we should have a fresh budget of 2 more denials before tripping.
+	if err := cb.RecordDenied("exec.run"); err != nil {
+		t.Fatalf("after reset, 1st denial trip: %v", err)
+	}
+	if err := cb.RecordDenied("exec.run"); err != nil {
+		t.Fatalf("after reset, 2nd denial trip: %v", err)
+	}
+	if err := cb.RecordDenied("exec.run"); err == nil {
+		t.Fatal("after reset, 3rd denial must trip")
+	}
+
+	// Reset must be tool-scoped: another tool's denials aren't cleared.
+	cb2 := NewCircuitBreaker(2, 6, 6, 3)
+	_ = cb2.RecordDenied("exec.run")
+	_ = cb2.RecordDenied("bash")
+	cb2.ResetDeniedForTool("exec.run")
+	if err := cb2.RecordDenied("bash"); err != nil {
+		t.Fatalf("bash 2nd denial after exec reset shouldn't trip: %v", err)
+	}
+	if err := cb2.RecordDenied("bash"); err == nil {
+		t.Fatal("bash 3rd denial must trip (exec.run reset is scoped)")
+	}
+}
