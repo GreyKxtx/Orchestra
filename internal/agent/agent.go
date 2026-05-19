@@ -1250,16 +1250,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	})
 }
 
-// buildToolDefs returns the tool definitions for this agent run.
-// Uses CustomTools when set (child agents), otherwise picks based on Mode,
-// and appends ExtraTools (e.g. MCP server tools).
-// buildToolDefs returns the tool surface advertised to the LLM. Memoised
-// via toolDefsOnce because every input is fixed at agent construction
-// (mode, capability flags, skills, subtasks). P1 in audit ledger (Sprint 6).
+// buildToolDefs returns the tool surface advertised to the LLM.
+//
+// Composition (H3 in architecture audit): CustomTools, when set, is the
+// authoritative BASE — child agents use it to lock the surface down to a
+// known read-only set. ExtraTools (MCP servers, plugin-provided tools)
+// and the skill_invoke tool are ALWAYS appended on top so they remain
+// available to child agents and skill-using agents. Previously
+// CustomTools short-circuited the function and ExtraTools were silently
+// dropped, making MCP invisible to any child agent.
+//
+// The result is memoised via toolDefsOnce because every input is fixed
+// at agent construction (mode, capability flags, skills, subtasks).
+// P1 in audit ledger (Sprint 6).
 func (a *Agent) buildToolDefs() []llm.ToolDef {
-	if len(a.opts.CustomTools) > 0 {
-		return a.opts.CustomTools
-	}
 	a.toolDefsOnce.Do(func() {
 		a.toolDefsCache = a.computeToolDefs()
 	})
@@ -1267,19 +1271,25 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 }
 
 func (a *Agent) computeToolDefs() []llm.ToolDef {
-	allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
-	allowWeb := a.opts.AllowWeb
-	allowBrowser := a.opts.AllowBrowser
-	hasSubtasks := a.opts.SubtaskRunner != nil
-	hasQA := a.opts.QuestionAsker != nil
-
 	var base []llm.ToolDef
-	if a.opts.Mode != "" {
-		base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, allowBrowser, hasSubtasks, hasQA)
-	} else if hasSubtasks {
-		base = tools.ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
+	if len(a.opts.CustomTools) > 0 {
+		// CustomTools replaces the mode-derived base; ExtraTools / skills
+		// are still appended below.
+		base = append(base, a.opts.CustomTools...)
 	} else {
-		base = tools.ListTools(allowExec, allowWeb, allowBrowser)
+		allowExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
+		allowWeb := a.opts.AllowWeb
+		allowBrowser := a.opts.AllowBrowser
+		hasSubtasks := a.opts.SubtaskRunner != nil
+		hasQA := a.opts.QuestionAsker != nil
+		switch {
+		case a.opts.Mode != "":
+			base = tools.ListToolsForMode(a.opts.Mode, allowExec, allowWeb, allowBrowser, hasSubtasks, hasQA)
+		case hasSubtasks:
+			base = tools.ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser)
+		default:
+			base = tools.ListTools(allowExec, allowWeb, allowBrowser)
+		}
 	}
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
