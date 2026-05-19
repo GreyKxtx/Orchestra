@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orchestra/orchestra/internal/subproc"
 )
 
 type callResult struct {
@@ -44,10 +46,11 @@ type Client struct {
 	docMu       sync.Mutex
 	docVersions map[string]int // uri → current version
 
-	// stderrMu guards stderrBuf (M18 in audit ledger). drainStderr appends;
-	// StderrTail and Close both read.
-	stderrMu  sync.Mutex
-	stderrBuf []byte
+	// stderr is a bounded ring (default 64 KiB) carrying the server's
+	// most recent stderr output. M18 + S1 in audit ledger: shared with
+	// MCP via internal/subproc.StderrRing — used to be a per-package
+	// re-implementation here and in mcp/client.go.
+	stderr *subproc.StderrRing
 
 	// notifyDropped counts publishDiagnostics / etc. notifications that were
 	// dropped because notifyCh was full (M19). Read via DroppedNotifications.
@@ -57,42 +60,10 @@ type Client struct {
 	DiagCache *DiagnosticsCache
 }
 
-// stderrRingSize caps the per-Client stderr ring buffer (M18). 64 KiB
-// preserves the most recent server output for debugging without unbounded
-// growth across long sessions.
-const stderrRingSize = 64 * 1024
-
-// drainStderr reads the server's stderr in a loop and keeps the most
-// recent stderrRingSize bytes in a ring buffer. Runs in its own goroutine
-// for the lifetime of the connection. Empty no-op if r is nil.
-func (c *Client) drainStderr(r io.Reader) {
-	if r == nil {
-		return
-	}
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			c.stderrMu.Lock()
-			c.stderrBuf = append(c.stderrBuf, buf[:n]...)
-			if len(c.stderrBuf) > stderrRingSize {
-				drop := len(c.stderrBuf) - stderrRingSize
-				c.stderrBuf = c.stderrBuf[drop:]
-			}
-			c.stderrMu.Unlock()
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
 // StderrTail returns the last <=64 KiB of the server's stderr output.
 // Use for diagnostics surfacing — e.g. logging when the server crashes.
 func (c *Client) StderrTail() string {
-	c.stderrMu.Lock()
-	defer c.stderrMu.Unlock()
-	return string(c.stderrBuf)
+	return c.stderr.Tail()
 }
 
 // DroppedNotifications reports how many publishDiagnostics / etc. messages
@@ -112,6 +83,7 @@ func newClient(name string, cmd *exec.Cmd, r io.Reader, w io.WriteCloser) *Clien
 		posEncoding: "utf-16", // conservative default until initialize
 		docVersions: make(map[string]int),
 		readDone:    make(chan struct{}),
+		stderr:      subproc.NewStderrRing(0),
 	}
 	go c.readLoop()
 	return c
@@ -134,10 +106,11 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
-	// H13 parity (audit ledger): start the LSP server in its own process
-	// group so killProcessTree (in Close) reaches every descendant. tsserver,
-	// pyright, etc. spawn helpers that would otherwise survive shutdown.
-	setProcessGroup(cmd)
+	// H13 parity (audit ledger) + S2 consolidation: start the LSP server in
+	// its own process group so subproc.KillProcessTree (in Close) reaches
+	// every descendant. tsserver, pyright, etc. spawn helpers that would
+	// otherwise survive shutdown.
+	subproc.SetProcessGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("lsp: stdin pipe for %q: %w", name, err)
@@ -163,7 +136,7 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 	c := newClient(name, cmd, stdout, stdin)
 	// Drain stderr into the ring buffer in its own goroutine so the
 	// subprocess's stderr pipe never fills and blocks the server.
-	go c.drainStderr(stderrPipe)
+	go c.stderr.Drain(stderrPipe)
 	if err := c.initialize(ctx, rootURI, initOptions); err != nil {
 		_ = c.Close()
 		return nil, fmt.Errorf("lsp: initialize %q: %w", name, err)
@@ -384,9 +357,10 @@ func (c *Client) Close() error {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			// H13 parity (audit ledger): kill the process tree so helpers
-			// the LSP server spawned (tsc, builders) don't survive.
-			killProcessTree(c.cmd)
+			// H13 parity (audit ledger) + S2 consolidation: kill the process
+			// tree so helpers the LSP server spawned (tsc, builders) don't
+			// survive.
+			subproc.KillProcessTree(c.cmd)
 		}
 	}
 	// M21 in audit ledger: wait for readLoop to fully exit so any in-flight
