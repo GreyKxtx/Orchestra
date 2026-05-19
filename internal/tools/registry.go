@@ -9,6 +9,56 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 )
 
+// appendExecTools adds bash + git-mutating + gh-mutating tools to out.
+// Extracted in S3 (audit ledger, Sprint 6) so ListTools / listToolsBuild /
+// listToolsGeneral share one definition instead of three copies that
+// could drift independently.
+func appendExecTools(out []llm.ToolDef) []llm.ToolDef {
+	out = append(out, toolExecRun(), toolExecBashOutput(), toolExecBashKill())
+	out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
+	out = append(out,
+		toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
+		toolGHIssueList(), toolGHIssueView(),
+	)
+	return out
+}
+
+// appendWebTools adds web fetch + search tools to out. S3 in audit ledger.
+func appendWebTools(out []llm.ToolDef) []llm.ToolDef {
+	return append(out, toolWebFetch(), toolWebSearch())
+}
+
+// appendBrowserTools adds the 10 Playwright-MCP browser tools to out.
+// S3 in audit ledger.
+func appendBrowserTools(out []llm.ToolDef) []llm.ToolDef {
+	return append(out,
+		toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
+		toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
+		toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
+	)
+}
+
+// appendSubtaskTools adds task.spawn/wait/cancel to out. S3 in audit ledger.
+func appendSubtaskTools(out []llm.ToolDef) []llm.ToolDef {
+	return append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+}
+
+// appendCapabilityTools layers exec / web / browser conditionally — the
+// flag pattern repeated across ListTools, listToolsBuild and
+// listToolsGeneral collapses to one call. S3 in audit ledger.
+func appendCapabilityTools(out []llm.ToolDef, allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
+	if allowExec {
+		out = appendExecTools(out)
+	}
+	if allowWeb {
+		out = appendWebTools(out)
+	}
+	if allowBrowser {
+		out = appendBrowserTools(out)
+	}
+	return out
+}
+
 // ListTools returns OpenAI-compatible tool definitions (JSON Schema), filtered by policy.
 // Only tools returned here may be exposed to the model.
 func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
@@ -39,26 +89,7 @@ func ListTools(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 		toolGitLog(),
 		toolGitDiff(),
 	}
-	if allowExec {
-		out = append(out, toolExecRun())
-		out = append(out, toolExecBashOutput(), toolExecBashKill())
-		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
-		out = append(out,
-			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
-			toolGHIssueList(), toolGHIssueView(),
-		)
-	}
-	if allowWeb {
-		out = append(out, toolWebFetch())
-		out = append(out, toolWebSearch())
-	}
-	if allowBrowser {
-		out = append(out,
-			toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
-			toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
-			toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
-		)
-	}
+	out = appendCapabilityTools(out, allowExec, allowWeb, allowBrowser)
 	return applyParallelFlags(out)
 }
 
@@ -512,7 +543,7 @@ func toolTodoRead() llm.ToolDef {
 // ListToolsWithSubtasks returns tools including task.spawn/wait/cancel for parent agents.
 func ListToolsWithSubtasks(allowExec, allowWeb, allowBrowser bool) []llm.ToolDef {
 	out := ListTools(allowExec, allowWeb, allowBrowser)
-	out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	out = appendSubtaskTools(out)
 	return applyParallelFlags(out)
 }
 
@@ -561,28 +592,9 @@ func listToolsBuild(allowExec, allowWeb, allowBrowser, hasSubtasks, hasQuestionA
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
-	if allowExec {
-		out = append(out, toolExecRun())
-		out = append(out, toolExecBashOutput(), toolExecBashKill())
-		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
-		out = append(out,
-			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
-			toolGHIssueList(), toolGHIssueView(),
-		)
-	}
-	if allowWeb {
-		out = append(out, toolWebFetch())
-		out = append(out, toolWebSearch())
-	}
-	if allowBrowser {
-		out = append(out,
-			toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
-			toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
-			toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
-		)
-	}
+	out = appendCapabilityTools(out, allowExec, allowWeb, allowBrowser)
 	if hasSubtasks {
-		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
 		out = append(out, toolQuestion())
@@ -600,7 +612,7 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		// lsp.rename excluded: plan mode is read-only.
 	}
 	if hasSubtasks {
-		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
 		out = append(out, toolQuestion())
@@ -628,28 +640,9 @@ func listToolsGeneral(allowExec, allowWeb, allowBrowser, hasSubtasks bool) []llm
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
-	if allowExec {
-		out = append(out, toolExecRun())
-		out = append(out, toolExecBashOutput(), toolExecBashKill())
-		out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
-		out = append(out,
-			toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
-			toolGHIssueList(), toolGHIssueView(),
-		)
-	}
-	if allowWeb {
-		out = append(out, toolWebFetch())
-		out = append(out, toolWebSearch())
-	}
-	if allowBrowser {
-		out = append(out,
-			toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
-			toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
-			toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
-		)
-	}
+	out = appendCapabilityTools(out, allowExec, allowWeb, allowBrowser)
 	if hasSubtasks {
-		out = append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+		out = appendSubtaskTools(out)
 	}
 	return applyParallelFlags(out)
 }
