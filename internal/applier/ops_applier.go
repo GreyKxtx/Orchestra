@@ -307,6 +307,47 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 		return result, nil
 	}
 
+	// TOCTOU re-validation (N2 in audit ledger, Sprint 6).
+	//
+	// The cross-process apply lock (acquireProjectLock) keeps two Orchestra
+	// processes from racing each other, but a NON-Orchestra writer (vim,
+	// IDE auto-save, build tool) can mutate a file between loadPlan reading
+	// it above and atomicWriteFile below. If we noticed that during planning
+	// (file_hash check at lines 257-264 and 395-399), we'd already have
+	// returned StaleContent — but the planning read happened earlier, and
+	// the mutation could land in the gap. Re-hash each modified file right
+	// before we touch it and bail before any write if it has drifted.
+	for _, rel := range paths {
+		fp := plans[rel]
+		if bytes.Equal(fp.before, fp.after) {
+			// We're not going to write this file (no change planned), so
+			// drift here doesn't matter.
+			continue
+		}
+		current, statErr := os.ReadFile(fp.abs)
+		switch {
+		case statErr == nil:
+			if !fp.exists {
+				return nil, protocol.NewError(protocol.StaleContent,
+					"file created between plan and apply",
+					map[string]any{"path": rel})
+			}
+			if cache.ComputeSHA256(current) != cache.ComputeSHA256(fp.before) {
+				return nil, protocol.NewError(protocol.StaleContent,
+					"file changed between plan and apply",
+					map[string]any{"path": rel})
+			}
+		case os.IsNotExist(statErr):
+			if fp.exists {
+				return nil, protocol.NewError(protocol.StaleContent,
+					"file deleted between plan and apply",
+					map[string]any{"path": rel})
+			}
+		default:
+			return nil, fmt.Errorf("revalidate %s: %w", rel, statErr)
+		}
+	}
+
 	// Apply mkdir_all (sorted for determinism).
 	mkdirPaths := make([]string, 0, len(mkdirByPath))
 	for p := range mkdirByPath {
