@@ -1,3 +1,14 @@
+// Package lmstudio is a thin client for LM Studio's *server management*
+// endpoints (model list, model load) — NOT for LLM chat completions.
+//
+// Distinct from internal/llm/, which talks to /v1/chat/completions via
+// an OpenAI-compatible provider abstraction. This package owns LM
+// Studio's product-specific endpoints (/api/v0/models, /api/v1/models/
+// load) that have no analogue in other providers. Merging the two
+// packages was considered (M1 in architecture audit) and rejected:
+// they have different lifecycle, different consumers (this is used by
+// the TUI onboarding + model dialog, not by the agent loop), and
+// different cardinality (one LM Studio per host, many LLM providers).
 package lmstudio
 
 import (
