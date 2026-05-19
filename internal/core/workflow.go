@@ -110,7 +110,7 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 			fmt.Sprintf("workflow %q not found", params.Name), nil)
 	}
 
-	discoveredSkills, err := skills.Discover(c.workspaceRoot)
+	discoveredSkills, err := skills.DiscoverCached(c.workspaceRoot)
 	if err != nil {
 		return nil, fmt.Errorf("discover skills: %w", err)
 	}

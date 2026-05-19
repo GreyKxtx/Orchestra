@@ -35,7 +35,7 @@ func (c *Core) SkillList(_ SkillListParams) (*SkillListResult, error) {
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	ss, err := skills.Discover(c.workspaceRoot)
+	ss, err := skills.DiscoverCached(c.workspaceRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		return nil, protocol.NewError(protocol.InvalidParams, "skill arguments are empty", nil)
 	}
 
-	ss, err := skills.Discover(c.workspaceRoot)
+	ss, err := skills.DiscoverCached(c.workspaceRoot)
 	if err != nil {
 		return nil, fmt.Errorf("discover skills: %w", err)
 	}

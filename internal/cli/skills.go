@@ -89,7 +89,7 @@ func init() {
 // prints a table of discovered skills to w. A missing or empty source
 // is not an error.
 func RunSkillsList(projectRoot string, w io.Writer) error {
-	all, err := skills.Discover(projectRoot)
+	all, err := skills.DiscoverCached(projectRoot)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func RunSkillsList(projectRoot string, w io.Writer) error {
 
 // RunSkillsShow prints the full skill definition for name.
 func RunSkillsShow(projectRoot, name string, w io.Writer) error {
-	all, err := skills.Discover(projectRoot)
+	all, err := skills.DiscoverCached(projectRoot)
 	if err != nil {
 		return err
 	}
