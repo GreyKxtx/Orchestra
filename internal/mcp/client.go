@@ -330,6 +330,13 @@ func (c *Client) listTools(ctx context.Context) ([]MCPTool, error) {
 
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := c.idSeq.Add(1)
+	// P3 in audit ledger (Sprint 6): pooling this chan via sync.Pool was
+	// evaluated and rejected. The race-safe recycle window is narrow
+	// (readLoop may send to the chan AFTER ctx.Done deleted pending[id],
+	// because the lookup-then-send sequence is not atomic) and the alloc
+	// is ~80 B per call. For typical MCP loads (<1k calls per server per
+	// session), GC pressure is negligible; the complexity of a drain-
+	// before-recycle barrier would outweigh the saving.
 	ch := make(chan rpcResponse, 1)
 
 	c.mu.Lock()
