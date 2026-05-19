@@ -14,9 +14,25 @@ import (
 )
 
 // Manager starts and manages multiple MCP server connections.
+//
+// M26 in audit ledger: each client is paired with its original config so
+// Manager.Call can lazy-restart a server whose subprocess died mid-session
+// (capped at maxMCPRestarts per server per Manager lifetime). The cached
+// tools list is refreshed on restart; if the post-restart schema differs
+// from the pre-restart cache, a warning is logged so the operator can
+// notice a server that's silently rotating its surface.
 type Manager struct {
-	clients []*Client
+	mu       sync.Mutex
+	clients  []*Client
+	entries  []*serverSlot
 }
+
+type serverSlot struct {
+	cfg          config.MCPServerConfig
+	restartCount int
+}
+
+const maxMCPRestarts = 3
 
 // mcpStartTimeout caps each server's initialize+listTools handshake so a
 // stuck server cannot block Core / apply startup. C5 in audit ledger.
@@ -53,7 +69,14 @@ func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 			defer wg.Done()
 			startCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
 			defer cancel()
-			c, err := Start(startCtx, srv.Name, srv.Command, srv.Env)
+			var opts StartOptions
+			if srv.CallTimeoutS > 0 {
+				opts.CallTimeout = time.Duration(srv.CallTimeoutS) * time.Second
+			}
+			c, err := Start(startCtx, srv.Name, srv.Command, srv.Env, opts)
+			if c != nil && len(srv.AllowedTools) > 0 {
+				c.SetAllowedTools(srv.AllowedTools)
+			}
 			results[idx] = startRes{idx: idx, c: c, err: err}
 		}(i, srv)
 	}
@@ -66,6 +89,7 @@ func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 			continue
 		}
 		m.clients = append(m.clients, r.c)
+		m.entries = append(m.entries, &serverSlot{cfg: enabled[i]})
 	}
 	return m, errs
 }
@@ -118,6 +142,9 @@ func (m *Manager) ListToolDefs() []llm.ToolDef {
 }
 
 // Call routes "mcp:<server>:<tool>" calls to the appropriate server.
+// M26 in audit ledger: when the target client's subprocess has died, an
+// auto-restart is attempted (capped) before failing the call. A successful
+// restart re-runs the same call once; further failures bubble up.
 func (m *Manager) Call(ctx context.Context, prefixedName string, input json.RawMessage) (json.RawMessage, error) {
 	serverName, toolName, err := parseMCPToolName(prefixedName)
 	if err != nil {
@@ -127,12 +154,91 @@ func (m *Manager) Call(ctx context.Context, prefixedName string, input json.RawM
 	if c == nil {
 		return nil, fmt.Errorf("mcp server %q not found", serverName)
 	}
+	if c.IsDead() {
+		newClient, restartErr := m.maybeRestart(ctx, serverName)
+		if restartErr != nil {
+			return nil, fmt.Errorf("mcp server %q died and restart failed: %w", serverName, restartErr)
+		}
+		c = newClient
+	}
 	result, err := c.Call(ctx, toolName, input)
 	if err != nil {
 		return nil, err
 	}
 	out, _ := json.Marshal(map[string]string{"result": result})
 	return out, nil
+}
+
+// maybeRestart re-spawns a dead MCP client using its original config.
+// Returns the fresh client on success. Capped at maxMCPRestarts per
+// server per Manager lifetime so a permanently-broken server doesn't
+// loop forever. On restart, the new tool list is compared with the
+// cached one and a warning is logged on schema drift.
+func (m *Manager) maybeRestart(ctx context.Context, serverName string) (*Client, error) {
+	m.mu.Lock()
+	var slot *serverSlot
+	var idx int
+	for i, c := range m.clients {
+		if c.ServerName() == serverName {
+			slot = m.entries[i]
+			idx = i
+			break
+		}
+	}
+	if slot == nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("no slot for server %q", serverName)
+	}
+	if slot.restartCount >= maxMCPRestarts {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("server %q exceeded max restarts (%d)", serverName, maxMCPRestarts)
+	}
+	slot.restartCount++
+	cfg := slot.cfg
+	oldClient := m.clients[idx]
+	m.mu.Unlock()
+
+	// Spawn outside the lock so concurrent calls to other servers don't
+	// block on a slow restart handshake.
+	startCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
+	defer cancel()
+	var opts StartOptions
+	if cfg.CallTimeoutS > 0 {
+		opts.CallTimeout = time.Duration(cfg.CallTimeoutS) * time.Second
+	}
+	fresh, err := Start(startCtx, cfg.Name, cfg.Command, cfg.Env, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.AllowedTools) > 0 {
+		fresh.SetAllowedTools(cfg.AllowedTools)
+	}
+
+	// Schema drift warning: compare bare tool names of old vs new.
+	if oldClient != nil && !sameToolNames(oldClient.tools, fresh.tools) {
+		fmt.Fprintf(os.Stderr, "mcp: server %q restarted with different tool list; agents may receive stale cached schemas until next ListToolDefs\n", serverName)
+	}
+
+	m.mu.Lock()
+	m.clients[idx] = fresh
+	m.mu.Unlock()
+	return fresh, nil
+}
+
+func sameToolNames(a, b []MCPTool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]bool, len(a))
+	for _, t := range a {
+		seen[t.Name] = true
+	}
+	for _, t := range b {
+		if !seen[t.Name] {
+			return false
+		}
+	}
+	return true
 }
 
 // IsMCPTool reports whether a tool name is an MCP-prefixed tool.

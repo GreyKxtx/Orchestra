@@ -176,6 +176,19 @@ type MCPServerConfig struct {
 	Env map[string]string `yaml:"env,omitempty"`
 	// Disabled skips this server without removing it from the config.
 	Disabled bool `yaml:"disabled,omitempty"`
+
+	// CallTimeoutS caps a single tools/call duration in seconds. 0 or
+	// negative = no per-call timeout (relies on the caller's ctx only).
+	// Useful when an MCP server may hang on a slow tool — a single agent
+	// step would otherwise wait on the caller's much larger context
+	// timeout. M27 in audit ledger.
+	CallTimeoutS int `yaml:"call_timeout_s,omitempty"`
+
+	// AllowedTools, if non-empty, restricts which tools from this server
+	// are exposed to the agent. Tool names match the bare MCP tool name
+	// (not the prefixed `mcp:server:tool` form). Globs supported via
+	// `path.Match`. Nil/empty = expose every tool. M31 in audit ledger.
+	AllowedTools []string `yaml:"allowed_tools,omitempty"`
 }
 
 // MCPConfig holds the list of MCP servers to connect to.
