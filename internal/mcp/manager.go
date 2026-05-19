@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -74,13 +75,18 @@ func (m *Manager) IsEmpty() bool {
 	return m == nil || len(m.clients) == 0
 }
 
-// Close stops all MCP server subprocesses.
+// Close stops all MCP server subprocesses, logging any errors per server.
+// M33 in audit ledger: previously `_ = c.Close()` discarded the kill-
+// after-timeout error and cmd.Wait() result, hiding zombie / failed-kill
+// outcomes from the operator.
 func (m *Manager) Close() {
 	if m == nil {
 		return
 	}
 	for _, c := range m.clients {
-		_ = c.Close()
+		if err := c.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp: server %q close: %v\n", c.ServerName(), err)
+		}
 	}
 }
 
