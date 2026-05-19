@@ -70,6 +70,46 @@ type Client struct {
 	writeMu sync.Mutex
 	pending map[int64]chan rpcResponse
 	done    chan struct{}
+
+	// stderrMu guards stderrBuf — drainStderr appends, StderrTail reads.
+	// L9 in audit ledger.
+	stderrMu  sync.Mutex
+	stderrBuf []byte
+}
+
+const stderrRingSize = 64 * 1024
+
+// drainStderr reads the server's stderr forever, keeping the most recent
+// stderrRingSize bytes in a ring buffer. Runs in its own goroutine.
+func (c *Client) drainStderr(r io.Reader) {
+	if r == nil {
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			c.stderrMu.Lock()
+			c.stderrBuf = append(c.stderrBuf, buf[:n]...)
+			if len(c.stderrBuf) > stderrRingSize {
+				drop := len(c.stderrBuf) - stderrRingSize
+				c.stderrBuf = c.stderrBuf[drop:]
+			}
+			c.stderrMu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// StderrTail returns the last <=64 KiB of the MCP server's stderr — useful
+// for surfacing crash dumps / npm-install errors / etc. without polluting
+// Orchestra's own stderr.
+func (c *Client) StderrTail() string {
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	return string(c.stderrBuf)
 }
 
 // Start spawns the MCP server and performs the initialize handshake.
@@ -96,6 +136,13 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 	if err != nil {
 		return nil, fmt.Errorf("mcp %q: stdout pipe: %w", name, err)
 	}
+	// L9 in audit ledger: capture server stderr into a per-Client ring
+	// buffer instead of inheriting Orchestra's stderr (mixing MCP server
+	// output with TUI / JSON-RPC over stdout). Mirrors the LSP M18 fix.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("mcp %q: stderr pipe: %w", name, err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("mcp %q: start: %w", name, err)
@@ -112,6 +159,7 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 	// Set a generous scan buffer for large tool descriptions.
 	c.stdout.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
+	go c.drainStderr(stderrPipe)
 	go c.readLoop()
 
 	// Initialize handshake.
