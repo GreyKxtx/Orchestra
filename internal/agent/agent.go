@@ -78,21 +78,44 @@ type SubtaskResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// Mode is the agent's execution-policy selector. M6 in architecture
+// audit elevated this from raw strings to a typed alias so the compiler
+// flags accidental mode comparisons against arbitrary strings; the
+// underlying type is still string so JSON / YAML / config flow is
+// unaffected.
+//
+// Unknown values are accepted by Options.Mode (no panic / no error) and
+// fall through to the build-mode default inside the tools registry —
+// this matches the pre-existing behaviour and keeps the CLI's silent-
+// fallback contract intact for ad-hoc / custom-agent modes that may
+// arrive later. Callers that need strict validation should use
+// IsKnownMode.
+type Mode string
+
 // Agent mode constants.
 const (
-	ModeBuild   = "build"   // default: full tool access
-	ModePlan    = "plan"    // read-only + plan tools
-	ModeExplore = "explore" // grep/glob/read only (subagent)
-
-	// ModeGeneral is a multi-step execution subagent: full read+write tools, returns via task_result.
-	ModeGeneral = "general"
-	// ModeCompaction is an internal agent that compresses conversation history into a summary.
-	ModeCompaction = "compaction"
-	// ModeTitle is an internal agent that generates a short task title from the user query.
-	ModeTitle = "title"
-	// ModeSummary is an internal agent that produces a brief summary of completed work.
-	ModeSummary = "summary"
+	ModeBuild      Mode = "build"      // default: full tool access
+	ModePlan       Mode = "plan"       // read-only + plan tools
+	ModeExplore    Mode = "explore"    // grep/glob/read only (subagent)
+	ModeGeneral    Mode = "general"    // multi-step execution subagent: full read+write tools, returns via task_result.
+	ModeCompaction Mode = "compaction" // internal: compresses history into a summary.
+	ModeTitle      Mode = "title"      // internal: generates a short task title from the user query.
+	ModeSummary    Mode = "summary"    // internal: produces a brief summary of completed work.
 )
+
+// knownModes is the closed set of modes registered in this package.
+// Used by IsKnownMode for callers that want a hard fail on a typo
+// instead of the registry's silent fall-through to build behaviour.
+var knownModes = map[Mode]bool{
+	ModeBuild: true, ModePlan: true, ModeExplore: true,
+	ModeGeneral: true, ModeCompaction: true, ModeTitle: true, ModeSummary: true,
+}
+
+// IsKnownMode reports whether m is a mode this package recognises.
+// Callers reading Options.Mode from user-provided config can use this
+// to surface a typo immediately rather than wait for the silent build
+// fallback to misclassify the run.
+func IsKnownMode(m Mode) bool { return knownModes[m] }
 
 type Options struct {
 	MaxSteps int
@@ -148,9 +171,12 @@ type Options struct {
 	// .orchestra/system.txt still takes precedence when present.
 	SystemPromptOverride string
 
-	// Mode selects the agent role: "build" (default), "plan" (read-only), "explore" (subagent).
-	// Empty string behaves identically to "build" for backward compatibility.
-	Mode string
+	// Mode selects the agent role. See the Mode constants
+	// (ModeBuild / ModePlan / ModeExplore / …) for the registered set.
+	// Empty string behaves identically to ModeBuild for backward
+	// compatibility; an unknown non-empty value also falls through to
+	// build (see IsKnownMode if you want strict rejection).
+	Mode Mode
 
 	// QuestionAsker, if non-nil, enables the question tool (interactive user Q&A).
 	// Use StdinQuestionAsker for direct CLI mode. Must be nil for orchestra core (stdio conflict).
@@ -1286,7 +1312,7 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		hasQA := a.opts.QuestionAsker != nil
 		switch {
 		case a.opts.Mode != "":
-			base = tools.ListToolsForMode(a.opts.Mode, caps, hasSubtasks, hasQA)
+			base = tools.ListToolsForMode(string(a.opts.Mode), caps, hasSubtasks, hasQA)
 		case hasSubtasks:
 			base = tools.ListToolsWithSubtasks(caps)
 		default:
@@ -1331,7 +1357,7 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 func (a *Agent) buildSystemPrompt() string {
 	// 1+2+3: base — first non-empty replacement wins (.orchestra/system.txt
 	// > Options.SystemPromptOverride > mode default).
-	prompt := promptpkg.BuildSystemPromptForMode(a.opts.Mode, a.opts.PromptFamily)
+	prompt := promptpkg.BuildSystemPromptForMode(string(a.opts.Mode), a.opts.PromptFamily)
 	if a.opts.SystemPromptOverride != "" {
 		prompt = a.opts.SystemPromptOverride
 	}

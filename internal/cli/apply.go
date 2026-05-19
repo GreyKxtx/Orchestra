@@ -587,7 +587,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Debug:                debugMode,
 			ResponseFormat:       respFmt,
 			PromptFamily:         cfg.LLM.PromptFamily,
-			Mode:                 agentMode,
+			Mode:                 agent.Mode(agentMode),
 			SystemPromptOverride: systemPromptOverride,
 			CustomTools:          customAgentTools,
 			ExtraTools:           mcpExtraTools,
@@ -922,7 +922,7 @@ func buildCLIRenderer() func(agent.AgentEvent) {
 // buildQuestionAsker returns a StdinQuestionAsker when mode requires it and stdin is a terminal.
 // Returns nil otherwise (disables the question tool) to avoid corrupting stdio JSON-RPC in core mode.
 func buildQuestionAsker(mode string) tools.QuestionAsker {
-	if mode == agent.ModePlan && isTTY() {
+	if agent.Mode(mode) == agent.ModePlan && isTTY() {
 		return &tools.StdinQuestionAsker{}
 	}
 	return nil
