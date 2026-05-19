@@ -330,6 +330,13 @@ type Agent struct {
 	// × N steps re-serialised on each LLM request.
 	toolDefsOnce  sync.Once
 	toolDefsCache []llm.ToolDef
+
+	// diags tracks LSP diagnostic fingerprints per file across write/
+	// edit attempts so a model that re-writes the same file with the
+	// same compile errors is detected even when its tool arguments
+	// differ. H7 in architecture audit: replaces the Sprint 6 prompt-
+	// only signal with a structural check.
+	diags *diagTracker
 }
 
 func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, opts Options) (*Agent, error) {
@@ -369,6 +376,7 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		tools:                toolRunner,
 		opts:                 opts,
 		justSwitchedFromPlan: opts.JustSwitchedFromPlan,
+		diags:                newDiagTracker(),
 	}, nil
 }
 
@@ -1008,10 +1016,22 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					})
 				}
 			}
-			// Inject LSP error hint so the model fixes compile errors in the next step.
+			// Inject LSP error hint so the model fixes compile errors in
+			// the next step. H7 in architecture audit: the diagnostic
+			// tracker compares the post-edit fingerprint against the
+			// previous attempt on the same file. When two consecutive
+			// write/edit attempts on a file produce identical errors
+			// the hint escalates to a "you re-wrote without changing
+			// anything" warning, which is more actionable than the
+			// generic "fix the errors" message.
 			if name == "write" || name == "edit" {
 				if hint := extractLSPErrors(out); hint != "" {
-					a.logf("lsp_hint name=%s injecting diagnostic hint", name)
+					path := extractWriteOrEditPath(step.Tool.Input)
+					streak := a.diags.Observe(path, fingerprintLSPErrors(out))
+					if streak >= 2 && path != "" {
+						hint = "LSP_ERRORS — твоя последняя правка на " + path + " не изменила диагностику (тот же набор ошибок №" + fmt.Sprint(streak) + "). Прекрати трогать этот файл write/edit'ом и сначала разберись в причине через lsp.references / lsp.hover / read.\n" + hint
+					}
+					a.logf("lsp_hint name=%s path=%s streak=%d injecting diagnostic hint", name, path, streak)
 					history = append(history, llm.Message{
 						Role:    llm.RoleUser,
 						Content: hint,
@@ -1022,6 +1042,11 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 							Content: "lsp_errors: " + name,
 						}})
 					}
+				} else {
+					// No errors after this write/edit — clear any prior streak
+					// for the file so a future regression doesn't carry over
+					// stale repeat count.
+					_ = a.diags.Observe(extractWriteOrEditPath(step.Tool.Input), "")
 				}
 			}
 			// Record call for future dedup checks. N6 (audit ledger,
