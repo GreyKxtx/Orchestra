@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orchestra/orchestra/internal/subproc"
 )
 
 const mcpProtocolVersion = "2024-11-05"
@@ -73,10 +75,10 @@ type Client struct {
 	pending     map[int64]chan rpcResponse
 	done        chan struct{}
 
-	// stderrMu guards stderrBuf — drainStderr appends, StderrTail reads.
-	// L9 in audit ledger.
-	stderrMu  sync.Mutex
-	stderrBuf []byte
+	// stderr is a bounded ring buffer carrying the server's recent stderr
+	// output. L9 + S1 in audit ledger: shared with LSP via subproc package
+	// so both packages don't carry the same drainStderr/StderrTail pair.
+	stderr *subproc.StderrRing
 
 	// allowedTools, if non-empty, restricts which tools from this server
 	// are advertised via Tools() and accepted in Call. Patterns support
@@ -85,39 +87,11 @@ type Client struct {
 	allowedTools []string
 }
 
-const stderrRingSize = 64 * 1024
-
-// drainStderr reads the server's stderr forever, keeping the most recent
-// stderrRingSize bytes in a ring buffer. Runs in its own goroutine.
-func (c *Client) drainStderr(r io.Reader) {
-	if r == nil {
-		return
-	}
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			c.stderrMu.Lock()
-			c.stderrBuf = append(c.stderrBuf, buf[:n]...)
-			if len(c.stderrBuf) > stderrRingSize {
-				drop := len(c.stderrBuf) - stderrRingSize
-				c.stderrBuf = c.stderrBuf[drop:]
-			}
-			c.stderrMu.Unlock()
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
 // StderrTail returns the last <=64 KiB of the MCP server's stderr — useful
 // for surfacing crash dumps / npm-install errors / etc. without polluting
 // Orchestra's own stderr.
 func (c *Client) StderrTail() string {
-	c.stderrMu.Lock()
-	defer c.stderrMu.Unlock()
-	return string(c.stderrBuf)
+	return c.stderr.Tail()
 }
 
 // Start spawns the MCP server and performs the initialize handshake.
@@ -143,7 +117,7 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = buildEnv(env)
-	setProcessGroup(cmd) // see proc_unix.go / proc_windows.go for H13 details
+	subproc.SetProcessGroup(cmd) // S2 consolidation; H13 rationale (audit ledger)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -177,11 +151,12 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 		callTimeout: so.CallTimeout,
 		pending:     make(map[int64]chan rpcResponse),
 		done:        make(chan struct{}),
+		stderr:      subproc.NewStderrRing(0),
 	}
 	// Set a generous scan buffer for large tool descriptions.
 	c.stdout.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
-	go c.drainStderr(stderrPipe)
+	go c.stderr.Drain(stderrPipe)
 	go c.readLoop()
 
 	// Initialize handshake.
@@ -313,14 +288,14 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMe
 
 // Close stops the MCP server subprocess. After a 5s wait for graceful exit
 // (the server should react to stdin EOF) we kill the entire process tree —
-// see killProcessTree / setProcessGroup for the H13 rationale (npx → node
-// orphans on Windows, unkilled children on Unix without Setpgid).
+// see subproc.KillProcessTree / SetProcessGroup for the H13 rationale
+// (npx → node orphans on Windows, unkilled children on Unix without Setpgid).
 func (c *Client) Close() error {
 	_ = c.stdin.Close()
 	select {
 	case <-c.done:
 	case <-time.After(5 * time.Second):
-		killProcessTree(c.cmd)
+		subproc.KillProcessTree(c.cmd)
 		<-c.done
 	}
 	return c.cmd.Wait()
