@@ -9,8 +9,11 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "orchestra",
-	Short: "Orchestra - LLM orchestrator for codebase",
-	Long:  "Orchestra is a service orchestrator for working with LLM on project codebase.",
+	Short: "Orchestra - interactive AI coding assistant",
+	Long: `Orchestra is a local AI coding assistant with a terminal UI.
+
+Run orchestra with no subcommand to open the interactive TUI (console agent).
+Use subcommands for headless workflows: apply, core, init, search, etc.`,
 }
 
 // testLLMClient is the test-only LLM client injection point used by

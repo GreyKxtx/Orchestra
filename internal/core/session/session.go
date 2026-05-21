@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type Session struct {
 	cancelFn    context.CancelFunc // non-nil while a turn is running
 	pendingOps  []ops.AnyOp        // ops from last dry-run turn, cleared on apply or new turn
 	todos       []tools.TodoItem   // model's working checklist, persisted across turns
+	planPath    string             // per-session plan markdown path (relative)
 }
 
 func newID() string {
@@ -112,4 +114,14 @@ func (s *Session) CopyTodos() []tools.TodoItem {
 // SetTodos replaces the todo list. Must be called with lock held.
 func (s *Session) SetTodos(items []tools.TodoItem) {
 	s.todos = items
+}
+
+// PlanPath returns the session plan file path (relative). Empty until first plan-mode turn.
+func (s *Session) PlanPath() string {
+	return s.planPath
+}
+
+// SetPlanPath stores the canonical plan markdown path for this session.
+func (s *Session) SetPlanPath(path string) {
+	s.planPath = strings.TrimSpace(path)
 }

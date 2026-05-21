@@ -60,19 +60,17 @@
 Артефакты пишутся в `.orchestra/`: `plan.json`, `diff.txt`, `last_run.jsonl`,
 `last_result.json`, `llm_log.jsonl`. На запись делается `*.orchestra.bak`.
 
-### 1.4. `orchestra chat`
-Интерактивный REPL. Под капотом запускает `orchestra core` подпроцессом
-(`internal/cli/corechild.go`), вызывает `session.start`, и в цикле читает
-строки stdin → `session.message`. Команды:
-- `/exit`, `/clear` (закрыть/перезапустить сессию);
-- `/diff`, `/apply` (показать/применить накопленные патчи);
-- `/cancel` (прервать текущий ход через `session.cancel`).
+### 1.4. `orchestra` (TUI, по умолчанию)
+Интерактивный консольный агент (Bubbletea TUI). Запуск без subcommand открывает UI;
+`orchestra tui` — alias. Под капотом спавнит `orchestra core` подпроцессом и
+общается через stdio JSON-RPC (`ui/tui/`).
 
 | Флаг | |
 |---|---|
-| `--workspace` | Рабочая директория |
-| `--allow-exec` | Разрешить `exec.run` |
-| `--apply` | Авто-apply после каждого хода |
+| `--apply` | LIVE: сразу писать изменения на диск (иначе PREVIEW/staging) |
+| `--allow-exec` | Разрешить `bash` / `exec.run` в agent runs |
+
+Настройки UI также читаются из `.orchestra.yml`: `ui.auto_apply`, `ui.allow_exec`, `ui.theme`.
 
 ### 1.5. `orchestra daemon`
 Локальный HTTP-демон v0.3 (legacy, остаётся для совместимости с командой
@@ -193,10 +191,10 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 
 | Возможность | OpenCode | Orchestra |
 |---|---|---|
-| Запуск TUI | `opencode tui` | ❌ нет TUI |
+| Запуск TUI | `opencode tui` | ✅ `orchestra` (default) / `orchestra tui` |
 | Headless server | `opencode serve` | ✅ `orchestra core` (stdio) + `--http` |
 | Один-шот запуск | `opencode run <prompt>` | ✅ `orchestra apply` |
-| Интерактивный chat | TUI | ✅ `orchestra chat` (REPL) |
+| Интерактивный chat | TUI | ✅ `orchestra` (Bubbletea TUI) |
 | Управление провайдерами | `opencode providers`, `models`, `auth` | ❌ конфигурируется только через `.orchestra.yml` |
 | Импорт/экспорт сессий | `import`, `export` | ❌ |
 | GitHub-интеграция | `opencode github`, `pr` | ❌ |
@@ -577,34 +575,31 @@ State между стадиями передаётся **строкой в goal*
 - `<investigation>...</investigation>` — для Coder;
 - `<critique>...</critique>` — для повторного Coder.
 
-### 4.5. Интерактивный chat: `orchestra chat`
+### 4.5. Интерактивный TUI: `orchestra`
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as User (TTY)
-    participant CLI as orchestra chat
+    participant TUI as orchestra TUI
     participant Core as orchestra core (subprocess)
-    participant Sess as session
+    participant Agent as agent.run
 
-    CLI->>Core: spawn + initialize
-    CLI->>Core: session.start
-    Core-->>CLI: {session_id}
-    loop REPL
-        U->>CLI: stdin line
-        alt slash command
-            CLI->>Core: session.{close|cancel|apply_pending}
-        else free text
-            CLI->>Core: session.message{content}
-            loop streaming
-                Core-->>CLI: notification agent/event
-                CLI-->>U: stderr live output
-            end
-            Core-->>CLI: result{patches, applied}
-            CLI-->>U: "/diff to preview, /apply to apply"
+    U->>TUI: orchestra [--apply] [--allow-exec]
+    TUI->>Core: spawn + initialize
+    loop session
+        U->>TUI: prompt / slash commands
+        TUI->>Core: agent.run{query, apply, allow_exec}
+        loop streaming
+            Core-->>TUI: notification agent/event
+            TUI-->>U: live transcript + tool blocks
+        end
+        Core-->>TUI: result{patches, changed_files}
+        opt PREVIEW mode
+            U->>TUI: /apply or /live
+            TUI->>Core: apply staged ops
         end
     end
-    CLI->>Core: session.close
 ```
 
 ### 4.6. Цикл одного шага агента (детальный)

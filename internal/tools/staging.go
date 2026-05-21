@@ -51,6 +51,94 @@ func (r *Runner) stageFileLocked(relSlash, content, hash string) {
 	}
 }
 
+// fileExistsOnDisk reports whether relSlash exists on disk (ignoring staging overlay).
+func (r *Runner) fileExistsOnDisk(relSlash string) bool {
+	absPath := filepath.Join(r.workspaceRoot, filepath.FromSlash(relSlash))
+	_, err := os.Stat(absPath)
+	return err == nil
+}
+
+// mergeStagedFilesIntoList adds staged-only files to an ls result and refreshes
+// size/hash for staged paths that also appear on disk. In dry-run the model
+// must see files it created via write/edit even before /apply.
+func (r *Runner) mergeStagedFilesIntoList(files []FSFileMeta, listPath string, includeHash bool, limit int) []FSFileMeta {
+	if !r.dryRun {
+		return files
+	}
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
+	if len(r.staged) == 0 {
+		return files
+	}
+
+	prefix := filepath.ToSlash(strings.TrimSpace(listPath))
+	if prefix == "" || prefix == "." {
+		prefix = ""
+	} else {
+		prefix = strings.TrimSuffix(prefix, "/") + "/"
+	}
+
+	byPath := make(map[string]int, len(files))
+	for i, f := range files {
+		byPath[f.Path] = i
+	}
+
+	for path, sf := range r.staged {
+		if prefix != "" && !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		if idx, ok := byPath[path]; ok {
+			files[idx].Size = int64(len(sf.content))
+			if includeHash {
+				files[idx].FileHash = sf.hash
+			}
+			continue
+		}
+		meta := FSFileMeta{Path: path, Size: int64(len(sf.content))}
+		if includeHash {
+			meta.FileHash = sf.hash
+		}
+		files = append(files, meta)
+		if limit > 0 && len(files) >= limit {
+			break
+		}
+	}
+	return files
+}
+
+// mergeStagedFilesIntoGlob adds staged paths that match pattern but are absent
+// from the disk walk result.
+func (r *Runner) mergeStagedFilesIntoGlob(files []FSFileMeta, pattern string, includeHash bool, limit int) []FSFileMeta {
+	if !r.dryRun {
+		return files
+	}
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
+	if len(r.staged) == 0 {
+		return files
+	}
+
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		seen[f.Path] = true
+	}
+
+	for path, sf := range r.staged {
+		if seen[path] || !matchGlobPath(pattern, path) {
+			continue
+		}
+		meta := FSFileMeta{Path: path, Size: int64(len(sf.content))}
+		if includeHash {
+			meta.FileHash = sf.hash
+		}
+		files = append(files, meta)
+		if limit > 0 && len(files) >= limit {
+			break
+		}
+	}
+	return files
+}
+
 // stagedContent returns staged content and hash for relSlash, or ok=false if not staged.
 func (r *Runner) stagedContent(relSlash string) (content, hash string, ok bool) {
 	r.stagedMu.RLock()
@@ -162,7 +250,7 @@ func (r *Runner) ApplyPatchesToStaged(patchList []patches.Patch) error {
 			newContent, err = resolver.ApplyUnifiedDiff(currentContent, p.Diff)
 		case patches.TypeFileWriteAtomic:
 			if p.Conditions != nil {
-				if p.Conditions.MustNotExist && r.currentHash(relSlash) != "" {
+				if p.Conditions.MustNotExist && r.fileExistsOnDisk(relSlash) {
 					return protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{"path": relSlash})
 				}
 				if p.Conditions.FileHash != "" {

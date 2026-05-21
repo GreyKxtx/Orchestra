@@ -6,7 +6,7 @@
 
 - **`protocol.ProtocolVersion`**: `3`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `6`
+- **`protocol.ToolsVersion`**: `11`
 
 Совместимость проверяется в `initialize`:
 
@@ -22,6 +22,8 @@
 
 ### История ToolsVersion
 
+- **v11** (2026-05-21): unified `task` tool (sync subagent); `todowrite` accepts `completed` status alias; plan mode uses `.orchestra/plans/<session-id>.md`.
+- **v10**: `gh.pr.*`, `gh.issue.*` (allowExec-gated).
 - **v6** (2026-05-15): добавлен инструмент `diff.preview`.
 - **v5**: добавлены `lsp.definition`, `lsp.references`, `lsp.hover`, `lsp.diagnostics`, `lsp.rename`; поле `diagnostics` в ответах `fs.write` и `fs.edit`.
 - **v4** (2026-05-05): `fs.read` content field now prefixed with 1-based line
@@ -222,6 +224,10 @@ Response `result`:
 - `patches` (optional)
 - `ops` (optional)
 - `apply_response` (optional)
+- `todos` (optional) — чеклист после хода (`todowrite`)
+- `plan_path` (optional) — путь plan-файла при `mode: plan`
+- `switch_to_build` (optional, legacy) — true если `plan_exit` одобрен; core обычно уже выполнил build-продолжение in-process
+- `usage` (optional) — token summary
 
 > Важно: по умолчанию `apply=false` — это dry-run (core ничего не пишет на диск, возвращает diff/план).
 
@@ -272,6 +278,10 @@ Response `result`:
 - `patches` (optional) — diff/patches (при `apply=false`)
 - `ops` (optional) — сырые операции
 - `apply_response` (optional) — при `apply=true`
+- `todos` (optional) — чеклист сессии после хода
+- `plan_path` (optional) — canonical plan markdown path (`.orchestra/plans/<session-id>.md`)
+- `switch_to_build` (optional, legacy) — см. `agent.run`
+- `usage` (optional)
 
 Пока ход выполняется, core отправляет уведомления `agent/event` по тому же JSON-RPC соединению.
 
@@ -557,6 +567,28 @@ Expected response (`result`):
 ```
 
 If no client request handler is registered (`Client.SetRequestHandler` not called), the client returns method-not-found and the server falls back to the static permission gate (config `exec.confirm` / `--allow-exec`).
+
+### `question/ask`
+
+Interactive Q&A for the `question` tool and `plan_exit` approval (plan → build).
+
+Params:
+
+```json
+{
+  "questions": [
+    {"question": "Which approach?", "options": ["A", "B"], "allow_multiple": false}
+  ]
+}
+```
+
+Expected response (`result`):
+
+```json
+{"answers": ["A"]}
+```
+
+TUI shows a blocking modal; CLI `apply --mode plan` uses stdin when TTY.
 
 ---
 

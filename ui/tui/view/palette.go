@@ -18,13 +18,16 @@ type SlashCmd struct {
 // AllSlashCmds is the complete list shown in the slash palette.
 // Sorted alphabetically — opencode style.
 var AllSlashCmds = []SlashCmd{
-	{"/apply", "apply pending ops"},
+	{"/apply", "apply pending ops (PREVIEW mode)"},
 	{"/clear", "clear chat history"},
 	{"/diff", "toggle diff view"},
 	{"/discard", "discard pending ops"},
+	{"/exec", "toggle bash/exec.run"},
 	{"/help", "show available commands"},
+	{"/live", "LIVE mode — write to disk immediately"},
 	{"/mode", "show current mode"},
 	{"/model", "show current model"},
+	{"/preview", "PREVIEW mode — stage until apply"},
 	{"/quit", "exit Orchestra TUI"},
 	{"/sessions", "browse saved sessions"},
 	{"/skill", "invoke a single skill"},
@@ -39,25 +42,6 @@ const maxPaletteVisible = 6
 // no right border. Appears as a seamless extension of the input box above it.
 var splitBorder = lipgloss.Border{
 	Left: "▌",
-}
-
-// paletteCursor encapsulates the cursor-up/down/clamp logic shared by every
-// palette. The struct keeps Cursor exported so the existing tests that probe
-// internal state continue to work.
-type paletteCursor struct {
-	Cursor int
-}
-
-func (p *paletteCursor) cursorUp() {
-	if p.Cursor > 0 {
-		p.Cursor--
-	}
-}
-
-func (p *paletteCursor) cursorDown(max int) {
-	if p.Cursor < max-1 {
-		p.Cursor++
-	}
 }
 
 // renderPaletteList returns a JoinVertical of one rendered row per visible

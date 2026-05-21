@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -180,7 +181,12 @@ const helpText = `Orchestra TUI — key bindings:
   d             toggle diff
   x             discard pending ops
   y / n / Esc   allow / deny exec.run permission
-  Ctrl+C        quit`
+  Ctrl+C        quit
+
+Write modes:
+  /live         LIVE — write to disk immediately (like Claude Code / apply --apply)
+  /preview      PREVIEW — stage changes, press [a] or /apply to write
+  /exec         toggle bash/exec.run for agent runs`
 
 // executePaletteCmd carries out the chosen slash command and returns a tea.Cmd
 // if the action requires async work, or nil. Commands that don't start a chat
@@ -230,7 +236,14 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 			a.chat.SetMessages(a.session.Messages)
 		}
 	case "/apply":
-		if a.pendingOps != nil && a.rpc != nil {
+		if a.autoApply {
+			dismissWelcome()
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: "Режим LIVE: изменения уже пишутся на диск во время write/edit. Переключись на /preview если нужен ручной apply.",
+			})
+			a.chat.SetMessages(a.session.Messages)
+		} else if a.pendingOps != nil && a.rpc != nil {
 			rawOps := a.pendingOps.Ops
 			count := len(a.pendingOps.Ops)
 			a.pendingOps = nil
@@ -243,7 +256,61 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 			return func() tea.Msg {
 				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
 			}
+		} else {
+			dismissWelcome()
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: "Нет pending ops для apply. Дождись завершения агента (полоска ⏵ N pending ops) или включи /live для записи на диск сразу.",
+			})
+			a.chat.SetMessages(a.session.Messages)
 		}
+	case "/live":
+		dismissWelcome()
+		a.toggleLiveMode(true)
+		if err := a.persistUIPrefs(); err != nil {
+			a.showToast("LIVE (не сохранено в yml)")
+		} else {
+			a.showToast("LIVE — запись на диск")
+		}
+		a.session.AppendMessage(state.Message{
+			Role: state.RoleSystem,
+			Text: "Режим LIVE: write/edit сразу на диск (как orchestra apply --apply). git status покажет изменения.",
+		})
+		a.chat.SetMessages(a.session.Messages)
+	case "/preview":
+		dismissWelcome()
+		a.toggleLiveMode(false)
+		if err := a.persistUIPrefs(); err != nil {
+			a.showToast("PREVIEW (не сохранено в yml)")
+		} else {
+			a.showToast("PREVIEW — staging до [a]")
+		}
+		a.session.AppendMessage(state.Message{
+			Role: state.RoleSystem,
+			Text: "Режим PREVIEW: изменения в staging, применяй [a] или /apply после завершения агента.",
+		})
+		a.chat.SetMessages(a.session.Messages)
+	case "/exec":
+		dismissWelcome()
+		a.toggleAllowExec(!a.allowExec)
+		if err := a.persistUIPrefs(); err != nil {
+			a.showToast(fmt.Sprintf("exec: %v", a.allowExec))
+		} else {
+			if a.allowExec {
+				a.showToast("exec.run разрешён")
+			} else {
+				a.showToast("exec.run выключен")
+			}
+		}
+		execState := "выключен"
+		if a.allowExec {
+			execState = "разрешён"
+		}
+		a.session.AppendMessage(state.Message{
+			Role: state.RoleSystem,
+			Text: "exec.run: " + execState,
+		})
+		a.chat.SetMessages(a.session.Messages)
 	case "/discard":
 		if a.pendingOps != nil {
 			a.pendingOps = nil

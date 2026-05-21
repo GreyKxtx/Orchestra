@@ -25,7 +25,9 @@ const (
 	//     browser.close (all allowBrowser-gated).
 	// v9: added search.websearch tool.
 	// v10: added gh.pr.list, gh.pr.create, gh.pr.view, gh.issue.list, gh.issue.view (allowExec-gated).
-	ToolsVersion = 10
+	// v11: added unified `task` tool (sync subagent); todowrite accepts `completed` alias;
+	//      plan mode uses per-session `.orchestra/plans/<id>.md`.
+	ToolsVersion = 11
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

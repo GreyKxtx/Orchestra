@@ -1443,25 +1443,6 @@ func (c *rpcClient) writeNotification(t *testing.T, method string, params any) {
 	}
 }
 
-func (c *rpcClient) assertNoResponseWithin(t *testing.T, d time.Duration) {
-	t.Helper()
-	if c.stdoutFile == nil {
-		t.Skip("stdout pipe does not support deadlines on this platform")
-	}
-
-	// Set deadline so read does not hang.
-	_ = c.stdoutFile.SetReadDeadline(time.Now().Add(d))
-	defer func() { _ = c.stdoutFile.SetReadDeadline(time.Time{}) }()
-
-	_, err := c.reader.ReadByte()
-	if err == nil {
-		t.Fatalf("unexpected response for notification")
-	}
-	if !errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("expected read timeout (no response), got: %v", err)
-	}
-}
-
 func (c *rpcClient) readResponse(t *testing.T) *rpcResponse {
 	t.Helper()
 

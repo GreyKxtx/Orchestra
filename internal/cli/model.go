@@ -65,10 +65,10 @@ func runModelSelect(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Получаю список моделей из %s...\n", cfg.LLM.APIBase)
 	models, err := fetchModels(cfg.LLM.APIBase, cfg.LLM.APIKey)
 	if err != nil {
-		return fmt.Errorf("не удалось получить список моделей: %w\n\nПроверь что LM Studio запущен и API включён.", err)
+		return fmt.Errorf("не удалось получить список моделей: %w (проверь что LM Studio запущен и API включён)", err)
 	}
 	if len(models) == 0 {
-		return fmt.Errorf("LM Studio не вернул ни одной модели. Загрузи модель в LM Studio.")
+		return fmt.Errorf("LM Studio не вернул ни одной модели — загрузи модель в LM Studio")
 	}
 
 	currentCtx := extraBodyNumCtx(cfg)

@@ -317,6 +317,10 @@ type AgentRunParams struct {
 	// PermissionRequester, if non-nil, is consulted before exec.run/bash runs
 	// instead of (or before) the static AllowExec gate. Set programmatically by the RPC handler.
 	PermissionRequester PermissionRequester `json:"-"`
+
+	// QuestionAsker, if non-nil, enables the question tool and plan_exit approval.
+	// Set programmatically by the RPC handler.
+	QuestionAsker tools.QuestionAsker `json:"-"`
 }
 
 type AgentRunResult struct {
@@ -328,7 +332,16 @@ type AgentRunResult struct {
 
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
 
-	// Usage summarises token consumption for this run. Nil when the provider
+	// SwitchToBuild is true when plan_exit requested a build continuation
+	// that was not completed in this response (legacy; normally handled in-core).
+	SwitchToBuild bool `json:"switch_to_build,omitempty"`
+
+	Todos []tools.TodoItem `json:"todos,omitempty"`
+
+	// PlanPath is the session plan markdown file when plan mode was used.
+	PlanPath string `json:"plan_path,omitempty"`
+
+	// Usage summarises token consumption for this run.
 	// did not return usage info (some local servers omit it).
 	Usage *UsageSnapshot `json:"usage,omitempty"`
 }
@@ -459,7 +472,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 
 	usageTracker := newAgentUsageTracker(c.cfg, "agent.run")
 
-	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agent.Options{
+	agOpts := agent.Options{
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxRetries,
 		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
@@ -486,15 +499,24 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		HooksRunner:          hooksRunner,
 		ExtraTools:           c.mcpToolDefs(),
 		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
+		QuestionAsker:        params.QuestionAsker,
 		UsageTracker:         usageTracker,
 		ProviderLabel:        providerLabelOf(c.cfg),
 		ModelLabel:           c.cfg.LLM.Model,
-	})
+		PlanPath:             resolvePlanPath(params.Mode, "", ""),
+	}
+	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	_, res, err := ag.Run(ctx, nil, params.Query)
+	var outHistory []llm.Message
+	var res *agent.Result
+	outHistory, res, err = ag.Run(ctx, nil, params.Query)
+	if err != nil {
+		return nil, err
+	}
+	outHistory, res, err = maybeContinueBuildAfterPlan(ctx, customOpts.llmClient, c.validator, c.tools, agOpts, outHistory, res)
 	if err != nil {
 		return nil, err
 	}
@@ -506,6 +528,9 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Patches:       res.Patches,
 		Ops:           res.Ops,
 		ApplyResponse: res.ApplyResponse,
+		SwitchToBuild: res.SwitchToBuild,
+		Todos:         res.Todos,
+		PlanPath:      agOpts.PlanPath,
 		Usage:         usageSnapshotFrom(usageTracker),
 	}, nil
 }
@@ -737,6 +762,9 @@ type SessionMessageParams struct {
 	// PermissionRequester, if non-nil, is consulted before exec.run/bash runs.
 	// Set programmatically by the RPC handler.
 	PermissionRequester PermissionRequester `json:"-"`
+
+	// QuestionAsker enables question tool and plan_exit approval in sessions.
+	QuestionAsker tools.QuestionAsker `json:"-"`
 }
 
 type SessionMessageResult struct {
@@ -746,6 +774,11 @@ type SessionMessageResult struct {
 	Patches       []patches.Patch     `json:"patches,omitempty"`
 	Ops           []ops.AnyOp               `json:"ops,omitempty"`
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+
+	SwitchToBuild bool             `json:"switch_to_build,omitempty"`
+	Todos         []tools.TodoItem `json:"todos,omitempty"`
+	PlanPath      string           `json:"plan_path,omitempty"`
+
 	// Usage summarises token consumption for this turn.
 	Usage *UsageSnapshot `json:"usage,omitempty"`
 }
@@ -776,6 +809,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// Snapshot history and todos for this turn (under lock).
 	inHistory := sess.CopyHistory()
 	inTodos := sess.CopyTodos()
+	planPath := sessionPlanPathLocked(sess, params.Mode)
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
@@ -800,6 +834,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		MaxPromptBytes:      params.MaxPromptBytes,
 		OnEvent:             params.OnEvent,
 		PermissionRequester: params.PermissionRequester,
+		QuestionAsker:       params.QuestionAsker,
 	}
 
 	// Build and run the agent (same setup as AgentRun).
@@ -893,7 +928,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 
 	sessUsageTracker := newAgentUsageTracker(c.cfg, "session.turn")
 
-	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, agent.Options{
+	sessAgOpts := agent.Options{
 		UsageTracker:         sessUsageTracker,
 		ProviderLabel:        providerLabelOf(c.cfg),
 		ModelLabel:           c.cfg.LLM.Model,
@@ -924,12 +959,19 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		HooksRunner:          sessHooksRunner,
 		ExtraTools:           c.mcpToolDefs(),
 		PermissionRequester:  convertPermissionRequester(agParams.PermissionRequester),
-	})
+		QuestionAsker:        agParams.QuestionAsker,
+		PlanPath:             planPath,
+	}
+	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, sessAgOpts)
 	if err != nil {
 		return nil, err
 	}
 
 	outHistory, res, err := ag.Run(turnCtx, inHistory, params.Content)
+	if err != nil {
+		return nil, err
+	}
+	outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, sessCustomOpts.llmClient, c.validator, c.tools, sessAgOpts, outHistory, res)
 	if err != nil {
 		return nil, err
 	}
@@ -946,6 +988,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	if res != nil {
 		sess.SetTodos(res.Todos)
+	}
+	if planPath != "" {
+		sess.SetPlanPath(planPath)
 	}
 	if !params.Apply && len(res.Ops) > 0 {
 		sess.SetPending(res.Ops)
@@ -966,6 +1011,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Patches:       res.Patches,
 		Ops:           res.Ops,
 		ApplyResponse: res.ApplyResponse,
+		SwitchToBuild: res.SwitchToBuild,
+		Todos:         res.Todos,
+		PlanPath:      planPath,
 		Usage:         usageSnapshotFrom(sessUsageTracker),
 	}, nil
 }

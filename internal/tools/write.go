@@ -48,7 +48,9 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 		if err != nil {
 			return nil, err
 		}
-		if req.MustNotExist && r.currentHash(relSlash) != "" {
+		// must_not_exist guards against clobbering a file on disk; re-staging a
+		// path created earlier in the same dry-run pass is allowed.
+		if req.MustNotExist && r.fileExistsOnDisk(relSlash) {
 			return nil, protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{"path": relSlash})
 		}
 		if fileHash != "" {

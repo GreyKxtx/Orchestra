@@ -199,8 +199,7 @@ func ParseOTLPJSON(data []byte, rootDir string) ([]TraceData, error) {
 	}
 
 	type entry struct {
-		td    *TraceData
-		index int
+		td *TraceData
 	}
 	byID := map[string]*entry{}
 	var order []string

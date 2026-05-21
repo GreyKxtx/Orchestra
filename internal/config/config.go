@@ -337,12 +337,17 @@ type HooksConfig struct {
 	TimeoutMS int `yaml:"timeout_ms"`
 }
 
-// UIConfig holds TUI-only presentation preferences. Currently just theme
-// selection; future fields can include layout density, font ramps, etc.
+// UIConfig holds TUI-only presentation preferences.
 type UIConfig struct {
 	// Theme is a registered theme name (see ui/tui/theme). Empty / unknown
 	// values fall back to the default ("neutral").
 	Theme string `yaml:"theme,omitempty"`
+	// AutoApply mirrors `orchestra apply --apply`: agent.run writes to disk
+	// immediately (LIVE mode). When false, TUI stages changes until the user
+	// presses [a] or /apply (PREVIEW mode).
+	AutoApply bool `yaml:"auto_apply,omitempty"`
+	// AllowExec mirrors `--allow-exec` for TUI agent runs (bash/git commit, etc.).
+	AllowExec bool `yaml:"allow_exec,omitempty"`
 }
 
 // ProjectConfig represents the Orchestra configuration
@@ -714,7 +719,7 @@ func (c *ProjectConfig) validateAgents() error {
 		// Validate provider reference exists in providers: map.
 		if a.Provider != "" {
 			if _, ok := c.Providers[a.Provider]; !ok {
-				return fmt.Errorf("agent %q: provider %q not defined in providers:", a.Name, a.Provider)
+				return fmt.Errorf("agent %q: provider %q not defined in providers", a.Name, a.Provider)
 			}
 		}
 	}

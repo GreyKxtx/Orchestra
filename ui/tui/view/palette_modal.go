@@ -31,6 +31,9 @@ var DefaultModalCommands = []ModalCommand{
 	{"/clear", "clear chat history", "Session"},
 	{"/diff", "toggle diff view", "Session"},
 	{"/discard", "discard pending ops", "Session"},
+	{"/exec", "toggle bash/exec.run", "Session"},
+	{"/live", "write to disk immediately", "Session"},
+	{"/preview", "stage changes until apply", "Session"},
 	// System
 	{"/help", "show key bindings", "System"},
 	{"/quit", "exit Orchestra", "System"},

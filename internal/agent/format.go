@@ -14,25 +14,6 @@ import (
 // context. Extracted from agent.go in C3 (architecture audit) so the
 // formatting concerns live separately from the agent's control flow.
 
-func formatToolOK(name string, input json.RawMessage, output json.RawMessage) string {
-	return "TOOL_OK " + name + "\ninput=" + compactJSON(input) + "\noutput=" + compactJSON(output)
-}
-
-func formatToolError(name string, input json.RawMessage, err error) string {
-	code := ""
-	if pe, ok := protocol.AsError(err); ok {
-		code = string(pe.Code)
-	}
-	if code != "" {
-		return "TOOL_ERR " + name + " code=" + code + "\ninput=" + compactJSON(input) + "\nerror=" + formatErr(err)
-	}
-	return "TOOL_ERR " + name + "\ninput=" + compactJSON(input) + "\nerror=" + formatErr(err)
-}
-
-func formatToolDenied(name string, input json.RawMessage, reason string) string {
-	return "TOOL_DENIED " + name + "\ninput=" + compactJSON(input) + "\nreason=" + reason
-}
-
 func formatValidatorError(msg string, raw string) string {
 	return "VALIDATION_ERROR\nmessage=" + msg + "\nraw=" + truncate(strings.TrimSpace(raw), 400)
 }
@@ -40,15 +21,6 @@ func formatValidatorError(msg string, raw string) string {
 // formatValidatorErrorCompact returns a compact error message without raw JSON to avoid prompt bloat.
 func formatValidatorErrorCompact(msg string) string {
 	return "VALIDATION_ERROR\nmessage=" + msg + "\nFix the JSON to match the schema (tool call or PatchSet)."
-}
-
-// formatPolicyDeniedCompact returns a compact policy denial message.
-func formatPolicyDeniedCompact(toolName string) string {
-	return fmt.Sprintf("TOOL_DENIED %s\nreason=requires explicit permission\nUse only tools from the advertised list.", toolName)
-}
-
-func formatResolveError(err error) string {
-	return "RESOLVE_ERROR\nerror=" + formatErr(err)
 }
 
 // errorDataString pulls a string field out of a protocol.Error's Data
@@ -129,10 +101,6 @@ func formatResolveErrorCompact(err error) string {
 		return fmt.Sprintf("RESOLVE_ERROR code=%s\nRe-read the file (fs.read) and update file_hash in the patch.", pe.Code)
 	}
 	return "RESOLVE_ERROR code=unknown\nerror=" + err.Error() + "\nRe-read the file (fs.read) and update file_hash in the patch."
-}
-
-func formatApplyError(err error) string {
-	return "APPLY_ERROR\nerror=" + formatErr(err)
 }
 
 // formatApplyErrorCompact returns a compact apply error message with

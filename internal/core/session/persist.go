@@ -32,6 +32,7 @@ type snapshot struct {
 	LastActivity time.Time        `json:"last_activity"`
 	PendingOps   []ops.AnyOp      `json:"pending_ops,omitempty"`
 	Todos        []tools.TodoItem `json:"todos,omitempty"`
+	PlanPath     string           `json:"plan_path,omitempty"`
 }
 
 const snapshotVersion = 1
@@ -67,6 +68,7 @@ func (s *Session) Snapshot(workspaceRoot string) error {
 		LastActivity: s.LastActivity,
 		PendingOps:   s.pendingOps,
 		Todos:        s.todos,
+		PlanPath:     s.planPath,
 	}
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
@@ -126,6 +128,7 @@ func LoadFromDisk(workspaceRoot, id string) (*Session, error) {
 		LastActivity: snap.LastActivity,
 		pendingOps:   snap.PendingOps,
 		todos:        snap.Todos,
+		planPath:     snap.PlanPath,
 	}, nil
 }
 

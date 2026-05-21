@@ -194,9 +194,6 @@ func renderListDialog(
 	}
 	if len(listLines) > maxListRows {
 		listLines = listLines[:maxListRows]
-		if cursor >= len(listLines) {
-			cursor = len(listLines) - 1
-		}
 	}
 
 	hintLine := fitInner(mutedStyle.Render(hint))

@@ -123,6 +123,10 @@ func (r *Runner) FSGlob(ctx context.Context, req FSGlobRequest) (*FSGlobResponse
 		return nil, walkErr
 	}
 
+	if r.dryRun {
+		files = r.mergeStagedFilesIntoGlob(files, pattern, req.IncludeHash, limit)
+	}
+
 	return &FSGlobResponse{Files: files, Pattern: pattern}, nil
 }
 

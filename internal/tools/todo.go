@@ -1,5 +1,10 @@
 package tools
 
+import (
+	"fmt"
+	"strings"
+)
+
 // TodoStatus represents the lifecycle state of a todo item.
 type TodoStatus string
 
@@ -30,4 +35,40 @@ type TodoWriteResponse struct {
 // TodoReadResponse is returned by todo.read.
 type TodoReadResponse struct {
 	Todos []TodoItem `json:"todos"`
+}
+
+// ValidateTodos normalizes and validates a todo list from todo.write.
+// Maps legacy status "completed" to "done". Requires unique non-empty ids
+// and at most one in_progress item.
+func ValidateTodos(items []TodoItem) ([]TodoItem, error) {
+	normalized := make([]TodoItem, len(items))
+	seen := make(map[string]bool, len(items))
+	inProgress := 0
+	for i, item := range items {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return nil, fmt.Errorf("todo item %d: id is required", i)
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("duplicate todo id %q", id)
+		}
+		seen[id] = true
+		st := item.Status
+		if st == "completed" {
+			st = TodoDone
+		}
+		switch st {
+		case TodoPending, TodoInProgress, TodoDone, TodoCancelled:
+		default:
+			return nil, fmt.Errorf("todo %q: invalid status %q", id, item.Status)
+		}
+		if st == TodoInProgress {
+			inProgress++
+		}
+		normalized[i] = TodoItem{ID: id, Content: strings.TrimSpace(item.Content), Status: st}
+	}
+	if inProgress > 1 {
+		return nil, fmt.Errorf("at most one todo may be in_progress")
+	}
+	return normalized, nil
 }

@@ -12,57 +12,87 @@ import (
 	"github.com/orchestra/orchestra/ui/tui"
 )
 
+var (
+	tuiApply     bool
+	tuiAllowExec bool
+)
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Open the interactive Orchestra terminal UI",
-	Long: `Open the Orchestra terminal UI.
+	Long: `Open the Orchestra terminal UI (same as running orchestra with no subcommand).
 
 Connects to a child 'orchestra core' subprocess via stdio JSON-RPC.
 Configure model and project_root via .orchestra.yml in the current
 directory (create with 'orchestra init').`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
+	Args: cobra.NoArgs,
+	RunE: runTUI,
+}
 
-		self, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("cannot resolve own executable path: %w", err)
-		}
+func runTUI(cmd *cobra.Command, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
 
-		projectID, err := cache.ComputeProjectID(cwd)
-		if err != nil {
-			return fmt.Errorf("compute project_id: %w", err)
-		}
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot resolve own executable path: %w", err)
+	}
 
-		cfgPath := filepath.Join(cwd, ".orchestra.yml")
-		model := ""
-		themeName := ""
-		needsOnboarding := false
+	projectID, err := cache.ComputeProjectID(cwd)
+	if err != nil {
+		return fmt.Errorf("compute project_id: %w", err)
+	}
 
-		if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
-			model = cfg.LLM.Model
-			themeName = cfg.UI.Theme
-		}
-		if model == "" {
-			needsOnboarding = true
-		}
+	cfgPath := filepath.Join(cwd, ".orchestra.yml")
+	model := ""
+	themeName := ""
+	autoApply := false
+	allowExec := false
+	needsOnboarding := false
 
-		return tui.Run(tui.Config{
-			Binary:          self,
-			WorkspaceRoot:   cwd,
-			ProjectID:       projectID,
-			Model:           model,
-			Mode:            "build",
-			CWD:             filepath.Base(cwd),
-			NeedsOnboarding: needsOnboarding,
-			ConfigPath:      cfgPath,
-			Theme:           themeName,
-		})
-	},
+	if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
+		model = cfg.LLM.Model
+		themeName = cfg.UI.Theme
+		autoApply = cfg.UI.AutoApply
+		allowExec = cfg.UI.AllowExec
+	}
+	if cmd.Flags().Changed("apply") {
+		autoApply = tuiApply
+	}
+	if cmd.Flags().Changed("allow-exec") {
+		allowExec = tuiAllowExec
+	}
+	if model == "" {
+		needsOnboarding = true
+	}
+
+	return tui.Run(tui.Config{
+		Binary:          self,
+		WorkspaceRoot:   cwd,
+		ProjectID:       projectID,
+		Model:           model,
+		Mode:            "build",
+		CWD:             filepath.Base(cwd),
+		NeedsOnboarding: needsOnboarding,
+		ConfigPath:      cfgPath,
+		Theme:           themeName,
+		AutoApply:       autoApply,
+		AllowExec:       allowExec,
+	})
+}
+
+func addTUIFlags(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&tuiApply, "apply", false, "LIVE mode: write agent changes to disk immediately (default: PREVIEW/staging)")
+	cmd.Flags().BoolVar(&tuiAllowExec, "allow-exec", false, "Allow bash/exec.run in TUI agent runs")
 }
 
 func init() {
+	rootCmd.RunE = runTUI
+	rootCmd.Args = cobra.NoArgs
+	addTUIFlags(rootCmd)
+
+	addTUIFlags(tuiCmd)
 	rootCmd.AddCommand(tuiCmd)
 }

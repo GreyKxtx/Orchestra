@@ -36,7 +36,8 @@ type Client struct {
 	mu        sync.Mutex
 	closed    bool
 
-	permCh chan bool // receives user's yes/no for pending permission/request
+	permCh     chan bool       // receives user's yes/no for pending permission/request
+	questionCh chan []string   // receives user's answers for pending question/ask
 }
 
 // Spawn starts the orchestra core subprocess and runs the initialize handshake.
@@ -75,7 +76,8 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 		stderr: stderr,
 		rpc:    jsonrpc.NewClient(stdout, stdin),
 		events: make(chan Event, 64),
-		permCh: make(chan bool, 1),
+		permCh:     make(chan bool, 1),
+		questionCh: make(chan []string, 1),
 	}
 
 	// Drain stderr to avoid pipe blocking.
@@ -116,6 +118,12 @@ func (c *Client) Events() <-chan Event {
 	return c.events
 }
 
+// AgentRunOptions controls an agent.run call from the TUI.
+type AgentRunOptions struct {
+	Apply     bool
+	AllowExec bool
+}
+
 // AgentRun calls agent.run on the core. Streaming events arrive via Events().
 // Returns when the agent.run RPC completes (final result returned).
 //
@@ -123,10 +131,12 @@ func (c *Client) Events() <-chan Event {
 // agent loop can apply mode-specific output rules — most importantly, accept
 // plain-text answers as final in read-only modes instead of looping on
 // invalid-JSON retries.
-func (c *Client) AgentRun(ctx context.Context, query, mode string) error {
+func (c *Client) AgentRun(ctx context.Context, query, mode string, opts AgentRunOptions) error {
 	params := map[string]any{
-		"query": query,
-		"apply": false, // Phase 2: dry-run only
+		"query":      query,
+		"apply":      opts.Apply,
+		"backup":     opts.Apply,
+		"allow_exec": opts.AllowExec,
 	}
 	if mode != "" {
 		params["mode"] = mode
@@ -352,20 +362,35 @@ func (c *Client) handleExecOutput(params json.RawMessage) {
 }
 
 func (c *Client) handleRequest(ctx context.Context, method string, params json.RawMessage) (any, error) {
-	if method != "permission/request" {
+	switch method {
+	case "permission/request":
+		var req PermissionRequestPayload
+		if err := json.Unmarshal(params, &req); err != nil {
+			return map[string]any{"approved": false}, nil
+		}
+		c.send(Event{Kind: EventPermissionRequest, PermReq: &req})
+		select {
+		case approved := <-c.permCh:
+			return map[string]any{"approved": approved}, nil
+		case <-ctx.Done():
+			return map[string]any{"approved": false}, nil
+		}
+	case "question/ask":
+		var req struct {
+			Questions []QuestionItemPayload `json:"questions"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil || len(req.Questions) == 0 {
+			return map[string]any{"answers": []string{}}, nil
+		}
+		c.send(Event{Kind: EventQuestionAsked, Questions: req.Questions})
+		select {
+		case answers := <-c.questionCh:
+			return map[string]any{"answers": answers}, nil
+		case <-ctx.Done():
+			return map[string]any{"answers": []string{}}, nil
+		}
+	default:
 		return nil, fmt.Errorf("unsupported server request: %s", method)
-	}
-	var req PermissionRequestPayload
-	if err := json.Unmarshal(params, &req); err != nil {
-		return map[string]any{"approved": false}, nil
-	}
-	c.send(Event{Kind: EventPermissionRequest, PermReq: &req})
-	// Block until the UI calls RespondPermission.
-	select {
-	case approved := <-c.permCh:
-		return map[string]any{"approved": approved}, nil
-	case <-ctx.Done():
-		return map[string]any{"approved": false}, nil
 	}
 }
 
@@ -374,6 +399,15 @@ func (c *Client) handleRequest(ctx context.Context, method string, params json.R
 func (c *Client) RespondPermission(approved bool) {
 	select {
 	case c.permCh <- approved:
+	default:
+	}
+}
+
+// RespondQuestion answers the pending question/ask from the core.
+// Must be called exactly once per EventQuestionAsked event.
+func (c *Client) RespondQuestion(answers []string) {
+	select {
+	case c.questionCh <- answers:
 	default:
 	}
 }

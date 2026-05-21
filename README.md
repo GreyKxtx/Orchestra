@@ -146,9 +146,14 @@ $env:ORCH_E2E_LLM = "1"
 go test ./tests/e2e_real_llm -v -count=1
 ```
 
-Запуск приложения 
+## TUI (консольный агент)
 
- & "D:\CursorProjects\Orchestra\orchestra.exe" tui
+```bash
+orchestra                  # интерактивный TUI (по умолчанию)
+orchestra --apply          # LIVE: сразу пишет на диск
+orchestra --apply --allow-exec
+orchestra tui              # alias
+```
  
 ---
 

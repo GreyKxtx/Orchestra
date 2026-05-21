@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -140,13 +141,33 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		})
 		saveCmd = a.persistSessionCmd()
 	case rpcclient.EventPendingOps:
-		if ev.PendingOps != nil && !ev.PendingOps.Applied {
-			a.pendingOps = ev.PendingOps
-			a.layout()
+		if ev.PendingOps == nil {
+			break
 		}
+		if ev.PendingOps.Applied {
+			if n := len(ev.PendingOps.Ops); n > 0 {
+				a.session.AppendMessage(state.Message{
+					Role: state.RoleSystem,
+					Text: fmt.Sprintf("[live] записано на диск: %d ops", n),
+				})
+			}
+			a.pendingOps = nil
+		} else {
+			a.pendingOps = ev.PendingOps
+		}
+		a.layout()
 	case rpcclient.EventPermissionRequest:
 		if ev.PermReq != nil {
 			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
+			a.layout()
+		}
+	case rpcclient.EventQuestionAsked:
+		if len(ev.Questions) > 0 {
+			items := make([]view.QuestionItem, len(ev.Questions))
+			for i, q := range ev.Questions {
+				items[i] = view.QuestionItem{Question: q.Question, Options: q.Options}
+			}
+			a.questionModal = view.NewQuestionModal(items)
 			a.layout()
 		}
 	case rpcclient.EventWorkflowStageStart:

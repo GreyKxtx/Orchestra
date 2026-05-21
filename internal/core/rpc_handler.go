@@ -81,6 +81,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		if h.requester != nil {
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
+			p.QuestionAsker = &rpcQuestionAsker{requestFn: h.requester}
 		}
 		return h.core.AgentRun(ctx, p)
 
@@ -125,6 +126,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		if h.requester != nil {
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
+			p.QuestionAsker = &rpcQuestionAsker{requestFn: h.requester}
 		}
 		return h.core.SessionMessage(ctx, p)
 

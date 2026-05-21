@@ -1,0 +1,29 @@
+Launch a child agent to handle a complex, multi-step subtask autonomously and return a single result.
+
+This tool runs synchronously: spawn + wait in one call. For fire-and-forget or parallel work, use task_spawn + task_wait instead.
+
+## subagent_type (required)
+- explore — read-only research (grep, read, glob, symbols). Default when omitted.
+- general — full read/write/edit child; returns via task_result, not final.patches.
+
+## When to use
+- Broad codebase exploration that would clutter the parent context
+- Independent subtasks (refactors in one area, research while you continue planning)
+- Delegating verification steps with a clear success criterion
+
+## When NOT to use
+- Reading one known file → use read
+- Searching one pattern in 1–2 files → use grep/read
+- Simple one-step edits → do them directly
+
+## Parameters
+- description — short 3–5 word label for logging
+- prompt — detailed task for the child; include expected output format and verification steps
+- subagent_type — explore or general
+- max_steps — optional cap (default 12)
+- timeout_ms — optional wait timeout (default 120000)
+
+## Notes
+- Child output is not shown to the user until you summarize it
+- Child agents cannot spawn nested subtasks
+- Trust but verify child results on critical paths

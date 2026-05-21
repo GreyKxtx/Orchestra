@@ -355,14 +355,6 @@ func (a *App) showToast(text string) {
 	a.toastTick = 15
 }
 
-// mouseXToAbsolutePos converts a screen X coordinate to an absolute rune
-// index in the input, assuming the click is on the first visible row of
-// the input box. Kept as a thin wrapper around mouseXYToAbsolutePos for
-// existing single-row call sites.
-func (a *App) mouseXToAbsolutePos(screenX int) int {
-	return a.mouseXYToAbsolutePos(screenX, 0)
-}
-
 // mouseXYToAbsolutePos converts (screenX, visualRowOffset) to an absolute
 // rune index. visualRowOffset is 0 for the topmost input row, 1 for the
 // second visual row, etc. — covers BOTH logical-line breaks and soft-wrap
@@ -661,6 +653,16 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.updateStatusHints()
 			return a, nil, true
 		}
+		if a.questionModal != nil {
+			a.questionModal = nil
+			a.input.Reset()
+			a.updateStatusHints()
+			a.layout()
+			if a.rpc != nil {
+				a.rpc.RespondQuestion(nil)
+			}
+			return a, nil, true
+		}
 		if a.permModal != nil {
 			a.permModal = nil
 			a.updateStatusHints()
@@ -775,6 +777,24 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 // mention/palette suggestion, or submits the current input as a new user
 // message and kicks off an agent run.
 func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
+	if a.questionModal != nil {
+		answer := strings.TrimSpace(a.input.Value())
+		if answer == "" {
+			return a, nil, true
+		}
+		done := a.questionModal.Advance(answer)
+		a.input.Reset()
+		if done {
+			answers := append([]string(nil), a.questionModal.Answers...)
+			a.questionModal = nil
+			a.layout()
+			a.updateStatusHints()
+			if a.rpc != nil {
+				a.rpc.RespondQuestion(answers)
+			}
+		}
+		return a, nil, true
+	}
 	if a.mentionActive {
 		if sel := a.mentionPalette.Selected(); sel != "" {
 			a.input.SetValue(replaceLastMention(a.input.Value(), sel))
@@ -842,7 +862,7 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		a.layout()
 		a.updateStatusHints()
 		go func(query, mode string) {
-			_ = a.rpc.AgentRun(ctx, query, mode)
+			_ = a.rpc.AgentRun(ctx, query, mode, a.agentRunOptions())
 		}(text, a.cfg.Mode)
 		return a, saveCmd, true
 	}

@@ -531,7 +531,7 @@ func TestAgent_Run_PlanMode_WriteGuard_AllowsPlanMd(t *testing.T) {
 
 	llmClient := &scriptedLLM{
 		steps: []string{
-			`{"type":"tool_call","tool":{"name":"write","input":{"path":".orchestra/plan.md","content":"# Plan\n","must_not_exist":true}}}`,
+			`{"type":"tool_call","tool":{"name":"write","input":{"path":".orchestra/plans/test-plan.md","content":"# Plan\n","must_not_exist":true}}}`,
 			`{"type":"final","final":{"patches":[]}}`,
 		},
 	}
@@ -539,6 +539,7 @@ func TestAgent_Run_PlanMode_WriteGuard_AllowsPlanMd(t *testing.T) {
 	ag, err := New(llmClient, v, tr, Options{
 		MaxSteps: 10,
 		Mode:     ModePlan,
+		PlanPath: ".orchestra/plans/test-plan.md",
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -551,9 +552,9 @@ func TestAgent_Run_PlanMode_WriteGuard_AllowsPlanMd(t *testing.T) {
 	if res == nil {
 		t.Fatalf("expected result")
 	}
-	content, readErr := os.ReadFile(filepath.Join(root, ".orchestra", "plan.md"))
+	content, readErr := os.ReadFile(filepath.Join(root, ".orchestra", "plans", "test-plan.md"))
 	if readErr != nil {
-		t.Fatalf(".orchestra/plan.md should have been created: %v", readErr)
+		t.Fatalf(".orchestra/plans/test-plan.md should have been created: %v", readErr)
 	}
 	if string(content) != "# Plan\n" {
 		t.Fatalf("unexpected plan.md content: %q", string(content))
@@ -1138,5 +1139,113 @@ func TestAgent_Run_LSPErrors_HintInjected_Edit(t *testing.T) {
 	}
 	if !mockLLM.hintSeen {
 		t.Error("expected LSP_ERRORS hint in LLM messages after edit tool call")
+	}
+}
+
+// mockSubtaskRunner implements SubtaskRunner for agent tests without importing internal/tasks.
+type mockSubtaskRunner struct {
+	result string
+}
+
+func (m *mockSubtaskRunner) Spawn(_ context.Context, _ SubtaskSpawnRequest) (string, error) {
+	return "task_mock_1", nil
+}
+
+func (m *mockSubtaskRunner) Wait(_ context.Context, taskID string, _ int) (*SubtaskResult, error) {
+	return &SubtaskResult{TaskID: taskID, Status: "done", Result: m.result}, nil
+}
+
+func (m *mockSubtaskRunner) Cancel(_ context.Context, _ string) error {
+	return nil
+}
+
+func TestHandleTaskTool_UnifiedTaskSync(t *testing.T) {
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(t.TempDir(), tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	ag, err := New(&scriptedLLM{}, v, tr, Options{SubtaskRunner: &mockSubtaskRunner{result: "research complete"}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	out, err := ag.handleTaskTool(context.Background(), "task", json.RawMessage(`{
+		"description": "scan repo",
+		"prompt": "find entry points",
+		"subagent_type": "explore",
+		"timeout_ms": 5000
+	}`))
+	if err != nil {
+		t.Fatalf("handleTaskTool: %v", err)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["status"] != "done" {
+		t.Fatalf("status = %v, want done", resp["status"])
+	}
+	if resp["result"] != "research complete" {
+		t.Fatalf("result = %v", resp["result"])
+	}
+	if _, ok := resp["task_id"].(string); !ok || resp["task_id"] == "" {
+		t.Fatalf("expected non-empty task_id, got %v", resp["task_id"])
+	}
+}
+
+func TestAgent_Run_UnifiedTaskTool(t *testing.T) {
+	root := t.TempDir()
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	taskRunner := &mockSubtaskRunner{result: "3 packages found"}
+	llmClient := &scriptedLLM{
+		steps: []string{
+			`{"type":"tool_call","tool":{"name":"task","input":{"prompt":"map packages","subagent_type":"explore","description":"map pkgs"}}}`,
+			`{"type":"final","final":{"patches":[]}}`,
+		},
+	}
+
+	ag, err := New(llmClient, v, tr, Options{
+		MaxSteps:      10,
+		SubtaskRunner: taskRunner,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	history, res, err := ag.Run(context.Background(), nil, "delegate research")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected result")
+	}
+	found := false
+	for _, m := range history {
+		if m.Role != llm.RoleTool {
+			continue
+		}
+		if strings.Contains(m.Content, "3 packages found") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected child task result in history: %+v", history)
 	}
 }

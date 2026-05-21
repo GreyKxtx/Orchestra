@@ -385,6 +385,9 @@ func (r *Runner) FSList(ctx context.Context, req FSListRequest) (*FSListResponse
 	if err != nil {
 		return nil, err
 	}
+	if r.dryRun {
+		files = r.mergeStagedFilesIntoList(files, listPath, req.IncludeHash, limit)
+	}
 	return &FSListResponse{Files: files}, nil
 }
 
