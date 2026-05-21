@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,7 @@ func TestStaging_NoFileCreatedOnDisk(t *testing.T) {
 	}
 	origHash := cache.ComputeSHA256([]byte("original"))
 
-	_, err := r.FSWrite(nil, FSWriteRequest{
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path:     "hello.txt",
 		Content:  "staged content",
 		FileHash: origHash,
@@ -50,7 +51,7 @@ func TestStaging_NoFileCreatedOnDisk(t *testing.T) {
 func TestStaging_StagedOps_HasWriteAtomic(t *testing.T) {
 	r := newDryRunRunner(t)
 
-	_, err := r.FSWrite(nil, FSWriteRequest{
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path:         "new.txt",
 		Content:      "hello",
 		MustNotExist: true,
@@ -82,7 +83,7 @@ func TestStaging_ReadAfterWrite(t *testing.T) {
 	}
 	origHash := cache.ComputeSHA256([]byte("before"))
 
-	_, err := r.FSWrite(nil, FSWriteRequest{
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path:     "foo.txt",
 		Content:  "after",
 		FileHash: origHash,
@@ -91,7 +92,7 @@ func TestStaging_ReadAfterWrite(t *testing.T) {
 		t.Fatalf("FSWrite: %v", err)
 	}
 
-	resp, err := r.FSRead(nil, FSReadRequest{Path: "foo.txt"})
+	resp, err := r.FSRead(context.Background(), FSReadRequest{Path: "foo.txt"})
 	if err != nil {
 		t.Fatalf("FSRead: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestStaging_EditDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := r.FSEdit(nil, FSEditRequest{
+	_, err := r.FSEdit(context.Background(), FSEditRequest{
 		Path:    "code.go",
 		Search:  "hello",
 		Replace: "world",
@@ -205,9 +206,68 @@ func TestStaging_ApplyPatchesToStaged_StaleFileHash(t *testing.T) {
 	}
 }
 
+func TestFSWrite_MustNotExist_AllowsRestageInDryRun(t *testing.T) {
+	r := newDryRunRunner(t)
+
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path:         "new.txt",
+		Content:      "v1",
+		MustNotExist: true,
+	})
+	if err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+
+	_, err = r.FSWrite(context.Background(), FSWriteRequest{
+		Path:         "new.txt",
+		Content:      "v2",
+		MustNotExist: true,
+	})
+	if err != nil {
+		t.Fatalf("re-stage with must_not_exist should succeed in dry-run: %v", err)
+	}
+
+	resp, err := r.FSRead(context.Background(), FSReadRequest{Path: "new.txt"})
+	if err != nil {
+		t.Fatalf("FSRead: %v", err)
+	}
+	if !strings.Contains(resp.Content, "v2") {
+		t.Fatalf("expected staged v2, got %q", resp.Content)
+	}
+}
+
+func TestStaging_MergeIntoList_ShowsStagedOnlyFiles(t *testing.T) {
+	r := newDryRunRunner(t)
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path:         "pkg/new.go",
+		Content:      "package pkg\n",
+		MustNotExist: true,
+	})
+	if err != nil {
+		t.Fatalf("FSWrite: %v", err)
+	}
+
+	resp, err := r.FSList(context.Background(), FSListRequest{Path: ".", Recursive: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("FSList: %v", err)
+	}
+	found := false
+	for _, f := range resp.Files {
+		if f.Path == "pkg/new.go" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected staged file in ls output, got %v", resp.Files)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
 func TestStaging_ClearStaged(t *testing.T) {
 	r := newDryRunRunner(t)
-	_, _ = r.FSWrite(nil, FSWriteRequest{Path: "x.txt", Content: "hi", MustNotExist: true})
+	_, _ = r.FSWrite(context.Background(), FSWriteRequest{Path: "x.txt", Content: "hi", MustNotExist: true})
 	if len(r.StagedOps()) == 0 {
 		t.Fatal("expected staged ops before clear")
 	}

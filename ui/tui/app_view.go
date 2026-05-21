@@ -77,7 +77,10 @@ func (a *App) View() string {
 	if a.workflowProgress != nil && a.workflowProgress.Active() {
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(a.workflowProgress.Render()))
 	}
-	if a.permModal != nil {
+	if a.questionModal != nil {
+		parts = append(parts, a.questionModal.Render())
+		parts = append(parts, a.renderChatInputBox())
+	} else if a.permModal != nil {
 		parts = append(parts, a.permModal.Render())
 	} else {
 		parts = append(parts, a.renderChatInputBox())
@@ -181,7 +184,10 @@ func (a *App) layout() {
 	// terminal-resize sequence.
 	inputRows := 5
 	modalRows := 0
-	if a.permModal != nil {
+	if a.questionModal != nil {
+		modalRows = 4
+		a.questionModal.SetSize(a.width)
+	} else if a.permModal != nil {
 		inputRows = 0 // modal replaces input
 		modalRows = 5
 		a.permModal.SetSize(a.width)
@@ -362,14 +368,18 @@ func (a *App) updateStatusHints() {
 		a.statusBar.SetHints("↑↓ select · Enter execute · Esc cancel")
 	case a.mentionActive:
 		a.statusBar.SetHints("↑↓ select · Enter/Tab insert · Esc cancel")
+	case a.questionModal != nil:
+		a.statusBar.SetHints("Enter — ответ · Esc — отмена")
 	case a.permModal != nil:
 		a.statusBar.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:
 		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
 	case a.agentBusy && a.activeCancel != nil:
 		a.statusBar.SetHints("Esc отменить · Ctrl+C выйти")
+	case a.autoApply:
+		a.statusBar.SetHints(a.writeModeLabel() + " · запись на диск · /preview · Ctrl+K")
 	default:
-		a.statusBar.SetHints("Ctrl+G выделение · Ctrl+K команды")
+		a.statusBar.SetHints(a.writeModeLabel() + " · [a]/apply · /live · Ctrl+K")
 	}
 }
 

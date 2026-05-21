@@ -47,9 +47,6 @@ func New(cfg config.EmbedConfig) *HTTPClient {
 	if base == "" {
 		base = "https://api.openai.com/v1"
 	}
-	if !strings.HasSuffix(base, "/v1") && !strings.HasSuffix(base, "/embeddings") {
-		// Trust the caller to supply a base ending in /v1.
-	}
 	batch := cfg.BatchSize
 	if batch <= 0 {
 		batch = 32

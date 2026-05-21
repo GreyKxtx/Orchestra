@@ -58,6 +58,15 @@ func mustLoadPromptFile(name string) string {
 	return s
 }
 
+// BuildToolDescription returns the embedded tool prompt for name (e.g. "todowrite", "task")
+// or fallback when no file exists.
+func BuildToolDescription(name, fallback string) string {
+	if s := loadPromptFile(name + ".txt"); s != "" {
+		return s
+	}
+	return fallback
+}
+
 // LoadSystemOverride reads .orchestra/system.txt from workspaceRoot.
 // If the file exists and is non-empty, its content replaces the built-in system prompt entirely.
 // Returns empty string when no override is present.

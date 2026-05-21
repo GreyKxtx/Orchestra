@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 )
 
@@ -101,7 +102,7 @@ func TestManager_Close_Empty(t *testing.T) {
 
 func TestManager_Call_UnknownServer(t *testing.T) {
 	m := &Manager{}
-	_, err := m.Call(nil, "mcp:ghost:tool", nil)
+	_, err := m.Call(context.Background(), "mcp:ghost:tool", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown server")
 	}
@@ -109,7 +110,7 @@ func TestManager_Call_UnknownServer(t *testing.T) {
 
 func TestManager_Call_InvalidName(t *testing.T) {
 	m := &Manager{}
-	_, err := m.Call(nil, "invalid-name", nil)
+	_, err := m.Call(context.Background(), "invalid-name", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid tool name")
 	}

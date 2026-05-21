@@ -95,3 +95,28 @@ func TestCircuitBreaker_ResetDeniedForTool(t *testing.T) {
 		t.Fatal("bash 3rd denial must trip (exec.run reset is scoped)")
 	}
 }
+
+func TestCircuitBreaker_ReadNotDeduped(t *testing.T) {
+	cb := NewCircuitBreaker(2, 6, 6, 3)
+	input := []byte(`{"path":"index.html"}`)
+
+	if cb.IsDuplicateCall("read", input) {
+		t.Fatal("first read should not be duplicate")
+	}
+	if hint := cb.RecordSuccessfulCall("read", input); hint != "" {
+		t.Fatalf("read should not emit dup hint, got %q", hint)
+	}
+	if cb.IsDuplicateCall("read", input) {
+		t.Fatal("second read with same args must stay allowed for read-only tools")
+	}
+	if hint := cb.RecordSuccessfulCall("read", input); hint != "" {
+		t.Fatalf("repeat read should not emit dup hint, got %q", hint)
+	}
+
+	if !cb.IsDuplicateCall("write", input) {
+		_ = cb.RecordSuccessfulCall("write", input)
+	}
+	if !cb.IsDuplicateCall("write", input) {
+		t.Fatal("mutating tools must still be deduped")
+	}
+}

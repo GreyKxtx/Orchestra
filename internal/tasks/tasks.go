@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -41,6 +42,17 @@ func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Ru
 	}
 }
 
+func childToolsForSubagent(subagentType string) []llm.ToolDef {
+	switch subagentType {
+	case "", "explore":
+		return tools.ListToolsForChild()
+	case "general":
+		return tools.ListToolsForMode("general", tools.Capabilities{}, false, false)
+	default:
+		return tools.ListToolsForMode(subagentType, tools.Capabilities{}, false, false)
+	}
+}
+
 // Spawn creates a new child agent task and starts it in a goroutine.
 func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (string, error) {
 	r.mu.Lock()
@@ -52,6 +64,12 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 	if maxSteps <= 0 || maxSteps > 12 {
 		maxSteps = 12
 	}
+
+	subagentType := req.SubagentType
+	if subagentType == "" {
+		subagentType = "explore"
+	}
+	childTools := childToolsForSubagent(subagentType)
 
 	var taskCtx context.Context
 	var cancel context.CancelFunc
@@ -71,7 +89,6 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 	r.tasks[taskID] = entry
 	r.mu.Unlock()
 
-	childTools := tools.ListToolsForChild()
 	go func() {
 		defer close(entry.done)
 		defer cancel()
@@ -99,6 +116,9 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID, goal string, maxSteps
 
 	_, res, runErr := ag.Run(ctx, nil, goal)
 	if runErr != nil {
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
+			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: runErr.Error()}
+		}
 		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: runErr.Error()}
 	}
 	if res.SubtaskResult != "" {
@@ -110,6 +130,12 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID, goal string, maxSteps
 		Status: "done",
 		Result: fmt.Sprintf("completed with %d patch(es)", len(res.Patches)),
 	}
+}
+
+func (r *TaskRunner) removeTask(taskID string) {
+	r.mu.Lock()
+	delete(r.tasks, taskID)
+	r.mu.Unlock()
 }
 
 // Wait blocks until the task completes, or the timeout/ctx expires.
@@ -133,12 +159,18 @@ func (r *TaskRunner) Wait(ctx context.Context, taskID string, timeoutMS int) (*a
 		r.mu.Lock()
 		result := entry.result
 		r.mu.Unlock()
+		r.removeTask(taskID)
 		if result == nil {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: "task produced no result"}, nil
 		}
 		return result, nil
 	case <-waitCtx.Done():
-		return &agent.SubtaskResult{TaskID: taskID, Status: "cancelled", Error: "wait timeout"}, nil
+		entry.cancel()
+		r.removeTask(taskID)
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: "wait timeout"}, nil
+		}
+		return &agent.SubtaskResult{TaskID: taskID, Status: "cancelled", Error: waitCtx.Err().Error()}, nil
 	}
 }
 

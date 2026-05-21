@@ -1,6 +1,6 @@
 # Режимы агента Orchestra
 
-Режим задаётся флагом `--mode` команды `apply`, параметром `mode` в `agent.run` через JSON-RPC, или косвенно через `plan_enter` / `plan_exit` внутри сессии.
+Режим задаётся флагом `--mode` команды `apply`, параметром `mode` в `agent.run` / `session.message` через JSON-RPC. Переключение **plan → build** внутри сессии — через `plan_exit` (core выполняет второй прогон автоматически при одобрении).
 
 Источник правды: `internal/agent/agent.go` (константы `Mode*`), `internal/tools/registry.go` (`ListToolsForMode`), `internal/prompt/files/*.txt` (промпты).
 
@@ -12,7 +12,9 @@
 
 **Назначение:** выполнение задачи: чтение кода, написание изменений, применение патчей.
 
-**Инструменты:** `ls`, `read`, `glob`, `write`, `edit`, `grep`, `symbols`, `explore`, `runtime_query`, `todowrite`, `todoread`, `plan_enter`, `bash` (если `--allow-exec`), `task_spawn/wait/cancel` (если включён SubtaskRunner), `question` (если включён QuestionAsker).
+**Инструменты:** `ls`, `read`, `glob`, `write`, `edit`, `grep`, `symbols`, `explore`, `runtime_query`, `todowrite`, `todoread`, `bash` (если `--allow-exec`), `task` + `task_spawn/wait/cancel` (если включён SubtaskRunner), `question` (если включён QuestionAsker).
+
+**Примечание:** `plan_enter` **не** рекламируется как tool (как в OpenCode) — вход в plan только через `--mode plan` / RPC `mode: "plan"`.
 
 **Промпты:** `build.txt`; вариации по семейству модели: `build-anthropic.txt`, `build-gpt.txt`, `build-gemini.txt`, `build-local.txt`, `build-kimi.txt`.
 
@@ -20,13 +22,13 @@
 
 ### `plan` — read-only планирование
 
-**Назначение:** анализ задачи и составление плана в `.orchestra/plan.md` без риска изменить код.
+**Назначение:** анализ задачи и составление плана в `.orchestra/plans/<session-id>.md` (или timestamped path для one-shot `agent.run`) без риска изменить код.
 
-**Инструменты:** `ls`, `read`, `glob`, `write` (только для `.orchestra/plan.md`!), `grep`, `symbols`, `explore`, `runtime_query`, `todowrite`, `todoread`, `plan_exit`, `task_spawn/wait/cancel` (если включён), `question` (если включён).
+**Инструменты:** `ls`, `read`, `glob`, `write` (только plan-файл!), `grep`, `symbols`, `explore`, `runtime_query`, `todowrite`, `todoread`, `plan_exit`, `task` + `task_spawn/wait/cancel` (если включён), `question` (если включён).
 
-**Ограничения:** любая запись за пределами `plan.md` → ошибка `PLAN_MODE_WRITE_DENIED`. `fs.edit` полностью заблокирован.
+**Ограничения:** любая запись за пределами `.orchestra/plans/*.md` (и legacy `.orchestra/plan.md`) → `PLAN_MODE_WRITE_DENIED`. `edit` полностью заблокирован.
 
-**Переход:** `plan_exit` спрашивает пользователя о переключении в `build`; при согласии агент перезапускается с флагом `JustSwitchedFromPlan`.
+**Переход:** `plan_exit` спрашивает пользователя о переключении в `build`; при согласии core запускает второй прогон с `JustSwitchedFromPlan` и synthetic query. RPC result: `switch_to_build` (legacy flag, обычно уже обработан in-core).
 
 **Промпт:** `plan.txt`; `plan-local.txt` для локальных моделей.
 
@@ -34,7 +36,7 @@
 
 ### `explore` — subagent для поиска
 
-**Назначение:** read-only исследование кодовой базы как дочерний агент. Запускается через `task_spawn` из родительского агента.
+**Назначение:** read-only исследование кодовой базы как дочерний агент. Запускается через `task` (sync) или `task_spawn` + `task_wait`.
 
 **Инструменты:** `ls`, `read`, `glob`, `grep`, `symbols`, `task_result`.
 
@@ -46,7 +48,7 @@
 
 ### `general` — универсальный subagent
 
-**Назначение:** полноценный исполнитель, запускаемый родительским агентом через `task_spawn`. Читает и пишет файлы, возвращает результат через `task_result`.
+**Назначение:** полноценный исполнитель, запускаемый родителем через `task` с `subagent_type: "general"`. Читает и пишет файлы, возвращает результат через `task_result`.
 
 **Инструменты:** `ls`, `read`, `glob`, `write`, `edit`, `grep`, `symbols`, `explore`, `runtime_query`, `todoread`, `task_result`, `bash` (если `--allow-exec`), `task_spawn/wait/cancel` (если включён).
 
@@ -68,7 +70,7 @@
 
 ### `title` — генерация заголовка (внутренний)
 
-**Назначение:** генерация короткого заголовка сессии/задачи по запросу пользователя. Используется для именования сессий в `orchestra chat`.
+**Назначение:** генерация короткого заголовка сессии/задачи по запросу пользователя. Используется для именования сессий в TUI.
 
 **Инструменты:** нет.
 

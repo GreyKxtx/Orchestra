@@ -9,7 +9,8 @@
 | `orchestra init` | ✅ | Создаёт `.orchestra.yml` в cwd |
 | `orchestra core` | ✅ | JSON-RPC 2.0 stdio сервер; `--http` отладочный режим |
 | `orchestra apply` | ✅ | Dry-run / `--apply` / `--via-core` / `--from-plan` / `--pipeline` / `--mode` / `--provider` / `--skill` / `--image` (multimodal) |
-| `orchestra chat` | ✅ | Интерактивный REPL поверх `orchestra core` |
+| `orchestra` | ✅ | TUI по умолчанию (консольный агент); `--apply`, `--allow-exec` |
+| `orchestra tui` | ✅ | Alias того же TUI |
 | `orchestra search` | ✅ | Regex-поиск с учётом `exclude_dirs` |
 | `orchestra llm-ping` | ✅ | Smoke-test LLM, пишет результат в `.orchestra/` |
 | `orchestra eval` | ✅ | YAML-задачи с изолированными воркспейсами |
@@ -109,11 +110,12 @@
 
 | Имя | Внутреннее | Статус | Что делает |
 |-----|-----------|--------|------------|
-| `todowrite` | `todo.write` | ✅ | Обновить чеклист задач сессии |
+| `todowrite` | `todo.write` | ✅ | Обновить чеклист (rich prompt; `completed`→`done`) |
 | `todoread` | `todo.read` | ✅ | Прочитать чеклист |
-| `task_spawn` | `task.spawn` | ✅ | Создать дочерний агент-задачу |
-| `task_wait` | `task.wait` | ✅ | Дождаться результата дочерней задачи |
-| `task_cancel` | `task.cancel` | ✅ | Отменить дочернюю задачу |
+| `task` | — | ✅ | Синхронный subagent (spawn+wait); `subagent_type`: explore/general |
+| `task_spawn` | `task.spawn` | ✅ | Async: создать дочерний агент |
+| `task_wait` | `task.wait` | ✅ | Async: дождаться результата |
+| `task_cancel` | `task.cancel` | ✅ | Async: отменить задачу |
 | `task_result` | `task.result` | ✅ | Вернуть результат родительскому агенту (subagent path) |
 | `skill_invoke` | `skill_invoke` | ✅ | Синхронный вызов скилла как child-agent с его prompt/tools/model/provider |
 
@@ -121,8 +123,8 @@
 
 | Имя | Статус | Что делает |
 |-----|--------|------------|
-| `plan_enter` | ✅ | Переключиться в режим `plan` (read-only) |
-| `plan_exit` | ✅ | Выйти из `plan`, запросить переключение в `build` |
+| `plan_enter` | ⚠️ legacy | Не в build tool list; stub handler для старых вызовов |
+| `plan_exit` | ✅ | Выйти из `plan`, запросить переключение в `build` (core auto-restart) |
 | `question` | ✅ | Задать уточняющий вопрос пользователю (блокирует до ответа) |
 
 ### Runtime / CKG

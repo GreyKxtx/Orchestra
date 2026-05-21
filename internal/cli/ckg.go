@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,7 +57,7 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("config: %w (run 'orchestra init' first)", err)
 	}
 	if cfg.Embed.Model == "" {
-		return fmt.Errorf("embed.model is empty in .orchestra.yml — set provider/model/api_base/api_key under embed:")
+		return fmt.Errorf("embed.model is empty in .orchestra.yml — set provider/model/api_base/api_key under embed")
 	}
 	if ckgEmbedBatchSize > 0 {
 		cfg.Embed.BatchSize = ckgEmbedBatchSize
@@ -166,20 +165,4 @@ func readNodeSource(projectRoot string, m ckg.MissingEmbedding) (string, error) 
 	// Prefix with FQN for embedding context.
 	body := strings.Join(lines[start:end], "\n")
 	return fmt.Sprintf("// %s\n%s\n", m.FQN, body), nil
-}
-
-// embedQuery is a small helper shared by the semantic_search tool to
-// embed a single query string and return the vector. Kept here (CLI
-// package) so internal/tools doesn't import internal/embed directly —
-// the tool dispatch goes through a callback set on the Runner.
-func embedQuery(ctx context.Context, cfg config.EmbedConfig, query string) ([]float32, error) {
-	client := embed.New(cfg)
-	vecs, err := client.Embed(ctx, []string{query})
-	if err != nil {
-		return nil, err
-	}
-	if len(vecs) == 0 {
-		return nil, fmt.Errorf("embed: server returned no vectors")
-	}
-	return vecs[0], nil
 }

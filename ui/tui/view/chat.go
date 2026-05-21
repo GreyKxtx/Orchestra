@@ -113,7 +113,7 @@ func (c *Chat) ScrollUp(n int) {
 	if n <= 0 {
 		n = c.vp.Height / 2
 	}
-	c.vp.LineUp(n)
+	c.vp.ScrollUp(n)
 	c.userScrolled = !c.vp.AtBottom()
 }
 
@@ -122,7 +122,7 @@ func (c *Chat) ScrollDown(n int) {
 	if n <= 0 {
 		n = c.vp.Height / 2
 	}
-	c.vp.LineDown(n)
+	c.vp.ScrollDown(n)
 	c.userScrolled = !c.vp.AtBottom()
 }
 

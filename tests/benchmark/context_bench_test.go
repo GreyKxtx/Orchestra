@@ -248,7 +248,7 @@ func startBenchDaemonHTTP(b *testing.B, projectRoot string) (baseURL string, tok
 		}
 		if time.Now().After(deadline) {
 			cancel()
-			_ = <-errCh
+			<-errCh
 			b.Fatalf("daemon did not start in time (discovery not available)")
 		}
 		runtime.Gosched()
@@ -257,7 +257,7 @@ func startBenchDaemonHTTP(b *testing.B, projectRoot string) (baseURL string, tok
 
 	stop = func() {
 		cancel()
-		_ = <-errCh
+		<-errCh
 	}
 	return baseURL, token, stop
 }

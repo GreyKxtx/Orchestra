@@ -26,6 +26,7 @@ const (
 	EventAgentRunCompleted EventKind = "agent_run_completed" // synthesized when AgentRun returns
 
 	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent
+	EventQuestionAsked     EventKind = "question_asked"     // server asks user via question/ask
 
 	// Workflow stage events (Protocol v4+). Note the `/` separator — matches
 	// LSP-style notification naming used by agent/event, exec/output_chunk, etc.
@@ -53,6 +54,7 @@ type Event struct {
 	ArgsDelta    string                    // only set on tool_call_delta — partial JSON of arguments
 	PendingOps   *PendingOpsPayload        // only set when Kind == EventPendingOps
 	PermReq      *PermissionRequestPayload // only set when Kind == EventPermissionRequest
+	Questions    []QuestionItemPayload     // only set when Kind == EventQuestionAsked
 	Stage        *WorkflowStagePayload     // only set when Kind == EventWorkflowStageStart / EventWorkflowStageDone
 	Err          string                    // only set on connection/agent error events
 }
@@ -75,4 +77,10 @@ type FileDiff struct {
 type PermissionRequestPayload struct {
 	Tool        string `json:"tool"`
 	Description string `json:"description"`
+}
+
+// QuestionItemPayload is one question in a question/ask server request.
+type QuestionItemPayload struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
 }

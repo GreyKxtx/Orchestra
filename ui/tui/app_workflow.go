@@ -140,10 +140,7 @@ func (a *App) cmdRunWorkflow(name, args string) tea.Cmd {
 	a.layout()
 	a.updateStatusHints()
 	return func() tea.Msg {
-		res, err := rpc.WorkflowRun(ctx, name, args, rpcclient.WorkflowRunOptions{
-			// TODO: thread --apply / --allow-exec from TUI settings once we add
-			// those toggles. Default: dry-run + no exec.
-		})
+		res, err := rpc.WorkflowRun(ctx, name, args, a.workflowRunOptions())
 		return workflowResultMsg{res: res, err: err}
 	}
 }

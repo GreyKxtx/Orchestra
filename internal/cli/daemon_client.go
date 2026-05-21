@@ -2,13 +2,10 @@ package cli
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/daemon"
-	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func getDaemonClient(ctx context.Context, cfg *config.ProjectConfig) (*daemon.Client, bool) {
@@ -28,26 +25,4 @@ func getDaemonClient(ctx context.Context, cfg *config.ProjectConfig) (*daemon.Cl
 
 	client := daemon.NewClientWithToken(info.URL, info.Token)
 	return client, true
-}
-
-func validateDaemonClient(ctx context.Context, client *daemon.Client, cfg *config.ProjectConfig) bool {
-	health, err := client.Health(ctx)
-	if err != nil {
-		return false
-	}
-	if health.ProtocolVersion != daemon.ProtocolVersion {
-		fmt.Fprintf(os.Stderr, "[orchestra] WARNING: daemon protocol mismatch (daemon=%d, cli=%d). Falling back to direct mode.\n", health.ProtocolVersion, daemon.ProtocolVersion)
-		return false
-	}
-
-	localID, err := cache.ComputeProjectID(cfg.ProjectRoot)
-	if err != nil {
-		return false
-	}
-	if health.ProjectID != localID {
-		fmt.Fprintf(os.Stderr, "[orchestra] WARNING: daemon serves different project (daemon project_id=%s). Falling back to direct mode.\n", health.ProjectID)
-		return false
-	}
-
-	return true
 }

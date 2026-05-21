@@ -7,17 +7,7 @@ import (
 	"github.com/orchestra/orchestra/internal/skills"
 )
 
-// argumentsMarker is replaced in a skill's body with the user-supplied
-// task text when the skill is invoked. When the marker is absent, the
-// task text is unchanged (still passed as the agent's user message by
-// the regular apply flow).
-const argumentsMarker = "$ARGUMENTS"
-
-// resolveSkillAgent loads the named skill from .orchestra/skills/ (user
-// + project, project wins) and converts it into a config.AgentDefinition
-// that can be appended to cfg.Agents and used via the existing --mode
-// resolution path. Tool names are validated against config.ValidAgentTool.
-// When the skill body contains $ARGUMENTS, it is replaced with arguments.
+// When the skill body contains $ARGUMENTS, it is replaced with arguments via skills.PrepareBody.
 func resolveSkillAgent(projectRoot, name, arguments string) (*config.AgentDefinition, error) {
 	all, err := skills.DiscoverCached(projectRoot)
 	if err != nil {

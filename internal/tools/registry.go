@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/llm"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 )
 
 // Capabilities is the bundle of capability flags every tool-listing
@@ -51,9 +52,9 @@ func appendBrowserTools(out []llm.ToolDef) []llm.ToolDef {
 	)
 }
 
-// appendSubtaskTools adds task.spawn/wait/cancel to out. S3 in audit ledger.
+// appendSubtaskTools adds unified task + async spawn/wait/cancel to out.
 func appendSubtaskTools(out []llm.ToolDef) []llm.ToolDef {
-	return append(out, toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	return append(out, toolTask(), toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
 }
 
 // appendCapabilityTools layers exec / web / browser conditionally — the
@@ -144,7 +145,7 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 var parallelSafeTools = map[string]bool{
 	"ls": true, "read": true, "glob": true, "grep": true,
 	"symbols": true, "explore": true, "repo_map": true,
-	"todoread": true, "runtime_query": true, "task_result": true,
+	"runtime_query": true,
 	"semantic_search": true,
 	"webfetch": true, "websearch": true,
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true, "lsp.diagnostics": true,
@@ -157,10 +158,10 @@ var parallelSafeTools = map[string]bool{
 var mutatingTools = map[string]bool{
 	"write": true, "edit": true,
 	"bash": true, "bash.output": true, "bash.kill": true,
-	"todowrite": true, "memory_write": true,
+	"todowrite": true, "todoread": true, "memory_write": true,
 	"lsp.rename": true,
-	"plan_enter": true, "plan_exit": true,
-	"task_spawn": true, "task_wait": true, "task_cancel": true,
+	"plan_exit": true,
+	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
 	"question": true,
 	"fs.delete": true, "fs.rename": true, "ast_rename": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
@@ -543,11 +544,12 @@ func toolExecBashKill() llm.ToolDef {
 }
 
 func toolTodoWrite() llm.ToolDef {
+	fallback := "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах."
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "todowrite",
-			Description: "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах.",
+			Description: promptpkg.BuildToolDescription("todowrite", fallback),
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -562,7 +564,7 @@ func toolTodoWrite() llm.ToolDef {
         "properties": {
           "id":      { "type": "string", "minLength": 1 },
           "content": { "type": "string", "minLength": 1 },
-          "status":  { "type": "string", "enum": ["pending", "in_progress", "done", "cancelled"] }
+          "status":  { "type": "string", "enum": ["pending", "in_progress", "done", "completed", "cancelled"] }
         }
       }
     }
@@ -635,7 +637,7 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolPlanEnter(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
@@ -694,6 +696,34 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	return applyParallelFlags(out)
 }
 
+func toolTask() llm.ToolDef {
+	fallback := "Запустить дочернего агента для подзадачи (синхронно: spawn+wait). Укажи subagent_type: explore (read-only) или general (read/write)."
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "task",
+			Description: promptpkg.BuildToolDescription("task", fallback),
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["prompt"],
+  "properties": {
+    "description": { "type": "string", "description": "Short 3-5 word label" },
+    "prompt": { "type": "string", "minLength": 1, "description": "Detailed task for the child agent" },
+    "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt" },
+    "subagent_type": {
+      "type": "string",
+      "enum": ["explore", "general"],
+      "description": "Child agent mode (default: explore)"
+    },
+    "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
+    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Wait timeout (default 120000)" }
+  }
+}`),
+		},
+	}
+}
+
 func toolTaskSpawn() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
@@ -703,9 +733,14 @@ func toolTaskSpawn() llm.ToolDef {
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
-  "required": ["goal"],
   "properties": {
     "goal": { "type": "string", "minLength": 1 },
+    "prompt": { "type": "string", "minLength": 1, "description": "Alias for goal" },
+    "subagent_type": {
+      "type": "string",
+      "enum": ["explore", "general"],
+      "description": "Child agent mode (default: explore)"
+    },
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
     "timeout_ms": { "type": "integer", "minimum": 0 }
   }
@@ -813,7 +848,7 @@ func toolPlanExit() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "plan_exit",
-			Description: "Завершить планирование и запросить переключение в build-режим. Вызывай только когда план в .orchestra/plan.md полностью готов.",
+			Description: "Завершить планирование и запросить переключение в build-режим. Вызывай только когда план в {{PLAN_PATH}} полностью готов.",
 			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
 		},
 	}

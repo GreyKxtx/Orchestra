@@ -40,6 +40,8 @@ type Config struct {
 	NeedsOnboarding bool   // true when no model is configured
 	ConfigPath      string // path to .orchestra.yml for saving onboarding result
 	Theme           string // registered theme name; empty → default
+	AutoApply       bool   // LIVE mode: write to disk during agent.run
+	AllowExec       bool   // allow bash/exec.run in TUI agent runs
 }
 
 // App is the root Bubble Tea Model.
@@ -61,7 +63,8 @@ type App struct {
 	diffShown  bool                         // true while diff messages are in session
 	agentBusy  bool                         // true while agent.run in flight
 
-	permModal *view.Modal // non-nil while an exec.run permission request is pending
+	permModal     *view.Modal         // non-nil while an exec.run permission request is pending
+	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
 
 	slashPalette  *view.SlashPalette
 	paletteActive bool
@@ -131,6 +134,9 @@ type App struct {
 	// mousePassthrough disables mouse reporting so the terminal can handle
 	// native text selection (toggled with Ctrl+G).
 	mousePassthrough bool
+
+	autoApply bool // LIVE: agent.run apply=true (writes to disk immediately)
+	allowExec bool // allow bash/exec.run in agent runs
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -181,8 +187,10 @@ func NewApp(cfg Config) (*App, error) {
 		theme.SetTheme(theme.ByName(cfg.Theme))
 	}
 	a := &App{
-		cfg:     cfg,
-		session: state.NewSession(),
+		cfg:       cfg,
+		session:   state.NewSession(),
+		autoApply: cfg.AutoApply,
+		allowExec: cfg.AllowExec,
 	}
 	a.statusBar.SetModel(cfg.Model)
 	a.statusBar.SetProject(cfg.CWD)

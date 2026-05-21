@@ -31,6 +31,22 @@ type CircuitBreaker struct {
 	successfulCallKeys map[string]int
 }
 
+// dedupExemptTools are read-only tools where re-fetching with identical args
+// is legitimate: history compaction may have dropped the prior result, the
+// file may have changed after a write, or the model may need a second look.
+var dedupExemptTools = map[string]bool{
+	"read": true, "ls": true, "glob": true, "grep": true,
+	"symbols": true, "explore": true, "repo_map": true, "semantic_search": true,
+	"runtime_query": true, "todoread": true,
+	"lsp.definition": true, "lsp.references": true, "lsp.hover": true, "lsp.diagnostics": true,
+	"webfetch": true, "websearch": true,
+	"git.status": true, "git.log": true, "git.diff": true,
+}
+
+func dedupExemptTool(toolName string) bool {
+	return dedupExemptTools[toolName]
+}
+
 // NewCircuitBreaker creates a CircuitBreaker with the given limits.
 // Zero or negative limits fall back to conservative defaults.
 func NewCircuitBreaker(maxDenied, maxToolErr, maxFinal, maxInvalid int) *CircuitBreaker {
@@ -126,6 +142,9 @@ func (cb *CircuitBreaker) ResetFinalFailures() {
 // successfully executed before. Does NOT modify the counter — call
 // RecordSuccessfulCall after deciding whether to execute.
 func (cb *CircuitBreaker) IsDuplicateCall(toolName string, inputBytes []byte) bool {
+	if dedupExemptTool(toolName) {
+		return false
+	}
 	key := toolName + ":" + string(inputBytes)
 	return cb.successfulCallKeys[key] > 0
 }
@@ -135,6 +154,9 @@ func (cb *CircuitBreaker) IsDuplicateCall(toolName string, inputBytes []byte) bo
 // the same arguments more than once — caller should inject it as a user message
 // so the model learns it already has the data and should answer.
 func (cb *CircuitBreaker) RecordSuccessfulCall(toolName string, inputBytes []byte) string {
+	if dedupExemptTool(toolName) {
+		return ""
+	}
 	key := toolName + ":" + string(inputBytes)
 	cb.successfulCallKeys[key]++
 	if cb.successfulCallKeys[key] == 2 {

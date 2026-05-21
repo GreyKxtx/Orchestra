@@ -172,7 +172,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	// Validate every stage's skill exists before doing any LLM work.
 	for _, stage := range w.Stages {
 		if skills.Find(discoveredSkills, stage.Skill) == nil {
-			return fmt.Errorf("workflow %q: stage %q references unknown skill %q\nRun `orchestra skills list` to see available skills.", w.Name, stage.ID, stage.Skill)
+			return fmt.Errorf("workflow %q: stage %q references unknown skill %q (run `orchestra skills list` to see available skills)", w.Name, stage.ID, stage.Skill)
 		}
 	}
 	// loop_until_marker must reference a skill with at least one completion marker.

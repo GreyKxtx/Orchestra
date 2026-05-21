@@ -13,6 +13,7 @@ import (
 	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/plan"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
@@ -50,9 +51,10 @@ type SubtaskRunner interface {
 
 // SubtaskSpawnRequest is the request for spawning a child agent task.
 type SubtaskSpawnRequest struct {
-	Goal      string
-	MaxSteps  int
-	TimeoutMS int
+	Goal         string
+	SubagentType string // "explore" (default), "general", or another ListToolsForMode key
+	MaxSteps     int
+	TimeoutMS    int
 }
 
 // SkillSpec is a thin summary of a discovered skill, used for system-prompt
@@ -185,6 +187,10 @@ type Options struct {
 	// JustSwitchedFromPlan, when true, injects a one-shot build-switch reminder on the first step.
 	// Set by the caller when restarting an agent in build mode after plan approval.
 	JustSwitchedFromPlan bool
+
+	// PlanPath is the session plan markdown file (relative to project root).
+	// Used in plan mode write guards and {{PLAN_PATH}} substitution in prompts/tools.
+	PlanPath string
 
 	// OnEvent, if non-nil, is called synchronously for each streaming event during a step.
 	// Nil disables streaming (agent falls back to the blocking Complete path).
@@ -472,31 +478,11 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 
 		switch step.Type {
 		case StepToolCall:
-			// Parallel batch fast-path. Set when NormalizeLLM saw multiple
-			// tool_calls and every one of them is registry-flagged ParallelSafe.
-			// We bypass the rich serial pipeline (per-tool permissions, exec
-			// auth, todo/task dispatcher, …) because read-only tools never hit
-			// those code paths anyway — only the generic tools.Call + the
-			// PreTool hook + audit log. See runParallelToolBatch.
-			if len(step.Tools) >= 2 {
-				var cbErr *protocol.Error
-				history, cbErr = a.runParallelToolBatch(ctx, cb, history, step.Tools, llmResp, steps)
-				if cbErr != nil {
-					return nil, nil, cbErr
-				}
-				emitStepDone("tool_call")
-				continue
-			}
-
-			if step.Tool == nil {
-				// M7+M8 in audit ledger: count invalid steps toward the
-				// MaxInvalidRetries cap via RecordInvalid (was dead code).
-				// Without this, a model stuck emitting malformed JSON could
-				// only be bounded by MaxSteps.
+			calls := a.resolveToolCalls(step, llmResp)
+			if len(calls) == 0 {
 				if cbErr := cb.RecordInvalid(); cbErr != nil {
 					return nil, nil, cbErr
 				}
-				// Add validation error as user message for retry
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
 					Content: formatValidatorError("Invalid JSON format: tool is required", raw),
@@ -504,577 +490,39 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				emitStepDone("invalid")
 				continue
 			}
-			name := strings.TrimSpace(step.Tool.Name)
-			if name == "" {
-				if cbErr := cb.RecordInvalid(); cbErr != nil {
+
+			toolDefs := a.buildToolDefs()
+			if len(calls) >= 2 && allParallelSafeCalls(calls, toolDefs) {
+				var cbErr *protocol.Error
+				history, cbErr = a.runParallelToolBatch(ctx, cb, history, calls, llmResp, steps)
+				if cbErr != nil {
 					return nil, nil, cbErr
 				}
-				history = append(history, llm.Message{
-					Role:    llm.RoleUser,
-					Content: formatValidatorError("Invalid JSON format: tool.name is empty", raw),
-				})
-				emitStepDone("invalid")
+				emitStepDone("tool_call")
 				continue
 			}
-			// Normalize LLM-facing aliases (read, bash, edit, todowrite, task_result, …)
-			// to canonical names so every downstream name check (exec consent,
-			// Extract tool_call_id from response
-			toolCallID := ""
+
 			hasToolCalls := llmResp != nil && len(llmResp.Message.ToolCalls) > 0
 			if hasToolCalls {
-				toolCallID = llmResp.Message.ToolCalls[0].ID
-			}
-			// Serial-fallback cleanup: when the LLM emitted several parallel
-			// tool_calls but the batch contained a Mutating tool, NormalizeLLM
-			// kept only the first call (Step.Tool) and dropped the rest. The
-			// SSE stream already pushed tool_call_start events for every entry,
-			// so the TUI now has orphan running blocks for the dropped ones.
-			// Emit synthetic "skipped" completions so they don't stay stuck.
-			if hasToolCalls && len(llmResp.Message.ToolCalls) > 1 && a.opts.OnEvent != nil {
-				for _, extra := range llmResp.Message.ToolCalls[1:] {
-					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-						Kind:         llm.StreamEventToolCallCompleted,
-						ToolCallID:   extra.ID,
-						ToolCallName: extra.Function.Name,
-						Content:      "skipped: only the first tool call in a mixed batch is executed",
-					}})
-				}
-			}
-			if toolCallID == "" {
-				// Fallback: generate a synthetic ID if not provided (for legacy JSON format)
-				toolCallID = fmt.Sprintf("call_%d_%d", steps, time.Now().UnixNano())
-			}
-
-			// Add assistant message with tool_calls (required for proper tool calling loop)
-			// Only add if we have actual tool_calls (not legacy JSON format in content)
-			if hasToolCalls {
-				// When tool_calls are present, content should be empty (some providers don't like content + tool_calls)
-				assistantMsg := llm.Message{
+				history = append(history, llm.Message{
 					Role:      llm.RoleAssistant,
-					Content:   "", // Clear content when tool_calls are present
+					Content:   "",
 					ToolCalls: llmResp.Message.ToolCalls,
-				}
-				history = append(history, assistantMsg)
-				a.logf("agent.tool_call added assistant message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
+				})
+				a.logf("agent.tool_call added assistant message to history, history_len=%d, tool_calls=%d", len(history), len(calls))
 			} else {
 				a.logf("agent.tool_call WARNING: no tool_calls in response, history_len=%d", len(history))
 			}
 
-			// Permission ruleset: evaluated first; first matching rule wins.
-			// allow → bypasses the AllowExec/AllowWeb consent gates for this call only.
-			// deny  → TOOL_DENIED regardless of --allow-exec/--allow-web.
-			effectiveAllowExec := a.opts.AllowExec
-			effectiveAllowWeb := a.opts.AllowWeb
-			if len(a.opts.PermissionRules) > 0 {
-				subject := subjectForTool(name, step.Tool.Input)
-				if act, matched := checkPermissions(a.opts.PermissionRules, name, subject); matched {
-					if act == "deny" {
-						toolResult := formatToolDeniedJSON(name, step.Tool.Input, "tool call denied by permission ruleset")
-						history = append(history, llm.Message{
-							Role:       llm.RoleTool,
-							ToolCallID: toolCallID,
-							Content:    toolResult,
-						})
-						if cbErr := cb.RecordDenied(name); cbErr != nil {
-							return nil, nil, cbErr
-						}
-						emitStepDone("tool_call")
-						continue
-					}
-					// act == "allow": grant consent for this call only.
-					effectiveAllowExec = true
-					effectiveAllowWeb = true
-				}
-			}
-
-			// Interactive consent via PermissionRequester (TUI/IDE): checked before the static gate.
-			// Approved → effectiveAllowExec = true (static gate becomes a no-op for this call).
-			// Denied  → TOOL_DENIED using the same pathway as the static gate below.
-			// Error   → fall through to static gate (defensive).
-			if name == "bash" && !effectiveAllowExec && a.opts.PermissionRequester != nil {
-				cmdPreview := ""
-				if len(step.Tool.Input) > 0 {
-					cmdPreview = string(step.Tool.Input)
-					if len(cmdPreview) > 200 {
-						cmdPreview = cmdPreview[:200] + "..."
-					}
-				}
-				resp, permErr := a.opts.PermissionRequester.RequestPermission(ctx, PermissionRequest{
-					Tool:        "bash",
-					Description: cmdPreview,
-				})
-				if permErr == nil && resp.Approved {
-					effectiveAllowExec = true
-				} else if permErr == nil && !resp.Approved {
-					reason := "exec.run denied by interactive permission requester"
-					if resp.Reason != "" {
-						reason = resp.Reason
-					}
-					toolResult := formatToolDeniedJSON(name, step.Tool.Input, reason)
-					history = append(history, llm.Message{
-						Role:       llm.RoleTool,
-						ToolCallID: toolCallID,
-						Content:    toolResult,
-					})
-					if cbErr := cb.RecordDenied(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-					emitStepDone("tool_call")
-					continue
-				}
-				// permErr != nil: fall through to static gate.
-			}
-
-			// Consent policy: block exec.run unless AllowExec (all allowed) or per-command allowlist permits it.
-			if name == "bash" && !effectiveAllowExec {
-				cmd := execCommandFromInput(step.Tool.Input)
-				if !execCommandAllowed(cmd, a.opts.ExecAllow, a.opts.ExecDeny) {
-					msg := "exec.run requires user consent (use --allow-exec or configure exec.allow)"
-					if len(a.opts.ExecAllow) > 0 {
-						msg = fmt.Sprintf("exec.run: command %q is not in the allowlist", cmd)
-					}
-					toolResult := formatToolDeniedJSON(name, step.Tool.Input, msg)
-					history = append(history, llm.Message{
-						Role:       llm.RoleTool,
-						ToolCallID: toolCallID,
-						Content:    toolResult,
-					})
-					if cbErr := cb.RecordDenied(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-					emitStepDone("tool_call")
-					continue
-				}
-			}
-
-			// Consent policy: block webfetch unless AllowWeb.
-			if name == "webfetch" && !effectiveAllowWeb {
-				toolResult := formatToolDeniedJSON(name, step.Tool.Input, "webfetch requires user consent (use --allow-web)")
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    toolResult,
-				})
-				if cbErr := cb.RecordDenied(name); cbErr != nil {
-					return nil, nil, cbErr
-				}
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// task.result: child agent reports its answer and exits immediately.
-			if name == "task_result" {
-				// H11 in audit ledger: task_result terminates the run with
-				// the supplied string. That's only valid for child agents
-				// (subtask / skill spawn). A main agent emitting task_result
-				// is a confused model trying to short-circuit — instead of
-				// terminating, push a hint back so it produces a normal
-				// final response on the next step.
-				if !a.opts.IsChild {
-					history = append(history, llm.Message{
-						Role:       llm.RoleTool,
-						ToolCallID: toolCallID,
-						Content:    formatToolErrorJSON(name, step.Tool.Input, fmt.Errorf("task_result is only valid in subtask / skill_invoke child agents; main agents must emit a normal final response with patches")),
-					})
-					if cbErr := cb.RecordToolError(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-					emitStepDone("tool_call")
-					continue
-				}
-				var req struct {
-					Content string `json:"content"`
-				}
-				_ = json.Unmarshal(step.Tool.Input, &req)
-				emitStepDone("final")
-				return history, &Result{
-					Steps:         steps,
-					SubtaskResult: req.Content,
-					Todos:         a.todos,
-				}, nil
-			}
-
-			// skill_invoke is handled in-process via SkillRunner (synchronous).
-			if a.opts.SkillRunner != nil && name == "skill_invoke" {
-				out, skillErr := a.handleSkillInvoke(ctx, step.Tool.Input)
-				var content string
-				if skillErr != nil {
-					content = formatToolErrorJSON(name, step.Tool.Input, skillErr)
-				} else {
-					content = string(out)
-				}
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    content,
-				})
-				if skillErr != nil {
-					if cbErr := cb.RecordToolError(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-				} else {
-					cb.ResetToolErrors()
-				}
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// task.spawn/wait/cancel are handled in-process via SubtaskRunner.
-			if a.opts.SubtaskRunner != nil && (name == "task_spawn" || name == "task_wait" || name == "task_cancel") {
-				out, taskErr := a.handleTaskTool(ctx, name, step.Tool.Input)
-				var content string
-				if taskErr != nil {
-					content = formatToolErrorJSON(name, step.Tool.Input, taskErr)
-				} else {
-					content = string(out)
-				}
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    content,
-				})
-				if taskErr != nil {
-					if cbErr := cb.RecordToolError(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-				} else {
-					cb.ResetToolErrors()
-				}
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// todo.write / todo.read are handled in-process (session state, no filesystem access).
-			if name == "todowrite" || name == "todoread" {
-				out, err := a.handleTodoTool(name, step.Tool.Input)
-				var content string
+			for _, tc := range calls {
+				outcome, err := a.runSerialToolCall(ctx, cb, &history, tc, steps, emitStepDone)
 				if err != nil {
-					content = formatToolErrorJSON(name, step.Tool.Input, err)
-				} else {
-					content = string(out)
+					return nil, nil, err
 				}
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    content,
-				})
-				if err != nil {
-					if cbErr := cb.RecordToolError(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-				} else {
-					cb.ResetToolErrors()
-				}
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// question: block until user answers via QuestionAsker.
-			if name == "question" {
-				var req struct {
-					Questions []tools.QuestionItem `json:"questions"`
-				}
-				if qErr := json.Unmarshal(step.Tool.Input, &req); qErr != nil || a.opts.QuestionAsker == nil {
-					msg := `{"error":"question tool unavailable"}`
-					if a.opts.QuestionAsker != nil {
-						msg = formatToolErrorJSON(name, step.Tool.Input, qErr)
-					}
-					history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: msg})
-					if cbErr := cb.RecordToolError(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-					emitStepDone("tool_call")
-					continue
-				}
-				answers, qErr := a.opts.QuestionAsker.Ask(ctx, req.Questions)
-				var content string
-				if qErr != nil {
-					content = formatToolErrorJSON(name, step.Tool.Input, qErr)
-					if cbErr := cb.RecordToolError(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-				} else {
-					b, _ := json.Marshal(map[string]any{"answers": answers})
-					content = string(b)
-					cb.ResetToolErrors()
-				}
-				history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: content})
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// plan_exit: ask user approval, then signal mode switch or continue planning.
-			if name == "plan_exit" {
-				approved := false
-				if a.opts.QuestionAsker != nil {
-					answers, qErr := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{{
-						Question: "Plan complete. Switch to build mode to apply changes?",
-						Options:  []string{"Yes, switch to build", "No, keep planning"},
-					}})
-					if qErr == nil && len(answers) > 0 {
-						ans := strings.ToLower(strings.TrimSpace(answers[0]))
-						approved = ans == "1" || ans == "yes" || ans == "y" || strings.HasPrefix(ans, "yes,") || ans == "да" || strings.HasPrefix(ans, "да,")
-					}
-				} else {
-					// L2 in audit ledger: when no QuestionAsker is available we
-					// CANNOT silently flip to build mode — the caller asked for
-					// plan mode and expects to stay there. Refuse the mode
-					// switch and tell the model so it returns a normal final
-					// answer with the plan instead.
-					history = append(history, llm.Message{
-						Role:       llm.RoleTool,
-						ToolCallID: toolCallID,
-						Content:    `{"status":"refused","message":"plan_exit is unavailable in non-interactive mode. Finish with a final answer — the user will switch modes manually if needed."}`,
-					})
-					emitStepDone("tool_call")
-					continue
-				}
-				if approved {
-					emitStepDone("final")
-					return history, &Result{Steps: steps, SwitchToBuild: true, Todos: a.todos}, nil
-				}
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    `{"status":"continue","message":"Continue planning. Refine the plan and call plan_exit again when ready."}`,
-				})
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// plan_enter: stub — switching modes in-process is not supported yet.
-			if name == "plan_enter" {
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    `{"status":"not_supported","message":"plan_enter недоступен в текущем режиме. Запусти orchestra apply --mode plan для планирования."}`,
-				})
-				emitStepDone("tool_call")
-				continue
-			}
-
-			// Plan-mode write guard: only .orchestra/plan.md writes are allowed.
-			if a.opts.Mode == ModePlan && (name == "write" || name == "edit") {
-				var pathReq struct {
-					Path string `json:"path"`
-				}
-				allowed := false
-				if json.Unmarshal(step.Tool.Input, &pathReq) == nil {
-					p := filepath.ToSlash(filepath.Clean(strings.TrimSpace(pathReq.Path)))
-					allowed = p == ".orchestra/plan.md"
-				}
-				if !allowed {
-					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "plan mode: writes are allowed only to .orchestra/plan.md")
-					history = append(history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
-					if cbErr := cb.RecordDenied(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-					emitStepDone("tool_call")
-					continue
+				if outcome.EarlyResult != nil {
+					return history, outcome.EarlyResult, nil
 				}
 			}
-
-			// For exec.run with streaming enabled, forward output chunks via OnEvent.
-			callCtx := ctx
-			if name == "bash" && a.opts.OnEvent != nil {
-				capturedStep := steps
-				onEvent := a.opts.OnEvent
-				callCtx = tools.WithExecOutputCallback(ctx, func(chunk string) {
-					onEvent(AgentEvent{Step: capturedStep, Stream: llm.StreamEvent{
-						Kind:    llm.StreamEventExecOutput,
-						Content: chunk,
-					}})
-				})
-			}
-
-			// Pre-tool hook: non-zero exit denies the tool call. Wrapped in
-			// safeRunErr so a panicking hook becomes a denial (with a
-			// synthesised error message) instead of killing the goroutine.
-			if a.opts.HooksRunner != nil {
-				hookErr := safeRunErr("PreTool hook "+name, func() error {
-					return a.opts.HooksRunner.RunPreTool(callCtx, name, step.Tool.Input)
-				})
-				if hookErr != nil {
-					toolResult := formatToolDeniedJSON(name, step.Tool.Input, "pre-tool hook denied: "+hookErr.Error())
-					history = append(history, llm.Message{
-						Role:       llm.RoleTool,
-						ToolCallID: toolCallID,
-						Content:    toolResult,
-					})
-					if cbErr := cb.RecordDenied(name); cbErr != nil {
-						return nil, nil, cbErr
-					}
-					emitStepDone("tool_call")
-					continue
-				}
-			}
-
-			// L1 in audit ledger: nil-guard symmetry with the parallel-batch
-			// path (line ~2213). Without this, a nil AgentLogger caused an NPE
-			// in serial mode.
-			if a.opts.AgentLogger != nil {
-				a.opts.AgentLogger.LogToolCall(name, len(step.Tool.Input))
-			}
-			// Dedup guard: skip execution entirely for repeated identical calls.
-			// Injecting the СТОП message as the tool result (not just a user
-			// hint) is much harder for the model to ignore than a side-channel
-			// user message, because the model must process tool results.
-			if cb.IsDuplicateCall(name, step.Tool.Input) {
-				stopMsg := "⛔ STOP. The tool «" + name + "» was already called with these exact arguments — the result is in your history. This duplicate call is blocked. Produce the final answer using the data from the previous result. No more tool_calls."
-				a.logf("tool_call name=%s dedup_blocked", name)
-				if a.opts.OnEvent != nil {
-					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-						Kind:         llm.StreamEventToolCallCompleted,
-						ToolCallName: name,
-						ToolCallID:   toolCallID,
-						Content:      "[dedup blocked]",
-					}})
-				}
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    stopMsg,
-				})
-				emitStepDone("tool_call")
-				continue
-			}
-
-			start := time.Now()
-			out, err := a.tools.Call(callCtx, name, step.Tool.Input)
-			dur := time.Since(start).Milliseconds()
-
-			// Emit tool_call_completed event for streaming clients (TUI).
-			if a.opts.OnEvent != nil {
-				preview := ""
-				if len(out) > 0 {
-					const maxPreview = 256
-					if len(out) > maxPreview {
-						preview = string(out[:maxPreview]) + "...(truncated)"
-					} else {
-						preview = string(out)
-					}
-				}
-				if err != nil {
-					msg := "error: " + err.Error()
-					if len(msg) > 256 {
-						msg = msg[:256] + "...(truncated)"
-					}
-					preview = msg
-				}
-				a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-					Kind:         llm.StreamEventToolCallCompleted,
-					ToolCallName: name,
-					ToolCallID:   toolCallID,
-					Content:      preview,
-				}})
-			}
-
-			if err != nil {
-				a.logf("tool_call name=%s status=error duration_ms=%d err=%v", name, dur, err)
-				a.opts.AgentLogger.LogToolResult(name, 0, dur, err.Error())
-				toolResult := formatToolErrorJSON(name, step.Tool.Input, err)
-				history = append(history, llm.Message{
-					Role:       llm.RoleTool,
-					ToolCallID: toolCallID,
-					Content:    toolResult,
-				})
-				if cbErr := cb.RecordToolError(name); cbErr != nil {
-					return nil, nil, cbErr
-				}
-				emitStepDone("tool_call")
-				continue
-			}
-			// Post-tool hook: errors logged but do not fail the tool. Panic
-			// converted to error by safeRunErr so a flaky logger hook can't
-			// take down the agent loop.
-			if a.opts.HooksRunner != nil {
-				_ = safeRunErr("PostTool hook "+name, func() error {
-					a.opts.HooksRunner.RunPostTool(callCtx, name, out)
-					return nil
-				})
-			}
-			a.logf("tool_call name=%s status=ok duration_ms=%d output_bytes=%d", name, dur, len(out))
-			a.opts.AgentLogger.LogToolResult(name, len(out), dur, "")
-			history = append(history, llm.Message{
-				Role:       llm.RoleTool,
-				ToolCallID: toolCallID,
-				Content:    string(out),
-			})
-			// Multimodal pipe: browser.screenshot returns base64 PNG. When the
-			// configured LLM is multimodal, inject a synthetic user message
-			// carrying the image as a PartImage so the model can "see" it on
-			// the next step (tool result alone is just a JSON-wrapped base64
-			// string the model can't decode without explicit support).
-			if a.opts.MultimodalLLM && name == "browser.screenshot" {
-				if part, ok := extractScreenshotImagePart(out); ok {
-					history = append(history, llm.Message{
-						Role: llm.RoleUser,
-						Parts: []llm.ContentPart{
-							{Kind: llm.PartText, Text: "Screenshot returned by browser.screenshot:"},
-							part,
-						},
-					})
-				}
-			}
-			// Inject LSP error hint so the model fixes compile errors in
-			// the next step. H7 in architecture audit: the diagnostic
-			// tracker compares the post-edit fingerprint against the
-			// previous attempt on the same file. When two consecutive
-			// write/edit attempts on a file produce identical errors
-			// the hint escalates to a "you re-wrote without changing
-			// anything" warning, which is more actionable than the
-			// generic "fix the errors" message.
-			if name == "write" || name == "edit" {
-				if hint := extractLSPErrors(out); hint != "" {
-					path := extractWriteOrEditPath(step.Tool.Input)
-					streak := a.diags.Observe(path, fingerprintLSPErrors(out))
-					if streak >= 2 && path != "" {
-						hint = "LSP_ERRORS — your last edit on " + path + " did not change diagnostics (same error set, attempt #" + fmt.Sprint(streak) + "). Stop write/edit'ing this file and diagnose the cause via lsp.references / lsp.hover / read.\n" + hint
-					}
-					a.logf("lsp_hint name=%s path=%s streak=%d injecting diagnostic hint", name, path, streak)
-					history = append(history, llm.Message{
-						Role:    llm.RoleUser,
-						Content: hint,
-					})
-					if a.opts.OnEvent != nil {
-						a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-							Kind:    llm.StreamEventRecoverableError,
-							Content: "lsp_errors: " + name,
-						}})
-					}
-				} else {
-					// No errors after this write/edit — clear any prior streak
-					// for the file so a future regression doesn't carry over
-					// stale repeat count.
-					_ = a.diags.Observe(extractWriteOrEditPath(step.Tool.Input), "")
-				}
-			}
-			// Record call for future dedup checks. N6 (audit ledger,
-			// Sprint 6): RecordSuccessfulCall returns a strong "you already
-			// did this" hint when the same (tool, args) succeeds twice.
-			// Inject it as a user message so the model sees an imperative
-			// nudge before it can call the same tool again — previously
-			// this return value was discarded, leaving only the next-step
-			// dedup tool-result block (which catches a 3rd repeat but
-			// silently accepts the 2nd).
-			if dupHint := cb.RecordSuccessfulCall(name, step.Tool.Input); dupHint != "" {
-				history = append(history, llm.Message{Role: llm.RoleUser, Content: dupHint})
-			}
-			a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(history), toolCallID)
-			cb.ResetToolErrors()
-			// N3 (audit ledger, Sprint 6): clear stale denial counter for
-			// this tool — a successful call means whatever was blocking it
-			// (permission rule, missing capability flag) is gone.
-			cb.ResetDeniedForTool(name)
-			// M6 in audit ledger: a successful tool call resets the final-
-			// failure counter on the rationale that the model is making
-			// progress between apply attempts. This makes MaxFinalFailures
-			// "consecutive failures with no intervening tool success" rather
-			// than "lifetime failures". Trade-off: a model in a
-			// fail→read→fail loop only trips on MaxSteps, not MaxFinalFailures.
-			// Accept by design: MaxSteps caps every loop shape; this cap
-			// targets a narrower "no progress at all" failure mode.
-			cb.ResetFinalFailures()
 			emitStepDone("tool_call")
 			continue
 
@@ -1354,7 +802,23 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		}
 		base = append(base, tools.ToolSkillInvoke(names))
 	}
+	if a.opts.Mode == ModePlan || strings.TrimSpace(a.opts.PlanPath) != "" {
+		for i := range base {
+			base[i].Function.Description = a.substitutePlanPath(base[i].Function.Description)
+		}
+	}
 	return base
+}
+
+func (a *Agent) effectivePlanPath() string {
+	if p := strings.TrimSpace(a.opts.PlanPath); p != "" {
+		return plan.NormalizeRelPath(p)
+	}
+	return plan.NormalizeRelPath(".orchestra/plan.md")
+}
+
+func (a *Agent) substitutePlanPath(s string) string {
+	return strings.ReplaceAll(s, "{{PLAN_PATH}}", a.effectivePlanPath())
 }
 
 // buildSystemPrompt assembles the system message handed to the LLM each
@@ -1395,6 +859,9 @@ func (a *Agent) buildSystemPrompt() string {
 	}
 	// 5: append skills advertisement.
 	prompt += a.skillsAdvertisement()
+	if a.opts.Mode == ModePlan || strings.TrimSpace(a.opts.PlanPath) != "" {
+		prompt = a.substitutePlanPath(prompt)
+	}
 	return prompt
 }
 
@@ -1608,83 +1075,6 @@ func (a *Agent) logf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
-func buildBasePrompt(userQuery string, allowExec bool) string {
-	// Keep this prompt compact but explicit: JSON-only, step schema, allowed tools.
-	toolsList := strings.TrimSpace(`
-Доступные инструменты:
-- fs.list
-- fs.read
-- search.text
-- code.symbols
-`)
-	if allowExec {
-		toolsList += "\n- exec.run"
-	} else {
-		toolsList += "\nВАЖНО: exec.run сейчас НЕДОСТУПЕН (не предлагай и не вызывай его)."
-	}
-
-	return strings.TrimSpace(fmt.Sprintf(`
-Ты — агент для работы с кодовой базой в workspace. Твоя цель: выполнить задачу пользователя.
-
-ВАЖНО:
-- Ты ДОЛЖЕН отвечать ТОЛЬКО валидным JSON (без markdown, без пояснений).
-- Каждый ответ — это ОДИН следующий шаг.
-
-Формат шага (AgentStep):
-1) Tool call:
-{"type":"tool_call","tool":{"name":"ls","input":{...}}}
-
-2) Final:
-{"type":"final","final":{"patches":[ ... ]}}
-
-%s
-
-Патчи (final.patches) поддерживают только:
-- {"type":"file.search_replace","path":"...","search":"...","replace":"...","file_hash":"sha256:..."}
-- {"type":"file.unified_diff","path":"...","diff":"...","file_hash":"sha256:..."}
-
-Правила:
-- Для каждого файла, который ты меняешь, сначала сделай fs.read, чтобы получить точный file_hash.
-- Не генерируй внутренние ops и не пытайся применять изменения инструментами. Верни изменения ТОЛЬКО через final.patches.
-
-Задача пользователя:
-%s
-`, toolsList, userQuery))
-}
-
-func buildPromptWithHistory(base string, history []string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return base + "\n"
-	}
-	header := base + "\n\nИстория (самые свежие события в конце):\n"
-	footer := "\n\nВерни ТОЛЬКО JSON следующего шага.\n"
-
-	// Keep the tail of history within the byte budget.
-	budget := maxBytes - len(header) - len(footer)
-	if budget <= 0 {
-		// Worst case: return only base prompt.
-		return base
-	}
-
-	var selected []string
-	size := 0
-	for i := len(history) - 1; i >= 0; i-- {
-		item := history[i]
-		need := len(item) + 2
-		if size+need > budget {
-			break
-		}
-		selected = append(selected, item)
-		size += need
-	}
-	// Reverse back to chronological order.
-	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
-		selected[i], selected[j] = selected[j], selected[i]
-	}
-
-	return header + strings.Join(selected, "\n\n") + footer
-}
-
 // handleTodoTool handles todo.read and todo.write in-process (no runner involvement).
 func (a *Agent) handleTodoTool(name string, input json.RawMessage) (json.RawMessage, error) {
 	switch name {
@@ -1693,8 +1083,12 @@ func (a *Agent) handleTodoTool(name string, input json.RawMessage) (json.RawMess
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("todo.write: invalid input: %w", err)
 		}
-		a.todos = req.Todos
-		resp, _ := json.Marshal(tools.TodoWriteResponse{Count: len(req.Todos)})
+		normalized, err := tools.ValidateTodos(req.Todos)
+		if err != nil {
+			return nil, fmt.Errorf("todo.write: %w", err)
+		}
+		a.todos = normalized
+		resp, _ := json.Marshal(tools.TodoWriteResponse{Count: len(normalized)})
 		return resp, nil
 	case "todoread":
 		resp, _ := json.Marshal(tools.TodoReadResponse{Todos: a.todos})
@@ -1757,25 +1151,92 @@ func (a *Agent) handleSkillInvoke(ctx context.Context, input json.RawMessage) (j
 	return resp, nil
 }
 
-// handleTaskTool handles task.spawn/task.wait/task.cancel in-process via SubtaskRunner.
+// handleTaskTool handles task / task.spawn / task.wait / task.cancel in-process via SubtaskRunner.
 func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawMessage) (json.RawMessage, error) {
 	switch name {
+	case "task":
+		var req struct {
+			Description  string `json:"description"`
+			Prompt       string `json:"prompt"`
+			Goal         string `json:"goal"`
+			SubagentType string `json:"subagent_type"`
+			MaxSteps     int    `json:"max_steps"`
+			TimeoutMS    int    `json:"timeout_ms"`
+		}
+		if err := json.Unmarshal(input, &req); err != nil {
+			return nil, fmt.Errorf("task: invalid input: %w", err)
+		}
+		goal := strings.TrimSpace(req.Prompt)
+		if goal == "" {
+			goal = strings.TrimSpace(req.Goal)
+		}
+		if goal == "" {
+			return nil, fmt.Errorf("task: prompt is required")
+		}
+		subagentType := strings.TrimSpace(req.SubagentType)
+		if subagentType == "" {
+			subagentType = "explore"
+		}
+		timeoutMS := req.TimeoutMS
+		if timeoutMS <= 0 {
+			timeoutMS = 120_000
+		}
+		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
+			Goal:         goal,
+			SubagentType: subagentType,
+			MaxSteps:     req.MaxSteps,
+			TimeoutMS:    timeoutMS,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("task: spawn: %w", err)
+		}
+		result, err := a.opts.SubtaskRunner.Wait(ctx, taskID, timeoutMS)
+		if err != nil {
+			return nil, fmt.Errorf("task: wait: %w", err)
+		}
+		out := map[string]any{
+			"task_id": taskID,
+			"status":  result.Status,
+		}
+		if req.Description != "" {
+			out["description"] = req.Description
+		}
+		if result.Result != "" {
+			out["result"] = result.Result
+		}
+		if result.Error != "" {
+			out["error"] = result.Error
+		}
+		resp, _ := json.Marshal(out)
+		return resp, nil
+
 	case "task_spawn":
 		var req struct {
-			Goal      string `json:"goal"`
-			MaxSteps  int    `json:"max_steps"`
-			TimeoutMS int    `json:"timeout_ms"`
+			Goal         string `json:"goal"`
+			Prompt       string `json:"prompt"`
+			SubagentType string `json:"subagent_type"`
+			MaxSteps     int    `json:"max_steps"`
+			TimeoutMS    int    `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("task.spawn: invalid input: %w", err)
 		}
-		if strings.TrimSpace(req.Goal) == "" {
+		goal := strings.TrimSpace(req.Goal)
+		if goal == "" {
+			goal = strings.TrimSpace(req.Prompt)
+		}
+		if goal == "" {
 			return nil, fmt.Errorf("task.spawn: goal is required")
 		}
+		subagentType := strings.TrimSpace(req.SubagentType)
+		if subagentType == "" {
+			subagentType = "explore"
+		}
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
-			Goal:      req.Goal,
-			MaxSteps:  req.MaxSteps,
-			TimeoutMS: req.TimeoutMS,
+			Goal:         goal,
+			SubagentType: subagentType,
+			MaxSteps:     req.MaxSteps,
+			TimeoutMS:    req.TimeoutMS,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("task.spawn: %w", err)
@@ -1827,11 +1288,11 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 func (a *Agent) modeReminder() string {
 	switch a.opts.Mode {
 	case ModePlan:
-		return promptpkg.PlanModeReminder
+		return a.substitutePlanPath(promptpkg.PlanModeReminder)
 	case ModeBuild, "":
 		if a.justSwitchedFromPlan {
 			a.justSwitchedFromPlan = false
-			return promptpkg.BuildSwitchReminder
+			return a.substitutePlanPath(promptpkg.BuildSwitchReminder)
 		}
 	}
 	return ""

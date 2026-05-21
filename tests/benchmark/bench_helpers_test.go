@@ -10,14 +10,6 @@ import (
 	"sync"
 )
 
-type projectSize string
-
-const (
-	projectSmall  projectSize = "small"
-	projectMedium projectSize = "medium"
-	projectLarge  projectSize = "large"
-)
-
 type genOpts struct {
 	seed        int64
 	files       int

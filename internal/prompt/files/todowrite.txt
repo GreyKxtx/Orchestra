@@ -1,0 +1,31 @@
+Use this tool to create and manage a structured task list for the current coding session. The list is injected into every turn as <todo_list> — keep it accurate.
+
+## When to use
+- Multi-step tasks (3+ distinct steps)
+- Non-trivial work requiring planning or several operations
+- User explicitly asks for a todo list or gives multiple tasks
+- After new instructions — capture requirements as todos
+- After completing a task — mark it done and add follow-ups
+- When starting work on a task — set exactly one item to in_progress
+
+## When NOT to use
+- Single trivial step
+- Purely conversational / informational requests
+- Work completable in fewer than 3 trivial steps
+
+## Status values
+Use exactly one of: pending, in_progress, done, cancelled.
+(Accepted alias: completed is normalized to done at runtime.)
+
+## Rules
+- Every item needs a unique non-empty id and content
+- At most one item may be in_progress at a time
+- Prefer updating the full list each call (merge semantics: replace entire list)
+- Do not use todos for notes — use memory_write for durable facts
+
+## Examples
+User: "Add dark mode, run tests when done"
+→ todos: implement toggle, wire state, update styles, run tests/build (one in_progress)
+
+User: "Rename getCwd across the repo"
+→ search first, then todos per file or batch with one in_progress
