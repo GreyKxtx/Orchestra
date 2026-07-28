@@ -566,7 +566,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			skillSpecsList = skillSpecs(discoveredSkills)
 		}
 
-		ag, err := agent.New(llmClient, validator, runner, agent.Options{
+		agOpts := agent.Options{
 			UsageTracker:         usageTracker,
 			ProviderLabel:        providerLabelFor(cfg, applyProvider),
 			ModelLabel:           cfg.LLM.Model,
@@ -600,13 +600,20 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			HooksRunner:          hooksRunner,
 			UserImages:           imageParts,
 			MultimodalLLM:        cfg.LLM.Multimodal,
-		})
+		}
+		ag, err := agent.New(llmClient, validator, runner, agOpts)
 		if err != nil {
 			retErr = err
 			return retErr
 		}
 
-		_, res, err := ag.Run(cmd.Context(), nil, query)
+		var hist []llm.Message
+		hist, res, err := ag.Run(cmd.Context(), nil, query)
+		if err != nil {
+			retErr = err
+			return retErr
+		}
+		_, res, err = agent.ContinueBuildAfterPlan(cmd.Context(), llmClient, validator, runner, agOpts, hist, res)
 		if err != nil {
 			retErr = err
 			return retErr

@@ -95,6 +95,8 @@ type App struct {
 	spinFrame      int       // monotonically increments every tick — drives all spinners
 	turnStartedAt  time.Time // moment the current agent.run was kicked off
 
+	coreSessionID string // JSON-RPC session for multi-turn agent history
+
 	// dialogStack holds dialogs opened from the Ctrl+K palette
 	// (/provider → ProviderDialog → ModelDialog → SettingsDialog).
 	// Top of stack receives input and is rendered on top of everything else.
@@ -226,7 +228,11 @@ func NewApp(cfg Config) (*App, error) {
 
 // Init satisfies tea.Model.
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, a.listenForEvents(), tickCmd())
+	cmds := []tea.Cmd{textarea.Blink, a.listenForEvents(), tickCmd()}
+	if a.rpc != nil {
+		cmds = append(cmds, a.startCoreSession())
+	}
+	return tea.Batch(cmds...)
 }
 
 // tickCmd schedules the next tick at 100ms — fast enough for a smooth spinner

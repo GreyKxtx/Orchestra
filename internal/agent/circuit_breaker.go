@@ -1,6 +1,10 @@
 package agent
 
-import "github.com/orchestra/orchestra/internal/protocol"
+import (
+	"fmt"
+
+	"github.com/orchestra/orchestra/internal/protocol"
+)
 
 // ErrorKind classifies the type of failure that occurred in the agent loop.
 type ErrorKind int
@@ -29,7 +33,14 @@ type CircuitBreaker struct {
 
 	// successfulCallKeys tracks (tool+argsHash) → count for dedup detection.
 	successfulCallKeys map[string]int
+	// readOnlyCallKeys tracks repeated identical read-only tool calls (doom-loop guard).
+	readOnlyCallKeys map[string]int
 }
+
+const (
+	readOnlyWarnRepeats  = 3 // inject a nudge into history
+	readOnlyBlockRepeats = 5 // block further identical calls
+)
 
 // dedupExemptTools are read-only tools where re-fetching with identical args
 // is legitimate: history compaction may have dropped the prior result, the
@@ -45,6 +56,40 @@ var dedupExemptTools = map[string]bool{
 
 func dedupExemptTool(toolName string) bool {
 	return dedupExemptTools[toolName]
+}
+
+// IsReadOnlyBlocked reports whether an identical read-only call should be
+// rejected to break doom-loops (same tool+args repeated many times).
+func (cb *CircuitBreaker) IsReadOnlyBlocked(toolName string, inputBytes []byte) bool {
+	if !dedupExemptTool(toolName) {
+		return false
+	}
+	key := toolName + ":" + string(inputBytes)
+	return cb.readOnlyCallKeys[key] >= readOnlyBlockRepeats
+}
+
+// RecordReadOnlyCall tracks identical read-only tool calls. Returns a user-role
+// hint to inject after a successful call (warn threshold) and whether the
+// call should have been blocked (caller should check IsReadOnlyBlocked first).
+func (cb *CircuitBreaker) RecordReadOnlyCall(toolName string, inputBytes []byte) string {
+	if !dedupExemptTool(toolName) {
+		return ""
+	}
+	key := toolName + ":" + string(inputBytes)
+	cb.readOnlyCallKeys[key]++
+	n := cb.readOnlyCallKeys[key]
+	if n >= readOnlyWarnRepeats && n < readOnlyBlockRepeats {
+		return fmt.Sprintf(
+			"⚠️ You called «%s» %d times with identical arguments. The result is already in your history — proceed to edit/write/bash or emit your final answer.",
+			toolName, n,
+		)
+	}
+	return ""
+}
+
+// ResetReadOnlyCalls clears read-only repeat counters (e.g. after history compaction).
+func (cb *CircuitBreaker) ResetReadOnlyCalls() {
+	cb.readOnlyCallKeys = make(map[string]int, 8)
 }
 
 // NewCircuitBreaker creates a CircuitBreaker with the given limits.
@@ -69,6 +114,7 @@ func NewCircuitBreaker(maxDenied, maxToolErr, maxFinal, maxInvalid int) *Circuit
 		maxInvalid:         maxInvalid,
 		deniedPerTool:      make(map[string]int, 4),
 		successfulCallKeys: make(map[string]int, 8),
+		readOnlyCallKeys:   make(map[string]int, 8),
 	}
 }
 
