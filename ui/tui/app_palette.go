@@ -206,6 +206,8 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 	case "/clear":
 		a.session.Clear()
 		a.chat.SetMessages(a.session.Messages)
+		a.coreSessionID = ""
+		return a.startCoreSession()
 	case "/model":
 		return a.openModelDialogForCurrentProvider()
 	case "/provider":

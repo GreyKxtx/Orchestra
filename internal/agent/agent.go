@@ -314,6 +314,10 @@ type Result struct {
 	// SwitchToBuild is set when plan_exit was approved by the user.
 	// The caller should restart the agent in Mode "build" with JustSwitchedFromPlan=true.
 	SwitchToBuild bool
+
+	// MaxStepsExceeded is true when the run stopped at the step limit but
+	// staged/partial results were flushed (dry-run overlay or apply path).
+	MaxStepsExceeded bool
 }
 
 type Agent struct {
@@ -452,6 +456,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					} else {
 						a.logf("history compacted: %d bytes → %d bytes", before, after)
 						history = compacted
+						cb.ResetReadOnlyCalls()
 					}
 				}
 			}
@@ -744,9 +749,39 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		}
 	}
 
+	if res, ok := a.finalizeOnMaxSteps(ctx, history, steps); ok {
+		return history, res, nil
+	}
 	return nil, nil, protocol.NewError(protocol.InvalidLLMOutput, "max_steps exceeded", map[string]any{
 		"max_steps": a.opts.MaxSteps,
 	})
+}
+
+// finalizeOnMaxSteps flushes staged changes when the step budget is exhausted
+// so dry-run/preview runs do not lose write/edit progress made via tools.
+func (a *Agent) finalizeOnMaxSteps(ctx context.Context, history []llm.Message, steps int) (*Result, bool) {
+	stagedOps := a.tools.StagedOps()
+	if len(stagedOps) == 0 {
+		return nil, false
+	}
+	a.logf("max_steps: flushing %d staged op(s) before exit", len(stagedOps))
+	resp, err := a.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
+		Ops:    stagedOps,
+		DryRun: !a.opts.Apply,
+		Backup: a.opts.Backup && a.opts.Apply,
+	})
+	if err != nil {
+		a.logf("max_steps staged flush failed: %v", err)
+		return nil, false
+	}
+	return &Result{
+		Steps:            steps,
+		Ops:              stagedOps,
+		Applied:          a.opts.Apply,
+		ApplyResponse:    resp,
+		Todos:            a.todos,
+		MaxStepsExceeded: true,
+	}, true
 }
 
 // buildToolDefs returns the tool surface advertised to the LLM.
@@ -1449,6 +1484,11 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		if denied[i] {
 			continue
 		}
+		if dedupExemptTool(tc.Name) && cb != nil && cb.IsReadOnlyBlocked(tc.Name, tc.Input) {
+			denied[i] = true
+			results[i] = "⛔ STOP. The tool «" + tc.Name + "» was called too many times with identical arguments — proceed with a different tool or final answer."
+			continue
+		}
 		wg.Add(1)
 		go func(idx int, call ToolCall) {
 			defer wg.Done()
@@ -1518,6 +1558,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	//    pipeline at agent.go:483-686.
 	if cb != nil {
 		anyErr := false
+		var readOnlyHints []string
 		for i, call := range calls {
 			switch {
 			case denied[i]:
@@ -1530,20 +1571,21 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 					return history, cbErr
 				}
 			default:
-				// Successful call. Track for cross-step duplicate detection.
-				// IsDuplicateCall is intentionally NOT consulted here: the
-				// LLM emitted N parallel calls in one step, so dedupe of
-				// within-batch repeats is the model's responsibility — but
-				// recording each success means the NEXT step will detect a
-				// repeat of these args.
-				_ = cb.RecordSuccessfulCall(call.Name, call.Input)
-				// N3 (audit ledger, Sprint 6): clear stale denial counter for
-				// this tool — successful call means the block is gone.
+				if dedupExemptTool(call.Name) {
+					if hint := cb.RecordReadOnlyCall(call.Name, call.Input); hint != "" {
+						readOnlyHints = append(readOnlyHints, hint)
+					}
+				} else {
+					_ = cb.RecordSuccessfulCall(call.Name, call.Input)
+				}
 				cb.ResetDeniedForTool(call.Name)
 			}
 		}
 		if !anyErr && len(calls) > 0 {
 			cb.ResetToolErrors()
+		}
+		for _, hint := range readOnlyHints {
+			history = append(history, llm.Message{Role: llm.RoleUser, Content: hint})
 		}
 	}
 	return history, nil

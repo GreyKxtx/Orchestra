@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/orchestra/orchestra/internal/jsonrpc"
@@ -118,19 +119,53 @@ func (c *Client) Events() <-chan Event {
 	return c.events
 }
 
-// AgentRunOptions controls an agent.run call from the TUI.
+// AgentRunOptions controls an agent.run or session.message call from the TUI.
 type AgentRunOptions struct {
 	Apply     bool
 	AllowExec bool
 }
 
-// AgentRun calls agent.run on the core. Streaming events arrive via Events().
-// Returns when the agent.run RPC completes (final result returned).
-//
-// mode propagates the active TUI agent mode (build/plan/explore/...) so the
-// agent loop can apply mode-specific output rules — most importantly, accept
-// plain-text answers as final in read-only modes instead of looping on
-// invalid-JSON retries.
+// SessionStart creates a new core session for multi-turn agent history.
+func (c *Client) SessionStart(ctx context.Context) (string, error) {
+	var res struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := c.rpc.Call(ctx, "session.start", map[string]any{}, &res); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(res.SessionID) == "" {
+		return "", fmt.Errorf("session.start returned empty session_id")
+	}
+	return res.SessionID, nil
+}
+
+// SessionMessage runs one agent turn in an existing session. Streaming events
+// arrive via Events(). Replaces one-shot agent.run for multi-turn chat.
+func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode string, opts AgentRunOptions) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	params := map[string]any{
+		"session_id": sessionID,
+		"content":    query,
+		"apply":      opts.Apply,
+		"backup":     opts.Apply,
+		"allow_exec": opts.AllowExec,
+	}
+	if mode != "" {
+		params["mode"] = mode
+	}
+	var result map[string]any
+	err := c.rpc.Call(ctx, "session.message", params, &result)
+	if err != nil {
+		c.send(Event{Kind: EventError, Err: err.Error()})
+	}
+	c.send(Event{Kind: EventAgentRunCompleted})
+	return err
+}
+
+// AgentRun calls agent.run on the core (one-shot, no session history).
+// Prefer SessionMessage for interactive TUI chat.
 func (c *Client) AgentRun(ctx context.Context, query, mode string, opts AgentRunOptions) error {
 	params := map[string]any{
 		"query":      query,

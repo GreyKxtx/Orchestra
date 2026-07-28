@@ -428,7 +428,18 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		a.opts.AgentLogger.LogToolCall(name, len(tc.Input))
 	}
 
-	if cb.IsDuplicateCall(name, tc.Input) {
+	if dedupExemptTool(name) {
+		if cb.IsReadOnlyBlocked(name, tc.Input) {
+			stopMsg := "⛔ STOP. The tool «" + name + "» was called too many times with identical arguments — the result is already in your history. Produce the final answer or use a different tool."
+			a.logf("tool_call name=%s read_only_doom_blocked", name)
+			*history = append(*history, llm.Message{
+				Role:       llm.RoleTool,
+				ToolCallID: toolCallID,
+				Content:    stopMsg,
+			})
+			return serialToolOutcome{}, nil
+		}
+	} else if cb.IsDuplicateCall(name, tc.Input) {
 		stopMsg := "⛔ STOP. The tool «" + name + "» was already called with these exact arguments — the result is in your history. This duplicate call is blocked. Produce the final answer using the data from the previous result. No more tool_calls."
 		a.logf("tool_call name=%s dedup_blocked", name)
 		if a.opts.OnEvent != nil {
@@ -544,7 +555,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 	}
 
-	if dupHint := cb.RecordSuccessfulCall(name, tc.Input); dupHint != "" {
+	if dedupExemptTool(name) {
+		if hint := cb.RecordReadOnlyCall(name, tc.Input); hint != "" {
+			*history = append(*history, llm.Message{Role: llm.RoleUser, Content: hint})
+		}
+	} else if dupHint := cb.RecordSuccessfulCall(name, tc.Input); dupHint != "" {
 		*history = append(*history, llm.Message{Role: llm.RoleUser, Content: dupHint})
 	}
 	a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(*history), toolCallID)

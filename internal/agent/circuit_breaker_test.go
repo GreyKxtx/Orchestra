@@ -96,6 +96,33 @@ func TestCircuitBreaker_ResetDeniedForTool(t *testing.T) {
 	}
 }
 
+func TestCircuitBreaker_ReadOnlyDoomLoop(t *testing.T) {
+	cb := NewCircuitBreaker(2, 6, 6, 3)
+	input := []byte(`{"path":"main.go"}`)
+
+	for i := 0; i < readOnlyWarnRepeats-1; i++ {
+		if cb.IsReadOnlyBlocked("read", input) {
+			t.Fatalf("call %d should not be blocked yet", i+1)
+		}
+		if hint := cb.RecordReadOnlyCall("read", input); hint != "" {
+			t.Fatalf("call %d should not warn yet, got %q", i+1, hint)
+		}
+	}
+	if hint := cb.RecordReadOnlyCall("read", input); hint == "" {
+		t.Fatal("expected warn hint at threshold")
+	}
+	for i := 0; i < readOnlyBlockRepeats-readOnlyWarnRepeats; i++ {
+		_ = cb.RecordReadOnlyCall("read", input)
+	}
+	if !cb.IsReadOnlyBlocked("read", input) {
+		t.Fatal("expected block at readOnlyBlockRepeats")
+	}
+	cb.ResetReadOnlyCalls()
+	if cb.IsReadOnlyBlocked("read", input) {
+		t.Fatal("ResetReadOnlyCalls should clear counters")
+	}
+}
+
 func TestCircuitBreaker_ReadNotDeduped(t *testing.T) {
 	cb := NewCircuitBreaker(2, 6, 6, 3)
 	input := []byte(`{"path":"index.html"}`)

@@ -139,7 +139,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.rpc = m.client
 		a.rpcCancel = m.cancel
-		return a, a.listenForEvents()
+		a.coreSessionID = ""
+		return a, tea.Batch(a.listenForEvents(), a.startCoreSession())
+
+	case coreSessionStartedMsg:
+		a.handleCoreSessionStarted(m)
+		return a, nil
 
 	case view.DialogResultMsg:
 		return a.handleDialogResult(m)
@@ -862,7 +867,7 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		a.layout()
 		a.updateStatusHints()
 		go func(query, mode string) {
-			_ = a.rpc.AgentRun(ctx, query, mode, a.agentRunOptions())
+			_ = a.runAgentTurn(ctx, query, mode)
 		}(text, a.cfg.Mode)
 		return a, saveCmd, true
 	}

@@ -423,7 +423,7 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 		},
 		ContextLimit: 50,
 		Limits: LimitsConfig{
-			ContextKB:       50,
+			ContextKB:       128,
 			MaxFiles:        30,
 			MaxBytesPerFile: 200 * 1024,
 		},
@@ -436,11 +436,12 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			// ResponseFormatType: "json_object" — раскомментируй если провайдер поддерживает
 		},
 		Agent: AgentConfig{
-			MaxSteps:          24,
-			MaxInvalidRetries: 3,
-			MaxFinalFailures:  6,
-			MaxToolErrors:     6,
-			MaxDeniedRepeats:  2,
+			MaxSteps:            36,
+			MaxInvalidRetries:   3,
+			MaxFinalFailures:    6,
+			MaxToolErrors:       6,
+			MaxDeniedRepeats:    2,
+			CompactThresholdPct: 70,
 		},
 		Daemon: DaemonConfig{
 			Enabled:      false,
@@ -538,7 +539,7 @@ func (c *ProjectConfig) applyDefaults() {
 		c.Limits.ContextKB = c.ContextLimit
 	}
 	if c.Limits.ContextKB <= 0 {
-		c.Limits.ContextKB = 50
+		c.Limits.ContextKB = 128
 	}
 	// Keep legacy field in sync so old code paths still work.
 	if c.ContextLimit <= 0 {
@@ -591,7 +592,7 @@ func (c *ProjectConfig) applyDefaults() {
 
 	// Agent defaults (tuned for local models).
 	if c.Agent.MaxSteps <= 0 {
-		c.Agent.MaxSteps = 24
+		c.Agent.MaxSteps = 36
 	}
 	if c.Agent.MaxInvalidRetries <= 0 {
 		c.Agent.MaxInvalidRetries = 3

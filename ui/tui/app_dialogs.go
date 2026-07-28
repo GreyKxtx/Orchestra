@@ -279,6 +279,7 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 	oldCancel := a.rpcCancel
 	a.rpc = nil
 	a.rpcCancel = nil
+	a.coreSessionID = ""
 	// In-flight agent activity is killed by the close; reset UI state so the
 	// header/status bar don't spin forever after respawn.
 	if a.agentBusy {
