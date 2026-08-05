@@ -167,6 +167,9 @@ func TestRPC_OneResponsePerRequest(t *testing.T) {
 	defer c.Close()
 
 	// 2 requests + 1 notification => responses only for requests.
+	// Handlers run concurrently (jsonrpc.Server dispatches in goroutines so
+	// $/cancelRequest can interleave), so response *order* is not guaranteed —
+	// we assert the id set and that the notification produced no reply.
 	id1 := c.nextID
 	c.nextID++
 	c.writeRequest(t, "core.health", map[string]any{}, id1)
@@ -178,36 +181,36 @@ func TestRPC_OneResponsePerRequest(t *testing.T) {
 	c.writeRequest(t, "core.health", map[string]any{}, id2)
 
 	// Add one more request to detect any extra response that might have been emitted
-	// for the notification (it would desync the ID order).
+	// for the notification (it would appear as a 4th message / unexpected id).
 	id3 := c.nextID
 	c.nextID++
 	c.writeRequest(t, "core.health", map[string]any{}, id3)
 
-	resp1 := c.readResponse(t)
-	if resp1.Error != nil {
-		t.Fatalf("rpc error for id1: code=%d msg=%s data=%s", resp1.Error.Code, resp1.Error.Message, string(resp1.Error.Data))
+	want := map[int]bool{id1: true, id2: true, id3: true}
+	got := make(map[int]bool, 3)
+	for i := 0; i < 3; i++ {
+		resp := c.readResponse(t)
+		if resp.Error != nil {
+			t.Fatalf("rpc error on response %d: code=%d msg=%s data=%s",
+				i+1, resp.Error.Code, resp.Error.Message, string(resp.Error.Data))
+		}
+		var id int
+		if err := json.Unmarshal(resp.ID, &id); err != nil {
+			t.Fatalf("response %d: bad id %s: %v", i+1, string(resp.ID), err)
+		}
+		if !want[id] {
+			t.Fatalf("unexpected response id=%d (want one of %v); notification may have leaked a reply",
+				id, []int{id1, id2, id3})
+		}
+		if got[id] {
+			t.Fatalf("duplicate response id=%d", id)
+		}
+		got[id] = true
 	}
-	resp2 := c.readResponse(t)
-	if resp2.Error != nil {
-		t.Fatalf("rpc error for id2: code=%d msg=%s data=%s", resp2.Error.Code, resp2.Error.Message, string(resp2.Error.Data))
-	}
-	resp3 := c.readResponse(t)
-	if resp3.Error != nil {
-		t.Fatalf("rpc error for id3: code=%d msg=%s data=%s", resp3.Error.Code, resp3.Error.Message, string(resp3.Error.Data))
-	}
-
-	var got1, got2, got3 int
-	_ = json.Unmarshal(resp1.ID, &got1)
-	_ = json.Unmarshal(resp2.ID, &got2)
-	_ = json.Unmarshal(resp3.ID, &got3)
-	if got1 != id1 {
-		t.Fatalf("expected first response id=%d, got=%s", id1, string(resp1.ID))
-	}
-	if got2 != id2 {
-		t.Fatalf("expected second response id=%d, got=%s", id2, string(resp2.ID))
-	}
-	if got3 != id3 {
-		t.Fatalf("expected third response id=%d, got=%s", id3, string(resp3.ID))
+	for id := range want {
+		if !got[id] {
+			t.Fatalf("missing response for request id=%d", id)
+		}
 	}
 }
 
