@@ -99,6 +99,9 @@ func (r *bgRegistry) stopAll() {
 	r.mu.Unlock()
 	for _, p := range procs {
 		p.cancel()
+		if p.cmd != nil && p.cmd.Process != nil {
+			_ = p.cmd.Process.Kill()
+		}
 	}
 }
 
