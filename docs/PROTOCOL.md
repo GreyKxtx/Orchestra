@@ -551,6 +551,8 @@ Generic envelope:
 | `type` | string | One of the kinds below |
 | `content` | string | Type-specific payload (string), used for most kinds |
 | `data` | object | Type-specific structured payload, only for `pending_ops` |
+| `session_id` | string | Present for `session.message` turns; omitted for one-shot `agent.run` |
+| `turn_id` | string | Sortable id for this `agent.run` or `session.message` invocation |
 | `tool_call_id`, `tool_call_name`, `tool_call_index`, `args_delta` | optional | Set for tool-call-related kinds |
 
 ### Event types
@@ -575,6 +577,8 @@ Streamed during `bash` (alias for `exec.run`) tool execution.
 |---|---|---|
 | `step` | int | Current agent loop step |
 | `chunk` | string | Raw stdout/stderr chunk |
+| `session_id` | string | Present for `session.message` turns; omitted for one-shot `agent.run` |
+| `turn_id` | string | Sortable id for this turn |
 
 ### `workflow/stage_start` (v4+)
 

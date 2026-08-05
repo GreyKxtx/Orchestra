@@ -2,6 +2,14 @@ package prompt
 
 import "strings"
 
+// ResolvePromptFamily returns explicit family if set, otherwise DetectPromptFamily(model).
+func ResolvePromptFamily(explicit, modelName string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return DetectPromptFamily(modelName)
+}
+
 // DetectPromptFamily infers model family from the model name string.
 //
 // Returns one of: "anthropic", "gpt", "gemini", "kimi", "local", "default".
@@ -9,7 +17,7 @@ import "strings"
 //   - "gpt"       — GPT-4 and O-series reasoning models (OpenAI); beast-mode autonomous execution
 //   - "gemini"    — Gemini models (Google)
 //   - "kimi"      — Kimi / Moonshot models
-//   - "local"     — open-source/local models: Qwen, Llama, Mistral, DeepSeek, Gemma, Phi, Yi
+//   - "local"     — open-source/local models: Qwen, Llama, Mistral, DeepSeek, Gemma, Phi, Yi, Nemotron
 //   - "default"   — unrecognized, falls back to build.txt
 func DetectPromptFamily(modelName string) string {
 	lower := strings.ToLower(modelName)
@@ -30,7 +38,10 @@ func DetectPromptFamily(modelName string) string {
 		strings.Contains(lower, "deepseek") ||
 		strings.Contains(lower, "gemma") ||
 		strings.Contains(lower, "phi-") ||
-		strings.Contains(lower, "yi-"):
+		strings.Contains(lower, "yi-") ||
+		strings.Contains(lower, "nemotron") ||
+		strings.Contains(lower, "lmstudio") ||
+		strings.Contains(lower, "local"):
 		return "local"
 	default:
 		return "default"

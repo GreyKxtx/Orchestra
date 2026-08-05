@@ -22,6 +22,7 @@ import (
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
@@ -128,6 +129,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 			tr.SetMCPCaller(mcpMgr)
 		}
 	}
+	tr.SetMemoryContext("", cfg.Memory.Resolve())
 
 	return &Core{
 		workspaceRoot:     rootAbs,
@@ -437,43 +439,13 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 
 	promptFamily := ""
 	if c.cfg != nil {
-		promptFamily = c.cfg.LLM.PromptFamily
+		promptFamily = promptpkg.ResolvePromptFamily(c.cfg.LLM.PromptFamily, c.cfg.LLM.Model)
 	}
 
 	// Build OnEvent callback: translate agent.AgentEvent to JSON-RPC notifications.
 	var onEvent func(agent.AgentEvent)
 	if params.OnEvent != nil {
-		notify := params.OnEvent
-		onEvent = func(ev agent.AgentEvent) {
-			if ev.Stream.Kind == llm.StreamEventExecOutput {
-				notify("exec/output_chunk", map[string]any{
-					"step":  ev.Step,
-					"chunk": ev.Stream.Content,
-				})
-				return
-			}
-			if ev.Stream.Kind == llm.StreamEventPendingOps {
-				var data any
-				if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
-					notify("agent/event", map[string]any{
-						"step": ev.Step,
-						"type": "pending_ops",
-						"data": data,
-					})
-					return
-				}
-				// If unmarshal fails (defensive), fall through to generic mapping with content as string.
-			}
-			notify("agent/event", map[string]any{
-				"step":            ev.Step,
-				"type":            string(ev.Stream.Kind),
-				"content":         ev.Stream.Content,
-				"tool_call_id":    ev.Stream.ToolCallID,
-				"tool_call_name":  ev.Stream.ToolCallName,
-				"tool_call_index": ev.Stream.ToolCallIndex,
-				"args_delta":      ev.Stream.ArgsDelta,
-			})
-		}
+		onEvent = buildAgentOnEvent(params.OnEvent, EventEnvelope{TurnID: NewTurnID()})
 	}
 
 	allowExec := params.AllowExec
@@ -493,7 +465,6 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		}
 	}
 
-	taskRunner := tasks.New(c.llmClient, c.validator, c.tools)
 	var hooksRunner agent.HooksRunner
 	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
 		hooksRunner = hr
@@ -513,6 +484,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	c.tools.ClearStaged()
 
 	usageTracker := newAgentUsageTracker(c.cfg, "agent.run")
+	taskRunner := tasks.New(c.llmClient, c.validator, c.tools, childAgentConfig(c.cfg, maxPromptBytes, usageTracker))
 
 	agOpts := agent.Options{
 		MaxSteps:             maxSteps,
@@ -546,6 +518,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		ProviderLabel:        providerLabelOf(c.cfg),
 		ModelLabel:           c.cfg.LLM.Model,
 		PlanPath:             resolvePlanPath(params.Mode, "", ""),
+		Memory:               c.cfg.Memory.Resolve(),
+		ToolDigestBytes:        c.cfg.Agent.ResolvedToolDigestBytes(),
+		HistoryPruneKeepRecent: c.cfg.Agent.ResolvedHistoryPruneKeepRecent(),
+		AutoSessionMemory:    false,
 	}
 	// Profile overlays config defaults. When a profile is selected it wins over
 	// agent.max_steps / limits.context_kb for the knobs it owns; omit profile
@@ -1106,42 +1082,15 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	promptFamily := ""
 	if c.cfg != nil {
-		promptFamily = c.cfg.LLM.PromptFamily
+		promptFamily = promptpkg.ResolvePromptFamily(c.cfg.LLM.PromptFamily, c.cfg.LLM.Model)
 	}
 
 	var onEvent func(agent.AgentEvent)
 	if agParams.OnEvent != nil {
-		notify := agParams.OnEvent
-		onEvent = func(ev agent.AgentEvent) {
-			if ev.Stream.Kind == llm.StreamEventExecOutput {
-				notify("exec/output_chunk", map[string]any{
-					"step":  ev.Step,
-					"chunk": ev.Stream.Content,
-				})
-				return
-			}
-			if ev.Stream.Kind == llm.StreamEventPendingOps {
-				var data any
-				if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
-					notify("agent/event", map[string]any{
-						"step": ev.Step,
-						"type": "pending_ops",
-						"data": data,
-					})
-					return
-				}
-				// If unmarshal fails (defensive), fall through to generic mapping with content as string.
-			}
-			notify("agent/event", map[string]any{
-				"step":            ev.Step,
-				"type":            string(ev.Stream.Kind),
-				"content":         ev.Stream.Content,
-				"tool_call_id":    ev.Stream.ToolCallID,
-				"tool_call_name":  ev.Stream.ToolCallName,
-				"tool_call_index": ev.Stream.ToolCallIndex,
-				"args_delta":      ev.Stream.ArgsDelta,
-			})
-		}
+		onEvent = buildAgentOnEvent(agParams.OnEvent, EventEnvelope{
+			SessionID: params.SessionID,
+			TurnID:    NewTurnID(),
+		})
 	}
 
 	sessAllowExec := agParams.AllowExec
@@ -1161,7 +1110,6 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		}
 	}
 
-	sessTaskRunner := tasks.New(c.llmClient, c.validator, c.tools)
 	var sessHooksRunner agent.HooksRunner
 	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
 		sessHooksRunner = hr
@@ -1173,6 +1121,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 
 	sessUsageTracker := newAgentUsageTracker(c.cfg, "session.turn")
+	sessTaskRunner := tasks.New(c.llmClient, c.validator, c.tools, childAgentConfig(c.cfg, maxPromptBytes, sessUsageTracker))
 
 	sessAgOpts := agent.Options{
 		UsageTracker:         sessUsageTracker,
@@ -1207,7 +1156,13 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		PermissionRequester:  convertPermissionRequester(agParams.PermissionRequester),
 		QuestionAsker:        agParams.QuestionAsker,
 		PlanPath:             planPath,
+		Memory:               c.cfg.Memory.Resolve(),
+		SessionID:            params.SessionID,
+		ToolDigestBytes:        c.cfg.Agent.ResolvedToolDigestBytes(),
+		HistoryPruneKeepRecent: c.cfg.Agent.ResolvedHistoryPruneKeepRecent(),
+		AutoSessionMemory:    c.cfg.Agent.ResolvedAutoSessionMemory(),
 	}
+	c.tools.SetMemoryContext(params.SessionID, c.cfg.Memory.Resolve())
 	if err := agent.ApplyProfile(&sessAgOpts, profileName, false); err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
@@ -1451,4 +1406,20 @@ func samePath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent.UsageRecorder) tasks.ChildAgentConfig {
+	out := tasks.ChildAgentConfig{
+		MaxPromptBytes: maxPromptBytes,
+		UsageTracker:   usage,
+	}
+	if cfg == nil {
+		return out
+	}
+	out.CompactThresholdPct = cfg.Agent.CompactThresholdPct
+	out.ToolDigestBytes = cfg.Agent.ResolvedToolDigestBytes()
+	out.HistoryPruneKeepRecent = cfg.Agent.ResolvedHistoryPruneKeepRecent()
+	out.ProviderLabel = providerLabelOf(cfg)
+	out.ModelLabel = cfg.LLM.Model
+	return out
 }

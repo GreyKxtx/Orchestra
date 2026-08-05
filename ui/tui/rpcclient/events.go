@@ -48,6 +48,8 @@ type WorkflowStagePayload struct {
 type Event struct {
 	Kind         EventKind
 	Step         int
+	SessionID    string // from agent/event envelope (session.message turns)
+	TurnID       string // from agent/event envelope
 	Content      string
 	ToolCallID   string
 	ToolCallName string

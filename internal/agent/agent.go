@@ -21,6 +21,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 
 	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/permission"
 )
 
@@ -248,6 +249,21 @@ type Options struct {
 	// HooksRunner, if non-nil, runs pre/post tool call hooks.
 	HooksRunner HooksRunner
 
+	// Memory configures layered project/session memory injection.
+	Memory memory.Config
+	// SessionID binds session-scoped memory (.orchestra/memory/sessions/<id>.md).
+	SessionID string
+
+	// ToolDigestBytes caps tool results in history; larger outputs become digests (0 = disable).
+	ToolDigestBytes int
+
+	// HistoryPruneKeepRecent is how many recent tool-bearing history atoms stay
+	// full during retroactive prune (default 2). 0 = prune all eligible.
+	HistoryPruneKeepRecent int
+
+	// AutoSessionMemory appends explore/grep notes to session memory automatically.
+	AutoSessionMemory bool
+
 	// PermissionRequester, if non-nil, is consulted before bash/exec.run runs
 	// instead of (or before) the static AllowExec gate.
 	// Nil → fall through to existing AllowExec / ExecAllow gates (CLI mode).
@@ -403,7 +419,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	}
 	// Initialize todos from session state (empty for one-shot runs).
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
-	// Pre-fetch relevant CKG nodes once per Run; injected into every nextStep prompt.
+	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).
 	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
 
 	if history == nil {
@@ -431,6 +447,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		// running compaction + nextStep before noticing the cancel.
 		if err := ctx.Err(); err != nil {
 			return history, nil, err
+		}
+
+		// Retroactive prune: shrink older tool outputs already in history.
+		if a.opts.ToolDigestBytes > 0 {
+			keep := a.opts.HistoryPruneKeepRecent
+			if keep <= 0 {
+				keep = defaultHistoryPruneKeepRecent
+			}
+			history = pruneRetroactiveToolHistory(history, a.opts.ToolDigestBytes, keep)
 		}
 
 		// Compaction: if history is getting large, summarise it before the next LLM call.
@@ -890,12 +915,13 @@ func (a *Agent) substitutePlanPath(s string) string {
 //     file exists it REPLACES whatever was selected above, including the
 //     custom-agent prompt — file-system wins over config.
 //  4. APPEND: project memory (ORCHESTRA.md + .orchestra/memory/*.md +
-//     ~/.orchestra/memory.md) capped at 2 KiB.
-//  5. APPEND: the <available_skills> block (when a SkillRunner is wired).
+//     ~/.orchestra/memory.md + optional session layer) via internal/memory.
+//  5. APPEND: <available_tools> catalog from live tool defs (names + short desc).
+//  6. APPEND: the <available_skills> block (when a SkillRunner is wired).
 //
 // M10 in architecture audit: this used to live as five ad-hoc if-checks
 // inline in nextStep. The replace-vs-append asymmetry (1/2/3 replace,
-// 4/5 append) was implicit and easy to mis-order on edit. Moving it to
+// 4/5/6 append) was implicit and easy to mis-order on edit. Moving it to
 // a method documents the contract and centralises the order so a new
 // prompt source can be added in one place.
 func (a *Agent) buildSystemPrompt() string {
@@ -908,11 +934,16 @@ func (a *Agent) buildSystemPrompt() string {
 	if fs := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); fs != "" {
 		prompt = fs
 	}
-	// 4: append project memory.
-	if memory := promptpkg.LoadProjectMemory(a.tools.WorkspaceRoot(), 2048); memory != "" {
-		prompt += "\n\n" + memory
+	// 4: append project memory (tiered, config-driven).
+	memCfg := a.opts.Memory
+	memCfg.Normalize()
+	store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
+	if block := store.FormatInject(memCfg.InjectBytes()); block != "" {
+		prompt += "\n\n" + block
 	}
-	// 5: append skills advertisement.
+	// 5: live tool catalog (mode/caps accurate — better than hardcoded lists in *.txt).
+	prompt += formatToolsCatalog(a.buildToolDefs())
+	// 6: append skills advertisement.
 	prompt += a.skillsAdvertisement()
 	if a.opts.Mode == ModePlan || strings.TrimSpace(a.opts.PlanPath) != "" {
 		prompt = a.substitutePlanPath(prompt)
@@ -947,8 +978,8 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	if block := renderTodosBlock(a.todos); block != "" {
 		userPrompt = block + "\n" + userPrompt
 	}
-	// CKG context appended at end: attention-bias to recent content.
-	if a.ckgContext != "" {
+	// CKG context only on step 1 (saves tokens; later steps use explore/grep in history).
+	if stepNum == 1 && a.ckgContext != "" {
 		userPrompt += "\n\n" + a.ckgContext
 	}
 	// Mode reminder injected last (freshest in attention window).
@@ -1527,7 +1558,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				if callErr != nil {
 					return callErr
 				}
-				results[idx] = string(out)
+				results[idx] = a.prepareToolHistoryContent(call.Name, call.Input, out)
 				if a.opts.OnEvent != nil {
 					// OnEvent in its own recover so a buggy UI sink doesn't take
 					// down the worker mid-success. Recovered value is dropped —

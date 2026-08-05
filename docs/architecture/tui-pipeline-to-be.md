@@ -7,8 +7,8 @@
 | Паттерн | Как уже проявляется в Orchestra | Что добавить |
 |---------|----------------------------------|--------------|
 | Actor Model | Bubble Tea: single-threaded `Update` + Cmd; Core — один процесс на workspace | Явная модель «Session Actor» на стороне core (один writer истории) |
-| Event-Driven | JSON-RPC notifications `agent/event`, `exec/output_chunk`, workflow stages | Единый event envelope с `session_id` + `turn_id` |
-| State machine | `TurnFSM` в `ui/tui/state` (M3) | Опционально: `session_id` + `turn_id` в event envelope |
+| Event-Driven | JSON-RPC notifications `agent/event`, `exec/output_chunk`, workflow stages | Единый event envelope с `session_id` + `turn_id` ✅ |
+| State machine | `TurnFSM` в `ui/tui/state` (M3) | `session_id` + `turn_id` в event envelope ✅ |
 | CQRS-lite | Dry-run = query/preview; `--apply` = command | Patch Mode как третья команда: «материализовать unified diff без write» |
 
 Вывод: не нужна полная переписка на actors/broker. Нужно **соединить** существующий multi-turn core path с TUI и **убрать** дублирование session stores.
@@ -131,7 +131,7 @@ agent:
 1. ~~На старте TUI: `session.start`~~ — реализовано (`ensureCoreSession`).
 2. ~~Заменить `AgentRun` на `SessionMessage`~~ — реализовано в `app_session.go` / `rpcclient`.
 3. Cancel / fallback на `agent.run` при отсутствии session id — на месте.
-4. Тесты multi-turn — желательно добить в follow-up.
+4. ~~Тесты multi-turn~~ — `tests/e2e_real_llm/session_multiturn_test.go` (ORCH_E2E_LLM=1).
 
 ### Phase M2 — Unify session schema — DONE
 

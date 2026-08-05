@@ -24,9 +24,9 @@ func TestResolveToolNames(t *testing.T) {
 		{"single known", []string{"read"}, 1, false},
 		{"multiple known", []string{"read", "grep", "write"}, 3, false},
 		{"all tools", []string{"ls", "read", "glob", "write", "edit", "grep", "symbols",
-			"explore", "bash", "webfetch", "todowrite", "todoread", "memory_write",
+			"explore", "bash", "webfetch", "todowrite", "todoread", "memory_write", "memory_read",
 			"runtime_query", "task_spawn", "task_wait", "task_cancel", "task_result",
-			"plan_enter", "plan_exit", "question", "diff.preview"}, 22, false},
+			"plan_enter", "plan_exit", "question", "diff.preview"}, 23, false},
 		{"unknown tool", []string{"read", "fly"}, 0, true},
 		{"empty list", []string{}, 0, false},
 	}

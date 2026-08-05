@@ -145,7 +145,7 @@ LLM final.patches (internal/patches)
 | P3 | **Resolved (M2)** | `loadSession` + `session.start(session_id)` restore UI **and** agent history | was: UI-only restore |
 | P4 | Medium | `events` chan coalesce-on-backpressure for token/tool-arg deltas (merged instead of dropped) | `rpcclient/client.go` |
 | P5 | Low (mitigated) | H9 concurrent `.orchestra.bak` — in-process `applyMu` + `.orchestra/apply.lock` flock; second process gets fail-closed error | `internal/applier/ops_applier.go` |
-| P6 | Low | Docs/CLAUDE всё ещё упоминают `internal/externalpatch`; факт: `internal/patches` + `internal/applier` | docs / CLAUDE.md |
+| P6 | **Resolved** | Docs updated: `internal/patches` + `internal/applier` (was `internal/externalpatch`) | docs |
 | P7 | **Resolved (M4)** | `SessionMessage` / `SessionApplyPending` hold `runMu` for full turn like `AgentRun` | `core.go` |
 | P8 | **Resolved (M3)** | Turn lifecycle via `TurnFSM` (idle/composing/running/applying) replaces ad-hoc `agentBusy` | `ui/tui/state/turn.go` |
 

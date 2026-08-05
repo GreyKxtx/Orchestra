@@ -54,7 +54,7 @@ func newTestTaskRunner(t *testing.T) *TaskRunner {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
 	t.Cleanup(func() { tr.Close() })
-	return New(&mockTaskResultLLM{result: "all done"}, v, tr)
+	return New(&mockTaskResultLLM{result: "all done"}, v, tr, ChildAgentConfig{})
 }
 
 // ── Wait / Cancel with unknown task ─────────────────────────────────────────
@@ -115,7 +115,7 @@ func TestSpawnWait_ReturnsResult(t *testing.T) {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
 	t.Cleanup(func() { tr.Close() })
-	r := New(&mockTaskResultLLM{result: "research complete"}, v, tr)
+	r := New(&mockTaskResultLLM{result: "research complete"}, v, tr, ChildAgentConfig{})
 
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "research files", MaxSteps: 3})
 	if err != nil {
@@ -132,8 +132,8 @@ func TestSpawnWait_ReturnsResult(t *testing.T) {
 	if result.Status != "done" {
 		t.Fatalf("expected status=done, got %q", result.Status)
 	}
-	if result.Result != "research complete" {
-		t.Fatalf("expected result='research complete', got %q", result.Result)
+	if !strings.Contains(result.Result, "research complete") {
+		t.Fatalf("expected result to contain 'research complete', got %q", result.Result)
 	}
 }
 
@@ -151,7 +151,7 @@ func TestCancel_BeforeCompletion(t *testing.T) {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
 	t.Cleanup(func() { tr.Close() })
-	r := New(blockingLLM, v, tr)
+	r := New(blockingLLM, v, tr, ChildAgentConfig{})
 
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "block forever", MaxSteps: 1})
 	if err != nil {

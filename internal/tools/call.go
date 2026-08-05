@@ -245,6 +245,17 @@ func (r *Runner) callImpl(ctx context.Context, name string, input json.RawMessag
 		}
 		return mustJSON(resp)
 
+	case "memory_read":
+		var req MemoryReadRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.MemoryRead(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	case "memory_write":
 		var req MemoryWriteRequest
 		if err := decodeToolInput(input, &req); err != nil {

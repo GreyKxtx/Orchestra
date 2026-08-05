@@ -24,6 +24,7 @@ import (
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/pipeline"
 	"github.com/orchestra/orchestra/internal/protocol"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
@@ -407,7 +408,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
 			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			PromptFamily:         cfg.LLM.PromptFamily,
+			PromptFamily:         promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
 			ResponseFormat:       respFmt,
 			Debug:                debugMode,
 			AgentLogger:          agentLogger,
@@ -583,7 +584,15 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 
-		taskRunner := tasks.New(llmClient, validator, runner)
+		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
+			MaxPromptBytes:         cfg.Limits.ContextKB * 1024,
+			CompactThresholdPct:    cfg.Agent.CompactThresholdPct,
+			ToolDigestBytes:        cfg.Agent.ResolvedToolDigestBytes(),
+			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
+			UsageTracker:           usageTracker,
+			ProviderLabel:          providerLabelFor(cfg, applyProvider),
+			ModelLabel:             cfg.LLM.Model,
+		})
 		var hooksRunner agent.HooksRunner
 		if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
 			hooksRunner = hr
@@ -621,7 +630,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			PermissionRules:      cfg.Permissions.Rules,
 			Debug:                debugMode,
 			ResponseFormat:       respFmt,
-			PromptFamily:         cfg.LLM.PromptFamily,
+			PromptFamily:         promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
 			Mode:                 agent.Mode(agentMode),
 			SystemPromptOverride: systemPromptOverride,
 			CustomTools:          customAgentTools,
@@ -635,6 +644,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			HooksRunner:          hooksRunner,
 			UserImages:           imageParts,
 			MultimodalLLM:        cfg.LLM.Multimodal,
+			Memory:               cfg.Memory.Resolve(),
+			ToolDigestBytes:      cfg.Agent.ResolvedToolDigestBytes(),
+			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
 		}
 		// Profile overlays defaults; named agents: (CustomTools / SystemPromptOverride /
 		// provider) already applied above and take precedence for those fields.

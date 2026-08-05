@@ -93,7 +93,7 @@ API для агентов. Здесь критично разделить **дв
 ### Слой 3: Worker Agents
 
 - **Investigator.** Получает trace из Runtime Bridge + срез CKG (целевой узел + 1–2 уровня caller chain). Возвращает вердикт: «причина в `pkg.X.method`, строка N, потому что Y».
-- **Coder.** Получает вердикт + точный snippet из CKG. Возвращает `final.patches` в существующем формате (см. `internal/externalpatch/`). Работает с тем же External Patches → Resolver → Internal Ops pipeline, что и vNext.
+- **Coder.** Получает вердикт + точный snippet из CKG. Возвращает `final.patches` в существующем формате (см. `internal/patches/`). Работает с тем же External Patches → Resolver → Internal Ops pipeline, что и vNext.
 - **Critic.** Запускает **формальные** проверки: `go vet`, `golangci-lint`, тесты, type-check. Это **не** «ещё один LLM-ревью» — такое дублирует Coder и почти ничего не даёт. LLM-проверка нужна только если у неё есть жёсткий критерий (security checklist, policy compliance), а не «оцени код в целом».
 
 Все три — субагенты с изолированной history, через `task.spawn` (vNext фаза 5).

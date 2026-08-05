@@ -17,6 +17,7 @@ import (
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lsp"
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/search"
@@ -49,6 +50,9 @@ type Runner struct {
 	// seenInstructionDirs tracks which directories have already had their
 	// ORCHESTRA.md injected into a tool result (lazy discovery).
 	seenInstructionDirs sync.Map
+
+	memoryCfg memory.Config
+	sessionID string
 
 	// Web fetch settings.
 	webFetchTimeout    time.Duration
@@ -204,6 +208,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		blockExecInDryRun:       opts.BlockExecInDryRun,
 		staged:                  make(map[string]*stagedFile),
 		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
+		memoryCfg:               memory.DefaultConfig(),
 	}, nil
 }
 
@@ -518,14 +523,11 @@ func (r *Runner) discoverInstructions(dir string) string {
 		}
 
 		if _, loaded := r.seenInstructionDirs.LoadOrStore(dir, struct{}{}); !loaded {
-			// First time seeing this directory — check for ORCHESTRA.md.
-			candidate := filepath.Join(dir, instructionFile)
-			if data, err := os.ReadFile(candidate); err == nil {
-				text := strings.TrimSpace(string(data))
-				if text != "" {
-					rel, _ := filepath.Rel(root, candidate)
-					parts = append(parts, "Instructions from "+filepath.ToSlash(rel)+":\n"+text)
-				}
+			text := r.memoryStore().LazyOrchestra(dir)
+			if text != "" {
+				candidate := filepath.Join(dir, instructionFile)
+				rel, _ := filepath.Rel(root, candidate)
+				parts = append(parts, "Instructions from "+filepath.ToSlash(rel)+":\n"+text)
 			}
 		}
 

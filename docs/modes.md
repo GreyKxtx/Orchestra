@@ -107,7 +107,13 @@
 | `local` | qwen*, llama*, mistral*, deepseek*, phi* | `build-local.txt`, `plan-local.txt` |
 | `default` | всё остальное | `{mode}.txt` / `build.txt` |
 
-`DetectPromptFamily(modelName)` автоматически определяет семейство по имени модели из конфига.
+`DetectPromptFamily(modelName)` / `ResolvePromptFamily` автоматически выбирает семейство по имени модели, если `llm.prompt_family` пуст.
+
+Для **`local`** (Qwen, Llama, Nemotron, …) промпт `build-local.txt` задаёт **edit/write по умолчанию**; `final.patches` — только для редкого multi-file батча. Пользователю не нужно выбирать «патчи или физика» флагом.
+
+### Каталог tools в system prompt
+
+Каждый ход агент добавляет блок `<available_tools>` из **живых** tool defs (mode + caps + MCP + skills): имя + короткое описание. В user prompt остаётся краткий `<tool_names>`. Статические списки в `*.txt` больше не считаются источником правды.
 
 ---
 

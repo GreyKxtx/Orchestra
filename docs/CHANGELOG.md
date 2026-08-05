@@ -489,7 +489,7 @@ permissions:
 - JSON-RPC 2.0 over stdio (`internal/jsonrpc`); `orchestra core --workspace-root .` server.
 - `Core` + `RPCHandler` (`internal/core`): `initialize`, `agent.run`, `tool.call`, `core.health`.
 - `internal/resolver` — `ExternalPatch` → `InternalOp` conversion; `file_hash` consistency checks.
-- `internal/externalpatch`, `internal/ops` — two-layer patch model.
+- `internal/patches`, `internal/ops` — two-layer patch model.
 - `orchestra daemon` — legacy v0.3 HTTP daemon (loopback-only, for backwards compatibility).
 
 ### Changed

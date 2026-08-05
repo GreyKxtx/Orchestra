@@ -22,8 +22,8 @@ type LLMConfig struct {
 	TimeoutS int `yaml:"timeout_s"`
 
 	// PromptFamily selects a model-family-specific system prompt template.
-	// Auto-detected from Model name if empty.
-	// Supported: "openai" (default), "qwen", "llama", "mistral", "deepseek".
+	// Empty = auto-detect from Model (qwen/llama/… → "local" → edit-first prompts).
+	// Supported: "anthropic", "gpt", "gemini", "kimi", "local", "default".
 	PromptFamily string `yaml:"prompt_family"`
 
 	// Multimodal must be set true for this LLM to receive image content
@@ -89,6 +89,12 @@ type AgentConfig struct {
 	// CompactThresholdPct triggers history compaction when history exceeds this % of MaxPromptBytes.
 	// 0 = disabled (default). Recommended: 70.
 	CompactThresholdPct int `yaml:"compact_threshold_pct"`
+	// ToolDigestKB replaces tool outputs larger than this in LLM history with a digest (default 16). -1 = off.
+	ToolDigestKB int `yaml:"tool_digest_kb,omitempty"`
+	// HistoryPruneKeepRecent keeps the last N tool-bearing history atoms full during retroactive prune (default 2).
+	HistoryPruneKeepRecent int `yaml:"history_prune_keep_recent,omitempty"`
+	// AutoSessionMemory writes explore/grep notes to session memory automatically.
+	AutoSessionMemory *bool `yaml:"auto_session_memory,omitempty"`
 	// Profile selects an adaptive execution preset: "" (defaults), "fast", or "precision".
 	// CLI --profile overrides this. Named agents: still take precedence over profile knobs
 	// that collide (system_prompt / tools / provider).
@@ -234,6 +240,10 @@ type EmbedConfig struct {
 	Dimensions int    `yaml:"dimensions,omitempty"`
 	BatchSize  int    `yaml:"batch_size,omitempty"`
 	TimeoutS   int    `yaml:"timeout_s,omitempty"`
+	// SemanticAutoExplore runs explore(FQN) for top semantic_search hits (default true when model set).
+	SemanticAutoExplore *bool `yaml:"semantic_auto_explore,omitempty"`
+	// SemanticAutoExploreTopK is how many hits to enrich with explore summaries (default 2).
+	SemanticAutoExploreTopK int `yaml:"semantic_auto_explore_top_k,omitempty"`
 }
 
 // WebConfig contains web fetch safety settings.
@@ -318,7 +328,7 @@ var validAgentToolNames = map[string]bool{
 	"webfetch": true, "todowrite": true, "todoread": true,
 	"bash.output": true, "bash.kill": true,
 	"semantic_search": true, "repo_map": true, "ast_rename": true,
-	"memory_write": true, "runtime_query": true,
+	"memory_write": true, "memory_read": true, "runtime_query": true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
 	"plan_enter": true, "plan_exit": true, "question": true,
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
@@ -356,6 +366,16 @@ type HooksConfig struct {
 	TimeoutMS int `yaml:"timeout_ms"`
 }
 
+// MemoryConfig controls layered project/session/global memory.
+type MemoryConfig struct {
+	InjectKB       int    `yaml:"inject_kb,omitempty"`
+	LazyKB         int    `yaml:"lazy_kb,omitempty"`
+	Mode           string `yaml:"mode,omitempty"` // eager | lazy | hybrid
+	GlobalEnabled  *bool  `yaml:"global_enabled,omitempty"`
+	SessionEnabled *bool  `yaml:"session_enabled,omitempty"`
+	MaxAgentKB     int    `yaml:"max_agent_kb,omitempty"`
+}
+
 // UIConfig holds TUI-only presentation preferences.
 type UIConfig struct {
 	// Theme is a registered theme name (see ui/tui/theme). Empty / unknown
@@ -391,6 +411,7 @@ type ProjectConfig struct {
 	Agents       []AgentDefinition `yaml:"agents,omitempty"`
 	LSP          LSPConfig         `yaml:"lsp,omitempty"`
 	UI           UIConfig          `yaml:"ui,omitempty"`
+	Memory       MemoryConfig      `yaml:"memory,omitempty"`
 	Embed        EmbedConfig       `yaml:"embed,omitempty"`
 	// Providers is an optional map of named LLM provider configurations.
 	// Use in agents: via provider: <name> or with --provider <name> CLI flag.
@@ -462,6 +483,8 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			MaxToolErrors:       6,
 			MaxDeniedRepeats:    2,
 			CompactThresholdPct: 70,
+			ToolDigestKB:        16,
+			AutoSessionMemory:   boolPtr(true),
 		},
 		Daemon: DaemonConfig{
 			Enabled:      false,
@@ -702,6 +725,10 @@ func (c *ProjectConfig) Validate() error {
 		// ok
 	default:
 		return fmt.Errorf("agent.profile must be empty, \"fast\", or \"precision\", got %q", c.Agent.Profile)
+	}
+
+	if err := c.validateMemory(); err != nil {
+		return err
 	}
 
 	return nil

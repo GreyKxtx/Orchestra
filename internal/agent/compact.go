@@ -75,11 +75,11 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, history []
 		return nil, fmt.Errorf("compaction returned empty summary")
 	}
 
-	// Replace the entire history with a single synthetic user message containing the summary.
+	// Replace the entire history with a structured checkpoint summary.
 	compacted := []llm.Message{
 		{
 			Role:    llm.RoleUser,
-			Content: "[История разговора сжата]\n\n" + summary,
+			Content: "[Session checkpoint — structured summary]\n\n" + summary,
 		},
 	}
 	return compacted, nil

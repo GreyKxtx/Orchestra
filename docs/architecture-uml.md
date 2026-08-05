@@ -109,7 +109,7 @@ flowchart TB
     end
 
     subgraph L4[Patches — слой намерения и применения]
-        EXT["externalpatch<br/>(LLM-формат:<br/>search_replace,<br/>unified_diff,<br/>write_atomic)"]
+        EXT["patches<br/>(LLM-формат:<br/>search_replace,<br/>unified_diff,<br/>write_atomic)"]
         RES["resolver<br/>External→Internal"]
         OPS["ops<br/>(детерминированные:<br/>replace_range,<br/>write_atomic, mkdir_all)"]
         APPL["applier<br/>(atomic temp+rename<br/>+ *.orchestra.bak)"]
@@ -430,7 +430,7 @@ flowchart TB
 
     subgraph Patches[Слой 4 — патчи и ops]
         direction LR
-        ext["internal/externalpatch"]
+        ext["internal/patches"]
         res["internal/resolver"]
         ops["internal/ops"]
         apl["internal/applier"]
@@ -617,7 +617,7 @@ flowchart LR
 | Agent loop | `internal/agent/agent.go` |
 | Tool registry | `internal/tools/registry.go` |
 | Modes | `agent.go::ModeBuild/Plan/Explore`, `registry.go::ListToolsForMode` |
-| External patches | `internal/externalpatch/` |
+| External patches | `internal/patches/` |
 | Internal ops | `internal/ops/` |
 | Resolver | `internal/resolver/` |
 | Applier | `internal/applier/` |

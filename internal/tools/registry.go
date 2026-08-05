@@ -113,6 +113,7 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 		toolTodoWrite(),
 		toolTodoRead(),
 		toolMemoryWrite(),
+		toolMemoryRead(),
 		toolLSPDefinition(),
 		toolLSPReferences(),
 		toolLSPHover(),
@@ -158,7 +159,7 @@ var parallelSafeTools = map[string]bool{
 var mutatingTools = map[string]bool{
 	"write": true, "edit": true,
 	"bash": true, "bash.output": true, "bash.kill": true,
-	"todowrite": true, "todoread": true, "memory_write": true,
+	"todowrite": true, "todoread": true, "memory_write": true, "memory_read": true,
 	"lsp.rename": true,
 	"plan_exit": true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
@@ -637,7 +638,7 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
@@ -685,7 +686,7 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoRead(), toolMemoryWrite(), toolTaskResult(),
+		toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
@@ -927,13 +928,33 @@ func toolMemoryWrite() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_write",
-			Description: "Сохранить факт в постоянную память агента (.orchestra/memory/agent.md). Используй для запоминания важных решений, предпочтений пользователя или контекста, который нужен в следующих сессиях. Не используй для временных заметок — для этого todowrite.",
+			Description: "Сохранить факт в постоянную память. scope=project → .orchestra/memory/agent.md (между сессиями). scope=session → память текущей сессии. Для временных задач — todowrite.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["content"],
   "properties": {
-    "content": { "type": "string", "minLength": 1, "description": "Факт или контекст для сохранения" }
+    "content": { "type": "string", "minLength": 1, "description": "Факт или контекст для сохранения" },
+    "scope":   { "type": "string", "enum": ["project", "session"], "description": "project (default) или session" }
+  }
+}`),
+		},
+	}
+}
+
+func toolMemoryRead() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "memory_read",
+			Description: "Прочитать слоистую память проекта (ORCHESTRA.md, .orchestra/memory/, session, global). Без аргументов — список источников. Экономит контекст vs полный inject.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "layer":  { "type": "string", "enum": ["orchestra", "session", "repo", "global", "all"], "description": "Слой памяти" },
+    "path":   { "type": "string", "description": "ORCHESTRA.md или .orchestra/memory/agent.md" },
+    "max_kb": { "type": "integer", "minimum": 1, "maximum": 64, "description": "Лимит ответа в KiB" }
   }
 }`),
 		},
@@ -946,7 +967,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), ToolASTRename(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), ToolASTRename(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),

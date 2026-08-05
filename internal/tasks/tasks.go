@@ -13,12 +13,24 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
+// ChildAgentConfig holds history/memory settings propagated to child agents.
+type ChildAgentConfig struct {
+	MaxPromptBytes         int
+	CompactThresholdPct    int
+	ToolDigestBytes        int
+	HistoryPruneKeepRecent int
+	UsageTracker           agent.UsageRecorder
+	ProviderLabel          string
+	ModelLabel             string
+}
+
 // TaskRunner implements agent.SubtaskRunner using real child agents.
 // Child agents run with a read-only tool set and cannot spawn further subtasks.
 type TaskRunner struct {
 	llmClient  llm.Client
 	validator  *schema.Validator
 	toolRunner *tools.Runner
+	child      ChildAgentConfig
 
 	mu    sync.Mutex
 	tasks map[string]*taskEntry
@@ -33,11 +45,12 @@ type taskEntry struct {
 }
 
 // New creates a new TaskRunner.
-func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Runner) *TaskRunner {
+func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Runner, child ChildAgentConfig) *TaskRunner {
 	return &TaskRunner{
 		llmClient:  llmClient,
 		validator:  validator,
 		toolRunner: toolRunner,
+		child:      child,
 		tasks:      make(map[string]*taskEntry),
 	}
 }
@@ -93,7 +106,7 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 		defer close(entry.done)
 		defer cancel()
 
-		result := r.runChild(taskCtx, taskID, req.Goal, maxSteps, childTools)
+		result := r.runChild(taskCtx, taskID, req.Goal, subagentType, maxSteps, childTools)
 
 		r.mu.Lock()
 		entry.result = result
@@ -103,33 +116,48 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 	return taskID, nil
 }
 
-func (r *TaskRunner) runChild(ctx context.Context, taskID, goal string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+func (r *TaskRunner) runChild(ctx context.Context, taskID, goal, subagentType string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+	maxPrompt := r.child.MaxPromptBytes
+	if maxPrompt <= 0 {
+		maxPrompt = 64 * 1024
+	}
 	ag, err := agent.New(r.llmClient, r.validator, r.toolRunner, agent.Options{
-		MaxSteps:    maxSteps,
-		CustomTools: childTools,
-		IsChild:     true, // expects task_result termination
-		// SubtaskRunner intentionally nil — prevents recursive spawning
+		MaxSteps:               maxSteps,
+		MaxPromptBytes:         maxPrompt,
+		CompactThresholdPct:    r.child.CompactThresholdPct,
+		ToolDigestBytes:        r.child.ToolDigestBytes,
+		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
+		CustomTools:            childTools,
+		IsChild:                true,
+		UsageTracker:           r.child.UsageTracker,
+		ProviderLabel:          r.child.ProviderLabel,
+		ModelLabel:             r.child.ModelLabel,
 	})
 	if err != nil {
 		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
 	}
 
-	_, res, runErr := ag.Run(ctx, nil, goal)
+	hist, res, runErr := ag.Run(ctx, nil, goal)
 	if runErr != nil {
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: runErr.Error()}
 		}
 		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: runErr.Error()}
 	}
-	if res.SubtaskResult != "" {
-		return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: res.SubtaskResult}
+
+	taskResult := ""
+	if res != nil {
+		taskResult = res.SubtaskResult
+		if taskResult == "" && len(res.Patches) > 0 {
+			taskResult = fmt.Sprintf("completed with %d patch(es)", len(res.Patches))
+		}
 	}
-	// Child finished with patches (unusual for research tasks — summarize)
-	return &agent.SubtaskResult{
-		TaskID: taskID,
-		Status: "done",
-		Result: fmt.Sprintf("completed with %d patch(es)", len(res.Patches)),
+
+	if subagentType == "" || subagentType == "explore" {
+		taskResult = agent.FormatSubagentResult(subagentType, goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
+
+	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
 }
 
 func (r *TaskRunner) removeTask(taskID string) {

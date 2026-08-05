@@ -466,6 +466,8 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 	var p struct {
 		Step         int             `json:"step"`
 		Type         string          `json:"type"`
+		SessionID    string          `json:"session_id"`
+		TurnID       string          `json:"turn_id"`
 		Content      string          `json:"content"`
 		ToolCallID   string          `json:"tool_call_id"`
 		ToolCallName string          `json:"tool_call_name"`
@@ -478,6 +480,8 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 	ev := Event{
 		Kind:         EventKind(p.Type),
 		Step:         p.Step,
+		SessionID:    p.SessionID,
+		TurnID:       p.TurnID,
 		Content:      p.Content,
 		ToolCallID:   p.ToolCallID,
 		ToolCallName: p.ToolCallName,
@@ -494,13 +498,21 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 
 func (c *Client) handleExecOutput(params json.RawMessage) {
 	var p struct {
-		Step  int    `json:"step"`
-		Chunk string `json:"chunk"`
+		Step      int    `json:"step"`
+		Chunk     string `json:"chunk"`
+		SessionID string `json:"session_id"`
+		TurnID    string `json:"turn_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
-	c.send(Event{Kind: EventExecOutputChunk, Step: p.Step, Content: p.Chunk})
+	c.send(Event{
+		Kind:      EventExecOutputChunk,
+		Step:      p.Step,
+		SessionID: p.SessionID,
+		TurnID:    p.TurnID,
+		Content:   p.Chunk,
+	})
 }
 
 func (c *Client) handleRequest(ctx context.Context, method string, params json.RawMessage) (any, error) {

@@ -24,6 +24,7 @@ var toolNameAliases = map[string]string{
 	"task.result": "task_result", "Task": "task",
 	"web.fetch": "webfetch", "web.search": "websearch",
 	"memory.write": "memory_write",
+	"memory.read":  "memory_read",
 }
 
 // normalizeToolName maps common LLM aliases to canonical registry names.
@@ -517,7 +518,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	*history = append(*history, llm.Message{
 		Role:       llm.RoleTool,
 		ToolCallID: toolCallID,
-		Content:    string(out),
+		Content:    a.prepareToolHistoryContent(name, tc.Input, out),
 	})
 
 	if a.opts.MultimodalLLM && name == "browser.screenshot" {
