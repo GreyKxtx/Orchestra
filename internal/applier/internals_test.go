@@ -2,6 +2,7 @@ package applier
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/ops"
@@ -296,8 +297,12 @@ func TestAtomicWriteFile_Overwrite(t *testing.T) {
 
 func TestAtomicWriteFile_WithRootCheck(t *testing.T) {
 	dir := t.TempDir()
-	path := dir + "/sub/out.txt"
-	if err := atomicWriteFile(path, []byte("data"), 0644, dir); err != nil {
+	rootReal, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	path := filepath.Join(rootReal, "sub", "out.txt")
+	if err := atomicWriteFile(path, []byte("data"), 0644, rootReal); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	b, _ := os.ReadFile(path)

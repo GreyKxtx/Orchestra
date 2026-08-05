@@ -672,8 +672,20 @@ func evalDeepestExistingDir(dir string) (real string, ok bool, _ error) {
 }
 
 // isWithinRoot checks if targetAbs is within rootAbs using realpath comparison.
-// On Windows, handles case-insensitive comparison and extended paths (\\?\ prefix).
+// On Windows, handles case-insensitive comparison, extended paths (\\?\ prefix),
+// and 8.3 short names (EvalSymlinks expands KORSUN~1 → KorsunAndrii).
 func isWithinRoot(rootAbs, targetAbs string) bool {
+	// Expand junctions/symlinks/8.3 names when the path exists. Callers often
+	// pass a non-eval'd root (e.g. t.TempDir()) while the target side has
+	// already been EvalSymlinks'd — without this, Windows short-path roots
+	// falsely fail the containment check.
+	if rp, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		rootAbs = rp
+	}
+	if tp, err := filepath.EvalSymlinks(targetAbs); err == nil {
+		targetAbs = tp
+	}
+
 	// Normalize both paths
 	r := filepath.Clean(rootAbs)
 	t := filepath.Clean(targetAbs)

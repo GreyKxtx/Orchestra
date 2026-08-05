@@ -193,44 +193,16 @@ func (c *Client) handshake(ctx context.Context) error {
 		err error
 	}
 	ch := make(chan res, 1)
-	enc, dec := c.enc, c.dec
-
 	go func() {
-		id := c.nextID.Add(1)
-		req := mcpRequest{
-			JSONRPC: "2.0",
-			ID:      id,
-			Method:  "initialize",
-			Params: map[string]any{
-				"protocolVersion": "2024-11-05",
-				"capabilities":    map[string]any{},
-				"clientInfo":      map[string]any{"name": "orchestra", "version": "1"},
-			},
-		}
-		if err := enc.Encode(req); err != nil {
-			ch <- res{err: fmt.Errorf("encode initialize: %w", err)}
-			return
-		}
-		var resp mcpResponse
-		if err := dec.Decode(&resp); err != nil {
-			ch <- res{err: fmt.Errorf("decode initialize response: %w", err)}
-			return
-		}
-		if resp.Error != nil {
-			ch <- res{err: fmt.Errorf("initialize error: %s", resp.Error.Message)}
-			return
-		}
-		// Send notifications/initialized (no response expected).
-		_ = enc.Encode(mcpRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
-		ch <- res{}
+		ch <- res{err: c.handshakeIO()}
 	}()
 
 	select {
 	case <-ctx.Done():
-		c.killSubprocess()
+		c.abortInFlight(func() { <-ch })
 		return protocol.NewError(protocol.ExecTimeout, "browser initialize timed out", nil)
 	case <-timer.C:
-		c.killSubprocess()
+		c.abortInFlight(func() { <-ch })
 		return protocol.NewError(protocol.ExecTimeout, "browser initialize timed out", nil)
 	case r := <-ch:
 		if r.err != nil {
@@ -239,6 +211,35 @@ func (c *Client) handshake(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+func (c *Client) handshakeIO() error {
+	id := c.nextID.Add(1)
+	req := mcpRequest{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  "initialize",
+		Params: map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "orchestra", "version": "1"},
+		},
+	}
+	if c.enc == nil || c.dec == nil {
+		return fmt.Errorf("encode initialize: subprocess not started")
+	}
+	if err := c.enc.Encode(req); err != nil {
+		return fmt.Errorf("encode initialize: %w", err)
+	}
+	var resp mcpResponse
+	if err := c.dec.Decode(&resp); err != nil {
+		return fmt.Errorf("decode initialize response: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("initialize error: %s", resp.Error.Message)
+	}
+	_ = c.enc.Encode(mcpRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
+	return nil
 }
 
 // Call makes one MCP tools/call request. On subprocess crash, retries once.
@@ -278,53 +279,65 @@ func (c *Client) doCall(ctx context.Context, toolName string, args any) (*MCPRes
 		err    error
 	}
 	ch := make(chan res, 1)
-	enc, dec := c.enc, c.dec
-
 	go func() {
-		if err := enc.Encode(req); err != nil {
-			ch <- res{err: protocol.NewError(protocol.ExecFailed,
-				fmt.Sprintf("encode request: %v", err), nil)}
-			return
-		}
-		var resp mcpResponse
-		if err := dec.Decode(&resp); err != nil {
-			ch <- res{err: protocol.NewError(protocol.ExecFailed,
-				fmt.Sprintf("decode response: %v", err), nil)}
-			return
-		}
-		if resp.Error != nil {
-			ch <- res{err: protocol.NewError(protocol.ExecFailed, resp.Error.Message, nil)}
-			return
-		}
-		var result MCPResult
-		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			ch <- res{err: protocol.NewError(protocol.ExecFailed,
-				fmt.Sprintf("parse MCP result: %v", err), nil)}
-			return
-		}
-		if result.IsError {
-			msg := result.TextContent()
-			if msg == "" {
-				msg = "browser tool error"
-			}
-			ch <- res{err: protocol.NewError(protocol.ExecFailed, msg, nil)}
-			return
-		}
-		ch <- res{result: &result}
+		result, err := c.callIO(req)
+		ch <- res{result: result, err: err}
 	}()
 
 	select {
 	case <-ctx.Done():
-		c.killSubprocess()
+		c.abortInFlight(func() { <-ch })
 		c.ready = false
 		return nil, protocol.NewError(protocol.ExecTimeout, "browser operation timed out", nil)
 	case <-timer.C:
-		c.killSubprocess()
+		c.abortInFlight(func() { <-ch })
 		c.ready = false
 		return nil, protocol.NewError(protocol.ExecTimeout, "browser operation timed out", nil)
 	case r := <-ch:
 		return r.result, r.err
 	}
+}
+
+func (c *Client) callIO(req mcpRequest) (*MCPResult, error) {
+	if c.enc == nil || c.dec == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "encode request: subprocess not started", nil)
+	}
+	if err := c.enc.Encode(req); err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			fmt.Sprintf("encode request: %v", err), nil)
+	}
+	var resp mcpResponse
+	if err := c.dec.Decode(&resp); err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			fmt.Sprintf("decode response: %v", err), nil)
+	}
+	if resp.Error != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, resp.Error.Message, nil)
+	}
+	var result MCPResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			fmt.Sprintf("parse MCP result: %v", err), nil)
+	}
+	if result.IsError {
+		msg := result.TextContent()
+		if msg == "" {
+			msg = "browser tool error"
+		}
+		return nil, protocol.NewError(protocol.ExecFailed, msg, nil)
+	}
+	return &result, nil
+}
+
+// abortInFlight stops a hung MCP I/O goroutine without racing the json
+// codec: kill the child so pipe reads get EOF, wait for the goroutine to
+// finish (via wait), then clear encoder/decoder pointers.
+func (c *Client) abortInFlight(wait func()) {
+	c.killProcessOnly()
+	if wait != nil {
+		wait()
+	}
+	c.clearSubprocess()
 }
 
 func (c *Client) isSubprocessDead() bool {
@@ -334,19 +347,33 @@ func (c *Client) isSubprocessDead() bool {
 	return c.cmd.ProcessState != nil
 }
 
-func (c *Client) killSubprocess() {
-	if c.stdin != nil {
-		_ = c.stdin.Close()
-		c.stdin = nil
-	}
+// killProcessOnly signals the child to exit so blocked pipe I/O unblocks
+// with EOF. Does not Close parent pipe ends or nil enc/dec — callers must
+// wait for in-flight Encode/Decode first (see abortInFlight).
+func (c *Client) killProcessOnly() {
 	if c.cmd != nil && c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
 		_ = c.cmd.Wait()
 	}
+}
+
+func (c *Client) clearSubprocess() {
+	if c.stdin != nil {
+		_ = c.stdin.Close()
+		c.stdin = nil
+	}
+	if c.stdout != nil {
+		_ = c.stdout.Close()
+		c.stdout = nil
+	}
 	c.cmd = nil
-	c.stdout = nil
 	c.enc = nil
 	c.dec = nil
+}
+
+func (c *Client) killSubprocess() {
+	c.killProcessOnly()
+	c.clearSubprocess()
 }
 
 // Close shuts down the subprocess. Safe to call multiple times.
