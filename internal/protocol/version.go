@@ -9,7 +9,9 @@ const (
 	//     pending_ops, recoverable_error) and bidirectional permission/request.
 	// v4: added workflow.list, workflow.run, skill.list, skill.invoke methods
 	//     plus workflow/stage_start / workflow/stage_done notification events.
-	ProtocolVersion = 4
+	// v5: agent.run / session.message gain apply_output, patch_path, profile;
+	//     results may include patch_path when apply_output=patch.
+	ProtocolVersion = 5
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

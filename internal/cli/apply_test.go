@@ -125,3 +125,26 @@ func TestRunApply_ProviderFlagKnown_LookupOnly(t *testing.T) {
 		t.Errorf("after provider override, LLM.APIBase = %q, want %q", cfg.LLM.APIBase, "http://other:8000/v1")
 	}
 }
+
+func TestResolvePatchOutputPath(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &config.ProjectConfig{
+		ProjectRoot: tmp,
+		Apply:       config.ApplyConfig{PatchDir: ".orchestra/patches"},
+	}
+	abs, err := resolvePatchOutputPath(cfg, tmp, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(abs, ".patch") {
+		t.Fatalf("expected .patch suffix, got %s", abs)
+	}
+	explicit := filepath.Join("out", "custom.patch")
+	abs2, err := resolvePatchOutputPath(cfg, tmp, explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(abs2, filepath.Join("out", "custom.patch")) && !strings.Contains(abs2, "custom.patch") {
+		t.Fatalf("unexpected path: %s", abs2)
+	}
+}

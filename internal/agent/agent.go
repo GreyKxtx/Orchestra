@@ -274,6 +274,10 @@ type Options struct {
 	// ModelLabel is the active model id reported to the tracker. When empty,
 	// "unknown" is used. Custom agents / pipeline stages can override this.
 	ModelLabel string
+
+	// Profile is an adaptive execution preset ("fast" / "precision").
+	// Empty means no preset. See ApplyProfile.
+	Profile string
 }
 
 // UsageRecorder is the agent's view of the usage tracker. Mirrors
@@ -842,7 +846,23 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 			base[i].Function.Description = a.substitutePlanPath(base[i].Function.Description)
 		}
 	}
+	// Fast profile: drop LSP / browser tools unless CustomTools already fixed the set.
+	if strings.EqualFold(a.opts.Profile, ProfileFast) && len(a.opts.CustomTools) == 0 {
+		base = filterFastProfileTools(base)
+	}
 	return base
+}
+
+func filterFastProfileTools(in []llm.ToolDef) []llm.ToolDef {
+	out := make([]llm.ToolDef, 0, len(in))
+	for _, t := range in {
+		name := t.Function.Name
+		if strings.HasPrefix(name, "lsp.") || strings.HasPrefix(name, "browser.") {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 func (a *Agent) effectivePlanPath() string {

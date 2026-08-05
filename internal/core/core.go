@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/applier"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
@@ -310,6 +311,15 @@ type AgentRunParams struct {
 	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
 	Mode string `json:"mode,omitempty"`
 
+	// ApplyOutput selects how changes are materialised: "disk" (default) or "patch".
+	// When "patch", Apply is forced false and a unified .patch is written to PatchPath
+	// (or apply.patch_dir default).
+	ApplyOutput string `json:"apply_output,omitempty"`
+	// PatchPath is an optional absolute or project-relative path for apply_output=patch.
+	PatchPath string `json:"patch_path,omitempty"`
+	// Profile is an adaptive execution preset: "fast" | "precision".
+	Profile string `json:"profile,omitempty"`
+
 	// OnEvent is called for each agent streaming event (method + params).
 	// Not serialized — set programmatically by the RPC handler.
 	OnEvent func(method string, params any) `json:"-"`
@@ -331,6 +341,9 @@ type AgentRunResult struct {
 	Ops     []ops.AnyOp           `json:"ops,omitempty"`
 
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+
+	// PatchPath is set when apply_output=patch and a unified diff was written.
+	PatchPath string `json:"patch_path,omitempty"`
 
 	// SwitchToBuild is true when plan_exit requested a build continuation
 	// that was not completed in this response (legacy; normally handled in-core).
@@ -367,6 +380,35 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if params.Mode != "" && !config.IsBuiltInMode(params.Mode) && c.cfg != nil && c.cfg.FindAgent(params.Mode) == nil {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput,
 			fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
+	}
+
+	applyOutput := strings.ToLower(strings.TrimSpace(params.ApplyOutput))
+	if applyOutput == "" && c.cfg != nil {
+		applyOutput = strings.ToLower(strings.TrimSpace(c.cfg.Apply.Output))
+	}
+	if applyOutput == "" {
+		applyOutput = config.ApplyOutputDisk
+	}
+	if applyOutput != config.ApplyOutputDisk && applyOutput != config.ApplyOutputPatch {
+		return nil, protocol.NewError(protocol.InvalidParams,
+			fmt.Sprintf("apply_output must be %q or %q", config.ApplyOutputDisk, config.ApplyOutputPatch), nil)
+	}
+	if applyOutput == config.ApplyOutputPatch {
+		if params.Apply {
+			return nil, protocol.NewError(protocol.InvalidParams,
+				"apply_output=patch is mutually exclusive with apply=true", nil)
+		}
+		params.Apply = false
+		params.Backup = false
+	}
+
+	profileName := strings.TrimSpace(params.Profile)
+	if profileName == "" && c.cfg != nil {
+		profileName = strings.TrimSpace(c.cfg.Agent.Profile)
+	}
+	if !agent.IsKnownProfile(profileName) {
+		return nil, protocol.NewError(protocol.InvalidParams,
+			fmt.Sprintf("unknown profile %q (want fast|precision)", profileName), nil)
 	}
 
 	// Build ResponseFormat from config (grammar-constrained sampling for local models).
@@ -505,6 +547,19 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		ModelLabel:           c.cfg.LLM.Model,
 		PlanPath:             resolvePlanPath(params.Mode, "", ""),
 	}
+	// Profile overlays config defaults. When a profile is selected it wins over
+	// agent.max_steps / limits.context_kb for the knobs it owns; omit profile
+	// to drive those via RPC max_steps / max_prompt_bytes alone.
+	if err := agent.ApplyProfile(&agOpts, profileName, false); err != nil {
+		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
+	}
+	if customOpts.systemPromptOverride != "" {
+		agOpts.SystemPromptOverride = customOpts.systemPromptOverride
+	}
+	if customOpts.customTools != nil {
+		agOpts.CustomTools = customOpts.customTools
+	}
+
 	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agOpts)
 	if err != nil {
 		return nil, err
@@ -522,7 +577,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	}
 	finalizeAgentUsage(usageTracker, c.workspaceRoot)
 
-	return &AgentRunResult{
+	result := &AgentRunResult{
 		Steps:         res.Steps,
 		Applied:       res.Applied,
 		Patches:       res.Patches,
@@ -532,7 +587,38 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Todos:         res.Todos,
 		PlanPath:      agOpts.PlanPath,
 		Usage:         usageSnapshotFrom(usageTracker),
-	}, nil
+	}
+	if applyOutput == config.ApplyOutputPatch {
+		path, werr := c.writeAgentPatch(params.PatchPath, res)
+		if werr != nil {
+			return nil, protocol.NewError(protocol.ExecFailed, werr.Error(), nil)
+		}
+		result.PatchPath = path
+		result.Applied = false
+	}
+	return result, nil
+}
+
+func (c *Core) writeAgentPatch(explicit string, res *agent.Result) (string, error) {
+	dir := ".orchestra/patches"
+	if c.cfg != nil && c.cfg.Apply.PatchDir != "" {
+		dir = c.cfg.Apply.PatchDir
+	}
+	path := strings.TrimSpace(explicit)
+	if path == "" {
+		path = applier.DefaultPatchPath(dir)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(c.workspaceRoot, path)
+	}
+	var diffs []applier.FileDiff
+	if res != nil && res.ApplyResponse != nil {
+		diffs = res.ApplyResponse.Diffs
+	}
+	if err := applier.WriteUnifiedPatch(path, diffs); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // providerLabelOf falls back to "openai" when the config doesn't name a provider.
@@ -756,6 +842,11 @@ type SessionMessageParams struct {
 	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
 	Mode string `json:"mode,omitempty"`
 
+	// ApplyOutput / PatchPath / Profile mirror agent.run (see AgentRunParams).
+	ApplyOutput string `json:"apply_output,omitempty"`
+	PatchPath   string `json:"patch_path,omitempty"`
+	Profile     string `json:"profile,omitempty"`
+
 	// OnEvent is set programmatically by the RPC handler for streaming notifications.
 	OnEvent func(method string, params any) `json:"-"`
 
@@ -778,6 +869,7 @@ type SessionMessageResult struct {
 	SwitchToBuild bool             `json:"switch_to_build,omitempty"`
 	Todos         []tools.TodoItem `json:"todos,omitempty"`
 	PlanPath      string           `json:"plan_path,omitempty"`
+	PatchPath     string           `json:"patch_path,omitempty"`
 
 	// Usage summarises token consumption for this turn.
 	Usage *UsageSnapshot `json:"usage,omitempty"`
@@ -793,6 +885,34 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	if strings.TrimSpace(params.Content) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "content is empty", nil)
+	}
+
+	applyOutput := strings.ToLower(strings.TrimSpace(params.ApplyOutput))
+	if applyOutput == "" && c.cfg != nil {
+		applyOutput = strings.ToLower(strings.TrimSpace(c.cfg.Apply.Output))
+	}
+	if applyOutput == "" {
+		applyOutput = config.ApplyOutputDisk
+	}
+	if applyOutput != config.ApplyOutputDisk && applyOutput != config.ApplyOutputPatch {
+		return nil, protocol.NewError(protocol.InvalidParams,
+			fmt.Sprintf("apply_output must be %q or %q", config.ApplyOutputDisk, config.ApplyOutputPatch), nil)
+	}
+	if applyOutput == config.ApplyOutputPatch {
+		if params.Apply {
+			return nil, protocol.NewError(protocol.InvalidParams,
+				"apply_output=patch is mutually exclusive with apply=true", nil)
+		}
+		params.Apply = false
+		params.Backup = false
+	}
+	profileName := strings.TrimSpace(params.Profile)
+	if profileName == "" && c.cfg != nil {
+		profileName = strings.TrimSpace(c.cfg.Agent.Profile)
+	}
+	if !agent.IsKnownProfile(profileName) {
+		return nil, protocol.NewError(protocol.InvalidParams,
+			fmt.Sprintf("unknown profile %q (want fast|precision)", profileName), nil)
 	}
 
 	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
@@ -962,6 +1082,15 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		QuestionAsker:        agParams.QuestionAsker,
 		PlanPath:             planPath,
 	}
+	if err := agent.ApplyProfile(&sessAgOpts, profileName, false); err != nil {
+		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
+	}
+	if sessCustomOpts.systemPromptOverride != "" {
+		sessAgOpts.SystemPromptOverride = sessCustomOpts.systemPromptOverride
+	}
+	if sessCustomOpts.customTools != nil {
+		sessAgOpts.CustomTools = sessCustomOpts.customTools
+	}
 	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, sessAgOpts)
 	if err != nil {
 		return nil, err
@@ -1005,7 +1134,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	sess.Unlock()
 
-	return &SessionMessageResult{
+	out := &SessionMessageResult{
 		Steps:         res.Steps,
 		Applied:       res.Applied,
 		Patches:       res.Patches,
@@ -1015,7 +1144,16 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Todos:         res.Todos,
 		PlanPath:      planPath,
 		Usage:         usageSnapshotFrom(sessUsageTracker),
-	}, nil
+	}
+	if applyOutput == config.ApplyOutputPatch {
+		path, werr := c.writeAgentPatch(params.PatchPath, res)
+		if werr != nil {
+			return nil, protocol.NewError(protocol.ExecFailed, werr.Error(), nil)
+		}
+		out.PatchPath = path
+		out.Applied = false
+	}
+	return out, nil
 }
 
 type SessionApplyPendingParams struct {

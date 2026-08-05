@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `3`
+- **`protocol.ProtocolVersion`**: `5`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `11`
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v5** (2026-08-05): `agent.run` / `session.message` — поля `apply_output` (`disk`|`patch`), `patch_path`, `profile` (`fast`|`precision`); в result может быть `patch_path` при `apply_output=patch`.
 - **v4** (2026-05-18): добавлены методы `workflow.list`, `workflow.run`, `skill.list`, `skill.invoke`; streaming events `workflow/stage_start` и `workflow/stage_done`.
 - **v3** (2026-05-07): добавлены agent-level streaming events (`tool_call_completed`, `step_done`, `pending_ops`, `recoverable_error`) и bidirectional `permission/request` method.
 - **v2** (2026-05-06): добавлено опциональное поле `mode` в `agent.run` и `session.message` для custom-agents (Sub-project D).
@@ -208,6 +209,9 @@ Response `result`:
 - `allow_exec` (bool, optional; default=false)
 - `debug` (bool, optional)
 - `mode` (string, optional) — имя built-in режима (`build`, `plan`, `explore`, …) или custom-агента, определённого в `agents:` в `.orchestra.yml`; пустая строка → поведение `build` по умолчанию.
+- `apply_output` (string, optional; default=`disk`) — `disk` (запись/dry-run как раньше) или `patch` (экспорт unified `.patch`, диск не трогается; mutually exclusive с `apply=true`).
+- `patch_path` (string, optional) — путь для `.patch` при `apply_output=patch` (иначе `apply.patch_dir` / `.orchestra/patches/orchestra-<ts>.patch`).
+- `profile` (string, optional) — adaptive preset `fast` | `precision` (см. `docs/architecture/tui-pipeline-to-be.md`).
 
 > **Skills:** CLI также принимает `--skill <name>`, который загружает file-based agent definition из `<project>/.orchestra/skills/<name>.md`. Скилл резолвится в синтетический `AgentDefinition` и идёт через тот же путь `--mode`, поэтому JSON-RPC surface не меняется — это CLI-side loader поверх существующего `AgentOptions`. См. `docs/skills.md`.
 
@@ -224,12 +228,13 @@ Response `result`:
 - `patches` (optional)
 - `ops` (optional)
 - `apply_response` (optional)
+- `patch_path` (optional) — абсолютный путь к записанному `.patch` при `apply_output=patch`
 - `todos` (optional) — чеклист после хода (`todowrite`)
 - `plan_path` (optional) — путь plan-файла при `mode: plan`
 - `switch_to_build` (optional, legacy) — true если `plan_exit` одобрен; core обычно уже выполнил build-продолжение in-process
 - `usage` (optional) — token summary
 
-> Важно: по умолчанию `apply=false` — это dry-run (core ничего не пишет на диск, возвращает diff/план).
+> Важно: по умолчанию `apply=false` — это dry-run (core ничего не пишет на диск, возвращает diff/план). `apply_output=patch` всегда dry-run для workspace и дополнительно пишет unified diff.
 
 ### `tool.call`
 
@@ -270,6 +275,7 @@ Response `result`:
 - `max_steps` (int, optional)
 - `max_invalid_retries` (int, optional)
 - `max_prompt_bytes` (int, optional)
+- `apply_output` / `patch_path` / `profile` — как у `agent.run`
 
 Response `result`:
 
@@ -278,6 +284,7 @@ Response `result`:
 - `patches` (optional) — diff/patches (при `apply=false`)
 - `ops` (optional) — сырые операции
 - `apply_response` (optional) — при `apply=true`
+- `patch_path` (optional) — при `apply_output=patch`
 - `todos` (optional) — чеклист сессии после хода
 - `plan_path` (optional) — canonical plan markdown path (`.orchestra/plans/<session-id>.md`)
 - `switch_to_build` (optional, legacy) — см. `agent.run`

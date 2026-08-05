@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/applier"
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
@@ -50,6 +51,8 @@ var (
 	applySkill          string
 	applyImages         []string
 	applyStream         bool
+	outputPatch         string // --output-patch; NoOptDefVal="AUTO"
+	applyProfile        string // --profile fast|precision
 )
 
 var applyCmd = &cobra.Command{
@@ -80,6 +83,9 @@ func init() {
 	applyCmd.Flags().StringVar(&applySkill, "skill", "", "Run with the named skill from .orchestra/skills/")
 	applyCmd.Flags().StringSliceVar(&applyImages, "image", nil, "Image file(s) to attach to the user message (PNG/JPEG/GIF/WebP). Repeatable. Requires a multimodal LLM.")
 	applyCmd.Flags().BoolVar(&applyStream, "stream", false, "Stream assistant tokens to stdout as they arrive (works in non-TTY pipes too)")
+	applyCmd.Flags().StringVar(&outputPatch, "output-patch", "", "Export unified .patch instead of writing files (optional path; default: apply.patch_dir)")
+	applyCmd.Flags().Lookup("output-patch").NoOptDefVal = "AUTO"
+	applyCmd.Flags().StringVar(&applyProfile, "profile", "", "Adaptive execution profile: fast|precision")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -105,6 +111,33 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
+	}
+
+	applyOutput := strings.ToLower(strings.TrimSpace(cfg.Apply.Output))
+	if applyOutput == "" {
+		applyOutput = config.ApplyOutputDisk
+	}
+	patchOutPath := ""
+	if cmd.Flags().Changed("output-patch") {
+		applyOutput = config.ApplyOutputPatch
+		if outputPatch != "" && outputPatch != "AUTO" {
+			patchOutPath = outputPatch
+		}
+	}
+	if applyOutput == config.ApplyOutputPatch {
+		if applyFlag {
+			return fmt.Errorf("--output-patch / apply.output=patch is mutually exclusive with --apply")
+		}
+		dryRun = true
+		backup = false
+	}
+
+	profileName := strings.TrimSpace(cfg.Agent.Profile)
+	if applyProfile != "" {
+		profileName = applyProfile
+	}
+	if !agent.IsKnownProfile(profileName) {
+		return fmt.Errorf("unknown --profile / agent.profile %q (want fast|precision)", profileName)
 	}
 
 	if applyProvider != "" {
@@ -146,6 +179,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		GeneratedAtUnix: startedAt.Unix(),
 	}
 	var applyResp *tools.FSApplyOpsResponse
+	corePatchPath := ""
 	usageTracker := newUsageTracker("apply", cfg)
 
 	defer func() {
@@ -256,7 +290,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	} else if viaCore {
 		// --- Mode: via core subprocess (stdio JSON-RPC) ---
 		mode = "via_core"
-		out, err := runApplyViaCore(cmd, cfg, query, allowExecEffective, dryRun, backup)
+		out, err := runApplyViaCore(cmd, cfg, query, allowExecEffective, dryRun, backup, applyOutput, patchOutPath, profileName)
 		if err != nil {
 			retErr = err
 			return retErr
@@ -284,6 +318,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			Ops:             out.Ops,
 		}
 		applyResp = out.ApplyResponse
+		corePatchPath = out.PatchPath
 
 	} else if pipelineMode {
 		// --- Mode: multi-agent pipeline (Investigator → Coder → Critic) ---
@@ -601,6 +636,20 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			UserImages:           imageParts,
 			MultimodalLLM:        cfg.LLM.Multimodal,
 		}
+		// Profile overlays defaults; named agents: (CustomTools / SystemPromptOverride /
+		// provider) already applied above and take precedence for those fields.
+		if err := agent.ApplyProfile(&agOpts, profileName, false); err != nil {
+			retErr = err
+			return retErr
+		}
+		// Restore custom-agent tool/prompt overrides if profile filtered tools.
+		if systemPromptOverride != "" {
+			agOpts.SystemPromptOverride = systemPromptOverride
+		}
+		if customAgentTools != nil {
+			agOpts.CustomTools = customAgentTools
+		}
+
 		ag, err := agent.New(llmClient, validator, runner, agOpts)
 		if err != nil {
 			retErr = err
@@ -635,6 +684,29 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	if applyResp != nil {
 		changed = applyResp.ChangedFiles
 	}
+
+	if applyOutput == config.ApplyOutputPatch {
+		resolvedPatch := corePatchPath
+		if resolvedPatch == "" {
+			var err error
+			resolvedPatch, err = resolvePatchOutputPath(cfg, cwd, patchOutPath)
+			if err != nil {
+				retErr = err
+				return retErr
+			}
+			var diffs []applier.FileDiff
+			if applyResp != nil {
+				diffs = applyResp.Diffs
+			}
+			if err := applier.WriteUnifiedPatch(resolvedPatch, diffs); err != nil {
+				retErr = fmt.Errorf("write patch: %w", err)
+				return retErr
+			}
+		}
+		fmt.Printf("Patch mode: workspace untouched\n")
+		fmt.Printf("Patch saved to: %s\n", resolvedPatch)
+	}
+
 	if len(changed) == 0 {
 		fmt.Println("Changed files: (none)")
 	} else {
@@ -663,7 +735,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	return nil
 }
 
-func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string, allowExec bool, dryRun bool, backup bool) (*core.AgentRunResult, error) {
+func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string, allowExec bool, dryRun bool, backup bool, applyOutput, patchPath, profile string) (*core.AgentRunResult, error) {
 	child, err := spawnCoreChild(cmd.Context(), cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
@@ -698,6 +770,9 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 		AllowExec:         allowExec,
 		Debug:             debugMode,
 		Mode:              agentMode,
+		ApplyOutput:       applyOutput,
+		PatchPath:         patchPath,
+		Profile:           profile,
 	}, &out)
 	if err != nil {
 		if rpcErr, ok := err.(*jsonrpc.RPCError); ok && rpcErr.Data != nil {
@@ -711,6 +786,25 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 	}
 
 	return &out, nil
+}
+
+func resolvePatchOutputPath(cfg *config.ProjectConfig, cwd, explicit string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		p := explicit
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		return filepath.Abs(p)
+	}
+	dir := cfg.Apply.PatchDir
+	if dir == "" {
+		dir = ".orchestra/patches"
+	}
+	p := applier.DefaultPatchPath(dir)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(cfg.ProjectRoot, p)
+	}
+	return filepath.Abs(p)
 }
 
 type planArtifact struct {

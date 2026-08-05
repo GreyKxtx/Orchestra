@@ -89,6 +89,25 @@ type AgentConfig struct {
 	// CompactThresholdPct triggers history compaction when history exceeds this % of MaxPromptBytes.
 	// 0 = disabled (default). Recommended: 70.
 	CompactThresholdPct int `yaml:"compact_threshold_pct"`
+	// Profile selects an adaptive execution preset: "" (defaults), "fast", or "precision".
+	// CLI --profile overrides this. Named agents: still take precedence over profile knobs
+	// that collide (system_prompt / tools / provider).
+	Profile string `yaml:"profile,omitempty"`
+}
+
+// ApplyOutputDisk writes changes to the workspace (subject to --apply / dry-run).
+const ApplyOutputDisk = "disk"
+
+// ApplyOutputPatch exports a unified .patch file and never writes workspace files.
+const ApplyOutputPatch = "patch"
+
+// ApplyConfig controls how generated changes are materialised after an agent run.
+type ApplyConfig struct {
+	// Output is "disk" (default) or "patch".
+	Output string `yaml:"output,omitempty"`
+	// PatchDir is where .patch files are written when Output=patch.
+	// Relative paths are resolved against project_root. Default: .orchestra/patches.
+	PatchDir string `yaml:"patch_dir,omitempty"`
 }
 
 // DaemonConfig contains local daemon settings (v0.3+).
@@ -360,6 +379,7 @@ type ProjectConfig struct {
 	Limits       LimitsConfig    `yaml:"limits"`
 	LLM          LLMConfig       `yaml:"llm"`
 	Agent        AgentConfig     `yaml:"agent"`
+	Apply        ApplyConfig     `yaml:"apply,omitempty"`
 	Daemon       DaemonConfig    `yaml:"daemon"`
 	Exec         ExecConfig      `yaml:"exec"`
 	Hooks        HooksConfig     `yaml:"hooks"`
@@ -606,6 +626,14 @@ func (c *ProjectConfig) applyDefaults() {
 	if c.Agent.MaxDeniedRepeats <= 0 {
 		c.Agent.MaxDeniedRepeats = 2
 	}
+
+	// Apply output defaults.
+	if c.Apply.Output == "" {
+		c.Apply.Output = ApplyOutputDisk
+	}
+	if c.Apply.PatchDir == "" {
+		c.Apply.PatchDir = ".orchestra/patches"
+	}
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -661,6 +689,19 @@ func (c *ProjectConfig) Validate() error {
 
 	if err := c.validateMCP(); err != nil {
 		return err
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.Apply.Output)) {
+	case "", ApplyOutputDisk, ApplyOutputPatch:
+		// ok (empty normalised in applyDefaults)
+	default:
+		return fmt.Errorf("apply.output must be %q or %q, got %q", ApplyOutputDisk, ApplyOutputPatch, c.Apply.Output)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Agent.Profile)) {
+	case "", "fast", "precision":
+		// ok
+	default:
+		return fmt.Errorf("agent.profile must be empty, \"fast\", or \"precision\", got %q", c.Agent.Profile)
 	}
 
 	return nil

@@ -54,6 +54,14 @@ orchestra apply "добавь логирование в main.go"
 # Реальное применение изменений (создаёт .orchestra.bak)
 orchestra apply --apply "добавь логирование в main.go"
 
+# Экспорт unified .patch для ревью (диск не трогается)
+orchestra apply --output-patch "добавь логирование в main.go"
+orchestra apply --output-patch ./review.patch "…"
+
+# Adaptive profiles: fast или precision
+orchestra apply --profile fast "поправь typo в README"
+orchestra apply --profile precision "спроектируй пакет X"
+
 # Разрешить выполнение команд через exec.run
 orchestra apply --apply --allow-exec "запусти go test и исправь ошибки"
 
@@ -90,6 +98,13 @@ llm:
   max_tokens: 4096
   timeout_s: 120
 
+agent:
+  profile: ""               # optional: fast | precision
+
+apply:
+  output: disk              # disk | patch
+  patch_dir: .orchestra/patches
+
 exec:
   confirm: true             # false = разрешить exec.run без --allow-exec
 
@@ -117,16 +132,19 @@ mcp:
 
 **Два уровня патчей — строго разделены:**
 
-- **External Patches** (`internal/externalpatch`) — гибкий LLM-формат: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Содержат `file_hash` версии, которую читал LLM.
+- **External Patches** (`internal/patches`) — гибкий LLM-формат: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Содержат `file_hash` версии, которую читал LLM.
 - **Internal Ops** (`internal/ops`) — детерминированный формат записи на диск: `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Координаты 0-based, end-exclusive. Каждая операция содержит `conditions.file_hash`.
 - `internal/resolver` — мост: `ResolveExternalPatches` конвертирует External → Internal, перечитывая файлы и вычисляя точные диапазоны.
+- `internal/applier` — запись ops; при `apply.output=patch` / `--output-patch` — unified diff без записи workspace.
 
-**Agent loop** (`internal/agent/agent.go`): системный промпт + история → `llm.Complete` → `tool_call` (выполнить, добавить в историю, продолжить) или `final` (резолвить патчи → применить). Recoverable ошибки (`StaleContent`, `AmbiguousMatch`) возвращаются в историю компактными хинтами.
+**Agent loop** (`internal/agent/agent.go`): системный промпт + история → `llm.Complete` → `tool_call` (выполнить, добавить в историю, продолжить) или `final` (резолвить патчи → применить). Recoverable ошибки (`StaleContent`, `AmbiguousMatch`) возвращаются в историю компактными хинтами. Профили `fast`/`precision` — см. `docs/architecture/`.
 
 **Три режима `apply`:**
 1. `direct` — агент in-process.
 2. `--via-core` — спавнит `orchestra core` как subprocess, управляет через JSON-RPC.
 3. `--from-plan` — воспроизводит сохранённый `plan.json` без LLM.
+
+Аудит TUI-пайплайна: [docs/architecture/tui-pipeline.md](docs/architecture/tui-pipeline.md), To-Be: [docs/architecture/tui-pipeline-to-be.md](docs/architecture/tui-pipeline-to-be.md).
 
 ---
 

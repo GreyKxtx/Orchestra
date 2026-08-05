@@ -44,6 +44,8 @@ orchestra apply --via-core "..."             # run agent inside subprocess core
 orchestra apply --plan-only "..."            # plan only, no LLM-driven edits
 orchestra apply --from-plan plan.json        # replay a saved plan with no LLM call
 orchestra apply --apply --allow-exec "..."   # allow exec.run (off by default)
+orchestra apply --output-patch [path] "..."  # export unified .patch; do not write workspace
+orchestra apply --profile fast|precision "..." # adaptive execution presets
 orchestra apply --skill <name> "..."         # run apply with a file-based skill
 orchestra apply --provider <name> "..."      # override LLM provider for the run
 orchestra llm-ping                           # smoke-check the configured LLM
@@ -53,14 +55,14 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced to 127.0.0.1)
 ```
 
-`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, plus debug discovery files.
+`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
 
 ## Architecture (the bits that need multiple files to understand)
 
 **Two patch layers — keep them separate.** This is the central abstraction:
 
-- **External Patches** (`internal/externalpatch`): the *flexible*, LLM-facing format. The agent only ever returns `final.patches` of type `file.search_replace`, `file.unified_diff`, or `file.write_atomic`. Each carries a `file_hash` (sha256) of the version the LLM read.
-- **Internal Ops** (`internal/ops`): the *strict*, deterministic format that actually mutates disk — `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every mutating op carries `conditions.file_hash` and the applier re-checks before writing.
+- **External Patches** (`internal/patches`): the *flexible*, LLM-facing format. The agent only ever returns `final.patches` of type `file.search_replace`, `file.unified_diff`, or `file.write_atomic`. Each carries a `file_hash` (sha256) of the version the LLM read.
+- **Internal Ops** (`internal/ops`): the *strict*, deterministic format that actually mutates disk — `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every mutating op carries `conditions.file_hash` and the applier (`internal/applier`) re-checks before writing.
 - `internal/resolver` is the bridge: `ResolveExternalPatches` turns external patches into internal ops by re-reading files and locating the search string via three-pass matching (exact → line-trimmed → indent-flexible). On ambiguity or no match it returns `AmbiguousMatch` / `StaleContent` errors that the agent loop feeds back as hints. The agent loop never emits internal ops directly.
 
 **Agent loop** (`internal/agent/agent.go`, `Agent.Run`): system+user prompt → call `llm.Complete` with OpenAI-style tool defs (`internal/tools/registry.go`) → handle either `tool_call` (execute via `tools.Runner.Call`, append assistant+tool messages to history, loop) or `final` (resolve patches → `tools.FSApplyOps` with dry-run flag). Recoverable errors (`StaleContent`, `AmbiguousMatch`) feed compact hints back into history and the loop continues. Hard caps: `MaxSteps` (default 24), `MaxInvalidRetries` (3), `MaxFinalFailures` (6), `MaxDeniedToolRepeats` (2), `MaxToolErrorRepeats` (6), `LLMStepTimeout` (per step). `truncateMessages` keeps assistant+tool pairs together when shrinking history.

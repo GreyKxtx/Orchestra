@@ -354,3 +354,42 @@ func TestFindAgent_WithProvider(t *testing.T) {
 		t.Fatalf("expected APIKey='key', got %q", prov.APIKey)
 	}
 }
+
+func TestValidate_ApplyOutputAndProfile(t *testing.T) {
+	cfg := DefaultConfig("/tmp/proj")
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("defaults should validate: %v", err)
+	}
+
+	cfg.Apply.Output = "nope"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "apply.output") {
+		t.Fatalf("expected apply.output error, got %v", err)
+	}
+	cfg.Apply.Output = ApplyOutputPatch
+	cfg.Agent.Profile = "turbo"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "agent.profile") {
+		t.Fatalf("expected agent.profile error, got %v", err)
+	}
+	cfg.Agent.Profile = "fast"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("fast+patch should validate: %v", err)
+	}
+}
+
+func TestApplyDefaults_PatchDir(t *testing.T) {
+	cfg := &ProjectConfig{
+		ProjectRoot:  "/tmp",
+		ContextLimit: 50,
+		Limits:       LimitsConfig{ContextKB: 50},
+		LLM:          LLMConfig{APIBase: "http://x", Model: "m", TimeoutS: 1},
+		Exec:         ExecConfig{TimeoutS: 1, OutputLimitKB: 1},
+	}
+	cfg.applyDefaults()
+	if cfg.Apply.Output != ApplyOutputDisk {
+		t.Fatalf("output=%q", cfg.Apply.Output)
+	}
+	if cfg.Apply.PatchDir != ".orchestra/patches" {
+		t.Fatalf("patch_dir=%q", cfg.Apply.PatchDir)
+	}
+}
