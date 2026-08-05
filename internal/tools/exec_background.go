@@ -36,6 +36,7 @@ type bgProcess struct {
 	workdir string
 	started time.Time
 
+	cmd    *exec.Cmd
 	cancel context.CancelFunc
 	done   chan struct{}
 
@@ -194,6 +195,7 @@ func (r *bgRegistry) spawnBackground(parent context.Context, req ExecBashBackgro
 			"args":    req.Args,
 		})
 	}
+	p.cmd = cmd
 
 	r.add(p)
 
@@ -378,13 +380,24 @@ func (r *Runner) ExecBashKill(_ context.Context, req ExecBashKillRequest) (*Exec
 		}, nil
 	}
 	p.cancel()
-	// Brief wait for Wait() goroutine to update status (best-effort, capped).
+	// CommandContext cancel is async; an explicit Kill avoids waiting on a
+	// slow graceful teardown (notably under -race where Wait can exceed 2s).
+	if p.cmd != nil && p.cmd.Process != nil {
+		_ = p.cmd.Process.Kill()
+	}
+	// Wait for the Wait() goroutine; allow extra headroom under -race/CI load.
 	select {
 	case <-p.done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.status == bgRunning {
+		// Kill was issued but Wait hasn't observed it yet — report killed so
+		// callers don't see a stale "running" after bash.kill returns.
+		p.status = bgKilled
+		p.statusMsg = "killed"
+	}
 	return &ExecBashKillResponse{
 		BgID:   p.id,
 		Status: string(p.status),
