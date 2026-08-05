@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/jsonrpc"
 	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 // Config configures the spawn + initialize handshake.
@@ -37,7 +38,10 @@ type Client struct {
 	mu        sync.Mutex
 	closed    bool
 
-	permCh     chan bool       // receives user's yes/no for pending permission/request
+	coalesceMu sync.Mutex
+	coalesce   Event // merged delta when events channel is saturated
+
+	permCh     chan bool     // receives user's yes/no for pending permission/request
 	questionCh chan []string   // receives user's answers for pending question/ask
 }
 
@@ -125,18 +129,57 @@ type AgentRunOptions struct {
 	AllowExec bool
 }
 
-// SessionStart creates a new core session for multi-turn agent history.
-func (c *Client) SessionStart(ctx context.Context) (string, error) {
+// SessionStart creates or reopens a core session.
+func (c *Client) SessionStart(ctx context.Context, sessionID string) (string, bool, error) {
+	params := map[string]any{}
+	if strings.TrimSpace(sessionID) != "" {
+		params["session_id"] = strings.TrimSpace(sessionID)
+	}
 	var res struct {
 		SessionID string `json:"session_id"`
+		Restored  bool   `json:"restored"`
 	}
-	if err := c.rpc.Call(ctx, "session.start", map[string]any{}, &res); err != nil {
-		return "", err
+	if err := c.rpc.Call(ctx, "session.start", params, &res); err != nil {
+		return "", false, err
 	}
 	if strings.TrimSpace(res.SessionID) == "" {
-		return "", fmt.Errorf("session.start returned empty session_id")
+		return "", false, fmt.Errorf("session.start returned empty session_id")
 	}
-	return res.SessionID, nil
+	return res.SessionID, res.Restored, nil
+}
+
+// SessionGetResult mirrors core.SessionGetResult.
+type SessionGetResult struct {
+	SessionID  string                  `json:"session_id"`
+	Title      string                  `json:"title,omitempty"`
+	Model      string                  `json:"model,omitempty"`
+	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
+	HistoryLen int                     `json:"history_len"`
+	HasPending bool                    `json:"has_pending,omitempty"`
+	Restored   bool                    `json:"restored,omitempty"`
+}
+
+// SessionGet returns the unified v2 session view.
+func (c *Client) SessionGet(ctx context.Context, sessionID string) (*SessionGetResult, error) {
+	var res SessionGetResult
+	if err := c.rpc.Call(ctx, "session.get", map[string]any{
+		"session_id": sessionID,
+	}, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// SessionUISync persists the TUI chat projection.
+func (c *Client) SessionUISync(ctx context.Context, sessionID, title, model string, ui []sessionfile.UIMessage) error {
+	params := map[string]any{
+		"session_id":  sessionID,
+		"title":       title,
+		"model":       model,
+		"ui_messages": ui,
+	}
+	var res map[string]any
+	return c.rpc.Call(ctx, "session.ui_sync", params, &res)
 }
 
 // SessionMessage runs one agent turn in an existing session. Streaming events
@@ -327,10 +370,74 @@ func (c *Client) send(ev Event) {
 	if closed {
 		return
 	}
-	// Non-blocking send: drop on backpressure (UI tolerates missed token deltas).
+	c.flushCoalesce()
+	if c.trySend(ev) {
+		return
+	}
+	if c.mergeCoalesce(ev) {
+		return
+	}
+	// Non-coalescable or coalesce buffer full: one blocking attempt.
 	select {
 	case c.events <- ev:
 	default:
+	}
+}
+
+func (c *Client) trySend(ev Event) bool {
+	select {
+	case c.events <- ev:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) flushCoalesce() {
+	c.coalesceMu.Lock()
+	pending := c.coalesce
+	c.coalesce = Event{}
+	c.coalesceMu.Unlock()
+	if pending.Kind == "" {
+		return
+	}
+	select {
+	case c.events <- pending:
+	default:
+		c.coalesceMu.Lock()
+		if c.coalesce.Kind == "" {
+			c.coalesce = pending
+		} else {
+			c.mergeCoalesceLocked(pending)
+		}
+		c.coalesceMu.Unlock()
+	}
+}
+
+func (c *Client) mergeCoalesce(ev Event) bool {
+	c.coalesceMu.Lock()
+	defer c.coalesceMu.Unlock()
+	return c.mergeCoalesceLocked(ev)
+}
+
+func (c *Client) mergeCoalesceLocked(ev Event) bool {
+	switch ev.Kind {
+	case EventMessageDelta:
+		if c.coalesce.Kind == EventMessageDelta {
+			c.coalesce.Content += ev.Content
+			return true
+		}
+		c.coalesce = ev
+		return true
+	case EventToolCallDelta:
+		if c.coalesce.Kind == EventToolCallDelta && c.coalesce.ToolCallID == ev.ToolCallID {
+			c.coalesce.ArgsDelta += ev.ArgsDelta
+			return true
+		}
+		c.coalesce = ev
+		return true
+	default:
+		return false
 	}
 }
 

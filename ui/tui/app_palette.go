@@ -206,6 +206,7 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 	case "/clear":
 		a.session.Clear()
 		a.chat.SetMessages(a.session.Messages)
+		a.currentSessionID = ""
 		a.coreSessionID = ""
 		return a.startCoreSession()
 	case "/model":
@@ -245,7 +246,7 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 				Text: "Режим LIVE: изменения уже пишутся на диск во время write/edit. Переключись на /preview если нужен ручной apply.",
 			})
 			a.chat.SetMessages(a.session.Messages)
-		} else if a.pendingOps != nil && a.rpc != nil {
+		} else if a.pendingOps != nil && a.rpc != nil && a.turn.CanApplyPending() {
 			rawOps := a.pendingOps.Ops
 			count := len(a.pendingOps.Ops)
 			a.pendingOps = nil
@@ -254,6 +255,9 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 				a.diffShown = false
 			}
 			a.chat.SetMessages(a.session.Messages)
+			if !a.beginApplyTurn() {
+				return nil
+			}
 			rpc := a.rpc
 			return func() tea.Msg {
 				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}

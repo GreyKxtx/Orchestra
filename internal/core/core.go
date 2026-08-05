@@ -26,6 +26,7 @@ import (
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/mcp"
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tasks"
 )
 
@@ -45,10 +46,9 @@ type Core struct {
 	tools     *tools.Runner
 	// runMu serialises every RPC entry point that mutates shared Runner state
 	// (SetDryRun, ClearStaged, staged-overlay writes). Without this, two
-	// concurrent agent.run / workflow.run / skill.invoke / ops.apply calls
-	// race over the dry-run flag and can leak staged ops between requests,
-	// silently turning a dry-run request into a real disk write when another
-	// request flips the flag mid-flight.
+	// concurrent agent.run / session.message / workflow.run / skill.invoke /
+	// ops.apply / session.apply_pending calls race over the dry-run flag and
+	// can leak staged ops between requests.
 	runMu      sync.Mutex
 	sessions   *coresession.Manager
 	mcpManager *mcp.Manager
@@ -812,19 +812,138 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (cus
 
 // ── Session API ──────────────────────────────────────────────────────────────
 
-type SessionStartParams struct{}
+type SessionStartParams struct {
+	// SessionID optionally reopens an existing on-disk session (v2 snapshot).
+	// When empty, core allocates a new sortable id.
+	SessionID string `json:"session_id,omitempty"`
+}
 
 type SessionStartResult struct {
 	SessionID string `json:"session_id"`
+	Restored  bool   `json:"restored,omitempty"`
 }
 
-// SessionStart creates a new session and returns its ID.
-func (c *Core) SessionStart(_ SessionStartParams) (*SessionStartResult, error) {
+// SessionStart creates or reopens a session and returns its canonical id.
+func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, error) {
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	s := c.sessions.Create()
-	return &SessionStartResult{SessionID: s.ID}, nil
+	id := strings.TrimSpace(params.SessionID)
+	var s *coresession.Session
+	var restored bool
+	if id != "" {
+		var err error
+		s, err = c.sessions.LoadOrCreate(c.workspaceRoot, id)
+		if err != nil {
+			return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": id})
+		}
+		s.Lock()
+		restored = len(s.History) > 0 || len(s.UIMessages()) > 0
+		s.Unlock()
+	} else {
+		s = c.sessions.Create()
+	}
+	return &SessionStartResult{SessionID: s.ID, Restored: restored}, nil
+}
+
+type SessionGetParams struct {
+	SessionID string `json:"session_id"`
+}
+
+type SessionGetResult struct {
+	SessionID   string                   `json:"session_id"`
+	Title       string                   `json:"title,omitempty"`
+	Model       string                   `json:"model,omitempty"`
+	UIMessages  []sessionfile.UIMessage  `json:"ui_messages"`
+	HistoryLen  int                      `json:"history_len"`
+	HasPending  bool                     `json:"has_pending,omitempty"`
+	Restored    bool                     `json:"restored,omitempty"`
+}
+
+// SessionGet returns the unified v2 session view for TUI reopen.
+func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
+	}
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	sess.Lock()
+	defer sess.Unlock()
+	ui := sess.UIMessages()
+	return &SessionGetResult{
+		SessionID:  sess.ID,
+		Title:      sess.Title(),
+		Model:      sess.Model(),
+		UIMessages: ui,
+		HistoryLen: len(sess.History),
+		HasPending: sess.HasPending(),
+		Restored:   len(sess.History) > 0 || len(ui) > 0,
+	}, nil
+}
+
+type SessionListParams struct{}
+
+type SessionListResult struct {
+	Sessions []sessionfile.Meta `json:"sessions"`
+}
+
+// SessionList returns session picker metadata from on-disk v2 snapshots.
+func (c *Core) SessionList(_ SessionListParams) (*SessionListResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	metas, err := sessionfile.ListMeta(c.workspaceRoot)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+	}
+	if metas == nil {
+		metas = []sessionfile.Meta{}
+	}
+	return &SessionListResult{Sessions: metas}, nil
+}
+
+type SessionUISyncParams struct {
+	SessionID  string                  `json:"session_id"`
+	Title      string                  `json:"title,omitempty"`
+	Model      string                  `json:"model,omitempty"`
+	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
+}
+
+type SessionUISyncResult struct {
+	SessionID string `json:"session_id"`
+	Saved     bool   `json:"saved"`
+}
+
+// SessionUISync persists the TUI chat projection into the unified v2 snapshot.
+func (c *Core) SessionUISync(params SessionUISyncParams) (*SessionUISyncResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
+	}
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	sess.Lock()
+	sess.SetTitle(params.Title)
+	if strings.TrimSpace(params.Model) != "" {
+		sess.SetModel(params.Model)
+	}
+	sess.SetUIMessages(params.UIMessages)
+	sess.LastActivity = time.Now()
+	snapErr := sess.Snapshot(c.workspaceRoot)
+	sess.Unlock()
+	if snapErr != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, snapErr.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	return &SessionUISyncResult{SessionID: params.SessionID, Saved: true}, nil
 }
 
 type SessionMessageParams struct {
@@ -942,6 +1061,13 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		sess.Unlock()
 		cancel()
 	}()
+
+	// Same staging contract as AgentRun: serialise shared Runner mutations
+	// (SetDryRun, ClearStaged, staged overlay writes) for the whole turn.
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	c.tools.SetDryRun(!params.Apply)
+	c.tools.ClearStaged()
 
 	// Merge params with config defaults.
 	agParams := AgentRunParams{
@@ -1121,6 +1247,12 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if planPath != "" {
 		sess.SetPlanPath(planPath)
 	}
+	if profileName != "" {
+		sess.SetProfile(profileName)
+	}
+	if applyOutput != "" {
+		sess.SetApplyOutput(applyOutput)
+	}
 	if !params.Apply && len(res.Ops) > 0 {
 		sess.SetPending(res.Ops)
 	} else {
@@ -1187,6 +1319,8 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 		return &SessionApplyPendingResult{Applied: false}, nil
 	}
 
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
 	resp, err := c.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
 		Ops:    pendingOps,
 		Backup: params.Backup,

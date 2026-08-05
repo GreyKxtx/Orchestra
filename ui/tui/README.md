@@ -76,7 +76,7 @@ ui/tui/
     events.go      ← Event types + kinds
 ```
 
-`app.go` координирует все состояния: `paletteActive` (slash), `mentionActive` (@), `agentBusy` (RPC), `permModal` (exec consent), `pendingOps` (apply/discard). Все мутации состояния — только в `Update()` goroutine.
+`app.go` координирует все состояния: `paletteActive` (slash), `mentionActive` (@), `TurnFSM` (turn lifecycle), `permModal` (exec consent), `pendingOps` (apply/discard). Все мутации состояния — только в `Update()` goroutine.
 
 См. также: `docs/superpowers/specs/2026-05-07-tui-design.md` (дизайн), `docs/PROTOCOL.md` (контракт ядра), `docs/architecture-uml.md` (TUI в Containers diagram).
 

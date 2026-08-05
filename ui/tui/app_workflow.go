@@ -129,14 +129,12 @@ func (a *App) cmdListSkills() tea.Cmd {
 
 func (a *App) cmdRunWorkflow(name, args string) tea.Cmd {
 	rpc := a.rpc
-	a.agentBusy = true
-	a.statusBar.SetAgentBusy(true)
-	a.chat.SetAgentBusy(true)
 	if a.workflowProgress != nil {
 		a.workflowProgress.Begin(name)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.activeCancel = cancel
+	a.beginAgentTurn()
 	a.layout()
 	a.updateStatusHints()
 	return func() tea.Msg {
@@ -147,11 +145,9 @@ func (a *App) cmdRunWorkflow(name, args string) tea.Cmd {
 
 func (a *App) cmdInvokeSkill(name, args string) tea.Cmd {
 	rpc := a.rpc
-	a.agentBusy = true
-	a.statusBar.SetAgentBusy(true)
-	a.chat.SetAgentBusy(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.activeCancel = cancel
+	a.beginAgentTurn()
 	a.layout()
 	a.updateStatusHints()
 	return func() tea.Msg {
@@ -184,9 +180,11 @@ func (a *App) handleSystemMsg(m systemMsgMsg) tea.Cmd {
 // handleWorkflowResult appends the workflow's final stage output (or error)
 // to the chat and clears busy state.
 func (a *App) handleWorkflowResult(m workflowResultMsg) tea.Cmd {
-	a.agentBusy = false
-	a.statusBar.SetAgentBusy(false)
-	a.chat.SetAgentBusy(false)
+	if m.err != nil {
+		a.failAgentTurn()
+	} else {
+		a.finishAgentTurn()
+	}
 	if a.workflowProgress != nil {
 		a.workflowProgress.End()
 	}
@@ -212,9 +210,11 @@ func (a *App) handleWorkflowResult(m workflowResultMsg) tea.Cmd {
 
 // handleSkillResult appends the skill's output (or error) and clears busy.
 func (a *App) handleSkillResult(m skillResultMsg) tea.Cmd {
-	a.agentBusy = false
-	a.statusBar.SetAgentBusy(false)
-	a.chat.SetAgentBusy(false)
+	if m.err != nil {
+		a.failAgentTurn()
+	} else {
+		a.finishAgentTurn()
+	}
 	a.clearActiveCancel()
 	a.layout()
 	a.updateStatusHints()

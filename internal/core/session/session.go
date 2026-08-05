@@ -2,14 +2,13 @@ package session
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -25,22 +24,29 @@ type Session struct {
 	pendingOps  []ops.AnyOp        // ops from last dry-run turn, cleared on apply or new turn
 	todos       []tools.TodoItem   // model's working checklist, persisted across turns
 	planPath    string             // per-session plan markdown path (relative)
+
+	// UI projection (v2 unified session schema).
+	title       string
+	model       string
+	uiMessages  []sessionfile.UIMessage
+	profile     string
+	applyOutput string
 }
 
-func newID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// New creates a new session with a random ID.
+// New creates a new session with a sortable TUI-compatible ID.
 func New() *Session {
+	return NewWithID(sessionfile.NewID())
+}
+
+// NewWithID creates a session with the given canonical id.
+func NewWithID(id string) *Session {
 	now := time.Now()
 	return &Session{
-		ID:           newID(),
+		ID:           strings.TrimSpace(id),
 		History:      make([]llm.Message, 0, 16),
 		CreatedAt:    now,
 		LastActivity: now,
+		uiMessages:   make([]sessionfile.UIMessage, 0, 8),
 	}
 }
 
@@ -125,3 +131,47 @@ func (s *Session) PlanPath() string {
 func (s *Session) SetPlanPath(path string) {
 	s.planPath = strings.TrimSpace(path)
 }
+
+// Title returns the persisted chat title (UI projection).
+func (s *Session) Title() string { return s.title }
+
+// SetTitle updates the chat title. Must be called with lock held when mutating
+// alongside other fields before Snapshot.
+func (s *Session) SetTitle(title string) { s.title = strings.TrimSpace(title) }
+
+// Model returns the last-used model name for this session.
+func (s *Session) Model() string { return s.model }
+
+// SetModel updates the model field.
+func (s *Session) SetModel(model string) { s.model = strings.TrimSpace(model) }
+
+// UIMessages returns a copy of the UI chat projection.
+func (s *Session) UIMessages() []sessionfile.UIMessage {
+	if len(s.uiMessages) == 0 {
+		return nil
+	}
+	out := make([]sessionfile.UIMessage, len(s.uiMessages))
+	copy(out, s.uiMessages)
+	return out
+}
+
+// SetUIMessages replaces the UI chat projection.
+func (s *Session) SetUIMessages(msgs []sessionfile.UIMessage) {
+	if len(msgs) == 0 {
+		s.uiMessages = nil
+		return
+	}
+	s.uiMessages = append([]sessionfile.UIMessage(nil), msgs...)
+}
+
+// Profile returns the last profile used in this session.
+func (s *Session) Profile() string { return s.profile }
+
+// SetProfile stores the profile name.
+func (s *Session) SetProfile(p string) { s.profile = strings.TrimSpace(p) }
+
+// ApplyOutput returns disk|patch preference for this session.
+func (s *Session) ApplyOutput() string { return s.applyOutput }
+
+// SetApplyOutput stores apply output mode.
+func (s *Session) SetApplyOutput(v string) { s.applyOutput = strings.TrimSpace(v) }

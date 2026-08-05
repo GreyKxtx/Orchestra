@@ -9,9 +9,9 @@ const (
 	//     pending_ops, recoverable_error) and bidirectional permission/request.
 	// v4: added workflow.list, workflow.run, skill.list, skill.invoke methods
 	//     plus workflow/stage_start / workflow/stage_done notification events.
-	// v5: agent.run / session.message gain apply_output, patch_path, profile;
-	//     results may include patch_path when apply_output=patch.
-	ProtocolVersion = 5
+	// v6: unified session schema v2; session.start(session_id?), session.get,
+	// session.list, session.ui_sync for TUI↔core session unification.
+	ProtocolVersion = 6
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

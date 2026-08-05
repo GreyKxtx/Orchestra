@@ -1,12 +1,14 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -100,6 +102,19 @@ func TestSnapshot_AtomicAndIsolated(t *testing.T) {
 	want := filepath.Join(dir, ".orchestra", "sessions", s.ID+".json")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("snapshot file missing: %v", err)
+	}
+	raw, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	var hdr struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &hdr); err != nil {
+		t.Fatalf("decode snapshot header: %v", err)
+	}
+	if hdr.Version != sessionfile.Version {
+		t.Errorf("version: got %d, want %d", hdr.Version, sessionfile.Version)
 	}
 }
 

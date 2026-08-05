@@ -1,143 +1,101 @@
-// Persistence for core sessions. C1 + C4 in architecture audit: the
-// previous design kept Session entirely in memory and used a separate
-// internal/sessionstore for TUI-only chat persistence — restart of
-// the core subprocess lost the agent's history, pending ops, and todo
-// list. This file adds JSON snapshots to .orchestra/sessions/<id>.json
-// owned by core; the legacy TUI sessionstore remains for chat-only
-// state until a follow-up migration consolidates the two.
+// Persistence for core sessions — unified v2 snapshots via internal/sessionfile.
 package session
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 
-	"github.com/orchestra/orchestra/internal/fsutil"
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
-// snapshot is the on-disk shape of a Session. Versioned so future
-// schema changes can be detected at load time without forcing a full
-// migration. Note: cancelFn is intentionally NOT serialised — it's a
-// runtime-only handle.
-type snapshot struct {
-	Version      int              `json:"version"`
-	ID           string           `json:"id"`
-	History      []llm.Message    `json:"history"`
-	CreatedAt    time.Time        `json:"created_at"`
-	LastActivity time.Time        `json:"last_activity"`
-	PendingOps   []ops.AnyOp      `json:"pending_ops,omitempty"`
-	Todos        []tools.TodoItem `json:"todos,omitempty"`
-	PlanPath     string           `json:"plan_path,omitempty"`
-}
-
-const snapshotVersion = 1
-
-// sessionsDir returns <workspaceRoot>/.orchestra/sessions. Created on
-// first snapshot.
-func sessionsDir(workspaceRoot string) string {
-	return filepath.Join(workspaceRoot, ".orchestra", "sessions")
-}
-
-// snapshotPath returns the on-disk path for session id.
-func snapshotPath(workspaceRoot, id string) string {
-	return filepath.Join(sessionsDir(workspaceRoot), id+".json")
-}
-
-// Snapshot serialises the session to .orchestra/sessions/<id>.json
-// atomically. Callers should call this after every mutation that
-// changes durable state (History append, SetPending, SetTodos). Lock
-// the session before calling so the snapshot is consistent.
-//
-// workspaceRoot must be non-empty; an empty value is a no-op (callers
-// that don't know the workspace root yet shouldn't fail their request
-// just because persistence is unavailable).
+// Snapshot serialises the session to .orchestra/sessions/<id>.json atomically.
+// Callers should hold Session.mu when building a consistent view.
 func (s *Session) Snapshot(workspaceRoot string) error {
-	if workspaceRoot == "" {
+	if workspaceRoot == "" || s == nil {
 		return nil
 	}
-	snap := snapshot{
-		Version:      snapshotVersion,
-		ID:           s.ID,
-		History:      s.History,
-		CreatedAt:    s.CreatedAt,
-		LastActivity: s.LastActivity,
-		PendingOps:   s.pendingOps,
-		Todos:        s.todos,
-		PlanPath:     s.planPath,
-	}
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return fmt.Errorf("session snapshot marshal: %w", err)
-	}
-	return fsutil.AtomicWriteFile(snapshotPath(workspaceRoot, s.ID), data, 0o600)
+	snap := s.toSnapshot()
+	return sessionfile.Save(workspaceRoot, snap)
 }
 
-// DeleteSnapshot removes the on-disk snapshot for id. Returns nil if
-// the file doesn't exist (close is idempotent). Other errors (perm
-// issues etc.) are surfaced so callers can log them.
+func (s *Session) toSnapshot() *sessionfile.Snapshot {
+	snap := &sessionfile.Snapshot{
+		Version:     sessionfile.Version,
+		ID:          s.ID,
+		Title:       s.title,
+		Model:       s.model,
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   s.LastActivity,
+		History:     s.History,
+		PendingOps:  s.pendingOps,
+		Todos:       todosToFile(s.todos),
+		PlanPath:    s.planPath,
+		UIMessages:  s.uiMessages,
+		Profile:     s.profile,
+		ApplyOutput: s.applyOutput,
+	}
+	if snap.UIMessages == nil {
+		snap.UIMessages = []sessionfile.UIMessage{}
+	}
+	if snap.History == nil {
+		snap.History = []llm.Message{}
+	}
+	return snap
+}
+
+func sessionFromSnapshot(snap *sessionfile.Snapshot) *Session {
+	if snap == nil {
+		return nil
+	}
+	s := &Session{
+		ID:           snap.ID,
+		History:      snap.History,
+		CreatedAt:    snap.CreatedAt,
+		LastActivity: snap.UpdatedAt,
+		pendingOps:   snap.PendingOps,
+		todos:        todosFromFile(snap.Todos),
+		planPath:     snap.PlanPath,
+		title:        snap.Title,
+		model:        snap.Model,
+		uiMessages:   snap.UIMessages,
+		profile:      snap.Profile,
+		applyOutput:  snap.ApplyOutput,
+	}
+	if s.LastActivity.IsZero() {
+		s.LastActivity = s.CreatedAt
+	}
+	if s.History == nil {
+		s.History = make([]llm.Message, 0, 16)
+	}
+	if s.uiMessages == nil {
+		s.uiMessages = make([]sessionfile.UIMessage, 0, 8)
+	}
+	return s
+}
+
+// DeleteSnapshot removes the on-disk snapshot for id.
 func DeleteSnapshot(workspaceRoot, id string) error {
-	if workspaceRoot == "" || id == "" {
-		return nil
-	}
-	if err := os.Remove(snapshotPath(workspaceRoot, id)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return sessionfile.Delete(workspaceRoot, id)
 }
 
-// LoadFromDisk reads a snapshot file and constructs a fresh Session
-// from it. The returned session has no cancelFn (it's idle).
-//
-// Returns os.ErrNotExist when no snapshot exists for id; the caller
-// can fall through to Manager.Create. Returns a parse error when the
-// file exists but is unreadable — the caller should NOT silently
-// drop the session in that case.
+// LoadFromDisk reads a snapshot file and constructs a fresh Session from it.
 func LoadFromDisk(workspaceRoot, id string) (*Session, error) {
 	if workspaceRoot == "" || id == "" {
 		return nil, fmt.Errorf("session load: workspace_root and id required")
 	}
-	data, err := os.ReadFile(snapshotPath(workspaceRoot, id))
+	snap, err := sessionfile.Load(workspaceRoot, id)
 	if err != nil {
 		return nil, err
 	}
-	var snap snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, fmt.Errorf("session %s parse: %w", id, err)
+	if snap.Version != sessionfile.Version {
+		return nil, fmt.Errorf("session %s: unsupported snapshot version %d (this binary expects %d)", id, snap.Version, sessionfile.Version)
 	}
-	if snap.Version != snapshotVersion {
-		return nil, fmt.Errorf("session %s: unsupported snapshot version %d (this binary expects %d)", id, snap.Version, snapshotVersion)
-	}
-	if snap.ID == "" {
-		snap.ID = id
-	}
-	if snap.CreatedAt.IsZero() {
-		snap.CreatedAt = time.Now()
-	}
-	if snap.LastActivity.IsZero() {
-		snap.LastActivity = snap.CreatedAt
-	}
-	return &Session{
-		ID:           snap.ID,
-		History:      snap.History,
-		CreatedAt:    snap.CreatedAt,
-		LastActivity: snap.LastActivity,
-		pendingOps:   snap.PendingOps,
-		todos:        snap.Todos,
-		planPath:     snap.PlanPath,
-	}, nil
+	return sessionFromSnapshot(snap), nil
 }
 
-// GetOrLoad returns an in-memory session if present, otherwise loads
-// it from disk and caches it. Returns the original "session not found"
-// error if neither memory nor disk has it — strict semantics for
-// handlers that must reject unknown IDs (SessionMessage, op.apply
-// pending lookup, etc.), distinct from LoadOrCreate's permissive
-// fallback used at reconnection time.
+// GetOrLoad returns an in-memory session if present, otherwise loads from disk.
 func (m *Manager) GetOrLoad(workspaceRoot, id string) (*Session, error) {
 	if id == "" {
 		return nil, fmt.Errorf("session not found: %s", id)
@@ -160,15 +118,47 @@ func (m *Manager) GetOrLoad(workspaceRoot, id string) (*Session, error) {
 		return nil, err
 	}
 	m.mu.Lock()
+	if existing, ok := m.sessions[id]; ok {
+		m.mu.Unlock()
+		return existing, nil
+	}
 	m.sessions[id] = s
 	m.mu.Unlock()
 	return s, nil
 }
 
+func todosToFile(items []tools.TodoItem) []sessionfile.TodoItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]sessionfile.TodoItem, len(items))
+	for i, it := range items {
+		out[i] = sessionfile.TodoItem{
+			ID:      it.ID,
+			Content: it.Content,
+			Status:  string(it.Status),
+		}
+	}
+	return out
+}
+
+func todosFromFile(items []sessionfile.TodoItem) []tools.TodoItem {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]tools.TodoItem, len(items))
+	for i, it := range items {
+		out[i] = tools.TodoItem{
+			ID:      it.ID,
+			Content: it.Content,
+			Status:  tools.TodoStatus(it.Status),
+		}
+	}
+	return out
+}
+
 // LoadOrCreate returns an existing session if a snapshot is present,
-// otherwise creates a fresh one with the given id. Used by the RPC
-// handler when a client reconnects with a known session id after a
-// core restart.
+// otherwise creates a fresh one with the given id.
 func (m *Manager) LoadOrCreate(workspaceRoot, id string) (*Session, error) {
 	if id == "" {
 		return m.Create(), nil
@@ -183,15 +173,12 @@ func (m *Manager) LoadOrCreate(workspaceRoot, id string) (*Session, error) {
 	s, err := LoadFromDisk(workspaceRoot, id)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No snapshot — create a session whose ID matches the
-			// requested one so the client's bookkeeping stays valid.
-			fresh := &Session{
-				ID:           id,
-				History:      make([]llm.Message, 0, 16),
-				CreatedAt:    time.Now(),
-				LastActivity: time.Now(),
-			}
+			fresh := NewWithID(id)
 			m.mu.Lock()
+			if existing, ok := m.sessions[id]; ok {
+				m.mu.Unlock()
+				return existing, nil
+			}
 			m.sessions[id] = fresh
 			m.mu.Unlock()
 			return fresh, nil
@@ -199,6 +186,10 @@ func (m *Manager) LoadOrCreate(workspaceRoot, id string) (*Session, error) {
 		return nil, err
 	}
 	m.mu.Lock()
+	if existing, ok := m.sessions[id]; ok {
+		m.mu.Unlock()
+		return existing, nil
+	}
 	m.sessions[id] = s
 	m.mu.Unlock()
 	return s, nil

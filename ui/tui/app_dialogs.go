@@ -92,8 +92,7 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 			id, _ := m.Data.(string)
 			a.popDialog()
 			a.closeCommandModal()
-			a.loadSession(id)
-			return a, nil
+			return a, a.loadSession(id)
 		case "delete":
 			id, _ := m.Data.(string)
 			_ = sessionstore.Delete(a.cfg.WorkspaceRoot, id)
@@ -282,10 +281,8 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 	a.coreSessionID = ""
 	// In-flight agent activity is killed by the close; reset UI state so the
 	// header/status bar don't spin forever after respawn.
-	if a.agentBusy {
-		a.agentBusy = false
-		a.statusBar.SetAgentBusy(false)
-		a.chat.SetAgentBusy(false)
+	if a.turn.IsRunning() {
+		a.resetTurnFSM()
 		a.chat.SetStreamCursor(false)
 		a.session.FinishAssistant()
 	}

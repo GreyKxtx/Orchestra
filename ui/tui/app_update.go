@@ -81,7 +81,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		//   - we have a running tool / streaming turn that needs the spinner
 		//     frame to advance visibly
 		//   - the streaming-cursor blink state just flipped
-		if a.agentBusy && (a.chatDirty || a.session.HasRunningTool() || blinkChanged) {
+		if a.turn.ShowBusySpinner() && (a.chatDirty || a.session.HasRunningTool() || blinkChanged) {
 			a.chat.SetStreamCursor(a.cursorBlink)
 			a.chat.SetMessages(a.session.Messages)
 			a.chatDirty = false
@@ -187,7 +187,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if topY <= 0 {
 					topY = chatVerticalPad
 				}
-				if m.Y >= topY && m.Y < a.inputRowY && !a.agentBusy && !a.showWelcome {
+				if m.Y >= topY && m.Y < a.inputRowY && !a.turn.BlocksInput() && !a.showWelcome {
 					contentY := a.chat.ViewportYOffset() + (m.Y - topY)
 					role, text, ok := a.chat.MessageAtContentY(contentY)
 					if ok && text != "" {
@@ -306,6 +306,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: fmt.Sprintf("[applied %d ops]", m.count)})
 		}
+		a.finishApplyTurn()
 		a.chat.SetMessages(a.session.Messages)
 		return a, nil
 
@@ -325,6 +326,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.input.ReplaceSelection(string(km.Runes))
 		a.input.SyncHeight(5)
 		a.syncPalette()
+		a.syncTurnComposing()
 		a.updateStatusHints()
 		a.layout()
 		return a, nil
@@ -340,6 +342,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// number of soft-wrapped visual rows (typing past width boundary).
 		a.input.SyncHeight(5)
 		a.syncPalette()
+		a.syncTurnComposing()
 		a.updateStatusHints()
 		a.layout()
 	}
@@ -682,7 +685,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		// per-request ctx so agent.run / workflow.run / skill.invoke unwind
 		// promptly. The visible "busy" state clears via the result/error
 		// event path (EventAgentRunCompleted, workflowResultMsg, etc.).
-		if a.agentBusy && a.activeCancel != nil {
+		if a.turn.CanCancel() && a.activeCancel != nil {
 			a.clearActiveCancel()
 			a.session.AppendMessage(state.Message{
 				Role: state.RoleSystem,
@@ -708,7 +711,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.cycleAgentMode()
 		return a, nil, true
 	case "a":
-		if a.pendingOps != nil && a.rpc != nil {
+		if a.pendingOps != nil && a.rpc != nil && a.turn.CanApplyPending() {
 			rawOps := a.pendingOps.Ops
 			count := len(a.pendingOps.Ops)
 			a.pendingOps = nil
@@ -719,6 +722,9 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.chat.SetMessages(a.session.Messages)
 			a.layout()
 			a.updateStatusHints()
+			if !a.beginApplyTurn() {
+				return a, nil, true
+			}
 			rpc := a.rpc
 			return a, func() tea.Msg {
 				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
@@ -819,7 +825,7 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		cmd := a.executePaletteCmd(selectedCmd)
 		return a, cmd, true
 	}
-	if a.agentBusy {
+	if a.turn.BlocksSubmit() {
 		return a, nil, true
 	}
 	text := strings.TrimSpace(a.input.Value())
@@ -859,11 +865,9 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 	a.chat.SetMessages(a.session.Messages)
 	saveCmd := a.persistSessionCmd()
 	if a.rpc != nil {
-		a.agentBusy = true
-		a.statusBar.SetAgentBusy(true)
-		a.chat.SetAgentBusy(true)
 		ctx, cancel := context.WithCancel(context.Background())
 		a.activeCancel = cancel
+		a.beginAgentTurn()
 		a.layout()
 		a.updateStatusHints()
 		go func(query, mode string) {

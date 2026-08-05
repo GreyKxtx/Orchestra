@@ -374,7 +374,7 @@ func (a *App) updateStatusHints() {
 		a.statusBar.SetHints("[y]es allow · [n]o deny · Esc deny")
 	case a.pendingOps != nil:
 		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
-	case a.agentBusy && a.activeCancel != nil:
+	case a.turn.CanCancel() && a.activeCancel != nil:
 		a.statusBar.SetHints("Esc отменить · Ctrl+C выйти")
 	case a.autoApply:
 		a.statusBar.SetHints(a.writeModeLabel() + " · запись на диск · /preview · Ctrl+K")

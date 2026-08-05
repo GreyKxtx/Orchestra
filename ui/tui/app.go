@@ -61,7 +61,7 @@ type App struct {
 
 	pendingOps *rpcclient.PendingOpsPayload // non-nil while ops await confirmation
 	diffShown  bool                         // true while diff messages are in session
-	agentBusy  bool                         // true while agent.run in flight
+	turn       *state.TurnFSM               // turn lifecycle FSM (M3)
 
 	permModal     *view.Modal         // non-nil while an exec.run permission request is pending
 	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
@@ -91,7 +91,7 @@ type App struct {
 	onboarding     *view.OnboardingView // 3-step wizard
 	showOnboarding bool
 	showWelcome    bool      // true on every startup until user sends first message
-	cursorBlink    bool      // toggles every ~500ms while agentBusy
+	cursorBlink    bool      // toggles every ~500ms while turn is running/applying
 	spinFrame      int       // monotonically increments every tick — drives all spinners
 	turnStartedAt  time.Time // moment the current agent.run was kicked off
 
@@ -191,6 +191,7 @@ func NewApp(cfg Config) (*App, error) {
 	a := &App{
 		cfg:       cfg,
 		session:   state.NewSession(),
+		turn:      state.NewTurnFSM(),
 		autoApply: cfg.AutoApply,
 		allowExec: cfg.AllowExec,
 	}

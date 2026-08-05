@@ -112,6 +112,33 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionStart(p)
 
+	case "session.get":
+		var p SessionGetParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionGet(p)
+
+	case "session.list":
+		var p SessionListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionList(p)
+
+	case "session.ui_sync":
+		var p SessionUISyncParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionUISync(p)
+
 	case "session.message":
 		var p SessionMessageParams
 		if err := decodeParams(params, &p); err != nil {

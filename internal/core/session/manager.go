@@ -3,6 +3,8 @@ package session
 import (
 	"fmt"
 	"sync"
+
+	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 // Manager manages a concurrent-safe map of sessions indexed by ID.
@@ -18,7 +20,12 @@ func NewManager() *Manager {
 
 // Create creates a new session, registers it, and returns it.
 func (m *Manager) Create() *Session {
-	s := New()
+	return m.CreateWithID(sessionfile.NewID())
+}
+
+// CreateWithID registers a new session under id and returns it.
+func (m *Manager) CreateWithID(id string) *Session {
+	s := NewWithID(id)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions[s.ID] = s

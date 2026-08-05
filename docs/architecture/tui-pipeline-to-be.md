@@ -1,6 +1,6 @@
 # TUI Pipeline — To-Be Architecture
 
-Целевая архитектура и план миграции. Реализация multi-turn TUI **не входит** в текущий эпик (только документация); Patch Mode и Adaptive Profiles — реализуются сейчас.
+Целевая архитектура и план миграции TUI↔core. **M1–M4 реализованы** (см. [tui-pipeline.md](./tui-pipeline.md) §10). Patch Mode и Adaptive Profiles — в коде с 2026-08-05.
 
 ## 1. Сравнение паттернов
 
@@ -8,7 +8,7 @@
 |---------|----------------------------------|--------------|
 | Actor Model | Bubble Tea: single-threaded `Update` + Cmd; Core — один процесс на workspace | Явная модель «Session Actor» на стороне core (один writer истории) |
 | Event-Driven | JSON-RPC notifications `agent/event`, `exec/output_chunk`, workflow stages | Единый event envelope с `session_id` + `turn_id` |
-| State machine | Разрозненные флаги: `agentBusy`, `pendingOps`, `activeCancel`, modals | Turn FSM: `idle → composing → running → applying → done/error` |
+| State machine | `TurnFSM` в `ui/tui/state` (M3) | Опционально: `session_id` + `turn_id` в event envelope |
 | CQRS-lite | Dry-run = query/preview; `--apply` = command | Patch Mode как третья команда: «материализовать unified diff без write» |
 
 Вывод: не нужна полная переписка на actors/broker. Нужно **соединить** существующий multi-turn core path с TUI и **убрать** дублирование session stores.
@@ -92,7 +92,7 @@ stateDiagram-v2
 
 Заменяет ad-hoc `agentBusy` + modal flags как единственный источник истины для input gating.
 
-## 3. Application strategies (реализуется в этом эпике)
+## 3. Application strategies (реализовано)
 
 ```yaml
 apply:
@@ -107,7 +107,7 @@ apply:
 
 CLI: `--output-patch [path]` перекрывает конфиг. Не путать с `--mode plan` и skill PATCH-ONLY.
 
-## 4. Adaptive execution profiles (реализуется в этом эпике)
+## 4. Adaptive execution profiles (реализовано)
 
 ```yaml
 agent:
@@ -133,27 +133,25 @@ agent:
 3. Cancel / fallback на `agent.run` при отсутствии session id — на месте.
 4. Тесты multi-turn — желательно добить в follow-up.
 
-### Phase M2 — Unify session schema
+### Phase M2 — Unify session schema — DONE
 
-1. Ввести `version: 2` snapshot в core persist.
-2. Migrator: UI-only v1 records → v2 с пустым `history`; core v1 → v2 с пустым `ui_messages`.
-3. Deprecate `internal/sessionstore` как отдельную схему (оставить thin helper для title/list).
-4. Документировать в PROTOCOL.md; bump `ProtocolVersion`.
+1. `internal/sessionfile` — v2 snapshot + migrator v0/v1→v2.
+2. Core persist/load via v2; RPC `session.get`, `session.list`, `session.ui_sync`; `session.start(session_id?)`.
+3. TUI: unified id, `session.ui_sync`, reopen restores history.
+4. `ProtocolVersion` 6; `sessionstore` — thin helper (List, NewID, offline Save).
 
-### Phase M3 — Turn FSM + polish
+### Phase M3 — Turn FSM + polish — DONE
 
-1. Ввести явный `TurnState` в `ui/tui/state`.
-2. Gating input/cancel/apply через FSM.
-3. Optional: backpressure policy для events (coalesce deltas).
+1. `ui/tui/state/turn.go` — `TurnFSM`: idle → composing → running → applying.
+2. Input/cancel/apply gated via FSM (`app_turn.go`); replaces `agentBusy`.
+3. Delta coalesce in `rpcclient` when events channel is saturated.
 
-### Phase M4 — Hardening
+### Phase M4 — Hardening — DONE
 
-1. `SessionMessage` под тем же `runMu`/staging contract, что `AgentRun`.
-2. Cross-process flock documentation / fail-closed.
-3. `go test -race` на Linux CI для session/tasks/tui packages.
+1. `SessionMessage` + `SessionApplyPending` under `runMu` / staging contract (same as `AgentRun`).
+2. Cross-process flock: `.orchestra/apply.lock` (POSIX flock / Windows LockFileEx) — see `internal/applier/ops_applier.go`.
+3. Race tests: `internal/core/runmu_test.go`, `internal/core/session/manager_race_test.go`; CI runs `go test -race ./...`.
 
 ## 6. Не-цели текущего эпика
 
-- Переключение TUI на `session.message` (только план выше).
-- Слияние session schema v2 (только дизайн).
 - Удаление dual path `final.patches` vs `edit`/`write` (см. ROADMAP).

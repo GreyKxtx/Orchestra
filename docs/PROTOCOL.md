@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `5`
+- **`protocol.ProtocolVersion`**: `6`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `11`
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v6** (2026-08-05): unified session schema v2 (`.orchestra/sessions/<id>.json` with `ui_messages` + `history`); `session.start` accepts optional `session_id`; new methods `session.get`, `session.list`, `session.ui_sync`.
 - **v5** (2026-08-05): `agent.run` / `session.message` — поля `apply_output` (`disk`|`patch`), `patch_path`, `profile` (`fast`|`precision`); в result может быть `patch_path` при `apply_output=patch`.
 - **v4** (2026-05-18): добавлены методы `workflow.list`, `workflow.run`, `skill.list`, `skill.invoke`; streaming events `workflow/stage_start` и `workflow/stage_done`.
 - **v3** (2026-05-07): добавлены agent-level streaming events (`tool_call_completed`, `step_done`, `pending_ops`, `recoverable_error`) и bidirectional `permission/request` method.
@@ -247,19 +248,64 @@ Response `result` — JSON-объект/массив (ответ инструм�
 
 ## Методы сессий
 
-Сессия инкапсулирует multi-turn диалог: история сообщений и pending-операции хранятся в памяти core-процесса между вызовами `session.message`.
+Сессия инкапсулирует multi-turn диалог. С **ProtocolVersion 6** состояние персистится в `.orchestra/sessions/<id>.json` (schema **v2**): `history` (LLM-память), `ui_messages` (TUI projection), `pending_ops`, `todos`, `plan_path`.
 
 ### `session.start`
 
-Создаёт новую сессию.
+Создаёт новую сессию или переоткрывает существующую по id.
 
-`params`: `{}`
+`params`:
+
+- `session_id` (string, optional) — если задан, core вызывает `LoadOrCreate` и восстанавливает snapshot v2 с диска
 
 Response `result`:
 
 ```json
-{"session_id": "abc123..."}
+{"session_id": "20260805T150405-7f3a", "restored": true}
 ```
+
+- `restored` — true когда на диске уже был snapshot с history и/или ui_messages
+
+### `session.get`
+
+Возвращает unified v2 view (для reopen TUI).
+
+`params`: `{ "session_id": "..." }`
+
+Response `result`:
+
+```json
+{
+  "session_id": "...",
+  "title": "...",
+  "model": "...",
+  "ui_messages": [],
+  "history_len": 4,
+  "has_pending": false,
+  "restored": true
+}
+```
+
+### `session.list`
+
+Список сессий для picker (meta без полной history).
+
+`params`: `{}`
+
+Response `result`: `{ "sessions": [ { "id", "title", "model", "created_at", "updated_at", "msg_count" }, ... ] }`
+
+### `session.ui_sync`
+
+Сохраняет TUI chat projection в v2 snapshot (core — единственный writer на диск).
+
+`params`:
+
+- `session_id` (string)
+- `title` (string, optional)
+- `model` (string, optional)
+- `ui_messages` (array) — см. schema v2 в `docs/architecture/tui-pipeline-to-be.md`
+
+Response `result`: `{ "session_id": "...", "saved": true }`
 
 ### `session.message`
 

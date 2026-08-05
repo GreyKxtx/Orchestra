@@ -120,17 +120,13 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		}
 		a.reasoning.Reset()
 		a.session.FinishAssistant()
-		a.agentBusy = false
-		a.statusBar.SetAgentBusy(false)
-		a.chat.SetAgentBusy(false)
+		a.finishAgentTurn()
 		a.statusBar.ClearError()
 		a.chat.SetStreamCursor(false)
 		a.layout()
 		saveCmd = a.persistSessionCmd()
 	case rpcclient.EventError, rpcclient.EventConnectionError:
-		a.agentBusy = false
-		a.statusBar.SetAgentBusy(false)
-		a.chat.SetAgentBusy(false)
+		a.failAgentTurn()
 		a.clearActiveCancel()
 		a.layout()
 		a.statusBar.SetError(ev.Err)
