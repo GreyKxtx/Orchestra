@@ -121,23 +121,32 @@ func TestClient_Notification(t *testing.T) {
 
 	var mu sync.Mutex
 	var received []string
+	arrived := make(chan struct{}, 1)
 
 	cli.SetNotificationHandler(func(method string, params json.RawMessage) {
 		mu.Lock()
 		received = append(received, method)
 		mu.Unlock()
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
 	})
 
-	// Trigger a notification by calling a method that emits one.
-	notifySrv := srv // server sends notification via Notify
-	go func() { _ = notifySrv.Notify("test/event", map[string]any{"x": 1}) }()
+	if err := srv.Notify("test/event", map[string]any{"x": 1}); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
 
-	// Give the notification time to arrive.
-	var health map[string]any
-	_ = cli.Call(ctx, "core.health", nil, &health) // synchronize
+	// Wait for the notification rather than assuming a subsequent Call
+	// synchronises the pipe (that race failed intermittently on CI/Windows).
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for notification")
+	}
 
 	mu.Lock()
-	got := received
+	got := append([]string(nil), received...)
 	mu.Unlock()
 	if len(got) != 1 || got[0] != "test/event" {
 		t.Fatalf("expected [test/event], got %v", got)

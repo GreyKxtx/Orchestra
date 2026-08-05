@@ -11,7 +11,7 @@
 package relpath
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/protocol"
@@ -20,17 +20,23 @@ import (
 // Normalize trims and canonicalises a workspace-relative path. Returns
 // the canonical slash-form ("path/to/file"), or a protocol.Error with
 // the appropriate code (InvalidLLMOutput for empty / dot, PathTraversal
-// for "..\\\\" escapes).
+// for ".." escapes).
+//
+// Always uses slash separators (OS-independent): callers pass LLM /
+// JSON paths that may contain Windows backslashes; the result is always
+// forward-slash form suitable for workspace-relative wire formats.
 //
 // Does NOT touch the filesystem. Callers that need symlink protection
 // must layer that on top (see applier.safeAbsPath).
 func Normalize(p string) (string, *protocol.Error) {
-	p = filepath.ToSlash(strings.TrimSpace(p))
+	p = strings.TrimSpace(p)
+	// Force slash form before Clean so Windows filepath.Clean cannot
+	// re-introduce backslashes into the canonical result.
+	p = strings.ReplaceAll(p, `\`, `/`)
 	if p == "" {
 		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is empty", nil)
 	}
-	p = filepath.Clean(filepath.FromSlash(p))
-	p = filepath.ToSlash(p)
+	p = path.Clean(p)
 	if p == "." {
 		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
 	}

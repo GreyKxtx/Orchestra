@@ -10,13 +10,32 @@ import (
 	"time"
 )
 
-// TestMain branches: if BE_MOCK_MCP_SERVER=1, act as mock MCP server.
+// TestMain branches: if BE_MOCK_MCP_SERVER=1, act as mock MCP server;
+// if BE_MOCK_MCP_SERVER=hang, accept the connection but never reply
+// (used to exercise client timeouts reliably across OS timer resolutions).
 func TestMain(m *testing.M) {
-	if os.Getenv("BE_MOCK_MCP_SERVER") == "1" {
+	switch os.Getenv("BE_MOCK_MCP_SERVER") {
+	case "1":
 		runMockMCPServer()
+		os.Exit(0)
+	case "hang":
+		runHangMCPServer()
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// runHangMCPServer keeps stdin open and never writes a response, so the
+// client-side TimeoutMS always fires. A bare sleep would also work, but
+// reading stdin keeps the process alive until the parent kills it.
+func runHangMCPServer() {
+	buf := make([]byte, 4096)
+	for {
+		_, err := os.Stdin.Read(buf)
+		if err != nil {
+			return
+		}
+	}
 }
 
 // runMockMCPServer reads MCP JSON-RPC requests from stdin and writes responses to stdout.
@@ -141,12 +160,14 @@ func TestClient_TimeoutReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
-	// Use a very short timeout so the initialize handshake times out.
+	// Hang mock never answers initialize; use a short but OS-timer-safe timeout.
+	// 1ms is unreliable on Windows (timer resolution ~15ms) and can lose the
+	// race against a fast mock — hang mode removes that race entirely.
 	cfg := Config{
 		Headless:    true,
-		TimeoutMS:   1, // 1ms — will always time out
+		TimeoutMS:   100,
 		CmdOverride: []string{exe, "-test.run=^TestMain$", "-test.v=false"},
-		EnvOverride: append(os.Environ(), "BE_MOCK_MCP_SERVER=1"),
+		EnvOverride: append(os.Environ(), "BE_MOCK_MCP_SERVER=hang"),
 	}
 	c := New(cfg)
 	defer func() { _ = c.Close() }()
