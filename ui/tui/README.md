@@ -76,7 +76,7 @@ ui/tui/
   app_rpc.go          — agent event handlers (stream/tools/turn/chrome)
   app_view.go         — View + input chrome
   app_session/status/todos/turn/… — session & chrome helpers
-  view/               — widgets (chat, tools, task_panel, …)
+  view/               — widgets (chat, input_*.go, tools, task_panel, …)
   state/              — messages, TurnFSM, toolblocks
   rpcclient/          — JSON-RPC stdio → orchestra core
   theme/
