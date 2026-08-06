@@ -359,6 +359,8 @@ func (c *Client) SkillInvoke(ctx context.Context, name, arguments string, opts S
 
 // ApplyOps sends the given ops to the core for application (no LLM re-run).
 // rawOps is the slice of ops as received in PendingOpsPayload.Ops.
+// Unused by the interactive TUI (auto-commit apply=true); kept for legacy
+// pending-ops / CLI-style callers.
 func (c *Client) ApplyOps(ctx context.Context, rawOps []map[string]any) error {
 	params := map[string]any{
 		"ops":    rawOps,

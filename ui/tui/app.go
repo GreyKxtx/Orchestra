@@ -95,7 +95,7 @@ type App struct {
 
 	// activeCancel cancels the currently in-flight long-running RPC
 	// (agent.run / workflow.run / skill.invoke). Set when the call starts,
-	// cleared when it completes. Bound to Esc while agentBusy so the user
+	// cleared when it completes. Bound to Esc while the turn is busy so the user
 	// can abort a stuck run; the rpcclient's Call sends $/cancelRequest to
 	// the core so the server-side ctx is cancelled too.
 	activeCancel context.CancelFunc

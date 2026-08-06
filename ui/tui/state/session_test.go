@@ -155,27 +155,6 @@ func TestSession_AppendDeltaWithoutActiveAssistant_NoOp(t *testing.T) {
 	}
 }
 
-func TestToggleLastToolBlock(t *testing.T) {
-	s := state.NewSession()
-	s.StartAssistant("", "")
-	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
-	s.UpdateToolBlock("t1", state.ToolBlockCompleted, "line1\nline2", nil)
-	// No auto-expand — tools start collapsed regardless of result size.
-	if s.Messages[0].ToolBlocks[0].Expanded {
-		t.Fatal("expected tool block to stay collapsed after completion")
-	}
-	// toggle on
-	s.ToggleLastToolBlock()
-	if !s.Messages[0].ToolBlocks[0].Expanded {
-		t.Fatal("expected toggle on")
-	}
-	// toggle off
-	s.ToggleLastToolBlock()
-	if s.Messages[0].ToolBlocks[0].Expanded {
-		t.Fatal("expected toggle off")
-	}
-}
-
 func TestNoAutoExpandLongResult(t *testing.T) {
 	s := state.NewSession()
 	s.StartAssistant("", "")

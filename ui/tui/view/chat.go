@@ -36,7 +36,6 @@ type Chat struct {
 	streamCursor  bool            // when true, appends ▋ to last assistant token
 	welcome       WelcomeInfo     // metadata for the empty-state welcome screen
 	forceWelcome  bool            // when true, always show welcome regardless of content
-	agentBusy     bool            // affects the help line shown below messages
 	chatMode      string          // current agent mode; drives ┃ color + footer
 	chatModel     string          // current model name; rendered in per-turn footer
 	spinFrame     int             // current spinner frame; advanced by App every tick
@@ -76,9 +75,6 @@ func (c *Chat) SetWelcomeInfo(info WelcomeInfo) { c.welcome = info }
 
 // SetForceWelcome controls whether the welcome screen is shown regardless of chat content.
 func (c *Chat) SetForceWelcome(v bool) { c.forceWelcome = v }
-
-// SetAgentBusy controls the help line text shown below messages.
-func (c *Chat) SetAgentBusy(b bool) { c.agentBusy = b }
 
 // SetStreamCursor controls whether a blinking cursor is appended to the
 // last message (used while agent is streaming a response).

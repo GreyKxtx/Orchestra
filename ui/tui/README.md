@@ -67,14 +67,19 @@ orchestra tui
 
 ```
 ui/tui/
-  app.go, app_view.go, app_update.go, app_rpc.go, …
-  view/
-    chat.go, input.go, statusbar.go, task_panel.go
-    tool_*.go, notice.go, diff*.go, modal.go, palette*.go
-    workflow_progress.go, progress_glyphs.go
-  state/          — messages, TurnFSM, toolblocks
-  rpcclient/      — JSON-RPC stdio → orchestra core
-  theme/          — orchestra (default), neutral
+  app.go              — App struct, Init
+  app_update.go       — Update dispatcher
+  app_keys.go         — routeKey / Enter / chrome hotkeys
+  app_mouse.go        — mouse handlers
+  app_layout.go       — layout()
+  app_diff.go         — commit diff toggle / restore
+  app_rpc.go          — agent event handlers (stream/tools/turn/chrome)
+  app_view.go         — View + input chrome
+  app_session/status/todos/turn/… — session & chrome helpers
+  view/               — widgets (chat, tools, task_panel, …)
+  state/              — messages, TurnFSM, toolblocks
+  rpcclient/          — JSON-RPC stdio → orchestra core
+  theme/
 ```
 
 Ход чата идёт через `session.message` (не one-shot `agent.run`). Streaming events: `message_delta`, `tool_call_*`, `todos_updated`, `step_usage`, `permission/request`.

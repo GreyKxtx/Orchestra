@@ -337,20 +337,6 @@ func (s *Session) FinishAssistant() {
 	s.activeAssistant = -1
 }
 
-// ToggleLastToolBlock toggles the Expanded flag on the most recently completed
-// or failed tool block across all messages. No-op if no such block exists.
-func (s *Session) ToggleLastToolBlock() {
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		blocks := s.Messages[i].ToolBlocks
-		for j := len(blocks) - 1; j >= 0; j-- {
-			if blocks[j].Status != ToolBlockRunning {
-				s.Messages[i].ToolBlocks[j].Expanded = !s.Messages[i].ToolBlocks[j].Expanded
-				return
-			}
-		}
-	}
-}
-
 const RoleDiff Role = "diff"
 
 // AddDiffFiles appends a collapsible diff message (rendered in view layer).

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -11,8 +10,6 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
-
-func itoa(i int) string { return strconv.Itoa(i) }
 
 func rpcEventErrorText(ev rpcclient.Event) string {
 	if msg := strings.TrimSpace(ev.Err); msg != "" {
@@ -52,26 +49,51 @@ func (a *App) listenForEvents() tea.Cmd {
 // so the caller can autosave the session record.
 func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 	var saveCmd tea.Cmd
-	// High-frequency stream events (text/tool-args deltas) mutate session
-	// state but skip the immediate re-render — the 100ms tick already calls
-	// SetMessages while agentBusy and chatDirty, so we get a smooth 10 fps
-	// view without rebuilding the entire chat content (and re-running the
-	// glamour pipeline) for every single token. This was the source of
-	// perceptible UI lag after the model "finished" — the queue of delta
-	// events would still be draining for seconds.
+	// High-frequency stream events skip immediate re-render; the 100ms tick
+	// rebuilds chat when chatDirty while the turn is busy (~10 fps).
 	skipRender := false
 
+	switch ev.Kind {
+	case rpcclient.EventReasoningDelta, rpcclient.EventMessageDelta,
+		rpcclient.EventDone, rpcclient.EventStepUsage:
+		skipRender = a.handleRPCStream(ev)
+
+	case rpcclient.EventToolCallStart, rpcclient.EventToolCallDelta,
+		rpcclient.EventToolCallCompleted, rpcclient.EventStepDone,
+		rpcclient.EventRecoverableError, rpcclient.EventExecOutputChunk:
+		skipRender = a.handleRPCTools(ev)
+
+	case rpcclient.EventConnectionClosed, rpcclient.EventAgentRunCompleted,
+		rpcclient.EventError, rpcclient.EventConnectionError:
+		saveCmd = a.handleRPCTurnTerminal(ev)
+
+	case rpcclient.EventPendingOps, rpcclient.EventTurnUsage,
+		rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated,
+		rpcclient.EventInitialized, rpcclient.EventPermissionRequest,
+		rpcclient.EventQuestionAsked, rpcclient.EventWorkflowStageStart,
+		rpcclient.EventWorkflowStageDone:
+		a.handleRPCChrome(ev)
+	}
+
+	if !skipRender {
+		a.chat.SetMessages(a.session.Messages)
+	}
+	a.updateStatusHints()
+	return saveCmd
+}
+
+// handleRPCStream handles reasoning/message deltas, per-step usage, and Done.
+// Returns true when the caller should skip an immediate chat rebuild.
+func (a *App) handleRPCStream(ev rpcclient.Event) (skipRender bool) {
 	switch ev.Kind {
 	case rpcclient.EventReasoningDelta:
 		if delta := ev.Content; delta != "" {
 			a.session.AppendAssistantReasoningDelta(delta)
 			a.chat.SetStreamCursor(true)
 			a.chatDirty = true
-			skipRender = true
+			return true
 		}
 	case rpcclient.EventMessageDelta:
-		// Models that embed CoT in content still use <think>...</think>.
-		// Dedicated reasoning_content arrives as EventReasoningDelta above.
 		reasoning, message := a.reasoning.Feed(ev.Content)
 		if reasoning != "" {
 			a.session.AppendAssistantReasoningDelta(reasoning)
@@ -81,7 +103,32 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		}
 		a.chat.SetStreamCursor(true)
 		a.chatDirty = true
-		skipRender = true
+		return true
+	case rpcclient.EventStepUsage:
+		if ev.Usage != nil && ev.Usage.PromptTokens > 0 {
+			a.livePromptTokens = ev.Usage.PromptTokens
+			a.promptTokensUsed = ev.Usage.PromptTokens
+			a.session.SetAssistantPromptCtx(ev.Usage.PromptTokens)
+			a.syncStatusBar()
+			a.chatDirty = true
+		}
+	case rpcclient.EventDone:
+		// Per LLM stream end (not end of user turn). Flush think-tag carry only.
+		if a.reasoning.Carry != "" {
+			if a.reasoning.InThink {
+				a.session.AppendAssistantReasoningDelta(a.reasoning.Carry)
+			} else {
+				a.session.AppendAssistantDelta(a.reasoning.Carry)
+			}
+		}
+		a.reasoning.Reset()
+	}
+	return false
+}
+
+// handleRPCTools handles tool-call lifecycle and recoverable errors.
+func (a *App) handleRPCTools(ev rpcclient.Event) (skipRender bool) {
+	switch ev.Kind {
 	case rpcclient.EventToolCallStart:
 		a.session.AppendToolBlock(state.ToolBlock{
 			ID:     ev.ToolCallID,
@@ -91,12 +138,11 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.statusBar.SetActiveTool(view.ToolDisplayName(ev.ToolCallName), "")
 	case rpcclient.EventToolCallDelta:
 		a.session.AppendToolArgsDelta(ev.ToolCallID, ev.ArgsDelta)
-		// Update status bar with the latest path/preview as args stream in.
 		if tb, ok := a.session.FindToolBlock(ev.ToolCallID); ok {
 			a.statusBar.SetActiveTool(view.ToolDisplayName(tb.Name), view.ToolArgsPath(tb.Name, tb.ArgsRaw))
 		}
 		a.chatDirty = true
-		skipRender = true
+		return true
 	case rpcclient.EventToolCallCompleted:
 		if tb, ok := a.session.FindToolBlock(ev.ToolCallID); ok {
 			if items := parseTodosFromTool(tb.Name, tb.ArgsRaw); len(items) > 0 {
@@ -136,8 +182,15 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		if chunk := ev.Content; chunk != "" {
 			a.session.AppendRunningToolOutput(chunk)
 			a.chatDirty = true
-			skipRender = true
+			return true
 		}
+	}
+	return false
+}
+
+// handleRPCTurnTerminal handles end-of-turn / connection failure events.
+func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
+	switch ev.Kind {
 	case rpcclient.EventConnectionClosed:
 		if a.turn.ShowBusySpinner() {
 			a.failAgentTurn()
@@ -147,32 +200,9 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 			a.chat.SetStreamCursor(false)
 			a.livePromptTokens = 0
 			a.layout()
-			saveCmd = a.persistSessionCmd()
+			return a.persistSessionCmd()
 		}
-	case rpcclient.EventStepUsage:
-		if ev.Usage != nil && ev.Usage.PromptTokens > 0 {
-			a.livePromptTokens = ev.Usage.PromptTokens
-			a.promptTokensUsed = ev.Usage.PromptTokens
-			a.session.SetAssistantPromptCtx(ev.Usage.PromptTokens)
-			a.syncStatusBar()
-			a.chatDirty = true
-		}
-	case rpcclient.EventDone:
-		// EventDone fires at the end of EVERY LLM stream — i.e. once per agent
-		// loop iteration, not once per user turn. Don't finalize the assistant
-		// here: the agent may run more tool calls and stream more content
-		// before the user turn actually ends. We only flush carry-over bytes
-		// from `<think>` tag prefix detection (those are per-stream).
-		if a.reasoning.Carry != "" {
-			if a.reasoning.InThink {
-				a.session.AppendAssistantReasoningDelta(a.reasoning.Carry)
-			} else {
-				a.session.AppendAssistantDelta(a.reasoning.Carry)
-			}
-		}
-		a.reasoning.Reset()
 	case rpcclient.EventAgentRunCompleted:
-		// Real end of the user turn. Now we finalize.
 		a.clearActiveCancel()
 		if a.turnError != "" {
 			a.reasoning.Reset()
@@ -184,13 +214,8 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 			a.turnError = ""
 			a.livePromptTokens = 0
 			a.layout()
-			saveCmd = a.persistSessionCmd()
-			break
+			return a.persistSessionCmd()
 		}
-		// Carry is always flushed to TEXT here — a stranded carry inside an
-		// unclosed `<think>` block at end-of-run means the provider never
-		// emitted `</think>`, so treating it as reasoning would hide it
-		// forever. Better to surface the bytes as visible text.
 		if a.reasoning.Carry != "" {
 			a.session.AppendAssistantDelta(a.reasoning.Carry)
 		}
@@ -204,7 +229,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.livePromptTokens = 0
 		a.chat.SetStreamCursor(false)
 		a.layout()
-		saveCmd = a.persistSessionCmd()
+		return a.persistSessionCmd()
 	case rpcclient.EventError:
 		if msg := rpcEventErrorText(ev); msg != "" {
 			a.turnError = msg
@@ -221,10 +246,17 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.statusBar.SetError(msg)
 		a.chat.SetStreamCursor(false)
 		a.session.AppendSystemNotice(state.SystemKindError, msg)
-		saveCmd = a.persistSessionCmd()
+		return a.persistSessionCmd()
+	}
+	return nil
+}
+
+// handleRPCChrome handles pending ops, usage, todos, permissions, questions, workflows.
+func (a *App) handleRPCChrome(ev rpcclient.Event) {
+	switch ev.Kind {
 	case rpcclient.EventPendingOps:
 		if ev.PendingOps == nil {
-			break
+			return
 		}
 		if ev.PendingOps.Applied {
 			if n := len(ev.PendingOps.Ops); n > 0 {
@@ -259,7 +291,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 				if a.rpc != nil {
 					a.rpc.RespondPermission(true)
 				}
-				break
+				return
 			}
 			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
 			a.layout()
@@ -306,9 +338,4 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 			})
 		}
 	}
-	if !skipRender {
-		a.chat.SetMessages(a.session.Messages)
-	}
-	a.updateStatusHints()
-	return saveCmd
 }

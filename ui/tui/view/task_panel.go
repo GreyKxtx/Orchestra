@@ -53,7 +53,6 @@ func (p *TaskPanel) SetItems(items []TodoView) {
 		p.scroll = 0
 	}
 }
-func (p *TaskPanel) Items() []TodoView { return p.items }
 
 func (p *TaskPanel) Toggle() {
 	if len(p.items) == 0 {

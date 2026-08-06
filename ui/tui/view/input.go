@@ -111,10 +111,6 @@ func (in Input) TextareaWidth() int {
 	return in.ta.Width()
 }
 
-// TextareaView renders just the underlying textarea (no "> " prompt).
-// Used by the welcome view which renders the input inside a styled box.
-func (in Input) TextareaView() string { return in.ta.View() }
-
 // Value returns the current text.
 func (in Input) Value() string { return in.ta.Value() }
 

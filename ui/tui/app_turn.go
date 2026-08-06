@@ -2,15 +2,12 @@ package tui
 
 import (
 	"strings"
-
-	"github.com/orchestra/orchestra/ui/tui/state"
 )
 
-// syncTurnUI pushes TurnFSM busy state into status bar and chat widgets.
+// syncTurnUI pushes TurnFSM busy state into the status bar spinner.
 func (a *App) syncTurnUI() {
 	busy := a.turn.ShowBusySpinner()
 	a.statusBar.SetAgentBusy(busy)
-	a.chat.SetAgentBusy(busy)
 }
 
 // syncTurnComposing updates idle/composing from the textarea contents.
@@ -66,9 +63,4 @@ func (a *App) failAgentTurn() {
 func (a *App) resetTurnFSM() {
 	a.turn.Reset()
 	a.syncTurnUI()
-}
-
-// turnState exposes the current FSM state for views/tests.
-func (a *App) turnState() state.TurnState {
-	return a.turn.State
 }
