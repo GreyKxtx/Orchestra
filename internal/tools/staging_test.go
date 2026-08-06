@@ -104,7 +104,7 @@ func TestStaging_ReadAfterWrite(t *testing.T) {
 func TestStaging_EditDryRun(t *testing.T) {
 	r := newDryRunRunner(t)
 	p := filepath.Join(r.workspaceRoot, "code.go")
-	if err := os.WriteFile(p, []byte("func hello() {}\n"), 0644); err != nil {
+	if err := os.WriteFile(p, []byte("package main\n\nfunc hello() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,7 +118,7 @@ func TestStaging_EditDryRun(t *testing.T) {
 	}
 
 	got, _ := os.ReadFile(p)
-	if string(got) != "func hello() {}\n" {
+	if string(got) != "package main\n\nfunc hello() {}\n" {
 		t.Fatalf("disk was modified: %q", string(got))
 	}
 
@@ -134,7 +134,7 @@ func TestStaging_EditDryRun(t *testing.T) {
 func TestStaging_ApplyPatchesToStaged_SearchReplace(t *testing.T) {
 	r := newDryRunRunner(t)
 	p := filepath.Join(r.workspaceRoot, "src.go")
-	if err := os.WriteFile(p, []byte("func hello() {}\n"), 0644); err != nil {
+	if err := os.WriteFile(p, []byte("package main\n\nfunc hello() {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +155,7 @@ func TestStaging_ApplyPatchesToStaged_SearchReplace(t *testing.T) {
 	if !strings.Contains(content, "world") || strings.Contains(content, "hello") {
 		t.Fatalf("unexpected staged content: %q", content)
 	}
-	if got, err := os.ReadFile(p); err != nil || string(got) != "func hello() {}\n" {
+	if got, err := os.ReadFile(p); err != nil || string(got) != "package main\n\nfunc hello() {}\n" {
 		t.Fatalf("disk was modified: %q", string(got))
 	}
 }
@@ -263,6 +263,46 @@ func TestStaging_MergeIntoList_ShowsStagedOnlyFiles(t *testing.T) {
 	}
 }
 
+func TestStaging_ASTGate_RejectsInvalidGo(t *testing.T) {
+	r := newDryRunRunner(t)
+
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path:         "broken.go",
+		Content:      "package main\n\nfunc main() {\n",
+		MustNotExist: true,
+	})
+	if err == nil {
+		t.Fatal("expected SyntaxError")
+	}
+	if !strings.Contains(err.Error(), "SyntaxError") {
+		t.Fatalf("expected SyntaxError, got %v", err)
+	}
+	if len(r.StagedOps()) != 0 {
+		t.Fatal("invalid content must not reach staging overlay")
+	}
+}
+
+func TestStaging_ASTGate_CanDisable(t *testing.T) {
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{DryRun: true, DisableASTGate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close() })
+
+	_, err = r.FSWrite(context.Background(), FSWriteRequest{
+		Path:         "broken.go",
+		Content:      "package main\n\nfunc main() {\n",
+		MustNotExist: true,
+	})
+	if err != nil {
+		t.Fatalf("gate disabled: %v", err)
+	}
+	if len(r.StagedOps()) != 1 {
+		t.Fatal("expected staged op with gate off")
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
 
 func TestStaging_ClearStaged(t *testing.T) {
@@ -274,5 +314,33 @@ func TestStaging_ClearStaged(t *testing.T) {
 	r.ClearStaged()
 	if len(r.StagedOps()) != 0 {
 		t.Fatal("expected empty staged ops after clear")
+	}
+}
+
+func TestCommitStagedPath_WritesToDisk(t *testing.T) {
+	r := newDryRunRunner(t)
+	_, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path:    "live.txt",
+		Content: "on disk now",
+	})
+	if err != nil {
+		t.Fatalf("FSWrite: %v", err)
+	}
+	resp, err := r.CommitStagedPath(context.Background(), "live.txt", false)
+	if err != nil {
+		t.Fatalf("CommitStagedPath: %v", err)
+	}
+	if resp == nil || !resp.Applied || len(resp.ChangedFiles) != 1 {
+		t.Fatalf("commit response: %+v", resp)
+	}
+	b, err := os.ReadFile(filepath.Join(r.workspaceRoot, "live.txt"))
+	if err != nil {
+		t.Fatalf("read disk: %v", err)
+	}
+	if string(b) != "on disk now" {
+		t.Fatalf("disk content: %q", b)
+	}
+	if len(r.StagedOps()) != 0 {
+		t.Fatal("expected overlay cleared after commit")
 	}
 }

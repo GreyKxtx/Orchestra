@@ -2,6 +2,7 @@
 package state
 
 import (
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,22 @@ const (
 	RoleAssistant Role = "assistant"
 	RoleSystem    Role = "system"
 )
+
+// SystemKind classifies standalone system messages and inline assistant notices.
+type SystemKind string
+
+const (
+	SystemKindInfo    SystemKind = "info"
+	SystemKindRetry   SystemKind = "retry"
+	SystemKindError   SystemKind = "error"
+	SystemKindSuccess SystemKind = "success"
+)
+
+// SystemNotice is a compact status line shown inside an assistant turn.
+type SystemNotice struct {
+	Kind SystemKind
+	Text string
+}
 
 // Message is one entry in the chat scroll. Either Text-only (user/system)
 // or Assistant with optional ToolBlocks interleaved.
@@ -33,10 +50,14 @@ type Message struct {
 	StartedAt time.Time
 	Duration  time.Duration
 
-	// TokensIn / TokensOut come from the provider's usage report on the last
-	// stream chunk. Zero when the provider doesn't report usage.
+	// TokensIn / TokensOut come from the provider's usage report for the turn
+	// (often summed across LLM steps). Used in the assistant footer.
 	TokensIn  int
 	TokensOut int
+
+	// PromptCtx is the last per-step prompt size (context window fill) for the
+	// status-bar tokens indicator. Distinct from TokensIn turn totals.
+	PromptCtx int
 
 	// Mode / Model identify the agent mode and LLM used at the time this
 	// message was sent (user) or generated (assistant). Stored per-message
@@ -45,6 +66,28 @@ type Message struct {
 	// must not retroactively recolor old turns.
 	Mode  string
 	Model string
+
+	// DiffFiles holds structured before/after for RoleDiff messages.
+	DiffFiles    []DiffFile
+	DiffExpanded bool
+
+	// SystemKind applies to RoleSystem messages (error, retry, committed, …).
+	SystemKind SystemKind
+
+	// Notices are inline retry/status lines attached to an assistant turn.
+	Notices []SystemNotice
+
+	// ToolsExpanded persists Ctrl+T tool-group expand for reopen.
+	ToolsExpanded bool
+	// ReasoningExpanded persists CoT expand (default collapsed when long).
+	ReasoningExpanded bool
+}
+
+// DiffFile is one file change shown inline in the chat diff panel.
+type DiffFile struct {
+	Path   string
+	Before string
+	After  string
 }
 
 // Session is the TUI's local view of the current chat.
@@ -64,6 +107,41 @@ func NewSession() *Session {
 // AppendMessage adds a message to history.
 func (s *Session) AppendMessage(m Message) {
 	s.Messages = append(s.Messages, m)
+}
+
+// AppendAssistantNotice adds a deduplicated notice to the active assistant turn.
+// Falls back to a standalone system message when no assistant is streaming.
+func (s *Session) AppendAssistantNotice(kind SystemKind, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		s.AppendMessage(Message{Role: RoleSystem, SystemKind: kind, Text: text})
+		return
+	}
+	m := &s.Messages[s.activeAssistant]
+	for _, n := range m.Notices {
+		if n.Kind == kind && n.Text == text {
+			return
+		}
+	}
+	m.Notices = append(m.Notices, SystemNotice{Kind: kind, Text: text})
+}
+
+// AppendSystemNotice adds a standalone styled system message.
+func (s *Session) AppendSystemNotice(kind SystemKind, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if n := len(s.Messages); n > 0 {
+		prev := s.Messages[n-1]
+		if prev.Role == RoleSystem && prev.SystemKind == kind && prev.Text == text {
+			return
+		}
+	}
+	s.AppendMessage(Message{Role: RoleSystem, SystemKind: kind, Text: text})
 }
 
 // StartAssistant begins a new streaming assistant message and returns its
@@ -98,6 +176,14 @@ func (s *Session) SetAssistantUsage(in, out int) {
 	}
 	s.Messages[s.activeAssistant].TokensIn = in
 	s.Messages[s.activeAssistant].TokensOut = out
+}
+
+// SetAssistantPromptCtx records the latest per-step prompt size for the ctx bar.
+func (s *Session) SetAssistantPromptCtx(n int) {
+	if n <= 0 || s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return
+	}
+	s.Messages[s.activeAssistant].PromptCtx = n
 }
 
 // AppendAssistantDelta appends a token to the active assistant message.
@@ -190,7 +276,7 @@ func (s *Session) AppendToolArgsDelta(id, delta string) {
 // promote the FIRST still-running block to completed — the order of starts
 // and completions is the same, so this stays correct under sequential tool
 // execution.
-func (s *Session) UpdateToolBlock(id string, status ToolBlockStatus, result string) bool {
+func (s *Session) UpdateToolBlock(id string, status ToolBlockStatus, result string, diags []ToolDiagnostic) bool {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return false
 	}
@@ -215,7 +301,27 @@ func (s *Session) UpdateToolBlock(id string, status ToolBlockStatus, result stri
 	}
 	blocks[idx].Status = status
 	blocks[idx].Result = result
+	blocks[idx].Diagnostics = diags
 	return true
+}
+
+// AppendRunningToolOutput appends streamed stdout to the last running exec/bash
+// tool block in the active assistant message.
+func (s *Session) AppendRunningToolOutput(chunk string) {
+	if chunk == "" || s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return
+	}
+	blocks := s.Messages[s.activeAssistant].ToolBlocks
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if blocks[i].Status != ToolBlockRunning {
+			continue
+		}
+		name := strings.ToLower(blocks[i].Name)
+		if name == "exec.run" || name == "bash" {
+			blocks[i].Result += chunk
+			return
+		}
+	}
 }
 
 // FinishAssistant marks the active assistant message as no longer streaming
@@ -247,9 +353,24 @@ func (s *Session) ToggleLastToolBlock() {
 
 const RoleDiff Role = "diff"
 
-// AddDiff appends a diff display message to history.
-func (s *Session) AddDiff(content string) {
-	s.Messages = append(s.Messages, Message{Role: RoleDiff, Text: content})
+// AddDiffFiles appends a collapsible diff message (rendered in view layer).
+func (s *Session) AddDiffFiles(files []DiffFile) {
+	if len(files) == 0 {
+		return
+	}
+	cp := append([]DiffFile(nil), files...)
+	s.Messages = append(s.Messages, Message{Role: RoleDiff, DiffFiles: cp})
+}
+
+// ToggleLastDiff expands/collapses the most recent diff message.
+func (s *Session) ToggleLastDiff() bool {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role == RoleDiff && len(s.Messages[i].DiffFiles) > 0 {
+			s.Messages[i].DiffExpanded = !s.Messages[i].DiffExpanded
+			return true
+		}
+	}
+	return false
 }
 
 // RemoveDiff removes the last diff message from history.

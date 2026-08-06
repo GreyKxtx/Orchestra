@@ -45,4 +45,5 @@ type Health struct {
 
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
+	LSPStatus     string `json:"lsp_status,omitempty"` // off | idle | active
 }

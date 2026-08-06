@@ -10,15 +10,12 @@ import (
 )
 
 // historyBytes returns the approximate size of the history in bytes.
-// Counts content strings and tool call argument blobs (the bulk of long histories).
+// Uses the same estimator as truncation so compaction thresholds align with
+// real MaxPromptBytes budgeting.
 func historyBytes(history []llm.Message) int {
 	total := 0
 	for _, m := range history {
-		total += len(m.Content)
-		for _, tc := range m.ToolCalls {
-			total += len(tc.Function.Name)
-			total += len(tc.Function.Arguments.Raw())
-		}
+		total += estimateMessageSize(m)
 	}
 	return total
 }

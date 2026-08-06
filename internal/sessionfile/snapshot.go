@@ -30,6 +30,7 @@ type Snapshot struct {
 	UIMessages  []UIMessage      `json:"ui_messages"`
 	Profile     string           `json:"profile,omitempty"`
 	ApplyOutput string           `json:"apply_output,omitempty"`
+	CostUSD     float64          `json:"cost_usd,omitempty"` // session spend (paid providers)
 	// MsgCount supports legacy list UIs; equals len(UIMessages) when unset.
 	MsgCount int `json:"msg_count,omitempty"`
 }

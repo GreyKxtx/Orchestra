@@ -393,3 +393,44 @@ func TestApplyDefaults_PatchDir(t *testing.T) {
 		t.Fatalf("patch_dir=%q", cfg.Apply.PatchDir)
 	}
 }
+
+func TestEffectiveNumCtx(t *testing.T) {
+	cfg := &ProjectConfig{
+		LLM: LLMConfig{
+			Model:        "qwen/qwen3.6-27b",
+			ExtraBody:      map[string]any{"num_ctx": 20000},
+			ModelPresets: map[string]ModelPreset{
+				"qwen/qwen3.6-27b": {NumCtx: 70000},
+			},
+		},
+	}
+	if got := cfg.EffectiveNumCtx(); got != 70000 {
+		t.Fatalf("preset: got %d want 70000", got)
+	}
+	cfg.LLM.ModelPresets = nil
+	if got := cfg.EffectiveNumCtx(); got != 20000 {
+		t.Fatalf("extra_body: got %d want 20000", got)
+	}
+	cfg.LLM.ExtraBody = nil
+	if got := cfg.EffectiveNumCtx(); got != 0 {
+		t.Fatalf("empty: got %d want 0", got)
+	}
+}
+
+func TestEffectiveMaxPromptBytes(t *testing.T) {
+	cfg := &ProjectConfig{
+		Limits: LimitsConfig{ContextKB: 64},
+		LLM: LLMConfig{
+			Model:     "qwen/qwen3.6-27b",
+			ExtraBody: map[string]any{"num_ctx": 60000},
+		},
+	}
+	want := 60000 * bytesPerContextToken
+	if got := cfg.EffectiveMaxPromptBytes(); got != want {
+		t.Fatalf("num_ctx wins: got %d want %d", got, want)
+	}
+	cfg.LLM.ExtraBody = nil
+	if got := cfg.EffectiveMaxPromptBytes(); got != 64*1024 {
+		t.Fatalf("context_kb only: got %d want %d", got, 64*1024)
+	}
+}

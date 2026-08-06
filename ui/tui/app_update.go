@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -41,7 +40,7 @@ func isNoiseKey(km tea.KeyMsg) bool {
 //   - DialogResultMsg / ModelsLoadedMsg / settingsSavedMsg — dialog stack flow
 //   - MouseMsg                                        — wheel scroll
 //   - KeyMsg                                          — main keyboard dispatcher
-//   - rpcEventMsg / applyResultMsg                    — agent streaming + apply
+//   - rpcEventMsg                                       — agent streaming
 //
 // Anything not handled here falls through to the textarea.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -116,6 +115,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.cfg.Model = cfg.LLM.Model
 		a.statusBar.SetModel(cfg.LLM.Model)
+		a.setContextLimitFromConfig(cfg)
 		a.chat.SetMeta(a.cfg.Mode, a.cfg.Model)
 		a.chat.SetWelcomeInfo(a.buildWelcomeInfo())
 		binary := a.cfg.Binary
@@ -150,11 +150,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleDialogResult(m)
 
 	case view.ModelsLoadedMsg:
-		// Forward to the ModelDialog at the top of the stack, if any.
 		if len(a.dialogStack) > 0 {
 			if md, ok := a.dialogStack[len(a.dialogStack)-1].(*view.ModelDialog); ok {
 				if m.Err != "" {
-					md.SetLoadError(m.Err)
+					if fallback := view.CloudModels[md.Provider().Key]; len(fallback) > 0 {
+						md.SetModels(fallback)
+					} else {
+						md.SetLoadError(m.Err)
+					}
 				} else {
 					md.SetModels(m.Models)
 				}
@@ -176,6 +179,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.ScrollDown(3)
 			return a, nil
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
+			if !a.showWelcome && a.taskPanelHeight > 0 && a.taskPanelTopY >= 0 &&
+				m.Y >= a.taskPanelTopY && m.Y < a.taskPanelTopY+a.taskPanelHeight &&
+				len(a.todos) > 0 {
+				a.toggleTaskPanel()
+				return a, nil
+			}
+			if !a.showWelcome && m.Y == a.statusBarRowY {
+				_ = m.X
+			}
 			// In passthrough mode mouse reporting is disabled — this event won't arrive.
 			inputH := a.input.Inner().Height()
 			if inputH < 1 {
@@ -191,12 +203,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					contentY := a.chat.ViewportYOffset() + (m.Y - topY)
 					role, text, ok := a.chat.MessageAtContentY(contentY)
 					if ok && text != "" {
-						if role == state.RoleUser {
-							a.pushDialog(view.NewMessageActionDialog(text, true))
-						} else if role == state.RoleAssistant {
-							_ = clipboard.WriteAll(text)
-							a.showToast("Скопировано")
-						}
+						// Same dialog for user and assistant (Copy; Edit only for user).
+						a.pushDialog(view.NewMessageActionDialog(text, role == state.RoleUser))
 					}
 				}
 				return a, nil
@@ -299,16 +307,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saveCmd := a.handleRPCEvent(rpcclient.Event(m))
 		listenCmd := a.listenForEvents()
 		return a, tea.Batch(saveCmd, listenCmd)
-
-	case applyResultMsg:
-		if m.err != nil {
-			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[apply failed] " + m.err.Error()})
-		} else {
-			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: fmt.Sprintf("[applied %d ops]", m.count)})
-		}
-		a.finishApplyTurn()
-		a.chat.SetMessages(a.session.Messages)
-		return a, nil
 
 	case systemMsgMsg:
 		return a, a.handleSystemMsg(m)
@@ -540,13 +538,61 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return a, a.sendKeyToTA(tea.KeyDown), true
 
 	case "ctrl+left":
-		a.input.ClearSelection()
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToStart()
+			return a, nil, true
+		}
 		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
 	case "ctrl+right":
-		a.input.ClearSelection()
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToEnd()
+			return a, nil, true
+		}
+		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
+
+	case "left":
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToStart()
+			return a, nil, true
+		}
+		return a, a.sendKeyToTA(tea.KeyLeft), true
+	case "right":
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToEnd()
+			return a, nil, true
+		}
+		return a, a.sendKeyToTA(tea.KeyRight), true
+	case "home":
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToStart()
+			return a, nil, true
+		}
+		return a, a.sendKeyToTA(tea.KeyHome), true
+	case "end":
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToEnd()
+			return a, nil, true
+		}
+		return a, a.sendKeyToTA(tea.KeyEnd), true
+	case "alt+left":
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToStart()
+			return a, nil, true
+		}
+		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
+	case "alt+right":
+		if a.input.HasSelection() {
+			a.input.CollapseSelectionToEnd()
+			return a, nil, true
+		}
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
 	case "up":
+		if a.taskPanelOpen && a.taskPanel != nil {
+			a.taskPanel.ScrollUp()
+			a.layout()
+			return a, nil, true
+		}
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
 			return a, nil, true
@@ -564,6 +610,11 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.input.SetValue(text)
 		return a, nil, true
 	case "down":
+		if a.taskPanelOpen && a.taskPanel != nil {
+			a.taskPanel.ScrollDown()
+			a.layout()
+			return a, nil, true
+		}
 		if a.paletteActive {
 			a.slashPalette.CursorDown()
 			return a, nil, true
@@ -584,20 +635,33 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 	case "y":
 		if a.permModal != nil {
-			a.permModal = nil
-			a.updateStatusHints()
-			if a.rpc != nil {
-				a.rpc.RespondPermission(true)
-			}
+			a.respondShellPermission(true, false, false)
 			return a, nil, true
+		}
+	case "a":
+		if a.permModal != nil {
+			a.respondShellPermission(true, true, false)
+			return a, nil, true
+		}
+	case "t":
+		if a.permModal != nil {
+			a.respondShellPermission(true, false, true)
+			return a, nil, true
+		}
+		// Bare "t": Tasks when todos exist; else same cascade as Ctrl+T.
+		// Only when input is empty — otherwise type normally.
+		if a.inputEmpty() {
+			if len(a.todos) > 0 {
+				a.toggleTaskPanel()
+				return a, nil, true
+			}
+			if a.handleCtrlTCascade() {
+				return a, nil, true
+			}
 		}
 	case "n":
 		if a.permModal != nil {
-			a.permModal = nil
-			a.updateStatusHints()
-			if a.rpc != nil {
-				a.rpc.RespondPermission(false)
-			}
+			a.respondShellPermission(false, false, false)
 			return a, nil, true
 		}
 	case "pgup":
@@ -610,21 +674,21 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.chat.ScrollUp(0)
 		return a, nil, true
 	case "ctrl+d":
+		// With empty input + available diff → toggle commit diff (like bare "d").
+		// Otherwise keep classic half-page scroll.
+		if a.inputEmpty() && (len(a.lastCommitDiff) > 0 || a.session.HasDiff()) {
+			a.showCommitDiff()
+			return a, nil, true
+		}
 		a.chat.ScrollDown(0)
 		return a, nil, true
 	case "ctrl+t":
-		// Toggle expand/collapse on the most recent assistant turn that
-		// has tool blocks — same UX as opencode's "view subagents" key.
-		// Keyed by StartedAt so /clear and RemoveDiff don't desync state.
-		for i := len(a.session.Messages) - 1; i >= 0; i-- {
-			m := a.session.Messages[i]
-			if m.Role == state.RoleAssistant && len(m.ToolBlocks) > 0 {
-				a.chat.ExpandTurn(view.MessageKey(m))
-				a.chat.SetMessages(a.session.Messages)
-				break
-			}
-		}
+		a.handleCtrlTCascade()
 		return a, nil, true
+	case "ctrl+r":
+		if a.toggleLastReasoning() {
+			return a, nil, true
+		}
 	case "ctrl+k":
 		if a.commandModal == nil {
 			a.commandModal = view.NewPaletteModal(a.width, a.height)
@@ -672,11 +736,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return a, nil, true
 		}
 		if a.permModal != nil {
-			a.permModal = nil
-			a.updateStatusHints()
-			if a.rpc != nil {
-				a.rpc.RespondPermission(false)
-			}
+			a.respondShellPermission(false, false, false)
 			return a, nil, true
 		}
 		// While a long-running RPC is in flight, Esc cancels it. The local
@@ -688,8 +748,9 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if a.turn.CanCancel() && a.activeCancel != nil {
 			a.clearActiveCancel()
 			a.session.AppendMessage(state.Message{
-				Role: state.RoleSystem,
-				Text: "[cancelled by user]",
+				Role:       state.RoleSystem,
+				SystemKind: state.SystemKindInfo,
+				Text:       "ход отменён",
 			})
 			a.chat.SetMessages(a.session.Messages)
 			return a, nil, true
@@ -710,49 +771,10 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		// Cycle through agent modes (build → ask → plan → build).
 		a.cycleAgentMode()
 		return a, nil, true
-	case "a":
-		if a.pendingOps != nil && a.rpc != nil && a.turn.CanApplyPending() {
-			rawOps := a.pendingOps.Ops
-			count := len(a.pendingOps.Ops)
-			a.pendingOps = nil
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			}
-			a.chat.SetMessages(a.session.Messages)
-			a.layout()
-			a.updateStatusHints()
-			if !a.beginApplyTurn() {
-				return a, nil, true
-			}
-			rpc := a.rpc
-			return a, func() tea.Msg {
-				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
-			}, true
-		}
 	case "d":
-		if a.pendingOps != nil {
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			} else {
-				content := a.buildDiffContent()
-				a.session.AddDiff(content)
-				a.diffShown = true
-			}
-			a.chat.SetMessages(a.session.Messages)
-			return a, nil, true
-		}
-	case "x":
-		if a.pendingOps != nil {
-			a.pendingOps = nil
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			}
-			a.chat.SetMessages(a.session.Messages)
-			a.layout()
-			a.updateStatusHints()
+		// Bare "d" only when input is empty — otherwise type normally.
+		if a.inputEmpty() && (len(a.lastCommitDiff) > 0 || a.session.HasDiff()) {
+			a.showCommitDiff()
 			return a, nil, true
 		}
 	case "backspace":
@@ -777,8 +799,10 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return a.handleEnter()
 	}
 	// Clear selection when a non-shift navigation key falls through to textarea.
+	// left/right/home/end/ctrl|alt+left|right are handled above when a selection
+	// is active (collapse to edge). Remaining keys clear then fall through.
 	switch m.String() {
-	case "left", "right", "ctrl+left", "ctrl+right", "alt+left", "alt+right", "home", "end", "up", "down":
+	case "up", "down":
 		a.input.ClearSelection()
 	}
 	return a, nil, false

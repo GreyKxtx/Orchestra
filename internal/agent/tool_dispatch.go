@@ -12,34 +12,6 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
-// toolNameAliases maps LLM-facing aliases to canonical tool names used by the
-// agent loop and tools.Runner.Call. See docs/tools-status.md.
-var toolNameAliases = map[string]string{
-	"fs.read": "read", "fs.list": "ls", "fs.write": "write", "fs.edit": "edit",
-	"fs.glob": "glob", "file.write_atomic": "write",
-	"search.text": "grep", "code.symbols": "symbols", "explore_codebase": "explore",
-	"exec.run": "bash", "bash_output": "bash.output", "bash_kill": "bash.kill",
-	"todo.write": "todowrite", "todo.read": "todoread",
-	"task.spawn": "task_spawn", "task.wait": "task_wait", "task.cancel": "task_cancel",
-	"task.result": "task_result", "Task": "task",
-	"web.fetch": "webfetch", "web.search": "websearch",
-	"memory.write": "memory_write",
-	"memory.read":  "memory_read",
-}
-
-// normalizeToolName maps common LLM aliases to canonical registry names.
-func normalizeToolName(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	key := strings.ToLower(name)
-	if canon, ok := toolNameAliases[key]; ok {
-		return canon
-	}
-	return key
-}
-
 // isAgentInProcessTool reports tools handled in the agent serial pipeline
 // (session state, subtasks, skills, plan mode) rather than tools.Runner.Call.
 func isAgentInProcessTool(name string) bool {
@@ -115,6 +87,9 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	name := normalizeToolName(tc.Name)
 	if name == "" {
 		return serialToolOutcome{}, nil
+	}
+	if name == "write" || name == "edit" {
+		a.turnMutatingTools++
 	}
 
 	toolCallID := strings.TrimSpace(tc.ID)
@@ -288,6 +263,13 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			content = formatToolErrorJSON(name, tc.Input, err)
 		} else {
 			content = string(out)
+			if name == "todowrite" && a.opts.OnEvent != nil {
+				payload, _ := json.Marshal(a.todos)
+				a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+					Kind:    llm.StreamEventTodosUpdated,
+					Content: string(payload),
+				}})
+			}
 		}
 		*history = append(*history, llm.Message{
 			Role:       llm.RoleTool,
@@ -431,7 +413,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 	if dedupExemptTool(name) {
 		if cb.IsReadOnlyBlocked(name, tc.Input) {
-			stopMsg := "⛔ STOP. The tool «" + name + "» was called too many times with identical arguments — the result is already in your history. Produce the final answer or use a different tool."
+			stopMsg := "⛔ The tool «" + name + "» was called too many times with identical arguments — the result is already in your history. Proceed with edit/write or use different arguments."
 			a.logf("tool_call name=%s read_only_doom_blocked", name)
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,
@@ -441,7 +423,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			return serialToolOutcome{}, nil
 		}
 	} else if cb.IsDuplicateCall(name, tc.Input) {
-		stopMsg := "⛔ STOP. The tool «" + name + "» was already called with these exact arguments — the result is in your history. This duplicate call is blocked. Produce the final answer using the data from the previous result. No more tool_calls."
+		stopMsg := "⛔ The tool «" + name + "» was already called with these exact arguments — duplicate blocked. Use edit/write to apply changes or call with different arguments."
 		a.logf("tool_call name=%s dedup_blocked", name)
 		if a.opts.OnEvent != nil {
 			a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
@@ -464,28 +446,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	dur := time.Since(start).Milliseconds()
 
 	if a.opts.OnEvent != nil {
-		preview := ""
-		if len(out) > 0 {
-			const maxPreview = 256
-			if len(out) > maxPreview {
-				preview = string(out[:maxPreview]) + "...(truncated)"
-			} else {
-				preview = string(out)
-			}
-		}
-		if err != nil {
-			msg := "error: " + err.Error()
-			if len(msg) > 256 {
-				msg = msg[:256] + "...(truncated)"
-			}
-			preview = msg
-		}
-		a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-			Kind:         llm.StreamEventToolCallCompleted,
-			ToolCallName: name,
-			ToolCallID:   toolCallID,
-			Content:      preview,
-		}})
+		a.opts.OnEvent(AgentEvent{Step: steps, Stream: toolCallCompletedStreamEvent(name, toolCallID, out, err)})
 	}
 
 	if err != nil {
@@ -520,6 +481,10 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		ToolCallID: toolCallID,
 		Content:    a.prepareToolHistoryContent(name, tc.Input, out),
 	})
+
+	if name == "write" || name == "edit" {
+		a.commitStagedAfterMutatingTool(ctx, steps, extractWriteOrEditPath(tc.Input))
+	}
 
 	if a.opts.MultimodalLLM && name == "browser.screenshot" {
 		if part, ok := extractScreenshotImagePart(out); ok {

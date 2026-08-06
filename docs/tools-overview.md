@@ -59,7 +59,13 @@
 | `lsp.diagnostics` | Ошибки и warnings LSP для файла | После редактирования — проверить что не сломал типы |
 | `lsp.rename` | Переименовать символ во всём проекте через LSP | Безопасный refactor — LSP знает все места использования |
 
+> **Semantic dry-run (без `--apply`):** `edit`/`write` пишут в **staging overlay** (диск не трогается).
+> Перед stage — **AST-Gate** (tree-sitter). После stage — **LSP sync** (`didOpen`/`didChange` с effective content).
+> Ответ tool включает `diagnostics`; при errors agent inject'ит hint `LSP_ERRORS`.
+> LSP servers стартуют **lazy** (`lsp.lazy_start: true`, default) и гасятся по TTL (`idle_ttl_seconds: 300`).
+
 > Все 5 инструментов покрыты интеграционными тестами с реальным gopls (`internal/tools/lsp_tools_test.go`).
+> Dry-run + LSP loop: `tests/e2e_agent/e2e_dryrun_lsp_test.go`.
 
 ---
 
@@ -70,6 +76,9 @@
 | `edit` | Точечная замена search → replace (нужен уникальный search-фрагмент) | Правки в существующем файле — изменить конкретный кусок |
 | `write` | Перезапись/создание файла целиком | Новый файл; или файл нужно переписать полностью |
 | `diff.preview` | Применяет search→replace в памяти, возвращает unified diff | Хочешь проверить что изменится перед применением `edit` |
+
+> В dry-run (`apply: false` / без `--apply`) `edit`/`write` обновляют staging overlay; `read`/`grep`/`ls` видят staged content.
+> `--apply` или `agent.run apply: true` сбрасывает overlay на диск через applier (`conditions.file_hash`).
 
 ---
 

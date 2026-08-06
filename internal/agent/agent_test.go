@@ -1054,6 +1054,56 @@ func TestAgent_Run_LSPErrors_HintInjected(t *testing.T) {
 	}
 }
 
+func TestAgent_Run_LSPErrors_HintInjected_DryRun(t *testing.T) {
+	root := t.TempDir()
+	content := "package main\n"
+	h := cache.ComputeSHA256([]byte(content))
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{
+		DryRun: true,
+		ForceDiagnosticsForTest: []lsp.ToolDiagnostic{
+			{StartLine: 1, StartCol: 1, Severity: "error", Message: "undefined: Bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	mockLLM := &lspHintLLM{fileHash: h}
+
+	ag, err := New(mockLLM, v, tr, Options{
+		MaxSteps: 10,
+		Apply:    false,
+		Backup:   false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "write a.go with package main")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !mockLLM.hintSeen {
+		t.Error("expected LSP_ERRORS hint in LLM messages after dry-run write tool call")
+	}
+	onDisk, err := os.ReadFile(filepath.Join(root, "a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(onDisk) != content {
+		t.Fatalf("dry-run must not modify disk: got %q", string(onDisk))
+	}
+}
+
 // lspHintEditLLM scripts two steps:
 //  1. Call the "edit" tool.
 //  2. Verify a user message with "LSP_ERRORS" was injected, then return final.
@@ -1139,6 +1189,56 @@ func TestAgent_Run_LSPErrors_HintInjected_Edit(t *testing.T) {
 	}
 	if !mockLLM.hintSeen {
 		t.Error("expected LSP_ERRORS hint in LLM messages after edit tool call")
+	}
+}
+
+func TestAgent_Run_LSPErrors_HintInjectedEdit_DryRun(t *testing.T) {
+	root := t.TempDir()
+	content := "package main\n"
+	h := cache.ComputeSHA256([]byte(content))
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{
+		DryRun: true,
+		ForceDiagnosticsForTest: []lsp.ToolDiagnostic{
+			{StartLine: 1, StartCol: 1, Severity: "error", Message: "undefined: Bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	mockLLM := &lspHintEditLLM{fileHash: h}
+
+	ag, err := New(mockLLM, v, tr, Options{
+		MaxSteps: 10,
+		Apply:    false,
+		Backup:   false,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, _, err = ag.Run(context.Background(), nil, "edit a.go replacing main with mainX")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !mockLLM.hintSeen {
+		t.Error("expected LSP_ERRORS hint in LLM messages after dry-run edit tool call")
+	}
+	onDisk, err := os.ReadFile(filepath.Join(root, "a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(onDisk) != content {
+		t.Fatalf("dry-run must not modify disk: got %q", string(onDisk))
 	}
 }
 

@@ -542,25 +542,33 @@ flowchart TB
 
     subgraph Orchestra["Orchestra (Go)"]
         or_llm[LLM]
+        or_tool["edit / write tools<br/>(dry-run staging)"]
+        or_stage[(Staging overlay)]
+        or_lsp[LSP sync + diagnostics]
         or_ext["External Patch<br/>(file.search_replace,<br/>file.unified_diff,<br/>file.write_atomic)"]
         or_res["Resolver<br/>(ranges + anchors +<br/>file_hash check)"]
         or_int["Internal Ops<br/>(replace_range,<br/>write_atomic, mkdir_all)"]
         or_app["Applier<br/>(atomic write +<br/>.orchestra.bak)"]
         or_disk[(Disk)]
         or_plan[(plan.json)]
+        or_llm -->|tool_call| or_tool
+        or_tool -->|AST gate + stage| or_stage
+        or_tool -->|SyncStaged| or_lsp
+        or_lsp -->|LSP_ERRORS hint| or_llm
         or_llm -->|final.patches| or_ext
         or_ext -->|resolve| or_res
         or_res -->|typed ops| or_int
         or_int -->|persist| or_plan
         or_int -->|apply| or_app
         or_app --> or_disk
+        or_stage -.->|--apply flush| or_app
         or_plan -.->|--from-plan replay| or_app
     end
 
     classDef oc fill:#fdd,stroke:#a44
     classDef or fill:#dfd,stroke:#4a4
     class oc_llm,oc_tool,oc_disk,oc_lsp oc
-    class or_llm,or_ext,or_res,or_int,or_app,or_disk,or_plan or
+    class or_llm,or_tool,or_stage,or_lsp,or_ext,or_res,or_int,or_app,or_disk,or_plan or
 ```
 
 **Ключевая разница**: у OpenCode инструмент = функция, которая решает всё
@@ -576,7 +584,7 @@ flowchart TB
 | Hash-условие на момент записи | ❌ только «должен был Read» | ✅ `conditions.file_hash` в каждой mutating op |
 | Точка вставки policy/audit | внутри тула | `resolver` или `applier` |
 | Forgiving edit | ✅ 9 fallback-стратегий | ❌ строгий, hard-fail |
-| LSP feedback loop | ✅ | ❌ (но есть CKG) |
+| LSP feedback loop | ✅ | ✅ dry-run staging + lazy LSP (`docs/architecture/semantic-dry-run-tz.md`) |
 
 Это компромисс по дизайну: они оптимизируют **first-shot success rate**
 (LLM с большей вероятностью попадёт), мы — **корректность и

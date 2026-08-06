@@ -1,6 +1,6 @@
 Ты — многозадачный субагент-исполнитель.
 
-Инструменты — только из <available_tools> (обычно read/ls/glob/grep/explore/write/edit/… + task_result).
+Инструменты — только из <available_tools>.
 Когда задача выполнена — вызови task_result с результатом (НЕ final.patches).
 
 ПРАВИЛА:

@@ -17,9 +17,9 @@ import (
 //
 //	▌ workflow:tdd_feature   ✓ spec  ✓ tests  ⋯ execute (12s)  · review
 //
-// Glyphs:
+// Glyphs (shared with Tasks via Progress* in progress_glyphs.go):
 //
-//	·   stage discovered but not yet attempted (or pending re-run after redo)
+//	○   stage discovered but not yet attempted (or pending re-run after redo)
 //	⋯   stage currently running — elapsed seconds in parentheses
 //	✓   stage completed with an advance/accept marker
 //	↻   stage completed with a redo:* action (we will re-run it)
@@ -152,19 +152,19 @@ func (w *WorkflowProgress) Render() string {
 	for i, s := range w.stages {
 		switch s.state {
 		case wpPending:
-			parts = append(parts, mutedStyle.Render("· "+s.id))
+			parts = append(parts, mutedStyle.Render(ProgressPending+" "+s.id))
 		case wpRunning:
 			elapsed := int(time.Since(s.startedAt).Round(time.Second).Seconds())
 			parts = append(parts,
-				runStyle.Render("⋯ "+s.id),
+				runStyle.Render(ProgressRunning+" "+s.id),
 				mutedStyle.Render(fmt.Sprintf(" (%ds)", elapsed)),
 			)
 		case wpDone:
-			parts = append(parts, okStyle.Render("✓ "+s.id))
+			parts = append(parts, okStyle.Render(ProgressDone+" "+s.id))
 		case wpRedo:
-			parts = append(parts, warnStyle.Render("↻ "+s.id))
+			parts = append(parts, warnStyle.Render(ProgressRedo+" "+s.id))
 		case wpFail:
-			parts = append(parts, errStyle.Render("✗ "+s.id))
+			parts = append(parts, errStyle.Render(ProgressFailed+" "+s.id))
 		}
 		if i < len(w.stages)-1 {
 			parts = append(parts, textStyle.Render("  "))

@@ -1,10 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
 )
@@ -91,6 +92,21 @@ func NormalizeLLMWithDefs(v *schema.Validator, resp *llm.CompleteResponse, defs 
 		// Recommended final: PatchSet JSON.
 		var ps patches.PatchSet
 		if coreErr := v.ValidateAndDecode(schema.KindExternalPatches, jsonStr, &ps); coreErr == nil {
+			step := Step{
+				Type: StepFinal,
+				Final: &Final{
+					Patches: ps.Patches,
+				},
+			}
+			return &step, jsonStr, nil
+		}
+	}
+
+	// Loose final: {"patches":[...]} without schema validator or when validator
+	// rejects AgentStep wrapper (common with thinking models).
+	if strings.Contains(jsonStr, `"patches"`) {
+		var ps patches.PatchSet
+		if err := json.Unmarshal([]byte(jsonStr), &ps); err == nil {
 			step := Step{
 				Type: StepFinal,
 				Final: &Final{

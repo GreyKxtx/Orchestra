@@ -107,12 +107,16 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 		"ops_version":      protocol.OpsVersion,
 		"tools_version":    protocol.ToolsVersion,
 	}
-	var initResult map[string]any
+	var initResult struct {
+		Health struct {
+			LSPStatus string `json:"lsp_status"`
+		} `json:"health"`
+	}
 	if err := c.rpc.Call(ctx, "initialize", initParams, &initResult); err != nil {
 		_ = c.Close()
 		return nil, fmt.Errorf("rpcclient: initialize: %w", err)
 	}
-	c.send(Event{Kind: EventInitialized})
+	c.send(Event{Kind: EventInitialized, LSPStatus: initResult.Health.LSPStatus})
 
 	return c, nil
 }
@@ -127,6 +131,7 @@ func (c *Client) Events() <-chan Event {
 type AgentRunOptions struct {
 	Apply     bool
 	AllowExec bool
+	Profile   string
 }
 
 // SessionStart creates or reopens a core session.
@@ -154,6 +159,8 @@ type SessionGetResult struct {
 	Title      string                  `json:"title,omitempty"`
 	Model      string                  `json:"model,omitempty"`
 	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
+	Todos      []TodoItem              `json:"todos,omitempty"`
+	CostUSD    float64                 `json:"cost_usd,omitempty"`
 	HistoryLen int                     `json:"history_len"`
 	HasPending bool                    `json:"has_pending,omitempty"`
 	Restored   bool                    `json:"restored,omitempty"`
@@ -170,13 +177,16 @@ func (c *Client) SessionGet(ctx context.Context, sessionID string) (*SessionGetR
 	return &res, nil
 }
 
-// SessionUISync persists the TUI chat projection.
-func (c *Client) SessionUISync(ctx context.Context, sessionID, title, model string, ui []sessionfile.UIMessage) error {
+// SessionUISync persists the TUI chat projection (and optional session spend).
+func (c *Client) SessionUISync(ctx context.Context, sessionID, title, model string, ui []sessionfile.UIMessage, costUSD float64) error {
 	params := map[string]any{
 		"session_id":  sessionID,
 		"title":       title,
 		"model":       model,
 		"ui_messages": ui,
+	}
+	if costUSD > 0 {
+		params["cost_usd"] = costUSD
 	}
 	var res map[string]any
 	return c.rpc.Call(ctx, "session.ui_sync", params, &res)
@@ -198,10 +208,21 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 	if mode != "" {
 		params["mode"] = mode
 	}
-	var result map[string]any
+	if opts.Profile != "" {
+		params["profile"] = opts.Profile
+	}
+	var result struct {
+		Usage *UsageTurnPayload `json:"usage"`
+		Todos []TodoItem        `json:"todos"`
+	}
 	err := c.rpc.Call(ctx, "session.message", params, &result)
 	if err != nil {
 		c.send(Event{Kind: EventError, Err: err.Error()})
+	} else {
+		if result.Usage != nil {
+			c.send(Event{Kind: EventTurnUsage, Usage: result.Usage})
+		}
+		c.send(Event{Kind: EventTurnTodos, Todos: result.Todos})
 	}
 	c.send(Event{Kind: EventAgentRunCompleted})
 	return err
@@ -469,10 +490,12 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 		SessionID    string          `json:"session_id"`
 		TurnID       string          `json:"turn_id"`
 		Content      string          `json:"content"`
+		Error        string          `json:"error"`
 		ToolCallID   string          `json:"tool_call_id"`
 		ToolCallName string          `json:"tool_call_name"`
 		ArgsDelta    string          `json:"args_delta"`
 		Data         json.RawMessage `json:"data"`
+		Diagnostics  json.RawMessage `json:"diagnostics"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
@@ -491,6 +514,31 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 		var payload PendingOpsPayload
 		if err := json.Unmarshal(p.Data, &payload); err == nil {
 			ev.PendingOps = &payload
+		}
+	}
+	if EventKind(p.Type) == EventStepUsage && len(p.Data) > 0 {
+		var usage UsageTurnPayload
+		if err := json.Unmarshal(p.Data, &usage); err == nil {
+			ev.Usage = &usage
+		}
+	}
+	if EventKind(p.Type) == EventError {
+		errMsg := strings.TrimSpace(p.Error)
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(p.Content)
+		}
+		ev.Err = errMsg
+	}
+	if EventKind(p.Type) == EventTodosUpdated && strings.TrimSpace(p.Content) != "" {
+		var items []TodoItem
+		if err := json.Unmarshal([]byte(p.Content), &items); err == nil {
+			ev.Todos = items
+		}
+	}
+	if len(p.Diagnostics) > 0 && string(p.Diagnostics) != "null" {
+		var diags []ToolDiagnosticPayload
+		if err := json.Unmarshal(p.Diagnostics, &diags); err == nil {
+			ev.Diagnostics = diags
 		}
 	}
 	c.send(ev)

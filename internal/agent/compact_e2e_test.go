@@ -169,11 +169,11 @@ func TestAgent_E2E_CompactionRespectsTracker(t *testing.T) {
 }
 
 type recordingTracker struct {
-	calls            int
-	totalPrompt      int
-	totalCompletion  int
-	lastProvider     string
-	lastModel        string
+	calls           int
+	totalPrompt     int
+	totalCompletion int
+	lastProvider    string
+	lastModel       string
 }
 
 func (r *recordingTracker) Record(provider, model string, prompt, completion int) {

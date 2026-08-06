@@ -34,6 +34,24 @@
 
 ---
 
+## Фаза 10 — Planner–Worker (целевой режим для локальных моделей)
+
+**Цель:** Lead (reasoning) планирует и делегирует; Workers (быстрые coder-модели) имплементируют атомарные правки под AST-Gate + LSP validation loop. Без гигантского промпта на каждый чих.
+
+**Design doc:** [docs/architecture/planner-worker.md](./architecture/planner-worker.md)
+
+**Ключевые deliverables:**
+
+1. `worker` mode + WorkOrder JSON contract (Lead → subagent)
+2. Worker validation loop (≤3 retries) с эскалацией Planner'у
+3. AST scoping в resolver (`target_symbol` + CKG range) — снять AmbiguousMatch
+4. Отдельный LLM profile для Worker (`llm.profiles.worker` или subagent override)
+5. Lead prompt: delegate через `task`, не monolithic `edit`
+
+**Зависит от:** semantic dry-run (✅), subagents `task`/`general` (✅), `build-local` prompts (✅).
+
+---
+
 ## MVP: что входит в первую тестируемую версию
 
 | Фаза | Что даёт пользователю | Без чего нельзя выйти |

@@ -200,7 +200,7 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		maxDenied = c.Cfg.Agent.MaxDeniedRepeats
 		maxToolErrors = c.Cfg.Agent.MaxToolErrors
 		maxFinalFails = c.Cfg.Agent.MaxFinalFailures
-		maxPromptBytes = c.Cfg.Limits.ContextKB * 1024
+		maxPromptBytes = c.Cfg.EffectiveMaxPromptBytes()
 		compactPct = c.Cfg.Agent.CompactThresholdPct
 		stepTimeout = time.Duration(c.Cfg.LLM.TimeoutS) * time.Second
 		permRules = c.Cfg.Permissions.Rules

@@ -9,7 +9,10 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-const appVersion = "v0.6"
+const appVersion = "v0.7"
+
+// AppVersion returns the TUI display version string.
+func AppVersion() string { return appVersion }
 
 // WelcomeInfo contains project metadata shown on the empty-state welcome screen.
 type WelcomeInfo struct {

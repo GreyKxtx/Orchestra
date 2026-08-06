@@ -192,7 +192,7 @@ func (c *Client) handshake(ctx context.Context) error {
 	type res struct {
 		err error
 	}
-	ch := make(chan res, 1)
+	ch := make(chan res, 1) 
 	go func() {
 		ch <- res{err: c.handshakeIO()}
 	}()

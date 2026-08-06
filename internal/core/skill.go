@@ -162,7 +162,7 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		maxSteps = c.cfg.Agent.MaxSteps
 	}
 
-	ag, err := agent.New(childClient, c.validator, c.tools, agent.Options{
+	agOpts := agent.Options{
 		MaxSteps:             maxSteps,
 		AllowExec:            allowExec,
 		AllowWeb:             params.AllowWeb,
@@ -171,7 +171,9 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		SystemPromptOverride: systemPrompt,
 		IsChild:              true,
 		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
-	})
+	}
+	agent.ApplyHistoryConfig(&agOpts, c.cfg)
+	ag, err := agent.New(childClient, c.validator, c.tools, agOpts)
 	if err != nil {
 		return nil, fmt.Errorf("skill %q: %w", params.Name, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,10 +13,7 @@ import (
 	"github.com/orchestra/orchestra/ui/tui"
 )
 
-var (
-	tuiApply     bool
-	tuiAllowExec bool
-)
+var tuiAllowExec bool
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
@@ -24,7 +22,10 @@ var tuiCmd = &cobra.Command{
 
 Connects to a child 'orchestra core' subprocess via stdio JSON-RPC.
 Configure model and project_root via .orchestra.yml in the current
-directory (create with 'orchestra init').`,
+directory (create with 'orchestra init').
+
+Agent edits run through staging + LSP validation during each turn; staged
+changes are committed to disk when the agent completes successfully.`,
 	Args: cobra.NoArgs,
 	RunE: runTUI,
 }
@@ -48,18 +49,15 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	cfgPath := filepath.Join(cwd, ".orchestra.yml")
 	model := ""
 	themeName := ""
-	autoApply := false
+	profile := ""
 	allowExec := false
 	needsOnboarding := false
 
 	if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
 		model = cfg.LLM.Model
 		themeName = cfg.UI.Theme
-		autoApply = cfg.UI.AutoApply
+		profile = strings.TrimSpace(cfg.Agent.Profile)
 		allowExec = cfg.UI.AllowExec
-	}
-	if cmd.Flags().Changed("apply") {
-		autoApply = tuiApply
 	}
 	if cmd.Flags().Changed("allow-exec") {
 		allowExec = tuiAllowExec
@@ -78,13 +76,12 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		NeedsOnboarding: needsOnboarding,
 		ConfigPath:      cfgPath,
 		Theme:           themeName,
-		AutoApply:       autoApply,
+		Profile:         profile,
 		AllowExec:       allowExec,
 	})
 }
 
 func addTUIFlags(cmd *cobra.Command) {
-	cmd.Flags().BoolVar(&tuiApply, "apply", false, "LIVE mode: write agent changes to disk immediately (default: PREVIEW/staging)")
 	cmd.Flags().BoolVar(&tuiAllowExec, "allow-exec", false, "Allow bash/exec.run in TUI agent runs")
 }
 

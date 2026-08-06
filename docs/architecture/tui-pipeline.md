@@ -124,17 +124,23 @@ Legacy v0 (sessionstore-only) и v1 (core-only) мигрируют автома�
 | Applier | `applyMu` + `.orchestra/apply.lock` | H9: in-process + cross-process flock (fail-closed) |
 | Bubble Tea | single-threaded `Update` | UI mutations |
 
-## 7. Application of changes (As-Is)
+## 7. Application of changes (единый semantic pipeline)
 
 ```
-LLM final.patches (internal/patches)
-  → dry-run: ApplyPatchesToStaged → StagedOps → FSApplyOps(DryRun=true)
-  → apply:   ResolveExternalPatches → FSApplyOps(DryRun=false, Backup)
+edit/write (during turn) → staging overlay → AST-Gate → LSP SyncAndDiagnose
+  → agent LSP_ERRORS hint loop (model fixes until green or gives up)
+  → final step → FSApplyOps (commit when apply=true)
 ```
 
-Артефакты CLI (`writeApplyArtifacts`): `plan.json`, `diff.txt` (before/after, **не** unified patch), `last_result.json`, `last_run.jsonl`.
+| Entry | `apply` flag | Поведение |
+|-------|--------------|-----------|
+| **TUI** | always `true` | staging + LSP во время хода; **commit на final** (без PREVIEW/LIVE toggle) |
+| `orchestra apply` | default `false` | dry-run, артефакты в `.orchestra/`, диск не трогается |
+| `orchestra apply --apply` | `true` | staging + LSP во время хода; commit на final |
 
-Отдельного режима «только `.patch` для review» **нет**.
+**Удалено из TUI:** `/live`, `/preview`, `ui.auto_apply` — один пайплайн, модель сама завершает через `final`.
+
+Артефакты CLI: `plan.json`, `diff.txt`, `last_result.json`, `last_run.jsonl`.
 
 ## 8. Реестр проблем
 

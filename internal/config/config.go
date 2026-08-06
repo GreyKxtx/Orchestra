@@ -189,6 +189,8 @@ type LSPConfig struct {
 	Enabled              *bool             `yaml:"enabled,omitempty"`
 	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
 	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	LazyStart            *bool             `yaml:"lazy_start,omitempty"`
+	IdleTTLSeconds       *int              `yaml:"idle_ttl_seconds,omitempty"`
 }
 
 // MCPServerConfig configures a single MCP server (Phase 8).
@@ -381,9 +383,8 @@ type UIConfig struct {
 	// Theme is a registered theme name (see ui/tui/theme). Empty / unknown
 	// values fall back to the default ("neutral").
 	Theme string `yaml:"theme,omitempty"`
-	// AutoApply mirrors `orchestra apply --apply`: agent.run writes to disk
-	// immediately (LIVE mode). When false, TUI stages changes until the user
-	// presses [a] or /apply (PREVIEW mode).
+	// AutoApply is deprecated: TUI always commits staged ops on agent final.
+	// Kept for config migration only; ignored by TUI.
 	AutoApply bool `yaml:"auto_apply,omitempty"`
 	// AllowExec mirrors `--allow-exec` for TUI agent runs (bash/git commit, etc.).
 	AllowExec bool `yaml:"allow_exec,omitempty"`
@@ -449,6 +450,70 @@ func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
 	}
 	cfg, ok := c.Providers[name]
 	return cfg, ok
+}
+
+// EffectiveNumCtx returns the user-configured LLM context window for the
+// active model: per-model preset num_ctx, else llm.extra_body.num_ctx.
+func (c *ProjectConfig) EffectiveNumCtx() int64 {
+	if c == nil {
+		return 0
+	}
+	model := strings.TrimSpace(c.LLM.Model)
+	if model != "" && c.LLM.ModelPresets != nil {
+		if p, ok := c.LLM.ModelPresets[model]; ok && p.NumCtx > 0 {
+			return p.NumCtx
+		}
+	}
+	return c.extraBodyNumCtx()
+}
+
+// bytesPerContextToken is the byte budget heuristic when deriving MaxPromptBytes
+// from num_ctx (≈4 bytes per token for Latin/Cyrillic mixed text + JSON).
+const bytesPerContextToken = 4
+
+// EffectiveMaxPromptBytes returns the agent history byte budget. Uses the larger
+// of limits.context_kb and num_ctx-derived bytes so compaction aligns with the
+// LLM context window configured in model presets / extra_body.num_ctx.
+func (c *ProjectConfig) EffectiveMaxPromptBytes() int {
+	if c == nil {
+		return 0
+	}
+	kb := c.Limits.ContextKB
+	if kb <= 0 && c.ContextLimit > 0 {
+		kb = c.ContextLimit
+	}
+	if kb <= 0 {
+		kb = 128
+	}
+	bytes := kb * 1024
+	if n := c.EffectiveNumCtx(); n > 0 {
+		fromCtx := int(n) * bytesPerContextToken
+		if fromCtx > bytes {
+			bytes = fromCtx
+		}
+	}
+	return bytes
+}
+
+func (c *ProjectConfig) extraBodyNumCtx() int64 {
+	if c.LLM.ExtraBody == nil {
+		return 0
+	}
+	v, ok := c.LLM.ExtraBody["num_ctx"]
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case float32:
+		return int64(n)
+	}
+	return 0
 }
 
 // DefaultConfig creates a default configuration for the project root

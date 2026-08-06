@@ -22,21 +22,18 @@ type ModalCommand struct {
 // in declaration order.
 var DefaultModalCommands = []ModalCommand{
 	// Agent
-	{"/provider", "switch LLM provider", "Agent"},
-	{"/model", "switch model and tune settings", "Agent"},
-	{"/mode", "show current mode", "Agent"},
+	{"/provider", "сменить LLM provider", "Agent"},
+	{"/model", "модель и настройки", "Agent"},
+	{"/mode", "текущий режим", "Agent"},
 	// Session
-	{"/sessions", "open past sessions", "Session"},
-	{"/apply", "apply pending ops", "Session"},
-	{"/clear", "clear chat history", "Session"},
-	{"/diff", "toggle diff view", "Session"},
-	{"/discard", "discard pending ops", "Session"},
-	{"/exec", "toggle bash/exec.run", "Session"},
-	{"/live", "write to disk immediately", "Session"},
-	{"/preview", "stage changes until apply", "Session"},
+	{"/sessions", "прошлые сессии", "Session"},
+	{"/clear", "очистить историю чата", "Session"},
+	{"/diff", "diff последнего commit", "Session"},
+	{"/shell", "права на shell: ask ↔ allow", "Session"},
+	{"/theme", "тема: orchestra ↔ neutral", "System"},
 	// System
-	{"/help", "show key bindings", "System"},
-	{"/quit", "exit Orchestra", "System"},
+	{"/help", "клавиши и команды", "System"},
+	{"/quit", "выйти из Orchestra", "System"},
 }
 
 // PaletteModal is a centered command palette modal (Ctrl+K).

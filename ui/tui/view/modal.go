@@ -4,9 +4,11 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// Modal displays a blocking yes/no dialog for exec.run consent.
+// Modal displays a blocking yes/no dialog for shell command consent.
 type Modal struct {
 	Tool        string
 	Description string
@@ -24,7 +26,7 @@ func (m *Modal) SetSize(width int) { m.width = width }
 // QuestionModal displays a blocking dialog for agent question/ask RPC.
 type QuestionModal struct {
 	Questions []QuestionItem
-	Index     int   // current question being answered
+	Index     int // current question being answered
 	Answers   []string
 	width     int
 }
@@ -61,17 +63,18 @@ func (m *QuestionModal) Advance(answer string) bool {
 
 // Render returns a styled question prompt string.
 func (m *QuestionModal) Render() string {
+	t := theme.CurrentTheme()
 	_, q := m.Current()
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#7aa2f7")).
+		BorderForeground(t.Primary()).
 		Padding(0, 2).
 		Width(m.width - 4)
 
 	title := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#7aa2f7")).
+		Foreground(t.Primary()).
 		Bold(true).
-		Render(fmt.Sprintf("? Agent question (%d/%d)", m.Index+1, len(m.Questions)))
+		Render(fmt.Sprintf("? Вопрос агента (%d/%d)", m.Index+1, len(m.Questions)))
 
 	body := q.Question
 	if len(q.Options) > 0 {
@@ -79,30 +82,36 @@ func (m *QuestionModal) Render() string {
 		for i, opt := range q.Options {
 			body += fmt.Sprintf("  %d) %s\n", i+1, opt)
 		}
-		body += "\nEnter number or text, then press Enter"
+		body += "\nВведите номер или текст, затем Enter"
 	} else {
-		body += "\n\nType your answer and press Enter"
+		body += "\n\nВведите ответ и нажмите Enter"
 	}
 	return border.Render(fmt.Sprintf("%s\n\n%s", title, body))
 }
 
 // Render returns a styled permission prompt string.
 func (m *Modal) Render() string {
+	t := theme.CurrentTheme()
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#f7768e")).
+		BorderForeground(t.Warning()).
 		Padding(0, 2).
 		Width(m.width - 4)
 
 	title := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#f7768e")).
+		Foreground(t.Warning()).
 		Bold(true).
-		Render("⚠ exec.run permission request")
+		Render("⚠ Разрешение shell")
 
 	desc := m.Description
 	if len(desc) > 200 {
 		desc = desc[:200] + "..."
 	}
-	body := fmt.Sprintf("%s\n\nCommand: %s\n\n[y] Allow   [n] Deny", title, desc)
+	tool := m.Tool
+	if tool == "" {
+		tool = "shell"
+	}
+	body := fmt.Sprintf("%s\n\nИнструмент: %s\nКоманда: %s\n\n[y] один раз   [a] на сессию   [t] этот tool   [n] запретить",
+		title, tool, desc)
 	return border.Render(body)
 }

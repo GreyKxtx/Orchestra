@@ -25,11 +25,11 @@ func (c Chat) renderAssistantMessage(m state.Message, key int64, width int, isLa
 	var parts []string
 
 	if strings.TrimSpace(m.Reasoning) != "" {
-		parts = append(parts, renderReasoning(m.Reasoning, width, m.Streaming && strings.TrimSpace(m.Text) == "", c.spinFrame))
+		parts = append(parts, renderReasoning(m.Reasoning, width, m.Streaming && strings.TrimSpace(m.Text) == "", c.spinFrame, m.ReasoningExpanded))
 	}
 
 	if len(m.ToolBlocks) > 0 {
-		expanded := m.Streaming || c.expandedTurns[key]
+		expanded := m.Streaming || c.expandedTurns[key] || m.ToolsExpanded
 		// Use this message's historical Mode for the tool-group title prefix
 		// ("Build Task — ...", "Plan Task — ..."), falling back to chat's
 		// current mode for legacy sessions.
@@ -43,7 +43,19 @@ func (c Chat) renderAssistantMessage(m state.Message, key int64, width int, isLa
 	text := stripFinalEnvelope(m.Text)
 	if strings.TrimSpace(text) != "" {
 		body := renderMarkdown(text, width-2)
+		if isLast && m.Streaming && c.streamCursor {
+			body += lipgloss.NewStyle().Foreground(theme.CurrentTheme().Primary()).Render("▋")
+		}
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(body))
+	} else if !m.Streaming &&
+		strings.TrimSpace(m.Reasoning) == "" &&
+		len(m.ToolBlocks) == 0 {
+		// Reasoning models (qwen3.6 via LM Studio) sometimes finish with blank
+		// content and no tool_calls — the turn ends but the bubble looks broken.
+		t := theme.CurrentTheme()
+		hint := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true).
+			Render("Модель завершила шаг без текста. Проверьте tool calling в LM Studio или отключите thinking (enable_thinking: false).")
+		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(hint))
 	}
 
 	// Inline "Thinking…" placeholder — opencode style. Shown only when the
@@ -56,6 +68,10 @@ func (c Chat) renderAssistantMessage(m state.Message, key int64, width int, isLa
 		len(m.ToolBlocks) == 0 &&
 		strings.TrimSpace(text) == "" {
 		parts = append(parts, renderInlineThinking(c.spinFrame))
+	}
+
+	if noticeBlock := RenderAssistantNotices(m.Notices, width); noticeBlock != "" {
+		parts = append(parts, noticeBlock)
 	}
 
 	// Footer is shown on EVERY finished assistant turn — not just the last.
@@ -88,10 +104,14 @@ func renderInlineThinking(spinFrame int) string {
 	return lipgloss.NewStyle().PaddingLeft(2).Render(spin + " " + label)
 }
 
+// reasoningCollapsedMaxLines is the default CoT preview height; Ctrl+R expands.
+const reasoningCollapsedMaxLines = 6
+
 // renderReasoning renders the model's chain-of-thought with a muted ┃ left bar
 // matching the user-message panel style but without a fill — italic warning-
 // colored "Thinking:" lead-in followed by italic muted body text.
-func renderReasoning(text string, width int, stillThinking bool, spinFrame int) string {
+// Long CoT is collapsed unless expanded or still streaming.
+func renderReasoning(text string, width int, stillThinking bool, spinFrame int, expanded bool) string {
 	t := theme.CurrentTheme()
 
 	prefix := lipgloss.NewStyle().Foreground(t.Warning()).Italic(true).Render("Thinking:")
@@ -101,7 +121,22 @@ func renderReasoning(text string, width int, stillThinking bool, spinFrame int) 
 	}
 
 	body := strings.TrimSpace(text)
+	collapsed := false
+	if !expanded && !stillThinking {
+		lines := strings.Split(body, "\n")
+		if len(lines) > reasoningCollapsedMaxLines {
+			body = strings.Join(lines[:reasoningCollapsedMaxLines], "\n")
+			collapsed = true
+		}
+	}
 	content := prefix + " " + body
+	if collapsed {
+		hint := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true).Render("… Ctrl+R развернуть")
+		content += "\n" + hint
+	} else if expanded && !stillThinking {
+		hint := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true).Render("Ctrl+R свернуть")
+		content += "\n" + hint
+	}
 
 	const (
 		padH   = 2

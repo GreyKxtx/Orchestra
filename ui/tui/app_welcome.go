@@ -114,7 +114,17 @@ func (a *App) modeProviderLine(bg lipgloss.Color) string {
 	muted := base.Foreground(t.TextMuted())
 	dot := muted.Render(" · ")
 
-	return modeStyle.Render(mode) + dot + modelStyle.Render(model) + dot + muted.Render(provider)
+	return modeStyle.Render(mode) + dot + modelStyle.Render(model) + dot + muted.Render(provider) + dot + a.shellPermsSpan(muted)
+}
+
+// shellPermsSpan renders shell permission mode for the input-box status row.
+// Labels follow the usual CLI wording (ask vs allow), not the internal tool name.
+func (a *App) shellPermsSpan(muted lipgloss.Style) string {
+	t := view.ThemeForApp()
+	if a.allowExec {
+		return lipgloss.NewStyle().Foreground(t.Success()).Render("shell · allow")
+	}
+	return muted.Render("shell · ask")
 }
 
 // providerDisplayName returns a human-readable provider name for the welcome
@@ -122,10 +132,8 @@ func (a *App) modeProviderLine(bg lipgloss.Color) string {
 func (a *App) providerDisplayName() string {
 	if a.cfg.ConfigPath != "" {
 		if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
-			for _, p := range view.DialogProviders {
-				if p.Key == cfg.LLM.Provider {
-					return p.Name
-				}
+			if p, ok := view.FindProviderByKey(cfg.LLM.Provider); ok {
+				return p.Name
 			}
 		}
 	}
@@ -160,7 +168,7 @@ func (a *App) welcomeBottomBar() string {
 	if left == "" {
 		left = "."
 	}
-	right := "v0.6"
+	right := view.AppVersion()
 
 	const sidePad = 2
 	leftR := muted.Render(left)

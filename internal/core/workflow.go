@@ -161,7 +161,7 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	// tool.call right after a dry-run workflow would be spuriously blocked.
 	c.runMu.Lock()
 	prevDry := c.tools.DryRun()
-	c.tools.SetDryRun(!params.Apply)
+	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
 	defer func() {
 		c.tools.SetDryRun(prevDry)

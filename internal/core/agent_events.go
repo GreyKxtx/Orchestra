@@ -51,6 +51,44 @@ func buildAgentOnEvent(notify func(method string, params any), env EventEnvelope
 				return
 			}
 		}
+		if ev.Stream.Kind == llm.StreamEventError {
+			msg := ""
+			if ev.Stream.Err != nil {
+				msg = ev.Stream.Err.Error()
+			}
+			notify("agent/event", mergeEventEnvelope(map[string]any{
+				"step":    ev.Step,
+				"type":    string(ev.Stream.Kind),
+				"content": msg,
+				"error":   msg,
+			}, env))
+			return
+		}
+		if ev.Stream.Kind == llm.StreamEventStepUsage {
+			var data any
+			if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
+				notify("agent/event", mergeEventEnvelope(map[string]any{
+					"step": ev.Step,
+					"type": string(llm.StreamEventStepUsage),
+					"data": data,
+				}, env))
+				return
+			}
+		}
+		if ev.Stream.Kind == llm.StreamEventDone {
+			if ev.Stream.Response != nil && ev.Stream.Response.Usage != nil {
+				u := ev.Stream.Response.Usage
+				notify("agent/event", mergeEventEnvelope(map[string]any{
+					"step": ev.Step,
+					"type": string(llm.StreamEventStepUsage),
+					"data": map[string]any{
+						"prompt_tokens":     u.PromptTokens,
+						"completion_tokens": u.CompletionTokens,
+						"total_tokens":      u.TotalTokens,
+					},
+				}, env))
+			}
+		}
 		notify("agent/event", mergeEventEnvelope(map[string]any{
 			"step":            ev.Step,
 			"type":            string(ev.Stream.Kind),
@@ -59,6 +97,7 @@ func buildAgentOnEvent(notify func(method string, params any), env EventEnvelope
 			"tool_call_name":  ev.Stream.ToolCallName,
 			"tool_call_index": ev.Stream.ToolCallIndex,
 			"args_delta":      ev.Stream.ArgsDelta,
+			"diagnostics":     json.RawMessage(ev.Stream.Diagnostics),
 		}, env))
 	}
 }

@@ -2,88 +2,55 @@ package view
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// StatusBar renders the bottom status line. Left side shows live agent state
-// (running-tool block while busy, or info parts when idle). Right side always
-// shows the context-sensitive key hint ("ctrl+k commands" by default).
-//
-// All parts live on the left so the visual weight stays at the bar's start
-// with a 1-cell left padding for breathing room. On narrow terminals the
-// rightmost (highest tier) parts are dropped first.
+// StatusBar renders the bottom status area.
+// Layout: project (left anchor) · metrics · …gap… · hints (right).
+// Metrics: busy spinner/tool · tokens% · LSP · profile · cost.
+// Tasks live in TaskPanel above the input — not here.
 type StatusBar struct {
 	width      int
 	agentBusy  bool
-	spinFrame  int // incremented by App on each tick
+	spinFrame  int
 	project    string
-	model      string
-	modelCtx   int    // model's max context length in tokens (0 = unknown)
-	tokensUsed int    // tokens used in current session
-	tokensMax  int    // session token budget (0 = unknown / use modelCtx)
-	ctxPercent int    // 0 = unknown, 1–100 = percentage (legacy, falls back to tokens-based)
-	errorMsg   string // non-empty → shows error instead of ready
-	hints      string // context-sensitive key hints; shown right-aligned
-	// activeTool / activePath describe what the agent is doing right now —
-	// rendered as an animated "▌▌ <icon> <name> <path>" block on the left
-	// side of the bar while agentBusy is true.
+	profile    string // fast | precision | "" (default)
+	lspStatus  string // off | idle | active
+	modelCtx   int
+	tokensUsed int
+	tokensMax  int
+	costUSD    float64
+	showCost   bool
+	errorMsg   string
+	hints      string
 	activeTool string
 	activePath string
 }
 
-// SetHints sets context-sensitive hint text shown right-aligned on the bar.
 func (s *StatusBar) SetHints(h string) { s.hints = h }
-
-// SetActiveTool sets the currently-running tool name + path/preview, rendered
-// as an animated left-side block while agentBusy. Empty strings hide it.
 func (s *StatusBar) SetActiveTool(name, path string) {
 	s.activeTool = name
 	s.activePath = path
 }
+func (s *StatusBar) SetWidth(w int)                     { s.width = w }
+func (s *StatusBar) SetAgentBusy(busy bool)             { s.agentBusy = busy }
+func (s *StatusBar) AdvanceSpin()                       { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
+func (s *StatusBar) SetModel(_ string)                  {} // model shown in input box row
+func (s *StatusBar) SetProject(p string)                { s.project = p }
+func (s *StatusBar) SetProfile(p string)                { s.profile = p }
+func (s *StatusBar) SetLSPStatus(st string)             { s.lspStatus = st }
+func (s *StatusBar) SetModelCtx(n int)                  { s.modelCtx = n }
+func (s *StatusBar) SetShowCost(v bool)                 { s.showCost = v }
+func (s *StatusBar) SetTokens(used, max int)            { s.tokensUsed = used; s.tokensMax = max }
+func (s *StatusBar) SetCostUSD(v float64)               { s.costUSD = v }
+func (s *StatusBar) SetError(msg string)                { s.errorMsg = msg }
+func (s *StatusBar) ClearError()                        { s.errorMsg = "" }
 
-// SetWidth updates the bar width.
-func (s *StatusBar) SetWidth(w int) { s.width = w }
-
-// SetAgentBusy marks agent as running/idle.
-func (s *StatusBar) SetAgentBusy(busy bool) { s.agentBusy = busy }
-
-// AdvanceSpin moves the spinner to the next frame.
-func (s *StatusBar) AdvanceSpin() { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
-
-// SetModel updates the displayed model name.
-func (s *StatusBar) SetModel(m string) { s.model = m }
-
-// SetProject sets the project name shown on the left of the bar.
-func (s *StatusBar) SetProject(p string) { s.project = p }
-
-// SetModelCtx sets the active model's max context length (tokens). 0 hides it.
-func (s *StatusBar) SetModelCtx(n int) { s.modelCtx = n }
-
-// SetTokens sets the running token usage and the session budget.
-// tokensMax=0 means "use modelCtx" for the X/Y display.
-func (s *StatusBar) SetTokens(used, max int) {
-	s.tokensUsed = used
-	s.tokensMax = max
-}
-
-// SetCtxPercent updates context usage (0 = hide).
-func (s *StatusBar) SetCtxPercent(pct int) { s.ctxPercent = pct }
-
-// SetError shows an error message on the left side.
-func (s *StatusBar) SetError(msg string) { s.errorMsg = msg }
-
-// ClearError clears the error message.
-func (s *StatusBar) ClearError() { s.errorMsg = "" }
-
-// Render returns the styled status bar string. Layout:
-//
-//	[left side: busy block OR info parts]                  [right: key hint]
-//
-// One blank padding row is prepended so the bar doesn't hug the input box.
-func (s StatusBar) Render() string {
+func (s *StatusBar) Render() string {
 	t := theme.CurrentTheme()
 	base := lipgloss.NewStyle().Foreground(t.Text())
 	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
@@ -94,108 +61,203 @@ func (s StatusBar) Render() string {
 		maxInner = 1
 	}
 
-	// Error takes over the whole bar — no point trying to show busy state.
 	if s.errorMsg != "" {
 		row := base.Foreground(t.Error()).Render("✗  " + s.errorMsg)
 		return s.frame(row, sidePad)
 	}
 
-	right := muted.Render(s.hints)
-	left := s.renderLeft(t, base, muted)
-
-	// Right-align the hint against the inner width budget.
-	rightW := lipgloss.Width(right)
-	leftW := lipgloss.Width(left)
-	gap := maxInner - leftW - rightW
-	if gap < 1 {
-		gap = 1
-		// If overflow, clip the left side.
-		budget := maxInner - rightW - 1
-		if budget < 1 {
-			budget = 1
+	hints := s.hints
+	hintsPlain := ""
+	hintsRendered := ""
+	hintsW := 0
+	hintsBudget := 0
+	if hints != "" {
+		hintsBudget = maxInner / 3
+		if hintsBudget < 12 {
+			hintsBudget = 12
 		}
-		left = clipLabel(left, budget)
+		if hintsBudget > 40 {
+			hintsBudget = 40
+		}
+		hintsPlain = clipPlain(hints, hintsBudget)
+		hintsRendered = muted.Render(hintsPlain)
+		hintsW = lipgloss.Width(hintsRendered)
 	}
-	row := left + lipgloss.NewStyle().Width(gap).Render("") + right
+
+	anchor := s.renderProjectPart(t, base)
+	sep := muted.Render(" · ")
+	anchorW := lipgloss.Width(anchor)
+	sepW := lipgloss.Width(sep)
+
+	metricsBudget := maxInner - anchorW - hintsW
+	if anchor != "" {
+		metricsBudget -= sepW
+	}
+	if metricsBudget < 1 {
+		metricsBudget = 1
+	}
+
+	metrics, _, _ := s.renderMetricsFit(t, base, muted, metricsBudget)
+	metricsW := lipgloss.Width(metrics)
+
+	// If metrics still overflow (styled width drift), trim hints further once.
+	if hints != "" && anchor != "" && anchorW+sepW+metricsW+hintsW > maxInner {
+		overflow := anchorW + sepW + metricsW + hintsW - maxInner
+		hintsPlain = clipPlain(hints, hintsBudget-overflow)
+		if hintsPlain == "" && len(hints) > 0 {
+			hintsPlain = "…"
+		}
+		hintsRendered = muted.Render(hintsPlain)
+		hintsW = lipgloss.Width(hintsRendered)
+	}
+
+	var row string
+	switch {
+	case anchor != "" && metrics != "":
+		midGap := maxInner - anchorW - sepW - metricsW - hintsW
+		if midGap < 1 {
+			midGap = 1
+		}
+		row = anchor + sep + metrics + lipgloss.NewStyle().Width(midGap).Render("") + hintsRendered
+	case anchor != "":
+		gap := maxInner - anchorW - hintsW
+		if gap < 1 {
+			gap = 1
+		}
+		row = anchor + lipgloss.NewStyle().Width(gap).Render("") + hintsRendered
+	case metrics != "":
+		gap := maxInner - metricsW - hintsW
+		if gap < 1 {
+			gap = 1
+		}
+		row = metrics + lipgloss.NewStyle().Width(gap).Render("") + hintsRendered
+	default:
+		gap := maxInner - hintsW
+		if gap < 1 {
+			gap = 1
+		}
+		row = lipgloss.NewStyle().Width(gap).Render("") + hintsRendered
+	}
+
 	return s.frame(row, sidePad)
 }
 
-// frame wraps a content row with a leading blank line (top breathing room) and
-// applies horizontal side padding.
-func (s StatusBar) frame(row string, sidePad int) string {
+func (s *StatusBar) frame(row string, sidePad int) string {
 	padded := lipgloss.NewStyle().Width(s.width).Padding(0, sidePad).Render(row)
 	gap := lipgloss.NewStyle().Width(s.width).Render("")
 	return gap + "\n" + padded
 }
 
-// renderLeft builds the left-side content: animated busy block when the agent
-// is working, otherwise the standard project/tokens/ctx info parts.
-func (s StatusBar) renderLeft(t theme.Theme, base, muted lipgloss.Style) string {
-	if s.agentBusy {
-		spin := lipgloss.NewStyle().Foreground(t.Primary()).Render(SpinnerFrames[s.spinFrame%len(SpinnerFrames)])
-		// Pulsing accent blocks — three glyphs that cycle in/out via spinFrame
-		// for the same OpenCode "moving blocks" feel.
-		blocks := s.busyBlocks(t)
-		if s.activeTool != "" {
-			label := s.activeTool
-			if s.activePath != "" {
-				label += " " + s.activePath
-			}
-			return spin + " " + blocks + " " + base.Render(label)
+func (s *StatusBar) renderBusyPart(t theme.Theme, base lipgloss.Style) string {
+	spin := lipgloss.NewStyle().Foreground(t.Primary()).Render(SpinnerFrames[s.spinFrame%len(SpinnerFrames)])
+	blocks := s.busyBlocks(t)
+	if s.activeTool != "" {
+		label := s.activeTool
+		if s.activePath != "" {
+			label += " " + clipPlain(s.activePath, 24)
 		}
-		return spin + " " + blocks + " " + base.Foreground(t.Primary()).Render("Thinking…")
+		return spin + " " + blocks + " " + base.Render(clipPlain(label, 32))
 	}
-
-	type tieredPart struct {
-		text string
-		tier int
-	}
-	var parts []tieredPart
-	if s.project != "" {
-		parts = append(parts, tieredPart{base.Bold(true).Render(s.project), 0})
-	}
-	if s.tokensUsed > 0 {
-		max := s.tokensMax
-		if max == 0 {
-			max = s.modelCtx
-		}
-		parts = append(parts, tieredPart{muted.Render(formatTokenUsage(s.tokensUsed, max)), 1})
-	}
-	if s.modelCtx > 0 {
-		parts = append(parts, tieredPart{muted.Render(formatCtxLen(int64(s.modelCtx))), 2})
-	}
-	if s.ctxPercent > 0 {
-		ctxColor := t.TextMuted()
-		if s.ctxPercent > 95 {
-			ctxColor = t.Error()
-		} else if s.ctxPercent > 80 {
-			ctxColor = t.Warning()
-		}
-		parts = append(parts, tieredPart{
-			lipgloss.NewStyle().Foreground(ctxColor).Render(fmt.Sprintf("ctx %d%%", s.ctxPercent)),
-			3,
-		})
-	}
-	hasInfo := len(parts) > 0
-	if !hasInfo {
-		parts = append(parts, tieredPart{base.Foreground(t.Success()).Render("●  Ready"), 0})
-	}
-
-	sep := muted.Render(" · ")
-	var b []byte
-	for i, p := range parts {
-		if i > 0 {
-			b = append(b, sep...)
-		}
-		b = append(b, p.text...)
-	}
-	return string(b)
+	return spin + " " + blocks + " " + base.Foreground(t.Primary()).Render("Думаю…")
 }
 
-// busyBlocks renders three accent glyphs that pulse in/out with the spin frame
-// for an OpenCode-like "work-in-progress" animation. Frame-modulo picks which
-// glyph is bright; the others stay muted, then the highlight moves along.
-func (s StatusBar) busyBlocks(t theme.Theme) string {
+func (s *StatusBar) renderProjectPart(t theme.Theme, base lipgloss.Style) string {
+	name := strings.TrimSpace(s.project)
+	if name == "" || name == "." {
+		return ""
+	}
+	return base.Bold(true).Foreground(t.Text()).Render(name)
+}
+
+func (s *StatusBar) renderContextPart(t theme.Theme, muted lipgloss.Style) string {
+	max := s.tokensMax
+	if max <= 0 {
+		max = s.modelCtx
+	}
+	used := s.tokensUsed
+	if used <= 0 && max <= 0 {
+		return ""
+	}
+
+	usage := formatTokenUsage(used, max)
+	pct := 0
+	if max > 0 && used > 0 {
+		pct = used * 100 / max
+	}
+	body := usage
+	if max > 0 {
+		body = usage + fmt.Sprintf(" (%d%%)", pct)
+	}
+
+	col := t.Text()
+	if max > 0 && used > 0 {
+		switch {
+		case pct > 100:
+			col = t.Error()
+		case pct > 95:
+			col = t.Error()
+		case pct > 80:
+			col = t.Warning()
+		}
+	}
+	_ = muted
+	return lipgloss.NewStyle().Foreground(col).Render(body)
+}
+
+func (s *StatusBar) renderLSPPart(t theme.Theme) string {
+	switch strings.ToLower(strings.TrimSpace(s.lspStatus)) {
+	case "active":
+		return lipgloss.NewStyle().Foreground(t.Success()).Render("LSP ●")
+	case "idle":
+		return lipgloss.NewStyle().Foreground(t.TextMuted()).Render("LSP ◐")
+	default:
+		return lipgloss.NewStyle().Foreground(t.TextMuted()).Render("LSP ○")
+	}
+}
+
+func (s *StatusBar) renderCostPart(t theme.Theme, muted lipgloss.Style) string {
+	if s.costUSD <= 0 && !s.showCost {
+		return ""
+	}
+	col := t.TextMuted()
+	if s.costUSD >= 0.01 {
+		col = t.Warning()
+	}
+	if s.costUSD >= 0.10 {
+		col = t.Error()
+	}
+	_ = muted
+	return lipgloss.NewStyle().Foreground(col).Render(formatCostUSD(s.costUSD))
+}
+
+func formatProfileLabel(p string) string {
+	p = strings.TrimSpace(strings.ToLower(p))
+	switch p {
+	case "", "default":
+		return ""
+	case "fast":
+		return "⚡ fast"
+	case "precision":
+		return "🎯 precision"
+	default:
+		return p
+	}
+}
+
+func formatCostUSD(v float64) string {
+	switch {
+	case v >= 1:
+		return fmt.Sprintf("$%.2f", v)
+	case v >= 0.01:
+		return fmt.Sprintf("$%.3f", v)
+	case v > 0:
+		return fmt.Sprintf("$%.4f", v)
+	default:
+		return "$0.00"
+	}
+}
+
+func (s *StatusBar) busyBlocks(t theme.Theme) string {
 	const glyph = "▰"
 	const dim = "▱"
 	prim := lipgloss.NewStyle().Foreground(t.Primary())
@@ -206,12 +268,9 @@ func (s StatusBar) busyBlocks(t theme.Theme) string {
 	return prim.Render(parts[active]) + muted.Render(parts[(active+1)%3]) + muted.Render(parts[(active+2)%3])
 }
 
-// formatTokenUsage renders "12.3k/128k" or "532/4k" depending on magnitudes.
-// max=0 means unknown — only show used.
 func formatTokenUsage(used, max int) string {
 	if max <= 0 {
-		return formatCount(used) + " tokens"
+		return formatCount(used)
 	}
 	return formatCount(used) + "/" + formatCount(max)
 }
-

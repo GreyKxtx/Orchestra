@@ -24,7 +24,7 @@ func TestListModels_V0API(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := lmstudio.NewClient(srv.URL)
+	client := lmstudio.NewClient(srv.URL, "")
 	models, err := client.ListModels()
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestListModels_V1Fallback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := lmstudio.NewClient(srv.URL)
+	client := lmstudio.NewClient(srv.URL, "")
 	models, err := client.ListModels()
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestListModels_V1Fallback(t *testing.T) {
 }
 
 func TestListModels_Unreachable(t *testing.T) {
-	client := lmstudio.NewClient("http://127.0.0.1:1")
+	client := lmstudio.NewClient("http://127.0.0.1:1", "")
 	_, err := client.ListModels()
 	if err == nil {
 		t.Error("expected error for unreachable server")

@@ -14,6 +14,24 @@ import (
 
 func itoa(i int) string { return strconv.Itoa(i) }
 
+func rpcEventErrorText(ev rpcclient.Event) string {
+	if msg := strings.TrimSpace(ev.Err); msg != "" {
+		return msg
+	}
+	return strings.TrimSpace(ev.Content)
+}
+
+func stepDoneUserHint(reason string) string {
+	switch reason {
+	case "invalid":
+		return "" // detailed hint comes via EventRecoverableError
+	case "final_retry":
+		return "ошибка apply/resolver — повтор final"
+	default:
+		return ""
+	}
+}
+
 // listenForEvents returns a Cmd that reads one event from the rpc channel.
 func (a *App) listenForEvents() tea.Cmd {
 	if a.rpc == nil {
@@ -44,10 +62,16 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 	skipRender := false
 
 	switch ev.Kind {
+	case rpcclient.EventReasoningDelta:
+		if delta := ev.Content; delta != "" {
+			a.session.AppendAssistantReasoningDelta(delta)
+			a.chat.SetStreamCursor(true)
+			a.chatDirty = true
+			skipRender = true
+		}
 	case rpcclient.EventMessageDelta:
-		// qwen3 / deepseek-r1 / etc emit chain-of-thought wrapped in
-		// <think>...</think> tags inline with the answer. The splitter routes
-		// think-tag content into Message.Reasoning and the rest into Message.Text.
+		// Models that embed CoT in content still use <think>...</think>.
+		// Dedicated reasoning_content arrives as EventReasoningDelta above.
 		reasoning, message := a.reasoning.Feed(ev.Content)
 		if reasoning != "" {
 			a.session.AppendAssistantReasoningDelta(reasoning)
@@ -55,6 +79,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		if message != "" {
 			a.session.AppendAssistantDelta(message)
 		}
+		a.chat.SetStreamCursor(true)
 		a.chatDirty = true
 		skipRender = true
 	case rpcclient.EventToolCallStart:
@@ -73,6 +98,11 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.chatDirty = true
 		skipRender = true
 	case rpcclient.EventToolCallCompleted:
+		if tb, ok := a.session.FindToolBlock(ev.ToolCallID); ok {
+			if items := parseTodosFromTool(tb.Name, tb.ArgsRaw); len(items) > 0 {
+				a.setTodos(items)
+			}
+		}
 		status := state.ToolBlockCompleted
 		switch {
 		case strings.HasPrefix(ev.Content, "error: "):
@@ -80,20 +110,53 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		case strings.HasPrefix(ev.Content, "skipped: "):
 			status = state.ToolBlockSkipped
 		}
-		a.session.UpdateToolBlock(ev.ToolCallID, status, ev.Content)
+		a.session.UpdateToolBlock(ev.ToolCallID, status, ev.Content, diagnosticsToState(ev.Diagnostics))
 		a.statusBar.SetActiveTool("", "")
+		if len(ev.Diagnostics) > 0 {
+			a.lspStatus = "active"
+			a.syncStatusBar()
+		}
 	case rpcclient.EventStepDone:
-		// Text from non-final steps (tool_call, invalid retry, compaction) is
-		// pre-tool commentary or scratch output — not the user-facing answer.
-		// Drop it so only the final step's text remains in the message body.
-		// Only "final" steps keep their text.
 		if ev.Content != "final" {
 			a.session.TruncateAssistantText(a.stepTextLen)
+			if reason := stepDoneUserHint(ev.Content); reason != "" && !a.retryHintThisStep {
+				a.session.AppendAssistantNotice(state.SystemKindRetry, reason)
+			}
+			a.retryHintThisStep = false
 		}
 		a.statusBar.SetActiveTool("", "")
-		// Record where the next step's text starts so future truncations target
-		// only that step's contribution.
 		a.stepTextLen = a.session.AssistantTextLen()
+	case rpcclient.EventRecoverableError:
+		if msg := strings.TrimSpace(ev.Content); msg != "" {
+			a.session.AppendAssistantNotice(state.SystemKindRetry, view.LocalizeRetryHint(msg))
+			a.retryHintThisStep = true
+			a.chatDirty = true
+		}
+	case rpcclient.EventExecOutputChunk:
+		if chunk := ev.Content; chunk != "" {
+			a.session.AppendRunningToolOutput(chunk)
+			a.chatDirty = true
+			skipRender = true
+		}
+	case rpcclient.EventConnectionClosed:
+		if a.turn.ShowBusySpinner() {
+			a.failAgentTurn()
+			a.clearActiveCancel()
+			a.session.AppendSystemNotice(state.SystemKindError, "соединение с core закрыто")
+			a.statusBar.SetError("connection to core closed")
+			a.chat.SetStreamCursor(false)
+			a.livePromptTokens = 0
+			a.layout()
+			saveCmd = a.persistSessionCmd()
+		}
+	case rpcclient.EventStepUsage:
+		if ev.Usage != nil && ev.Usage.PromptTokens > 0 {
+			a.livePromptTokens = ev.Usage.PromptTokens
+			a.promptTokensUsed = ev.Usage.PromptTokens
+			a.session.SetAssistantPromptCtx(ev.Usage.PromptTokens)
+			a.syncStatusBar()
+			a.chatDirty = true
+		}
 	case rpcclient.EventDone:
 		// EventDone fires at the end of EVERY LLM stream — i.e. once per agent
 		// loop iteration, not once per user turn. Don't finalize the assistant
@@ -111,6 +174,19 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 	case rpcclient.EventAgentRunCompleted:
 		// Real end of the user turn. Now we finalize.
 		a.clearActiveCancel()
+		if a.turnError != "" {
+			a.reasoning.Reset()
+			a.session.FinishAssistant()
+			a.failAgentTurn()
+			a.statusBar.SetError(a.turnError)
+			a.chat.SetStreamCursor(false)
+			a.session.AppendSystemNotice(state.SystemKindError, a.turnError)
+			a.turnError = ""
+			a.livePromptTokens = 0
+			a.layout()
+			saveCmd = a.persistSessionCmd()
+			break
+		}
 		// Carry is always flushed to TEXT here — a stranded carry inside an
 		// unclosed `<think>` block at end-of-run means the provider never
 		// emitted `</think>`, so treating it as reasoning would hide it
@@ -119,22 +195,32 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 			a.session.AppendAssistantDelta(a.reasoning.Carry)
 		}
 		a.reasoning.Reset()
+		if a.promptTokensUsed > 0 {
+			a.session.SetAssistantPromptCtx(a.promptTokensUsed)
+		}
 		a.session.FinishAssistant()
 		a.finishAgentTurn()
 		a.statusBar.ClearError()
+		a.livePromptTokens = 0
 		a.chat.SetStreamCursor(false)
 		a.layout()
 		saveCmd = a.persistSessionCmd()
-	case rpcclient.EventError, rpcclient.EventConnectionError:
+	case rpcclient.EventError:
+		if msg := rpcEventErrorText(ev); msg != "" {
+			a.turnError = msg
+			a.statusBar.SetError(msg)
+		}
+	case rpcclient.EventConnectionError:
 		a.failAgentTurn()
 		a.clearActiveCancel()
 		a.layout()
-		a.statusBar.SetError(ev.Err)
+		msg := rpcEventErrorText(ev)
+		if msg == "" {
+			msg = "connection error"
+		}
+		a.statusBar.SetError(msg)
 		a.chat.SetStreamCursor(false)
-		a.session.AppendMessage(state.Message{
-			Role: state.RoleSystem,
-			Text: "[error] " + ev.Err,
-		})
+		a.session.AppendSystemNotice(state.SystemKindError, msg)
 		saveCmd = a.persistSessionCmd()
 	case rpcclient.EventPendingOps:
 		if ev.PendingOps == nil {
@@ -142,18 +228,39 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		}
 		if ev.PendingOps.Applied {
 			if n := len(ev.PendingOps.Ops); n > 0 {
-				a.session.AppendMessage(state.Message{
-					Role: state.RoleSystem,
-					Text: fmt.Sprintf("[live] записано на диск: %d ops", n),
-				})
+				a.session.AppendSystemNotice(state.SystemKindSuccess,
+					fmt.Sprintf("записано на диск: %d ops", n))
 			}
-			a.pendingOps = nil
-		} else {
-			a.pendingOps = ev.PendingOps
+			if len(ev.PendingOps.Diff) > 0 {
+				a.lastCommitDiff = append([]rpcclient.FileDiff(nil), ev.PendingOps.Diff...)
+				if a.diffShown {
+					a.session.RemoveDiff()
+				}
+				a.session.AddDiffFiles(a.buildDiffFiles())
+				a.diffShown = true
+			}
 		}
 		a.layout()
+	case rpcclient.EventTurnUsage:
+		if ev.Usage != nil {
+			a.recordTurnUsage(ev.Usage.PromptTokens, ev.Usage.CompletionTokens, ev.Usage.CostUSD)
+			a.session.SetAssistantUsage(ev.Usage.PromptTokens, ev.Usage.CompletionTokens)
+		}
+	case rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated:
+		a.setTodos(ev.Todos)
+	case rpcclient.EventInitialized:
+		if ev.LSPStatus != "" {
+			a.lspStatus = ev.LSPStatus
+		}
+		a.syncStatusBar()
 	case rpcclient.EventPermissionRequest:
 		if ev.PermReq != nil {
+			if a.toolAllowedThisSession(ev.PermReq.Tool) {
+				if a.rpc != nil {
+					a.rpc.RespondPermission(true)
+				}
+				break
+			}
 			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
 			a.layout()
 		}
@@ -175,9 +282,10 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 				a.workflowProgress.StageStart(ev.Stage.StageID)
 			}
 			a.session.AppendMessage(state.Message{
-				Role: state.RoleSystem,
-				Text: "[workflow:" + ev.Stage.Name + "] → stage " + ev.Stage.StageID +
-					" (attempt " + itoa(ev.Stage.Attempt) + ")",
+				Role:       state.RoleSystem,
+				SystemKind: state.SystemKindInfo,
+				Text: fmt.Sprintf("workflow «%s»: этап %s (попытка %d)",
+					ev.Stage.Name, ev.Stage.StageID, ev.Stage.Attempt),
 			})
 			a.layout()
 		}
@@ -188,13 +296,13 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 			}
 			marker := ev.Stage.Marker
 			if marker == "" {
-				marker = "(no marker)"
+				marker = "—"
 			}
 			a.session.AppendMessage(state.Message{
-				Role: state.RoleSystem,
-				Text: "[workflow:" + ev.Stage.Name + "] ← stage " + ev.Stage.StageID +
-					" done: marker=" + marker + ", action=" + ev.Stage.Action +
-					", " + itoa(ev.Stage.OutputKB) + "KB out",
+				Role:       state.RoleSystem,
+				SystemKind: state.SystemKindInfo,
+				Text: fmt.Sprintf("workflow «%s»: этап %s готов · marker=%s · %s · %dKB",
+					ev.Stage.Name, ev.Stage.StageID, marker, ev.Stage.Action, ev.Stage.OutputKB),
 			})
 		}
 	}

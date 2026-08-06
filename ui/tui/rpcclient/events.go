@@ -12,6 +12,7 @@ const (
 	EventConnectionError  EventKind = "connection_error"
 
 	EventMessageDelta      EventKind = "message_delta"
+	EventReasoningDelta    EventKind = "reasoning_delta"
 	EventToolCallStart     EventKind = "tool_call_start"
 	EventToolCallDelta     EventKind = "tool_call_delta"
 	EventToolCallCompleted EventKind = "tool_call_completed"
@@ -24,6 +25,10 @@ const (
 	EventExecOutputChunk EventKind = "exec_output_chunk"
 
 	EventAgentRunCompleted EventKind = "agent_run_completed" // synthesized when AgentRun returns
+	EventTurnUsage         EventKind = "turn_usage"        // usage totals from session.message result
+	EventTurnTodos         EventKind = "turn_todos"        // todo list from session.message result
+	EventTodosUpdated      EventKind = "todos_updated"     // live todo list after todowrite
+	EventStepUsage         EventKind = "step_usage"        // per-LLM-step token totals during a turn
 
 	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent
 	EventQuestionAsked     EventKind = "question_asked"     // server asks user via question/ask
@@ -58,7 +63,37 @@ type Event struct {
 	PermReq      *PermissionRequestPayload // only set when Kind == EventPermissionRequest
 	Questions    []QuestionItemPayload     // only set when Kind == EventQuestionAsked
 	Stage        *WorkflowStagePayload     // only set when Kind == EventWorkflowStageStart / EventWorkflowStageDone
+	Diagnostics  []ToolDiagnosticPayload   // LSP diagnostics on write/edit tool_call_completed
+	Usage        *UsageTurnPayload         // token/cost totals for completed turn
+	Todos        []TodoItem                // model checklist after turn / todowrite
+	LSPStatus    string                    // from core.health on init
 	Err          string                    // only set on connection/agent error events
+}
+
+// UsageTurnPayload mirrors core.UsageSnapshot from session.message / agent.run.
+type UsageTurnPayload struct {
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+}
+
+// TodoItem mirrors tools.TodoItem from session.message / todowrite.
+type TodoItem struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
+
+// ToolDiagnosticPayload mirrors lsp.ToolDiagnostic in tool JSON responses.
+type ToolDiagnosticPayload struct {
+	StartLine int    `json:"start_line"`
+	StartCol  int    `json:"start_col"`
+	EndLine   int    `json:"end_line,omitempty"`
+	EndCol    int    `json:"end_col,omitempty"`
+	Severity  string `json:"severity"`
+	Source    string `json:"source,omitempty"`
+	Message   string `json:"message"`
 }
 
 // PendingOpsPayload mirrors the data sub-object in the pending_ops event.

@@ -18,22 +18,19 @@ type SlashCmd struct {
 // AllSlashCmds is the complete list shown in the slash palette.
 // Sorted alphabetically — opencode style.
 var AllSlashCmds = []SlashCmd{
-	{"/apply", "apply pending ops (PREVIEW mode)"},
-	{"/clear", "clear chat history"},
-	{"/diff", "toggle diff view"},
-	{"/discard", "discard pending ops"},
-	{"/exec", "toggle bash/exec.run"},
-	{"/help", "show available commands"},
-	{"/live", "LIVE mode — write to disk immediately"},
-	{"/mode", "show current mode"},
-	{"/model", "show current model"},
-	{"/preview", "PREVIEW mode — stage until apply"},
-	{"/quit", "exit Orchestra TUI"},
-	{"/sessions", "browse saved sessions"},
-	{"/skill", "invoke a single skill"},
-	{"/skills", "list available skills"},
-	{"/workflow", "run a multi-stage workflow"},
-	{"/workflows", "list available workflows"},
+	{"/clear", "очистить историю чата"},
+	{"/diff", "diff последнего commit"},
+	{"/help", "показать команды и клавиши"},
+	{"/mode", "текущий режим агента"},
+	{"/model", "текущая модель"},
+	{"/quit", "выйти из Orchestra TUI"},
+	{"/sessions", "сохранённые сессии"},
+	{"/shell", "права на shell: ask ↔ allow"},
+	{"/skill", "запустить skill"},
+	{"/skills", "список skills"},
+	{"/theme", "тема: orchestra ↔ neutral"},
+	{"/workflow", "запустить workflow"},
+	{"/workflows", "список workflows"},
 }
 
 const maxPaletteVisible = 6

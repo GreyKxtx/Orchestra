@@ -2,7 +2,9 @@ package view
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,9 +23,8 @@ type SettingsDialogResult struct {
 	EnableThinking bool
 }
 
-// SettingsDialog edits the per-model settings preset. Field cursor cycles
-// through the editable fields; ←/→ adjust numeric/bool values; for the
-// API-key field, plain typing edits the buffer.
+// SettingsDialog edits the per-model settings preset.
+// Type digits to enter values manually; ←/→ step the committed value.
 type SettingsDialog struct {
 	provider ProviderEntry
 	model    ModelEntry
@@ -34,12 +35,11 @@ type SettingsDialog struct {
 	numCtx         int64
 	enableThinking bool
 
-	cursor int // index into fields()
+	cursor  int
+	editBuf string // in-progress typed value for the focused field
 }
 
-// NewSettingsDialog returns a SettingsDialog seeded with reasonable defaults
-// (or values from an existing preset, if applicable). Caller can override
-// initial values via SetInitial.
+// NewSettingsDialog returns a SettingsDialog seeded with reasonable defaults.
 func NewSettingsDialog(provider ProviderEntry, model ModelEntry) *SettingsDialog {
 	d := &SettingsDialog{
 		provider:    provider,
@@ -96,22 +96,29 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		return d, nil
 	}
 	flds := d.fields()
+	kind := flds[d.cursor].kind
+
 	switch km.String() {
 	case "up", "ctrl+p":
+		d.commitEdit()
 		if d.cursor > 0 {
 			d.cursor--
 		}
 	case "down", "ctrl+n":
+		d.commitEdit()
 		if d.cursor < len(flds)-1 {
 			d.cursor++
 		}
 	case "left":
-		d.adjustField(flds[d.cursor].kind, -1)
+		d.commitEdit()
+		d.adjustField(kind, -1)
 	case "right":
-		d.adjustField(flds[d.cursor].kind, +1)
+		d.commitEdit()
+		d.adjustField(kind, +1)
 	case "esc":
 		return d, dialogResultCmd("settings", "cancel", nil)
 	case "enter":
+		d.commitEdit()
 		return d, dialogResultCmd("settings", "save", SettingsDialogResult{
 			Provider:       d.provider,
 			Model:          d.model,
@@ -122,39 +129,102 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			EnableThinking: d.enableThinking,
 		})
 	case "backspace":
-		if flds[d.cursor].kind == "apikey" && len(d.apiKey) > 0 {
+		if len(d.editBuf) > 0 {
+			d.editBuf = d.editBuf[:len(d.editBuf)-1]
+		} else if kind == "apikey" && len(d.apiKey) > 0 {
 			d.apiKey = d.apiKey[:len(d.apiKey)-1]
 		}
 	default:
-		if flds[d.cursor].kind == "apikey" && len(km.Runes) == 1 {
-			d.apiKey += string(km.Runes[0])
+		if len(km.Runes) == 1 {
+			r := km.Runes[0]
+			switch kind {
+			case "temp":
+				if isTempRune(r) {
+					d.editBuf += string(r)
+				}
+			case "tokens", "ctx":
+				if unicode.IsDigit(r) {
+					d.editBuf += string(r)
+				}
+			case "apikey":
+				d.editBuf += string(r)
+			}
 		}
 	}
 	return d, nil
 }
 
+func isTempRune(r rune) bool {
+	return unicode.IsDigit(r) || r == '.'
+}
+
+func (d *SettingsDialog) commitEdit() {
+	if d.editBuf == "" {
+		return
+	}
+	kind := d.fields()[d.cursor].kind
+	switch kind {
+	case "temp":
+		if v, err := strconv.ParseFloat(d.editBuf, 32); err == nil {
+			d.temperature = clampTemp(float32(v))
+		}
+	case "tokens":
+		if v, err := strconv.Atoi(d.editBuf); err == nil {
+			d.maxTokens = clampTokens(v)
+		}
+	case "ctx":
+		if v, err := strconv.ParseInt(d.editBuf, 10, 64); err == nil {
+			d.numCtx = clampCtx(v, d.model.MaxContextLength)
+		}
+	case "apikey":
+		d.apiKey = d.editBuf
+	}
+	d.editBuf = ""
+}
+
+func clampTemp(v float32) float32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 2 {
+		return 2
+	}
+	return v
+}
+
+func clampTokens(v int) int {
+	if v < 256 {
+		return 256
+	}
+	if v > 200_000 {
+		return 200_000
+	}
+	return v
+}
+
+func clampCtx(v, maxModel int64) int64 {
+	if v < 1024 {
+		return 1024
+	}
+	if maxModel > 0 && v > maxModel {
+		return maxModel
+	}
+	if v > 1_048_576 {
+		return 1_048_576
+	}
+	return v
+}
+
 func (d *SettingsDialog) adjustField(kind string, dir int) {
 	switch kind {
 	case "temp":
-		d.temperature += float32(dir) * 0.05
-		if d.temperature < 0 {
-			d.temperature = 0
-		}
-		if d.temperature > 2 {
-			d.temperature = 2
-		}
+		d.temperature = clampTemp(d.temperature + float32(dir)*0.05)
 	case "tokens":
 		step := 1024
 		if d.maxTokens >= 16384 {
 			step = 4096
 		}
-		d.maxTokens += dir * step
-		if d.maxTokens < 256 {
-			d.maxTokens = 256
-		}
-		if d.maxTokens > 200_000 {
-			d.maxTokens = 200_000
-		}
+		d.maxTokens = clampTokens(d.maxTokens + dir*step)
 	case "ctx":
 		step := int64(2048)
 		if d.numCtx >= 32768 {
@@ -163,16 +233,7 @@ func (d *SettingsDialog) adjustField(kind string, dir int) {
 		if d.numCtx >= 131_072 {
 			step = 32_768
 		}
-		d.numCtx += int64(dir) * step
-		if d.numCtx < 1024 {
-			d.numCtx = 1024
-		}
-		if d.model.MaxContextLength > 0 && d.numCtx > d.model.MaxContextLength {
-			d.numCtx = d.model.MaxContextLength
-		}
-		if d.numCtx > 1_048_576 {
-			d.numCtx = 1_048_576
-		}
+		d.numCtx = clampCtx(d.numCtx+int64(dir)*step, d.model.MaxContextLength)
 	case "thinking":
 		d.enableThinking = !d.enableThinking
 	}
@@ -238,11 +299,12 @@ func (d *SettingsDialog) Render(screenW, screenH int) string {
 
 	var rows []string
 	for i, f := range flds {
-		valueText := d.fieldValue(f.kind)
-		hint := d.fieldHint(f.kind, i == d.cursor)
+		active := i == d.cursor
+		valueText := d.fieldDisplay(f.kind, active)
+		hint := d.fieldHint(f.kind, active)
 
 		row := inset + fmt.Sprintf("%-*s", labelCol, f.label)
-		if i == d.cursor {
+		if active {
 			rendered := selStyle.Render(row + valueText + "  " + hint)
 			rows = append(rows, rendered)
 		} else {
@@ -254,7 +316,7 @@ func (d *SettingsDialog) Render(screenW, screenH int) string {
 		}
 	}
 
-	hint := fitInner(mutedStyle.Render("↑↓ field · ←→ adjust · Enter save · Esc back"))
+	hint := fitInner(mutedStyle.Render("↑↓ field · type value · ←→ step · Enter save · Esc back"))
 	blank := padBg(inner)
 
 	sections := []string{blank, header, modelLine, blank}
@@ -271,7 +333,15 @@ func (d *SettingsDialog) Render(screenW, screenH int) string {
 	return lipgloss.Place(screenW, screenH, lipgloss.Center, lipgloss.Center, box)
 }
 
-func (d *SettingsDialog) fieldValue(kind string) string {
+func (d *SettingsDialog) fieldDisplay(kind string, active bool) string {
+	if active && d.editBuf != "" {
+		return d.editBuf + "▋"
+	}
+	if active && kind == "apikey" {
+		if d.apiKey == "" && d.editBuf == "" {
+			return "▋"
+		}
+	}
 	switch kind {
 	case "temp":
 		return fmt.Sprintf("%.2f", d.temperature)
@@ -298,12 +368,10 @@ func (d *SettingsDialog) fieldHint(kind string, active bool) string {
 		return ""
 	}
 	switch kind {
-	case "temp", "tokens", "ctx":
-		return "← →"
+	case "temp", "tokens", "ctx", "apikey":
+		return "type · ←→ step"
 	case "thinking":
-		return "← → toggle"
-	case "apikey":
-		return "type to edit"
+		return "←→ toggle"
 	}
 	return ""
 }

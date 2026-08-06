@@ -72,9 +72,18 @@ const (
 	// StreamEventPendingOps is emitted when the agent produces final patches (dry-run or pre-apply).
 	// Content holds a JSON-encoded {ops: [...], diff: "...", applied: bool} payload.
 	StreamEventPendingOps StreamEventKind = "pending_ops"
+	// StreamEventStepUsage carries per-LLM-step token totals (prompt/completion).
+	StreamEventStepUsage StreamEventKind = "step_usage"
+	// StreamEventTodosUpdated carries the full todo list after a successful todowrite.
+	// Content is a JSON array of todo items.
+	StreamEventTodosUpdated StreamEventKind = "todos_updated"
 	// StreamEventRecoverableError is emitted when a non-fatal error (StaleContent, AmbiguousMatch,
 	// schema validation failure) occurs and the loop will retry. Content holds a short message.
 	StreamEventRecoverableError StreamEventKind = "recoverable_error"
+	// StreamEventReasoningDelta carries chain-of-thought tokens from a dedicated
+	// provider field (reasoning_content / thinking). Distinct from message_delta
+	// so the TUI can append to Reasoning without think-tag parsing.
+	StreamEventReasoningDelta StreamEventKind = "reasoning_delta"
 )
 
 // StreamEvent is one event emitted during a streaming completion.
@@ -97,6 +106,9 @@ type StreamEvent struct {
 
 	// Error: non-nil on StreamEventError.
 	Err error
+
+	// Diagnostics: JSON array of LSP tool diagnostics (write/edit completed events).
+	Diagnostics json.RawMessage
 }
 
 // sseChunk is the JSON payload of one SSE "data:" line in OpenAI-compatible streaming.
@@ -152,10 +164,9 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 		// file.write_atomic) don't exceed bufio's default 64 KB line limit.
 		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 
-		// inReasoning tracks whether we are currently streaming dedicated reasoning
-		// content (reasoning_content / thinking_content fields). Used to emit
-		// synthetic <think>…</think> wrappers so the TUI's ReasoningSplitter can
-		// route this text into Message.Reasoning without any additional plumbing.
+		// inReasoning tracks dedicated reasoning_content / thinking_content.
+		// Accumulator still wraps with <think> for BuildResponse history;
+		// the TUI receives StreamEventReasoningDelta separately.
 		inReasoning := false
 
 		for scanner.Scan() {
@@ -172,7 +183,6 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			if strings.TrimSpace(data) == "[DONE]" {
 				if inReasoning {
 					acc.AppendContent("</think>")
-					ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: "</think>"}
 				}
 				ch <- StreamEvent{Kind: StreamEventDone, Response: acc.BuildResponse()}
 				return
@@ -200,25 +210,27 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			delta := chunk.Choices[0].Delta
 
 			// Dedicated reasoning field (Qwen3, DeepSeek-R1 via LM Studio, etc.).
-			// Wrap in <think>…</think> so the TUI ReasoningSplitter picks it up.
+			// Emit reasoning_delta for the TUI; also wrap in <think> in the
+			// accumulator so BuildResponse / history stay consistent with
+			// models that embed think tags in content.
 			rc := delta.ReasoningContent
 			if rc == "" {
 				rc = delta.ThinkingContent
 			}
 			if rc != "" {
+				accRC := rc
 				if !inReasoning {
-					rc = "<think>" + rc
+					accRC = "<think>" + rc
 					inReasoning = true
 				}
-				acc.AppendContent(rc)
-				ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: rc}
+				acc.AppendContent(accRC)
+				ch <- StreamEvent{Kind: StreamEventReasoningDelta, Content: rc}
 			}
 
 			if delta.Content != "" {
 				if inReasoning {
 					// Close the think block before the actual answer starts.
 					acc.AppendContent("</think>")
-					ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: "</think>"}
 					inReasoning = false
 				}
 				acc.AppendContent(delta.Content)
@@ -253,7 +265,6 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 		// Scanner exhausted without a [DONE] line — some proxies strip it.
 		if inReasoning {
 			acc.AppendContent("</think>")
-			ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: "</think>"}
 		}
 		ch <- StreamEvent{Kind: StreamEventDone, Response: acc.BuildResponse()}
 	}()

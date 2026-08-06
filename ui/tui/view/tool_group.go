@@ -44,7 +44,9 @@ func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, str
 	var lines []string
 	for _, tb := range blocks {
 		if expanded && isBlockStyleTool(tb, streaming) {
-			lines = append(lines, renderBlockTool(tb, width, c.spinFrame))
+			tb2 := tb
+			tb2.Expanded = true // group expand → show more output lines
+			lines = append(lines, renderBlockTool(tb2, width, c.spinFrame))
 		} else {
 			lines = append(lines, renderInlineTool(tb, width, c.spinFrame))
 		}

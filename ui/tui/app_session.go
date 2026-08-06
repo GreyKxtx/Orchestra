@@ -43,15 +43,27 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	}
 	a.coreSessionID = m.sessionID
 	a.currentSessionID = m.sessionID
-	if m.restored && a.rpc != nil && len(a.session.Messages) == 0 {
-		if got, err := a.rpc.SessionGet(context.Background(), m.sessionID); err == nil && len(got.UIMessages) > 0 {
-			a.session = state.NewSession()
-			for _, msg := range stateMessagesFromUI(got.UIMessages) {
-				a.session.AppendMessage(msg)
+	if m.restored && a.rpc != nil {
+		if got, err := a.rpc.SessionGet(context.Background(), m.sessionID); err == nil {
+			if len(a.session.Messages) == 0 && len(got.UIMessages) > 0 {
+				a.session = state.NewSession()
+				for _, msg := range stateMessagesFromUI(got.UIMessages) {
+					a.session.AppendMessage(msg)
+				}
+				a.chat.SetMessages(a.session.Messages)
+				a.showWelcome = false
+				a.chat.SetForceWelcome(false)
 			}
-			a.chat.SetMessages(a.session.Messages)
-			a.showWelcome = false
-			a.chat.SetForceWelcome(false)
+			if len(got.Todos) > 0 {
+				a.setTodos(got.Todos)
+			}
+			if got.CostUSD > 0 {
+				a.sessionCostUSD = got.CostUSD
+			}
+			a.chat.SyncExpandFromMessages(a.session.Messages)
+			a.syncDiffStateFromSession()
+			a.restorePromptTokensFromSession()
+			a.updateStatusHints()
 		}
 	}
 }
@@ -82,12 +94,13 @@ func (a *App) persistSessionCmd() tea.Cmd {
 	}
 	id := a.currentSessionID
 	model := a.cfg.Model
+	cost := a.sessionCostUSD
 	msgs := append([]state.Message(nil), a.session.Messages...)
 	ui := uiMessagesFromState(msgs)
 	title := sessionstore.TitleFromMessages(msgs)
 	rpc := a.rpc
 	return func() tea.Msg {
-		if err := rpc.SessionUISync(context.Background(), id, title, model, ui); err != nil {
+		if err := rpc.SessionUISync(context.Background(), id, title, model, ui, cost); err != nil {
 			return sessionPersistMsg{err: err}
 		}
 		return sessionPersistMsg{id: id}
@@ -142,11 +155,40 @@ func (a *App) loadSession(id string) tea.Cmd {
 			a.session.AppendMessage(m)
 		}
 	}
+	a.chat.SyncExpandFromMessages(a.session.Messages)
 	a.chat.SetMessages(a.session.Messages)
 	a.showWelcome = false
 	a.chat.SetForceWelcome(false)
+	a.syncDiffStateFromSession()
+	a.restorePromptTokensFromSession()
+	a.updateStatusHints()
 	if a.rpc != nil {
 		return a.startCoreSession()
 	}
 	return nil
+}
+
+// restorePromptTokensFromSession sets the status-bar token counter from the
+// last assistant turn. Prefer PromptCtx (last per-step prompt size). TokensIn
+// is a turn total (sum of steps) and is only used as a fallback when it cannot
+// exceed the configured context limit (typical single-step turns).
+func (a *App) restorePromptTokensFromSession() {
+	limit := a.contextLimit()
+	for i := len(a.session.Messages) - 1; i >= 0; i-- {
+		m := a.session.Messages[i]
+		if m.Role != state.RoleAssistant {
+			continue
+		}
+		switch {
+		case m.PromptCtx > 0:
+			a.promptTokensUsed = m.PromptCtx
+		case m.TokensIn > 0 && (limit <= 0 || m.TokensIn <= limit):
+			a.promptTokensUsed = m.TokensIn
+		default:
+			continue
+		}
+		a.livePromptTokens = 0
+		a.syncStatusBar()
+		return
+	}
 }

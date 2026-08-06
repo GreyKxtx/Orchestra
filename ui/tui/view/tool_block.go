@@ -10,13 +10,8 @@ import (
 )
 
 // isBlockStyleTool decides whether a tool renders as a multi-line panel block
-// (exec/write: command + truncated output) vs a one-line inline summary
+// (exec/write/edit: command + truncated output) vs a one-line inline summary
 // (read/list/search/etc: icon + path + entries/matches counter).
-//
-// Only exec.run / fs.write / file.write_atomic ever get the block style — their
-// payload (command, file content) is the actual user-relevant artifact. For
-// read-style tools the inline preview already conveys everything useful and a
-// full body would just dump JSON noise into the chat.
 //
 // Block style is suppressed while the message is still streaming so completed
 // exec/write don't pop into heavy panels mid-stream.
@@ -28,7 +23,13 @@ func isBlockStyleTool(tb state.ToolBlock, streaming bool) bool {
 		return false
 	}
 	switch tb.Name {
-	case "exec.run", "fs.write", "file.write_atomic":
+	case "exec.run", "bash", "fs.write", "file.write_atomic", "write", "edit", "Edit", "MultiEdit":
+		return true
+	}
+	if toolKind(tb.Name) == "write" {
+		return true
+	}
+	if toolKind(tb.Name) == "exec" {
 		return true
 	}
 	return false
@@ -36,11 +37,7 @@ func isBlockStyleTool(tb state.ToolBlock, streaming bool) bool {
 
 // renderBlockTool — compact tool detail box. No background fill; left ┃ bar
 // only. Title is icon + preview (no "# " prefix). Body text is muted.
-// Used only for completed tools when the user expands the group (Ctrl+T) or
-// expands an individual tool via Tab.
-//
-// exec.run: body shows `$ <command>` followed by output (max 20 lines).
-// fs.write: body shows the new file content (max 20 lines).
+// Used only for completed tools when the user expands the group (Ctrl+T).
 func renderBlockTool(tb state.ToolBlock, width int, spinFrame int) string {
 	t := theme.CurrentTheme()
 
@@ -102,8 +99,13 @@ func maxLineWidth(s string) int {
 }
 
 // blockToolBody builds the inner content of a BlockTool — per-tool layout.
-// exec.run: `$ <command>` + output. fs.write: new content. otherwise: result.
+// exec.run: `$ <command>` + output. fs.write/edit: new content. otherwise: result.
+// When the tool (or group) is Expanded, show more lines before truncating.
 func blockToolBody(tb state.ToolBlock) string {
+	maxLines := 20
+	if tb.Expanded {
+		maxLines = 200
+	}
 	args := parseToolArgs(tb.ArgsRaw)
 	switch toolKind(tb.Name) {
 	case "exec":
@@ -117,7 +119,7 @@ func blockToolBody(tb state.ToolBlock) string {
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(truncateLines(out, 20))
+			b.WriteString(truncateLines(out, maxLines))
 		}
 		if b.Len() == 0 {
 			return "(running…)"
@@ -128,15 +130,27 @@ func blockToolBody(tb state.ToolBlock) string {
 		if content == "" {
 			content = strings.TrimSpace(tb.Result)
 		}
-		if content == "" {
+		var b strings.Builder
+		if content != "" {
+			b.WriteString(truncateLines(content, maxLines))
+		} else if len(tb.Diagnostics) == 0 {
 			return "(running…)"
 		}
-		return truncateLines(content, 20)
+		if diagBlock := formatDiagnosticsBlock(tb.Diagnostics); diagBlock != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(diagBlock)
+		}
+		if b.Len() == 0 {
+			return "(running…)"
+		}
+		return b.String()
 	default:
 		out := strings.TrimSpace(tb.Result)
 		if out == "" {
 			return "(no output)"
 		}
-		return truncateLines(out, 20)
+		return truncateLines(out, maxLines)
 	}
 }

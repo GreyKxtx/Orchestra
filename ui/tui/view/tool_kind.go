@@ -192,6 +192,9 @@ func toolPreview(name, argsRaw, result string) string {
 		return strings.TrimSpace(disp + " " + path)
 
 	case "write":
+		if name == "edit" {
+			disp = "Edit"
+		}
 		path, _ := args["filePath"].(string)
 		if path == "" {
 			path, _ = args["path"].(string)
@@ -310,5 +313,5 @@ func truncateLines(s string, maxLines int) string {
 		return s
 	}
 	return strings.Join(lines[:maxLines], "\n") +
-		fmt.Sprintf("\n… %d more lines", len(lines)-maxLines)
+		fmt.Sprintf("\n… %d more lines · Ctrl+T", len(lines)-maxLines)
 }

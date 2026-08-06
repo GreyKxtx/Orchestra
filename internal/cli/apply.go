@@ -405,7 +405,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,
 			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
-			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
+			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			PromptFamily:         promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
@@ -585,7 +585,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
-			MaxPromptBytes:         cfg.Limits.ContextKB * 1024,
+			MaxPromptBytes:         cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:    cfg.Agent.CompactThresholdPct,
 			ToolDigestBytes:        cfg.Agent.ResolvedToolDigestBytes(),
 			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
@@ -619,7 +619,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,
 			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
-			MaxPromptBytes:       cfg.Limits.ContextKB * 1024,
+			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			Apply:                !dryRun,
@@ -644,10 +644,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			HooksRunner:          hooksRunner,
 			UserImages:           imageParts,
 			MultimodalLLM:        cfg.LLM.Multimodal,
-			Memory:               cfg.Memory.Resolve(),
-			ToolDigestBytes:      cfg.Agent.ResolvedToolDigestBytes(),
-			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
 		}
+		agent.ApplyHistoryConfig(&agOpts, cfg)
 		// Profile overlays defaults; named agents: (CustomTools / SystemPromptOverride /
 		// provider) already applied above and take precedence for those fields.
 		if err := agent.ApplyProfile(&agOpts, profileName, false); err != nil {
@@ -778,7 +776,7 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 		Backup:            backup,
 		MaxSteps:          cfg.Agent.MaxSteps,
 		MaxInvalidRetries: cfg.Agent.MaxInvalidRetries,
-		MaxPromptBytes:    cfg.Limits.ContextKB * 1024,
+		MaxPromptBytes:    cfg.EffectiveMaxPromptBytes(),
 		AllowExec:         allowExec,
 		Debug:             debugMode,
 		Mode:              agentMode,

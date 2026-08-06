@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
 type lineKind int
@@ -109,12 +111,13 @@ func filterContext(lines []diffLine, ctxN int) []diffLine {
 	return out
 }
 
-var (
-	addStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
-	delStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
-	ctxStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
-	pathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7")).Bold(true)
-)
+func diffStyles() (add, del, ctx, path lipgloss.Style) {
+	t := theme.CurrentTheme()
+	return lipgloss.NewStyle().Foreground(t.Success()),
+		lipgloss.NewStyle().Foreground(t.Error()),
+		lipgloss.NewStyle().Foreground(t.TextMuted()),
+		lipgloss.NewStyle().Foreground(t.Primary()).Bold(true)
+}
 
 // RenderFileDiff renders a colored unified-style diff of before→after.
 // width is the available terminal width (unused in current implementation but
@@ -124,6 +127,7 @@ func RenderFileDiff(before, after string, width int) string {
 	bLines := strings.Split(strings.TrimRight(after, "\n"), "\n")
 	dl := computeDiff(aLines, bLines)
 	dl = filterContext(dl, 3)
+	addStyle, delStyle, ctxStyle, _ := diffStyles()
 
 	var sb strings.Builder
 	for _, l := range dl {
@@ -147,8 +151,9 @@ func RenderFileDiff(before, after string, width int) string {
 // RenderAllDiffs renders diffs for a slice of FileDiff values, each with a
 // path header. path and before/after fields are plain strings.
 func RenderAllDiffs(diffs []FileDiffView, width int) string {
+	_, _, ctxStyle, pathStyle := diffStyles()
 	if len(diffs) == 0 {
-		return ctxStyle.Render("(no file changes)")
+		return ctxStyle.Render("(нет изменений в файлах)")
 	}
 	var sb strings.Builder
 	for i, fd := range diffs {

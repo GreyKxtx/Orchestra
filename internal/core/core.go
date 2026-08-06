@@ -22,10 +22,8 @@ import (
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
-	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/mcp"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tasks"
@@ -152,7 +150,7 @@ func (c *Core) WarmupCKG(ctx context.Context) {
 }
 
 func (c *Core) Health() protocol.Health {
-	return protocol.Health{
+	h := protocol.Health{
 		Status:          "ok",
 		CoreVersion:     protocol.CoreVersion,
 		ProtocolVersion: protocol.ProtocolVersion,
@@ -161,6 +159,10 @@ func (c *Core) Health() protocol.Health {
 		WorkspaceRoot:   c.workspaceRoot,
 		ProjectID:       c.projectID,
 	}
+	if c != nil && c.tools != nil {
+		h.LSPStatus = c.tools.LSPStatus()
+	}
+	return h
 }
 
 type InitializeParams struct {
@@ -384,159 +386,41 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 			fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
 	}
 
-	applyOutput := strings.ToLower(strings.TrimSpace(params.ApplyOutput))
-	if applyOutput == "" && c.cfg != nil {
-		applyOutput = strings.ToLower(strings.TrimSpace(c.cfg.Apply.Output))
-	}
-	if applyOutput == "" {
-		applyOutput = config.ApplyOutputDisk
-	}
-	if applyOutput != config.ApplyOutputDisk && applyOutput != config.ApplyOutputPatch {
-		return nil, protocol.NewError(protocol.InvalidParams,
-			fmt.Sprintf("apply_output must be %q or %q", config.ApplyOutputDisk, config.ApplyOutputPatch), nil)
-	}
-	if applyOutput == config.ApplyOutputPatch {
-		if params.Apply {
-			return nil, protocol.NewError(protocol.InvalidParams,
-				"apply_output=patch is mutually exclusive with apply=true", nil)
-		}
-		params.Apply = false
-		params.Backup = false
-	}
-
-	profileName := strings.TrimSpace(params.Profile)
-	if profileName == "" && c.cfg != nil {
-		profileName = strings.TrimSpace(c.cfg.Agent.Profile)
-	}
-	if !agent.IsKnownProfile(profileName) {
-		return nil, protocol.NewError(protocol.InvalidParams,
-			fmt.Sprintf("unknown profile %q (want fast|precision)", profileName), nil)
-	}
-
-	// Build ResponseFormat from config (grammar-constrained sampling for local models).
-	var respFmt *llm.ResponseFormat
-	if c.cfg != nil && c.cfg.LLM.ResponseFormatType != "" {
-		respFmt = &llm.ResponseFormat{Type: c.cfg.LLM.ResponseFormatType}
-		if c.cfg.LLM.ResponseFormatType == "json_schema" {
-			respFmt.Schema = schema.AgentStepSchemaRaw()
-			respFmt.SchemaName = "agent_step"
-		}
-	}
-
-	// Merge params with config defaults (params take precedence when non-zero).
-	maxSteps := params.MaxSteps
-	if maxSteps <= 0 && c.cfg != nil {
-		maxSteps = c.cfg.Agent.MaxSteps
-	}
-	maxRetries := params.MaxInvalidRetries
-	if maxRetries <= 0 && c.cfg != nil {
-		maxRetries = c.cfg.Agent.MaxInvalidRetries
-	}
-	maxPromptBytes := params.MaxPromptBytes
-	if maxPromptBytes <= 0 && c.cfg != nil {
-		maxPromptBytes = c.cfg.Limits.ContextKB * 1024
-	}
-
-	promptFamily := ""
-	if c.cfg != nil {
-		promptFamily = promptpkg.ResolvePromptFamily(c.cfg.LLM.PromptFamily, c.cfg.LLM.Model)
-	}
-
-	// Build OnEvent callback: translate agent.AgentEvent to JSON-RPC notifications.
-	var onEvent func(agent.AgentEvent)
-	if params.OnEvent != nil {
-		onEvent = buildAgentOnEvent(params.OnEvent, EventEnvelope{TurnID: NewTurnID()})
-	}
-
-	allowExec := params.AllowExec
-	if c.cfg != nil && c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
-		allowExec = true // Confirm: false in config = allow all (backward compat)
-	}
-	var execAllow, execDeny []string
-	if c.cfg != nil {
-		execAllow = c.cfg.Exec.Allow
-		execDeny = c.cfg.Exec.Deny
-	}
-
-	var agentLogger *llm.Logger
-	if c.llmClient != nil {
-		if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
-			agentLogger = oc.GetLogger()
-		}
-	}
-
-	var hooksRunner agent.HooksRunner
-	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
-		hooksRunner = hr
-	}
-
-	customOpts, err := c.resolveCustomAgentOpts(params.Mode, agentLogger)
+	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
 	if err != nil {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
+		return nil, err
 	}
 
-	// Configure staging mode: dry-run when not applying; clear any stale state from prior runs.
-	// runMu serialises this whole call so a concurrent agent.run/workflow.run/
-	// skill.invoke/ops.apply cannot flip dry-run mid-flight on our shared Runner.
+	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+		Mode:                params.Mode,
+		Profile:             params.Profile,
+		Apply:               params.Apply,
+		Backup:              params.Backup,
+		AllowExec:           params.AllowExec,
+		Debug:               params.Debug || c.debug,
+		MaxSteps:            params.MaxSteps,
+		MaxInvalidRetries:   params.MaxInvalidRetries,
+		MaxPromptBytes:      params.MaxPromptBytes,
+		AutoSessionMemory:   false,
+		UsageLabel:          "agent.run",
+		OnEvent:             params.OnEvent,
+		EventEnvelope:       EventEnvelope{TurnID: NewTurnID()},
+		PermissionRequester: params.PermissionRequester,
+		QuestionAsker:       params.QuestionAsker,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Semantic dry-run pipeline: edit/write always go through staging + LSP
+	// during the turn. params.Apply controls commit-to-disk at end of turn,
+	// not per-tool live writes.
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
-	c.tools.SetDryRun(!params.Apply)
+	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
 
-	usageTracker := newAgentUsageTracker(c.cfg, "agent.run")
-	taskRunner := tasks.New(c.llmClient, c.validator, c.tools, childAgentConfig(c.cfg, maxPromptBytes, usageTracker))
-
-	agOpts := agent.Options{
-		MaxSteps:             maxSteps,
-		MaxInvalidRetries:    maxRetries,
-		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
-		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
-		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
-		MaxPromptBytes:       maxPromptBytes,
-		CompactThresholdPct:  c.cfg.Agent.CompactThresholdPct,
-		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
-		Apply:                params.Apply,
-		Backup:               params.Backup,
-		AllowExec:            allowExec,
-		ExecAllow:            execAllow,
-		ExecDeny:             execDeny,
-		PermissionRules:      c.cfg.Permissions.Rules,
-		Debug:                params.Debug || c.debug,
-		ResponseFormat:       respFmt,
-		PromptFamily:         promptFamily,
-		Mode:                 agent.Mode(params.Mode),
-		SystemPromptOverride: customOpts.systemPromptOverride,
-		CustomTools:          customOpts.customTools,
-		OnEvent:              onEvent,
-		AgentLogger:          agentLogger,
-		SubtaskRunner:        taskRunner,
-		HooksRunner:          hooksRunner,
-		ExtraTools:           c.mcpToolDefs(),
-		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
-		QuestionAsker:        params.QuestionAsker,
-		UsageTracker:         usageTracker,
-		ProviderLabel:        providerLabelOf(c.cfg),
-		ModelLabel:           c.cfg.LLM.Model,
-		PlanPath:             resolvePlanPath(params.Mode, "", ""),
-		Memory:               c.cfg.Memory.Resolve(),
-		ToolDigestBytes:        c.cfg.Agent.ResolvedToolDigestBytes(),
-		HistoryPruneKeepRecent: c.cfg.Agent.ResolvedHistoryPruneKeepRecent(),
-		AutoSessionMemory:    false,
-	}
-	// Profile overlays config defaults. When a profile is selected it wins over
-	// agent.max_steps / limits.context_kb for the knobs it owns; omit profile
-	// to drive those via RPC max_steps / max_prompt_bytes alone.
-	if err := agent.ApplyProfile(&agOpts, profileName, false); err != nil {
-		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
-	}
-	if customOpts.systemPromptOverride != "" {
-		agOpts.SystemPromptOverride = customOpts.systemPromptOverride
-	}
-	if customOpts.customTools != nil {
-		agOpts.CustomTools = customOpts.customTools
-	}
-
-	ag, err := agent.New(customOpts.llmClient, c.validator, c.tools, agOpts)
+	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
 		return nil, err
 	}
@@ -547,11 +431,11 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if err != nil {
 		return nil, err
 	}
-	outHistory, res, err = maybeContinueBuildAfterPlan(ctx, customOpts.llmClient, c.validator, c.tools, agOpts, outHistory, res)
+	outHistory, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	if err != nil {
 		return nil, err
 	}
-	finalizeAgentUsage(usageTracker, c.workspaceRoot)
+	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
 
 	result := &AgentRunResult{
 		Steps:         res.Steps,
@@ -561,8 +445,8 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		ApplyResponse: res.ApplyResponse,
 		SwitchToBuild: res.SwitchToBuild,
 		Todos:         res.Todos,
-		PlanPath:      agOpts.PlanPath,
-		Usage:         usageSnapshotFrom(usageTracker),
+		PlanPath:      launch.Opts.PlanPath,
+		Usage:         usageSnapshotFrom(launch.Usage),
 	}
 	if applyOutput == config.ApplyOutputPatch {
 		path, werr := c.writeAgentPatch(params.PatchPath, res)
@@ -831,6 +715,8 @@ type SessionGetResult struct {
 	Title       string                   `json:"title,omitempty"`
 	Model       string                   `json:"model,omitempty"`
 	UIMessages  []sessionfile.UIMessage  `json:"ui_messages"`
+	Todos       []tools.TodoItem         `json:"todos,omitempty"`
+	CostUSD     float64                  `json:"cost_usd,omitempty"`
 	HistoryLen  int                      `json:"history_len"`
 	HasPending  bool                     `json:"has_pending,omitempty"`
 	Restored    bool                     `json:"restored,omitempty"`
@@ -856,6 +742,8 @@ func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
 		Title:      sess.Title(),
 		Model:      sess.Model(),
 		UIMessages: ui,
+		Todos:      sess.CopyTodos(),
+		CostUSD:    sess.CostUSD(),
 		HistoryLen: len(sess.History),
 		HasPending: sess.HasPending(),
 		Restored:   len(sess.History) > 0 || len(ui) > 0,
@@ -888,6 +776,7 @@ type SessionUISyncParams struct {
 	Title      string                  `json:"title,omitempty"`
 	Model      string                  `json:"model,omitempty"`
 	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
+	CostUSD    float64                 `json:"cost_usd,omitempty"`
 }
 
 type SessionUISyncResult struct {
@@ -913,6 +802,9 @@ func (c *Core) SessionUISync(params SessionUISyncParams) (*SessionUISyncResult, 
 		sess.SetModel(params.Model)
 	}
 	sess.SetUIMessages(params.UIMessages)
+	if params.CostUSD > 0 {
+		sess.SetCostUSD(params.CostUSD)
+	}
 	sess.LastActivity = time.Now()
 	snapErr := sess.Snapshot(c.workspaceRoot)
 	sess.Unlock()
@@ -982,32 +874,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "content is empty", nil)
 	}
 
-	applyOutput := strings.ToLower(strings.TrimSpace(params.ApplyOutput))
-	if applyOutput == "" && c.cfg != nil {
-		applyOutput = strings.ToLower(strings.TrimSpace(c.cfg.Apply.Output))
-	}
-	if applyOutput == "" {
-		applyOutput = config.ApplyOutputDisk
-	}
-	if applyOutput != config.ApplyOutputDisk && applyOutput != config.ApplyOutputPatch {
-		return nil, protocol.NewError(protocol.InvalidParams,
-			fmt.Sprintf("apply_output must be %q or %q", config.ApplyOutputDisk, config.ApplyOutputPatch), nil)
-	}
-	if applyOutput == config.ApplyOutputPatch {
-		if params.Apply {
-			return nil, protocol.NewError(protocol.InvalidParams,
-				"apply_output=patch is mutually exclusive with apply=true", nil)
-		}
-		params.Apply = false
-		params.Backup = false
-	}
-	profileName := strings.TrimSpace(params.Profile)
-	if profileName == "" && c.cfg != nil {
-		profileName = strings.TrimSpace(c.cfg.Agent.Profile)
-	}
-	if !agent.IsKnownProfile(profileName) {
-		return nil, protocol.NewError(protocol.InvalidParams,
-			fmt.Sprintf("unknown profile %q (want fast|precision)", profileName), nil)
+	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
+	if err != nil {
+		return nil, err
 	}
 
 	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
@@ -1040,139 +909,38 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 
 	// Same staging contract as AgentRun: serialise shared Runner mutations
 	// (SetDryRun, ClearStaged, staged overlay writes) for the whole turn.
+	// Tools always dry-run (staging + LSP); params.Apply commits at end.
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
-	c.tools.SetDryRun(!params.Apply)
+	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
 
-	// Merge params with config defaults.
-	agParams := AgentRunParams{
-		Query:               params.Content,
+	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+		Mode:                params.Mode,
+		Profile:             params.Profile,
+		PlanPath:            planPath,
+		SessionID:           params.SessionID,
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
+		Debug:               c.debug,
 		MaxSteps:            params.MaxSteps,
 		MaxInvalidRetries:   params.MaxInvalidRetries,
 		MaxPromptBytes:      params.MaxPromptBytes,
+		InitialTodos:        inTodos,
+		AutoSessionMemory:   c.cfg.Agent.ResolvedAutoSessionMemory(),
+		UsageLabel:          "session.turn",
 		OnEvent:             params.OnEvent,
+		EventEnvelope:       EventEnvelope{SessionID: params.SessionID, TurnID: NewTurnID()},
 		PermissionRequester: params.PermissionRequester,
 		QuestionAsker:       params.QuestionAsker,
-	}
-
-	// Build and run the agent (same setup as AgentRun).
-	var respFmt *llm.ResponseFormat
-	if c.cfg != nil && c.cfg.LLM.ResponseFormatType != "" {
-		respFmt = &llm.ResponseFormat{Type: c.cfg.LLM.ResponseFormatType}
-		if c.cfg.LLM.ResponseFormatType == "json_schema" {
-			respFmt.Schema = schema.AgentStepSchemaRaw()
-			respFmt.SchemaName = "agent_step"
-		}
-	}
-	maxSteps := agParams.MaxSteps
-	if maxSteps <= 0 && c.cfg != nil {
-		maxSteps = c.cfg.Agent.MaxSteps
-	}
-	maxRetries := agParams.MaxInvalidRetries
-	if maxRetries <= 0 && c.cfg != nil {
-		maxRetries = c.cfg.Agent.MaxInvalidRetries
-	}
-	maxPromptBytes := agParams.MaxPromptBytes
-	if maxPromptBytes <= 0 && c.cfg != nil {
-		maxPromptBytes = c.cfg.Limits.ContextKB * 1024
-	}
-	promptFamily := ""
-	if c.cfg != nil {
-		promptFamily = promptpkg.ResolvePromptFamily(c.cfg.LLM.PromptFamily, c.cfg.LLM.Model)
-	}
-
-	var onEvent func(agent.AgentEvent)
-	if agParams.OnEvent != nil {
-		onEvent = buildAgentOnEvent(agParams.OnEvent, EventEnvelope{
-			SessionID: params.SessionID,
-			TurnID:    NewTurnID(),
-		})
-	}
-
-	sessAllowExec := agParams.AllowExec
-	if c.cfg != nil && c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
-		sessAllowExec = true
-	}
-	var sessExecAllow, sessExecDeny []string
-	if c.cfg != nil {
-		sessExecAllow = c.cfg.Exec.Allow
-		sessExecDeny = c.cfg.Exec.Deny
-	}
-
-	var sessAgentLogger *llm.Logger
-	if c.llmClient != nil {
-		if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
-			sessAgentLogger = oc.GetLogger()
-		}
-	}
-
-	var sessHooksRunner agent.HooksRunner
-	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
-		sessHooksRunner = hr
-	}
-
-	sessCustomOpts, err := c.resolveCustomAgentOpts(params.Mode, sessAgentLogger)
+	})
 	if err != nil {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
-	}
-
-	sessUsageTracker := newAgentUsageTracker(c.cfg, "session.turn")
-	sessTaskRunner := tasks.New(c.llmClient, c.validator, c.tools, childAgentConfig(c.cfg, maxPromptBytes, sessUsageTracker))
-
-	sessAgOpts := agent.Options{
-		UsageTracker:         sessUsageTracker,
-		ProviderLabel:        providerLabelOf(c.cfg),
-		ModelLabel:           c.cfg.LLM.Model,
-		MaxSteps:             maxSteps,
-		MaxInvalidRetries:    maxRetries,
-		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
-		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
-		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
-		MaxPromptBytes:       maxPromptBytes,
-		CompactThresholdPct:  c.cfg.Agent.CompactThresholdPct,
-		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
-		Apply:                agParams.Apply,
-		Backup:               agParams.Backup,
-		AllowExec:            sessAllowExec,
-		ExecAllow:            sessExecAllow,
-		ExecDeny:             sessExecDeny,
-		PermissionRules:      c.cfg.Permissions.Rules,
-		InitialTodos:         inTodos,
-		Debug:                c.debug,
-		ResponseFormat:       respFmt,
-		PromptFamily:         promptFamily,
-		Mode:                 agent.Mode(params.Mode),
-		SystemPromptOverride: sessCustomOpts.systemPromptOverride,
-		CustomTools:          sessCustomOpts.customTools,
-		OnEvent:              onEvent,
-		AgentLogger:          sessAgentLogger,
-		SubtaskRunner:        sessTaskRunner,
-		HooksRunner:          sessHooksRunner,
-		ExtraTools:           c.mcpToolDefs(),
-		PermissionRequester:  convertPermissionRequester(agParams.PermissionRequester),
-		QuestionAsker:        agParams.QuestionAsker,
-		PlanPath:             planPath,
-		Memory:               c.cfg.Memory.Resolve(),
-		SessionID:            params.SessionID,
-		ToolDigestBytes:        c.cfg.Agent.ResolvedToolDigestBytes(),
-		HistoryPruneKeepRecent: c.cfg.Agent.ResolvedHistoryPruneKeepRecent(),
-		AutoSessionMemory:    c.cfg.Agent.ResolvedAutoSessionMemory(),
+		return nil, err
 	}
 	c.tools.SetMemoryContext(params.SessionID, c.cfg.Memory.Resolve())
-	if err := agent.ApplyProfile(&sessAgOpts, profileName, false); err != nil {
-		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
-	}
-	if sessCustomOpts.systemPromptOverride != "" {
-		sessAgOpts.SystemPromptOverride = sessCustomOpts.systemPromptOverride
-	}
-	if sessCustomOpts.customTools != nil {
-		sessAgOpts.CustomTools = sessCustomOpts.customTools
-	}
-	ag, err := agent.New(sessCustomOpts.llmClient, c.validator, c.tools, sessAgOpts)
+
+	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1181,11 +949,12 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err != nil {
 		return nil, err
 	}
-	outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, sessCustomOpts.llmClient, c.validator, c.tools, sessAgOpts, outHistory, res)
+	outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	if err != nil {
 		return nil, err
 	}
-	finalizeAgentUsage(sessUsageTracker, c.workspaceRoot)
+	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
+	profileName := launch.Profile
 
 	// Update session history, todos, and pending-ops with this turn's
 	// results, then snapshot to disk so a core restart can pick up where
@@ -1230,7 +999,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		SwitchToBuild: res.SwitchToBuild,
 		Todos:         res.Todos,
 		PlanPath:      planPath,
-		Usage:         usageSnapshotFrom(sessUsageTracker),
+		Usage:         usageSnapshotFrom(launch.Usage),
 	}
 	if applyOutput == config.ApplyOutputPatch {
 		path, werr := c.writeAgentPatch(params.PatchPath, res)

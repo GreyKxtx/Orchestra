@@ -107,15 +107,38 @@ func TestFSWrite_OverwriteWithStaleHash(t *testing.T) {
 }
 
 func TestFSWrite_NoCondition_ReturnsError(t *testing.T) {
-	r, _ := newWriteRunner(t)
+	r, root := newWriteRunner(t)
+	_ = os.WriteFile(filepath.Join(root, "file.txt"), []byte("old\n"), 0644)
 
 	_, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path:    "file.txt",
 		Content: "content\n",
-		// neither file_hash nor must_not_exist
+		// neither file_hash nor must_not_exist on existing file
 	})
 	if err == nil {
-		t.Fatal("expected error when no safety condition provided")
+		t.Fatal("expected error when overwriting without file_hash")
+	}
+}
+
+func TestFSWrite_InferMustNotExistForNewFile(t *testing.T) {
+	r, root := newWriteRunner(t)
+
+	resp, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path:    "auto-create.txt",
+		Content: "created\n",
+	})
+	if err != nil {
+		t.Fatalf("FSWrite: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "auto-create.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "created\n" {
+		t.Errorf("content: %q", data)
+	}
+	if resp.FileHash == "" {
+		t.Fatal("expected file_hash in response")
 	}
 }
 

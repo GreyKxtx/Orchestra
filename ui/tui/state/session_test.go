@@ -66,7 +66,7 @@ func TestSession_ToolBlockUpdate(t *testing.T) {
 	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
 
-	if !s.UpdateToolBlock("t1", state.ToolBlockCompleted, "12 lines") {
+	if !s.UpdateToolBlock("t1", state.ToolBlockCompleted, "12 lines", nil) {
 		t.Fatal("UpdateToolBlock returned false for known id")
 	}
 
@@ -90,7 +90,7 @@ func TestSession_UpdateToolBlock_UnknownID_FallsBackToRunning(t *testing.T) {
 	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "", Name: "read", Status: state.ToolBlockRunning})
 
-	if !s.UpdateToolBlock("synthesized-id", state.ToolBlockCompleted, "x") {
+	if !s.UpdateToolBlock("synthesized-id", state.ToolBlockCompleted, "x", nil) {
 		t.Fatal("UpdateToolBlock should fall back to the first running block when id mismatches")
 	}
 	if got := s.Messages[0].ToolBlocks[0].Status; got != state.ToolBlockCompleted {
@@ -103,8 +103,22 @@ func TestSession_UpdateToolBlock_NoRunning(t *testing.T) {
 	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockCompleted})
 
-	if s.UpdateToolBlock("nonexistent", state.ToolBlockCompleted, "x") {
+	if s.UpdateToolBlock("nonexistent", state.ToolBlockCompleted, "x", nil) {
 		t.Error("UpdateToolBlock should return false when no running blocks exist for fallback")
+	}
+}
+
+func TestSession_UpdateToolBlock_StoresDiagnostics(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant("", "")
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "edit", Status: state.ToolBlockRunning})
+	diags := []state.ToolDiagnostic{{StartLine: 1, StartCol: 1, Severity: "error", Message: "undefined: x"}}
+	if !s.UpdateToolBlock("t1", state.ToolBlockCompleted, "ok", diags) {
+		t.Fatal("UpdateToolBlock failed")
+	}
+	got := s.Messages[0].ToolBlocks[0].Diagnostics
+	if len(got) != 1 || got[0].Message != "undefined: x" {
+		t.Fatalf("diagnostics not stored: %+v", got)
 	}
 }
 
@@ -145,7 +159,7 @@ func TestToggleLastToolBlock(t *testing.T) {
 	s := state.NewSession()
 	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
-	s.UpdateToolBlock("t1", state.ToolBlockCompleted, "line1\nline2")
+	s.UpdateToolBlock("t1", state.ToolBlockCompleted, "line1\nline2", nil)
 	// No auto-expand — tools start collapsed regardless of result size.
 	if s.Messages[0].ToolBlocks[0].Expanded {
 		t.Fatal("expected tool block to stay collapsed after completion")
@@ -167,7 +181,7 @@ func TestNoAutoExpandLongResult(t *testing.T) {
 	s.StartAssistant("", "")
 	s.AppendToolBlock(state.ToolBlock{ID: "t2", Name: "read", Status: state.ToolBlockRunning})
 	result := strings.Repeat("line\n", 11)
-	s.UpdateToolBlock("t2", state.ToolBlockCompleted, result)
+	s.UpdateToolBlock("t2", state.ToolBlockCompleted, result, nil)
 	if s.Messages[0].ToolBlocks[0].Expanded {
 		t.Fatal("expected no auto-expand")
 	}
@@ -194,15 +208,28 @@ func TestSession_Clear(t *testing.T) {
 func TestAddRemoveDiff(t *testing.T) {
 	s := state.NewSession()
 	s.AppendMessage(state.Message{Role: state.RoleUser, Text: "hi"})
-	s.AddDiff("diff content")
+	s.AddDiffFiles([]state.DiffFile{{Path: "a.txt", Before: "old", After: "new"}})
 	if !s.HasDiff() {
 		t.Fatal("HasDiff should be true")
 	}
 	if s.Messages[len(s.Messages)-1].Role != state.RoleDiff {
 		t.Fatal("last message should be diff")
 	}
+	if !s.ToggleLastDiff() || !s.Messages[len(s.Messages)-1].DiffExpanded {
+		t.Fatal("ToggleLastDiff should expand")
+	}
 	s.RemoveDiff()
 	if s.HasDiff() {
 		t.Fatal("HasDiff should be false after RemoveDiff")
+	}
+}
+
+func TestAppendAssistantNotice_dedup(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant("build", "m")
+	s.AppendAssistantNotice(state.SystemKindRetry, "повтор шага")
+	s.AppendAssistantNotice(state.SystemKindRetry, "повтор шага")
+	if len(s.Messages[0].Notices) != 1 {
+		t.Fatalf("want 1 notice, got %d", len(s.Messages[0].Notices))
 	}
 }

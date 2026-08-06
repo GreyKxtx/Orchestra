@@ -344,12 +344,18 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 	bgStyle := lipgloss.NewStyle().Background(bg)
 	textStyle := bgStyle.Foreground(t.Text())
 	mutedStyle := bgStyle.Foreground(t.TextMuted())
+	mentionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#4fc3f7")).
+		Background(lipgloss.Color("#163044")).
+		Bold(true).
+		Underline(true)
 	cursorStyle := lipgloss.NewStyle().Background(t.Primary()).Foreground(t.Background())
 	selStyle := lipgloss.NewStyle().Background(t.BorderNormal()).Foreground(t.Text())
 	bar := lipgloss.NewStyle().Background(bg).Foreground(t.Primary()).Bold(true).Render("│")
 
 	val := in.ta.Value()
 	totalRunes := len([]rune(val))
+	mentions := mentionSpans([]rune(val))
 
 	// Empty input — placeholder is always visible; only the bar cursor in
 	// front of it blinks (replaced with a same-width space when off) so the
@@ -395,11 +401,14 @@ func (in Input) WelcomeRender(width int, blinkOn bool) string {
 			ch := string(r)
 			isCursor := blinkOn && absIdx == cursorPos
 			isSelected := hasSel && absIdx >= selMin && absIdx < selMax
+			isMention := inMention(mentions, absIdx)
 			switch {
 			case isCursor:
 				b.WriteString(cursorStyle.Render(ch))
 			case isSelected:
 				b.WriteString(selStyle.Render(ch))
+			case isMention:
+				b.WriteString(mentionStyle.Render(ch))
 			default:
 				b.WriteString(textStyle.Render(ch))
 			}
@@ -815,4 +824,61 @@ func (in *Input) SyncHeight(max int) {
 		h = max
 	}
 	in.ta.SetHeight(h)
+}
+
+// mentionSpans returns [start,end) absolute rune ranges for @path tokens.
+// A mention starts at '@' (start-of-text or after whitespace) and runs until
+// the next whitespace/newline. Lone '@' is ignored.
+func mentionSpans(runes []rune) [][2]int {
+	var spans [][2]int
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '@' {
+			continue
+		}
+		if i > 0 && !unicode.IsSpace(runes[i-1]) && runes[i-1] != '\n' {
+			continue
+		}
+		j := i + 1
+		for j < len(runes) && !unicode.IsSpace(runes[j]) && runes[j] != '\n' {
+			j++
+		}
+		if j > i+1 {
+			spans = append(spans, [2]int{i, j})
+		}
+		i = j - 1
+	}
+	return spans
+}
+
+func inMention(spans [][2]int, idx int) bool {
+	for _, sp := range spans {
+		if idx >= sp[0] && idx < sp[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// CollapseSelectionToStart clears the selection and places the cursor at the
+// selection start (desktop-editor Left after Select-All).
+func (in *Input) CollapseSelectionToStart() bool {
+	lo, _, ok := in.SelectionRange()
+	if !ok {
+		return false
+	}
+	in.ClearSelection()
+	in.moveCursorAbs(lo)
+	return true
+}
+
+// CollapseSelectionToEnd clears the selection and places the cursor at the
+// selection end (desktop-editor Right after Select-All).
+func (in *Input) CollapseSelectionToEnd() bool {
+	_, hi, ok := in.SelectionRange()
+	if !ok {
+		return false
+	}
+	in.ClearSelection()
+	in.moveCursorAbs(hi)
+	return true
 }

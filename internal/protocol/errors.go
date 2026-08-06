@@ -74,6 +74,10 @@ const (
 	// "file" / "tool" with the corresponding Data["name"] or
 	// Data["id"] / Data["path"]. Maps to -32012 (impl-defined).
 	NotFound ErrorCode = "NotFound"
+
+	// SyntaxError — tree-sitter detected ERROR/MISSING nodes before staging.
+	// Data: {path, line, node}.
+	SyntaxError ErrorCode = "SyntaxError"
 )
 
 // RPCCode maps an internal ErrorCode to a JSON-RPC server error code.
@@ -107,6 +111,8 @@ func (c ErrorCode) RPCCode() int {
 		return -32602 // JSON-RPC standard "Invalid params"
 	case NotFound:
 		return -32012
+	case SyntaxError:
+		return -32013
 	default:
 		return -32099
 	}

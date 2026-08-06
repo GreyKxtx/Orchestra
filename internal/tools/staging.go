@@ -1,12 +1,15 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
@@ -24,10 +27,22 @@ type stagedFile struct {
 // stageFile records new staged content for relSlash (forward-slash relative path).
 // On first call for a given path, captures original disk state for plan.json conditions.
 // Subsequent calls update content but keep original disk conditions.
-func (r *Runner) stageFile(relSlash, content, hash string) {
+// Returns SyntaxError when AST gate rejects content (see Runner.astGate).
+func (r *Runner) stageFile(relSlash, content, hash string) error {
+	if r.astGate {
+		if err := ckg.ValidateSyntax(relSlash, []byte(content)); err != nil {
+			return err
+		}
+	}
 	r.stagedMu.Lock()
-	defer r.stagedMu.Unlock()
 	r.stageFileLocked(relSlash, content, hash)
+	r.stagedMu.Unlock()
+	if r.lspManager != nil && !r.lspManager.IsEmpty() {
+		if err := r.lspManager.SyncStaged(context.Background(), relSlash, content); err != nil {
+			fmt.Fprintf(os.Stderr, "tools: staging LSP sync %s: %v\n", relSlash, err)
+		}
+	}
+	return nil
 }
 
 func (r *Runner) stageFileLocked(relSlash, content, hash string) {
@@ -150,6 +165,28 @@ func (r *Runner) stagedContent(relSlash string) (content, hash string, ok bool) 
 	return sf.content, sf.hash, true
 }
 
+// EffectiveContent implements lsp.ContentProvider for dry-run staging overlay.
+func (r *Runner) EffectiveContent(relPath string) (string, bool) {
+	relPath = filepath.ToSlash(relPath)
+	content, _, ok := r.stagedContent(relPath)
+	return content, ok
+}
+
+// ListStagedPaths returns sorted forward-slash paths currently in the staging overlay.
+func (r *Runner) ListStagedPaths() []string {
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
+	if len(r.staged) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(r.staged))
+	for p := range r.staged {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // currentHash returns sha256 of relSlash from overlay (if staged) or disk.
 // Returns empty string if the file doesn't exist anywhere.
 func (r *Runner) currentHash(relSlash string) string {
@@ -188,6 +225,62 @@ func (r *Runner) StagedOps() []ops.AnyOp {
 		out = append(out, ops.AnyOp{Op: waCopy.Op, Path: waCopy.Path, WriteAtomic: &waCopy})
 	}
 	return out
+}
+
+// stagedOpForPath returns the write_atomic op for one staged path.
+func (r *Runner) stagedOpForPath(relSlash string) (ops.AnyOp, bool) {
+	r.stagedMu.RLock()
+	defer r.stagedMu.RUnlock()
+	sf, ok := r.staged[relSlash]
+	if !ok {
+		return ops.AnyOp{}, false
+	}
+	wa := ops.WriteAtomicOp{
+		Op:      ops.OpFileWriteAtomic,
+		Path:    relSlash,
+		Content: sf.content,
+		Conditions: ops.WriteAtomicConditions{
+			MustNotExist: sf.isNew,
+			FileHash:     sf.diskHash,
+		},
+	}
+	return ops.AnyOp{Op: wa.Op, Path: wa.Path, WriteAtomic: &wa}, true
+}
+
+// unstagePath removes relSlash from the overlay after a successful disk commit.
+func (r *Runner) unstagePath(relSlash string) {
+	r.stagedMu.Lock()
+	delete(r.staged, relSlash)
+	r.stagedMu.Unlock()
+}
+
+// CommitStagedPath writes one staged file to disk and removes it from the overlay.
+// No-op when path is not staged or dry-run is off (already written directly).
+func (r *Runner) CommitStagedPath(ctx context.Context, path string, backup bool) (*FSApplyOpsResponse, error) {
+	if r == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
+	}
+	if !r.dryRun {
+		return nil, nil
+	}
+	_, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path)
+	if err != nil {
+		return nil, err
+	}
+	op, ok := r.stagedOpForPath(relSlash)
+	if !ok {
+		return nil, nil
+	}
+	resp, err := r.FSApplyOps(ctx, FSApplyOpsRequest{
+		Ops:    []ops.AnyOp{op},
+		DryRun: false,
+		Backup: backup,
+	})
+	if err != nil {
+		return nil, err
+	}
+	r.unstagePath(relSlash)
+	return resp, nil
 }
 
 // StagedFileContent returns a snapshot of the staging overlay as a path→content map.
@@ -273,7 +366,9 @@ func (r *Runner) ApplyPatchesToStaged(patchList []patches.Patch) error {
 		}
 
 		newHash := cache.ComputeSHA256(newContent)
-		r.stageFile(relSlash, string(newContent), newHash)
+		if err := r.stageFile(relSlash, string(newContent), newHash); err != nil {
+			return err
+		}
 	}
 	return nil
 }

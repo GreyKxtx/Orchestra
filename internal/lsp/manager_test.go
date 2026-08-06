@@ -43,8 +43,10 @@ func TestManager_IsEmpty_NilManager(t *testing.T) {
 
 func TestManager_StartErrors_BadCommand(t *testing.T) {
 	enabled := true
+	lazy := false
 	cfg := lsp.LSPConfig{
-		Enabled: &enabled,
+		Enabled:   &enabled,
+		LazyStart: &lazy,
 		Servers: []lsp.LSPServerConfig{
 			{
 				Language:   "go",
@@ -55,7 +57,7 @@ func TestManager_StartErrors_BadCommand(t *testing.T) {
 	}
 	m, errs := lsp.NewManager("/workspace", cfg)
 	if len(errs) == 0 {
-		t.Fatal("expected start error for nonexistent binary")
+		t.Fatal("expected start error for nonexistent binary (eager mode)")
 	}
 	if m == nil {
 		t.Fatal("manager must not be nil even when start fails")
@@ -185,5 +187,51 @@ func TestManager_DocumentSymbols_EmptyResponse(t *testing.T) {
 	}
 	if syms != nil {
 		t.Fatalf("expected nil for null response, got %v", syms)
+	}
+}
+
+func TestManager_ContentProvider_EnsureOpenUsesStaged(t *testing.T) {
+	root := t.TempDir()
+	diskContent := "package main\n\nfunc Disk() {}\n"
+	stagedContent := "package main\n\nfunc Staged() {}\n"
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(diskContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, srv := lsptest.NewConn()
+	var openedText string
+	srv.SetHandler("textDocument/didOpen", func(params json.RawMessage) (json.RawMessage, error) {
+		var p struct {
+			TextDocument struct {
+				Text string `json:"text"`
+			} `json:"textDocument"`
+		}
+		_ = json.Unmarshal(params, &p)
+		openedText = p.TextDocument.Text
+		return json.RawMessage(`null`), nil
+	})
+	srv.SetHandler("textDocument/documentSymbol", func(_ json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(`[]`), nil
+	})
+
+	c, err := lsp.StartFromConn("test", conn, lsp.PathToURI(root), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := lsp.ForTest(root, c, []string{".go"}, 1500)
+	defer m.Close()
+
+	m.SetContentProvider(lsp.ContentProviderFunc(func(relPath string) (string, bool) {
+		if relPath == "main.go" {
+			return stagedContent, true
+		}
+		return "", false
+	}))
+
+	if _, err := m.DocumentSymbols(context.Background(), "main.go"); err != nil {
+		t.Fatal(err)
+	}
+	if openedText != stagedContent {
+		t.Fatalf("ensureOpen via DocumentSymbols: got %q, want staged %q", openedText, stagedContent)
 	}
 }

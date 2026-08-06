@@ -19,6 +19,13 @@ func stripFinalEnvelope(text string) string {
 		}
 		end := matchJSONObject(text, i)
 		if end < 0 {
+			// Unbalanced trailing object — hide while streaming if it looks
+			// like a final patches envelope (avoids flicker of `{..."patches"...`).
+			tail := text[i:]
+			if strings.Contains(tail, `"patches"`) ||
+				(strings.Contains(tail, `"type"`) && strings.Contains(tail, `"final"`)) {
+				return strings.TrimSpace(text[:i])
+			}
 			return text
 		}
 		blob := text[i : end+1]

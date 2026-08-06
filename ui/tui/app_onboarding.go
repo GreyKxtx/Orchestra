@@ -50,13 +50,16 @@ func (a *App) updateOnboarding(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if ob.Step == view.OnboardingSettings {
 			ob.AdjustSetting(+1)
 		}
+	case "tab":
+		if ob.Step == view.OnboardingProvider {
+			ob.ToggleURLEdit()
+		}
 	case "enter":
 		switch ob.Step {
 		case view.OnboardingProvider:
-			p := ob.SelectedProvider()
-			endpoint := p.Endpoint
-			if p.Name == "Custom" {
-				endpoint = ob.CustomEndpoint
+			endpoint := ob.SelectedEndpoint()
+			if endpoint == "" {
+				return a, nil
 			}
 			ob.Step = view.OnboardingModel
 			ob.LoadingModels = true
@@ -71,15 +74,21 @@ func (a *App) updateOnboarding(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 				ob.Step = view.OnboardingSettings
 			}
 		case view.OnboardingSettings:
+			ob.CommitSettingsEdit()
 			return a, a.saveOnboardingConfig()
 		}
 	default:
-		// Custom URL typing when editing custom endpoint.
-		if ob.Step == view.OnboardingProvider && ob.IsEditingCustom() {
+		if ob.Step == view.OnboardingProvider && ob.IsEditingURL() {
 			if m.String() == "backspace" {
-				ob.BackspaceCustomEndpoint()
+				ob.BackspaceEndpoint()
 			} else if len(m.Runes) == 1 {
-				ob.TypeCustomEndpoint(m.Runes[0])
+				ob.TypeEndpoint(m.Runes[0])
+			}
+		} else if ob.Step == view.OnboardingSettings {
+			if m.String() == "backspace" {
+				ob.BackspaceSettingsEdit()
+			} else if len(m.Runes) == 1 {
+				ob.TypeSettingsEdit(m.Runes[0])
 			}
 		}
 	}
@@ -91,10 +100,7 @@ func (a *App) saveOnboardingConfig() tea.Cmd {
 	ob := a.onboarding
 	sel := ob.SelectedModel()
 	p := ob.SelectedProvider()
-	endpoint := p.Endpoint
-	if p.Name == "Custom" {
-		endpoint = ob.CustomEndpoint
-	}
+	endpoint := ob.SelectedEndpoint()
 	cfgPath := a.cfg.ConfigPath
 	workspaceRoot := a.cfg.WorkspaceRoot
 
@@ -104,7 +110,8 @@ func (a *App) saveOnboardingConfig() tea.Cmd {
 			cfg = config.DefaultConfig(workspaceRoot)
 			cfg.ProjectRoot = workspaceRoot
 		}
-		cfg.LLM.APIBase = endpoint
+		cfg.LLM.Provider = p.Key
+		cfg.LLM.APIBase = view.NormalizeEndpoint(endpoint)
 		cfg.LLM.Model = sel.ID
 		cfg.LLM.Temperature = ob.Settings.Temperature
 		cfg.LLM.MaxTokens = ob.Settings.MaxTokens

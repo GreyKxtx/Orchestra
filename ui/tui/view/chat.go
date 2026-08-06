@@ -2,10 +2,11 @@
 //
 // The chat layer is split across several files:
 //
-//	chat.go         — Chat struct, public API, dispatcher
-//	chat_render.go  — user/assistant/reasoning render + markdown + footer
-//	chat_tools.go   — tool kinds, icons, previews, inline/block/group rendering
-//	chat_welcome.go — empty-state welcome screen + ASCII logo
+//	chat.go              — Chat struct, public API, dispatcher
+//	message_*.go         — user/assistant/system render
+//	tool_*.go            — tool kinds, icons, inline/block/group
+//	diff_message.go      — RoleDiff panels
+//	chat_welcome.go      — empty-state welcome screen
 package view
 
 import (
@@ -99,6 +100,44 @@ func (c *Chat) ExpandTurn(key int64) {
 	c.cache.delete(key)
 }
 
+// IsTurnExpanded reports whether the turn key is currently expanded.
+func (c *Chat) IsTurnExpanded(key int64) bool {
+	return c.expandedTurns[key]
+}
+
+// SetTurnExpanded forces expand state (used when restoring from session).
+func (c *Chat) SetTurnExpanded(key int64, expanded bool) {
+	if key == 0 {
+		return
+	}
+	if c.expandedTurns == nil {
+		c.expandedTurns = map[int64]bool{}
+	}
+	if expanded {
+		c.expandedTurns[key] = true
+	} else {
+		delete(c.expandedTurns, key)
+	}
+	c.cache.delete(key)
+}
+
+// InvalidateMessage drops a cached render for key (e.g. after ReasoningExpanded toggle).
+func (c *Chat) InvalidateMessage(key int64) {
+	if key != 0 {
+		c.cache.delete(key)
+	}
+}
+
+// SyncExpandFromMessages seeds expandedTurns from persisted ToolsExpanded flags.
+func (c *Chat) SyncExpandFromMessages(msgs []state.Message) {
+	for _, m := range msgs {
+		if m.Role != state.RoleAssistant || !m.ToolsExpanded {
+			continue
+		}
+		c.SetTurnExpanded(MessageKey(m), true)
+	}
+}
+
 // MessageKey returns the stable key for a message used in expandedTurns and
 // the render cache. Zero StartedAt → 0 (caller must treat as uncacheable).
 func MessageKey(m state.Message) int64 {
@@ -133,8 +172,6 @@ func (c *Chat) ScrollToBottom() {
 }
 
 // SetMessages re-renders the viewport content from the session messages.
-// Visual structure mirrors OpenCode's session view (see chat_render.go,
-// chat_tools.go for the per-element implementations).
 func (c *Chat) SetMessages(msgs []state.Message) {
 	if len(msgs) == 0 {
 		c.vp.SetContent("")
@@ -195,12 +232,10 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 			}
 
 		case state.RoleSystem:
-			s := CurrentStyles()
-			rendered = s.Warning.Italic(true).PaddingLeft(2).Render(m.Text)
+			rendered = RenderSystemMessage(m, width)
 
 		case state.RoleDiff:
-			s := CurrentStyles()
-			rendered = s.Muted.PaddingLeft(2).Render(m.Text)
+			rendered = RenderDiffMessage(m.DiffFiles, width, m.DiffExpanded)
 		}
 
 		b.WriteString(rendered)
@@ -210,7 +245,15 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 		if m.Role == state.RoleUser || m.Role == state.RoleAssistant {
 			c.msgRanges = append(c.msgRanges, msgYRange{
 				role:  m.Role,
-				text:  m.Text,
+				text:  messageCopyText(m),
+				start: start,
+				end:   end,
+			})
+		}
+		if m.Role == state.RoleDiff || m.Role == state.RoleSystem {
+			c.msgRanges = append(c.msgRanges, msgYRange{
+				role:  m.Role,
+				text:  messageCopyText(m),
 				start: start,
 				end:   end,
 			})
@@ -267,4 +310,61 @@ func (c Chat) MessageAtContentY(y int) (role state.Role, text string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// messageCopyText builds clipboard payload: text + reasoning + tool summaries.
+func messageCopyText(m state.Message) string {
+	var b strings.Builder
+	if r := strings.TrimSpace(m.Reasoning); r != "" {
+		b.WriteString("Thinking:\n")
+		b.WriteString(r)
+		b.WriteString("\n\n")
+	}
+	if t := strings.TrimSpace(m.Text); t != "" {
+		b.WriteString(t)
+	}
+	if len(m.ToolBlocks) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Tools:\n")
+		for _, tb := range m.ToolBlocks {
+			b.WriteString("- ")
+			b.WriteString(tb.Name)
+			if tb.ArgsPreview != "" {
+				b.WriteString(" ")
+				b.WriteString(tb.ArgsPreview)
+			}
+			b.WriteString(" [")
+			b.WriteString(string(tb.Status))
+			b.WriteString("]")
+			if out := strings.TrimSpace(tb.Result); out != "" {
+				b.WriteString("\n  ")
+				b.WriteString(truncateForCopy(out, 2000))
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if len(m.DiffFiles) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Diff:\n")
+		for _, df := range m.DiffFiles {
+			b.WriteString("- ")
+			b.WriteString(df.Path)
+			b.WriteByte('\n')
+		}
+	}
+	if b.Len() == 0 {
+		return m.Text
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func truncateForCopy(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }

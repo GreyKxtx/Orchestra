@@ -61,8 +61,15 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 			return nil, err
 		}
 		newHash := cache.ComputeSHA256(newContent)
-		r.stageFile(relSlash, string(newContent), newHash)
-		return &FSEditResponse{Path: relSlash, FileHash: newHash}, nil
+		if err := r.stageFile(relSlash, string(newContent), newHash); err != nil {
+			return nil, err
+		}
+		var diags []lsp.ToolDiagnostic
+		if r.lspManager != nil && !r.lspManager.IsEmpty() {
+			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, string(newContent))
+		}
+		diags = append(diags, r.forceDiagnosticsForTest...)
+		return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
 	}
 
 	patch := patches.Patch{

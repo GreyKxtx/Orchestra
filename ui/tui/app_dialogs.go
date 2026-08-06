@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,21 +27,21 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		case "select":
 			p, _ := m.Data.(view.ProviderEntry)
-			// If the picked provider matches the user's saved one, prefer
-			// the saved endpoint over the hardcoded default so model
-			// listing hits the user's actual server.
-			if a.cfg.ConfigPath != "" {
-				if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
-					if cfg.LLM.Provider == p.Key && cfg.LLM.APIBase != "" {
-						p.Endpoint = cfg.LLM.APIBase
-					}
-				}
+			p = a.hydrateProviderEndpoint(p)
+			if p.EndpointEditable {
+				a.pushDialog(view.NewEndpointDialog(p, p.Endpoint))
+				return a, nil
 			}
-			a.pushDialog(view.NewModelDialog(p))
-			if p.Local {
-				return a, view.FetchModelsCmd(p.Key, p.Endpoint)
-			}
+			return a, a.pushModelDialog(p)
+		}
+	case "endpoint":
+		switch m.Action {
+		case "cancel":
+			a.popDialog()
 			return a, nil
+		case "save":
+			p, _ := m.Data.(view.ProviderEntry)
+			return a, a.pushModelDialog(p)
 		}
 	case "model":
 		switch m.Action {
@@ -60,10 +61,12 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 				if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
 					if preset, ok := cfg.LLM.ModelPresets[me.ID]; ok {
 						var thinking bool
-					if preset.EnableThinking != nil {
-						thinking = *preset.EnableThinking
-					}
-					sd.SetInitial(preset.Temperature, preset.MaxTokens, preset.NumCtx, thinking, cfg.LLM.APIKey)
+						if preset.EnableThinking != nil {
+							thinking = *preset.EnableThinking
+						}
+						sd.SetInitial(preset.Temperature, preset.MaxTokens, preset.NumCtx, thinking, cfg.LLM.APIKey)
+					} else if cfg.LLM.Model == me.ID {
+						sd.SetInitial(cfg.LLM.Temperature, cfg.LLM.MaxTokens, cfg.EffectiveNumCtx(), false, cfg.LLM.APIKey)
 					} else {
 						sd.SetInitial(0, 0, 0, false, cfg.LLM.APIKey)
 					}
@@ -152,46 +155,81 @@ func (a *App) topDialog() view.Dialog {
 	return nil
 }
 
+// hydrateProviderEndpoint loads saved api_base when re-selecting the same provider.
+func (a *App) hydrateProviderEndpoint(p view.ProviderEntry) view.ProviderEntry {
+	if a.cfg.ConfigPath == "" {
+		return p
+	}
+	cfg, err := config.Load(a.cfg.ConfigPath)
+	if err != nil || cfg == nil {
+		return p
+	}
+	if cfg.LLM.Provider == p.Key && cfg.LLM.APIBase != "" {
+		p.Endpoint = view.NormalizeEndpoint(cfg.LLM.APIBase)
+	}
+	return p
+}
+
+// pushModelDialog opens model selection and fetches model lists from the API.
+func (a *App) pushModelDialog(p view.ProviderEntry) tea.Cmd {
+	apiKey := a.loadLLMAPIKey()
+	fetchRemote := p.Local || p.Key == "custom" || (p.NeedsKey && apiKey != "")
+	a.pushDialog(view.NewModelDialog(p, fetchRemote))
+	if fetchRemote {
+		return view.FetchModelsCmd(p.Key, p.Endpoint, apiKey)
+	}
+	return nil
+}
+
+func (a *App) loadLLMAPIKey() string {
+	if a.cfg.ConfigPath == "" {
+		return ""
+	}
+	cfg, err := config.Load(a.cfg.ConfigPath)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.LLM.APIKey)
+}
+
 // openModelDialogForCurrentProvider is the /model entry point: push a
 // ModelDialog using the currently configured provider (read from disk so
 // the most recent /provider choice wins).
 func (a *App) openModelDialogForCurrentProvider() tea.Cmd {
 	provider := a.currentProvider()
-	a.pushDialog(view.NewModelDialog(provider))
-	if provider.Local {
-		return view.FetchModelsCmd(provider.Key, provider.Endpoint)
-	}
-	return nil
+	return a.pushModelDialog(provider)
 }
 
 // currentProvider determines the active provider from .orchestra.yml.
-// Falls back to LM Studio defaults when nothing is configured.
 func (a *App) currentProvider() view.ProviderEntry {
-	defaultProvider := view.DialogProviders[0] // LM Studio
-	if a.cfg.ConfigPath == "" {
-		return defaultProvider
-	}
-	cfg, err := config.Load(a.cfg.ConfigPath)
-	if err != nil || cfg == nil {
-		return defaultProvider
-	}
-	for _, p := range view.DialogProviders {
-		if p.Key == cfg.LLM.Provider {
-			if cfg.LLM.APIBase != "" {
-				p.Endpoint = cfg.LLM.APIBase
-			}
-			return p
+	savedBase := ""
+	savedKey := ""
+	if a.cfg.ConfigPath != "" {
+		if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
+			savedKey = cfg.LLM.Provider
+			savedBase = cfg.LLM.APIBase
 		}
 	}
-	// No exact match — guess from the endpoint.
-	if cfg.LLM.APIBase != "" {
+	if savedKey != "" {
+		return view.ProviderWithSavedEndpoint(savedKey, savedBase)
+	}
+	if savedBase != "" {
 		for _, p := range view.DialogProviders {
-			if p.Endpoint == cfg.LLM.APIBase {
+			if view.NormalizeEndpoint(p.Endpoint) == view.NormalizeEndpoint(savedBase) {
+				p.Endpoint = view.NormalizeEndpoint(savedBase)
 				return p
 			}
 		}
+		return view.ProviderEntry{
+			Key:              "custom",
+			Name:             "Custom (OpenAI-compatible)",
+			Category:         "Other",
+			Endpoint:         view.NormalizeEndpoint(savedBase),
+			Local:            true,
+			EndpointEditable: true,
+		}
 	}
-	return defaultProvider
+	return view.DialogProviders[0]
 }
 
 // persistSettingsCmd writes the chosen provider/model/settings to
@@ -207,7 +245,7 @@ func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
 			cfg.ProjectRoot = workspaceRoot
 		}
 		cfg.LLM.Provider = r.Provider.Key
-		cfg.LLM.APIBase = r.Provider.Endpoint
+		cfg.LLM.APIBase = view.NormalizeEndpoint(r.Provider.Endpoint)
 		if r.Provider.NeedsKey {
 			cfg.LLM.APIKey = r.APIKey
 		}
@@ -229,7 +267,7 @@ func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
 		thinkingVal := r.EnableThinking
 		cfg.LLM.ModelPresets[r.Model.ID] = config.ModelPreset{
 			Provider:       r.Provider.Key,
-			APIBase:        r.Provider.Endpoint,
+			APIBase:        view.NormalizeEndpoint(r.Provider.Endpoint),
 			Temperature:    r.Temperature,
 			MaxTokens:      r.MaxTokens,
 			NumCtx:         r.NumCtx,
@@ -238,7 +276,7 @@ func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return settingsSavedMsg{err: err}
 		}
-		return settingsSavedMsg{provider: r.Provider, model: r.Model}
+		return settingsSavedMsg{provider: r.Provider, model: r.Model, numCtx: r.NumCtx}
 	}
 }
 
@@ -256,7 +294,13 @@ func (a *App) applySavedSettings(m settingsSavedMsg) tea.Cmd {
 	}
 	a.cfg.Model = m.model.ID
 	a.statusBar.SetModel(m.model.ID)
-	a.statusBar.SetModelCtx(int(m.model.MaxContextLength))
+	limit := int(m.numCtx)
+	if limit <= 0 {
+		limit = int(m.model.MaxContextLength)
+	}
+	a.modelContextLimit = limit
+	a.statusBar.SetModelCtx(limit)
+	a.syncStatusBar()
 	a.chat.SetMeta(a.cfg.Mode, a.cfg.Model)
 	msg := fmt.Sprintf("[saved] %s · %s", m.provider.Name, m.model.ID)
 	if a.cfg.Binary != "" {
@@ -286,7 +330,7 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 		a.chat.SetStreamCursor(false)
 		a.session.FinishAssistant()
 	}
-	a.pendingOps = nil
+	a.lastCommitDiff = nil
 	a.permModal = nil
 
 	binary := a.cfg.Binary

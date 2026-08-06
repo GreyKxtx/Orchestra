@@ -31,6 +31,7 @@ type Session struct {
 	uiMessages  []sessionfile.UIMessage
 	profile     string
 	applyOutput string
+	costUSD     float64
 }
 
 // New creates a new session with a sortable TUI-compatible ID.
@@ -175,3 +176,14 @@ func (s *Session) ApplyOutput() string { return s.applyOutput }
 
 // SetApplyOutput stores apply output mode.
 func (s *Session) SetApplyOutput(v string) { s.applyOutput = strings.TrimSpace(v) }
+
+// CostUSD returns accumulated session spend (paid providers).
+func (s *Session) CostUSD() float64 { return s.costUSD }
+
+// SetCostUSD replaces accumulated session spend.
+func (s *Session) SetCostUSD(v float64) {
+	if v < 0 {
+		v = 0
+	}
+	s.costUSD = v
+}

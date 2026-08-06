@@ -96,7 +96,9 @@ func TestFSPreview_DryRunReadsFromStaging(t *testing.T) {
 	defer r.Close()
 
 	// Stage content without writing to disk.
-	r.stageFile("staged.go", "package main\n\nfunc Foo() {}\n", "fakehash")
+	if err := r.stageFile("staged.go", "package main\n\nfunc Foo() {}\n", "fakehash"); err != nil {
+		t.Fatalf("stageFile: %v", err)
+	}
 
 	resp, err := r.FSPreview(context.Background(), FSPreviewRequest{
 		Path:    "staged.go",

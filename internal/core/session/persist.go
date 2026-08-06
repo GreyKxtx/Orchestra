@@ -35,6 +35,7 @@ func (s *Session) toSnapshot() *sessionfile.Snapshot {
 		UIMessages:  s.uiMessages,
 		Profile:     s.profile,
 		ApplyOutput: s.applyOutput,
+		CostUSD:     s.costUSD,
 	}
 	if snap.UIMessages == nil {
 		snap.UIMessages = []sessionfile.UIMessage{}
@@ -62,6 +63,7 @@ func sessionFromSnapshot(snap *sessionfile.Snapshot) *Session {
 		uiMessages:   snap.UIMessages,
 		profile:      snap.Profile,
 		applyOutput:  snap.ApplyOutput,
+		costUSD:      snap.CostUSD,
 	}
 	if s.LastActivity.IsZero() {
 		s.LastActivity = s.CreatedAt

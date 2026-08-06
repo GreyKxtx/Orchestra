@@ -2,7 +2,9 @@ package view
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -19,18 +21,25 @@ const (
 	OnboardingSettings                       // step 3: configure settings
 )
 
-// Provider is a selectable LLM provider in the onboarding flow.
-type Provider struct {
-	Name     string
-	Endpoint string
-}
+// OnboardingView renders the onboarding wizard.
+type OnboardingView struct {
+	Step           OnboardingStep
+	Providers      []ProviderEntry
+	ProviderCursor int
+	EndpointURL    string // editable URL for local/custom providers
+	editingURL     bool
 
-// DefaultProviders is the list shown in step 1.
-var DefaultProviders = []Provider{
-	{"LM Studio", "http://localhost:1234"},
-	{"Ollama", "http://localhost:11434"},
-	{"OpenAI", "https://api.openai.com"},
-	{"Custom", ""},
+	Models        []lmstudio.RemoteModel
+	ModelCursor   int
+	LoadingModels bool
+	ModelError    string
+
+	Settings       ModelSettings
+	settingsCursor int
+	settingsEdit   string // typed buffer for numeric fields on settings step
+
+	screenW int
+	screenH int
 }
 
 // ModelSettings holds the user-configured model parameters from step 3.
@@ -41,31 +50,11 @@ type ModelSettings struct {
 	EnableThinking bool
 }
 
-// OnboardingView renders the onboarding wizard.
-type OnboardingView struct {
-	Step           OnboardingStep
-	Providers      []Provider
-	ProviderCursor int
-	CustomEndpoint string
-	editingCustom  bool
-
-	Models        []lmstudio.RemoteModel
-	ModelCursor   int
-	LoadingModels bool
-	ModelError    string
-
-	Settings       ModelSettings
-	settingsCursor int // 0=temp 1=maxTokens 2=numCtx 3=thinking
-
-	screenW int
-	screenH int
-}
-
 // NewOnboardingView creates an onboarding view with defaults.
 func NewOnboardingView(screenW, screenH int) *OnboardingView {
-	return &OnboardingView{
+	o := &OnboardingView{
 		Step:      OnboardingProvider,
-		Providers: DefaultProviders,
+		Providers: DialogProviders,
 		Settings: ModelSettings{
 			Temperature: 0.20,
 			MaxTokens:   8192,
@@ -74,17 +63,28 @@ func NewOnboardingView(screenW, screenH int) *OnboardingView {
 		screenW: screenW,
 		screenH: screenH,
 	}
+	o.syncEndpointField()
+	return o
 }
 
 // SetScreenSize updates known terminal dimensions.
 func (o *OnboardingView) SetScreenSize(w, h int) { o.screenW = w; o.screenH = h }
 
 // SelectedProvider returns the currently highlighted provider.
-func (o *OnboardingView) SelectedProvider() Provider {
+func (o *OnboardingView) SelectedProvider() ProviderEntry {
 	if o.ProviderCursor < len(o.Providers) {
 		return o.Providers[o.ProviderCursor]
 	}
-	return Provider{}
+	return ProviderEntry{}
+}
+
+// SelectedEndpoint returns the API base for the current provider step.
+func (o *OnboardingView) SelectedEndpoint() string {
+	p := o.SelectedProvider()
+	if p.EndpointEditable && strings.TrimSpace(o.EndpointURL) != "" {
+		return NormalizeEndpoint(o.EndpointURL)
+	}
+	return NormalizeEndpoint(p.Endpoint)
 }
 
 // SelectedModel returns the currently highlighted remote model.
@@ -99,11 +99,23 @@ func (o *OnboardingView) SelectedModel() lmstudio.RemoteModel {
 func (o *OnboardingView) ProviderCursorUp() {
 	if o.ProviderCursor > 0 {
 		o.ProviderCursor--
+		o.syncEndpointField()
 	}
 }
 func (o *OnboardingView) ProviderCursorDown() {
 	if o.ProviderCursor < len(o.Providers)-1 {
 		o.ProviderCursor++
+		o.syncEndpointField()
+	}
+}
+
+func (o *OnboardingView) syncEndpointField() {
+	p := o.SelectedProvider()
+	if p.EndpointEditable {
+		o.EndpointURL = p.Endpoint
+	} else {
+		o.EndpointURL = ""
+		o.editingURL = false
 	}
 }
 
@@ -121,21 +133,23 @@ func (o *OnboardingView) ModelCursorDown() {
 
 // SettingsCursorUp / Down navigate settings fields.
 func (o *OnboardingView) SettingsCursorUp() {
+	o.CommitSettingsEdit()
 	if o.settingsCursor > 0 {
 		o.settingsCursor--
 	}
 }
 func (o *OnboardingView) SettingsCursorDown() {
+	o.CommitSettingsEdit()
 	if o.settingsCursor < 3 {
 		o.settingsCursor++
 	}
 }
 
-// AdjustSetting changes the currently focused setting value.
-// delta is +1 or -1.
+// AdjustSetting steps the focused setting with ←/→ only.
 func (o *OnboardingView) AdjustSetting(delta int) {
+	o.CommitSettingsEdit()
 	switch o.settingsCursor {
-	case 0: // temperature
+	case 0:
 		o.Settings.Temperature += float32(delta) * 0.05
 		if o.Settings.Temperature < 0 {
 			o.Settings.Temperature = 0
@@ -143,40 +157,95 @@ func (o *OnboardingView) AdjustSetting(delta int) {
 		if o.Settings.Temperature > 2 {
 			o.Settings.Temperature = 2
 		}
-	case 1: // max_tokens
+	case 1:
 		o.Settings.MaxTokens += delta * 256
 		if o.Settings.MaxTokens < 256 {
 			o.Settings.MaxTokens = 256
 		}
-	case 2: // num_ctx
+	case 2:
 		o.Settings.NumCtx += int64(delta) * 1024
 		if o.Settings.NumCtx < 1024 {
 			o.Settings.NumCtx = 1024
 		}
-	case 3: // thinking
+	case 3:
 		o.Settings.EnableThinking = !o.Settings.EnableThinking
 	}
 }
 
-// TypeCustomEndpoint appends a rune when editing a custom endpoint.
-func (o *OnboardingView) TypeCustomEndpoint(r rune) {
-	if o.editingCustom {
-		o.CustomEndpoint += string(r)
+func (o *OnboardingView) CommitSettingsEdit() {
+	if o.settingsEdit == "" {
+		return
+	}
+	switch o.settingsCursor {
+	case 0:
+		if v, err := strconv.ParseFloat(o.settingsEdit, 32); err == nil {
+			o.Settings.Temperature = clampTemp(float32(v))
+		}
+	case 1:
+		if v, err := strconv.Atoi(o.settingsEdit); err == nil {
+			if v >= 256 {
+				o.Settings.MaxTokens = v
+			}
+		}
+	case 2:
+		if v, err := strconv.ParseInt(o.settingsEdit, 10, 64); err == nil {
+			if v >= 1024 {
+				o.Settings.NumCtx = v
+			}
+		}
+	}
+	o.settingsEdit = ""
+}
+
+func (o *OnboardingView) TypeSettingsEdit(r rune) {
+	switch o.settingsCursor {
+	case 0:
+		if unicode.IsDigit(r) || r == '.' {
+			o.settingsEdit += string(r)
+		}
+	case 1, 2:
+		if unicode.IsDigit(r) {
+			o.settingsEdit += string(r)
+		}
 	}
 }
 
-// BackspaceCustomEndpoint removes last rune from custom endpoint.
-func (o *OnboardingView) BackspaceCustomEndpoint() {
-	if o.editingCustom && len(o.CustomEndpoint) > 0 {
-		o.CustomEndpoint = o.CustomEndpoint[:len(o.CustomEndpoint)-1]
+func (o *OnboardingView) BackspaceSettingsEdit() {
+	if len(o.settingsEdit) > 0 {
+		o.settingsEdit = o.settingsEdit[:len(o.settingsEdit)-1]
 	}
 }
 
-// IsEditingCustom reports whether the user is typing a custom URL.
-func (o *OnboardingView) IsEditingCustom() bool { return o.editingCustom }
+func (o *OnboardingView) settingsFieldDisplay(idx int, committed string) string {
+	if idx == o.settingsCursor && o.settingsEdit != "" {
+		return o.settingsEdit + "▋"
+	}
+	return committed
+}
 
-// ToggleCustomEdit starts or stops custom endpoint editing.
-func (o *OnboardingView) ToggleCustomEdit() { o.editingCustom = !o.editingCustom }
+// TypeEndpoint appends a rune when editing server URL.
+func (o *OnboardingView) TypeEndpoint(r rune) {
+	if o.editingURL {
+		o.EndpointURL += string(r)
+	}
+}
+
+// BackspaceEndpoint removes last rune from server URL.
+func (o *OnboardingView) BackspaceEndpoint() {
+	if o.editingURL && len(o.EndpointURL) > 0 {
+		o.EndpointURL = o.EndpointURL[:len(o.EndpointURL)-1]
+	}
+}
+
+func (o *OnboardingView) IsEditingURL() bool { return o.editingURL }
+
+// ToggleURLEdit starts or stops server URL editing on the provider step.
+func (o *OnboardingView) ToggleURLEdit() {
+	p := o.SelectedProvider()
+	if p.EndpointEditable {
+		o.editingURL = !o.editingURL
+	}
+}
 
 // Render returns the onboarding screen string (full screen overlay).
 func (o *OnboardingView) Render() string {
@@ -215,9 +284,10 @@ func (o *OnboardingView) renderProvider(t theme.Theme, w int) string {
 	sb.WriteString("\n\n")
 
 	for i, p := range o.Providers {
-		isCustom := p.Name == "Custom"
 		line := fmt.Sprintf("  %s", p.Name)
-		if !isCustom {
+		if !p.EndpointEditable && p.Endpoint != "" {
+			line += fmt.Sprintf("  (%s)", p.Endpoint)
+		} else if p.EndpointEditable && p.Endpoint != "" {
 			line += fmt.Sprintf("  (%s)", p.Endpoint)
 		}
 		if i == o.ProviderCursor {
@@ -226,10 +296,13 @@ func (o *OnboardingView) renderProvider(t theme.Theme, w int) string {
 			sb.WriteString(normalStyle.Width(w - 4).Render(line))
 		}
 		sb.WriteString("\n")
-		if isCustom && i == o.ProviderCursor {
-			url := o.CustomEndpoint
-			if o.editingCustom {
+		if p.EndpointEditable && i == o.ProviderCursor {
+			url := o.EndpointURL
+			if o.editingURL {
 				url += "▋"
+			}
+			if url == "" {
+				url = "(enter URL)"
 			}
 			sb.WriteString(muted.Render("    URL: " + url))
 			sb.WriteString("\n")
@@ -237,7 +310,11 @@ func (o *OnboardingView) renderProvider(t theme.Theme, w int) string {
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(muted.Render("↑↓ выбор · Enter продолжить"))
+	hint := "↑↓ выбор · Enter продолжить"
+	if o.SelectedProvider().EndpointEditable {
+		hint += " · Tab редактировать URL"
+	}
+	sb.WriteString(muted.Render(hint))
 	return sb.String()
 }
 
@@ -311,17 +388,18 @@ func (o *OnboardingView) renderSettings(t theme.Theme, w int) string {
 
 	for i, f := range fields {
 		label := labelStyle.Render("  " + f.label + "  ")
+		display := o.settingsFieldDisplay(i, f.value)
 		var val string
 		if i == o.settingsCursor {
-			val = selectedValueStyle.Render("[ " + f.value + " ]")
+			val = selectedValueStyle.Render("[ " + display + " ]")
 		} else {
-			val = valueStyle.Render("[ " + f.value + " ]")
+			val = valueStyle.Render("[ " + display + " ]")
 		}
 		sb.WriteString(label + val)
 		sb.WriteString("\n")
 	}
 
 	sb.WriteString("\n")
-	sb.WriteString(muted.Render("↑↓ поля · ←→ значение · Enter сохранить"))
+	sb.WriteString(muted.Render("↑↓ поля · ввод цифрами · ←→ шаг · Enter сохранить"))
 	return sb.String()
 }

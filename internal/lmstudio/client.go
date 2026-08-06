@@ -30,14 +30,22 @@ type RemoteModel struct {
 // Client talks to a LM Studio (or OpenAI-compatible) local server.
 type Client struct {
 	endpoint   string // e.g. "http://localhost:1234"
+	apiKey     string // optional Bearer token for cloud /v1/models
 	httpClient *http.Client
 }
 
-// NewClient creates a new LM Studio client with a 5-second timeout.
-func NewClient(endpoint string) *Client {
+// NewClient creates a new OpenAI-compatible models client with a 5-second timeout.
+func NewClient(endpoint, apiKey string) *Client {
 	return &Client{
 		endpoint:   strings.TrimRight(endpoint, "/"),
+		apiKey:     strings.TrimSpace(apiKey),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func (c *Client) setAuth(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 }
 
@@ -151,7 +159,12 @@ func (c *Client) ListModels() ([]RemoteModel, error) {
 }
 
 func (c *Client) listV0() ([]RemoteModel, error) {
-	resp, err := c.httpClient.Get(c.endpoint + "/api/v0/models")
+	req, err := http.NewRequest(http.MethodGet, c.endpoint+"/api/v0/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +197,12 @@ func (c *Client) listV0() ([]RemoteModel, error) {
 }
 
 func (c *Client) listV1() ([]RemoteModel, error) {
-	resp, err := c.httpClient.Get(c.endpoint + "/v1/models")
+	req, err := http.NewRequest(http.MethodGet, c.endpoint+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

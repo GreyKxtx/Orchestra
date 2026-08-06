@@ -2,6 +2,7 @@ package view
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sahilm/fuzzy"
@@ -16,8 +17,7 @@ type ModelEntry struct {
 	IsLoaded         bool  // applies to local providers
 }
 
-// CloudModels lists known cloud model ids per provider key. Used when the
-// provider is non-local (no /v1/models endpoint without an API key).
+// CloudModels lists known cloud model ids per provider key.
 var CloudModels = map[string][]ModelEntry{
 	"openai": {
 		{ID: "gpt-4.1"},
@@ -38,6 +38,63 @@ var CloudModels = map[string][]ModelEntry{
 		{ID: "claude-3-7-sonnet-latest"},
 		{ID: "claude-3-5-sonnet-latest"},
 	},
+	"google": {
+		{ID: "gemini-2.5-pro"},
+		{ID: "gemini-2.5-flash"},
+		{ID: "gemini-2.0-flash"},
+		{ID: "gemini-1.5-pro"},
+		{ID: "gemini-1.5-flash"},
+	},
+	"mistral": {
+		{ID: "mistral-large-latest"},
+		{ID: "mistral-small-latest"},
+		{ID: "codestral-latest"},
+		{ID: "open-mistral-nemo"},
+	},
+	"deepseek": {
+		{ID: "deepseek-chat"},
+		{ID: "deepseek-reasoner"},
+	},
+	"xai": {
+		{ID: "grok-3"},
+		{ID: "grok-3-mini"},
+		{ID: "grok-2-latest"},
+	},
+	"moonshot": {
+		{ID: "moonshot-v1-8k"},
+		{ID: "moonshot-v1-32k"},
+		{ID: "moonshot-v1-128k"},
+		{ID: "kimi-k2-turbo-preview"},
+	},
+	"openrouter": {
+		{ID: "openai/gpt-4o"},
+		{ID: "anthropic/claude-sonnet-4"},
+		{ID: "google/gemini-2.5-pro"},
+		{ID: "deepseek/deepseek-chat"},
+		{ID: "meta-llama/llama-3.3-70b-instruct"},
+		{ID: "qwen/qwen3-235b-a22b"},
+	},
+	"groq": {
+		{ID: "llama-3.3-70b-versatile"},
+		{ID: "llama-3.1-8b-instant"},
+		{ID: "mixtral-8x7b-32768"},
+		{ID: "gemma2-9b-it"},
+	},
+	"together": {
+		{ID: "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+		{ID: "Qwen/Qwen2.5-72B-Instruct-Turbo"},
+		{ID: "deepseek-ai/DeepSeek-V3"},
+	},
+	"fireworks": {
+		{ID: "accounts/fireworks/models/llama-v3p3-70b-instruct"},
+		{ID: "accounts/fireworks/models/deepseek-v3"},
+		{ID: "accounts/fireworks/models/qwen2p5-72b-instruct"},
+	},
+	"cerebras": {
+		{ID: "llama-3.3-70b"},
+		{ID: "llama3.1-8b"},
+		{ID: "qwen-3-32b"},
+	},
 }
 
 // ModelsLoadedMsg is dispatched when async fetching of models completes.
@@ -47,11 +104,10 @@ type ModelsLoadedMsg struct {
 	Err         string
 }
 
-// FetchModelsCmd fetches models from a local OpenAI-compatible endpoint.
-// Used for LM Studio and Ollama. The result lands as ModelsLoadedMsg.
-func FetchModelsCmd(providerKey, endpoint string) tea.Cmd {
+// FetchModelsCmd fetches models from an OpenAI-compatible /v1/models endpoint.
+func FetchModelsCmd(providerKey, endpoint, apiKey string) tea.Cmd {
 	return func() tea.Msg {
-		client := lmstudio.NewClient(endpoint)
+		client := lmstudio.NewClient(endpoint, apiKey)
 		raw, err := client.ListModels()
 		if err != nil {
 			return ModelsLoadedMsg{ProviderKey: providerKey, Err: err.Error()}
@@ -78,13 +134,11 @@ type ModelDialog struct {
 	filter   string
 }
 
-// NewModelDialog returns a ModelDialog for the given provider. For local
-// providers (LM Studio, Ollama, Custom) it starts in loading state; the
-// caller is expected to also dispatch FetchModelsCmd. For cloud providers
-// it pre-populates from CloudModels.
-func NewModelDialog(p ProviderEntry) *ModelDialog {
+// NewModelDialog returns a ModelDialog for the given provider.
+// When fetchRemote is true, starts in loading state until FetchModelsCmd returns.
+func NewModelDialog(p ProviderEntry, fetchRemote bool) *ModelDialog {
 	d := &ModelDialog{provider: p}
-	if p.Local {
+	if p.Local || p.Key == "custom" || fetchRemote {
 		d.loading = true
 	} else {
 		d.models = CloudModels[p.Key]
@@ -132,6 +186,10 @@ func (d *ModelDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		filtered := d.visibleModels()
 		if d.cursor >= 0 && d.cursor < len(filtered) {
 			return d, dialogResultCmd("model", "select", filtered[d.cursor])
+		}
+		// Allow typing a custom model id when search has no list match.
+		if id := strings.TrimSpace(d.filter); id != "" {
+			return d, dialogResultCmd("model", "select", ModelEntry{ID: id})
 		}
 	case "backspace":
 		if len(d.filter) > 0 {
@@ -200,7 +258,7 @@ func (d *ModelDialog) Render(screenW, screenH int) string {
 		d.cursor,
 		d.filter,
 		"Search models",
-		"↑↓ navigate · Enter/→ select · Esc/← back",
+		"↑↓ navigate · Enter/→ select · type custom id · Esc/← back",
 		screenW, screenH,
 	)
 }

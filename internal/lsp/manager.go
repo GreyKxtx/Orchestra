@@ -27,6 +27,10 @@ type LSPConfig struct {
 	Enabled              *bool             `yaml:"enabled,omitempty"`
 	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
 	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	// LazyStart: when true (default), servers spawn on first use instead of NewManager.
+	LazyStart *bool `yaml:"lazy_start,omitempty"`
+	// IdleTTLSeconds: shutdown idle servers after N seconds; nil → 300; 0 → disabled.
+	IdleTTLSeconds *int `yaml:"idle_ttl_seconds,omitempty"`
 }
 
 // ToolLocation is an LSP location converted to workspace-relative, 1-based coordinates.
@@ -82,6 +86,7 @@ type serverEntry struct {
 	mu           sync.Mutex
 	client       *Client
 	restartCount int // H6 in audit ledger: bounded lazy restart on crash
+	lastActivity time.Time
 }
 
 // Manager manages one LSP client per language, routing by file extension.
@@ -89,13 +94,35 @@ type Manager struct {
 	workspaceRoot string
 	servers       []*serverEntry
 	diagTimeoutMS int
+	content       ContentProvider
+	lazyStart     bool
+	idleTTL       time.Duration
+	stopCh        chan struct{}
+	closeOnce     sync.Once
+
+	// startServerHook replaces Start() in tests (package lsp only).
+	startServerHook func(cfg LSPServerConfig, rootURI string) (*Client, error)
 }
 
-// NewManager starts all enabled servers and returns any per-server start errors (non-fatal).
+// SetContentProvider wires a staging overlay (or other in-memory source) so
+// ensureOpen / readLineText / LSP tools see effective content before --apply.
+func (m *Manager) SetContentProvider(p ContentProvider) {
+	if m == nil {
+		return
+	}
+	m.content = p
+}
+
+// NewManager registers LSP servers and optionally starts them eagerly.
+// With lazy_start (default true), no subprocesses are spawned until the first
+// tool call for that language. Returns per-server start errors only in eager mode.
 func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 	m := &Manager{
 		workspaceRoot: workspaceRoot,
 		diagTimeoutMS: cfg.DiagnosticsTimeoutMS,
+		lazyStart:     cfg.lazyStartEnabled(),
+		idleTTL:       cfg.idleTTLDuration(),
+		stopCh:        make(chan struct{}),
 	}
 	if m.diagTimeoutMS <= 0 {
 		m.diagTimeoutMS = 1500
@@ -107,10 +134,6 @@ func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 	rootURI := PathToURI(workspaceRoot)
 	var errs []error
 
-	// C4 (audit ledger): cap LSP init at 30s per server so a hung gopls /
-	// tsserver / pyright cannot block Core / apply / TUI startup forever.
-	// A timed-out server is reported as a non-fatal start error and skipped;
-	// the rest of Orchestra runs without LSP support for that language.
 	const lspStartTimeout = 30 * time.Second
 
 	for _, sc := range cfg.Servers {
@@ -118,37 +141,97 @@ func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 			continue
 		}
 		diags := NewDiagnosticsCache()
-		startCtx, cancel := context.WithTimeout(context.Background(), lspStartTimeout)
-		c, err := Start(startCtx, sc.Language, sc.Command, sc.Env, rootURI, sc.InitOptions)
-		cancel()
-		if err != nil {
-			errs = append(errs, fmt.Errorf("lsp server %q: %w", sc.Language, err))
-			continue
-		}
-		c.DiagCache = diags
-		go dispatchNotifications(c, diags)
-
 		exts := make(map[string]bool, len(sc.Extensions))
 		for _, ext := range sc.Extensions {
 			exts[strings.ToLower(ext)] = true
 		}
-		m.servers = append(m.servers, &serverEntry{cfg: sc, client: c, diags: diags, exts: exts})
+		entry := &serverEntry{cfg: sc, diags: diags, exts: exts, lastActivity: time.Now()}
+
+		if !m.lazyStart {
+			startCtx, cancel := context.WithTimeout(context.Background(), lspStartTimeout)
+			c, err := m.startServer(entry, rootURI, startCtx)
+			cancel()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("lsp server %q: %w", sc.Language, err))
+				continue
+			}
+			c.DiagCache = diags
+			go dispatchNotifications(c, diags)
+			entry.client = c
+		}
+		m.servers = append(m.servers, entry)
+	}
+
+	if m.idleTTL > 0 && len(m.servers) > 0 {
+		go m.idleWatcher()
 	}
 	return m, errs
 }
 
-// Close shuts down all managed servers.
+func (cfg LSPConfig) lazyStartEnabled() bool {
+	if cfg.LazyStart == nil {
+		return true
+	}
+	return *cfg.LazyStart
+}
+
+func (cfg LSPConfig) idleTTLDuration() time.Duration {
+	if cfg.IdleTTLSeconds == nil {
+		return 5 * time.Minute
+	}
+	if *cfg.IdleTTLSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(*cfg.IdleTTLSeconds) * time.Second
+}
+
+func (m *Manager) startServer(entry *serverEntry, rootURI string, ctx context.Context) (*Client, error) {
+	if m.startServerHook != nil {
+		return m.startServerHook(entry.cfg, rootURI)
+	}
+	return Start(ctx, entry.cfg.Language, entry.cfg.Command, entry.cfg.Env, rootURI, entry.cfg.InitOptions)
+}
+
+// Close shuts down all managed servers and stops the idle watcher.
 func (m *Manager) Close() {
+	if m == nil {
+		return
+	}
+	m.closeOnce.Do(func() {
+		if m.stopCh != nil {
+			close(m.stopCh)
+		}
+	})
 	for _, s := range m.servers {
+		s.mu.Lock()
 		if s.client != nil && !s.client.IsDead() {
 			_ = s.client.Close()
 		}
+		s.client = nil
+		s.mu.Unlock()
 	}
 	m.servers = nil
 }
 
-// IsEmpty reports whether any servers are running.
+// IsEmpty reports whether any LSP servers are configured (not whether they are running).
 func (m *Manager) IsEmpty() bool { return m == nil || len(m.servers) == 0 }
+
+// RuntimeStatus reports LSP readiness for UI: off (none configured), idle
+// (configured but no live server), active (at least one live client).
+func (m *Manager) RuntimeStatus() string {
+	if m.IsEmpty() {
+		return "off"
+	}
+	for _, s := range m.servers {
+		s.mu.Lock()
+		alive := s.client != nil && !s.client.IsDead()
+		s.mu.Unlock()
+		if alive {
+			return "active"
+		}
+	}
+	return "idle"
+}
 
 // ForTest creates a Manager from a pre-started *Client, for use in tests.
 // The client is assumed to have already completed the initialize handshake.
@@ -163,7 +246,12 @@ func ForTest(workspaceRoot string, c *Client, extensions []string, diagTimeoutMS
 	if diagTimeoutMS <= 0 {
 		diagTimeoutMS = 1500
 	}
-	m := &Manager{workspaceRoot: workspaceRoot, diagTimeoutMS: diagTimeoutMS}
+	m := &Manager{
+		workspaceRoot: workspaceRoot,
+		diagTimeoutMS: diagTimeoutMS,
+		lazyStart:     false,
+		stopCh:        make(chan struct{}),
+	}
 	m.servers = append(m.servers, &serverEntry{
 		cfg:    LSPServerConfig{Extensions: extensions},
 		client: c,
@@ -196,49 +284,150 @@ func (m *Manager) serverForPath(relPath string) (*serverEntry, error) {
 		if !s.exts[ext] {
 			continue
 		}
-		// Fast path: alive client, no lock.
-		if c := s.client; c != nil && !c.IsDead() {
-			return s, nil
+		if err := m.ensureClient(s); err != nil {
+			return nil, err
 		}
-		// Slow path: serialize restart attempts for this entry so that
-		// concurrent calls don't both increment restartCount past the cap
-		// and don't both spawn a fresh subprocess. N1 in audit ledger.
-		if ok := s.tryRestart(m.workspaceRoot); ok {
-			return s, nil
-		}
+		return s, nil
 	}
 	return nil, fmt.Errorf("lsp: no server configured for %q files (ext=%q)", relPath, ext)
 }
 
-// tryRestart serializes lazy-restart attempts for one serverEntry. Returns
-// true if the entry has an alive client when it returns (either someone
-// else restarted while we waited, or we restarted successfully).
-func (s *serverEntry) tryRestart(workspaceRoot string) bool {
+// ensureClient starts or revives the LSP client for s. Serializes concurrent
+// start attempts per entry. TTL shutdown sets client=nil without bumping
+// restartCount; unexpected death increments restartCount (H6).
+func (m *Manager) ensureClient(s *serverEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Re-check under the lock: another goroutine may have already
-	// restarted while we were blocked on Lock.
 	if s.client != nil && !s.client.IsDead() {
-		return true
+		s.lastActivity = time.Now()
+		return nil
+	}
+	if s.client != nil && s.client.IsDead() {
+		s.restartCount++
+		_ = s.client.Close()
+		s.client = nil
 	}
 	if s.restartCount >= maxLSPRestarts {
-		return false
+		return fmt.Errorf("lsp server %q: exceeded max restarts (%d)", s.cfg.Language, maxLSPRestarts)
 	}
-	s.restartCount++
-	rootURI := PathToURI(workspaceRoot)
+
+	rootURI := PathToURI(m.workspaceRoot)
 	startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	fresh, err := Start(startCtx, s.cfg.Language, s.cfg.Command, s.cfg.Env, rootURI, s.cfg.InitOptions)
+	fresh, err := m.startServer(s, rootURI, startCtx)
 	cancel()
 	if err != nil {
-		// Mark this entry permanently dead by exhausting the budget.
-		s.restartCount = maxLSPRestarts
-		return false
+		s.restartCount++
+		return fmt.Errorf("lsp server %q: %w", s.cfg.Language, err)
 	}
 	fresh.DiagCache = s.diags
 	go dispatchNotifications(fresh, s.diags)
 	s.client = fresh
-	return true
+	s.lastActivity = time.Now()
+	go m.reopenStaged(s)
+	return nil
+}
+
+func (m *Manager) idleWatcher() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			m.checkIdleShutdown()
+		}
+	}
+}
+
+func (m *Manager) checkIdleShutdown() {
+	if m.idleTTL <= 0 {
+		return
+	}
+	cutoff := time.Now().Add(-m.idleTTL)
+	for _, s := range m.servers {
+		s.mu.Lock()
+		if s.client != nil && !s.client.IsDead() && s.lastActivity.Before(cutoff) {
+			_ = s.client.Close()
+			s.client = nil
+		}
+		s.mu.Unlock()
+	}
+}
+
+// reopenStaged didOpens all staged overlay paths matching s's extensions.
+func (m *Manager) reopenStaged(s *serverEntry) {
+	if m.content == nil {
+		return
+	}
+	sp, ok := m.content.(StagedPathsProvider)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	c := s.client
+	exts := s.exts
+	s.mu.Unlock()
+	if c == nil || c.IsDead() {
+		return
+	}
+	ctx := context.Background()
+	for _, relPath := range sp.ListStagedPaths() {
+		ext := strings.ToLower(filepath.Ext(relPath))
+		if !exts[ext] {
+			continue
+		}
+		content, err := m.fileContent(relPath)
+		if err != nil {
+			continue
+		}
+		absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
+		uri := PathToURI(absPath)
+		if c.IsOpen(uri) {
+			_ = c.DidChange(ctx, uri, content)
+			continue
+		}
+		_ = c.DidOpen(ctx, uri, langIDFromExt(ext), content)
+	}
+}
+
+// CheckIdleShutdownForTest runs one idle-TTL sweep (tests only).
+func (m *Manager) CheckIdleShutdownForTest() { m.checkIdleShutdown() }
+
+// SetStartServerHookForTest replaces Start() during ensureClient (tests only).
+func (m *Manager) SetStartServerHookForTest(hook func(cfg LSPServerConfig, rootURI string) (*Client, error)) {
+	if m == nil {
+		return
+	}
+	m.startServerHook = hook
+}
+
+// SetLastActivityForTest sets lastActivity for the first server matching language (tests only).
+func (m *Manager) SetLastActivityForTest(language string, t time.Time) {
+	for _, s := range m.servers {
+		if s.cfg.Language != language {
+			continue
+		}
+		s.mu.Lock()
+		s.lastActivity = t
+		s.mu.Unlock()
+		return
+	}
+}
+
+// ClientRunningForTest reports whether the server for language has a live client (tests only).
+func (m *Manager) ClientRunningForTest(language string) bool {
+	for _, s := range m.servers {
+		if s.cfg.Language != language {
+			continue
+		}
+		s.mu.Lock()
+		ok := s.client != nil && !s.client.IsDead()
+		s.mu.Unlock()
+		return ok
+	}
+	return false
 }
 
 func (m *Manager) ensureOpen(ctx context.Context, s *serverEntry, relPath string) error {
@@ -247,11 +436,27 @@ func (m *Manager) ensureOpen(ctx context.Context, s *serverEntry, relPath string
 	if s.client.IsOpen(uri) {
 		return nil
 	}
-	content, err := os.ReadFile(absPath)
+	content, err := m.fileContent(relPath)
 	if err != nil {
 		return fmt.Errorf("lsp: read %s: %w", relPath, err)
 	}
-	return s.client.DidOpen(ctx, uri, langIDFromExt(filepath.Ext(relPath)), string(content))
+	return s.client.DidOpen(ctx, uri, langIDFromExt(filepath.Ext(relPath)), content)
+}
+
+// fileContent returns effective text for relPath (staging overlay when set).
+func (m *Manager) fileContent(relPath string) (string, error) {
+	relPath = filepath.ToSlash(relPath)
+	if m != nil && m.content != nil {
+		if c, ok := m.content.EffectiveContent(relPath); ok {
+			return c, nil
+		}
+	}
+	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
+	b, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // DidClose sends textDocument/didClose for every server that has the
@@ -290,8 +495,7 @@ func (m *Manager) readLineText(relPath string, line int) string {
 	if line < 0 {
 		return ""
 	}
-	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
-	content, err := os.ReadFile(absPath)
+	content, err := m.fileContent(relPath)
 	if err != nil {
 		return ""
 	}
@@ -304,13 +508,13 @@ func (m *Manager) readLineText(relPath string, line int) string {
 			continue
 		}
 		if cur == line {
-			return string(content[start:i])
+			return content[start:i]
 		}
 		cur++
 		start = i + 1
 	}
 	if cur == line { // last line (no trailing newline)
-		return string(content[start:])
+		return content[start:]
 	}
 	return ""
 }
@@ -474,6 +678,32 @@ func (m *Manager) DocumentSymbols(ctx context.Context, relPath string) ([]ToolSy
 	return parseDocSymbols(raw), nil
 }
 
+// SyncStaged pushes overlay content to LSP (didOpen or full didChange) without
+// waiting for diagnostics. No-op when LSP is disabled or no server handles ext.
+func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error {
+	if m == nil || m.IsEmpty() {
+		return nil
+	}
+	s, err := m.serverForPath(relPath)
+	if err != nil {
+		return nil
+	}
+	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
+	uri := PathToURI(absPath)
+
+	if s.client.IsOpen(uri) {
+		if err := s.client.DidChange(ctx, uri, content); err != nil {
+			return fmt.Errorf("lsp: SyncStaged DidChange %s: %w", relPath, err)
+		}
+		return nil
+	}
+	langID := langIDFromExt(filepath.Ext(relPath))
+	if err := s.client.DidOpen(ctx, uri, langID, content); err != nil {
+		return fmt.Errorf("lsp: SyncStaged DidOpen %s: %w", relPath, err)
+	}
+	return nil
+}
+
 // SyncAndDiagnose notifies the server of new file content and waits for diagnostics.
 // Returns nil (not an error) if no server handles the file or on timeout.
 //
@@ -483,6 +713,10 @@ func (m *Manager) DocumentSymbols(ctx context.Context, relPath string) ([]ToolSy
 // returns nil to keep the diagnostics-empty contract intact for callers
 // that treat "no diagnostics" as "all clean".
 func (m *Manager) SyncAndDiagnose(ctx context.Context, relPath, content string) []ToolDiagnostic {
+	if err := m.SyncStaged(ctx, relPath, content); err != nil {
+		fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: %v\n", err)
+		return nil
+	}
 	s, err := m.serverForPath(relPath)
 	if err != nil {
 		return nil
@@ -494,18 +728,6 @@ func (m *Manager) SyncAndDiagnose(ctx context.Context, relPath, content string) 
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if s.client.IsOpen(uri) {
-		if err := s.client.DidChange(tctx, uri, content); err != nil {
-			fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: DidChange %s: %v\n", relPath, err)
-			return nil
-		}
-	} else {
-		langID := langIDFromExt(filepath.Ext(relPath))
-		if err := s.client.DidOpen(tctx, uri, langID, content); err != nil {
-			fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: DidOpen %s: %v\n", relPath, err)
-			return nil
-		}
-	}
 	return diagsToTool(s.diags.WaitForUpdate(tctx, uri))
 }
 

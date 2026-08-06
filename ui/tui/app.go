@@ -40,8 +40,8 @@ type Config struct {
 	NeedsOnboarding bool   // true when no model is configured
 	ConfigPath      string // path to .orchestra.yml for saving onboarding result
 	Theme           string // registered theme name; empty → default
-	AutoApply       bool   // LIVE mode: write to disk during agent.run
 	AllowExec       bool   // allow bash/exec.run in TUI agent runs
+	Profile         string // agent.profile: fast | precision | ""
 }
 
 // App is the root Bubble Tea Model.
@@ -50,7 +50,11 @@ type App struct {
 	session   *state.Session
 	chat      view.Chat
 	input     view.Input
-	statusBar view.StatusBar // replaces footer
+	statusBar view.StatusBar
+
+	taskPanel    *view.TaskPanel
+	todos        []rpcclient.TodoItem
+	taskPanelOpen bool
 
 	width       int
 	height      int
@@ -59,9 +63,20 @@ type App struct {
 	rpc       *rpcclient.Client
 	rpcCancel context.CancelFunc
 
-	pendingOps *rpcclient.PendingOpsPayload // non-nil while ops await confirmation
-	diffShown  bool                         // true while diff messages are in session
-	turn       *state.TurnFSM               // turn lifecycle FSM (M3)
+	lastCommitDiff []rpcclient.FileDiff // diff from last auto-commit (for /diff)
+	diffShown      bool                 // true while diff messages are in session
+	turn           *state.TurnFSM       // turn lifecycle FSM (M3)
+
+	// sessionTokens accumulates prompt+completion across the whole session (cost/stats).
+	sessionTokens     int
+	// promptTokensUsed is the last LLM step prompt size — drives the ctx bar.
+	promptTokensUsed  int
+	livePromptTokens  int // current step prompt tokens while a turn is running
+	turnError         string
+	sessionCostUSD    float64
+	modelContextLimit int
+	lspStatus         string // off | idle | active
+	showCost          bool
 
 	permModal     *view.Modal         // non-nil while an exec.run permission request is pending
 	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
@@ -112,6 +127,10 @@ type App struct {
 	// text is truncated back to this value to discard pre-tool-call chatter.
 	stepTextLen int
 
+	// retryHintThisStep suppresses duplicate generic retry lines when
+	// EventRecoverableError already showed the detailed hint this step.
+	retryHintThisStep bool
+
 	// currentSessionID is the on-disk id of the in-flight chat. Empty until
 	// the first user message is sent (and the session record is created).
 	currentSessionID string
@@ -126,8 +145,10 @@ type App struct {
 
 	// Mouse state for click-to-cursor and drag selection.
 	inputRowY int  // absolute screen row of textarea content
+	inputBoxTopY int // absolute screen row of input box top (chat mode)
 	inputColX int  // absolute screen column where textarea content starts
 	chatTopY  int  // absolute screen row of the first viewport content line
+	statusBarRowY int // status bar content row (tasks chip click target)
 	mouseDown         bool // true while left button held in input area
 	mouseLastClickAt  time.Time
 	mouseLastClickPos int
@@ -137,18 +158,19 @@ type App struct {
 	// native text selection (toggled with Ctrl+G).
 	mousePassthrough bool
 
-	autoApply bool // LIVE: agent.run apply=true (writes to disk immediately)
 	allowExec bool // allow bash/exec.run in agent runs
+
+	// sessionToolAllow remembers tools approved with [t] for this TUI session
+	// (ask mode still on; these tools skip the permission modal).
+	sessionToolAllow map[string]bool
+
+	// taskPanelTopY / taskPanelHeight track the Tasks strip for mouse toggle.
+	taskPanelTopY   int
+	taskPanelHeight int
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
 type rpcEventMsg rpcclient.Event
-
-// applyResultMsg is returned by the ops-apply Cmd to keep session writes on the Update goroutine.
-type applyResultMsg struct {
-	err   error
-	count int
-}
 
 // tickMsg drives the spinner and streaming cursor animation.
 type tickMsg time.Time
@@ -176,6 +198,7 @@ type rpcSpawnedMsg struct {
 type settingsSavedMsg struct {
 	provider view.ProviderEntry
 	model    view.ModelEntry
+	numCtx   int64
 	err      error
 }
 
@@ -189,12 +212,15 @@ func NewApp(cfg Config) (*App, error) {
 		theme.SetTheme(theme.ByName(cfg.Theme))
 	}
 	a := &App{
-		cfg:       cfg,
-		session:   state.NewSession(),
-		turn:      state.NewTurnFSM(),
-		autoApply: cfg.AutoApply,
-		allowExec: cfg.AllowExec,
+		cfg:              cfg,
+		session:          state.NewSession(),
+		turn:             state.NewTurnFSM(),
+		allowExec:        cfg.AllowExec,
+		sessionToolAllow: map[string]bool{},
 	}
+	a.taskPanel = view.NewTaskPanel(0)
+	a.loadConfigPrefs()
+	a.syncStatusBar()
 	a.statusBar.SetModel(cfg.Model)
 	a.statusBar.SetProject(cfg.CWD)
 	a.showWelcome = true
@@ -248,7 +274,7 @@ func tickCmd() tea.Cmd {
 // fetchModelsCmd fetches models from the given LM Studio endpoint asynchronously.
 func fetchModelsCmd(endpoint string) tea.Cmd {
 	return func() tea.Msg {
-		client := lmstudio.NewClient(endpoint)
+		client := lmstudio.NewClient(endpoint, "")
 		models, err := client.ListModels()
 		return modelsLoadedMsg{models: models, err: err}
 	}

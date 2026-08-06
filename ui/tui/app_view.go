@@ -1,13 +1,16 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/orchestra/orchestra/ui/tui/rpcclient"
+	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
+
+const statusBarScreenRows = 2
 
 // chatSidePad is the symmetric horizontal margin applied to the chat
 // scrollback area only — so individual messages don't hug the terminal edge.
@@ -61,13 +64,14 @@ func (a *App) View() string {
 		return a.renderWelcomeView()
 	}
 
-	// Chat is the only component narrowed by chatSidePad — everything else
-	// (input box with its border + bg, action bar, palette, status bar) keeps
-	// the full terminal width and uses its own internal padding.
+	// Chat layout: chat + input box + status bar.
 	parts := []string{a.padChat(a.chat.Render())}
-	if a.pendingOps != nil {
-		parts = append(parts, a.renderActionBar())
-	}
+	parts = append(parts, a.renderPalettesAndInput()...)
+	return a.overlayModals(strings.Join(parts, "\n"))
+}
+
+func (a *App) renderPalettesAndInput() []string {
+	var parts []string
 	if a.paletteActive && len(a.slashPalette.Items) > 0 {
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(a.slashPalette.Render()))
 	}
@@ -79,17 +83,31 @@ func (a *App) View() string {
 	}
 	if a.questionModal != nil {
 		parts = append(parts, a.questionModal.Render())
+		parts = append(parts, a.renderTaskArea())
 		parts = append(parts, a.renderChatInputBox())
 	} else if a.permModal != nil {
+		parts = append(parts, a.renderTaskArea())
 		parts = append(parts, a.permModal.Render())
 	} else {
+		parts = append(parts, a.renderTaskArea())
 		parts = append(parts, a.renderChatInputBox())
 	}
 	parts = append(parts, a.statusBar.Render())
+	return parts
+}
 
-	screen := strings.Join(parts, "\n")
+func (a *App) renderTaskArea() string {
+	if a.taskPanel == nil || len(a.todos) == 0 {
+		return ""
+	}
+	panel := a.taskPanel.RenderAboveInput()
+	if panel == "" {
+		return ""
+	}
+	return lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(panel)
+}
 
-	// Command modal overlaid on top.
+func (a *App) overlayModals(screen string) string {
 	if a.commandModal != nil && a.commandModal.Active() {
 		a.commandModal.SetScreenSize(a.width, a.height)
 		return a.commandModal.Render()
@@ -121,25 +139,9 @@ func (a *App) renderChatInputBox() string {
 	return lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(box)
 }
 
-// renderActionBar draws the "⏵ N pending ops · [a]pply · [d]iff · [x]discard"
-// banner shown above the input when the agent produced patches awaiting
-// user approval. Full terminal width with its own internal padding.
-func (a *App) renderActionBar() string {
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#e0af68")).
-		Width(a.width).
-		Padding(0, 1)
-	count := len(a.pendingOps.Ops)
-	return style.Render(fmt.Sprintf("⏵ %d pending ops · [a]pply · [d]iff · [x]discard", count))
-}
-
 // layout recomputes child sizes based on current width/height. Called on
 // WindowSize and whenever a layout-affecting state changes (agent busy,
-// permission modal, pending ops, palette active).
-//
-// Only the chat scrollback is narrowed by 2*chatSidePad cells so its content
-// has a gutter from the edges. Input box, palette, action bar and status bar
-// render at full terminal width and rely on their own internal padding.
+// permission modal, palette active).
 func (a *App) layout() {
 	chatW := a.width - 2*chatSidePad
 	if chatW < 1 {
@@ -151,10 +153,8 @@ func (a *App) layout() {
 	}
 
 	actionBarRows := 0
-	if a.pendingOps != nil {
-		actionBarRows = 1
-	}
 	progressRows := 0
+	// Task panel overlays chat — does not consume layout rows (avoids input jumping).
 	if a.workflowProgress != nil && a.workflowProgress.Active() {
 		progressRows = 1
 	}
@@ -172,17 +172,15 @@ func (a *App) layout() {
 		}
 		paletteRows = n
 	}
-	// Boxed input: pad-top(1) + textarea(N rows) + gap(1) + modeline(1) +
-	// pad-bottom(1) — measured exactly from a sample render so a multi-line
-	// textarea (or a future palette-mode swap) doesn't desync the layout.
-	// Falls back to the static 5-row total when the input isn't constructed
-	// yet (first WindowSize before NewInput).
-	// Welcome-style box: 1 pad-top + textarea + gap + modeline + 1 pad-bottom
-	// = 5 rows, fixed. Don't pay the full renderChatInputBox cost on every
-	// resize / layout call — that one allocates a non-trivial chain of
-	// lipgloss styles, which manifests as visible flicker during a sustained
-	// terminal-resize sequence.
+	// Boxed input: pad-top + textarea + gap + modeline + pad-bottom = 5 + taH rows.
 	inputRows := 5
+	if !a.showWelcome {
+		taH := a.input.Inner().Height()
+		if taH < 1 {
+			taH = 1
+		}
+		inputRows = taH + 5
+	}
 	modalRows := 0
 	if a.questionModal != nil {
 		modalRows = 4
@@ -192,10 +190,12 @@ func (a *App) layout() {
 		modalRows = 5
 		a.permModal.SetSize(a.width)
 	}
-	// Status bar now reserves 2 rows (1 gap + 1 content) for breathing room
-	// between the input box and the status text.
-	const statusBarRows = 2
-	chatHeight := a.height - statusBarRows - inputRows - actionBarRows - modalRows - paletteRows - progressRows - 2*chatVerticalPad
+	taskRows := 0
+	if a.taskPanel != nil && len(a.todos) > 0 {
+		taskRows = a.taskPanel.VisibleRowsAboveInput()
+	}
+	const statusBarRows = statusBarScreenRows
+	chatHeight := a.height - statusBarRows - inputRows - actionBarRows - modalRows - paletteRows - progressRows - taskRows - 2*chatVerticalPad
 	if chatHeight < 1 {
 		chatHeight = 1
 	}
@@ -255,25 +255,37 @@ func (a *App) layout() {
 	if a.workflowProgress != nil {
 		a.workflowProgress.SetSize(inputW)
 	}
+	if a.taskPanel != nil {
+		a.taskPanel.SetSize(inputW)
+	}
 
-	// Track input box position for mouse click-to-cursor.
+	// Track input box + task panel positions for mouse.
 	if !a.showWelcome {
-		// Box layout (no top border, only left border ▌):
-		//   top pad (1) + textarea (taH) + gap (1) + modeLine (1) + bottom pad (1) = 4 + taH rows.
-		// Box ends at screen row h-2 (status bar at h-1). Box starts at h-1-inputBoxHeight.
-		// First textarea row is at boxStart + 1 (skip top pad) = h - inputBoxHeight.
 		taH := a.input.Inner().Height()
 		if taH < 1 {
 			taH = 1
 		}
-		inputBoxHeight := 4 + taH
-		a.inputRowY = a.height - inputBoxHeight // first textarea row inside the box
-		a.inputColX = chatSidePad + 1 + 2        // sidePad + border(▌) + leftPad
-		// chatTopY: padChat adds PaddingTop(chatVerticalPad) above the viewport,
-		// so the first viewport content row is at screen row chatVerticalPad.
+		meta := 0
+		inputBoxHeight := meta + taH + 5 + taskRows
+		a.inputBoxTopY = a.height - statusBarRows - inputBoxHeight
+		if a.inputBoxTopY < 0 {
+			a.inputBoxTopY = 0
+		}
+		a.taskPanelHeight = taskRows
+		if taskRows > 0 {
+			a.taskPanelTopY = a.inputBoxTopY
+			a.inputRowY = a.inputBoxTopY + taskRows + 1 + meta + 1
+		} else {
+			a.taskPanelTopY = -1
+			a.inputRowY = a.inputBoxTopY + 1 + meta + 1
+		}
+		a.inputColX = chatSidePad + 1 + 2
 		a.chatTopY = chatVerticalPad
+		a.statusBarRowY = a.height - 1
 	} else {
 		// Welcome view: rough estimate
+		a.taskPanelTopY = -1
+		a.taskPanelHeight = 0
 		a.inputRowY = a.height / 2
 		a.inputColX = (a.width-80)/2 + 3
 		if a.inputColX < 3 {
@@ -282,32 +294,124 @@ func (a *App) layout() {
 	}
 }
 
-// buildDiffContent renders the diff for the current pending-ops set as a
-// single text block that fits the chat width.
-func (a *App) buildDiffContent() string {
-	if a.pendingOps == nil || len(a.pendingOps.Diff) == 0 {
-		return "(no diff available)"
+// buildDiffFiles converts lastCommitDiff to session DiffFile slice.
+func (a *App) buildDiffFiles() []state.DiffFile {
+	if len(a.lastCommitDiff) == 0 {
+		return nil
 	}
-	diffs := make([]view.FileDiffView, len(a.pendingOps.Diff))
-	for i, fd := range a.pendingOps.Diff {
-		diffs[i] = view.FileDiffView{Path: fd.Path, Before: fd.Before, After: fd.After}
+	out := make([]state.DiffFile, len(a.lastCommitDiff))
+	for i, fd := range a.lastCommitDiff {
+		out[i] = state.DiffFile{Path: fd.Path, Before: fd.Before, After: fd.After}
 	}
-	return view.RenderAllDiffs(diffs, a.width)
+	return out
+}
+
+func (a *App) showCommitDiff() {
+	if len(a.lastCommitDiff) == 0 && !a.session.HasDiff() {
+		return
+	}
+	// Prefer toggling in-chat RoleDiff when lastCommitDiff is empty (reopen).
+	if len(a.lastCommitDiff) == 0 {
+		if a.session.ToggleLastDiff() {
+			a.diffShown = a.session.HasDiff()
+			a.chat.SetMessages(a.session.Messages)
+			a.layout()
+			a.updateStatusHints()
+		}
+		return
+	}
+	if a.diffShown {
+		a.session.RemoveDiff()
+		a.diffShown = false
+	} else {
+		a.session.AddDiffFiles(a.buildDiffFiles())
+		a.diffShown = true
+	}
+	a.chat.SetMessages(a.session.Messages)
+	a.layout()
+	a.updateStatusHints()
+}
+
+// inputEmpty reports whether the composer has no text (hotkeys may steal keys).
+func (a *App) inputEmpty() bool {
+	return strings.TrimSpace(a.input.Value()) == ""
+}
+
+// handleCtrlTCascade: close open Tasks; else expand tools; else toggle diff;
+// else open Tasks. Tools/diff stay reachable even when todos exist.
+func (a *App) handleCtrlTCascade() bool {
+	if a.taskPanelOpen {
+		a.toggleTaskPanel()
+		return true
+	}
+	for i := len(a.session.Messages) - 1; i >= 0; i-- {
+		m := a.session.Messages[i]
+		if m.Role == state.RoleAssistant && len(m.ToolBlocks) > 0 {
+			key := view.MessageKey(m)
+			a.chat.ExpandTurn(key)
+			a.session.Messages[i].ToolsExpanded = a.chat.IsTurnExpanded(key)
+			a.chat.SetMessages(a.session.Messages)
+			a.layout()
+			a.updateStatusHints()
+			return true
+		}
+	}
+	if a.session.ToggleLastDiff() {
+		a.diffShown = a.session.HasDiff()
+		a.chat.SetMessages(a.session.Messages)
+		a.layout()
+		a.updateStatusHints()
+		return true
+	}
+	if len(a.todos) > 0 {
+		a.toggleTaskPanel()
+		return true
+	}
+	return false
+}
+
+// toggleLastReasoning expands/collapses CoT on the newest assistant message.
+func (a *App) toggleLastReasoning() bool {
+	for i := len(a.session.Messages) - 1; i >= 0; i-- {
+		m := &a.session.Messages[i]
+		if m.Role != state.RoleAssistant || strings.TrimSpace(m.Reasoning) == "" {
+			continue
+		}
+		m.ReasoningExpanded = !m.ReasoningExpanded
+		a.chat.InvalidateMessage(view.MessageKey(*m))
+		a.chat.SetMessages(a.session.Messages)
+		a.layout()
+		return true
+	}
+	return false
+}
+
+// syncDiffStateFromSession rebuilds lastCommitDiff from RoleDiff messages so
+// /diff and d work after session reopen.
+func (a *App) syncDiffStateFromSession() {
+	a.lastCommitDiff = nil
+	a.diffShown = false
+	for _, m := range a.session.Messages {
+		if m.Role != state.RoleDiff || len(m.DiffFiles) == 0 {
+			continue
+		}
+		out := make([]rpcclient.FileDiff, len(m.DiffFiles))
+		for i, df := range m.DiffFiles {
+			out[i] = rpcclient.FileDiff{Path: df.Path, Before: df.Before, After: df.After}
+		}
+		a.lastCommitDiff = out
+		a.diffShown = true
+		return
+	}
 }
 
 // renderInputBox renders the boxed text-input used in both the welcome screen
-// and the chat view. ▌ accent in mode color, panel BG, padding 1×2:
-//
-//	┌── ▌ ──────────────────────┐
-//	│  > textarea               │
-//	│                           │   ← gap
-//	│  build · model · LMStudio │   ← status row INSIDE the box
-//	└───────────────────────────┘
+// and the chat view. Bottom row: build · model · provider · exec (mode lives here only).
 func (a *App) renderInputBox(width int) string {
 	t := view.ThemeForApp()
 	bg := t.BackgroundSecondary()
 
-	contentW := width - 5 // 1 border + 2 left pad + 2 right pad
+	contentW := width - 5
 	if contentW < 20 {
 		contentW = 20
 	}
@@ -365,22 +469,36 @@ func (a *App) updateStatusHints() {
 	case a.mousePassthrough:
 		a.statusBar.SetHints("Выделение мышью · Ctrl+G для возврата")
 	case a.paletteActive:
-		a.statusBar.SetHints("↑↓ select · Enter execute · Esc cancel")
+		a.statusBar.SetHints("↑↓ выбор · Enter выполнить · Esc")
 	case a.mentionActive:
-		a.statusBar.SetHints("↑↓ select · Enter/Tab insert · Esc cancel")
+		a.statusBar.SetHints("↑↓ выбор · Enter/Tab вставить · Esc")
 	case a.questionModal != nil:
 		a.statusBar.SetHints("Enter — ответ · Esc — отмена")
 	case a.permModal != nil:
-		a.statusBar.SetHints("[y]es allow · [n]o deny · Esc deny")
-	case a.pendingOps != nil:
-		a.statusBar.SetHints("[a]pply · [d]iff · [x]discard · Ctrl+C quit")
+		a.statusBar.SetHints("[y] раз · [a] сессия · [t] tool · [n] нет")
 	case a.turn.CanCancel() && a.activeCancel != nil:
-		a.statusBar.SetHints("Esc отменить · Ctrl+C выйти")
-	case a.autoApply:
-		a.statusBar.SetHints(a.writeModeLabel() + " · запись на диск · /preview · Ctrl+K")
+		a.statusBar.SetHints("Esc отмена · Ctrl+C")
+	case !a.turn.ShowBusySpinner() && a.pendingTodoCount() > 0:
+		a.statusBar.SetHints("Ctrl+T · «продолжай»")
+	case a.taskPanelOpen && len(a.todos) > 0:
+		a.statusBar.SetHints("↑↓ · Ctrl+T")
+	case !a.turn.ShowBusySpinner() && a.session.HasDiff():
+		a.statusBar.SetHints("d / Ctrl+D · diff")
+	case !a.turn.ShowBusySpinner() && a.sessionHasTools():
+		a.statusBar.SetHints("Ctrl+T · tools")
 	default:
-		a.statusBar.SetHints(a.writeModeLabel() + " · [a]/apply · /live · Ctrl+K")
+		a.statusBar.SetHints("")
 	}
+	a.syncStatusBar()
+}
+
+func (a *App) sessionHasTools() bool {
+	for i := len(a.session.Messages) - 1; i >= 0; i-- {
+		if a.session.Messages[i].Role == state.RoleAssistant && len(a.session.Messages[i].ToolBlocks) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // renderToast renders a centered floating notification box.

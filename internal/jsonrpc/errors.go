@@ -14,10 +14,31 @@ func (e *RPCError) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
-	if e.Message != "" {
+	detail := rpcErrorDetail(e.Data)
+	switch {
+	case detail != "" && e.Message != "" && detail != e.Message:
+		if e.Message == "Internal error" || e.Code == -32603 {
+			return detail
+		}
+		return e.Message + ": " + detail
+	case detail != "":
+		return detail
+	case e.Message != "":
 		return e.Message
+	default:
+		return fmt.Sprintf("jsonrpc error %d", e.Code)
 	}
-	return fmt.Sprintf("jsonrpc error %d", e.Code)
+}
+
+func rpcErrorDetail(data any) string {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if s, ok := m["error"].(string); ok {
+		return s
+	}
+	return ""
 }
 
 func MethodNotFound(method string) *RPCError {

@@ -37,6 +37,9 @@ func renderInlineTool(tb state.ToolBlock, width, spinFrame int) string {
 	}
 
 	label := toolPreview(tb.Name, tb.ArgsRaw, tb.Result)
+	if suffix := diagnosticsInlineSuffix(tb.Diagnostics); suffix != "" {
+		label += suffix
+	}
 	if label == "" {
 		label = toolDisplayName(tb.Name)
 	}
@@ -44,6 +47,15 @@ func renderInlineTool(tb state.ToolBlock, width, spinFrame int) string {
 	iconCh := toolIcon(tb.Name)
 	if tb.Status == state.ToolBlockRunning {
 		iconCh = SpinnerFrames[spinFrame%len(SpinnerFrames)]
+	}
+
+	// LSP errors: highlight inline tool line (OpenCode-style soft validation feedback).
+	if errs := countDiagErrors(tb.Diagnostics); errs > 0 && tb.Status == state.ToolBlockCompleted {
+		iconColor = t.Error()
+		textColor = t.Error()
+	} else if countDiagWarnings(tb.Diagnostics) > 0 && tb.Status == state.ToolBlockCompleted {
+		iconColor = t.Warning()
+		textColor = t.Warning()
 	}
 
 	// Clip only when the label would actually overflow the row budget;

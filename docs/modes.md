@@ -56,6 +56,8 @@
 
 **Промпт:** `general.txt`.
 
+> **Эволюция:** `general` станет основой для режима **`worker`** в схеме Planner–Worker — см. [architecture/planner-worker.md](./architecture/planner-worker.md).
+
 ---
 
 ### `compaction` — сжатие истории (внутренний)
@@ -133,8 +135,12 @@
 
 | Режим | Статус | Описание |
 |-------|--------|---------|
-| `custom` через конфиг | ⏳ planned | Описать роль агента в `.orchestra.yml` без правки кода (аналог OpenCode `cfg.agent`) |
-| TUI-режим | ⏳ planned | Интерактивный терминальный UI (Bubble Tea / Charmbracelet) |
+| **Planner–Worker (Lead + Worker)** | 🎯 **target** | Lead общается и планирует; Workers (subagents) имплементируют атомарные правки под AST/LSP. См. [architecture/planner-worker.md](./architecture/planner-worker.md) |
+| `worker` | ⏳ planned | Узкий subagent: WorkOrder in, validation loop, без истории чата |
+| `custom` через конфиг | ⏳ planned | Описать роль агента в `.orchestra.yml` без правки кода (анalog OpenCode `cfg.agent`) |
+| TUI-режим | ✅ done | `ui/tui/` — основной UI для Lead + Workers |
 | `critic` | ⏳ planned | Выделить роль Critic из pipeline в отдельный именованный режим |
 | `investigator` | ⏳ planned | Выделить роль Investigator из pipeline в отдельный именованный режим |
-| Fine-grained permissions | ⏳ planned | Правила allow/ask/deny per-tool и per-glob (аналог OpenCode permission ruleset) |
+| Fine-grained permissions | ⏳ planned | Правила allow/ask/deny per-tool и per-glob (анalog OpenCode permission ruleset) |
+
+> Основной сценарий локального стека: Lead в TUI-сессии + Workers через `task`.

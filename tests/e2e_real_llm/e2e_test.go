@@ -41,7 +41,7 @@ func ensureModelLoaded() {
 	// Derive the LM Studio endpoint from the OpenAI-compat api_base.
 	endpoint := strings.TrimSuffix(strings.TrimSuffix(apiBase, "/v1"), "/")
 
-	lms := lmstudio.NewClient(endpoint)
+	lms := lmstudio.NewClient(endpoint, "")
 
 	// Skip reload if the model is already running (e.g. loaded manually in LM Studio).
 	if lms.IsModelLoaded(model) {

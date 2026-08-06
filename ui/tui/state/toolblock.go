@@ -25,7 +25,8 @@ type ToolBlock struct {
 	ArgsRaw     string // accumulated raw JSON arguments; available for richer block renders
 	Status      ToolBlockStatus
 	Result      string
-	Expanded    bool // true = show full result; toggled by Tab
+	Diagnostics []ToolDiagnostic // LSP diagnostics from write/edit (dry-run or live)
+	Expanded    bool             // true = show full result; toggled by Tab
 	StartedAt   time.Time
 	Duration    time.Duration
 }

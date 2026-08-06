@@ -73,6 +73,7 @@ type Runner struct {
 	// instead of writing to disk. FSRead serves staged content back to the model.
 	dryRun            bool
 	blockExecInDryRun bool // see RunnerOptions.BlockExecInDryRun
+	astGate           bool // tree-sitter gate before staging (see DisableASTGate)
 	staged            map[string]*stagedFile
 	stagedMu          sync.RWMutex
 
@@ -117,6 +118,10 @@ type RunnerOptions struct {
 	// Core's JSON-RPC entry (where the staging contract is a hard promise to
 	// remote clients) enables this — see `internal/core/core.go::New`.
 	BlockExecInDryRun bool
+
+	// DisableASTGate turns off tree-sitter syntax validation before staging
+	// (dry-run write/edit and ApplyPatchesToStaged). Default: gate enabled.
+	DisableASTGate bool
 
 	// ForceDiagnosticsForTest, if non-nil, is appended to every FSWrite/FSEdit
 	// diagnostic response. Only for use in tests.
@@ -190,7 +195,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		})
 	}
 
-	return &Runner{
+	r := &Runner{
 		workspaceRoot:           rootAbs,
 		excludeDirs:             exclude,
 		execTimeout:             timeout,
@@ -206,10 +211,15 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		allowBrowserEval:        opts.Browser.AllowEval,
 		dryRun:                  opts.DryRun,
 		blockExecInDryRun:       opts.BlockExecInDryRun,
+		astGate:                 !opts.DisableASTGate,
 		staged:                  make(map[string]*stagedFile),
 		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
 		memoryCfg:               memory.DefaultConfig(),
-	}, nil
+	}
+	if lspMgr != nil {
+		lspMgr.SetContentProvider(r)
+	}
+	return r, nil
 }
 
 // DryRun reports the current staging-mode flag. Cheap (RLock); callers that
@@ -248,10 +258,20 @@ func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 		Enabled:              c.Enabled,
 		Servers:              servers,
 		DiagnosticsTimeoutMS: c.DiagnosticsTimeoutMS,
+		LazyStart:            c.LazyStart,
+		IdleTTLSeconds:       c.IdleTTLSeconds,
 	}
 }
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
+
+// LSPStatus returns off | idle | active for status UI.
+func (r *Runner) LSPStatus() string {
+	if r == nil || r.lspManager == nil {
+		return "off"
+	}
+	return r.lspManager.RuntimeStatus()
+}
 
 // WarmupCKG launches a background incremental scan of the CKG store so that
 // the first explore or FetchCKGContext call doesn't pay the full scan cost.

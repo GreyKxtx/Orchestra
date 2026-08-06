@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -32,10 +31,12 @@ func (a *App) syncPalette() {
 	a.syncMention()
 }
 
-// syncMention checks if the input ends with an @-mention and updates the
-// mention palette.
+// syncMention checks if the input ends with an in-progress @-mention and
+// updates the mention palette. Completed mentions (@path followed by space)
+// and mid-token '@' (emails) do not open the palette.
 func (a *App) syncMention() {
-	if !strings.Contains(a.input.Value(), "@") {
+	q, active := activeMentionQuery(a.input.Value())
+	if !active {
 		a.mentionActive = false
 		return
 	}
@@ -44,16 +45,9 @@ func (a *App) syncMention() {
 		a.workspaceFiles = listWorkspaceFiles(a.cfg.WorkspaceRoot, 4)
 	}
 
-	q := mentionQuery(a.input.Value())
-	lastAt := strings.LastIndex(a.input.Value(), "@")
-	if lastAt < 0 {
-		a.mentionActive = false
-		return
-	}
-
 	var items []string
 	if q == "" {
-		// Show first 10 files when just "@" is typed.
+		// Bare "@" — show first 10 files.
 		items = a.workspaceFiles
 		if len(items) > 10 {
 			items = items[:10]
@@ -104,32 +98,58 @@ func listWorkspaceFiles(root string, maxDepth int) []string {
 	return files
 }
 
-// mentionQuery returns the text after @ in the last @word of the input,
-// or "" if the last word is not an @-mention or has no text after @.
+// mentionQuery returns the text after @ in the last in-progress @-mention,
+// or "" if none / completed. Prefer activeMentionQuery when you need to know
+// whether the palette should open (bare "@" is active with empty query).
 func mentionQuery(text string) string {
-	lastAt := strings.LastIndex(text, "@")
-	if lastAt < 0 {
+	q, active := activeMentionQuery(text)
+	if !active {
 		return ""
 	}
-	word := text[lastAt+1:]
-	if strings.IndexByte(word, ' ') >= 0 {
-		return ""
-	}
-	return word
+	return q
 }
 
-// replaceLastMention replaces the last @word in text with replacement.
+// activeMentionQuery reports an in-progress @-mention at the end of text.
+// Active only when '@' is at start-of-token and nothing after it contains
+// whitespace (so "@path " / normal typing after a finished mention stay closed).
+func activeMentionQuery(text string) (query string, active bool) {
+	lastAt := strings.LastIndex(text, "@")
+	if lastAt < 0 {
+		return "", false
+	}
+	if lastAt > 0 {
+		prev := text[lastAt-1]
+		if prev != ' ' && prev != '\n' && prev != '\t' {
+			return "", false // mid-token (e.g. user@host)
+		}
+	}
+	after := text[lastAt+1:]
+	if strings.ContainsAny(after, " \t\n") {
+		return "", false // mention already finished
+	}
+	return after, true
+}
+
+// replaceLastMention replaces the last @word in text with "@"+replacement
+// plus a trailing space so the mention is completed and the palette closes.
 func replaceLastMention(text, replacement string) string {
 	lastAt := strings.LastIndex(text, "@")
 	if lastAt < 0 {
 		return text
 	}
+	replacement = strings.TrimSpace(replacement)
+	if replacement == "" {
+		return text
+	}
+	if !strings.HasPrefix(replacement, "@") {
+		replacement = "@" + replacement
+	}
 	rest := text[lastAt+1:]
 	spaceIdx := strings.IndexByte(rest, ' ')
 	if spaceIdx < 0 {
-		return text[:lastAt] + replacement
+		return text[:lastAt] + replacement + " "
 	}
-	return text[:lastAt] + replacement + rest[spaceIdx:]
+	return text[:lastAt] + replacement + " " + strings.TrimLeft(rest[spaceIdx:], " ")
 }
 
 // updateCommandModal handles keyboard input while the Ctrl+K modal is open.
@@ -168,25 +188,21 @@ func (a *App) updateCommandModal(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-const helpText = `Orchestra TUI — key bindings:
-  Enter         send message
-  Shift+Enter   newline in input
-  Tab           cycle agent mode (build / ask / plan)
-  Ctrl+T        expand/collapse last tool block
-  ↑ / ↓         input history (single-line mode)
-  @             file mention (fuzzy)
+const helpText = `Orchestra TUI — клавиши:
+  Enter         отправить
+  Shift+Enter   новая строка
+  Tab           цикл mode (build / plan / explore)
+  Ctrl+T / t    Tasks (если есть) / иначе diff или tools
+  ↑ / ↓         история ввода
+  @             mention файла
   Ctrl+K        command palette
-  Ctrl+O        change model (onboarding)
-  a             apply pending ops
-  d             toggle diff
-  x             discard pending ops
-  y / n / Esc   allow / deny exec.run permission
-  Ctrl+C        quit
+  /shell        shell · ask ↔ allow
+  /theme        тема orchestra ↔ neutral
+  d             diff последнего commit
+  y / a / t / n shell: раз / сессия / этот tool / нет
+  Ctrl+C        выход
 
-Write modes:
-  /live         LIVE — write to disk immediately (like Claude Code / apply --apply)
-  /preview      PREVIEW — stage changes, press [a] or /apply to write
-  /exec         toggle bash/exec.run for agent runs`
+Pipeline: staging + LSP → auto-commit. Chrome: docs/architecture/tui-chrome.md`
 
 // executePaletteCmd carries out the chosen slash command and returns a tea.Cmd
 // if the action requires async work, or nil. Commands that don't start a chat
@@ -227,105 +243,34 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "Mode: " + mode})
 		a.chat.SetMessages(a.session.Messages)
 	case "/diff":
-		if a.pendingOps != nil {
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			} else {
-				content := a.buildDiffContent()
-				a.session.AddDiff(content)
-				a.diffShown = true
-			}
-			a.chat.SetMessages(a.session.Messages)
-		}
-	case "/apply":
-		if a.autoApply {
-			dismissWelcome()
-			a.session.AppendMessage(state.Message{
-				Role: state.RoleSystem,
-				Text: "Режим LIVE: изменения уже пишутся на диск во время write/edit. Переключись на /preview если нужен ручной apply.",
-			})
-			a.chat.SetMessages(a.session.Messages)
-		} else if a.pendingOps != nil && a.rpc != nil && a.turn.CanApplyPending() {
-			rawOps := a.pendingOps.Ops
-			count := len(a.pendingOps.Ops)
-			a.pendingOps = nil
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			}
-			a.chat.SetMessages(a.session.Messages)
-			if !a.beginApplyTurn() {
-				return nil
-			}
-			rpc := a.rpc
-			return func() tea.Msg {
-				return applyResultMsg{err: rpc.ApplyOps(context.Background(), rawOps), count: count}
-			}
+		if len(a.lastCommitDiff) > 0 {
+			a.showCommitDiff()
 		} else {
 			dismissWelcome()
 			a.session.AppendMessage(state.Message{
 				Role: state.RoleSystem,
-				Text: "Нет pending ops для apply. Дождись завершения агента (полоска ⏵ N pending ops) или включи /live для записи на диск сразу.",
+				Text: "Diff появится после хода агента с изменениями ([committed] в чате).",
 			})
 			a.chat.SetMessages(a.session.Messages)
 		}
-	case "/live":
-		dismissWelcome()
-		a.toggleLiveMode(true)
-		if err := a.persistUIPrefs(); err != nil {
-			a.showToast("LIVE (не сохранено в yml)")
-		} else {
-			a.showToast("LIVE — запись на диск")
-		}
-		a.session.AppendMessage(state.Message{
-			Role: state.RoleSystem,
-			Text: "Режим LIVE: write/edit сразу на диск (как orchestra apply --apply). git status покажет изменения.",
-		})
-		a.chat.SetMessages(a.session.Messages)
-	case "/preview":
-		dismissWelcome()
-		a.toggleLiveMode(false)
-		if err := a.persistUIPrefs(); err != nil {
-			a.showToast("PREVIEW (не сохранено в yml)")
-		} else {
-			a.showToast("PREVIEW — staging до [a]")
-		}
-		a.session.AppendMessage(state.Message{
-			Role: state.RoleSystem,
-			Text: "Режим PREVIEW: изменения в staging, применяй [a] или /apply после завершения агента.",
-		})
-		a.chat.SetMessages(a.session.Messages)
-	case "/exec":
+	case "/shell", "/exec":
 		dismissWelcome()
 		a.toggleAllowExec(!a.allowExec)
 		if err := a.persistUIPrefs(); err != nil {
-			a.showToast(fmt.Sprintf("exec: %v", a.allowExec))
+			a.showToast(fmt.Sprintf("shell: %v", a.allowExec))
 		} else {
 			if a.allowExec {
-				a.showToast("exec.run разрешён")
+				a.showToast("shell · allow — команды без спроса")
 			} else {
-				a.showToast("exec.run выключен")
+				a.showToast("shell · ask — спрашивать перед командой")
 			}
 		}
-		execState := "выключен"
-		if a.allowExec {
-			execState = "разрешён"
-		}
-		a.session.AppendMessage(state.Message{
-			Role: state.RoleSystem,
-			Text: "exec.run: " + execState,
-		})
-		a.chat.SetMessages(a.session.Messages)
-	case "/discard":
-		if a.pendingOps != nil {
-			a.pendingOps = nil
-			if a.diffShown {
-				a.session.RemoveDiff()
-				a.diffShown = false
-			}
-			a.chat.SetMessages(a.session.Messages)
-		}
+		a.layout()
+	case "/theme":
+		dismissWelcome()
+		next := a.cycleTheme()
+		a.showToast("тема: " + next)
+		a.layout()
 	case "/quit":
 		return tea.Quit
 	}

@@ -16,7 +16,7 @@ func TestHistoryBytes_CountsContent(t *testing.T) {
 		{Role: llm.RoleAssistant, Content: "world"},
 	}
 	got := historyBytes(history)
-	want := len("hello") + len("world")
+	want := estimateMessageSize(history[0]) + estimateMessageSize(history[1])
 	if got != want {
 		t.Errorf("historyBytes = %d, want %d", got, want)
 	}
@@ -38,9 +38,12 @@ func TestHistoryBytes_CountsToolCallArgs(t *testing.T) {
 		},
 	}
 	got := historyBytes(history)
-	want := len("read") + len(args)
+	want := estimateMessageSize(history[0])
 	if got != want {
 		t.Errorf("historyBytes = %d, want %d", got, want)
+	}
+	if got <= len("read")+len(args) {
+		t.Errorf("historyBytes should include estimate overhead, got %d", got)
 	}
 }
 

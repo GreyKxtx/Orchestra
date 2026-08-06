@@ -5,92 +5,88 @@ Terminal UI для Orchestra ядра.
 ## Запуск
 
 ```bash
+orchestra          # из каталога с .orchestra.yml
+# или
 orchestra tui
 ```
 
-(Требует, чтобы в cwd был `.orchestra.yml` для отображения модели в header'e — иначе будет "(none)".)
-
-## Раскладка
+## Раскладка (as-is)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Orchestra · qwen3.6-27b · code · <project>                 │  header
+│  chat scroll (messages · tools · notices · diffs)           │
 ├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  > пользовательский ввод                                    │
-│                                                             │
-│  ответ агента                                               │  ← (Фаза 1: echo)
-│                                                             │
+│  ▌ Tasks N/M · Ctrl+T          ← только если есть todos     │
+│  ▌ workflow:name · ○ a ⋯ b ✓ c ← только во время workflow   │
 ├─────────────────────────────────────────────────────────────┤
-│ > _                                                         │  multiline textarea
+│  ▌ input                                                     │
+│    build · model · provider · shell · ask|allow              │
 ├─────────────────────────────────────────────────────────────┤
-│ ↑↓ history · Enter send · Shift+Enter newline · Ctrl+C quit │  footer
+│  project · 12k/60k (20%) · LSP · $…                          │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+Сигналы (один source of truth):
+
+| Сигнал | Где |
+|--------|-----|
+| mode / model / provider / shell | input mode-line |
+| tokens% / LSP / cost / project | status bar |
+| todos | Task panel над input |
+| workflow stages | WorkflowProgress над input |
+| hints | status bar справа |
+
+См. [`docs/architecture/tui-chrome.md`](../../docs/architecture/tui-chrome.md).
 
 ## Клавиши
 
 | Клавиша | Действие |
 |---|---|
-| Enter | отправить ввод |
-| Shift+Enter | новая строка в инпуте |
-| Tab | развернуть/свернуть последний tool block |
-| a | применить pending ops (если есть) |
-| d | показать/скрыть inline diff |
-| x | отменить pending ops |
-| y / n / Esc | разрешить/запретить exec.run (modal) |
-| Esc | очистить инпут (без modal) |
+| Enter | отправить |
+| Shift+Enter | новая строка |
+| Tab | цикл mode (build → plan → explore) |
+| Ctrl+T / t | cascade: tools → diff → Tasks (t при todos — Tasks; пустой input) |
+| Ctrl+R | свернуть/развернуть Thinking |
+| d / Ctrl+D | показать/скрыть inline diff (пустой input) |
+| y / a / n / Esc | shell: один раз / на сессию / запретить |
+| Esc | отменить turn / закрыть overlay |
 | Ctrl+C | выйти |
-| / | открыть slash-палитру команд |
-| @ | @-mention fuzzy-поиск файлов |
-| ↑ / ↓ | история ввода (single-line mode) |
+| Ctrl+K | command palette |
+| / | slash-палитра |
+| @ | @-mention файлов |
+| Ctrl+G | mouse passthrough (выделение терминала) |
 
-## Статус по фазам
+Изменения пишутся на диск сразу после write/edit (TUI `apply=true`). Pending ops bar `[a]/[d]/[x]` — только legacy dry-run CLI, не TUI.
 
-- [x] **Фаза 1 — скелет**: раскладка, echo, базовая навигация
-- [x] **Фаза 2 — подключение к ядру** (текущая): JSON-RPC stdio, streaming token deltas, tool blocks (collapsed)
-- [x] **Фаза 3** — collapsible tool blocks (Tab expand), inline diff view, pending ops action bar ([a]pply / [d]iff / [x]discard), permission modal для exec.run
-- [x] **Фаза 4** — slash-палитра (`/help` `/clear` `/model` `/mode` `/diff` `/apply` `/discard` `/quit`), @-mention fuzzy (`@`), история ввода ↑↓, динамические footer hints
-- [x] **Фаза 5** — расширенные behavior tests (slash palette, /help, /clear, /quit, Esc), обновление документации
+## Slash / команды
+
+`/shell` — переключить `shell · ask` ↔ `shell · allow` (алиас `/exec`).  
+`/diff`, `/clear`, `/sessions`, `/help`, `/quit`, `/provider`, `/model`, …
 
 ## Архитектура
 
 ```
 ui/tui/
-  app.go           ← корневая Bubble Tea модель (Update / View / Init)
-  mention_test.go  ← unit-тесты для @-mention helpers
+  app.go, app_view.go, app_update.go, app_rpc.go, …
   view/
-    chat.go        ← viewport + сообщения + tool blocks + diff
-    input.go       ← textarea wrapper + SetValue
-    footer.go      ← hints line (динамические)
-    header.go      ← model · mode · cwd
-    modal.go       ← permission modal для exec.run
-    palette.go     ← SlashPalette + MentionPalette (fuzzy)
-    diff.go        ← LCS-based colored diff renderer
-  state/
-    session.go     ← Messages, ToolBlocks, RoleDiff
-    toolblock.go   ← ToolBlock lifecycle state
-    history.go     ← InputHistory (↑↓ recall)
-  rpcclient/
-    client.go      ← JSON-RPC stdio wrapper (Spawn, AgentRun, ApplyOps, RespondPermission)
-    events.go      ← Event types + kinds
+    chat.go, input.go, statusbar.go, task_panel.go
+    tool_*.go, notice.go, diff*.go, modal.go, palette*.go
+    workflow_progress.go, progress_glyphs.go
+  state/          — messages, TurnFSM, toolblocks
+  rpcclient/      — JSON-RPC stdio → orchestra core
+  theme/          — orchestra (default), neutral
 ```
 
-`app.go` координирует все состояния: `paletteActive` (slash), `mentionActive` (@), `TurnFSM` (turn lifecycle), `permModal` (exec consent), `pendingOps` (apply/discard). Все мутации состояния — только в `Update()` goroutine.
+Ход чата идёт через `session.message` (не one-shot `agent.run`). Streaming events: `message_delta`, `tool_call_*`, `todos_updated`, `step_usage`, `permission/request`.
 
-См. также: `docs/superpowers/specs/2026-05-07-tui-design.md` (дизайн), `docs/PROTOCOL.md` (контракт ядра), `docs/architecture-uml.md` (TUI в Containers diagram).
+**Permission modal (shell)**: при `shell · ask` модель спрашивает согласие. `[y]` — один раз, `[a]` — `shell · allow` на сессию (+ prefs), `[t]` — всегда этот tool до конца сессии, `[n]` — запрет.
 
-## Подключение к ядру (Фаза 2)
+## Статус
 
-TUI спаунит `orchestra core --workspace-root <cwd>` как subprocess и общается через stdin/stdout JSON-RPC. На submit (Enter) вызывается `agent.run`; streaming события (`message_delta`, `tool_call_start/completed`, `pending_ops`) рендерятся в ленту по мере прихода.
+- [x] Chat + streaming + tool blocks + markdown
+- [x] Task panel + shell ask/allow + compact tokens%
+- [x] Auto-commit pipeline (TUI apply=true)
+- [x] Session v2 / TurnFSM
+- [ ] Полный Crush-style whitelist — out of scope
 
-**Tool blocks** показываются свернутыми одной строкой:
-- `⋯ name` — выполняется
-- `▸ name → preview` — завершён успешно
-- `▸ name → error: ...` (красным) — упал
-
-**Pending ops** показываются action bar'ом в ленте: `⏵ N pending ops · [a]pply · [d]iff · [x]discard`. Нажатие `[a]` применяет ops через RPC `ops.apply` (без перезапуска LLM); `[d]` показывает inline diff; `[x]` отменяет.
-
-**Если subprocess падает или initialize не проходит** — Run возвращает ошибку до запуска UI; на лету ошибки показываются как `[error] ...` в ленте.
-
-**Permission modal для exec.run**: при попытке модели вызвать `bash` без `--allow-exec` TUI показывает интерактивный диалог `[y] Allow / [n] Deny`. Ответ передаётся ядру через server-initiated JSON-RPC `permission/request`.
+См. также: `docs/architecture/tui-pipeline.md`, `docs/architecture/tui-chrome.md`, `docs/PROTOCOL.md`.
