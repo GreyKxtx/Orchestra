@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/internal/subproc"
 )
 
 // bgStatus is the lifecycle state of a background process.
@@ -88,7 +89,8 @@ func (r *bgRegistry) get(id string) (*bgProcess, bool) {
 	return p, ok
 }
 
-// stopAll kills every running background process. Called from Runner.Close.
+// stopAll kills every running background process and waits for Wait()
+// goroutines to exit. Called from Runner.Close.
 func (r *bgRegistry) stopAll() {
 	r.mu.Lock()
 	procs := make([]*bgProcess, 0, len(r.procs))
@@ -99,8 +101,17 @@ func (r *bgRegistry) stopAll() {
 	r.mu.Unlock()
 	for _, p := range procs {
 		p.cancel()
-		if p.cmd != nil && p.cmd.Process != nil {
-			_ = p.cmd.Process.Kill()
+		subproc.KillProcessTree(p.cmd)
+	}
+	// Drain Wait() goroutines so TempDir / -race CI does not race with
+	// still-alive grandchildren (sh→sleep, cmd→ping).
+	deadline := time.After(10 * time.Second)
+	for _, p := range procs {
+		select {
+		case <-p.done:
+		case <-deadline:
+			// Best-effort: remaining procs were signaled; do not block Close forever.
+			return
 		}
 	}
 }
@@ -175,6 +186,8 @@ func (r *bgRegistry) spawnBackground(parent context.Context, req ExecBashBackgro
 	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
 	cmd.Dir = req.Workdir
 	cmd.Stdin = nil
+	// Own process group so KillProcessTree reaches shell→sleep / cmd children.
+	subproc.SetProcessGroup(cmd)
 
 	id := r.nextID()
 	p := &bgProcess{
@@ -383,11 +396,9 @@ func (r *Runner) ExecBashKill(_ context.Context, req ExecBashKillRequest) (*Exec
 		}, nil
 	}
 	p.cancel()
-	// CommandContext cancel is async; an explicit Kill avoids waiting on a
-	// slow graceful teardown (notably under -race where Wait can exceed 2s).
-	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
-	}
+	// CommandContext cancel is async; KillProcessTree covers shell→child
+	// chains that a lone Process.Kill leaves running (notably under -race).
+	subproc.KillProcessTree(p.cmd)
 	// Wait for the Wait() goroutine; allow extra headroom under -race/CI load.
 	select {
 	case <-p.done:

@@ -118,7 +118,9 @@ func installGopls(ctx context.Context, destDir string) error {
 	}
 	cmd := exec.CommandContext(ctx, "go", "install", "golang.org/x/tools/gopls@latest")
 	cmd.Dir = destDir
-	cmd.Env = append(os.Environ(), "GOBIN="+destDir)
+	// setup-go sets GOTOOLCHAIN=local; latest gopls may require a newer Go
+	// than go.mod. Allow the installer to fetch that toolchain temporarily.
+	cmd.Env = append(os.Environ(), "GOBIN="+destDir, "GOTOOLCHAIN=auto")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))

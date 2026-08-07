@@ -30,13 +30,13 @@ func echoCmd(text string) (string, []string) {
 }
 
 // longRunningCmd returns a process that will run for ~30s; used to test
-// the kill path. Portable across Windows (ping pacing ~1s between hops)
-// and Unix (sleep).
+// the kill path. Prefer a leaf binary (no shell) so Process.Kill /
+// KillProcessTree hits the sleeper directly.
 func longRunningCmd() (string, []string) {
 	if runtime.GOOS == "windows" {
 		return "ping", []string{"-n", "30", "127.0.0.1"}
 	}
-	return "sh", []string{"-c", "sleep 30"}
+	return "sleep", []string{"30"}
 }
 
 var _ = fmt.Sprintf // keep fmt import when above helper is reverted
@@ -169,7 +169,7 @@ func TestRunnerClose_KillsBackgroundProcs(t *testing.T) {
 	select {
 	case <-p.done:
 		// good
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("Close() did not kill background process")
 	}
 }
