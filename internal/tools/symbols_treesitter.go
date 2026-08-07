@@ -106,4 +106,3 @@ func firstNamedOfType(n *sitter.Node, typ string) *sitter.Node {
 	}
 	return nil
 }
-

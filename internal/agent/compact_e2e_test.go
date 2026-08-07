@@ -25,7 +25,7 @@ func (l *stepLLM) Plan(ctx context.Context, prompt string) (string, error) { ret
 
 func (l *stepLLM) Complete(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
 	for _, m := range req.Messages {
-		if m.Role == llm.RoleSystem && strings.Contains(m.Content, "сжать историю") {
+		if m.Role == llm.RoleSystem && strings.Contains(m.Content, "Context Manager") {
 			l.compactionCalls++
 			return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: "summary placeholder"}}, nil
 		}

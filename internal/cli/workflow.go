@@ -292,4 +292,3 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
-

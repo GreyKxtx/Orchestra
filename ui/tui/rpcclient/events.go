@@ -25,10 +25,11 @@ const (
 	EventExecOutputChunk EventKind = "exec_output_chunk"
 
 	EventAgentRunCompleted EventKind = "agent_run_completed" // synthesized when AgentRun returns
-	EventTurnUsage         EventKind = "turn_usage"        // usage totals from session.message result
-	EventTurnTodos         EventKind = "turn_todos"        // todo list from session.message result
-	EventTodosUpdated      EventKind = "todos_updated"     // live todo list after todowrite
-	EventStepUsage         EventKind = "step_usage"        // per-LLM-step token totals during a turn
+	EventTurnUsage         EventKind = "turn_usage"          // usage totals from session.message result
+	EventTurnTodos         EventKind = "turn_todos"          // todo list from session.message result
+	EventTodosUpdated      EventKind = "todos_updated"       // live todo list after todowrite
+	EventStepUsage         EventKind = "step_usage"          // per-LLM-step token totals during a turn
+	EventModeRoute         EventKind = "mode_route"          // agent auto-router: agent→build|plan|explore
 
 	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent
 	EventQuestionAsked     EventKind = "question_asked"     // server asks user via question/ask
@@ -66,8 +67,17 @@ type Event struct {
 	Diagnostics  []ToolDiagnosticPayload   // LSP diagnostics on write/edit tool_call_completed
 	Usage        *UsageTurnPayload         // token/cost totals for completed turn
 	Todos        []TodoItem                // model checklist after turn / todowrite
+	ModeRoute    *ModeRoutePayload         // agent→effective mode
 	LSPStatus    string                    // from core.health on init
 	Err          string                    // only set on connection/agent error events
+}
+
+// ModeRoutePayload is emitted when mode=agent classifies the turn.
+type ModeRoutePayload struct {
+	From       string  `json:"from"`
+	To         string  `json:"to"`
+	Reason     string  `json:"reason,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
 }
 
 // UsageTurnPayload mirrors core.UsageSnapshot from session.message / agent.run.
@@ -76,6 +86,7 @@ type UsageTurnPayload struct {
 	CompletionTokens int     `json:"completion_tokens"`
 	TotalTokens      int     `json:"total_tokens"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
+	Source           string  `json:"source,omitempty"` // "estimate" when agent-side heuristic
 }
 
 // TodoItem mirrors tools.TodoItem from session.message / todowrite.
@@ -110,10 +121,12 @@ type FileDiff struct {
 	After  string `json:"after"`
 }
 
-// PermissionRequestPayload carries the exec.run consent request.
+// PermissionRequestPayload carries a consent request (shell or lsp.install).
 type PermissionRequestPayload struct {
 	Tool        string `json:"tool"`
 	Description string `json:"description"`
+	Kind        string `json:"kind,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // QuestionItemPayload is one question in a question/ask server request.

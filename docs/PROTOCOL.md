@@ -6,7 +6,7 @@
 
 - **`protocol.ProtocolVersion`**: `6`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `11`
+- **`protocol.ToolsVersion`**: `12`
 
 Совместимость проверяется в `initialize`:
 

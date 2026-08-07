@@ -32,16 +32,19 @@ type SystemNotice struct {
 }
 
 // Message is one entry in the chat scroll. Either Text-only (user/system)
-// or Assistant with optional ToolBlocks interleaved.
+// or Assistant with chronological Segments (reasoning / tools / text).
+// Flat Text/Reasoning/ToolBlocks are projections synced from Segments for
+// chrome, copy, and session-file compat.
 type Message struct {
 	Role       Role
-	Text       string
-	ToolBlocks []ToolBlock
-	Streaming  bool // true while the assistant message is still being received
+	Text       string      // projection: concatenated SegmentText
+	ToolBlocks []ToolBlock // projection: flattened SegmentTools
+	Streaming  bool        // true while the assistant message is still being received
 
-	// Reasoning holds the chain-of-thought text streamed before the answer
-	// (qwen3 / deepseek-r1 / openai o1 style). Rendered as a muted block above
-	// the answer when non-empty.
+	// Segments is the chronological SoT for assistant turns (variant A).
+	Segments []Segment
+
+	// Reasoning is the projection of SegmentReasoning bodies.
 	Reasoning string
 
 	// StartedAt is the moment a streaming assistant message began; Duration
@@ -74,7 +77,8 @@ type Message struct {
 	// SystemKind applies to RoleSystem messages (error, retry, committed, …).
 	SystemKind SystemKind
 
-	// Notices are inline retry/status lines attached to an assistant turn.
+	// Notices is a projection of SegmentNotice entries (kept for older
+	// persist readers and chrome). Chronological SoT is Segments.
 	Notices []SystemNotice
 
 	// ToolsExpanded persists Ctrl+T tool-group expand for reopen.
@@ -106,11 +110,13 @@ func NewSession() *Session {
 
 // AppendMessage adds a message to history.
 func (s *Session) AppendMessage(m Message) {
+	m.NormalizeSegments()
 	s.Messages = append(s.Messages, m)
 }
 
-// AppendAssistantNotice adds a deduplicated notice to the active assistant turn.
-// Falls back to a standalone system message when no assistant is streaming.
+// AppendAssistantNotice inserts an inline notice at the current chronological
+// position in the active assistant turn (as SegmentNotice). Falls back to a
+// standalone system message when no assistant is streaming.
 func (s *Session) AppendAssistantNotice(kind SystemKind, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -121,12 +127,20 @@ func (s *Session) AppendAssistantNotice(kind SystemKind, text string) {
 		return
 	}
 	m := &s.Messages[s.activeAssistant]
-	for _, n := range m.Notices {
-		if n.Kind == kind && n.Text == text {
+	// Dedup only against other notice segments (same kind+text already shown).
+	for _, seg := range m.Segments {
+		if seg.Kind == SegmentNotice && seg.NoticeKind == kind && strings.TrimSpace(seg.Text) == text {
 			return
 		}
 	}
-	m.Notices = append(m.Notices, SystemNotice{Kind: kind, Text: text})
+	// Always a new segment — never coalesce consecutive notices into one block,
+	// so each event keeps its place between tools/text.
+	m.Segments = append(m.Segments, Segment{
+		Kind:       SegmentNotice,
+		Text:       text,
+		NoticeKind: kind,
+	})
+	m.syncProjections()
 }
 
 // AppendSystemNotice adds a standalone styled system message.
@@ -165,7 +179,10 @@ func (s *Session) AppendAssistantReasoningDelta(delta string) {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return
 	}
-	s.Messages[s.activeAssistant].Reasoning += delta
+	m := &s.Messages[s.activeAssistant]
+	i := m.ensureOpenSegment(SegmentReasoning)
+	m.Segments[i].Text += delta
+	m.syncProjections()
 }
 
 // SetAssistantUsage records token counts on the active assistant message.
@@ -192,22 +209,20 @@ func (s *Session) AppendAssistantDelta(delta string) {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return
 	}
-	s.Messages[s.activeAssistant].Text += delta
-}
-
-// TruncateAssistantText truncates the active assistant's Text to n bytes.
-// Used to discard pre-tool-call chatter when a step ends with a tool call.
-func (s *Session) TruncateAssistantText(n int) {
-	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
-		return
-	}
 	m := &s.Messages[s.activeAssistant]
-	if len(m.Text) > n {
-		m.Text = m.Text[:n]
-	}
+	i := m.ensureOpenSegment(SegmentText)
+	m.Segments[i].Text += delta
+	m.syncProjections()
 }
 
-// AssistantTextLen returns the current byte length of the active assistant's Text.
+// TruncateAssistantText is a no-op kept for call-site compatibility.
+// Chronological segments keep mid-step narration; pre-tool chatter is no longer discarded.
+func (s *Session) TruncateAssistantText(n int) {
+	_ = s
+	_ = n
+}
+
+// AssistantTextLen returns the current byte length of the active assistant's Text projection.
 func (s *Session) AssistantTextLen() int {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return 0
@@ -220,14 +235,13 @@ func (s *Session) FindToolBlock(id string) (ToolBlock, bool) {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return ToolBlock{}, false
 	}
-	for _, tb := range s.Messages[s.activeAssistant].ToolBlocks {
-		if tb.ID == id {
-			return tb, true
-		}
+	m := &s.Messages[s.activeAssistant]
+	si, ti := m.findToolBlockLoc(id)
+	if si < 0 {
+		return ToolBlock{}, false
 	}
-	return ToolBlock{}, false
+	return m.Segments[si].Tools[ti], true
 }
-
 
 // AppendToolBlock attaches a tool block to the active assistant message.
 // If no active assistant exists, starts one with empty mode/model — caller
@@ -237,7 +251,18 @@ func (s *Session) AppendToolBlock(tb ToolBlock) {
 	if s.activeAssistant < 0 {
 		s.StartAssistant("", "")
 	}
-	s.Messages[s.activeAssistant].ToolBlocks = append(s.Messages[s.activeAssistant].ToolBlocks, tb)
+	m := &s.Messages[s.activeAssistant]
+	// Starting a fresh tool batch after text/reasoning — any still-running
+	// tools in earlier segments are stale (step moved on without completion).
+	if n := len(m.Segments); n > 0 && m.Segments[n-1].Kind != SegmentTools {
+		finalizeRunningToolsBefore(m, n)
+	}
+	if tb.StartedAt.IsZero() {
+		tb.StartedAt = time.Now()
+	}
+	i := m.ensureOpenSegment(SegmentTools)
+	m.Segments[i].Tools = append(m.Segments[i].Tools, tb)
+	m.syncProjections()
 }
 
 // AppendToolArgsDelta accumulates raw JSON-argument bytes onto the latest
@@ -247,24 +272,25 @@ func (s *Session) AppendToolArgsDelta(id, delta string) {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return
 	}
-	blocks := s.Messages[s.activeAssistant].ToolBlocks
-	// Exact ID match first (reverse scan so the latest running block wins).
+	m := &s.Messages[s.activeAssistant]
 	if id != "" {
-		for i := len(blocks) - 1; i >= 0; i-- {
-			if blocks[i].Status == ToolBlockRunning && blocks[i].ID == id {
-				blocks[i].ArgsRaw += delta
-				return
-			}
-		}
-	}
-	// Fallback: first running block — same strategy as UpdateToolBlock.
-	// Handles LLMs that omit tool IDs on streaming deltas.
-	for i := range blocks {
-		if blocks[i].Status == ToolBlockRunning {
-			blocks[i].ArgsRaw += delta
+		si, ti := m.findToolBlockLoc(id)
+		if si >= 0 && m.Segments[si].Tools[ti].Status == ToolBlockRunning {
+			m.Segments[si].Tools[ti].ArgsRaw += delta
+			m.syncProjections()
 			return
 		}
 	}
+	// Fallback: last running block (prefer latest for streaming deltas).
+	si, ti := m.lastRunningToolLoc()
+	if si < 0 {
+		si, ti = m.firstRunningToolLoc()
+	}
+	if si < 0 {
+		return
+	}
+	m.Segments[si].Tools[ti].ArgsRaw += delta
+	m.syncProjections()
 }
 
 // UpdateToolBlock finds the tool block by ID in the active assistant message
@@ -280,29 +306,59 @@ func (s *Session) UpdateToolBlock(id string, status ToolBlockStatus, result stri
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return false
 	}
-	blocks := s.Messages[s.activeAssistant].ToolBlocks
-	idx := -1
-	for i := range blocks {
-		if blocks[i].ID == id {
-			idx = i
-			break
+	m := &s.Messages[s.activeAssistant]
+	si, ti := m.findToolBlockLoc(id)
+	if si < 0 {
+		si, ti = m.firstRunningToolLoc()
+	}
+	if si < 0 {
+		return false
+	}
+	m.Segments[si].Tools[ti].Status = status
+	m.Segments[si].Tools[ti].Result = result
+	m.Segments[si].Tools[ti].Diagnostics = diags
+	tb := &m.Segments[si].Tools[ti]
+	if status != ToolBlockRunning {
+		if tb.Duration == 0 && !tb.StartedAt.IsZero() {
+			tb.Duration = time.Since(tb.StartedAt)
 		}
 	}
-	if idx < 0 {
-		for i := range blocks {
-			if blocks[i].Status == ToolBlockRunning {
-				idx = i
-				break
+	m.syncProjections()
+	return true
+}
+
+// FinalizeRunningTools marks any still-running tool blocks as completed.
+// Called at step boundaries when the agent loop has moved on.
+func (s *Session) FinalizeRunningTools() {
+	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return
+	}
+	m := &s.Messages[s.activeAssistant]
+	finalizeRunningToolsBefore(m, len(m.Segments))
+	m.syncProjections()
+}
+
+// finalizeRunningToolsBefore completes running tools in segments [0, segLimit).
+func finalizeRunningToolsBefore(m *Message, segLimit int) {
+	if m == nil {
+		return
+	}
+	now := time.Now()
+	for si := 0; si < segLimit && si < len(m.Segments); si++ {
+		if m.Segments[si].Kind != SegmentTools {
+			continue
+		}
+		for ti := range m.Segments[si].Tools {
+			tb := &m.Segments[si].Tools[ti]
+			if tb.Status != ToolBlockRunning {
+				continue
+			}
+			tb.Status = ToolBlockCompleted
+			if !tb.StartedAt.IsZero() {
+				tb.Duration = now.Sub(tb.StartedAt)
 			}
 		}
 	}
-	if idx < 0 {
-		return false
-	}
-	blocks[idx].Status = status
-	blocks[idx].Result = result
-	blocks[idx].Diagnostics = diags
-	return true
 }
 
 // AppendRunningToolOutput appends streamed stdout to the last running exec/bash
@@ -311,15 +367,21 @@ func (s *Session) AppendRunningToolOutput(chunk string) {
 	if chunk == "" || s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return
 	}
-	blocks := s.Messages[s.activeAssistant].ToolBlocks
-	for i := len(blocks) - 1; i >= 0; i-- {
-		if blocks[i].Status != ToolBlockRunning {
+	m := &s.Messages[s.activeAssistant]
+	for si := len(m.Segments) - 1; si >= 0; si-- {
+		if m.Segments[si].Kind != SegmentTools {
 			continue
 		}
-		name := strings.ToLower(blocks[i].Name)
-		if name == "exec.run" || name == "bash" {
-			blocks[i].Result += chunk
-			return
+		for ti := len(m.Segments[si].Tools) - 1; ti >= 0; ti-- {
+			if m.Segments[si].Tools[ti].Status != ToolBlockRunning {
+				continue
+			}
+			name := strings.ToLower(m.Segments[si].Tools[ti].Name)
+			if name == "exec.run" || name == "bash" {
+				m.Segments[si].Tools[ti].Result += chunk
+				m.syncProjections()
+				return
+			}
 		}
 	}
 }
@@ -386,6 +448,7 @@ func (s *Session) SetMessages(msgs []Message) {
 		// Loaded messages should not be marked as streaming.
 		for i := range s.Messages {
 			s.Messages[i].Streaming = false
+			s.Messages[i].NormalizeSegments()
 		}
 	}
 	s.activeAssistant = -1
@@ -408,10 +471,6 @@ func (s *Session) HasRunningTool() bool {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return false
 	}
-	for _, tb := range s.Messages[s.activeAssistant].ToolBlocks {
-		if tb.Status == ToolBlockRunning {
-			return true
-		}
-	}
-	return false
+	si, _ := s.Messages[s.activeAssistant].firstRunningToolLoc()
+	return si >= 0
 }

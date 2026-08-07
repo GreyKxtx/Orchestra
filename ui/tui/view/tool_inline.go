@@ -40,6 +40,9 @@ func renderInlineTool(tb state.ToolBlock, width, spinFrame int) string {
 	if suffix := diagnosticsInlineSuffix(tb.Diagnostics); suffix != "" {
 		label += suffix
 	}
+	if dur := toolElapsed(tb); dur > 0 {
+		label += lipgloss.NewStyle().Foreground(t.TextMuted()).Render(" · " + formatDuration(dur))
+	}
 	if label == "" {
 		label = toolDisplayName(tb.Name)
 	}

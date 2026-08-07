@@ -46,6 +46,46 @@ func TestListToolsForMode_NewModes(t *testing.T) {
 		t.Error("general mode: must not include todowrite")
 	}
 
+	// ask: read-only, no write/edit; task_result only on child (not top-level)
+	askNames := toolNameSet(ListToolsForMode("ask", Capabilities{}, false, true))
+	for _, want := range []string{"read", "grep", "explore", "question"} {
+		if !askNames[want] {
+			t.Errorf("ask mode: missing %q", want)
+		}
+	}
+	if askNames["write"] || askNames["edit"] || askNames["bash"] || askNames["task_result"] {
+		t.Error("ask mode must not include write/edit/bash/task_result")
+	}
+
+	// explore: CKG explore tool, no task_result at top-level
+	exploreNames := toolNameSet(ListToolsForMode("explore", Capabilities{}, false, false))
+	if !exploreNames["explore"] {
+		t.Error("explore mode: missing explore tool")
+	}
+	if exploreNames["task_result"] || exploreNames["write"] {
+		t.Error("explore mode must not include task_result/write")
+	}
+
+	// architecture: write ok, edit no, plan_exit for finishing
+	archNames := toolNameSet(ListToolsForMode("architecture", Capabilities{}, true, true))
+	if !archNames["write"] || archNames["edit"] {
+		t.Error("architecture: want write, no edit")
+	}
+	if !archNames["task"] {
+		t.Error("architecture with subtasks: want task")
+	}
+	if !archNames["plan_exit"] {
+		t.Error("architecture: want plan_exit")
+	}
+
+	// debug: edit + task
+	dbgNames := toolNameSet(ListToolsForMode("debug", Capabilities{Exec: true}, true, false))
+	for _, want := range []string{"edit", "write", "task", "lsp.diagnostics"} {
+		if !dbgNames[want] {
+			t.Errorf("debug mode: missing %q", want)
+		}
+	}
+
 	// compaction/title/summary: no tools at all
 	for _, mode := range []string{"compaction", "title", "summary"} {
 		defs := ListToolsForMode(mode, Capabilities{Exec: true, Web: true, Browser: false}, true, true)

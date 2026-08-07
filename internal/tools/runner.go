@@ -17,8 +17,10 @@ import (
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lsp"
+	"github.com/orchestra/orchestra/internal/lsp/provision"
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/permission"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/search"
 )
@@ -64,7 +66,9 @@ type Runner struct {
 	webSearchTavilyEndpoint string // override for tests; empty → real Tavily URL
 	webSearchBraveEndpoint  string // override for tests; empty → real Brave URL
 
-	lspManager *lsp.Manager
+	lspManager     *lsp.Manager
+	lspAutoInstall string
+	lspConsent     permission.Requester
 
 	browserClient    *browser.Client
 	allowBrowserEval bool
@@ -172,12 +176,9 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 	}
 
 	var lspMgr *lsp.Manager
-	if len(opts.LSP.Servers) > 0 {
-		mgr, lspErrs := lsp.NewManager(rootAbs, convertLSPConfig(opts.LSP))
-		// M22 in audit ledger: surface per-server LSP start errors via
-		// stderr instead of silently dropping them. Without this, an
-		// operator with a misconfigured gopls saw "no LSP" with zero
-		// indication why.
+	lspCfg := mergeLSPConfig(rootAbs, opts.LSP)
+	if len(lspCfg.Servers) > 0 {
+		mgr, lspErrs := lsp.NewManager(rootAbs, lspCfg)
 		for _, e := range lspErrs {
 			fmt.Fprintf(os.Stderr, "orchestra: lsp startup warning: %v\n", e)
 		}
@@ -207,6 +208,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		webSearchCfg:            opts.WebSearch,
 		embedCfg:                opts.Embed,
 		lspManager:              lspMgr,
+		lspAutoInstall:          lspCfg.EffectiveAutoInstall(),
 		browserClient:           browserCli,
 		allowBrowserEval:        opts.Browser.AllowEval,
 		dryRun:                  opts.DryRun,
@@ -241,7 +243,8 @@ func (r *Runner) SetDryRun(v bool) {
 	}
 }
 
-// convertLSPConfig translates config.LSPConfig to lsp.LSPConfig.
+// convertLSPConfig translates config.LSPConfig to lsp.LSPConfig and merges
+// workspace language detection so empty yaml still gets the right servers.
 func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 	servers := make([]lsp.LSPServerConfig, len(c.Servers))
 	for i, s := range c.Servers {
@@ -260,7 +263,36 @@ func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 		DiagnosticsTimeoutMS: c.DiagnosticsTimeoutMS,
 		LazyStart:            c.LazyStart,
 		IdleTTLSeconds:       c.IdleTTLSeconds,
+		AutoInstall:          c.AutoInstall,
 	}
+}
+
+func mergeLSPConfig(workspaceRoot string, c config.LSPConfig) lsp.LSPConfig {
+	base := convertLSPConfig(c)
+	if c.Enabled != nil && !*c.Enabled {
+		return base
+	}
+	configured := make([]provision.ServerSpec, 0, len(base.Servers))
+	for _, s := range base.Servers {
+		configured = append(configured, provision.ServerSpec{
+			Language:   s.Language,
+			Extensions: s.Extensions,
+			Command:    s.Command,
+			Disabled:   s.Disabled,
+		})
+	}
+	merged := provision.MergeServers(configured, provision.Detect(workspaceRoot))
+	out := make([]lsp.LSPServerConfig, 0, len(merged))
+	for _, s := range merged {
+		out = append(out, lsp.LSPServerConfig{
+			Language:   s.Language,
+			Extensions: s.Extensions,
+			Command:    s.Command,
+			Disabled:   s.Disabled,
+		})
+	}
+	base.Servers = out
+	return base
 }
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
@@ -271,6 +303,48 @@ func (r *Runner) LSPStatus() string {
 		return "off"
 	}
 	return r.lspManager.RuntimeStatus()
+}
+
+// SetLSPInstallConsent wires permission/request for missing language servers.
+func (r *Runner) SetLSPInstallConsent(req permission.Requester) {
+	if r == nil {
+		return
+	}
+	r.lspConsent = req
+	if r.lspManager != nil {
+		r.lspManager.SetInstallConsent(req)
+	}
+}
+
+// WarmupLSP detects project languages, ensures missing automated servers, then
+// starts registered language-server processes so TUI shows LSP ● without waiting
+// for the first edit. Policy comes from lsp.auto_install (ask|true|false).
+func (r *Runner) WarmupLSP(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	policy := provision.EnsurePolicy(r.lspAutoInstall)
+	if policy == "" {
+		policy = "ask"
+	}
+	// Prefer silent install after detect when policy is ask but no interactive
+	// consent yet — still no network without consent. With consent (TUI turn),
+	// one batch modal covers all missing servers.
+	installed, skipped, err := provision.EnsureDetected(ctx, r.workspaceRoot, policy, r.lspConsent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "orchestra: lsp warmup: %v\n", err)
+		return
+	}
+	if len(installed) > 0 {
+		fmt.Fprintf(os.Stderr, "orchestra: lsp ensured: %s\n", strings.Join(installed, ", "))
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(os.Stderr, "orchestra: lsp skipped: %s\n", strings.Join(skipped, ", "))
+	}
+	if r.lspManager != nil {
+		r.lspManager.WarmupStart(ctx)
+		fmt.Fprintf(os.Stderr, "orchestra: lsp status after warmup: %s\n", r.lspManager.RuntimeStatus())
+	}
 }
 
 // WarmupCKG launches a background incremental scan of the CKG store so that

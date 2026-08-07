@@ -3,6 +3,8 @@ package tools
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 func TestToolRegistry_AllowExecFalse_NoExecRun(t *testing.T) {
@@ -10,6 +12,51 @@ func TestToolRegistry_AllowExecFalse_NoExecRun(t *testing.T) {
 	for _, d := range defs {
 		if d.Function.Name == "bash" {
 			t.Fatalf("bash must not be exposed when allowExec=false (got %q)", d.Function.Name)
+		}
+	}
+}
+
+// TestTaskSchemas_AcceptEitherGoalOrPrompt asserts task/task_spawn schemas
+// accept a call carrying only "goal" OR only "prompt" (the runtime in
+// handleTaskTool supports both as aliases), and reject a call with neither.
+// A flat "required":["prompt"] previously rejected goal-only calls that the
+// runtime actually supports — a real gap for providers doing schema-guided
+// decoding (e.g. vLLM guided_json).
+func TestTaskSchemas_AcceptEitherGoalOrPrompt(t *testing.T) {
+	defs := map[string]json.RawMessage{}
+	for _, d := range ListTools(Capabilities{}) {
+		defs[d.Function.Name] = d.Function.Parameters
+	}
+	subtaskDefs := appendSubtaskTools(nil)
+	for _, d := range subtaskDefs {
+		defs[d.Function.Name] = d.Function.Parameters
+	}
+
+	cases := []struct {
+		tool    string
+		payload string
+		wantOK  bool
+	}{
+		{"task", `{"prompt":"do the thing"}`, true},
+		{"task", `{"goal":"do the thing"}`, true},
+		{"task", `{}`, false},
+		{"task_spawn", `{"goal":"do the thing"}`, true},
+		{"task_spawn", `{"prompt":"do the thing"}`, true},
+		{"task_spawn", `{}`, false},
+	}
+	for _, tc := range cases {
+		schemaJSON, ok := defs[tc.tool]
+		if !ok {
+			t.Fatalf("tool %q not found in registry", tc.tool)
+		}
+		res, err := gojsonschema.Validate(
+			gojsonschema.NewBytesLoader(schemaJSON),
+			gojsonschema.NewStringLoader(tc.payload))
+		if err != nil {
+			t.Fatalf("%s %s: validate error: %v", tc.tool, tc.payload, err)
+		}
+		if res.Valid() != tc.wantOK {
+			t.Errorf("%s %s: valid=%v want=%v errors=%v", tc.tool, tc.payload, res.Valid(), tc.wantOK, res.Errors())
 		}
 	}
 }
@@ -24,9 +71,9 @@ func TestResolveToolNames(t *testing.T) {
 		{"single known", []string{"read"}, 1, false},
 		{"multiple known", []string{"read", "grep", "write"}, 3, false},
 		{"all tools", []string{"ls", "read", "glob", "write", "edit", "grep", "symbols",
-			"explore", "bash", "webfetch", "todowrite", "todoread", "memory_write", "memory_read",
+			"explore", "bash", "webfetch", "todowrite", "todoread", "memory_write", "memory_read", "memory_search",
 			"runtime_query", "task_spawn", "task_wait", "task_cancel", "task_result",
-			"plan_enter", "plan_exit", "question", "diff.preview"}, 23, false},
+			"plan_enter", "plan_exit", "question", "diff.preview"}, 24, false},
 		{"unknown tool", []string{"read", "fly"}, 0, true},
 		{"empty list", []string{}, 0, false},
 	}

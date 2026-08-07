@@ -2,28 +2,34 @@ Launch a child agent to handle a complex, multi-step subtask autonomously and re
 
 This tool runs synchronously: spawn + wait in one call. For fire-and-forget or parallel work, use task_spawn + task_wait instead.
 
-## subagent_type (required)
-- explore — read-only research (grep, read, glob, symbols). Default when omitted.
-- general — full read/write/edit child; returns via task_result, not final.patches.
+## subagent_type (required unless explore default)
+- explore — read-only research (grep, read, glob, symbols, explore, LSP). Default when omitted.
+- ask — Q&A / explanations (read-only).
+- debug — root-cause investigation (+ optional fix).
+- architecture — design notes (plan md only).
+- general — full read/write/edit child; returns via task_result.
+- worker — atomic code edit; pass WorkOrder JSON in prompt + tier (complex|focused|micro).
 
 ## When to use
 - Broad codebase exploration that would clutter the parent context
 - Independent subtasks (refactors in one area, research while you continue planning)
 - Delegating verification steps with a clear success criterion
+- Orchestra Lead: one worker per atomic WorkOrder
 
 ## When NOT to use
 - Reading one known file → use read
 - Searching one pattern in 1–2 files → use grep/read
-- Simple one-step edits → do them directly
+- Simple one-step edits in build mode → do them directly
 
 ## Parameters
 - description — short 3–5 word label for logging
-- prompt — detailed task for the child; include expected output format and verification steps
-- subagent_type — explore or general
+- prompt — detailed task for the child; for worker: WorkOrder JSON with acceptance_criteria
+- subagent_type — explore|ask|debug|architecture|general|worker
+- tier — orchestra worker tier (complex|focused|micro) when subagent_type=worker
 - max_steps — optional cap (default 12)
 - timeout_ms — optional wait timeout (default 120000)
 
 ## Notes
-- Child output is not shown to the user until you summarize it
+- Child gets NO parent chat history — only the prompt/WorkOrder
 - Child agents cannot spawn nested subtasks
 - Trust but verify child results on critical paths

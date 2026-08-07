@@ -20,7 +20,7 @@ orchestra tui
 │  ▌ workflow:name · ○ a ⋯ b ✓ c ← только во время workflow   │
 ├─────────────────────────────────────────────────────────────┤
 │  ▌ input                                                     │
-│    build · model · provider · shell · ask|allow              │
+│    build · model · provider · ask|allow                      │
 ├─────────────────────────────────────────────────────────────┤
 │  project · 12k/60k (20%) · LSP · $…                          │
 └─────────────────────────────────────────────────────────────┘
@@ -28,13 +28,16 @@ orchestra tui
 
 Сигналы (один source of truth):
 
+- Assistant turn = chronological **segments** (reasoning → tools → text → …), см. [`docs/architecture/tui-chat-segments.md`](../../docs/architecture/tui-chat-segments.md)
+
 | Сигнал | Где |
 |--------|-----|
-| mode / model / provider / shell | input mode-line |
+| mode / model / provider / ask|allow | input mode-line |
 | tokens% / LSP / cost / project | status bar |
 | todos | Task panel над input |
 | workflow stages | WorkflowProgress над input |
 | hints | status bar справа |
+| tools / thinking expand | Ctrl+T / Ctrl+R на assistant turn |
 
 См. [`docs/architecture/tui-chrome.md`](../../docs/architecture/tui-chrome.md).
 
@@ -44,14 +47,15 @@ orchestra tui
 |---|---|
 | Enter | отправить |
 | Shift+Enter | новая строка |
-| Tab | цикл mode (build → plan → explore) |
-| Ctrl+T / t | cascade: tools → diff → Tasks (t при todos — Tasks; пустой input) |
+| Tab | цикл mode (build → plan → explore → ask → debug → architecture → agent → orchestra) |
+| Ctrl+T / t | Tasks (если есть todos); иначе tools → diff |
 | Ctrl+R | свернуть/развернуть Thinking |
 | d / Ctrl+D | показать/скрыть inline diff (пустой input) |
 | y / a / n / Esc | shell: один раз / на сессию / запретить |
 | Esc | отменить turn / закрыть overlay |
 | Ctrl+C | выйти |
 | Ctrl+K | command palette |
+| Ctrl+S | sessions list (если есть в проекте) |
 | / | slash-палитра |
 | @ | @-mention файлов |
 | Ctrl+G | mouse passthrough (выделение терминала) |
@@ -69,13 +73,15 @@ orchestra tui
 ui/tui/
   app.go              — App struct, Init
   app_update.go       — Update dispatcher
-  app_keys.go         — routeKey / Enter / chrome hotkeys
+  app_keys.go         — routeKey / Enter / selection / scroll
+  app_chrome_keys.go  — Ctrl+T/R, bare d/t, tools expand SoT
   app_mouse.go        — mouse handlers
   app_layout.go       — layout()
   app_diff.go         — commit diff toggle / restore
   app_rpc.go          — agent event handlers (stream/tools/turn/chrome)
   app_view.go         — View + input chrome
-  app_session/status/todos/turn/… — session & chrome helpers
+  app_status.go       — chromeMetrics + status bar sync
+  app_session/todos/turn/… — session & chrome helpers
   view/               — widgets (chat, input_*.go, tools, task_panel, …)
   state/              — messages, TurnFSM, toolblocks
   rpcclient/          — JSON-RPC stdio → orchestra core
@@ -94,4 +100,4 @@ ui/tui/
 - [x] Session v2 / TurnFSM
 - [ ] Полный Crush-style whitelist — out of scope
 
-См. также: `docs/architecture/tui-pipeline.md`, `docs/architecture/tui-chrome.md`, `docs/PROTOCOL.md`.
+См. также: `docs/architecture/tui-pipeline.md`, `docs/architecture/tui-chrome.md`, `docs/architecture/lsp-auto-provision.md`, `docs/PROTOCOL.md`.

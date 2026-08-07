@@ -39,11 +39,20 @@ type UINotice struct {
 	Text string `json:"text"`
 }
 
+// UISegment is one chronological part of a persisted assistant message.
+type UISegment struct {
+	Kind       string        `json:"kind"` // reasoning | text | tools | notice
+	Text       string        `json:"text,omitempty"`
+	Tools      []UIToolBlock `json:"tools,omitempty"`
+	NoticeKind string        `json:"notice_kind,omitempty"` // info|retry|error|success
+}
+
 // UIMessage is the persisted projection of one chat viewport message.
 type UIMessage struct {
 	Role              string        `json:"role"`
 	Text              string        `json:"text,omitempty"`
 	ToolBlocks        []UIToolBlock `json:"tool_blocks,omitempty"`
+	Segments          []UISegment   `json:"segments,omitempty"`
 	Reasoning         string        `json:"reasoning,omitempty"`
 	Notices           []UINotice    `json:"notices,omitempty"`
 	SystemKind        string        `json:"system_kind,omitempty"`

@@ -2,22 +2,29 @@ package view
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// Modal displays a blocking yes/no dialog for shell command consent.
+// Modal displays a blocking yes/no dialog for shell or LSP install consent.
 type Modal struct {
 	Tool        string
 	Description string
+	Kind        string // "" / exec vs lsp.install
 	width       int
 }
 
 // NewModal creates a permission modal for the given tool request.
 func NewModal(tool, description string) *Modal {
 	return &Modal{Tool: tool, Description: description}
+}
+
+// NewPermissionModal creates a modal with an explicit kind (e.g. lsp.install).
+func NewPermissionModal(tool, description, kind string) *Modal {
+	return &Modal{Tool: tool, Description: description, Kind: kind}
 }
 
 // SetSize updates the modal's known width.
@@ -98,19 +105,29 @@ func (m *Modal) Render() string {
 		Padding(0, 2).
 		Width(m.width - 4)
 
-	title := lipgloss.NewStyle().
-		Foreground(t.Warning()).
-		Bold(true).
-		Render("⚠ Разрешение shell")
-
 	desc := m.Description
-	if len(desc) > 200 {
-		desc = desc[:200] + "..."
+	if len(desc) > 400 {
+		desc = desc[:400] + "..."
 	}
 	tool := m.Tool
 	if tool == "" {
 		tool = "shell"
 	}
+
+	if strings.EqualFold(m.Kind, "lsp.install") || tool == "lsp.install" {
+		title := lipgloss.NewStyle().
+			Foreground(t.Warning()).
+			Bold(true).
+			Render("⚠ Language server")
+		body := fmt.Sprintf("%s\n\n%s\n\n[y] установить   [a] всегда auto   [n] пропустить",
+			title, desc)
+		return border.Render(body)
+	}
+
+	title := lipgloss.NewStyle().
+		Foreground(t.Warning()).
+		Bold(true).
+		Render("⚠ Разрешение shell")
 	body := fmt.Sprintf("%s\n\nИнструмент: %s\nКоманда: %s\n\n[y] один раз   [a] на сессию   [t] этот tool   [n] запретить",
 		title, tool, desc)
 	return border.Render(body)

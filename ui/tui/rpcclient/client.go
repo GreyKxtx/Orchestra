@@ -41,8 +41,14 @@ type Client struct {
 	coalesceMu sync.Mutex
 	coalesce   Event // merged delta when events channel is saturated
 
-	permCh     chan bool     // receives user's yes/no for pending permission/request
-	questionCh chan []string   // receives user's answers for pending question/ask
+	permCh     chan PermissionDecision // receives user's decision for permission/request
+	questionCh chan []string           // receives user's answers for pending question/ask
+}
+
+// PermissionDecision is the TUI answer to permission/request.
+type PermissionDecision struct {
+	Approved bool
+	Always   bool
 }
 
 // Spawn starts the orchestra core subprocess and runs the initialize handshake.
@@ -74,14 +80,14 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	c := &Client{
-		cfg:    cfg,
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-		rpc:    jsonrpc.NewClient(stdout, stdin),
-		events: make(chan Event, 64),
-		permCh:     make(chan bool, 1),
+		cfg:        cfg,
+		cmd:        cmd,
+		stdin:      stdin,
+		stdout:     stdout,
+		stderr:     stderr,
+		rpc:        jsonrpc.NewClient(stdout, stdin),
+		events:     make(chan Event, 64),
+		permCh:     make(chan PermissionDecision, 1),
 		questionCh: make(chan []string, 1),
 	}
 
@@ -160,6 +166,7 @@ type SessionGetResult struct {
 	Model      string                  `json:"model,omitempty"`
 	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
 	Todos      []TodoItem              `json:"todos,omitempty"`
+	PlanPath   string                  `json:"plan_path,omitempty"`
 	CostUSD    float64                 `json:"cost_usd,omitempty"`
 	HistoryLen int                     `json:"history_len"`
 	HasPending bool                    `json:"has_pending,omitempty"`
@@ -524,6 +531,12 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 			ev.Usage = &usage
 		}
 	}
+	if EventKind(p.Type) == EventModeRoute && len(p.Data) > 0 {
+		var route ModeRoutePayload
+		if err := json.Unmarshal(p.Data, &route); err == nil {
+			ev.ModeRoute = &route
+		}
+	}
 	if EventKind(p.Type) == EventError {
 		errMsg := strings.TrimSpace(p.Error)
 		if errMsg == "" {
@@ -574,8 +587,8 @@ func (c *Client) handleRequest(ctx context.Context, method string, params json.R
 		}
 		c.send(Event{Kind: EventPermissionRequest, PermReq: &req})
 		select {
-		case approved := <-c.permCh:
-			return map[string]any{"approved": approved}, nil
+		case d := <-c.permCh:
+			return map[string]any{"approved": d.Approved, "always": d.Always}, nil
 		case <-ctx.Done():
 			return map[string]any{"approved": false}, nil
 		}
@@ -601,8 +614,13 @@ func (c *Client) handleRequest(ctx context.Context, method string, params json.R
 // RespondPermission answers the pending permission/request from the core.
 // Must be called exactly once per EventPermissionRequest event.
 func (c *Client) RespondPermission(approved bool) {
+	c.RespondPermissionDecision(PermissionDecision{Approved: approved})
+}
+
+// RespondPermissionDecision answers with approved + always (lsp.auto_install).
+func (c *Client) RespondPermissionDecision(d PermissionDecision) {
 	select {
-	case c.permCh <- approved:
+	case c.permCh <- d:
 	default:
 	}
 }
@@ -614,4 +632,41 @@ func (c *Client) RespondQuestion(answers []string) {
 	case c.questionCh <- answers:
 	default:
 	}
+}
+
+// QueryLSPStatus calls core.health and returns lsp_status (off|idle|installing|active).
+func (c *Client) QueryLSPStatus(ctx context.Context) (string, error) {
+	if c == nil || c.rpc == nil {
+		return "", fmt.Errorf("rpcclient: not connected")
+	}
+	var h struct {
+		LSPStatus string `json:"lsp_status"`
+	}
+	if err := c.rpc.Call(ctx, "core.health", map[string]any{}, &h); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(h.LSPStatus), nil
+}
+
+// SessionCompactResult mirrors core.SessionCompactResult.
+type SessionCompactResult struct {
+	SessionID  string `json:"session_id"`
+	BeforeMsgs int    `json:"before_msgs"`
+	AfterMsgs  int    `json:"after_msgs"`
+}
+
+// SessionCompact forces LLM history compaction for the session.
+func (c *Client) SessionCompact(ctx context.Context, sessionID, query string) (*SessionCompactResult, error) {
+	if c == nil || c.rpc == nil {
+		return nil, fmt.Errorf("rpcclient: not connected")
+	}
+	params := map[string]any{"session_id": strings.TrimSpace(sessionID)}
+	if q := strings.TrimSpace(query); q != "" {
+		params["query"] = q
+	}
+	var res SessionCompactResult
+	if err := c.rpc.Call(ctx, "session.compact", params, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
 }

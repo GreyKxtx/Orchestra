@@ -29,6 +29,7 @@ type StatusBar struct {
 	hints      string
 	activeTool string
 	activePath string
+	tokensEst  bool // soft "~" marker when figure is estimate
 }
 
 func (s *StatusBar) SetHints(h string) { s.hints = h }
@@ -36,19 +37,20 @@ func (s *StatusBar) SetActiveTool(name, path string) {
 	s.activeTool = name
 	s.activePath = path
 }
-func (s *StatusBar) SetWidth(w int)                     { s.width = w }
-func (s *StatusBar) SetAgentBusy(busy bool)             { s.agentBusy = busy }
-func (s *StatusBar) AdvanceSpin()                       { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
-func (s *StatusBar) SetModel(_ string)                  {} // model shown in input box row
-func (s *StatusBar) SetProject(p string)                { s.project = p }
-func (s *StatusBar) SetProfile(p string)                { s.profile = p }
-func (s *StatusBar) SetLSPStatus(st string)             { s.lspStatus = st }
-func (s *StatusBar) SetModelCtx(n int)                  { s.modelCtx = n }
-func (s *StatusBar) SetShowCost(v bool)                 { s.showCost = v }
-func (s *StatusBar) SetTokens(used, max int)            { s.tokensUsed = used; s.tokensMax = max }
-func (s *StatusBar) SetCostUSD(v float64)               { s.costUSD = v }
-func (s *StatusBar) SetError(msg string)                { s.errorMsg = msg }
-func (s *StatusBar) ClearError()                        { s.errorMsg = "" }
+func (s *StatusBar) SetWidth(w int)            { s.width = w }
+func (s *StatusBar) SetAgentBusy(busy bool)    { s.agentBusy = busy }
+func (s *StatusBar) AdvanceSpin()              { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
+func (s *StatusBar) SetModel(_ string)         {} // model shown in input box row
+func (s *StatusBar) SetProject(p string)       { s.project = p }
+func (s *StatusBar) SetProfile(p string)       { s.profile = p }
+func (s *StatusBar) SetLSPStatus(st string)    { s.lspStatus = st }
+func (s *StatusBar) SetModelCtx(n int)         { s.modelCtx = n }
+func (s *StatusBar) SetShowCost(v bool)        { s.showCost = v }
+func (s *StatusBar) SetTokens(used, max int)   { s.tokensUsed = used; s.tokensMax = max }
+func (s *StatusBar) SetTokensEstimated(v bool) { s.tokensEst = v }
+func (s *StatusBar) SetCostUSD(v float64)      { s.costUSD = v }
+func (s *StatusBar) SetError(msg string)       { s.errorMsg = msg }
+func (s *StatusBar) ClearError()               { s.errorMsg = "" }
 
 func (s *StatusBar) Render() string {
 	t := theme.CurrentTheme()
@@ -188,6 +190,9 @@ func (s *StatusBar) renderContextPart(t theme.Theme, muted lipgloss.Style) strin
 	if max > 0 {
 		body = usage + fmt.Sprintf(" (%d%%)", pct)
 	}
+	if s.tokensEst {
+		body = "~" + body
+	}
 
 	col := t.Text()
 	if max > 0 && used > 0 {
@@ -205,11 +210,14 @@ func (s *StatusBar) renderContextPart(t theme.Theme, muted lipgloss.Style) strin
 }
 
 func (s *StatusBar) renderLSPPart(t theme.Theme) string {
+	// off=muted ○ · idle=green ◐ (configured/ready, lazy) · installing=warn · active=green ● (process up)
 	switch strings.ToLower(strings.TrimSpace(s.lspStatus)) {
 	case "active":
 		return lipgloss.NewStyle().Foreground(t.Success()).Render("LSP ●")
+	case "installing":
+		return lipgloss.NewStyle().Foreground(t.Warning()).Render("LSP ◐")
 	case "idle":
-		return lipgloss.NewStyle().Foreground(t.TextMuted()).Render("LSP ◐")
+		return lipgloss.NewStyle().Foreground(t.Success()).Render("LSP ◐")
 	default:
 		return lipgloss.NewStyle().Foreground(t.TextMuted()).Render("LSP ○")
 	}

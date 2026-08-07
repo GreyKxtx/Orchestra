@@ -185,12 +185,20 @@ func (c Chat) welcomeProjectInfo(width int) string {
 		)
 	}
 
-	sessLine := base.Width(width).Render(
-		base.Foreground(t.Text()).Render("• ") +
-			base.Foreground(t.Text()).Render(fmt.Sprintf("sessions: %d", c.welcome.SessionCount)),
-	)
+	var sessLine string
+	if c.welcome.SessionCount > 0 {
+		sessLine = base.Width(width).Render(
+			base.Foreground(t.Text()).Render("• ") +
+				base.Foreground(t.Text()).Render(fmt.Sprintf("sessions: %d ", c.welcome.SessionCount)) +
+				base.Foreground(t.TextMuted()).Render("(ctrl+s)"),
+		)
+	}
 
+	rows := []string{title, nameLine, modelLine}
+	if sessLine != "" {
+		rows = append(rows, sessLine)
+	}
 	return base.Width(width).Render(
-		lipgloss.JoinVertical(lipgloss.Left, title, nameLine, modelLine, sessLine),
+		lipgloss.JoinVertical(lipgloss.Left, rows...),
 	)
 }

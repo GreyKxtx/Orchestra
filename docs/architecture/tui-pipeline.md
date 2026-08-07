@@ -86,7 +86,8 @@ flowchart TD
 
 ## 3. Unified session (v2, M2)
 
-Один файл `.orchestra/sessions/<id>.json`, schema **version 2** (`internal/sessionfile`):
+Один файл `.orchestra/sessions/<id>.json`, schema **version 3** (`internal/sessionfile`):
+chronological `ui_messages[].segments` (assistant parts). Flat text/reasoning/tool_blocks remain as projections.
 
 - `history` — LLM-память (writer: core после `session.message`)
 - `ui_messages` — TUI projection (writer: `session.ui_sync`)

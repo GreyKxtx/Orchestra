@@ -1,6 +1,6 @@
 # Planner–Worker: целевой режим Orchestra (локальные модели)
 
-**Статус:** Architecture target (design doc)  
+**Статус:** Partial implemented (MVP) — `mode=orchestra` Lead + `subagent_type=worker` tiers; AST symbol scoping / parallel budget / E2E eval → P3  
 **Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [architecture-uml.md](../architecture-uml.md)
 
 ---

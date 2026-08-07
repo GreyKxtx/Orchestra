@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -16,6 +17,24 @@ func rpcEventErrorText(ev rpcclient.Event) string {
 		return msg
 	}
 	return strings.TrimSpace(ev.Content)
+}
+
+func isSilentAgentRetry(msg string) bool {
+	return strings.Contains(msg, "Model returned an empty response") ||
+		strings.Contains(msg, "Пустой ответ модели")
+}
+
+func isContextCompactedNotice(msg string) bool {
+	return strings.HasPrefix(strings.TrimSpace(msg), "CONTEXT_COMPACTED")
+}
+
+func isContextPressureNotice(msg string) bool {
+	return strings.HasPrefix(strings.TrimSpace(msg), "CONTEXT_PRESSURE")
+}
+
+func isMaxStepsNotice(msg string) bool {
+	m := strings.TrimSpace(msg)
+	return strings.HasPrefix(m, "MAX_STEPS") || strings.Contains(m, "max_steps exceeded")
 }
 
 func stepDoneUserHint(reason string) string {
@@ -71,7 +90,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated,
 		rpcclient.EventInitialized, rpcclient.EventPermissionRequest,
 		rpcclient.EventQuestionAsked, rpcclient.EventWorkflowStageStart,
-		rpcclient.EventWorkflowStageDone:
+		rpcclient.EventWorkflowStageDone, rpcclient.EventModeRoute:
 		a.handleRPCChrome(ev)
 	}
 
@@ -79,7 +98,14 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		a.chat.SetMessages(a.session.Messages)
 	}
 	a.updateStatusHints()
-	return saveCmd
+	switch ev.Kind {
+	case rpcclient.EventInitialized:
+		return tea.Batch(saveCmd, a.awaitLSPWarmupCmd())
+	case rpcclient.EventAgentRunCompleted:
+		return tea.Batch(saveCmd, a.refreshLSPStatusCmd())
+	default:
+		return saveCmd
+	}
 }
 
 // handleRPCStream handles reasoning/message deltas, per-step usage, and Done.
@@ -106,8 +132,9 @@ func (a *App) handleRPCStream(ev rpcclient.Event) (skipRender bool) {
 		return true
 	case rpcclient.EventStepUsage:
 		if ev.Usage != nil && ev.Usage.PromptTokens > 0 {
-			a.livePromptTokens = ev.Usage.PromptTokens
-			a.promptTokensUsed = ev.Usage.PromptTokens
+			a.chrome.livePromptTokens = ev.Usage.PromptTokens
+			a.chrome.promptTokensUsed = ev.Usage.PromptTokens
+			a.chrome.tokensEstimated = strings.EqualFold(ev.Usage.Source, "estimate")
 			a.session.SetAssistantPromptCtx(ev.Usage.PromptTokens)
 			a.syncStatusBar()
 			a.chatDirty = true
@@ -131,9 +158,10 @@ func (a *App) handleRPCTools(ev rpcclient.Event) (skipRender bool) {
 	switch ev.Kind {
 	case rpcclient.EventToolCallStart:
 		a.session.AppendToolBlock(state.ToolBlock{
-			ID:     ev.ToolCallID,
-			Name:   ev.ToolCallName,
-			Status: state.ToolBlockRunning,
+			ID:        ev.ToolCallID,
+			Name:      ev.ToolCallName,
+			Status:    state.ToolBlockRunning,
+			StartedAt: time.Now(),
 		})
 		a.statusBar.SetActiveTool(view.ToolDisplayName(ev.ToolCallName), "")
 	case rpcclient.EventToolCallDelta:
@@ -158,22 +186,47 @@ func (a *App) handleRPCTools(ev rpcclient.Event) (skipRender bool) {
 		}
 		a.session.UpdateToolBlock(ev.ToolCallID, status, ev.Content, diagnosticsToState(ev.Diagnostics))
 		a.statusBar.SetActiveTool("", "")
-		if len(ev.Diagnostics) > 0 {
-			a.lspStatus = "active"
+		// diagnostics present (even empty []) means SyncAndDiagnose ran → client is up
+		if ev.Diagnostics != nil {
+			a.chrome.lspStatus = "active"
+			a.syncStatusBar()
+		} else if isLSPToolName(ev.ToolCallName) {
+			a.chrome.lspStatus = "active"
 			a.syncStatusBar()
 		}
 	case rpcclient.EventStepDone:
 		if ev.Content != "final" {
-			a.session.TruncateAssistantText(a.stepTextLen)
+			// Keep mid-step narration in chronological segments (no truncate).
 			if reason := stepDoneUserHint(ev.Content); reason != "" && !a.retryHintThisStep {
 				a.session.AppendAssistantNotice(state.SystemKindRetry, reason)
 			}
 			a.retryHintThisStep = false
+			a.session.FinalizeRunningTools()
 		}
 		a.statusBar.SetActiveTool("", "")
 		a.stepTextLen = a.session.AssistantTextLen()
 	case rpcclient.EventRecoverableError:
 		if msg := strings.TrimSpace(ev.Content); msg != "" {
+			if isSilentAgentRetry(msg) {
+				// Empty-model retries are processed in the agent loop; don't spam chat.
+				a.retryHintThisStep = true
+				return false
+			}
+			if isContextCompactedNotice(msg) {
+				a.session.AppendAssistantNotice(state.SystemKindInfo, "Контекст сжат — старая история суммаризирована")
+				a.chatDirty = true
+				return false
+			}
+			if isContextPressureNotice(msg) {
+				a.session.AppendAssistantNotice(state.SystemKindInfo, "Контекст почти заполнен — скоро сжатие истории")
+				a.chatDirty = true
+				return false
+			}
+			if isMaxStepsNotice(msg) {
+				a.session.AppendAssistantNotice(state.SystemKindInfo, view.LocalizeRetryHint(msg))
+				a.chatDirty = true
+				return false
+			}
 			a.session.AppendAssistantNotice(state.SystemKindRetry, view.LocalizeRetryHint(msg))
 			a.retryHintThisStep = true
 			a.chatDirty = true
@@ -195,10 +248,10 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 		if a.turn.ShowBusySpinner() {
 			a.failAgentTurn()
 			a.clearActiveCancel()
-			a.session.AppendSystemNotice(state.SystemKindError, "соединение с core закрыто")
-			a.statusBar.SetError("connection to core closed")
+			a.session.AppendSystemNotice(state.SystemKindError, "connection to core closed")
+			a.statusBar.ClearError()
 			a.chat.SetStreamCursor(false)
-			a.livePromptTokens = 0
+			a.chrome.livePromptTokens = 0
 			a.layout()
 			return a.persistSessionCmd()
 		}
@@ -208,11 +261,11 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 			a.reasoning.Reset()
 			a.session.FinishAssistant()
 			a.failAgentTurn()
-			a.statusBar.SetError(a.turnError)
+			a.statusBar.ClearError()
 			a.chat.SetStreamCursor(false)
 			a.session.AppendSystemNotice(state.SystemKindError, a.turnError)
 			a.turnError = ""
-			a.livePromptTokens = 0
+			a.chrome.livePromptTokens = 0
 			a.layout()
 			return a.persistSessionCmd()
 		}
@@ -220,20 +273,20 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 			a.session.AppendAssistantDelta(a.reasoning.Carry)
 		}
 		a.reasoning.Reset()
-		if a.promptTokensUsed > 0 {
-			a.session.SetAssistantPromptCtx(a.promptTokensUsed)
+		if a.chrome.promptTokensUsed > 0 {
+			a.session.SetAssistantPromptCtx(a.chrome.promptTokensUsed)
 		}
 		a.session.FinishAssistant()
 		a.finishAgentTurn()
 		a.statusBar.ClearError()
-		a.livePromptTokens = 0
+		a.chrome.livePromptTokens = 0
 		a.chat.SetStreamCursor(false)
 		a.layout()
 		return a.persistSessionCmd()
 	case rpcclient.EventError:
 		if msg := rpcEventErrorText(ev); msg != "" {
 			a.turnError = msg
-			a.statusBar.SetError(msg)
+			// Error is shown in chat on turn complete — not in the status bar.
 		}
 	case rpcclient.EventConnectionError:
 		a.failAgentTurn()
@@ -243,7 +296,7 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 		if msg == "" {
 			msg = "connection error"
 		}
-		a.statusBar.SetError(msg)
+		a.statusBar.ClearError()
 		a.chat.SetStreamCursor(false)
 		a.session.AppendSystemNotice(state.SystemKindError, msg)
 		return a.persistSessionCmd()
@@ -282,7 +335,7 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 		a.setTodos(ev.Todos)
 	case rpcclient.EventInitialized:
 		if ev.LSPStatus != "" {
-			a.lspStatus = ev.LSPStatus
+			a.chrome.lspStatus = ev.LSPStatus
 		}
 		a.syncStatusBar()
 	case rpcclient.EventPermissionRequest:
@@ -293,7 +346,11 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 				}
 				return
 			}
-			a.permModal = view.NewModal(ev.PermReq.Tool, ev.PermReq.Description)
+			kind := ev.PermReq.Kind
+			if kind == "" && ev.PermReq.Tool == "lsp.install" {
+				kind = "lsp.install"
+			}
+			a.permModal = view.NewPermissionModal(ev.PermReq.Tool, ev.PermReq.Description, kind)
 			a.layout()
 		}
 	case rpcclient.EventQuestionAsked:
@@ -336,6 +393,15 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 				Text: fmt.Sprintf("workflow «%s»: этап %s готов · marker=%s · %s · %dKB",
 					ev.Stage.Name, ev.Stage.StageID, marker, ev.Stage.Action, ev.Stage.OutputKB),
 			})
+		}
+	case rpcclient.EventModeRoute:
+		if ev.ModeRoute != nil && ev.ModeRoute.To != "" {
+			from := ev.ModeRoute.From
+			if from == "" {
+				from = "agent"
+			}
+			a.routeBadge = from + "→" + ev.ModeRoute.To
+			a.showToast(a.routeBadge)
 		}
 	}
 }

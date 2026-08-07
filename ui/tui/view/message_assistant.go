@@ -10,84 +10,102 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// renderAssistantMessage — port of OpenCode AssistantMessage.
+// renderAssistantMessage — chronological segments (Claude/OpenCode parts model).
 //
-//	reasoning (CoT)        — italic muted, no border, indented col 2
-//	tool group             — multi-line `│ Task — query` / `└ N toolcalls · Xs`
-//	final answer (markdown)— indented col 2
-//	thinking placeholder   — `⠋ Thinking…` while streaming and nothing has
-//	                         landed yet (no reasoning, no tools, no text)
-//	footer ▣ Mode · Model · Xs · Y tokens — last assistant only
+//	for each segment in order: reasoning | tool group | text | notice
+//	thinking placeholder while streaming and nothing has landed yet
+//	footer ▣ Mode · Model · Xs · Y tokens — finished turns
 //
-// key is the stable message key (StartedAt.UnixNano) used for expand state.
 // userQuery: the preceding RoleUser message text (passes into the tool-group title).
-func (c Chat) renderAssistantMessage(m state.Message, key int64, width int, isLast bool, userQuery string) string {
+func (c Chat) renderAssistantMessage(m state.Message, width int, isLast bool, userQuery string) string {
 	var parts []string
 
-	if strings.TrimSpace(m.Reasoning) != "" {
-		parts = append(parts, renderReasoning(m.Reasoning, width, m.Streaming && strings.TrimSpace(m.Text) == "", c.spinFrame, m.ReasoningExpanded))
+	segs := m.Segments
+	if len(segs) == 0 {
+		// Legacy flat message (should be rare after NormalizeSegments).
+		if strings.TrimSpace(m.Reasoning) != "" {
+			segs = append(segs, state.Segment{Kind: state.SegmentReasoning, Text: m.Reasoning})
+		}
+		if len(m.ToolBlocks) > 0 {
+			segs = append(segs, state.Segment{Kind: state.SegmentTools, Tools: m.ToolBlocks})
+		}
+		if strings.TrimSpace(m.Text) != "" {
+			segs = append(segs, state.Segment{Kind: state.SegmentText, Text: m.Text})
+		}
+		for _, n := range m.Notices {
+			segs = append(segs, state.Segment{Kind: state.SegmentNotice, Text: n.Text, NoticeKind: n.Kind})
+		}
 	}
 
-	if len(m.ToolBlocks) > 0 {
-		expanded := m.Streaming || c.expandedTurns[key] || m.ToolsExpanded
-		// Use this message's historical Mode for the tool-group title prefix
-		// ("Build Task — ...", "Plan Task — ..."), falling back to chat's
-		// current mode for legacy sessions.
-		msgMode := m.Mode
-		if msgMode == "" {
-			msgMode = c.chatMode
+	msgMode := m.Mode
+	if msgMode == "" {
+		msgMode = c.chatMode
+	}
+	toolsExpanded := m.Streaming || m.ToolsExpanded
+	lastTextIdx := -1
+	for i := range segs {
+		if segs[i].Kind == state.SegmentText && strings.TrimSpace(segs[i].Text) != "" {
+			lastTextIdx = i
 		}
-		parts = append(parts, c.renderToolGroup(m.ToolBlocks, width, expanded, m.Streaming, turnElapsed(m), userQuery, msgMode))
 	}
 
-	text := stripFinalEnvelope(m.Text)
-	if strings.TrimSpace(text) != "" {
-		body := renderMarkdown(text, width-2)
-		if isLast && m.Streaming && c.streamCursor {
-			body += lipgloss.NewStyle().Foreground(theme.CurrentTheme().Primary()).Render("▋")
+	for i, seg := range segs {
+		switch seg.Kind {
+		case state.SegmentReasoning:
+			if strings.TrimSpace(seg.Text) == "" {
+				continue
+			}
+			streamingTail := m.Streaming && lastTextIdx < 0 && i == len(segs)-1
+			parts = append(parts, renderReasoning(seg.Text, width, streamingTail, c.spinFrame, m.ReasoningExpanded))
+		case state.SegmentTools:
+			if len(seg.Tools) == 0 {
+				continue
+			}
+			parts = append(parts, c.renderToolGroup(seg.Tools, width, toolsExpanded, m.Streaming, 0, userQuery, msgMode))
+		case state.SegmentText:
+			text := stripFinalEnvelope(seg.Text)
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			body := renderMarkdown(text, width-2)
+			if isLast && m.Streaming && i == lastTextIdx && c.streamCursor {
+				body += lipgloss.NewStyle().Foreground(theme.CurrentTheme().Primary()).Render("▋")
+			}
+			parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(body))
+		case state.SegmentNotice:
+			if line := RenderAssistantNotice(seg.NoticeKind, seg.Text, width); line != "" {
+				parts = append(parts, line)
+			}
 		}
-		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(body))
-	} else if !m.Streaming &&
-		strings.TrimSpace(m.Reasoning) == "" &&
-		len(m.ToolBlocks) == 0 {
-		// Reasoning models (qwen3.6 via LM Studio) sometimes finish with blank
-		// content and no tool_calls — the turn ends but the bubble looks broken.
+	}
+
+	if len(parts) == 0 && !m.Streaming {
+		// Reasoning models sometimes finish with blank content and no tool_calls.
 		t := theme.CurrentTheme()
 		hint := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true).
-			Render("Модель завершила шаг без текста. Проверьте tool calling в LM Studio или отключите thinking (enable_thinking: false).")
+			Render("Model finished with no text. Check tool calling in LM Studio or set enable_thinking: false.")
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(hint))
 	}
 
-	// Inline "Thinking…" placeholder — opencode style. Shown only when the
-	// assistant turn is still streaming but nothing user-visible has landed
-	// yet (no reasoning prefix, no tool calls, no text). All other states
-	// already display their own spinner: reasoning has "⠋ Thinking:", a
-	// running tool-group has its own spinner in the title icon.
-	if isLast && m.Streaming &&
-		strings.TrimSpace(m.Reasoning) == "" &&
-		len(m.ToolBlocks) == 0 &&
-		strings.TrimSpace(text) == "" {
+	// Inline "Thinking…" placeholder — opencode style.
+	if isLast && m.Streaming && !m.HasVisibleContent() {
 		parts = append(parts, renderInlineThinking(c.spinFrame))
 	}
 
-	if noticeBlock := RenderAssistantNotices(m.Notices, width); noticeBlock != "" {
-		parts = append(parts, noticeBlock)
+	mode := m.Mode
+	if mode == "" {
+		mode = c.chatMode
 	}
-
-	// Footer is shown on EVERY finished assistant turn — not just the last.
-	// The mode/model/duration belong to that specific exchange so the user
-	// can scroll back and see what produced each answer. m.Mode/Model are
-	// the historical values stored at StartAssistant time; fall back to the
-	// current chat config for legacy sessions.
-	if !m.Streaming {
-		mode := m.Mode
-		if mode == "" {
-			mode = c.chatMode
+	model := m.Model
+	if model == "" {
+		model = c.chatModel
+	}
+	// Live footer while streaming; final footer when done (includes tokens).
+	if m.Streaming {
+		if dur := turnElapsed(m); dur > 0 || !m.StartedAt.IsZero() {
+			parts = append(parts, assistantFooter(mode, model, dur, 0, 0))
 		}
-		model := m.Model
-		if model == "" {
-			model = c.chatModel
-		}
+	} else {
 		parts = append(parts, assistantFooter(mode, model, m.Duration, m.TokensIn, m.TokensOut))
 	}
 

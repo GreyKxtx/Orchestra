@@ -69,6 +69,12 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return next, cmd, true
 	}
 
+	// Terminal paste (bracketed or flood of key events) — never treat Enter
+	// inside the paste as "submit message".
+	if next, cmd, handled := a.tryIngestPaste(m); handled {
+		return next, cmd, true
+	}
+
 	switch m.String() {
 	case "ctrl+g":
 		// Toggle mouse passthrough: when on, mouse reporting is disabled so the
@@ -284,16 +290,8 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.respondShellPermission(true, false, true)
 			return a, nil, true
 		}
-		// Bare "t": Tasks when todos exist; else same cascade as Ctrl+T.
-		// Only when input is empty — otherwise type normally.
-		if a.inputEmpty() {
-			if len(a.todos) > 0 {
-				a.toggleTaskPanel()
-				return a, nil, true
-			}
-			if a.handleCtrlTCascade() {
-				return a, nil, true
-			}
+		if a.tryChromeHotkey("t") {
+			return a, nil, true
 		}
 	case "n":
 		if a.permModal != nil {
@@ -310,19 +308,16 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.chat.ScrollUp(0)
 		return a, nil, true
 	case "ctrl+d":
-		// With empty input + available diff → toggle commit diff (like bare "d").
-		// Otherwise keep classic half-page scroll.
-		if a.inputEmpty() && (len(a.lastCommitDiff) > 0 || a.session.HasDiff()) {
-			a.showCommitDiff()
+		if a.tryChromeHotkey("ctrl+d") {
 			return a, nil, true
 		}
 		a.chat.ScrollDown(0)
 		return a, nil, true
 	case "ctrl+t":
-		a.handleCtrlTCascade()
+		a.tryChromeHotkey("ctrl+t")
 		return a, nil, true
 	case "ctrl+r":
-		if a.toggleLastReasoning() {
+		if a.tryChromeHotkey("ctrl+r") {
 			return a, nil, true
 		}
 	case "ctrl+k":
@@ -330,6 +325,9 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.commandModal = view.NewPaletteModal(a.width, a.height)
 		}
 		a.commandModal.SetActive(true)
+		return a, nil, true
+	case "ctrl+s":
+		a.openSessionsDialog()
 		return a, nil, true
 	case "ctrl+o":
 		if a.showOnboarding {
@@ -408,9 +406,7 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.cycleAgentMode()
 		return a, nil, true
 	case "d":
-		// Bare "d" only when input is empty — otherwise type normally.
-		if a.inputEmpty() && (len(a.lastCommitDiff) > 0 || a.session.HasDiff()) {
-			a.showCommitDiff()
+		if a.tryChromeHotkey("d") {
 			return a, nil, true
 		}
 	case "backspace":
@@ -542,62 +538,85 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 	return a, saveCmd, true
 }
 
+// pasteBurstWindow is how long after a paste chunk we keep treating
+// Enter/Space/runes as part of the same paste (Windows Terminal often
+// delivers clipboard text as many KeyMsg without the Paste flag).
+const pasteBurstWindow = 80 * time.Millisecond
+
+// pasteFloodGap detects character-by-character clipboard floods. Human
+// typing is typically ≥40–80ms between keys; paste events are much faster.
+const pasteFloodGap = 20 * time.Millisecond
+
+// pasteFloodArmCount is how many consecutive sub-pasteFloodGap runes it takes
+// to treat a single-rune flood as a paste. Bursts of 2–5 fast keys happen in
+// normal fast typing (letter rolls); no human sustains 8+ keys under 20ms.
+// Without this floor, quick "hello"+Enter got swallowed as paste text.
+const pasteFloodArmCount = 8
+
+// tryIngestPaste handles bracketed paste and paste-like key floods.
+// Returns handled=true when the key was consumed as paste text.
+func (a *App) tryIngestPaste(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	now := time.Now()
+	inBurst := now.Before(a.pasteBurstUntil)
+
+	switch {
+	case m.Paste:
+		return a.ingestPasteChunk(string(m.Runes))
+	case m.Type == tea.KeyRunes && len(m.Runes) > 1:
+		return a.ingestPasteChunk(string(m.Runes))
+	case m.Type == tea.KeyRunes && len(m.Runes) == 1:
+		// Fast rune flood (clipboard without bracketed paste). Only a
+		// sustained flood arms the paste burst; short fast runs are typing.
+		fast := !a.lastRuneAt.IsZero() && now.Sub(a.lastRuneAt) < pasteFloodGap
+		a.lastRuneAt = now
+		if fast {
+			a.floodRunCount++
+		} else {
+			a.floodRunCount = 0
+		}
+		if inBurst || a.floodRunCount >= pasteFloodArmCount {
+			return a.ingestPasteChunk(string(m.Runes))
+		}
+		return a, nil, false
+	case m.Type == tea.KeyEnter:
+		// Mid-paste newline — must NOT submit the message.
+		// Only while an active paste burst (not merely "typed a char recently").
+		if inBurst {
+			return a.ingestPasteChunk("\n")
+		}
+		a.floodRunCount = 0
+		return a, nil, false
+	case m.Type == tea.KeySpace && inBurst:
+		return a.ingestPasteChunk(" ")
+	case m.Type == tea.KeyTab && inBurst:
+		return a.ingestPasteChunk("\t")
+	default:
+		return a, nil, false
+	}
+}
+
+// ingestPasteChunk inserts clipboard / paste-flood text into the composer.
+func (a *App) ingestPasteChunk(s string) (tea.Model, tea.Cmd, bool) {
+	if s == "" {
+		return a, nil, true
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	a.pasteBurstUntil = time.Now().Add(pasteBurstWindow)
+	a.lastRuneAt = time.Now()
+	a.input.Paste(s)
+	a.input.SyncHeight(5)
+	if a.turn != nil {
+		a.syncPalette()
+		a.syncTurnComposing()
+		a.updateStatusHints()
+		a.layout()
+	}
+	return a, nil, true
+}
+
 // isPrintableKey reports whether a key message represents printable input
 // (regular typing or a bracketed paste from the terminal).
 func isPrintableKey(km tea.KeyMsg) bool {
 	return km.Type == tea.KeyRunes && len(km.Runes) > 0
-}
-
-// inputEmpty reports whether the composer has no text (hotkeys may steal keys).
-func (a *App) inputEmpty() bool {
-	return strings.TrimSpace(a.input.Value()) == ""
-}
-
-// handleCtrlTCascade: close open Tasks; else expand tools; else toggle diff;
-// else open Tasks. Tools/diff stay reachable even when todos exist.
-func (a *App) handleCtrlTCascade() bool {
-	if a.taskPanelOpen {
-		a.toggleTaskPanel()
-		return true
-	}
-	for i := len(a.session.Messages) - 1; i >= 0; i-- {
-		m := a.session.Messages[i]
-		if m.Role == state.RoleAssistant && len(m.ToolBlocks) > 0 {
-			key := view.MessageKey(m)
-			a.chat.ExpandTurn(key)
-			a.session.Messages[i].ToolsExpanded = a.chat.IsTurnExpanded(key)
-			a.chat.SetMessages(a.session.Messages)
-			a.layout()
-			a.updateStatusHints()
-			return true
-		}
-	}
-	if a.session.ToggleLastDiff() {
-		a.diffShown = a.session.HasDiff()
-		a.chat.SetMessages(a.session.Messages)
-		a.layout()
-		a.updateStatusHints()
-		return true
-	}
-	if len(a.todos) > 0 {
-		a.toggleTaskPanel()
-		return true
-	}
-	return false
-}
-
-// toggleLastReasoning expands/collapses CoT on the newest assistant message.
-func (a *App) toggleLastReasoning() bool {
-	for i := len(a.session.Messages) - 1; i >= 0; i-- {
-		m := &a.session.Messages[i]
-		if m.Role != state.RoleAssistant || strings.TrimSpace(m.Reasoning) == "" {
-			continue
-		}
-		m.ReasoningExpanded = !m.ReasoningExpanded
-		a.chat.InvalidateMessage(view.MessageKey(*m))
-		a.chat.SetMessages(a.session.Messages)
-		a.layout()
-		return true
-	}
-	return false
 }

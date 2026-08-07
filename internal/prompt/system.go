@@ -58,6 +58,11 @@ func mustLoadPromptFile(name string) string {
 	return s
 }
 
+// LoadEmbedded returns an embedded prompt file by name (e.g. "auto-router.txt"), or "".
+func LoadEmbedded(name string) string {
+	return loadPromptFile(name)
+}
+
 // BuildToolDescription returns the embedded tool prompt for name (e.g. "todowrite", "task")
 // or fallback when no file exists.
 func BuildToolDescription(name, fallback string) string {

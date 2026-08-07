@@ -294,4 +294,4 @@ lsp:
 - Enforced validation state machine in agent.Run
 - RAM watchdog queue
 - `textDocument/didSave` semantics
-- Polyglot default configs (pyright, tsserver) in `orchestra init`
+- Polyglot default configs + **auto-download LS** — см. отдельный план: [`lsp-auto-provision.md`](./lsp-auto-provision.md) (TUI-first)

@@ -9,7 +9,8 @@ import (
 )
 
 // Input is the bottom editor — direct port of OpenCode's editor.View().
-//   style.Render(">") + textarea.View()
+//
+//	style.Render(">") + textarea.View()
 type Input struct {
 	ta        textarea.Model
 	width     int
@@ -62,6 +63,9 @@ func NewInput(width int) Input {
 	ta.Prompt = " "
 	ta.ShowLineNumbers = false
 	ta.CharLimit = -1
+	// Unlimited logical lines — default MaxHeight=99 silently drops newlines
+	// after the 99th line during paste / InsertNewline.
+	ta.MaxHeight = 0
 	ta.SetWidth(width - 2) // " >" prompt occupies 2 cols
 	ta.SetHeight(1)
 

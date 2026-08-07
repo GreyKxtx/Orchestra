@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/patches"
-	"github.com/orchestra/orchestra/internal/ops"
-	"github.com/orchestra/orchestra/internal/fsutil"
-	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/relpath"
 )
 

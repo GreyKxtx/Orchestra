@@ -1,4 +1,5 @@
 package sessionfile
 
 // Version is the on-disk session schema version (unified TUI + core).
-const Version = 2
+// v3 adds chronological UIMessage.segments (assistant parts).
+const Version = 3

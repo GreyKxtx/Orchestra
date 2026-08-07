@@ -114,6 +114,7 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 		toolTodoRead(),
 		toolMemoryWrite(),
 		toolMemoryRead(),
+		toolMemorySearch(),
 		toolLSPDefinition(),
 		toolLSPReferences(),
 		toolLSPHover(),
@@ -146,12 +147,12 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 var parallelSafeTools = map[string]bool{
 	"ls": true, "read": true, "glob": true, "grep": true,
 	"symbols": true, "explore": true, "repo_map": true,
-	"runtime_query": true,
+	"runtime_query":   true,
 	"semantic_search": true,
-	"webfetch": true, "websearch": true,
+	"webfetch":        true, "websearch": true,
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true, "lsp.diagnostics": true,
 	"diff.preview": true,
-	"git.status": true, "git.diff": true, "git.log": true,
+	"git.status":   true, "git.diff": true, "git.log": true,
 	"browser.snapshot": true, "browser.screenshot": true,
 	"gh.pr.list": true, "gh.pr.view": true, "gh.issue.list": true, "gh.issue.view": true,
 }
@@ -159,14 +160,14 @@ var parallelSafeTools = map[string]bool{
 var mutatingTools = map[string]bool{
 	"write": true, "edit": true,
 	"bash": true, "bash.output": true, "bash.kill": true,
-	"todowrite": true, "todoread": true, "memory_write": true, "memory_read": true,
+	"todowrite": true, "todoread": true, "memory_write": true, "memory_read": true, "memory_search": true,
 	"lsp.rename": true,
-	"plan_exit": true,
+	"plan_exit":  true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
-	"question": true,
+	"question":  true,
 	"fs.delete": true, "fs.rename": true, "ast_rename": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
-	"gh.pr.create": true,
+	"gh.pr.create":     true,
 	"browser.navigate": true, "browser.click": true, "browser.type": true,
 	"browser.fill": true, "browser.select": true, "browser.eval": true,
 	"browser.wait": true, "browser.close": true,
@@ -625,8 +626,22 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 		return listToolsPlan(hasSubtasks, hasQuestionAsker)
 	case "explore":
 		return listToolsExplore()
+	case "ask":
+		return listToolsAsk(hasQuestionAsker)
+	case "debug":
+		return listToolsDebug(caps, hasSubtasks, hasQuestionAsker)
+	case "architecture":
+		return listToolsArchitecture(hasSubtasks, hasQuestionAsker)
 	case "general":
 		return listToolsGeneral(caps, hasSubtasks)
+	case "orchestra":
+		return listToolsOrchestra(hasSubtasks, hasQuestionAsker)
+	case "worker":
+		return listToolsWorker(caps)
+	case "agent":
+		// Mode agent is resolved to build|plan|explore|ask before tool listing;
+		// if still seen here, treat as build.
+		return listToolsBuild(caps, hasSubtasks, hasQuestionAsker)
 	case "compaction", "title", "summary":
 		return []llm.ToolDef{} // pure LLM output, no tools needed
 	default: // "build" or ""
@@ -638,7 +653,7 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
@@ -673,10 +688,61 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsExplore() []llm.ToolDef {
 	return applyParallelFlags([]llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(),
-		toolSearchText(), toolCodeSymbols(), toolTaskResult(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
 		// lsp.rename excluded: explore mode is read-only.
+		// task_result is appended for child explore via childToolsForSubagent.
 	})
+}
+
+// listToolsAsk is Q&A read-only (stricter than explore: includes question when available).
+func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+	}
+	if hasQuestionAsker {
+		out = append(out, toolQuestion())
+	}
+	return applyParallelFlags(out)
+}
+
+// listToolsArchitecture is design-only: plan md writes + research + optional research spawn.
+func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		toolGitStatus(), toolGitLog(), toolGitDiff(),
+	}
+	if hasSubtasks {
+		out = appendSubtaskTools(out)
+	}
+	if hasQuestionAsker {
+		out = append(out, toolQuestion())
+	}
+	return applyParallelFlags(out)
+}
+
+// listToolsDebug is root-cause focused: full read/write + LSP + optional worker/explore spawn.
+func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
+		toolGitStatus(), toolGitLog(), toolGitDiff(),
+	}
+	out = appendCapabilityTools(out, caps)
+	if hasSubtasks {
+		out = appendSubtaskTools(out)
+	}
+	if hasQuestionAsker {
+		out = append(out, toolQuestion())
+	}
+	return applyParallelFlags(out)
 }
 
 // listToolsGeneral returns tools for the "general" multi-step execution subagent.
@@ -686,7 +752,7 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolTaskResult(),
+		toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), toolTaskResult(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
 		toolGitStatus(), toolGitLog(), toolGitDiff(),
 	}
@@ -697,8 +763,38 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	return applyParallelFlags(out)
 }
 
+// listToolsOrchestra is the Lead planner surface: research + plan write + task spawn, no production edit.
+func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		toolGitStatus(), toolGitLog(), toolGitDiff(),
+	}
+	if hasSubtasks {
+		out = appendSubtaskTools(out)
+	}
+	if hasQuestionAsker {
+		out = append(out, toolQuestion())
+	}
+	return applyParallelFlags(out)
+}
+
+// listToolsWorker is the atomic implementer: edit/write + LSP, no nested spawn.
+func listToolsWorker(caps Capabilities) []llm.ToolDef {
+	out := []llm.ToolDef{
+		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
+		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(),
+		toolTaskResult(),
+		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+	}
+	out = appendCapabilityTools(out, caps)
+	return applyParallelFlags(out)
+}
+
 func toolTask() llm.ToolDef {
-	fallback := "Запустить дочернего агента для подзадачи (синхронно: spawn+wait). Укажи subagent_type: explore (read-only) или general (read/write)."
+	fallback := "Run a child agent synchronously (spawn+wait). subagent_type: explore|ask|debug|architecture|general|worker. For worker, set tier (complex|focused|micro) and pass a WorkOrder JSON in prompt."
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
@@ -707,16 +803,22 @@ func toolTask() llm.ToolDef {
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
-  "required": ["prompt"],
+  "anyOf": [
+    { "required": ["prompt"] },
+    { "required": ["goal"] }
+  ],
   "properties": {
     "description": { "type": "string", "description": "Short 3-5 word label" },
-    "prompt": { "type": "string", "minLength": 1, "description": "Detailed task for the child agent" },
-    "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt" },
+    "prompt": { "type": "string", "minLength": 1, "description": "Detailed task or WorkOrder JSON for the child (or use goal)" },
+    "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt — provide exactly one of prompt/goal" },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "general"],
+      "enum": ["explore", "ask", "debug", "architecture", "general", "worker"],
       "description": "Child agent mode (default: explore)"
     },
+    "tier": { "type": "string", "description": "Orchestra worker tier name (complex|focused|micro)" },
+    "provider": { "type": "string", "description": "Optional named providers: map entry for child LLM" },
+    "model": { "type": "string", "description": "Optional model id override for child LLM" },
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
     "timeout_ms": { "type": "integer", "minimum": 0, "description": "Wait timeout (default 120000)" }
   }
@@ -730,18 +832,25 @@ func toolTaskSpawn() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_spawn",
-			Description: "Создать дочернюю задачу для независимого исследования. Возвращает task_id. Используй task_wait для получения результата.",
+			Description: "Spawn a child task asynchronously. Returns task_id. Use task_wait for the result.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
+  "anyOf": [
+    { "required": ["goal"] },
+    { "required": ["prompt"] }
+  ],
   "properties": {
-    "goal": { "type": "string", "minLength": 1 },
+    "goal": { "type": "string", "minLength": 1, "description": "Provide exactly one of goal/prompt" },
     "prompt": { "type": "string", "minLength": 1, "description": "Alias for goal" },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "general"],
+      "enum": ["explore", "ask", "debug", "architecture", "general", "worker"],
       "description": "Child agent mode (default: explore)"
     },
+    "tier": { "type": "string", "description": "Orchestra worker tier name" },
+    "provider": { "type": "string" },
+    "model": { "type": "string" },
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
     "timeout_ms": { "type": "integer", "minimum": 0 }
   }
@@ -804,6 +913,9 @@ func toolTaskResult() llm.ToolDef {
 		},
 	}
 }
+
+// ToolTaskResult is the public task_result tool (appended to child subagent tool lists).
+func ToolTaskResult() llm.ToolDef { return toolTaskResult() }
 
 func toolRuntimeQuery() llm.ToolDef {
 	return llm.ToolDef{
@@ -928,7 +1040,7 @@ func toolMemoryWrite() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_write",
-			Description: "Сохранить факт в постоянную память. scope=project → .orchestra/memory/agent.md (между сессиями). scope=session → память текущей сессии. Для временных задач — todowrite.",
+			Description: "Сохранить факт в постоянную память. scope=project → .orchestra/memory/agent.md. Начните с [pin] для sticky facts. scope=session → память сессии.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -961,13 +1073,32 @@ func toolMemoryRead() llm.ToolDef {
 	}
 }
 
+func toolMemorySearch() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "memory_search",
+			Description: "Поиск по слоям памяти (agent.md, session, global, ORCHESTRA.md) по подстроке. Для точных фактов без полного memory_read.",
+			Parameters: mustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string", "minLength": 1, "description": "Подстрока поиска" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Макс. хитов (default 8)" }
+  }
+}`),
+		},
+	}
+}
+
 // allToolDefsMap returns a map of every known tool definition keyed by its
 // short canonical name (the name the LLM sees).
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
 		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), ToolASTRename(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), ToolASTRename(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
 		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),

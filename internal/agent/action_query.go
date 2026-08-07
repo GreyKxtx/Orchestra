@@ -10,7 +10,10 @@ import (
 // tool calls (edit/write) rather than a conversational final answer.
 func queryRequiresCodeChanges(query string, todos []tools.TodoItem, mode Mode) bool {
 	switch mode {
-	case ModeExplore, ModeCompaction, ModeTitle, ModeSummary:
+	case ModeExplore, ModeAsk, ModePlan, ModeArchitecture, ModeOrchestra,
+		ModeCompaction, ModeTitle, ModeSummary:
+		// Read-only / planning modes must never be forced into edit/write by
+		// action phrasing in the user query ("исправь", "fix", …).
 		return false
 	}
 	for _, t := range todos {

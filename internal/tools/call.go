@@ -267,6 +267,17 @@ func (r *Runner) callImpl(ctx context.Context, name string, input json.RawMessag
 		}
 		return mustJSON(resp)
 
+	case "memory_search":
+		var req MemorySearchRequest
+		if err := decodeToolInput(input, &req); err != nil {
+			return nil, err
+		}
+		resp, err := r.MemorySearch(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return mustJSON(resp)
+
 	case "runtime_query":
 		var req RuntimeQueryRequest
 		if err := decodeToolInput(input, &req); err != nil {

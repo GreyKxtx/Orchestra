@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -44,6 +46,10 @@ func (a *App) renderWelcomeView() string {
 	hintsBold := lipgloss.NewStyle().Foreground(t.Text()).Bold(true)
 	hintsText := hintsBold.Render("tab") + hintsMuted.Render(" agents  ") +
 		hintsBold.Render("ctrl+k") + hintsMuted.Render(" commands")
+	if n := countSessions(a.cfg.WorkspaceRoot); n > 0 {
+		hintsText += "  " + hintsBold.Render("ctrl+s") +
+			hintsMuted.Render(fmt.Sprintf(" sessions · %d", n))
+	}
 	hints := lipgloss.NewStyle().Width(boxWidth).Padding(0, 2).Align(lipgloss.Right).Render(hintsText)
 
 	// Slash/mention palette appears ABOVE the input box (when active).
@@ -99,6 +105,11 @@ func (a *App) modeProviderLine(bg lipgloss.Color) string {
 	if mode == "" {
 		mode = "build"
 	}
+	if a.routeBadge != "" && strings.HasPrefix(a.routeBadge, mode) {
+		mode = a.routeBadge
+	} else if a.routeBadge != "" && mode == "agent" {
+		mode = a.routeBadge
+	}
 	model := a.cfg.Model
 	if model == "" {
 		model = "no model"
@@ -109,22 +120,49 @@ func (a *App) modeProviderLine(bg lipgloss.Color) string {
 	if bg != "" {
 		base = base.Background(bg)
 	}
-	modeStyle := base.Foreground(view.ModeColor(mode)).Bold(true)
+	accentMode := a.cfg.Mode
+	if accentMode == "" {
+		accentMode = "build"
+	}
+	modeStyle := base.Foreground(view.ModeColor(accentMode)).Bold(true)
 	modelStyle := base.Foreground(t.Text()).Bold(true)
 	muted := base.Foreground(t.TextMuted())
 	dot := muted.Render(" · ")
 
-	return modeStyle.Render(mode) + dot + modelStyle.Render(model) + dot + muted.Render(provider) + dot + a.shellPermsSpan(muted)
+	modeLabel := mode
+	if a.routeBadge != "" && (a.cfg.Mode == "agent" || strings.HasPrefix(a.routeBadge, "agent→")) {
+		modeLabel = a.routeBadge
+	}
+	if a.cfg.Mode == "orchestra" {
+		modeLabel = "orchestra · lead"
+	}
+	if a.cfg.Mode == "architecture" {
+		modeLabel = "architecture"
+	}
+
+	line := modeStyle.Render(modeLabel) + dot + modelStyle.Render(model) + dot + muted.Render(provider) + dot + a.shellPermsSpan(muted)
+	if a.turn.ShowBusySpinner() && !a.turnStartedAt.IsZero() {
+		line += dot + muted.Render(formatTurnElapsed(time.Since(a.turnStartedAt)))
+	}
+	return line
+}
+
+// formatTurnElapsed prints compact elapsed for the input-box status row.
+func formatTurnElapsed(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	return view.FormatDuration(d)
 }
 
 // shellPermsSpan renders shell permission mode for the input-box status row.
-// Labels follow the usual CLI wording (ask vs allow), not the internal tool name.
+// Only the mode (ask|allow) — "shell ·" prefix is redundant next to mode/model.
 func (a *App) shellPermsSpan(muted lipgloss.Style) string {
 	t := view.ThemeForApp()
 	if a.allowExec {
-		return lipgloss.NewStyle().Foreground(t.Success()).Render("shell · allow")
+		return lipgloss.NewStyle().Foreground(t.Success()).Render("allow")
 	}
-	return muted.Render("shell · ask")
+	return muted.Render("ask")
 }
 
 // providerDisplayName returns a human-readable provider name for the welcome

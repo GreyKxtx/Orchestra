@@ -19,8 +19,8 @@ func estimateMessageSize(msg llm.Message) int {
 	return history.EstimateMessageSize(msg)
 }
 
-func pruneRetroactiveToolHistory(messages []llm.Message, digestBudget, keepRecent int) []llm.Message {
-	return history.PruneRetroactiveToolHistory(messages, digestBudget, keepRecent)
+func pruneRetroactiveToolHistory(messages []llm.Message, digestBudget, keepRecent int, protectPaths ...string) []llm.Message {
+	return history.PruneRetroactiveToolHistory(messages, digestBudget, keepRecent, protectPaths...)
 }
 
 func formatToolsCatalog(defs []llm.ToolDef) string {

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/cache"
 )
 
 func TestResolveExternalPatches_SearchReplace_ToOps_Apply(t *testing.T) {

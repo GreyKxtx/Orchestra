@@ -30,6 +30,47 @@ func TestDigestToolOutput_SmallPassthrough(t *testing.T) {
 	}
 }
 
+func TestDigestToolOutput_PreservesErrorShape(t *testing.T) {
+	// Same shape agent.formatToolErrorJSON produces for a failed "bash" call.
+	errMsg := strings.Repeat("compile failed: undefined symbol foo ", 200)
+	raw, _ := json.Marshal(map[string]any{
+		"status": "error",
+		"tool":   "bash",
+		"code":   "TOOL_ERROR",
+		"error":  errMsg,
+		"input":  map[string]any{"command": "go build ./..."},
+	})
+	out, digested := DigestToolOutput("bash", json.RawMessage(`{"command":"go build ./..."}`), raw, 200)
+	if !digested {
+		t.Fatal("expected digest (raw exceeds budget)")
+	}
+	if !strings.Contains(out, "status: error") {
+		t.Fatalf("expected preserved status, got: %s", out)
+	}
+	if !strings.Contains(out, "code: TOOL_ERROR") {
+		t.Fatalf("expected preserved code, got: %s", out)
+	}
+	if !strings.Contains(out, "undefined symbol foo") {
+		t.Fatalf("expected preserved error text, got: %s", out)
+	}
+}
+
+func TestDigestToolOutput_PreservesDeniedShape(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"status": "denied",
+		"tool":   "write",
+		"reason": strings.Repeat("ask mode is read-only; blocked write to protected path ", 20),
+		"input":  map[string]any{"path": "a.go"},
+	})
+	out, digested := DigestToolOutput("write", json.RawMessage(`{"path":"a.go"}`), raw, 100)
+	if !digested {
+		t.Fatal("expected digest (raw exceeds budget)")
+	}
+	if !strings.Contains(out, "status: denied") || !strings.Contains(out, "ask mode is read-only") {
+		t.Fatalf("expected preserved denial reason, got: %s", out)
+	}
+}
+
 func TestAutoMemoryNote_Explore(t *testing.T) {
 	in := json.RawMessage(`{"symbol_name":"Agent.Run"}`)
 	note := AutoMemoryNote("explore", in, "[digest]\n- location: agent.go:403-520\n")

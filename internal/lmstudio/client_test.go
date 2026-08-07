@@ -78,3 +78,33 @@ func TestListModels_Unreachable(t *testing.T) {
 		t.Error("expected error for unreachable server")
 	}
 }
+
+func TestListModels_V1MaxModelLen(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v0/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"Qwen/Qwen3.6-27B-FP8","object":"model","max_model_len":51200}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := lmstudio.NewClient(srv.URL, "")
+	models, err := client.ListModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].MaxContextLength != 51200 {
+		t.Fatalf("got %+v", models)
+	}
+	n, err := client.FindModelContext("qwen/qwen3.6-27b-fp8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 51200 {
+		t.Fatalf("FindModelContext = %d", n)
+	}
+}

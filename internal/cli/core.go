@@ -71,6 +71,8 @@ func runCore(cmd *cobra.Command, args []string) error {
 	// Pre-populate the CKG in the background so the first explore/FetchCKGContext
 	// call doesn't pay the full initial scan cost.
 	c.WarmupCKG(ctx)
+	// Detect languages and auto-install missing language servers (lsp.auto_install).
+	c.WarmupLSP(ctx)
 
 	// Optional HTTP debug server.
 	if coreHTTP {

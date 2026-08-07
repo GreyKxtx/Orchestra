@@ -19,10 +19,14 @@ type SlashCmd struct {
 // Sorted alphabetically — opencode style.
 var AllSlashCmds = []SlashCmd{
 	{"/clear", "очистить историю чата"},
+	{"/compact", "сжать LLM-контекст сессии"},
 	{"/diff", "diff последнего commit"},
 	{"/help", "показать команды и клавиши"},
+	{"/mcp", "MCP servers: add / edit / test"},
+	{"/memory", "показать слои памяти проекта"},
 	{"/mode", "текущий режим агента"},
 	{"/model", "текущая модель"},
+	{"/orchestra", "planner + worker tiers"},
 	{"/quit", "выйти из Orchestra TUI"},
 	{"/sessions", "сохранённые сессии"},
 	{"/shell", "права на shell: ask ↔ allow"},

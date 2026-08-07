@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
@@ -77,16 +77,13 @@ type settingsField struct {
 }
 
 func (d *SettingsDialog) fields() []settingsField {
-	out := []settingsField{
+	return []settingsField{
 		{label: "Temperature", kind: "temp"},
 		{label: "Max tokens", kind: "tokens"},
 		{label: "Context length", kind: "ctx"},
 		{label: "Enable thinking", kind: "thinking"},
+		{label: "API key", kind: "apikey"},
 	}
-	if d.provider.NeedsKey {
-		out = append(out, settingsField{label: "API key", kind: "apikey"})
-	}
-	return out
 }
 
 // Update implements Dialog.
@@ -119,6 +116,7 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		return d, dialogResultCmd("settings", "cancel", nil)
 	case "enter":
 		d.commitEdit()
+		d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
 		return d, dialogResultCmd("settings", "save", SettingsDialogResult{
 			Provider:       d.provider,
 			Model:          d.model,
@@ -135,20 +133,26 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.apiKey = d.apiKey[:len(d.apiKey)-1]
 		}
 	default:
-		if len(km.Runes) == 1 {
-			r := km.Runes[0]
-			switch kind {
-			case "temp":
+		if len(km.Runes) == 0 {
+			break
+		}
+		// Paste may arrive as many runes in one KeyMsg (Windows Terminal).
+		chunk := string(km.Runes)
+		switch kind {
+		case "temp":
+			for _, r := range km.Runes {
 				if isTempRune(r) {
 					d.editBuf += string(r)
 				}
-			case "tokens", "ctx":
+			}
+		case "tokens", "ctx":
+			for _, r := range km.Runes {
 				if unicode.IsDigit(r) {
 					d.editBuf += string(r)
 				}
-			case "apikey":
-				d.editBuf += string(r)
 			}
+		case "apikey":
+			d.editBuf += chunk
 		}
 	}
 	return d, nil
@@ -170,11 +174,12 @@ func (d *SettingsDialog) commitEdit() {
 		}
 	case "tokens":
 		if v, err := strconv.Atoi(d.editBuf); err == nil {
-			d.maxTokens = clampTokens(v)
+			d.maxTokens = clampTokensForCtx(v, d.numCtx)
 		}
 	case "ctx":
 		if v, err := strconv.ParseInt(d.editBuf, 10, 64); err == nil {
 			d.numCtx = clampCtx(v, d.model.MaxContextLength)
+			d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
 		}
 	case "apikey":
 		d.apiKey = d.editBuf
@@ -202,6 +207,25 @@ func clampTokens(v int) int {
 	return v
 }
 
+// clampTokensForCtx keeps max_tokens below the context window. Does not
+// statically reserve half the window (LM Studio style): only a tiny floor for
+// the prompt. Per-request fitting is done in the LLM client.
+func clampTokensForCtx(tokens int, numCtx int64) int {
+	tokens = clampTokens(tokens)
+	if numCtx <= 0 {
+		return tokens
+	}
+	const promptFloor = 256
+	capTok := numCtx - promptFloor
+	if capTok < promptFloor {
+		capTok = promptFloor
+	}
+	if int64(tokens) > capTok {
+		return int(capTok)
+	}
+	return tokens
+}
+
 func clampCtx(v, maxModel int64) int64 {
 	if v < 1024 {
 		return 1024
@@ -224,7 +248,7 @@ func (d *SettingsDialog) adjustField(kind string, dir int) {
 		if d.maxTokens >= 16384 {
 			step = 4096
 		}
-		d.maxTokens = clampTokens(d.maxTokens + dir*step)
+		d.maxTokens = clampTokensForCtx(d.maxTokens+dir*step, d.numCtx)
 	case "ctx":
 		step := int64(2048)
 		if d.numCtx >= 32768 {
@@ -234,6 +258,7 @@ func (d *SettingsDialog) adjustField(kind string, dir int) {
 			step = 32_768
 		}
 		d.numCtx = clampCtx(d.numCtx+int64(dir)*step, d.model.MaxContextLength)
+		d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
 	case "thinking":
 		d.enableThinking = !d.enableThinking
 	}

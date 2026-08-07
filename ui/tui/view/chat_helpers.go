@@ -68,6 +68,11 @@ func matchJSONObject(s string, start int) int {
 	return -1
 }
 
+// FormatDuration prints a compact duration: 800ms → "800ms", 65s → "1m 5s".
+func FormatDuration(d time.Duration) string {
+	return formatDuration(d)
+}
+
 // formatDuration prints a compact duration: 800ms → "0.8s", 65s → "1m 5s".
 func formatDuration(d time.Duration) string {
 	switch {

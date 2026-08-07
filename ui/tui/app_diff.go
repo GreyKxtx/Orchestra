@@ -42,6 +42,7 @@ func (a *App) showCommitDiff() {
 	a.layout()
 	a.updateStatusHints()
 }
+
 // syncDiffStateFromSession rebuilds lastCommitDiff from RoleDiff messages so
 // /diff and d work after session reopen.
 func (a *App) syncDiffStateFromSession() {

@@ -21,7 +21,7 @@
 | Providers | Anthropic API + OpenAI-совместимые провайдеры (LM Studio, vLLM…) | ✅ |
 | Eval | YAML-задачи, изолированные воркспейсы, `orchestra eval` | ✅ |
 | Prompt Pipeline | go:embed .txt промпты, маршрутизация по семейству модели (anthropic/gpt/gemini/kimi/local) | ✅ |
-| Agent Modes | 7 режимов: build, plan, explore, general, compaction, title, summary | ✅ |
+| Agent Modes | build, plan, explore, ask, debug, architecture, agent, orchestra, worker, … | ✅ |
 | Prompt Caching | Anthropic `cache_control: ephemeral` — экономия ~90% токенов с шага 2 | ✅ |
 | Lazy Instructions | Автоматическое обнаружение `ORCHESTRA.md` при чтении файлов | ✅ |
 | Line Numbers | `fs.read` возвращает контент с номерами строк для точных edit-ссылок | ✅ |

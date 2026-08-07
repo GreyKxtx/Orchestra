@@ -19,7 +19,12 @@ func TestQueryRequiresCodeChanges(t *testing.T) {
 		{"население не грузится, поиск не работает", nil, ModeBuild, true},
 		{"hello", nil, ModeExplore, false},
 		{"implement feature", nil, ModeExplore, false},
+		{"fix the bug", nil, ModeAsk, false},
+		{"исправь поиск", nil, ModePlan, false},
+		{"add feature", nil, ModeArchitecture, false},
+		{"fix login", nil, ModeOrchestra, false},
 		{"", []tools.TodoItem{{ID: "1", Content: "x", Status: tools.TodoInProgress}}, ModeBuild, true},
+		{"", []tools.TodoItem{{ID: "1", Content: "x", Status: tools.TodoInProgress}}, ModeAsk, false},
 	}
 	for _, tt := range tests {
 		got := queryRequiresCodeChanges(tt.query, tt.todos, tt.mode)

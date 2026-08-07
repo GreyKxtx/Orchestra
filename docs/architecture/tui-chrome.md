@@ -30,7 +30,7 @@
 
 ## Interaction
 
-- **Ctrl+T** — cascade: expand tools → toggle diff → open Tasks (if any). Open Tasks panel → close first.
+- **Ctrl+T** — Tasks when todos exist; else expand tools → toggle diff. Open Tasks → close first.
 - **`t` (пустой input)** — Tasks если есть todos; иначе тот же cascade.
 - **`d` / Ctrl+D (пустой input)** — показать/скрыть inline diff.
 - **Ctrl+R** — свернуть/развернуть Thinking (CoT).

@@ -77,7 +77,7 @@ Use `--skill <name>` (CLI-driven) when you want to commit a whole run to one ski
 
 ## Rules
 
-- `name` and `description` are required; `name` must not collide with a built-in mode (`build`, `plan`, `explore`, `general`, `compaction`, `title`, `summary`) or with any entry in `agents:` in `.orchestra.yml`.
+- `name` and `description` are required; `name` must not collide with a built-in mode (`build`, `plan`, `explore`, `ask`, `debug`, `architecture`, `general`, `agent`, `orchestra`, `worker`, `compaction`, `title`, `summary`) or with any entry in `agents:` in `.orchestra.yml`.
 - `tools` is optional; when omitted the skill inherits the full build toolset. When set, every name must be in the same allow-list as inline `agents:` (see `config.ValidAgentTool`).
 - `model` is optional; overrides the model on the selected provider.
 - `provider` is optional; must reference a key in the top-level `providers:` map in `.orchestra.yml`.

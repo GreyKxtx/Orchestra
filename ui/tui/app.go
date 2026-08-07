@@ -2,17 +2,21 @@
 //
 // The code is split into focused files for maintainability:
 //
-//	app.go            — Config, App struct, tea.Msg types, NewApp, Init,
-//	                    tick/fetch cmds, Run entry-point.
-//	app_update.go     — Update + routeKey + handleEnter.
-//	app_view.go       — View dispatcher, layout, renderInputBox, renderThinkingLine,
-//	                    cycleAgentMode, updateStatusHints.
-//	app_welcome.go    — welcome view + welcomeModeLine + bottom bar.
-//	app_rpc.go        — RPC stream handlers, <think>...</think> splitter.
-//	app_dialogs.go    — dialog stack + handleDialogResult + settings/respawn.
-//	app_palette.go    — slash/mention palettes, command modal, executePaletteCmd.
-//	app_onboarding.go — provider/model/settings wizard.
-//	app_session.go    — session record persist/load.
+//	app.go              — Config, App struct, tea.Msg types, NewApp, Init, Run
+//	app_update.go       — Update dispatcher
+//	app_keys.go         — routeKey / Enter / selection / scroll
+//	app_chrome_keys.go  — Ctrl+T/R, bare d/t, chrome cascade
+//	app_mouse.go        — mouse handlers
+//	app_layout.go       — layout()
+//	app_diff.go         — commit diff toggle / restore
+//	app_status.go       — chromeMetrics sync + prefs
+//	app_view.go         — View + input chrome + hints
+//	app_rpc.go          — RPC stream handlers
+//	app_dialogs.go      — dialog stack
+//	app_palette.go      — slash/mention palettes
+//	app_onboarding.go   — provider/model wizard
+//	app_session.go      — session persist/load
+//	app_todos/turn/…    — chrome helpers
 package tui
 
 import (
@@ -22,6 +26,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/lmstudio"
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
@@ -52,8 +57,8 @@ type App struct {
 	input     view.Input
 	statusBar view.StatusBar
 
-	taskPanel    *view.TaskPanel
-	todos        []rpcclient.TodoItem
+	taskPanel     *view.TaskPanel
+	todos         []rpcclient.TodoItem
 	taskPanelOpen bool
 
 	width       int
@@ -66,17 +71,9 @@ type App struct {
 	lastCommitDiff []rpcclient.FileDiff // diff from last auto-commit (for /diff)
 	diffShown      bool                 // true while diff messages are in session
 	turn           *state.TurnFSM       // turn lifecycle FSM (M3)
+	turnError      string
 
-	// sessionTokens accumulates prompt+completion across the whole session (cost/stats).
-	sessionTokens     int
-	// promptTokensUsed is the last LLM step prompt size — drives the ctx bar.
-	promptTokensUsed  int
-	livePromptTokens  int // current step prompt tokens while a turn is running
-	turnError         string
-	sessionCostUSD    float64
-	modelContextLimit int
-	lspStatus         string // off | idle | active
-	showCost          bool
+	chrome chromeMetrics
 
 	permModal     *view.Modal         // non-nil while an exec.run permission request is pending
 	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
@@ -117,6 +114,14 @@ type App struct {
 	// Top of stack receives input and is rendered on top of everything else.
 	dialogStack []view.Dialog
 
+	// orchFlow is set while nested provider/model dialogs edit an Orchestra role
+	// (must not save into global llm: / settings).
+	orchFlow      bool
+	orchRoleIdx   int
+	orchPending   string // provider key while picking model; "" = main
+	orchPendingP  view.ProviderEntry
+	pendingAPIKey string // from EndpointDialog; used for /v1/models fetch
+
 	// reasoning routes streamed assistant text into reasoning vs message
 	// buffers based on `<think>...</think>` tags. State persists across
 	// deltas so a tag straddling two chunks is still recognized.
@@ -144,11 +149,11 @@ type App struct {
 	toastTick int    // countdown ticks until toast clears
 
 	// Mouse state for click-to-cursor and drag selection.
-	inputRowY int  // absolute screen row of textarea content
-	inputBoxTopY int // absolute screen row of input box top (chat mode)
-	inputColX int  // absolute screen column where textarea content starts
-	chatTopY  int  // absolute screen row of the first viewport content line
-	statusBarRowY int // status bar content row (tasks chip click target)
+	inputRowY         int  // absolute screen row of textarea content
+	inputBoxTopY      int  // absolute screen row of input box top (chat mode)
+	inputColX         int  // absolute screen column where textarea content starts
+	chatTopY          int  // absolute screen row of the first viewport content line
+	statusBarRowY     int  // status bar content row (tasks chip click target)
 	mouseDown         bool // true while left button held in input area
 	mouseLastClickAt  time.Time
 	mouseLastClickPos int
@@ -158,7 +163,20 @@ type App struct {
 	// native text selection (toggled with Ctrl+G).
 	mousePassthrough bool
 
+	// pasteBurstUntil marks the end of an in-progress terminal paste. While
+	// active, Enter/Space are inserted as text (not submit / word-break), so
+	// multi-line clipboard content is not truncated mid-paste.
+	pasteBurstUntil time.Time
+	lastRuneAt      time.Time
+	// floodRunCount counts consecutive sub-pasteFloodGap single runes; a
+	// paste burst arms only after pasteFloodArmCount of them (fast typing
+	// bursts must not swallow the following Enter).
+	floodRunCount int
+
 	allowExec bool // allow bash/exec.run in agent runs
+
+	// routeBadge is set when mode=agent auto-routes (e.g. "agent→build").
+	routeBadge string
 
 	// sessionToolAllow remembers tools approved with [t] for this TUI session
 	// (ask mode still on; these tools skip the permission modal).
@@ -200,6 +218,22 @@ type settingsSavedMsg struct {
 	model    view.ModelEntry
 	numCtx   int64
 	err      error
+}
+
+// llmProbeMsg is the result of an async LLM connectivity check.
+type llmProbeMsg struct {
+	phase    string // "endpoint" | "settings" | "startup"
+	provider view.ProviderEntry
+	apiKey   string
+	result   llm.ProbeResult
+}
+
+// limitsAppliedMsg reports that server-discovered context was written to config.
+type limitsAppliedMsg struct {
+	contextTokens int
+	maxTokens     int
+	clamped       bool
+	err           error
 }
 
 // NewApp constructs an App with the given config. If cfg.Binary is non-empty,
@@ -255,7 +289,7 @@ func NewApp(cfg Config) (*App, error) {
 
 // Init satisfies tea.Model.
 func (a *App) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, a.listenForEvents(), tickCmd()}
+	cmds := []tea.Cmd{textarea.Blink, tea.EnableBracketedPaste, a.listenForEvents(), tickCmd()}
 	if a.rpc != nil {
 		cmds = append(cmds, a.startCoreSession())
 	}

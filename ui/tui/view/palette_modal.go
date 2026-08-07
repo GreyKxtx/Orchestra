@@ -24,10 +24,14 @@ var DefaultModalCommands = []ModalCommand{
 	// Agent
 	{"/provider", "сменить LLM provider", "Agent"},
 	{"/model", "модель и настройки", "Agent"},
+	{"/orchestra", "planner + worker tiers", "Agent"},
 	{"/mode", "текущий режим", "Agent"},
+	{"/mcp", "MCP servers: add / edit / test", "Agent"},
 	// Session
 	{"/sessions", "прошлые сессии", "Session"},
 	{"/clear", "очистить историю чата", "Session"},
+	{"/compact", "сжать LLM-контекст", "Session"},
+	{"/memory", "слои памяти", "Session"},
 	{"/diff", "diff последнего commit", "Session"},
 	{"/shell", "права на shell: ask ↔ allow", "Session"},
 	{"/theme", "тема: orchestra ↔ neutral", "System"},

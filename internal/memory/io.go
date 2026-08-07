@@ -153,4 +153,3 @@ func (s *Store) readByPath(path string, maxBytes int) (content, layer string, er
 	}
 	return content, layer, nil
 }
-

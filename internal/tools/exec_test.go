@@ -167,4 +167,3 @@ func TestExecRun_WorkdirTraversal_ReturnsPathTraversal(t *testing.T) {
 		t.Fatalf("expected %s, got %s", protocol.PathTraversal, coreErr.Code)
 	}
 }
-

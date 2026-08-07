@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/autorouter"
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
@@ -23,8 +24,8 @@ import (
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/pipeline"
-	"github.com/orchestra/orchestra/internal/protocol"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
@@ -76,7 +77,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&allowWeb, "allow-web", false, "Allow webfetch tool (fetches external URLs; private IPs blocked)")
 	applyCmd.Flags().BoolVar(&allowBrowser, "allow-browser", false, "Allow browser.* tools (requires Node.js and npx)")
 	applyCmd.Flags().BoolVar(&viaCore, "via-core", false, "Run via JSON-RPC core subprocess (stdio)")
-	applyCmd.Flags().StringVar(&agentMode, "mode", "", "Agent mode: plan (read-only analysis) or build (default)")
+	applyCmd.Flags().StringVar(&agentMode, "mode", "", "Agent mode: build|plan|explore|ask|debug|architecture|agent|orchestra (or custom agents: name)")
 	applyCmd.Flags().BoolVar(&pipelineMode, "pipeline", false, "Run multi-agent pipeline: Investigator → Coder → Critic")
 	applyCmd.Flags().IntVar(&pipelineMaxAttempts, "pipeline-attempts", 2, "Max Coder→Critic cycles in pipeline mode")
 	applyCmd.Flags().StringVar(&pipelineTraceID, "trace-id", "", "Trace ID for runtime evidence pre-fetch in pipeline mode")
@@ -407,6 +408,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
 			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
+			ModelContextTokens:   int(cfg.EffectiveNumCtx()),
+			CompletionMaxTokens:  cfg.LLM.MaxTokens,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			PromptFamily:         promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
 			ResponseFormat:       respFmt,
@@ -504,6 +507,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if cfg.Embed.Model != "" {
 			mcpExtraTools = append(mcpExtraTools, tools.ToolSemanticSearch())
 		}
+		mcpExtraTools = append(mcpExtraTools, tools.ToolRepoMap())
 
 		var respFmt *llm.ResponseFormat
 		if cfg.LLM.ResponseFormatType != "" {
@@ -518,6 +522,38 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
 			agentLogger = openAIClient.GetLogger()
 		}
+
+		requestedMode := agentMode
+		if strings.EqualFold(agentMode, string(agent.ModeAgent)) {
+			routerClient := llmClient
+			if getTestLLMClient() == nil && cfg.AutoRouter.ResolvedEnabled() {
+				prov := strings.TrimSpace(cfg.AutoRouter.Provider)
+				model := strings.TrimSpace(cfg.AutoRouter.Model)
+				if prov == "" {
+					prov = strings.TrimSpace(cfg.LLM.Router.FastProvider)
+				}
+				if prov != "" || model != "" {
+					if c, err := namedLLMClient(cfg, prov, model, agentLogger); err == nil {
+						routerClient = c
+					}
+				}
+			}
+			dec := autorouter.Classify(cmd.Context(), routerClient, query)
+			agentMode = dec.Mode
+			fmt.Fprintf(os.Stderr, "[auto_router] agent → %s (%.0f%%) %s\n", dec.Mode, dec.Confidence*100, dec.Reason)
+		}
+
+		if strings.EqualFold(agentMode, string(agent.ModeOrchestra)) && getTestLLMClient() == nil {
+			p := strings.TrimSpace(cfg.Orchestra.Planner.Provider)
+			m := strings.TrimSpace(cfg.Orchestra.Planner.Model)
+			if p != "" || m != "" {
+				if c, err := namedLLMClient(cfg, p, m, agentLogger); err == nil {
+					llmClient = c
+					fmt.Fprintf(os.Stderr, "[orchestra] planner %s / %s\n", p, m)
+				}
+			}
+		}
+		_ = requestedMode
 
 		// Custom agent override: look up agentMode in agents: config block.
 		var systemPromptOverride string
@@ -587,11 +623,43 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
 			MaxPromptBytes:         cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:    cfg.Agent.CompactThresholdPct,
+			ModelContextTokens:     int(cfg.EffectiveNumCtx()),
+			CompletionMaxTokens:    cfg.LLM.MaxTokens,
 			ToolDigestBytes:        cfg.Agent.ResolvedToolDigestBytes(),
 			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
 			UsageTracker:           usageTracker,
 			ProviderLabel:          providerLabelFor(cfg, applyProvider),
 			ModelLabel:             cfg.LLM.Model,
+			MaxWorkerRetries:       cfg.Orchestra.ResolvedMaxWorkerRetries(),
+			Caps: tools.Capabilities{
+				Exec:    allowExecEffective,
+				Web:     allowWebEffective,
+				Browser: allowBrowserEffective,
+			},
+			ResolveClient: func(provider, model string) (llm.Client, string, string, error) {
+				if getTestLLMClient() != nil {
+					return llmClient, provider, model, nil
+				}
+				c, err := namedLLMClient(cfg, provider, model, agentLogger)
+				if err != nil {
+					return nil, "", "", err
+				}
+				pl, ml := provider, model
+				if pl == "" {
+					pl = providerLabelFor(cfg, applyProvider)
+				}
+				if ml == "" {
+					ml = cfg.LLM.Model
+				}
+				return c, pl, ml, nil
+			},
+			ResolveTier: func(tier string) (provider, model string, ok bool) {
+				t := cfg.Orchestra.FindTier(tier)
+				if t == nil {
+					return "", "", false
+				}
+				return t.Provider, t.Model, true
+			},
 		})
 		var hooksRunner agent.HooksRunner
 		if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
@@ -621,6 +689,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
 			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
+			ModelContextTokens:   int(cfg.EffectiveNumCtx()),
+			CompletionMaxTokens:  cfg.LLM.MaxTokens,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			Apply:                !dryRun,
 			Backup:               backup,
@@ -646,9 +716,25 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MultimodalLLM:        cfg.LLM.Multimodal,
 		}
 		agent.ApplyHistoryConfig(&agOpts, cfg)
+		if getTestLLMClient() == nil {
+			fp := strings.TrimSpace(cfg.LLM.Router.FastProvider)
+			if fp == "" {
+				if _, ok := cfg.FindProvider("fast"); ok {
+					fp = "fast"
+				}
+			}
+			if fp != "" {
+				if c, err := namedLLMClient(cfg, fp, "", agentLogger); err == nil {
+					agOpts.CompactionClient = c
+					if pcfg, ok := cfg.FindProvider(fp); ok {
+						agOpts.CompactionContextTokens = llm.ContextTokensFromConfig(pcfg)
+					}
+				}
+			}
+		}
 		// Profile overlays defaults; named agents: (CustomTools / SystemPromptOverride /
 		// provider) already applied above and take precedence for those fields.
-		if err := agent.ApplyProfile(&agOpts, profileName, false); err != nil {
+		if err := agent.ApplyProfile(&agOpts, profileName, true); err != nil {
 			retErr = err
 			return retErr
 		}
@@ -993,6 +1079,36 @@ func providerNames(cfg *config.ProjectConfig) string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// namedLLMClient builds a client from providers: map and/or model override.
+func namedLLMClient(cfg *config.ProjectConfig, provider, model string, logger *llm.Logger) (llm.Client, error) {
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider != "" {
+		provCfg, ok := cfg.FindProvider(provider)
+		if !ok {
+			return nil, fmt.Errorf("provider %q not found in providers", provider)
+		}
+		if model != "" {
+			provCfg.Model = model
+		}
+		client := llm.NewClient(provCfg)
+		if oc, ok := client.(*llm.OpenAIClient); ok && logger != nil {
+			oc.SetLogger(logger)
+		}
+		return client, nil
+	}
+	if model != "" {
+		override := cfg.LLM
+		override.Model = model
+		client := llm.NewClient(override)
+		if oc, ok := client.(*llm.OpenAIClient); ok && logger != nil {
+			oc.SetLogger(logger)
+		}
+		return client, nil
+	}
+	return nil, fmt.Errorf("provider or model required")
 }
 
 // buildCLIRenderer returns an OnEvent callback that renders streaming events to stderr

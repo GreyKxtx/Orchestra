@@ -38,9 +38,10 @@
 
 **Назначение:** read-only исследование кодовой базы как дочерний агент. Запускается через `task` (sync) или `task_spawn` + `task_wait`.
 
-**Инструменты:** `ls`, `read`, `glob`, `grep`, `symbols`, `task_result`.
+**Инструменты (top-level Tab):** `ls`, `read`, `glob`, `grep`, `symbols`, `explore`, `repo_map`, LSP (без rename), `runtime_query`, `question`.
+**Child:** тот же набор + `task_result` (только у дочернего агента).
 
-**Ограничения:** нет записи, нет exec, нельзя порождать дальнейшие subtasks.
+**Ограничения:** нет записи, нет exec; nested spawn — только если режим child это допускает.
 
 **Промпт:** `explore.txt`.
 
@@ -56,7 +57,101 @@
 
 **Промпт:** `general.txt`.
 
-> **Эволюция:** `general` станет основой для режима **`worker`** в схеме Planner–Worker — см. [architecture/planner-worker.md](./architecture/planner-worker.md).
+> **Эволюция:** `general` остаётся универсальным child; для Orchestra Lead используйте `subagent_type: worker` + `tier` (и специализированные `ask` / `debug` / `architecture`).
+
+---
+
+### `ask` — вопросы по коду (read-only)
+
+**Назначение:** объяснить код / ответить на вопрос без правок. Доступен в Tab и как `subagent_type` для Lead.
+
+**Инструменты (top-level):** `ls`, `read`, `glob`, `grep`, `symbols`, `explore`, LSP (без rename), `question`.
+**Child:** + `task_result`.
+
+**Ограничения:** write/edit/bash/`skill_invoke` запрещены (tools + runtime guard). Final-guard не требует правок кода.
+
+**Промпт:** `ask.txt`.
+
+---
+
+### `debug` — поиск причины + точечный фикс
+
+**Назначение:** root cause с evidence; узкий фикс сам или через `worker`. Tab + `subagent_type`.
+
+**Инструменты (top-level):** почти как `build` (read/write/edit, LSP, todos, task spawn).
+**Child:** + `task_result`.
+
+**Промпт:** `debug.txt`.
+
+---
+
+### `architecture` — дизайн без production-правок
+
+**Назначение:** границы модулей, потоки, риски; план в `.orchestra/plans/*.md`. Tab + `subagent_type`.
+
+**Инструменты:** как `plan` + research spawn (`task`) + `plan_exit`; write только в plan-пути.
+
+**Промпт:** `architecture.txt` (`{{PLAN_PATH}}`).
+
+---
+
+### `agent` — auto-route (top-level)
+
+**Назначение:** один режим «сам реши»: классификатор выбирает `build` | `plan` | `explore` | `ask` на старте хода.
+
+**Конфиг:**
+```yaml
+auto_router:
+  enabled: true          # default true
+  provider: ""           # optional named providers: entry; empty → llm.router.fast_provider или main
+  model: ""
+```
+
+**Поведение:** `internal/autorouter` — LLM JSON one-shot + keyword heuristic fallback (explain/what-is → `ask`). Auto-router **не** выбирает `orchestra`. Explicit `--mode build|plan|explore|ask` побеждает.
+
+**TUI:** Tab включает `agent`; badge `agent→build` (effective mode) после классификации.
+
+---
+
+### `orchestra` — Lead planner (top-level, opt-in)
+
+**Назначение:** Lead декомпозирует задачу и спавнит Workers по tiers; production `edit`/`write` запрещены (как plan — только plan md).
+
+**Конфиг:**
+```yaml
+orchestra:
+  planner:
+    provider: lmstudio-reason
+    model: qwen3.6-27b
+  tiers:
+    - name: complex
+      provider: lmstudio-coder
+      model: deepseek-coder-33b
+    - name: focused
+      provider: lmstudio-mid
+      model: qwen-coder-14b
+    - name: micro
+      provider: lmstudio-fast
+      model: qwen-7b
+  default_tier: focused
+  max_worker_retries: 3
+```
+
+**Инструменты:** research + plan write + `task`/`task_spawn` (`worker|ask|debug|architecture|explore`, `tier=…` для worker) + `question`.
+
+**Промпт:** `orchestra.txt`. TUI: `/orchestra` — настройки planner/tiers; badge `orchestra · lead`. Tab: `… → agent → orchestra`.
+
+---
+
+### `worker` — atomic WorkOrder executor (child only)
+
+**Назначение:** один WorkOrder → `edit`/`write` + LSP validation loop → `task_result`. Без nested spawn.
+
+**Контекст (скорость):** worker **не** получает историю диалога родителя. Только focused goal: JSON WorkOrder (`intent` / `instructions` / `acceptance_criteria` / `constraints`). Plain-text prompt оборачивается в WorkOrder с дефолтными критериями (`FormatChildGoal`). Session memory и большой prompt budget отключены/урезаны.
+
+**Инструменты:** fs read/write/edit, grep/symbols/explore, LSP, `task_result` (+ bash если caps).
+
+**Промпт:** `worker.txt`. LLM из `orchestra.tiers[tier]` (или явные `provider`/`model` в spawn).
 
 ---
 
@@ -135,12 +230,13 @@
 
 | Режим | Статус | Описание |
 |-------|--------|---------|
-| **Planner–Worker (Lead + Worker)** | 🎯 **target** | Lead общается и планирует; Workers (subagents) имплементируют атомарные правки под AST/LSP. См. [architecture/planner-worker.md](./architecture/planner-worker.md) |
-| `worker` | ⏳ planned | Узкий subagent: WorkOrder in, validation loop, без истории чата |
-| `custom` через конфиг | ⏳ planned | Описать роль агента в `.orchestra.yml` без правки кода (анalog OpenCode `cfg.agent`) |
-| TUI-режим | ✅ done | `ui/tui/` — основной UI для Lead + Workers |
+| **Planner–Worker (`orchestra` + `worker`)** | ✅ **MVP** | Lead (`mode=orchestra`) + Workers (`subagent_type=worker`, tiers). См. [architecture/planner-worker.md](./architecture/planner-worker.md) |
+| `ask` / `debug` / `architecture` | ✅ done | Специализации (Tab + subagent для Lead); без MCP |
+| `agent` auto-router | ✅ done | Классификатор → build\|plan\|explore |
+| `custom` через `agents:` | ✅ done | Именованные агенты в `.orchestra.yml` |
+| TUI-режим | ✅ done | Tab cycle + `/orchestra` settings |
 | `critic` | ⏳ planned | Выделить роль Critic из pipeline в отдельный именованный режим |
 | `investigator` | ⏳ planned | Выделить роль Investigator из pipeline в отдельный именованный режим |
-| Fine-grained permissions | ⏳ planned | Правила allow/ask/deny per-tool и per-glob (анalog OpenCode permission ruleset) |
+| Fine-grained permissions | partial | `permissions.rules` allow/deny; ask-mode в TUI для shell |
 
-> Основной сценарий локального стека: Lead в TUI-сессии + Workers через `task`.
+> Основной сценарий локального стека: Lead в TUI (`mode=orchestra`) + Workers через `task`.

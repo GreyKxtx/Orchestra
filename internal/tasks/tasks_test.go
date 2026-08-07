@@ -210,3 +210,92 @@ func TestSpawn_MaxStepsClampedTo12(t *testing.T) {
 		}
 	}
 }
+
+func TestModeForSubagent(t *testing.T) {
+	cases := map[string]agent.Mode{
+		"":             agent.ModeExplore,
+		"explore":      agent.ModeExplore,
+		"ask":          agent.ModeAsk,
+		"debug":        agent.ModeDebug,
+		"architecture": agent.ModeArchitecture,
+		"general":      agent.ModeGeneral,
+		"worker":       agent.ModeWorker,
+	}
+	for in, want := range cases {
+		if got := modeForSubagent(in); got != want {
+			t.Errorf("modeForSubagent(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestResolveChildLLM_Tier(t *testing.T) {
+	called := false
+	r := &TaskRunner{
+		llmClient: &mockTaskResultLLM{result: "x"},
+		child: ChildAgentConfig{
+			ResolveTier: func(tier string) (string, string, bool) {
+				if tier != "micro" {
+					t.Fatalf("tier=%q", tier)
+				}
+				return "fast", "qwen-7b", true
+			},
+			ResolveClient: func(provider, model string) (llm.Client, string, string, error) {
+				called = true
+				if provider != "fast" || model != "qwen-7b" {
+					t.Fatalf("got %s/%s", provider, model)
+				}
+				return &mockTaskResultLLM{result: "child"}, provider, model, nil
+			},
+		},
+	}
+	client, pl, ml := r.resolveChildLLM(agent.SubtaskSpawnRequest{Tier: "micro"}, "worker")
+	if !called {
+		t.Fatal("ResolveClient not called")
+	}
+	if pl != "fast" || ml != "qwen-7b" {
+		t.Fatalf("labels %s/%s", pl, ml)
+	}
+	if client == nil {
+		t.Fatal("nil client")
+	}
+}
+
+func TestChildToolsForWorkerIncludesEdit(t *testing.T) {
+	defs := childToolsForSubagent("worker", tools.Capabilities{})
+	hasEdit := false
+	for _, d := range defs {
+		if d.Function.Name == "edit" {
+			hasEdit = true
+		}
+		if d.Function.Name == "task_spawn" {
+			t.Fatal("worker must not nest spawn")
+		}
+	}
+	if !hasEdit {
+		t.Fatal("worker tools missing edit")
+	}
+}
+
+func TestChildToolsForExploreHasLSP(t *testing.T) {
+	defs := childToolsForSubagent("explore", tools.Capabilities{})
+	hasHover, hasExplore, hasResult := false, false, false
+	for _, d := range defs {
+		switch d.Function.Name {
+		case "lsp.hover":
+			hasHover = true
+		case "explore":
+			hasExplore = true
+		case "task_result":
+			hasResult = true
+		}
+	}
+	if !hasHover {
+		t.Fatal("explore child should include LSP tools")
+	}
+	if !hasExplore {
+		t.Fatal("explore child should include explore tool")
+	}
+	if !hasResult {
+		t.Fatal("explore child should include task_result")
+	}
+}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,6 +10,7 @@ import (
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/sessionstore"
 	"github.com/orchestra/orchestra/ui/tui/state"
+	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
 type coreSessionStartedMsg struct {
@@ -43,27 +45,49 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	}
 	a.coreSessionID = m.sessionID
 	a.currentSessionID = m.sessionID
-	if m.restored && a.rpc != nil {
-		if got, err := a.rpc.SessionGet(context.Background(), m.sessionID); err == nil {
-			if len(a.session.Messages) == 0 && len(got.UIMessages) > 0 {
-				a.session = state.NewSession()
-				for _, msg := range stateMessagesFromUI(got.UIMessages) {
-					a.session.AppendMessage(msg)
-				}
-				a.chat.SetMessages(a.session.Messages)
-				a.showWelcome = false
-				a.chat.SetForceWelcome(false)
-			}
-			if len(got.Todos) > 0 {
-				a.setTodos(got.Todos)
-			}
-			if got.CostUSD > 0 {
-				a.sessionCostUSD = got.CostUSD
-			}
-			a.chat.SyncExpandFromMessages(a.session.Messages)
-			a.syncDiffStateFromSession()
-			a.restorePromptTokensFromSession()
-			a.updateStatusHints()
+	if a.rpc == nil {
+		return
+	}
+	// Always SessionGet after start: restored flag used to skip when only
+	// todos/plan existed; also refreshes checklist after reopen.
+	got, err := a.rpc.SessionGet(context.Background(), m.sessionID)
+	if err != nil {
+		return
+	}
+	if len(a.session.Messages) == 0 && len(got.UIMessages) > 0 {
+		a.session = state.NewSession()
+		for _, msg := range stateMessagesFromUI(got.UIMessages) {
+			a.session.AppendMessage(msg)
+		}
+		a.chat.SetMessages(a.session.Messages)
+		a.showWelcome = false
+		a.chat.SetForceWelcome(false)
+	}
+	a.setTodos(got.Todos)
+	if len(got.Todos) > 0 && a.pendingTodoCount() > 0 {
+		a.taskPanelOpen = true
+		a.taskPanel.SetOpen(true)
+		a.layout()
+	}
+	if got.CostUSD > 0 {
+		a.chrome.sessionCostUSD = got.CostUSD
+	}
+	a.chat.SyncExpandFromMessages(a.session.Messages)
+	a.syncDiffStateFromSession()
+	a.restorePromptTokensFromSession()
+	a.updateStatusHints()
+
+	// Surface whether agent LLM history actually came back. UI scrollback can
+	// look full while history_len=0 (failed turns used to skip ReplaceHistory).
+	if m.restored || got.HistoryLen > 0 || len(got.UIMessages) > 0 || len(a.session.Messages) > 0 {
+		switch {
+		case got.HistoryLen > 0:
+			a.showToast(fmt.Sprintf("session · history %d msgs", got.HistoryLen))
+		case len(a.session.Messages) > 0:
+			a.showToast("session · UI only (agent history empty)")
+			a.session.AppendSystemNotice(state.SystemKindInfo,
+				"LLM-история сессии пуста — модель не помнит прошлые tool results. Продолжение начнёт исследование заново.")
+			a.chat.SetMessages(a.session.Messages)
 		}
 	}
 }
@@ -74,6 +98,12 @@ func (a *App) runAgentTurn(ctx context.Context, query, mode string) error {
 	opts := a.agentRunOptions()
 	if a.coreSessionID != "" {
 		return a.rpc.SessionMessage(ctx, a.coreSessionID, query, mode, opts)
+	}
+	// Prefer binding to the on-disk session id so we never silently start a
+	// one-shot AgentRun that cannot restore history on the next message.
+	if sid := strings.TrimSpace(a.currentSessionID); sid != "" {
+		a.coreSessionID = sid
+		return a.rpc.SessionMessage(ctx, sid, query, mode, opts)
 	}
 	return a.rpc.AgentRun(ctx, query, mode, opts)
 }
@@ -94,7 +124,7 @@ func (a *App) persistSessionCmd() tea.Cmd {
 	}
 	id := a.currentSessionID
 	model := a.cfg.Model
-	cost := a.sessionCostUSD
+	cost := a.chrome.sessionCostUSD
 	msgs := append([]state.Message(nil), a.session.Messages...)
 	ui := uiMessagesFromState(msgs)
 	title := sessionstore.TitleFromMessages(msgs)
@@ -143,6 +173,7 @@ func (a *App) loadSession(id string) tea.Cmd {
 	a.currentSessionID = id
 	a.coreSessionID = ""
 	a.session = state.NewSession()
+	a.setTodos(nil)
 
 	rec, err := sessionstore.Load(a.cfg.WorkspaceRoot, id)
 	if err != nil {
@@ -181,14 +212,24 @@ func (a *App) restorePromptTokensFromSession() {
 		}
 		switch {
 		case m.PromptCtx > 0:
-			a.promptTokensUsed = m.PromptCtx
+			a.chrome.promptTokensUsed = m.PromptCtx
 		case m.TokensIn > 0 && (limit <= 0 || m.TokensIn <= limit):
-			a.promptTokensUsed = m.TokensIn
+			a.chrome.promptTokensUsed = m.TokensIn
 		default:
 			continue
 		}
-		a.livePromptTokens = 0
+		a.chrome.livePromptTokens = 0
 		a.syncStatusBar()
 		return
 	}
+}
+
+// openSessionsDialog lists project sessions (.orchestra/sessions) for pick/delete.
+func (a *App) openSessionsDialog() {
+	metas, err := sessionstore.List(a.cfg.WorkspaceRoot)
+	if err != nil || len(metas) == 0 {
+		a.showToast("no sessions in this project")
+		return
+	}
+	a.dialogStack = append(a.dialogStack, view.NewSessionsDialog(metas))
 }

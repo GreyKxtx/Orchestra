@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -92,6 +93,36 @@ func TestSession_AppendAndCopyHistory(t *testing.T) {
 	if hist[0].Content != "hello" {
 		t.Fatalf("unexpected content: %q", hist[0].Content)
 	}
+}
+
+func TestSession_ReplaceHistory(t *testing.T) {
+	m := session.NewManager()
+	s := m.Create()
+	s.Lock()
+	s.AppendHistory([]llm.Message{
+		{Role: llm.RoleUser, Content: "a"},
+		{Role: llm.RoleAssistant, Content: "b"},
+		{Role: llm.RoleUser, Content: "c"},
+	})
+	// Compaction rewrite: shorter prefix checkpoint.
+	s.ReplaceHistory([]llm.Message{
+		{Role: llm.RoleUser, Content: "[Session checkpoint — structured summary]\n\nGoal: done"},
+		{Role: llm.RoleAssistant, Content: "ok"},
+	})
+	hist := s.CopyHistory()
+	s.Unlock()
+	if len(hist) != 2 {
+		t.Fatalf("after replace: len=%d want 2", len(hist))
+	}
+	if !strings.Contains(hist[0].Content, "Session checkpoint") {
+		t.Fatalf("expected checkpoint, got %q", hist[0].Content)
+	}
+	s.Lock()
+	s.ReplaceHistory(nil)
+	if len(s.CopyHistory()) != 0 {
+		t.Fatal("nil replace should clear history")
+	}
+	s.Unlock()
 }
 
 func TestManager_ConcurrentIsolation(t *testing.T) {

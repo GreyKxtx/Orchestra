@@ -31,7 +31,7 @@ func TestDialogProviders_HasCommunityGateways(t *testing.T) {
 	for _, p := range DialogProviders {
 		keys[p.Key] = true
 	}
-	for _, want := range []string{"openrouter", "groq", "google", "deepseek", "custom"} {
+	for _, want := range []string{"openrouter", "groq", "google", "deepseek", "custom", "vllm"} {
 		if !keys[want] {
 			t.Fatalf("missing provider %q in catalog", want)
 		}

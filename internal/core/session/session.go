@@ -19,11 +19,11 @@ type Session struct {
 	CreatedAt    time.Time
 	LastActivity time.Time
 
-	mu          sync.Mutex
-	cancelFn    context.CancelFunc // non-nil while a turn is running
-	pendingOps  []ops.AnyOp        // ops from last dry-run turn, cleared on apply or new turn
-	todos       []tools.TodoItem   // model's working checklist, persisted across turns
-	planPath    string             // per-session plan markdown path (relative)
+	mu         sync.Mutex
+	cancelFn   context.CancelFunc // non-nil while a turn is running
+	pendingOps []ops.AnyOp        // ops from last dry-run turn, cleared on apply or new turn
+	todos      []tools.TodoItem   // model's working checklist, persisted across turns
+	planPath   string             // per-session plan markdown path (relative)
 
 	// UI projection (v2 unified session schema).
 	title       string
@@ -79,6 +79,19 @@ func (s *Session) Cancel() {
 // AppendHistory appends messages and updates LastActivity. Must be called with lock held.
 func (s *Session) AppendHistory(msgs []llm.Message) {
 	s.History = append(s.History, msgs...)
+	s.LastActivity = time.Now()
+}
+
+// ReplaceHistory replaces the full LLM history (e.g. after compaction rewrite).
+// Must be called with lock held. UIMessages are intentionally untouched.
+func (s *Session) ReplaceHistory(msgs []llm.Message) {
+	if msgs == nil {
+		s.History = make([]llm.Message, 0, 16)
+	} else {
+		out := make([]llm.Message, len(msgs))
+		copy(out, msgs)
+		s.History = out
+	}
 	s.LastActivity = time.Now()
 }
 

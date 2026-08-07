@@ -93,6 +93,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 			Prompt       string `json:"prompt"`
 			Goal         string `json:"goal"`
 			SubagentType string `json:"subagent_type"`
+			Tier         string `json:"tier"`
+			Provider     string `json:"provider"`
+			Model        string `json:"model"`
 			MaxSteps     int    `json:"max_steps"`
 			TimeoutMS    int    `json:"timeout_ms"`
 		}
@@ -117,6 +120,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 			Goal:         goal,
 			SubagentType: subagentType,
+			Tier:         strings.TrimSpace(req.Tier),
+			Provider:     strings.TrimSpace(req.Provider),
+			Model:        strings.TrimSpace(req.Model),
 			MaxSteps:     req.MaxSteps,
 			TimeoutMS:    timeoutMS,
 		})
@@ -148,6 +154,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 			Goal         string `json:"goal"`
 			Prompt       string `json:"prompt"`
 			SubagentType string `json:"subagent_type"`
+			Tier         string `json:"tier"`
+			Provider     string `json:"provider"`
+			Model        string `json:"model"`
 			MaxSteps     int    `json:"max_steps"`
 			TimeoutMS    int    `json:"timeout_ms"`
 		}
@@ -168,6 +177,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 			Goal:         goal,
 			SubagentType: subagentType,
+			Tier:         strings.TrimSpace(req.Tier),
+			Provider:     strings.TrimSpace(req.Provider),
+			Model:        strings.TrimSpace(req.Model),
 			MaxSteps:     req.MaxSteps,
 			TimeoutMS:    req.TimeoutMS,
 		})

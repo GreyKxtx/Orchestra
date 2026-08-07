@@ -31,14 +31,16 @@ Budget split in eager/hybrid: orchestra 35%, session 25%, repo 30%, global remai
 
 ## Tools
 
-- **`memory_write`** — `{ content, scope?: "project"|"session" }`
+- **`memory_write`** — `{ content, scope?: "project"|"session" }` — prefix `[pin]` for sticky facts
 - **`memory_read`** — `{ layer?, path?, max_kb? }` — list sources or read a layer
+- **`memory_search`** — `{ query, limit? }` — substring search across memory layers
 
 ## Integration
 
 - System prompt: `Agent.buildSystemPrompt()` → `memory.Store.FormatInject()`
 - Lazy: `fs.read` → `Runner.discoverInstructions()` (capped ORCHESTRA.md)
-- Session: `Core.SessionMessage` sets `session_id` on runner + agent options
+- Session: `Core.SessionMessage` sets `session_id` on runner + agent options; **ReplaceHistory** persists compaction
+- TUI: `/compact` → `session.compact`; `/memory` lists layers + pins
 
 ## History optimization (OpenCode-style)
 
@@ -46,29 +48,22 @@ Configured under `agent:` and `embed:` in `.orchestra.yml`:
 
 ```yaml
 agent:
-  tool_digest_kb: 16             # digest tool outputs larger than this (default 16; -1 = off)
-  history_prune_keep_recent: 2   # keep last N tool atoms full; older ones re-digested each step
-  auto_session_memory: true      # auto-note explore/grep into session memory
+  tool_digest_kb: 16
+  history_prune_keep_recent: 2
+  auto_session_memory: true
+  auto_summary_memory: false   # ModeSummary → project agent.md after long turns
+  working_state: true          # rule-based <working_state> (no LLM)
+  turn_digest_keep: 3          # last N digests; 0 = off
+  turn_digest_every_n: 6       # mid-run micro-summary every N steps; 0 = end only
   compact_threshold_pct: 70
-
-embed:
-  semantic_auto_explore: true    # semantic_search → auto explore(FQN) for top hits (default on)
-  semantic_auto_explore_top_k: 2
+  bytes_per_context_token: 4
 ```
 
-- **Tool digest (write-time)** — large `read`/`grep`/`explore`/`bash`/`semantic_search`/`task` results become structured digests when appended to history
-- **Retroactive prune** — at each agent step, older tool outputs in history are re-digested (last `history_prune_keep_recent` tool atoms stay full)
-- **Structured compaction** — `ModeCompaction` prompt emits Goal/Decisions/Files/Next step sections
-- **Subagent explore** — child runs with same digest/prune settings; parent receives one `[subagent:explore]` summary (Findings + Result), not raw tool spam
-- **semantic_search pipeline** — top-K hits auto-enriched with `explore_summaries`; model gets FQN + callers preview in one call
-- **CKG prefetch** — `<ckg_context>` only on **step 1** of each turn
-- **Auto session memory** — one-line notes after explore/grep (session scope)
+Rule-based digests: [`architecture/turn-digest-working-state.md`](./architecture/turn-digest-working-state.md).
+Architecture + phases: [`architecture/memory-context.md`](./architecture/memory-context.md).
 
-Template for project rules: [ORCHESTRA.template.md](./examples/ORCHESTRA.template.md)
+## Not in v1 (remaining)
 
-## Not in v1 (future)
-
-- Semantic retrieval / embeddings over memory
-- Auto-summarization of long sessions into memory
-- TUI memory editor
+- Semantic embeddings over memory (substring `memory_search` ships first)
+- Full TUI memory editor
 - Session-start hooks

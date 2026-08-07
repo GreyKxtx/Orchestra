@@ -1,4 +1,4 @@
-﻿package memory
+package memory
 
 import (
 	"fmt"
@@ -25,11 +25,11 @@ type LayerSummary struct {
 
 // ReadResult is returned by memory_read.
 type ReadResult struct {
-	Layer   string `json:"layer,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Content string `json:"content,omitempty"`
-	Entries []LayerSummary `json:"entries,omitempty"`
-	Truncated bool `json:"truncated,omitempty"`
+	Layer     string         `json:"layer,omitempty"`
+	Path      string         `json:"path,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Entries   []LayerSummary `json:"entries,omitempty"`
+	Truncated bool           `json:"truncated,omitempty"`
 }
 
 // Store reads and writes layered project memory on disk.
@@ -49,7 +49,6 @@ func NewStore(workspaceRoot, sessionID string, cfg Config) *Store {
 	}
 }
 
-
 func (s *Store) sessionFilePath() string {
 	return filepath.Join(s.workspaceRoot, ".orchestra", "memory", "sessions", s.sessionID+".md")
 }
@@ -68,7 +67,6 @@ func (s *Store) readSessionFile(maxBytes int) string {
 	}
 	return raw
 }
-
 
 func (s *Store) Append(scope, content string) (relPath string, written int, err error) {
 	content = strings.TrimSpace(content)

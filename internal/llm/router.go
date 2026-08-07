@@ -74,6 +74,26 @@ func (r *RouterClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 	return r.pick(req).Complete(ctx, req)
 }
 
+// ContextTokens reports the smallest known window among the routed clients so
+// callers budget for the worst case a request may land on.
+func (r *RouterClient) ContextTokens() int {
+	ctxOf := func(c Client) int {
+		if p, ok := c.(interface{ ContextTokens() int }); ok {
+			return p.ContextTokens()
+		}
+		return 0
+	}
+	main, fast := ctxOf(r.Main), ctxOf(r.Fast)
+	switch {
+	case main > 0 && fast > 0 && fast < main:
+		return fast
+	case main > 0:
+		return main
+	default:
+		return fast
+	}
+}
+
 // Plan implements Client. Plans always go to Main (rare/expensive enough that
 // routing isn't worth the risk).
 func (r *RouterClient) Plan(ctx context.Context, prompt string) (string, error) {

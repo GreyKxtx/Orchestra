@@ -1,4 +1,4 @@
-﻿package memory
+package memory
 
 import (
 	"os"
@@ -23,22 +23,51 @@ func (s *Store) compactAgentFile(path string) error {
 		trimmed := tailBytes(string(data), maxBytes)
 		return os.WriteFile(path, []byte(trimmed), 0644)
 	}
-	// Keep recent entries until under budget.
+	// Always keep pinned facts; fill remaining budget with recent entries.
+	var pins, rest []string
+	for _, e := range entries {
+		if IsPinnedEntry(e) {
+			pins = append(pins, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
 	var kept []string
 	total := 0
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	for _, e := range pins {
 		add := len(e) + len(entrySep)
-		if total+add > maxBytes && len(kept) > 0 {
-			break
-		}
-		kept = append([]string{e}, kept...)
+		kept = append(kept, e)
 		total += add
 	}
-	body := strings.Join(kept, entrySep)
+	for i := len(rest) - 1; i >= 0; i-- {
+		e := rest[i]
+		add := len(e) + len(entrySep)
+		if total+add > maxBytes && len(kept) > len(pins) {
+			break
+		}
+		if total+add > maxBytes && len(kept) == len(pins) {
+			// Still over budget with pins only — keep pins anyway.
+			break
+		}
+		kept = append(kept, e)
+		total += add
+		// Insert recent at end; we'll reverse non-pin portion for file order (oldest→newest).
+	}
+	// Rebuild: pins first (stable), then rest chronologically (oldest first among kept rest).
+	var restKept []string
+	for _, e := range kept {
+		if !IsPinnedEntry(e) {
+			restKept = append(restKept, e)
+		}
+	}
+	// restKept was appended newest-first; reverse to oldest-first for file.
+	for i, j := 0, len(restKept)-1; i < j; i, j = i+1, j-1 {
+		restKept[i], restKept[j] = restKept[j], restKept[i]
+	}
+	final := append(append([]string{}, pins...), restKept...)
+	body := strings.Join(final, entrySep)
 	if !strings.HasPrefix(body, "---") {
 		body = entrySep + body
 	}
 	return os.WriteFile(path, []byte(body+"\n"), 0644)
 }
-

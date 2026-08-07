@@ -38,6 +38,14 @@ type LLMConfig struct {
 	// Set "json_object" for vLLM/lm-studio; leave empty for cloud APIs.
 	ResponseFormatType string `yaml:"response_format_type"`
 
+	// ToolChoice controls the OpenAI tool_choice field when tools are present.
+	//   "" / "auto" — send "auto" (default for most providers)
+	//   "omit"      — do not send tool_choice (needed for vLLM without
+	//                 --enable-auto-tool-choice; tools are still advertised)
+	//   "none" / "required" — pass through as-is
+	// Provider "vllm" defaults to "omit" when this field is empty.
+	ToolChoice string `yaml:"tool_choice,omitempty"`
+
 	// ExtraBody contains arbitrary key-value pairs merged into every API request body.
 	// Use this to pass provider-specific parameters, e.g.:
 	//   extra_body:
@@ -87,17 +95,25 @@ type AgentConfig struct {
 	// MaxDeniedRepeats is the max repeated calls to a denied tool before giving up.
 	MaxDeniedRepeats int `yaml:"max_denied_repeats"`
 	// CompactThresholdPct triggers history compaction when history exceeds this % of MaxPromptBytes.
-	// 0 = disabled (default). Recommended: 70.
+	// 0 = use default (60). Negative (-1) = disabled.
 	CompactThresholdPct int `yaml:"compact_threshold_pct"`
+	// BytesPerContextToken calibrates prompt token estimates (default 4).
+	BytesPerContextToken int `yaml:"bytes_per_context_token,omitempty"`
 	// ToolDigestKB replaces tool outputs larger than this in LLM history with a digest (default 16). -1 = off.
 	ToolDigestKB int `yaml:"tool_digest_kb,omitempty"`
 	// HistoryPruneKeepRecent keeps the last N tool-bearing history atoms full during retroactive prune (default 2).
 	HistoryPruneKeepRecent int `yaml:"history_prune_keep_recent,omitempty"`
 	// AutoSessionMemory writes explore/grep notes to session memory automatically.
 	AutoSessionMemory *bool `yaml:"auto_session_memory,omitempty"`
+	// AutoSummaryMemory writes a ModeSummary note to project memory after long turns.
+	AutoSummaryMemory *bool `yaml:"auto_summary_memory,omitempty"`
+	// WorkingState enables <working_state> inject (default true).
+	WorkingState *bool `yaml:"working_state,omitempty"`
+	// TurnDigestKeep injects last N rule-based turn digests (default 3; 0 = off).
+	TurnDigestKeep *int `yaml:"turn_digest_keep,omitempty"`
+	// TurnDigestEveryN writes a mid-run micro-digest every N steps (default 6; 0 = end-of-run only).
+	TurnDigestEveryN *int `yaml:"turn_digest_every_n,omitempty"`
 	// Profile selects an adaptive execution preset: "" (defaults), "fast", or "precision".
-	// CLI --profile overrides this. Named agents: still take precedence over profile knobs
-	// that collide (system_prompt / tools / provider).
 	Profile string `yaml:"profile,omitempty"`
 }
 
@@ -137,8 +153,8 @@ type LimitsConfig struct {
 // ExecConfig contains exec.run safety + consent settings (vNext).
 type ExecConfig struct {
 	Confirm       *bool    `yaml:"confirm"`
-	Allow         []string `yaml:"allow,omitempty"`  // commands explicitly allowed (basename, e.g. "go", "npm")
-	Deny          []string `yaml:"deny,omitempty"`   // commands explicitly denied (takes precedence over Allow)
+	Allow         []string `yaml:"allow,omitempty"` // commands explicitly allowed (basename, e.g. "go", "npm")
+	Deny          []string `yaml:"deny,omitempty"`  // commands explicitly denied (takes precedence over Allow)
 	TimeoutS      int      `yaml:"timeout_s"`
 	OutputLimitKB int      `yaml:"output_limit_kb"`
 }
@@ -191,6 +207,25 @@ type LSPConfig struct {
 	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
 	LazyStart            *bool             `yaml:"lazy_start,omitempty"`
 	IdleTTLSeconds       *int              `yaml:"idle_ttl_seconds,omitempty"`
+	// AutoInstall controls language-server provisioning: ask | true | false.
+	// Empty default = true (auto-install after workspace language detect).
+	AutoInstall string `yaml:"auto_install,omitempty"`
+}
+
+// EffectiveAutoInstall returns ask|true|false (empty → true).
+func (c LSPConfig) EffectiveAutoInstall() string {
+	switch strings.ToLower(strings.TrimSpace(c.AutoInstall)) {
+	case "true", "yes", "1", "always":
+		return "true"
+	case "false", "no", "0", "never", "off":
+		return "false"
+	case "ask":
+		return "ask"
+	case "":
+		return "true"
+	default:
+		return "ask"
+	}
 }
 
 // MCPServerConfig configures a single MCP server (Phase 8).
@@ -269,12 +304,12 @@ type BrowserConfig struct {
 // PermissionRule is a single entry in the permission ruleset.
 // Rules are evaluated in order; the first matching rule determines the outcome.
 //
-// - tool: canonical or alias tool name, or "*" to match any tool.
-// - pattern: glob against the tool's subject (command string for bash,
-//   URL for webfetch, file path for fs tools). Omit or set to "" to match any subject.
-//   Glob syntax: standard path.Match — '*' matches any sequence of non-separator chars,
-//   '?' matches a single non-separator char. '**' is NOT supported.
-// - action: "allow" or "deny".
+//   - tool: canonical or alias tool name, or "*" to match any tool.
+//   - pattern: glob against the tool's subject (command string for bash,
+//     URL for webfetch, file path for fs tools). Omit or set to "" to match any subject.
+//     Glob syntax: standard path.Match — '*' matches any sequence of non-separator chars,
+//     '?' matches a single non-separator char. '**' is NOT supported.
+//   - action: "allow" or "deny".
 //
 // An explicit "allow" rule permits the tool call even when --allow-exec / --allow-web
 // are not set. An explicit "deny" always blocks the call with TOOL_DENIED.
@@ -318,6 +353,8 @@ type AgentDefinition struct {
 // builtInAgentModes are reserved names that cannot be used for custom agents.
 var builtInAgentModes = map[string]bool{
 	"build": true, "plan": true, "explore": true, "general": true,
+	"ask": true, "debug": true, "architecture": true,
+	"agent": true, "orchestra": true, "worker": true,
 	"compaction": true, "title": true, "summary": true,
 }
 
@@ -336,7 +373,7 @@ var validAgentToolNames = map[string]bool{
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
 	"lsp.diagnostics": true, "lsp.rename": true,
 	"diff.preview": true,
-	"git.status": true, "git.log": true, "git.diff": true,
+	"git.status":   true, "git.log": true, "git.diff": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
 	"gh.pr.list": true, "gh.pr.create": true, "gh.pr.view": true,
 	"gh.issue.list": true, "gh.issue.view": true,
@@ -396,15 +433,15 @@ type ProjectConfig struct {
 	ExcludeDirs []string `yaml:"exclude_dirs"`
 	// ContextLimit is the v0.2/v0.3 name kept for backward compatibility.
 	// Prefer Limits.ContextKB.
-	ContextLimit int             `yaml:"context_limit_kb"`
-	Limits       LimitsConfig    `yaml:"limits"`
-	LLM          LLMConfig       `yaml:"llm"`
-	Agent        AgentConfig     `yaml:"agent"`
-	Apply        ApplyConfig     `yaml:"apply,omitempty"`
-	Daemon       DaemonConfig    `yaml:"daemon"`
-	Exec         ExecConfig      `yaml:"exec"`
-	Hooks        HooksConfig     `yaml:"hooks"`
-	MCP          MCPConfig       `yaml:"mcp"`
+	ContextLimit int               `yaml:"context_limit_kb"`
+	Limits       LimitsConfig      `yaml:"limits"`
+	LLM          LLMConfig         `yaml:"llm"`
+	Agent        AgentConfig       `yaml:"agent"`
+	Apply        ApplyConfig       `yaml:"apply,omitempty"`
+	Daemon       DaemonConfig      `yaml:"daemon"`
+	Exec         ExecConfig        `yaml:"exec"`
+	Hooks        HooksConfig       `yaml:"hooks"`
+	MCP          MCPConfig         `yaml:"mcp"`
 	Web          WebConfig         `yaml:"web"`
 	Browser      BrowserConfig     `yaml:"browser"`
 	Languages    LanguagesConfig   `yaml:"languages"`
@@ -414,6 +451,10 @@ type ProjectConfig struct {
 	UI           UIConfig          `yaml:"ui,omitempty"`
 	Memory       MemoryConfig      `yaml:"memory,omitempty"`
 	Embed        EmbedConfig       `yaml:"embed,omitempty"`
+	// AutoRouter classifies queries when mode=agent (build|plan|explore).
+	AutoRouter AutoRouterConfig `yaml:"auto_router,omitempty"`
+	// Orchestra configures Lead + worker tiers for mode=orchestra.
+	Orchestra OrchestraConfig `yaml:"orchestra,omitempty"`
 	// Providers is an optional map of named LLM provider configurations.
 	// Use in agents: via provider: <name> or with --provider <name> CLI flag.
 	Providers map[string]LLMConfig `yaml:"providers,omitempty"`
@@ -443,13 +484,58 @@ func (c *ProjectConfig) FindAgent(name string) *AgentDefinition {
 }
 
 // FindProvider looks up a named provider from the providers: map.
-// Returns (LLMConfig{}, false) when not found or when the map is nil.
+// When the named entry omits api_key/api_base, inherits from top-level llm:
+// if the names match (or named provider field equals llm.provider).
 func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
 	if c.Providers == nil {
 		return LLMConfig{}, false
 	}
 	cfg, ok := c.Providers[name]
-	return cfg, ok
+	if !ok {
+		return LLMConfig{}, false
+	}
+	// Inherit credentials from main llm: when the named slot left them blank.
+	sameAsMain := strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(c.LLM.Provider)) ||
+		strings.EqualFold(strings.TrimSpace(cfg.Provider), strings.TrimSpace(c.LLM.Provider))
+	if strings.TrimSpace(cfg.APIKey) == "" && sameAsMain {
+		cfg.APIKey = c.LLM.APIKey
+	}
+	if strings.TrimSpace(cfg.APIBase) == "" {
+		if sameAsMain && strings.TrimSpace(c.LLM.APIBase) != "" {
+			cfg.APIBase = c.LLM.APIBase
+		}
+	}
+	if strings.TrimSpace(cfg.APIKey) == "" && strings.TrimSpace(c.LLM.APIKey) != "" {
+		// Soft inherit: many TUI flows write key only under llm: while providers:
+		// hold api_base/model for orchestra roles on the same endpoint.
+		if strings.TrimSpace(cfg.APIBase) == "" ||
+			NormalizeAPIBase(cfg.APIBase) == NormalizeAPIBase(c.LLM.APIBase) {
+			cfg.APIKey = c.LLM.APIKey
+		}
+	}
+	// Inherit tuning when the named slot left them at zero/empty — otherwise
+	// NewClient omits max_tokens and vLLM may default to ~50k completion tokens.
+	if cfg.MaxTokens <= 0 && c.LLM.MaxTokens > 0 {
+		cfg.MaxTokens = c.LLM.MaxTokens
+	}
+	if cfg.Temperature == 0 && c.LLM.Temperature != 0 {
+		cfg.Temperature = c.LLM.Temperature
+	}
+	if cfg.TimeoutS <= 0 && c.LLM.TimeoutS > 0 {
+		cfg.TimeoutS = c.LLM.TimeoutS
+	}
+	if strings.TrimSpace(cfg.ToolChoice) == "" && strings.TrimSpace(c.LLM.ToolChoice) != "" {
+		cfg.ToolChoice = c.LLM.ToolChoice
+	}
+	if len(cfg.ExtraBody) == 0 && len(c.LLM.ExtraBody) > 0 {
+		cfg.ExtraBody = c.LLM.ExtraBody
+	}
+	return cfg, true
+}
+
+// NormalizeAPIBase trims trailing slashes for endpoint comparison.
+func NormalizeAPIBase(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
 }
 
 // EffectiveNumCtx returns the user-configured LLM context window for the
@@ -471,9 +557,10 @@ func (c *ProjectConfig) EffectiveNumCtx() int64 {
 // from num_ctx (≈4 bytes per token for Latin/Cyrillic mixed text + JSON).
 const bytesPerContextToken = 4
 
-// EffectiveMaxPromptBytes returns the agent history byte budget. Uses the larger
-// of limits.context_kb and num_ctx-derived bytes so compaction aligns with the
-// LLM context window configured in model presets / extra_body.num_ctx.
+// EffectiveMaxPromptBytes returns the agent history byte budget. Uses the
+// larger of limits.context_kb and a share of num_ctx so compaction aligns with
+// the real model window — but never the full window: vLLM requires
+// prompt + max_tokens ≤ max_model_len, so history tracks PromptBudgetTokens.
 func (c *ProjectConfig) EffectiveMaxPromptBytes() int {
 	if c == nil {
 		return 0
@@ -487,7 +574,17 @@ func (c *ProjectConfig) EffectiveMaxPromptBytes() int {
 	}
 	bytes := kb * 1024
 	if n := c.EffectiveNumCtx(); n > 0 {
-		fromCtx := int(n) * bytesPerContextToken
+		// Same reserve as llm.PromptBudgetTokens: leave room for max_tokens + safety.
+		want := c.LLM.MaxTokens
+		if want <= 0 {
+			want = 4096
+		}
+		promptTok := int(n) - want - 2048
+		floor := int(n) / 4
+		if promptTok < floor {
+			promptTok = floor
+		}
+		fromCtx := promptTok * bytesPerContextToken
 		if fromCtx > bytes {
 			bytes = fromCtx
 		}
@@ -542,14 +639,16 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			// ResponseFormatType: "json_object" — раскомментируй если провайдер поддерживает
 		},
 		Agent: AgentConfig{
-			MaxSteps:            36,
+			MaxSteps:            128,
 			MaxInvalidRetries:   3,
 			MaxFinalFailures:    6,
 			MaxToolErrors:       6,
 			MaxDeniedRepeats:    2,
-			CompactThresholdPct: 70,
-			ToolDigestKB:        16,
+			CompactThresholdPct: 60,
+			ToolDigestKB:        48,
 			AutoSessionMemory:   boolPtr(true),
+			AutoSummaryMemory:   boolPtr(true),
+			TurnDigestEveryN:    intPtr(4),
 		},
 		Daemon: DaemonConfig{
 			Enabled:      false,
@@ -700,7 +799,7 @@ func (c *ProjectConfig) applyDefaults() {
 
 	// Agent defaults (tuned for local models).
 	if c.Agent.MaxSteps <= 0 {
-		c.Agent.MaxSteps = 36
+		c.Agent.MaxSteps = 128
 	}
 	if c.Agent.MaxInvalidRetries <= 0 {
 		c.Agent.MaxInvalidRetries = 3
@@ -714,6 +813,12 @@ func (c *ProjectConfig) applyDefaults() {
 	if c.Agent.MaxDeniedRepeats <= 0 {
 		c.Agent.MaxDeniedRepeats = 2
 	}
+	// Compact: 0 → default 60; negative → disabled (stored as 0).
+	if c.Agent.CompactThresholdPct < 0 {
+		c.Agent.CompactThresholdPct = 0
+	} else if c.Agent.CompactThresholdPct == 0 {
+		c.Agent.CompactThresholdPct = 60
+	}
 
 	// Apply output defaults.
 	if c.Apply.Output == "" {
@@ -725,6 +830,8 @@ func (c *ProjectConfig) applyDefaults() {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func intPtr(v int) *int { return &v }
 
 // Validate validates the configuration
 func (c *ProjectConfig) Validate() error {
@@ -774,8 +881,18 @@ func (c *ProjectConfig) Validate() error {
 	if err := c.validateAgents(); err != nil {
 		return err
 	}
+	if err := c.validateOrchestra(); err != nil {
+		return err
+	}
+	if err := c.validateAutoRouter(); err != nil {
+		return err
+	}
 
 	if err := c.validateMCP(); err != nil {
+		return err
+	}
+
+	if err := c.validateLSP(); err != nil {
 		return err
 	}
 
@@ -818,6 +935,58 @@ func (c *ProjectConfig) validateMCP() error {
 			return fmt.Errorf("mcp.servers[%d]: duplicate name %q (each MCP server name must be unique within the project)", i, name)
 		}
 		seen[name] = true
+	}
+	return nil
+}
+
+func (c *ProjectConfig) validateLSP() error {
+	v := strings.ToLower(strings.TrimSpace(c.LSP.AutoInstall))
+	switch v {
+	case "", "ask", "true", "false", "yes", "no", "1", "0", "always", "never", "off":
+		return nil
+	default:
+		return fmt.Errorf("lsp.auto_install must be ask, true, or false, got %q", c.LSP.AutoInstall)
+	}
+}
+
+func (c *ProjectConfig) validateOrchestra() error {
+	o := c.Orchestra
+	if o.Planner.Provider != "" {
+		if _, ok := c.Providers[o.Planner.Provider]; !ok {
+			return fmt.Errorf("orchestra.planner.provider %q not defined in providers", o.Planner.Provider)
+		}
+	}
+	seen := map[string]bool{}
+	for i, t := range o.Tiers {
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			return fmt.Errorf("orchestra.tiers[%d]: name is required", i)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return fmt.Errorf("orchestra.tiers: duplicate name %q", name)
+		}
+		seen[key] = true
+		if t.Provider != "" {
+			if _, ok := c.Providers[t.Provider]; !ok {
+				return fmt.Errorf("orchestra.tiers[%d] (%q): provider %q not defined in providers", i, name, t.Provider)
+			}
+		}
+	}
+	if def := strings.TrimSpace(o.DefaultTier); def != "" && len(o.Tiers) > 0 {
+		if o.FindTier(def) == nil {
+			return fmt.Errorf("orchestra.default_tier %q not found in tiers", def)
+		}
+	}
+	return nil
+}
+
+func (c *ProjectConfig) validateAutoRouter() error {
+	if c.AutoRouter.Provider == "" {
+		return nil
+	}
+	if _, ok := c.Providers[c.AutoRouter.Provider]; !ok {
+		return fmt.Errorf("auto_router.provider %q not defined in providers", c.AutoRouter.Provider)
 	}
 	return nil
 }

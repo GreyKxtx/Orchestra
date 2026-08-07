@@ -10,6 +10,7 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/internal/tools"
 )
 
 func TestSessionStart_ReopenByID(t *testing.T) {
@@ -34,6 +35,62 @@ func TestSessionStart_ReopenByID(t *testing.T) {
 	}
 	if res.SessionID != id {
 		t.Fatalf("session_id=%q", res.SessionID)
+	}
+}
+
+func TestSessionStart_RestoredWhenOnlyTodos(t *testing.T) {
+	root := t.TempDir()
+	c := setupSessionV2Core(t, root)
+
+	id := "20260805T150001-todos"
+	s := session.NewWithID(id)
+	s.Lock()
+	s.SetTodos([]tools.TodoItem{{Content: "ship fix", Status: "pending"}})
+	s.SetPlanPath(".orchestra/plans/" + id + ".md")
+	if err := s.Snapshot(root); err != nil {
+		t.Fatal(err)
+	}
+	s.Unlock()
+
+	res, err := c.SessionStart(SessionStartParams{SessionID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Restored {
+		t.Fatal("expected restored=true when only todos/plan_path present")
+	}
+	got, err := c.SessionGet(SessionGetParams{SessionID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Todos) != 1 || got.Todos[0].Content != "ship fix" {
+		t.Fatalf("todos=%+v", got.Todos)
+	}
+	if got.PlanPath == "" {
+		t.Fatal("expected plan_path in SessionGet")
+	}
+}
+
+func TestPersistSessionTodos_MidTurnSnapshot(t *testing.T) {
+	root := t.TempDir()
+	c := setupSessionV2Core(t, root)
+	start, err := c.SessionStart(SessionStartParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := c.sessions.GetOrLoad(root, start.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := `[{"content":"mid-turn","status":"pending"}]`
+	persistSessionTodos(root, sess, payload)
+
+	got, err := c.SessionGet(SessionGetParams{SessionID: start.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Todos) != 1 || got.Todos[0].Content != "mid-turn" {
+		t.Fatalf("todos=%+v", got.Todos)
 	}
 }
 

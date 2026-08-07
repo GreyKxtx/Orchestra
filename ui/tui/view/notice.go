@@ -32,37 +32,49 @@ func LocalizeRetryHint(msg string) string {
 		return "Контент устарел — перечитайте файл и повторите edit"
 	case strings.Contains(msg, "AmbiguousMatch"):
 		return "Неоднозначное совпадение — уточните edit или добавьте контекст"
+	case strings.Contains(msg, "max_steps exceeded"), strings.HasPrefix(msg, "MAX_STEPS"):
+		return "Лимит шагов хода — история сохранена, напишите продолжить"
 	default:
 		return msg
 	}
 }
 
-// RenderAssistantNotices renders inline retry/status lines inside an assistant turn.
-func RenderAssistantNotices(notices []state.SystemNotice, width int) string {
-	if len(notices) == 0 {
+// RenderAssistantNotice renders one inline info/retry/error line (chronological segment).
+func RenderAssistantNotice(kind state.SystemKind, text string, width int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return ""
 	}
 	t := theme.CurrentTheme()
 	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
 	warn := lipgloss.NewStyle().Foreground(t.Warning())
+	icon := "↻"
+	label := warn.Render("Retry")
+	switch kind {
+	case state.SystemKindError:
+		icon = "✗"
+		label = lipgloss.NewStyle().Foreground(t.Error()).Render("Error")
+	case state.SystemKindSuccess:
+		icon = "✓"
+		label = lipgloss.NewStyle().Foreground(t.Success()).Render("Done")
+	case state.SystemKindInfo:
+		icon = "●"
+		label = muted.Render("Info")
+	}
+	return renderNoticeLines(muted.Render(icon+" ")+label, muted, text, width)
+}
+
+// RenderAssistantNotices renders a stack of notices (legacy / tests). Prefer
+// chronological SegmentNotice rendering via RenderAssistantNotice.
+func RenderAssistantNotices(notices []state.SystemNotice, width int) string {
+	if len(notices) == 0 {
+		return ""
+	}
 	var lines []string
 	for _, n := range notices {
-		text := strings.TrimSpace(n.Text)
-		if text == "" {
-			continue
+		if line := RenderAssistantNotice(n.Kind, n.Text, width); line != "" {
+			lines = append(lines, line)
 		}
-		icon := "↻"
-		label := warn.Render("Повтор")
-		switch n.Kind {
-		case state.SystemKindError:
-			icon = "✗"
-			label = lipgloss.NewStyle().Foreground(t.Error()).Render("Ошибка")
-		case state.SystemKindSuccess:
-			icon = "✓"
-			label = lipgloss.NewStyle().Foreground(t.Success()).Render("Готово")
-		}
-		line := muted.Render(icon+" ") + label + muted.Render(" · "+clipPlain(text, width-16))
-		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(line))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -88,26 +100,126 @@ func RenderSystemMessage(m state.Message, width int) string {
 	switch kind {
 	case state.SystemKindError:
 		icon = "✗"
-		label = "Ошибка"
+		label = "Error"
 		labelStyle = lipgloss.NewStyle().Foreground(t.Error())
 	case state.SystemKindSuccess:
 		icon = "✓"
-		label = "Коммит"
+		label = "Done"
 		labelStyle = lipgloss.NewStyle().Foreground(t.Success())
 	case state.SystemKindRetry:
 		icon = "↻"
-		label = "Повтор"
+		label = "Retry"
 		labelStyle = lipgloss.NewStyle().Foreground(t.Warning())
 		text = LocalizeRetryHint(text)
+	case state.SystemKindInfo:
+		icon = "●"
+		label = "Info"
+		labelStyle = muted
 	default:
 		icon = "●"
-		label = "Система"
+		label = "System"
 		labelStyle = muted
 	}
 
-	body := labelStyle.Render(label) + muted.Render(" · "+clipPlain(text, width-14))
-	line := muted.Render(icon+" ") + body
-	return lipgloss.NewStyle().PaddingLeft(2).Render(line)
+	head := muted.Render(icon+" ") + labelStyle.Render(label)
+	return renderNoticeLines(head, muted, text, width)
+}
+
+// renderNoticeLines paints "icon Label · body" with word-wrapped body so long
+// API errors remain readable (no single-line clipPlain truncation).
+func renderNoticeLines(head string, muted lipgloss.Style, text string, width int) string {
+	const pad = 2
+	inner := width - pad
+	if inner < 24 {
+		inner = 24
+	}
+	sep := " · "
+	headW := lipgloss.Width(head) + lipgloss.Width(sep)
+	firstBudget := inner - headW
+	if firstBudget < 16 {
+		wrapped := wrapPlain(text, inner)
+		var out []string
+		out = append(out, lipgloss.NewStyle().PaddingLeft(pad).Render(head))
+		for _, line := range strings.Split(wrapped, "\n") {
+			out = append(out, lipgloss.NewStyle().PaddingLeft(pad).Render(muted.Render(line)))
+		}
+		return strings.Join(out, "\n")
+	}
+
+	wrapped := wrapPlain(text, firstBudget)
+	parts := strings.Split(wrapped, "\n")
+	first := lipgloss.NewStyle().PaddingLeft(pad).Render(head + muted.Render(sep+parts[0]))
+	if len(parts) == 1 {
+		return first
+	}
+	indent := strings.Repeat(" ", headW)
+	var out []string
+	out = append(out, first)
+	for _, line := range parts[1:] {
+		out = append(out, lipgloss.NewStyle().PaddingLeft(pad).Render(muted.Render(indent+line)))
+	}
+	return strings.Join(out, "\n")
+}
+
+// wrapPlain wraps plain text to maxCells visible columns (rune-aware).
+// Soft-wraps on spaces when possible; hard-breaks oversized tokens.
+func wrapPlain(s string, maxCells int) string {
+	s = strings.TrimSpace(s)
+	if s == "" || maxCells <= 0 {
+		return s
+	}
+	var blocks []string
+	for _, para := range strings.Split(s, "\n") {
+		para = strings.TrimSpace(para)
+		if para == "" {
+			continue
+		}
+		blocks = append(blocks, wrapPlainParagraph(para, maxCells))
+	}
+	return strings.Join(blocks, "\n")
+}
+
+func wrapPlainParagraph(s string, maxCells int) string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return ""
+	}
+	var lines []string
+	var cur string
+	flush := func() {
+		if cur != "" {
+			lines = append(lines, cur)
+			cur = ""
+		}
+	}
+	for _, w := range words {
+		if lipgloss.Width(w) > maxCells {
+			flush()
+			r := []rune(w)
+			for len(r) > 0 {
+				chunk := r
+				for len(chunk) > 1 && lipgloss.Width(string(chunk)) > maxCells {
+					chunk = chunk[:len(chunk)-1]
+				}
+				lines = append(lines, string(chunk))
+				r = r[len(chunk):]
+			}
+			continue
+		}
+		if cur == "" {
+			cur = w
+			continue
+		}
+		trial := cur + " " + w
+		if lipgloss.Width(trial) <= maxCells {
+			cur = trial
+			continue
+		}
+		flush()
+		cur = w
+	}
+	flush()
+	return strings.Join(lines, "\n")
 }
 
 func inferSystemKind(text string) state.SystemKind {

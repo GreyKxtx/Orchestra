@@ -48,7 +48,8 @@
 4. Отдельный LLM profile для Worker (`llm.profiles.worker` или subagent override)
 5. Lead prompt: delegate через `task`, не monolithic `edit`
 
-**Зависит от:** semantic dry-run (✅), subagents `task`/`general` (✅), `build-local` prompts (✅).
+**Зависит от:** semantic dry-run (✅), subagents `task`/`general` (✅), `build-local` prompts (✅).  
+**UX-предпочтительнее до старта:** LSP auto-provision в TUI — [`docs/architecture/lsp-auto-provision.md`](architecture/lsp-auto-provision.md) (чтобы Worker не упирался в «поставь gopls руками»).
 
 ---
 

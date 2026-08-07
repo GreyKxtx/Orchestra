@@ -123,6 +123,10 @@ func (c *HTTPClient) embedBatch(ctx context.Context, inputs []string) ([][]float
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
+	// Free ngrok tunnels return HTML/401 without this header.
+	if strings.Contains(strings.ToLower(c.baseURL), "ngrok") {
+		req.Header.Set("ngrok-skip-browser-warning", "true")
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err

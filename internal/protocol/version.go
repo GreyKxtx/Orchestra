@@ -29,7 +29,7 @@ const (
 	// v10: added gh.pr.list, gh.pr.create, gh.pr.view, gh.issue.list, gh.issue.view (allowExec-gated).
 	// v11: added unified `task` tool (sync subagent); todowrite accepts `completed` alias;
 	//      plan mode uses per-session `.orchestra/plans/<id>.md`.
-	ToolsVersion = 11
+	ToolsVersion = 12
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

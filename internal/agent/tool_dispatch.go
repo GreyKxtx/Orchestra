@@ -212,6 +212,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 	if a.opts.SkillRunner != nil && name == "skill_invoke" {
 		out, skillErr := a.handleSkillInvoke(ctx, tc.Input)
+		a.observeWorkingTool(name, tc.Input, out, skillErr)
 		var content string
 		if skillErr != nil {
 			content = formatToolErrorJSON(name, tc.Input, skillErr)
@@ -235,6 +236,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 	if a.opts.SubtaskRunner != nil && (name == "task" || name == "task_spawn" || name == "task_wait" || name == "task_cancel") {
 		out, taskErr := a.handleTaskTool(ctx, name, tc.Input)
+		a.observeWorkingTool(name, tc.Input, out, taskErr)
 		var content string
 		if taskErr != nil {
 			content = formatToolErrorJSON(name, tc.Input, taskErr)
@@ -258,6 +260,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 	if name == "todowrite" || name == "todoread" {
 		out, err := a.handleTodoTool(name, tc.Input)
+		a.observeWorkingTool(name, tc.Input, out, err)
 		var content string
 		if err != nil {
 			content = formatToolErrorJSON(name, tc.Input, err)
@@ -359,7 +362,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		return serialToolOutcome{}, nil
 	}
 
-	if a.opts.Mode == ModePlan && (name == "write" || name == "edit") {
+	if (a.opts.Mode == ModePlan || a.opts.Mode == ModeOrchestra || a.opts.Mode == ModeArchitecture) && (name == "write" || name == "edit") {
 		var pathReq struct {
 			Path string `json:"path"`
 		}
@@ -368,13 +371,28 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			allowed = plan.IsWritablePath(pathReq.Path, a.effectivePlanPath())
 		}
 		if !allowed {
-			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("plan mode: writes are allowed only to %s or .orchestra/plans/*.md", a.effectivePlanPath()))
+			label := "plan mode"
+			switch a.opts.Mode {
+			case ModeOrchestra:
+				label = "orchestra lead"
+			case ModeArchitecture:
+				label = "architecture mode"
+			}
+			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s or .orchestra/plans/*.md", label, a.effectivePlanPath()))
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
 			}
 			return serialToolOutcome{}, nil
 		}
+	}
+	if a.opts.Mode == ModeAsk && (name == "write" || name == "edit" || name == "bash" || name == "fs.delete" || name == "fs.rename" || name == "skill_invoke") {
+		toolResult := formatToolDeniedJSON(name, tc.Input, "ask mode is read-only")
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+		if cbErr := cb.RecordDenied(name); cbErr != nil {
+			return serialToolOutcome{}, cbErr
+		}
+		return serialToolOutcome{}, nil
 	}
 
 	callCtx := ctx
@@ -444,6 +462,9 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	start := time.Now()
 	out, err := a.tools.Call(callCtx, name, tc.Input)
 	dur := time.Since(start).Milliseconds()
+	if err != nil {
+		a.observeWorkingTool(name, tc.Input, out, err)
+	}
 
 	if a.opts.OnEvent != nil {
 		a.opts.OnEvent(AgentEvent{Step: steps, Stream: toolCallCompletedStreamEvent(name, toolCallID, out, err)})

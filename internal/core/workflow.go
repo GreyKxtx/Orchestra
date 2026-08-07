@@ -231,4 +231,3 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	}
 	return out, nil
 }
-

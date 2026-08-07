@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/plan"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
@@ -28,6 +29,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	// Initialize todos from session state (empty for one-shot runs).
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
 	a.turnMutatingTools = 0
+	a.overflowRecoveries = 0
+	a.contextPressureWarned = false
+	a.initWorkingState(userQuery)
+	defer a.persistWorkingTurnDigest()
 	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).
 	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
 
@@ -35,6 +40,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		history = make([]llm.Message, 0, 32)
 	}
 	steps := 0
+	a.syncModelContextFromClient()
 	maxStepsReminderSent := false
 	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 	cb.ResetDedup()
@@ -65,7 +71,37 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			if keep <= 0 {
 				keep = defaultHistoryPruneKeepRecent
 			}
-			history = pruneRetroactiveToolHistory(history, a.opts.ToolDigestBytes, keep)
+			var protect []string
+			if a.working != nil {
+				protect = a.working.ActiveFiles()
+			}
+			history = pruneRetroactiveToolHistory(history, a.opts.ToolDigestBytes, keep, protect...)
+		}
+
+		// Soft notice once when context approaches the compact threshold
+		// (warnPct ≈ compactPct−5, floor 50%) so TUI can hint before a full compact.
+		if !a.contextPressureWarned && a.opts.CompactThresholdPct > 0 && a.opts.MaxPromptBytes > 0 {
+			warnPct := a.opts.CompactThresholdPct - 5
+			if warnPct < 50 {
+				warnPct = a.opts.CompactThresholdPct * 3 / 4
+			}
+			if warnPct > 0 && warnPct < a.opts.CompactThresholdPct && shouldCompactHistoryEx(
+				history,
+				a.opts.MaxPromptBytes,
+				warnPct,
+				a.lastPromptTokens,
+				a.opts.ModelContextTokens,
+				a.opts.CompletionMaxTokens,
+				a.bytesPerToken(),
+			) {
+				a.contextPressureWarned = true
+				if a.opts.OnEvent != nil {
+					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+						Kind:    llm.StreamEventRecoverableError,
+						Content: "CONTEXT_PRESSURE",
+					}})
+				}
+			}
 		}
 
 		// Compaction: if history is getting large, summarise it before the next LLM call.
@@ -80,22 +116,41 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		// and (b) fall back to plain truncateMessages when compaction declines
 		// to converge, breaking the loop on the very next step.
 		if a.opts.CompactThresholdPct > 0 && a.opts.MaxPromptBytes > 0 {
-			threshold := a.opts.MaxPromptBytes * a.opts.CompactThresholdPct / 100
-			if historyBytes(history) > threshold {
+			force := a.opts.ForceCompactOnce
+			a.opts.ForceCompactOnce = false
+			need := force || shouldCompactHistoryEx(
+				history,
+				a.opts.MaxPromptBytes,
+				a.opts.CompactThresholdPct,
+				a.lastPromptTokens,
+				a.opts.ModelContextTokens,
+				a.opts.CompletionMaxTokens,
+				a.bytesPerToken(),
+			)
+			if need {
 				before := historyBytes(history)
 				compacted, compactErr := a.compactHistory(ctx, userQuery, history)
 				if compactErr != nil {
 					a.logf("compaction failed (non-fatal), continuing with truncation: %v", compactErr)
 					history = truncateMessages(history, a.opts.MaxPromptBytes)
+					a.recordCompactMetrics(before, historyBytes(history), false)
 				} else {
 					after := historyBytes(compacted)
 					if after*5 >= before*4 { // < 20% shrink
-						a.logf("compaction did not converge: %d в†’ %d bytes (в‰Ґ80%% retained); falling back to truncation", before, after)
+						a.logf("compaction did not converge: %d → %d bytes (≥80%% retained); falling back to truncation", before, after)
 						history = truncateMessages(history, a.opts.MaxPromptBytes)
+						a.recordCompactMetrics(before, historyBytes(history), false)
 					} else {
-						a.logf("history compacted: %d bytes в†’ %d bytes", before, after)
+						a.logf("history compacted: %d bytes → %d bytes", before, after)
 						history = compacted
+						a.recordCompactMetrics(before, after, true)
 						cb.ResetReadOnlyCalls()
+						if a.opts.OnEvent != nil {
+							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+								Kind:    llm.StreamEventRecoverableError,
+								Content: "CONTEXT_COMPACTED",
+							}})
+						}
 					}
 				}
 				if afterBytes := historyBytes(history); afterBytes < before {
@@ -120,10 +175,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 
 		step, raw, llmResp, err := a.nextStep(ctx, userQuery, history, steps)
 		if err != nil {
-			return nil, nil, err
+			// Provider rejected the request because prompt + max_tokens exceeds
+			// the model window. Compact and replay the step (OpenCode-style)
+			// instead of failing the turn.
+			if ctx.Err() == nil && llm.IsContextOverflowError(err) {
+				if shrunk, ok := a.recoverFromOverflow(ctx, userQuery, history, err, steps); ok {
+					history = shrunk
+					steps--
+					continue
+				}
+			}
+			return history, nil, err
 		}
 		if step == nil {
-			return nil, nil, fmt.Errorf("nextStep returned nil step without error")
+			return history, nil, fmt.Errorf("nextStep returned nil step without error")
 		}
 		// resp can be nil only if there was an error, which should have been returned above
 		// But we handle it gracefully for tool calls that need tool_call_id
@@ -133,7 +198,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			calls := a.resolveToolCalls(step, llmResp)
 			if len(calls) == 0 {
 				if cbErr := cb.RecordInvalid(); cbErr != nil {
-					return nil, nil, cbErr
+					return history, nil, cbErr
 				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
@@ -148,9 +213,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				var cbErr *protocol.Error
 				history, cbErr = a.runParallelToolBatch(ctx, cb, history, calls, llmResp, steps)
 				if cbErr != nil {
-					return nil, nil, cbErr
+					return history, nil, cbErr
 				}
 				emitStepDone("tool_call")
+				a.maybePersistMicroDigest(steps)
 				continue
 			}
 
@@ -169,25 +235,27 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			for _, tc := range calls {
 				outcome, err := a.runSerialToolCall(ctx, cb, &history, tc, steps, emitStepDone)
 				if err != nil {
-					return nil, nil, err
+					return history, nil, err
 				}
 				if outcome.EarlyResult != nil {
 					return history, outcome.EarlyResult, nil
 				}
 			}
 			emitStepDone("tool_call")
+			a.maybePersistMicroDigest(steps)
 			continue
 
 		case StepFinal:
 			if hint, reject := a.rejectPrematureFinal(userQuery, step, raw, steps); reject {
 				if cbErr := cb.RecordInvalid(); cbErr != nil {
-					return nil, nil, cbErr
+					return history, nil, cbErr
 				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
 					Content: formatValidatorErrorCompact(hint),
 				})
-				if a.opts.OnEvent != nil {
+				// Empty-response retries stay in the agent loop; skip TUI spam.
+				if a.opts.OnEvent != nil && !isSilentPrematureFinalHint(hint) {
 					a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
 						Kind:    llm.StreamEventRecoverableError,
 						Content: hint,
@@ -198,7 +266,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			}
 			outcome, err := a.handleFinalStep(ctx, cb, &history, step, llmResp, steps, raw, emitStepDone)
 			if err != nil {
-				return nil, nil, err
+				return history, nil, err
 			}
 			if outcome.Retry {
 				continue
@@ -210,7 +278,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 			// MaxInvalidRetries cap so a model emitting persistently bogus
 			// step shapes can't loop forever within MaxSteps.
 			if cbErr := cb.RecordInvalid(); cbErr != nil {
-				return nil, nil, cbErr
+				return history, nil, cbErr
 			}
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -223,9 +291,20 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	if res, ok := a.finalizeOnMaxSteps(ctx, history, steps); ok {
 		return history, res, nil
 	}
-	return nil, nil, protocol.NewError(protocol.InvalidLLMOutput, "max_steps exceeded", map[string]any{
-		"max_steps": a.opts.MaxSteps,
-	})
+	// Soft-stop: always return history so SessionMessage can persist it.
+	// A hard error here used to leave UI chat on disk but empty agent history —
+	// reopen then forced the model to re-read everything.
+	if a.opts.OnEvent != nil {
+		a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+			Kind:    llm.StreamEventRecoverableError,
+			Content: "MAX_STEPS — история сохранена, продолжите новым сообщением",
+		}})
+	}
+	return history, &Result{
+		Steps:            steps,
+		Todos:            a.todos,
+		MaxStepsExceeded: true,
+	}, nil
 }
 
 // P1 in audit ledger (Sprint 6).
@@ -338,11 +417,14 @@ func (a *Agent) buildSystemPrompt() string {
 		prompt = fs
 	}
 	// 4: append project memory (tiered, config-driven).
-	memCfg := a.opts.Memory
-	memCfg.Normalize()
-	store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
-	if block := store.FormatInject(memCfg.InjectBytes()); block != "" {
-		prompt += "\n\n" + block
+	// Workers/focused children skip this — they only need the WorkOrder.
+	if !a.opts.SkipMemoryInject && a.opts.Mode != ModeWorker {
+		memCfg := a.opts.Memory
+		memCfg.Normalize()
+		store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
+		if block := store.FormatInject(memCfg.InjectBytes()); block != "" {
+			prompt += "\n\n" + block
+		}
 	}
 	// 5: live tool catalog (mode/caps accurate вЂ” better than hardcoded lists in *.txt).
 	prompt += formatToolsCatalog(a.buildToolDefs())
@@ -380,6 +462,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
 	if block := renderTodosBlock(a.todos); block != "" {
 		userPrompt = block + "\n" + userPrompt
+	}
+	if block := a.injectWorkingPromptBlocks(); block != "" {
+		userPrompt += "\n\n" + block
 	}
 	// CKG context only on step 1 (saves tokens; later steps use explore/grep in history).
 	if stepNum == 1 && a.ckgContext != "" {
@@ -422,6 +507,10 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			a.logf("agent.nextStep messages truncated: %d -> %d (budget=%d)", beforeTruncate, len(messages), a.opts.MaxPromptBytes)
 		}
 	}
+
+	// Track the request size so real Usage.PromptTokens can calibrate our
+	// bytes-per-token heuristic (see calibrateFromRealPrompt).
+	a.lastPromptBytes = messagesBytes(messages) + toolDefsBytes(toolDefs)
 
 	if a.opts.Debug {
 		totalBytes := 0
@@ -531,32 +620,96 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	return nil, lastRaw, nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: unknown validation failure", nil)
 }
 
-// streamStep calls CompleteStream and forwards events to OnEvent, returning the
-// final assembled CompleteResponse from the Done event.
+// streamStep calls CompleteStream and forwards events to OnEvent, returning
+// the final assembled CompleteResponse from the Done event. Transient stream
+// failures (dead tunnel, stall, reset) before any assistant content arrived
+// are retried in place so one network hiccup doesn't kill a long agent turn.
 func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.Streamer, step int) (*llm.CompleteResponse, error) {
+	const maxStreamAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxStreamAttempts; attempt++ {
+		resp, contentStarted, err := a.streamStepOnce(ctx, req, s, step)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		// Content already streamed to the UI: retrying would duplicate it and
+		// diverge from what the user saw — surface the error instead.
+		if ctx.Err() != nil || contentStarted || !llm.IsTransientLLMError(err) || attempt == maxStreamAttempts {
+			// Context overflow is handled by the Run loop (compact + replay);
+			// emitting a hard error here would show the user a failure for a
+			// step that is about to be retried successfully.
+			if a.opts.OnEvent != nil && !llm.IsContextOverflowError(err) {
+				a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
+					Kind: llm.StreamEventError,
+					Err:  err,
+				}})
+			}
+			return nil, err
+		}
+		a.logf("stream attempt %d/%d failed (transient): %v — retrying", attempt, maxStreamAttempts, err)
+		if a.opts.OnEvent != nil {
+			a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
+				Kind:    llm.StreamEventRecoverableError,
+				Content: truncate(fmt.Sprintf("LLM stream interrupted, retry %d/%d: %v", attempt, maxStreamAttempts-1, err), 200),
+			}})
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		}
+	}
+	return nil, lastErr
+}
+
+// streamStepOnce runs one streaming attempt. contentStarted reports whether
+// any assistant text or tool-call delta was already forwarded to OnEvent.
+func (a *Agent) streamStepOnce(ctx context.Context, req llm.CompleteRequest, s llm.Streamer, step int) (*llm.CompleteResponse, bool, error) {
+	contentStarted := false
 	ch, err := s.CompleteStream(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, contentStarted, err
 	}
 	var final *llm.CompleteResponse
 	for ev := range ch {
+		switch ev.Kind {
+		case llm.StreamEventMessageDelta, llm.StreamEventToolCallStart, llm.StreamEventToolCallDelta:
+			contentStarted = true
+		}
+		// Error events are not forwarded here: streamStep decides whether to
+		// retry silently (recoverable notice) or surface the failure.
+		if ev.Kind == llm.StreamEventError {
+			// Drain remaining events so the producer goroutine can exit.
+			for range ch {
+			}
+			return nil, contentStarted, ev.Err
+		}
 		if a.opts.OnEvent != nil {
 			a.opts.OnEvent(AgentEvent{Step: step, Stream: ev})
 		}
-		switch ev.Kind {
-		case llm.StreamEventError:
-			return nil, ev.Err
-		case llm.StreamEventDone:
+		if ev.Kind == llm.StreamEventDone {
 			final = ev.Response
+			// Streaming path: OnEvent already forwarded usage to the UI, but the
+			// agent's own budgeting state must be updated too, otherwise the
+			// usage-based compaction trigger never fires in the TUI.
+			if final != nil && final.Usage != nil && final.Usage.PromptTokens > 0 {
+				a.lastPromptTokens = final.Usage.PromptTokens
+				a.calibrateFromRealPrompt(final.Usage.PromptTokens)
+			}
 		}
 	}
 	if final == nil {
-		return nil, fmt.Errorf("stream ended without Done event")
+		return nil, contentStarted, fmt.Errorf("stream ended without Done event")
 	}
-	return final, nil
+	return final, contentStarted, nil
 }
 
 func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
+	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
+		a.lastPromptTokens = resp.Usage.PromptTokens
+		a.calibrateFromRealPrompt(resp.Usage.PromptTokens)
+	}
 	if a.opts.OnEvent == nil || resp == nil || resp.Usage == nil {
 		return
 	}
@@ -570,6 +723,42 @@ func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
 		Kind:    llm.StreamEventStepUsage,
 		Content: string(payload),
 	}})
+}
+
+// bytesPerToken returns the calibration factor for token estimates. A value
+// learned from real provider usage wins over config when it is more
+// pessimistic — under-estimating the prompt is what triggers 400s.
+func (a *Agent) bytesPerToken() int {
+	if a == nil {
+		return DefaultBytesPerContextToken
+	}
+	base := a.opts.BytesPerContextToken
+	if base <= 0 {
+		base = DefaultBytesPerContextToken
+	}
+	if c := a.calibratedBytesPerToken; c > 0 && c < base {
+		return c
+	}
+	return base
+}
+
+// messagesBytes approximates the serialized size of a request's messages.
+func messagesBytes(msgs []llm.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += estimateMessageSize(m)
+	}
+	return total
+}
+
+// toolDefsBytes approximates the serialized size of advertised tool schemas,
+// which count against the model window just like messages do.
+func toolDefsBytes(defs []llm.ToolDef) int {
+	total := 0
+	for _, d := range defs {
+		total += len(d.Function.Name) + len(d.Function.Description) + len(d.Function.Parameters)
+	}
+	return total
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -591,6 +780,14 @@ func (a *Agent) modeReminder() string {
 	switch a.opts.Mode {
 	case ModePlan:
 		return a.substitutePlanPath(promptpkg.PlanModeReminder)
+	case ModeArchitecture:
+		return a.substitutePlanPath("Architecture mode: design only — write plans under {{PLAN_PATH}}; no production edits.")
+	case ModeAsk:
+		return "Ask mode: read-only answers. Do not edit code."
+	case ModeDebug:
+		return "Debug mode: find root cause with evidence; fix narrowly or delegate worker."
+	case ModeOrchestra:
+		return "You are Orchestra Lead: plan and delegate via task(subagent_type=worker|ask|debug|architecture|explore, tier=…). Do not edit production code."
 	case ModeBuild, "":
 		if a.justSwitchedFromPlan {
 			a.justSwitchedFromPlan = false
@@ -772,6 +969,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				}
 				out, callErr := a.tools.Call(ctx, call.Name, call.Input)
 				if callErr != nil {
+					a.observeWorkingTool(call.Name, call.Input, out, callErr)
 					return callErr
 				}
 				results[idx] = a.prepareToolHistoryContent(call.Name, call.Input, out)

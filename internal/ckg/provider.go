@@ -171,12 +171,18 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string) (string, err
 				 ORDER BY line_start`,
 				prefix+"%", h.id)
 			if mErr == nil {
-				var methods []struct{ sn string; ls, le int }
+				var methods []struct {
+					sn     string
+					ls, le int
+				}
 				for mRows.Next() {
 					var sn string
 					var ls2, le2 int
 					if mRows.Scan(&sn, &ls2, &le2) == nil {
-						methods = append(methods, struct{ sn string; ls, le int }{sn, ls2, le2})
+						methods = append(methods, struct {
+							sn     string
+							ls, le int
+						}{sn, ls2, le2})
 					}
 				}
 				mRows.Close()
@@ -434,8 +440,8 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 
 	// Separate: types (struct/interface), methods, funcs (exported/unexported).
 	type typeEntry struct {
-		s          sym
-		methodCnt  int
+		s           sym
+		methodCnt   int
 		methodNames []string
 	}
 	var types []typeEntry

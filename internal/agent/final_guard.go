@@ -47,6 +47,10 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 	return "Task requires code changes but no edit/write was performed. Call read, then edit or write.", true
 }
 
+func isSilentPrematureFinalHint(hint string) bool {
+	return strings.Contains(hint, "Model returned an empty response")
+}
+
 // isContentOnlyPatchesJSON reports whether visible content (after stripping
 // thinking blocks) is exclusively a JSON object with a "patches" key.
 func isContentOnlyPatchesJSON(raw string) bool {

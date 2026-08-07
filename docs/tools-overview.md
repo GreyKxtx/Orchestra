@@ -63,6 +63,7 @@
 > Перед stage — **AST-Gate** (tree-sitter). После stage — **LSP sync** (`didOpen`/`didChange` с effective content).
 > Ответ tool включает `diagnostics`; при errors agent inject'ит hint `LSP_ERRORS`.
 > LSP servers стартуют **lazy** (`lsp.lazy_start: true`, default) и гасятся по TTL (`idle_ttl_seconds: 300`).
+> Resolve: PATH → `~/.orchestra/lsp/<id>/<ver>/`. Auto-install gopls: TUI modal / `orchestra lsp ensure go` — [`docs/architecture/lsp-auto-provision.md`](architecture/lsp-auto-provision.md) (A+B ✅).
 
 > Все 5 инструментов покрыты интеграционными тестами с реальным gopls (`internal/tools/lsp_tools_test.go`).
 > Dry-run + LSP loop: `tests/e2e_agent/e2e_dryrun_lsp_test.go`.

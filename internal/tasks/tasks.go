@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,19 +14,33 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
+// ChildClientResolver builds an LLM client for a child from optional provider/model overrides.
+// Returns client plus labels for usage tracking. Nil resolver → always use TaskRunner.llmClient.
+type ChildClientResolver func(provider, model string) (client llm.Client, providerLabel, modelLabel string, err error)
+
+// TierResolver maps a worker tier name to provider/model (orchestra.tiers).
+type TierResolver func(tier string) (provider, model string, ok bool)
+
 // ChildAgentConfig holds history/memory settings propagated to child agents.
 type ChildAgentConfig struct {
 	MaxPromptBytes         int
 	CompactThresholdPct    int
+	ModelContextTokens     int
+	CompletionMaxTokens    int
 	ToolDigestBytes        int
 	HistoryPruneKeepRecent int
 	UsageTracker           agent.UsageRecorder
 	ProviderLabel          string
 	ModelLabel             string
+	Caps                   tools.Capabilities
+	ResolveClient          ChildClientResolver
+	ResolveTier            TierResolver
+	// MaxWorkerRetries caps validation/final failures for worker children (orchestra).
+	MaxWorkerRetries int
 }
 
 // TaskRunner implements agent.SubtaskRunner using real child agents.
-// Child agents run with a read-only tool set and cannot spawn further subtasks.
+// Child agents cannot spawn further subtasks (hasSubtasks=false).
 type TaskRunner struct {
 	llmClient  llm.Client
 	validator  *schema.Validator
@@ -55,14 +70,46 @@ func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Ru
 	}
 }
 
-func childToolsForSubagent(subagentType string) []llm.ToolDef {
-	switch subagentType {
+func childToolsForSubagent(subagentType string, caps tools.Capabilities) []llm.ToolDef {
+	var defs []llm.ToolDef
+	switch strings.ToLower(strings.TrimSpace(subagentType)) {
 	case "", "explore":
-		return tools.ListToolsForChild()
+		defs = tools.ListToolsForMode("explore", caps, false, false)
 	case "general":
-		return tools.ListToolsForMode("general", tools.Capabilities{}, false, false)
+		defs = tools.ListToolsForMode("general", caps, false, false)
+	case "worker":
+		defs = tools.ListToolsForMode("worker", caps, false, false)
 	default:
-		return tools.ListToolsForMode(subagentType, tools.Capabilities{}, false, false)
+		defs = tools.ListToolsForMode(subagentType, caps, false, false)
+	}
+	return ensureTaskResult(defs)
+}
+
+func ensureTaskResult(defs []llm.ToolDef) []llm.ToolDef {
+	for _, d := range defs {
+		if d.Function.Name == "task_result" {
+			return defs
+		}
+	}
+	return append(defs, tools.ToolTaskResult())
+}
+
+func modeForSubagent(subagentType string) agent.Mode {
+	switch strings.ToLower(strings.TrimSpace(subagentType)) {
+	case "", "explore":
+		return agent.ModeExplore
+	case "ask":
+		return agent.ModeAsk
+	case "debug":
+		return agent.ModeDebug
+	case "architecture":
+		return agent.ModeArchitecture
+	case "general":
+		return agent.ModeGeneral
+	case "worker":
+		return agent.ModeWorker
+	default:
+		return agent.Mode(subagentType)
 	}
 }
 
@@ -82,7 +129,7 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 	if subagentType == "" {
 		subagentType = "explore"
 	}
-	childTools := childToolsForSubagent(subagentType)
+	childTools := childToolsForSubagent(subagentType, r.child.Caps)
 
 	var taskCtx context.Context
 	var cancel context.CancelFunc
@@ -106,7 +153,7 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 		defer close(entry.done)
 		defer cancel()
 
-		result := r.runChild(taskCtx, taskID, req.Goal, subagentType, maxSteps, childTools)
+		result := r.runChild(taskCtx, taskID, req, subagentType, maxSteps, childTools)
 
 		r.mu.Lock()
 		entry.result = result
@@ -116,28 +163,75 @@ func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (st
 	return taskID, nil
 }
 
-func (r *TaskRunner) runChild(ctx context.Context, taskID, goal, subagentType string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType string) (llm.Client, string, string) {
+	provider := strings.TrimSpace(req.Provider)
+	model := strings.TrimSpace(req.Model)
+	if provider == "" && model == "" && strings.EqualFold(subagentType, "worker") && r.child.ResolveTier != nil {
+		if p, m, ok := r.child.ResolveTier(req.Tier); ok {
+			provider, model = p, m
+		}
+	}
+	if r.child.ResolveClient != nil && (provider != "" || model != "") {
+		if client, pl, ml, err := r.child.ResolveClient(provider, model); err == nil && client != nil {
+			if pl == "" {
+				pl = provider
+			}
+			if ml == "" {
+				ml = model
+			}
+			return client, pl, ml
+		}
+	}
+	pl := r.child.ProviderLabel
+	ml := r.child.ModelLabel
+	return r.llmClient, pl, ml
+}
+
+func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, subagentType string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+	client, providerLabel, modelLabel := r.resolveChildLLM(req, subagentType)
+	mode := modeForSubagent(subagentType)
 	maxPrompt := r.child.MaxPromptBytes
 	if maxPrompt <= 0 {
 		maxPrompt = 64 * 1024
 	}
-	ag, err := agent.New(r.llmClient, r.validator, r.toolRunner, agent.Options{
+	// Workers: tight budget — no parent dialog, only WorkOrder + tool reads.
+	if mode == agent.ModeWorker && maxPrompt > 48*1024 {
+		maxPrompt = 48 * 1024
+	}
+	opts := agent.Options{
 		MaxSteps:               maxSteps,
 		MaxPromptBytes:         maxPrompt,
 		CompactThresholdPct:    r.child.CompactThresholdPct,
+		ModelContextTokens:     r.child.ModelContextTokens,
+		CompletionMaxTokens:    r.child.CompletionMaxTokens,
 		ToolDigestBytes:        r.child.ToolDigestBytes,
 		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
 		CustomTools:            childTools,
+		Mode:                   mode,
 		IsChild:                true,
 		UsageTracker:           r.child.UsageTracker,
-		ProviderLabel:          r.child.ProviderLabel,
-		ModelLabel:             r.child.ModelLabel,
-	})
+		ProviderLabel:          providerLabel,
+		ModelLabel:             modelLabel,
+		// Workers: no parent dialog, no project memory inject, no session notes.
+		AutoSessionMemory: false,
+		SkipMemoryInject:  mode == agent.ModeWorker,
+	}
+	if mode == agent.ModeWorker {
+		wsOff := false
+		opts.WorkingState = &wsOff
+		opts.TurnDigestKeep = 0
+	}
+	if mode == agent.ModeWorker && r.child.MaxWorkerRetries > 0 {
+		opts.MaxFinalFailures = r.child.MaxWorkerRetries
+		opts.MaxInvalidRetries = r.child.MaxWorkerRetries
+	}
+	ag, err := agent.New(client, r.validator, r.toolRunner, opts)
 	if err != nil {
 		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
 	}
 
-	hist, res, runErr := ag.Run(ctx, nil, goal)
+	childGoal := FormatChildGoal(subagentType, req.Tier, req.Goal)
+	hist, res, runErr := ag.Run(ctx, nil, childGoal)
 	if runErr != nil {
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: runErr.Error()}
@@ -154,7 +248,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID, goal, subagentType st
 	}
 
 	if subagentType == "" || subagentType == "explore" {
-		taskResult = agent.FormatSubagentResult(subagentType, goal, hist, taskResult, r.child.ToolDigestBytes)
+		taskResult = agent.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
 
 	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
@@ -202,7 +296,7 @@ func (r *TaskRunner) Wait(ctx context.Context, taskID string, timeoutMS int) (*a
 	}
 }
 
-// Cancel cancels a running task.
+// Cancel aborts a running task.
 func (r *TaskRunner) Cancel(_ context.Context, taskID string) error {
 	r.mu.Lock()
 	entry, ok := r.tasks[taskID]

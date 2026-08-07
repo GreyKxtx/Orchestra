@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/agent/working"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -56,7 +58,7 @@ type compactionLLM struct {
 func (c *compactionLLM) Complete(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
 	// Detect compaction call by checking for the compaction system prompt marker.
 	for _, m := range req.Messages {
-		if m.Role == llm.RoleSystem && strings.Contains(m.Content, "сжать историю") {
+		if m.Role == llm.RoleSystem && strings.Contains(m.Content, "Context Manager") {
 			c.compactionCalled = true
 			return &llm.CompleteResponse{
 				Message: llm.Message{Role: llm.RoleAssistant, Content: "Compacted summary."},
@@ -64,6 +66,47 @@ func (c *compactionLLM) Complete(ctx context.Context, req llm.CompleteRequest) (
 		}
 	}
 	return c.scriptedLLM.Complete(ctx, req)
+}
+
+// buildCorpusFixture returns an old tool-call entry referencing targetPath
+// followed by enough filler history that the old entry would normally fall
+// outside compactionCorpusBudget's oldest-first cut.
+func buildCorpusFixture(targetPath string) []llm.Message {
+	hist := []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				Function: llm.ToolCallFunc{
+					Name:      "read",
+					Arguments: llm.ToolArguments(json.RawMessage(`{"path":"` + targetPath + `"}`)),
+				},
+			}},
+		},
+	}
+	hist = append(hist, bigHistory(50, 3000)...)
+	return hist
+}
+
+func TestBuildCompactionCorpus_RescuesActiveFile(t *testing.T) {
+	const target = "internal/agent/agent.go"
+	hist := buildCorpusFixture(target)
+
+	// Baseline: no working state → the old entry about target is dropped.
+	agNoWorking := &Agent{opts: Options{MaxPromptBytes: 32 * 1024, ModelContextTokens: 8192, CompletionMaxTokens: 1024}}
+	baseline := agNoWorking.buildCompactionCorpus(hist)
+	if strings.Contains(baseline, target) {
+		t.Fatalf("test fixture invalid: baseline corpus already contains %q without rescue", target)
+	}
+
+	// With working state marking target as active, it must survive the cut.
+	agWithWorking := &Agent{opts: Options{MaxPromptBytes: 32 * 1024, ModelContextTokens: 8192, CompletionMaxTokens: 1024}}
+	agWithWorking.working = working.New("fix bug")
+	agWithWorking.working.ObserveTool("read", json.RawMessage(`{"path":"`+target+`"}`), []byte(`{}`), nil)
+
+	rescued := agWithWorking.buildCompactionCorpus(hist)
+	if !strings.Contains(rescued, target) {
+		t.Errorf("expected active file %q to be rescued from the omitted range, corpus: %s", target, clipChars(rescued, 400))
+	}
 }
 
 func TestCompactHistory_ReturnsCompactedHistory(t *testing.T) {
@@ -108,10 +151,13 @@ func TestCompactHistory_ReturnsCompactedHistory(t *testing.T) {
 	if !llmClient.compactionCalled {
 		t.Error("expected compaction LLM call to have been made")
 	}
-	if len(compacted) != 1 {
-		t.Errorf("expected 1 compacted message, got %d", len(compacted))
+	if len(compacted) < 1 {
+		t.Errorf("expected compacted history, got %d", len(compacted))
 	}
 	if !strings.Contains(compacted[0].Content, "Compacted summary") {
 		t.Errorf("compacted message should contain summary, got: %q", compacted[0].Content)
+	}
+	if !strings.Contains(compacted[0].Content, "Session checkpoint") {
+		t.Errorf("expected sticky checkpoint header, got: %q", compacted[0].Content)
 	}
 }

@@ -35,17 +35,30 @@ type Client struct {
 }
 
 // NewClient creates a new OpenAI-compatible models client with a 5-second timeout.
+// api_base may include a trailing /v1 (chat completions style); management
+// paths are rooted at the host without that suffix.
 func NewClient(endpoint, apiKey string) *Client {
 	return &Client{
-		endpoint:   strings.TrimRight(endpoint, "/"),
+		endpoint:   stripOpenAIV1(endpoint),
 		apiKey:     strings.TrimSpace(apiKey),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
+func stripOpenAIV1(endpoint string) string {
+	e := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if len(e) >= 3 && strings.EqualFold(e[len(e)-3:], "/v1") {
+		return strings.TrimRight(e[:len(e)-3], "/")
+	}
+	return e
+}
+
 func (c *Client) setAuth(req *http.Request) {
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	if strings.Contains(strings.ToLower(c.endpoint), "ngrok") {
+		req.Header.Set("ngrok-skip-browser-warning", "true")
 	}
 }
 
@@ -63,9 +76,21 @@ type v0Response struct {
 }
 
 // v1Model matches the OpenAI-compatible /v1/models response.
+// vLLM exposes max_model_len; LM Studio may use max_context_length / context_length.
 type v1Model struct {
 	ID               string `json:"id"`
-	MaxContextLength int64  `json:"max_context_length"` // may be absent
+	MaxContextLength int64  `json:"max_context_length"`
+	MaxModelLen      int64  `json:"max_model_len"`
+	ContextLength    int64  `json:"context_length"`
+}
+
+func (m v1Model) resolvedContextLen() int64 {
+	for _, n := range []int64{m.MaxModelLen, m.MaxContextLength, m.ContextLength} {
+		if n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 type v1Response struct {
@@ -87,8 +112,8 @@ type LoadModelRequest struct {
 
 // LoadModelResponse is the LM Studio /api/v1/models/load response.
 type LoadModelResponse struct {
-	Status  string `json:"status"`
-	Type    string `json:"type"`
+	Status     string `json:"status"`
+	Type       string `json:"type"`
 	LoadConfig *struct {
 		ContextLength int `json:"context_length"`
 	} `json:"load_config,omitempty"`
@@ -218,8 +243,53 @@ func (c *Client) listV1() ([]RemoteModel, error) {
 	for _, m := range out.Data {
 		result = append(result, RemoteModel{
 			ID:               m.ID,
-			MaxContextLength: m.MaxContextLength,
+			MaxContextLength: m.resolvedContextLen(),
 		})
 	}
 	return result, nil
+}
+
+// FindModelContext returns the server-advertised context window for modelID
+// (exact or case-insensitive match). Returns 0,nil when the model is listed
+// without a context field; error only on transport/decode failures.
+func (c *Client) FindModelContext(modelID string) (int64, error) {
+	models, err := c.ListModels()
+	if err != nil {
+		return 0, err
+	}
+	want := strings.TrimSpace(modelID)
+	if want == "" {
+		// Prefer the first model that reports a context length.
+		for _, m := range models {
+			if m.MaxContextLength > 0 {
+				return m.MaxContextLength, nil
+			}
+		}
+		return 0, nil
+	}
+	var fuzzy *RemoteModel
+	for i := range models {
+		m := &models[i]
+		if m.ID == want {
+			return m.MaxContextLength, nil
+		}
+		if strings.EqualFold(m.ID, want) {
+			fuzzy = m
+		}
+	}
+	if fuzzy != nil {
+		return fuzzy.MaxContextLength, nil
+	}
+	// Suffix / contains match (vLLM may serve "Qwen/…" while config has "qwen/…").
+	low := strings.ToLower(want)
+	for i := range models {
+		m := &models[i]
+		id := strings.ToLower(m.ID)
+		if strings.HasSuffix(id, low) || strings.HasSuffix(low, id) || strings.Contains(id, low) {
+			if m.MaxContextLength > 0 {
+				return m.MaxContextLength, nil
+			}
+		}
+	}
+	return 0, nil
 }

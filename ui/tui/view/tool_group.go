@@ -2,6 +2,7 @@ package view
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,27 +14,21 @@ import (
 
 // renderToolGroup renders the model's tool calls as a compact inline list.
 //
-// Collapsed (default): one line per tool — `<icon> <name> <path/args>`. A
-// muted footer summarises count and duration; a tiny ctrl+t hint reminds the
-// user how to expand.
-//
-// Expanded (Ctrl+T): same list, but exec/write tools render as a left-bar
-// detail block (command + truncated output). Other tools stay inline since
-// their result is already summarised in the preview (entries/matches count).
-//
-// turnDur: elapsed for the current turn (0 = unknown, hides the suffix).
-// title/mode: kept on the signature for compatibility; no longer rendered as
-// a "Build Task — query" header because the request is already shown in the
-// preceding user-message panel above.
-func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, streaming bool, turnDur time.Duration, title, mode string) string {
+// Collapsed (default): one line per tool — `<icon> <name> <path/args> · <dur>`.
+// Running tools render last so the active spinner sits at the bottom of the
+// group (most recent activity). Footer shows this group's wall time, not the
+// whole turn.
+func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, streaming bool, _ time.Duration, title, mode string) string {
 	_ = title
 	_ = mode
 	t := theme.CurrentTheme()
 	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
 
+	display := sortToolsForDisplay(blocks)
+
 	failed, skipped := 0, 0
-	for i := range blocks {
-		switch blocks[i].Status {
+	for i := range display {
+		switch display[i].Status {
 		case state.ToolBlockFailed:
 			failed++
 		case state.ToolBlockSkipped:
@@ -42,24 +37,24 @@ func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, str
 	}
 
 	var lines []string
-	for _, tb := range blocks {
+	for _, tb := range display {
 		if expanded && isBlockStyleTool(tb, streaming) {
 			tb2 := tb
-			tb2.Expanded = true // group expand → show more output lines
+			tb2.Expanded = true
 			lines = append(lines, renderBlockTool(tb2, width, c.spinFrame))
 		} else {
 			lines = append(lines, renderInlineTool(tb, width, c.spinFrame))
 		}
 	}
 
-	count := len(blocks)
+	count := len(display)
 	plural := "toolcalls"
 	if count == 1 {
 		plural = "toolcall"
 	}
 	footerText := fmt.Sprintf("└ %d %s", count, plural)
-	if turnDur > 0 {
-		footerText += " · " + formatDuration(turnDur)
+	if groupDur := groupElapsed(display); groupDur > 0 {
+		footerText += " · " + formatDuration(groupDur)
 	}
 	if failed > 0 {
 		footerText += fmt.Sprintf(" · %d failed", failed)
@@ -76,3 +71,63 @@ func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, str
 	return strings.Join(lines, "\n")
 }
 
+// sortToolsForDisplay keeps chronological order but moves running tools to the
+// end so the live spinner is always at the bottom of the group.
+func sortToolsForDisplay(blocks []state.ToolBlock) []state.ToolBlock {
+	out := append([]state.ToolBlock(nil), blocks...)
+	sort.SliceStable(out, func(i, j int) bool {
+		ri := out[i].Status == state.ToolBlockRunning
+		rj := out[j].Status == state.ToolBlockRunning
+		if ri != rj {
+			return !ri
+		}
+		return false
+	})
+	return out
+}
+
+// toolElapsed returns per-tool wall time (live for running, stamped when done).
+func toolElapsed(tb state.ToolBlock) time.Duration {
+	if tb.Duration > 0 {
+		return tb.Duration
+	}
+	if tb.Status == state.ToolBlockRunning && !tb.StartedAt.IsZero() {
+		return time.Since(tb.StartedAt)
+	}
+	return 0
+}
+
+// groupElapsed is the wall-clock span of one tool segment (not the whole turn).
+func groupElapsed(blocks []state.ToolBlock) time.Duration {
+	if len(blocks) == 0 {
+		return 0
+	}
+	if len(blocks) == 1 {
+		return toolElapsed(blocks[0])
+	}
+	var first time.Time
+	var lastEnd time.Time
+	anyRunning := false
+	for _, tb := range blocks {
+		if !tb.StartedAt.IsZero() && (first.IsZero() || tb.StartedAt.Before(first)) {
+			first = tb.StartedAt
+		}
+		if tb.Status == state.ToolBlockRunning {
+			anyRunning = true
+		}
+		d := toolElapsed(tb)
+		if !tb.StartedAt.IsZero() && d > 0 {
+			end := tb.StartedAt.Add(d)
+			if end.After(lastEnd) {
+				lastEnd = end
+			}
+		}
+	}
+	if anyRunning && !first.IsZero() {
+		return time.Since(first)
+	}
+	if !first.IsZero() && !lastEnd.IsZero() {
+		return lastEnd.Sub(first)
+	}
+	return 0
+}

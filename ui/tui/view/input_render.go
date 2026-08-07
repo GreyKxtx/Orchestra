@@ -158,4 +158,3 @@ func inMention(spans [][2]int, idx int) bool {
 	}
 	return false
 }
-

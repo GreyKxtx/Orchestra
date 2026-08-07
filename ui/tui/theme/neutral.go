@@ -28,8 +28,14 @@ func (t *NeutralTheme) ModeAccent(mode string) lipgloss.Color {
 	switch mode {
 	case "explore", "ask":
 		return "#7dcfff" // cyan — read-only / exploration
-	case "plan":
-		return "#e0af68" // yellow — planning only
+	case "plan", "architecture":
+		return "#e0af68" // yellow — planning / design
+	case "debug":
+		return "#f7768e" // rose — investigation
+	case "agent":
+		return "#bb9af7" // violet — auto-route
+	case "orchestra", "worker":
+		return "#7aa2f7" // blue — lead/worker
 	default:
 		return "#9ece6a" // green (build) — active edits
 	}

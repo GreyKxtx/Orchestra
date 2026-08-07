@@ -33,9 +33,9 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/fsutil"
-	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/schema"
 	"github.com/orchestra/orchestra/internal/tools"
 )
@@ -75,6 +75,8 @@ type Options struct {
 	LLMStepTimeout       time.Duration
 	MaxPromptBytes       int
 	CompactThresholdPct  int
+	ModelContextTokens   int
+	CompletionMaxTokens  int
 	PermissionRules      []configpkg.PermissionRule
 
 	// OnEvent, if non-nil, receives streaming events tagged with the stage name.
@@ -107,9 +109,9 @@ type Result struct {
 	Accepted      bool
 	FinalCritique string
 
-	StageResults []StageResult
-	Patches      []patches.Patch
-	Ops          []ops.AnyOp
+	StageResults  []StageResult
+	Patches       []patches.Patch
+	Ops           []ops.AnyOp
 	ApplyResponse *tools.FSApplyOpsResponse
 }
 
@@ -239,6 +241,8 @@ func runInvestigator(
 		MaxFinalFailures:     opts.MaxFinalFailures,
 		MaxPromptBytes:       opts.MaxPromptBytes,
 		CompactThresholdPct:  opts.CompactThresholdPct,
+		ModelContextTokens:   opts.ModelContextTokens,
+		CompletionMaxTokens:  opts.CompletionMaxTokens,
 		LLMStepTimeout:       opts.LLMStepTimeout,
 		PromptFamily:         opts.PromptFamily,
 		ResponseFormat:       opts.ResponseFormat,
@@ -278,6 +282,8 @@ func runCoder(
 		MaxFinalFailures:     opts.MaxFinalFailures,
 		MaxPromptBytes:       opts.MaxPromptBytes,
 		CompactThresholdPct:  opts.CompactThresholdPct,
+		ModelContextTokens:   opts.ModelContextTokens,
+		CompletionMaxTokens:  opts.CompletionMaxTokens,
 		LLMStepTimeout:       opts.LLMStepTimeout,
 		PromptFamily:         opts.PromptFamily,
 		ResponseFormat:       opts.ResponseFormat,
@@ -318,6 +324,8 @@ func runCritic(
 		MaxFinalFailures:     opts.MaxFinalFailures,
 		MaxPromptBytes:       opts.MaxPromptBytes,
 		CompactThresholdPct:  opts.CompactThresholdPct,
+		ModelContextTokens:   opts.ModelContextTokens,
+		CompletionMaxTokens:  opts.CompletionMaxTokens,
 		LLMStepTimeout:       opts.LLMStepTimeout,
 		PromptFamily:         opts.PromptFamily,
 		ResponseFormat:       opts.ResponseFormat,

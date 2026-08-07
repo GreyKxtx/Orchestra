@@ -31,6 +31,22 @@ func DigestToolOutput(toolName string, toolInput json.RawMessage, raw []byte, bu
 		return string(raw), false
 	}
 	name := strings.ToLower(strings.TrimSpace(toolName))
+	// Error-shaped payloads (agent.formatToolErrorJSON / formatToolDeniedJSON:
+	// {"status":"error"|"denied", "tool":..., "code":..., "error":..., "reason":...})
+	// must NOT go through the success-shape digesters below (digestBash,
+	// digestRead, ...): json.Unmarshal silently succeeds against the wrong
+	// struct shape (Go doesn't fail on missing fields), leaving every field
+	// zero-valued and deleting the actual error/denial text from history.
+	// Detect and handle them first, regardless of tool name.
+	if isToolErrorOrDeniedJSON(raw) {
+		body := digestToolErrorOrDenied(raw, budgetBytes)
+		header := fmt.Sprintf("[digest tool:%s original_bytes=%d]\n", name, len(raw))
+		out := header + body
+		if len(out) > budgetBytes*2 {
+			out = agentformat.Truncate(out, budgetBytes*2)
+		}
+		return out, true
+	}
 	body := digestGeneric(name, raw, budgetBytes)
 	if d, ok := toolDigesters[name]; ok {
 		body = d(toolInput, raw, budgetBytes)
@@ -41,6 +57,52 @@ func DigestToolOutput(toolName string, toolInput json.RawMessage, raw []byte, bu
 		out = agentformat.Truncate(out, budgetBytes*2)
 	}
 	return out, true
+}
+
+// isToolErrorOrDeniedJSON reports whether raw matches the shape produced by
+// agent.formatToolErrorJSON / formatToolDeniedJSON: a top-level "status" of
+// "error" or "denied". Cheap structural check — avoids false positives on
+// tool payloads that merely contain the substring "error" somewhere.
+func isToolErrorOrDeniedJSON(raw []byte) bool {
+	var probe struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return false
+	}
+	return probe.Status == "error" || probe.Status == "denied"
+}
+
+// digestToolErrorOrDenied preserves the fields that actually carry the
+// failure reason (error/reason/code) instead of running the payload through
+// a success-shape digester that would silently drop them.
+func digestToolErrorOrDenied(raw []byte, budget int) string {
+	var resp struct {
+		Status string          `json:"status"`
+		Tool   string          `json:"tool"`
+		Code   string          `json:"code"`
+		Error  string          `json:"error"`
+		Reason string          `json:"reason"`
+		Input  json.RawMessage `json:"input"`
+	}
+	if json.Unmarshal(raw, &resp) != nil {
+		return digestGeneric("error", raw, budget)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "- status: %s\n", resp.Status)
+	if resp.Code != "" {
+		fmt.Fprintf(&b, "- code: %s\n", resp.Code)
+	}
+	if resp.Error != "" {
+		b.WriteString("- error: " + agentformat.Truncate(resp.Error, budget-64) + "\n")
+	}
+	if resp.Reason != "" {
+		b.WriteString("- reason: " + agentformat.Truncate(resp.Reason, budget-64) + "\n")
+	}
+	if len(resp.Input) > 0 {
+		b.WriteString("- input: " + agentformat.Truncate(string(resp.Input), 200) + "\n")
+	}
+	return agentformat.Truncate(b.String(), budget)
 }
 
 func digestExplore(input json.RawMessage, raw []byte, budget int) string {

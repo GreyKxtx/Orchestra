@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
@@ -32,6 +32,7 @@ type listDialogItem struct {
 	Description string
 	Category    string // optional group header
 	Disabled    bool   // greyed and skipped on cursor moves
+	Ready       bool   // green ● — credentials configured / connected
 }
 
 // truncRunes truncates s to at most maxR visible runes, appending "…" if cut.
@@ -92,6 +93,7 @@ func renderListDialog(
 		Bold(true).
 		Width(inner)
 	accentStyle := base.Foreground(t.Secondary()).Bold(true)
+	okStyle := base.Foreground(t.Success())
 
 	padBg := func(n int) string {
 		if n <= 0 {
@@ -142,6 +144,9 @@ func renderListDialog(
 		maxTitle := 0
 		for _, it := range items {
 			w := lipgloss.Width(it.Title)
+			if it.Ready {
+				w += 2 // "● "
+			}
 			if w > maxTitle {
 				maxTitle = w
 			}
@@ -168,18 +173,32 @@ func renderListDialog(
 				}
 				prevCategory = it.Category
 			}
-			// Truncate title and description to guaranteed-fit widths.
-			rowTitle := truncRunes(it.Title, maxTitle)
+			badge := ""
+			badgeW := 0
+			if it.Ready {
+				badge = "● "
+				badgeW = 2
+			}
+			rowTitle := truncRunes(it.Title, maxTitle-badgeW)
+			if badgeW > 0 && maxTitle-badgeW < 1 {
+				rowTitle = truncRunes(it.Title, 1)
+			}
 			rowDesc := truncRunes(it.Description, maxDescW)
-			padTitle := fmt.Sprintf("%-*s", titleCol, rowTitle)
+			padTitle := fmt.Sprintf("%-*s", titleCol-badgeW, rowTitle)
 			switch {
 			case it.Disabled:
-				row := disabledStyle.Render(inset+padTitle) + disabledStyle.Render(rowDesc)
+				row := disabledStyle.Render(inset+badge+padTitle) + disabledStyle.Render(rowDesc)
 				listLines = append(listLines, fitInner(row))
 			case i == cursor:
-				listLines = append(listLines, selStyle.Render(inset+padTitle+rowDesc))
+				listLines = append(listLines, selStyle.Render(inset+badge+padTitle+rowDesc))
 			default:
-				row := cmdStyle.Render(inset+padTitle) + descStyle.Render(rowDesc)
+				var titlePart string
+				if it.Ready {
+					titlePart = okStyle.Render(inset+badge) + cmdStyle.Render(padTitle)
+				} else {
+					titlePart = cmdStyle.Render(inset + badge + padTitle)
+				}
+				row := titlePart + descStyle.Render(rowDesc)
 				listLines = append(listLines, fitInner(row))
 			}
 		}

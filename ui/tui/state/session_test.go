@@ -3,6 +3,7 @@ package state_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orchestra/orchestra/ui/tui/state"
 )
@@ -147,6 +148,21 @@ func TestSession_AppendToolBlock_StartsAssistantIfNoneActive(t *testing.T) {
 	}
 }
 
+func TestSession_FinalizeRunningTools(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant("", "")
+	start := time.Now().Add(-2 * time.Second)
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "todoread", Status: state.ToolBlockRunning, StartedAt: start})
+	s.FinalizeRunningTools()
+	tb := s.Messages[0].ToolBlocks[0]
+	if tb.Status != state.ToolBlockCompleted {
+		t.Fatalf("status=%s", tb.Status)
+	}
+	if tb.Duration <= 0 {
+		t.Fatalf("expected duration stamped, got %v", tb.Duration)
+	}
+}
+
 func TestSession_AppendDeltaWithoutActiveAssistant_NoOp(t *testing.T) {
 	s := state.NewSession()
 	s.AppendAssistantDelta("orphan delta")
@@ -203,6 +219,39 @@ func TestAddRemoveDiff(t *testing.T) {
 	}
 }
 
+func TestAppendAssistantNotice_ChronologicalSegment(t *testing.T) {
+	s := state.NewSession()
+	s.StartAssistant("build", "m")
+	s.AppendAssistantDelta("before compact")
+	s.AppendAssistantNotice(state.SystemKindInfo, "Контекст сжат — старая история суммаризирована")
+	s.AppendToolBlock(state.ToolBlock{ID: "t1", Name: "read", Status: state.ToolBlockRunning})
+	s.UpdateToolBlock("t1", state.ToolBlockCompleted, "ok", nil)
+	s.AppendAssistantDelta(" after")
+
+	m := s.Messages[0]
+	kinds := make([]state.SegmentKind, len(m.Segments))
+	for i, seg := range m.Segments {
+		kinds[i] = seg.Kind
+	}
+	want := []state.SegmentKind{
+		state.SegmentText,
+		state.SegmentNotice,
+		state.SegmentTools,
+		state.SegmentText,
+	}
+	if len(kinds) != len(want) {
+		t.Fatalf("kinds=%v want %v", kinds, want)
+	}
+	for i := range want {
+		if kinds[i] != want[i] {
+			t.Fatalf("kinds=%v want %v", kinds, want)
+		}
+	}
+	if len(m.Notices) != 1 || m.Notices[0].Text == "" {
+		t.Fatalf("Notices projection unset: %+v", m.Notices)
+	}
+}
+
 func TestAppendAssistantNotice_dedup(t *testing.T) {
 	s := state.NewSession()
 	s.StartAssistant("build", "m")
@@ -210,5 +259,22 @@ func TestAppendAssistantNotice_dedup(t *testing.T) {
 	s.AppendAssistantNotice(state.SystemKindRetry, "повтор шага")
 	if len(s.Messages[0].Notices) != 1 {
 		t.Fatalf("want 1 notice, got %d", len(s.Messages[0].Notices))
+	}
+}
+
+func TestNormalizeSegments_MigratesFlatNotices(t *testing.T) {
+	m := state.Message{
+		Role: state.RoleAssistant,
+		Text: "hello",
+		Segments: []state.Segment{
+			{Kind: state.SegmentText, Text: "hello"},
+		},
+		Notices: []state.SystemNotice{
+			{Kind: state.SystemKindInfo, Text: "Контекст сжат"},
+		},
+	}
+	m.NormalizeSegments()
+	if len(m.Segments) != 2 || m.Segments[1].Kind != state.SegmentNotice {
+		t.Fatalf("want notice migrated to segments, got %+v", m.Segments)
 	}
 }

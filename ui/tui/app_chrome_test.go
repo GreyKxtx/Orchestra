@@ -6,7 +6,6 @@ import (
 
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
-	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
 func testChromeApp(t *testing.T) *App {
@@ -37,7 +36,7 @@ func TestInputEmpty_gatesBareHotkeys(t *testing.T) {
 	}
 }
 
-func TestHandleCtrlTCascade_expandsToolsBeforeTodos(t *testing.T) {
+func TestHandleCtrlTCascade_opensTasksBeforeTools(t *testing.T) {
 	a := testChromeApp(t)
 	a.todos = []rpcclient.TodoItem{{ID: "1", Content: "task", Status: "pending"}}
 	a.setTodos(a.todos)
@@ -53,16 +52,33 @@ func TestHandleCtrlTCascade_expandsToolsBeforeTodos(t *testing.T) {
 	a.chat.SetMessages(a.session.Messages)
 
 	if !a.handleCtrlTCascade() {
-		t.Fatal("cascade should handle tools")
+		t.Fatal("cascade should open tasks")
+	}
+	if !a.taskPanelOpen {
+		t.Fatal("Ctrl+T must open Tasks when todos exist (strip advertises it)")
+	}
+	if a.session.Messages[0].ToolsExpanded {
+		t.Fatal("tools must not steal Ctrl+T while todos exist")
+	}
+}
+
+func TestHandleCtrlTCascade_expandsToolsWhenNoTodos(t *testing.T) {
+	a := testChromeApp(t)
+	started := time.Now()
+	a.session.AppendMessage(state.Message{
+		Role:      state.RoleAssistant,
+		StartedAt: started,
+		ToolBlocks: []state.ToolBlock{
+			{ID: "t1", Name: "read", Status: state.ToolBlockCompleted, Result: "ok"},
+		},
+	})
+	a.chat.SetMessages(a.session.Messages)
+
+	if !a.handleCtrlTCascade() {
+		t.Fatal("cascade should expand tools")
 	}
 	if !a.session.Messages[0].ToolsExpanded {
 		t.Fatal("expected ToolsExpanded after cascade")
-	}
-	if !a.chat.IsTurnExpanded(view.MessageKey(a.session.Messages[0])) {
-		t.Fatal("expected chat expand state")
-	}
-	if a.taskPanelOpen {
-		t.Fatal("todos must not monopolize Ctrl+T when tools exist")
 	}
 }
 

@@ -33,16 +33,16 @@ type msgYRange struct {
 // Chat renders the scrollable history of messages.
 type Chat struct {
 	vp            viewport.Model
-	streamCursor  bool            // when true, appends ▋ to last assistant token
-	welcome       WelcomeInfo     // metadata for the empty-state welcome screen
-	forceWelcome  bool            // when true, always show welcome regardless of content
-	chatMode      string          // current agent mode; drives ┃ color + footer
-	chatModel     string          // current model name; rendered in per-turn footer
-	spinFrame     int             // current spinner frame; advanced by App every tick
-	userScrolled  bool            // true while user is reading scrolled-back history
-	expandedTurns map[int64]bool  // assistant msg keys (StartedAt.UnixNano) the user expanded
-	cache         renderCache     // per-message render cache for completed assistant turns
-	msgRanges     []msgYRange     // content-line ranges for click-to-action detection
+	streamCursor  bool           // when true, appends ▋ to last assistant token
+	welcome       WelcomeInfo    // metadata for the empty-state welcome screen
+	forceWelcome  bool           // when true, always show welcome regardless of content
+	chatMode      string         // current agent mode; drives ┃ color + footer
+	chatModel     string         // current model name; rendered in per-turn footer
+	spinFrame     int            // current spinner frame; advanced by App every tick
+	userScrolled  bool           // true while user is reading scrolled-back history
+	expandedTurns map[int64]bool // mirror of Message.ToolsExpanded for cache skip / invalidation
+	cache         renderCache    // per-message render cache for completed assistant turns
+	msgRanges     []msgYRange    // content-line ranges for click-to-action detection
 	width         int
 	height        int
 }
@@ -83,25 +83,9 @@ func (c *Chat) SetStreamCursor(on bool) { c.streamCursor = on }
 // SetSpinFrame sets the current spinner frame index.
 func (c *Chat) SetSpinFrame(n int) { c.spinFrame = n }
 
-// ExpandTurn toggles the expanded/collapsed state of the assistant turn
-// identified by its StartedAt timestamp (stable across message-list mutations
-// like /clear or RemoveDiff that would shift integer indices).
-// The render cache entry for this key is invalidated so SetMessages rebuilds
-// the output with the new expand state instead of returning stale HTML.
-func (c *Chat) ExpandTurn(key int64) {
-	if c.expandedTurns == nil {
-		c.expandedTurns = map[int64]bool{}
-	}
-	c.expandedTurns[key] = !c.expandedTurns[key]
-	c.cache.delete(key)
-}
-
-// IsTurnExpanded reports whether the turn key is currently expanded.
-func (c *Chat) IsTurnExpanded(key int64) bool {
-	return c.expandedTurns[key]
-}
-
-// SetTurnExpanded forces expand state (used when restoring from session).
+// SetTurnExpanded mirrors Message.ToolsExpanded into the chat expand cache
+// and invalidates the render cache entry. Prefer flipping ToolsExpanded on
+// the message (persist SoT), then calling this to keep cache in sync.
 func (c *Chat) SetTurnExpanded(key int64, expanded bool) {
 	if key == 0 {
 		return
@@ -117,6 +101,13 @@ func (c *Chat) SetTurnExpanded(key int64, expanded bool) {
 	c.cache.delete(key)
 }
 
+// IsTurnExpanded reports whether the expand cache marks the turn expanded.
+// Prefer Message.ToolsExpanded for persist/UX decisions; this is for tests
+// and cache-skip mirroring.
+func (c *Chat) IsTurnExpanded(key int64) bool {
+	return c.expandedTurns[key]
+}
+
 // InvalidateMessage drops a cached render for key (e.g. after ReasoningExpanded toggle).
 func (c *Chat) InvalidateMessage(key int64) {
 	if key != 0 {
@@ -124,8 +115,9 @@ func (c *Chat) InvalidateMessage(key int64) {
 	}
 }
 
-// SyncExpandFromMessages seeds expandedTurns from persisted ToolsExpanded flags.
+// SyncExpandFromMessages reseeds the expand cache from persisted ToolsExpanded.
 func (c *Chat) SyncExpandFromMessages(msgs []state.Message) {
+	c.expandedTurns = map[int64]bool{}
 	for _, m := range msgs {
 		if m.Role != state.RoleAssistant || !m.ToolsExpanded {
 			continue
@@ -169,6 +161,7 @@ func (c *Chat) ScrollToBottom() {
 
 // SetMessages re-renders the viewport content from the session messages.
 func (c *Chat) SetMessages(msgs []state.Message) {
+	msgs = CollapseOldTurnsForView(msgs)
 	if len(msgs) == 0 {
 		c.vp.SetContent("")
 		c.userScrolled = false // cleared chat → next stream should auto-scroll
@@ -213,18 +206,17 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 			// to the same string forever — no need to rebuild markdown / tool
 			// groups every 100ms tick. Skip cache for: streaming turns, the
 			// last assistant (footer depends on isLast), and expanded turns
-			// (Ctrl+T) — their output varies with expandedTurns state.
+			// (Ctrl+T) — their output varies with ToolsExpanded.
 			key := MessageKey(m)
-			expanded := c.expandedTurns[key]
-			if !m.Streaming && !isLast && !expanded {
+			if !m.Streaming && !isLast && !m.ToolsExpanded {
 				if cached, ok := c.cache.get(key, width); ok {
 					rendered = cached
 				} else {
-					rendered = c.renderAssistantMessage(m, key, width, false, userQueryFor[i])
+					rendered = c.renderAssistantMessage(m, width, false, userQueryFor[i])
 					c.cache.put(key, width, rendered)
 				}
 			} else {
-				rendered = c.renderAssistantMessage(m, key, width, isLast, userQueryFor[i])
+				rendered = c.renderAssistantMessage(m, width, isLast, userQueryFor[i])
 			}
 
 		case state.RoleSystem:
@@ -308,37 +300,75 @@ func (c Chat) MessageAtContentY(y int) (role state.Role, text string, ok bool) {
 	return "", "", false
 }
 
-// messageCopyText builds clipboard payload: text + reasoning + tool summaries.
+// messageCopyText builds clipboard payload in chronological segment order.
 func messageCopyText(m state.Message) string {
 	var b strings.Builder
-	if r := strings.TrimSpace(m.Reasoning); r != "" {
-		b.WriteString("Thinking:\n")
-		b.WriteString(r)
-		b.WriteString("\n\n")
-	}
-	if t := strings.TrimSpace(m.Text); t != "" {
-		b.WriteString(t)
-	}
-	if len(m.ToolBlocks) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("\n\n")
+	segs := m.Segments
+	if len(segs) == 0 {
+		if strings.TrimSpace(m.Reasoning) != "" {
+			segs = append(segs, state.Segment{Kind: state.SegmentReasoning, Text: m.Reasoning})
 		}
-		b.WriteString("Tools:\n")
-		for _, tb := range m.ToolBlocks {
-			b.WriteString("- ")
-			b.WriteString(tb.Name)
-			if tb.ArgsPreview != "" {
-				b.WriteString(" ")
-				b.WriteString(tb.ArgsPreview)
+		if len(m.ToolBlocks) > 0 {
+			segs = append(segs, state.Segment{Kind: state.SegmentTools, Tools: m.ToolBlocks})
+		}
+		if strings.TrimSpace(m.Text) != "" {
+			segs = append(segs, state.Segment{Kind: state.SegmentText, Text: m.Text})
+		}
+	}
+	for _, seg := range segs {
+		switch seg.Kind {
+		case state.SegmentReasoning:
+			if r := strings.TrimSpace(seg.Text); r != "" {
+				if b.Len() > 0 {
+					b.WriteString("\n\n")
+				}
+				b.WriteString("Thinking:\n")
+				b.WriteString(r)
 			}
-			b.WriteString(" [")
-			b.WriteString(string(tb.Status))
-			b.WriteString("]")
-			if out := strings.TrimSpace(tb.Result); out != "" {
-				b.WriteString("\n  ")
-				b.WriteString(truncateForCopy(out, 2000))
+		case state.SegmentText:
+			if t := strings.TrimSpace(seg.Text); t != "" {
+				if b.Len() > 0 {
+					b.WriteString("\n\n")
+				}
+				b.WriteString(t)
 			}
-			b.WriteByte('\n')
+		case state.SegmentTools:
+			if len(seg.Tools) == 0 {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString("Tools:\n")
+			for _, tb := range seg.Tools {
+				b.WriteString("- ")
+				b.WriteString(tb.Name)
+				if tb.ArgsPreview != "" {
+					b.WriteString(" ")
+					b.WriteString(tb.ArgsPreview)
+				}
+				b.WriteString(" [")
+				b.WriteString(string(tb.Status))
+				b.WriteString("]")
+				if out := strings.TrimSpace(tb.Result); out != "" {
+					b.WriteString("\n  ")
+					b.WriteString(truncateForCopy(out, 2000))
+				}
+				b.WriteByte('\n')
+			}
+		case state.SegmentNotice:
+			if t := strings.TrimSpace(seg.Text); t != "" {
+				if b.Len() > 0 {
+					b.WriteString("\n\n")
+				}
+				kind := string(seg.NoticeKind)
+				if kind == "" {
+					kind = "info"
+				}
+				b.WriteString(kind)
+				b.WriteString(": ")
+				b.WriteString(t)
+			}
 		}
 	}
 	if len(m.DiffFiles) > 0 {

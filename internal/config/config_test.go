@@ -9,10 +9,10 @@ import (
 
 func TestExecConfig_IsCommandAllowed(t *testing.T) {
 	cases := []struct {
-		name    string
-		cfg     ExecConfig
-		cmd     string
-		want    bool
+		name string
+		cfg  ExecConfig
+		cmd  string
+		want bool
 	}{
 		{
 			name: "empty lists deny all",
@@ -270,6 +270,55 @@ web:
 	}
 }
 
+func TestFindProvider_InheritsAPIKeyFromLLM(t *testing.T) {
+	cfg := &ProjectConfig{
+		LLM: LLMConfig{
+			Provider: "vllm",
+			APIBase:  "https://example.ngrok-free.dev/v1",
+			APIKey:   "secret-from-llm",
+		},
+		Providers: map[string]LLMConfig{
+			"vllm": {Provider: "vllm", APIBase: "https://example.ngrok-free.dev/v1"},
+		},
+	}
+	prov, ok := cfg.FindProvider("vllm")
+	if !ok {
+		t.Fatal("expected find")
+	}
+	if prov.APIKey != "secret-from-llm" {
+		t.Fatalf("APIKey = %q, want inherited from llm:", prov.APIKey)
+	}
+}
+
+func TestFindProvider_InheritsMaxTokensFromLLM(t *testing.T) {
+	cfg := &ProjectConfig{
+		LLM: LLMConfig{
+			Provider:    "vllm",
+			APIBase:     "https://example.ngrok-free.dev/v1",
+			MaxTokens:   8192,
+			Temperature: 0.2,
+			ToolChoice:  "omit",
+			ExtraBody:   map[string]any{"num_ctx": 20000},
+		},
+		Providers: map[string]LLMConfig{
+			"vllm": {Provider: "vllm", APIBase: "https://example.ngrok-free.dev/v1", Model: "qwen"},
+		},
+	}
+	prov, ok := cfg.FindProvider("vllm")
+	if !ok {
+		t.Fatal("expected find")
+	}
+	if prov.MaxTokens != 8192 {
+		t.Fatalf("MaxTokens = %d, want 8192", prov.MaxTokens)
+	}
+	if prov.ToolChoice != "omit" {
+		t.Fatalf("ToolChoice = %q", prov.ToolChoice)
+	}
+	if prov.ExtraBody["num_ctx"] == nil {
+		t.Fatal("ExtraBody not inherited")
+	}
+}
+
 func TestFindProvider_Found(t *testing.T) {
 	cfg := &ProjectConfig{
 		Providers: map[string]LLMConfig{
@@ -377,6 +426,25 @@ func TestValidate_ApplyOutputAndProfile(t *testing.T) {
 	}
 }
 
+func TestValidate_LSPAutoInstall(t *testing.T) {
+	cfg := DefaultConfig("/tmp/proj")
+	cfg.applyDefaults()
+	if cfg.LSP.EffectiveAutoInstall() != "true" {
+		t.Fatalf("default EffectiveAutoInstall=%q", cfg.LSP.EffectiveAutoInstall())
+	}
+	cfg.LSP.AutoInstall = "maybe"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "lsp.auto_install") {
+		t.Fatalf("expected lsp.auto_install error, got %v", err)
+	}
+	cfg.LSP.AutoInstall = "true"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LSP.EffectiveAutoInstall() != "true" {
+		t.Fatal(cfg.LSP.EffectiveAutoInstall())
+	}
+}
+
 func TestApplyDefaults_PatchDir(t *testing.T) {
 	cfg := &ProjectConfig{
 		ProjectRoot:  "/tmp",
@@ -397,8 +465,8 @@ func TestApplyDefaults_PatchDir(t *testing.T) {
 func TestEffectiveNumCtx(t *testing.T) {
 	cfg := &ProjectConfig{
 		LLM: LLMConfig{
-			Model:        "qwen/qwen3.6-27b",
-			ExtraBody:      map[string]any{"num_ctx": 20000},
+			Model:     "qwen/qwen3.6-27b",
+			ExtraBody: map[string]any{"num_ctx": 20000},
 			ModelPresets: map[string]ModelPreset{
 				"qwen/qwen3.6-27b": {NumCtx: 70000},
 			},
@@ -422,15 +490,59 @@ func TestEffectiveMaxPromptBytes(t *testing.T) {
 		Limits: LimitsConfig{ContextKB: 64},
 		LLM: LLMConfig{
 			Model:     "qwen/qwen3.6-27b",
+			MaxTokens: 8192,
 			ExtraBody: map[string]any{"num_ctx": 60000},
 		},
 	}
-	want := 60000 * bytesPerContextToken
+	// promptTok = 60000 - 8192 - 2048 = 49760; bytes = 49760 * 4
+	want := (60000 - 8192 - 2048) * bytesPerContextToken
 	if got := cfg.EffectiveMaxPromptBytes(); got != want {
-		t.Fatalf("num_ctx wins: got %d want %d", got, want)
+		t.Fatalf("num_ctx share: got %d want %d", got, want)
 	}
 	cfg.LLM.ExtraBody = nil
 	if got := cfg.EffectiveMaxPromptBytes(); got != 64*1024 {
 		t.Fatalf("context_kb only: got %d want %d", got, 64*1024)
+	}
+}
+
+func TestApplyDefaults_CompactThreshold(t *testing.T) {
+	cfg := &ProjectConfig{}
+	cfg.applyDefaults()
+	if cfg.Agent.CompactThresholdPct != 60 {
+		t.Fatalf("default compact=%d want 60", cfg.Agent.CompactThresholdPct)
+	}
+	cfg.Agent.CompactThresholdPct = -1
+	cfg.applyDefaults()
+	if cfg.Agent.CompactThresholdPct != 0 {
+		t.Fatalf("disabled compact=%d want 0", cfg.Agent.CompactThresholdPct)
+	}
+}
+
+func TestValidate_OrchestraAndAutoRouter(t *testing.T) {
+	cfg := DefaultConfig("/tmp/proj")
+	cfg.applyDefaults()
+	cfg.Providers = map[string]LLMConfig{
+		"fast": {APIBase: "http://x", Model: "m", TimeoutS: 1},
+	}
+	cfg.Orchestra = OrchestraConfig{
+		Planner: OrchestraRole{Provider: "missing"},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "orchestra.planner") {
+		t.Fatalf("expected planner provider error, got %v", err)
+	}
+	cfg.Orchestra.Planner.Provider = "fast"
+	cfg.Orchestra.Tiers = []OrchestraTier{{Name: "focused", Provider: "fast"}}
+	cfg.Orchestra.DefaultTier = "nope"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "default_tier") {
+		t.Fatalf("expected default_tier error, got %v", err)
+	}
+	cfg.Orchestra.DefaultTier = "focused"
+	cfg.AutoRouter.Provider = "missing"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "auto_router") {
+		t.Fatalf("expected auto_router error, got %v", err)
+	}
+	cfg.AutoRouter.Provider = "fast"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

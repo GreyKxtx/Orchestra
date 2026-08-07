@@ -17,6 +17,16 @@ func AtomHasToolRole(a Atom) bool {
 	return false
 }
 
+// AtomMessages returns a copy of the atom's messages.
+func AtomMessages(a Atom) []llm.Message {
+	if len(a.msgs) == 0 {
+		return nil
+	}
+	out := make([]llm.Message, len(a.msgs))
+	copy(out, a.msgs)
+	return out
+}
+
 // BuildHistoryAtoms groups messages (from index 0) into atoms preserving
 // assistant+tool_call ↔ tool reply pairing — same semantics as TruncateMessages.
 func BuildHistoryAtoms(messages []llm.Message) []Atom {

@@ -24,10 +24,15 @@ type Request struct {
 	Tool        string `json:"tool"`
 	Description string `json:"description"`
 	Reason      string `json:"reason,omitempty"`
+	// Kind distinguishes consent flows: ""/"exec" (shell) vs "lsp.install".
+	Kind string `json:"kind,omitempty"`
 }
 
 // Response is the client's consent decision.
 type Response struct {
 	Approved bool   `json:"approved"`
 	Reason   string `json:"reason,omitempty"`
+	// Always means "remember for this session / persist auto policy".
+	// For kind=lsp.install, TUI maps this to lsp.auto_install=true.
+	Always bool `json:"always,omitempty"`
 }

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 )
 
 // syncTurnUI pushes TurnFSM busy state into the status bar spinner.
@@ -36,9 +37,10 @@ func (a *App) finishApplyTurn() {
 
 // beginAgentTurn marks the turn as running and wires cancel UI.
 func (a *App) beginAgentTurn() {
-	a.livePromptTokens = 0
+	a.chrome.livePromptTokens = 0
 	a.turnError = ""
 	a.retryHintThisStep = false
+	a.turnStartedAt = time.Now()
 	_ = a.turn.OnSubmit() // caller already gated BlocksSubmit
 	a.syncTurnUI()
 }

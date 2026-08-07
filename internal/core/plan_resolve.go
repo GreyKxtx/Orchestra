@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/plan"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
+	"github.com/orchestra/orchestra/internal/plan"
 )
 
 // resolvePlanPath returns the plan markdown path for an agent run.
@@ -14,7 +14,7 @@ func resolvePlanPath(mode, sessionPlanPath, sessionID string) string {
 	if p := strings.TrimSpace(sessionPlanPath); p != "" {
 		return plan.NormalizeRelPath(p)
 	}
-	if agent.Mode(mode) != agent.ModePlan {
+	if !needsPlanPath(agent.Mode(mode)) {
 		return ""
 	}
 	if strings.TrimSpace(sessionID) != "" {
@@ -23,13 +23,22 @@ func resolvePlanPath(mode, sessionPlanPath, sessionID string) string {
 	return plan.AdHocRelPath()
 }
 
+func needsPlanPath(m agent.Mode) bool {
+	switch m {
+	case agent.ModePlan, agent.ModeArchitecture, agent.ModeOrchestra:
+		return true
+	default:
+		return false
+	}
+}
+
 // sessionPlanPathLocked assigns or returns the session plan path.
 // Caller must hold sess.Lock().
 func sessionPlanPathLocked(sess *coresession.Session, mode string) string {
 	if p := sess.PlanPath(); p != "" {
 		return p
 	}
-	if agent.Mode(mode) != agent.ModePlan {
+	if !needsPlanPath(agent.Mode(mode)) {
 		return ""
 	}
 	p := plan.SessionRelPath(sess.ID)

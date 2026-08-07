@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/agent/working"
 	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/patches"
@@ -47,14 +48,19 @@ type SubtaskRunner interface {
 // SubtaskSpawnRequest is the request for spawning a child agent task.
 type SubtaskSpawnRequest struct {
 	Goal         string
-	SubagentType string // "explore" (default), "general", or another ListToolsForMode key
+	SubagentType string // explore|ask|debug|architecture|general|worker (or ListToolsForMode key)
 	MaxSteps     int
 	TimeoutMS    int
+	// Provider / Model optionally override the child LLM (named providers: map entry).
+	Provider string
+	Model    string
+	// Tier selects orchestra.tiers[] when SubagentType is "worker" (e.g. complex|focused|micro).
+	Tier string
 }
 
 // SkillSpec is a thin summary of a discovered skill, used for system-prompt
 // advertisement and validation of skill_invoke calls. The full skill body
-// is not embedded here вЂ” SkillRunner.InvokeSkill resolves it by name.
+// is not embedded here — SkillRunner.InvokeSkill resolves it by name.
 type SkillSpec struct {
 	Name        string
 	Description string
@@ -82,7 +88,7 @@ type SubtaskResult struct {
 // unaffected.
 //
 // Unknown values are accepted by Options.Mode (no panic / no error) and
-// fall through to the build-mode default inside the tools registry вЂ”
+// fall through to the build-mode default inside the tools registry —
 // this matches the pre-existing behaviour and keeps the CLI's silent-
 // fallback contract intact for ad-hoc / custom-agent modes that may
 // arrive later. Callers that need strict validation should use
@@ -91,13 +97,19 @@ type Mode string
 
 // Agent mode constants.
 const (
-	ModeBuild      Mode = "build"      // default: full tool access
-	ModePlan       Mode = "plan"       // read-only + plan tools
-	ModeExplore    Mode = "explore"    // grep/glob/read only (subagent)
-	ModeGeneral    Mode = "general"    // multi-step execution subagent: full read+write tools, returns via task_result.
-	ModeCompaction Mode = "compaction" // internal: compresses history into a summary.
-	ModeTitle      Mode = "title"      // internal: generates a short task title from the user query.
-	ModeSummary    Mode = "summary"    // internal: produces a brief summary of completed work.
+	ModeBuild        Mode = "build"        // default: full tool access
+	ModePlan         Mode = "plan"         // read-only + plan tools
+	ModeExplore      Mode = "explore"      // grep/glob/read only (subagent)
+	ModeAsk          Mode = "ask"          // Q&A read-only
+	ModeDebug        Mode = "debug"        // root-cause + targeted fix
+	ModeArchitecture Mode = "architecture" // design / plan md only
+	ModeGeneral      Mode = "general"      // multi-step execution subagent: full read+write tools, returns via task_result.
+	ModeAgent        Mode = "agent"        // auto-route to build|plan|explore before Run
+	ModeOrchestra    Mode = "orchestra"    // Lead planner; delegates to worker tiers
+	ModeWorker       Mode = "worker"       // atomic WorkOrder executor (child only)
+	ModeCompaction   Mode = "compaction"   // internal: compresses history into a summary.
+	ModeTitle        Mode = "title"        // internal: generates a short task title from the user query.
+	ModeSummary      Mode = "summary"      // internal: produces a brief summary of completed work.
 )
 
 // knownModes is the closed set of modes registered in this package.
@@ -105,7 +117,9 @@ const (
 // instead of the registry's silent fall-through to build behaviour.
 var knownModes = map[Mode]bool{
 	ModeBuild: true, ModePlan: true, ModeExplore: true,
-	ModeGeneral: true, ModeCompaction: true, ModeTitle: true, ModeSummary: true,
+	ModeAsk: true, ModeDebug: true, ModeArchitecture: true,
+	ModeGeneral: true, ModeAgent: true, ModeOrchestra: true, ModeWorker: true,
+	ModeCompaction: true, ModeTitle: true, ModeSummary: true,
 }
 
 // IsKnownMode reports whether m is a mode this package recognises.
@@ -258,15 +272,56 @@ type Options struct {
 	// AutoSessionMemory appends explore/grep notes to session memory automatically.
 	AutoSessionMemory bool
 
+	// SkipMemoryInject disables ORCHESTRA.md / agent.md / global memory in the
+	// system prompt. Used for workers that should see only the WorkOrder.
+	SkipMemoryInject bool
+
 	// PermissionRequester, if non-nil, is consulted before bash/exec.run runs
 	// instead of (or before) the static AllowExec gate.
 	// Nil в†’ fall through to existing AllowExec / ExecAllow gates (CLI mode).
 	PermissionRequester PermissionRequester
 
+	// CompactionClient, if non-nil, is used for ModeCompaction LLM calls
+	// (cheap/fast provider). Nil → use the main agent LLM client.
+	CompactionClient llm.Client
+
+	// CompactionContextTokens is the context window (num_ctx) of the model
+	// CompactionClient actually talks to. When 0 and CompactionClient is set,
+	// compactionCorpusBudget falls back to ModelContextTokens (the MAIN
+	// model's window) which is wrong whenever the compaction provider has a
+	// smaller window — the summarizer request itself can then overflow.
+	// Always set this alongside CompactionClient (see Core.compactionClient).
+	CompactionContextTokens int
+
 	// CompactThresholdPct, if > 0, triggers history compaction when total history size (in bytes)
-	// exceeds this percentage of MaxPromptBytes. 0 = disabled. Recommended: 70.
+	// exceeds this percentage of MaxPromptBytes. 0 = disabled. Recommended: 60.
 	// Compaction failure is non-fatal: logs a warning and continues without compacting.
 	CompactThresholdPct int
+
+	// ForceCompactOnce forces one compaction at the start of Run regardless of threshold.
+	ForceCompactOnce bool
+
+	// ModelContextTokens is the model context window (num_ctx / max_model_len).
+	// When > 0, compaction uses PromptBudgetTokens(ctx, CompletionMaxTokens)
+	// so history shrinks before vLLM would 400 on prompt+max_tokens.
+	ModelContextTokens int
+
+	// CompletionMaxTokens is the configured llm.max_tokens (want). Reserved
+	// inside the context window when deciding whether to compact.
+	CompletionMaxTokens int
+
+	// BytesPerContextToken calibrates estimatePromptTokens (default 4).
+	BytesPerContextToken int
+
+	// WorkingState enables <working_state> inject (default true when unset via ApplyHistoryConfig).
+	WorkingState *bool
+
+	// TurnDigestKeep is how many recent turn digests to inject (default 3; 0 = off).
+	TurnDigestKeep int
+
+	// TurnDigestEveryN writes a mid-run micro-digest every N agent steps (0 = end-of-run only).
+	// Does not compact or rewrite LLM history.
+	TurnDigestEveryN int
 
 	Debug  bool
 	Logger *log.Logger
@@ -366,6 +421,30 @@ type Agent struct {
 	// premature-final rejection does not block legitimate finals after a
 	// denied or failed mutating attempt.
 	turnMutatingTools int
+
+	// lastPromptTokens is the most recent real Usage.PromptTokens (0 if unknown).
+	lastPromptTokens int
+
+	// lastPromptBytes is the serialized size of the last request sent to the
+	// LLM. Paired with lastPromptTokens it calibrates bytes-per-token.
+	lastPromptBytes int
+
+	// calibratedBytesPerToken is learned from real usage (0 = not yet known).
+	calibratedBytesPerToken int
+
+	// overflowRecoveries counts compact→retry cycles triggered by provider
+	// context-window rejections during this Run.
+	overflowRecoveries int
+
+	// contextPressureWarned is set after emitting a soft approaching-threshold
+	// notice once this Run (avoid per-step spam).
+	contextPressureWarned bool
+
+	// compactMetrics accumulates compaction stats for this agent instance.
+	compactMetrics CompactMetrics
+
+	// working is the rule-based ledger for the current Run (token economy).
+	working *working.State
 }
 
 func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, opts Options) (*Agent, error) {

@@ -119,11 +119,7 @@ func (a *App) saveOnboardingConfig() tea.Cmd {
 			cfg.LLM.ExtraBody = map[string]any{}
 		}
 		cfg.LLM.ExtraBody["num_ctx"] = ob.Settings.NumCtx
-		if ob.Settings.EnableThinking {
-			cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": true}
-		} else {
-			delete(cfg.LLM.ExtraBody, "chat_template_kwargs")
-		}
+		cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": ob.Settings.EnableThinking}
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return modelsLoadedMsg{err: fmt.Errorf("save config: %w", err)}
 		}

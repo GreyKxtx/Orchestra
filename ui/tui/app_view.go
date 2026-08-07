@@ -138,7 +138,6 @@ func (a *App) renderChatInputBox() string {
 	return lipgloss.NewStyle().PaddingLeft(chatSidePad).Render(box)
 }
 
-
 // renderInputBox renders the boxed text-input used in both the welcome screen
 // and the chat view. Bottom row: build В· model В· provider В· exec (mode lives here only).
 func (a *App) renderInputBox(width int) string {
@@ -177,7 +176,7 @@ func (a *App) renderInputBox(width int) string {
 // agentModes lists the available agent modes cycled by Tab. The names must
 // match the built-in modes recognized by internal/config вЂ” otherwise the
 // core returns "unknown agent mode" on agent.run.
-var agentModes = []string{"build", "plan", "explore"}
+var agentModes = []string{"build", "plan", "explore", "ask", "debug", "architecture", "agent", "orchestra"}
 
 // cycleAgentMode advances cfg.Mode to the next mode in agentModes.
 func (a *App) cycleAgentMode() {
@@ -193,6 +192,7 @@ func (a *App) cycleAgentMode() {
 		}
 	}
 	a.cfg.Mode = agentModes[(idx+1)%len(agentModes)]
+	a.routeBadge = ""
 	a.input.SetMode(a.cfg.Mode)
 	a.chat.SetMeta(a.cfg.Mode, a.cfg.Model)
 }
@@ -201,25 +201,25 @@ func (a *App) cycleAgentMode() {
 func (a *App) updateStatusHints() {
 	switch {
 	case a.mousePassthrough:
-		a.statusBar.SetHints("Р’С‹РґРµР»РµРЅРёРµ РјС‹С€СЊСЋ В· Ctrl+G РґР»СЏ РІРѕР·РІСЂР°С‚Р°")
+		a.statusBar.SetHints("Выделение мышью · Ctrl+G для возврата")
 	case a.paletteActive:
-		a.statusBar.SetHints("в†‘в†“ РІС‹Р±РѕСЂ В· Enter РІС‹РїРѕР»РЅРёС‚СЊ В· Esc")
+		a.statusBar.SetHints("↑↓ выбор · Enter выполнить · Esc")
 	case a.mentionActive:
-		a.statusBar.SetHints("в†‘в†“ РІС‹Р±РѕСЂ В· Enter/Tab РІСЃС‚Р°РІРёС‚СЊ В· Esc")
+		a.statusBar.SetHints("↑↓ выбор · Enter/Tab вставить · Esc")
 	case a.questionModal != nil:
-		a.statusBar.SetHints("Enter вЂ” РѕС‚РІРµС‚ В· Esc вЂ” РѕС‚РјРµРЅР°")
+		a.statusBar.SetHints("Enter — ответ · Esc — отмена")
 	case a.permModal != nil:
-		a.statusBar.SetHints("[y] СЂР°Р· В· [a] СЃРµСЃСЃРёСЏ В· [t] tool В· [n] РЅРµС‚")
+		a.statusBar.SetHints("[y] раз · [a] сессия · [t] tool · [n] нет")
 	case a.turn.CanCancel() && a.activeCancel != nil:
-		a.statusBar.SetHints("Esc РѕС‚РјРµРЅР° В· Ctrl+C")
+		a.statusBar.SetHints("Esc отмена · Ctrl+C")
 	case !a.turn.ShowBusySpinner() && a.pendingTodoCount() > 0:
-		a.statusBar.SetHints("Ctrl+T В· В«РїСЂРѕРґРѕР»Р¶Р°Р№В»")
+		a.statusBar.SetHints("Ctrl+T · «продолжай»")
 	case a.taskPanelOpen && len(a.todos) > 0:
-		a.statusBar.SetHints("в†‘в†“ В· Ctrl+T")
+		a.statusBar.SetHints("↑↓ · Ctrl+T")
 	case !a.turn.ShowBusySpinner() && a.session.HasDiff():
-		a.statusBar.SetHints("d / Ctrl+D В· diff")
+		a.statusBar.SetHints("d / Ctrl+D · diff")
 	case !a.turn.ShowBusySpinner() && a.sessionHasTools():
-		a.statusBar.SetHints("Ctrl+T В· tools")
+		a.statusBar.SetHints("Ctrl+T · tools")
 	default:
 		a.statusBar.SetHints("")
 	}

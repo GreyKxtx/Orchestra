@@ -189,6 +189,8 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		maxFinalFails  int
 		maxPromptBytes int
 		compactPct     int
+		modelCtx       int
+		completionMax  int
 		stepTimeout    time.Duration
 	)
 	var permRules []config.PermissionRule
@@ -202,6 +204,8 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		maxFinalFails = c.Cfg.Agent.MaxFinalFailures
 		maxPromptBytes = c.Cfg.EffectiveMaxPromptBytes()
 		compactPct = c.Cfg.Agent.CompactThresholdPct
+		modelCtx = int(c.Cfg.EffectiveNumCtx())
+		completionMax = c.Cfg.LLM.MaxTokens
 		stepTimeout = time.Duration(c.Cfg.LLM.TimeoutS) * time.Second
 		permRules = c.Cfg.Permissions.Rules
 	}
@@ -210,7 +214,7 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 	// the marker/output the runner expects. Without IsChild=true, the
 	// main-agent guard rejects task_result as invalid.
 	return agent.Options{
-		IsChild: true,
+		IsChild:              true,
 		MaxSteps:             maxSteps,
 		MaxInvalidRetries:    maxInvalid,
 		MaxDeniedToolRepeats: maxDenied,
@@ -218,6 +222,8 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		MaxFinalFailures:     maxFinalFails,
 		MaxPromptBytes:       maxPromptBytes,
 		CompactThresholdPct:  compactPct,
+		ModelContextTokens:   modelCtx,
+		CompletionMaxTokens:  completionMax,
 		LLMStepTimeout:       stepTimeout,
 		AllowExec:            c.AllowExec,
 		AllowWeb:             c.AllowWeb,

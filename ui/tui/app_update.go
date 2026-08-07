@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -48,6 +49,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return a, tickCmd()
+
+	case lspStatusMsg:
+		if m.status != "" {
+			a.chrome.lspStatus = m.status
+			a.syncStatusBar()
+		}
+		return a, nil
+
+	case sessionCompactDoneMsg:
+		a.handleSessionCompactDone(m)
+		return a, nil
 
 	case modelsLoadedMsg:
 		if a.onboarding != nil {
@@ -100,7 +112,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case coreSessionStartedMsg:
 		a.handleCoreSessionStarted(m)
-		return a, nil
+		var cmds []tea.Cmd
+		if a.cfg.Model != "" && a.cfg.ConfigPath != "" {
+			cmds = append(cmds, a.probeStartupCmd())
+		}
+		if len(cmds) == 0 {
+			return a, nil
+		}
+		return a, tea.Batch(cmds...)
 
 	case view.DialogResultMsg:
 		return a.handleDialogResult(m)
@@ -123,6 +142,37 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case settingsSavedMsg:
 		return a, a.applySavedSettings(m)
+	case llmProbeMsg:
+		return a, a.handleLLMProbe(m)
+	case limitsAppliedMsg:
+		if m.err != nil {
+			a.showToast("ctx sync ✗ · " + m.err.Error())
+			return a, nil
+		}
+		if m.contextTokens > 0 {
+			a.chrome.modelContextLimit = m.contextTokens
+			a.statusBar.SetModelCtx(m.contextTokens)
+			a.syncStatusBar()
+		}
+		if m.clamped {
+			a.showToast(fmt.Sprintf("ctx %d · max_tokens урезан до %d (лимит vLLM)", m.contextTokens, m.maxTokens))
+		}
+		return a, nil
+	case orchestraSavedMsg:
+		if m.err != nil {
+			a.session.AppendMessage(state.Message{
+				Role: state.RoleSystem,
+				Text: "[error] save orchestra: " + m.err.Error(),
+			})
+			a.chat.SetMessages(a.session.Messages)
+			return a, nil
+		}
+		a.showToast("orchestra · roles saved")
+		return a, a.respawnRPCCmd()
+
+	case mcpTestMsg:
+		a.handleMCPTestMsg(m)
+		return a, nil
 
 	case tea.MouseMsg:
 		return a.handleMouseMsg(m)
@@ -148,6 +198,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if km, ok := msg.(tea.KeyMsg); ok && a.input.HasSelection() && isPrintableKey(km) {
+		// Bracketed / multi-rune paste replaces selection as one chunk.
+		if km.Paste || len(km.Runes) > 1 {
+			if next, cmd, handled := a.ingestPasteChunk(string(km.Runes)); handled {
+				return next, cmd
+			}
+		}
 		a.input.ReplaceSelection(string(km.Runes))
 		a.input.SyncHeight(5)
 		a.syncPalette()

@@ -1,17 +1,21 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/autorouter"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/protocol"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
+	"github.com/orchestra/orchestra/internal/skillrun"
+	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
@@ -25,6 +29,7 @@ type agentLaunchSpec struct {
 	Profile   string
 	PlanPath  string
 	SessionID string
+	Query     string // user turn text; used by mode=agent auto-router
 
 	Apply     bool
 	Backup    bool
@@ -52,6 +57,12 @@ type agentLaunch struct {
 	Usage      *usage.Tracker
 	TaskRunner *tasks.TaskRunner
 	Profile    string
+
+	RequestedMode   string
+	EffectiveMode   string
+	RouteReason     string
+	RouteConfidence float64
+	EventEnvelope   EventEnvelope
 }
 
 // resolveApplyOutput normalises apply_output and forces dry-run for patch mode.
@@ -99,6 +110,12 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		return nil, protocol.NewError(protocol.ExecFailed, "core config is nil", nil)
 	}
 
+	// Wire TUI/CLI consent into LSP auto-provision for this turn.
+	if c.tools != nil {
+		c.tools.SetLSPInstallConsent(spec.PermissionRequester)
+		c.tools.WarmupLSP(context.Background())
+	}
+
 	profileName, err := resolveProfileName(c.cfg, spec.Profile)
 	if err != nil {
 		return nil, err
@@ -128,12 +145,12 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 
 	promptFamily := promptpkg.ResolvePromptFamily(c.cfg.LLM.PromptFamily, c.cfg.LLM.Model)
 
+	env := spec.EventEnvelope
+	if env.TurnID == "" {
+		env.TurnID = NewTurnID()
+	}
 	var onEvent func(agent.AgentEvent)
 	if spec.OnEvent != nil {
-		env := spec.EventEnvelope
-		if env.TurnID == "" {
-			env.TurnID = NewTurnID()
-		}
 		onEvent = buildAgentOnEvent(spec.OnEvent, env)
 	}
 
@@ -154,9 +171,44 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		hooksRunner = hr
 	}
 
-	customOpts, err := c.resolveCustomAgentOpts(spec.Mode, agentLogger)
+	requestedMode := strings.TrimSpace(spec.Mode)
+	effectiveMode := requestedMode
+	routeReason := ""
+	routeConfidence := 0.0
+
+	if strings.EqualFold(requestedMode, string(agent.ModeAgent)) {
+		dec := c.classifyAgentMode(context.Background(), spec.Query, agentLogger)
+		effectiveMode = dec.Mode
+		routeReason = dec.Reason
+		routeConfidence = dec.Confidence
+		if spec.OnEvent != nil {
+			spec.OnEvent("agent/event", mergeEventEnvelope(map[string]any{
+				"step": 0,
+				"type": "mode_route",
+				"data": map[string]any{
+					"from":       string(agent.ModeAgent),
+					"to":         effectiveMode,
+					"reason":     routeReason,
+					"confidence": routeConfidence,
+				},
+			}, env))
+		}
+	}
+
+	customOpts, err := c.resolveCustomAgentOpts(effectiveMode, agentLogger)
 	if err != nil {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
+	}
+
+	// Orchestra Lead uses orchestra.planner provider/model when configured.
+	if strings.EqualFold(effectiveMode, string(agent.ModeOrchestra)) {
+		if client, pl, ml, ok := c.resolveOrchestraPlanner(agentLogger); ok {
+			customOpts.llmClient = client
+			if pl != "" {
+				// labels applied below via opts
+				_ = ml
+			}
+		}
 	}
 
 	usageLabel := spec.UsageLabel
@@ -164,11 +216,23 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		usageLabel = "agent.run"
 	}
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
-	taskRunner := tasks.New(c.llmClient, c.validator, c.tools, childAgentConfig(c.cfg, maxPromptBytes, usageTracker))
+	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
+	taskRunner := tasks.New(customOpts.llmClient, c.validator, c.tools, childCfg)
 
 	planPath := strings.TrimSpace(spec.PlanPath)
 	if planPath == "" {
-		planPath = resolvePlanPath(spec.Mode, "", "")
+		planPath = resolvePlanPath(effectiveMode, "", "")
+	}
+
+	providerLabel := providerLabelOf(c.cfg)
+	modelLabel := c.cfg.LLM.Model
+	if strings.EqualFold(effectiveMode, string(agent.ModeOrchestra)) {
+		if p := strings.TrimSpace(c.cfg.Orchestra.Planner.Provider); p != "" {
+			providerLabel = p
+		}
+		if m := strings.TrimSpace(c.cfg.Orchestra.Planner.Model); m != "" {
+			modelLabel = m
+		}
 	}
 
 	opts := agent.Options{
@@ -178,6 +242,9 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
 		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
 		MaxPromptBytes:       maxPromptBytes,
+		ModelContextTokens:   int(c.cfg.EffectiveNumCtx()),
+		CompletionMaxTokens:  c.cfg.LLM.MaxTokens,
+		BytesPerContextToken: c.cfg.Agent.ResolvedBytesPerContextToken(),
 		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
 		Apply:                spec.Apply,
 		Backup:               spec.Backup,
@@ -189,26 +256,47 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		Debug:                spec.Debug,
 		ResponseFormat:       respFmt,
 		PromptFamily:         promptFamily,
-		Mode:                 agent.Mode(spec.Mode),
+		Mode:                 agent.Mode(effectiveMode),
 		SystemPromptOverride: customOpts.systemPromptOverride,
 		CustomTools:          customOpts.customTools,
 		OnEvent:              onEvent,
 		AgentLogger:          agentLogger,
 		SubtaskRunner:        taskRunner,
 		HooksRunner:          hooksRunner,
-		ExtraTools:           c.mcpToolDefs(),
+		ExtraTools:           c.extraToolDefs(),
 		PermissionRequester:  convertPermissionRequester(spec.PermissionRequester),
 		QuestionAsker:        spec.QuestionAsker,
 		UsageTracker:         usageTracker,
-		ProviderLabel:        providerLabelOf(c.cfg),
-		ModelLabel:           c.cfg.LLM.Model,
+		ProviderLabel:        providerLabel,
+		ModelLabel:           modelLabel,
 		PlanPath:             planPath,
 		SessionID:            spec.SessionID,
 		AutoSessionMemory:    spec.AutoSessionMemory,
 	}
+	// Skills in TUI/core (parity with `orchestra apply`). Skip for read-only /
+	// plan-only modes so skill_invoke cannot bypass write guards via a child.
+	if skillsAllowedInMode(effectiveMode) {
+		if discovered, err := skills.DiscoverCached(c.workspaceRoot); err == nil && len(discovered) > 0 {
+			refs, _ := skills.DiscoverRefs(c.workspaceRoot)
+			allowWeb := c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm
+			opts.Skills = skillrun.Specs(discovered)
+			opts.SkillRunner = skillrun.New(
+				c.cfg, discovered, refs, customOpts.llmClient, c.validator, c.tools, agentLogger,
+				c.cfg.Agent.MaxSteps, allowExec, allowWeb, false,
+			)
+		}
+	}
 	agent.ApplyHistoryConfig(&opts, c.cfg)
 
-	if err := agent.ApplyProfile(&opts, profileName, false); err != nil {
+	if cc, ctxTok := c.compactionClientWithContext(agentLogger); cc != nil {
+		opts.CompactionClient = cc
+		opts.CompactionContextTokens = ctxTok
+	}
+
+	// preserveNonZero=true: agent.max_steps / timeouts from .orchestra.yml win over
+	// profile presets (fast=10, precision=36). Otherwise a selected profile silently
+	// undoes max_steps: 200 and the turn "falls" after 10–36 steps.
+	if err := agent.ApplyProfile(&opts, profileName, true); err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
 	if customOpts.systemPromptOverride != "" {
@@ -219,10 +307,180 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 
 	return &agentLaunch{
-		Opts:       opts,
-		Custom:     customOpts,
-		Usage:      usageTracker,
-		TaskRunner: taskRunner,
-		Profile:    profileName,
+		Opts:            opts,
+		Custom:          customOpts,
+		Usage:           usageTracker,
+		TaskRunner:      taskRunner,
+		Profile:         profileName,
+		RequestedMode:   requestedMode,
+		EffectiveMode:   effectiveMode,
+		RouteReason:     routeReason,
+		RouteConfidence: routeConfidence,
+		EventEnvelope:   env,
 	}, nil
+}
+
+func skillsAllowedInMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case string(agent.ModeAsk), string(agent.ModePlan), string(agent.ModeExplore),
+		string(agent.ModeArchitecture), string(agent.ModeCompaction),
+		string(agent.ModeTitle), string(agent.ModeSummary):
+		return false
+	default:
+		return true
+	}
+}
+
+func (c *Core) classifyAgentMode(ctx context.Context, query string, logger *llm.Logger) autorouter.Decision {
+	fallback := autorouter.HeuristicClassify(query)
+	if c.cfg == nil || !c.cfg.AutoRouter.ResolvedEnabled() {
+		return fallback
+	}
+	client := c.autoRouterClient(logger)
+	return autorouter.Classify(ctx, client, query)
+}
+
+func (c *Core) autoRouterClient(logger *llm.Logger) llm.Client {
+	if c == nil || c.cfg == nil {
+		return c.llmClient
+	}
+	if c.llmClientInjected {
+		return c.llmClient
+	}
+	provider := strings.TrimSpace(c.cfg.AutoRouter.Provider)
+	model := strings.TrimSpace(c.cfg.AutoRouter.Model)
+	if provider == "" {
+		provider = strings.TrimSpace(c.cfg.LLM.Router.FastProvider)
+	}
+	if provider == "" && model == "" {
+		return c.llmClient
+	}
+	client, _, _, err := c.resolveNamedClient(provider, model, logger)
+	if err != nil || client == nil {
+		return c.llmClient
+	}
+	return client
+}
+
+// compactionClient returns a cheap LLM for ModeCompaction / auto-summary.
+// Prefer llm.router.fast_provider; else providers.fast when present.
+// Nil → agent uses the main LLM client.
+func (c *Core) compactionClient(logger *llm.Logger) llm.Client {
+	client, _ := c.compactionClientWithContext(logger)
+	return client
+}
+
+// compactionClientWithContext is compactionClient plus the resolved
+// provider's own context window (num_ctx), so callers can size compaction
+// requests against the ACTUAL model answering them (see
+// agent.Options.CompactionContextTokens) instead of the main model's window.
+func (c *Core) compactionClientWithContext(logger *llm.Logger) (llm.Client, int) {
+	if c == nil || c.cfg == nil || c.llmClientInjected {
+		return nil, 0
+	}
+	provider := strings.TrimSpace(c.cfg.LLM.Router.FastProvider)
+	if provider == "" {
+		if _, ok := c.cfg.FindProvider("fast"); ok {
+			provider = "fast"
+		}
+	}
+	if provider == "" {
+		return nil, 0
+	}
+	client, _, _, err := c.resolveNamedClient(provider, "", logger)
+	if err != nil || client == nil {
+		return nil, 0
+	}
+	ctxTok := 0
+	if pcfg, ok := c.cfg.FindProvider(provider); ok {
+		ctxTok = llm.ContextTokensFromConfig(pcfg)
+	}
+	return client, ctxTok
+}
+
+func (c *Core) resolveOrchestraPlanner(logger *llm.Logger) (llm.Client, string, string, bool) {
+	if c == nil || c.cfg == nil || c.llmClientInjected {
+		return nil, "", "", false
+	}
+	p := strings.TrimSpace(c.cfg.Orchestra.Planner.Provider)
+	m := strings.TrimSpace(c.cfg.Orchestra.Planner.Model)
+	if p == "" && m == "" {
+		return nil, "", "", false
+	}
+	client, pl, ml, err := c.resolveNamedClient(p, m, logger)
+	if err != nil || client == nil {
+		return nil, "", "", false
+	}
+	return client, pl, ml, true
+}
+
+// resolveNamedClient builds an LLM client from providers: map and/or model override.
+func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (llm.Client, string, string, error) {
+	if c == nil || c.cfg == nil {
+		return nil, "", "", fmt.Errorf("nil core/config")
+	}
+	if c.llmClientInjected {
+		return c.llmClient, providerLabelOf(c.cfg), c.cfg.LLM.Model, nil
+	}
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider != "" {
+		provCfg, ok := c.cfg.FindProvider(provider)
+		if !ok {
+			return nil, "", "", fmt.Errorf("provider %q not found in providers", provider)
+		}
+		if model != "" {
+			provCfg.Model = model
+		}
+		client := llm.NewClient(provCfg)
+		if oc, ok2 := client.(*llm.OpenAIClient); ok2 && logger != nil {
+			oc.SetLogger(logger)
+		}
+		return client, provider, provCfg.Model, nil
+	}
+	if model != "" {
+		overrideCfg := c.cfg.LLM
+		overrideCfg.Model = model
+		client := llm.NewClient(overrideCfg)
+		if oc, ok := client.(*llm.OpenAIClient); ok && logger != nil {
+			oc.SetLogger(logger)
+		}
+		return client, providerLabelOf(c.cfg), model, nil
+	}
+	return c.llmClient, providerLabelOf(c.cfg), c.cfg.LLM.Model, nil
+}
+
+func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecorder, allowExec bool, logger *llm.Logger) tasks.ChildAgentConfig {
+	out := tasks.ChildAgentConfig{
+		MaxPromptBytes: maxPromptBytes,
+		UsageTracker:   usage,
+		Caps: tools.Capabilities{
+			Exec: allowExec,
+		},
+	}
+	if c == nil || c.cfg == nil {
+		return out
+	}
+	out.CompactThresholdPct = c.cfg.Agent.CompactThresholdPct
+	out.ModelContextTokens = int(c.cfg.EffectiveNumCtx())
+	out.CompletionMaxTokens = c.cfg.LLM.MaxTokens
+	out.ToolDigestBytes = c.cfg.Agent.ResolvedToolDigestBytes()
+	out.HistoryPruneKeepRecent = c.cfg.Agent.ResolvedHistoryPruneKeepRecent()
+	out.ProviderLabel = providerLabelOf(c.cfg)
+	out.ModelLabel = c.cfg.LLM.Model
+	out.MaxWorkerRetries = c.cfg.Orchestra.ResolvedMaxWorkerRetries()
+	if c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm {
+		out.Caps.Web = true
+	}
+	out.ResolveClient = func(provider, model string) (llm.Client, string, string, error) {
+		return c.resolveNamedClient(provider, model, logger)
+	}
+	out.ResolveTier = func(tier string) (provider, model string, ok bool) {
+		t := c.cfg.Orchestra.FindTier(tier)
+		if t == nil {
+			return "", "", false
+		}
+		return t.Provider, t.Model, true
+	}
+	return out
 }

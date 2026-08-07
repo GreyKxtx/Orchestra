@@ -27,6 +27,11 @@ func ContinueBuildAfterPlan(
 	}
 	buildOpts.Mode = ModeBuild
 	buildOpts.JustSwitchedFromPlan = true
+	// Carry todos written during the plan turn into the build agent; otherwise
+	// InitialTodos stays at the pre-turn snapshot and merge can wipe the plan checklist.
+	if len(res.Todos) > 0 {
+		buildOpts.InitialTodos = append([]tools.TodoItem(nil), res.Todos...)
+	}
 	buildAg, err := New(llmClient, validator, toolRunner, buildOpts)
 	if err != nil {
 		return history, res, err

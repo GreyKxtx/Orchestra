@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sahilm/fuzzy"
 
-	"github.com/orchestra/orchestra/internal/sessionstore"
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
@@ -191,12 +190,16 @@ func (a *App) updateCommandModal(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 const helpText = `Orchestra TUI — клавиши:
   Enter         отправить
   Shift+Enter   новая строка
-  Tab           цикл mode (build / plan / explore)
-  Ctrl+T / t    Tasks (если есть) / иначе diff или tools
+  Tab           цикл mode (build / plan / explore / ask / debug / architecture / agent / orchestra)
+  Ctrl+T / t    Tasks (если есть) / иначе tools → diff
+  /compact      сжать LLM-контекст сессии
+  /memory       слои памяти + pinned facts
+  /mcp          MCP servers (добавить / edit / test)
   ↑ / ↓         история ввода
   @             mention файла
   Ctrl+K        command palette
-  /shell        shell · ask ↔ allow
+  Ctrl+S        sessions (если есть в проекте)
+  /shell        ask ↔ allow
   /theme        тема orchestra ↔ neutral
   d             diff последнего commit
   y / a / t / n shell: раз / сессия / этот tool / нет
@@ -225,14 +228,25 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		a.currentSessionID = ""
 		a.coreSessionID = ""
 		return a.startCoreSession()
+	case "/compact":
+		dismissWelcome()
+		return a.cmdSessionCompact()
+	case "/memory":
+		dismissWelcome()
+		return a.cmdShowMemory()
 	case "/model":
 		return a.openModelDialogForCurrentProvider()
+	case "/orchestra":
+		a.openOrchestraDialog()
+		return nil
 	case "/provider":
-		a.dialogStack = append(a.dialogStack, view.NewProviderDialog())
+		a.dialogStack = append(a.dialogStack, view.NewProviderDialog(a.providerReadyMap()))
 		return nil
 	case "/sessions":
-		metas, _ := sessionstore.List(a.cfg.WorkspaceRoot)
-		a.dialogStack = append(a.dialogStack, view.NewSessionsDialog(metas))
+		a.openSessionsDialog()
+		return nil
+	case "/mcp":
+		a.openMCPDialog()
 		return nil
 	case "/mode":
 		dismissWelcome()

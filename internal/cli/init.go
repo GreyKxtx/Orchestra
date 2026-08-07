@@ -58,20 +58,26 @@ func runInit(cmd *cobra.Command, args []string) error {
 		"# lsp.references, lsp.hover, lsp.diagnostics, lsp.rename tools.\n" +
 		"#\n" +
 		"# lsp:\n" +
+		"#   auto_install: ask          # ask | true | false (TUI consent)\n" +
 		"#   diagnostics_timeout_ms: 1500\n" +
 		"#   servers:\n" +
 		"#     - language: go\n" +
 		"#       extensions: [.go]\n" +
-		"#       command: [gopls]        # gopls is included with the Go toolchain\n" +
+		"#       command: [gopls, serve]\n" +
 		"#     - language: typescript\n" +
-		"#       extensions: [.ts, .tsx]\n" +
+		"#       extensions: [.ts, .tsx, .js, .jsx]\n" +
 		"#       command: [typescript-language-server, --stdio]\n" +
 		"#     - language: python\n" +
 		"#       extensions: [.py]\n" +
-		"#       command: [pylsp]\n" +
+		"#       command: [basedpyright-langserver, --stdio]\n" +
+		"#     - language: csharp\n" +
+		"#       extensions: [.cs]\n" +
+		"#       command: [csharp-ls]     # dotnet tool install -g csharp-ls\n" +
 		"#     - language: rust\n" +
 		"#       extensions: [.rs]\n" +
 		"#       command: [rust-analyzer]\n" +
+		"#   # See: orchestra lsp list  (12 built-in recipes)\n" +
+		"#   # Docs: docs/architecture/lsp-auto-provision.md\n" +
 		"\n" +
 		"# ── Custom agents ──────────────────────────────────────────────────────────────────────────\n" +
 		"# Define named agents with custom prompts, tool sets, and model overrides.\n" +

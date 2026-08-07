@@ -123,10 +123,12 @@ func (r *Runner) GHPRList(ctx context.Context, req GHPRListRequest) (*GHPRListRe
 	}
 
 	var raw []struct {
-		Number    int    `json:"number"`
-		Title     string `json:"title"`
-		State     string `json:"state"`
-		Author    struct{ Login string `json:"login"` } `json:"author"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		State  string `json:"state"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
 		URL       string `json:"url"`
 		Base      string `json:"baseRefName"`
 		Head      string `json:"headRefName"`
@@ -241,18 +243,22 @@ func (r *Runner) GHPRView(ctx context.Context, req GHPRViewRequest) (*GHPRViewRe
 	}
 
 	var raw struct {
-		Number   int    `json:"number"`
-		Title    string `json:"title"`
-		Body     string `json:"body"`
-		State    string `json:"state"`
-		URL      string `json:"url"`
-		Author   struct{ Login string `json:"login"` } `json:"author"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+		URL    string `json:"url"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
 		Base     string `json:"baseRefName"`
 		Head     string `json:"headRefName"`
 		Comments []struct {
-			Author struct{ Login string `json:"login"` } `json:"author"`
-			Body   string                               `json:"body"`
-			URL    string                               `json:"url"`
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			Body string `json:"body"`
+			URL  string `json:"url"`
 		} `json:"comments"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
@@ -329,12 +335,16 @@ func (r *Runner) GHIssueList(ctx context.Context, req GHIssueListRequest) (*GHIs
 	}
 
 	var raw []struct {
-		Number    int    `json:"number"`
-		Title     string `json:"title"`
-		State     string `json:"state"`
-		Author    struct{ Login string `json:"login"` } `json:"author"`
-		URL       string `json:"url"`
-		Labels    []struct{ Name string `json:"name"` } `json:"labels"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		State  string `json:"state"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		URL    string `json:"url"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 		UpdatedAt string `json:"updatedAt"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
@@ -403,17 +413,23 @@ func (r *Runner) GHIssueView(ctx context.Context, req GHIssueViewRequest) (*GHIs
 	}
 
 	var raw struct {
-		Number   int    `json:"number"`
-		Title    string `json:"title"`
-		Body     string `json:"body"`
-		State    string `json:"state"`
-		URL      string `json:"url"`
-		Author   struct{ Login string `json:"login"` } `json:"author"`
-		Labels   []struct{ Name string `json:"name"` } `json:"labels"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		State  string `json:"state"`
+		URL    string `json:"url"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 		Comments []struct {
-			Author struct{ Login string `json:"login"` } `json:"author"`
-			Body   string                               `json:"body"`
-			URL    string                               `json:"url"`
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			Body string `json:"body"`
+			URL  string `json:"url"`
 		} `json:"comments"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {

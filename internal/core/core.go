@@ -13,13 +13,13 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/applier"
+	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/internal/patches"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/schema"
-	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
 
@@ -108,6 +108,13 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	injected := opts.LLMClient != nil
 	llmClient := opts.LLMClient
 	if llmClient == nil {
+		// Discover max_model_len from the server so max_tokens / num_ctx stay valid
+		// even when .orchestra.yml is stale or missing num_ctx.
+		discCtx, discCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		if lim, err := llm.DiscoverModelLimits(discCtx, cfg.LLM); err == nil && lim.ContextTokens > 0 {
+			_ = llm.ApplyDiscoveredLimits(&cfg.LLM, lim)
+		}
+		discCancel()
 		llmClient = llm.NewClient(cfg.LLM)
 		if oc, ok := llmClient.(*llm.OpenAIClient); ok {
 			oc.SetLogger(llm.NewLogger(rootAbs))
@@ -147,6 +154,15 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 // so the graph is populated before the first agent run or explore call.
 func (c *Core) WarmupCKG(ctx context.Context) {
 	c.tools.WarmupCKG(ctx)
+}
+
+// WarmupLSP detects workspace languages and auto-ensures missing servers
+// (policy from lsp.auto_install, default true).
+func (c *Core) WarmupLSP(ctx context.Context) {
+	if c == nil || c.tools == nil {
+		return
+	}
+	go c.tools.WarmupLSP(ctx)
 }
 
 func (c *Core) Health() protocol.Health {
@@ -342,7 +358,7 @@ type AgentRunResult struct {
 	Applied bool `json:"applied"`
 
 	Patches []patches.Patch `json:"patches,omitempty"`
-	Ops     []ops.AnyOp           `json:"ops,omitempty"`
+	Ops     []ops.AnyOp     `json:"ops,omitempty"`
 
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
 
@@ -361,6 +377,11 @@ type AgentRunResult struct {
 	// Usage summarises token consumption for this run.
 	// did not return usage info (some local servers omit it).
 	Usage *UsageSnapshot `json:"usage,omitempty"`
+
+	// EffectiveMode is the mode actually used after auto-router (mode=agent).
+	EffectiveMode string `json:"effective_mode,omitempty"`
+	// RoutedFrom is set when RequestedMode was agent and routing rewrote the mode.
+	RoutedFrom string `json:"routed_from,omitempty"`
 }
 
 // UsageSnapshot is the totals view of one run's token consumption, returned
@@ -394,6 +415,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
 		Mode:                params.Mode,
 		Profile:             params.Profile,
+		Query:               params.Query,
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
@@ -447,6 +469,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Todos:         res.Todos,
 		PlanPath:      launch.Opts.PlanPath,
 		Usage:         usageSnapshotFrom(launch.Usage),
+		EffectiveMode: launch.EffectiveMode,
+	}
+	if strings.EqualFold(launch.RequestedMode, string(agent.ModeAgent)) && launch.EffectiveMode != "" {
+		result.RoutedFrom = string(agent.ModeAgent)
 	}
 	if applyOutput == config.ApplyOutputPatch {
 		path, werr := c.writeAgentPatch(params.PatchPath, res)
@@ -596,6 +622,23 @@ func (c *Core) mcpToolDefs() []llm.ToolDef {
 	return c.mcpManager.ListToolDefs()
 }
 
+// extraToolDefs is the ExtraTools slice for agent runs: MCP tools plus
+// optional feature tools gated by config (parity with `orchestra apply`).
+func (c *Core) extraToolDefs() []llm.ToolDef {
+	out := c.mcpToolDefs()
+	if c == nil || c.cfg == nil {
+		return out
+	}
+	// semantic_search needs an embedding model; the Runner already has
+	// embedCfg + ckgStore from New. Empty index returns zero hits, not a crash.
+	if strings.TrimSpace(c.cfg.Embed.Model) != "" {
+		out = append(out, tools.ToolSemanticSearch())
+	}
+	// repo_map is always safe (tree-sitter outline, no network).
+	out = append(out, tools.ToolRepoMap())
+	return out
+}
+
 // customAgentOpts holds resolved overrides for a custom agent.
 type customAgentOpts struct {
 	llmClient            llm.Client
@@ -698,7 +741,7 @@ func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, err
 			return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": id})
 		}
 		s.Lock()
-		restored = len(s.History) > 0 || len(s.UIMessages()) > 0
+		restored = sessionLooksRestoredLocked(s)
 		s.Unlock()
 	} else {
 		s = c.sessions.Create()
@@ -706,20 +749,49 @@ func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, err
 	return &SessionStartResult{SessionID: s.ID, Restored: restored}, nil
 }
 
+// sessionLooksRestoredLocked reports whether a loaded session carries any
+// durable state worth a TUI SessionGet (history, UI, todos, or plan path).
+// Caller must hold sess.Lock.
+func sessionLooksRestoredLocked(s *coresession.Session) bool {
+	if s == nil {
+		return false
+	}
+	return len(s.History) > 0 || len(s.UIMessages()) > 0 || len(s.CopyTodos()) > 0 || s.PlanPath() != ""
+}
+
+// persistSessionTodos writes todowrite payload into the session snapshot.
+// Best-effort: snapshot failures are logged and ignored (turn still continues).
+func persistSessionTodos(workspaceRoot string, sess *coresession.Session, payload string) {
+	if sess == nil || strings.TrimSpace(payload) == "" {
+		return
+	}
+	var items []tools.TodoItem
+	if err := json.Unmarshal([]byte(payload), &items); err != nil {
+		return
+	}
+	sess.Lock()
+	sess.SetTodos(items)
+	if snapErr := sess.Snapshot(workspaceRoot); snapErr != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s mid-turn todo snapshot failed: %v\n", sess.ID, snapErr)
+	}
+	sess.Unlock()
+}
+
 type SessionGetParams struct {
 	SessionID string `json:"session_id"`
 }
 
 type SessionGetResult struct {
-	SessionID   string                   `json:"session_id"`
-	Title       string                   `json:"title,omitempty"`
-	Model       string                   `json:"model,omitempty"`
-	UIMessages  []sessionfile.UIMessage  `json:"ui_messages"`
-	Todos       []tools.TodoItem         `json:"todos,omitempty"`
-	CostUSD     float64                  `json:"cost_usd,omitempty"`
-	HistoryLen  int                      `json:"history_len"`
-	HasPending  bool                     `json:"has_pending,omitempty"`
-	Restored    bool                     `json:"restored,omitempty"`
+	SessionID  string                  `json:"session_id"`
+	Title      string                  `json:"title,omitempty"`
+	Model      string                  `json:"model,omitempty"`
+	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
+	Todos      []tools.TodoItem        `json:"todos,omitempty"`
+	PlanPath   string                  `json:"plan_path,omitempty"`
+	CostUSD    float64                 `json:"cost_usd,omitempty"`
+	HistoryLen int                     `json:"history_len"`
+	HasPending bool                    `json:"has_pending,omitempty"`
+	Restored   bool                    `json:"restored,omitempty"`
 }
 
 // SessionGet returns the unified v2 session view for TUI reopen.
@@ -743,10 +815,11 @@ func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
 		Model:      sess.Model(),
 		UIMessages: ui,
 		Todos:      sess.CopyTodos(),
+		PlanPath:   sess.PlanPath(),
 		CostUSD:    sess.CostUSD(),
 		HistoryLen: len(sess.History),
 		HasPending: sess.HasPending(),
-		Restored:   len(sess.History) > 0 || len(ui) > 0,
+		Restored:   sessionLooksRestoredLocked(sess),
 	}, nil
 }
 
@@ -849,7 +922,7 @@ type SessionMessageResult struct {
 	Steps   int  `json:"steps"`
 	Applied bool `json:"applied"`
 
-	Patches       []patches.Patch     `json:"patches,omitempty"`
+	Patches       []patches.Patch           `json:"patches,omitempty"`
 	Ops           []ops.AnyOp               `json:"ops,omitempty"`
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
 
@@ -860,6 +933,9 @@ type SessionMessageResult struct {
 
 	// Usage summarises token consumption for this turn.
 	Usage *UsageSnapshot `json:"usage,omitempty"`
+
+	EffectiveMode string `json:"effective_mode,omitempty"`
+	RoutedFrom    string `json:"routed_from,omitempty"`
 }
 
 // SessionMessage runs one agent turn in the named session, streaming events via OnEvent.
@@ -920,6 +996,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Profile:             params.Profile,
 		PlanPath:            planPath,
 		SessionID:           params.SessionID,
+		Query:               params.Content,
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
@@ -940,55 +1017,43 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	c.tools.SetMemoryContext(params.SessionID, c.cfg.Memory.Resolve())
 
+	// Persist todos as soon as todowrite succeeds so a crash / cancel mid-turn
+	// (or reopen before SessionMessage returns) does not lose the checklist.
+	innerOnEvent := launch.Opts.OnEvent
+	launch.Opts.OnEvent = func(ev agent.AgentEvent) {
+		if ev.Stream.Kind == llm.StreamEventTodosUpdated {
+			persistSessionTodos(c.workspaceRoot, sess, ev.Stream.Content)
+		}
+		if innerOnEvent != nil {
+			innerOnEvent(ev)
+		}
+	}
+
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
 		return nil, err
 	}
 
 	outHistory, res, err := ag.Run(turnCtx, inHistory, params.Content)
-	if err != nil {
-		return nil, err
-	}
-	outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	}
 	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
 	profileName := launch.Profile
 
-	// Update session history, todos, and pending-ops with this turn's
-	// results, then snapshot to disk so a core restart can pick up where
-	// we left off. C1+C4 in architecture audit consolidated this into
-	// one critical section.
-	newMsgs := outHistory[len(inHistory):]
-	sess.Lock()
-	if len(newMsgs) > 0 {
-		sess.AppendHistory(newMsgs)
+	// Always persist whatever history we have — including failed turns.
+	// Previously err != nil skipped ReplaceHistory, so TUI reopen showed the
+	// chat (ui_sync) while agent history was empty and the model re-explored.
+	c.persistSessionTurn(sess, outHistory, res, launch.Opts.PlanPath, profileName, applyOutput, params.Apply)
+
+	if err != nil {
+		return nil, err
 	}
-	if res != nil {
-		sess.SetTodos(res.Todos)
+	if res == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "agent returned nil result", nil)
 	}
-	if planPath != "" {
-		sess.SetPlanPath(planPath)
-	}
-	if profileName != "" {
-		sess.SetProfile(profileName)
-	}
-	if applyOutput != "" {
-		sess.SetApplyOutput(applyOutput)
-	}
-	if !params.Apply && len(res.Ops) > 0 {
-		sess.SetPending(res.Ops)
-	} else {
-		sess.SetPending(nil)
-	}
-	if snapErr := sess.Snapshot(c.workspaceRoot); snapErr != nil {
-		// Best effort — log but don't fail the request. A failed snapshot
-		// only costs the in-progress crash-recovery story for this turn;
-		// the result itself is still valid.
-		fmt.Fprintf(os.Stderr, "core: session %s snapshot failed: %v\n", sess.ID, snapErr)
-	}
-	sess.Unlock()
+
+	c.maybeAutoSummaryMemory(ctx, sess.ID, outHistory, res)
 
 	out := &SessionMessageResult{
 		Steps:         res.Steps,
@@ -998,8 +1063,12 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		ApplyResponse: res.ApplyResponse,
 		SwitchToBuild: res.SwitchToBuild,
 		Todos:         res.Todos,
-		PlanPath:      planPath,
+		PlanPath:      launch.Opts.PlanPath,
 		Usage:         usageSnapshotFrom(launch.Usage),
+		EffectiveMode: launch.EffectiveMode,
+	}
+	if strings.EqualFold(launch.RequestedMode, string(agent.ModeAgent)) && launch.EffectiveMode != "" {
+		out.RoutedFrom = string(agent.ModeAgent)
 	}
 	if applyOutput == config.ApplyOutputPatch {
 		path, werr := c.writeAgentPatch(params.PatchPath, res)
@@ -1010,6 +1079,48 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		out.Applied = false
 	}
 	return out, nil
+}
+
+// persistSessionTurn writes agent history (+ todos/pending when present) to the
+// in-memory session and snapshots to disk. Safe to call after failed turns —
+// empty outHistory is a no-op for ReplaceHistory only when nil; we still want
+// to keep prior history if the agent returned nothing.
+func (c *Core) persistSessionTurn(
+	sess *coresession.Session,
+	outHistory []llm.Message,
+	res *agent.Result,
+	planPath, profileName, applyOutput string,
+	apply bool,
+) {
+	if c == nil || sess == nil {
+		return
+	}
+	sess.Lock()
+	defer sess.Unlock()
+	if outHistory != nil {
+		// Full ReplaceHistory (not append-only): compaction may rewrite the prefix.
+		sess.ReplaceHistory(outHistory)
+	}
+	if res != nil {
+		sess.SetTodos(res.Todos)
+		if !apply && len(res.Ops) > 0 {
+			sess.SetPending(res.Ops)
+		} else {
+			sess.SetPending(nil)
+		}
+	}
+	if planPath != "" {
+		sess.SetPlanPath(planPath)
+	}
+	if profileName != "" {
+		sess.SetProfile(profileName)
+	}
+	if applyOutput != "" {
+		sess.SetApplyOutput(applyOutput)
+	}
+	if snapErr := sess.Snapshot(c.workspaceRoot); snapErr != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s snapshot failed: %v\n", sess.ID, snapErr)
+	}
 }
 
 type SessionApplyPendingParams struct {
@@ -1083,6 +1194,73 @@ func (c *Core) SessionHistory(params SessionHistoryParams) (*SessionHistoryResul
 	msgs := sess.CopyHistory()
 	sess.Unlock()
 	return &SessionHistoryResult{SessionID: params.SessionID, Messages: msgs}, nil
+}
+
+type SessionCompactParams struct {
+	SessionID string `json:"session_id"`
+	Query     string `json:"query,omitempty"` // optional goal hint for the summary
+}
+
+type SessionCompactResult struct {
+	SessionID   string `json:"session_id"`
+	BeforeMsgs  int    `json:"before_msgs"`
+	AfterMsgs   int    `json:"after_msgs"`
+	BeforeBytes int    `json:"before_bytes,omitempty"`
+	AfterBytes  int    `json:"after_bytes,omitempty"`
+}
+
+// SessionCompact forces ModeCompaction on the session LLM history and persists
+// the sticky checkpoint (UIMessages untouched).
+func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) (*SessionCompactResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	sess.Lock()
+	if sess.IsBusy() {
+		sess.Unlock()
+		return nil, protocol.NewError(protocol.ExecFailed, "session is busy", map[string]any{"session_id": params.SessionID})
+	}
+	hist := sess.CopyHistory()
+	sess.Unlock()
+	if len(hist) == 0 {
+		return &SessionCompactResult{SessionID: params.SessionID}, nil
+	}
+
+	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+		Mode:   string(agent.ModeBuild),
+		Apply:  false,
+		Backup: true,
+		Debug:  c.debug,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+	}
+	goal := strings.TrimSpace(params.Query)
+	if goal == "" {
+		goal = "Summarize the session so far"
+	}
+	before := len(hist)
+	compacted, cerr := ag.CompactNow(ctx, goal, hist)
+	if cerr != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, cerr.Error(), nil)
+	}
+	sess.Lock()
+	sess.ReplaceHistory(compacted)
+	_ = sess.Snapshot(c.workspaceRoot)
+	sess.Unlock()
+	return &SessionCompactResult{
+		SessionID:  params.SessionID,
+		BeforeMsgs: before,
+		AfterMsgs:  len(compacted),
+	}, nil
 }
 
 type SessionCancelParams struct {
@@ -1178,6 +1356,7 @@ func samePath(a, b string) bool {
 }
 
 func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent.UsageRecorder) tasks.ChildAgentConfig {
+	// Deprecated wrapper — prefer Core.buildChildAgentConfig for resolvers.
 	out := tasks.ChildAgentConfig{
 		MaxPromptBytes: maxPromptBytes,
 		UsageTracker:   usage,
@@ -1186,9 +1365,12 @@ func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent
 		return out
 	}
 	out.CompactThresholdPct = cfg.Agent.CompactThresholdPct
+	out.ModelContextTokens = int(cfg.EffectiveNumCtx())
+	out.CompletionMaxTokens = cfg.LLM.MaxTokens
 	out.ToolDigestBytes = cfg.Agent.ResolvedToolDigestBytes()
 	out.HistoryPruneKeepRecent = cfg.Agent.ResolvedHistoryPruneKeepRecent()
 	out.ProviderLabel = providerLabelOf(cfg)
 	out.ModelLabel = cfg.LLM.Model
+	out.MaxWorkerRetries = cfg.Orchestra.ResolvedMaxWorkerRetries()
 	return out
 }

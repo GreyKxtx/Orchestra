@@ -22,6 +22,7 @@ var DialogProviders = []ProviderEntry{
 	// Local — OpenAI-compatible servers on the machine.
 	{Key: "lmstudio", Name: "LM Studio", Category: "Local", Endpoint: "http://localhost:1234", Local: true, EndpointEditable: true},
 	{Key: "ollama", Name: "Ollama", Category: "Local", Endpoint: "http://localhost:11434", Local: true, EndpointEditable: true},
+	{Key: "vllm", Name: "vLLM", Category: "Local", Endpoint: "http://localhost:8000/v1", Local: true, EndpointEditable: true},
 
 	// Major cloud APIs.
 	{Key: "openai", Name: "OpenAI", Category: "Cloud", Endpoint: "https://api.openai.com/v1", NeedsKey: true},
@@ -84,10 +85,17 @@ func NormalizeEndpoint(url string) string {
 // ProviderDialog is the first dialog in the /provider flow: picks a provider.
 type ProviderDialog struct {
 	cursor int
+	ready  map[string]bool // provider key → credentials configured
 }
 
-// NewProviderDialog constructs a ProviderDialog with cursor at 0.
-func NewProviderDialog() *ProviderDialog { return &ProviderDialog{} }
+// NewProviderDialog constructs a ProviderDialog.
+// ready marks providers that already have URL (+ API key when required).
+func NewProviderDialog(ready map[string]bool) *ProviderDialog {
+	if ready == nil {
+		ready = map[string]bool{}
+	}
+	return &ProviderDialog{ready: ready}
+}
 
 // Update implements Dialog.
 func (d *ProviderDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
@@ -120,6 +128,7 @@ func (d *ProviderDialog) Render(screenW, screenH int) string {
 			Title:       p.Name,
 			Description: providerEndpointDesc(p),
 			Category:    p.Category,
+			Ready:       d.ready[p.Key],
 		})
 	}
 	return renderListDialog(
@@ -128,7 +137,7 @@ func (d *ProviderDialog) Render(screenW, screenH int) string {
 		d.cursor,
 		"",
 		"",
-		"↑↓ navigate · Enter/→ select · Esc/← back",
+		"● зелёный = подключено  ↑↓ Enter  Esc",
 		screenW, screenH,
 	)
 }

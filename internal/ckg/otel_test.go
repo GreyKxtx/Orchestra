@@ -119,8 +119,8 @@ func TestOtlpAttrString(t *testing.T) {
 		want string
 	}{
 		{`{"stringValue":"hello"}`, "hello"},
-		{`{"intValue":"42"}`, "42"},   // OTLP-JSON: intValue is a string
-		{`{"intValue":42}`, "42"},     // fallback: bare number
+		{`{"intValue":"42"}`, "42"}, // OTLP-JSON: intValue is a string
+		{`{"intValue":42}`, "42"},   // fallback: bare number
 		{`{"boolValue":true}`, "true"},
 		{`{"doubleValue":3.14}`, "3.14"},
 		{`{}`, ""},
@@ -353,4 +353,3 @@ func TestFindNodeAtLine(t *testing.T) {
 		t.Errorf("expected 0 for nonexistent file, got %d", id3)
 	}
 }
-

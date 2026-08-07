@@ -8,7 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/orchestra/orchestra/internal/lsp/provision"
+	"github.com/orchestra/orchestra/internal/lsp/registry"
+	"github.com/orchestra/orchestra/internal/permission"
 )
 
 // LSPServerConfig is the configuration for one language server.
@@ -31,6 +36,28 @@ type LSPConfig struct {
 	LazyStart *bool `yaml:"lazy_start,omitempty"`
 	// IdleTTLSeconds: shutdown idle servers after N seconds; nil → 300; 0 → disabled.
 	IdleTTLSeconds *int `yaml:"idle_ttl_seconds,omitempty"`
+	// AutoInstall: ask | true | false (default ask). Ensure wiring is phase B.
+	AutoInstall string `yaml:"auto_install,omitempty"`
+}
+
+func (cfg LSPConfig) EffectiveAutoInstall() string {
+	switch strings.ToLower(strings.TrimSpace(cfg.AutoInstall)) {
+	case "true", "yes", "1", "always":
+		return "true"
+	case "false", "no", "0", "never", "off":
+		return "false"
+	case "ask":
+		return "ask"
+	case "":
+		// Default true: after language detect, install automated servers without a prompt.
+		return "true"
+	default:
+		return "ask"
+	}
+}
+
+func (cfg LSPConfig) effectiveAutoInstall() string {
+	return cfg.EffectiveAutoInstall()
 }
 
 // ToolLocation is an LSP location converted to workspace-relative, 1-based coordinates.
@@ -99,9 +126,28 @@ type Manager struct {
 	idleTTL       time.Duration
 	stopCh        chan struct{}
 	closeOnce     sync.Once
+	autoInstall   string // ask | true | false (mutable when user picks Always)
+	consent       permission.Requester
+	installing    atomic.Bool
 
 	// startServerHook replaces Start() in tests (package lsp only).
 	startServerHook func(cfg LSPServerConfig, rootURI string) (*Client, error)
+}
+
+// SetInstallConsent wires interactive consent for lsp.auto_install=ask.
+func (m *Manager) SetInstallConsent(r permission.Requester) {
+	if m == nil {
+		return
+	}
+	m.consent = r
+}
+
+// SetAutoInstall updates the in-memory auto-install policy (session).
+func (m *Manager) SetAutoInstall(policy string) {
+	if m == nil {
+		return
+	}
+	m.autoInstall = strings.ToLower(strings.TrimSpace(policy))
 }
 
 // SetContentProvider wires a staging overlay (or other in-memory source) so
@@ -122,6 +168,7 @@ func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 		diagTimeoutMS: cfg.DiagnosticsTimeoutMS,
 		lazyStart:     cfg.lazyStartEnabled(),
 		idleTTL:       cfg.idleTTLDuration(),
+		autoInstall:   cfg.effectiveAutoInstall(),
 		stopCh:        make(chan struct{}),
 	}
 	if m.diagTimeoutMS <= 0 {
@@ -186,10 +233,85 @@ func (cfg LSPConfig) idleTTLDuration() time.Duration {
 }
 
 func (m *Manager) startServer(entry *serverEntry, rootURI string, ctx context.Context) (*Client, error) {
-	if m.startServerHook != nil {
-		return m.startServerHook(entry.cfg, rootURI)
+	cfg := entry.cfg
+	res, err := provision.Resolve(cfg.Command)
+	if err != nil {
+		res, err = m.tryEnsureAndResolve(ctx, cfg, err)
+		if err != nil {
+			// Test hooks often use dummy commands; fall through to the hook.
+			if m.startServerHook != nil {
+				return m.startServerHook(entry.cfg, rootURI)
+			}
+			fmt.Fprintf(os.Stderr, "lsp: resolve %q: %v\n", cfg.Language, err)
+			return nil, err
+		}
 	}
-	return Start(ctx, entry.cfg.Language, entry.cfg.Command, entry.cfg.Env, rootURI, entry.cfg.InitOptions)
+	if res.Source == provision.SourceCache {
+		fmt.Fprintf(os.Stderr, "lsp: using cached %s (%s)\n", cfg.Language, res.Command[0])
+	}
+	cfg.Command = res.Command
+	if m.startServerHook != nil {
+		return m.startServerHook(cfg, rootURI)
+	}
+	return Start(ctx, cfg.Language, cfg.Command, cfg.Env, rootURI, cfg.InitOptions)
+}
+
+func (m *Manager) tryEnsureAndResolve(ctx context.Context, cfg LSPServerConfig, resolveErr error) (provision.Result, error) {
+	if len(cfg.Command) == 0 {
+		return provision.Result{}, resolveErr
+	}
+	entry, ok := registry.ByBinaryName(filepath.Base(cfg.Command[0]))
+	if !ok {
+		entry, ok = registry.ByLanguage(cfg.Language)
+	}
+	if !ok || !provision.CanEnsure(entry.ID) {
+		// No automated installer for this language yet.
+		return provision.Result{}, resolveErr
+	}
+
+	policy := m.autoInstall
+	if policy == "" {
+		policy = "ask"
+	}
+	switch policy {
+	case "false":
+		return provision.Result{}, resolveErr
+	case "ask":
+		if m.consent == nil {
+			return provision.Result{}, fmt.Errorf("%w (no interactive consent; set lsp.auto_install: true or run orchestra lsp ensure %s)", resolveErr, entry.Language)
+		}
+		desc := fmt.Sprintf("Установить %s (%s) в ~/.orchestra/lsp?\n%s", entry.ID, entry.Version, entry.InstallHint)
+		resp, perr := m.consent.RequestPermission(ctx, permission.Request{
+			Tool:        "lsp.install",
+			Kind:        "lsp.install",
+			Description: desc,
+			Reason:      entry.ID,
+		})
+		if perr != nil {
+			return provision.Result{}, fmt.Errorf("lsp install consent: %w", perr)
+		}
+		if !resp.Approved {
+			return provision.Result{}, fmt.Errorf("%w (install declined)", resolveErr)
+		}
+		if resp.Always {
+			m.autoInstall = "true"
+		}
+	case "true":
+		// silent ensure
+	default:
+		return provision.Result{}, resolveErr
+	}
+
+	m.installing.Store(true)
+	defer m.installing.Store(false)
+	fmt.Fprintf(os.Stderr, "lsp: ensuring %s…\n", entry.ID)
+	// Ensure uses its own long timeout; parent ctx still cancels consent wait above.
+	ensureCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := provision.Ensure(ensureCtx, entry.ID); err != nil {
+		return provision.Result{}, err
+	}
+	return provision.Resolve(cfg.Command)
 }
 
 // Close shuts down all managed servers and stops the idle watcher.
@@ -216,11 +338,13 @@ func (m *Manager) Close() {
 // IsEmpty reports whether any LSP servers are configured (not whether they are running).
 func (m *Manager) IsEmpty() bool { return m == nil || len(m.servers) == 0 }
 
-// RuntimeStatus reports LSP readiness for UI: off (none configured), idle
-// (configured but no live server), active (at least one live client).
+// RuntimeStatus reports LSP readiness for UI: off | idle | installing | active.
 func (m *Manager) RuntimeStatus() string {
 	if m.IsEmpty() {
 		return "off"
+	}
+	if m.installing.Load() {
+		return "installing"
 	}
 	for _, s := range m.servers {
 		s.mu.Lock()
@@ -231,6 +355,27 @@ func (m *Manager) RuntimeStatus() string {
 		}
 	}
 	return "idle"
+}
+
+// WarmupStart spawns every registered language server in the background-friendly
+// sense: sequential ensureClient so the status bar can flip to active without
+// waiting for the first edit/write. Failures are soft (logged); lazy_start still
+// applies to later revive after idle TTL.
+func (m *Manager) WarmupStart(ctx context.Context) {
+	if m == nil || m.IsEmpty() {
+		return
+	}
+	for _, s := range m.servers {
+		if ctx.Err() != nil {
+			return
+		}
+		if s == nil || s.cfg.Disabled {
+			continue
+		}
+		if err := m.ensureClient(s); err != nil {
+			fmt.Fprintf(os.Stderr, "lsp: warmup start %q: %v\n", s.cfg.Language, err)
+		}
+	}
 }
 
 // ForTest creates a Manager from a pre-started *Client, for use in tests.
@@ -950,14 +1095,24 @@ func langIDFromExt(ext string) string {
 		return "rust"
 	case ".java":
 		return "java"
-	case ".c":
+	case ".c", ".h":
 		return "c"
-	case ".cpp", ".cc", ".cxx":
+	case ".cpp", ".cc", ".cxx", ".hpp", ".hxx":
 		return "cpp"
 	case ".cs":
 		return "csharp"
-	case ".rb":
+	case ".rb", ".rake", ".gemspec":
 		return "ruby"
+	case ".php":
+		return "php"
+	case ".kt", ".kts":
+		return "kotlin"
+	case ".lua":
+		return "lua"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".sh", ".bash":
+		return "shellscript"
 	default:
 		return "plaintext"
 	}

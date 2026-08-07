@@ -49,6 +49,43 @@ func TestManager_LazyStart_NoClientUntilFirstUse(t *testing.T) {
 	}
 }
 
+func TestManager_WarmupStart_SpawnsClient(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled := true
+	m, errs := lsp.NewManager(root, lsp.LSPConfig{Enabled: &enabled, Servers: []lsp.LSPServerConfig{{
+		Language:   "go",
+		Extensions: []string{".go"},
+		Command:    []string{"unused"},
+	}}})
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	defer m.Close()
+
+	m.SetStartServerHookForTest(func(_ lsp.LSPServerConfig, rootURI string) (*lsp.Client, error) {
+		conn, srv := lsptest.NewConn()
+		srv.SetHandler("initialize", func(_ json.RawMessage) (json.RawMessage, error) {
+			return json.RawMessage(`{"capabilities":{}}`), nil
+		})
+		return lsp.StartFromConn("test", conn, rootURI, nil)
+	})
+
+	if m.RuntimeStatus() != "idle" {
+		t.Fatalf("before warmup want idle, got %s", m.RuntimeStatus())
+	}
+	m.WarmupStart(context.Background())
+	if m.RuntimeStatus() != "active" {
+		t.Fatalf("after warmup want active, got %s", m.RuntimeStatus())
+	}
+	if !m.ClientRunningForTest("go") {
+		t.Fatal("expected client running after WarmupStart")
+	}
+}
+
 func TestManager_LazyStart_StartsOnFirstUse(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0644); err != nil {
