@@ -288,7 +288,17 @@ func (r *TaskRunner) Wait(ctx context.Context, taskID string, timeoutMS int) (*a
 		return result, nil
 	case <-waitCtx.Done():
 		entry.cancel()
+		// Wait for the child goroutine to exit before returning so callers
+		// (and t.TempDir cleanup on Windows) do not race with late writes
+		// under .orchestra/.
+		<-entry.done
+		r.mu.Lock()
+		result := entry.result
+		r.mu.Unlock()
 		r.removeTask(taskID)
+		if result != nil {
+			return result, nil
+		}
 		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: "wait timeout"}, nil
 		}
@@ -306,4 +316,27 @@ func (r *TaskRunner) Cancel(_ context.Context, taskID string) error {
 	}
 	entry.cancel()
 	return nil
+}
+
+// Close cancels every in-flight task and waits for its goroutine to exit.
+// Call before releasing the shared tools.Runner / TempDir so Windows does not
+// hit "directory is not empty" while a child is still writing under .orchestra/.
+// Safe to call multiple times.
+func (r *TaskRunner) Close() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	entries := make([]*taskEntry, 0, len(r.tasks))
+	for _, e := range r.tasks {
+		entries = append(entries, e)
+	}
+	r.tasks = make(map[string]*taskEntry)
+	r.mu.Unlock()
+	for _, e := range entries {
+		e.cancel()
+	}
+	for _, e := range entries {
+		<-e.done
+	}
 }

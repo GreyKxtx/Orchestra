@@ -53,8 +53,14 @@ func newTestTaskRunner(t *testing.T) *TaskRunner {
 	if err != nil {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
-	t.Cleanup(func() { tr.Close() })
-	return New(&mockTaskResultLLM{result: "all done"}, v, tr, ChildAgentConfig{})
+	r := New(&mockTaskResultLLM{result: "all done"}, v, tr, ChildAgentConfig{})
+	// Drain child goroutines before TempDir cleanup — otherwise Windows CI
+	// fails with unlinkat .orchestra: The directory is not empty.
+	t.Cleanup(func() {
+		r.Close()
+		_ = tr.Close()
+	})
+	return r
 }
 
 // ── Wait / Cancel with unknown task ─────────────────────────────────────────
@@ -114,8 +120,11 @@ func TestSpawnWait_ReturnsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
-	t.Cleanup(func() { tr.Close() })
 	r := New(&mockTaskResultLLM{result: "research complete"}, v, tr, ChildAgentConfig{})
+	t.Cleanup(func() {
+		r.Close()
+		_ = tr.Close()
+	})
 
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "research files", MaxSteps: 3})
 	if err != nil {
@@ -150,8 +159,11 @@ func TestCancel_BeforeCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools.NewRunner: %v", err)
 	}
-	t.Cleanup(func() { tr.Close() })
 	r := New(blockingLLM, v, tr, ChildAgentConfig{})
+	t.Cleanup(func() {
+		r.Close()
+		_ = tr.Close()
+	})
 
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "block forever", MaxSteps: 1})
 	if err != nil {
@@ -207,6 +219,11 @@ func TestSpawn_MaxStepsClampedTo12(t *testing.T) {
 		}
 		if id == "" {
 			t.Fatalf("expected non-empty ID for MaxSteps=%d", ms)
+		}
+		// Drain each child before the next spawn so TempDir cleanup on Windows
+		// does not race with leftover .orchestra writers.
+		if _, err := r.Wait(context.Background(), id, 5000); err != nil {
+			t.Fatalf("Wait(MaxSteps=%d): %v", ms, err)
 		}
 	}
 }
