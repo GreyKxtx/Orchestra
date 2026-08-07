@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/config"
 )
 
 func TestCodeSymbols_Go_RegexFallback(t *testing.T) {
@@ -21,7 +23,13 @@ func (f Foo) Baz() {}
 		t.Fatalf("write failed: %v", err)
 	}
 
-	r, err := NewRunner(root, RunnerOptions{})
+	// Force tiers 1–2 (tree-sitter / regex). With LSP enabled, gopls is
+	// auto-provisioned in CI and returns method names as "(Foo).Baz", which
+	// is fine for the product path but not what this fallback test asserts.
+	lspOff := false
+	r, err := NewRunner(root, RunnerOptions{
+		LSP: config.LSPConfig{Enabled: &lspOff},
+	})
 	if err != nil {
 		t.Fatalf("NewRunner failed: %v", err)
 	}
