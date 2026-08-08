@@ -31,7 +31,8 @@ type LSPServerConfig struct {
 type LSPConfig struct {
 	Enabled              *bool             `yaml:"enabled,omitempty"`
 	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
-	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	DiagnosticsTimeoutMS   int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	InitializeTimeoutMS    int               `yaml:"initialize_timeout_ms,omitempty"`
 	// LazyStart: when true (default), servers spawn on first use instead of NewManager.
 	LazyStart *bool `yaml:"lazy_start,omitempty"`
 	// IdleTTLSeconds: shutdown idle servers after N seconds; nil → 300; 0 → disabled.
@@ -120,8 +121,9 @@ type serverEntry struct {
 type Manager struct {
 	workspaceRoot string
 	servers       []*serverEntry
-	diagTimeoutMS int
-	content       ContentProvider
+	diagTimeoutMS   int
+	initTimeoutMS   int
+	content         ContentProvider
 	lazyStart     bool
 	idleTTL       time.Duration
 	stopCh        chan struct{}
@@ -165,14 +167,18 @@ func (m *Manager) SetContentProvider(p ContentProvider) {
 func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 	m := &Manager{
 		workspaceRoot: workspaceRoot,
-		diagTimeoutMS: cfg.DiagnosticsTimeoutMS,
-		lazyStart:     cfg.lazyStartEnabled(),
+		diagTimeoutMS:   cfg.DiagnosticsTimeoutMS,
+		initTimeoutMS:   cfg.InitializeTimeoutMS,
+		lazyStart:       cfg.lazyStartEnabled(),
 		idleTTL:       cfg.idleTTLDuration(),
 		autoInstall:   cfg.effectiveAutoInstall(),
 		stopCh:        make(chan struct{}),
 	}
 	if m.diagTimeoutMS <= 0 {
 		m.diagTimeoutMS = 1500
+	}
+	if m.initTimeoutMS <= 0 {
+		m.initTimeoutMS = int(DefaultInitializeTimeout / time.Millisecond)
 	}
 	if cfg.Enabled != nil && !*cfg.Enabled {
 		return m, nil
@@ -253,7 +259,8 @@ func (m *Manager) startServer(entry *serverEntry, rootURI string, ctx context.Co
 	if m.startServerHook != nil {
 		return m.startServerHook(cfg, rootURI)
 	}
-	return Start(ctx, cfg.Language, cfg.Command, cfg.Env, rootURI, cfg.InitOptions)
+	initTimeout := time.Duration(m.initTimeoutMS) * time.Millisecond
+	return Start(ctx, cfg.Language, cfg.Command, cfg.Env, rootURI, cfg.InitOptions, initTimeout)
 }
 
 func (m *Manager) tryEnsureAndResolve(ctx context.Context, cfg LSPServerConfig, resolveErr error) (provision.Result, error) {
@@ -357,12 +364,10 @@ func (m *Manager) RuntimeStatus() string {
 	return "idle"
 }
 
-// WarmupStart spawns every registered language server in the background-friendly
-// sense: sequential ensureClient so the status bar can flip to active without
-// waiting for the first edit/write. Failures are soft (logged); lazy_start still
-// applies to later revive after idle TTL.
+// WarmupStart spawns every registered language server when lazy_start is false.
+// With lazy_start (default), servers spawn on first tool touch per extension.
 func (m *Manager) WarmupStart(ctx context.Context) {
-	if m == nil || m.IsEmpty() {
+	if m == nil || m.IsEmpty() || m.lazyStart {
 		return
 	}
 	for _, s := range m.servers {
@@ -539,6 +544,14 @@ func (m *Manager) reopenStaged(s *serverEntry) {
 
 // CheckIdleShutdownForTest runs one idle-TTL sweep (tests only).
 func (m *Manager) CheckIdleShutdownForTest() { m.checkIdleShutdown() }
+
+// SetLazyStartForTest toggles lazy_start after construction (tests only).
+func (m *Manager) SetLazyStartForTest(v bool) {
+	if m == nil {
+		return
+	}
+	m.lazyStart = v
+}
 
 // SetStartServerHookForTest replaces Start() during ensureClient (tests only).
 func (m *Manager) SetStartServerHookForTest(hook func(cfg LSPServerConfig, rootURI string) (*Client, error)) {

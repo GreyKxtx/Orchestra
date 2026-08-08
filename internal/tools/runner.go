@@ -75,15 +75,19 @@ type Runner struct {
 
 	// Dry-run staging: when dryRun=true, FSWrite/FSEdit accumulate changes in staged
 	// instead of writing to disk. FSRead serves staged content back to the model.
-	dryRun            bool
-	blockExecInDryRun bool // see RunnerOptions.BlockExecInDryRun
-	astGate           bool // tree-sitter gate before staging (see DisableASTGate)
+	dryRun                 bool
+	blockExecInDryRun      bool // see RunnerOptions.BlockExecInDryRun
+	allowExecDespiteDryRun bool // apply:true turns may run bash while files stay staged
+	astGate                bool // tree-sitter gate before staging (see DisableASTGate)
 	staged            map[string]*stagedFile
 	stagedMu          sync.RWMutex
 
 	// forceDiagnosticsForTest is appended to every write/edit diagnostic response.
 	// Only used in tests — nil in production.
 	forceDiagnosticsForTest []lsp.ToolDiagnostic
+	// forceDiagnosticsHook, when set, receives staged content and returns extra
+	// diagnostics (E2E: simulate LSP only while broken code remains).
+	forceDiagnosticsHook func(content string) []lsp.ToolDiagnostic
 
 	// bg holds all background processes launched via bash run_in_background=true.
 	// Lazily created on first use. Killed on Close().
@@ -130,6 +134,10 @@ type RunnerOptions struct {
 	// ForceDiagnosticsForTest, if non-nil, is appended to every FSWrite/FSEdit
 	// diagnostic response. Only for use in tests.
 	ForceDiagnosticsForTest []lsp.ToolDiagnostic
+
+	// ForceDiagnosticsHook, when set, receives staged file content after each
+	// dry-run write/edit and may return synthetic LSP diagnostics.
+	ForceDiagnosticsHook func(content string) []lsp.ToolDiagnostic
 }
 
 func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
@@ -216,6 +224,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		astGate:                 !opts.DisableASTGate,
 		staged:                  make(map[string]*stagedFile),
 		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
+		forceDiagnosticsHook:    opts.ForceDiagnosticsHook,
 		memoryCfg:               memory.DefaultConfig(),
 	}
 	if lspMgr != nil {
@@ -243,6 +252,19 @@ func (r *Runner) SetDryRun(v bool) {
 	}
 }
 
+// SetAllowExecDespiteDryRun lets exec.run proceed while file tools stay in the
+// staging overlay. Core sets this for apply:true turns — the RPC error text
+// historically promised apply:true unlocks shell side effects, but staging
+// always left dryRun=true for write/edit, so bash stayed blocked incorrectly.
+func (r *Runner) SetAllowExecDespiteDryRun(v bool) {
+	if r == nil {
+		return
+	}
+	r.stagedMu.Lock()
+	defer r.stagedMu.Unlock()
+	r.allowExecDespiteDryRun = v
+}
+
 // convertLSPConfig translates config.LSPConfig to lsp.LSPConfig and merges
 // workspace language detection so empty yaml still gets the right servers.
 func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
@@ -261,6 +283,7 @@ func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 		Enabled:              c.Enabled,
 		Servers:              servers,
 		DiagnosticsTimeoutMS: c.DiagnosticsTimeoutMS,
+		InitializeTimeoutMS:  c.InitializeTimeoutMS,
 		LazyStart:            c.LazyStart,
 		IdleTTLSeconds:       c.IdleTTLSeconds,
 		AutoInstall:          c.AutoInstall,
@@ -281,7 +304,7 @@ func mergeLSPConfig(workspaceRoot string, c config.LSPConfig) lsp.LSPConfig {
 			Disabled:   s.Disabled,
 		})
 	}
-	merged := provision.MergeServers(configured, provision.Detect(workspaceRoot))
+	merged := provision.MergeServersForWorkspace(configured, workspaceRoot)
 	out := make([]lsp.LSPServerConfig, 0, len(merged))
 	for _, s := range merged {
 		out = append(out, lsp.LSPServerConfig{
@@ -316,9 +339,9 @@ func (r *Runner) SetLSPInstallConsent(req permission.Requester) {
 	}
 }
 
-// WarmupLSP detects project languages, ensures missing automated servers, then
-// starts registered language-server processes so TUI shows LSP ● without waiting
-// for the first edit. Policy comes from lsp.auto_install (ask|true|false).
+// WarmupLSP detects project languages and ensures missing automated servers.
+// With lazy_start (default), subprocesses spawn on first LSP tool touch only;
+// WarmupStart is skipped so a Go+TS monorepo does not eager-spawn both servers.
 func (r *Runner) WarmupLSP(ctx context.Context) {
 	if r == nil {
 		return
@@ -361,6 +384,25 @@ func (r *Runner) WarmupCKG(ctx context.Context) {
 		orch := ckg.NewOrchestrator(store, r.workspaceRoot)
 		_ = orch.UpdateGraph(ctx)
 	}()
+}
+
+// SeedCKGSymbolForTest registers a symbol line range for E2E / eval harnesses.
+func (r *Runner) SeedCKGSymbolForTest(ctx context.Context, relPath, fileHash, symbol string, lineStart, lineEnd int) error {
+	if r == nil || r.ckgStore == nil {
+		return fmt.Errorf("ckg store unavailable")
+	}
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return fmt.Errorf("symbol is empty")
+	}
+	nodes := []ckg.Node{{
+		FQN:       "eval." + symbol,
+		ShortName: symbol,
+		Kind:      "func",
+		LineStart: lineStart,
+		LineEnd:   lineEnd,
+	}}
+	return r.ckgStore.SaveFileNodes(ctx, relPath, fileHash, "go", "eval", "eval", nodes, nil)
 }
 
 // FetchCKGContext returns a <ckg_context> block of up to 12 nodes relevant to
@@ -1019,10 +1061,11 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 	r.stagedMu.RLock()
 	dry := r.dryRun
 	block := r.blockExecInDryRun
+	allowDespite := r.allowExecDespiteDryRun
 	r.stagedMu.RUnlock()
-	if dry && block {
+	if dry && block && !allowDespite {
 		return nil, protocol.NewError(protocol.ExecFailed,
-			"exec.run disabled in dry-run: use agent.run apply:true (RPC) to allow disk side effects",
+			"exec.run disabled in dry-run preview: use apply:true (TUI always applies) and shell allow (Shift+Tab) for commands",
 			map[string]any{"command": req.Command})
 	}
 	// Implementation in exec.go
@@ -1169,4 +1212,18 @@ func samePath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+func (r *Runner) extraTestDiagnostics(content string) []lsp.ToolDiagnostic {
+	if r == nil {
+		return nil
+	}
+	var out []lsp.ToolDiagnostic
+	if len(r.forceDiagnosticsForTest) > 0 {
+		out = append(out, r.forceDiagnosticsForTest...)
+	}
+	if r.forceDiagnosticsHook != nil {
+		out = append(out, r.forceDiagnosticsHook(content)...)
+	}
+	return out
 }

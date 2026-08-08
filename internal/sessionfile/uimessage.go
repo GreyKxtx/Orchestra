@@ -28,9 +28,10 @@ type UIToolBlock struct {
 
 // UIDiffFile is one file change in a persisted diff message.
 type UIDiffFile struct {
-	Path   string `json:"path"`
-	Before string `json:"before,omitempty"`
-	After  string `json:"after,omitempty"`
+	Path         string `json:"path"`
+	Before       string `json:"before,omitempty"`
+	After        string `json:"after,omitempty"`
+	ReviewStatus string `json:"review_status,omitempty"`
 }
 
 // UINotice is a persisted inline assistant notice.

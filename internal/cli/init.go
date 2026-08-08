@@ -7,6 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/instrument"
+	"github.com/orchestra/orchestra/internal/lsp/provision"
 	"github.com/spf13/cobra"
 )
 
@@ -46,42 +47,47 @@ func runInit(cmd *cobra.Command, args []string) error {
 	cfg.ContextLimit = 50
 	cfg.Limits.ContextKB = 50
 
+	lspEnabled := true
+	cfg.LSP = config.LSPConfig{
+		Enabled:              &lspEnabled,
+		AutoInstall:          "ask",
+		DiagnosticsTimeoutMS: 1500,
+		Servers:              lspServersFromInit(cwd),
+	}
+
 	// Save config
 	if err := config.Save(configPath, cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Append LSP and custom-agent examples as commented blocks.
+	// Append custom-agent examples as commented blocks.
 	comment := "\n" +
-		"# ── LSP (native language server integration) ────────────────────────────────────────────\n" +
-		"# Native LSP integration: auto-diagnostics on write/edit, plus lsp.definition,\n" +
-		"# lsp.references, lsp.hover, lsp.diagnostics, lsp.rename tools.\n" +
-		"#\n" +
-		"# lsp:\n" +
-		"#   auto_install: ask          # ask | true | false (TUI consent)\n" +
-		"#   diagnostics_timeout_ms: 1500\n" +
-		"#   servers:\n" +
-		"#     - language: go\n" +
-		"#       extensions: [.go]\n" +
-		"#       command: [gopls, serve]\n" +
-		"#     - language: typescript\n" +
-		"#       extensions: [.ts, .tsx, .js, .jsx]\n" +
-		"#       command: [typescript-language-server, --stdio]\n" +
-		"#     - language: python\n" +
-		"#       extensions: [.py]\n" +
-		"#       command: [basedpyright-langserver, --stdio]\n" +
-		"#     - language: csharp\n" +
-		"#       extensions: [.cs]\n" +
-		"#       command: [csharp-ls]     # dotnet tool install -g csharp-ls\n" +
-		"#     - language: rust\n" +
-		"#       extensions: [.rs]\n" +
-		"#       command: [rust-analyzer]\n" +
-		"#   # See: orchestra lsp list  (12 built-in recipes)\n" +
-		"#   # Docs: docs/architecture/lsp-auto-provision.md\n" +
+		"# LSP: active servers from workspace detect (or go+ts+py fallback). See orchestra lsp list.\n" +
+		"# Optional extras (uncomment under lsp.servers): csharp-ls, rust-analyzer — docs/architecture/lsp-auto-provision.md\n" +
 		"\n" +
 		"# ── Custom agents ──────────────────────────────────────────────────────────────────────────\n" +
 		"# Define named agents with custom prompts, tool sets, and model overrides.\n" +
 		"# Usage: orchestra apply --mode advisor \"review the recent changes\"\n" +
+		"#\n" +
+		"# Planner–Worker (recommended for local models):\n" +
+		"#   orchestra apply --mode orchestra \"…\"   # Lead delegates via task(worker)\n" +
+		"#   orchestra:\n" +
+		"#     planner:\n" +
+		"#       provider: fast          # reasoning / strong model for Lead\n" +
+		"#       model: …\n" +
+		"#     default_tier: focused\n" +
+		"#     max_worker_retries: 3\n" +
+		"#     tiers:\n" +
+		"#       - name: complex\n" +
+		"#         provider: …\n" +
+		"#         model: …\n" +
+		"#       - name: focused\n" +
+		"#         provider: …\n" +
+		"#         model: qwen2.5-coder-7b\n" +
+		"#       - name: micro\n" +
+		"#         provider: …\n" +
+		"#         model: …\n" +
+		"# Docs: docs/architecture/planner-worker.md\n" +
 		"#\n" +
 		"# agents:\n" +
 		"#   - name: advisor\n" +
@@ -109,6 +115,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func lspServersFromInit(projectRoot string) []config.LSPServerConfig {
+	specs := provision.InitServerSpecs(projectRoot)
+	out := make([]config.LSPServerConfig, len(specs))
+	for i, s := range specs {
+		out[i] = config.LSPServerConfig{
+			Language:   s.Language,
+			Extensions: append([]string(nil), s.Extensions...),
+			Command:    append([]string(nil), s.Command...),
+		}
+	}
+	return out
 }
 
 func runInstrument(dir string, dryRun bool) error {

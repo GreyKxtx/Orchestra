@@ -304,6 +304,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		Steps:            steps,
 		Todos:            a.todos,
 		MaxStepsExceeded: true,
+		StopReason:       "max_steps",
 	}, nil
 }
 
@@ -545,7 +546,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			stepCtx, cancel = context.WithTimeout(ctx, a.opts.LLMStepTimeout)
 		}
 		llmReq := llm.CompleteRequest{
-			Messages:       messages,
+			Messages:       a.messagesWithAssistantPrefill(messages),
 			Tools:          toolDefs,
 			ResponseFormat: a.opts.ResponseFormat,
 		}
@@ -556,15 +557,27 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		} else {
 			resp, err = a.llm.Complete(stepCtx, llmReq)
 		}
+		// Snapshot before cancel(): after Cancel, a WithTimeout context that has
+		// not yet expired reports context.Canceled, hiding a real deadline miss.
+		stepDeadlineExceeded := stepCtx.Err() == context.DeadlineExceeded
 		if cancel != nil {
 			cancel() // Always cancel timeout context to free resources
 		}
 		if err != nil {
+			// Surface LLMStepTimeout clearly — raw "SSE read error: context
+			// deadline exceeded" hides that llm.timeout_s / LLMStepTimeout fired.
+			if stepDeadlineExceeded && ctx.Err() == nil && a.opts.LLMStepTimeout > 0 {
+				sec := int(a.opts.LLMStepTimeout / time.Second)
+				return nil, "", nil, fmt.Errorf(
+					"LLM step timed out after %s (llm.timeout_s=%d; raise it and restart core): %w",
+					a.opts.LLMStepTimeout.Round(time.Second), sec, err)
+			}
 			return nil, "", nil, err
 		}
 		if !canStream || a.opts.OnEvent == nil {
 			a.emitStepUsage(stepNum, resp)
 		}
+		a.mergeResponsePrefill(resp)
 		if a.opts.UsageTracker != nil && resp != nil {
 			if resp.Usage != nil {
 				a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,

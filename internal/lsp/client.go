@@ -15,6 +15,16 @@ import (
 	"github.com/orchestra/orchestra/internal/subproc"
 )
 
+// DefaultInitializeTimeout caps the LSP initialize handshake (C4 audit ledger).
+const DefaultInitializeTimeout = 15 * time.Second
+
+func effectiveInitTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultInitializeTimeout
+	}
+	return d
+}
+
 type callResult struct {
 	raw json.RawMessage
 	err error
@@ -90,7 +100,8 @@ func newClient(name string, cmd *exec.Cmd, r io.Reader, w io.WriteCloser) *Clien
 }
 
 // Start launches command as a subprocess and performs the LSP initialize handshake.
-func Start(ctx context.Context, name string, command []string, env map[string]string, rootURI string, initOptions any) (*Client, error) {
+// initTimeout caps only the initialize request; zero uses DefaultInitializeTimeout.
+func Start(ctx context.Context, name string, command []string, env map[string]string, rootURI string, initOptions any, initTimeout time.Duration) (*Client, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("lsp: empty command for server %q", name)
 	}
@@ -137,8 +148,8 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 	// Drain stderr into the ring buffer in its own goroutine so the
 	// subprocess's stderr pipe never fills and blocks the server.
 	go c.stderr.Drain(stderrPipe)
-	if err := c.initialize(ctx, rootURI, initOptions); err != nil {
-		_ = c.Close()
+	if err := c.initializeWithTimeout(ctx, rootURI, initOptions, initTimeout); err != nil {
+		_ = c.abortStartup()
 		return nil, fmt.Errorf("lsp: initialize %q: %w", name, err)
 	}
 	return c, nil
@@ -146,12 +157,23 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 
 // StartFromConn creates a client from an existing connection (used in tests).
 func StartFromConn(name string, conn io.ReadWriteCloser, rootURI string, initOptions any) (*Client, error) {
+	return StartFromConnContext(context.Background(), name, conn, rootURI, initOptions, 0)
+}
+
+// StartFromConnContext is StartFromConn with caller-controlled initialize timeout.
+func StartFromConnContext(ctx context.Context, name string, conn io.ReadWriteCloser, rootURI string, initOptions any, initTimeout time.Duration) (*Client, error) {
 	c := newClient(name, nil, conn, conn)
-	if err := c.initialize(context.Background(), rootURI, initOptions); err != nil {
-		_ = c.Close()
+	if err := c.initializeWithTimeout(ctx, rootURI, initOptions, initTimeout); err != nil {
+		_ = c.abortStartup()
 		return nil, fmt.Errorf("lsp: initialize %q: %w", name, err)
 	}
 	return c, nil
+}
+
+func (c *Client) initializeWithTimeout(parent context.Context, rootURI string, initOptions any, initTimeout time.Duration) error {
+	initCtx, cancel := context.WithTimeout(parent, effectiveInitTimeout(initTimeout))
+	defer cancel()
+	return c.initialize(initCtx, rootURI, initOptions)
 }
 
 func (c *Client) initialize(ctx context.Context, rootURI string, initOptions any) error {
@@ -347,6 +369,20 @@ func (c *Client) Close() error {
 	_, _ = c.request(ctx, "shutdown", nil)
 	_ = c.notify(ctx, "exit", nil)
 
+	return c.closeIOAndWait()
+}
+
+// abortStartup tears down a client that never finished initialize (C4).
+// Skips the shutdown handshake so a hung server cannot block Core startup.
+func (c *Client) abortStartup() error {
+	if c.dead.Load() {
+		return nil
+	}
+	c.dead.Store(true)
+	return c.closeIOAndWait()
+}
+
+func (c *Client) closeIOAndWait() error {
 	c.wMu.Lock()
 	_ = c.w.Close()
 	c.wMu.Unlock()

@@ -20,12 +20,6 @@ func (a *App) handleMouseMsg(m tea.MouseMsg) (tea.Model, tea.Cmd) {
 			a.chat.ScrollDown(3)
 			return a, nil
 		case m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress:
-			if !a.showWelcome && a.taskPanelHeight > 0 && a.taskPanelTopY >= 0 &&
-				m.Y >= a.taskPanelTopY && m.Y < a.taskPanelTopY+a.taskPanelHeight &&
-				len(a.todos) > 0 {
-				a.toggleTaskPanel()
-				return a, nil
-			}
 			if !a.showWelcome && m.Y == a.statusBarRowY {
 				_ = m.X
 			}

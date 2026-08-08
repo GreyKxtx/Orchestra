@@ -1,6 +1,6 @@
 # Planner–Worker: целевой режим Orchestra (локальные модели)
 
-**Статус:** Partial implemented (MVP) — `mode=orchestra` Lead + `subagent_type=worker` tiers; AST symbol scoping / parallel budget / E2E eval → P3  
+**Статус:** MVP ✅ — `mode=orchestra` Lead + `subagent_type=worker` + WorkOrder JSON + `target_symbol` scoping + E2E eval (§11). Осталось: manual TUI smoke LSP install.
 **Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [architecture-uml.md](../architecture-uml.md)
 
 ---
@@ -180,7 +180,7 @@ Staging отклоняет синтаксически битый контент 
 
 Зашить в Worker system prompt + few-shot.
 
-### 6.4 AST Scoping (🔜 Phase 5 — высокий приоритет)
+### 6.4 AST Scoping (✅ Phase 5)
 
 Если WorkOrder содержит `target_symbol`:
 
@@ -196,12 +196,12 @@ Staging отклоняет синтаксически битый контент 
 
 | Приём | Где | Статус |
 |-------|-----|--------|
-| **Few-shot** в Worker prompt | `worker.txt` / `build-local.txt` | 🔜 |
-| **Prefilling** `{` assistant prefix | `internal/llm` OpenAI client | 🔜 |
-| **Атомарность** 1 WorkOrder = 1 symbol | Lead prompt + spawn policy | 🔜 |
-| **Отдельная модель** Worker в config | `llm.worker_model` или subagent override | 🔜 |
-| **Узкий tool surface** Worker | `read`, `edit`, `grep`, `symbols`, `lsp.*` — без `task_spawn` | частично (`general`) |
-| **Preflight context** только от Planner | WorkOrder.context | 🔜 |
+| **Few-shot** в Worker prompt | `worker.txt` / `build-local.txt` | ✅ |
+| **Prefilling** `{` assistant prefix | `internal/agent` worker mode | ✅ |
+| **Атомарность** 1 WorkOrder = 1 symbol | Lead prompt + spawn policy | ✅ |
+| **Отдельная модель** Worker в config | `orchestra.tiers` | ✅ |
+| **Узкий tool surface** Worker | `read`, `edit`, `grep`, `symbols`, `lsp.*`, `task_result` — без nested spawn | ✅ (`ListToolsForMode("worker")`) |
+| **Preflight context** только от Planner | WorkOrder.context | частично (JSON поле есть; Lead prompt — best-effort) |
 
 ---
 
@@ -216,7 +216,7 @@ sequenceDiagram
 
     U->>L: задача
     L->>L: explore / plan / question
-    L->>W: task(general) + WorkOrder JSON
+    L->>W: task(worker) + WorkOrder JSON
     loop validation (≤3)
         W->>O: edit (dry-run)
         O->>O: AST-Gate + LSP staging
@@ -224,7 +224,7 @@ sequenceDiagram
     end
     alt success
         W-->>L: task_result success + staged ops
-        L->>U: summary / apply (/live or /preview)
+        L->>U: summary / apply (TUI apply=true или CLI --apply)
     else exhausted
         W-->>L: error + suggestion
         L->>L: переплан / новый WorkOrder
@@ -238,15 +238,15 @@ sequenceDiagram
 | # | Задача | Зависимости | Приоритет |
 |---|--------|-------------|-----------|
 | P0 | Зафиксировать этот doc + ссылка из `modes.md` / ROADMAP | — | ✅ doc |
-| P1 | **`worker` mode** (промпт + tool surface + `build-local` fork) | subagent infra | высокий |
-| P2 | **WorkOrder schema** в `task` prompt + валидация JSON | P1 | высокий |
-| P3 | Worker **retry budget** + эскалация в `task_result` | semantic dry-run ✅ | высокий |
-| P4 | **AmbiguousMatch** hints в Worker prompt + agent format | resolver ✅ | средний |
-| P5 | **AST scoping** в resolver (`target_symbol` + CKG range) | CKG | высокий |
-| P6 | **Prefilling** + few-shot examples в `worker.txt` | llm client | средний |
-| P7 | **Отдельный LLM profile** для Worker (`llm.profiles.worker`) | config | средний |
-| P8 | Lead prompt: «не edit сам — только task + WorkOrder» | P1–P2 | высокий |
-| P9 | E2E: Lead spawns Worker, local model, dry-run LSP green | TUI | контрольная точка |
+| P1 | **`worker` mode** (промпт + tool surface + `build-local` fork) | subagent infra | ✅ |
+| P2 | **WorkOrder schema** в `task` prompt + валидация JSON | P1 | ✅ |
+| P3 | Worker **retry budget** + эскалация в `task_result` | semantic dry-run ✅ | ✅ |
+| P4 | **AmbiguousMatch** hints в Worker prompt + agent format | resolver ✅ | ✅ |
+| P5 | **AST scoping** в resolver (`target_symbol` + CKG range) | CKG | ✅ |
+| P6 | **Prefilling** + few-shot examples в `worker.txt` | llm client | ✅ |
+| P7 | **Отдельный LLM profile** для Worker (`orchestra.tiers`) | config | ✅ |
+| P8 | Lead prompt: «не edit сам — только task + WorkOrder» | P1–P2 | ✅ |
+| P9 | E2E: Lead spawns Worker, local model, dry-run LSP green | TUI | ✅ |
 
 **Не в scope ближайших фаз:** VFS as SoT для grep/CKG (см. semantic-dry-run §9), полная замена `edit` на patch-only JSON Worker output.
 
@@ -265,11 +265,11 @@ sequenceDiagram
 
 ## 11. Критерии приёмки (контрольная точка)
 
-- [ ] Lead на reasoning/сильной модели **не вызывает** `edit` на `.go` файлах — только `task` с WorkOrder.
-- [ ] Worker на локальной модели (≤20B Q6) выполняет типовую правку за ≤3 LSP-итерации в dry-run.
-- [ ] `AmbiguousMatch` rate < 10% при `target_symbol` scoping ( после P5 ).
-- [ ] TUI показывает LSP diagnostics на Worker tool blocks (✅).
-- [ ] `/preview` → apply без сюрпризов на disk (staging + hash conditions).
+- [x] Lead на reasoning/сильной модели **не вызывает** `edit` на `.go` файлах — только `task` с WorkOrder (runtime guard + orchestra tool surface).
+- [x] Worker на локальной модели (≤20B Q6) выполняет типовую правку за ≤3 LSP-итерации в dry-run (`tests/e2e_agent/e2e_worker_lsp_iterations_test.go` CI; `tests/e2e_real_llm/worker_lsp_iterations_test.go` при `ORCH_E2E_LLM=1`).
+- [x] `AmbiguousMatch` rate < 10% при `target_symbol` scoping (`tests/e2e_agent/e2e_ambiguous_match_eval_test.go`).
+- [x] TUI показывает LSP diagnostics на Worker tool blocks (`ui/tui/view/diagnostics.go`, `tool_block_diagnostics_test.go`; manual smoke LSP install — см. `lsp-auto-provision.md`).
+- [x] Dry-run staging → explicit apply без сюрпризов на disk (`tests/e2e_agent/e2e_staging_apply_test.go`; hash conditions + backup). TUI: `apply=true` auto-commit pipeline.
 
 ---
 

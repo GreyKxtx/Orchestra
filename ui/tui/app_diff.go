@@ -25,6 +25,7 @@ func (a *App) showCommitDiff() {
 	if len(a.lastCommitDiff) == 0 {
 		if a.session.ToggleLastDiff() {
 			a.diffShown = a.session.HasDiff()
+			a.syncDiffReviewCursor()
 			a.chat.SetMessages(a.session.Messages)
 			a.layout()
 			a.updateStatusHints()
@@ -34,10 +35,14 @@ func (a *App) showCommitDiff() {
 	if a.diffShown {
 		a.session.RemoveDiff()
 		a.diffShown = false
+		a.chat.SetDiffReviewCursor(-1)
 	} else {
 		a.session.AddDiffFiles(a.buildDiffFiles())
+		a.session.ExpandLastDiff()
 		a.diffShown = true
+		a.diffCursor = 0
 	}
+	a.syncDiffReviewCursor()
 	a.chat.SetMessages(a.session.Messages)
 	a.layout()
 	a.updateStatusHints()
@@ -58,6 +63,9 @@ func (a *App) syncDiffStateFromSession() {
 		}
 		a.lastCommitDiff = out
 		a.diffShown = true
+		if m.DiffExpanded {
+			a.diffCursor = 0
+		}
 		return
 	}
 }

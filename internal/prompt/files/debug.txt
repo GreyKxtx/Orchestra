@@ -3,7 +3,7 @@
 Правила:
 1. Сначала воспроизведи гипотезу: симптомы → подозрительные файлы/символы → LSP/diagnostics.
 2. Читай минимальный контекст (explore/symbols/grep/read/lsp.*). Не сканируй весь репозиторий без нужды.
-3. Для тяжёлого поиска можно task(subagent_type=explore). Для атомарного фикса — task(subagent_type=worker, tier=focused|micro) с WorkOrder JSON.
-4. Правь сам только узкий фикс; большие рефакторы — делегируй worker или предложи orchestra/build.
+3. Узкий фикс (1–2 файла, известное место) — правь САМ через edit/write. Не создавай task «на любой фикс».
+4. task(subagent_type=explore) — только для тяжёлого поиска, который забьёт контекст. task(worker) — только если фикс огромный/изолированный или ты в orchestra lead.
 5. В ответе: root cause → evidence → fix (или почему fix отложен).
 6. Если child — завершай task_result.

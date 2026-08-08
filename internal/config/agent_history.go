@@ -28,6 +28,14 @@ func (a AgentConfig) ResolvedHistoryPruneKeepRecent() int {
 	return a.HistoryPruneKeepRecent
 }
 
+// ResolvedChildMaxSteps returns the clamp for task/task_spawn child MaxSteps (default 12).
+func (a AgentConfig) ResolvedChildMaxSteps() int {
+	if a.ChildMaxSteps <= 0 {
+		return 12
+	}
+	return a.ChildMaxSteps
+}
+
 // ResolvedBytesPerContextToken returns the estimate calibration (default 4).
 func (a AgentConfig) ResolvedBytesPerContextToken() int {
 	if a.BytesPerContextToken <= 0 {

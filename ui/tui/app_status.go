@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/llm"
 )
 
 // chromeMetrics groups status-bar / session gauges owned by App (not chat history).
@@ -17,8 +18,9 @@ type chromeMetrics struct {
 	livePromptTokens  int     // current step prompt tokens while a turn is running
 	tokensEstimated   bool    // true when last ctx figure is agent estimate, not provider usage
 	sessionCostUSD    float64 // accumulated spend (paid providers)
-	modelContextLimit int
-	lspStatus         string // off | idle | active
+	modelContextLimit int     // full model window (num_ctx / max_model_len)
+	promptBudgetTokens int    // prompt room after max_tokens reserve — ctx bar denominator
+	lspStatus         string  // off | idle | active
 	showCost          bool
 }
 
@@ -85,6 +87,12 @@ func (a *App) awaitLSPWarmupCmd() tea.Cmd {
 }
 
 func (a *App) contextLimit() int {
+	// Ctx bar % must match compaction pressure (PromptBudgetTokens), not the
+	// raw model window — otherwise 24k/122k looks like 19% while max_tokens
+	// has already reserved most of the window for completion.
+	if a.chrome.promptBudgetTokens > 0 {
+		return a.chrome.promptBudgetTokens
+	}
 	if a.chrome.modelContextLimit > 0 {
 		return a.chrome.modelContextLimit
 	}
@@ -97,7 +105,8 @@ func (a *App) setContextLimitFromConfig(cfg *config.ProjectConfig) {
 	}
 	if n := int(cfg.EffectiveNumCtx()); n > 0 {
 		a.chrome.modelContextLimit = n
-		a.statusBar.SetModelCtx(n)
+		a.chrome.promptBudgetTokens = llm.PromptBudgetTokens(n, cfg.LLM.MaxTokens)
+		a.statusBar.SetModelCtx(a.chrome.promptBudgetTokens)
 	}
 }
 

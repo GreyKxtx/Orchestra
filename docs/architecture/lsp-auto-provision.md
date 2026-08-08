@@ -2,7 +2,7 @@
 
 **Проект:** Orchestra  
 **Версия:** 0.1 (2026-08-06)  
-**Статус:** фаза A ✅ · фаза B ✅ (gopls ensure + TUI consent) · C/D pending  
+**Статус:** фаза A ✅ · фаза B ✅ (gopls ensure + TUI consent) · C частично ✅ · D pending  
 **Продуктовый фокус:** default UX = **TUI** (`orchestra` / `orchestra tui`), не CLI `apply`.  
 **Связано:**
 - [`semantic-dry-run-tz.md`](./semantic-dry-run-tz.md) — фазы 1–4 ✅; Phase 5+ polyglot defaults
@@ -246,7 +246,8 @@ Prefs / TUI `[a]`:
 - [x] Unit: ask+approve → Ensure + resolve cache; ask+deny → error
 - [x] `orchestra lsp ensure go`
 - [x] TUI modal kind=lsp.install + `[a]` → `lsp.auto_install: true`
-- [ ] Manual smoke in TUI after rebuild
+- [x] Automated: RPC diagnostics on edit tool blocks (`ui/tui/rpcclient/diagnostics_test.go`, `view/tool_block_diagnostics_test.go`)
+- [ ] Manual smoke in TUI after rebuild (modal + status bar — чеклист `ui/tui/README.md`)
 
 **Статус:** ✅ реализовано (2026-08-06) — gopls only; TS/Python = фаза C.
 
@@ -259,14 +260,16 @@ Prefs / TUI `[a]`:
 - Docs: tools-overview + README TUI LSP section
 
 **Приёмка:**
-- [ ] Новый TS-only проект: prompt только tsserver
-- [ ] Go+TS monorepo: два server'а lazy, без eager spawn обоих
+- [x] `orchestra init` пишет активный `lsp.servers` (detect или go+ts+py fallback)
+- [x] Ensure recipes: typescript-language-server, basedpyright (`internal/lsp/provision/ensure.go`)
+- [x] TS-only проект: runtime merge оставляет только tsserver (`MergeServersForWorkspace`)
+- [x] Go+TS monorepo: оба server'а lazy, spawn по touch `.go`/`.ts` (`WarmupStart no-op при lazy_start`)
 
 ### Фаза D — Hardening (можно параллельно / после)
 
-- C4: timeout на LSP `initialize`
-- Crash → one retry + re-open staged
-- Pin/upgrade CLI
+- [x] C4: timeout на LSP `initialize` (`lsp.initialize_timeout_ms`, default 15s)
+- [x] Crash → lazy restart + `reopenStaged` (H6, max 3 restarts)
+- [x] Pin/upgrade CLI: `orchestra lsp upgrade [id]`, `orchestra lsp ensure --upgrade`
 - Optional: progress events `%` для длинного download в status hints
 
 ---

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
@@ -30,15 +31,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		a.spinFrame++
-		blinkChanged := false
 		if a.spinFrame%5 == 0 {
 			a.cursorBlink = !a.cursorBlink
-			blinkChanged = true
 		}
 		a.statusBar.AdvanceSpin()
 		a.chat.SetSpinFrame(a.spinFrame)
-		if a.turn.ShowBusySpinner() && (a.chatDirty || a.session.HasRunningTool() || blinkChanged) {
-			a.chat.SetStreamCursor(a.cursorBlink)
+		// Refresh chat for spinner animation while busy. Do NOT blink a mid-
+		// message ▋ caret — that jumped the viewport and sat above the footer.
+		if a.turn.ShowBusySpinner() && (a.chatDirty || a.session.HasRunningTool() || a.spinFrame%2 == 0) {
 			a.chat.SetMessages(a.session.Messages)
 			a.chatDirty = false
 		}
@@ -151,11 +151,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.contextTokens > 0 {
 			a.chrome.modelContextLimit = m.contextTokens
-			a.statusBar.SetModelCtx(m.contextTokens)
+			budget := llm.PromptBudgetTokens(m.contextTokens, m.maxTokens)
+			if budget <= 0 {
+				budget = m.contextTokens
+			}
+			a.chrome.promptBudgetTokens = budget
+			a.statusBar.SetModelCtx(budget)
 			a.syncStatusBar()
 		}
-		if m.clamped {
-			a.showToast(fmt.Sprintf("ctx %d · max_tokens урезан до %d (лимит vLLM)", m.contextTokens, m.maxTokens))
+		switch {
+		case m.ctxClamped && m.serverMax > 0:
+			a.showToast(fmt.Sprintf("ctx урезан до %d (сервер max_model_len)", m.contextTokens))
+		case m.clamped:
+			a.showToast(fmt.Sprintf("окно %d · ответ auto %d", m.contextTokens, m.maxTokens))
 		}
 		return a, nil
 	case orchestraSavedMsg:
@@ -195,6 +203,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case skillResultMsg:
 		return a, a.handleSkillResult(m)
+
+	case diffRevertResultMsg:
+		return a, a.handleDiffRevertResult(m)
+
+	case diffApplyResultMsg:
+		return a, a.handleDiffApplyResult(m)
+
+	case sessionRewindResultMsg:
+		return a, a.handleSessionRewindResult(m)
 	}
 
 	if km, ok := msg.(tea.KeyMsg); ok && a.input.HasSelection() && isPrintableKey(km) {

@@ -85,6 +85,43 @@ func Ensure(ctx context.Context, idOrLang string) error {
 	return nil
 }
 
+// Upgrade removes the pinned cache directory for idOrLang and re-runs Ensure.
+func Upgrade(ctx context.Context, idOrLang string) error {
+	e, ok := registry.ByID(idOrLang)
+	if !ok {
+		e, ok = registry.ByLanguage(idOrLang)
+	}
+	if !ok {
+		return fmt.Errorf("provision: unknown language server %q (see orchestra lsp list)", idOrLang)
+	}
+	if !CanEnsure(e.ID) {
+		return fmt.Errorf("provision: upgrade for %q not automated yet — install manually: %s", e.ID, e.InstallHint)
+	}
+	dir, err := cacheVersionDir(e.ID, e.Version)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("provision: remove cache %s: %w", dir, err)
+	}
+	return Ensure(ctx, e.ID)
+}
+
+// UpgradeAll re-downloads every automated language server in the registry.
+func UpgradeAll(ctx context.Context) ([]string, error) {
+	var upgraded []string
+	for _, e := range registry.All() {
+		if !CanEnsure(e.ID) {
+			continue
+		}
+		if err := Upgrade(ctx, e.ID); err != nil {
+			return upgraded, err
+		}
+		upgraded = append(upgraded, e.ID)
+	}
+	return upgraded, nil
+}
+
 func cacheVersionDir(id, version string) (string, error) {
 	root, err := CacheRoot()
 	if err != nil {

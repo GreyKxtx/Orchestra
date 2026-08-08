@@ -20,6 +20,7 @@ type SettingsDialogResult struct {
 	Temperature    float32
 	MaxTokens      int
 	NumCtx         int64
+	TimeoutS       int
 	EnableThinking bool
 }
 
@@ -33,6 +34,7 @@ type SettingsDialog struct {
 	temperature    float32
 	maxTokens      int
 	numCtx         int64
+	timeoutS       int
 	enableThinking bool
 
 	cursor  int
@@ -47,15 +49,18 @@ func NewSettingsDialog(provider ProviderEntry, model ModelEntry) *SettingsDialog
 		temperature: 0.20,
 		maxTokens:   8192,
 		numCtx:      20480,
+		timeoutS:    600, // match Claude Code-class default (10m) for local/ngrok
 	}
 	if model.MaxContextLength > 0 && model.MaxContextLength < d.numCtx {
 		d.numCtx = model.MaxContextLength
 	}
+	d.syncAutoAnswer()
 	return d
 }
 
-// SetInitial seeds settings from an existing preset.
-func (d *SettingsDialog) SetInitial(temperature float32, maxTokens int, numCtx int64, enableThinking bool, apiKey string) {
+// SetInitial seeds settings from an existing preset / config.
+// timeoutS <= 0 leaves the dialog default.
+func (d *SettingsDialog) SetInitial(temperature float32, maxTokens int, numCtx int64, timeoutS int, enableThinking bool, apiKey string) {
 	if temperature > 0 {
 		d.temperature = temperature
 	}
@@ -65,26 +70,54 @@ func (d *SettingsDialog) SetInitial(temperature float32, maxTokens int, numCtx i
 	if numCtx > 0 {
 		d.numCtx = numCtx
 	}
+	if timeoutS > 0 {
+		d.timeoutS = clampTimeoutS(timeoutS)
+	}
 	d.enableThinking = enableThinking
 	if apiKey != "" {
 		d.apiKey = apiKey
 	}
+	d.syncAutoAnswer()
 }
 
 type settingsField struct {
 	label string
-	kind  string // "temp" | "tokens" | "ctx" | "thinking" | "apikey"
+	kind  string // "temp" | "tokens" | "ctx" | "timeout" | "thinking" | "apikey"
 }
 
 func (d *SettingsDialog) fields() []settingsField {
+	// One Tokens knob (= window). Answer budget is always derived (~20%).
 	return []settingsField{
 		{label: "Temperature", kind: "temp"},
-		{label: "Max tokens", kind: "tokens"},
-		{label: "Context length", kind: "ctx"},
+		{label: "Tokens", kind: "ctx"},
+		{label: "LLM timeout (s)", kind: "timeout"},
 		{label: "Enable thinking", kind: "thinking"},
 		{label: "API key", kind: "apikey"},
 	}
 }
+
+// syncAutoAnswer sets max_tokens from the window when the provider auto-splits.
+func (d *SettingsDialog) syncAutoAnswer() {
+	if d.provider.AutoAnswerBudget() {
+		d.maxTokens = autoAnswerBudget(d.numCtx)
+	}
+}
+
+// autoAnswerBudget is the derived completion size for a context window (~20%).
+func autoAnswerBudget(numCtx int64) int {
+	return clampTokensForCtx(1<<30, numCtx)
+}
+
+func formatTokenCount(n int) string {
+	if n >= 1000 {
+		if n%1000 == 0 {
+			return fmt.Sprintf("%dk", n/1000)
+		}
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return strconv.Itoa(n)
+}
+
 
 // Update implements Dialog.
 func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
@@ -116,7 +149,11 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		return d, dialogResultCmd("settings", "cancel", nil)
 	case "enter":
 		d.commitEdit()
-		d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
+		d.syncAutoAnswer()
+		if !d.provider.AutoAnswerBudget() {
+			d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
+		}
+		d.timeoutS = clampTimeoutS(d.timeoutS)
 		return d, dialogResultCmd("settings", "save", SettingsDialogResult{
 			Provider:       d.provider,
 			Model:          d.model,
@@ -124,6 +161,7 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			Temperature:    d.temperature,
 			MaxTokens:      d.maxTokens,
 			NumCtx:         d.numCtx,
+			TimeoutS:       d.timeoutS,
 			EnableThinking: d.enableThinking,
 		})
 	case "backspace":
@@ -145,7 +183,7 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 					d.editBuf += string(r)
 				}
 			}
-		case "tokens", "ctx":
+		case "tokens", "ctx", "timeout":
 			for _, r := range km.Runes {
 				if unicode.IsDigit(r) {
 					d.editBuf += string(r)
@@ -179,7 +217,14 @@ func (d *SettingsDialog) commitEdit() {
 	case "ctx":
 		if v, err := strconv.ParseInt(d.editBuf, 10, 64); err == nil {
 			d.numCtx = clampCtx(v, d.model.MaxContextLength)
-			d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
+			d.syncAutoAnswer()
+			if !d.provider.AutoAnswerBudget() {
+				d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
+			}
+		}
+	case "timeout":
+		if v, err := strconv.Atoi(d.editBuf); err == nil {
+			d.timeoutS = clampTimeoutS(v)
 		}
 	case "apikey":
 		d.apiKey = d.editBuf
@@ -207,18 +252,16 @@ func clampTokens(v int) int {
 	return v
 }
 
-// clampTokensForCtx keeps max_tokens below the context window. Does not
-// statically reserve half the window (LM Studio style): only a tiny floor for
-// the prompt. Per-request fitting is done in the LLM client.
+// clampTokensForCtx keeps max_tokens ≤ ~20% of the context window so most of
+// num_ctx stays for the prompt (LM Studio-friendly). Hard floor 256.
 func clampTokensForCtx(tokens int, numCtx int64) int {
 	tokens = clampTokens(tokens)
 	if numCtx <= 0 {
 		return tokens
 	}
-	const promptFloor = 256
-	capTok := numCtx - promptFloor
-	if capTok < promptFloor {
-		capTok = promptFloor
+	capTok := numCtx / 5 // ~20% for the answer
+	if capTok < 256 {
+		capTok = 256
 	}
 	if int64(tokens) > capTok {
 		return int(capTok)
@@ -235,6 +278,18 @@ func clampCtx(v, maxModel int64) int64 {
 	}
 	if v > 1_048_576 {
 		return 1_048_576
+	}
+	return v
+}
+
+// clampTimeoutS bounds a single LLM step wait. Floor 30s (local probe),
+// ceiling 2h (Claude Code allows effectively unbounded; we keep a sane cap).
+func clampTimeoutS(v int) int {
+	if v < 30 {
+		return 30
+	}
+	if v > 7200 {
+		return 7200
 	}
 	return v
 }
@@ -258,7 +313,16 @@ func (d *SettingsDialog) adjustField(kind string, dir int) {
 			step = 32_768
 		}
 		d.numCtx = clampCtx(d.numCtx+int64(dir)*step, d.model.MaxContextLength)
-		d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
+		d.syncAutoAnswer()
+		if !d.provider.AutoAnswerBudget() {
+			d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
+		}
+	case "timeout":
+		step := 30
+		if d.timeoutS >= 600 {
+			step = 60
+		}
+		d.timeoutS = clampTimeoutS(d.timeoutS + dir*step)
 	case "thinking":
 		d.enableThinking = !d.enableThinking
 	}
@@ -317,6 +381,13 @@ func (d *SettingsDialog) Render(screenW, screenH int) string {
 	header := titleR + padBg(gap) + esc
 
 	modelLine := fitInner(mutedStyle.Render("  " + d.provider.Name + " · " + d.model.ID))
+	if d.provider.AutoAnswerBudget() {
+		ans := autoAnswerBudget(d.numCtx)
+		modelLine = fitInner(mutedStyle.Render(fmt.Sprintf(
+			"  %s · %s · answer auto %s",
+			d.provider.Name, d.model.ID, formatTokenCount(ans),
+		)))
+	}
 
 	flds := d.fields()
 	const labelCol = 18
@@ -370,10 +441,12 @@ func (d *SettingsDialog) fieldDisplay(kind string, active bool) string {
 	switch kind {
 	case "temp":
 		return fmt.Sprintf("%.2f", d.temperature)
-	case "tokens":
-		return fmt.Sprintf("%d", d.maxTokens)
 	case "ctx":
 		return fmt.Sprintf("%d", d.numCtx)
+	case "tokens":
+		return fmt.Sprintf("%d", d.maxTokens)
+	case "timeout":
+		return fmt.Sprintf("%d", d.timeoutS)
 	case "thinking":
 		if d.enableThinking {
 			return "on"
@@ -393,7 +466,12 @@ func (d *SettingsDialog) fieldHint(kind string, active bool) string {
 		return ""
 	}
 	switch kind {
-	case "temp", "tokens", "ctx", "apikey":
+	case "temp", "tokens", "timeout", "apikey":
+		return "type · ←→ step"
+	case "ctx":
+		if d.provider.AutoAnswerBudget() {
+			return "window · answer auto · ←→"
+		}
 		return "type · ←→ step"
 	case "thinking":
 		return "←→ toggle"

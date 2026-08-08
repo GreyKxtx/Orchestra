@@ -174,6 +174,10 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 		if subagentType == "" {
 			subagentType = "explore"
 		}
+		timeoutMS := req.TimeoutMS
+		if timeoutMS <= 0 {
+			timeoutMS = 120_000 // same default as sync task — avoid orphan children
+		}
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 			Goal:         goal,
 			SubagentType: subagentType,
@@ -181,7 +185,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 			Provider:     strings.TrimSpace(req.Provider),
 			Model:        strings.TrimSpace(req.Model),
 			MaxSteps:     req.MaxSteps,
-			TimeoutMS:    req.TimeoutMS,
+			TimeoutMS:    timeoutMS,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("task.spawn: %w", err)

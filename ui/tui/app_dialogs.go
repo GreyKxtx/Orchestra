@@ -93,6 +93,7 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 			// Hydrate with an existing preset for this model id, if any.
 			if a.cfg.ConfigPath != "" {
 				if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
+					timeoutS := cfg.LLM.TimeoutS
 					if preset, ok := cfg.LLM.ModelPresets[me.ID]; ok {
 						var thinking bool
 						if preset.EnableThinking != nil {
@@ -101,23 +102,23 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 						if apiKey == "" {
 							apiKey = cfg.LLM.APIKey
 						}
-						sd.SetInitial(preset.Temperature, preset.MaxTokens, preset.NumCtx, thinking, apiKey)
+						sd.SetInitial(preset.Temperature, preset.MaxTokens, preset.NumCtx, timeoutS, thinking, apiKey)
 					} else if cfg.LLM.Model == me.ID {
 						if apiKey == "" {
 							apiKey = cfg.LLM.APIKey
 						}
-						sd.SetInitial(cfg.LLM.Temperature, cfg.LLM.MaxTokens, cfg.EffectiveNumCtx(), false, apiKey)
+						sd.SetInitial(cfg.LLM.Temperature, cfg.LLM.MaxTokens, cfg.EffectiveNumCtx(), timeoutS, false, apiKey)
 					} else {
 						if apiKey == "" {
 							apiKey = cfg.LLM.APIKey
 						}
-						sd.SetInitial(0, 0, 0, false, apiKey)
+						sd.SetInitial(0, 0, 0, timeoutS, false, apiKey)
 					}
 				} else {
-					sd.SetInitial(0, 0, 0, false, apiKey)
+					sd.SetInitial(0, 0, 0, 0, false, apiKey)
 				}
 			} else {
-				sd.SetInitial(0, 0, 0, false, apiKey)
+				sd.SetInitial(0, 0, 0, 0, false, apiKey)
 			}
 			// Keep pendingAPIKey until settings save — merge if Settings field empty.
 			a.pushDialog(sd)
@@ -215,6 +216,17 @@ func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
 			metas, _ := sessionstore.List(a.cfg.WorkspaceRoot)
 			a.popDialog()
 			a.pushDialog(view.NewSessionsDialog(metas))
+			return a, nil
+		}
+	case "rewind":
+		switch m.Action {
+		case "cancel":
+			a.popDialog()
+			return a, nil
+		case "select":
+			cp, _ := m.Data.(view.RewindCheckpoint)
+			a.popDialog()
+			a.handleRewindSelect(cp)
 			return a, nil
 		}
 	case "message_action":
@@ -461,6 +473,9 @@ func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
 		cfg.LLM.Model = r.Model.ID
 		cfg.LLM.Temperature = r.Temperature
 		cfg.LLM.MaxTokens = r.MaxTokens
+		if r.TimeoutS > 0 {
+			cfg.LLM.TimeoutS = r.TimeoutS
+		}
 		if cfg.LLM.ExtraBody == nil {
 			cfg.LLM.ExtraBody = map[string]any{}
 		}
@@ -485,6 +500,9 @@ func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
 			pc.MaxTokens = cfg.LLM.MaxTokens
 			pc.Temperature = cfg.LLM.Temperature
 			pc.ToolChoice = cfg.LLM.ToolChoice
+			if r.TimeoutS > 0 {
+				pc.TimeoutS = r.TimeoutS
+			}
 			if pc.ExtraBody == nil {
 				pc.ExtraBody = map[string]any{}
 			}
@@ -507,7 +525,7 @@ func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return settingsSavedMsg{err: err}
 		}
-		return settingsSavedMsg{provider: r.Provider, model: r.Model, numCtx: r.NumCtx}
+		return settingsSavedMsg{provider: r.Provider, model: r.Model, numCtx: r.NumCtx, maxTokens: r.MaxTokens}
 	}
 }
 
@@ -530,7 +548,12 @@ func (a *App) applySavedSettings(m settingsSavedMsg) tea.Cmd {
 		limit = int(m.model.MaxContextLength)
 	}
 	a.chrome.modelContextLimit = limit
-	a.statusBar.SetModelCtx(limit)
+	budget := llm.PromptBudgetTokens(limit, m.maxTokens)
+	if budget <= 0 {
+		budget = limit
+	}
+	a.chrome.promptBudgetTokens = budget
+	a.statusBar.SetModelCtx(budget)
 	a.syncStatusBar()
 	a.chat.SetMeta(a.cfg.Mode, a.cfg.Model)
 	msg := fmt.Sprintf("[saved] %s · %s", m.provider.Name, m.model.ID)
@@ -581,9 +604,8 @@ func (a *App) probeLLMCmd(phase string, p view.ProviderEntry, apiKey, model stri
 func (a *App) handleLLMProbe(m llmProbeMsg) tea.Cmd {
 	var after tea.Cmd
 	if m.result.ContextTokens > 0 {
-		a.chrome.modelContextLimit = m.result.ContextTokens
-		a.statusBar.SetModelCtx(m.result.ContextTokens)
-		a.syncStatusBar()
+		// Persist may keep a lower user num_ctx; chrome updates via limitsAppliedMsg
+		// with the *effective* window, not raw server max_model_len.
 		after = a.persistDiscoveredLimitsCmd(m.result)
 	}
 	switch m.phase {
@@ -634,8 +656,9 @@ func (a *App) handleLLMProbe(m llmProbeMsg) tea.Cmd {
 	return after
 }
 
-// persistDiscoveredLimitsCmd writes server max_model_len into num_ctx and
-// clamps max_tokens when the values differ from .orchestra.yml.
+// persistDiscoveredLimitsCmd reconciles server max_model_len with user num_ctx
+// (fill if unset, clamp if oversize, keep intentional lower windows) and
+// clamps max_tokens when needed.
 func (a *App) persistDiscoveredLimitsCmd(res llm.ProbeResult) tea.Cmd {
 	if res.ContextTokens <= 0 {
 		return nil
@@ -651,18 +674,40 @@ func (a *App) persistDiscoveredLimitsCmd(res llm.ProbeResult) tea.Cmd {
 		}
 		lim := llm.ModelLimits{ContextTokens: ctxTok, MaxTokensCap: res.MaxTokensCap}
 		beforeTok := cfg.LLM.MaxTokens
+		beforeCtx := int(cfg.EffectiveNumCtx())
 		if !llm.ApplyDiscoveredLimits(&cfg.LLM, lim) {
 			return nil
 		}
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return limitsAppliedMsg{err: err}
 		}
+		applied := int(cfg.EffectiveNumCtx())
+		if applied <= 0 {
+			applied = contextLenFromCfgExtra(cfg)
+		}
 		return limitsAppliedMsg{
-			contextTokens: ctxTok,
+			contextTokens: applied,
+			serverMax:     ctxTok,
 			maxTokens:     cfg.LLM.MaxTokens,
 			clamped:       beforeTok > 0 && cfg.LLM.MaxTokens < beforeTok,
+			ctxClamped:    beforeCtx > 0 && applied > 0 && beforeCtx > applied,
 		}
 	}
+}
+
+func contextLenFromCfgExtra(cfg *config.ProjectConfig) int {
+	if cfg == nil || cfg.LLM.ExtraBody == nil {
+		return 0
+	}
+	switch n := cfg.LLM.ExtraBody["num_ctx"].(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
 }
 
 // respawnRPCCmd shuts down the active core subprocess and spawns a fresh one

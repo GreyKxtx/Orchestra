@@ -58,6 +58,29 @@ func MergeServers(configured []ServerSpec, detected []registry.Entry) []ServerSp
 	return out
 }
 
+// MergeServersForWorkspace merges yaml config with workspace detect (phase C).
+// When detect finds languages, servers for undetected languages are dropped so
+// polyglot init fallback on a TS-only repo does not keep gopls/pyright registered.
+// Empty detect (brand-new repo) keeps configured servers unchanged.
+func MergeServersForWorkspace(configured []ServerSpec, workspaceRoot string) []ServerSpec {
+	detected := Detect(workspaceRoot)
+	merged := MergeServers(configured, detected)
+	if len(detected) == 0 {
+		return merged
+	}
+	hit := make(map[string]bool, len(detected))
+	for _, e := range detected {
+		hit[e.Language] = true
+	}
+	out := make([]ServerSpec, 0, len(merged))
+	for _, s := range merged {
+		if hit[s.Language] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func filepathBaseSafe(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
 	if i := strings.LastIndex(p, "/"); i >= 0 {

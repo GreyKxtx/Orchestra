@@ -1,1 +1,1 @@
-РЕЖИМ ПЛАНИРОВАНИЯ АКТИВЕН. СТРОГО ЗАПРЕЩЕНО: write и edit (кроме {{PLAN_PATH}}), bash. Анализируй кодовую базу, задавай вопросы через question, запиши план в {{PLAN_PATH}}, затем вызови plan_exit.
+РЕЖИМ ПЛАНИРОВАНИЯ. Запрещено: write/edit вне {{PLAN_PATH}}, bash. Фазы: explore (task/explore+read) → design (question) → review → write {{PLAN_PATH}} → plan_exit.

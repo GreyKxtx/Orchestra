@@ -14,11 +14,12 @@ import (
 )
 
 type FSEditRequest struct {
-	Path     string `json:"path"`
-	Search   string `json:"search"`
-	Replace  string `json:"replace"`
-	FileHash string `json:"file_hash,omitempty"` // strongly recommended; mismatch → StaleContent
-	Backup   bool   `json:"backup,omitempty"`
+	Path         string `json:"path"`
+	Search       string `json:"search"`
+	Replace      string `json:"replace"`
+	FileHash     string `json:"file_hash,omitempty"` // strongly recommended; mismatch → StaleContent
+	TargetSymbol string `json:"target_symbol,omitempty"`
+	Backup       bool   `json:"backup,omitempty"`
 }
 
 type FSEditResponse struct {
@@ -56,7 +57,7 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 			}
 			currentContent = b
 		}
-		newContent, err := resolver.ApplySearchReplace(currentContent, req.Search, req.Replace)
+		newContent, err := r.applyEditSearchReplace(ctx, relSlash, currentContent, req.Search, req.Replace, req.TargetSymbol)
 		if err != nil {
 			return nil, err
 		}
@@ -68,7 +69,7 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 		if r.lspManager != nil && !r.lspManager.IsEmpty() {
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, string(newContent))
 		}
-		diags = append(diags, r.forceDiagnosticsForTest...)
+		diags = append(diags, r.extraTestDiagnostics(string(newContent))...)
 		return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
 	}
 
@@ -109,7 +110,7 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 	if r.lspManager != nil && !r.lspManager.IsEmpty() {
 		diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, content)
 	}
-	diags = append(diags, r.forceDiagnosticsForTest...)
+	diags = append(diags, r.extraTestDiagnostics(string(content))...)
 
 	return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
 }

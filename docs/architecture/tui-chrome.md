@@ -6,7 +6,7 @@
 
 ```
 [ chat scrollback ]
-[ ▌ Tasks N/M · Ctrl+T ]          optional; expand → numbered rows + status glyphs
+[ ▌ Tasks (sticky) ]              optional; open todos only; hides when all done
 [ ▌ workflow:name ○…⋯…✓ ]         optional; only while workflow active
 [ ▌ input textarea ]
 [   mode · model · provider · shell · ask|allow ]
@@ -24,18 +24,20 @@
 | LSP ●/◐/○ | Status bar | — |
 | Cost `$` | Status bar (paid providers) | — |
 | Project name | Status bar left | — |
-| Todos | Task panel above input | Not in status bar |
+| Todos | Sticky checklist above input | Not in status bar; Ctrl+T does not toggle |
 | Workflow stages | WorkflowProgress above input | Same Progress* glyphs as Tasks |
 | Discoverability | Contextual status hints only (modal/busy/todos) | No permanent `/ · @ · Tab · …` legend — see `/help` and welcome |
 
 ## Interaction
 
-- **Ctrl+T** — Tasks when todos exist; else expand tools → toggle diff. Open Tasks → close first.
-- **`t` (пустой input)** — Tasks если есть todos; иначе тот же cascade.
+- **Ctrl+T** — expand tools → toggle diff (same cascade as bare `t`).
+- **`t` (пустой input)** — тот же cascade: tools → diff.
 - **`d` / Ctrl+D (пустой input)** — показать/скрыть inline diff.
+- **Diff review (развёрнутый diff):** `↑↓` файл · `a` принять · `x` откат/исключить · `Enter` принять все / apply pending.
 - **Ctrl+R** — свернуть/развернуть Thinking (CoT).
 - Bare `d`/`t` не перехватывают ввод, если в composer есть текст.
 - **`/shell`** — toggle ask ↔ allow for session (persisted in `.orchestra.yml` `ui.allow_exec`).
+- **Enter while agent busy** — enqueue message; drains automatically when the turn completes.
 - **Permission modal** when ask + tool needs shell:
   - `[y]` once
   - `[a]` allow for session
@@ -54,4 +56,6 @@
 
 - Crush command whitelist
 - Restoring header/footer from old design
-- Pending-ops `[a]/[d]/[x]` action bar in TUI
+- Отдельный `/preview` toggle (удалён; см. §7 — единый apply=true pipeline)
+
+**In scope (реализовано):** diff review `[a]/[d]/[x]` при развёрнутом diff (`app_diff_review.go`); LSP diagnostics на `edit`/`write` tool blocks.

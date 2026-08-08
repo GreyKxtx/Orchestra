@@ -28,6 +28,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/model", "текущая модель"},
 	{"/orchestra", "planner + worker tiers"},
 	{"/quit", "выйти из Orchestra TUI"},
+	{"/rewind", "checkpoint rewind (скелет)"},
 	{"/sessions", "сохранённые сессии"},
 	{"/shell", "права на shell: ask ↔ allow"},
 	{"/skill", "запустить skill"},

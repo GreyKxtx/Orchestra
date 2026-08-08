@@ -101,13 +101,8 @@ func (a *Agent) overflowTargetBytes() int {
 	target := a.opts.MaxPromptBytes / 2
 	if ctxTok := a.opts.ModelContextTokens; ctxTok > 0 {
 		budgetTok := llm.PromptBudgetTokens(ctxTok, a.opts.CompletionMaxTokens)
-		// Reserve the same system/tool overhead estimatePromptTokens assumes.
-		overheadTok := (32 * 1024) / bpt
-		if a.opts.MaxPromptBytes > 0 {
-			if oh := (a.opts.MaxPromptBytes / 5) / bpt; oh > overheadTok {
-				overheadTok = oh
-			}
-		}
+		// Reserve the same fixed system/tool overhead estimatePromptTokens uses.
+		overheadTok := promptOverheadBytes / bpt
 		histTok := budgetTok - overheadTok
 		if histTok < 512 {
 			histTok = 512

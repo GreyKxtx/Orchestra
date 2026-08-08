@@ -190,4 +190,4 @@ edit/write (during turn) → staging overlay → AST-Gate → LSP SyncAndDiagnos
 | M3 Turn FSM | DONE | `ui/tui/state/turn.go`, `app_turn.go`, delta coalesce in `rpcclient` |
 | M4 Hardening | DONE | `SessionMessage`/`SessionApplyPending` under `runMu`, race tests |
 
-См. целевой дизайн и историю: [tui-pipeline-to-be.md](./tui-pipeline-to-be.md).
+Миграция M1–M4 завершена (2026-08). Исторический to-be doc удалён; актуальный контракт — этот файл + `tui-chat-segments.md`.

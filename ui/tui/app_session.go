@@ -64,11 +64,6 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 		a.chat.SetForceWelcome(false)
 	}
 	a.setTodos(got.Todos)
-	if len(got.Todos) > 0 && a.pendingTodoCount() > 0 {
-		a.taskPanelOpen = true
-		a.taskPanel.SetOpen(true)
-		a.layout()
-	}
 	if got.CostUSD > 0 {
 		a.chrome.sessionCostUSD = got.CostUSD
 	}

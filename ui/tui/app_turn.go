@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // syncTurnUI pushes TurnFSM busy state into the status bar spinner.
@@ -46,11 +48,13 @@ func (a *App) beginAgentTurn() {
 }
 
 // finishAgentTurn clears running state after RPC completion or error.
-func (a *App) finishAgentTurn() {
+// Drains the message queue when the next prompt is waiting.
+func (a *App) finishAgentTurn() tea.Cmd {
 	a.turn.OnTurnComplete()
 	a.syncTurnUI()
 	a.layout()
 	a.updateStatusHints()
+	return a.startNextQueuedTurn()
 }
 
 // failAgentTurn clears running state after RPC error/cancel.

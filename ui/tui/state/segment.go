@@ -12,6 +12,8 @@ const (
 	// SegmentNotice is an inline info/retry/error line at the moment it happened
 	// (e.g. "Контекст сжат"), not a footer dump at the end of the turn.
 	SegmentNotice SegmentKind = "notice"
+	// SegmentTodos is an inline checklist (Claude Code-style) inside the turn.
+	SegmentTodos SegmentKind = "todos"
 )
 
 // Segment is one chronological part of an assistant message (Claude/OpenCode-style parts).
@@ -21,7 +23,15 @@ type Segment struct {
 	Kind       SegmentKind
 	Text       string      // reasoning, visible text, or notice body
 	Tools      []ToolBlock // only for SegmentTools
+	Todos      []TodoItem  // only for SegmentTodos
 	NoticeKind SystemKind  // only for SegmentNotice
+}
+
+// TodoItem is one checklist row in an assistant SegmentTodos.
+type TodoItem struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Status  string `json:"status"` // pending | in_progress | done | cancelled
 }
 
 // NormalizeSegments ensures Segments is populated. Legacy flat messages
@@ -121,6 +131,10 @@ func (m Message) HasVisibleContent() bool {
 				}
 			case SegmentTools:
 				if len(seg.Tools) > 0 {
+					return true
+				}
+			case SegmentTodos:
+				if len(seg.Todos) > 0 {
 					return true
 				}
 			}

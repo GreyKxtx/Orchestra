@@ -64,3 +64,24 @@ func TestEnsure_Unsupported(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestUpgrade_Reinstalls(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Setenv("ORCHESTRA_LSP_CACHE", cache)
+	fake := &fakeInstaller{}
+	provision.SetInstallerForTest(fake)
+	t.Cleanup(func() { provision.SetInstallerForTest(nil) })
+
+	if err := provision.Ensure(context.Background(), "gopls"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.called != 1 {
+		t.Fatalf("ensure called=%d", fake.called)
+	}
+	if err := provision.Upgrade(context.Background(), "gopls"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.called != 2 {
+		t.Fatalf("upgrade should reinstall, called=%d", fake.called)
+	}
+}

@@ -37,6 +37,37 @@ func isMaxStepsNotice(msg string) bool {
 	return strings.HasPrefix(m, "MAX_STEPS") || strings.Contains(m, "max_steps exceeded")
 }
 
+func (a *App) noticeTurnStop(stopReason string, openTodos int, todos []rpcclient.TodoItem) {
+	if openTodos <= 0 && len(todos) > 0 {
+		for _, t := range todos {
+			switch strings.ToLower(strings.TrimSpace(t.Status)) {
+			case "pending", "in_progress":
+				openTodos++
+			}
+		}
+	}
+	reason := strings.ToLower(strings.TrimSpace(stopReason))
+	switch reason {
+	case "max_steps":
+		msg := "Лимит шагов — ход прерван (не ошибка сети). Напиши «продолжай»."
+		if openTodos > 0 {
+			msg = fmt.Sprintf("Лимит шагов — ход прерван. Ещё %d задач открыто. Напиши «продолжай».", openTodos)
+		}
+		a.session.AppendAssistantNotice(state.SystemKindInfo, msg)
+	case "partial":
+		a.session.AppendAssistantNotice(state.SystemKindInfo,
+			fmt.Sprintf("Ход завершён частично: ещё %d задач в списке. Это не обрыв связи — напиши «продолжай».", openTodos))
+	case "completed":
+		a.session.AppendAssistantNotice(state.SystemKindSuccess, "Ход завершён — можно идти дальше или дать следующую задачу")
+	default:
+		if openTodos > 0 {
+			a.session.AppendAssistantNotice(state.SystemKindInfo,
+				fmt.Sprintf("Ход завершён частично: ещё %d задач в списке. Напиши «продолжай».", openTodos))
+		}
+	}
+	a.chatDirty = true
+}
+
 func stepDoneUserHint(reason string) string {
 	switch reason {
 	case "invalid":
@@ -132,10 +163,20 @@ func (a *App) handleRPCStream(ev rpcclient.Event) (skipRender bool) {
 		return true
 	case rpcclient.EventStepUsage:
 		if ev.Usage != nil && ev.Usage.PromptTokens > 0 {
-			a.chrome.livePromptTokens = ev.Usage.PromptTokens
-			a.chrome.promptTokensUsed = ev.Usage.PromptTokens
-			a.chrome.tokensEstimated = strings.EqualFold(ev.Usage.Source, "estimate")
-			a.session.SetAssistantPromptCtx(ev.Usage.PromptTokens)
+			tok := ev.Usage.PromptTokens
+			isEst := strings.EqualFold(ev.Usage.Source, "estimate")
+			// After reopen the bar shows last real PromptCtx. Don't let a
+			// pessimistic estimate inflate it before provider usage arrives.
+			if isEst && a.chrome.promptTokensUsed > 0 && !a.chrome.tokensEstimated {
+				ceil := a.chrome.promptTokensUsed + a.chrome.promptTokensUsed/6 + 2048
+				if tok > ceil {
+					return false
+				}
+			}
+			a.chrome.livePromptTokens = tok
+			a.chrome.promptTokensUsed = tok
+			a.chrome.tokensEstimated = isEst
+			a.session.SetAssistantPromptCtx(tok)
 			a.syncStatusBar()
 			a.chatDirty = true
 		}
@@ -218,7 +259,8 @@ func (a *App) handleRPCTools(ev rpcclient.Event) (skipRender bool) {
 				return false
 			}
 			if isContextPressureNotice(msg) {
-				a.session.AppendAssistantNotice(state.SystemKindInfo, "Контекст почти заполнен — скоро сжатие истории")
+				a.session.AppendAssistantNotice(state.SystemKindInfo,
+					"Бюджет промпта почти заполнен — скоро сжатие (это не % от полного окна модели; max_tokens резервирует место под ответ)")
 				a.chatDirty = true
 				return false
 			}
@@ -248,7 +290,7 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 		if a.turn.ShowBusySpinner() {
 			a.failAgentTurn()
 			a.clearActiveCancel()
-			a.session.AppendSystemNotice(state.SystemKindError, "connection to core closed")
+			a.session.AppendSystemNotice(state.SystemKindError, "Соединение с core оборвалось — ход прерван, не «готово»")
 			a.statusBar.ClearError()
 			a.chat.SetStreamCursor(false)
 			a.chrome.livePromptTokens = 0
@@ -277,12 +319,12 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 			a.session.SetAssistantPromptCtx(a.chrome.promptTokensUsed)
 		}
 		a.session.FinishAssistant()
-		a.finishAgentTurn()
+		queueCmd := a.finishAgentTurn()
 		a.statusBar.ClearError()
 		a.chrome.livePromptTokens = 0
 		a.chat.SetStreamCursor(false)
 		a.layout()
-		return a.persistSessionCmd()
+		return tea.Batch(a.persistSessionCmd(), queueCmd)
 	case rpcclient.EventError:
 		if msg := rpcEventErrorText(ev); msg != "" {
 			a.turnError = msg
@@ -322,8 +364,27 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 					a.session.RemoveDiff()
 				}
 				a.session.AddDiffFiles(a.buildDiffFiles())
+				a.session.ExpandLastDiff()
 				a.diffShown = true
+				a.diffCursor = 0
+				a.syncDiffReviewCursor()
 			}
+		} else if len(ev.PendingOps.Ops) > 0 || len(ev.PendingOps.Diff) > 0 {
+			a.pendingOps = append([]map[string]any(nil), ev.PendingOps.Ops...)
+			a.pendingReview = true
+			if len(ev.PendingOps.Diff) > 0 {
+				a.lastCommitDiff = append([]rpcclient.FileDiff(nil), ev.PendingOps.Diff...)
+			}
+			if a.diffShown {
+				a.session.RemoveDiff()
+			}
+			a.session.AddDiffFiles(a.buildDiffFiles())
+			a.session.ExpandLastDiff()
+			a.diffShown = true
+			a.diffCursor = 0
+			a.syncDiffReviewCursor()
+			a.syncActionBar()
+			a.chat.SetMessages(a.session.Messages)
 		}
 		a.layout()
 	case rpcclient.EventTurnUsage:
@@ -333,6 +394,9 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 		}
 	case rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated:
 		a.setTodos(ev.Todos)
+		if ev.Kind == rpcclient.EventTurnTodos {
+			a.noticeTurnStop(ev.StopReason, ev.OpenTodos, ev.Todos)
+		}
 	case rpcclient.EventInitialized:
 		if ev.LSPStatus != "" {
 			a.chrome.lspStatus = ev.LSPStatus

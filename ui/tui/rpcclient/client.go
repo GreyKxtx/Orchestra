@@ -199,6 +199,26 @@ func (c *Client) SessionUISync(ctx context.Context, sessionID, title, model stri
 	return c.rpc.Call(ctx, "session.ui_sync", params, &res)
 }
 
+// SessionRewindResult mirrors core.SessionRewindResult.
+type SessionRewindResult struct {
+	SessionID       string `json:"session_id"`
+	UIMessages      int    `json:"ui_messages"`
+	HistoryMessages int    `json:"history_messages"`
+}
+
+// SessionRewind truncates UI projection and LLM history to a user checkpoint.
+func (c *Client) SessionRewind(ctx context.Context, sessionID string, uiMessageIndex int) (*SessionRewindResult, error) {
+	var res SessionRewindResult
+	err := c.rpc.Call(ctx, "session.rewind", map[string]any{
+		"session_id":       sessionID,
+		"ui_message_index": uiMessageIndex,
+	}, &res)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
 // SessionMessage runs one agent turn in an existing session. Streaming events
 // arrive via Events(). Replaces one-shot agent.run for multi-turn chat.
 func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode string, opts AgentRunOptions) error {
@@ -219,8 +239,11 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 		params["profile"] = opts.Profile
 	}
 	var result struct {
-		Usage *UsageTurnPayload `json:"usage"`
-		Todos []TodoItem        `json:"todos"`
+		Usage            *UsageTurnPayload `json:"usage"`
+		Todos            []TodoItem        `json:"todos"`
+		StopReason       string            `json:"stop_reason"`
+		MaxStepsExceeded bool              `json:"max_steps_exceeded"`
+		OpenTodos        int               `json:"open_todos"`
 	}
 	err := c.rpc.Call(ctx, "session.message", params, &result)
 	if err != nil {
@@ -229,7 +252,16 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 		if result.Usage != nil {
 			c.send(Event{Kind: EventTurnUsage, Usage: result.Usage})
 		}
-		c.send(Event{Kind: EventTurnTodos, Todos: result.Todos})
+		c.send(Event{
+			Kind:       EventTurnTodos,
+			Todos:      result.Todos,
+			StopReason: result.StopReason,
+			OpenTodos:  result.OpenTodos,
+			Content:    result.StopReason,
+		})
+		if result.MaxStepsExceeded && result.StopReason == "" {
+			// keep Content for older cores
+		}
 	}
 	c.send(Event{Kind: EventAgentRunCompleted})
 	return err
@@ -365,9 +397,6 @@ func (c *Client) SkillInvoke(ctx context.Context, name, arguments string, opts S
 }
 
 // ApplyOps sends the given ops to the core for application (no LLM re-run).
-// rawOps is the slice of ops as received in PendingOpsPayload.Ops.
-// Unused by the interactive TUI (auto-commit apply=true); kept for legacy
-// pending-ops / CLI-style callers.
 func (c *Client) ApplyOps(ctx context.Context, rawOps []map[string]any) error {
 	params := map[string]any{
 		"ops":    rawOps,
@@ -375,6 +404,16 @@ func (c *Client) ApplyOps(ctx context.Context, rawOps []map[string]any) error {
 	}
 	var result map[string]any
 	return c.rpc.Call(ctx, "ops.apply", params, &result)
+}
+
+// ToolCall invokes a core tool synchronously (e.g. fs.delete for diff revert).
+func (c *Client) ToolCall(ctx context.Context, tool string, input json.RawMessage) error {
+	params := map[string]any{
+		"name":  tool,
+		"input": json.RawMessage(input),
+	}
+	var result map[string]any
+	return c.rpc.Call(ctx, "tool.call", params, &result)
 }
 
 // Close kills the subprocess and closes the events channel.

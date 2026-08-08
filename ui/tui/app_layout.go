@@ -37,14 +37,14 @@ func (a *App) layout() {
 		}
 		paletteRows = n
 	}
-	// Boxed input: pad-top + textarea + gap + modeline + pad-bottom = 5 + taH rows.
+	// Boxed input: pad-top + textarea + gap + mode + pad-bottom.
 	inputRows := 5
 	if !a.showWelcome {
 		taH := a.input.Inner().Height()
 		if taH < 1 {
 			taH = 1
 		}
-		inputRows = taH + 5
+		inputRows = taH + 4
 	}
 	modalRows := 0
 	if a.questionModal != nil {
@@ -55,10 +55,7 @@ func (a *App) layout() {
 		modalRows = 5
 		a.permModal.SetSize(a.width)
 	}
-	taskRows := 0
-	if a.taskPanel != nil && len(a.todos) > 0 {
-		taskRows = a.taskPanel.VisibleRowsAboveInput()
-	}
+	taskRows := a.stickyTaskRows()
 	const statusBarRows = statusBarScreenRows
 	chatHeight := a.height - statusBarRows - inputRows - actionBarRows - modalRows - paletteRows - progressRows - taskRows - 2*chatVerticalPad
 	if chatHeight < 1 {
@@ -91,6 +88,8 @@ func (a *App) layout() {
 			boxW = 40
 		}
 	}
+	// Content width inside the box: Width includes Padding(1,2) → width-4,
+	// minus 1 for historical │-caret slack (must match renderInputBox).
 	contentW := boxW - 5
 	if contentW < 20 {
 		contentW = 20
@@ -110,6 +109,7 @@ func (a *App) layout() {
 		a.input.SetSize(inputW)
 		a.input.SetTextareaWidth(contentW)
 	}
+	a.syncActionBar()
 	// After (re)sizing, recompute soft-wrap visual height so the box
 	// grows immediately on resize without waiting for the next keystroke.
 	a.input.SyncHeight(5)
@@ -130,27 +130,28 @@ func (a *App) layout() {
 		if taH < 1 {
 			taH = 1
 		}
-		meta := 0
-		inputBoxHeight := meta + taH + 5 + taskRows
-		a.inputBoxTopY = a.height - statusBarRows - inputBoxHeight
+		// pad-top + textarea + gap + mode + pad-bottom (matches renderInputBox).
+		inputBoxHeight := taH + 4
+		taskRows := a.stickyTaskRows()
+		a.inputBoxTopY = a.height - statusBarRows - inputBoxHeight - taskRows
 		if a.inputBoxTopY < 0 {
 			a.inputBoxTopY = 0
 		}
-		a.taskPanelHeight = taskRows
+		a.stickyTasksHeight = taskRows
 		if taskRows > 0 {
-			a.taskPanelTopY = a.inputBoxTopY
-			a.inputRowY = a.inputBoxTopY + taskRows + 1 + meta + 1
+			a.stickyTasksTopY = a.inputBoxTopY
+			a.inputBoxTopY = a.inputBoxTopY + taskRows
 		} else {
-			a.taskPanelTopY = -1
-			a.inputRowY = a.inputBoxTopY + 1 + meta + 1
+			a.stickyTasksTopY = -1
 		}
-		a.inputColX = chatSidePad + 1 + 2
+		a.inputRowY = a.inputBoxTopY + 1 // skip pad-top
+		a.inputColX = chatSidePad + 1 + 2 // border + pad-left
 		a.chatTopY = chatVerticalPad
 		a.statusBarRowY = a.height - 1
 	} else {
 		// Welcome view: rough estimate
-		a.taskPanelTopY = -1
-		a.taskPanelHeight = 0
+		a.stickyTasksTopY = -1
+		a.stickyTasksHeight = 0
 		a.inputRowY = a.height / 2
 		a.inputColX = (a.width-80)/2 + 3
 		if a.inputColX < 3 {

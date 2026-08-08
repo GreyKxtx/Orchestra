@@ -163,7 +163,9 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	prevDry := c.tools.DryRun()
 	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
+	c.tools.SetAllowExecDespiteDryRun(params.Apply)
 	defer func() {
+		c.tools.SetAllowExecDespiteDryRun(false)
 		c.tools.SetDryRun(prevDry)
 		c.runMu.Unlock()
 	}()

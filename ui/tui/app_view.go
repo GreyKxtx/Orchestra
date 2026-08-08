@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -82,24 +83,31 @@ func (a *App) renderPalettesAndInput() []string {
 	}
 	if a.questionModal != nil {
 		parts = append(parts, a.questionModal.Render())
-		parts = append(parts, a.renderTaskArea())
+		parts = append(parts, a.renderStickyTasks())
 		parts = append(parts, a.renderChatInputBox())
 	} else if a.permModal != nil {
-		parts = append(parts, a.renderTaskArea())
+		parts = append(parts, a.renderStickyTasks())
 		parts = append(parts, a.permModal.Render())
 	} else {
-		parts = append(parts, a.renderTaskArea())
+		parts = append(parts, a.renderStickyTasks())
 		parts = append(parts, a.renderChatInputBox())
 	}
 	parts = append(parts, a.statusBar.Render())
 	return parts
 }
 
-func (a *App) renderTaskArea() string {
-	if a.taskPanel == nil || len(a.todos) == 0 {
+// renderStickyTasks pins the live checklist above the input (Claude-style),
+// so scrolling the transcript does not hide what the agent is working on.
+func (a *App) renderStickyTasks() string {
+	items := todosToState(a.todos)
+	if len(items) == 0 {
 		return ""
 	}
-	panel := a.taskPanel.RenderAboveInput()
+	w := a.width - 2*chatSidePad
+	if w < 40 {
+		w = 40
+	}
+	panel := view.RenderTodosChecklistCapped(items, w, a.turn.ShowBusySpinner(), a.spinFrame, 5)
 	if panel == "" {
 		return ""
 	}
@@ -139,11 +147,13 @@ func (a *App) renderChatInputBox() string {
 }
 
 // renderInputBox renders the boxed text-input used in both the welcome screen
-// and the chat view. Bottom row: build В· model В· provider В· exec (mode lives here only).
+// and the chat view. Bottom row: build · model · provider · exec (mode lives here only).
 func (a *App) renderInputBox(width int) string {
 	t := view.ThemeForApp()
 	bg := t.BackgroundSecondary()
 
+	// Width includes horizontal padding (1,2) but not the left border.
+	// contentW = width - 4 (pad) - 1 (slack / │ caret) — matches pre-compact math.
 	contentW := width - 5
 	if contentW < 20 {
 		contentW = 20
@@ -157,6 +167,8 @@ func (a *App) renderInputBox(width int) string {
 	gapLine := padLinesBg("", contentW, bg)
 	modeLine := padLinesBg(a.welcomeModeLine(), contentW, bg)
 
+	// Textarea, spacer, then mode/model row — spacer keeps "Спроси…" from
+	// sitting flush against build · model · …
 	boxContent := lipgloss.JoinVertical(lipgloss.Left, taLine, gapLine, modeLine)
 
 	mode := a.cfg.Mode
@@ -211,17 +223,31 @@ func (a *App) updateStatusHints() {
 	case a.permModal != nil:
 		a.statusBar.SetHints("[y] раз · [a] сессия · [t] tool · [n] нет")
 	case a.turn.CanCancel() && a.activeCancel != nil:
-		a.statusBar.SetHints("Esc отмена · Ctrl+C")
+		if n := a.queuedMessageCount(); n > 0 {
+			a.statusBar.SetHints(fmt.Sprintf("Esc отмена · в очереди: %d", n))
+		} else {
+			a.statusBar.SetHints("Esc отмена · Ctrl+C")
+		}
 	case !a.turn.ShowBusySpinner() && a.pendingTodoCount() > 0:
-		a.statusBar.SetHints("Ctrl+T · «продолжай»")
-	case a.taskPanelOpen && len(a.todos) > 0:
-		a.statusBar.SetHints("↑↓ · Ctrl+T")
+		a.statusBar.SetHints("«продолжай» · Shift+Tab shell")
+	case !a.turn.ShowBusySpinner() && a.actionBarActive():
+		if a.session.LastDiffExpanded() {
+			a.statusBar.SetHints("↑↓ · a/x file · Enter apply · d collapse · shift+x discard")
+		} else {
+			a.statusBar.SetHints("[a] apply · [d] diff · [x] discard")
+		}
+	case !a.turn.ShowBusySpinner() && a.session.LastDiffExpanded():
+		if a.pendingReview {
+			a.statusBar.SetHints("↑↓ · a принять · x откат · Enter apply")
+		} else {
+			a.statusBar.SetHints("↑↓ · a принять · x откат · Enter все")
+		}
 	case !a.turn.ShowBusySpinner() && a.session.HasDiff():
-		a.statusBar.SetHints("d / Ctrl+D · diff")
+		a.statusBar.SetHints("d / Ctrl+D · diff · Shift+Tab shell")
 	case !a.turn.ShowBusySpinner() && a.sessionHasTools():
-		a.statusBar.SetHints("Ctrl+T · tools")
+		a.statusBar.SetHints("Ctrl+T · tools · Shift+Tab shell")
 	default:
-		a.statusBar.SetHints("")
+		a.statusBar.SetHints("Tab · mode · Shift+Tab · shell")
 	}
 	a.syncStatusBar()
 }

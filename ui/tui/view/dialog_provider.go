@@ -44,7 +44,14 @@ var DialogProviders = []ProviderEntry{
 	{Key: "custom", Name: "Custom (OpenAI-compatible)", Category: "Other", Endpoint: "", Local: true, EndpointEditable: true},
 }
 
-// FindProviderByKey returns a catalog entry by key.
+// AutoAnswerBudget reports whether Settings exposes a single Tokens window
+// knob and derives the completion budget (~20% of window). Cloud APIs manage
+// their own output limits server-side — we still send a sane max_tokens, but
+// the operator only sets the window.
+func (p ProviderEntry) AutoAnswerBudget() bool {
+	return true
+}
+
 func FindProviderByKey(key string) (ProviderEntry, bool) {
 	key = strings.ToLower(strings.TrimSpace(key))
 	for _, p := range DialogProviders {

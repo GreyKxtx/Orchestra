@@ -76,7 +76,7 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 		if r.lspManager != nil && !r.lspManager.IsEmpty() {
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, req.Content)
 		}
-		diags = append(diags, r.forceDiagnosticsForTest...)
+		diags = append(diags, r.extraTestDiagnostics(req.Content)...)
 		return &FSWriteResponse{
 			Path:         relSlash,
 			FileHash:     contentHash,
@@ -118,7 +118,7 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, req.Content)
 		}
 	}
-	diags = append(diags, r.forceDiagnosticsForTest...)
+	diags = append(diags, r.extraTestDiagnostics(req.Content)...)
 
 	return &FSWriteResponse{
 		Path:         path,

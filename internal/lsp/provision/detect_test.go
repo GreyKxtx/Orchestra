@@ -26,6 +26,24 @@ func TestDetect_GoMod(t *testing.T) {
 	}
 }
 
+func TestDetect_GoAndTSMonorepo(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := provision.Detect(root)
+	ids := map[string]bool{}
+	for _, e := range got {
+		ids[e.ID] = true
+	}
+	if !ids["gopls"] || !ids["typescript-language-server"] {
+		t.Fatalf("expected gopls+tsserver, got %+v", got)
+	}
+}
+
 func TestDetect_PackageJSON(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"x"}`), 0o644); err != nil {

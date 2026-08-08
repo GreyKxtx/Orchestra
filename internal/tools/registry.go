@@ -409,6 +409,7 @@ func toolFSEdit() llm.ToolDef {
     "search": { "type": "string", "minLength": 1 },
     "replace": { "type": "string" },
     "file_hash": { "type": "string" },
+    "target_symbol": { "type": "string", "description": "Optional CKG symbol name — search uniqueness is checked inside this function/method only (Planner–Worker WorkOrder)" },
     "backup": { "type": "boolean" }
   }
 }`),
@@ -794,7 +795,7 @@ func listToolsWorker(caps Capabilities) []llm.ToolDef {
 }
 
 func toolTask() llm.ToolDef {
-	fallback := "Run a child agent synchronously (spawn+wait). subagent_type: explore|ask|debug|architecture|general|worker. For worker, set tier (complex|focused|micro) and pass a WorkOrder JSON in prompt."
+	fallback := "Child agent (sync spawn+wait) for HEAVY/parallel work only. Prefer edit/write yourself for quick fixes. subagent_type: explore|ask|debug|architecture|general|worker. Do NOT use for 1–3 known-file edits."
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
@@ -832,7 +833,7 @@ func toolTaskSpawn() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_spawn",
-			Description: "Spawn a child task asynchronously. Returns task_id. Use task_wait for the result.",
+			Description: "Spawn a child asynchronously (rare). Prefer doing quick/concrete edits yourself with edit/write. Use only for parallel independent work; then task_wait.",
 			Parameters: mustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -852,7 +853,7 @@ func toolTaskSpawn() llm.ToolDef {
     "provider": { "type": "string" },
     "model": { "type": "string" },
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
-    "timeout_ms": { "type": "integer", "minimum": 0 }
+    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Child lifetime (default 120000); 0 also uses 120000" }
   }
 }`),
 		},

@@ -169,7 +169,9 @@ func RenderAllDiffs(diffs []FileDiffView, width int) string {
 
 // FileDiffView is a view-layer copy of rpcclient.FileDiff to avoid import cycle.
 type FileDiffView struct {
-	Path   string
-	Before string
-	After  string
+	Path         string
+	Before       string
+	After        string
+	ReviewStatus string
+	Selected     bool
 }

@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,6 +38,14 @@ type ChildAgentConfig struct {
 	ResolveTier            TierResolver
 	// MaxWorkerRetries caps validation/final failures for worker children (orchestra).
 	MaxWorkerRetries int
+	// LLMStepTimeout bounds each child LLM call. When 0, agent.Options defaults
+	// to 25s — far too short for local/tunnelled models. Always set from
+	// cfg.LLM.TimeoutS (see Core.buildChildAgentConfig).
+	LLMStepTimeout time.Duration
+	// MaxStepsCap clamps child MaxSteps (default 12). Parent may request less.
+	MaxStepsCap int
+	// OnChildEvent, when set, receives streaming events from child agents (E2E metrics).
+	OnChildEvent func(agent.AgentEvent)
 }
 
 // TaskRunner implements agent.SubtaskRunner using real child agents.
@@ -113,30 +122,56 @@ func modeForSubagent(subagentType string) agent.Mode {
 	}
 }
 
+// DefaultChildMaxSteps is the hard cap on child agent loop iterations when
+// ChildAgentConfig.MaxStepsCap is unset.
+const DefaultChildMaxSteps = 12
+
+// DefaultTaskTimeoutMS is used for sync `task` and for `task_spawn` when the
+// model omits timeout_ms (avoids orphan background children).
+const DefaultTaskTimeoutMS = 120_000
+
 // Spawn creates a new child agent task and starts it in a goroutine.
-func (r *TaskRunner) Spawn(_ context.Context, req agent.SubtaskSpawnRequest) (string, error) {
+func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (string, error) {
 	r.mu.Lock()
 	r.seq++
 	taskID := fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000)
 	r.mu.Unlock()
 
+	capSteps := r.child.MaxStepsCap
+	if capSteps <= 0 {
+		capSteps = DefaultChildMaxSteps
+	}
 	maxSteps := req.MaxSteps
-	if maxSteps <= 0 || maxSteps > 12 {
-		maxSteps = 12
+	if maxSteps <= 0 || maxSteps > capSteps {
+		maxSteps = capSteps
 	}
 
 	subagentType := req.SubagentType
 	if subagentType == "" {
 		subagentType = "explore"
 	}
+	if strings.EqualFold(subagentType, "worker") {
+		goal := strings.TrimSpace(req.Goal)
+		if goal != "" && json.Valid([]byte(goal)) {
+			if _, err := ParseWorkOrderJSON(goal); err != nil {
+				return "", err
+			}
+		}
+	}
 	childTools := childToolsForSubagent(subagentType, r.child.Caps)
 
+	// Inherit parent cancellation so finishing/cancelling the parent turn
+	// stops orphaned children. Timeout still applies when TimeoutMS > 0.
+	parent := ctx
+	if parent == nil {
+		parent = context.Background()
+	}
 	var taskCtx context.Context
 	var cancel context.CancelFunc
 	if req.TimeoutMS > 0 {
-		taskCtx, cancel = context.WithTimeout(context.Background(), time.Duration(req.TimeoutMS)*time.Millisecond)
+		taskCtx, cancel = context.WithTimeout(parent, time.Duration(req.TimeoutMS)*time.Millisecond)
 	} else {
-		taskCtx, cancel = context.WithCancel(context.Background())
+		taskCtx, cancel = context.WithCancel(parent)
 	}
 
 	entry := &taskEntry{
@@ -188,6 +223,14 @@ func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType
 }
 
 func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, subagentType string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+	if strings.EqualFold(subagentType, "worker") {
+		goal := strings.TrimSpace(req.Goal)
+		if goal != "" && json.Valid([]byte(goal)) {
+			if _, err := ParseWorkOrderJSON(goal); err != nil {
+				return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
+			}
+		}
+	}
 	client, providerLabel, modelLabel := r.resolveChildLLM(req, subagentType)
 	mode := modeForSubagent(subagentType)
 	maxPrompt := r.child.MaxPromptBytes
@@ -206,6 +249,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		CompletionMaxTokens:    r.child.CompletionMaxTokens,
 		ToolDigestBytes:        r.child.ToolDigestBytes,
 		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
+		LLMStepTimeout:         r.child.LLMStepTimeout,
 		CustomTools:            childTools,
 		Mode:                   mode,
 		IsChild:                true,
@@ -220,10 +264,15 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		wsOff := false
 		opts.WorkingState = &wsOff
 		opts.TurnDigestKeep = 0
+		opts.AssistantPrefill = "{"
+	}
+	if r.child.OnChildEvent != nil {
+		opts.OnEvent = r.child.OnChildEvent
 	}
 	if mode == agent.ModeWorker && r.child.MaxWorkerRetries > 0 {
 		opts.MaxFinalFailures = r.child.MaxWorkerRetries
 		opts.MaxInvalidRetries = r.child.MaxWorkerRetries
+		opts.MaxToolErrorRepeats = r.child.MaxWorkerRetries
 	}
 	ag, err := agent.New(client, r.validator, r.toolRunner, opts)
 	if err != nil {

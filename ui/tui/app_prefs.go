@@ -29,6 +29,19 @@ func (a *App) toggleAllowExec(on bool) {
 	a.updateStatusHints()
 }
 
+// cycleShellPerms toggles shell ask ↔ allow (bypass) and persists UI prefs.
+// Bound to Shift+Tab so Tab keeps cycling agent modes.
+func (a *App) cycleShellPerms() {
+	a.toggleAllowExec(!a.allowExec)
+	_ = a.persistUIPrefs()
+	if a.allowExec {
+		a.showToast("shell · allow · Shift+Tab")
+	} else {
+		a.showToast("shell · ask · Shift+Tab")
+	}
+	a.layout()
+}
+
 // respondShellPermission closes the permission modal and answers the core.
 // sessionAllow flips shell · allow for the rest of the session (+ prefs),
 // or for lsp.install sets lsp.auto_install=true.

@@ -436,11 +436,14 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 
 	// Semantic dry-run pipeline: edit/write always go through staging + LSP
 	// during the turn. params.Apply controls commit-to-disk at end of turn,
-	// not per-tool live writes.
+	// not per-tool live writes. apply:true also unlocks bash (staging would
+	// otherwise keep dryRun=true and BlockExecInDryRun would deny shell).
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
 	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
+	c.tools.SetAllowExecDespiteDryRun(params.Apply)
+	defer c.tools.SetAllowExecDespiteDryRun(false)
 
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
@@ -936,6 +939,11 @@ type SessionMessageResult struct {
 
 	EffectiveMode string `json:"effective_mode,omitempty"`
 	RoutedFrom    string `json:"routed_from,omitempty"`
+
+	// StopReason: completed | partial | max_steps — for TUI status notices.
+	StopReason       string `json:"stop_reason,omitempty"`
+	MaxStepsExceeded bool   `json:"max_steps_exceeded,omitempty"`
+	OpenTodos        int    `json:"open_todos,omitempty"`
 }
 
 // SessionMessage runs one agent turn in the named session, streaming events via OnEvent.
@@ -985,11 +993,13 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 
 	// Same staging contract as AgentRun: serialise shared Runner mutations
 	// (SetDryRun, ClearStaged, staged overlay writes) for the whole turn.
-	// Tools always dry-run (staging + LSP); params.Apply commits at end.
+	// Tools stage write/edit; params.Apply commits at end and unlocks bash.
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
 	c.tools.SetDryRun(true)
 	c.tools.ClearStaged()
+	c.tools.SetAllowExecDespiteDryRun(params.Apply)
+	defer c.tools.SetAllowExecDespiteDryRun(false)
 
 	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
 		Mode:                params.Mode,
@@ -1056,16 +1066,28 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	c.maybeAutoSummaryMemory(ctx, sess.ID, outHistory, res)
 
 	out := &SessionMessageResult{
-		Steps:         res.Steps,
-		Applied:       res.Applied,
-		Patches:       res.Patches,
-		Ops:           res.Ops,
-		ApplyResponse: res.ApplyResponse,
-		SwitchToBuild: res.SwitchToBuild,
-		Todos:         res.Todos,
-		PlanPath:      launch.Opts.PlanPath,
-		Usage:         usageSnapshotFrom(launch.Usage),
-		EffectiveMode: launch.EffectiveMode,
+		Steps:            res.Steps,
+		Applied:          res.Applied,
+		Patches:          res.Patches,
+		Ops:              res.Ops,
+		ApplyResponse:    res.ApplyResponse,
+		SwitchToBuild:    res.SwitchToBuild,
+		Todos:            res.Todos,
+		PlanPath:         launch.Opts.PlanPath,
+		Usage:            usageSnapshotFrom(launch.Usage),
+		EffectiveMode:    launch.EffectiveMode,
+		StopReason:       res.StopReason,
+		MaxStepsExceeded: res.MaxStepsExceeded,
+		OpenTodos:        countOpenTodoItems(res.Todos),
+	}
+	if out.StopReason == "" {
+		if res.MaxStepsExceeded {
+			out.StopReason = "max_steps"
+		} else if out.OpenTodos > 0 {
+			out.StopReason = "partial"
+		} else {
+			out.StopReason = "completed"
+		}
 	}
 	if strings.EqualFold(launch.RequestedMode, string(agent.ModeAgent)) && launch.EffectiveMode != "" {
 		out.RoutedFrom = string(agent.ModeAgent)
@@ -1085,6 +1107,17 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 // in-memory session and snapshots to disk. Safe to call after failed turns —
 // empty outHistory is a no-op for ReplaceHistory only when nil; we still want
 // to keep prior history if the agent returned nothing.
+func countOpenTodoItems(todos []tools.TodoItem) int {
+	n := 0
+	for _, t := range todos {
+		switch t.Status {
+		case tools.TodoPending, tools.TodoInProgress:
+			n++
+		}
+	}
+	return n
+}
+
 func (c *Core) persistSessionTurn(
 	sess *coresession.Session,
 	outHistory []llm.Message,
@@ -1372,5 +1405,7 @@ func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent
 	out.ProviderLabel = providerLabelOf(cfg)
 	out.ModelLabel = cfg.LLM.Model
 	out.MaxWorkerRetries = cfg.Orchestra.ResolvedMaxWorkerRetries()
+	out.LLMStepTimeout = time.Duration(cfg.LLM.TimeoutS) * time.Second
+	out.MaxStepsCap = cfg.Agent.ResolvedChildMaxSteps()
 	return out
 }

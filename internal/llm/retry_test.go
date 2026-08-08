@@ -199,6 +199,9 @@ func TestIsTransientLLMError(t *testing.T) {
 		{fmt.Errorf("failed to send request: read tcp: connection reset by peer"), true},
 		{fmt.Errorf("stream stalled: no data from server for 2m0s"), true},
 		{fmt.Errorf("SSE read error: unexpected EOF"), true},
+		{fmt.Errorf("SSE read error: %w", context.DeadlineExceeded), true},
+		{fmt.Errorf("SSE read error: %w", context.Canceled), true},
+		{fmt.Errorf("timeout awaiting response headers"), true},
 		{fmt.Errorf("no choices in response"), true},
 		{context.Canceled, false},
 		{context.DeadlineExceeded, false},
@@ -277,7 +280,7 @@ func TestCompleteStream_StallWatchdog(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
+	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", TimeoutS: 1})
 	ch, err := c.streamOnce(context.Background(), srv.URL+"/v1/chat/completions", CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	}, 128)

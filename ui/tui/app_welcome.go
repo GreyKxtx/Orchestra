@@ -156,11 +156,10 @@ func formatTurnElapsed(d time.Duration) string {
 }
 
 // shellPermsSpan renders shell permission mode for the input-box status row.
-// Only the mode (ask|allow) — "shell ·" prefix is redundant next to mode/model.
+// Shift+Tab cycles ask ↔ allow. Plain muted text — no accent color / icon.
 func (a *App) shellPermsSpan(muted lipgloss.Style) string {
-	t := view.ThemeForApp()
 	if a.allowExec {
-		return lipgloss.NewStyle().Foreground(t.Success()).Render("allow")
+		return muted.Render("allow")
 	}
 	return muted.Render("ask")
 }

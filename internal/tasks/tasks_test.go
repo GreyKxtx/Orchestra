@@ -207,6 +207,41 @@ func (m *blockMockLLM) Plan(_ context.Context, _ string) (string, error) {
 
 // ── MaxSteps clamping ────────────────────────────────────────────────────────
 
+func TestSpawn_ParentCancelStopsChild(t *testing.T) {
+	blockingLLM := &blockMockLLM{ready: make(chan struct{})}
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("schema.NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(t.TempDir(), tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("tools.NewRunner: %v", err)
+	}
+	r := New(blockingLLM, v, tr, ChildAgentConfig{})
+	t.Cleanup(func() {
+		r.Close()
+		_ = tr.Close()
+	})
+
+	parent, cancel := context.WithCancel(context.Background())
+	id, err := r.Spawn(parent, agent.SubtaskSpawnRequest{
+		Goal:      "hang forever",
+		MaxSteps:  1,
+		TimeoutMS: 60_000,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	cancel() // parent turn aborted — must stop child (no longer on Background)
+	res, err := r.Wait(context.Background(), id, 5000)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if res.Status != "timeout" && res.Status != "cancelled" && res.Status != "error" {
+		t.Fatalf("status=%q, want cancelled/timeout/error after parent cancel", res.Status)
+	}
+}
+
 func TestSpawn_MaxStepsClampedTo12(t *testing.T) {
 	// Negative/zero MaxSteps should be clamped to 12.
 	// We can't easily observe maxSteps directly, but verifying Spawn doesn't error

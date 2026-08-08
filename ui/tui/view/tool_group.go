@@ -24,7 +24,10 @@ func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, str
 	t := theme.CurrentTheme()
 	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
 
-	display := sortToolsForDisplay(blocks)
+	display := sortToolsForDisplay(filterTodoWriteTools(blocks))
+	if len(display) == 0 {
+		return ""
+	}
 
 	failed, skipped := 0, 0
 	for i := range display {
@@ -69,6 +72,19 @@ func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, str
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// filterTodoWriteTools hides todowrite from the tool list — the checklist
+// SegmentTodos already shows the same data in-chat (Claude Code style).
+func filterTodoWriteTools(blocks []state.ToolBlock) []state.ToolBlock {
+	out := make([]state.ToolBlock, 0, len(blocks))
+	for _, tb := range blocks {
+		if toolKind(tb.Name) == "task" {
+			continue
+		}
+		out = append(out, tb)
+	}
+	return out
 }
 
 // sortToolsForDisplay keeps chronological order but moves running tools to the

@@ -115,6 +115,8 @@ type AgentConfig struct {
 	TurnDigestEveryN *int `yaml:"turn_digest_every_n,omitempty"`
 	// Profile selects an adaptive execution preset: "" (defaults), "fast", or "precision".
 	Profile string `yaml:"profile,omitempty"`
+	// ChildMaxSteps caps child agent MaxSteps for task/task_spawn (default 12).
+	ChildMaxSteps int `yaml:"child_max_steps,omitempty"`
 }
 
 // ApplyOutputDisk writes changes to the workspace (subject to --apply / dry-run).
@@ -204,8 +206,9 @@ type LSPServerConfig struct {
 type LSPConfig struct {
 	Enabled              *bool             `yaml:"enabled,omitempty"`
 	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
-	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
-	LazyStart            *bool             `yaml:"lazy_start,omitempty"`
+	DiagnosticsTimeoutMS   int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	InitializeTimeoutMS    int               `yaml:"initialize_timeout_ms,omitempty"`
+	LazyStart              *bool             `yaml:"lazy_start,omitempty"`
 	IdleTTLSeconds       *int              `yaml:"idle_ttl_seconds,omitempty"`
 	// AutoInstall controls language-server provisioning: ask | true | false.
 	// Empty default = true (auto-install after workspace language detect).
@@ -635,7 +638,7 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			Model:       "qwen2.5-coder-7b",
 			Temperature: 0.7,
 			MaxTokens:   4096,
-			TimeoutS:    300,
+			TimeoutS:    600,
 			// ResponseFormatType: "json_object" — раскомментируй если провайдер поддерживает
 		},
 		Agent: AgentConfig{
@@ -794,7 +797,7 @@ func (c *ProjectConfig) applyDefaults() {
 
 	// LLM defaults
 	if c.LLM.TimeoutS <= 0 {
-		c.LLM.TimeoutS = 300
+		c.LLM.TimeoutS = 600
 	}
 
 	// Agent defaults (tuned for local models).

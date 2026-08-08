@@ -11,6 +11,11 @@ func (a *Agent) emitPromptContextEstimate(step int, history []llm.Message) {
 		return
 	}
 	est := estimatePromptTokensWithFactor(history, a.opts.MaxPromptBytes, a.bytesPerToken())
+	// Prefer last real usage as a floor — history only grows within a turn,
+	// and a fresh Agent after reopen has lastPromptTokens=0 until usage returns.
+	if a.lastPromptTokens > est {
+		est = a.lastPromptTokens
+	}
 	if est <= 0 {
 		return
 	}

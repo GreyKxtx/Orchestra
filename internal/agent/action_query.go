@@ -17,7 +17,7 @@ func queryRequiresCodeChanges(query string, todos []tools.TodoItem, mode Mode) b
 		return false
 	}
 	for _, t := range todos {
-		if t.Status == tools.TodoInProgress {
+		if t.Status == tools.TodoInProgress || t.Status == tools.TodoPending {
 			return true
 		}
 	}

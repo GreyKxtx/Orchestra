@@ -33,6 +33,7 @@
 | Parallel Tool Calls | `ParallelSafe`/`Mutating` флаги в `llm.ToolDef`; read-only тулы (`ls`/`read`/`glob`/`grep`/`symbols`/`explore`/`lsp.*`/`webfetch`) выполняются конкурентно в одной пачке через worker-pool (16); mutating (`write`/`edit`/`bash`) — серийно. Pre-tool hooks серийны до fan-out'а чтобы не race'ить по shared-state | ✅ |
 | Reasoning Stream | Парсинг `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 через LM Studio); автоматическое заворачивание в `<think>…</think>` для `ReasoningSplitter`; SSE-tap по env-флагу `ORCH_STREAM_DEBUG` | ✅ |
 | TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy-indicator в статус-баре, mouse wheel scroll, "Thinking:" блок с `┃` бордером, render-cache invalidation на Ctrl+T, mode-aware accent colors | ✅ |
+| Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
 
 ---
 
@@ -144,7 +145,7 @@ mcp:
 2. `--via-core` — спавнит `orchestra core` как subprocess, управляет через JSON-RPC.
 3. `--from-plan` — воспроизводит сохранённый `plan.json` без LLM.
 
-Аудит TUI-пайплайна: [docs/architecture/tui-pipeline.md](docs/architecture/tui-pipeline.md), To-Be: [docs/architecture/tui-pipeline-to-be.md](docs/architecture/tui-pipeline-to-be.md).
+Аудит TUI-пайплайна: [docs/architecture/tui-pipeline.md](docs/architecture/tui-pipeline.md). Planner–Worker: [docs/architecture/planner-worker.md](docs/architecture/planner-worker.md).
 
 ---
 
@@ -162,6 +163,9 @@ go test ./internal/jsonrpc -race -count=10
 # E2E с реальным LLM (не входит в CI)
 $env:ORCH_E2E_LLM = "1"
 go test ./tests/e2e_real_llm -v -count=1
+
+# Planner–Worker E2E (mock, в CI)
+go test ./tests/e2e_agent/... -run 'Orchestra|Worker|Ambiguous|Staging' -count=1
 ```
 
 ## TUI (консольный агент)
@@ -180,8 +184,11 @@ orchestra tui              # alias
 - [Changelog](docs/CHANGELOG.md)
 - [Protocol contract](docs/PROTOCOL.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Commands & architecture](docs/commands-and-modes.md)
-- [Agent modes](docs/modes.md)
+- [Agent modes](docs/modes.md) — authoritative для режимов
+- [Planner–Worker architecture](docs/architecture/planner-worker.md)
+- [TUI pipeline](docs/architecture/tui-pipeline.md)
+- [LSP auto-provision](docs/architecture/lsp-auto-provision.md)
+- [Commands & CLI reference](docs/commands-and-modes.md)
 - [Tools & commands status](docs/tools-status.md)
 - [Architecture diagrams](docs/architecture-uml.md)
 

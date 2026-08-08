@@ -16,7 +16,7 @@ orchestra tui
 ┌─────────────────────────────────────────────────────────────┐
 │  chat scroll (messages · tools · notices · diffs)           │
 ├─────────────────────────────────────────────────────────────┤
-│  ▌ Tasks N/M · Ctrl+T          ← только если есть todos     │
+│  ▌ Tasks (sticky checklist)    ← открытые todos над input     │
 │  ▌ workflow:name · ○ a ⋯ b ✓ c ← только во время workflow   │
 ├─────────────────────────────────────────────────────────────┤
 │  ▌ input                                                     │
@@ -34,10 +34,11 @@ orchestra tui
 |--------|-----|
 | mode / model / provider / ask|allow | input mode-line |
 | tokens% / LSP / cost / project | status bar |
-| todos | Task panel над input |
+| todos | sticky checklist над input (скрывается когда все done) |
 | workflow stages | WorkflowProgress над input |
 | hints | status bar справа |
-| tools / thinking expand | Ctrl+T / Ctrl+R на assistant turn |
+| tools expand | Ctrl+T / t на assistant turn |
+| diff expand | d / Ctrl+D |
 
 См. [`docs/architecture/tui-chrome.md`](../../docs/architecture/tui-chrome.md).
 
@@ -45,12 +46,14 @@ orchestra tui
 
 | Клавиша | Действие |
 |---|---|
-| Enter | отправить |
+| Enter | отправить (в очередь, если agent busy) |
 | Shift+Enter | новая строка |
 | Tab | цикл mode (build → plan → explore → ask → debug → architecture → agent → orchestra) |
-| Ctrl+T / t | Tasks (если есть todos); иначе tools → diff |
+| Ctrl+T / t | tools → diff |
 | Ctrl+R | свернуть/развернуть Thinking |
 | d / Ctrl+D | показать/скрыть inline diff (пустой input) |
+| ↑↓ a x Enter | per-file diff review (когда diff развёрнут) |
+| a / d / x | pending ops bar: apply · diff · discard (dry-run review) |
 | y / a / n / Esc | shell: один раз / на сессию / запретить |
 | Esc | отменить turn / закрыть overlay |
 | Ctrl+C | выйти |
@@ -60,7 +63,7 @@ orchestra tui
 | @ | @-mention файлов |
 | Ctrl+G | mouse passthrough (выделение терминала) |
 
-Изменения пишутся на диск сразу после write/edit (TUI `apply=true`). Pending ops bar `[a]/[d]/[x]` — только legacy dry-run CLI, не TUI.
+TUI по умолчанию коммитит write/edit сразу (`apply=true`). При dry-run core присылает `pending_ops` — в ленте показывается inline bar `⏵ N pending · [a]pply · [d]iff · [x]discard` + per-file review (↑↓ a x Enter).
 
 ## Slash / команды
 
@@ -77,7 +80,8 @@ ui/tui/
   app_chrome_keys.go  — Ctrl+T/R, bare d/t, tools expand SoT
   app_mouse.go        — mouse handlers
   app_layout.go       — layout()
-  app_diff.go         — commit diff toggle / restore
+  app_diff_review.go  — per-file accept/reject
+  app_action_bar.go   — inline [a]/[d]/[x] pending ops bar
   app_rpc.go          — agent event handlers (stream/tools/turn/chrome)
   app_view.go         — View + input chrome
   app_status.go       — chromeMetrics + status bar sync
@@ -91,6 +95,13 @@ ui/tui/
 Ход чата идёт через `session.message` (не one-shot `agent.run`). Streaming events: `message_delta`, `tool_call_*`, `todos_updated`, `step_usage`, `permission/request`.
 
 **Permission modal (shell)**: при `shell · ask` модель спрашивает согласие. `[y]` — один раз, `[a]` — `shell · allow` на сессию (+ prefs), `[t]` — всегда этот tool до конца сессии, `[n]` — запрет.
+
+**LSP (status bar `LSP ●/◐`)**: lazy spawn по расширению файла; при отсутствии бинарника — modal `lsp.install` (`[y]`/`[a]`/`[n]`). `WarmupLSP` на старте сессии только ensure'ит cache, не поднимает все language servers. Worker `edit`/`write` tool blocks показывают LSP diagnostics inline + в expanded block. См. `docs/architecture/lsp-auto-provision.md`.
+
+**Manual smoke (LSP + Worker diagnostics):**
+1. Rebuild TUI, открыть Go-проект без gopls в cache → modal `lsp.install`.
+2. Запустить orchestra mode task с worker → после `edit` на `.go` видны `· N LSP error(s)` на tool line.
+3. Expand tool block (Ctrl+T) → блок `LSP diagnostics:` с line:col.
 
 ## Статус
 

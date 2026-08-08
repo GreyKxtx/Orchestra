@@ -67,6 +67,8 @@ type Event struct {
 	Diagnostics  []ToolDiagnosticPayload   // LSP diagnostics on write/edit tool_call_completed
 	Usage        *UsageTurnPayload         // token/cost totals for completed turn
 	Todos        []TodoItem                // model checklist after turn / todowrite
+	StopReason   string                    // completed | partial | max_steps (turn end)
+	OpenTodos    int                       // open pending/in_progress todos at turn end
 	ModeRoute    *ModeRoutePayload         // agent→effective mode
 	LSPStatus    string                    // from core.health on init
 	Err          string                    // only set on connection/agent error events

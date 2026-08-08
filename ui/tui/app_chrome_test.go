@@ -36,7 +36,7 @@ func TestInputEmpty_gatesBareHotkeys(t *testing.T) {
 	}
 }
 
-func TestHandleCtrlTCascade_opensTasksBeforeTools(t *testing.T) {
+func TestHandleCtrlTCascade_expandsToolsEvenWithTodos(t *testing.T) {
 	a := testChromeApp(t)
 	a.todos = []rpcclient.TodoItem{{ID: "1", Content: "task", Status: "pending"}}
 	a.setTodos(a.todos)
@@ -52,13 +52,10 @@ func TestHandleCtrlTCascade_opensTasksBeforeTools(t *testing.T) {
 	a.chat.SetMessages(a.session.Messages)
 
 	if !a.handleCtrlTCascade() {
-		t.Fatal("cascade should open tasks")
+		t.Fatal("cascade should expand tools (tasks live in chat)")
 	}
-	if !a.taskPanelOpen {
-		t.Fatal("Ctrl+T must open Tasks when todos exist (strip advertises it)")
-	}
-	if a.session.Messages[0].ToolsExpanded {
-		t.Fatal("tools must not steal Ctrl+T while todos exist")
+	if !a.session.Messages[0].ToolsExpanded {
+		t.Fatal("expected ToolsExpanded after cascade")
 	}
 }
 
@@ -82,23 +79,36 @@ func TestHandleCtrlTCascade_expandsToolsWhenNoTodos(t *testing.T) {
 	}
 }
 
-func TestHandleCtrlTCascade_opensTasksWhenNoToolsOrDiff(t *testing.T) {
+func TestSetTodos_upsertsInChatChecklist(t *testing.T) {
 	a := testChromeApp(t)
-	a.todos = []rpcclient.TodoItem{{ID: "1", Content: "task", Status: "pending"}}
-	a.setTodos(a.todos)
+	idx := a.session.StartAssistant("build", "m")
+	a.setTodos([]rpcclient.TodoItem{
+		{ID: "1", Content: "do thing", Status: "in_progress"},
+		{ID: "2", Content: "next", Status: "pending"},
+	})
+	m := a.session.Messages[idx]
+	found := false
+	for _, seg := range m.Segments {
+		if seg.Kind == state.SegmentTodos && len(seg.Todos) == 2 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected SegmentTodos on assistant turn, segs=%v", m.Segments)
+	}
+}
 
-	if !a.handleCtrlTCascade() {
-		t.Fatal("cascade should open tasks")
+func TestCycleShellPerms(t *testing.T) {
+	a := testChromeApp(t)
+	a.allowExec = false
+	a.cycleShellPerms()
+	if !a.allowExec {
+		t.Fatal("expected allow after cycle")
 	}
-	if !a.taskPanelOpen {
-		t.Fatal("expected task panel open")
-	}
-	// Second press closes.
-	if !a.handleCtrlTCascade() {
-		t.Fatal("cascade should close tasks")
-	}
-	if a.taskPanelOpen {
-		t.Fatal("expected task panel closed")
+	a.cycleShellPerms()
+	if a.allowExec {
+		t.Fatal("expected ask after second cycle")
 	}
 }
 

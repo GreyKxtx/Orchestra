@@ -532,6 +532,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				if prov == "" {
 					prov = strings.TrimSpace(cfg.LLM.Router.FastProvider)
 				}
+				if prov == "" && model == "" {
+					if _, ok := cfg.FindProvider("fast"); ok {
+						prov = "fast"
+					}
+				}
 				if prov != "" || model != "" {
 					if c, err := namedLLMClient(cfg, prov, model, agentLogger); err == nil {
 						routerClient = c
@@ -627,6 +632,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			CompletionMaxTokens:    cfg.LLM.MaxTokens,
 			ToolDigestBytes:        cfg.Agent.ResolvedToolDigestBytes(),
 			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
+			LLMStepTimeout:         time.Duration(cfg.LLM.TimeoutS) * time.Second,
+			MaxStepsCap:            cfg.Agent.ResolvedChildMaxSteps(),
 			UsageTracker:           usageTracker,
 			ProviderLabel:          providerLabelFor(cfg, applyProvider),
 			ModelLabel:             cfg.LLM.Model,
@@ -737,6 +744,10 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if err := agent.ApplyProfile(&agOpts, profileName, true); err != nil {
 			retErr = err
 			return retErr
+		}
+		// llm.timeout_s always wins — profiles must not shrink the step budget.
+		if t := time.Duration(cfg.LLM.TimeoutS) * time.Second; t > 0 {
+			agOpts.LLMStepTimeout = t
 		}
 		// Restore custom-agent tool/prompt overrides if profile filtered tools.
 		if systemPromptOverride != "" {

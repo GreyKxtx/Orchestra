@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -73,6 +73,14 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	// inside the paste as "submit message".
 	if next, cmd, handled := a.tryIngestPaste(m); handled {
 		return next, cmd, true
+	}
+
+	if cmd, handled := a.tryActionBarHotkey(m.String()); handled {
+		return a, cmd, true
+	}
+
+	if cmd, handled := a.tryDiffReviewHotkey(m.String()); handled {
+		return a, cmd, true
 	}
 
 	switch m.String() {
@@ -230,11 +238,6 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
 
 	case "up":
-		if a.taskPanelOpen && a.taskPanel != nil {
-			a.taskPanel.ScrollUp()
-			a.layout()
-			return a, nil, true
-		}
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
 			return a, nil, true
@@ -252,11 +255,6 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.input.SetValue(text)
 		return a, nil, true
 	case "down":
-		if a.taskPanelOpen && a.taskPanel != nil {
-			a.taskPanel.ScrollDown()
-			a.layout()
-			return a, nil, true
-		}
 		if a.paletteActive {
 			a.slashPalette.CursorDown()
 			return a, nil, true
@@ -402,8 +400,12 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			return a, nil, true
 		}
-		// Cycle through agent modes (build → ask → plan → build).
+		// Cycle through agent modes (build → ask → plan → …).
 		a.cycleAgentMode()
+		return a, nil, true
+	case "shift+tab":
+		// Cycle shell ask ↔ allow (Claude Code–style bypass permissions).
+		a.cycleShellPerms()
 		return a, nil, true
 	case "d":
 		if a.tryChromeHotkey("d") {
@@ -482,60 +484,28 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		return a, cmd, true
 	}
 	if a.turn.BlocksSubmit() {
+		text := strings.TrimSpace(a.input.Value())
+		if text == "" {
+			return a, nil, true
+		}
+		a.enqueueMessage(text)
+		a.input.Reset()
+		n := a.queuedMessageCount()
+		if n == 1 {
+			a.showToast("В очереди — отправится после ответа")
+		} else {
+			a.showToast(fmt.Sprintf("В очереди: %d", n))
+		}
+		a.updateStatusHints()
 		return a, nil, true
 	}
 	text := strings.TrimSpace(a.input.Value())
 	if text == "" {
 		return a, nil, true
 	}
-	// Dismiss welcome screen on first message.
-	if a.showWelcome {
-		a.showWelcome = false
-		a.chat.SetForceWelcome(false)
-	}
-	a.session.AppendMessage(state.Message{
-		Role:  state.RoleUser,
-		Text:  text,
-		Mode:  a.cfg.Mode,
-		Model: a.cfg.Model,
-	})
-	a.history.Push(text)
-	a.history.Reset()
 	a.input.Reset()
-
-	// Intercept skill/workflow commands BEFORE the generic agent.run path.
-	// "/workflows" and "/skills" (no args) list available items.
-	// "/workflow <name> <args>" runs the named workflow with the rest as
-	// arguments. Same for "/skill <name> <args>". Anything else falls
-	// through to the regular agent.run flow.
-	if cmd := a.maybeRunSkillOrWorkflow(text); cmd != nil {
-		a.chat.SetMessages(a.session.Messages)
-		return a, cmd, true
-	}
-
-	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
-	a.reasoning.Reset()
-	a.stepTextLen = 0
-	a.turnStartedAt = time.Now()
-	a.chat.ScrollToBottom()
-	a.chat.SetMessages(a.session.Messages)
-	saveCmd := a.persistSessionCmd()
-	if a.rpc != nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		a.activeCancel = cancel
-		a.beginAgentTurn()
-		a.layout()
-		a.updateStatusHints()
-		go func(query, mode string) {
-			_ = a.runAgentTurn(ctx, query, mode)
-		}(text, a.cfg.Mode)
-		return a, saveCmd, true
-	}
-	// Echo fallback (tests).
-	a.session.AppendAssistantDelta("echo: " + text)
-	a.session.FinishAssistant()
-	a.chat.SetMessages(a.session.Messages)
-	return a, saveCmd, true
+	cmd := a.submitUserMessage(text)
+	return a, cmd, true
 }
 
 // pasteBurstWindow is how long after a paste chunk we keep treating

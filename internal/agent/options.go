@@ -174,6 +174,11 @@ type Options struct {
 	// LLMStepTimeout bounds time spent waiting for the model per attempt.
 	LLMStepTimeout time.Duration
 
+	// AssistantPrefill appends a partial assistant message before each LLM step
+	// (OpenAI prefilling). The prefix is merged into text responses when the
+	// model omits it. Used for Worker JSON determinism (default "{" in worker mode).
+	AssistantPrefill string
+
 	// ResponseFormat, if non-nil, is sent to the LLM on every call (grammar-constrained sampling).
 	ResponseFormat *llm.ResponseFormat
 	// PromptFamily selects model-family-specific system prompt. Auto-detected if empty.
@@ -387,6 +392,10 @@ type Result struct {
 	// MaxStepsExceeded is true when the run stopped at the step limit but
 	// staged/partial results were flushed (dry-run overlay or apply path).
 	MaxStepsExceeded bool
+
+	// StopReason is a stable machine token for the TUI:
+	//   "completed" | "partial" | "max_steps"
+	StopReason string
 }
 
 type Agent struct {

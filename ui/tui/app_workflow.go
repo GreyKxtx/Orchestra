@@ -180,10 +180,11 @@ func (a *App) handleSystemMsg(m systemMsgMsg) tea.Cmd {
 // handleWorkflowResult appends the workflow's final stage output (or error)
 // to the chat and clears busy state.
 func (a *App) handleWorkflowResult(m workflowResultMsg) tea.Cmd {
+	var queueCmd tea.Cmd
 	if m.err != nil {
 		a.failAgentTurn()
 	} else {
-		a.finishAgentTurn()
+		queueCmd = a.finishAgentTurn()
 	}
 	if a.workflowProgress != nil {
 		a.workflowProgress.End()
@@ -205,15 +206,16 @@ func (a *App) handleWorkflowResult(m workflowResultMsg) tea.Cmd {
 	}
 	a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: summary})
 	a.chat.SetMessages(a.session.Messages)
-	return a.persistSessionCmd()
+	return tea.Batch(a.persistSessionCmd(), queueCmd)
 }
 
 // handleSkillResult appends the skill's output (or error) and clears busy.
 func (a *App) handleSkillResult(m skillResultMsg) tea.Cmd {
+	var queueCmd tea.Cmd
 	if m.err != nil {
 		a.failAgentTurn()
 	} else {
-		a.finishAgentTurn()
+		queueCmd = a.finishAgentTurn()
 	}
 	a.clearActiveCancel()
 	a.layout()
@@ -231,5 +233,5 @@ func (a *App) handleSkillResult(m skillResultMsg) tea.Cmd {
 		m.res.Skill, m.res.Steps, marker, m.res.Output)
 	a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: summary})
 	a.chat.SetMessages(a.session.Messages)
-	return a.persistSessionCmd()
+	return tea.Batch(a.persistSessionCmd(), queueCmd)
 }

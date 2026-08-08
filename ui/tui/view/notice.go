@@ -32,6 +32,8 @@ func LocalizeRetryHint(msg string) string {
 		return "Контент устарел — перечитайте файл и повторите edit"
 	case strings.Contains(msg, "AmbiguousMatch"):
 		return "Неоднозначное совпадение — уточните edit или добавьте контекст"
+	case strings.Contains(msg, "open todo"):
+		return "Есть незакрытые задачи в todolist — не final; отметь done и продолжай следующий пункт"
 	case strings.Contains(msg, "max_steps exceeded"), strings.HasPrefix(msg, "MAX_STEPS"):
 		return "Лимит шагов хода — история сохранена, напишите продолжить"
 	default:

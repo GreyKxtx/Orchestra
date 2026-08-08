@@ -50,9 +50,10 @@ func StateMessagesToUI(msgs []state.Message) []sessionfile.UIMessage {
 			ui.DiffFiles = make([]sessionfile.UIDiffFile, 0, len(m.DiffFiles))
 			for _, df := range m.DiffFiles {
 				ui.DiffFiles = append(ui.DiffFiles, sessionfile.UIDiffFile{
-					Path:   df.Path,
-					Before: df.Before,
-					After:  df.After,
+					Path:         df.Path,
+					Before:       df.Before,
+					After:        df.After,
+					ReviewStatus: df.ReviewStatus,
 				})
 			}
 			ui.DiffExpanded = m.DiffExpanded
@@ -113,9 +114,10 @@ func UIMessagesToState(msgs []sessionfile.UIMessage) []state.Message {
 			msg.DiffFiles = make([]state.DiffFile, 0, len(m.DiffFiles))
 			for _, df := range m.DiffFiles {
 				msg.DiffFiles = append(msg.DiffFiles, state.DiffFile{
-					Path:   df.Path,
-					Before: df.Before,
-					After:  df.After,
+					Path:         df.Path,
+					Before:       df.Before,
+					After:        df.After,
+					ReviewStatus: df.ReviewStatus,
 				})
 			}
 			msg.DiffExpanded = m.DiffExpanded

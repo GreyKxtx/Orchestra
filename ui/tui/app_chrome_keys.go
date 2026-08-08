@@ -26,10 +26,6 @@ func (a *App) tryChromeHotkey(key string) bool {
 		if !a.inputEmpty() {
 			return false
 		}
-		if len(a.todos) > 0 {
-			a.toggleTaskPanel()
-			return true
-		}
 		return a.handleCtrlTCascade()
 	case "d":
 		if !a.inputEmpty() || !a.hasCommitDiff() {
@@ -53,17 +49,9 @@ func (a *App) hasCommitDiff() bool {
 	return len(a.lastCommitDiff) > 0 || a.session.HasDiff()
 }
 
-// handleCtrlTCascade: close open Tasks; else open Tasks when todos exist;
-// else expand tools; else toggle diff. Tasks strip advertises Ctrl+T.
+// handleCtrlTCascade: expand tools on last assistant; else toggle diff.
+// Tasks checklist lives in chat (no above-input panel).
 func (a *App) handleCtrlTCascade() bool {
-	if a.taskPanelOpen {
-		a.toggleTaskPanel()
-		return true
-	}
-	if len(a.todos) > 0 {
-		a.toggleTaskPanel()
-		return true
-	}
 	for i := len(a.session.Messages) - 1; i >= 0; i-- {
 		m := a.session.Messages[i]
 		if m.Role == state.RoleAssistant && len(m.ToolBlocks) > 0 {
@@ -73,6 +61,7 @@ func (a *App) handleCtrlTCascade() bool {
 	}
 	if a.session.ToggleLastDiff() {
 		a.diffShown = a.session.HasDiff()
+		a.syncDiffReviewCursor()
 		a.chat.SetMessages(a.session.Messages)
 		a.layout()
 		a.updateStatusHints()

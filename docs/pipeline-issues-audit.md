@@ -1,6 +1,6 @@
 # Pipeline Issues Audit
 
-Дата: 2026-05-21
+Дата: 2026-05-21 · **статус P0/P1 ядра: закрыто** (см. § «Исправления» внизу; регрессии — `internal/agent/audit_regression_test.go`)
 
 Цель: зафиксировать проблемы в текущем agent pipeline Orchestra, особенно вокруг todo-list, task/subagent execution, mode switching и отличий от OpenCode.
 
@@ -434,15 +434,13 @@ OpenCode возвращает todos как tool metadata and session state; UI �
 - либо удалить misleading comment и унифицировать docs на short names;
 - либо реализовать `NormalizeToolName` с tests для aliases.
 
-## Документация, которая сейчас расходится с кодом и OpenCode
+## Документация — актуальность (2026-08)
 
-- `docs/modes.md`: `plan_exit` → build restart с `JustSwitchedFromPlan` — не wired (OpenCode делает switch в `plan.ts`).
-- `docs/modes.md`: `plan_enter` как tool — **в OpenCode такого tool нет**.
-- `docs/modes.md`: `general` subagent write-capable — `task_spawn` всегда read-only (OpenCode `task` + `general` agent write-capable).
-- `docs/tools-status.md`: `plan_enter` ✅ — stub at runtime.
-- `docs/tools-status.md`: `todo.read` ✅ — OpenCode имеет только `todowrite`.
-- Plan file path в docs не отражает OpenCode `.opencode/plans/*.md` vs Orchestra `.orchestra/plan.md`.
-- `docs/commands-and-modes.md`: часть comparison tables устарела.
+- **Режимы / Planner–Worker:** [`modes.md`](./modes.md), [`architecture/planner-worker.md`](./architecture/planner-worker.md).
+- **TUI pipeline:** [`architecture/tui-pipeline.md`](./architecture/tui-pipeline.md) (M1–M4 done).
+- **Удалено как устаревшее:** `subproject-3b-roles-modes.md`, `architecture/tui-pipeline-to-be.md`.
+
+Ниже — исторический аудит расхождений с OpenCode; часть пунктов закрыта в коде, сверяйте с `modes.md` перед правками.
 
 ## Приоритет проверок
 

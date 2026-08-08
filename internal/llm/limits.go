@@ -62,8 +62,15 @@ func DiscoverModelLimits(ctx context.Context, cfg config.LLMConfig) (ModelLimits
 	}
 }
 
-// ApplyDiscoveredLimits writes server context into cfg (num_ctx) and clamps
-// max_tokens so prompt+completion fit. Returns true if cfg changed.
+// ApplyDiscoveredLimits reconciles server max_model_len with the user's
+// configured num_ctx:
+//
+//   - unset num_ctx  → fill with server max
+//   - user ≤ server  → keep user (intentional smaller window / RAM)
+//   - user > server  → clamp down to server (avoid 400 overflow)
+//
+// Also clamps max_tokens to the effective window and syncs ModelPresets[model].NumCtx
+// so EffectiveNumCtx and the LLM client stay aligned. Returns true if cfg changed.
 func ApplyDiscoveredLimits(cfg *config.LLMConfig, lim ModelLimits) bool {
 	if cfg == nil || lim.ContextTokens <= 0 {
 		return false
@@ -72,17 +79,56 @@ func ApplyDiscoveredLimits(cfg *config.LLMConfig, lim ModelLimits) bool {
 	if cfg.ExtraBody == nil {
 		cfg.ExtraBody = map[string]any{}
 	}
-	prev := contextLenFromExtra(cfg.ExtraBody)
-	if prev != lim.ContextTokens {
-		cfg.ExtraBody["num_ctx"] = lim.ContextTokens
+
+	user := userConfiguredNumCtx(cfg)
+	target := lim.ContextTokens
+	if user > 0 {
+		if user < lim.ContextTokens {
+			target = user
+		} else {
+			target = lim.ContextTokens
+		}
+	}
+
+	prevExtra := contextLenFromExtra(cfg.ExtraBody)
+	if prevExtra != target {
+		cfg.ExtraBody["num_ctx"] = target
 		changed = true
 	}
-	clamped := effectiveMaxTokens(cfg.MaxTokens, lim.ContextTokens)
+
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		if cfg.ModelPresets == nil {
+			cfg.ModelPresets = map[string]config.ModelPreset{}
+		}
+		p := cfg.ModelPresets[model]
+		if p.NumCtx != int64(target) {
+			p.NumCtx = int64(target)
+			cfg.ModelPresets[model] = p
+			changed = true
+		}
+	}
+
+	clamped := effectiveMaxTokens(cfg.MaxTokens, target)
 	if cfg.MaxTokens != clamped {
 		cfg.MaxTokens = clamped
 		changed = true
 	}
 	return changed
+}
+
+// userConfiguredNumCtx returns the operator's intended window: preset for the
+// active model wins (same as ProjectConfig.EffectiveNumCtx), else extra_body.
+func userConfiguredNumCtx(cfg *config.LLMConfig) int {
+	if cfg == nil {
+		return 0
+	}
+	model := strings.TrimSpace(cfg.Model)
+	if model != "" && cfg.ModelPresets != nil {
+		if p, ok := cfg.ModelPresets[model]; ok && p.NumCtx > 0 {
+			return int(p.NumCtx)
+		}
+	}
+	return contextLenFromExtra(cfg.ExtraBody)
 }
 
 // ClampMaxTokensAgainstContext is the exported form of effectiveMaxTokens.

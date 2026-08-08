@@ -47,9 +47,9 @@
 
 ---
 
-## LSP — точная навигация ✅ ВКЛЮЧЕНО (gopls)
+## LSP — точная навигация ✅ ВКЛЮЧЕНО (polyglot)
 
-Настроено в `.orchestra.yml` (`lsp.servers: gopls serve`). Требует установленного `gopls` (`go install golang.org/x/tools/gopls@latest`).
+`orchestra init` пишет `lsp.servers` по workspace detect (или go+ts+py fallback на пустом репо). Runtime merge отсекает серверы языков, которых нет в проекте (TS-only не держит gopls из polyglot yaml).
 
 | Инструмент | Что делает | Лучше всего когда |
 |---|---|---|
@@ -62,8 +62,8 @@
 > **Semantic dry-run (без `--apply`):** `edit`/`write` пишут в **staging overlay** (диск не трогается).
 > Перед stage — **AST-Gate** (tree-sitter). После stage — **LSP sync** (`didOpen`/`didChange` с effective content).
 > Ответ tool включает `diagnostics`; при errors agent inject'ит hint `LSP_ERRORS`.
-> LSP servers стартуют **lazy** (`lsp.lazy_start: true`, default) и гасятся по TTL (`idle_ttl_seconds: 300`).
-> Resolve: PATH → `~/.orchestra/lsp/<id>/<ver>/`. Auto-install gopls: TUI modal / `orchestra lsp ensure go` — [`docs/architecture/lsp-auto-provision.md`](architecture/lsp-auto-provision.md) (A+B ✅).
+> LSP servers **lazy** (`lsp.lazy_start: true`): Go+TS monorepo регистрирует оба, subprocess только на первый touch `.go`/`.ts`. `WarmupLSP` ensure'ит бинарники без eager spawn. TTL: `idle_ttl_seconds: 300`.
+> Resolve: PATH → `~/.orchestra/lsp/<id>/<ver>/`. Auto-install / upgrade: TUI modal, `orchestra lsp ensure`, `orchestra lsp upgrade` — [`docs/architecture/lsp-auto-provision.md`](architecture/lsp-auto-provision.md).
 
 > Все 5 инструментов покрыты интеграционными тестами с реальным gopls (`internal/tools/lsp_tools_test.go`).
 > Dry-run + LSP loop: `tests/e2e_agent/e2e_dryrun_lsp_test.go`.

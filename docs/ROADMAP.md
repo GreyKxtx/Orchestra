@@ -31,25 +31,25 @@
 | 7. Memory / ORCHESTRA.md | ✅ Готово | проект знает контекст без объяснений |
 | 8. MCP bridge | ✅ Готово | экосистема инструментов (github, sqlite, slack) |
 | 9. Eval harness + провайдеры | ✅ Готово | метрики качества, Anthropic API |
+| 10. Planner–Worker | ✅ Готово | Lead + Worker, WorkOrder, LSP E2E |
 
 ---
 
-## Фаза 10 — Planner–Worker (целевой режим для локальных моделей)
+## Фаза 10 — Planner–Worker (целевой режим для локальных моделей) ✅
 
-**Цель:** Lead (reasoning) планирует и делегирует; Workers (быстрые coder-модели) имплементируют атомарные правки под AST-Gate + LSP validation loop. Без гигантского промпта на каждый чих.
+**Цель:** Lead (reasoning) планирует и делегирует; Workers (быстрые coder-модели) имплементируют атомарные правки под AST-Gate + LSP validation loop.
 
 **Design doc:** [docs/architecture/planner-worker.md](./architecture/planner-worker.md)
 
-**Ключевые deliverables:**
+**Deliverables (2026-08):**
 
-1. `worker` mode + WorkOrder JSON contract (Lead → subagent)
-2. Worker validation loop (≤3 retries) с эскалацией Planner'у
-3. AST scoping в resolver (`target_symbol` + CKG range) — снять AmbiguousMatch
-4. Отдельный LLM profile для Worker (`llm.profiles.worker` или subagent override)
-5. Lead prompt: delegate через `task`, не monolithic `edit`
+1. ✅ `worker` mode + WorkOrder JSON + validation
+2. ✅ Worker validation loop (≤3 LSP iterations) + E2E (`tests/e2e_agent/`, `tests/e2e_real_llm/`)
+3. ✅ AST scoping (`target_symbol` + CKG) + AmbiguousMatch eval
+4. ✅ `orchestra.tiers` + prefilling `{` для Worker
+5. ✅ Lead guard: delegate через `task(worker)`, не monolithic `edit`
 
-**Зависит от:** semantic dry-run (✅), subagents `task`/`general` (✅), `build-local` prompts (✅).  
-**UX-предпочтительнее до старта:** LSP auto-provision в TUI — [`docs/architecture/lsp-auto-provision.md`](architecture/lsp-auto-provision.md) (чтобы Worker не упирался в «поставь gopls руками»).
+**Осталось вручную:** TUI smoke LSP install modal (чеклист в `ui/tui/README.md`).
 
 ---
 
@@ -332,8 +332,11 @@
 
 ---
 
-## Что делаем прямо сейчас
+## Что делаем дальше
 
-Начинаем с **Фазы 0**, задача №1 — разобрать `git status` на осмысленные коммиты. Без этого работать в репо будет неприятно: 50+ файлов в неопределённом состоянии, сложно понять, что добавлено, что удалено, что по-настоящему вNext.
+Фазы 0–10 (MVP + Planner–Worker) закрыты. Следующий фокус:
 
-Когда будешь готов — скажи, и пройдём её вместе.
+1. **Коммиты** — разобрать `git status` на осмысленные PR/коммиты.
+2. **Manual TUI smoke** — LSP install modal + Worker diagnostics (см. `ui/tui/README.md`).
+3. **Real LLM E2E** — прогон `ORCH_E2E_LLM=1` на локальной модели.
+4. **Фаза 1 roadmap** (опционально) — grammar-constrained sampling, unified retry classifier.

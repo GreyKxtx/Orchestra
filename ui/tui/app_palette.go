@@ -191,8 +191,9 @@ const helpText = `Orchestra TUI — клавиши:
   Enter         отправить
   Shift+Enter   новая строка
   Tab           цикл mode (build / plan / explore / ask / debug / architecture / agent / orchestra)
-  Ctrl+T / t    Tasks (если есть) / иначе tools → diff
+  Ctrl+T / t    tools → diff (d / Ctrl+D — diff)
   /compact      сжать LLM-контекст сессии
+  /rewind       checkpoint rewind (скелет)
   /memory       слои памяти + pinned facts
   /mcp          MCP servers (добавить / edit / test)
   ↑ / ↓         история ввода
@@ -244,6 +245,10 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		return nil
 	case "/sessions":
 		a.openSessionsDialog()
+		return nil
+	case "/rewind":
+		dismissWelcome()
+		a.openRewindDialog()
 		return nil
 	case "/mcp":
 		a.openMCPDialog()

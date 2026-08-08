@@ -11,7 +11,8 @@ const (
 	//     plus workflow/stage_start / workflow/stage_done notification events.
 	// v6: unified session schema v2; session.start(session_id?), session.get,
 	// session.list, session.ui_sync for TUI↔core session unification.
-	ProtocolVersion = 6
+	// v7: session.rewind — truncate UI + LLM history to a user checkpoint.
+	ProtocolVersion = 7
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

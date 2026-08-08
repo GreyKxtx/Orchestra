@@ -89,10 +89,17 @@ type Message struct {
 
 // DiffFile is one file change shown inline in the chat diff panel.
 type DiffFile struct {
-	Path   string
-	Before string
-	After  string
+	Path         string
+	Before       string
+	After        string
+	ReviewStatus string // "", "accepted", "rejected"
 }
+
+// Diff review status values persisted in session UI projection.
+const (
+	DiffReviewAccepted = "accepted"
+	DiffReviewRejected = "rejected"
+)
 
 // Session is the TUI's local view of the current chat.
 type Session struct {
@@ -140,6 +147,40 @@ func (s *Session) AppendAssistantNotice(kind SystemKind, text string) {
 		Text:       text,
 		NoticeKind: kind,
 	})
+	m.syncProjections()
+}
+
+// UpsertTodosChecklist puts/refreshes a SegmentTodos on the active streaming
+// assistant turn (Claude Code-style checklist in the transcript). When the turn
+// has already finished, updates the last assistant message instead.
+func (s *Session) UpsertTodosChecklist(items []TodoItem) {
+	if s == nil || len(items) == 0 {
+		return
+	}
+	idx := s.activeAssistant
+	if idx < 0 || idx >= len(s.Messages) {
+		idx = -1
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			if s.Messages[i].Role == RoleAssistant {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	m := &s.Messages[idx]
+	cp := append([]TodoItem(nil), items...)
+	// Refresh the last todos segment in this turn, else append.
+	for i := len(m.Segments) - 1; i >= 0; i-- {
+		if m.Segments[i].Kind == SegmentTodos {
+			m.Segments[i].Todos = cp
+			m.syncProjections()
+			return
+		}
+	}
+	m.Segments = append(m.Segments, Segment{Kind: SegmentTodos, Todos: cp})
 	m.syncProjections()
 }
 
@@ -462,6 +503,82 @@ func (s *Session) HasDiff() bool {
 		}
 	}
 	return false
+}
+
+// LastDiffIndex returns the index of the newest RoleDiff message, or -1.
+func (s *Session) LastDiffIndex() int {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role == RoleDiff && len(s.Messages[i].DiffFiles) > 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+// LastDiffExpanded reports whether the newest diff message is expanded.
+func (s *Session) LastDiffExpanded() bool {
+	i := s.LastDiffIndex()
+	if i < 0 {
+		return false
+	}
+	return s.Messages[i].DiffExpanded
+}
+
+// ExpandLastDiff expands the newest diff message.
+func (s *Session) ExpandLastDiff() bool {
+	i := s.LastDiffIndex()
+	if i < 0 {
+		return false
+	}
+	s.Messages[i].DiffExpanded = true
+	return true
+}
+
+// DiffFileCount returns the number of files in the newest diff message.
+func (s *Session) DiffFileCount() int {
+	i := s.LastDiffIndex()
+	if i < 0 {
+		return 0
+	}
+	return len(s.Messages[i].DiffFiles)
+}
+
+// SetDiffFileReviewStatus updates review status for one file in the last diff.
+func (s *Session) SetDiffFileReviewStatus(fileIdx int, status string) bool {
+	i := s.LastDiffIndex()
+	if i < 0 || fileIdx < 0 || fileIdx >= len(s.Messages[i].DiffFiles) {
+		return false
+	}
+	s.Messages[i].DiffFiles[fileIdx].ReviewStatus = status
+	return true
+}
+
+// PendingDiffReviewCount counts files not yet accepted or rejected.
+func (s *Session) PendingDiffReviewCount() int {
+	i := s.LastDiffIndex()
+	if i < 0 {
+		return 0
+	}
+	n := 0
+	for _, df := range s.Messages[i].DiffFiles {
+		if df.ReviewStatus != DiffReviewAccepted && df.ReviewStatus != DiffReviewRejected {
+			n++
+		}
+	}
+	return n
+}
+
+// AcceptAllDiffFiles marks every file in the last diff as accepted.
+func (s *Session) AcceptAllDiffFiles() {
+	i := s.LastDiffIndex()
+	if i < 0 {
+		return
+	}
+	for j := range s.Messages[i].DiffFiles {
+		if s.Messages[i].DiffFiles[j].ReviewStatus != DiffReviewRejected {
+			s.Messages[i].DiffFiles[j].ReviewStatus = DiffReviewAccepted
+		}
+	}
 }
 
 // HasRunningTool reports whether the active assistant message has any tool

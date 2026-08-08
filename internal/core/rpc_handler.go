@@ -175,6 +175,15 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionCompact(ctx, p)
 
+	case "session.rewind":
+		var p SessionRewindParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionRewind(p)
+
 	case "ops.apply":
 		var p OpsApplyParams
 		if err := decodeParams(params, &p); err != nil {

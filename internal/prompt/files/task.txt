@@ -2,6 +2,13 @@ Launch a child agent to handle a complex, multi-step subtask autonomously and re
 
 This tool runs synchronously: spawn + wait in one call. For fire-and-forget or parallel work, use task_spawn + task_wait instead.
 
+## Orchestra Lead (mode=orchestra)
+- You MUST NOT edit/write production code — delegate ALL code changes via `subagent_type=worker`.
+- Pass a self-contained WorkOrder JSON in `prompt` (see orchestra system prompt).
+- One worker = one atomic change. On failure, replan or switch tier/debug child.
+
+Default bias (build/debug modes only): DO THE WORK YOURSELF with read/edit/write.
+
 ## subagent_type (required unless explore default)
 - explore — read-only research (grep, read, glob, symbols, explore, LSP). Default when omitted.
 - ask — Q&A / explanations (read-only).
@@ -12,14 +19,17 @@ This tool runs synchronously: spawn + wait in one call. For fire-and-forget or p
 
 ## When to use
 - Broad codebase exploration that would clutter the parent context
-- Independent subtasks (refactors in one area, research while you continue planning)
-- Delegating verification steps with a clear success criterion
-- Orchestra Lead: one worker per atomic WorkOrder
+- Truly independent parallel subtasks (research A while planning B)
+- Orchestra Lead mode only: one worker per atomic WorkOrder
+- One huge isolated file that would blow the parent context window
 
-## When NOT to use
-- Reading one known file → use read
-- Searching one pattern in 1–2 files → use grep/read
-- Simple one-step edits in build mode → do them directly
+## When NOT to use (almost always prefer direct tools)
+- Quick / concrete fix in a known file → edit/write yourself
+- 1–3 file edits you can do in this turn → edit/write yourself
+- Reading one known file → read
+- Searching one pattern → grep/read
+- "Small bugfix", "change this string", "rename locally" → never spawn
+- Do not spawn just because the tool exists
 
 ## Parameters
 - description — short 3–5 word label for logging
@@ -33,3 +43,4 @@ This tool runs synchronously: spawn + wait in one call. For fire-and-forget or p
 - Child gets NO parent chat history — only the prompt/WorkOrder
 - Child agents cannot spawn nested subtasks
 - Trust but verify child results on critical paths
+- Spawning has high latency/cost on local models — avoid unless necessary

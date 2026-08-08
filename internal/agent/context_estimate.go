@@ -29,18 +29,20 @@ func estimatePromptTokensWithFactor(history []llm.Message, maxPromptBytes, bytes
 		bytesPerTok = bytesPerContextToken
 	}
 	base := historyBytes(history)
-	overhead := 32 * 1024 // ~8k tokens minimum for system + tools
-	if maxPromptBytes > 0 {
-		if oh := maxPromptBytes / 5; oh > overhead {
-			overhead = oh
-		}
-	}
+	// Fixed overhead for system prompt + tool schemas + user shell.
+	// Do NOT scale with MaxPromptBytes/window — that made the status bar jump
+	// ~+12k on every new turn (reopen → follow-up) before real usage arrived.
+	_ = maxPromptBytes
+	overhead := promptOverheadBytes
 	tokens := (base + overhead) / bytesPerTok
 	if tokens < 0 {
 		return 0
 	}
 	return tokens
 }
+
+// promptOverheadBytes is a fixed stand-in for system + tools (~8k tokens at 4 B/tok).
+const promptOverheadBytes = 32 * 1024
 
 // DefaultBytesPerContextToken is the heuristic when no family calibration is set.
 const DefaultBytesPerContextToken = 4
@@ -57,8 +59,10 @@ func shouldCompactHistory(history []llm.Message, maxPromptBytes, compactPct int)
 // reserve + bytes/token factor.
 //
 // When modelCtxTokens > 0, the token budget is PromptBudgetTokens (vLLM rule:
-// prompt + max_tokens ≤ max_model_len), not the raw window. Real lastPromptTokens
-// from the previous step force compact when the next request would not fit.
+// prompt + max_tokens ≤ max_model_len), not the raw window. Comparing against
+// raw FitsContext(prompt, unclamped max_tokens) is wrong: a Settings value like
+// max_tokens≈num_ctx makes every non-trivial prompt "overflow" while the status
+// bar still shows used/num_ctx ≈ 20%.
 func shouldCompactHistoryEx(history []llm.Message, maxPromptBytes, compactPct, lastPromptTokens, modelCtxTokens, completionMaxTokens, bytesPerTok int) bool {
 	if compactPct <= 0 || maxPromptBytes <= 0 {
 		return false
@@ -80,17 +84,14 @@ func shouldCompactHistoryEx(history []llm.Message, maxPromptBytes, compactPct, l
 	}
 
 	if modelCtxTokens > 0 {
-		// Hard vLLM gate: if even the last known prompt cannot leave room for
-		// the configured completion budget, compact before the next call.
-		if lastPromptTokens > 0 && !llm.FitsContext(modelCtxTokens, lastPromptTokens, completionMaxTokens) {
-			return true
-		}
-		if !llm.FitsContext(modelCtxTokens, promptEst, completionMaxTokens) {
-			return true
-		}
 		budgetTok := llm.PromptBudgetTokens(modelCtxTokens, completionMaxTokens)
 		if budgetTok <= 0 {
 			return false
+		}
+		// Hard gate: last measured prompt already exceeds what fits with
+		// completion reserve (after the same clamp the wire client uses).
+		if lastPromptTokens > budgetTok {
+			return true
 		}
 		tokThreshold := budgetTok * compactPct / 100
 		return promptEst > tokThreshold

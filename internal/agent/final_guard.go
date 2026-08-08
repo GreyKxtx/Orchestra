@@ -2,11 +2,16 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // rejectPrematureFinal detects final steps that claim completion without any
-// staged mutations when the turn still requires code changes.
+// staged mutations when the turn still requires code changes — or when the
+// model abandons an open todo checklist after a single edit (common local-model
+// failure: edit package.json → {"patches":[]} → stop).
 func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, steps int) (hint string, reject bool) {
 	if step == nil || step.Final == nil {
 		return "", false
@@ -17,6 +22,15 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 	if a.tools != nil && len(a.tools.StagedOps()) > 0 {
 		return "", false
 	}
+
+	// Open checklist always blocks final — even after successful edit/write.
+	if n := countOpenTodos(a.todos); n > 0 {
+		return fmt.Sprintf(
+			"You still have %d open todo(s). Do not final yet — mark the finished item done with todowrite, continue the next with read/edit/write, or cancel abandoned todos. Only final when every todo is completed or cancelled.",
+			n,
+		), true
+	}
+
 	if a.turnMutatingTools > 0 {
 		return "", false
 	}
@@ -45,6 +59,17 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 		return "Task requires code changes. Call read, then edit/write — reasoning alone is not enough.", true
 	}
 	return "Task requires code changes but no edit/write was performed. Call read, then edit or write.", true
+}
+
+func countOpenTodos(todos []tools.TodoItem) int {
+	n := 0
+	for _, t := range todos {
+		switch t.Status {
+		case tools.TodoPending, tools.TodoInProgress:
+			n++
+		}
+	}
+	return n
 }
 
 func isSilentPrematureFinalHint(hint string) bool {

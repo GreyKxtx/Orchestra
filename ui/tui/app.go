@@ -59,7 +59,8 @@ type App struct {
 
 	taskPanel     *view.TaskPanel
 	todos         []rpcclient.TodoItem
-	taskPanelOpen bool
+
+	msgQueue []string // FIFO prompts submitted while agent busy
 
 	width       int
 	height      int
@@ -70,6 +71,10 @@ type App struct {
 
 	lastCommitDiff []rpcclient.FileDiff // diff from last auto-commit (for /diff)
 	diffShown      bool                 // true while diff messages are in session
+	diffCursor     int                  // selected file index in expanded diff review
+
+	pendingOps    []map[string]any // dry-run ops awaiting user apply
+	pendingReview bool             // true when pendingOps must be confirmed
 	turn           *state.TurnFSM       // turn lifecycle FSM (M3)
 	turnError      string
 
@@ -182,9 +187,9 @@ type App struct {
 	// (ask mode still on; these tools skip the permission modal).
 	sessionToolAllow map[string]bool
 
-	// taskPanelTopY / taskPanelHeight track the Tasks strip for mouse toggle.
-	taskPanelTopY   int
-	taskPanelHeight int
+	// stickyTasksTopY / stickyTasksHeight track the pinned checklist for layout.
+	stickyTasksTopY   int
+	stickyTasksHeight int
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
@@ -214,10 +219,11 @@ type rpcSpawnedMsg struct {
 // settingsSavedMsg is emitted by the dialog flow when a SettingsDialog
 // completes successfully and the new config has been written to disk.
 type settingsSavedMsg struct {
-	provider view.ProviderEntry
-	model    view.ModelEntry
-	numCtx   int64
-	err      error
+	provider  view.ProviderEntry
+	model     view.ModelEntry
+	numCtx    int64
+	maxTokens int
+	err       error
 }
 
 // llmProbeMsg is the result of an async LLM connectivity check.
@@ -228,11 +234,13 @@ type llmProbeMsg struct {
 	result   llm.ProbeResult
 }
 
-// limitsAppliedMsg reports that server-discovered context was written to config.
+// limitsAppliedMsg reports that server-discovered context was reconciled into config.
 type limitsAppliedMsg struct {
-	contextTokens int
+	contextTokens int  // effective num_ctx after reconcile
+	serverMax     int  // raw max_model_len from probe
 	maxTokens     int
-	clamped       bool
+	clamped       bool // max_tokens reduced
+	ctxClamped    bool // user num_ctx reduced to server max
 	err           error
 }
 
@@ -252,7 +260,7 @@ func NewApp(cfg Config) (*App, error) {
 		allowExec:        cfg.AllowExec,
 		sessionToolAllow: map[string]bool{},
 	}
-	a.taskPanel = view.NewTaskPanel(0)
+	a.taskPanel = view.NewTaskPanel(0) // tests only; sticky checklist is live UI
 	a.loadConfigPrefs()
 	a.syncStatusBar()
 	a.statusBar.SetModel(cfg.Model)

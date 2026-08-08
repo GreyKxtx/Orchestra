@@ -2,7 +2,6 @@ package agent
 
 import (
 	"testing"
-	"time"
 )
 
 func TestApplyProfile_Fast(t *testing.T) {
@@ -16,8 +15,8 @@ func TestApplyProfile_Fast(t *testing.T) {
 	if opts.MaxPromptBytes != 32*1024 {
 		t.Fatalf("MaxPromptBytes=%d", opts.MaxPromptBytes)
 	}
-	if opts.LLMStepTimeout != 60*time.Second {
-		t.Fatalf("timeout=%v", opts.LLMStepTimeout)
+	if opts.LLMStepTimeout != 0 {
+		t.Fatalf("profiles must not set LLMStepTimeout (got %v); llm.timeout_s owns it", opts.LLMStepTimeout)
 	}
 	if opts.AllowBrowser {
 		t.Fatal("fast should disable browser")

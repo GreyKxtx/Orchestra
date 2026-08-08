@@ -43,6 +43,9 @@ type Chat struct {
 	expandedTurns map[int64]bool // mirror of Message.ToolsExpanded for cache skip / invalidation
 	cache         renderCache    // per-message render cache for completed assistant turns
 	msgRanges     []msgYRange    // content-line ranges for click-to-action detection
+	diffReviewCursor int // >=0 when diff review hotkeys active; -1 otherwise
+	actionBar        ActionBarState
+	showActionBar    bool
 	width         int
 	height        int
 }
@@ -62,7 +65,15 @@ func (c *Chat) SetSize(width, height int) {
 	c.vp.Height = height
 }
 
-// SetMeta records the active mode/model so the per-turn footer
+// SetDiffReviewCursor highlights one file in the expanded diff panel (-1 = off).
+func (c *Chat) SetDiffReviewCursor(idx int) { c.diffReviewCursor = idx }
+
+// SetActionBar configures the inline pending-ops bar appended after the newest diff.
+func (c *Chat) SetActionBar(st ActionBarState) {
+	c.actionBar = st
+	c.showActionBar = st.OpCount > 0 || st.FileCount > 0
+}
+
 // (▣ <mode> · <model>) and the user-message ┃ accent stay in sync with
 // what the rest of the UI displays.
 func (c *Chat) SetMeta(mode, model string) {
@@ -176,6 +187,7 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 	// assistant message with the user query immediately preceding it.
 	// Avoids the previous O(N²) nested scan.
 	lastAssistantIdx := -1
+	lastDiffIdx := -1
 	userQueryFor := make([]string, len(msgs))
 	pendingUser := ""
 	for i := 0; i < len(msgs); i++ {
@@ -185,6 +197,10 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 		case state.RoleAssistant:
 			userQueryFor[i] = pendingUser
 			lastAssistantIdx = i
+		case state.RoleDiff:
+			if len(msgs[i].DiffFiles) > 0 {
+				lastDiffIdx = i
+			}
 		}
 	}
 
@@ -223,7 +239,16 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 			rendered = RenderSystemMessage(m, width)
 
 		case state.RoleDiff:
-			rendered = RenderDiffMessage(m.DiffFiles, width, m.DiffExpanded)
+			cursor := -1
+			if m.DiffExpanded {
+				cursor = c.diffReviewCursor
+			}
+			rendered = RenderDiffMessage(m.DiffFiles, width, m.DiffExpanded, cursor)
+			if c.showActionBar && i == lastDiffIdx {
+				if bar := RenderActionBar(c.actionBar, width); bar != "" {
+					rendered += "\n" + bar
+				}
+			}
 		}
 
 		b.WriteString(rendered)

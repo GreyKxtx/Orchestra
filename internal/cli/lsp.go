@@ -50,11 +50,22 @@ var lspEnsureCmd = &cobra.Command{
 	RunE:  runLSPEnsure,
 }
 
+var lspUpgradeCmd = &cobra.Command{
+	Use:   "upgrade [language|id]",
+	Short: "Re-download pinned language server(s) into cache",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runLSPUpgrade,
+}
+
 var lspEnsureDetect bool
+var lspEnsureUpgrade bool
+var lspUpgradeAll bool
 
 func init() {
 	lspEnsureCmd.Flags().BoolVar(&lspEnsureDetect, "detect", false, "detect project languages and ensure all automated servers")
-	lspCmd.AddCommand(lspListCmd, lspStatusCmd, lspDoctorCmd, lspEnsureCmd)
+	lspEnsureCmd.Flags().BoolVar(&lspEnsureUpgrade, "upgrade", false, "remove cached copy and re-download")
+	lspUpgradeCmd.Flags().BoolVar(&lspUpgradeAll, "all", false, "upgrade all automated servers")
+	lspCmd.AddCommand(lspListCmd, lspStatusCmd, lspDoctorCmd, lspEnsureCmd, lspUpgradeCmd)
 	rootCmd.AddCommand(lspCmd)
 }
 
@@ -172,7 +183,7 @@ func printLSPStatus(w io.Writer, cfg *config.ProjectConfig, doctor bool) error {
 			Disabled:   s.Disabled,
 		})
 	}
-	merged := provision.MergeServers(cfgSpecs, detected)
+	merged := provision.MergeServersForWorkspace(cfgSpecs, cwd)
 	fmt.Fprintln(w, "Effective (runtime merge):")
 	if len(merged) == 0 {
 		fmt.Fprintln(w, "  (none)")
@@ -234,6 +245,9 @@ func printServerStatus(w io.Writer, st provision.ServerStatus, doctor bool) {
 }
 
 func runLSPEnsure(cmd *cobra.Command, args []string) error {
+	if lspEnsureUpgrade && len(args) == 1 {
+		return runLSPUpgrade(cmd, args)
+	}
 	if lspEnsureDetect || len(args) == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -273,5 +287,42 @@ func runLSPEnsure(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "OK %s (%s)\n", res.Command[0], res.Source)
+	return nil
+}
+
+func runLSPUpgrade(cmd *cobra.Command, args []string) error {
+	w := cmd.OutOrStdout()
+	ctx := cmd.Context()
+	if lspUpgradeAll || len(args) == 0 {
+		fmt.Fprintln(w, "upgrading all automated language servers…")
+		ids, err := provision.UpgradeAll(ctx)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			fmt.Fprintf(w, "OK upgraded %s\n", id)
+		}
+		if len(ids) == 0 {
+			fmt.Fprintln(w, "nothing to upgrade")
+		}
+		return nil
+	}
+	name := args[0]
+	e, ok := registry.ByLanguage(name)
+	if !ok {
+		e, ok = registry.ByID(name)
+	}
+	if !ok {
+		return fmt.Errorf("unknown language/id %q — see orchestra lsp list", name)
+	}
+	fmt.Fprintf(w, "upgrading %s (%s)…\n", e.ID, e.Version)
+	if err := provision.Upgrade(ctx, e.ID); err != nil {
+		return err
+	}
+	res, err := provision.Resolve(append([]string{e.BinaryName}, e.DefaultArgs...))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "OK %s (%s)\n", res.Command[0], res.Source)
 	return nil
 }

@@ -68,14 +68,17 @@ func (c Chat) renderAssistantMessage(m state.Message, width int, isLast bool, us
 				continue
 			}
 			body := renderMarkdown(text, width-2)
-			if isLast && m.Streaming && i == lastTextIdx && c.streamCursor {
-				body += lipgloss.NewStyle().Foreground(theme.CurrentTheme().Primary()).Render("▋")
-			}
+			// No mid-message ▋ caret — it sat above the mode footer and blinked
+			// the viewport. Busy state is the spinner in assistantFooter.
 			parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(body))
 		case state.SegmentNotice:
 			if line := RenderAssistantNotice(seg.NoticeKind, seg.Text, width); line != "" {
 				parts = append(parts, line)
 			}
+		case state.SegmentTodos:
+			// Checklist is pinned above the input (sticky), not in scrollback —
+			// matches Claude Code "always visible at the bottom" behavior.
+			continue
 		}
 	}
 
@@ -103,10 +106,10 @@ func (c Chat) renderAssistantMessage(m state.Message, width int, isLast bool, us
 	// Live footer while streaming; final footer when done (includes tokens).
 	if m.Streaming {
 		if dur := turnElapsed(m); dur > 0 || !m.StartedAt.IsZero() {
-			parts = append(parts, assistantFooter(mode, model, dur, 0, 0))
+			parts = append(parts, assistantFooter(mode, model, dur, 0, 0, true, c.spinFrame))
 		}
 	} else {
-		parts = append(parts, assistantFooter(mode, model, m.Duration, m.TokensIn, m.TokensOut))
+		parts = append(parts, assistantFooter(mode, model, m.Duration, m.TokensIn, m.TokensOut, false, 0))
 	}
 
 	return strings.Join(parts, "\n\n")
@@ -177,20 +180,33 @@ func renderReasoning(text string, width int, stillThinking bool, spinFrame int, 
 	return lipgloss.NewStyle().PaddingLeft(indent).Render(box)
 }
 
-// assistantFooter — `▣ <Mode> · <model> · <duration> · <tokens>`. Indented
-// col 2 to align with the assistant body above it. Empty fields omitted.
-func assistantFooter(mode, model string, dur time.Duration, tokensIn, tokensOut int) string {
+// assistantFooter — mode/model/duration/tokens line under the assistant turn.
+// While streaming: braille spinner instead of ▣ so it reads as "in progress",
+// not a finished badge.
+func assistantFooter(mode, model string, dur time.Duration, tokensIn, tokensOut int, streaming bool, spinFrame int) string {
 	t := theme.CurrentTheme()
 
 	if mode == "" {
 		mode = "build"
 	}
 
-	icon := lipgloss.NewStyle().Foreground(ModeColor(mode)).Render("▣")
-	label := lipgloss.NewStyle().Foreground(t.Text()).Render(titlecase(mode))
+	var icon string
+	if streaming {
+		icon = lipgloss.NewStyle().Foreground(ModeColor(mode)).Render(SpinnerFrames[spinFrame%len(SpinnerFrames)])
+	} else {
+		icon = lipgloss.NewStyle().Foreground(ModeColor(mode)).Render("▣")
+	}
+	labelStyle := lipgloss.NewStyle().Foreground(t.Text())
+	if streaming {
+		labelStyle = labelStyle.Italic(true)
+	}
+	label := labelStyle.Render(titlecase(mode))
 	muted := lipgloss.NewStyle().Foreground(t.TextMuted())
 
 	out := icon + " " + label
+	if streaming {
+		out += muted.Italic(true).Render(" · работаю…")
+	}
 	if model != "" {
 		out += muted.Render(" · " + model)
 	}

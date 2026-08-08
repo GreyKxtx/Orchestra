@@ -208,14 +208,16 @@ func TestEffectiveMaxTokens(t *testing.T) {
 	if got := effectiveMaxTokens(8192, 0); got != 8192 {
 		t.Fatalf("passthrough: got %d", got)
 	}
-	// No half-window tax: configured want stays until it nearly fills the ctx.
-	if got := effectiveMaxTokens(50000, 51200); got != 50000 {
-		t.Fatalf("no half-reserve: got %d want 50000", got)
+	// Cap completion at ~20% of the window (most stays for prompt/history).
+	if got := effectiveMaxTokens(50000, 51200); got != 10240 {
+		t.Fatalf("20%% completion cap: got %d want 10240", got)
 	}
-	// Only hard ceiling: leave MinCompletionTokens for the prompt.
-	wantCap := 51200 - MinCompletionTokens
+	wantCap := 51200 / 5
 	if got := effectiveMaxTokens(60000, 51200); got != wantCap {
 		t.Fatalf("ceiling: got %d want %d", got, wantCap)
+	}
+	if got := effectiveMaxTokens(8192, 51200); got != 8192 {
+		t.Fatalf("under cap passthrough: got %d", got)
 	}
 }
 

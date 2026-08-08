@@ -54,6 +54,7 @@ type OpenAIClient struct {
 	extraBody          map[string]any
 	client             *http.Client
 	streamClient       *http.Client // no Timeout — relies on context cancellation for SSE connections
+	requestTimeout     time.Duration // llm.timeout_s — also scales stream stall watchdog
 	logger             *Logger
 }
 
@@ -61,17 +62,25 @@ type OpenAIClient struct {
 // servers (ngrok, vLLM behind a proxy). Default Transport has no header/dial
 // timeouts, so a silently dropped tunnel connection hangs until the step
 // timeout (up to 15 min). Keep-alives detect dead peers earlier.
-func newLLMTransport() *http.Transport {
+//
+// headerTimeout bounds time-to-first-byte (response headers). Slow local
+// models behind ngrok can spend minutes accepting a large prompt before the
+// first SSE byte — keep this aligned with llm.timeout_s, not a fixed 180s.
+func newLLMTransport(headerTimeout time.Duration) *http.Transport {
+	if headerTimeout < 60*time.Second {
+		headerTimeout = 60 * time.Second
+	}
+	if headerTimeout > 15*time.Minute {
+		headerTimeout = 15 * time.Minute
+	}
 	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   15 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout: 15 * time.Second,
-		// vLLM sends response headers once the request is accepted; if headers
-		// take longer than this the tunnel/server is effectively down.
-		ResponseHeaderTimeout: 180 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: headerTimeout,
 		IdleConnTimeout:       90 * time.Second,
 		MaxIdleConns:          8,
 		MaxIdleConnsPerHost:   4,
@@ -91,6 +100,7 @@ func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
 		want = defaultMaxTokens
 	}
 	ctxLen := contextLenFromExtra(cfg.ExtraBody)
+	transport := newLLMTransport(timeout)
 	return &OpenAIClient{
 		baseURL:            cfg.APIBase,
 		apiKey:             cfg.APIKey,
@@ -103,12 +113,13 @@ func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
 		toolChoice:         resolveToolChoice(cfg),
 		toolChoiceImplicit: strings.TrimSpace(cfg.ToolChoice) == "",
 		extraBody:          normalizeExtraBody(cfg.Provider, cfg.Model, cfg.ExtraBody),
+		requestTimeout:     timeout,
 		client: &http.Client{
 			Timeout:   timeout,
-			Transport: newLLMTransport(),
+			Transport: transport,
 		},
 		// SSE connections are long-lived; context + stall watchdog handle cancellation.
-		streamClient: &http.Client{Timeout: 0, Transport: newLLMTransport()},
+		streamClient: &http.Client{Timeout: 0, Transport: newLLMTransport(timeout)},
 		logger:       nil, // Set via SetLogger if needed
 	}
 }
@@ -187,11 +198,10 @@ func contextLenFromExtra(extra map[string]any) int {
 	}
 }
 
-// effectiveMaxTokens ensures we always send a finite max_tokens and that it
-// cannot alone exceed the model window. We do NOT statically reserve half the
-// context for the prompt (that made UI show max_tokens = ctx/2 and felt unlike
-// LM Studio). Real fit is done per request in clampMaxTokensForPrompt using
-// the estimated/actual prompt size — same idea as servers that clamp on send.
+// effectiveMaxTokens ensures we always send a finite max_tokens.
+// Cap completion at ~20% of the window (LM Studio-style: most of num_ctx
+// stays available for prompt/history). Users who need longer completions
+// can still raise max_tokens up to this ceiling in Settings.
 func effectiveMaxTokens(maxTokens, contextLen int) int {
 	if maxTokens <= 0 {
 		maxTokens = defaultMaxTokens
@@ -199,10 +209,17 @@ func effectiveMaxTokens(maxTokens, contextLen int) int {
 	if contextLen <= 0 {
 		return maxTokens
 	}
-	// Tiny floor so max_tokens != entire window; prompt must have somewhere to go.
-	capTok := contextLen - MinCompletionTokens
+	capTok := contextLen / 5 // ~20% for the answer
 	if capTok < MinCompletionTokens {
 		capTok = MinCompletionTokens
+	}
+	// Never let completion alone exceed the window minus a tiny prompt floor.
+	hard := contextLen - MinCompletionTokens
+	if hard < MinCompletionTokens {
+		hard = MinCompletionTokens
+	}
+	if capTok > hard {
+		capTok = hard
 	}
 	if maxTokens > capTok {
 		return capTok
@@ -463,14 +480,22 @@ func parseContextLengthError(msg string) (ctxLen, promptTok int, ok bool) {
 }
 
 // IsTransientLLMError reports whether a request is worth retrying: network
-// hiccups, tunnel drops, 429/5xx, stalled or truncated streams. Context
-// cancellation and 4xx API errors are permanent.
+// hiccups, tunnel drops, 429/5xx, stalled or truncated streams. Bare context
+// cancellation / deadline (caller aborted the step) are permanent. Wrapped
+// "SSE read error: context deadline exceeded" from a dead tunnel mid-body is
+// still transient — streamStep checks ctx.Err() separately so intentional
+// LLMStepTimeout does not get retried.
 func IsTransientLLMError(err error) bool {
 	if err == nil {
 		return false
 	}
+	s := strings.ToLower(err.Error())
+	sseOrStall := strings.Contains(s, "sse read error") || strings.Contains(s, "stream stalled")
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
+		if !sseOrStall {
+			return false
+		}
+		// Fall through: treat wrapped stream deaths as retryable.
 	}
 	if code := extractStatusCode(err.Error()); code != 0 {
 		return code == 429 || code == 408 || code >= 500
@@ -479,7 +504,6 @@ func IsTransientLLMError(err error) bool {
 	if errors.As(err, &nerr) {
 		return true
 	}
-	s := strings.ToLower(err.Error())
 	for _, marker := range []string{
 		"connection reset", "connection refused", "broken pipe",
 		"unexpected eof", "eof", "wsarecv", "forcibly closed",
@@ -487,6 +511,7 @@ func IsTransientLLMError(err error) bool {
 		"stream ended without done", "bad gateway", "service unavailable",
 		"gateway timeout", "tls handshake timeout", "no such host",
 		"i/o timeout", "server closed idle connection",
+		"timeout awaiting response headers",
 	} {
 		if strings.Contains(s, marker) {
 			return true
@@ -938,14 +963,14 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	}
 
 	// ParseSSEStream owns reading; we wrap its output to close the body on
-	// finish and to detect stalls (no SSE data for streamStallTimeout).
+	// finish and to detect stalls (no SSE data for stall duration).
 	raw := ParseSSEStream(streamCtx, resp.Body)
 	out := make(chan StreamEvent, 16)
 	go func() {
 		defer cancelStream()
 		defer resp.Body.Close()
 		defer close(out)
-		stall := streamStallTimeout
+		stall := c.effectiveStreamStallTimeout()
 		timer := time.NewTimer(stall)
 		defer timer.Stop()
 		for {
@@ -975,4 +1000,21 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 		}
 	}()
 	return out, nil
+}
+
+// effectiveStreamStallTimeout scales the idle-SSE watchdog with llm.timeout_s.
+// Fixed 120s was too aggressive for large local models behind ngrok (long
+// quiet gaps while the server is still generating). Cap at 5 minutes.
+func (c *OpenAIClient) effectiveStreamStallTimeout() time.Duration {
+	stall := streamStallTimeout
+	if c == nil || c.requestTimeout <= 0 {
+		return stall
+	}
+	if scaled := c.requestTimeout / 5; scaled > stall {
+		stall = scaled
+	}
+	if stall > 5*time.Minute {
+		stall = 5 * time.Minute
+	}
+	return stall
 }

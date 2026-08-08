@@ -3,7 +3,6 @@ package agent
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/schema"
@@ -34,6 +33,9 @@ func IsKnownProfile(name string) bool {
 //
 // CustomTools / SystemPromptOverride / provider selection are never
 // touched here (named agents: and --provider keep priority).
+//
+// LLMStepTimeout is intentionally NOT set by profiles — llm.timeout_s in
+// .orchestra.yml is the single source of truth (see Core.prepareAgentLaunch).
 func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 	if opts == nil {
 		return fmt.Errorf("agent: ApplyProfile: opts is nil")
@@ -55,8 +57,6 @@ func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 		setInt(&opts.MaxFinalFailures, 3, preserveNonZero)
 		setInt(&opts.MaxToolErrorRepeats, 4, preserveNonZero)
 		setInt(&opts.CompactThresholdPct, 60, preserveNonZero)
-		setDuration(&opts.LLMStepTimeout, 60*time.Second, preserveNonZero)
-		// Lightweight tool surface: no browser; LSP stripped in computeToolDefs.
 		opts.AllowBrowser = false
 	case ProfilePrecision:
 		setInt(&opts.MaxSteps, 36, preserveNonZero)
@@ -65,7 +65,6 @@ func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 		setInt(&opts.MaxFinalFailures, 8, preserveNonZero)
 		setInt(&opts.MaxToolErrorRepeats, 8, preserveNonZero)
 		setInt(&opts.CompactThresholdPct, 75, preserveNonZero)
-		setDuration(&opts.LLMStepTimeout, 300*time.Second, preserveNonZero)
 		if opts.ResponseFormat == nil {
 			opts.ResponseFormat = &llm.ResponseFormat{
 				Type:       "json_schema",
@@ -78,13 +77,6 @@ func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 }
 
 func setInt(dst *int, v int, preserveNonZero bool) {
-	if preserveNonZero && *dst > 0 {
-		return
-	}
-	*dst = v
-}
-
-func setDuration(dst *time.Duration, v time.Duration, preserveNonZero bool) {
 	if preserveNonZero && *dst > 0 {
 		return
 	}

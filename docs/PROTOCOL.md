@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `6`
+- **`protocol.ProtocolVersion`**: `7`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `12`
 
@@ -212,7 +212,7 @@ Response `result`:
 - `mode` (string, optional) — имя built-in режима (`build`, `plan`, `explore`, …) или custom-агента, определённого в `agents:` в `.orchestra.yml`; пустая строка → поведение `build` по умолчанию.
 - `apply_output` (string, optional; default=`disk`) — `disk` (запись/dry-run как раньше) или `patch` (экспорт unified `.patch`, диск не трогается; mutually exclusive с `apply=true`).
 - `patch_path` (string, optional) — путь для `.patch` при `apply_output=patch` (иначе `apply.patch_dir` / `.orchestra/patches/orchestra-<ts>.patch`).
-- `profile` (string, optional) — adaptive preset `fast` | `precision` (см. `docs/architecture/tui-pipeline-to-be.md`).
+- `profile` (string, optional) — adaptive preset `fast` | `precision` (см. `docs/architecture/tui-pipeline.md` §9).
 
 > **Skills:** CLI также принимает `--skill <name>`, который загружает file-based agent definition из `<project>/.orchestra/skills/<name>.md`. Скилл резолвится в синтетический `AgentDefinition` и идёт через тот же путь `--mode`, поэтому JSON-RPC surface не меняется — это CLI-side loader поверх существующего `AgentOptions`. См. `docs/skills.md`.
 
@@ -303,7 +303,7 @@ Response `result`: `{ "sessions": [ { "id", "title", "model", "created_at", "upd
 - `session_id` (string)
 - `title` (string, optional)
 - `model` (string, optional)
-- `ui_messages` (array) — см. schema v2 в `docs/architecture/tui-pipeline-to-be.md`
+- `ui_messages` (array) — см. schema v3 в `docs/architecture/tui-chat-segments.md` и `docs/architecture/tui-pipeline.md` §3.
 
 Response `result`: `{ "session_id": "...", "saved": true }`
 
@@ -391,6 +391,21 @@ Response `result`:
 
 - `session_id` (string)
 - `messages` (array of `{role, content}`)
+
+### `session.rewind`
+
+Откатывает UI-проекцию и LLM history к user-checkpoint (сообщения после индекса удаляются; assistant-ответы после checkpoint тоже).
+
+`params`:
+
+- `session_id` (string)
+- `ui_message_index` (int) — inclusive; должен указывать на `role=user` в `ui_messages`
+
+Response `result`:
+
+- `session_id` (string)
+- `ui_messages` (int)
+- `history_messages` (int)
 
 ### `session.close`
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/protocol"
 	"github.com/orchestra/orchestra/internal/tools"
 )
@@ -37,6 +38,7 @@ func (a *Agent) finalizeOnMaxSteps(ctx context.Context, history []llm.Message, s
 		ApplyResponse:    resp,
 		Todos:            a.todos,
 		MaxStepsExceeded: true,
+		StopReason:       "max_steps",
 	}, true
 }
 
@@ -70,6 +72,25 @@ func (a *Agent) handleFinalStep(
 	}
 
 	finalPatches := append([]patches.Patch{}, step.Final.Patches...)
+
+	if a.opts.Mode == ModeOrchestra && len(finalPatches) > 0 {
+		var blocked []string
+		planPath := a.effectivePlanPath()
+		for _, p := range finalPatches {
+			if !plan.IsWritablePath(p.Path, planPath) {
+				blocked = append(blocked, p.Path)
+			}
+		}
+		if len(blocked) > 0 {
+			msg := fmt.Sprintf(
+				"orchestra lead cannot apply final.patches to production files (%s). Delegate code changes via task(subagent_type=worker, tier=focused, prompt=<WorkOrder JSON>).",
+				strings.Join(blocked, ", "),
+			)
+			*history = append(*history, llm.Message{Role: llm.RoleUser, Content: msg})
+			emitStepDone("invalid")
+			return finalStepOutcome{Retry: true}, nil
+		}
+	}
 
 	if len(finalPatches) > 0 {
 		a.logf("final received patches=%d -> applying to staging overlay", len(finalPatches))
@@ -109,10 +130,11 @@ func (a *Agent) handleFinalStep(
 		}
 		emitStepDone("final")
 		return finalStepOutcome{Result: &Result{
-			Steps:   steps,
-			Patches: finalPatches,
-			Applied: false,
-			Todos:   a.todos,
+			Steps:      steps,
+			Patches:    finalPatches,
+			Applied:    false,
+			Todos:      a.todos,
+			StopReason: a.computeStopReason(false),
 		}}, nil
 	}
 
@@ -172,7 +194,18 @@ func (a *Agent) handleFinalStep(
 		Applied:       a.opts.Apply,
 		ApplyResponse: resp,
 		Todos:         a.todos,
+		StopReason:    a.computeStopReason(false),
 	}}, nil
+}
+
+func (a *Agent) computeStopReason(maxSteps bool) string {
+	if maxSteps {
+		return "max_steps"
+	}
+	if countOpenTodos(a.todos) > 0 {
+		return "partial"
+	}
+	return "completed"
 }
 
 // commitStagedAfterMutatingTool flushes one staged write/edit to disk immediately

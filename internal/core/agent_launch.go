@@ -293,11 +293,15 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		opts.CompactionContextTokens = ctxTok
 	}
 
-	// preserveNonZero=true: agent.max_steps / timeouts from .orchestra.yml win over
+	// preserveNonZero=true: agent.max_steps from .orchestra.yml wins over
 	// profile presets (fast=10, precision=36). Otherwise a selected profile silently
 	// undoes max_steps: 200 and the turn "falls" after 10–36 steps.
 	if err := agent.ApplyProfile(&opts, profileName, true); err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
+	}
+	// llm.timeout_s always wins over any profile/default residue.
+	if t := time.Duration(c.cfg.LLM.TimeoutS) * time.Second; t > 0 {
+		opts.LLMStepTimeout = t
 	}
 	if customOpts.systemPromptOverride != "" {
 		opts.SystemPromptOverride = customOpts.systemPromptOverride
@@ -351,6 +355,13 @@ func (c *Core) autoRouterClient(logger *llm.Logger) llm.Client {
 	model := strings.TrimSpace(c.cfg.AutoRouter.Model)
 	if provider == "" {
 		provider = strings.TrimSpace(c.cfg.LLM.Router.FastProvider)
+	}
+	// Same fallback as compaction: use named providers.fast when present so
+	// mode=agent classification does not burn the main (slow) model.
+	if provider == "" && model == "" {
+		if _, ok := c.cfg.FindProvider("fast"); ok {
+			provider = "fast"
+		}
 	}
 	if provider == "" && model == "" {
 		return c.llmClient
@@ -469,6 +480,8 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 	out.ProviderLabel = providerLabelOf(c.cfg)
 	out.ModelLabel = c.cfg.LLM.Model
 	out.MaxWorkerRetries = c.cfg.Orchestra.ResolvedMaxWorkerRetries()
+	out.LLMStepTimeout = time.Duration(c.cfg.LLM.TimeoutS) * time.Second
+	out.MaxStepsCap = c.cfg.Agent.ResolvedChildMaxSteps()
 	if c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm {
 		out.Caps.Web = true
 	}
