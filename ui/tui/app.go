@@ -50,6 +50,13 @@ type Config struct {
 }
 
 // App is the root Bubble Tea Model.
+// pendingPermReq is one permission/request waiting in the TUI FIFO queue.
+type pendingPermReq struct {
+	Tool        string
+	Description string
+	Kind        string
+}
+
 type App struct {
 	cfg       Config
 	session   *state.Session
@@ -80,7 +87,8 @@ type App struct {
 
 	chrome chromeMetrics
 
-	permModal     *view.Modal         // non-nil while an exec.run permission request is pending
+	permModal     *view.Modal         // non-nil while the front permission request is shown
+	permQueue     []pendingPermReq    // FIFO of permission requests waiting behind permModal
 	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
 
 	slashPalette  *view.SlashPalette

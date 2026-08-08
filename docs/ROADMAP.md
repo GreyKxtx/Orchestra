@@ -334,9 +334,22 @@
 
 ## Что делаем дальше
 
-Фазы 0–10 (MVP + Planner–Worker) закрыты. Следующий фокус:
+Фазы 0–10 (MVP + Planner–Worker) закрыты. Фаза 1 hardening (grammar / classify / logging) — в коде.
 
-1. **Коммиты** — разобрать `git status` на осмысленные PR/коммиты.
-2. **Manual TUI smoke** — LSP install modal + Worker diagnostics (см. `ui/tui/README.md`).
-3. **Real LLM E2E** — прогон `ORCH_E2E_LLM=1` на локальной модели.
-4. **Фаза 1 roadmap** (опционально) — grammar-constrained sampling, unified retry classifier.
+Следующий фокус:
+
+1. **Manual TUI smoke** — LSP install modal + Worker diagnostics (см. `ui/tui/README.md`).
+2. **Real LLM E2E** — прогон `ORCH_E2E_LLM=1` на локальной модели.
+3. **Maiden voyage** — полевой тест `orchestra chat` + отчёт (см. контрольную точку выше).
+
+### Фаза 1 — knobs в `.orchestra.yml`
+
+```yaml
+llm:
+  response_format_type: json_schema   # или json_object
+  supports_json_schema: true          # false = тихо omit; omit = auto-detect
+  prompt_family: local                # или qwen|chatml|llama|llama-instruct (→ local)
+```
+
+События в `.orchestra/llm_log.jsonl`: `tool_call`, `tool_result`, `step.classified`
+(`kind`: `validation_error` | `tool_denied` | `tool_failed` | `resolve_failed` | `apply_recoverable`).

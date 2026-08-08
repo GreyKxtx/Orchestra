@@ -21,6 +21,7 @@ func BuildSystemPromptForMode(mode, family string) string {
 	if mode == "" {
 		mode = "build"
 	}
+	family = NormalizePromptFamily(family)
 	if family != "" && family != "default" {
 		if s := loadPromptFile(mode + "-" + family + ".txt"); s != "" {
 			return s

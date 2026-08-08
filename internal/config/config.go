@@ -24,6 +24,7 @@ type LLMConfig struct {
 	// PromptFamily selects a model-family-specific system prompt template.
 	// Empty = auto-detect from Model (qwen/llama/… → "local" → edit-first prompts).
 	// Supported: "anthropic", "gpt", "gemini", "kimi", "local", "default".
+	// Aliases: "qwen", "chatml", "llama", "llama-instruct" → "local".
 	PromptFamily string `yaml:"prompt_family"`
 
 	// Multimodal must be set true for this LLM to receive image content
@@ -37,6 +38,13 @@ type LLMConfig struct {
 	// "json_schema" — strict schema-constrained JSON (requires provider support).
 	// Set "json_object" for vLLM/lm-studio; leave empty for cloud APIs.
 	ResponseFormatType string `yaml:"response_format_type"`
+
+	// SupportsJSONSchema controls whether response_format type=json_schema is sent.
+	// nil (omit in YAML) — send when requested; auto-disable for the process if the
+	// backend returns an unsupported response_format error.
+	// true — always send json_schema when ResponseFormatType/agent requests it.
+	// false — silently omit json_schema (fall back to unconstrained / json_object).
+	SupportsJSONSchema *bool `yaml:"supports_json_schema,omitempty"`
 
 	// ToolChoice controls the OpenAI tool_choice field when tools are present.
 	//   "" / "auto" — send "auto" (default for most providers)
@@ -213,6 +221,10 @@ type LSPConfig struct {
 	// AutoInstall controls language-server provisioning: ask | true | false.
 	// Empty default = true (auto-install after workspace language detect).
 	AutoInstall string `yaml:"auto_install,omitempty"`
+	// EnsureSyncBudgetMS: wait this long for sync install before continuing
+	// async (empty diags + diagnostics_pending). Default 2500. 0 = always
+	// async after consent; negative = always wait (legacy sync).
+	EnsureSyncBudgetMS int `yaml:"ensure_sync_budget_ms,omitempty"`
 }
 
 // EffectiveAutoInstall returns ask|true|false (empty → true).
@@ -639,7 +651,8 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			Temperature: 0.7,
 			MaxTokens:   4096,
 			TimeoutS:    600,
-			// ResponseFormatType: "json_object" — раскомментируй если провайдер поддерживает
+			// ResponseFormatType: "json_schema" — grammar-constrained sampling (если провайдер умеет)
+			// SupportsJSONSchema: false — тихо не слать json_schema (vLLM без support)
 		},
 		Agent: AgentConfig{
 			MaxSteps:            128,

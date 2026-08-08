@@ -1,6 +1,9 @@
 package prompt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDetectPromptFamily(t *testing.T) {
 	cases := []struct {
@@ -29,4 +32,25 @@ func TestResolvePromptFamily(t *testing.T) {
 	if got := ResolvePromptFamily("gpt", "qwen/qwen3"); got != "gpt" {
 		t.Fatalf("explicit wins: got %q", got)
 	}
+	for _, alias := range []string{"qwen", "chatml", "llama", "llama-instruct"} {
+		if got := ResolvePromptFamily(alias, "claude-sonnet"); got != "local" {
+			t.Fatalf("alias %q → %q want local", alias, got)
+		}
+	}
+}
+
+func TestBuildSystemPromptForMode_AliasUsesLocal(t *testing.T) {
+	local := BuildSystemPromptForMode("build", "local")
+	viaAlias := BuildSystemPromptForMode("build", "qwen")
+	if local == "" || viaAlias != local {
+		t.Fatalf("qwen alias should load build-local.txt")
+	}
+	if !containsPreferSearchReplace(local) {
+		t.Fatalf("build-local.txt missing search_replace preference")
+	}
+}
+
+func containsPreferSearchReplace(s string) bool {
+	return strings.Contains(s, "ПРЕДПОЧИТАЙ file.search_replace") ||
+		strings.Contains(s, "предпочтительно")
 }

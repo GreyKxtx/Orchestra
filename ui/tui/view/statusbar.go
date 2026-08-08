@@ -19,7 +19,9 @@ type StatusBar struct {
 	spinFrame  int
 	project    string
 	profile    string // fast | precision | "" (default)
-	lspStatus  string // off | idle | active
+	lspStatus  string // off | idle | installing | active
+	lspPercent int    // 0–100 while installing; 0 = omit
+	lspHint    string // e.g. gopls
 	modelCtx   int
 	tokensUsed int
 	tokensMax  int
@@ -43,8 +45,12 @@ func (s *StatusBar) AdvanceSpin()              { s.spinFrame = (s.spinFrame + 1)
 func (s *StatusBar) SetModel(_ string)         {} // model shown in input box row
 func (s *StatusBar) SetProject(p string)       { s.project = p }
 func (s *StatusBar) SetProfile(p string)       { s.profile = p }
-func (s *StatusBar) SetLSPStatus(st string)    { s.lspStatus = st }
-func (s *StatusBar) SetModelCtx(n int)         { s.modelCtx = n }
+func (s *StatusBar) SetLSPStatus(st string) { s.lspStatus = st }
+func (s *StatusBar) SetLSPProgress(percent int, id string) {
+	s.lspPercent = percent
+	s.lspHint = id
+}
+func (s *StatusBar) SetModelCtx(n int) { s.modelCtx = n }
 func (s *StatusBar) SetShowCost(v bool)        { s.showCost = v }
 func (s *StatusBar) SetTokens(used, max int)   { s.tokensUsed = used; s.tokensMax = max }
 func (s *StatusBar) SetTokensEstimated(v bool) { s.tokensEst = v }
@@ -215,7 +221,16 @@ func (s *StatusBar) renderLSPPart(t theme.Theme) string {
 	case "active":
 		return lipgloss.NewStyle().Foreground(t.Success()).Render("LSP ●")
 	case "installing":
-		return lipgloss.NewStyle().Foreground(t.Warning()).Render("LSP ◐")
+		label := "LSP ◐"
+		if s.lspPercent > 0 {
+			label = fmt.Sprintf("LSP ◐ %d%%", s.lspPercent)
+			if s.lspHint != "" {
+				label = fmt.Sprintf("LSP ◐ %s %d%%", s.lspHint, s.lspPercent)
+			}
+		} else if s.lspHint != "" {
+			label = fmt.Sprintf("LSP ◐ %s", s.lspHint)
+		}
+		return lipgloss.NewStyle().Foreground(t.Warning()).Render(label)
 	case "idle":
 		return lipgloss.NewStyle().Foreground(t.Success()).Render("LSP ◐")
 	default:

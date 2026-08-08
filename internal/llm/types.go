@@ -246,11 +246,41 @@ type ResponseFormat struct {
 	SchemaName string
 }
 
+// GrammarFromJSONSchema builds a ResponseFormat for grammar-constrained sampling
+// via OpenAI-compatible response_format type=json_schema.
+func GrammarFromJSONSchema(schema []byte, name string) *ResponseFormat {
+	if len(schema) == 0 {
+		return nil
+	}
+	if name == "" {
+		name = "response"
+	}
+	return &ResponseFormat{
+		Type:       "json_schema",
+		Schema:     schema,
+		SchemaName: name,
+	}
+}
+
 // CompleteRequest is a single chat completion request.
 type CompleteRequest struct {
-	Messages       []Message
-	Tools          []ToolDef
-	ResponseFormat *ResponseFormat // optional; nil = no constraint
+	Messages []Message
+	Tools    []ToolDef
+	// ResponseFormat, if non-nil, is sent as response_format (when the client
+	// capability allows it). Prefer this for explicit json_object / json_schema.
+	ResponseFormat *ResponseFormat
+	// ResponseGrammar is a convenience alias for JSON Schema grammar-constrained
+	// sampling. When ResponseFormat is nil and ResponseGrammar is non-empty, the
+	// client treats it as Type=json_schema (see GrammarFromJSONSchema).
+	ResponseGrammar []byte
+}
+
+// EffectiveResponseFormat returns ResponseFormat, or derives one from ResponseGrammar.
+func (r CompleteRequest) EffectiveResponseFormat() *ResponseFormat {
+	if r.ResponseFormat != nil {
+		return r.ResponseFormat
+	}
+	return GrammarFromJSONSchema(r.ResponseGrammar, "agent_step")
 }
 
 // CompleteResponse is a single assistant turn (content and/or tool calls).

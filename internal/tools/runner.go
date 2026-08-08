@@ -287,6 +287,7 @@ func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 		LazyStart:            c.LazyStart,
 		IdleTTLSeconds:       c.IdleTTLSeconds,
 		AutoInstall:          c.AutoInstall,
+		EnsureSyncBudgetMS:   c.EnsureSyncBudgetMS,
 	}
 }
 
@@ -320,12 +321,20 @@ func mergeLSPConfig(workspaceRoot string, c config.LSPConfig) lsp.LSPConfig {
 
 func (r *Runner) WorkspaceRoot() string { return r.workspaceRoot }
 
-// LSPStatus returns off | idle | active for status UI.
+// LSPStatus returns off | idle | installing | active for status UI.
 func (r *Runner) LSPStatus() string {
 	if r == nil || r.lspManager == nil {
 		return "off"
 	}
 	return r.lspManager.RuntimeStatus()
+}
+
+// LSPInstallProgress returns current ensure progress for health/UI, or nil.
+func (r *Runner) LSPInstallProgress() *lsp.InstallProgress {
+	if r == nil || r.lspManager == nil {
+		return nil
+	}
+	return r.lspManager.GetInstallProgress()
 }
 
 // SetLSPInstallConsent wires permission/request for missing language servers.

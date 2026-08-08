@@ -44,6 +44,7 @@ func CanEnsure(id string) bool {
 }
 
 // Ensure downloads/builds the language server into ~/.orchestra/lsp/<id>/<ver>/.
+// Progress callbacks may be attached via WithProgress(ctx, fn).
 func Ensure(ctx context.Context, idOrLang string) error {
 	e, ok := registry.ByID(idOrLang)
 	if !ok {
@@ -57,6 +58,7 @@ func Ensure(ctx context.Context, idOrLang string) error {
 	}
 
 	if _, ok := findCacheBinary(e.ID, e.Version, e.BinaryName); ok {
+		reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "done", Percent: 100, Message: "already cached"})
 		return nil
 	}
 	dir, err := cacheVersionDir(e.ID, e.Version)
@@ -76,12 +78,44 @@ func Ensure(ctx context.Context, idOrLang string) error {
 		defer cancel()
 	}
 
-	if err := activeInstaller.Install(ctx, e, dir); err != nil {
+	reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "starting", Percent: 0, Message: "starting install"})
+	reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "installing", Percent: 10, Message: "installing " + e.ID})
+
+	// Heartbeat while Install blocks (go install / npm have no reliable % stream).
+	stopBeat := make(chan struct{})
+	go func() {
+		pct := 15
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopBeat:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if pct < 85 {
+					pct += 5
+				}
+				reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "installing", Percent: pct, Message: "installing " + e.ID + "…"})
+			}
+		}
+	}()
+
+	err = activeInstaller.Install(ctx, e, dir)
+	close(stopBeat)
+	if err != nil {
+		reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "error", Percent: -1, Message: err.Error()})
 		return err
 	}
+
+	reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "verifying", Percent: 90, Message: "verifying binary"})
 	if _, ok := findCacheBinary(e.ID, e.Version, e.BinaryName); !ok {
-		return fmt.Errorf("provision: ensure %s finished but binary missing in %s", e.ID, dir)
+		err := fmt.Errorf("provision: ensure %s finished but binary missing in %s", e.ID, dir)
+		reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "error", Percent: -1, Message: err.Error()})
+		return err
 	}
+	reportProgress(ctx, ProgressEvent{ID: e.ID, Phase: "done", Percent: 100, Message: "ready"})
 	return nil
 }
 

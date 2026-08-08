@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 
 	"github.com/orchestra/orchestra/internal/permission"
 )
@@ -18,11 +19,16 @@ type (
 
 // rpcPermissionRequester routes a PermissionRequest through the
 // server-initiated request function the RPC handler injects.
+// Concurrent callers are serialized (FIFO) so shell + lsp.install
+// consent never race on the wire / TUI modal.
 type rpcPermissionRequester struct {
 	requestFn func(ctx context.Context, method string, params any, result any) error
+	mu        sync.Mutex
 }
 
 func (r *rpcPermissionRequester) RequestPermission(ctx context.Context, req permission.Request) (permission.Response, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var resp permission.Response
 	if r.requestFn == nil {
 		return permission.Response{Approved: false}, nil

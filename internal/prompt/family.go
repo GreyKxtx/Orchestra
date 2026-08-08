@@ -2,10 +2,27 @@ package prompt
 
 import "strings"
 
+// NormalizePromptFamily maps user-facing aliases onto embed template families.
+//
+// ROADMAP aliases: qwen / chatml / llama / llama-instruct → local (edit-first prompts).
+func NormalizePromptFamily(family string) string {
+	switch strings.ToLower(strings.TrimSpace(family)) {
+	case "":
+		return ""
+	case "qwen", "chatml", "llama", "llama-instruct", "llama_instruct":
+		return "local"
+	default:
+		return family
+	}
+}
+
 // ResolvePromptFamily returns explicit family if set, otherwise DetectPromptFamily(model).
+// Explicit aliases (qwen/chatml/llama…) are normalised to embed template names.
 func ResolvePromptFamily(explicit, modelName string) string {
 	if explicit != "" {
-		return explicit
+		if n := NormalizePromptFamily(explicit); n != "" {
+			return n
+		}
 	}
 	return DetectPromptFamily(modelName)
 }
@@ -41,6 +58,7 @@ func DetectPromptFamily(modelName string) string {
 		strings.Contains(lower, "yi-") ||
 		strings.Contains(lower, "nemotron") ||
 		strings.Contains(lower, "lmstudio") ||
+		strings.Contains(lower, "chatml") ||
 		strings.Contains(lower, "local"):
 		return "local"
 	default:

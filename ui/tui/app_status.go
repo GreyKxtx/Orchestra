@@ -20,7 +20,9 @@ type chromeMetrics struct {
 	sessionCostUSD    float64 // accumulated spend (paid providers)
 	modelContextLimit int     // full model window (num_ctx / max_model_len)
 	promptBudgetTokens int    // prompt room after max_tokens reserve — ctx bar denominator
-	lspStatus         string  // off | idle | active
+	lspStatus         string  // off | idle | installing | active
+	lspInstallPercent int
+	lspInstallID      string
 	showCost          bool
 }
 
@@ -28,6 +30,7 @@ type chromeMetrics struct {
 func (a *App) syncStatusBar() {
 	a.statusBar.SetProfile(a.cfg.Profile)
 	a.statusBar.SetLSPStatus(a.chrome.lspStatus)
+	a.statusBar.SetLSPProgress(a.chrome.lspInstallPercent, a.chrome.lspInstallID)
 	used := a.chrome.promptTokensUsed
 	if a.turn.ShowBusySpinner() && a.chrome.livePromptTokens > 0 {
 		used = a.chrome.livePromptTokens
@@ -39,7 +42,9 @@ func (a *App) syncStatusBar() {
 }
 
 type lspStatusMsg struct {
-	status string
+	status  string
+	percent int
+	id      string
 }
 
 // refreshLSPStatusCmd polls core.health once for current lsp_status.
@@ -49,16 +54,17 @@ func (a *App) refreshLSPStatusCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		st, err := rpc.QueryLSPStatus(context.Background())
-		if err != nil || st == "" {
+		st, pct, id, err := rpc.QueryLSPStatusDetail(context.Background())
+		if err != nil {
 			return nil
 		}
-		return lspStatusMsg{status: st}
+		return lspStatusMsg{status: st, percent: pct, id: id}
 	}
 }
 
 // awaitLSPWarmupCmd polls health until active/off or ~10s — core WarmupLSP
-// starts servers asynchronously after initialize.
+// starts servers asynchronously after initialize. While installing, keeps
+// polling so progress % can update the status bar.
 func (a *App) awaitLSPWarmupCmd() tea.Cmd {
 	rpc := a.rpc
 	if rpc == nil {
@@ -66,18 +72,18 @@ func (a *App) awaitLSPWarmupCmd() tea.Cmd {
 	}
 	return func() tea.Msg {
 		deadline := time.Now().Add(10 * time.Second)
-		last := ""
+		last := lspStatusMsg{}
 		for {
-			st, err := rpc.QueryLSPStatus(context.Background())
+			st, pct, id, err := rpc.QueryLSPStatusDetail(context.Background())
 			if err == nil && st != "" {
-				last = st
+				last = lspStatusMsg{status: st, percent: pct, id: id}
 				if st == "active" || st == "off" {
-					return lspStatusMsg{status: st}
+					return last
 				}
 			}
 			if time.Now().After(deadline) {
-				if last != "" {
-					return lspStatusMsg{status: last}
+				if last.status != "" {
+					return last
 				}
 				return nil
 			}

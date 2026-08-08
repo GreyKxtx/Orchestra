@@ -9,14 +9,18 @@ import (
 )
 
 // ErrorKind classifies the type of failure that occurred in the agent loop.
+// String() returns ROADMAP names: validation_error, tool_denied, tool_failed,
+// resolve_failed, apply_recoverable.
 type ErrorKind int
 
 const (
-	ErrorKindNone        ErrorKind = iota
-	ErrorKindDenied                // tool call was blocked by policy
-	ErrorKindToolError             // tool call returned an error
-	ErrorKindFinalFailed           // resolve/apply of final patches failed
-	ErrorKindInvalid               // LLM produced invalid JSON/schema output
+	ErrorKindNone ErrorKind = iota
+	ErrorKindDenied           // tool_denied — blocked by policy
+	ErrorKindToolError        // tool_failed — tool returned an error
+	ErrorKindFinalFailed      // legacy alias for resolve_failed
+	ErrorKindInvalid          // validation_error — invalid JSON/schema output
+	ErrorKindResolveFailed    // resolve_failed — staged patch resolve failed
+	ErrorKindApplyRecoverable // apply_recoverable — StaleContent / AmbiguousMatch
 )
 
 // CircuitBreaker tracks per-kind failure counters and opens (trips) when any
@@ -30,13 +34,15 @@ type CircuitBreaker struct {
 	// deniedPerTool tracks repeated denied calls per tool name.
 	deniedPerTool       map[string]int
 	consecutiveToolErrs int
-	finalFailures       int
+	finalFailures       int // resolve + apply_recoverable share this budget
 	invalidOutputs      int
 
 	// successfulCallKeys tracks (tool+argsHash) → count for dedup detection.
 	successfulCallKeys map[string]int
 	// readOnlyCallKeys tracks repeated identical read-only tool calls (doom-loop guard).
 	readOnlyCallKeys map[string]int
+
+	onClassified OnClassifiedFunc
 }
 
 const (
@@ -129,12 +135,17 @@ func NewCircuitBreaker(maxDenied, maxToolErr, maxFinal, maxInvalid int) *Circuit
 
 // RecordDenied records a denied tool call and returns an error if the circuit trips.
 func (cb *CircuitBreaker) RecordDenied(toolName string) *protocol.Error {
+	return cb.Record(ErrorKindDenied, RecordMeta{ToolName: toolName})
+}
+
+func (cb *CircuitBreaker) recordDenied(toolName string) *protocol.Error {
 	cb.deniedPerTool[toolName]++
 	if cb.deniedPerTool[toolName] > cb.maxDenied {
 		return protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly requested denied tool", map[string]any{
 			"tool":        toolName,
 			"count":       cb.deniedPerTool[toolName],
 			"max_repeats": cb.maxDenied,
+			"kind":        ErrorKindDenied.String(),
 		})
 	}
 	return nil
@@ -143,12 +154,17 @@ func (cb *CircuitBreaker) RecordDenied(toolName string) *protocol.Error {
 // RecordToolError records a consecutive tool call error and returns an error if the circuit trips.
 // Successful tool calls should reset consecutive errors via ResetToolErrors.
 func (cb *CircuitBreaker) RecordToolError(toolName string) *protocol.Error {
+	return cb.Record(ErrorKindToolError, RecordMeta{ToolName: toolName})
+}
+
+func (cb *CircuitBreaker) recordToolError(toolName string) *protocol.Error {
 	cb.consecutiveToolErrs++
 	if cb.consecutiveToolErrs > cb.maxToolErr {
 		return protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly produced failing tool calls", map[string]any{
 			"count":       cb.consecutiveToolErrs,
 			"max_repeats": cb.maxToolErr,
 			"last_tool":   toolName,
+			"kind":        ErrorKindToolError.String(),
 		})
 	}
 	return nil
@@ -176,13 +192,38 @@ func (cb *CircuitBreaker) ResetDeniedForTool(toolName string) {
 }
 
 // RecordFinalFailure records a failed resolve/apply attempt and returns an error if the circuit trips.
+// Prefer RecordResolveFailure / RecordApplyRecoverable when the failure kind is known.
 func (cb *CircuitBreaker) RecordFinalFailure(lastErr error) *protocol.Error {
+	kind := Classify(lastErr, ErrorKindResolveFailed)
+	return cb.Record(kind, RecordMeta{Err: lastErr})
+}
+
+// RecordResolveFailure records a staged-patch resolve failure.
+func (cb *CircuitBreaker) RecordResolveFailure(lastErr error) *protocol.Error {
+	return cb.Record(ErrorKindResolveFailed, RecordMeta{Err: lastErr})
+}
+
+// RecordApplyRecoverable records StaleContent / AmbiguousMatch apply failures.
+func (cb *CircuitBreaker) RecordApplyRecoverable(lastErr error) *protocol.Error {
+	return cb.Record(ErrorKindApplyRecoverable, RecordMeta{Err: lastErr})
+}
+
+func (cb *CircuitBreaker) recordResolveFailure(lastErr error) *protocol.Error {
+	return cb.bumpFinal(lastErr, ErrorKindResolveFailed)
+}
+
+func (cb *CircuitBreaker) recordApplyRecoverable(lastErr error) *protocol.Error {
+	return cb.bumpFinal(lastErr, ErrorKindApplyRecoverable)
+}
+
+func (cb *CircuitBreaker) bumpFinal(lastErr error, kind ErrorKind) *protocol.Error {
 	cb.finalFailures++
 	if cb.finalFailures > cb.maxFinal {
 		return protocol.NewError(protocol.InvalidLLMOutput, "failed to resolve/apply patches repeatedly", map[string]any{
 			"count":        cb.finalFailures,
 			"max_failures": cb.maxFinal,
 			"last_error":   agentformat.ErrString(lastErr),
+			"kind":         kind.String(),
 		})
 	}
 	return nil
@@ -222,11 +263,16 @@ func (cb *CircuitBreaker) RecordSuccessfulCall(toolName string, inputBytes []byt
 
 // RecordInvalid records an invalid LLM output and returns an error if the circuit trips.
 func (cb *CircuitBreaker) RecordInvalid() *protocol.Error {
+	return cb.Record(ErrorKindInvalid, RecordMeta{})
+}
+
+func (cb *CircuitBreaker) recordInvalid() *protocol.Error {
 	cb.invalidOutputs++
 	if cb.invalidOutputs > cb.maxInvalid {
 		return protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly produced invalid output", map[string]any{
 			"count": cb.invalidOutputs,
 			"max":   cb.maxInvalid,
+			"kind":  ErrorKindInvalid.String(),
 		})
 	}
 	return nil

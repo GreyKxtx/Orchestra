@@ -414,7 +414,17 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 			if kind == "" && ev.PermReq.Tool == "lsp.install" {
 				kind = "lsp.install"
 			}
-			a.permModal = view.NewPermissionModal(ev.PermReq.Tool, ev.PermReq.Description, kind)
+			req := pendingPermReq{
+				Tool:        ev.PermReq.Tool,
+				Description: ev.PermReq.Description,
+				Kind:        kind,
+			}
+			if a.permModal != nil {
+				// FIFO: show after the current modal is answered.
+				a.permQueue = append(a.permQueue, req)
+				return
+			}
+			a.permModal = view.NewPermissionModal(req.Tool, req.Description, req.Kind)
 			a.layout()
 		}
 	case rpcclient.EventQuestionAsked:

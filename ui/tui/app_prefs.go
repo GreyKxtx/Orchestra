@@ -7,6 +7,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/theme"
+	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
 func (a *App) agentRunOptions() rpcclient.AgentRunOptions {
@@ -73,7 +74,7 @@ func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 		a.showToast("tool · always: " + tool)
 	}
 	if approved && isLSP {
-		a.chrome.lspStatus = "idle"
+		a.chrome.lspStatus = "installing"
 		a.showToast("ставлю language server…")
 		a.syncStatusBar()
 	}
@@ -85,6 +86,25 @@ func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 			Always:   approved && sessionAllow && isLSP,
 		})
 	}
+	// Show next queued permission modal (FIFO: shell ↔ lsp.install).
+	a.showNextPermissionModal()
+}
+
+func (a *App) showNextPermissionModal() {
+	if a.permModal != nil || len(a.permQueue) == 0 {
+		return
+	}
+	next := a.permQueue[0]
+	a.permQueue = a.permQueue[1:]
+	if a.toolAllowedThisSession(next.Tool) {
+		if a.rpc != nil {
+			a.rpc.RespondPermission(true)
+		}
+		a.showNextPermissionModal()
+		return
+	}
+	a.permModal = view.NewPermissionModal(next.Tool, next.Description, next.Kind)
+	a.layout()
 }
 
 func (a *App) persistLSPAutoInstall(on bool) error {

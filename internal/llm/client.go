@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -56,6 +57,11 @@ type OpenAIClient struct {
 	streamClient       *http.Client // no Timeout — relies on context cancellation for SSE connections
 	requestTimeout     time.Duration // llm.timeout_s — also scales stream stall watchdog
 	logger             *Logger
+
+	// supportsJSONSchema: nil = unknown (send when requested; auto-disable on reject);
+	// non-nil bool = explicit config. Mutated under supportsMu when auto-detect trips.
+	supportsJSONSchema *bool
+	supportsMu         sync.Mutex
 }
 
 // newLLMTransport returns an HTTP transport tuned for remote/tunnelled LLM
@@ -101,6 +107,11 @@ func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
 	}
 	ctxLen := contextLenFromExtra(cfg.ExtraBody)
 	transport := newLLMTransport(timeout)
+	var supportsJSON *bool
+	if cfg.SupportsJSONSchema != nil {
+		v := *cfg.SupportsJSONSchema
+		supportsJSON = &v
+	}
 	return &OpenAIClient{
 		baseURL:            cfg.APIBase,
 		apiKey:             cfg.APIKey,
@@ -119,8 +130,9 @@ func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
 			Transport: transport,
 		},
 		// SSE connections are long-lived; context + stall watchdog handle cancellation.
-		streamClient: &http.Client{Timeout: 0, Transport: newLLMTransport(timeout)},
-		logger:       nil, // Set via SetLogger if needed
+		streamClient:       &http.Client{Timeout: 0, Transport: newLLMTransport(timeout)},
+		logger:             nil, // Set via SetLogger if needed
+		supportsJSONSchema: supportsJSON,
 	}
 }
 
@@ -686,22 +698,90 @@ func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream boo
 	}
 	// If tools are provided, set tool_choice (or omit for vLLM compatibility).
 	applyToolChoice(&reqBody, c.toolChoice)
-	if req.ResponseFormat != nil && req.ResponseFormat.Type != "" {
-		wf := &responseFormatWire{Type: req.ResponseFormat.Type}
-		if req.ResponseFormat.Type == "json_schema" && len(req.ResponseFormat.Schema) > 0 {
-			name := req.ResponseFormat.SchemaName
-			if name == "" {
-				name = "response"
-			}
-			wf.JSONSchema = &jsonSchemaSpec{
-				Name:   name,
-				Schema: json.RawMessage(req.ResponseFormat.Schema),
-				Strict: true,
-			}
-		}
-		reqBody.ResponseFormat = wf
+	if rf := c.effectiveWireResponseFormat(req); rf != nil {
+		reqBody.ResponseFormat = rf
 	}
 	return mergeExtraBody(reqBody, c.extraBody)
+}
+
+// effectiveWireResponseFormat maps CompleteRequest → wire response_format,
+// honouring SupportsJSONSchema / auto-detect disable.
+func (c *OpenAIClient) effectiveWireResponseFormat(req CompleteRequest) *responseFormatWire {
+	rf := req.EffectiveResponseFormat()
+	if rf == nil || rf.Type == "" {
+		return nil
+	}
+	if rf.Type == "json_schema" && !c.jsonSchemaAllowed() {
+		return nil
+	}
+	wf := &responseFormatWire{Type: rf.Type}
+	if rf.Type == "json_schema" && len(rf.Schema) > 0 {
+		name := rf.SchemaName
+		if name == "" {
+			name = "response"
+		}
+		wf.JSONSchema = &jsonSchemaSpec{
+			Name:   name,
+			Schema: json.RawMessage(rf.Schema),
+			Strict: true,
+		}
+	}
+	return wf
+}
+
+func (c *OpenAIClient) jsonSchemaAllowed() bool {
+	if c == nil {
+		return true
+	}
+	c.supportsMu.Lock()
+	defer c.supportsMu.Unlock()
+	if c.supportsJSONSchema == nil {
+		return true // unknown → try; auto-disable on reject
+	}
+	return *c.supportsJSONSchema
+}
+
+// disableJSONSchema marks json_schema unsupported for this client process.
+// No-op when the user explicitly set supports_json_schema: true.
+func (c *OpenAIClient) disableJSONSchema(reason string) {
+	if c == nil {
+		return
+	}
+	c.supportsMu.Lock()
+	defer c.supportsMu.Unlock()
+	if c.supportsJSONSchema != nil && *c.supportsJSONSchema {
+		return // explicit true — do not auto-disable
+	}
+	f := false
+	c.supportsJSONSchema = &f
+	if c.logger != nil {
+		c.logger.LogError(400, "json_schema unsupported — omitting response_format: "+reason, 0)
+	}
+}
+
+// isUnsupportedJSONSchemaError reports whether err looks like a provider
+// rejecting response_format / json_schema.
+func isUnsupportedJSONSchemaError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	if !strings.Contains(s, "response_format") && !strings.Contains(s, "json_schema") &&
+		!strings.Contains(s, "json schema") {
+		return false
+	}
+	return strings.Contains(s, "unsupported") ||
+		strings.Contains(s, "not supported") ||
+		strings.Contains(s, "unknown") ||
+		strings.Contains(s, "invalid") ||
+		strings.Contains(s, "unexpected") ||
+		strings.Contains(s, "400")
+}
+
+// requestUsedJSONSchema reports whether the outgoing request carried json_schema.
+func (c *OpenAIClient) requestUsedJSONSchema(req CompleteRequest) bool {
+	rf := req.EffectiveResponseFormat()
+	return rf != nil && rf.Type == "json_schema" && c.jsonSchemaAllowed()
 }
 
 // chatCompletionsURL normalizes api_base into the full endpoint URL.
@@ -733,6 +813,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 
 	var lastErr error
 	ctxFixed := false
+	schemaRetried := false
 	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
 		out, err := c.completeOnce(ctx, url, req, maxTok)
 		if err == nil {
@@ -741,6 +822,12 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 		lastErr = err
 		if ctx.Err() != nil {
 			return nil, err
+		}
+		// Capability-detect: backend rejected json_schema → disable and retry once.
+		if !schemaRetried && c.requestUsedJSONSchema(req) && isUnsupportedJSONSchemaError(err) {
+			schemaRetried = true
+			c.disableJSONSchema(err.Error())
+			continue
 		}
 		// Context overflow: recompute max_tokens from the server's own numbers.
 		if !ctxFixed {
@@ -896,6 +983,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 
 	var lastErr error
 	ctxFixed := false
+	schemaRetried := false
 	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
 		out, err := c.streamOnce(ctx, url, req, maxTok)
 		if err == nil {
@@ -904,6 +992,11 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 		lastErr = err
 		if ctx.Err() != nil {
 			return nil, err
+		}
+		if !schemaRetried && c.requestUsedJSONSchema(req) && isUnsupportedJSONSchemaError(err) {
+			schemaRetried = true
+			c.disableJSONSchema(err.Error())
+			continue
 		}
 		if !ctxFixed {
 			if fixed, ok := c.fixMaxTokensFromError(err.Error()); ok {

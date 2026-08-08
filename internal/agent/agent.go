@@ -44,6 +44,16 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	maxStepsReminderSent := false
 	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 	cb.ResetDedup()
+	cb.SetOnClassified(func(kind ErrorKind, meta RecordMeta) {
+		if a.opts.AgentLogger == nil {
+			return
+		}
+		detail := meta.Detail
+		if detail == "" && meta.Err != nil {
+			detail = meta.Err.Error()
+		}
+		a.opts.AgentLogger.LogStepClassified(steps, kind.String(), meta.ToolName, detail)
+	})
 
 	emitStepDone := func(reason string) {
 		if a.opts.OnEvent != nil && reason != "" {

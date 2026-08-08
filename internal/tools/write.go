@@ -21,10 +21,11 @@ type FSWriteRequest struct {
 }
 
 type FSWriteResponse struct {
-	Path         string               `json:"path"`
-	FileHash     string               `json:"file_hash"` // sha256 of written content
-	BytesWritten int                  `json:"bytes_written"`
-	Diagnostics  []lsp.ToolDiagnostic `json:"diagnostics,omitempty"`
+	Path               string               `json:"path"`
+	FileHash           string               `json:"file_hash"` // sha256 of written content
+	BytesWritten       int                  `json:"bytes_written"`
+	Diagnostics        []lsp.ToolDiagnostic `json:"diagnostics,omitempty"`
+	DiagnosticsPending bool                 `json:"diagnostics_pending,omitempty"`
 }
 
 func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteResponse, error) {
@@ -73,15 +74,18 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 			return nil, err
 		}
 		var diags []lsp.ToolDiagnostic
+		pending := false
 		if r.lspManager != nil && !r.lspManager.IsEmpty() {
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, req.Content)
+			pending = r.lspManager.EnsurePendingFor(relSlash)
 		}
 		diags = append(diags, r.extraTestDiagnostics(req.Content)...)
 		return &FSWriteResponse{
-			Path:         relSlash,
-			FileHash:     contentHash,
-			BytesWritten: len(req.Content),
-			Diagnostics:  diags,
+			Path:               relSlash,
+			FileHash:           contentHash,
+			BytesWritten:       len(req.Content),
+			Diagnostics:        diags,
+			DiagnosticsPending: pending,
 		}, nil
 	}
 
@@ -113,17 +117,20 @@ func (r *Runner) FSWrite(ctx context.Context, req FSWriteRequest) (*FSWriteRespo
 	contentHash := cache.ComputeSHA256([]byte(req.Content))
 
 	var diags []lsp.ToolDiagnostic
+	pending := false
 	if r.lspManager != nil && !r.lspManager.IsEmpty() {
 		if _, relSlash, err := resolveWorkspacePath(r.workspaceRoot, path); err == nil {
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, req.Content)
+			pending = r.lspManager.EnsurePendingFor(relSlash)
 		}
 	}
 	diags = append(diags, r.extraTestDiagnostics(req.Content)...)
 
 	return &FSWriteResponse{
-		Path:         path,
-		FileHash:     contentHash,
-		BytesWritten: len(req.Content),
-		Diagnostics:  diags,
+		Path:               path,
+		FileHash:           contentHash,
+		BytesWritten:       len(req.Content),
+		Diagnostics:        diags,
+		DiagnosticsPending: pending,
 	}, nil
 }

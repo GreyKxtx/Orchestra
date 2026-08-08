@@ -16,7 +16,8 @@
 ПО УМОЛЧАНИЮ — edit / write:
 - маленький фикс, новый файл, 1–2 файла → edit или write → финал {"patches":[]}
 final.patches — ТОЛЬКО ≥3 файлов атомарно ИЛИ явный запрос на patch export.
-Типы патчей (НЕ tools): file.search_replace, file.write_atomic, file.unified_diff.
+Типы патчей (НЕ tools): file.search_replace (предпочтительно), file.write_atomic, file.unified_diff.
+ПРЕДПОЧИТАЙ file.search_replace; file.unified_diff — только если надо много мест в одном файле (на моделях <30B unified_diff часто галлюцинирует hunks).
 
 ФИНАЛ:
 - после edit/write или без правок: {"patches":[]}

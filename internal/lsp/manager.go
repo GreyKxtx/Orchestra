@@ -39,6 +39,10 @@ type LSPConfig struct {
 	IdleTTLSeconds *int `yaml:"idle_ttl_seconds,omitempty"`
 	// AutoInstall: ask | true | false (default ask). Ensure wiring is phase B.
 	AutoInstall string `yaml:"auto_install,omitempty"`
+	// EnsureSyncBudgetMS: how long tryEnsure waits for a sync install before
+	// continuing in the background (v2 async). Default 2500. 0 = always async
+	// after consent; <0 = always wait (v1 sync).
+	EnsureSyncBudgetMS int `yaml:"ensure_sync_budget_ms,omitempty"`
 }
 
 func (cfg LSPConfig) EffectiveAutoInstall() string {
@@ -132,8 +136,29 @@ type Manager struct {
 	consent       permission.Requester
 	installing    atomic.Bool
 
+	ensureSyncBudget time.Duration // see LSPConfig.EnsureSyncBudgetMS
+
+	progressMu sync.Mutex
+	progress   *InstallProgress // last/current install progress for health/UI
+
+	pendingMu      sync.Mutex
+	pendingEnsures map[string]*ensureJob // id → in-flight install
+
 	// startServerHook replaces Start() in tests (package lsp only).
 	startServerHook func(cfg LSPServerConfig, rootURI string) (*Client, error)
+}
+
+// InstallProgress is exposed via core.health for TUI status hints.
+type InstallProgress struct {
+	ID      string `json:"id"`
+	Phase   string `json:"phase,omitempty"`
+	Percent int    `json:"percent"`
+	Message string `json:"message,omitempty"`
+}
+
+type ensureJob struct {
+	done chan struct{}
+	err  error
 }
 
 // SetInstallConsent wires interactive consent for lsp.auto_install=ask.
@@ -166,13 +191,15 @@ func (m *Manager) SetContentProvider(p ContentProvider) {
 // tool call for that language. Returns per-server start errors only in eager mode.
 func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 	m := &Manager{
-		workspaceRoot: workspaceRoot,
-		diagTimeoutMS:   cfg.DiagnosticsTimeoutMS,
-		initTimeoutMS:   cfg.InitializeTimeoutMS,
-		lazyStart:       cfg.lazyStartEnabled(),
-		idleTTL:       cfg.idleTTLDuration(),
-		autoInstall:   cfg.effectiveAutoInstall(),
-		stopCh:        make(chan struct{}),
+		workspaceRoot:    workspaceRoot,
+		diagTimeoutMS:    cfg.DiagnosticsTimeoutMS,
+		initTimeoutMS:    cfg.InitializeTimeoutMS,
+		lazyStart:        cfg.lazyStartEnabled(),
+		idleTTL:          cfg.idleTTLDuration(),
+		autoInstall:      cfg.effectiveAutoInstall(),
+		ensureSyncBudget: cfg.ensureSyncBudget(),
+		pendingEnsures:   make(map[string]*ensureJob),
+		stopCh:           make(chan struct{}),
 	}
 	if m.diagTimeoutMS <= 0 {
 		m.diagTimeoutMS = 1500
@@ -238,12 +265,28 @@ func (cfg LSPConfig) idleTTLDuration() time.Duration {
 	return time.Duration(*cfg.IdleTTLSeconds) * time.Second
 }
 
+func (cfg LSPConfig) ensureSyncBudget() time.Duration {
+	ms := cfg.EnsureSyncBudgetMS
+	if ms < 0 {
+		return -1 // always sync
+	}
+	if ms == 0 {
+		// Default: wait briefly, then continue async (v2).
+		return 2500 * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
 func (m *Manager) startServer(entry *serverEntry, rootURI string, ctx context.Context) (*Client, error) {
 	cfg := entry.cfg
 	res, err := provision.Resolve(cfg.Command)
 	if err != nil {
 		res, err = m.tryEnsureAndResolve(ctx, cfg, err)
 		if err != nil {
+			// Async install in flight — do not fall through to test hooks.
+			if provision.IsEnsurePending(err) {
+				return nil, err
+			}
 			// Test hooks often use dummy commands; fall through to the hook.
 			if m.startServerHook != nil {
 				return m.startServerHook(entry.cfg, rootURI)
@@ -310,15 +353,170 @@ func (m *Manager) tryEnsureAndResolve(ctx context.Context, cfg LSPServerConfig, 
 	}
 
 	m.installing.Store(true)
-	defer m.installing.Store(false)
 	fmt.Fprintf(os.Stderr, "lsp: ensuring %s…\n", entry.ID)
-	// Ensure uses its own long timeout; parent ctx still cancels consent wait above.
-	ensureCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	if err := provision.Ensure(ensureCtx, entry.ID); err != nil {
-		return provision.Result{}, err
+
+	ensureCtx := provision.WithProgress(context.Background(), func(ev provision.ProgressEvent) {
+		m.setInstallProgress(&InstallProgress{
+			ID:      ev.ID,
+			Phase:   ev.Phase,
+			Percent: ev.Percent,
+			Message: ev.Message,
+		})
+	})
+	ensureCtx, cancel := context.WithTimeout(ensureCtx, 10*time.Minute)
+
+	job, started := m.beginEnsureJob(entry.ID)
+	if !started {
+		cancel()
+		// Another caller already installing this id.
+		m.installing.Store(true) // keep status until that job finishes
+		return provision.Result{}, provision.ErrEnsurePending
 	}
-	return provision.Resolve(cfg.Command)
+
+	go func() {
+		defer cancel()
+		err := provision.Ensure(ensureCtx, entry.ID)
+		m.finishEnsureJob(entry.ID, job, err)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lsp: ensure %s failed: %v\n", entry.ID, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "lsp: ensure %s done\n", entry.ID)
+		}
+		if !m.hasPendingEnsures() {
+			m.installing.Store(false)
+		}
+	}()
+
+	budget := m.ensureSyncBudget
+	if budget < 0 {
+		// v1: wait until finished
+		select {
+		case <-job.done:
+		case <-ctx.Done():
+			return provision.Result{}, ctx.Err()
+		}
+		if job.err != nil {
+			return provision.Result{}, job.err
+		}
+		return provision.Resolve(cfg.Command)
+	}
+	if budget == 0 {
+		return provision.Result{}, provision.ErrEnsurePending
+	}
+
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	select {
+	case <-job.done:
+		if job.err != nil {
+			return provision.Result{}, job.err
+		}
+		return provision.Resolve(cfg.Command)
+	case <-timer.C:
+		return provision.Result{}, provision.ErrEnsurePending
+	case <-ctx.Done():
+		return provision.Result{}, ctx.Err()
+	}
+}
+
+func (m *Manager) beginEnsureJob(id string) (*ensureJob, bool) {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	if m.pendingEnsures == nil {
+		m.pendingEnsures = make(map[string]*ensureJob)
+	}
+	if j, ok := m.pendingEnsures[id]; ok {
+		return j, false
+	}
+	j := &ensureJob{done: make(chan struct{})}
+	m.pendingEnsures[id] = j
+	return j, true
+}
+
+func (m *Manager) finishEnsureJob(id string, job *ensureJob, err error) {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	job.err = err
+	close(job.done)
+	delete(m.pendingEnsures, id)
+}
+
+func (m *Manager) hasPendingEnsures() bool {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	return len(m.pendingEnsures) > 0
+}
+
+// EnsurePendingFor reports whether an async install is in flight for the
+// language server that handles relPath.
+func (m *Manager) EnsurePendingFor(relPath string) bool {
+	if m == nil || m.IsEmpty() {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(relPath))
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	if len(m.pendingEnsures) == 0 {
+		return false
+	}
+	for _, s := range m.servers {
+		if !s.exts[ext] {
+			continue
+		}
+		entry, ok := registry.ByBinaryName(filepath.Base(s.cfg.Command[0]))
+		if !ok {
+			entry, ok = registry.ByLanguage(s.cfg.Language)
+		}
+		if ok {
+			if _, pending := m.pendingEnsures[entry.ID]; pending {
+				return true
+			}
+		}
+		// Also match by language id keys used in pending map.
+		if _, pending := m.pendingEnsures[s.cfg.Language]; pending {
+			return true
+		}
+	}
+	return m.installing.Load()
+}
+
+func (m *Manager) setInstallProgress(p *InstallProgress) {
+	m.progressMu.Lock()
+	defer m.progressMu.Unlock()
+	m.progress = p
+}
+
+// GetInstallProgress returns a copy of the latest ensure progress, if any.
+func (m *Manager) GetInstallProgress() *InstallProgress {
+	if m == nil {
+		return nil
+	}
+	m.progressMu.Lock()
+	defer m.progressMu.Unlock()
+	if m.progress == nil {
+		return nil
+	}
+	cp := *m.progress
+	return &cp
+}
+
+// RuntimeStatus reports LSP readiness for UI: off | idle | installing | active.
+func (m *Manager) RuntimeStatus() string {
+	if m.IsEmpty() {
+		return "off"
+	}
+	if m.installing.Load() || m.hasPendingEnsures() {
+		return "installing"
+	}
+	for _, s := range m.servers {
+		s.mu.Lock()
+		alive := s.client != nil && !s.client.IsDead()
+		s.mu.Unlock()
+		if alive {
+			return "active"
+		}
+	}
+	return "idle"
 }
 
 // Close shuts down all managed servers and stops the idle watcher.
@@ -344,25 +542,6 @@ func (m *Manager) Close() {
 
 // IsEmpty reports whether any LSP servers are configured (not whether they are running).
 func (m *Manager) IsEmpty() bool { return m == nil || len(m.servers) == 0 }
-
-// RuntimeStatus reports LSP readiness for UI: off | idle | installing | active.
-func (m *Manager) RuntimeStatus() string {
-	if m.IsEmpty() {
-		return "off"
-	}
-	if m.installing.Load() {
-		return "installing"
-	}
-	for _, s := range m.servers {
-		s.mu.Lock()
-		alive := s.client != nil && !s.client.IsDead()
-		s.mu.Unlock()
-		if alive {
-			return "active"
-		}
-	}
-	return "idle"
-}
 
 // WarmupStart spawns every registered language server when lazy_start is false.
 // With lazy_start (default), servers spawn on first tool touch per extension.
@@ -544,6 +723,15 @@ func (m *Manager) reopenStaged(s *serverEntry) {
 
 // CheckIdleShutdownForTest runs one idle-TTL sweep (tests only).
 func (m *Manager) CheckIdleShutdownForTest() { m.checkIdleShutdown() }
+
+// SetEnsureSyncBudgetForTest sets the sync→async budget (tests only).
+// Negative = always sync; 0 = always async after consent.
+func (m *Manager) SetEnsureSyncBudgetForTest(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.ensureSyncBudget = d
+}
 
 // SetLazyStartForTest toggles lazy_start after construction (tests only).
 func (m *Manager) SetLazyStartForTest(v bool) {
@@ -844,11 +1032,14 @@ func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error
 	}
 	s, err := m.serverForPath(relPath)
 	if err != nil {
-		return nil
+		return err
 	}
 	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
 	uri := PathToURI(absPath)
 
+	if s.client == nil || s.client.IsDead() {
+		return fmt.Errorf("lsp: SyncStaged %s: client not ready", relPath)
+	}
 	if s.client.IsOpen(uri) {
 		if err := s.client.DidChange(ctx, uri, content); err != nil {
 			return fmt.Errorf("lsp: SyncStaged DidChange %s: %w", relPath, err)
@@ -872,6 +1063,10 @@ func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error
 // that treat "no diagnostics" as "all clean".
 func (m *Manager) SyncAndDiagnose(ctx context.Context, relPath, content string) []ToolDiagnostic {
 	if err := m.SyncStaged(ctx, relPath, content); err != nil {
+		if provision.IsEnsurePending(err) {
+			fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: ensure pending for %s\n", relPath)
+			return nil
+		}
 		fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: %v\n", err)
 		return nil
 	}

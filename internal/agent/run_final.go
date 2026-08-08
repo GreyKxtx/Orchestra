@@ -102,7 +102,7 @@ func (a *Agent) handleFinalStep(
 				Role:    llm.RoleUser,
 				Content: formatResolveErrorCompact(err),
 			})
-			if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+			if cbErr := cb.RecordResolveFailure(err); cbErr != nil {
 				return finalStepOutcome{}, cbErr
 			}
 			if a.opts.OnEvent != nil {
@@ -154,7 +154,7 @@ func (a *Agent) handleFinalStep(
 				Role:    llm.RoleUser,
 				Content: formatApplyErrorCompact(err, pe.Code),
 			})
-			if cbErr := cb.RecordFinalFailure(err); cbErr != nil {
+			if cbErr := cb.RecordApplyRecoverable(err); cbErr != nil {
 				return finalStepOutcome{}, cbErr
 			}
 			if a.opts.OnEvent != nil {

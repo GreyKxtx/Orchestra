@@ -12,18 +12,25 @@ type (
 	ErrorKind      = guard.ErrorKind
 	CircuitBreaker = guard.CircuitBreaker
 	DiagTracker    = guard.DiagTracker
+	RecordMeta     = guard.RecordMeta
 )
 
 const (
-	ErrorKindNone        = guard.ErrorKindNone
-	ErrorKindDenied      = guard.ErrorKindDenied
-	ErrorKindToolError   = guard.ErrorKindToolError
-	ErrorKindFinalFailed = guard.ErrorKindFinalFailed
-	ErrorKindInvalid     = guard.ErrorKindInvalid
+	ErrorKindNone             = guard.ErrorKindNone
+	ErrorKindDenied           = guard.ErrorKindDenied
+	ErrorKindToolError        = guard.ErrorKindToolError
+	ErrorKindFinalFailed      = guard.ErrorKindFinalFailed
+	ErrorKindInvalid          = guard.ErrorKindInvalid
+	ErrorKindResolveFailed    = guard.ErrorKindResolveFailed
+	ErrorKindApplyRecoverable = guard.ErrorKindApplyRecoverable
 )
 
 func NewCircuitBreaker(maxDenied, maxToolErr, maxFinal, maxInvalid int) *CircuitBreaker {
 	return guard.NewCircuitBreaker(maxDenied, maxToolErr, maxFinal, maxInvalid)
+}
+
+func Classify(err error, hint ErrorKind) ErrorKind {
+	return guard.Classify(err, hint)
 }
 
 func newDiagTracker() *DiagTracker {

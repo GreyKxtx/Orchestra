@@ -270,7 +270,9 @@ Prefs / TUI `[a]`:
 - [x] C4: timeout на LSP `initialize` (`lsp.initialize_timeout_ms`, default 15s)
 - [x] Crash → lazy restart + `reopenStaged` (H6, max 3 restarts)
 - [x] Pin/upgrade CLI: `orchestra lsp upgrade [id]`, `orchestra lsp ensure --upgrade`
-- Optional: progress events `%` для длинного download в status hints
+- [x] Progress events `%` для длинного download в status hints (`LSP ◐ gopls 42%` via `core.health.lsp_install_progress`)
+- [x] Async ensure v2: sync budget (`lsp.ensure_sync_budget_ms`, default 2500) → background install + `diagnostics_pending` / empty diags once
+- [x] FIFO очередь permission modals (shell + `lsp.install`) — `rpcPermissionRequester` mutex + TUI `permQueue`
 
 ---
 
@@ -302,7 +304,8 @@ Prefs / TUI `[a]`:
 
 **Решение по UX блокировки (зафиксировать в impl):**  
 v1 — **синхронно** ждать ensure внутри `ensureClient` (проще, честный ◐); Esc cancel turn отменяет install ctx.  
-v2 — async ensure + empty diagnostics once — если sync окажется слишком долгим.
+v2 — ✅ **async ensure**: после consent ждём `ensure_sync_budget_ms` (default 2500); если install ещё идёт — `ErrEnsurePending`, diagnostics пустые + `diagnostics_pending: true`, статус `LSP ◐ N%`; следующий tool call поднимает уже установленный server.  
+FIFO permission: core сериализует `permission/request`; TUI держит очередь модалок.
 
 ---
 

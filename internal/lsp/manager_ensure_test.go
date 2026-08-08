@@ -62,6 +62,7 @@ func TestManager_EnsureOnAsk_Approved(t *testing.T) {
 	t.Cleanup(m.Close)
 	consent := &approveOnce{}
 	m.SetInstallConsent(consent)
+	m.SetEnsureSyncBudgetForTest(-1) // always sync for this test
 
 	m.startServerHook = func(cfg LSPServerConfig, rootURI string) (*Client, error) {
 		if len(cfg.Command) == 0 || !filepath.IsAbs(cfg.Command[0]) {

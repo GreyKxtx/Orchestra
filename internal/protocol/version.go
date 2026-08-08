@@ -46,5 +46,15 @@ type Health struct {
 
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
-	LSPStatus     string `json:"lsp_status,omitempty"` // off | idle | active
+	LSPStatus     string `json:"lsp_status,omitempty"` // off | idle | installing | active
+	// LSPInstallProgress is set while a language server is being provisioned.
+	LSPInstallProgress *LSPInstallProgress `json:"lsp_install_progress,omitempty"`
+}
+
+// LSPInstallProgress is download/install status for the TUI status bar.
+type LSPInstallProgress struct {
+	ID      string `json:"id"`
+	Phase   string `json:"phase,omitempty"`
+	Percent int    `json:"percent"`
+	Message string `json:"message,omitempty"`
 }

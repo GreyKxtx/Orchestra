@@ -48,11 +48,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.toastText = ""
 			}
 		}
-		return a, tickCmd()
+		var cmds []tea.Cmd
+		cmds = append(cmds, tickCmd())
+		// Poll install progress while LSP is installing (status bar %).
+		if a.chrome.lspStatus == "installing" && a.spinFrame%8 == 0 {
+			if c := a.refreshLSPStatusCmd(); c != nil {
+				cmds = append(cmds, c)
+			}
+		}
+		return a, tea.Batch(cmds...)
 
 	case lspStatusMsg:
 		if m.status != "" {
 			a.chrome.lspStatus = m.status
+			a.chrome.lspInstallPercent = m.percent
+			a.chrome.lspInstallID = m.id
 			a.syncStatusBar()
 		}
 		return a, nil

@@ -9,7 +9,7 @@ import (
 )
 
 // LLMLogEntry represents a single log entry in llm_log.jsonl.
-// Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result".
+// Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result", "step.classified".
 type LLMLogEntry struct {
 	TSUnix          int64    `json:"ts_unix"`
 	Event           string   `json:"event"`
@@ -32,6 +32,11 @@ type LLMLogEntry struct {
 	InputBytes  int    `json:"input_bytes,omitempty"`
 	OutputBytes int    `json:"output_bytes,omitempty"`
 	ErrorStr    string `json:"error,omitempty"`
+
+	// step.classified fields
+	Step int    `json:"step,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // Logger handles LLM request/response logging
@@ -137,6 +142,22 @@ func (l *Logger) LogToolResult(toolName string, outputBytes int, durationMS int6
 		OutputBytes: outputBytes,
 		DurationMS:  durationMS,
 		ErrorStr:    errStr,
+	})
+}
+
+// LogStepClassified logs a circuit-breaker / retry classification for eval harnesses.
+// kind uses ROADMAP names: validation_error, tool_denied, tool_failed, resolve_failed, apply_recoverable.
+func (l *Logger) LogStepClassified(step int, kind, toolName, detail string) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix:   time.Now().Unix(),
+		Event:    "step.classified",
+		Step:     step,
+		Kind:     kind,
+		ToolName: toolName,
+		Detail:   truncateAndSanitize(detail, 512),
 	})
 }
 

@@ -23,9 +23,10 @@ type FSEditRequest struct {
 }
 
 type FSEditResponse struct {
-	Path        string               `json:"path"`
-	FileHash    string               `json:"file_hash"` // sha256 of file after edit
-	Diagnostics []lsp.ToolDiagnostic `json:"diagnostics,omitempty"`
+	Path               string               `json:"path"`
+	FileHash           string               `json:"file_hash"` // sha256 of file after edit
+	Diagnostics        []lsp.ToolDiagnostic `json:"diagnostics,omitempty"`
+	DiagnosticsPending bool                 `json:"diagnostics_pending,omitempty"` // LSP ensure still running
 }
 
 func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse, error) {
@@ -66,11 +67,13 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 			return nil, err
 		}
 		var diags []lsp.ToolDiagnostic
+		pending := false
 		if r.lspManager != nil && !r.lspManager.IsEmpty() {
 			diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, string(newContent))
+			pending = r.lspManager.EnsurePendingFor(relSlash)
 		}
 		diags = append(diags, r.extraTestDiagnostics(string(newContent))...)
-		return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
+		return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags, DiagnosticsPending: pending}, nil
 	}
 
 	patch := patches.Patch{
@@ -107,10 +110,12 @@ func (r *Runner) FSEdit(ctx context.Context, req FSEditRequest) (*FSEditResponse
 	}
 
 	var diags []lsp.ToolDiagnostic
+	pending := false
 	if r.lspManager != nil && !r.lspManager.IsEmpty() {
 		diags = r.lspManager.SyncAndDiagnose(ctx, relSlash, content)
+		pending = r.lspManager.EnsurePendingFor(relSlash)
 	}
 	diags = append(diags, r.extraTestDiagnostics(string(content))...)
 
-	return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags}, nil
+	return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags, DiagnosticsPending: pending}, nil
 }

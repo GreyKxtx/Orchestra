@@ -675,16 +675,31 @@ func (c *Client) RespondQuestion(answers []string) {
 
 // QueryLSPStatus calls core.health and returns lsp_status (off|idle|installing|active).
 func (c *Client) QueryLSPStatus(ctx context.Context) (string, error) {
+	st, _, _, err := c.QueryLSPStatusDetail(ctx)
+	return st, err
+}
+
+// QueryLSPStatusDetail returns lsp_status plus optional install progress %.
+func (c *Client) QueryLSPStatusDetail(ctx context.Context) (status string, percent int, id string, err error) {
 	if c == nil || c.rpc == nil {
-		return "", fmt.Errorf("rpcclient: not connected")
+		return "", 0, "", fmt.Errorf("rpcclient: not connected")
 	}
 	var h struct {
-		LSPStatus string `json:"lsp_status"`
+		LSPStatus          string `json:"lsp_status"`
+		LSPInstallProgress *struct {
+			ID      string `json:"id"`
+			Percent int    `json:"percent"`
+			Message string `json:"message"`
+		} `json:"lsp_install_progress"`
 	}
 	if err := c.rpc.Call(ctx, "core.health", map[string]any{}, &h); err != nil {
-		return "", err
+		return "", 0, "", err
 	}
-	return strings.TrimSpace(h.LSPStatus), nil
+	st := strings.TrimSpace(h.LSPStatus)
+	if h.LSPInstallProgress != nil {
+		return st, h.LSPInstallProgress.Percent, h.LSPInstallProgress.ID, nil
+	}
+	return st, 0, "", nil
 }
 
 // SessionCompactResult mirrors core.SessionCompactResult.

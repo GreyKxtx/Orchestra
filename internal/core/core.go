@@ -177,6 +177,14 @@ func (c *Core) Health() protocol.Health {
 	}
 	if c != nil && c.tools != nil {
 		h.LSPStatus = c.tools.LSPStatus()
+		if p := c.tools.LSPInstallProgress(); p != nil {
+			h.LSPInstallProgress = &protocol.LSPInstallProgress{
+				ID:      p.ID,
+				Phase:   p.Phase,
+				Percent: p.Percent,
+				Message: p.Message,
+			}
+		}
 	}
 	return h
 }
