@@ -18,11 +18,11 @@ go build -o orchestra ./cmd/orchestra        # produces orchestra(.exe)
 go vet ./...
 go test ./...
 go test -race ./...                          # Linux/macOS or Windows w/ cgo
-go test -race -count=50 ./internal/jsonrpc ./internal/core   # stress
+go test -race -count=50 ./protocol/jsonrpc ./internal/core   # stress
 
 # Single package / single test
 go test ./internal/agent -run TestAgent_Run -v
-go test ./internal/jsonrpc -race -run TestServer -count=10
+go test ./protocol/jsonrpc -race -run TestServer -count=10
 
 # Real-LLM E2E (NOT in CI — gated by env var)
 $env:ORCH_E2E_LLM = "1"                      # PowerShell
@@ -69,10 +69,10 @@ orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced t
 
 **Three execution modes for `apply`**, all defined in `internal/cli/apply.go::runApply`:
 1. `direct` — agent runs in-process against the local `tools.Runner`.
-2. `via-core` (`--via-core`) — spawns `orchestra core` as a subprocess and drives it via `internal/jsonrpc` (`initialize` → `agent.run`). Use this when isolation matters; real-LLM E2E tests use it.
+2. `via-core` (`--via-core`) — spawns `orchestra core` as a subprocess and drives it via `protocol/jsonrpc` (`initialize` → `agent.run`). Use this when isolation matters; real-LLM E2E tests use it.
 3. `from-plan` (`--from-plan`) — no LLM call; loads a saved `plan.json` and replays its `ops` through the same applier. Critical for deterministic re-application and for the stale-content E2E tests.
 
-**Core / RPC** (`internal/core`, `internal/jsonrpc`, `internal/protocol`): `Core` owns `cfg`, `llmClient`, `tools.Runner`, `schema.Validator`. `RPCHandler` exposes `core.health`, `initialize`, `agent.run`, `tool.call`. Pre-`initialize`, only `core.health` and `initialize` are allowed (others return `NotInitialized`). `initialize` is idempotent for the same params and hard-fails on mismatched `protocol_version` / `ops_version` / `tools_version` / `project_root` / `project_id`. Versions live in `internal/protocol/version.go` — bump them together when the contract changes and update `docs/PROTOCOL.md`.
+**Core / RPC** (`internal/core`, `protocol/jsonrpc`, `protocol`): `Core` owns `cfg`, `llmClient`, `tools.Runner`, `schema.Validator`. `RPCHandler` exposes `core.health`, `initialize`, `agent.run`, `tool.call`. Pre-`initialize`, only `core.health` and `initialize` are allowed (others return `NotInitialized`). `initialize` is idempotent for the same params and hard-fails on mismatched `protocol_version` / `ops_version` / `tools_version` / `project_root` / `project_id`. Versions live in `protocol/version.go` — bump them together when the contract changes and update `docs/PROTOCOL.md`.
 
 **Tools** (`internal/tools`): the model-facing surface is large and grows by feature flag. `ListTools(allowExec, allowWeb, allowBrowser)` in `registry.go` is the single source of truth; per-mode variants (`ListToolsForMode`, `ListToolsWithSubtasks`, `ListToolsForChild`, …) layer on top. Full per-tool status: `docs/tools-status.md`. Headline groups:
 

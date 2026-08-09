@@ -173,7 +173,7 @@ go test -race ./...
 
 # Один пакет / один тест
 go test ./internal/agent -run TestAgent_Run -v
-go test ./internal/jsonrpc -race -count=10
+go test ./protocol/jsonrpc -race -count=10
 
 # E2E с реальным LLM (не входит в CI)
 $env:ORCH_E2E_LLM = "1"
