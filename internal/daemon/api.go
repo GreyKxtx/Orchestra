@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 // Refresh rescans the project "now" and updates server metrics/cache.

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/patch/ops"
 )
 
 // ParseSnapshot reads raw JSON from disk, auto-migrating legacy v0 (TUI-only)

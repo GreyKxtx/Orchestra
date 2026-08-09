@@ -7,7 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/patch/ops"
 )
 
 func TestOpsApply_NotInitialized(t *testing.T) {

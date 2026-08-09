@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func discoveryPath(projectRoot string) string {

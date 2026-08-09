@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // ValidatePaths ensures every attachment path resolves inside workspaceRoot.

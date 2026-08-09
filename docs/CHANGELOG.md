@@ -26,7 +26,9 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 
 Neutral chat DTOs moved to **`internal/uimodel`**. `internal/sessionstore` no longer imports `ui/tui/state`. Layer rules: `docs/architecture/modules.md`.
 
-### Changed — Phase 1 wire module (`protocol/`)
+### Changed — Phase 2 patch module (`patch/`)
+
+Extracted **`github.com/orchestra/orchestra/patch`** (`ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`); depends on `protocol/`; added to `go.work`.
 
 Extracted **`github.com/orchestra/orchestra/protocol`** sub-module (`protocol`, `jsonrpc`, `schema`); root **`go.work`**; main module `replace => ./protocol`.
 

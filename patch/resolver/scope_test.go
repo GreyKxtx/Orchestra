@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/resolver"
+	"github.com/orchestra/orchestra/patch/resolver"
 )
 
 func TestApplySearchReplaceWithScope_UniqueInFunction(t *testing.T) {

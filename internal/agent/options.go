@@ -10,8 +10,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent/working"
 	configpkg "github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/ops"
-	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/patch/ops"
+	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tools"
 

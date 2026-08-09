@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/lsp"
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 )
 

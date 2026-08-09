@@ -340,7 +340,9 @@
 
 **Phase 0 modularization:** `internal/uimodel` — neutral chat DTOs; `sessionstore` больше не импортирует `ui/tui`.
 
-**Phase 1:** sub-module `protocol/` + `go.work`. См. `docs/architecture/modules.md`.
+**Phase 1:** sub-module `protocol/` + `go.work`.
+
+**Phase 2:** sub-module `patch/` (ops/resolver/applier/fsutil). См. `docs/architecture/modules.md`.
 
 Следующий фокус:
 

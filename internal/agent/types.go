@@ -7,7 +7,7 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/patch/patches"
 )
 
 type StepType string

@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/resolver"
+	"github.com/orchestra/orchestra/patch/resolver"
 )
 
 func (r *Runner) applyEditSearchReplace(ctx context.Context, relPath string, content []byte, search, replace, targetSymbol string) ([]byte, error) {

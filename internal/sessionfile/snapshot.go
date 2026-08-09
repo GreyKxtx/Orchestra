@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/patch/ops"
 )
 
 // TodoItem mirrors tools.TodoItem for disk schema without importing tools/.

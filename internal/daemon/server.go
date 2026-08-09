@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 type ServerConfig struct {

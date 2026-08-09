@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/orchestra/orchestra/internal/astedit"
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 // ASTRenameRequest is the JSON input for ast_rename.

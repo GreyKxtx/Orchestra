@@ -5,12 +5,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/applier"
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/applier"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/lsp"
-	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/resolver"
+	"github.com/orchestra/orchestra/patch/resolver"
 )
 
 type FSEditRequest struct {

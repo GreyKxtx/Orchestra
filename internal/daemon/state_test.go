@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 func TestScanOnce_RehashesOnlyWhenMetadataChanged(t *testing.T) {

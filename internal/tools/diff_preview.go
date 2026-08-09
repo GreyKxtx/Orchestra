@@ -8,7 +8,7 @@ import (
 
 	"github.com/aymanbagabas/go-udiff"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/resolver"
+	"github.com/orchestra/orchestra/patch/resolver"
 )
 
 // FSPreviewRequest is the input for the diff.preview tool.

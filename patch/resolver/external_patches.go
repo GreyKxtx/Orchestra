@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/cache"
-	"github.com/orchestra/orchestra/internal/fsutil"
-	"github.com/orchestra/orchestra/internal/ops"
-	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
+	"github.com/orchestra/orchestra/patch/ops"
+	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/relpath"
+	"github.com/orchestra/orchestra/patch/relpath"
 )
 
 // ResolveExternalPatches converts External Patch objects into Internal Ops v1.

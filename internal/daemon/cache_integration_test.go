@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 func TestNewServer_IgnoresCacheOnConfigHashMismatch(t *testing.T) {

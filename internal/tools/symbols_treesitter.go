@@ -9,7 +9,7 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/golang"
 
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/patch/ops"
 )
 
 func goSymbolsViaTreeSitter(ctx context.Context, src []byte) ([]Symbol, bool) {

@@ -8,12 +8,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/ckg"
-	"github.com/orchestra/orchestra/internal/ops"
-	"github.com/orchestra/orchestra/internal/patches"
+	"github.com/orchestra/orchestra/patch/ops"
+	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/resolver"
+	"github.com/orchestra/orchestra/patch/resolver"
 )
 
 // stagedFile holds the in-memory state of a file written or edited during a dry-run pass.

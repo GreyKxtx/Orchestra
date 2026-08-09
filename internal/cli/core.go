@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/spf13/cobra"

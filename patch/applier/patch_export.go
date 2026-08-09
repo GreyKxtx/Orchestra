@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/aymanbagabas/go-udiff"
-	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // UnifiedPatch builds a git-apply-compatible unified diff from FileDiffs.

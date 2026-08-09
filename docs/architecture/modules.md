@@ -58,12 +58,17 @@ Shared UI DTOs (client-neutral):
 - [x] Root `go.work` + `replace` in main `go.mod`
 - [x] CI: `go work sync` before vet/test
 
-## Phase 2 (next)
+## Phase 2 (done)
 
-- Extract patch stack sub-module (`ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`)
-- `go.work` add `./patch` (or `./patchstack`)
+- [x] Sub-module `patch/` — `ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`
+- [x] Depends on `protocol/`; `go.work` includes `./patch`
 
-## Phase 3+
+## Phase 3 (next)
+
+- Extract infra: `llm`, `lsp`, `ckg` (optional separate modules)
+- Or in-repo: split `internal/tools` into subpackages (`fs/`, `exec/`, `lsp/`, …)
+
+## Phase 4+
 
 ## In-repo splits (before multi-module)
 

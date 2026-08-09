@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 func TestApply_FromPlan_DryRun_And_Apply(t *testing.T) {

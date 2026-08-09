@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // StageIntoWorkspace ensures srcPath is readable inside workspaceRoot.

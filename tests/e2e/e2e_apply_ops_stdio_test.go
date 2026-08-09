@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/cache"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 type rpcError struct {

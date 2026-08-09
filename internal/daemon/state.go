@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/cache"
-	"github.com/orchestra/orchestra/internal/fsutil"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 type FileState struct {

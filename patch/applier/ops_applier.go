@@ -10,10 +10,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orchestra/orchestra/internal/cache"
-	"github.com/orchestra/orchestra/internal/ops"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/relpath"
+	"github.com/orchestra/orchestra/patch/relpath"
 )
 
 // applyMu serialises all in-process apply runs so concurrent ApplyAnyOps
