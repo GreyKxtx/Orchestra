@@ -13,7 +13,7 @@ internal/core          JSON-RPC orchestrator (sessions, agent.run, tools runner)
     │
     ├── internal/agent (+ subpackages)   LLM loop
     ├── internal/tools                   tool registry + execution
-    ├── internal/llm, mcp, lsp, ckg    providers & integrations
+    ├── internal/llm, mcp, lsp, ckg    providers & integrations  →  **llm/ sub-module** (+ lmstudio)
     │
 internal/patch stack   patches → resolver → applier (+ ops, fsutil, cache)
     │
@@ -63,12 +63,18 @@ Shared UI DTOs (client-neutral):
 - [x] Sub-module `patch/` — `ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`
 - [x] Depends on `protocol/`; `go.work` includes `./patch`
 
-## Phase 3 (next)
+## Phase 3 (done)
 
-- Extract infra: `llm`, `lsp`, `ckg` (optional separate modules)
-- Or in-repo: split `internal/tools` into subpackages (`fs/`, `exec/`, `lsp/`, …)
+- [x] Sub-module `llm/` — clients, streaming, catalog, `LLMConfig` types, `lmstudio/`
+- [x] `internal/config` aliases `LLMConfig` → `llm.LLMConfig`; `ProjectConfig.LLMRegistry()` for provider lookup
+- [x] `go.work` includes `./llm`
 
-## Phase 4+
+## Phase 4 (next)
+
+- In-repo split `internal/tools` into subpackages (`fs/`, `exec/`, `lsp/`, …)
+- Optional: extract `lsp/` or `ckg/` sub-modules (heavy deps)
+
+## Phase 5+
 
 ## In-repo splits (before multi-module)
 

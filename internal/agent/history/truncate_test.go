@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // TestTruncateMessages_KeepsAssistantToolGroupsTogether is the C1 regression:

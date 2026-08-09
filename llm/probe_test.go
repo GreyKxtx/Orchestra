@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 func TestProbeModels_OK(t *testing.T) {
@@ -29,7 +27,7 @@ func TestProbeModels_OK(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	res := Probe(context.Background(), config.LLMConfig{
+	res := Probe(context.Background(), LLMConfig{
 		APIBase: srv.URL + "/v1",
 		APIKey:  "secret",
 		Model:   "m1",
@@ -49,7 +47,7 @@ func TestProbeModels_Unauthorized(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	res := Probe(context.Background(), config.LLMConfig{
+	res := Probe(context.Background(), LLMConfig{
 		APIBase: srv.URL + "/v1",
 		APIKey:  "bad",
 	}, ProbeModels)
@@ -80,7 +78,7 @@ func TestProbeChat_OK(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	res := Probe(context.Background(), config.LLMConfig{
+	res := Probe(context.Background(), LLMConfig{
 		Provider:  "vllm",
 		APIBase:   srv.URL,
 		APIKey:    "k",

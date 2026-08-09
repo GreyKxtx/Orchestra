@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent/digest"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 const DefaultHistoryPruneKeepRecent = 2

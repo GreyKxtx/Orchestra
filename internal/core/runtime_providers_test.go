@@ -7,7 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestRuntimeListProviders_CatalogAndReady(t *testing.T) {

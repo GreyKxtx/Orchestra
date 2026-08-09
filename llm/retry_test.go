@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 func fastRetries(t *testing.T) {
@@ -39,7 +37,7 @@ func TestComplete_RetriesOn5xx(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
 	resp, err := c.Complete(context.Background(), CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	})
@@ -64,7 +62,7 @@ func TestComplete_NoRetryOn400(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
 	_, err := c.Complete(context.Background(), CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	})
@@ -99,7 +97,7 @@ func TestComplete_ContextOverflowAutoFix(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", MaxTokens: 8192})
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", MaxTokens: 8192})
 	resp, err := c.Complete(context.Background(), CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	})
@@ -171,7 +169,7 @@ func TestComplete_ContextOverflowAutoFix_NewVLLMWording(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", MaxTokens: 8192})
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", MaxTokens: 8192})
 	c.SetContextTokens(51200)
 	resp, err := c.Complete(context.Background(), CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
@@ -233,7 +231,7 @@ func TestCompleteStream_SetupRetryOn503(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m"})
 	ch, err := c.CompleteStream(context.Background(), CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	})
@@ -280,7 +278,7 @@ func TestCompleteStream_StallWatchdog(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", TimeoutS: 1})
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm", APIBase: srv.URL, Model: "m", TimeoutS: 1})
 	ch, err := c.streamOnce(context.Background(), srv.URL+"/v1/chat/completions", CompleteRequest{
 		Messages: []Message{{Role: RoleUser, Content: "hi"}},
 	}, 128)

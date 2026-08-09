@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // maxOverflowRecoveries caps compact→retry cycles per Run so a history that

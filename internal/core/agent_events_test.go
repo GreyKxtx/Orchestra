@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestBuildAgentOnEvent_Envelope(t *testing.T) {

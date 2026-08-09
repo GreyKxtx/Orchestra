@@ -26,7 +26,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -148,7 +148,7 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 		// run-up). A fresh per-skill client built from provider/model overrides
 		// would otherwise lose that wrap, silently disabling the fast-path /
 		// fallback routing for that stage. Re-wrap so behaviour is consistent.
-		childClient = llm.MaybeWrapRouter(childClient, c.Cfg)
+		childClient = llm.MaybeWrapRouter(childClient, c.Cfg.LLMRegistry(), c.Cfg.LLM.Router)
 	}
 
 	opts := buildAgentOptions(c, childTools, systemPrompt)

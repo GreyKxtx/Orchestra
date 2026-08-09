@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 // ProbeKind selects which connectivity check to run.
@@ -36,7 +34,7 @@ type ProbeResult struct {
 }
 
 // Probe checks that api_base (+ api_key) actually work — not merely that fields are filled.
-func Probe(ctx context.Context, cfg config.LLMConfig, kind ProbeKind) ProbeResult {
+func Probe(ctx context.Context, cfg LLMConfig, kind ProbeKind) ProbeResult {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
 	if base == "" {
 		return ProbeResult{Kind: kind, Err: "api_base пустой", Hint: "Укажи URL сервера (например http://localhost:8000/v1)"}
@@ -153,7 +151,7 @@ func extractStatusCode(msg string) int {
 	return 0
 }
 
-func hintFromHTTP(code int, errMsg string, cfg config.LLMConfig) string {
+func hintFromHTTP(code int, errMsg string, cfg LLMConfig) string {
 	low := strings.ToLower(errMsg)
 	switch {
 	case code == 401 || code == 403 || strings.Contains(low, "unauthorized"):

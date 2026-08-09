@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"

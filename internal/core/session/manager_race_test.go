@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestManager_LoadOrCreate_ConcurrentSameID(t *testing.T) {

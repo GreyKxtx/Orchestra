@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/orchestra/orchestra/internal/llm"
+import "github.com/orchestra/orchestra/llm"
 
 // estimatePromptTokens approximates the next LLM prompt size from history bytes
 // plus fixed overhead (system prompt, tool defs, user shell). Emitted every

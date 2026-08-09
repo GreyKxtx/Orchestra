@@ -7,13 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 func TestBuildChatBody_OmitsJSONSchemaWhenDisabled(t *testing.T) {
 	falseVal := false
-	c := NewOpenAIClient(config.LLMConfig{
+	c := NewOpenAIClient(LLMConfig{
 		Provider:           "openai",
 		APIBase:            "http://example.invalid",
 		Model:              "m",
@@ -40,7 +38,7 @@ func TestBuildChatBody_OmitsJSONSchemaWhenDisabled(t *testing.T) {
 }
 
 func TestBuildChatBody_ResponseGrammar(t *testing.T) {
-	c := NewOpenAIClient(config.LLMConfig{Provider: "openai", APIBase: "http://example.invalid", Model: "m"})
+	c := NewOpenAIClient(LLMConfig{Provider: "openai", APIBase: "http://example.invalid", Model: "m"})
 	schema := []byte(`{"type":"object","properties":{}}`)
 	body, err := c.buildChatBody(CompleteRequest{
 		Messages:        []Message{{Role: RoleUser, Content: "hi"}},
@@ -78,7 +76,7 @@ func TestComplete_AutoDisablesJSONSchema(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{
+	c := NewOpenAIClient(LLMConfig{
 		Provider: "openai",
 		APIBase:  srv.URL,
 		Model:    "m",

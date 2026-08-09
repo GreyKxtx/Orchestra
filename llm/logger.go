@@ -34,8 +34,8 @@ type LLMLogEntry struct {
 	ErrorStr    string `json:"error,omitempty"`
 
 	// step.classified fields
-	Step int    `json:"step,omitempty"`
-	Kind string `json:"kind,omitempty"`
+	Step   int    `json:"step,omitempty"`
+	Kind   string `json:"kind,omitempty"`
 	Detail string `json:"detail,omitempty"`
 }
 
@@ -208,9 +208,9 @@ func truncateAndSanitize(s string, maxBytes int) string {
 }
 
 var (
-	reBearer     = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-]+`)
-	reAPIKeyDbl  = regexp.MustCompile(`(?i)("api_key"\s*:\s*")[^"]*("?)`)
-	reAPIKeySgl  = regexp.MustCompile(`(?i)('api_key'\s*:\s*')[^']*('?)`)
+	reBearer    = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-]+`)
+	reAPIKeyDbl = regexp.MustCompile(`(?i)("api_key"\s*:\s*")[^"]*("?)`)
+	reAPIKeySgl = regexp.MustCompile(`(?i)('api_key'\s*:\s*')[^']*('?)`)
 )
 
 // sanitizeSecrets removes Bearer tokens and api_key values from strings.

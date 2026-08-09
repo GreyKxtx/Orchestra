@@ -3,7 +3,7 @@ package cli
 import (
 	"sync"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/spf13/cobra"
 )
 

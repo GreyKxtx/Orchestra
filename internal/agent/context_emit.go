@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func (a *Agent) emitPromptContextEstimate(step int, history []llm.Message) {

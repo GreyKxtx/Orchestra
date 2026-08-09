@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 // truncateID truncates an ID string for logging
@@ -54,7 +52,7 @@ type OpenAIClient struct {
 	toolChoiceWarned   bool
 	extraBody          map[string]any
 	client             *http.Client
-	streamClient       *http.Client // no Timeout — relies on context cancellation for SSE connections
+	streamClient       *http.Client  // no Timeout — relies on context cancellation for SSE connections
 	requestTimeout     time.Duration // llm.timeout_s — also scales stream stall watchdog
 	logger             *Logger
 
@@ -96,7 +94,7 @@ func newLLMTransport(headerTimeout time.Duration) *http.Transport {
 }
 
 // NewOpenAIClient creates a new OpenAI-compatible client
-func NewOpenAIClient(cfg config.LLMConfig) *OpenAIClient {
+func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 	timeout := 60 * time.Second
 	if cfg.TimeoutS > 0 {
 		timeout = time.Duration(cfg.TimeoutS) * time.Second
@@ -160,7 +158,7 @@ func (c *OpenAIClient) DiscoverAndApplyLimits(ctx context.Context) (ModelLimits,
 	if c == nil {
 		return ModelLimits{}, fmt.Errorf("nil client")
 	}
-	lim, err := DiscoverModelLimits(ctx, config.LLMConfig{
+	lim, err := DiscoverModelLimits(ctx, LLMConfig{
 		APIBase: c.baseURL,
 		APIKey:  c.apiKey,
 		Model:   c.model,
@@ -183,7 +181,7 @@ const defaultMaxTokens = 4096
 // cfg, or 0 if unset. Exported so callers that build a *named* provider client
 // (e.g. providers.fast for compaction) can learn its window without
 // constructing a full OpenAIClient first — see agent.Options.CompactionContextTokens.
-func ContextTokensFromConfig(cfg config.LLMConfig) int {
+func ContextTokensFromConfig(cfg LLMConfig) int {
 	return contextLenFromExtra(cfg.ExtraBody)
 }
 
@@ -388,7 +386,7 @@ func (c *OpenAIClient) warnImplicitToolChoiceOnce(toolCount int) {
 // reject explicit "auto" unless started with --enable-auto-tool-choice and
 // --tool-call-parser. Omitting the field keeps tools advertised without that
 // requirement on many setups.
-func resolveToolChoice(cfg config.LLMConfig) string {
+func resolveToolChoice(cfg LLMConfig) string {
 	tc := strings.ToLower(strings.TrimSpace(cfg.ToolChoice))
 	switch tc {
 	case "omit", "off", "false", "none", "required", "auto":

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/orchestra/orchestra/internal/attachments"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // loadImageParts reads the named files and returns a slice of PartImage

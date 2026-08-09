@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -70,7 +70,7 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 		}
 		seen[key] = struct{}{}
 
-		llmCfg, catEntry, ok := llm.ResolveProviderConfig(c.cfg, key)
+		llmCfg, catEntry, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), key)
 		if !ok {
 			return
 		}
@@ -159,7 +159,7 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 }
 
 func (c *Core) listModelsForProvider(ctx context.Context, key string) ([]RuntimeModelEntry, error) {
-	llmCfg, _, ok := llm.ResolveProviderConfig(c.cfg, key)
+	llmCfg, _, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), key)
 	if !ok {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "unknown provider", map[string]any{"provider": key})
 	}

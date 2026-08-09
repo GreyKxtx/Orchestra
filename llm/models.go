@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 // RemoteModel is one entry from OpenAI-compatible GET …/models.
@@ -19,7 +17,7 @@ type RemoteModel struct {
 }
 
 // ListRemoteModels fetches models from cfg.APIBase (/v1/models or /models).
-func ListRemoteModels(ctx context.Context, cfg config.LLMConfig) ([]RemoteModel, error) {
+func ListRemoteModels(ctx context.Context, cfg LLMConfig) ([]RemoteModel, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
 	if base == "" {
 		return nil, fmt.Errorf("api_base is empty")

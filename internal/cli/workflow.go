@@ -10,7 +10,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/hooks"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/stageinvoke"
@@ -198,7 +198,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	if oc, ok := llmClient.(*llm.OpenAIClient); ok {
 		oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 	}
-	llmClient = llm.MaybeWrapRouter(llmClient, cfg)
+	llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
 
 	validator, err := schema.NewValidator()
 	if err != nil {

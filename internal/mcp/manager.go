@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // Manager starts and manages multiple MCP server connections.

@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func (a *Agent) messagesWithAssistantPrefill(messages []llm.Message) []llm.Message {

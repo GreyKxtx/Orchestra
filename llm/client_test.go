@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
@@ -52,7 +50,7 @@ func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{
+	c := NewOpenAIClient(LLMConfig{
 		Provider:    "openai",
 		APIBase:     srv.URL, // client will append /v1 if missing
 		APIKey:      "test",
@@ -123,7 +121,7 @@ func TestOpenAIClient_VLLMOmitsToolChoice(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{
+	c := NewOpenAIClient(LLMConfig{
 		Provider:  "vllm",
 		APIBase:   srv.URL,
 		Model:     "qwen",
@@ -156,25 +154,25 @@ func TestOpenAIClient_VLLMOmitsToolChoice(t *testing.T) {
 }
 
 func TestResolveToolChoice(t *testing.T) {
-	if got := resolveToolChoice(config.LLMConfig{Provider: "vllm"}); got != "omit" {
+	if got := resolveToolChoice(LLMConfig{Provider: "vllm"}); got != "omit" {
 		t.Fatalf("vllm default = %q", got)
 	}
-	if got := resolveToolChoice(config.LLMConfig{}); got != "omit" {
+	if got := resolveToolChoice(LLMConfig{}); got != "omit" {
 		t.Fatalf("empty provider default = %q", got)
 	}
-	if got := resolveToolChoice(config.LLMConfig{Provider: "custom"}); got != "omit" {
+	if got := resolveToolChoice(LLMConfig{Provider: "custom"}); got != "omit" {
 		t.Fatalf("custom default = %q", got)
 	}
-	if got := resolveToolChoice(config.LLMConfig{Provider: "openai"}); got != "auto" {
+	if got := resolveToolChoice(LLMConfig{Provider: "openai"}); got != "auto" {
 		t.Fatalf("openai default = %q", got)
 	}
-	if got := resolveToolChoice(config.LLMConfig{Provider: "vllm", ToolChoice: "auto"}); got != "auto" {
+	if got := resolveToolChoice(LLMConfig{Provider: "vllm", ToolChoice: "auto"}); got != "auto" {
 		t.Fatalf("explicit auto = %q", got)
 	}
 }
 
 func TestWarnImplicitToolChoiceOnce(t *testing.T) {
-	c := NewOpenAIClient(config.LLMConfig{Provider: "vllm"}) // no ToolChoice set → implicit "omit"
+	c := NewOpenAIClient(LLMConfig{Provider: "vllm"}) // no ToolChoice set → implicit "omit"
 	if !c.toolChoiceImplicit {
 		t.Fatal("expected toolChoiceImplicit=true when cfg.ToolChoice is blank")
 	}
@@ -191,7 +189,7 @@ func TestWarnImplicitToolChoiceOnce(t *testing.T) {
 		t.Fatal("expected warning once a tool-bearing request is sent with implicit omit")
 	}
 
-	explicit := NewOpenAIClient(config.LLMConfig{Provider: "vllm", ToolChoice: "omit"})
+	explicit := NewOpenAIClient(LLMConfig{Provider: "vllm", ToolChoice: "omit"})
 	if explicit.toolChoiceImplicit {
 		t.Fatal("explicit ToolChoice=omit in config must not be flagged as implicit")
 	}
@@ -303,7 +301,7 @@ func TestOpenAIClient_DefaultsMaxTokensWhenZero(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewOpenAIClient(config.LLMConfig{
+	c := NewOpenAIClient(LLMConfig{
 		Provider: "vllm",
 		APIBase:  srv.URL,
 		Model:    "other-model",

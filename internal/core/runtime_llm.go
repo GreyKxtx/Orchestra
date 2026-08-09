@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -70,7 +70,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 	llmCfg := c.cfg.LLM
 	provKey := strings.TrimSpace(params.Provider)
 	if provKey != "" {
-		resolved, _, ok := llm.ResolveProviderConfig(c.cfg, provKey)
+		resolved, _, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), provKey)
 		if !ok {
 			return nil, protocol.NewError(protocol.InvalidLLMOutput, "unknown provider", map[string]any{
 				"provider": provKey,
@@ -164,7 +164,7 @@ func (c *Core) RuntimeListModels(ctx context.Context, params RuntimeListModelsPa
 	llmCfg := c.cfg.LLM
 	provKey := strings.TrimSpace(params.Provider)
 	if provKey != "" {
-		resolved, _, ok := llm.ResolveProviderConfig(c.cfg, provKey)
+		resolved, _, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), provKey)
 		if !ok {
 			return nil, protocol.NewError(protocol.InvalidLLMOutput, "unknown provider", map[string]any{
 				"provider": provKey,

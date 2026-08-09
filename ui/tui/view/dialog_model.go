@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sahilm/fuzzy"
 
-	"github.com/orchestra/orchestra/internal/lmstudio"
+	"github.com/orchestra/orchestra/llm/lmstudio"
 )
 
 // ModelEntry is a single selectable model.

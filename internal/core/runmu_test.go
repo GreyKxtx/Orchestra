@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // gateLLM blocks Complete until release is closed, then returns a final step.

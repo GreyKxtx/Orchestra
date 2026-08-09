@@ -26,6 +26,10 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 
 Neutral chat DTOs moved to **`internal/uimodel`**. `internal/sessionstore` no longer imports `ui/tui/state`. Layer rules: `docs/architecture/modules.md`.
 
+### Changed — Phase 3 LLM module (`llm/`)
+
+Extracted **`github.com/orchestra/orchestra/llm`** (clients, streaming, catalog, `LLMConfig`/`RouterConfig`/`ModelPreset`, `lmstudio/`). `internal/config` type-aliases LLM types; `ProjectConfig.LLMRegistry()` feeds provider resolution without config↔llm import cycle.
+
 ### Changed — Phase 2 patch module (`patch/`)
 
 Extracted **`github.com/orchestra/orchestra/patch`** (`ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`); depends on `protocol/`; added to `go.work`.

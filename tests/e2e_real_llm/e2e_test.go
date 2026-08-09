@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/lmstudio"
+	"github.com/orchestra/orchestra/llm/lmstudio"
 	"github.com/orchestra/orchestra/protocol"
 )
 

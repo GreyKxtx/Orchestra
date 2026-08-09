@@ -6,7 +6,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/attachments"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 )

@@ -2,7 +2,7 @@ package agent
 
 import (
 	"github.com/orchestra/orchestra/internal/agent/format"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 const toolCompletedPreviewMax = 256

@@ -7,89 +7,16 @@ import (
 	"sort"
 	"strings"
 
+	llmpkg "github.com/orchestra/orchestra/llm"
 	"gopkg.in/yaml.v3"
 )
 
-// LLMConfig contains LLM API settings
-type LLMConfig struct {
-	// Provider selects the API provider: "openai" (default), "anthropic".
-	Provider    string  `yaml:"provider"`
-	APIBase     string  `yaml:"api_base"`
-	APIKey      string  `yaml:"api_key"`
-	Model       string  `yaml:"model"`
-	MaxTokens   int     `yaml:"max_tokens"`
-	Temperature float32 `yaml:"temperature"`
-	// TimeoutS bounds a single LLM request (agent step attempt).
-	TimeoutS int `yaml:"timeout_s"`
-
-	// PromptFamily selects a model-family-specific system prompt template.
-	// Empty = auto-detect from Model (qwen/llama/… → "local" → edit-first prompts).
-	// Supported: "anthropic", "gpt", "gemini", "kimi", "local", "default".
-	// Aliases: "qwen", "chatml", "llama", "llama-instruct" → "local".
-	PromptFamily string `yaml:"prompt_family"`
-
-	// Multimodal must be set true for this LLM to receive image content
-	// (--image CLI flag or browser.screenshot piping). When false (default),
-	// the multimodal paths are no-ops to avoid sending image payloads to a
-	// text-only model and getting an opaque error from the server.
-	Multimodal bool `yaml:"multimodal,omitempty"`
-
-	// ResponseFormatType requests structured output from the provider.
-	// "" (default) — no constraint; "json_object" — valid JSON output;
-	// "json_schema" — strict schema-constrained JSON (requires provider support).
-	// Set "json_object" for vLLM/lm-studio; leave empty for cloud APIs.
-	ResponseFormatType string `yaml:"response_format_type"`
-
-	// SupportsJSONSchema controls whether response_format type=json_schema is sent.
-	// nil (omit in YAML) — send when requested; auto-disable for the process if the
-	// backend returns an unsupported response_format error.
-	// true — always send json_schema when ResponseFormatType/agent requests it.
-	// false — silently omit json_schema (fall back to unconstrained / json_object).
-	SupportsJSONSchema *bool `yaml:"supports_json_schema,omitempty"`
-
-	// ToolChoice controls the OpenAI tool_choice field when tools are present.
-	//   "" / "auto" — send "auto" (default for most providers)
-	//   "omit"      — do not send tool_choice (needed for vLLM without
-	//                 --enable-auto-tool-choice; tools are still advertised)
-	//   "none" / "required" — pass through as-is
-	// Provider "vllm" defaults to "omit" when this field is empty.
-	ToolChoice string `yaml:"tool_choice,omitempty"`
-
-	// ExtraBody contains arbitrary key-value pairs merged into every API request body.
-	// Use this to pass provider-specific parameters, e.g.:
-	//   extra_body:
-	//     chat_template_kwargs:
-	//       enable_thinking: false
-	ExtraBody map[string]any `yaml:"extra_body,omitempty"`
-
-	// ModelPresets remembers per-model settings so switching back to a
-	// previously-used model restores its temperature/num_ctx/etc.
-	// Keyed by model id.
-	ModelPresets map[string]ModelPreset `yaml:"model_presets,omitempty"`
-
-	// Router opts the client into prompt-size-based auto-routing between this
-	// main model and a named fast provider (looked up in providers:).
-	Router RouterConfig `yaml:"router,omitempty"`
-}
-
-// RouterConfig configures llm.RouterClient. Disabled when Enabled is false
-// or FastProvider is empty.
-type RouterConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	FastProvider   string `yaml:"fast_provider"`
-	ThresholdBytes int    `yaml:"threshold_bytes"`
-}
-
-// ModelPreset captures the settings associated with one model id, so that
-// switching providers/models in the TUI restores prior tuning automatically.
-type ModelPreset struct {
-	Provider       string  `yaml:"provider,omitempty"`
-	APIBase        string  `yaml:"api_base,omitempty"`
-	Temperature    float32 `yaml:"temperature,omitempty"`
-	MaxTokens      int     `yaml:"max_tokens,omitempty"`
-	NumCtx         int64   `yaml:"num_ctx,omitempty"`
-	EnableThinking *bool   `yaml:"enable_thinking,omitempty"`
-}
+// LLM wire/config types live in the llm module; aliases preserve YAML and call sites.
+type (
+	LLMConfig    = llmpkg.LLMConfig
+	RouterConfig = llmpkg.RouterConfig
+	ModelPreset  = llmpkg.ModelPreset
+)
 
 // AgentConfig controls the agent loop retry and step limits.
 type AgentConfig struct {
@@ -547,6 +474,14 @@ func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
 		cfg.ExtraBody = c.LLM.ExtraBody
 	}
 	return cfg, true
+}
+
+// LLMRegistry exposes llm + providers for the llm sub-module (no config→llm cycle).
+func (c *ProjectConfig) LLMRegistry() llmpkg.ProviderRegistry {
+	if c == nil {
+		return llmpkg.ProviderRegistry{}
+	}
+	return llmpkg.NewProviderRegistry(c.LLM, c.Providers)
 }
 
 // NormalizeAPIBase trims trailing slashes for endpoint comparison.

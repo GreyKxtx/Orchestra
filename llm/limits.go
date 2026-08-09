@@ -6,8 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/lmstudio"
+	"github.com/orchestra/orchestra/llm/lmstudio"
 )
 
 // ModelLimits is the server-advertised context window and a safe max_tokens cap.
@@ -20,7 +19,7 @@ type ModelLimits struct {
 
 // DiscoverModelLimits queries the OpenAI-compatible /v1/models (or LM Studio
 // /api/v0/models) for the configured model's context window.
-func DiscoverModelLimits(ctx context.Context, cfg config.LLMConfig) (ModelLimits, error) {
+func DiscoverModelLimits(ctx context.Context, cfg LLMConfig) (ModelLimits, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
 	if base == "" {
 		return ModelLimits{}, fmt.Errorf("api_base is empty")
@@ -71,7 +70,7 @@ func DiscoverModelLimits(ctx context.Context, cfg config.LLMConfig) (ModelLimits
 //
 // Also clamps max_tokens to the effective window and syncs ModelPresets[model].NumCtx
 // so EffectiveNumCtx and the LLM client stay aligned. Returns true if cfg changed.
-func ApplyDiscoveredLimits(cfg *config.LLMConfig, lim ModelLimits) bool {
+func ApplyDiscoveredLimits(cfg *LLMConfig, lim ModelLimits) bool {
 	if cfg == nil || lim.ContextTokens <= 0 {
 		return false
 	}
@@ -98,7 +97,7 @@ func ApplyDiscoveredLimits(cfg *config.LLMConfig, lim ModelLimits) bool {
 
 	if model := strings.TrimSpace(cfg.Model); model != "" {
 		if cfg.ModelPresets == nil {
-			cfg.ModelPresets = map[string]config.ModelPreset{}
+			cfg.ModelPresets = map[string]ModelPreset{}
 		}
 		p := cfg.ModelPresets[model]
 		if p.NumCtx != int64(target) {
@@ -118,7 +117,7 @@ func ApplyDiscoveredLimits(cfg *config.LLMConfig, lim ModelLimits) bool {
 
 // userConfiguredNumCtx returns the operator's intended window: preset for the
 // active model wins (same as ProjectConfig.EffectiveNumCtx), else extra_body.
-func userConfiguredNumCtx(cfg *config.LLMConfig) int {
+func userConfiguredNumCtx(cfg *LLMConfig) int {
 	if cfg == nil {
 		return 0
 	}

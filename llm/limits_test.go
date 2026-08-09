@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 func TestDiscoverModelLimits_VLLMMaxModelLen(t *testing.T) {
@@ -19,7 +17,7 @@ func TestDiscoverModelLimits_VLLMMaxModelLen(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	lim, err := DiscoverModelLimits(context.Background(), config.LLMConfig{
+	lim, err := DiscoverModelLimits(context.Background(), LLMConfig{
 		APIBase: srv.URL,
 		Model:   "qwen/qwen3.6-27b-fp8",
 	})
@@ -35,11 +33,11 @@ func TestDiscoverModelLimits_VLLMMaxModelLen(t *testing.T) {
 }
 
 func TestApplyDiscoveredLimits_KeepsUserBelowServer(t *testing.T) {
-	cfg := &config.LLMConfig{
+	cfg := &LLMConfig{
 		Model:     "qwen/qwen3.6-27b",
 		MaxTokens: 3000,
 		ExtraBody: map[string]any{"num_ctx": 20000},
-		ModelPresets: map[string]config.ModelPreset{
+		ModelPresets: map[string]ModelPreset{
 			"qwen/qwen3.6-27b": {NumCtx: 20000},
 		},
 	}
@@ -56,11 +54,11 @@ func TestApplyDiscoveredLimits_KeepsUserBelowServer(t *testing.T) {
 }
 
 func TestApplyDiscoveredLimits_ClampsUserAboveServer(t *testing.T) {
-	cfg := &config.LLMConfig{
+	cfg := &LLMConfig{
 		Model:     "m",
 		MaxTokens: 8192,
 		ExtraBody: map[string]any{"num_ctx": 128000},
-		ModelPresets: map[string]config.ModelPreset{
+		ModelPresets: map[string]ModelPreset{
 			"m": {NumCtx: 128000},
 		},
 	}
@@ -76,7 +74,7 @@ func TestApplyDiscoveredLimits_ClampsUserAboveServer(t *testing.T) {
 }
 
 func TestApplyDiscoveredLimits_FillsWhenUnset(t *testing.T) {
-	cfg := &config.LLMConfig{Model: "m", MaxTokens: 80000}
+	cfg := &LLMConfig{Model: "m", MaxTokens: 80000}
 	if !ApplyDiscoveredLimits(cfg, ModelLimits{ContextTokens: 51200}) {
 		t.Fatal("expected fill of missing num_ctx + clamp max_tokens")
 	}
@@ -93,7 +91,7 @@ func TestApplyDiscoveredLimits_FillsWhenUnset(t *testing.T) {
 }
 
 func TestApplyDiscoveredLimits_ClampsMaxTokensToEffectiveWindow(t *testing.T) {
-	cfg := &config.LLMConfig{
+	cfg := &LLMConfig{
 		MaxTokens: 50000,
 		ExtraBody: map[string]any{"num_ctx": 20000},
 	}

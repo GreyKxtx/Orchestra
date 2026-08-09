@@ -1,7 +1,7 @@
 package history
 
 import (
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // History truncation + sanitization. Extracted from agent.go in C3

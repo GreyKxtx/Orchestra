@@ -7,7 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent/digest"
 	agentformat "github.com/orchestra/orchestra/internal/agent/format"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // FormatSubagentResult collapses a child agent run into one structured summary

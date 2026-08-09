@@ -17,5 +17,5 @@
 ## Добавление нового клиента
 
 1. Создать `ui/<name>/` с собственным README
-2. Если клиент на Go — может импортировать `github.com/orchestra/orchestra/protocol` и `protocol/jsonrpc`
+2. Если клиент на Go — может импортировать `github.com/orchestra/orchestra/protocol`, `protocol/jsonrpc`, `github.com/orchestra/orchestra/llm`
 3. Если на другом языке — генерировать DTO из `docs/PROTOCOL.md` и переиспользовать схему версионирования

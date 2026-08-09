@@ -342,7 +342,9 @@
 
 **Phase 1:** sub-module `protocol/` + `go.work`.
 
-**Phase 2:** sub-module `patch/` (ops/resolver/applier/fsutil). См. `docs/architecture/modules.md`.
+**Phase 2:** sub-module `patch/` (ops/resolver/applier/fsutil).
+
+**Phase 3:** sub-module `llm/` + `lmstudio/`. См. `docs/architecture/modules.md`.
 
 Следующий фокус:
 

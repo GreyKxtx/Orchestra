@@ -2,8 +2,6 @@ package llm
 
 import (
 	"context"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 // RouterClient is a thin Client wrapper that dispatches each Complete call to
@@ -118,21 +116,20 @@ type streamingUnsupportedError string
 
 func (e streamingUnsupportedError) Error() string { return string(e) }
 
-// MaybeWrapRouter returns a RouterClient when cfg defines an enabled router
-// targeting an existing fast provider; otherwise returns main unwrapped. This
-// is the single hook NewClient callers use to opt in to routing.
-func MaybeWrapRouter(main Client, cfg *config.ProjectConfig) Client {
-	if cfg == nil || !cfg.LLM.Router.Enabled || cfg.LLM.Router.FastProvider == "" {
+// MaybeWrapRouter returns a RouterClient when reg defines an enabled router
+// targeting an existing fast provider; otherwise returns main unwrapped.
+func MaybeWrapRouter(main Client, reg ProviderRegistry, router RouterConfig) Client {
+	if !router.Enabled || router.FastProvider == "" {
 		return main
 	}
-	fastCfg, ok := cfg.FindProvider(cfg.LLM.Router.FastProvider)
+	fastCfg, ok := reg.FindProvider(router.FastProvider)
 	if !ok {
 		return main
 	}
 	fast := NewClient(fastCfg)
-	threshold := cfg.LLM.Router.ThresholdBytes
+	threshold := router.ThresholdBytes
 	if threshold <= 0 {
-		threshold = 2048 // sensible default: ~500 tokens
+		threshold = 2048
 	}
 	return NewRouterClient(main, fast, threshold)
 }

@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/orchestra/orchestra/internal/config"
 )
 
 const anthropicAPIBase = "https://api.anthropic.com"
@@ -26,7 +24,7 @@ type AnthropicClient struct {
 }
 
 // NewAnthropicClient creates an Anthropic client from config.
-func NewAnthropicClient(cfg config.LLMConfig) *AnthropicClient {
+func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 	timeout := 120 * time.Second
 	if cfg.TimeoutS > 0 {
 		timeout = time.Duration(cfg.TimeoutS) * time.Second
@@ -76,13 +74,13 @@ type anthropicMessage struct {
 }
 
 type anthropicBlock struct {
-	Type       string          `json:"type"`
-	Text       string          `json:"text,omitempty"`
-	ID         string          `json:"id,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	ToolUseID  string          `json:"tool_use_id,omitempty"`
-	Content    string          `json:"content,omitempty"` // tool_result text
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"` // tool_result text
 }
 
 type anthropicTool struct {

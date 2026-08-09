@@ -19,7 +19,7 @@ import (
 	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/mcp"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
@@ -334,7 +334,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
 				oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 			}
-			llmClient = llm.MaybeWrapRouter(llmClient, cfg)
+			llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
 		}
 
 		validator, err := schema.NewValidator()
@@ -459,7 +459,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			if oc, ok := llmClient.(*llm.OpenAIClient); ok {
 				oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
 			}
-			llmClient = llm.MaybeWrapRouter(llmClient, cfg)
+			llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
 		}
 
 		validator, err := schema.NewValidator()

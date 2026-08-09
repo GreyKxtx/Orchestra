@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/core/session"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestManager_CreateAndGet(t *testing.T) {

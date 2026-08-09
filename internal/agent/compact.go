@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent/history"
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 )
 

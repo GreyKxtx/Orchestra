@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/lmstudio"
+	"github.com/orchestra/orchestra/llm/lmstudio"
 )
 
 func TestListModels_V0API(t *testing.T) {

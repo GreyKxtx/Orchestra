@@ -1,6 +1,6 @@
 package history
 
-import "github.com/orchestra/orchestra/internal/llm"
+import "github.com/orchestra/orchestra/llm"
 
 // Atom is an assistant↔tool group or a standalone message block.
 type Atom struct {

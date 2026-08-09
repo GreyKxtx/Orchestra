@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/llm"
+	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 )
 

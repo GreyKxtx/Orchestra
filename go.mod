@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260503005035-c113ba3d2310
 	github.com/mattn/go-runewidth v0.0.19
+	github.com/orchestra/orchestra/llm v0.0.0
 	github.com/orchestra/orchestra/patch v0.0.0
 	github.com/orchestra/orchestra/protocol v0.0.0
 	github.com/rivo/uniseg v0.4.7
@@ -69,3 +70,5 @@ require (
 replace github.com/orchestra/orchestra/protocol => ./protocol
 
 replace github.com/orchestra/orchestra/patch => ./patch
+
+replace github.com/orchestra/orchestra/llm => ./llm
