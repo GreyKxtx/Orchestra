@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `7`
+- **`protocol.ProtocolVersion`**: `13`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `12`
 
@@ -15,6 +15,13 @@
 
 ### История ProtocolVersion
 
+- **v13** (2026-08-09): `attachments[]` on `agent.run` and `session.message`; `UIMessage.attachments` in session schema v4.
+- **v12** (2026-08-09): `agent/event` child scope fields (`scope`, `task_id`, `parent_tool_call_id`, `subagent_type`); `child_started` / `child_done`.
+- **v11** (2026-08-08): `runtime.list_providers` — provider catalog + named entries, optional `/models` probe per provider.
+- **v10** (2026-08-08): `index.status` / `index.configure` / `index.rebuild` / `index.embed` — CKG graph stats, scope/embed config, rescan, vector indexing.
+- **v9** (2026-08-08): `mcp.list` / `mcp.upsert` / `mcp.delete` / `mcp.set_disabled` / `mcp.test`; `agents.list` / `agents.upsert` / `agents.delete`; `runtime.get_system_prompt` / `runtime.set_system_prompt`; `runtime.configure_llm.prompt_family`.
+- **v8** (2026-08-08): `runtime.set_model`, `runtime.list_models`, `runtime.get_llm`, `runtime.configure_llm`; `core.health` включает `model` / `provider`.
+- **v7** (2026-08): `session.rewind` — truncate UI + LLM history to a user checkpoint.
 - **v6** (2026-08-05): unified session schema v2 (`.orchestra/sessions/<id>.json` with `ui_messages` + `history`); `session.start` accepts optional `session_id`; new methods `session.get`, `session.list`, `session.ui_sync`.
 - **v5** (2026-08-05): `agent.run` / `session.message` — поля `apply_output` (`disk`|`patch`), `patch_path`, `profile` (`fast`|`precision`); в result может быть `patch_path` при `apply_output=patch`.
 - **v4** (2026-05-18): добавлены методы `workflow.list`, `workflow.run`, `skill.list`, `skill.invoke`; streaming events `workflow/stage_start` и `workflow/stage_done`.
@@ -176,13 +183,142 @@ Response `result`:
 {
   "status": "ok",
   "core_version": "vnext",
-  "protocol_version": 3,
+  "protocol_version": 9,
   "ops_version": 1,
-  "tools_version": 6,
+  "tools_version": 12,
   "workspace_root": "...",
-  "project_id": "sha256:..."
+  "project_id": "sha256:...",
+  "model": "qwen2.5-coder-7b",
+  "provider": "openai"
 }
 ```
+
+### `runtime.set_model`
+
+Hot-swap active LLM model for this core process (no client respawn). Optionally persists to `.orchestra.yml` (default `persist: true`), same intent as TUI `/model`.
+
+`params`:
+
+- `model` (string, required)
+- `provider` (string, optional) — key from `providers:` map; empty keeps current `llm` credentials
+- `persist` (bool, optional; default `true`)
+
+Response `result`:
+
+```json
+{
+  "model": "…",
+  "provider": "…",
+  "api_base": "…",
+  "persisted": true,
+  "context_tokens": 32768
+}
+```
+
+### `runtime.list_models`
+
+Lists models from the OpenAI-compatible `/models` endpoint for the current (or named) provider.
+
+`params`:
+
+- `provider` (string, optional) — catalog key (e.g. `openai`, `ollama`) or named `providers:` entry
+
+Response `result`:
+
+```json
+{
+  "models": [{"id": "…", "owned_by": "…"}],
+  "provider": "…",
+  "api_base": "…",
+  "current": "…"
+}
+```
+
+### `runtime.list_providers`
+
+Returns the built-in provider catalog (same list as TUI) plus extra named `providers:` entries from YAML. Optional probe calls `/models` for configured providers.
+
+`params`:
+
+- `probe` (bool, optional; default `false`) — when true, fetches models for every **ready** provider (`api_base` set; API key present when required)
+- `probe_key` (string, optional) — probe only this provider key (implies fetch even if `probe` is false)
+
+Response `result`:
+
+```json
+{
+  "active_provider": "openai",
+  "active_model": "gpt-4o",
+  "providers": [{
+    "key": "openai",
+    "name": "OpenAI",
+    "category": "Cloud",
+    "api_base": "https://api.openai.com/v1",
+    "active": true,
+    "ready": true,
+    "api_key_set": true,
+    "needs_key": true,
+    "named": false,
+    "custom": false,
+    "current_model": "gpt-4o",
+    "model_count": 42,
+    "models": [{"id": "gpt-4o", "owned_by": "openai"}],
+    "models_error": ""
+  }]
+}
+```
+
+`ready` means credentials are sufficient to call `/models`. `models_error` is set when probe fails.
+
+### `runtime.get_llm`
+
+Returns active LLM connection settings. API key is never returned in full — only `api_key_set` + `api_key_hint`.
+
+### `runtime.configure_llm`
+
+Updates `api_base` / `api_key` / `model` / `provider` / temperature / max_tokens / `prompt_family` (hot-swap client). Empty `api_key` keeps the existing key. Default `persist: true` writes `.orchestra.yml`.
+
+### `runtime.get_system_prompt`
+
+Returns `.orchestra/system.txt` override (if any), `has_override`, and current `llm.prompt_family`.
+
+### `runtime.set_system_prompt`
+
+Writes or clears `.orchestra/system.txt` (`content` / `clear`). Optional `prompt_family` updates YAML. Does not restart core.
+
+### `mcp.list`
+
+Returns configured MCP servers with runtime `status` (`running` | `disabled` | `error` | `stopped`), `tool_count`, and last error if any.
+
+### `mcp.upsert` / `mcp.delete` / `mcp.set_disabled`
+
+Mutate `mcp.servers` in `.orchestra.yml` (default `persist: true`) and **hot-reload** the in-process MCP manager (`ReplaceMCP`) without killing chat sessions. Startup failures are non-fatal and surfaced as `warnings` / per-server `error`.
+
+Server fields: `name`, `command[]`, `env`, `disabled`, `call_timeout_s`, `allowed_tools`.
+
+### `mcp.test`
+
+Temporary connect (or use named cfg entry) and list tool names; does not persist.
+
+### `agents.list` / `agents.upsert` / `agents.delete`
+
+CRUD for custom `agents[]` in `.orchestra.yml`. Built-in mode names are reserved (`built_in_modes` in list). Agent fields: `name`, `system_prompt`, `tools`, `model`, `provider`.
+
+### `index.status`
+
+Returns CKG graph counters (`files`, `nodes`, `edges`, `embeddings`, `missing_embeddings`), `exclude_dirs`, `context_limit_kb`, `limits`, and `embed` config. `graph_ui_port` defaults to `6061` for `orchestra ckg-ui`.
+
+### `index.configure`
+
+Hot-save index scope + embed settings to `.orchestra.yml` (default `persist: true`). Updates in-process runner exclude list and embed client config.
+
+### `index.rebuild`
+
+Synchronous incremental CKG rescan (`UpdateGraph`). Returns updated graph stats.
+
+### `index.embed`
+
+Vector-index CKG nodes using configured `embed.model`. Params: `rebuild` (clear model vectors first), `limit` (max nodes, 0 = all missing).
 
 ### `initialize`
 
@@ -213,6 +349,7 @@ Response `result`:
 - `apply_output` (string, optional; default=`disk`) — `disk` (запись/dry-run как раньше) или `patch` (экспорт unified `.patch`, диск не трогается; mutually exclusive с `apply=true`).
 - `patch_path` (string, optional) — путь для `.patch` при `apply_output=patch` (иначе `apply.patch_dir` / `.orchestra/patches/orchestra-<ts>.patch`).
 - `profile` (string, optional) — adaptive preset `fast` | `precision` (см. `docs/architecture/tui-pipeline.md` §9).
+- `attachments` (array, optional) — файлы/изображения для multimodal хода. Элемент: `{ "path": "...", "kind": "image"|"file", "mime": "...", "name": "..." }`. `kind=image` требует `llm.multimodal: true` и vision-модель.
 
 > **Skills:** CLI также принимает `--skill <name>`, который загружает file-based agent definition из `<project>/.orchestra/skills/<name>.md`. Скилл резолвится в синтетический `AgentDefinition` и идёт через тот же путь `--mode`, поэтому JSON-RPC surface не меняется — это CLI-side loader поверх существующего `AgentOptions`. См. `docs/skills.md`.
 
@@ -314,7 +451,8 @@ Response `result`: `{ "session_id": "...", "saved": true }`
 `params`:
 
 - `session_id` (string, обязательный)
-- `content` (string, обязательный) — запрос пользователя
+- `content` (string) — текст пользователя (может быть пустым, если есть `attachments`)
+- `attachments` (array, optional) — как у `agent.run` (`path`, `kind`, `mime`, `name`)
 - `apply` (bool, optional; default=false) — применить изменения на диск
 - `backup` (bool, optional) — делать резервные копии изменённых файлов
 - `allow_exec` (bool, optional) — разрешить инструмент `exec.run`

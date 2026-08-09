@@ -72,6 +72,7 @@ TUI по умолчанию коммитит write/edit сразу (`apply=true`
 ## Slash / команды
 
 `/shell` — переключить `shell · ask` ↔ `shell · allow` (алиас `/exec`).  
+`/attach <path>` — прикрепить файл (image/PDF/SVG); копия в `.orchestra/attachments/`, chips в user bubble, multimodal в LLM при `llm.multimodal: true`.  
 `/diff`, `/clear`, `/sessions`, `/help`, `/quit`, `/provider`, `/model`, …
 
 ## Архитектура
@@ -86,6 +87,7 @@ ui/tui/
   app_layout.go       — layout()
   app_diff_review.go  — per-file accept/reject
   app_action_bar.go   — inline [a]/[d]/[x] pending ops bar
+  app_attach.go       — /attach staging + attachment chips
   app_rpc.go          — agent event handlers (stream/tools/turn/chrome)
   app_view.go         — View + input chrome
   app_status.go       — chromeMetrics + status bar sync

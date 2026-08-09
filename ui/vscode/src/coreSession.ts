@@ -1,0 +1,1504 @@
+import * as crypto from "crypto";
+import { EventEmitter } from "events";
+import * as fs from "fs";
+import * as path from "path";
+import * as vscode from "vscode";
+import type {
+  AgentEventParams,
+  ConnectionStatus,
+  ExecChunkPayload,
+  PermissionRequestPayload,
+  QuestionItemPayload,
+  ToolDiagnosticPayload,
+  WorkflowStagePayload,
+} from "./protocol/events";
+import { RpcClient } from "./rpc/client";
+
+/** Must match internal/protocol/version.go */
+const PROTOCOL_VERSION = 13;
+const OPS_VERSION = 1;
+const TOOLS_VERSION = 12;
+
+/** session.message can run a long agent turn */
+const MESSAGE_TIMEOUT_MS = 10 * 60 * 1000;
+
+export interface HealthResult {
+  ok: boolean;
+  raw: unknown;
+}
+
+export interface SessionMeta {
+  id: string;
+  title: string;
+  model?: string;
+  msg_count?: number;
+  updated_at?: string;
+}
+
+export interface SessionView {
+  sessionId: string;
+  title: string;
+  model: string;
+  uiMessages: Array<{ role?: string; text?: string; content?: string }>;
+}
+
+export interface ModelInfo {
+  id: string;
+  owned_by?: string;
+}
+
+export interface ProviderEntry {
+  key: string;
+  name: string;
+  category: string;
+  api_base: string;
+  active: boolean;
+  ready: boolean;
+  configured: boolean;
+  api_key_set: boolean;
+  needs_key: boolean;
+  named: boolean;
+  custom: boolean;
+  current_model?: string;
+  models?: ModelInfo[];
+  models_error?: string;
+  model_count: number;
+}
+
+export interface CoreSessionEvents {
+  status: (status: ConnectionStatus, detail?: string) => void;
+  agentEvent: (event: AgentEventParams) => void;
+  execChunk: (payload: ExecChunkPayload) => void;
+  workflowStage: (phase: "start" | "done", stage: WorkflowStagePayload) => void;
+  stderr: (line: string) => void;
+  permissionRequest: (request: PermissionRequestPayload) => void;
+  questionAsk: (questions: QuestionItemPayload[]) => void;
+}
+
+/**
+ * Long-lived orchestra core session: ensure → initialize → session.start → session.message.
+ */
+export class CoreSession extends EventEmitter implements vscode.Disposable {
+  private client: RpcClient | undefined;
+  private readonly output: vscode.OutputChannel;
+  private readonly extensionPath: string;
+  private workspaceRoot: string | undefined;
+  private sessionId: string | undefined;
+  private coreInitialized = false;
+  private status: ConnectionStatus = "idle";
+  private ensurePromise: Promise<void> | undefined;
+  private permissionResolver: ((result: Record<string, unknown>) => void) | undefined;
+  private questionResolver: ((result: Record<string, unknown>) => void) | undefined;
+
+  constructor(output: vscode.OutputChannel, extensionPath: string) {
+    super();
+    this.output = output;
+    this.extensionPath = extensionPath;
+  }
+
+  dispose(): void {
+    this.stop();
+  }
+
+  getConnectionStatus(): ConnectionStatus {
+    return this.status;
+  }
+
+  getSessionId(): string | undefined {
+    return this.sessionId;
+  }
+
+  stop(): void {
+    this.teardownClient();
+    this.ensurePromise = undefined;
+    this.setStatus("idle");
+  }
+
+  private teardownClient(): void {
+    if (this.client) {
+      this.client.dispose();
+      this.client = undefined;
+      this.output.appendLine("[orchestra] core stopped");
+    }
+    this.sessionId = undefined;
+    this.workspaceRoot = undefined;
+    this.coreInitialized = false;
+  }
+
+  /**
+   * Ensure core is running and initialized for the current project root.
+   * Restarts if project root changed or process died.
+   */
+  async ensure(): Promise<void> {
+    if (this.ensurePromise) {
+      await this.ensurePromise;
+      return;
+    }
+    this.ensurePromise = this.ensureInner();
+    try {
+      await this.ensurePromise;
+    } finally {
+      this.ensurePromise = undefined;
+    }
+  }
+
+  /**
+   * Attach a session:
+   * - no args → reuse current or create new
+   * - { forceNew: true } → always create new
+   * - { sessionId } → reopen that id
+   */
+  async startSession(options?: { sessionId?: string; forceNew?: boolean }): Promise<string> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing after ensure");
+    }
+
+    const forceNew = options?.forceNew === true;
+    const reopenId = options?.sessionId?.trim() || "";
+
+    if (!forceNew && !reopenId && this.sessionId) {
+      this.setStatus("ready", this.sessionId);
+      return this.sessionId;
+    }
+    if (!forceNew && reopenId && this.sessionId === reopenId) {
+      this.setStatus("ready", this.sessionId);
+      return this.sessionId;
+    }
+
+    const params: Record<string, unknown> = {};
+    if (forceNew) {
+      this.sessionId = undefined;
+    } else if (reopenId) {
+      params.session_id = reopenId;
+    }
+
+    this.output.appendLine(
+      forceNew
+        ? "[orchestra] session.start (new)…"
+        : reopenId
+          ? `[orchestra] session.start reopen ${reopenId}…`
+          : "[orchestra] session.start…"
+    );
+    const result = (await this.client.request("session.start", params, 30_000)) as {
+      session_id?: string;
+    };
+    const id = typeof result.session_id === "string" ? result.session_id.trim() : "";
+    if (!id) {
+      throw new Error(`session.start returned no session_id: ${JSON.stringify(result)}`);
+    }
+    this.sessionId = id;
+    this.output.appendLine(`[orchestra] session_id: ${id}`);
+    this.setStatus("ready", id);
+    return id;
+  }
+
+  async listSessions(): Promise<SessionMeta[]> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const result = (await this.client.request("session.list", {}, 30_000)) as {
+      sessions?: SessionMeta[];
+    };
+    return Array.isArray(result.sessions) ? result.sessions : [];
+  }
+
+  async getSession(sessionId?: string): Promise<SessionView> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const id = (sessionId || this.sessionId || "").trim();
+    if (!id) {
+      throw new Error("session_id required");
+    }
+    const result = (await this.client.request(
+      "session.get",
+      { session_id: id },
+      30_000
+    )) as {
+      session_id?: string;
+      title?: string;
+      model?: string;
+      ui_messages?: Array<{ role?: string; text?: string; content?: string }>;
+    };
+    return {
+      sessionId: result.session_id || id,
+      title: (result.title || "").trim(),
+      model: (result.model || "").trim(),
+      uiMessages: Array.isArray(result.ui_messages) ? result.ui_messages : [],
+    };
+  }
+
+  async closeSession(sessionId?: string): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const id = (sessionId || this.sessionId || "").trim();
+    if (!id) {
+      throw new Error("session_id required");
+    }
+    await this.client.request("session.close", { session_id: id }, 30_000);
+    if (this.sessionId === id) {
+      this.sessionId = "";
+    }
+  }
+
+  /** Best-effort: set human title when session still untitled (preserves ui_messages). */
+  async maybeSetSessionTitle(title: string): Promise<void> {
+    const id = this.sessionId;
+    if (!id || !this.client) {
+      return;
+    }
+    const clean = title.trim().replace(/\s+/g, " ");
+    if (!clean) {
+      return;
+    }
+    try {
+      const raw = (await this.client.request(
+        "session.get",
+        { session_id: id },
+        15_000
+      )) as {
+        title?: string;
+        model?: string;
+        ui_messages?: unknown;
+      };
+      if (typeof raw.title === "string" && raw.title.trim() !== "") {
+        return;
+      }
+      const short = clean.length > 48 ? clean.slice(0, 45) + "…" : clean;
+      await this.client.request(
+        "session.ui_sync",
+        {
+          session_id: id,
+          title: short,
+          model: raw.model || undefined,
+          ui_messages: Array.isArray(raw.ui_messages) ? raw.ui_messages : [],
+        },
+        15_000
+      );
+    } catch (err) {
+      this.output.appendLine(
+        `[orchestra] set title skipped: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  async healthInfo(): Promise<{ model: string; provider: string; raw: unknown }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const health = (await this.client.request("core.health", {}, 10_000)) as {
+      model?: string;
+      provider?: string;
+    };
+    return {
+      model: typeof health.model === "string" ? health.model : "",
+      provider: typeof health.provider === "string" ? health.provider : "",
+      raw: health,
+    };
+  }
+
+  async listModels(provider?: string): Promise<{ models: ModelInfo[]; current: string; provider: string }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = {};
+    if (provider?.trim()) {
+      params.provider = provider.trim();
+    }
+    const result = (await this.client.request("runtime.list_models", params, 60_000)) as {
+      models?: ModelInfo[];
+      current?: string;
+      provider?: string;
+    };
+    return {
+      models: Array.isArray(result.models) ? result.models : [],
+      current: typeof result.current === "string" ? result.current : "",
+      provider: typeof result.provider === "string" ? result.provider : "",
+    };
+  }
+
+  async listProviders(options?: {
+    probe?: boolean;
+    probeKey?: string;
+  }): Promise<{
+    providers: ProviderEntry[];
+    activeProvider: string;
+    activeModel: string;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = {};
+    if (options?.probe) {
+      params.probe = true;
+    }
+    if (options?.probeKey?.trim()) {
+      params.probe_key = options.probeKey.trim();
+    }
+    const result = (await this.client.request("runtime.list_providers", params, 90_000)) as {
+      providers?: ProviderEntry[];
+      active_provider?: string;
+      active_model?: string;
+    };
+    return {
+      providers: Array.isArray(result.providers) ? result.providers : [],
+      activeProvider: typeof result.active_provider === "string" ? result.active_provider : "",
+      activeModel: typeof result.active_model === "string" ? result.active_model : "",
+    };
+  }
+
+  async setModel(
+    model: string,
+    options?: { persist?: boolean; provider?: string }
+  ): Promise<{ model: string; persisted: boolean }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const persist = options?.persist ?? true;
+    const params: Record<string, unknown> = {
+      model: model.trim(),
+      persist,
+    };
+    if (options?.provider) {
+      params.provider = options.provider;
+    }
+    this.output.appendLine(`[orchestra] runtime.set_model ${model}…`);
+    const result = (await this.client.request("runtime.set_model", params, 60_000)) as {
+      model?: string;
+      persisted?: boolean;
+    };
+    return {
+      model: typeof result.model === "string" ? result.model : model,
+      persisted: Boolean(result.persisted),
+    };
+  }
+
+  async getLLM(): Promise<{
+    provider: string;
+    apiBase: string;
+    model: string;
+    apiKeySet: boolean;
+    apiKeyHint: string;
+    temperature: number;
+    maxTokens: number;
+    timeoutS: number;
+    promptFamily: string;
+    multimodal: boolean;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("runtime.get_llm", {}, 15_000)) as {
+      provider?: string;
+      api_base?: string;
+      model?: string;
+      api_key_set?: boolean;
+      api_key_hint?: string;
+      temperature?: number;
+      max_tokens?: number;
+      timeout_s?: number;
+      prompt_family?: string;
+      multimodal?: boolean;
+    };
+    return {
+      provider: r.provider || "",
+      apiBase: r.api_base || "",
+      model: r.model || "",
+      apiKeySet: Boolean(r.api_key_set),
+      apiKeyHint: r.api_key_hint || "",
+      temperature: typeof r.temperature === "number" ? r.temperature : 0,
+      maxTokens: typeof r.max_tokens === "number" ? r.max_tokens : 0,
+      timeoutS: typeof r.timeout_s === "number" ? r.timeout_s : 0,
+      promptFamily: r.prompt_family || "",
+      multimodal: Boolean(r.multimodal),
+    };
+  }
+
+  async configureLLM(input: {
+    provider?: string;
+    apiBase?: string;
+    apiKey?: string;
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    timeoutS?: number;
+    promptFamily?: string;
+    multimodal?: boolean;
+    persist?: boolean;
+  }): Promise<{ model: string; apiBase: string; persisted: boolean }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = {
+      persist: input.persist ?? true,
+    };
+    if (input.provider) params.provider = input.provider;
+    if (input.apiBase) params.api_base = input.apiBase;
+    if (input.apiKey) params.api_key = input.apiKey;
+    if (input.model) params.model = input.model;
+    if (input.temperature !== undefined) params.temperature = input.temperature;
+    if (input.maxTokens !== undefined) params.max_tokens = input.maxTokens;
+    if (input.timeoutS !== undefined) params.timeout_s = input.timeoutS;
+    if (input.promptFamily !== undefined) params.prompt_family = input.promptFamily;
+    if (input.multimodal !== undefined) params.multimodal = input.multimodal;
+    this.output.appendLine("[orchestra] runtime.configure_llm…");
+    const r = (await this.client.request("runtime.configure_llm", params, 60_000)) as {
+      model?: string;
+      api_base?: string;
+      persisted?: boolean;
+    };
+    return {
+      model: r.model || input.model || "",
+      apiBase: r.api_base || input.apiBase || "",
+      persisted: Boolean(r.persisted),
+    };
+  }
+
+  async getSystemPrompt(): Promise<{
+    content: string;
+    hasOverride: boolean;
+    promptFamily: string;
+    path: string;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("runtime.get_system_prompt", {}, 15_000)) as {
+      content?: string;
+      has_override?: boolean;
+      prompt_family?: string;
+      path?: string;
+    };
+    return {
+      content: r.content || "",
+      hasOverride: Boolean(r.has_override),
+      promptFamily: r.prompt_family || "",
+      path: r.path || "",
+    };
+  }
+
+  async setSystemPrompt(input: {
+    content?: string;
+    clear?: boolean;
+    promptFamily?: string;
+  }): Promise<{ hasOverride: boolean; promptFamily: string; persisted: boolean }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = { persist: true };
+    if (input.clear) {
+      params.clear = true;
+    } else if (input.content !== undefined) {
+      params.content = input.content;
+    }
+    if (input.promptFamily !== undefined) {
+      params.prompt_family = input.promptFamily;
+    }
+    const r = (await this.client.request("runtime.set_system_prompt", params, 30_000)) as {
+      has_override?: boolean;
+      prompt_family?: string;
+      persisted?: boolean;
+    };
+    return {
+      hasOverride: Boolean(r.has_override),
+      promptFamily: r.prompt_family || "",
+      persisted: Boolean(r.persisted),
+    };
+  }
+
+  async listAgents(): Promise<{
+    agents: Array<{
+      name: string;
+      system_prompt?: string;
+      tools?: string[];
+      model?: string;
+      provider?: string;
+    }>;
+    builtInModes: string[];
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("agents.list", {}, 15_000)) as {
+      agents?: Array<{
+        name: string;
+        system_prompt?: string;
+        tools?: string[];
+        model?: string;
+        provider?: string;
+      }>;
+      built_in_modes?: string[];
+    };
+    return {
+      agents: Array.isArray(r.agents) ? r.agents : [],
+      builtInModes: Array.isArray(r.built_in_modes) ? r.built_in_modes : [],
+    };
+  }
+
+  async upsertAgent(agent: {
+    name: string;
+    system_prompt?: string;
+    tools?: string[];
+    model?: string;
+    provider?: string;
+  }): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    await this.client.request("agents.upsert", { agent, persist: true }, 30_000);
+  }
+
+  async deleteAgent(name: string): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    await this.client.request("agents.delete", { name, persist: true }, 30_000);
+  }
+
+  async listMCP(): Promise<{
+    servers: Array<{
+      name: string;
+      command: string[];
+      env?: Record<string, string>;
+      disabled: boolean;
+      call_timeout_s?: number;
+      allowed_tools?: string[];
+      status: string;
+      tool_count: number;
+      error?: string;
+    }>;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("mcp.list", {}, 30_000)) as {
+      servers?: Array<{
+        name: string;
+        command: string[];
+        env?: Record<string, string>;
+        disabled: boolean;
+        call_timeout_s?: number;
+        allowed_tools?: string[];
+        status: string;
+        tool_count: number;
+        error?: string;
+      }>;
+    };
+    return { servers: Array.isArray(r.servers) ? r.servers : [] };
+  }
+
+  async upsertMCP(server: {
+    name: string;
+    command: string[];
+    env?: Record<string, string>;
+    disabled?: boolean;
+    call_timeout_s?: number;
+    allowed_tools?: string[];
+  }): Promise<{ warnings: string[] }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request(
+      "mcp.upsert",
+      { server, persist: true },
+      120_000
+    )) as { warnings?: string[] };
+    return { warnings: Array.isArray(r.warnings) ? r.warnings : [] };
+  }
+
+  async deleteMCP(name: string): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    await this.client.request("mcp.delete", { name, persist: true }, 60_000);
+  }
+
+  async setMCPDisabled(name: string, disabled: boolean): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    await this.client.request("mcp.set_disabled", { name, disabled, persist: true }, 60_000);
+  }
+
+  async testMCP(input: {
+    name?: string;
+    server?: {
+      name: string;
+      command: string[];
+      env?: Record<string, string>;
+      call_timeout_s?: number;
+      allowed_tools?: string[];
+    };
+  }): Promise<{ ok: boolean; name: string; tools: string[]; error: string; elapsed: string }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("mcp.test", input, 60_000)) as {
+      ok?: boolean;
+      name?: string;
+      tools?: string[];
+      error?: string;
+      elapsed?: string;
+    };
+    return {
+      ok: Boolean(r.ok),
+      name: r.name || "",
+      tools: Array.isArray(r.tools) ? r.tools : [],
+      error: r.error || "",
+      elapsed: r.elapsed || "",
+    };
+  }
+
+  async getIndexStatus(): Promise<{
+    projectRoot: string;
+    excludeDirs: string[];
+    contextLimitKB: number;
+    limits: { context_kb?: number; max_files?: number; max_bytes_per_file?: number };
+    embed: {
+      api_base?: string;
+      model?: string;
+      batch_size?: number;
+      timeout_s?: number;
+      semantic_auto_explore?: boolean;
+      semantic_auto_explore_top_k?: number;
+    };
+    graph: {
+      available: boolean;
+      db_path?: string;
+      files: number;
+      nodes: number;
+      edges: number;
+      embeddings: number;
+      missing_embeddings: number;
+    };
+    graphUIPort: number;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("index.status", {}, 30_000)) as Record<string, unknown>;
+    const graph = (r.graph as Record<string, unknown>) || {};
+    const embed = (r.embed as Record<string, unknown>) || {};
+    const limits = (r.limits as Record<string, unknown>) || {};
+    return {
+      projectRoot: String(r.project_root || ""),
+      excludeDirs: Array.isArray(r.exclude_dirs) ? (r.exclude_dirs as string[]) : [],
+      contextLimitKB: Number(r.context_limit_kb) || 0,
+      limits: {
+        context_kb: Number(limits.context_kb) || undefined,
+        max_files: Number(limits.max_files) || undefined,
+        max_bytes_per_file: Number(limits.max_bytes_per_file) || undefined,
+      },
+      embed: {
+        api_base: String(embed.api_base || ""),
+        model: String(embed.model || ""),
+        batch_size: Number(embed.batch_size) || undefined,
+        timeout_s: Number(embed.timeout_s) || undefined,
+        semantic_auto_explore:
+          embed.semantic_auto_explore === undefined
+            ? undefined
+            : Boolean(embed.semantic_auto_explore),
+        semantic_auto_explore_top_k: Number(embed.semantic_auto_explore_top_k) || undefined,
+      },
+      graph: {
+        available: Boolean(graph.available),
+        db_path: String(graph.db_path || ""),
+        files: Number(graph.files) || 0,
+        nodes: Number(graph.nodes) || 0,
+        edges: Number(graph.edges) || 0,
+        embeddings: Number(graph.embeddings) || 0,
+        missing_embeddings: Number(graph.missing_embeddings) || 0,
+      },
+      graphUIPort: Number(r.graph_ui_port) || 6061,
+    };
+  }
+
+  async configureIndex(input: {
+    excludeDirs?: string[];
+    contextLimitKB?: number;
+    limitsMaxFiles?: number;
+    limitsMaxBytesPerFile?: number;
+    embedAPIBase?: string;
+    embedAPIKey?: string;
+    embedModel?: string;
+    embedBatchSize?: number;
+    embedTimeoutS?: number;
+    semanticAutoExplore?: boolean;
+    semanticAutoExploreTopK?: number;
+  }): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = { persist: true };
+    if (input.excludeDirs) {
+      params.exclude_dirs = input.excludeDirs;
+    }
+    if (input.contextLimitKB !== undefined) {
+      params.context_limit_kb = input.contextLimitKB;
+    }
+    if (input.limitsMaxFiles !== undefined) {
+      params.limits_max_files = input.limitsMaxFiles;
+    }
+    if (input.limitsMaxBytesPerFile !== undefined) {
+      params.limits_max_bytes_per_file = input.limitsMaxBytesPerFile;
+    }
+    if (input.embedAPIBase) {
+      params.embed_api_base = input.embedAPIBase;
+    }
+    if (input.embedAPIKey) {
+      params.embed_api_key = input.embedAPIKey;
+    }
+    if (input.embedModel) {
+      params.embed_model = input.embedModel;
+    }
+    if (input.embedBatchSize !== undefined) {
+      params.embed_batch_size = input.embedBatchSize;
+    }
+    if (input.embedTimeoutS !== undefined) {
+      params.embed_timeout_s = input.embedTimeoutS;
+    }
+    if (input.semanticAutoExplore !== undefined) {
+      params.semantic_auto_explore = input.semanticAutoExplore;
+    }
+    if (input.semanticAutoExploreTopK !== undefined) {
+      params.semantic_auto_explore_top_k = input.semanticAutoExploreTopK;
+    }
+    await this.client.request("index.configure", params, 60_000);
+  }
+
+  async rebuildIndex(): Promise<{
+    files: number;
+    nodes: number;
+    edges: number;
+    embeddings: number;
+    missing_embeddings: number;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("index.rebuild", {}, 5 * 60_000)) as {
+      graph?: Record<string, unknown>;
+    };
+    const g = r.graph || {};
+    return {
+      files: Number(g.files) || 0,
+      nodes: Number(g.nodes) || 0,
+      edges: Number(g.edges) || 0,
+      embeddings: Number(g.embeddings) || 0,
+      missing_embeddings: Number(g.missing_embeddings) || 0,
+    };
+  }
+
+  async embedIndex(options?: { rebuild?: boolean; limit?: number }): Promise<{
+    model: string;
+    embedded: number;
+    total: number;
+    remaining: number;
+    elapsed: string;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = {};
+    if (options?.rebuild) {
+      params.rebuild = true;
+    }
+    if (options?.limit) {
+      params.limit = options.limit;
+    }
+    const r = (await this.client.request("index.embed", params, 10 * 60_000)) as {
+      model?: string;
+      embedded?: number;
+      total?: number;
+      remaining?: number;
+      elapsed?: string;
+    };
+    return {
+      model: r.model || "",
+      embedded: Number(r.embedded) || 0,
+      total: Number(r.total) || 0,
+      remaining: Number(r.remaining) || 0,
+      elapsed: r.elapsed || "",
+    };
+  }
+
+  async listSkills(): Promise<
+    Array<{ name: string; description: string; origin?: string }>
+  > {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("skill.list", {}, 30_000)) as {
+      skills?: Array<{ name?: string; description?: string; origin?: string }>;
+    };
+    const skills = Array.isArray(r.skills) ? r.skills : [];
+    return skills.map((s) => ({
+      name: s.name || "",
+      description: s.description || "",
+      origin: s.origin,
+    }));
+  }
+
+  /**
+   * One agent turn. Streams agent/event via "agentEvent" while in flight.
+   */
+  async sendMessage(
+    content: string,
+    options?: {
+      apply?: boolean;
+      mode?: string;
+      profile?: string;
+      allowExec?: boolean;
+      attachments?: Array<{
+        name: string;
+        path?: string;
+        ext?: string;
+        kind?: string;
+      }>;
+    }
+  ): Promise<unknown> {
+    const text = content.trim();
+    const attachments =
+      options?.attachments
+        ?.filter((f) => typeof f.path === "string" && f.path.trim() !== "")
+        .map((f) => ({
+          path: f.path!.trim(),
+          kind: f.kind || "file",
+          name: f.name,
+          mime: f.kind === "image" ? mimeForExt(f.ext || f.name) : undefined,
+        })) ?? [];
+    if (!text && attachments.length === 0) {
+      throw new Error("empty message");
+    }
+    const sessionId = await this.startSession();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+
+    this.setStatus("running");
+    this.output.appendLine(
+      `[orchestra] session.message (${text.length} chars)` +
+        (options?.mode ? ` mode=${options.mode}` : "") +
+        (options?.profile ? ` profile=${options.profile}` : "") +
+        "…"
+    );
+    try {
+      const params: Record<string, unknown> = {
+        session_id: sessionId,
+        content: text,
+        apply: options?.apply ?? false,
+        backup: options?.apply ?? false,
+        allow_exec: options?.allowExec ?? false,
+      };
+      if (options?.mode && options.mode.trim() !== "") {
+        params.mode = options.mode.trim();
+      }
+      if (options?.profile && options.profile.trim() !== "") {
+        params.profile = options.profile.trim();
+      }
+      if (attachments.length > 0) {
+        params.attachments = attachments;
+      }
+      const result = await this.client.request("session.message", params, MESSAGE_TIMEOUT_MS);
+      this.setStatus("ready", sessionId);
+      return result;
+    } catch (err) {
+      this.setStatus("error", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }
+
+  async applyPending(backup = true): Promise<{ applied: boolean }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const sessionId = (this.sessionId || "").trim();
+    if (!sessionId) {
+      throw new Error("session_id required");
+    }
+    const r = (await this.client.request(
+      "session.apply_pending",
+      { session_id: sessionId, backup },
+      5 * 60_000
+    )) as { applied?: boolean };
+    return { applied: Boolean(r.applied) };
+  }
+
+  async applyOps(ops: unknown[], backup = true): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    if (!Array.isArray(ops) || ops.length === 0) {
+      throw new Error("ops required");
+    }
+    await this.client.request(
+      "ops.apply",
+      { ops, backup },
+      5 * 60_000
+    );
+  }
+
+  async rewindSession(uiMessageIndex: number): Promise<{
+    uiMessages: number;
+    historyMessages: number;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const sessionId = (this.sessionId || "").trim();
+    if (!sessionId) {
+      throw new Error("session_id required");
+    }
+    const r = (await this.client.request(
+      "session.rewind",
+      { session_id: sessionId, ui_message_index: uiMessageIndex },
+      60_000
+    )) as { ui_messages?: number; history_messages?: number };
+    return {
+      uiMessages: typeof r.ui_messages === "number" ? r.ui_messages : 0,
+      historyMessages: typeof r.history_messages === "number" ? r.history_messages : 0,
+    };
+  }
+
+  async compactSession(query?: string): Promise<{
+    beforeMsgs: number;
+    afterMsgs: number;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const sessionId = (this.sessionId || "").trim();
+    if (!sessionId) {
+      throw new Error("session_id required");
+    }
+    const params: Record<string, unknown> = { session_id: sessionId };
+    if (query?.trim()) {
+      params.query = query.trim();
+    }
+    const r = (await this.client.request("session.compact", params, 5 * 60_000)) as {
+      before_msgs?: number;
+      after_msgs?: number;
+    };
+    return {
+      beforeMsgs: typeof r.before_msgs === "number" ? r.before_msgs : 0,
+      afterMsgs: typeof r.after_msgs === "number" ? r.after_msgs : 0,
+    };
+  }
+
+  resolvePermission(decision: { approved: boolean; always?: boolean; reason?: string }): void {
+    const resolve = this.permissionResolver;
+    this.permissionResolver = undefined;
+    if (!resolve) {
+      return;
+    }
+    resolve({
+      approved: decision.approved,
+      always: Boolean(decision.always),
+      reason: decision.reason || (decision.approved ? "ok" : "denied"),
+    });
+  }
+
+  resolveQuestion(answers: string[]): void {
+    const resolve = this.questionResolver;
+    this.questionResolver = undefined;
+    if (!resolve) {
+      return;
+    }
+    resolve({ answers });
+  }
+
+  /**
+   * Health smoke: ensure core, call core.health (does not tear down).
+   */
+  async ping(): Promise<HealthResult> {
+    this.output.appendLine("— Orchestra: Ping Core —");
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    this.output.appendLine("[orchestra] core.health…");
+    const health = await this.client.request("core.health", {}, 10_000);
+    this.output.appendLine(`[orchestra] health: ${JSON.stringify(health, null, 2)}`);
+    return { ok: true, raw: health };
+  }
+
+  private async ensureInner(): Promise<void> {
+    const workspaceRoot = await resolveProjectRoot();
+    if (
+      this.client &&
+      !this.client.isClosed &&
+      this.workspaceRoot === workspaceRoot &&
+      this.coreInitialized
+    ) {
+      return;
+    }
+
+    this.teardownClient();
+    this.setStatus("connecting");
+
+    const binary = resolveBinaryPath(workspaceRoot, this.extensionPath);
+    this.output.appendLine(`[orchestra] binary: ${binary}`);
+    this.output.appendLine(`[orchestra] workspace: ${workspaceRoot}`);
+
+    const client = new RpcClient(binary, ["core", "--workspace-root", workspaceRoot], {
+      cwd: workspaceRoot,
+    });
+    this.client = client;
+    this.workspaceRoot = workspaceRoot;
+    this.coreInitialized = false;
+
+    client.on("stderr", (line: string) => {
+      this.output.append(`[core stderr] ${line}`);
+      this.emit("stderr", line);
+    });
+    client.on("error", (err: Error) => {
+      this.output.appendLine(`[orchestra] rpc error: ${err.message}`);
+      this.setStatus("error", err.message);
+    });
+    client.on("exit", () => {
+      this.output.appendLine("[orchestra] core process exited");
+      this.client = undefined;
+      this.sessionId = undefined;
+      this.coreInitialized = false;
+      this.setStatus("idle", "core exited");
+    });
+    client.on("notification", (method: string, params: unknown) => {
+      this.handleNotification(method, params);
+    });
+    client.setServerRequestHandler(async (method, params, id) => {
+      return this.handleServerRequest(method, params, id);
+    });
+
+    try {
+      this.output.appendLine("[orchestra] core.health (pre-init)…");
+      const preHealth = (await client.request("core.health", {}, 10_000)) as {
+        project_id?: string;
+        protocol_version?: number;
+      };
+      if (
+        typeof preHealth.protocol_version === "number" &&
+        preHealth.protocol_version !== PROTOCOL_VERSION
+      ) {
+        throw new Error(
+          `protocol_version mismatch: extension=${PROTOCOL_VERSION}, core=${preHealth.protocol_version}. ` +
+            `Rebuild orchestra.exe (go build -o orchestra.exe ./cmd/orchestra) and reload the window.`
+        );
+      }
+      const projectId =
+        typeof preHealth.project_id === "string" && preHealth.project_id.trim() !== ""
+          ? preHealth.project_id.trim()
+          : computeProjectID(workspaceRoot);
+      this.output.appendLine(`[orchestra] project_id: ${projectId}`);
+
+      this.output.appendLine("[orchestra] initialize…");
+      const initResult = await client.request(
+        "initialize",
+        {
+          protocol_version: PROTOCOL_VERSION,
+          ops_version: OPS_VERSION,
+          tools_version: TOOLS_VERSION,
+          project_root: workspaceRoot,
+          project_id: projectId,
+        },
+        20_000
+      );
+      this.output.appendLine(`[orchestra] initialize ok: ${JSON.stringify(initResult)}`);
+      this.coreInitialized = true;
+      this.setStatus("ready");
+    } catch (err) {
+      this.teardownClient();
+      throw err;
+    }
+  }
+
+  private handleNotification(method: string, params: unknown): void {
+    if (method === "agent/event") {
+      const event = normalizeAgentEvent(params);
+      if (event) {
+        this.output.appendLine(
+          `[agent/event] ${event.type}` +
+            (event.tool_call_name ? ` ${event.tool_call_name}` : "") +
+            (event.content ? ` ${truncate(event.content, 80)}` : "")
+        );
+        this.emit("agentEvent", event);
+      }
+      return;
+    }
+    if (method === "exec/output_chunk") {
+      const chunk = parseExecChunk(params);
+      if (chunk) {
+        this.emit("execChunk", chunk);
+      }
+      return;
+    }
+    if (method === "workflow/stage_start") {
+      const stage = parseWorkflowStage(params);
+      if (stage) {
+        this.emit("workflowStage", "start", stage);
+      }
+      return;
+    }
+    if (method === "workflow/stage_done") {
+      const stage = parseWorkflowStage(params);
+      if (stage) {
+        this.emit("workflowStage", "done", stage);
+      }
+      return;
+    }
+    this.output.appendLine(`[notify] ${method} ${JSON.stringify(params)}`);
+  }
+
+  private handleServerRequest(method: string, params: unknown, id: number | string): Promise<unknown> {
+    this.output.appendLine(
+      `[server-req] ${method} id=${String(id)} ${JSON.stringify(params)}`
+    );
+
+    if (method === "permission/request") {
+      const req = parsePermissionRequest(params);
+      return new Promise((resolve) => {
+        this.permissionResolver = resolve;
+        this.emit("permissionRequest", req);
+      });
+    }
+
+    if (method === "question/ask") {
+      const questions = parseQuestionRequest(params);
+      return new Promise((resolve) => {
+        this.questionResolver = resolve;
+        this.emit("questionAsk", questions);
+      });
+    }
+
+    return Promise.reject(new Error(`unsupported server request: ${method}`));
+  }
+
+  private setStatus(status: ConnectionStatus, detail?: string): void {
+    this.status = status;
+    this.emit("status", status, detail);
+  }
+}
+
+function normalizeAgentEvent(params: unknown): AgentEventParams | undefined {
+  if (!params || typeof params !== "object") {
+    return undefined;
+  }
+  const p = params as Record<string, unknown>;
+  const type = typeof p.type === "string" ? p.type : undefined;
+  if (!type) {
+    return undefined;
+  }
+  let diagnostics: ToolDiagnosticPayload[] | undefined;
+  if (p.diagnostics !== undefined && p.diagnostics !== null) {
+    const raw = p.diagnostics;
+    if (Array.isArray(raw)) {
+      diagnostics = raw
+        .map(parseDiagnostic)
+        .filter((x): x is ToolDiagnosticPayload => x !== undefined);
+    } else if (typeof raw === "string" && raw.trim() !== "" && raw.trim() !== "null") {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          diagnostics = parsed
+            .map(parseDiagnostic)
+            .filter((x): x is ToolDiagnosticPayload => x !== undefined);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return {
+    type,
+    step: typeof p.step === "number" ? p.step : undefined,
+    content: typeof p.content === "string" ? p.content : undefined,
+    data: p.data,
+    session_id: typeof p.session_id === "string" ? p.session_id : undefined,
+    turn_id: typeof p.turn_id === "string" ? p.turn_id : undefined,
+    tool_call_id: typeof p.tool_call_id === "string" ? p.tool_call_id : undefined,
+    tool_call_name: typeof p.tool_call_name === "string" ? p.tool_call_name : undefined,
+    tool_call_index: typeof p.tool_call_index === "number" ? p.tool_call_index : undefined,
+    args_delta: typeof p.args_delta === "string" ? p.args_delta : undefined,
+    diagnostics,
+    scope: typeof p.scope === "string" ? p.scope : undefined,
+    task_id: typeof p.task_id === "string" ? p.task_id : undefined,
+    parent_tool_call_id:
+      typeof p.parent_tool_call_id === "string" ? p.parent_tool_call_id : undefined,
+    subagent_type: typeof p.subagent_type === "string" ? p.subagent_type : undefined,
+    status: typeof p.status === "string" ? p.status : undefined,
+    error: typeof p.error === "string" ? p.error : undefined,
+  };
+}
+
+function parseDiagnostic(item: unknown): ToolDiagnosticPayload | undefined {
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+  const d = item as Record<string, unknown>;
+  const message = typeof d.message === "string" ? d.message : "";
+  const severity = typeof d.severity === "string" ? d.severity : "warning";
+  const startLine = typeof d.start_line === "number" ? d.start_line : 0;
+  const startCol = typeof d.start_col === "number" ? d.start_col : 0;
+  if (!message) {
+    return undefined;
+  }
+  return {
+    start_line: startLine,
+    start_col: startCol,
+    end_line: typeof d.end_line === "number" ? d.end_line : undefined,
+    end_col: typeof d.end_col === "number" ? d.end_col : undefined,
+    severity,
+    source: typeof d.source === "string" ? d.source : undefined,
+    message,
+  };
+}
+
+function parseExecChunk(params: unknown): ExecChunkPayload | undefined {
+  if (!params || typeof params !== "object") {
+    return undefined;
+  }
+  const p = params as Record<string, unknown>;
+  const step = typeof p.step === "number" ? p.step : undefined;
+  const chunk = typeof p.chunk === "string" ? p.chunk : "";
+  if (step === undefined) {
+    return undefined;
+  }
+  return {
+    step,
+    chunk,
+    session_id: typeof p.session_id === "string" ? p.session_id : undefined,
+    turn_id: typeof p.turn_id === "string" ? p.turn_id : undefined,
+  };
+}
+
+function parseWorkflowStage(params: unknown): WorkflowStagePayload | undefined {
+  if (!params || typeof params !== "object") {
+    return undefined;
+  }
+  const p = params as Record<string, unknown>;
+  const name = typeof p.name === "string" ? p.name : "";
+  const stageId = typeof p.stage_id === "string" ? p.stage_id : "";
+  if (!name || !stageId) {
+    return undefined;
+  }
+  return {
+    name,
+    stage_id: stageId,
+    attempt: typeof p.attempt === "number" ? p.attempt : 0,
+    marker: typeof p.marker === "string" ? p.marker : undefined,
+    action: typeof p.action === "string" ? p.action : undefined,
+    output_kb: typeof p.output_kb === "number" ? p.output_kb : undefined,
+  };
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n) + "…";
+}
+
+function parsePermissionRequest(params: unknown): PermissionRequestPayload {
+  if (!params || typeof params !== "object") {
+    return { tool: "unknown" };
+  }
+  const p = params as Record<string, unknown>;
+  return {
+    tool: typeof p.tool === "string" ? p.tool : "unknown",
+    description: typeof p.description === "string" ? p.description : undefined,
+    kind: typeof p.kind === "string" ? p.kind : undefined,
+    reason: typeof p.reason === "string" ? p.reason : undefined,
+  };
+}
+
+function parseQuestionRequest(params: unknown): QuestionItemPayload[] {
+  if (!params || typeof params !== "object") {
+    return [];
+  }
+  const raw = (params as { questions?: unknown }).questions;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: QuestionItemPayload[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const q = item as Record<string, unknown>;
+    const question = typeof q.question === "string" ? q.question : "";
+    if (!question) {
+      continue;
+    }
+    const options = Array.isArray(q.options)
+      ? q.options.filter((x): x is string => typeof x === "string")
+      : undefined;
+    out.push({
+      question,
+      options,
+      allow_multiple: q.allow_multiple === true,
+    });
+  }
+  return out;
+}
+
+function computeProjectID(projectRoot: string): string {
+  let abs = path.resolve(projectRoot);
+  if (process.platform === "win32") {
+    abs = abs.toLowerCase();
+  }
+  const sum = crypto.createHash("sha256").update(abs, "utf8").digest("hex");
+  return `sha256:${sum}`;
+}
+
+export async function resolveProjectRoot(): Promise<string> {
+  const configured = vscode.workspace
+    .getConfiguration("orchestra")
+    .get<string>("projectRoot")
+    ?.trim();
+  if (configured) {
+    if (!fs.existsSync(configured)) {
+      throw new Error(`orchestra.projectRoot not found: ${configured}`);
+    }
+    return path.resolve(configured);
+  }
+
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder) {
+    return folder.uri.fsPath;
+  }
+
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: "Use as Orchestra project root",
+    title: "No folder open — pick a project for orchestra core",
+  });
+  const uri = picked?.[0];
+  if (!uri) {
+    throw new Error(
+      "No workspace folder open. Open a folder (File → Open Folder) or set orchestra.projectRoot."
+    );
+  }
+  return uri.fsPath;
+}
+
+export function resolveBinaryPath(workspaceRoot: string, extensionPath: string): string {
+  const exeName = process.platform === "win32" ? "orchestra.exe" : "orchestra";
+
+  const configured = vscode.workspace
+    .getConfiguration("orchestra")
+    .get<string>("binaryPath")
+    ?.trim();
+  if (configured) {
+    if (!fs.existsSync(configured)) {
+      throw new Error(
+        `orchestra.binaryPath not found: ${configured}\n` +
+          `Set Settings → Orchestra: Binary Path to your built orchestra.exe`
+      );
+    }
+    return configured;
+  }
+
+  const candidates: string[] = [
+    path.join(workspaceRoot, exeName),
+    path.join(extensionPath, "..", "..", exeName),
+    path.join(extensionPath, "..", exeName),
+    path.join(extensionPath, exeName),
+  ];
+  if (process.platform === "win32") {
+    // Fallback when orchestra.exe is locked mid-rebuild.
+    candidates.push(
+      path.join(workspaceRoot, "orchestra-new.exe"),
+      path.join(extensionPath, "..", "..", "orchestra-new.exe")
+    );
+  }
+
+  let dir = workspaceRoot;
+  for (let i = 0; i < 6; i++) {
+    candidates.push(path.join(dir, exeName));
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+
+  const seen = new Set<string>();
+  let best = "";
+  let bestMtime = 0;
+  for (const c of candidates) {
+    const abs = path.resolve(c);
+    if (seen.has(abs)) {
+      continue;
+    }
+    seen.add(abs);
+    try {
+      const st = fs.statSync(abs);
+      if (st.isFile() && st.mtimeMs >= bestMtime) {
+        best = abs;
+        bestMtime = st.mtimeMs;
+      }
+    } catch {
+      // missing
+    }
+  }
+  if (best) {
+    return best;
+  }
+
+  throw new Error(
+    `orchestra binary not found (looked for ${exeName}).\n` +
+      `Build: go build -o ${exeName} ./cmd/orchestra\n` +
+      `Or set Settings → Orchestra: Binary Path.`
+  );
+}
+
+function mimeForExt(extOrName: string): string | undefined {
+  const ext = extOrName.includes(".")
+    ? extOrName.replace(/^.*\./, "").toLowerCase()
+    : extOrName.toLowerCase();
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "bmp":
+      return "image/bmp";
+    case "avif":
+      return "image/avif";
+    default:
+      return undefined;
+  }
+}

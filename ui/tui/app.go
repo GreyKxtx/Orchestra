@@ -69,6 +69,8 @@ type App struct {
 
 	msgQueue []string // FIFO prompts submitted while agent busy
 
+	stagedAttachments []state.Attachment // files/images for the next user turn
+
 	width       int
 	height      int
 	initialized bool

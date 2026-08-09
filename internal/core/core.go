@@ -38,6 +38,7 @@ type Core struct {
 	initParams    *InitializeParams
 
 	cfg               *config.ProjectConfig
+	configPath        string
 	llmClient         llm.Client
 	llmClientInjected bool // true when LLMClient was set via Options (test/DI mode)
 
@@ -49,8 +50,9 @@ type Core struct {
 	// ops.apply / session.apply_pending calls race over the dry-run flag and
 	// can leak staged ops between requests.
 	runMu      sync.Mutex
-	sessions   *coresession.Manager
-	mcpManager *mcp.Manager
+	sessions     *coresession.Manager
+	mcpManager   *mcp.Manager
+	mcpStartErrs map[string]string // last ReplaceMCP/New failures by server name
 }
 
 type Options struct {
@@ -123,12 +125,21 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 
 	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
 	var mcpMgr *mcp.Manager
+	mcpErrs := map[string]string{}
 	if len(cfg.MCP.Servers) > 0 {
 		var startErrs []error
 		mcpMgr, startErrs = mcp.NewManager(context.Background(), cfg.MCP)
 		for _, err := range startErrs {
 			// Log to stderr — not a fatal error.
 			fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", err)
+			msg := err.Error()
+			const prefix = `mcp server "`
+			if strings.HasPrefix(msg, prefix) {
+				rest := msg[len(prefix):]
+				if i := strings.Index(rest, `"`); i > 0 {
+					mcpErrs[rest[:i]] = msg
+				}
+			}
 		}
 		if !mcpMgr.IsEmpty() {
 			tr.SetMCPCaller(mcpMgr)
@@ -141,12 +152,14 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		projectID:         projectID,
 		debug:             opts.Debug,
 		cfg:               cfg,
+		configPath:        cfgPath,
 		llmClient:         llmClient,
 		llmClientInjected: injected,
 		validator:         v,
 		tools:             tr,
 		sessions:          coresession.NewManager(),
 		mcpManager:        mcpMgr,
+		mcpStartErrs:      mcpErrs,
 	}, nil
 }
 
@@ -174,6 +187,10 @@ func (c *Core) Health() protocol.Health {
 		ToolsVersion:    protocol.ToolsVersion,
 		WorkspaceRoot:   c.workspaceRoot,
 		ProjectID:       c.projectID,
+	}
+	if c != nil && c.cfg != nil {
+		h.Model = c.cfg.LLM.Model
+		h.Provider = c.cfg.LLM.Provider
 	}
 	if c != nil && c.tools != nil {
 		h.LSPStatus = c.tools.LSPStatus()
@@ -359,6 +376,9 @@ type AgentRunParams struct {
 	// QuestionAsker, if non-nil, enables the question tool and plan_exit approval.
 	// Set programmatically by the RPC handler.
 	QuestionAsker tools.QuestionAsker `json:"-"`
+
+	// Attachments are optional files/images for multimodal turns.
+	Attachments []MessageAttachment `json:"attachments,omitempty"`
 }
 
 type AgentRunResult struct {
@@ -407,9 +427,19 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	if strings.TrimSpace(params.Query) == "" {
+	if strings.TrimSpace(params.Query) == "" && len(params.Attachments) == 0 {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "query is empty", nil)
 	}
+	if err := validateTurnInput(params.Query, params.Attachments); err != nil {
+		return nil, err
+	}
+
+	imageParts, err := loadAttachmentImages(c.cfg, c.workspaceRoot, params.Attachments)
+	if err != nil {
+		return nil, err
+	}
+	agentQuery := resolveTurnQuery(params.Query, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
+	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
 	if params.Mode != "" && !config.IsBuiltInMode(params.Mode) && c.cfg != nil && c.cfg.FindAgent(params.Mode) == nil {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput,
 			fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
@@ -423,7 +453,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
 		Mode:                params.Mode,
 		Profile:             params.Profile,
-		Query:               params.Query,
+		Query:               agentQuery,
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
@@ -437,6 +467,9 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		EventEnvelope:       EventEnvelope{TurnID: NewTurnID()},
 		PermissionRequester: params.PermissionRequester,
 		QuestionAsker:       params.QuestionAsker,
+		Attachments:         params.Attachments,
+		UserImages:          imageParts,
+		Multimodal:          len(imageParts) > 0,
 	})
 	if err != nil {
 		return nil, err
@@ -460,7 +493,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 
 	var outHistory []llm.Message
 	var res *agent.Result
-	outHistory, res, err = ag.Run(ctx, nil, params.Query)
+	outHistory, res, err = ag.Run(ctx, nil, agentQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -927,6 +960,9 @@ type SessionMessageParams struct {
 
 	// QuestionAsker enables question tool and plan_exit approval in sessions.
 	QuestionAsker tools.QuestionAsker `json:"-"`
+
+	// Attachments are optional files/images for multimodal turns.
+	Attachments []MessageAttachment `json:"attachments,omitempty"`
 }
 
 type SessionMessageResult struct {
@@ -962,9 +998,19 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if strings.TrimSpace(params.SessionID) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
 	}
-	if strings.TrimSpace(params.Content) == "" {
+	if strings.TrimSpace(params.Content) == "" && len(params.Attachments) == 0 {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "content is empty", nil)
 	}
+	if err := validateTurnInput(params.Content, params.Attachments); err != nil {
+		return nil, err
+	}
+
+	imageParts, err := loadAttachmentImages(c.cfg, c.workspaceRoot, params.Attachments)
+	if err != nil {
+		return nil, err
+	}
+	agentQuery := resolveTurnQuery(params.Content, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
+	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
 
 	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
 	if err != nil {
@@ -986,6 +1032,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	inHistory := sess.CopyHistory()
 	inTodos := sess.CopyTodos()
 	planPath := sessionPlanPathLocked(sess, params.Mode)
+	sess.AppendUIMessage(buildUserUIMessage(params.Content, params.Attachments))
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
@@ -1014,7 +1061,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Profile:             params.Profile,
 		PlanPath:            planPath,
 		SessionID:           params.SessionID,
-		Query:               params.Content,
+		Query:               agentQuery,
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
@@ -1029,6 +1076,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		EventEnvelope:       EventEnvelope{SessionID: params.SessionID, TurnID: NewTurnID()},
 		PermissionRequester: params.PermissionRequester,
 		QuestionAsker:       params.QuestionAsker,
+		Attachments:         params.Attachments,
+		UserImages:          imageParts,
+		Multimodal:          len(imageParts) > 0,
 	})
 	if err != nil {
 		return nil, err
@@ -1052,7 +1102,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 
-	outHistory, res, err := ag.Run(turnCtx, inHistory, params.Content)
+	outHistory, res, err := ag.Run(turnCtx, inHistory, agentQuery)
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	}

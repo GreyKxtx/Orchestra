@@ -40,15 +40,25 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 	if text == "" {
 		return nil
 	}
+	if strings.HasPrefix(text, "/attach ") {
+		path := strings.TrimSpace(strings.TrimPrefix(text, "/attach "))
+		return a.cmdAttachFile(path)
+	}
+	if strings.EqualFold(text, "/attach") {
+		a.showToast("/attach <path>")
+		return nil
+	}
+	atts := a.takeStagedAttachments()
 	if a.showWelcome {
 		a.showWelcome = false
 		a.chat.SetForceWelcome(false)
 	}
 	a.session.AppendMessage(state.Message{
-		Role:  state.RoleUser,
-		Text:  text,
-		Mode:  a.cfg.Mode,
-		Model: a.cfg.Model,
+		Role:        state.RoleUser,
+		Text:        text,
+		Attachments: atts,
+		Mode:        a.cfg.Mode,
+		Model:       a.cfg.Model,
 	})
 	a.history.Push(text)
 	a.history.Reset()
@@ -79,8 +89,8 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 	a.beginAgentTurn()
 	a.layout()
 	a.updateStatusHints()
-	go func(query, mode string) {
-		_ = a.runAgentTurn(ctx, query, mode)
-	}(text, a.cfg.Mode)
+	go func(query, mode string, atts []state.Attachment) {
+		_ = a.runAgentTurnWithAttachments(ctx, query, mode, atts)
+	}(text, a.cfg.Mode, atts)
 	return saveCmd
 }

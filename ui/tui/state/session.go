@@ -38,6 +38,7 @@ type SystemNotice struct {
 type Message struct {
 	Role       Role
 	Text       string      // projection: concatenated SegmentText
+	Attachments []Attachment
 	ToolBlocks []ToolBlock // projection: flattened SegmentTools
 	Streaming  bool        // true while the assistant message is still being received
 
@@ -85,6 +86,15 @@ type Message struct {
 	ToolsExpanded bool
 	// ReasoningExpanded persists CoT expand (default collapsed when long).
 	ReasoningExpanded bool
+}
+
+// Attachment is a chat file/image staged for a user turn.
+type Attachment struct {
+	Path string
+	Name string
+	Kind string // image | file
+	MIME string
+	Ext  string
 }
 
 // DiffFile is one file change shown inline in the chat diff panel.

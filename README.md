@@ -34,6 +34,8 @@
 | Reasoning Stream | Парсинг `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 через LM Studio); автоматическое заворачивание в `<think>…</think>` для `ReasoningSplitter`; SSE-tap по env-флагу `ORCH_STREAM_DEBUG` | ✅ |
 | TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy-indicator в статус-баре, mouse wheel scroll, "Thinking:" блок с `┃` бордером, render-cache invalidation на Ctrl+T, mode-aware accent colors | ✅ |
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
+| Attachments / Vision | Protocol **v13**: images/SVG/PDF, staging `.orchestra/attachments/`, TUI `/attach`, VS Code drag-drop | ✅ |
+| VS Code extension | Webview chat + settings, LSP install modal, per-file diff review, workspace editor for previews | ✅ |
 
 ---
 
@@ -83,6 +85,18 @@ orchestra eval                          # tests/eval/tasks/ по умолчан�
 orchestra eval path/to/tasks/           # своя директория
 ```
 
+### VS Code / Cursor extension
+
+Клиент в `ui/vscode/` — webview chat, settings, attachments/vision (protocol **v13**). Нужен собранный `orchestra` в PATH или рядом с репо.
+
+```bash
+go build -o orchestra ./cmd/orchestra
+cd ui/vscode && npm ci && npm run compile
+# F5 в VS Code, или упаковка: npm run package
+```
+
+Подробнее: `ui/vscode/README.md`.
+
 ---
 
 ## Конфигурация (`.orchestra.yml`)
@@ -98,6 +112,7 @@ llm:
   model: qwen2.5-coder-7b-instruct
   max_tokens: 4096
   timeout_s: 120
+  multimodal: true          # images in chat (TUI /attach, VS Code); needs vision-capable model
 
 agent:
   profile: ""               # optional: fast | precision

@@ -255,6 +255,34 @@ func (m *Manager) findClient(serverName string) *Client {
 	return nil
 }
 
+// ServerStatus describes one connected MCP server's runtime view.
+type ServerStatus struct {
+	Name      string
+	ToolCount int
+	Dead      bool
+}
+
+// RuntimeStatuses returns status for each live client connection.
+func (m *Manager) RuntimeStatuses() []ServerStatus {
+	if m == nil || len(m.clients) == 0 {
+		return nil
+	}
+	out := make([]ServerStatus, 0, len(m.clients))
+	for _, c := range m.clients {
+		out = append(out, ServerStatus{
+			Name:      c.ServerName(),
+			ToolCount: len(c.Tools()),
+			Dead:      c.IsDead(),
+		})
+	}
+	return out
+}
+
+// FindClient returns the client for serverName, or nil.
+func (m *Manager) FindClient(serverName string) *Client {
+	return m.findClient(serverName)
+}
+
 func parseMCPToolName(name string) (serverName, toolName string, err error) {
 	// Format: "mcp:<server>:<tool>" — tool name may contain colons itself
 	parts := strings.SplitN(name, ":", 3)

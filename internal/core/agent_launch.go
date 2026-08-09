@@ -49,6 +49,10 @@ type agentLaunchSpec struct {
 	EventEnvelope       EventEnvelope
 	PermissionRequester PermissionRequester
 	QuestionAsker       tools.QuestionAsker
+
+	Attachments []MessageAttachment
+	UserImages  []llm.ContentPart
+	Multimodal  bool
 }
 
 type agentLaunch struct {
@@ -217,6 +221,22 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
+	if spec.OnEvent != nil {
+		childCfg.NotifyAgentEvent = func(params map[string]any) {
+			if _, ok := params["task_id"]; ok {
+				params["scope"] = "child"
+			}
+			spec.OnEvent("agent/event", mergeEventEnvelope(params, env))
+		}
+		childCfg.ChildEventSink = func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent) {
+			meta := &ChildScopeMeta{
+				TaskID:           taskID,
+				ParentToolCallID: parentToolCallID,
+				SubagentType:     subagentType,
+			}
+			return buildAgentOnEventWithChild(spec.OnEvent, env, meta)
+		}
+	}
 	taskRunner := tasks.New(customOpts.llmClient, c.validator, c.tools, childCfg)
 
 	planPath := strings.TrimSpace(spec.PlanPath)
@@ -308,6 +328,12 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 	if customOpts.customTools != nil {
 		opts.CustomTools = customOpts.customTools
+	}
+	if len(spec.UserImages) > 0 {
+		opts.UserImages = spec.UserImages
+	}
+	if spec.Multimodal || (c.cfg.LLM.Multimodal && len(spec.UserImages) > 0) {
+		opts.MultimodalLLM = c.cfg.LLM.Multimodal
 	}
 
 	return &agentLaunch{

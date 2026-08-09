@@ -336,11 +336,14 @@
 
 Фазы 0–10 (MVP + Planner–Worker) закрыты. Фаза 1 hardening (grammar / classify / logging) — в коде.
 
+**Закрыто недавно (P1/P2):** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension (chat, settings, LSP modal, per-file diff, `@` без reload webview), session persist multimodal parts, PDF/SVG MIME, CI job для `ui/vscode`.
+
 Следующий фокус:
 
-1. **Manual TUI smoke** — LSP install modal + Worker diagnostics (см. `ui/tui/README.md`).
-2. **Real LLM E2E** — прогон `ORCH_E2E_LLM=1` на локальной модели.
+1. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm -run TestRealLLMVisionAttachment` когда LLM-сервер доступен.
+2. **VS Code marketplace** — `npm run package` / vsce publish (см. `ui/vscode/README.md`).
 3. **Maiden voyage** — полевой тест `orchestra chat` + отчёт (см. контрольную точку выше).
+4. **Manual TUI smoke** — LSP install modal + Worker diagnostics (см. `ui/tui/README.md`) — по необходимости регресс.
 
 ### Фаза 1 — knobs в `.orchestra.yml`
 

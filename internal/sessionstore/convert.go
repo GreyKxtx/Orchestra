@@ -29,6 +29,9 @@ func StateMessagesToUI(msgs []state.Message) []sessionfile.UIMessage {
 			ToolsExpanded:     m.ToolsExpanded,
 			ReasoningExpanded: m.ReasoningExpanded,
 		}
+		if len(m.Attachments) > 0 {
+			ui.Attachments = attachmentsToUI(m.Attachments)
+		}
 		if m.Duration > 0 {
 			ui.DurationMS = m.Duration.Milliseconds()
 		}
@@ -98,6 +101,9 @@ func UIMessagesToState(msgs []sessionfile.UIMessage) []state.Message {
 		}
 		if len(m.ToolBlocks) > 0 {
 			msg.ToolBlocks = toolBlocksFromUI(m.ToolBlocks)
+		}
+		if len(m.Attachments) > 0 {
+			msg.Attachments = attachmentsFromUI(m.Attachments)
 		}
 		if len(m.Segments) > 0 {
 			msg.Segments = make([]state.Segment, 0, len(m.Segments))
@@ -207,6 +213,40 @@ func toolBlocksFromUI(blocks []sessionfile.UIToolBlock) []state.ToolBlock {
 			}
 		}
 		out = append(out, block)
+	}
+	return out
+}
+
+func attachmentsToUI(atts []state.Attachment) []sessionfile.UIAttachment {
+	if len(atts) == 0 {
+		return nil
+	}
+	out := make([]sessionfile.UIAttachment, 0, len(atts))
+	for _, a := range atts {
+		out = append(out, sessionfile.UIAttachment{
+			Path: a.Path,
+			Name: a.Name,
+			Kind: a.Kind,
+			MIME: a.MIME,
+			Ext:  a.Ext,
+		})
+	}
+	return out
+}
+
+func attachmentsFromUI(atts []sessionfile.UIAttachment) []state.Attachment {
+	if len(atts) == 0 {
+		return nil
+	}
+	out := make([]state.Attachment, 0, len(atts))
+	for _, a := range atts {
+		out = append(out, state.Attachment{
+			Path: a.Path,
+			Name: a.Name,
+			Kind: a.Kind,
+			MIME: a.MIME,
+			Ext:  a.Ext,
+		})
 	}
 	return out
 }

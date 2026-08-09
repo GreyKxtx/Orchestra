@@ -56,6 +56,8 @@ type SubtaskSpawnRequest struct {
 	Model    string
 	// Tier selects orchestra.tiers[] when SubagentType is "worker" (e.g. complex|focused|micro).
 	Tier string
+	// ParentToolCallID is the parent agent's tool_call_id for task/task_spawn.
+	ParentToolCallID string
 }
 
 // SkillSpec is a thin summary of a discovered skill, used for system-prompt

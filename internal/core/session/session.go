@@ -169,6 +169,11 @@ func (s *Session) UIMessages() []sessionfile.UIMessage {
 	return out
 }
 
+// AppendUIMessage appends one UI projection message.
+func (s *Session) AppendUIMessage(msg sessionfile.UIMessage) {
+	s.uiMessages = append(s.uiMessages, msg)
+}
+
 // SetUIMessages replaces the UI chat projection.
 func (s *Session) SetUIMessages(msgs []sessionfile.UIMessage) {
 	if len(msgs) == 0 {

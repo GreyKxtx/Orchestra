@@ -1,6 +1,11 @@
 package view
 
-import "github.com/orchestra/orchestra/ui/tui/state"
+import (
+	"path/filepath"
+	"strings"
+
+	"github.com/orchestra/orchestra/ui/tui/state"
+)
 
 // renderUserMessage — port of OpenCode UserMessage. Plain text in a panel-bg
 // block with a thick ┃ in the message's mode color.
@@ -18,7 +23,27 @@ func (c Chat) renderUserMessage(m state.Message, width int) string {
 	if mode == "" {
 		mode = c.chatMode
 	}
-	return panelBlock(m.Text, PanelOpts{
+	body := m.Text
+	if len(m.Attachments) > 0 {
+		var names []string
+		for _, att := range m.Attachments {
+			n := strings.TrimSpace(att.Name)
+			if n == "" {
+				n = filepath.Base(att.Path)
+			}
+			if att.Kind == "image" {
+				n = "🖼 " + n
+			} else {
+				n = "📎 " + n
+			}
+			names = append(names, n)
+		}
+		if body != "" {
+			body += "\n"
+		}
+		body += strings.Join(names, " · ")
+	}
+	return panelBlock(body, PanelOpts{
 		Width:   width,
 		Accent:  ModeColor(mode),
 		Padding: [2]int{1, 2},

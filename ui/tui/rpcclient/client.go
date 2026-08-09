@@ -135,9 +135,18 @@ func (c *Client) Events() <-chan Event {
 
 // AgentRunOptions controls an agent.run or session.message call from the TUI.
 type AgentRunOptions struct {
-	Apply     bool
-	AllowExec bool
-	Profile   string
+	Apply       bool
+	AllowExec   bool
+	Profile     string
+	Attachments []RPCAttachment
+}
+
+// RPCAttachment mirrors core message attachment params.
+type RPCAttachment struct {
+	Path string `json:"path"`
+	Kind string `json:"kind,omitempty"`
+	MIME string `json:"mime,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // SessionStart creates or reopens a core session.
@@ -238,6 +247,9 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 	if opts.Profile != "" {
 		params["profile"] = opts.Profile
 	}
+	if len(opts.Attachments) > 0 {
+		params["attachments"] = opts.Attachments
+	}
 	var result struct {
 		Usage            *UsageTurnPayload `json:"usage"`
 		Todos            []TodoItem        `json:"todos"`
@@ -278,6 +290,9 @@ func (c *Client) AgentRun(ctx context.Context, query, mode string, opts AgentRun
 	}
 	if mode != "" {
 		params["mode"] = mode
+	}
+	if len(opts.Attachments) > 0 {
+		params["attachments"] = opts.Attachments
 	}
 	var result map[string]any
 	err := c.rpc.Call(ctx, "agent.run", params, &result)

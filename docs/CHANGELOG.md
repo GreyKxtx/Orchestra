@@ -8,6 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Attachments & vision (protocol v13)
+
+Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.orchestra/attachments/`; RPC `session.message` / `agent.run` param `attachments[]`.
+
+- **`internal/attachments`** — path validation, MIME detection, workspace-safe staging copy.
+- **TUI** — `/attach <path>`, chips in user bubble, persist in session v4 `UIMessage.attachments`.
+- **VS Code extension** (`ui/vscode/`) — drag-drop / picker, open attachment or diff in workspace editor (not webview), LSP install modal, per-file diff review (↑↓ a x Enter), `@`-mention without webview reload.
+- **Session roundtrip** — `llm.Message` JSON unmarshals multimodal `parts` for reload.
+- **E2E** — `tests/e2e_real_llm/vision_test.go` (gated by `ORCH_E2E_LLM=1`).
+
+### Changed — Core runtime modularization
+
+`internal/core` split: `runtime_agents.go`, `runtime_llm.go`, `runtime_mcp.go`, `runtime_providers.go`, `runtime_prompt.go`, `runtime_index.go`, `message_attachments.go`. CI adds `vscode-extension` job (`npm ci` + `compile`).
+
 ### Added — Skill packs: install/uninstall + per-skill review (2026-05-18)
 
 Third-party skill bundles can be installed from git URLs, HTTP(S) zip/tar archives, or local directories. Installed packs live under `~/.orchestra/packs/<id>/`; `Discover` adds a third tier (project > user > pack) and tags each skill with its `Origin`.

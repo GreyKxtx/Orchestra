@@ -4,8 +4,8 @@
 
 | Каталог | Стек | Статус |
 |---|---|---|
-| `tui/` | Go + Bubble Tea + Lipgloss | реализован (Фазы 0-4: streaming · tool blocks · slash-палитра · @-mention · история) |
-| `vscode/` | TypeScript / Node | планируется (Этап 2 product roadmap) |
+| `tui/` | Go + Bubble Tea + Lipgloss | реализован (streaming · tool blocks · `/attach` · @-mention · session v4) |
+| `vscode/` | TypeScript / Node | chat + settings · attachments/vision · protocol **v13** |
 | `desktop/` | TBD (Tauri или Electron) | планируется (Этап 3 product roadmap) |
 
 ## Принципы

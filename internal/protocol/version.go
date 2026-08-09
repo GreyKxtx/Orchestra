@@ -12,7 +12,15 @@ const (
 	// v6: unified session schema v2; session.start(session_id?), session.get,
 	// session.list, session.ui_sync for TUI↔core session unification.
 	// v7: session.rewind — truncate UI + LLM history to a user checkpoint.
-	ProtocolVersion = 7
+	// v8: runtime.set_model / runtime.list_models; core.health exposes model/provider.
+	// v9: mcp.list/upsert/delete/set_disabled/test; agents.list/upsert/delete;
+	//     runtime.get_system_prompt / runtime.set_system_prompt; configure_llm.prompt_family.
+	// v10: index.status / index.configure / index.rebuild / index.embed (CKG graph + embeddings).
+	// v11: runtime.list_providers — catalog + named providers with optional /models probe.
+	// v12: agent/event child scope fields (scope, task_id, parent_tool_call_id,
+	//      subagent_type) and child_started / child_done lifecycle events.
+	// v13: attachments[] on agent.run and session.message; UIMessage.attachments.
+	ProtocolVersion = 13
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1
@@ -46,6 +54,8 @@ type Health struct {
 
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Provider      string `json:"provider,omitempty"`
 	LSPStatus     string `json:"lsp_status,omitempty"` // off | idle | installing | active
 	// LSPInstallProgress is set while a language server is being provisioned.
 	LSPInstallProgress *LSPInstallProgress `json:"lsp_install_progress,omitempty"`

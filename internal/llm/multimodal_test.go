@@ -86,6 +86,33 @@ func TestMessage_HasImages(t *testing.T) {
 	}
 }
 
+func TestMessageUnmarshal_RoundTripMultimodal(t *testing.T) {
+	orig := Message{
+		Role: RoleUser,
+		Parts: []ContentPart{
+			{Kind: PartText, Text: "describe"},
+			{Kind: PartImage, ImageData: []byte{0x89, 0x50, 0x4E, 0x47}, ImageMIME: "image/png"},
+		},
+	}
+	b, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Message
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Parts) != 2 {
+		t.Fatalf("parts len = %d", len(got.Parts))
+	}
+	if got.Parts[0].Text != "describe" {
+		t.Errorf("text part: %q", got.Parts[0].Text)
+	}
+	if !got.HasImages() || len(got.Parts[1].ImageData) != 4 {
+		t.Errorf("image part not restored: %+v", got.Parts[1])
+	}
+}
+
 func TestMessageMarshal_PartImageEmptyDataAndURL_Skipped(t *testing.T) {
 	m := Message{
 		Role: RoleUser,

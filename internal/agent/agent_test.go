@@ -1275,7 +1275,7 @@ func TestHandleTaskTool_UnifiedTaskSync(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	out, err := ag.handleTaskTool(context.Background(), "task", json.RawMessage(`{
+	out, err := ag.handleTaskTool(context.Background(), "task", "call-test-1", json.RawMessage(`{
 		"description": "scan repo",
 		"prompt": "find entry points",
 		"subagent_type": "explore",

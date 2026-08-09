@@ -46,6 +46,11 @@ type ChildAgentConfig struct {
 	MaxStepsCap int
 	// OnChildEvent, when set, receives streaming events from child agents (E2E metrics).
 	OnChildEvent func(agent.AgentEvent)
+	// ChildEventSink builds a per-task OnEvent handler with child scope metadata.
+	// Preferred over OnChildEvent in production core wiring.
+	ChildEventSink func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent)
+	// NotifyAgentEvent emits arbitrary agent/event payloads (child lifecycle).
+	NotifyAgentEvent func(params map[string]any)
 }
 
 // TaskRunner implements agent.SubtaskRunner using real child agents.
@@ -269,6 +274,18 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if r.child.OnChildEvent != nil {
 		opts.OnEvent = r.child.OnChildEvent
 	}
+	if r.child.ChildEventSink != nil {
+		opts.OnEvent = r.child.ChildEventSink(taskID, req.ParentToolCallID, subagentType)
+	}
+	if r.child.NotifyAgentEvent != nil {
+		r.child.NotifyAgentEvent(map[string]any{
+			"type":                 "child_started",
+			"task_id":              taskID,
+			"parent_tool_call_id":  req.ParentToolCallID,
+			"subagent_type":        subagentType,
+			"content":              req.Goal,
+		})
+	}
 	if mode == agent.ModeWorker && r.child.MaxWorkerRetries > 0 {
 		opts.MaxFinalFailures = r.child.MaxWorkerRetries
 		opts.MaxInvalidRetries = r.child.MaxWorkerRetries
@@ -281,6 +298,29 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 
 	childGoal := FormatChildGoal(subagentType, req.Tier, req.Goal)
 	hist, res, runErr := ag.Run(ctx, nil, childGoal)
+	status := "done"
+	errMsg := ""
+	if runErr != nil {
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
+			status = "timeout"
+		} else {
+			status = "error"
+		}
+		errMsg = runErr.Error()
+	}
+	if r.child.NotifyAgentEvent != nil {
+		params := map[string]any{
+			"type":                "child_done",
+			"task_id":             taskID,
+			"parent_tool_call_id": req.ParentToolCallID,
+			"subagent_type":       subagentType,
+			"status":              status,
+		}
+		if errMsg != "" {
+			params["error"] = errMsg
+		}
+		r.child.NotifyAgentEvent(params)
+	}
 	if runErr != nil {
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: runErr.Error()}

@@ -73,6 +73,11 @@ func BuildToolDescription(name, fallback string) string {
 	return fallback
 }
 
+// SystemOverridePath returns the path to .orchestra/system.txt for workspaceRoot.
+func SystemOverridePath(workspaceRoot string) string {
+	return filepath.Join(workspaceRoot, ".orchestra", "system.txt")
+}
+
 // LoadSystemOverride reads .orchestra/system.txt from workspaceRoot.
 // If the file exists and is non-empty, its content replaces the built-in system prompt entirely.
 // Returns empty string when no override is present.
@@ -80,10 +85,38 @@ func LoadSystemOverride(workspaceRoot string) string {
 	if workspaceRoot == "" {
 		return ""
 	}
-	p := filepath.Join(workspaceRoot, ".orchestra", "system.txt")
-	data, err := os.ReadFile(p)
+	data, err := os.ReadFile(SystemOverridePath(workspaceRoot))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// WriteSystemOverride atomically writes .orchestra/system.txt (creates .orchestra/ if needed).
+// Empty content clears the override (deletes the file).
+func WriteSystemOverride(workspaceRoot, content string) error {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return fmt.Errorf("workspaceRoot is empty")
+	}
+	dir := filepath.Join(workspaceRoot, ".orchestra")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir .orchestra: %w", err)
+	}
+	p := SystemOverridePath(workspaceRoot)
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove system.txt: %w", err)
+		}
+		return nil
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, []byte(trimmed+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write temp system.txt: %w", err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename system.txt: %w", err)
+	}
+	return nil
 }

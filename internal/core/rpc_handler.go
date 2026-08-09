@@ -184,6 +184,177 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionRewind(p)
 
+	case "runtime.set_model":
+		var p RuntimeSetModelParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeSetModel(ctx, p)
+
+	case "runtime.list_models":
+		var p RuntimeListModelsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeListModels(ctx, p)
+
+	case "runtime.list_providers":
+		var p RuntimeListProvidersParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeListProviders(ctx, p)
+
+	case "runtime.get_llm":
+		var p RuntimeGetLLMParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeGetLLM(p)
+
+	case "runtime.configure_llm":
+		var p RuntimeConfigureLLMParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeConfigureLLM(ctx, p)
+
+	case "runtime.get_system_prompt":
+		var p RuntimeGetSystemPromptParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeGetSystemPrompt(p)
+
+	case "runtime.set_system_prompt":
+		var p RuntimeSetSystemPromptParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeSetSystemPrompt(p)
+
+	case "mcp.list":
+		var p MCPListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPList(p)
+
+	case "mcp.upsert":
+		var p MCPUpsertParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPUpsert(ctx, p)
+
+	case "mcp.delete":
+		var p MCPDeleteParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPDelete(ctx, p)
+
+	case "mcp.set_disabled":
+		var p MCPSetDisabledParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPSetDisabled(ctx, p)
+
+	case "mcp.test":
+		var p MCPTestParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPTest(ctx, p)
+
+	case "agents.list":
+		var p AgentsListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.AgentsList(p)
+
+	case "agents.upsert":
+		var p AgentsUpsertParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.AgentsUpsert(p)
+
+	case "agents.delete":
+		var p AgentsDeleteParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.AgentsDelete(p)
+
+	case "index.status":
+		var p IndexStatusParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.IndexStatus(p)
+
+	case "index.configure":
+		var p IndexConfigureParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.IndexConfigure(p)
+
+	case "index.rebuild":
+		var p IndexRebuildParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.IndexRebuild(ctx, p)
+
+	case "index.embed":
+		var p IndexEmbedParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.IndexEmbed(ctx, p)
+
 	case "ops.apply":
 		var p OpsApplyParams
 		if err := decodeParams(params, &p); err != nil {

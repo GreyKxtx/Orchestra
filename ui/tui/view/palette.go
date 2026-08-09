@@ -18,6 +18,7 @@ type SlashCmd struct {
 // AllSlashCmds is the complete list shown in the slash palette.
 // Sorted alphabetically — opencode style.
 var AllSlashCmds = []SlashCmd{
+	{"/attach", "прикрепить файл: /attach <path>"},
 	{"/clear", "очистить историю чата"},
 	{"/compact", "сжать LLM-контекст сессии"},
 	{"/diff", "diff последнего commit"},

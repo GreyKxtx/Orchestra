@@ -85,7 +85,7 @@ func (a *Agent) handleSkillInvoke(ctx context.Context, input json.RawMessage) (j
 }
 
 // handleTaskTool handles task / task.spawn / task.wait / task.cancel in-process via SubtaskRunner.
-func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawMessage) (json.RawMessage, error) {
+func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallID string, input json.RawMessage) (json.RawMessage, error) {
 	switch name {
 	case "task":
 		var req struct {
@@ -118,13 +118,14 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 			timeoutMS = 120_000
 		}
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
-			Goal:         goal,
-			SubagentType: subagentType,
-			Tier:         strings.TrimSpace(req.Tier),
-			Provider:     strings.TrimSpace(req.Provider),
-			Model:        strings.TrimSpace(req.Model),
-			MaxSteps:     req.MaxSteps,
-			TimeoutMS:    timeoutMS,
+			Goal:             goal,
+			SubagentType:     subagentType,
+			Tier:             strings.TrimSpace(req.Tier),
+			Provider:         strings.TrimSpace(req.Provider),
+			Model:            strings.TrimSpace(req.Model),
+			MaxSteps:         req.MaxSteps,
+			TimeoutMS:        timeoutMS,
+			ParentToolCallID: parentToolCallID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("task: spawn: %w", err)
@@ -179,13 +180,14 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, input json.RawM
 			timeoutMS = 120_000 // same default as sync task — avoid orphan children
 		}
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
-			Goal:         goal,
-			SubagentType: subagentType,
-			Tier:         strings.TrimSpace(req.Tier),
-			Provider:     strings.TrimSpace(req.Provider),
-			Model:        strings.TrimSpace(req.Model),
-			MaxSteps:     req.MaxSteps,
-			TimeoutMS:    timeoutMS,
+			Goal:             goal,
+			SubagentType:     subagentType,
+			Tier:             strings.TrimSpace(req.Tier),
+			Provider:         strings.TrimSpace(req.Provider),
+			Model:            strings.TrimSpace(req.Model),
+			MaxSteps:         req.MaxSteps,
+			TimeoutMS:        timeoutMS,
+			ParentToolCallID: parentToolCallID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("task.spawn: %w", err)

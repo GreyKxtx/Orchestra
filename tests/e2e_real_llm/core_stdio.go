@@ -222,6 +222,42 @@ func (c *coreRPCClient) sessionMessage(sessionID, content string) {
 	})
 }
 
+func (c *coreRPCClient) sessionMessageWithAttachments(sessionID, content string, attachments []map[string]any) error {
+	c.t.Helper()
+	id := c.nextID
+	c.nextID++
+	params := map[string]any{
+		"session_id": sessionID,
+		"content":    content,
+		"apply":      false,
+		"profile":    "fast",
+	}
+	if len(attachments) > 0 {
+		params["attachments"] = attachments
+	}
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "session.message",
+		"params":  params,
+	})
+	if err != nil {
+		return err
+	}
+	c.writeFrame(body)
+	for {
+		resp := c.readFrame()
+		var gotID int
+		if err := json.Unmarshal(resp.ID, &gotID); err != nil || gotID != id {
+			c.t.Fatalf("unexpected response id=%s want=%d method=session.message", string(resp.ID), id)
+		}
+		if resp.Error != nil {
+			return fmt.Errorf("%s", resp.Error.Message)
+		}
+		return nil
+	}
+}
+
 func (c *coreRPCClient) sessionHistoryLen(sessionID string) int {
 	raw := c.call("session.history", map[string]any{"session_id": sessionID})
 	var res struct {

@@ -220,6 +220,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case diffApplyResultMsg:
 		return a, a.handleDiffApplyResult(m)
 
+	case attachResultMsg:
+		return a, a.handleAttachResult(m)
+
 	case sessionRewindResultMsg:
 		return a, a.handleSessionRewindResult(m)
 	}

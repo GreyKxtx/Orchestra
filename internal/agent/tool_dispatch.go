@@ -235,7 +235,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if a.opts.SubtaskRunner != nil && (name == "task" || name == "task_spawn" || name == "task_wait" || name == "task_cancel") {
-		out, taskErr := a.handleTaskTool(ctx, name, tc.Input)
+		out, taskErr := a.handleTaskTool(ctx, name, toolCallID, tc.Input)
 		a.observeWorkingTool(name, tc.Input, out, taskErr)
 		var content string
 		if taskErr != nil {

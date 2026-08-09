@@ -48,10 +48,20 @@ type UISegment struct {
 	NoticeKind string        `json:"notice_kind,omitempty"` // info|retry|error|success
 }
 
+// UIAttachment is a persisted chat attachment (metadata only — no inline bytes).
+type UIAttachment struct {
+	Path string `json:"path"`
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	MIME string `json:"mime,omitempty"`
+	Ext  string `json:"ext,omitempty"`
+}
+
 // UIMessage is the persisted projection of one chat viewport message.
 type UIMessage struct {
 	Role              string        `json:"role"`
 	Text              string        `json:"text,omitempty"`
+	Attachments       []UIAttachment `json:"attachments,omitempty"`
 	ToolBlocks        []UIToolBlock `json:"tool_blocks,omitempty"`
 	Segments          []UISegment   `json:"segments,omitempty"`
 	Reasoning         string        `json:"reasoning,omitempty"`

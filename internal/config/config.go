@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -347,22 +348,22 @@ type PermissionsConfig struct {
 // contract.
 type AgentDefinition struct {
 	// Name is required and must be unique; cannot collide with built-in modes.
-	Name string `yaml:"name"`
+	Name string `yaml:"name" json:"name"`
 	// SystemPrompt replaces the built-in mode system prompt for this agent.
 	// .orchestra/system.txt still takes precedence when present.
-	SystemPrompt string `yaml:"system_prompt,omitempty"`
+	SystemPrompt string `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
 	// Tools is the explicit tool list.
 	//   nil (omitted) → inherit the full build toolset.
 	//   []  (empty)   → config load error (caught by validateAgents).
 	//   [ls, read, …] → exactly these tools are exposed to the model.
-	Tools []string `yaml:"tools,omitempty"`
+	Tools []string `yaml:"tools,omitempty" json:"tools,omitempty"`
 	// Model overrides the model name within the same provider (v1).
 	// Provider, api_base, and api_key are inherited from the top-level llm config.
-	Model string `yaml:"model,omitempty"`
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 	// Provider references a named entry in the top-level providers: map.
 	// When set, the agent uses that provider's full LLMConfig (api_base, api_key, etc.)
 	// instead of the global llm: config. Model (above) still overrides the provider model.
-	Provider string `yaml:"provider,omitempty"`
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 }
 
 // builtInAgentModes are reserved names that cannot be used for custom agents.
@@ -955,6 +956,14 @@ func (c *ProjectConfig) validateMCP() error {
 	return nil
 }
 
+// ValidateMCPOnly validates mcp.servers without loading the full config.
+func (c *ProjectConfig) ValidateMCPOnly() error {
+	if c == nil {
+		return nil
+	}
+	return c.validateMCP()
+}
+
 func (c *ProjectConfig) validateLSP() error {
 	v := strings.ToLower(strings.TrimSpace(c.LSP.AutoInstall))
 	switch v {
@@ -1009,6 +1018,24 @@ func (c *ProjectConfig) validateAutoRouter() error {
 
 // IsBuiltInMode reports whether name is a reserved built-in agent mode.
 func IsBuiltInMode(name string) bool { return builtInAgentModes[name] }
+
+// BuiltInModeNames returns reserved agent mode names (sorted).
+func BuiltInModeNames() []string {
+	out := make([]string, 0, len(builtInAgentModes))
+	for name := range builtInAgentModes {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ValidateAgentsOnly validates agents: without a full config reload.
+func (c *ProjectConfig) ValidateAgentsOnly() error {
+	if c == nil {
+		return nil
+	}
+	return c.validateAgents()
+}
 
 // validateAgents checks all AgentDefinition entries for correctness.
 func (c *ProjectConfig) validateAgents() error {

@@ -33,10 +33,10 @@ func TestLoadImageParts_HappyPath(t *testing.T) {
 
 func TestLoadImageParts_UnsupportedExt(t *testing.T) {
 	dir := t.TempDir()
-	f := filepath.Join(dir, "x.bmp")
+	f := filepath.Join(dir, "x.tiff")
 	os.WriteFile(f, []byte{1, 2}, 0o644)
 	_, err := loadImageParts([]string{f})
-	if err == nil || !strings.Contains(err.Error(), "unsupported extension") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("expected unsupported error, got %v", err)
 	}
 }

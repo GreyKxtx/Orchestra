@@ -1,0 +1,72 @@
+{
+  "name": "orchestra",
+  "displayName": "Orchestra",
+  "description": "Local AI coding assistant — JSON-RPC client for orchestra core",
+  "version": "0.1.0",
+  "publisher": "orchestra",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orchestra/orchestra"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onCommand:orchestra.openChat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "orchestra.openChat",
+        "title": "Orchestra: Open Chat"
+      },
+      {
+        "command": "orchestra.pingCore",
+        "title": "Orchestra: Ping Core"
+      },
+      {
+        "command": "orchestra.openSettings",
+        "title": "Orchestra: Settings"
+      },
+      {
+        "command": "orchestra.showOutput",
+        "title": "Orchestra: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "Orchestra",
+      "properties": {
+        "orchestra.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to orchestra(.exe). Empty = auto-detect next to workspace or in the Orchestra repo (ui/vscode → ../../)."
+        },
+        "orchestra.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Project root passed to orchestra core. Empty = first workspace folder (or folder picker if none)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "shiki": "^4.4.2"
+  }
+}

@@ -141,6 +141,86 @@ func (m Message) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// UnmarshalJSON restores string or multimodal array content into Message.
+func (m *Message) UnmarshalJSON(b []byte) error {
+	type alias Message
+	raw := struct {
+		alias
+		Content json.RawMessage `json:"content"`
+	}{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*m = Message(raw.alias)
+	if len(raw.Content) == 0 || string(raw.Content) == "null" {
+		return nil
+	}
+	// String content
+	if raw.Content[0] == '"' {
+		return json.Unmarshal(raw.Content, &m.Content)
+	}
+	if raw.Content[0] != '[' {
+		return nil
+	}
+	type imageURL struct {
+		URL string `json:"url"`
+	}
+	type wirePart struct {
+		Type     string    `json:"type"`
+		Text     string    `json:"text,omitempty"`
+		ImageURL *imageURL `json:"image_url,omitempty"`
+	}
+	var parts []wirePart
+	if err := json.Unmarshal(raw.Content, &parts); err != nil {
+		return err
+	}
+	for _, wp := range parts {
+		switch wp.Type {
+		case "text":
+			if wp.Text != "" {
+				m.Parts = append(m.Parts, ContentPart{Kind: PartText, Text: wp.Text})
+			}
+		case "image_url":
+			if wp.ImageURL == nil || wp.ImageURL.URL == "" {
+				continue
+			}
+			url := wp.ImageURL.URL
+			if mime, data, ok := decodeDataURI(url); ok {
+				m.Parts = append(m.Parts, ContentPart{
+					Kind:      PartImage,
+					ImageData: data,
+					ImageMIME: mime,
+				})
+			} else {
+				m.Parts = append(m.Parts, ContentPart{Kind: PartImage, ImageURL: url})
+			}
+		}
+	}
+	return nil
+}
+
+func decodeDataURI(url string) (mime string, data []byte, ok bool) {
+	if !strings.HasPrefix(url, "data:") {
+		return "", nil, false
+	}
+	rest := url[5:]
+	semi := strings.Index(rest, ";")
+	if semi < 0 {
+		return "", nil, false
+	}
+	mime = rest[:semi]
+	payload := rest[semi+1:]
+	if !strings.HasPrefix(payload, "base64,") {
+		return "", nil, false
+	}
+	b64 := payload[len("base64,"):]
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", nil, false
+	}
+	return mime, data, true
+}
+
 // ToolDef describes a callable tool in OpenAI "tools" format.
 //
 // ParallelSafe and Mutating are out-of-band metadata used by the agent loop

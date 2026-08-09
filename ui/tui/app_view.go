@@ -247,7 +247,11 @@ func (a *App) updateStatusHints() {
 	case !a.turn.ShowBusySpinner() && a.sessionHasTools():
 		a.statusBar.SetHints("Ctrl+T · tools · Shift+Tab shell")
 	default:
-		a.statusBar.SetHints("Tab · mode · Shift+Tab · shell")
+		if n := len(a.stagedAttachments); n > 0 {
+			a.statusBar.SetHints(fmt.Sprintf("📎 %d влож. · Enter отправить · /attach ещё", n))
+		} else {
+			a.statusBar.SetHints("Tab · mode · Shift+Tab · shell · /attach")
+		}
 	}
 	a.syncStatusBar()
 }
