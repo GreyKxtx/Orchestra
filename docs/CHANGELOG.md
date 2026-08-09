@@ -30,6 +30,8 @@ Neutral chat DTOs moved to **`internal/uimodel`**. `internal/sessionstore` no lo
 
 Extracted **`github.com/orchestra/orchestra/patch`** (`ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`); depends on `protocol/`; added to `go.work`.
 
+### Changed — Phase 1 wire module (`protocol/`)
+
 Extracted **`github.com/orchestra/orchestra/protocol`** sub-module (`protocol`, `jsonrpc`, `schema`); root **`go.work`**; main module `replace => ./protocol`.
 
 ### Added — Skill packs: install/uninstall + per-skill review (2026-05-18)
