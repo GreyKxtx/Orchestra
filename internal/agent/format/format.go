@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // Format helpers for tool-call observations the agent inserts back into

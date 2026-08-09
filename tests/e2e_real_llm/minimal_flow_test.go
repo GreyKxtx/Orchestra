@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // TestRealLLMMinimalFlow tests the minimal end-to-end flow:

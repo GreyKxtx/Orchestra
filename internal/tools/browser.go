@@ -5,7 +5,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // errNoBrowser is returned when browser tools are called without --allow-browser.

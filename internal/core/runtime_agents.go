@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // AgentsListParams is reserved.

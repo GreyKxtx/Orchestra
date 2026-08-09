@@ -20,16 +20,16 @@ jobs:
           go-version-file: go.mod
 
       - name: Download modules
-        run: go mod download
+        run: go work sync
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... ./protocol/...
 
       - name: Test
-        run: go test ./...
+        run: go test ./... ./protocol/...
 
       - name: Test (race)
-        run: go test -race ./...
+        run: go test -race ./... ./protocol/...
 
   test-windows:
     runs-on: windows-latest
@@ -46,16 +46,16 @@ jobs:
         run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Download modules
-        run: go mod download
+        run: go work sync
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... ./protocol/...
 
       - name: Test (Windows)
-        run: go test ./...
+        run: go test ./... ./protocol/...
 
       - name: Test (Windows, race)
-        run: go test -race ./...
+        run: go test -race ./... ./protocol/...
 
   vscode-extension:
     runs-on: ubuntu-latest

@@ -10,7 +10,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/ops"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func (r *Runner) CodeSymbols(ctx context.Context, req CodeSymbolsRequest) (*CodeSymbolsResponse, error) {

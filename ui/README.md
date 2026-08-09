@@ -12,10 +12,10 @@
 
 - Каждый клиент общается с ядром через JSON-RPC stdio (subprocess `orchestra core`).
 - Не дублируем бизнес-логику ядра в клиентах. Клиент = только UI + транспорт.
-- Все клиенты опираются на единый `internal/protocol` для типов.
+- Все клиенты опираются на sub-module **`protocol/`** (`github.com/orchestra/orchestra/protocol`) для wire-типов.
 
 ## Добавление нового клиента
 
 1. Создать `ui/<name>/` с собственным README
-2. Если клиент на Go — может импортировать `internal/protocol`, `internal/jsonrpc`
+2. Если клиент на Go — может импортировать `github.com/orchestra/orchestra/protocol` и `protocol/jsonrpc`
 3. Если на другом языке — генерировать DTO из `docs/PROTOCOL.md` и переиспользовать схему версионирования

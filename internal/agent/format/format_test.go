@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // TestFormatApplyErrorCompact_StaleContentIncludesPath is the H1 regression:

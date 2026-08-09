@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // RuntimeGetSystemPromptParams is reserved.

@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260503005035-c113ba3d2310
 	github.com/mattn/go-runewidth v0.0.19
+	github.com/orchestra/orchestra/protocol v0.0.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/sahilm/fuzzy v0.1.2
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
@@ -63,3 +64,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/orchestra/orchestra/protocol => ./protocol

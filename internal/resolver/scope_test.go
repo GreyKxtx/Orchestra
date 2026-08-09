@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
 )
 

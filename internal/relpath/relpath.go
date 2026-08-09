@@ -14,7 +14,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // Normalize trims and canonicalises a workspace-relative path. Returns

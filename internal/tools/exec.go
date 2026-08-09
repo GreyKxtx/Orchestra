@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 type execOutputCBKey struct{}

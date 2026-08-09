@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 
 	agentformat "github.com/orchestra/orchestra/internal/agent/format"
 )

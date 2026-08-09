@@ -3,7 +3,7 @@ package guard
 import (
 	"fmt"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 
 	agentformat "github.com/orchestra/orchestra/internal/agent/format"
 )

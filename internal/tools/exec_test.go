@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestExecRun_Helper(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"github.com/orchestra/orchestra/internal/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // fixedLLM always returns the same scripted responses in order.

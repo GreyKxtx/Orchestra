@@ -3,7 +3,7 @@ package relpath
 import (
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestNormalize_Cases(t *testing.T) {

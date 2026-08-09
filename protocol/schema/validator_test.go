@@ -1,9 +1,8 @@
 package schema
 
 import (
+	"encoding/json"
 	"testing"
-
-	"github.com/orchestra/orchestra/internal/patches"
 )
 
 func TestValidator_ExternalPatches_Valid(t *testing.T) {
@@ -24,7 +23,9 @@ func TestValidator_ExternalPatches_Valid(t *testing.T) {
   ]
 }`
 
-	var ps patches.PatchSet
+	var ps struct {
+		Patches []json.RawMessage `json:"patches"`
+	}
 	if coreErr := v.ValidateAndDecode(KindExternalPatches, raw, &ps); coreErr != nil {
 		t.Fatalf("ValidateAndDecode failed: %v", coreErr)
 	}
@@ -40,7 +41,9 @@ func TestValidator_ExternalPatches_InvalidSchema(t *testing.T) {
 	}
 
 	raw := `{"patches":[{"type":"file.search_replace","path":"a.go","search":"x","replace":"y"}]}`
-	var ps patches.PatchSet
+	var ps struct {
+		Patches []json.RawMessage `json:"patches"`
+	}
 	coreErr := v.ValidateAndDecode(KindExternalPatches, raw, &ps)
 	if coreErr == nil {
 		t.Fatalf("expected error, got nil")
@@ -54,7 +57,9 @@ func TestValidator_InvalidJSON(t *testing.T) {
 	}
 
 	raw := `{"patches":[`
-	var ps patches.PatchSet
+	var ps struct {
+		Patches []json.RawMessage `json:"patches"`
+	}
 	coreErr := v.ValidateAndDecode(KindExternalPatches, raw, &ps)
 	if coreErr == nil {
 		t.Fatalf("expected error, got nil")

@@ -12,7 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/patches"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/resolver"
 )
 

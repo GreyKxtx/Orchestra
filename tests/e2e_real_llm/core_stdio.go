@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 type rpcEnvelope struct {

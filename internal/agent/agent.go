@@ -12,7 +12,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/plan"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/tools"
 
 	"github.com/orchestra/orchestra/internal/llm"

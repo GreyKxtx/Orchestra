@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestClassify(t *testing.T) {

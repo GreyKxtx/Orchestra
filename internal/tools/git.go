@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 const gitOutputLimit = 256 * 1024 // 256 KB

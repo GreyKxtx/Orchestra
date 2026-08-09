@@ -338,7 +338,9 @@
 
 **Закрыто недавно (P1/P2):** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension, session persist multimodal parts.
 
-**Phase 0 modularization:** `internal/uimodel` — neutral chat DTOs; `sessionstore` больше не импортирует `ui/tui`. См. `docs/architecture/modules.md`.
+**Phase 0 modularization:** `internal/uimodel` — neutral chat DTOs; `sessionstore` больше не импортирует `ui/tui`.
+
+**Phase 1:** sub-module `protocol/` + `go.work`. См. `docs/architecture/modules.md`.
 
 Следующий фокус:
 

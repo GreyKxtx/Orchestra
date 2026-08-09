@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/schema"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // Named execution profiles (adaptive presets over Options).

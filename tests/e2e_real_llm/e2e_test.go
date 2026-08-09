@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/lmstudio"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 const (

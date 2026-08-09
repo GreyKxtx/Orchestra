@@ -24,4 +24,4 @@ jobs:
         run: go mod download
 
       - name: Stress (race, -count=50)
-        run: go test -race -count=50 ./internal/jsonrpc ./internal/core
+        run: go test -race -count=50 ./protocol/jsonrpc ./internal/core

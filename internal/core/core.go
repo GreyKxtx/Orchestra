@@ -18,8 +18,8 @@ import (
 	"github.com/orchestra/orchestra/internal/llm"
 	"github.com/orchestra/orchestra/internal/ops"
 	"github.com/orchestra/orchestra/internal/patches"
-	"github.com/orchestra/orchestra/internal/protocol"
-	"github.com/orchestra/orchestra/internal/schema"
+	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/embed"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // SemanticSearchRequest is the input for the semantic_search tool.

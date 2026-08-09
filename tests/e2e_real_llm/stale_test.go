@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 const externalMarker = "// Modified externally"

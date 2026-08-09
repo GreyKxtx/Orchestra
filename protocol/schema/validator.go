@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/xeipuuv/gojsonschema"
 )
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/stageinvoke"
 	"github.com/orchestra/orchestra/internal/workflow"

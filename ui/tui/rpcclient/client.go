@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orchestra/orchestra/internal/jsonrpc"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 

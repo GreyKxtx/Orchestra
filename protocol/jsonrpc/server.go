@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // Handler dispatches JSON-RPC methods.

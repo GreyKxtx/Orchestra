@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // TestWorkspaceEscapeAttempt verifies that content from outside the workspace

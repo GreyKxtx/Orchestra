@@ -5,7 +5,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/llm"
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestLoopMetrics_CountsEditsAndRecoverableErrors(t *testing.T) {

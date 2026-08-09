@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/protocol"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestValidateSyntax_ValidGo(t *testing.T) {

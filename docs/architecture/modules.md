@@ -17,8 +17,8 @@ internal/core          JSON-RPC orchestrator (sessions, agent.run, tools runner)
     │
 internal/patch stack   patches → resolver → applier (+ ops, fsutil, cache)
     │
-internal/protocol      wire DTOs, version constants
-internal/jsonrpc       stdio/HTTP transport
+internal/protocol      wire DTOs, version constants  →  **moved to `protocol/` sub-module**
+internal/jsonrpc       stdio/HTTP transport           →  **`protocol/jsonrpc`**
 
 Clients (must not be imported by core):
     ui/tui               Bubble Tea client (Go)
@@ -46,21 +46,24 @@ Shared UI DTOs (client-neutral):
 
 **Hard rule:** `internal/*` packages below `core` must never import `ui/*`. Chat message types live in `internal/uimodel`.
 
-## Phase 0 (done / in progress)
+## Phase 0 (done)
 
 - [x] Extract `internal/uimodel` — neutral chat DTOs + `ToSessionfile` / `FromSessionfile`
 - [x] `internal/sessionstore` uses `uimodel` (no `ui/tui/state` import)
 - [x] `ui/tui/state` re-exports `uimodel` types; TUI-specific `Session` streaming helpers stay in TUI
 
-## Phase 1 (next)
+## Phase 1 (done)
 
-- Extract `github.com/orchestra/orchestra/protocol` sub-module (`protocol`, `jsonrpc`, `schema`)
-- Add `go.work` at repo root
-- CI: `go work sync` + vet/test all modules
+- [x] Sub-module `protocol/` — `github.com/orchestra/orchestra/protocol` (`protocol`, `jsonrpc`, `schema`)
+- [x] Root `go.work` + `replace` in main `go.mod`
+- [x] CI: `go work sync` before vet/test
 
-## Phase 2+
+## Phase 2 (next)
 
-See planning notes in `docs/ROADMAP.md` — patch module, llm/lsp/ckg, tools, then optional `orchestra-tui` binary module.
+- Extract patch stack sub-module (`ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath`)
+- `go.work` add `./patch` (or `./patchstack`)
+
+## Phase 3+
 
 ## In-repo splits (before multi-module)
 
