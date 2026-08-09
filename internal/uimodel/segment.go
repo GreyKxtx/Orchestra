@@ -1,6 +1,9 @@
-package state
+package uimodel
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // SegmentKind identifies one chronological slice of an assistant turn.
 type SegmentKind string
@@ -9,35 +12,27 @@ const (
 	SegmentReasoning SegmentKind = "reasoning"
 	SegmentText      SegmentKind = "text"
 	SegmentTools     SegmentKind = "tools"
-	// SegmentNotice is an inline info/retry/error line at the moment it happened
-	// (e.g. "Контекст сжат"), not a footer dump at the end of the turn.
-	SegmentNotice SegmentKind = "notice"
-	// SegmentTodos is an inline checklist (Claude Code-style) inside the turn.
-	SegmentTodos SegmentKind = "todos"
+	SegmentNotice    SegmentKind = "notice"
+	SegmentTodos     SegmentKind = "todos"
 )
 
-// Segment is one chronological part of an assistant message (Claude/OpenCode-style parts).
-// Contiguous tools from the same step share one SegmentTools entry.
-// Each notice is its own segment (never coalesced) so history order is preserved.
+// Segment is one chronological part of an assistant message.
 type Segment struct {
 	Kind       SegmentKind
-	Text       string      // reasoning, visible text, or notice body
-	Tools      []ToolBlock // only for SegmentTools
-	Todos      []TodoItem  // only for SegmentTodos
-	NoticeKind SystemKind  // only for SegmentNotice
+	Text       string
+	Tools      []ToolBlock
+	Todos      []TodoItem
+	NoticeKind SystemKind
 }
 
 // TodoItem is one checklist row in an assistant SegmentTodos.
 type TodoItem struct {
 	ID      string `json:"id"`
 	Content string `json:"content"`
-	Status  string `json:"status"` // pending | in_progress | done | cancelled
+	Status  string `json:"status"`
 }
 
-// NormalizeSegments ensures Segments is populated. Legacy flat messages
-// (Reasoning/ToolBlocks/Text/Notices) become a synthetic stack matching the old
-// render order. Flat Notices without SegmentNotice entries are migrated into
-// chronological notice segments (appended when position is unknown).
+// NormalizeSegments ensures Segments is populated from legacy flat fields.
 func (m *Message) NormalizeSegments() {
 	if m == nil || m.Role != RoleAssistant {
 		return
@@ -66,8 +61,6 @@ func (m *Message) NormalizeSegments() {
 			})
 		}
 	} else if len(m.Notices) > 0 && !m.hasNoticeSegments() {
-		// Old persist: Segments without notice kinds + flat Notices → append
-		// notices at end (best-effort; true position was lost).
 		for _, n := range m.Notices {
 			if strings.TrimSpace(n.Text) == "" {
 				continue
@@ -91,8 +84,9 @@ func (m *Message) hasNoticeSegments() bool {
 	return false
 }
 
-// syncProjections refreshes flat Text/Reasoning/ToolBlocks/Notices from Segments
-// for chrome, persist projection, and older call sites.
+// SyncProjections refreshes flat Text/Reasoning/ToolBlocks/Notices from Segments.
+func (m *Message) SyncProjections() { m.syncProjections() }
+
 func (m *Message) syncProjections() {
 	if m == nil {
 		return
@@ -144,9 +138,9 @@ func (m Message) HasVisibleContent() bool {
 	return strings.TrimSpace(m.Reasoning) != "" || strings.TrimSpace(m.Text) != "" || len(m.ToolBlocks) > 0 || len(m.Notices) > 0
 }
 
-// ensureOpenSegment returns the index of the last segment if it matches kind,
+// EnsureOpenSegment returns the index of the last segment if it matches kind,
 // otherwise appends a new one and returns its index.
-func (m *Message) ensureOpenSegment(kind SegmentKind) int {
+func (m *Message) EnsureOpenSegment(kind SegmentKind) int {
 	if n := len(m.Segments); n > 0 && m.Segments[n-1].Kind == kind {
 		return n - 1
 	}
@@ -154,8 +148,8 @@ func (m *Message) ensureOpenSegment(kind SegmentKind) int {
 	return len(m.Segments) - 1
 }
 
-// findToolBlockLoc returns segment index and tool index for id, or (-1,-1).
-func (m *Message) findToolBlockLoc(id string) (segIdx, toolIdx int) {
+// FindToolBlockLoc returns segment index and tool index for id, or (-1,-1).
+func (m *Message) FindToolBlockLoc(id string) (segIdx, toolIdx int) {
 	for si := range m.Segments {
 		if m.Segments[si].Kind != SegmentTools {
 			continue
@@ -169,8 +163,8 @@ func (m *Message) findToolBlockLoc(id string) (segIdx, toolIdx int) {
 	return -1, -1
 }
 
-// firstRunningToolLoc returns the first running tool across segments.
-func (m *Message) firstRunningToolLoc() (segIdx, toolIdx int) {
+// FirstRunningToolLoc returns the first running tool across segments.
+func (m *Message) FirstRunningToolLoc() (segIdx, toolIdx int) {
 	for si := range m.Segments {
 		if m.Segments[si].Kind != SegmentTools {
 			continue
@@ -184,8 +178,8 @@ func (m *Message) firstRunningToolLoc() (segIdx, toolIdx int) {
 	return -1, -1
 }
 
-// lastRunningToolLoc returns the last running tool across segments.
-func (m *Message) lastRunningToolLoc() (segIdx, toolIdx int) {
+// LastRunningToolLoc returns the last running tool across segments.
+func (m *Message) LastRunningToolLoc() (segIdx, toolIdx int) {
 	for si := len(m.Segments) - 1; si >= 0; si-- {
 		if m.Segments[si].Kind != SegmentTools {
 			continue
@@ -197,4 +191,27 @@ func (m *Message) lastRunningToolLoc() (segIdx, toolIdx int) {
 		}
 	}
 	return -1, -1
+}
+
+// FinalizeRunningToolsBefore completes running tools in segments [0, segLimit).
+func FinalizeRunningToolsBefore(m *Message, segLimit int) {
+	if m == nil {
+		return
+	}
+	now := time.Now()
+	for si := 0; si < segLimit && si < len(m.Segments); si++ {
+		if m.Segments[si].Kind != SegmentTools {
+			continue
+		}
+		for ti := range m.Segments[si].Tools {
+			tb := &m.Segments[si].Tools[ti]
+			if tb.Status != ToolBlockRunning {
+				continue
+			}
+			tb.Status = ToolBlockCompleted
+			if !tb.StartedAt.IsZero() {
+				tb.Duration = now.Sub(tb.StartedAt)
+			}
+		}
+	}
 }

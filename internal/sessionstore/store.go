@@ -1,6 +1,3 @@
-// Package sessionstore provides TUI-facing helpers for session listing and
-// ID generation. On-disk persistence is owned by core via internal/sessionfile
-// (unified v2 schema); Save/Load remain for offline fallbacks only.
 package sessionstore
 
 import (
@@ -8,24 +5,24 @@ import (
 	"os"
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
-	"github.com/orchestra/orchestra/ui/tui/state"
+	"github.com/orchestra/orchestra/internal/uimodel"
 )
 
 // SessionMeta describes a saved session without its full message list.
 type SessionMeta = sessionfile.Meta
 
-// SessionRecord is the TUI view of a saved session (UI messages only).
+// SessionRecord is the client view of a saved session (UI messages only).
 type SessionRecord struct {
 	SessionMeta
-	Messages []state.Message `json:"messages"`
+	Messages []uimodel.Message `json:"messages"`
 }
 
 // NewID returns a sortable session id (delegates to sessionfile).
 func NewID() string { return sessionfile.NewID() }
 
 // TitleFromMessages returns a short title from chat messages.
-func TitleFromMessages(msgs []state.Message) string {
-	return sessionfile.TitleFromUIMessages(StateMessagesToUI(msgs))
+func TitleFromMessages(msgs []uimodel.Message) string {
+	return sessionfile.TitleFromUIMessages(uimodel.ToSessionfile(msgs))
 }
 
 // Save writes a v2 snapshot via sessionfile (legacy direct TUI path).
@@ -46,7 +43,7 @@ func Save(workspaceRoot string, rec *SessionRecord) error {
 	if !rec.CreatedAt.IsZero() {
 		snap.CreatedAt = rec.CreatedAt
 	}
-	snap.UIMessages = StateMessagesToUI(rec.Messages)
+	snap.UIMessages = uimodel.ToSessionfile(rec.Messages)
 	return sessionfile.Save(workspaceRoot, snap)
 }
 
@@ -56,7 +53,7 @@ func Load(workspaceRoot, id string) (*SessionRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	msgs := UIMessagesToState(snap.UIMessages)
+	msgs := uimodel.FromSessionfile(snap.UIMessages)
 	return &SessionRecord{
 		SessionMeta: SessionMeta{
 			ID:        snap.ID,
@@ -78,4 +75,16 @@ func List(workspaceRoot string) ([]SessionMeta, error) {
 // Delete removes a session file.
 func Delete(workspaceRoot, id string) error {
 	return sessionfile.Delete(workspaceRoot, id)
+}
+
+// StateMessagesToUI converts chat messages to sessionfile projection.
+// Deprecated: use uimodel.ToSessionfile.
+func StateMessagesToUI(msgs []uimodel.Message) []sessionfile.UIMessage {
+	return uimodel.ToSessionfile(msgs)
+}
+
+// UIMessagesToState converts sessionfile projection back to chat messages.
+// Deprecated: use uimodel.FromSessionfile.
+func UIMessagesToState(msgs []sessionfile.UIMessage) []uimodel.Message {
+	return uimodel.FromSessionfile(msgs)
 }

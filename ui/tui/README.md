@@ -77,6 +77,8 @@ TUI по умолчанию коммитит write/edit сразу (`apply=true`
 
 ## Архитектура
 
+Chat DTO (`Message`, `Segment`, `ToolBlock`, …) — **`internal/uimodel`**; TUI re-exports via `ui/tui/state/aliases.go`. Слои и import rules: `docs/architecture/modules.md`.
+
 ```
 ui/tui/
   app.go              — App struct, Init

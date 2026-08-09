@@ -22,6 +22,10 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 
 `internal/core` split: `runtime_agents.go`, `runtime_llm.go`, `runtime_mcp.go`, `runtime_providers.go`, `runtime_prompt.go`, `runtime_index.go`, `message_attachments.go`. CI adds `vscode-extension` job (`npm ci` + `compile`).
 
+### Changed — Phase 0 module layout (`internal/uimodel`)
+
+Neutral chat DTOs moved to **`internal/uimodel`** (`Message`, `Segment`, `ToolBlock`, `ToSessionfile` / `FromSessionfile`). `internal/sessionstore` no longer imports `ui/tui/state`. TUI re-exports via `ui/tui/state/aliases.go`. Layer rules: `docs/architecture/modules.md`.
+
 ### Added — Skill packs: install/uninstall + per-skill review (2026-05-18)
 
 Third-party skill bundles can be installed from git URLs, HTTP(S) zip/tar archives, or local directories. Installed packs live under `~/.orchestra/packs/<id>/`; `Discover` adds a third tier (project > user > pack) and tags each skill with its `Origin`.

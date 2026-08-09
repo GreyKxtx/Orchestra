@@ -336,7 +336,9 @@
 
 Фазы 0–10 (MVP + Planner–Worker) закрыты. Фаза 1 hardening (grammar / classify / logging) — в коде.
 
-**Закрыто недавно (P1/P2):** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension (chat, settings, LSP modal, per-file diff, `@` без reload webview), session persist multimodal parts, PDF/SVG MIME, CI job для `ui/vscode`.
+**Закрыто недавно (P1/P2):** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension, session persist multimodal parts.
+
+**Phase 0 modularization:** `internal/uimodel` — neutral chat DTOs; `sessionstore` больше не импортирует `ui/tui`. См. `docs/architecture/modules.md`.
 
 Следующий фокус:
 

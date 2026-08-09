@@ -1,14 +1,13 @@
-package sessionstore
+package uimodel
 
 import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
-	"github.com/orchestra/orchestra/ui/tui/state"
 )
 
-// StateMessagesToUI converts TUI messages to the persisted projection (v3+ segments).
-func StateMessagesToUI(msgs []state.Message) []sessionfile.UIMessage {
+// ToSessionfile converts chat messages to the persisted projection (v3+ segments).
+func ToSessionfile(msgs []Message) []sessionfile.UIMessage {
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -30,13 +29,13 @@ func StateMessagesToUI(msgs []state.Message) []sessionfile.UIMessage {
 			ReasoningExpanded: m.ReasoningExpanded,
 		}
 		if len(m.Attachments) > 0 {
-			ui.Attachments = attachmentsToUI(m.Attachments)
+			ui.Attachments = attachmentsToFile(m.Attachments)
 		}
 		if m.Duration > 0 {
 			ui.DurationMS = m.Duration.Milliseconds()
 		}
 		if len(m.ToolBlocks) > 0 {
-			ui.ToolBlocks = toolBlocksToUI(m.ToolBlocks)
+			ui.ToolBlocks = toolBlocksToFile(m.ToolBlocks)
 		}
 		if len(m.Segments) > 0 {
 			ui.Segments = make([]sessionfile.UISegment, 0, len(m.Segments))
@@ -44,7 +43,7 @@ func StateMessagesToUI(msgs []state.Message) []sessionfile.UIMessage {
 				ui.Segments = append(ui.Segments, sessionfile.UISegment{
 					Kind:       string(seg.Kind),
 					Text:       seg.Text,
-					Tools:      toolBlocksToUI(seg.Tools),
+					Tools:      toolBlocksToFile(seg.Tools),
 					NoticeKind: string(seg.NoticeKind),
 				})
 			}
@@ -75,18 +74,18 @@ func StateMessagesToUI(msgs []state.Message) []sessionfile.UIMessage {
 	return out
 }
 
-// UIMessagesToState converts persisted UI messages back into TUI state.
-func UIMessagesToState(msgs []sessionfile.UIMessage) []state.Message {
+// FromSessionfile converts persisted UI messages back into chat messages.
+func FromSessionfile(msgs []sessionfile.UIMessage) []Message {
 	if len(msgs) == 0 {
 		return nil
 	}
-	out := make([]state.Message, 0, len(msgs))
+	out := make([]Message, 0, len(msgs))
 	for _, m := range msgs {
-		msg := state.Message{
-			Role:              state.Role(m.Role),
+		msg := Message{
+			Role:              Role(m.Role),
 			Text:              m.Text,
 			Reasoning:         m.Reasoning,
-			SystemKind:        state.SystemKind(m.SystemKind),
+			SystemKind:        SystemKind(m.SystemKind),
 			StartedAt:         m.StartedAt,
 			TokensIn:          m.TokensIn,
 			TokensOut:         m.TokensOut,
@@ -100,26 +99,26 @@ func UIMessagesToState(msgs []sessionfile.UIMessage) []state.Message {
 			msg.Duration = time.Duration(m.DurationMS) * time.Millisecond
 		}
 		if len(m.ToolBlocks) > 0 {
-			msg.ToolBlocks = toolBlocksFromUI(m.ToolBlocks)
+			msg.ToolBlocks = toolBlocksFromFile(m.ToolBlocks)
 		}
 		if len(m.Attachments) > 0 {
-			msg.Attachments = attachmentsFromUI(m.Attachments)
+			msg.Attachments = attachmentsFromFile(m.Attachments)
 		}
 		if len(m.Segments) > 0 {
-			msg.Segments = make([]state.Segment, 0, len(m.Segments))
+			msg.Segments = make([]Segment, 0, len(m.Segments))
 			for _, seg := range m.Segments {
-				msg.Segments = append(msg.Segments, state.Segment{
-					Kind:       state.SegmentKind(seg.Kind),
+				msg.Segments = append(msg.Segments, Segment{
+					Kind:       SegmentKind(seg.Kind),
 					Text:       seg.Text,
-					Tools:      toolBlocksFromUI(seg.Tools),
-					NoticeKind: state.SystemKind(seg.NoticeKind),
+					Tools:      toolBlocksFromFile(seg.Tools),
+					NoticeKind: SystemKind(seg.NoticeKind),
 				})
 			}
 		}
 		if len(m.DiffFiles) > 0 {
-			msg.DiffFiles = make([]state.DiffFile, 0, len(m.DiffFiles))
+			msg.DiffFiles = make([]DiffFile, 0, len(m.DiffFiles))
 			for _, df := range m.DiffFiles {
-				msg.DiffFiles = append(msg.DiffFiles, state.DiffFile{
+				msg.DiffFiles = append(msg.DiffFiles, DiffFile{
 					Path:         df.Path,
 					Before:       df.Before,
 					After:        df.After,
@@ -129,10 +128,10 @@ func UIMessagesToState(msgs []sessionfile.UIMessage) []state.Message {
 			msg.DiffExpanded = m.DiffExpanded
 		}
 		if len(m.Notices) > 0 {
-			msg.Notices = make([]state.SystemNotice, 0, len(m.Notices))
+			msg.Notices = make([]SystemNotice, 0, len(m.Notices))
 			for _, n := range m.Notices {
-				msg.Notices = append(msg.Notices, state.SystemNotice{
-					Kind: state.SystemKind(n.Kind),
+				msg.Notices = append(msg.Notices, SystemNotice{
+					Kind: SystemKind(n.Kind),
 					Text: n.Text,
 				})
 			}
@@ -143,7 +142,7 @@ func UIMessagesToState(msgs []sessionfile.UIMessage) []state.Message {
 	return out
 }
 
-func toolBlocksToUI(blocks []state.ToolBlock) []sessionfile.UIToolBlock {
+func toolBlocksToFile(blocks []ToolBlock) []sessionfile.UIToolBlock {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -180,18 +179,18 @@ func toolBlocksToUI(blocks []state.ToolBlock) []sessionfile.UIToolBlock {
 	return out
 }
 
-func toolBlocksFromUI(blocks []sessionfile.UIToolBlock) []state.ToolBlock {
+func toolBlocksFromFile(blocks []sessionfile.UIToolBlock) []ToolBlock {
 	if len(blocks) == 0 {
 		return nil
 	}
-	out := make([]state.ToolBlock, 0, len(blocks))
+	out := make([]ToolBlock, 0, len(blocks))
 	for _, tb := range blocks {
-		block := state.ToolBlock{
+		block := ToolBlock{
 			ID:          tb.ID,
 			Name:        tb.Name,
 			ArgsPreview: tb.ArgsPreview,
 			ArgsRaw:     tb.ArgsRaw,
-			Status:      state.ToolBlockStatus(tb.Status),
+			Status:      ToolBlockStatus(tb.Status),
 			Result:      tb.Result,
 			Expanded:    tb.Expanded,
 		}
@@ -199,9 +198,9 @@ func toolBlocksFromUI(blocks []sessionfile.UIToolBlock) []state.ToolBlock {
 			block.Duration = time.Duration(tb.DurationMS) * time.Millisecond
 		}
 		if len(tb.Diagnostics) > 0 {
-			block.Diagnostics = make([]state.ToolDiagnostic, len(tb.Diagnostics))
+			block.Diagnostics = make([]ToolDiagnostic, len(tb.Diagnostics))
 			for i, d := range tb.Diagnostics {
-				block.Diagnostics[i] = state.ToolDiagnostic{
+				block.Diagnostics[i] = ToolDiagnostic{
 					StartLine: d.StartLine,
 					StartCol:  d.StartCol,
 					EndLine:   d.EndLine,
@@ -217,7 +216,7 @@ func toolBlocksFromUI(blocks []sessionfile.UIToolBlock) []state.ToolBlock {
 	return out
 }
 
-func attachmentsToUI(atts []state.Attachment) []sessionfile.UIAttachment {
+func attachmentsToFile(atts []Attachment) []sessionfile.UIAttachment {
 	if len(atts) == 0 {
 		return nil
 	}
@@ -234,13 +233,13 @@ func attachmentsToUI(atts []state.Attachment) []sessionfile.UIAttachment {
 	return out
 }
 
-func attachmentsFromUI(atts []sessionfile.UIAttachment) []state.Attachment {
+func attachmentsFromFile(atts []sessionfile.UIAttachment) []Attachment {
 	if len(atts) == 0 {
 		return nil
 	}
-	out := make([]state.Attachment, 0, len(atts))
+	out := make([]Attachment, 0, len(atts))
 	for _, a := range atts {
-		out = append(out, state.Attachment{
+		out = append(out, Attachment{
 			Path: a.Path,
 			Name: a.Name,
 			Kind: a.Kind,

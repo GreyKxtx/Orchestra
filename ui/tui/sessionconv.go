@@ -2,14 +2,14 @@ package tui
 
 import (
 	"github.com/orchestra/orchestra/internal/sessionfile"
-	"github.com/orchestra/orchestra/internal/sessionstore"
+	"github.com/orchestra/orchestra/internal/uimodel"
 	"github.com/orchestra/orchestra/ui/tui/state"
 )
 
 func uiMessagesFromState(msgs []state.Message) []sessionfile.UIMessage {
-	return sessionstore.StateMessagesToUI(msgs)
+	return uimodel.ToSessionfile(msgs)
 }
 
 func stateMessagesFromUI(msgs []sessionfile.UIMessage) []state.Message {
-	return sessionstore.UIMessagesToState(msgs)
+	return uimodel.FromSessionfile(msgs)
 }
