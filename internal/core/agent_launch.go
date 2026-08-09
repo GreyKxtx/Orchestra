@@ -115,9 +115,10 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 
 	// Wire TUI/CLI consent into LSP auto-provision for this turn.
+	// Warmup is best-effort and must not block the agent loop on npm/go install.
 	if c.tools != nil {
 		c.tools.SetLSPInstallConsent(spec.PermissionRequester)
-		c.tools.WarmupLSP(context.Background())
+		go c.tools.WarmupLSP(context.Background())
 	}
 
 	profileName, err := resolveProfileName(c.cfg, spec.Profile)

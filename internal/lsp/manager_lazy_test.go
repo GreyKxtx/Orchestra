@@ -58,7 +58,8 @@ func TestManager_WarmupStart_SpawnsClient(t *testing.T) {
 	lazyOff := false
 	enabled := true
 	m, errs := lsp.NewManager(root, lsp.LSPConfig{
-		Enabled: &enabled,
+		Enabled:     &enabled,
+		AutoInstall: "false",
 		Servers: []lsp.LSPServerConfig{{
 			Language:   "go",
 			Extensions: []string{".go"},
@@ -97,7 +98,10 @@ func TestManager_WarmupStart_LazySkipsSpawn(t *testing.T) {
 		t.Fatal(err)
 	}
 	enabled := true
-	m, errs := lsp.NewManager(root, lsp.LSPConfig{Enabled: &enabled, Servers: []lsp.LSPServerConfig{{
+	m, errs := lsp.NewManager(root, lsp.LSPConfig{
+		Enabled:     &enabled,
+		AutoInstall: "false",
+		Servers: []lsp.LSPServerConfig{{
 		Language:   "go",
 		Extensions: []string{".go"},
 		Command:    []string{"unused"},
@@ -132,7 +136,10 @@ func TestManager_GoTSMonorepo_LazyPerExtension(t *testing.T) {
 
 	starts := map[string]int{}
 	enabled := true
-	m, errs := lsp.NewManager(root, lsp.LSPConfig{Enabled: &enabled, Servers: []lsp.LSPServerConfig{
+	m, errs := lsp.NewManager(root, lsp.LSPConfig{
+		Enabled:     &enabled,
+		AutoInstall: "false",
+		Servers: []lsp.LSPServerConfig{
 		{Language: "go", Extensions: []string{".go"}, Command: []string{"unused-go"}},
 		{Language: "typescript", Extensions: []string{".ts", ".tsx"}, Command: []string{"unused-ts"}},
 	}})
@@ -178,7 +185,10 @@ func TestManager_LazyStart_StartsOnFirstUse(t *testing.T) {
 	}
 
 	enabled := true
-	m, errs := lsp.NewManager(root, lsp.LSPConfig{Enabled: &enabled, Servers: []lsp.LSPServerConfig{{
+	m, errs := lsp.NewManager(root, lsp.LSPConfig{
+		Enabled:     &enabled,
+		AutoInstall: "false",
+		Servers: []lsp.LSPServerConfig{{
 		Language:   "go",
 		Extensions: []string{".go"},
 		Command:    []string{"unused"},
@@ -256,6 +266,7 @@ func TestManager_TTL_ShutdownAndReopenStaged(t *testing.T) {
 	enabled := true
 	m, errs := lsp.NewManager(root, lsp.LSPConfig{
 		Enabled:        &enabled,
+		AutoInstall:    "false",
 		IdleTTLSeconds: &ttl,
 		Servers: []lsp.LSPServerConfig{{
 			Language:   "go",
@@ -353,7 +364,8 @@ func TestManager_CrashRestartReopensStaged(t *testing.T) {
 
 	enabled := true
 	m, errs := lsp.NewManager(root, lsp.LSPConfig{
-		Enabled: &enabled,
+		Enabled:     &enabled,
+		AutoInstall: "false",
 		Servers: []lsp.LSPServerConfig{{
 			Language:   "go",
 			Extensions: []string{".go"},

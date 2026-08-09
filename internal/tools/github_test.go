@@ -4,6 +4,8 @@ import (
 	"context"
 	"os/exec"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/tools/git"
 )
 
 func TestGHPRCreate_EmptyTitle(t *testing.T) {
@@ -24,10 +26,10 @@ func TestGHPRCreate_WhitespaceTitle(t *testing.T) {
 
 func TestGHAvailable_DoesNotPanic(t *testing.T) {
 	// Just verify the function runs and returns a consistent result.
-	first := ghAvailable()
-	second := ghAvailable()
+	first := git.GHAvailable()
+	second := git.GHAvailable()
 	if first != second {
-		t.Error("ghAvailable() must return consistent result (sync.Once)")
+		t.Error("GHAvailable() must return consistent result (sync.Once)")
 	}
 }
 

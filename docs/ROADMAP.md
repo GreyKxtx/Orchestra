@@ -346,6 +346,8 @@
 
 **Phase 3:** sub-module `llm/` + `lmstudio/`. См. `docs/architecture/modules.md`.
 
+**Phase 4:** in-repo split `internal/tools` → `exec/`, `git/`, `web/`, `toolslsp/` (+ `toolpath/`, `toolschema/`); registry и публичный API остаются в корне `tools`. **`fs/`** — следующий шаг.
+
 Следующий фокус:
 
 1. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm -run TestRealLLMVisionAttachment` когда LLM-сервер доступен.

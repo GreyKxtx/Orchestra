@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -89,7 +90,7 @@ func TestExecRun_Timeout_ReturnsExecTimeout(t *testing.T) {
 }
 
 func TestMaybeShellExec_PlainCommandPassesThrough(t *testing.T) {
-	cmd, args, viaShell, err := maybeShellExec("git", []string{"status"})
+	cmd, args, viaShell, err := exec.MaybeShellExec("git", []string{"status"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestMaybeShellExec_PlainCommandPassesThrough(t *testing.T) {
 }
 
 func TestMaybeShellExec_CommandWithSpacesGoesToShell(t *testing.T) {
-	cmd, args, viaShell, err := maybeShellExec("go version", nil)
+	cmd, args, viaShell, err := exec.MaybeShellExec("go version", nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestMaybeShellExec_CommandWithSpacesGoesToShell(t *testing.T) {
 }
 
 func TestMaybeShellExec_CompoundCommandGoesToShell(t *testing.T) {
-	_, args, viaShell, err := maybeShellExec("go build && go test", nil)
+	_, args, viaShell, err := exec.MaybeShellExec("go build && go test", nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestMaybeShellExec_CompoundCommandGoesToShell(t *testing.T) {
 // them into the shell expression would be an injection sink. The caller has to
 // put the whole shell expression in `command`.
 func TestMaybeShellExec_RefusesArgsWhenShellRouting(t *testing.T) {
-	_, _, _, err := maybeShellExec("git log", []string{"$(rm -rf ~)"})
+	_, _, _, err := exec.MaybeShellExec("git log", []string{"$(rm -rf ~)"})
 	if err == nil {
 		t.Fatal("expected error when shell-routing with non-empty args")
 	}

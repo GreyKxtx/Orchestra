@@ -41,6 +41,13 @@ func longRunningCmd() (string, []string) {
 
 var _ = fmt.Sprintf // keep fmt import when above helper is reverted
 
+func waitBgDone(t *testing.T, r *Runner, bgID string, timeout time.Duration) {
+	t.Helper()
+	if err := r.bg.WaitDone(bgID, timeout); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecBashBackground_StartAndComplete(t *testing.T) {
 	r := newTestRunner(t)
 	cmd, args := echoCmd("hello-bg")
@@ -58,13 +65,7 @@ func TestExecBashBackground_StartAndComplete(t *testing.T) {
 		t.Errorf("initial status: %q", resp.Status)
 	}
 
-	// Wait for completion (echo is sub-second).
-	p, _ := r.bg.get(resp.BgID)
-	select {
-	case <-p.done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("process did not finish in time")
-	}
+	waitBgDone(t, r, resp.BgID, 5*time.Second)
 
 	out, err := r.ExecBashOutput(context.Background(), ExecBashOutputRequest{BgID: resp.BgID})
 	if err != nil {
@@ -88,14 +89,12 @@ func TestExecBashOutput_CursorAdvances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := r.bg.get(resp.BgID)
-	<-p.done
+	waitBgDone(t, r, resp.BgID, 5*time.Second)
 
 	first, _ := r.ExecBashOutput(context.Background(), ExecBashOutputRequest{BgID: resp.BgID})
 	if !strings.Contains(first.Stdout, "payload-1") {
 		t.Errorf("first call missing payload: %q", first.Stdout)
 	}
-	// Second call: cursor advanced, no new content.
 	second, _ := r.ExecBashOutput(context.Background(), ExecBashOutputRequest{BgID: resp.BgID})
 	if second.Stdout != "" {
 		t.Errorf("expected empty stdout after cursor advance, got %q", second.Stdout)
@@ -106,8 +105,7 @@ func TestExecBashOutput_PeekDoesNotAdvance(t *testing.T) {
 	r := newTestRunner(t)
 	cmd, args := echoCmd("peek-payload")
 	resp, _ := r.ExecBashBackground(context.Background(), ExecRunRequest{Command: cmd, Args: args})
-	p, _ := r.bg.get(resp.BgID)
-	<-p.done
+	waitBgDone(t, r, resp.BgID, 5*time.Second)
 
 	for i := 0; i < 3; i++ {
 		out, _ := r.ExecBashOutput(context.Background(), ExecBashOutputRequest{BgID: resp.BgID, Peek: true})
@@ -145,8 +143,7 @@ func TestExecBashKill_AlreadyDone(t *testing.T) {
 	r := newTestRunner(t)
 	cmd, args := echoCmd("quick")
 	resp, _ := r.ExecBashBackground(context.Background(), ExecRunRequest{Command: cmd, Args: args})
-	p, _ := r.bg.get(resp.BgID)
-	<-p.done
+	waitBgDone(t, r, resp.BgID, 5*time.Second)
 
 	killResp, err := r.ExecBashKill(context.Background(), ExecBashKillRequest{BgID: resp.BgID})
 	if err != nil {
@@ -164,11 +161,13 @@ func TestRunnerClose_KillsBackgroundProcs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := r.bg.get(resp.BgID)
+	done, err := r.bg.DoneCh(resp.BgID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = r.Close()
 	select {
-	case <-p.done:
-		// good
+	case <-done:
 	case <-time.After(15 * time.Second):
 		t.Fatal("Close() did not kill background process")
 	}
@@ -179,18 +178,5 @@ func TestExecBashBackground_EmptyCommand(t *testing.T) {
 	_, err := r.ExecBashBackground(context.Background(), ExecRunRequest{Command: "  "})
 	if err == nil {
 		t.Fatal("expected error for empty command")
-	}
-}
-
-func TestBgRegistry_NextIDMonotonic(t *testing.T) {
-	reg := newBgRegistry()
-	a := reg.nextID()
-	b := reg.nextID()
-	c := reg.nextID()
-	if a == b || b == c || a == c {
-		t.Errorf("ids not distinct: %s %s %s", a, b, c)
-	}
-	if !strings.HasPrefix(a, "bg_") {
-		t.Errorf("prefix: %q", a)
 	}
 }

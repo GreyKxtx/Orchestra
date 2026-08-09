@@ -279,6 +279,12 @@ func (cfg LSPConfig) ensureSyncBudget() time.Duration {
 
 func (m *Manager) startServer(entry *serverEntry, rootURI string, ctx context.Context) (*Client, error) {
 	cfg := entry.cfg
+	// Test hooks with dummy/unknown commands skip real resolve/ensure entirely.
+	if m.startServerHook != nil && len(cfg.Command) > 0 {
+		if _, known := registry.ByBinaryName(filepath.Base(cfg.Command[0])); !known {
+			return m.startServerHook(cfg, rootURI)
+		}
+	}
 	res, err := provision.Resolve(cfg.Command)
 	if err != nil {
 		res, err = m.tryEnsureAndResolve(ctx, cfg, err)
@@ -286,10 +292,6 @@ func (m *Manager) startServer(entry *serverEntry, rootURI string, ctx context.Co
 			// Async install in flight — do not fall through to test hooks.
 			if provision.IsEnsurePending(err) {
 				return nil, err
-			}
-			// Test hooks often use dummy commands; fall through to the hook.
-			if m.startServerHook != nil {
-				return m.startServerHook(entry.cfg, rootURI)
 			}
 			fmt.Fprintf(os.Stderr, "lsp: resolve %q: %v\n", cfg.Language, err)
 			return nil, err
@@ -312,9 +314,10 @@ func (m *Manager) tryEnsureAndResolve(ctx context.Context, cfg LSPServerConfig, 
 	}
 	entry, ok := registry.ByBinaryName(filepath.Base(cfg.Command[0]))
 	if !ok {
-		entry, ok = registry.ByLanguage(cfg.Language)
+		// Custom/unknown binary name — do not infer a catalog server by language.
+		return provision.Result{}, resolveErr
 	}
-	if !ok || !provision.CanEnsure(entry.ID) {
+	if !provision.CanEnsure(entry.ID) {
 		// No automated installer for this language yet.
 		return provision.Result{}, resolveErr
 	}

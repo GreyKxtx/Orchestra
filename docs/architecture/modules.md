@@ -69,10 +69,12 @@ Shared UI DTOs (client-neutral):
 - [x] `internal/config` aliases `LLMConfig` → `llm.LLMConfig`; `ProjectConfig.LLMRegistry()` for provider lookup
 - [x] `go.work` includes `./llm`
 
-## Phase 4 (next)
+## Phase 4 (done)
 
-- In-repo split `internal/tools` into subpackages (`fs/`, `exec/`, `lsp/`, …)
-- Optional: extract `lsp/` or `ckg/` sub-modules (heavy deps)
+- [x] In-repo split `internal/tools` into subpackages: `exec/`, `git/`, `web/`, `toolslsp/`, `fs/` (+ existing `toolpath/`, `toolschema/`)
+- [x] Root `registry.go` keeps `ListTools*` / parallel flags; tool defs for exec/git/web/browser/LSP/FS live in subpackages (`Tool*` + `toolschema.MustSchema`)
+- [x] Root `Runner` delegates via `*_delegate.go`; public API preserved with type aliases in `aliases.go` / `web_delegate.go`
+- [x] `fs/` — write/edit/staging overlay, list/read/glob/grep, delete/rename, diff.preview, ast_rename; `Client` + `Hooks` for LSP/CKG/memory integration without importing parent `tools`
 
 ## Phase 5+
 
@@ -80,9 +82,9 @@ Shared UI DTOs (client-neutral):
 
 Prefer **subpackages** over new modules when coupling is high:
 
-| Package | Suggested subdirs (future) |
-|---------|--------------------------|
-| `internal/tools` | `fs/`, `git/`, `exec/`, `lsp/`, `web/` — registry stays root |
+| Package | Subdirs |
+|---------|---------|
+| `internal/tools` | `exec/`, `git/`, `web/`, `toolslsp/`, `toolpath/`, `toolschema/` — registry stays root; **`fs/` pending** |
 | `internal/core` | already split: `runtime_*.go`, `session/` |
 | `internal/agent` | already has `digest/`, `guard/`, `history/`, … |
 

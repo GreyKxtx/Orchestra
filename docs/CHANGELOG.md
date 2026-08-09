@@ -26,6 +26,19 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 
 Neutral chat DTOs moved to **`internal/uimodel`**. `internal/sessionstore` no longer imports `ui/tui/state`. Layer rules: `docs/architecture/modules.md`.
 
+### Changed — Phase 4 tools subpackages (`internal/tools/*`)
+
+Split tool implementations into subpackages while keeping the registry and public `tools` API at package root:
+
+- **`internal/tools/exec/`** — `Run`, background bash registry, tool defs (`ToolExecRun`, …)
+- **`internal/tools/git/`** — git + `gh` CLI tools, tool defs
+- **`internal/tools/web/`** — `webfetch`, `websearch`, Playwright browser tools, tool defs
+- **`internal/tools/toolslsp/`** — LSP tool implementations + defs (avoids clash with `internal/lsp`)
+- **`internal/tools/toolpath/`**, **`internal/tools/toolschema/`** — shared path + JSON-schema helpers
+- **`internal/tools/fs/`** — filesystem tools (`Client`, `Overlay`, staging, list/read/write/edit/glob/grep, delete/rename, diff.preview, ast_rename) + tool defs
+- Root **`registry.go`** — `ListTools*` / `allToolDefsMap` / parallel flags; delegates to subpackage `Tool*` constructors
+- Root **`aliases.go`**, **`*_delegate.go`** — backward-compatible types and `Runner` methods
+
 ### Changed — Phase 3 LLM module (`llm/`)
 
 Extracted **`github.com/orchestra/orchestra/llm`** (clients, streaming, catalog, `LLMConfig`/`RouterConfig`/`ModelPreset`, `lmstudio/`). `internal/config` type-aliases LLM types; `ProjectConfig.LLMRegistry()` feeds provider resolution without config↔llm import cycle.

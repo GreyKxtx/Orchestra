@@ -8,6 +8,12 @@ import (
 
 	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/tools/exec"
+	"github.com/orchestra/orchestra/internal/tools/fs"
+	"github.com/orchestra/orchestra/internal/tools/git"
+	"github.com/orchestra/orchestra/internal/tools/toolschema"
+	"github.com/orchestra/orchestra/internal/tools/toolslsp"
+	"github.com/orchestra/orchestra/internal/tools/web"
 )
 
 // Capabilities is the bundle of capability flags every tool-listing
@@ -28,27 +34,27 @@ type Capabilities struct {
 // listToolsGeneral share one definition instead of three copies that
 // could drift independently.
 func appendExecTools(out []llm.ToolDef) []llm.ToolDef {
-	out = append(out, toolExecRun(), toolExecBashOutput(), toolExecBashKill())
-	out = append(out, toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush())
+	out = append(out, exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill())
+	out = append(out, git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush())
 	out = append(out,
-		toolGHPRList(), toolGHPRCreate(), toolGHPRView(),
-		toolGHIssueList(), toolGHIssueView(),
+		git.ToolGHPRList(), git.ToolGHPRCreate(), git.ToolGHPRView(),
+		git.ToolGHIssueList(), git.ToolGHIssueView(),
 	)
 	return out
 }
 
 // appendWebTools adds web fetch + search tools to out. S3 in audit ledger.
 func appendWebTools(out []llm.ToolDef) []llm.ToolDef {
-	return append(out, toolWebFetch(), toolWebSearch())
+	return append(out, web.ToolWebFetch(), web.ToolWebSearch())
 }
 
 // appendBrowserTools adds the 10 Playwright-MCP browser tools to out.
 // S3 in audit ledger.
 func appendBrowserTools(out []llm.ToolDef) []llm.ToolDef {
 	return append(out,
-		toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
-		toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
-		toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
+		web.ToolBrowserNavigate(), web.ToolBrowserSnapshot(), web.ToolBrowserScreenshot(),
+		web.ToolBrowserClick(), web.ToolBrowserType(), web.ToolBrowserFill(),
+		web.ToolBrowserSelect(), web.ToolBrowserEval(), web.ToolBrowserWait(), web.ToolBrowserClose(),
 	)
 }
 
@@ -96,33 +102,33 @@ func appendCapabilityTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
 // the parameter list from three bools to a Capabilities struct.
 func ListTools(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(),
-		toolFSRead(),
-		toolFSGlob(),
-		toolFSWrite(),
-		toolFSEdit(),
-		toolFSDelete(),
-		toolFSRename(),
-		ToolASTRename(),
-		toolSearchText(),
+		fs.ToolFSList(),
+		fs.ToolFSRead(),
+		fs.ToolFSGlob(),
+		fs.ToolFSWrite(),
+		fs.ToolFSEdit(),
+		fs.ToolFSDelete(),
+		fs.ToolFSRename(),
+		fs.ToolASTRename(),
+		fs.ToolSearchText(),
 		toolCodeSymbols(),
 		toolExploreCodebase(),
 		ToolRepoMap(),
-		toolDiffPreview(),
+		fs.ToolDiffPreview(),
 		toolRuntimeQuery(),
 		toolTodoWrite(),
 		toolTodoRead(),
 		toolMemoryWrite(),
 		toolMemoryRead(),
 		toolMemorySearch(),
-		toolLSPDefinition(),
-		toolLSPReferences(),
-		toolLSPHover(),
-		toolLSPDiagnostics(),
-		toolLSPRename(),
-		toolGitStatus(),
-		toolGitLog(),
-		toolGitDiff(),
+		toolslsp.ToolLSPDefinition(),
+		toolslsp.ToolLSPReferences(),
+		toolslsp.ToolLSPHover(),
+		toolslsp.ToolLSPDiagnostics(),
+		toolslsp.ToolLSPRename(),
+		git.ToolGitStatus(),
+		git.ToolGitLog(),
+		git.ToolGitDiff(),
 	}
 	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
@@ -216,31 +222,7 @@ func ToolSemanticSearch() llm.ToolDef {
 	}
 }
 
-// ToolASTRename returns the ast_rename tool definition. Uses tree-sitter to
-// rename a single identifier across one file, skipping hits inside strings,
-// comments, and substrings of longer identifiers. Safer than a text edit when
-// the target name is a common substring.
-func ToolASTRename() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "ast_rename",
-			Description: "AST-aware rename идентификатора в одном файле через tree-sitter. Пропускает строки/комментарии/подстроки. Поддерживает все языки, которые есть в CKG (go/ts/py/rs/java/...). Маршрутизируется через ту же staging/file_hash логику, что fs.write. Когда нужно — используй вместо edit для имён, которые встречаются и как подстроки.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "old_name", "new_name"],
-  "properties": {
-    "path":     { "type": "string", "minLength": 1 },
-    "old_name": { "type": "string", "minLength": 1 },
-    "new_name": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
-
-// ToolRepoMap returns the repo_map tool definition. Always available — it has
+// ToolRepoMap returns the repo_map tool definition.
 // no external dependencies beyond the tree-sitter grammars baked into the
 // binary. Returns a compact outline of the workspace fitting an optional byte
 // budget so the model can pick interesting files without first listing them.
@@ -309,144 +291,6 @@ func ToolNames(defs []llm.ToolDef) []string {
 	return out
 }
 
-func toolFSList() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "ls",
-			Description: "Список файлов в workspace (с exclude правилами).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "path": { "type": "string" },
-    "recursive": { "type": "boolean" },
-    "max_entries": { "type": "integer", "minimum": 0 },
-    "exclude_dirs": { "type": "array", "items": { "type": "string" } },
-    "include_hash": { "type": "boolean" },
-    "limit": { "type": "integer", "minimum": 0 },
-    "skip_backups": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolFSRead() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "read",
-			Description: "Читает файл в workspace и возвращает content+sha256 (file_hash). Содержимое возвращается с префиксами номеров строк (`1: строка`) — только для ориентации. Префиксы не входят в файл: не включай их в поле `search` при редактировании и не пиши их в content при записи. При усечении (truncated=true) нумеруются только вернувшиеся строки.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 },
-    "max_bytes": { "type": "integer", "minimum": 0 }
-  }
-}`),
-		},
-	}
-}
-
-func toolFSGlob() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "glob",
-			Description: "Поиск файлов по glob-паттерну (поддерживает ** для рекурсивного поиска).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["pattern"],
-  "properties": {
-    "pattern": { "type": "string", "minLength": 1 },
-    "limit": { "type": "integer", "minimum": 0 },
-    "include_hash": { "type": "boolean" },
-    "exclude_dirs": { "type": "array", "items": { "type": "string" } }
-  }
-}`),
-		},
-	}
-}
-
-func toolFSWrite() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "write",
-			Description: "Атомарная запись файла (создание или перезапись). Для создания нового файла используй must_not_exist=true. Для перезаписи — file_hash текущей версии (из read). Контент пишется как есть — не включай префиксы номеров строк из read.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "content"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 },
-    "content": { "type": "string" },
-    "file_hash": { "type": "string" },
-    "must_not_exist": { "type": "boolean" },
-    "backup": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolFSEdit() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "edit",
-			Description: "Точечная замена в файле (search → replace). Строка поиска должна быть уникальна в файле. При неоднозначности — AmbiguousMatch; если не найдена — StaleContent. file_hash рекомендуется для защиты от гонок. Поле `search` должно содержать точный текст файла без префиксов номеров строк.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "search", "replace"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 },
-    "search": { "type": "string", "minLength": 1 },
-    "replace": { "type": "string" },
-    "file_hash": { "type": "string" },
-    "target_symbol": { "type": "string", "description": "Optional CKG symbol name — search uniqueness is checked inside this function/method only (Planner–Worker WorkOrder)" },
-    "backup": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolSearchText() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "grep",
-			Description: "Текстовый поиск по проекту. Возвращает исчерпывающий список всех совпадений — если показано N результатов, других нет. Каждый матч в .go файле содержит поле [в: Receiver.Method] — это метод/функция где найдена строка. Не повторяй запрос если результат уже получен.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["query"],
-  "properties": {
-    "query": { "type": "string", "minLength": 1 },
-    "paths": { "type": "array", "items": { "type": "string" } },
-    "max_matches": { "type": "integer", "minimum": 0 },
-    "exclude_dirs": { "type": "array", "items": { "type": "string" } },
-    "options": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "max_matches_per_file": { "type": "integer", "minimum": 0 },
-        "case_insensitive": { "type": "boolean" },
-        "context_lines": { "type": "integer", "minimum": 0 }
-      }
-    }
-  }
-}`),
-		},
-	}
-}
-
 func toolCodeSymbols() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
@@ -486,65 +330,6 @@ func toolExploreCodebase() llm.ToolDef {
 	}
 }
 
-func toolExecRun() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "bash",
-			Description: "Запуск команды внутри workspace (sandboxed: timeout/output limit). Установи run_in_background=true для длительных задач (build/test/dev-server) — вернётся bg_id, который можно опрашивать через bash.output и убивать через bash.kill.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["command"],
-  "properties": {
-    "command": { "type": "string", "minLength": 1 },
-    "args": { "type": "array", "items": { "type": "string" } },
-    "workdir": { "type": "string" },
-    "timeout_ms": { "type": "integer", "minimum": 0 },
-    "output_limit_kb": { "type": "integer", "minimum": 0 },
-    "run_in_background": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolExecBashOutput() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "bash.output",
-			Description: "Возвращает накопленный с прошлого опроса stdout/stderr и статус (running/done/killed/timed_out) фонового процесса. Установи peek=true чтобы прочитать не сдвигая курсор.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["bg_id"],
-  "properties": {
-    "bg_id": { "type": "string", "minLength": 1 },
-    "peek": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolExecBashKill() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "bash.kill",
-			Description: "Терминирует фоновый процесс по bg_id. Уже завершённый процесс — no-op с актуальным статусом.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["bg_id"],
-  "properties": {
-    "bg_id": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
 
 func toolTodoWrite() llm.ToolDef {
 	fallback := "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах."
@@ -603,12 +388,12 @@ func ListToolsWithSubtasks(caps Capabilities) []llm.ToolDef {
 // Child agents cannot write files, run commands, or spawn further subtasks.
 func ListToolsForChild() []llm.ToolDef {
 	return applyParallelFlags([]llm.ToolDef{
-		toolFSList(),
-		toolFSRead(),
-		toolFSGlob(),
-		toolSearchText(),
+		fs.ToolFSList(),
+		fs.ToolFSRead(),
+		fs.ToolFSGlob(),
+		fs.ToolSearchText(),
 		toolCodeSymbols(),
-		toolDiffPreview(),
+		fs.ToolDiffPreview(),
 		toolTaskResult(),
 	})
 }
@@ -652,11 +437,11 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 
 func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(), toolGitDiff(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
 	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
@@ -671,10 +456,10 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	// fs.write is kept so the model can write .orchestra/plan.md — enforced at runtime.
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		// lsp.rename excluded: plan mode is read-only.
 	}
 	if hasSubtasks {
@@ -688,9 +473,9 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 
 func listToolsExplore() []llm.ToolDef {
 	return applyParallelFlags([]llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		// lsp.rename excluded: explore mode is read-only.
 		// task_result is appended for child explore via childToolsForSubagent.
 	})
@@ -699,9 +484,9 @@ func listToolsExplore() []llm.ToolDef {
 // listToolsAsk is Q&A read-only (stricter than explore: includes question when available).
 func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 	}
 	if hasQuestionAsker {
 		out = append(out, toolQuestion())
@@ -712,11 +497,11 @@ func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
 // listToolsArchitecture is design-only: plan md writes + research + optional research spawn.
 func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
-		toolGitStatus(), toolGitLog(), toolGitDiff(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
@@ -730,11 +515,11 @@ func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 // listToolsDebug is root-cause focused: full read/write + LSP + optional worker/explore spawn.
 func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(), toolGitDiff(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
 	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
@@ -751,11 +536,11 @@ func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 // todowrite is intentionally excluded — general agents track progress internally.
 func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
 		toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), toolTaskResult(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(), toolGitDiff(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
 	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
@@ -767,11 +552,11 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 // listToolsOrchestra is the Lead planner surface: research + plan write + task spawn, no production edit.
 func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
 		toolTodoWrite(), toolTodoRead(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
-		toolGitStatus(), toolGitLog(), toolGitDiff(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
@@ -785,10 +570,10 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 // listToolsWorker is the atomic implementer: edit/write + LSP, no nested spawn.
 func listToolsWorker(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(),
 		toolTaskResult(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 	}
 	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
@@ -998,43 +783,6 @@ func toolQuestion() llm.ToolDef {
 	}
 }
 
-func toolWebFetch() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "webfetch",
-			Description: "Загрузить URL и вернуть текстовое содержимое страницы. Поддерживаются только http/https. Приватные, loopback и link-local адреса заблокированы.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["url"],
-  "properties": {
-    "url": { "type": "string", "minLength": 1, "description": "Полный URL (http:// или https://)" },
-    "max_bytes": { "type": "integer", "minimum": 0, "description": "Максимальный размер ответа в байтах" }
-  }
-}`),
-		},
-	}
-}
-
-func toolWebSearch() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "websearch",
-			Description: "Поиск в интернете. Возвращает список результатов с заголовком, URL и сниппетом. Требует настройки web.search.provider и web.search.api_key в .orchestra.yml.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["query"],
-  "properties": {
-    "query":       { "type": "string", "minLength": 1, "description": "Поисковый запрос." },
-    "max_results": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Максимум результатов. По умолчанию из конфига (5)." }
-  }
-}`),
-		},
-	}
-}
 
 func toolMemoryWrite() llm.ToolDef {
 	return llm.ToolDef{
@@ -1097,18 +845,18 @@ func toolMemorySearch() llm.ToolDef {
 // short canonical name (the name the LLM sees).
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
-		toolFSList(), toolFSRead(), toolFSGlob(), toolFSWrite(), toolFSEdit(), toolFSDelete(), toolFSRename(),
-		toolSearchText(), toolCodeSymbols(), toolExploreCodebase(), toolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), toolExecRun(), toolExecBashOutput(), toolExecBashKill(), toolWebFetch(), toolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), ToolASTRename(),
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
+		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
+		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), fs.ToolASTRename(),
 		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
 		toolPlanEnter(), toolPlanExit(), toolQuestion(),
-		toolLSPDefinition(), toolLSPReferences(), toolLSPHover(), toolLSPDiagnostics(), toolLSPRename(),
-		toolGitStatus(), toolGitLog(), toolGitDiff(),
-		toolGitCommit(), toolGitBranch(), toolGitCheckout(), toolGitPush(),
-		toolGHPRList(), toolGHPRCreate(), toolGHPRView(), toolGHIssueList(), toolGHIssueView(),
-		toolBrowserNavigate(), toolBrowserSnapshot(), toolBrowserScreenshot(),
-		toolBrowserClick(), toolBrowserType(), toolBrowserFill(),
-		toolBrowserSelect(), toolBrowserEval(), toolBrowserWait(), toolBrowserClose(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush(),
+		git.ToolGHPRList(), git.ToolGHPRCreate(), git.ToolGHPRView(), git.ToolGHIssueList(), git.ToolGHIssueView(),
+		web.ToolBrowserNavigate(), web.ToolBrowserSnapshot(), web.ToolBrowserScreenshot(),
+		web.ToolBrowserClick(), web.ToolBrowserType(), web.ToolBrowserFill(),
+		web.ToolBrowserSelect(), web.ToolBrowserEval(), web.ToolBrowserWait(), web.ToolBrowserClose(),
 	}
 	m := make(map[string]llm.ToolDef, len(all))
 	for _, d := range all {
@@ -1171,584 +919,7 @@ func isBrowserGated(name string) bool {
 	return strings.HasPrefix(name, "browser.") || strings.HasPrefix(name, "browser_")
 }
 
-func toolLSPDefinition() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "lsp.definition",
-			Description: "Перейти к определению символа (функции, типа, переменной) в указанной позиции файла (1-based line/col). Использует gopls или другой настроенный LSP-сервер.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "line", "col"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1, "description": "Путь к файлу относительно workspace root" },
-    "line": { "type": "integer", "minimum": 1, "description": "Строка (1-based)" },
-    "col":  { "type": "integer", "minimum": 1, "description": "Колонка — байтовый offset (1-based)" }
-  }
-}`),
-		},
-	}
-}
-
-func toolLSPReferences() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "lsp.references",
-			Description: "Найти все места использования символа в проекте (1-based line/col). Использует LSP-сервер.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "line", "col"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 },
-    "line": { "type": "integer", "minimum": 1 },
-    "col":  { "type": "integer", "minimum": 1 },
-    "include_declaration": { "type": "boolean", "description": "Включить объявление в результаты (default: false)" }
-  }
-}`),
-		},
-	}
-}
-
-func toolLSPHover() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "lsp.hover",
-			Description: "Получить документацию/тип символа в указанной позиции (hover-info). Использует LSP-сервер.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "line", "col"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 },
-    "line": { "type": "integer", "minimum": 1 },
-    "col":  { "type": "integer", "minimum": 1 }
-  }
-}`),
-		},
-	}
-}
-
-func toolLSPDiagnostics() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "lsp.diagnostics",
-			Description: "Получить диагностические ошибки и предупреждения LSP-сервера для файла (аналог 'Problems' в IDE). Возвращает массив диагностик с позициями и уровнем severity.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
-
-func toolLSPRename() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "lsp.rename",
-			Description: "Переименовать символ во всём проекте. Возвращает список предложенных правок (edits), которые нужно применить через fs.edit или fs.write.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "line", "col", "new_name"],
-  "properties": {
-    "path":     { "type": "string", "minLength": 1 },
-    "line":     { "type": "integer", "minimum": 1 },
-    "col":      { "type": "integer", "minimum": 1 },
-    "new_name": { "type": "string", "minLength": 1, "description": "Новое имя символа" }
-  }
-}`),
-		},
-	}
-}
-
-func toolDiffPreview() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "diff.preview",
-			Description: "Предварительный просмотр изменений: применяет search→replace в памяти и возвращает unified diff без записи на диск. Используй перед edit чтобы убедиться что замена правильная.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "search", "replace"],
-  "properties": {
-    "path":    { "type": "string", "minLength": 1, "description": "Путь к файлу относительно workspace root" },
-    "search":  { "type": "string", "minLength": 1, "description": "Текст для поиска (как в edit)" },
-    "replace": { "type": "string", "description": "Текст замены" }
-  }
-}`),
-		},
-	}
-}
-
-func toolFSDelete() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "fs.delete",
-			Description: "Удалить файл или директорию по workspace-relative пути. Для непустых директорий требуется recursive=true.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path"],
-  "properties": {
-    "path":      { "type": "string", "minLength": 1, "description": "Workspace-relative путь для удаления." },
-    "recursive": { "type": "boolean", "description": "Рекурсивно удалить непустую директорию. По умолчанию false." }
-  }
-}`),
-		},
-	}
-}
-
-func toolFSRename() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "fs.rename",
-			Description: "Переместить или переименовать файл/директорию внутри workspace. Родительские директории new_path создаются автоматически.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path", "new_path"],
-  "properties": {
-    "path":     { "type": "string", "minLength": 1, "description": "Workspace-relative путь источника." },
-    "new_path": { "type": "string", "minLength": 1, "description": "Workspace-relative путь назначения." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGitStatus() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.status",
-			Description: "Show current git working-tree status — staged/unstaged changes, untracked files, current branch.",
-			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
-		},
-	}
-}
-
-func toolGitLog() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.log",
-			Description: "Show commit history. n limits the count (default 20, max 200). Optionally filtered by ref or path.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "n":       { "type": "integer", "minimum": 1, "maximum": 200, "description": "Max commits to show. Default 20." },
-    "ref":     { "type": "string", "description": "Branch, tag, or commit hash." },
-    "path":    { "type": "string", "description": "Limit to commits touching this workspace-relative path." },
-    "oneline": { "type": "boolean", "description": "Compact single-line format." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGitCommit() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.commit",
-			Description: "Stage files and create a git commit. Use add=[\".\"] to stage all changes.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["message"],
-  "properties": {
-    "message":     { "type": "string", "minLength": 1, "description": "Commit message." },
-    "add":         { "type": "array", "items": {"type":"string"}, "description": "Workspace-relative paths to git add. Use [\".\"] for all changes." },
-    "allow_empty": { "type": "boolean", "description": "Allow commit with no staged changes." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGitBranch() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.branch",
-			Description: "List, create, or delete a local branch. Defaults to listing when no option is set.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "list":   { "type": "boolean", "description": "List local branches (default)." },
-    "create": { "type": "string",  "description": "Create a branch with this name." },
-    "delete": { "type": "string",  "description": "Delete a branch with this name." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGitCheckout() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.checkout",
-			Description: "Switch to a branch/commit or restore specific files. new_branch creates and switches (-b).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "ref":        { "type": "string", "description": "Branch, tag, or commit to switch to." },
-    "paths":      { "type": "array",  "items": {"type":"string"}, "description": "Workspace-relative paths to restore from HEAD." },
-    "new_branch": { "type": "string", "description": "Create this branch and switch to it (-b)." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGitPush() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.push",
-			Description: "Push current branch to remote. force=true uses --force-with-lease (safer than --force). Default remote is 'origin'.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "remote":       { "type": "string",  "description": "Remote name. Default 'origin'." },
-    "branch":       { "type": "string",  "description": "Branch to push. Default: current branch." },
-    "set_upstream": { "type": "boolean", "description": "Set upstream tracking (-u)." },
-    "force":        { "type": "boolean", "description": "Push with --force-with-lease." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGitDiff() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "git.diff",
-			Description: "Show diff of uncommitted changes. staged=true shows staged (--cached) changes. ref compares against a specific commit or branch.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "staged": { "type": "boolean", "description": "Show staged (--cached) changes instead of unstaged." },
-    "ref":    { "type": "string", "description": "Compare against this commit, branch, or tag." },
-    "path":   { "type": "string", "description": "Limit diff to this workspace-relative file or directory." }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserNavigate() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.navigate",
-			Description: "Открыть URL в браузере и дождаться загрузки страницы.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["url"],
-  "properties": {
-    "url": { "type": "string", "minLength": 1 },
-    "wait_until": { "type": "string", "enum": ["load", "domcontentloaded", "networkidle"] }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserSnapshot() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.snapshot",
-			Description: "Вернуть accessibility-дерево текущей страницы (структурированный текст с ref-идентификаторами для кликов).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {}
-}`),
-		},
-	}
-}
-
-func toolBrowserScreenshot() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.screenshot",
-			Description: "Снять скриншот текущей страницы (base64 PNG).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "full_page": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserClick() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.click",
-			Description: "Нажать на элемент по имени или ref из snapshot.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "element": { "type": "string" },
-    "ref": { "type": "string" }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserType() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.type",
-			Description: "Ввести текст в поле ввода (по имени или ref из snapshot).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["text"],
-  "properties": {
-    "element": { "type": "string" },
-    "ref": { "type": "string" },
-    "text": { "type": "string" },
-    "clear": { "type": "boolean" }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserFill() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.fill",
-			Description: "Заполнить несколько полей формы за один вызов.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["fields"],
-  "properties": {
-    "fields": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["value"],
-        "properties": {
-          "element": { "type": "string" },
-          "ref": { "type": "string" },
-          "value": { "type": "string" }
-        }
-      }
-    }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserSelect() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.select",
-			Description: "Выбрать опцию в выпадающем списке <select>.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["value"],
-  "properties": {
-    "element": { "type": "string" },
-    "ref": { "type": "string" },
-    "value": { "type": "string" }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserEval() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.eval",
-			Description: "Выполнить JavaScript в контексте страницы. Требует allow_eval: true в конфигурации.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["expression"],
-  "properties": {
-    "expression": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserWait() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.wait",
-			Description: "Ждать условие: совпадение URL, появление CSS-селектора или текста на странице.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "url": { "type": "string" },
-    "selector": { "type": "string" },
-    "text": { "type": "string" },
-    "timeout_ms": { "type": "integer", "minimum": 0 }
-  }
-}`),
-		},
-	}
-}
-
-func toolBrowserClose() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "browser.close",
-			Description: "Закрыть текущую страницу (браузер остаётся запущенным для повторного использования).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {}
-}`),
-		},
-	}
-}
-
-func toolGHPRList() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "gh.pr.list",
-			Description: "List pull requests in the current GitHub repository. Requires gh CLI installed and authenticated.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "state":  { "type": "string", "enum": ["open","closed","merged","all"], "description": "Filter by PR state. Default: open." },
-    "limit":  { "type": "integer", "minimum": 1, "maximum": 100, "description": "Max PRs to return. Default: 20." },
-    "base":   { "type": "string", "description": "Filter by base branch name." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGHPRCreate() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "gh.pr.create",
-			Description: "Create a pull request from the current branch. Requires gh CLI installed and authenticated.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["title"],
-  "properties": {
-    "title": { "type": "string", "minLength": 1, "description": "PR title." },
-    "body":  { "type": "string", "description": "PR description (markdown)." },
-    "base":  { "type": "string", "description": "Base branch. Defaults to repo default branch." },
-    "draft": { "type": "boolean", "description": "Create as draft PR." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGHPRView() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "gh.pr.view",
-			Description: "View details of a pull request including description and comments. number=0 uses the current branch's PR.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "number": { "type": "integer", "minimum": 0, "description": "PR number. Omit or 0 = current branch's PR." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGHIssueList() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "gh.issue.list",
-			Description: "List issues in the current GitHub repository. Requires gh CLI installed and authenticated.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "state":  { "type": "string", "enum": ["open","closed","all"], "description": "Filter by state. Default: open." },
-    "labels": { "type": "array", "items": { "type": "string" }, "description": "Filter by label names." },
-    "limit":  { "type": "integer", "minimum": 1, "maximum": 100, "description": "Max issues to return. Default: 20." }
-  }
-}`),
-		},
-	}
-}
-
-func toolGHIssueView() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "gh.issue.view",
-			Description: "View details of a GitHub issue including description and comments.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["number"],
-  "properties": {
-    "number": { "type": "integer", "minimum": 1, "description": "Issue number." }
-  }
-}`),
-		},
-	}
-}
 
 func mustSchema(s string) json.RawMessage {
-	// Validate schema JSON at startup (panic is OK: it's a programmer error).
-	var v map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(s), &v); err != nil {
-		panic(err)
-	}
-	return json.RawMessage(s)
+	return toolschema.MustSchema(s)
 }

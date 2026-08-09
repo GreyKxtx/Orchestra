@@ -8,6 +8,17 @@ import (
 	"github.com/orchestra/orchestra/internal/ckg"
 )
 
+func newEditRunner(t *testing.T) (*Runner, string) {
+	t.Helper()
+	root := t.TempDir()
+	r, err := NewRunner(root, RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { r.Close() })
+	return r, root
+}
+
 func TestRunner_RuntimeQuery_JoinsCKG(t *testing.T) {
 	r, _ := newEditRunner(t)
 	ctx := context.Background()

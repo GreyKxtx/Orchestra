@@ -150,6 +150,9 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 func setupInitializedCore(t *testing.T, root string, llmOverride llm.Client) (*Core, *RPCHandler) {
 	t.Helper()
 	cfg := config.DefaultConfig(root)
+	lspOff := false
+	cfg.LSP.Enabled = &lspOff
+	cfg.LSP.AutoInstall = "false"
 	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
 		t.Fatalf("Save config failed: %v", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/tools/git"
 )
 
 // initGitRepo initialises a git repo in root with a single initial commit.
@@ -146,14 +148,14 @@ func TestGitLog_InvalidRef(t *testing.T) {
 func TestGitSafeRef_RejectsLeadingDash(t *testing.T) {
 	bad := []string{"-n5", "--all", "-p", "--"}
 	for _, s := range bad {
-		if isGitSafeRef(s) {
-			t.Errorf("isGitSafeRef(%q) = true, want false", s)
+		if git.IsGitSafeRef(s) {
+			t.Errorf("IsGitSafeRef(%q) = true, want false", s)
 		}
 	}
 	good := []string{"main", "origin/main", "v1.0.0", "HEAD~1", "abc123"}
 	for _, s := range good {
-		if !isGitSafeRef(s) {
-			t.Errorf("isGitSafeRef(%q) = false, want true", s)
+		if !git.IsGitSafeRef(s) {
+			t.Errorf("IsGitSafeRef(%q) = false, want true", s)
 		}
 	}
 }
