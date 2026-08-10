@@ -98,12 +98,12 @@
 
 ### Задачи
 
-1. **Configurable retry strategy.** Вынести `MaxInvalidRetries`/`MaxFinalFailures`/`MaxToolErrorRepeats`/`MaxDeniedToolRepeats`/`MaxToolErrorRepeats` в `agent.Options` *без значений по умолчанию*, а дефолты подставлять в `cli/apply.go` и `core.AgentRun`. Это нужно, чтобы дефолты для разных провайдеров отличались (для Claude → 1, для локалки → 3-6).
-2. **Единая классификация ошибок.** Заменить 5 счётчиков на классификатор `classify(err) → kind` + один circuit-breaker на kind. Виды: `validation_error`, `tool_denied`, `tool_failed`, `resolve_failed`, `apply_recoverable`. Сейчас логика размазана по `agent.Run`.
-3. **Grammar-constrained sampling.** Добавить в `llm.CompleteRequest` опциональное поле `ResponseGrammar` (JSON Schema или GBNF). В `OpenAIClient` пробросить как `response_format: {type: "json_schema", schema: ...}` (vLLM/lm-studio это поддерживают). Если backend не умеет — клиент тихо игнорирует. Самый большой выигрыш для слабых моделей — устраняет основную причину `MaxInvalidRetries`.
+1. **Configurable retry strategy.** ✅ Provider-aware `FillRetryLimits` в `internal/agent/defaults.go`; `0` в `.orchestra.yml` → auto (frontier: `max_invalid_retries=1`, local: `5`). Подключено в `core`, `cli/apply`, `pipeline`. Явные значения в конфиге/RPC сохраняются.
+2. **Единая классификация ошибок.** ✅ `internal/agent/guard/classify.go` + circuit-breaker; `step.classified` в лог.
+3. **Grammar-constrained sampling.** ✅ `ResolveResponseFormat` + `llm.response_format_type: json_schema` в конфиге; precision profile включает schema по умолчанию.
 4. **Шаблоны промптов per model family.** Сейчас `internal/prompt/` строит один промпт на русском. Сделать систему шаблонов: `prompts/qwen.tmpl`, `prompts/chatml.tmpl`, `prompts/llama-instruct.tmpl`. Выбор по `cfg.LLM.Model` или явным `cfg.LLM.PromptFamily`. Промпт остаётся русским — это ок для русскоязычных моделей и нормально работает для остальных.
-5. **Деприоритизировать `unified_diff`.** В системном промпте писать: "**предпочитай `file.search_replace`**, `unified_diff` используй только если поменять надо много мест в одном файле". На моделях <30B `unified_diff` галлюцинирует hunks.
-6. **Логирование наблюдений.** В `.orchestra/llm_log.jsonl` сейчас пишутся запросы. Добавить туда же события `tool.call`, `tool.result`, `step.classified`. Это станет основой для eval-харнеса в фазе 9.
+5. **Деприоритизировать `unified_diff`.** ✅ В промптах `build-local`, `build-gpt`, `build-gemini`, `build-kimi`: предпочитать `file.search_replace`.
+6. **Логирование наблюдений.** Частично: `step.classified` в llm_log; `tool.call`/`tool.result` — TODO eval-харнес (фаза 9).
 
 ### Definition of Done
 

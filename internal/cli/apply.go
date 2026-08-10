@@ -361,14 +361,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		defer runner.Close()
 
-		var respFmt *llm.ResponseFormat
-		if cfg.LLM.ResponseFormatType != "" {
-			respFmt = &llm.ResponseFormat{Type: cfg.LLM.ResponseFormatType}
-			if cfg.LLM.ResponseFormatType == "json_schema" {
-				respFmt.Schema = schema.AgentStepSchemaRaw()
-				respFmt.SchemaName = "agent_step"
-			}
-		}
+		respFmt := agent.ResolveResponseFormat(cfg.LLM)
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -509,14 +502,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		mcpExtraTools = append(mcpExtraTools, tools.ToolRepoMap())
 
-		var respFmt *llm.ResponseFormat
-		if cfg.LLM.ResponseFormatType != "" {
-			respFmt = &llm.ResponseFormat{Type: cfg.LLM.ResponseFormatType}
-			if cfg.LLM.ResponseFormatType == "json_schema" {
-				respFmt.Schema = schema.AgentStepSchemaRaw()
-				respFmt.SchemaName = "agent_step"
-			}
-		}
+		respFmt := agent.ResolveResponseFormat(cfg.LLM)
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -745,6 +731,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
+		agent.FillRetryLimits(&agOpts, agOpts.ProviderLabel)
 		// llm.timeout_s always wins — profiles must not shrink the step budget.
 		if t := time.Duration(cfg.LLM.TimeoutS) * time.Second; t > 0 {
 			agOpts.LLMStepTimeout = t

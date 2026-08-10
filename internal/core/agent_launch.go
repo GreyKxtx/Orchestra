@@ -13,7 +13,6 @@ import (
 	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
@@ -127,13 +126,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 
 	var respFmt *llm.ResponseFormat
-	if c.cfg.LLM.ResponseFormatType != "" {
-		respFmt = &llm.ResponseFormat{Type: c.cfg.LLM.ResponseFormatType}
-		if c.cfg.LLM.ResponseFormatType == "json_schema" {
-			respFmt.Schema = schema.AgentStepSchemaRaw()
-			respFmt.SchemaName = "agent_step"
-		}
-	}
+	respFmt = agent.ResolveResponseFormat(c.cfg.LLM)
 
 	maxSteps := spec.MaxSteps
 	if maxSteps <= 0 {
@@ -320,6 +313,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	if err := agent.ApplyProfile(&opts, profileName, true); err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
+	agent.FillRetryLimits(&opts, providerLabel)
 	// llm.timeout_s always wins over any profile/default residue.
 	if t := time.Duration(c.cfg.LLM.TimeoutS) * time.Second; t > 0 {
 		opts.LLMStepTimeout = t

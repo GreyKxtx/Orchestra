@@ -595,22 +595,22 @@ func applyDefaults(opts *Options) {
 	if opts.MaxStepsCritic <= 0 {
 		opts.MaxStepsCritic = 8
 	}
-	if opts.MaxInvalidRetries <= 0 {
-		opts.MaxInvalidRetries = 3
-	}
-	if opts.MaxDeniedToolRepeats <= 0 {
-		opts.MaxDeniedToolRepeats = 2
-	}
-	if opts.MaxToolErrorRepeats <= 0 {
-		opts.MaxToolErrorRepeats = 6
-	}
-	if opts.MaxFinalFailures <= 0 {
-		opts.MaxFinalFailures = 6
-	}
 	if opts.LLMStepTimeout <= 0 {
 		opts.LLMStepTimeout = 25 * time.Second
 	}
 	if opts.MaxPromptBytes <= 0 {
 		opts.MaxPromptBytes = 64 * 1024
 	}
+	ao := agent.Options{
+		MaxInvalidRetries:    opts.MaxInvalidRetries,
+		MaxDeniedToolRepeats: opts.MaxDeniedToolRepeats,
+		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
+		MaxFinalFailures:     opts.MaxFinalFailures,
+		ProviderLabel:        opts.ProviderLabel,
+	}
+	agent.FillRetryLimits(&ao, opts.ProviderLabel)
+	opts.MaxInvalidRetries = ao.MaxInvalidRetries
+	opts.MaxDeniedToolRepeats = ao.MaxDeniedToolRepeats
+	opts.MaxToolErrorRepeats = ao.MaxToolErrorRepeats
+	opts.MaxFinalFailures = ao.MaxFinalFailures
 }

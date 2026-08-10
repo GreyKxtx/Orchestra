@@ -126,6 +126,22 @@ func TestApplyDefaults(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_ProviderRetryLimits(t *testing.T) {
+	var local Options
+	local.ProviderLabel = "lmstudio"
+	applyDefaults(&local)
+	if local.MaxInvalidRetries != 5 {
+		t.Errorf("local MaxInvalidRetries=%d want 5", local.MaxInvalidRetries)
+	}
+
+	var frontier Options
+	frontier.ProviderLabel = "anthropic"
+	applyDefaults(&frontier)
+	if frontier.MaxInvalidRetries != 1 {
+		t.Errorf("anthropic MaxInvalidRetries=%d want 1", frontier.MaxInvalidRetries)
+	}
+}
+
 func TestBuildInvestigatorGoal_NoEvidence(t *testing.T) {
 	goal := buildInvestigatorGoal("add logging to handler", "")
 	if !strings.Contains(goal, "add logging to handler") {

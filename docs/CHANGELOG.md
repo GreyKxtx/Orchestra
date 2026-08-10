@@ -23,6 +23,11 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 - **`code.symbols`** — documented three-tier resolution (LSP → tree-sitter when CGO → regex); method vs function kinds in regex fallback; CGO integration test.
 - **`orchestra core --http`** — explicitly debug-only in CLI help and stderr notice; stdio remains the supported transport.
 
+### Changed — Phase 1 local-model hardening (partial)
+
+- **Provider-aware retry limits** — `internal/agent/defaults.go`: `FillRetryLimits`, `RetryLimitsForProvider`; config `max_invalid_retries: 0` (default) auto-tunes per provider (frontier APIs → 1, local OpenAI-compatible → 5). Wired in `core`, `cli/apply`, `pipeline`.
+- **`ResolveResponseFormat`** — shared helper for `json_schema` grammar from `llm.response_format_type`.
+- **Prompts** — deprioritize `file.unified_diff` in `build-gpt`, `build-gemini`, `build-kimi` (aligned with `build-local`).
 
 - **`call_dispatch.go`** — table-driven tool dispatch via `toolDispatchTable` + generic `dispatchRunnerTool`.
 - **Test colocation** — browser tests moved to `internal/tools/web/browser_test.go`; root duplicates removed.

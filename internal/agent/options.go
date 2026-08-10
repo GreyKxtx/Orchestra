@@ -468,27 +468,7 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 	if toolRunner == nil {
 		return nil, fmt.Errorf("tools runner is nil")
 	}
-	if opts.MaxSteps <= 0 {
-		opts.MaxSteps = 24
-	}
-	if opts.MaxInvalidRetries <= 0 {
-		opts.MaxInvalidRetries = 3
-	}
-	if opts.MaxPromptBytes <= 0 {
-		opts.MaxPromptBytes = 64 * 1024
-	}
-	if opts.MaxDeniedToolRepeats <= 0 {
-		opts.MaxDeniedToolRepeats = 2
-	}
-	if opts.MaxToolErrorRepeats <= 0 {
-		opts.MaxToolErrorRepeats = 6
-	}
-	if opts.MaxFinalFailures <= 0 {
-		opts.MaxFinalFailures = 6
-	}
-	if opts.LLMStepTimeout <= 0 {
-		opts.LLMStepTimeout = 25 * time.Second
-	}
+	ApplyDefaults(&opts)
 	return &Agent{
 		llm:                  llmClient,
 		validator:            v,

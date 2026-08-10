@@ -15,9 +15,9 @@
    ТОЛЬКО JSON (без ```json блоков): {"patches":[{"type":"file.search_replace",...}]}
 
 ТИПЫ ПАТЧЕЙ:
-- file.search_replace — точечная правка (нужен file_hash из read)
+- file.search_replace — точечная правка (предпочтительно; нужен file_hash из read)
 - file.write_atomic   — новый файл или полная перезапись
-- file.unified_diff   — крупный diff
+- file.unified_diff   — только если надо много мест в одном файле (избегай на слабых моделях)
 
 ПРАВИЛА:
 - Делай read перед изменением, используй точный file_hash из ответа.

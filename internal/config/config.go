@@ -592,10 +592,10 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 		},
 		Agent: AgentConfig{
 			MaxSteps:            128,
-			MaxInvalidRetries:   3,
-			MaxFinalFailures:    6,
-			MaxToolErrors:       6,
-			MaxDeniedRepeats:    2,
+			MaxInvalidRetries:   0, // 0 = auto (provider-tuned at launch)
+			MaxFinalFailures:    0,
+			MaxToolErrors:       0,
+			MaxDeniedRepeats:    0,
 			CompactThresholdPct: 60,
 			ToolDigestKB:        48,
 			AutoSessionMemory:   boolPtr(true),
@@ -753,18 +753,7 @@ func (c *ProjectConfig) applyDefaults() {
 	if c.Agent.MaxSteps <= 0 {
 		c.Agent.MaxSteps = 128
 	}
-	if c.Agent.MaxInvalidRetries <= 0 {
-		c.Agent.MaxInvalidRetries = 3
-	}
-	if c.Agent.MaxFinalFailures <= 0 {
-		c.Agent.MaxFinalFailures = 6
-	}
-	if c.Agent.MaxToolErrors <= 0 {
-		c.Agent.MaxToolErrors = 6
-	}
-	if c.Agent.MaxDeniedRepeats <= 0 {
-		c.Agent.MaxDeniedRepeats = 2
-	}
+	// Retry limits: 0 leaves provider-aware FillRetryLimits at launch/RPC.
 	// Compact: 0 → default 60; negative → disabled (stored as 0).
 	if c.Agent.CompactThresholdPct < 0 {
 		c.Agent.CompactThresholdPct = 0
