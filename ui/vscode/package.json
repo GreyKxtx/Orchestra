@@ -1,7 +1,7 @@
 {
-  "name": "orchestra-ai",
-  "displayName": "Orchestra",
-  "description": "Local AI coding assistant for VS Code and Cursor — chat, tools, dry-run apply, bundled orchestra core.",
+  "name": "orchestra-ai-code",
+  "displayName": "Orchestra AI Code",
+  "description": "Local AI coding assistant (Orchestra) for VS Code and Cursor — chat, tools, dry-run apply, bundled core.",
   "version": "0.1.0",
   "publisher": "Screamgxne",
   "license": "MIT",
