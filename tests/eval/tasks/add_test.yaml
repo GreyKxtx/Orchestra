@@ -1,0 +1,23 @@
+name: add_test
+description: Add a unit test for an existing Go function
+max_steps: 12
+files:
+  go.mod: |
+    module testpkg
+    go 1.21
+  math.go: |
+    package testpkg
+
+    func Double(n int) int {
+        return n * 2
+    }
+query: "Add math_test.go with a table-driven test for Double."
+checks:
+  - type: file_exists
+    path: math_test.go
+  - type: file_contains
+    path: math_test.go
+    content: "func TestDouble"
+  - type: file_contains
+    path: math_test.go
+    content: "Double("

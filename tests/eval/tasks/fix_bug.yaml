@@ -1,0 +1,25 @@
+name: fix_bug
+description: Fix an off-by-one bug in a Go function
+max_steps: 12
+files:
+  go.mod: |
+    module testpkg
+    go 1.21
+  slice.go: |
+    package testpkg
+
+    // Last returns the last element of s, or 0 when empty.
+    func Last(s []int) int {
+        if len(s) == 0 {
+            return 0
+        }
+        return s[len(s)-2]
+    }
+query: "Fix the bug in Last so it returns the last element of the slice, not the second-to-last."
+checks:
+  - type: file_contains
+    path: slice.go
+    content: "s[len(s)-1]"
+  - type: file_not_contains
+    path: slice.go
+    content: "s[len(s)-2]"

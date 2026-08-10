@@ -23,11 +23,12 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 - **`code.symbols`** — documented three-tier resolution (LSP → tree-sitter when CGO → regex); method vs function kinds in regex fallback; CGO integration test.
 - **`orchestra core --http`** — explicitly debug-only in CLI help and stderr notice; stdio remains the supported transport.
 
-### Changed — Phase 1 local-model hardening (partial)
+### Changed — Phase 1 local-model hardening ✅
 
-- **Provider-aware retry limits** — `internal/agent/defaults.go`: `FillRetryLimits`, `RetryLimitsForProvider`; config `max_invalid_retries: 0` (default) auto-tunes per provider (frontier APIs → 1, local OpenAI-compatible → 5). Wired in `core`, `cli/apply`, `pipeline`.
-- **`ResolveResponseFormat`** — shared helper for `json_schema` grammar from `llm.response_format_type`.
-- **Prompts** — deprioritize `file.unified_diff` in `build-gpt`, `build-gemini`, `build-kimi` (aligned with `build-local`).
+- **Provider-aware retry limits** — `FillRetryLimits` / `RetryLimitsForProvider`; config `0` = auto (frontier → 1, local → 5). Wired in core, apply, pipeline.
+- **`ResolveResponseFormat`** — shared helper; **auto `json_schema` for local providers** unless `supports_json_schema: false`.
+- **Prompts** — deprioritize `file.unified_diff` in build-gpt/gemini/kimi; per-family templates via `internal/prompt/files/*-{family}.txt`.
+- **Eval harness** — 5 Phase-1 tasks (`rename_func`, `add_func`, `fix_bug`, `add_test`, `refactor`); `ParseLLMLog` metrics; `orchestra eval` RETRIES column + avg summary.
 
 - **`call_dispatch.go`** — table-driven tool dispatch via `toolDispatchTable` + generic `dispatchRunnerTool`.
 - **Test colocation** — browser tests moved to `internal/tools/web/browser_test.go`; root duplicates removed.

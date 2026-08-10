@@ -37,12 +37,14 @@ type Check struct {
 
 // Result records the outcome of running one task.
 type Result struct {
-	TaskName string
-	Passed   bool
-	Steps    int
-	Duration time.Duration
-	Error    error
-	Failures []string // descriptions of failed checks
+	TaskName         string
+	Passed           bool
+	Steps            int
+	InvalidRetries   int // validation_error events from llm_log
+	ToolCalls        int
+	Duration         time.Duration
+	Error            error
+	Failures         []string // descriptions of failed checks
 }
 
 // Runner executes eval tasks.
@@ -90,6 +92,11 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 	if err != nil {
 		result.Error = err
 		return result
+	}
+
+	if metrics, mErr := ParseLLMLog(filepath.Join(tmpDir, ".orchestra", "llm_log.jsonl")); mErr == nil {
+		result.InvalidRetries = metrics.ValidationErrors
+		result.ToolCalls = metrics.ToolCalls
 	}
 
 	// Evaluate checks.

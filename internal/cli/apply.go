@@ -361,7 +361,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		defer runner.Close()
 
-		respFmt := agent.ResolveResponseFormat(cfg.LLM)
+	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider))
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -502,7 +502,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		mcpExtraTools = append(mcpExtraTools, tools.ToolRepoMap())
 
-		respFmt := agent.ResolveResponseFormat(cfg.LLM)
+	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider))
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {

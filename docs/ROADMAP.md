@@ -92,29 +92,29 @@
 
 ---
 
-## Фаза 1 — Усиление под локальные модели
+## Фаза 1 — Усиление под локальные модели ✅
 
 **Цель:** локальная модель 7B-20B стабильно следует контракту инструментов, не уходит в ретраи на 30 секунд, выдаёт корректные патчи.
 
 ### Задачи
 
-1. **Configurable retry strategy.** ✅ Provider-aware `FillRetryLimits` в `internal/agent/defaults.go`; `0` в `.orchestra.yml` → auto (frontier: `max_invalid_retries=1`, local: `5`). Подключено в `core`, `cli/apply`, `pipeline`. Явные значения в конфиге/RPC сохраняются.
-2. **Единая классификация ошибок.** ✅ `internal/agent/guard/classify.go` + circuit-breaker; `step.classified` в лог.
-3. **Grammar-constrained sampling.** ✅ `ResolveResponseFormat` + `llm.response_format_type: json_schema` в конфиге; precision profile включает schema по умолчанию.
-4. **Шаблоны промптов per model family.** Сейчас `internal/prompt/` строит один промпт на русском. Сделать систему шаблонов: `prompts/qwen.tmpl`, `prompts/chatml.tmpl`, `prompts/llama-instruct.tmpl`. Выбор по `cfg.LLM.Model` или явным `cfg.LLM.PromptFamily`. Промпт остаётся русским — это ок для русскоязычных моделей и нормально работает для остальных.
-5. **Деприоритизировать `unified_diff`.** ✅ В промптах `build-local`, `build-gpt`, `build-gemini`, `build-kimi`: предпочитать `file.search_replace`.
-6. **Логирование наблюдений.** Частично: `step.classified` в llm_log; `tool.call`/`tool.result` — TODO eval-харнес (фаза 9).
+1. **Configurable retry strategy.** ✅ Provider-aware `FillRetryLimits`; `0` в конфиге → auto.
+2. **Единая классификация ошибок.** ✅ `guard/classify.go` + circuit-breaker; `step.classified` в llm_log.
+3. **Grammar-constrained sampling.** ✅ `ResolveResponseFormat` + auto `json_schema` для local; `supports_json_schema: false` opt-out; OpenAI client auto-detect on reject.
+4. **Шаблоны промптов per model family.** ✅ `internal/prompt/files/{mode}-{family}.txt` + `ResolvePromptFamily` (aliases: qwen/chatml/llama → local).
+5. **Деприоритизировать `unified_diff`.** ✅ build-local/gpt/gemini/kimi.
+6. **Логирование наблюдений.** ✅ `tool_call`, `tool_result`, `step.classified` в llm_log; `tests/eval.ParseLLMLog` + `orchestra eval` колонка RETRIES.
 
 ### Definition of Done
 
-- Локальная модель (gpt-oss-20b или Qwen2.5-Coder-7B) на 5 разных типовых задачах (rename, add func, fix bug, add test, refactor) делает <3 retry-цикла в среднем.
-- `--from-plan` детерминированно повторяет применение plan.json.
-- Включение grammar-constraint сокращает invalid_retries в логе как минимум вдвое.
-- Все юнит-тесты зелёные.
+- Локальная модель на 5 типовых задачах (`tests/eval/tasks/`: rename, add_func, fix_bug, add_test, refactor) — **ручной прогон** `orchestra eval` (avg invalid retries <3).
+- `--from-plan` детерминированно повторяет plan.json — ✅ e2e (`TestApply_FromPlan_*`).
+- Grammar-constraint сокращает invalid_retries — проверяется через `orchestra eval` + сравнение лога с/без `supports_json_schema: false`.
+- Все юнит-тесты зелёные — ✅ CI.
 
 ### Риски
 
-- Не все OpenAI-совместимые сервера поддерживают `response_format: json_schema` одинаково. Нужен capability-detect или конфиг-флаг `llm.supports_json_schema`.
+- Не все OpenAI-совместимые сервера поддерживают `json_schema` — mitigated: auto-detect disable + `supports_json_schema: false`.
 
 ---
 
@@ -354,10 +354,10 @@
 
 Следующий фокус:
 
-1. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm -run TestRealLLMVisionAttachment` когда LLM-сервер доступен.
-2. **VS Code marketplace** — `npm run package` / vsce publish (см. `ui/vscode/README.md`).
-3. **Maiden voyage** — полевой тест `orchestra chat` + отчёт (см. контрольную точку выше).
-4. **Manual TUI smoke** — LSP install modal + Worker diagnostics (см. `ui/tui/README.md`) — по необходимости регресс.
+1. **Фаза 2 — стриминг** — `CompleteStream`, JSON-RPC notifications, CLI TTY render.
+2. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm` когда LLM-сервер доступен.
+3. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance: avg invalid retries <3).
+4. **VS Code marketplace** — `npm run package` / vsce publish (см. `ui/vscode/README.md`).
 
 ### Фаза 1 — knobs в `.orchestra.yml`
 

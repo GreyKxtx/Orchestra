@@ -587,8 +587,8 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			Temperature: 0.7,
 			MaxTokens:   4096,
 			TimeoutS:    600,
-			// ResponseFormatType: "json_schema" — grammar-constrained sampling (если провайдер умеет)
-			// SupportsJSONSchema: false — тихо не слать json_schema (vLLM без support)
+			// response_format_type: json_schema — явно; omit на local → auto json_schema
+			// supports_json_schema: false — отключить auto/явный json_schema
 		},
 		Agent: AgentConfig{
 			MaxSteps:            128,

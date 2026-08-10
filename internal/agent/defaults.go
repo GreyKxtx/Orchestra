@@ -103,13 +103,35 @@ func ApplyDefaults(opts *Options) {
 	}
 }
 
+// IsFrontierProvider reports API providers where grammar auto-enable is off by default.
+func IsFrontierProvider(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	switch {
+	case strings.Contains(p, "anthropic"),
+		strings.Contains(p, "claude"),
+		p == "openai",
+		strings.Contains(p, "gpt"):
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolveResponseFormat builds grammar-constrained sampling config from llm.* YAML.
-func ResolveResponseFormat(cfg llm.LLMConfig) *llm.ResponseFormat {
-	if strings.TrimSpace(cfg.ResponseFormatType) == "" {
+// When response_format_type is unset and the provider is local/open-weight, json_schema
+// is enabled unless supports_json_schema: false (OpenAI client auto-disables on reject).
+func ResolveResponseFormat(cfg llm.LLMConfig, providerLabel string) *llm.ResponseFormat {
+	formatType := strings.TrimSpace(cfg.ResponseFormatType)
+	if formatType == "" && !IsFrontierProvider(providerLabel) {
+		if cfg.SupportsJSONSchema == nil || *cfg.SupportsJSONSchema {
+			formatType = "json_schema"
+		}
+	}
+	if formatType == "" {
 		return nil
 	}
-	rf := &llm.ResponseFormat{Type: cfg.ResponseFormatType}
-	if cfg.ResponseFormatType == "json_schema" {
+	rf := &llm.ResponseFormat{Type: formatType}
+	if formatType == "json_schema" {
 		rf.Schema = schema.AgentStepSchemaRaw()
 		rf.SchemaName = "agent_step"
 	}
