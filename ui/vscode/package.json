@@ -1,5 +1,5 @@
 {
-  "name": "orchestra",
+  "name": "orchestra-ai",
   "displayName": "Orchestra",
   "description": "Local AI coding assistant for VS Code and Cursor — chat, tools, dry-run apply, bundled orchestra core.",
   "version": "0.1.0",
