@@ -105,5 +105,5 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 ## Conventions to preserve
 
 - Idiomatic Go, no panics for expected failures, errors wrap with `fmt.Errorf("...: %w", err)`. Concurrency uses `context.Context` + `sync.Mutex/RWMutex`; goroutines must have a stop path.
-- Don't reintroduce the v0.2 patterns being deleted: `pkg/cli`, `internal/context` builder, the old `daemon.json`/`cache.json` discovery dance. The HTTP debug endpoint on `core --http` is debug-only; the supported transport is stdio JSON-RPC. (`orchestra daemon` CLI was removed; `internal/daemon` remains for in-repo benchmarks only.)
+- Don't reintroduce the v0.2 patterns being deleted: `pkg/cli`, `internal/context` builder, the old `daemon.json`/`cache.json` discovery dance. The HTTP debug endpoint on `core --http` is debug-only; the supported transport is stdio JSON-RPC. **`internal/daemon` and `orchestra daemon` are removed** — see `docs/architecture/paths.md`.
 - Public CLI flags and the JSON-RPC method names/params are part of the contract. Bump `ProtocolVersion` / `OpsVersion` / `ToolsVersion` rather than silently changing them.

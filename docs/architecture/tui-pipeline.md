@@ -14,7 +14,7 @@
 | Core sessions | `internal/core/session` | Multi-turn LLM history + todos + pending ops |
 | Agent loop | `internal/agent` | LLM ↔ tools ↔ final patches |
 | Tasks | `internal/tasks` | Child agents (`task_spawn` / `wait` / `cancel`) |
-| Patches → ops | `internal/patches`, `internal/resolver`, `internal/ops`, `internal/applier` | Двухслойное применение изменений |
+| Patches → ops | `patch/patches`, `patch/resolver`, `patch/ops`, `patch/applier` | Двухслойное применение изменений |
 | Staging | `internal/tools/staging.go` | Overlay для dry-run |
 
 ## 2. Data flow (текущий TUI-путь)
@@ -151,8 +151,8 @@ edit/write (during turn) → staging overlay → AST-Gate → LSP SyncAndDiagnos
 | P2 | **Resolved (M2)** | Unified v2 schema in `internal/sessionfile`; core owns disk writes; TUI uses `session.ui_sync` | was: dual schema overwrite |
 | P3 | **Resolved (M2)** | `loadSession` + `session.start(session_id)` restore UI **and** agent history | was: UI-only restore |
 | P4 | Medium | `events` chan coalesce-on-backpressure for token/tool-arg deltas (merged instead of dropped) | `rpcclient/client.go` |
-| P5 | Low (mitigated) | H9 concurrent `.orchestra.bak` — in-process `applyMu` + `.orchestra/apply.lock` flock; second process gets fail-closed error | `internal/applier/ops_applier.go` |
-| P6 | **Resolved** | Docs updated: `internal/patches` + `internal/applier` (was `internal/externalpatch`) | docs |
+| P5 | Low (mitigated) | H9 concurrent `.orchestra.bak` — in-process `applyMu` + `.orchestra/apply.lock` flock | `patch/applier/ops_applier.go` |
+| P6 | **Resolved** | Docs updated: `patch/patches` + `patch/applier` | docs |
 | P7 | **Resolved (M4)** | `SessionMessage` / `SessionApplyPending` hold `runMu` for full turn like `AgentRun` | `core.go` |
 | P8 | **Resolved (M3)** | Turn lifecycle via `TurnFSM` (idle/composing/running/applying) replaces ad-hoc `agentBusy` | `ui/tui/state/turn.go` |
 
@@ -179,7 +179,7 @@ edit/write (during turn) → staging overlay → AST-Gate → LSP SyncAndDiagnos
 
 - `disk` (default) — dry-run staging / `--apply` write + `.orchestra.bak`
 - `patch` — unified `.patch` в `patch_dir`, без write на диск
-- Реализация: `internal/applier/patch_export.go`, `config.Apply.Output`
+- Реализация: `patch/applier/patch_export.go`, `config.Apply.Output`
 
 ## 10. Migration status (M1–M4)
 

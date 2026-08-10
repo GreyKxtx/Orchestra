@@ -197,10 +197,10 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 | Веб-консоль / Console | `opencode web`, `console` | ❌ |
 | Удалённый share | `share` | ❌ |
 | Git worktrees | первоклассно (`worktree/`) | ❌ |
-| LSP-интеграция в tools | `tool/lsp.ts` (диагностика, hover) | ❌ |
-| WebFetch/WebSearch | ✅ | ❌ |
-| Skills (намёки) | ✅ (`tool/skill.ts`, `src/skill`) | ❌ |
-| Plugins | ✅ (`src/plugin`) | ❌ |
+| LSP-интеграция в tools | `tool/lsp.ts` | ✅ `lsp.*` (`internal/tools/toolslsp/`) |
+| WebFetch/WebSearch | ✅ | ✅ `internal/tools/web/` |
+| Skills | ✅ | ✅ `orchestra skills`, `skill_invoke`, `~/.orchestra/skills/` |
+| MCP CLI | `opencode mcp` | ⚠️ `orchestra mcp list-tools`; config in `.orchestra.yml` |
 | Auto-upgrade | `opencode upgrade` | ❌ |
 | Stats / heap-debug | `stats`, `heap` | частично через `metrics.go` |
 | **CKG (Code Knowledge Graph)** | ❌ | ✅ `orchestra ckg-ui`, `runtime ingest` |
@@ -209,18 +209,18 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 | **Dry-run + savable plan** | через permission ask | ✅ `--from-plan` |
 | **Pipeline Investigator→Coder→Critic** | ❌ (один агент) | ✅ `--pipeline` |
 
-**Что у OpenCode есть, а у нас нет** (приоритезированный список «дыр»):
-1. **TUI** — основной их UX. У нас нет ни Bubble Tea, ни Charmbracelet.
-2. **Compaction/title/summary** — авто-сжатие истории, заголовки сессий.
-3. **Кастомные агенты в `cfg.agent`** — описать роль через конфиг, без правки кода.
-4. **Permission ruleset per tool + glob** — у них fine-grained `allow/ask/deny`, у нас лишь `--allow-exec`.
-5. **WebFetch / WebSearch** — модель не может сходить в интернет.
-6. **LSP-tools** — нет диагностики/hover/symbols через LSP-сервер языка.
-7. **GitHub / PR-команды** — нет инструментов для работы с PR.
-8. **Worktree-first** — нет встроенного управления git worktrees.
-9. **MCP-CLI** — backend есть, но управления через CLI нет.
-10. **Plugins / Skills** — нет точки расширения «снаружи».
-11. **Multi-provider auth** (`opencode auth`) — нет менеджера ключей.
+**Что у OpenCode есть, а у нас нет** (актуальный список «дыр», 2026-08):
+
+1. **Compaction/title/summary** — авто-сжатие истории, заголовки сессий (у нас partial compact в agent).
+2. **Кастомные агенты в `cfg.agent`** — описать роль через конфиг без правки кода.
+3. **Permission ruleset per tool + glob** — fine-grained `allow/ask/deny` (у нас частично: exec, plan write-guard).
+4. **Worktree-first** — встроенное управление git worktrees.
+5. **Multi-provider auth CLI** (`opencode auth`) — у нас только `.orchestra.yml`.
+6. **Plugins SDK** — у нас skills + MCP, не general plugins.
+7. **Web console / remote share** — нет.
+8. **Auto-upgrade CLI** — нет.
+
+> TUI, LSP-tools, WebFetch/WebSearch, GitHub tools, eval, pipeline — **у нас есть**. См. §1 и `docs/architecture/paths.md`.
 
 **Что у нас есть, а у OpenCode нет:**
 1. **CKG** (Code Knowledge Graph) — символьный граф проекта в SQLite.
@@ -295,7 +295,7 @@ Orchestra: namespaced (`fs.*`, `search.*`, `code.*`, `exec.*`, `agent.*`,
 разрешения, и после записи прогоняется LSP-диагностика, ошибки которой
 попадают обратно в ответ модели как «LSP errors detected, please fix».
 
-**Orchestra (`internal/tools/fs_edit.go` + `internal/resolver/external_patches.go`)**:
+**Orchestra (`internal/tools/fs/edit.go` + `patch/resolver/external_patches.go`)**:
 строгий контракт. `search` должен встречаться в файле ровно один раз. Если
 ноль вхождений — `StaleContent`; если больше одного — `AmbiguousMatch`.
 Хард-фейл, без fuzzy-fallback. Перед записью проверяется `file_hash` против
@@ -377,10 +377,10 @@ OpenCode пишет в файл прямо из `edit.ts` / `write.ts` / `apply_
 
 1. LLM возвращает `final.patches` в одном из трёх внешних форматов
    (`file.search_replace`, `file.unified_diff`, `file.write_atomic`).
-2. `internal/resolver` пере-читает файлы, считает 0-based ranges,
+2. `patch/resolver` пере-читает файлы, считает 0-based ranges,
    вытаскивает якоря, валидирует уникальность — превращает в типизированные
    `ops.AnyOp`.
-3. `internal/applier` применяет op'ы детерминированно, проверяя `file_hash`
+3. `patch/applier` применяет op'ы детерминированно, проверяя `file_hash`
    условие непосредственно перед записью (atomic temp → fsync → rename
    + `.orchestra.bak`).
 
@@ -441,7 +441,7 @@ plan как объект, CKG). Если совсем грубо: они дал�
 **Топ-5 заимствований — ВСЕ ЗАКРЫТЫ ✅** (см. CHANGELOG за 2026-05):
 
 1. ✅ **Короткие алиасы тулов** — `internal/tools/aliases.go`, ToolsVersion 3.
-2. ✅ **LineTrimmed + IndentationFlexible fallback** в резолвере (`internal/resolver/external_patches.go`, three-pass matching).
+2. ✅ **LineTrimmed + IndentationFlexible fallback** в резолвере (`patch/resolver/external_patches.go`, three-pass matching).
 3. ✅ **Префикс номеров строк** в `fs.read` — возвращается в response.
 4. ✅ **ripgrep-detection** в `search.text` — авто-fallback на `rg` если в PATH (`internal/search/`).
 5. ✅ **LSP-тул** — 5 функций (`lsp.definition/references/hover/diagnostics/rename`); диагностика авто-инжектится в history после `edit`/`write`.

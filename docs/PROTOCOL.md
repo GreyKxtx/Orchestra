@@ -587,7 +587,7 @@ Orchestra использует диапазон `-32000..-32099`.
 | `InvalidParams` | `-32602` (JSON-RPC standard) |
 | (прочее) | `-32099` |
 
-Payload (в `error.data`) для ошибок из `internal/protocol`:
+Payload (в `error.data`) для ошибок из `protocol/`:
 
 ```json
 {

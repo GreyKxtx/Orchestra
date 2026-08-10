@@ -116,8 +116,8 @@ UI: полный текст ошибки **переносится** по стр�
 
 | Кусок | Файл |
 |-------|------|
-| Формула vLLM + парсер overflow (`ParseContextOverflow`) | `internal/llm/budget.go` |
-| Clamp + retry 400 | `internal/llm/client.go` |
+| Формула vLLM + парсер overflow (`ParseContextOverflow`) | `llm/budget.go` |
+| Clamp + retry 400 | `llm/client.go` |
 | Когда компактить | `internal/agent/context_estimate.go` |
 | Overflow → compact → retry шага, калибровка | `internal/agent/overflow.go` |
 | Сам compact (+ бюджет корпуса) | `internal/agent/compact.go` |

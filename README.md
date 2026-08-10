@@ -205,7 +205,8 @@ orchestra tui              # alias
 - [LSP auto-provision](docs/architecture/lsp-auto-provision.md)
 - [Commands & CLI reference](docs/commands-and-modes.md)
 - [Tools & commands status](docs/tools-status.md)
-- [Architecture diagrams](docs/architecture-uml.md)
+- [Package paths (authoritative map)](docs/architecture/paths.md)
+- [Module layout & import rules](docs/architecture/modules.md)
 
 ---
 

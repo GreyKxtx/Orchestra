@@ -25,6 +25,6 @@ These are project-wide hard rules. Treat them as binding; do not relax any of th
 - No global mutable state.
 
 **Protocol versioning**
-- JSON-RPC method names and params are part of the contract. Bump `ProtocolVersion` / `OpsVersion` / `ToolsVersion` (in `internal/protocol/version.go`) rather than silently changing them — and update `docs/PROTOCOL.md` in the same commit.
+- JSON-RPC method names and params are part of the contract. Bump `ProtocolVersion` / `OpsVersion` / `ToolsVersion` (in `protocol/version.go`) rather than silently changing them — and update `docs/PROTOCOL.md` in the same commit.
 - Top-level JSON-RPC arrays (batch) are not supported — return `-32600` with `id: null`. `id: null` is a request, not a notification.
 </safety-invariants>

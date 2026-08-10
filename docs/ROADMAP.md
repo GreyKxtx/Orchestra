@@ -9,7 +9,7 @@
 ## Принципы (держим сквозь все фазы)
 
 1. **Stateless ядро + stateful сессия снаружи.** `Agent` не накапливает состояние между ходами, история живёт в `Session`. Это нужно, чтобы один и тот же код обслуживал и `apply` (один ход), и multi-turn клиенты (TUI, VS Code, IDE).
-2. **Провайдер-нейтральность изнутри `internal/llm/`.** OpenAI-семантика (`tool` role, `tool_call_id`, `ToolCalls` на assistant) — внутренний lingua franca. Не утекает в `agent`/`core`/`ops`.
+2. **Провайдер-нейтральность изнутри `llm/`.** OpenAI-семантика (`tool` role, `tool_call_id`, `ToolCalls` на assistant) — внутренний lingua franca. Не утекает в `agent`/`core`/`patch/ops`.
 3. **Защитные слои не убираем.** External Patches → Resolver → Internal Ops с `file_hash`/anchors/atomic write — это моат под локалки. Любая оптимизация скорости не должна снимать эти инварианты.
 4. **JSON-RPC контракт расширяется аддитивно.** Новые методы — да; ломать существующие `initialize`/`agent.run`/`tool.call` — нет. Версии (`protocol/ops/tools`) бампим осознанно.
 5. **Тесты вперёд кода.** Каждая фаза заканчивается зелёными `go test ./...` и `go vet ./...`, и Linux, и Windows (как в CI).

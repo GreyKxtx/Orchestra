@@ -232,7 +232,7 @@ func generateSyntheticProject(root string, opts genOpts) error {
 	}
 
 	targetSize := func() int {
-		// Keep most files under daemon.DefaultMaxCacheFileBytes (64KB) for cache effect.
+		// Keep most files under 64KB for realistic cache/walk benchmarks.
 		switch strings.ToLower(strings.TrimSpace(opts.sizeProfile)) {
 		case "small":
 			return 300 + r.Intn(900) // 0.3–1.2KB

@@ -1,5 +1,8 @@
 # Архитектура Orchestra — целевая модель (UML)
 
+> **Note (2026-08):** Some package labels in diagrams still say `internal/protocol`, `internal/llm`, etc.
+> **Authoritative current paths:** `docs/architecture/paths.md` and `docs/architecture/modules.md`.
+
 Документ фиксирует **целевой** облик Orchestra — то, к чему ведёт
 vNext-транзиция. Используется как «карта местности» для будущих фич
 (TUI, кастомные агенты, Skills, GitHub-tools, multi-provider) и как

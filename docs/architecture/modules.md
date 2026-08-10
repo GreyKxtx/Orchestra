@@ -13,12 +13,11 @@ internal/core          JSON-RPC orchestrator (sessions, agent.run, tools runner)
     │
     ├── internal/agent (+ subpackages)   LLM loop
     ├── internal/tools                   tool registry + execution
-    ├── internal/llm, mcp, lsp, ckg    providers & integrations  →  **llm/ sub-module** (+ lmstudio)
+    ├── llm/ (sub-module), mcp, lsp, ckg    providers & integrations
     │
-internal/patch stack   patches → resolver → applier (+ ops, fsutil, cache)
+patch/ (sub-module)    patches → resolver → applier (+ ops, fsutil, cache)
     │
-internal/protocol      wire DTOs, version constants  →  **moved to `protocol/` sub-module**
-internal/jsonrpc       stdio/HTTP transport           →  **`protocol/jsonrpc`**
+protocol/ (sub-module) wire DTOs, version, jsonrpc, schema
 
 Clients (must not be imported by core):
     ui/tui               Bubble Tea client (Go)
@@ -34,8 +33,8 @@ Shared UI DTOs (client-neutral):
 
 | Layer | May import | Must NOT import |
 |-------|------------|-----------------|
-| `internal/protocol`, `jsonrpc`, `schema` | stdlib, each other | `agent`, `tools`, `core`, `ui/*` |
-| patch stack (`ops`, `patches`, `resolver`, `applier`, `fsutil`) | protocol, stdlib | `agent`, `llm`, `ui/*` |
+| `protocol/`, `protocol/jsonrpc`, `protocol/schema` | stdlib, each other | `agent`, `tools`, `core`, `ui/*` |
+| `patch/*` (ops, patches, resolver, applier, fsutil) | protocol, stdlib | `agent`, `llm`, `ui/*` |
 | `internal/uimodel`, `sessionfile` | stdlib | `ui/*`, `agent`, `tools` |
 | `internal/tools` | patch, llm, lsp, ckg, config, … | `ui/*`, `cli` |
 | `internal/agent` | tools, llm, prompt, … | `ui/*`, `cli`, `core` |
@@ -109,8 +108,7 @@ Shared UI DTOs (client-neutral):
 
 - [x] **`call.go` split** — `call.go` (entry + MCP routing), `call_dispatch.go` (table-driven dispatch), `call_decode.go` (JSON helpers)
 - [x] **Tests colocated with subpackages** — `exec/`, `git/`, `web/` (incl. browser), `nav/`, `session/`, `task/`, `toolslsp/`, `fs/`; root keeps only `Runner`-level integration tests
-- [x] **Removed root test duplicates** and legacy **`orchestra daemon` CLI** (package `internal/daemon` kept for benchmarks only)
-- [x] **`internal/daemon/doc.go`** — deprecated; CLI removed
+- [x] **Removed `orchestra daemon` CLI** and **`internal/daemon`** (v0.3 HTTP); benchmarks use direct search only
 
 ## Phase 6+
 
@@ -122,7 +120,7 @@ Prefer **subpackages** over new modules when coupling is high:
 | `internal/core` | already split: `runtime_*.go`, `session/` |
 | `internal/agent` | already has `digest/`, `guard/`, `history/`, … |
 
-Do **not** extract `internal/daemon` — legacy; deprecate instead.
+Do **not** reintroduce `internal/daemon` or `orchestra daemon`. See `docs/architecture/paths.md`.
 
 ## Verification
 

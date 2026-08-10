@@ -119,6 +119,7 @@ func TestNoLegacyInternalSubmodules(t *testing.T) {
 		"github.com/orchestra/orchestra/internal/fsutil",
 		"github.com/orchestra/orchestra/internal/cache",
 		"github.com/orchestra/orchestra/internal/relpath",
+		"github.com/orchestra/orchestra/internal/daemon",
 		"github.com/orchestra/orchestra/internal/llm",
 	}
 	for _, e := range listPackages(t, root, "./...") {

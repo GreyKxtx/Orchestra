@@ -35,7 +35,11 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 
 - **Dropped `orchestra chat` REPL** from scope — multi-turn UX is TUI + VS Code (+ future IDE); `session.*` API remains the contract. ROADMAP Phase 3 rewritten accordingly.
 
-### Changed — Modularization status (P0–P6)
+### Changed — Architecture cleanup (pre field-test)
+
+- **Removed `internal/daemon`** — v0.3 HTTP daemon; benchmarks use direct search only.
+- **Docs** — new `docs/architecture/paths.md`; updated live paths (`protocol/`, `patch/`, `llm/`); fixed stale OpenCode gap list in `commands-and-modes.md`.
+- **CI** — `TestNoLegacyInternalSubmodules` also bans `internal/daemon` imports.
 
 - **Documented complete** — `protocol/`, `patch/`, `llm/` sub-modules + `go.work`; `internal/tools` split; legacy `internal/{protocol,llm,ops,...}` removed.
 - **CI** — `TestNoLegacyInternalSubmodules` bans reintroducing deleted import paths.

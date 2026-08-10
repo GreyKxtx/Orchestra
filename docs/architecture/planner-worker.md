@@ -166,7 +166,7 @@ Worker edit/write (dry-run)
 
 ### 6.1 Каскад патчей (✅ сегодня)
 
-`internal/resolver`: **exact → trimmed → indent**. Не fuzzy/Levenshtein — безопасно для локальных моделей (прощаем пробелы/отступы, не «угадываем» код).
+`patch/resolver`: **exact → trimmed → indent**. Не fuzzy/Levenshtein — безопасно для локальных моделей (прощаем пробелы/отступы, не «угадываем» код).
 
 ### 6.2 AST-Gate (✅ Phase 1)
 
@@ -282,5 +282,5 @@ sequenceDiagram
 | Resolver cascade | `internal/resolver/` |
 | AST-Gate | `internal/ckg/syntax.go`, `internal/tools/staging.go` |
 | LSP dry-run | `internal/lsp/manager.go`, `docs/architecture/semantic-dry-run-tz.md` |
-| AmbiguousMatch | `internal/protocol/errors.go`, resolver errors |
+| AmbiguousMatch | `protocol/errors.go`, `patch/resolver/` |
 | Local prompts | `internal/prompt/files/build-local.txt` |
