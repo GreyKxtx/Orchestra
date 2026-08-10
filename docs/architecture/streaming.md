@@ -83,9 +83,10 @@ Production streaming has four classic edge cases. Below: **what Orchestra does t
 | `agent` | `OnEvent` is **synchronous** — a slow callback blocks the stream read loop. |
 | `core` | `buildAgentOnEvent` → `notifier.Notify` writes one JSON-RPC frame per event (mutex on Writer). |
 | **TUI** (`ui/tui/rpcclient`) | **Coalesces** `message_delta` and `tool_call_delta` when the events channel is saturated; drops non-mergeable events only after one non-blocking try. |
-| **VS Code** | Handles each notification in the extension host; no core-level coalesce yet. |
+| **VS Code** | Handles each notification in the extension host; core debounce reduces frame rate before the client. |
+| **Core** (`buildAgentOnEvent`) | **Time-based debounce** (~30 ms default) merges consecutive `message_delta` / `reasoning_delta` into one RPC notification; tool boundaries flush immediately. Override: `ORCH_STREAM_DEBOUNCE_MS=0` to disable. |
 
-**Verdict:** Safe for correctness (LLM won't run unbounded ahead of a stuck client), but a very slow UI can slow token delivery. TUI mitigates locally. Optional improvement: async notify queue in `core` or time-based debounce in `buildAgentOnEvent` (~20–50 ms for `message_delta` only).
+**Verdict:** Safe for correctness. Slow UIs no longer receive one JSON-RPC frame per token; TUI coalesce remains as a second line of defense under channel saturation.
 
 ### 2. Partial tool call / mid-stream failure
 
@@ -113,11 +114,10 @@ If the SSE stream dies before `StreamEventDone`:
 
 ### 4. Event granularity (debouncing)
 
-- **Core** emits **one RPC notification per stream event** (no debounce).
-- **TUI client** merges consecutive `message_delta` / same-id `tool_call_delta` under backpressure.
-- **CLI apply** writes tokens directly to stderr/stdout (no RPC).
-
-Optional: core-side debounce for `message_delta`/`reasoning_delta` only, preserving immediate delivery for tool boundaries and `step_done`.
+- **Core** coalesces consecutive `message_delta` / `reasoning_delta` within **`ORCH_STREAM_DEBOUNCE_MS`** (default **30**; `0` = off) before emitting `agent/event`.
+- Non-text events (`tool_call_start`, `step_done`, …) **flush** any pending delta immediately, then pass through unchanged.
+- **TUI client** still merges deltas when its events channel is saturated (backpressure path).
+- **CLI apply** writes tokens directly to stderr/stdout (bypasses core RPC debounce).
 
 ---
 

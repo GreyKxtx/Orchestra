@@ -55,6 +55,7 @@ var (
 	applyStream         bool
 	outputPatch         string // --output-patch; NoOptDefVal="AUTO"
 	applyProfile        string // --profile fast|precision
+	applyWorktree       string // --worktree name
 )
 
 var applyCmd = &cobra.Command{
@@ -88,6 +89,7 @@ func init() {
 	applyCmd.Flags().StringVar(&outputPatch, "output-patch", "", "Export unified .patch instead of writing files (optional path; default: apply.patch_dir)")
 	applyCmd.Flags().Lookup("output-patch").NoOptDefVal = "AUTO"
 	applyCmd.Flags().StringVar(&applyProfile, "profile", "", "Adaptive execution profile: fast|precision")
+	applyCmd.Flags().StringVar(&applyWorktree, "worktree", "", "Run in orchestra-managed git worktree (name from orchestra worktree list)")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -113,6 +115,14 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
+	}
+
+	if wt := strings.TrimSpace(applyWorktree); wt != "" {
+		wtPath, wtErr := git.ResolveManagedWorktree(cfg.ProjectRoot, wt)
+		if wtErr != nil {
+			return fmt.Errorf("--worktree %q: %w", wt, wtErr)
+		}
+		cfg.ProjectRoot = wtPath
 	}
 
 	applyOutput := strings.ToLower(strings.TrimSpace(cfg.Apply.Output))
@@ -361,7 +371,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		defer runner.Close()
 
-	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider))
+	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -502,7 +512,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		mcpExtraTools = append(mcpExtraTools, tools.ToolRepoMap())
 
-	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider))
+	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {

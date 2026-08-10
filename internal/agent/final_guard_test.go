@@ -18,6 +18,12 @@ func TestQueryRequiresCodeChanges(t *testing.T) {
 		{"explain this function", nil, ModeBuild, false},
 		{"fix the search bug", nil, ModeBuild, true},
 		{"население не грузится, поиск не работает", nil, ModeBuild, true},
+		{"Распиши что там реализованно и сделанно", nil, ModeBuild, false},
+		{"оставь в конце коментарий", nil, ModeBuild, true},
+		{"посмотри какой комментарий в конце файла app.jsx", nil, ModeBuild, false},
+		{"what comment is at the end of the file", nil, ModeBuild, false},
+		{"добавь комментарий в конец файла", nil, ModeBuild, true},
+		{"what was implemented in this module", nil, ModeBuild, false},
 		{"hello", nil, ModeExplore, false},
 		{"implement feature", nil, ModeExplore, false},
 		{"fix the bug", nil, ModeAsk, false},
@@ -91,6 +97,41 @@ func TestRejectPrematureFinal_allowsFinalWhenTodosDone(t *testing.T) {
 	_, reject := a.rejectPrematureFinal("перейди на maplibre", step, "all done\n{\"patches\":[]}", 5)
 	if reject {
 		t.Fatal("completed todos should allow final after edits")
+	}
+}
+
+func TestRejectPrematureFinal_step1PatchesOnly_conversationalAllowed(t *testing.T) {
+	a := &Agent{opts: Options{Mode: ModeBuild}}
+	step := &Step{Type: StepFinal, Final: &Final{Patches: nil}}
+	_, reject := a.rejectPrematureFinal("explain this function", step, `{"patches":[]}`, 1)
+	if reject {
+		t.Fatal("patches-only final on step 1 should be allowed for non-code queries")
+	}
+}
+
+func TestRejectPrematureFinal_step1PatchesOnly_codeTaskRejected(t *testing.T) {
+	a := &Agent{opts: Options{Mode: ModeBuild}}
+	step := &Step{Type: StepFinal, Final: &Final{Patches: nil}}
+	hint, reject := a.rejectPrematureFinal("fix the search bug", step, `{"patches":[]}`, 1)
+	if !reject {
+		t.Fatal("patches-only final on step 1 should be rejected for code-change queries")
+	}
+	if !strings.Contains(hint, "without tool calls") {
+		t.Fatalf("hint=%q", hint)
+	}
+}
+
+func TestRejectPrematureFinal_readOnlyCommentQueryAfterRead(t *testing.T) {
+	a := &Agent{
+		opts:              Options{Mode: ModeBuild},
+		turnMutatingTools: 0, // read only this turn
+	}
+	step := &Step{Type: StepFinal, Final: &Final{Patches: nil}}
+	query := "посмотри какой комментарий в конце файла app.jsx"
+	answer := "В конце файла находится комментарий: // тестик"
+	_, reject := a.rejectPrematureFinal(query, step, answer, 2)
+	if reject {
+		t.Fatal("read-only comment question should allow plain-text final after read")
 	}
 }
 

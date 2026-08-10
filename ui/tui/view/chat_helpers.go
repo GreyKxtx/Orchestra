@@ -2,9 +2,43 @@ package view
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var placeholderAssistantText = regexp.MustCompile(`^\[\d+\]$`)
+
+// isPlaceholderAssistantText reports assistant prose that is not a real answer
+// (json_schema debris like "[1]", or final JSON stripped to empty).
+func isPlaceholderAssistantText(text string) bool {
+	t := strings.TrimSpace(stripFinalEnvelope(text))
+	if t == "" {
+		return true
+	}
+	if placeholderAssistantText.MatchString(t) {
+		return true
+	}
+	if t == "{" || t == "}" {
+		return true
+	}
+	return false
+}
+
+// stripFinalEnvelopeStreaming is a cheap guard while tokens are still arriving.
+// Avoids scanning the whole buffer on every UI tick.
+func stripFinalEnvelopeStreaming(text string) string {
+	idx := strings.LastIndexByte(text, '{')
+	if idx < 0 {
+		return text
+	}
+	tail := text[idx:]
+	if strings.Contains(tail, `"patches"`) ||
+		(strings.Contains(tail, `"type"`) && strings.Contains(tail, `"final"`)) {
+		return strings.TrimSpace(text[:idx])
+	}
+	return text
+}
 
 // stripFinalEnvelope removes any balanced JSON object containing a `"patches"`
 // key from the assistant text. The agent emits final-action JSON (e.g.

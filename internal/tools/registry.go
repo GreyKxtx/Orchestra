@@ -38,6 +38,7 @@ type Capabilities struct {
 func appendExecTools(out []llm.ToolDef) []llm.ToolDef {
 	out = append(out, exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill())
 	out = append(out, git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush())
+	out = append(out, git.ToolGitWorktreeAdd(), git.ToolGitWorktreeRemove(), git.ToolGitWorktreePrune())
 	out = append(out,
 		git.ToolGHPRList(), git.ToolGHPRCreate(), git.ToolGHPRView(),
 		git.ToolGHIssueList(), git.ToolGHIssueView(),
@@ -131,6 +132,7 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 		git.ToolGitStatus(),
 		git.ToolGitLog(),
 		git.ToolGitDiff(),
+		git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
@@ -160,7 +162,7 @@ var parallelSafeTools = map[string]bool{
 	"webfetch":        true, "websearch": true,
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true, "lsp.diagnostics": true,
 	"diff.preview": true,
-	"git.status":   true, "git.diff": true, "git.log": true,
+	"git.status":   true, "git.diff": true, "git.log": true, "git.worktree.list": true,
 	"browser.snapshot": true, "browser.screenshot": true,
 	"gh.pr.list": true, "gh.pr.view": true, "gh.issue.list": true, "gh.issue.view": true,
 }
@@ -175,6 +177,7 @@ var mutatingTools = map[string]bool{
 	"question":  true,
 	"fs.delete": true, "fs.rename": true, "ast_rename": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
+	"git.worktree.add": true, "git.worktree.remove": true, "git.worktree.prune": true,
 	"gh.pr.create":     true,
 	"browser.navigate": true, "browser.click": true, "browser.type": true,
 	"browser.fill": true, "browser.select": true, "browser.eval": true,
@@ -276,7 +279,7 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
@@ -336,7 +339,7 @@ func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
@@ -354,7 +357,7 @@ func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
@@ -375,7 +378,7 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), task.ToolTaskResult(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
 	if hasSubtasks {
@@ -391,7 +394,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
@@ -424,7 +427,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
 		task.ToolPlanEnter(), task.ToolPlanExit(), session.ToolQuestion(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 		git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush(),
 		git.ToolGHPRList(), git.ToolGHPRCreate(), git.ToolGHPRView(), git.ToolGHIssueList(), git.ToolGHIssueView(),
 		web.ToolBrowserNavigate(), web.ToolBrowserSnapshot(), web.ToolBrowserScreenshot(),

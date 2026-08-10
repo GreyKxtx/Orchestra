@@ -25,7 +25,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = m.Height
 		a.layout()
 		if a.initialized {
-			a.chat.SetMessages(a.session.Messages)
+			a.flushChat(true)
 		}
 		return a, nil
 
@@ -36,12 +36,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.statusBar.AdvanceSpin()
 		a.chat.SetSpinFrame(a.spinFrame)
-		// Refresh chat for spinner animation while busy. Do NOT blink a mid-
-		// message ▋ caret — that jumped the viewport and sat above the footer.
-		if a.turn.ShowBusySpinner() && (a.chatDirty || a.session.HasRunningTool() || a.spinFrame%2 == 0) {
-			a.chat.SetMessages(a.session.Messages)
-			a.chatDirty = false
-		}
+		a.flushChat(false)
 		if a.toastTick > 0 {
 			a.toastTick--
 			if a.toastTick == 0 {
@@ -204,6 +199,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saveCmd := a.handleRPCEvent(rpcclient.Event(m))
 		listenCmd := a.listenForEvents()
 		return a, tea.Batch(saveCmd, listenCmd)
+
+	case rpcBatchMsg:
+		var saveCmds []tea.Cmd
+		for _, ev := range m {
+			if cmd := a.handleRPCEvent(ev); cmd != nil {
+				saveCmds = append(saveCmds, cmd)
+			}
+		}
+		saveCmds = append(saveCmds, a.listenForEvents())
+		return a, tea.Batch(saveCmds...)
 
 	case systemMsgMsg:
 		return a, a.handleSystemMsg(m)

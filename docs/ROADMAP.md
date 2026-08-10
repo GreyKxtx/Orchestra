@@ -340,12 +340,99 @@ Legacy `internal/{protocol,jsonrpc,schema,ops,applier,patches,resolver,fsutil,ca
 
 **Закрыто недавно:** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension, Phase 2 streaming.
 
-Следующий фокус (продукт, не modularization):
+---
+
+## Фаза 11 — Стабильность, скорость, OpenCode-parity (локальные модели)
+
+**Цель:** меньше rebounce и шагов LLM на локальном стеке (27B lead + fast worker), стабильнее edit/search, быстрее end-to-end в TUI/eval. Invariants Phase 0–10 **не снимаем**: unique match, `file_hash`, atomic write, External→Internal ops.
+
+**Design reference:** [forgiving-edit.md](./architecture/forgiving-edit.md) — 3-pass vs 9-strategy OpenCode.
+
+### Статус треков
+
+| Трек | Фокус | Статус |
+|------|--------|--------|
+| **A** Patch / resolver | passes 4–6 + BlockAnchor strict | ✅ A1–A2 |
+| **B** Search / nav | CKG, semantic_search, repo-map, grep, explore routing | ✅ B1–B5 (docs/prompts/grep) |
+| **C** Agent speed | tiers 27B/4B, parallel batch, compaction, truncate | ✅ C1–C5 |
+| **D** Stability | permission `ask` on edit/write, LSP smoke, grammar local | ✅ D1,D3; D2 checklist; D4 existing |
+| **E** OpenCode gaps | session import/export, auth CLI lite, worktrees | ✅ E1–E4 |
+
+### A — Patch / edit (`patch/resolver/`)
+
+| ID | Задача | DoD |
+|----|--------|-----|
+| A1 | Passes **4–6**: WhitespaceNormalized, EscapeNormalized, TrimmedBoundary | ✅ |
+| A2 | **BlockAnchor** strict (unique first/last line anchors, **без** Levenshtein) | ✅ |
+| A3 | Eval metric: `resolve_failed` count в eval summary / llm_log | ✅ RESOLVE column |
+| A4 | Компактные ambiguous hints (match_lines) — регрессия | ✅ exact + strategy field |
+
+**Не в Phase 11a:** Levenshtein fuzzy, MultiOccurrence «replace all» — только если A1–A2 не хватит (Phase 11a-ext).
+
+### B — Search / navigation
+
+| ID | Задача | DoD |
+|----|--------|-----|
+| B1 | Ops: `orchestra ckg embed --rebuild` перед map-задачами | documented in planner-worker / TUI hints |
+| B2 | `semantic_search` + auto-explore включены и smoke-tested | embed.model + CKG store |
+| B3 | Prompts: Lead → `repo_map` / `symbols` / `semantic_search` before blind grep | `build-local.txt`, `orchestra.txt` |
+| B4 | Grep: mtime sort, лимиты на huge repos | `internal/search/` |
+| B5 | Wide queries → `explore` subagent by default in `orchestra` mode | mode routing + test |
+
+### C — Agent speed
+
+| ID | Задача | DoD |
+|----|--------|-----|
+| C1 | Default tiers: Lead = main LLM, Worker = `providers.fast` | TUI + `.orchestra.yml` example |
+| C2 | Parallel batch audit: read+grep in one step where safe | `registry` ParallelSafe flags green |
+| C3 | Auto-compaction threshold tuning + long-session smoke | `session.compact` |
+| C4 | `truncateMessages` / working_state budget на 20k ctx | no tool-call orphans |
+| C5 | Streaming core debounce for `message_delta`/`reasoning_delta` | ✅ default 30ms; `ORCH_STREAM_DEBOUNCE_MS` |
+
+### D — Stability
+
+| ID | Задача | DoD |
+|----|--------|-----|
+| D1 | `permissions.rules`: `allow \| deny \| ask`; ask on `edit`/`write` | TUI/VS Code modal; PROTOCOL.md |
+| D2 | TUI LSP install + worker diagnostics smoke | checklist `ui/tui/README.md` |
+| D3 | Local grammar knobs documented + eval with `prompt_family: local` | `.orchestra.yml` template |
+| D4 | Circuit breaker / repeat-tool hints audit | agent tests |
+
+### E — Backlog (после A–D)
+
+| ID | Задача |
+|----|--------|
+| E1 | Session export/import | ✅ `orchestra session export/import/list` |
+| E2 | Auth CLI lite | ✅ `orchestra auth set-key`, `auth list` |
+| E3 | Git worktrees first-class | ✅ `orchestra worktree`, `git.worktree.*`, `--worktree` |
+| E4 | Full 9-pass edit + bounded fuzzy (OpenCode parity) | ✅ fuzzy-block + double-anchor |
+
+### Рекомендуемый порядок
+
+1. **A1 + A4** (resolver 4–6 + metrics) — ~1 нед  
+2. **B1–B3 + C1** (CKG/semantic + tiers) — ~1 нед  
+3. **A2** BlockAnchor — ~3–5 д  
+4. **B4 + C2** — ~1 нед  
+5. **D1** или **C3** — по pain из `llm_log.jsonl`  
+6. **E*** — по необходимости  
+
+### KPI Phase 11
+
+| Метрика | Источник | Цель |
+|---------|----------|------|
+| Steps / task | `orchestra eval` | −20%+ vs baseline |
+| `resolve_failed` | `llm_log.jsonl` | ↓ после A1 |
+| Time-to-first-patch | TUI / eval | ↓ |
+| PASS rate | eval tasks | ↑ |
+
+---
+
+### Legacy «Следующий фокус» (field-test checklist)
 
 1. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance).
 2. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm`.
 3. **VS Code marketplace** — `npm run package` / vsce publish.
-4. **Streaming hardening** — см. «Operational notes» в `docs/architecture/streaming.md` (core debounce, async notify — опционально).
+4. **Streaming hardening** — см. «Operational notes» в `docs/architecture/streaming.md` (core debounce, async notify — опционально → Phase 11 **C5**).
 
 ### Фаза 1 — knobs в `.orchestra.yml`
 

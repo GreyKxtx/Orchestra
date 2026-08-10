@@ -1,4 +1,4 @@
-﻿package tools
+package tools
 
 import (
 	"context"
@@ -52,6 +52,10 @@ var toolDispatchTable = map[string]toolDispatchFn{
 	"git.status":      dispatchRunnerTool((*Runner).GitStatus),
 	"git.log":         dispatchRunnerTool((*Runner).GitLog),
 	"git.diff":        dispatchRunnerTool((*Runner).GitDiff),
+	"git.worktree.list":   dispatchRunnerTool((*Runner).GitWorktreeList),
+	"git.worktree.add":    dispatchRunnerTool((*Runner).GitWorktreeAdd),
+	"git.worktree.remove": dispatchRunnerTool((*Runner).GitWorktreeRemove),
+	"git.worktree.prune":  dispatchRunnerTool((*Runner).GitWorktreePrune),
 	"git.commit":      dispatchRunnerTool((*Runner).GitCommit),
 	"git.branch":      dispatchRunnerTool((*Runner).GitBranch),
 	"git.checkout":    dispatchRunnerTool((*Runner).GitCheckout),

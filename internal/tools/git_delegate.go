@@ -41,6 +41,22 @@ func (r *Runner) GitPush(ctx context.Context, req GitPushRequest) (*GitPushRespo
 	return r.gitClient().GitPush(ctx, req)
 }
 
+func (r *Runner) GitWorktreeList(ctx context.Context, req GitWorktreeListRequest) (*GitWorktreeListResponse, error) {
+	return r.gitClient().GitWorktreeList(ctx, req)
+}
+
+func (r *Runner) GitWorktreeAdd(ctx context.Context, req GitWorktreeAddRequest) (*GitWorktreeAddResponse, error) {
+	return r.gitClient().GitWorktreeAdd(ctx, req)
+}
+
+func (r *Runner) GitWorktreeRemove(ctx context.Context, req GitWorktreeRemoveRequest) (*GitWorktreeRemoveResponse, error) {
+	return r.gitClient().GitWorktreeRemove(ctx, req)
+}
+
+func (r *Runner) GitWorktreePrune(ctx context.Context, req GitWorktreePruneRequest) (*GitWorktreePruneResponse, error) {
+	return r.gitClient().GitWorktreePrune(ctx, req)
+}
+
 func (r *Runner) GHPRList(ctx context.Context, req GHPRListRequest) (*GHPRListResponse, error) {
 	return r.gitClient().GHPRList(ctx, req)
 }

@@ -201,6 +201,18 @@ func (r *Runner) ClearStaged() {
 	}
 }
 
+// UnstagePath removes one path from the dry-run staging overlay after a successful disk commit.
+func (r *Runner) UnstagePath(path string) {
+	if r.fsTools == nil || r.fsTools.Overlay == nil {
+		return
+	}
+	rel := strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	if rel == "" {
+		return
+	}
+	r.fsTools.Overlay.UnstagePath(rel)
+}
+
 func (r *Runner) HasStagedChanges() bool {
 	if r.fsTools == nil || r.fsTools.Overlay == nil {
 		return false

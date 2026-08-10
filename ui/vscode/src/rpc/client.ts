@@ -18,6 +18,7 @@ export interface JsonRpcResponse {
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 export type ServerRequestHandler = (
@@ -99,11 +100,17 @@ export class RpcClient extends EventEmitter {
     this.serverRequestHandler = handler;
   }
 
-  async request(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
+  async request(
+    method: string,
+    params?: unknown,
+    timeoutMs = 30_000,
+    onAssigned?: (id: number) => void
+  ): Promise<unknown> {
     if (this.closed) {
       throw new Error("rpc client is closed");
     }
     const id = this.nextId++;
+    onAssigned?.(id);
     const payload = JSON.stringify({
       jsonrpc: "2.0",
       id,
@@ -126,6 +133,7 @@ export class RpcClient extends EventEmitter {
           clearTimeout(timer);
           reject(err);
         },
+        timer,
       });
 
       try {
@@ -136,6 +144,30 @@ export class RpcClient extends EventEmitter {
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
+  }
+
+  /** Best-effort LSP-style cancel for an in-flight request (also rejects local promise). */
+  cancelRequest(id: number | string, reason = "request cancelled"): void {
+    if (this.closed) {
+      return;
+    }
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "$/cancelRequest",
+      params: { id },
+    });
+    try {
+      this.proc.stdin.write(encodeMessage(payload));
+    } catch {
+      // ignore broken pipe
+    }
+    const pending = this.pending.get(id);
+    if (!pending) {
+      return;
+    }
+    this.pending.delete(id);
+    clearTimeout(pending.timer);
+    pending.reject(new Error(reason));
   }
 
   /** Reply to a server-initiated request. */

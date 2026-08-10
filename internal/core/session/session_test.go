@@ -61,8 +61,12 @@ func TestSession_BusyFlag(t *testing.T) {
 	s.Cancel()
 
 	s.Lock()
+	if !s.IsBusy() {
+		t.Fatal("should still be busy after Cancel until ClearCancel (turn unwinding)")
+	}
+	s.ClearCancel()
 	if s.IsBusy() {
-		t.Fatal("should not be busy after Cancel")
+		t.Fatal("should not be busy after ClearCancel")
 	}
 	s.Unlock()
 

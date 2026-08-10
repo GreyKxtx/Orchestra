@@ -114,12 +114,29 @@ export interface SessionListItem {
   msg_count?: number;
 }
 
+export interface ChatHistoryToolBlock {
+  id?: string;
+  name: string;
+  argsRaw?: string;
+  status?: string;
+  result?: string;
+  diagnostics?: ToolDiagnosticPayload[];
+  /** Reconstructed from tool args so diffs survive session reopen. */
+  diffBefore?: string;
+  diffAfter?: string;
+}
+
 export interface ChatHistoryMessage {
   role: string;
   text: string;
   /** Index in session ui_messages (user messages only — for rewind). */
   uiIndex?: number;
   files?: ChatFileRef[];
+  reasoning?: string;
+  toolBlocks?: ChatHistoryToolBlock[];
+  promptCtx?: number;
+  tokensIn?: number;
+  tokensOut?: number;
 }
 
 export interface PendingFileDiff {
@@ -162,6 +179,12 @@ export interface ProviderPickerEntry {
   model_count?: number;
 }
 
+export interface QueuedSendPreview {
+  id: string;
+  preview: string;
+  fileCount?: number;
+}
+
 /** Extension → Webview */
 export type HostToWebview =
   | { type: "status"; status: ConnectionStatus; detail?: string }
@@ -186,6 +209,9 @@ export type HostToWebview =
     }
   | { type: "userEcho"; text: string; uiIndex?: number; files?: ChatFileRef[] }
   | { type: "delta"; content: string }
+  | { type: "deltaSync"; content: string }
+  | { type: "discardAssistantBubble" }
+  | { type: "reasoningDelta"; content: string }
   | { type: "tool"; toolName: string; detail?: string; done?: boolean }
   | {
       type: "toolBlock";
@@ -240,7 +266,9 @@ export type HostToWebview =
   | { type: "permissionRequest"; request: PermissionRequestPayload }
   | { type: "questionAsk"; questions: QuestionItemPayload[] }
   | { type: "error"; message: string }
-  | { type: "turnComplete"; ok: boolean }
+  | { type: "turnStart" }
+  | { type: "turnComplete"; ok: boolean; queuedNext?: boolean }
+  | { type: "queueUpdate"; items: QueuedSendPreview[] }
   | {
       type: "attachmentPreview";
       path: string;
@@ -256,7 +284,7 @@ export type WebviewToHost =
       text: string;
       mode?: string;
       profile?: string;
-      apply?: boolean;
+      allowExec?: boolean;
       files?: ChatFileRef[];
     }
   | { type: "attach" }
@@ -267,7 +295,7 @@ export type WebviewToHost =
   | { type: "listModels" }
   | { type: "listProviderModels" }
   | { type: "setModel"; model: string; provider?: string }
-  | { type: "applyPending"; ops?: unknown[] }
+  | { type: "applyPending"; paths?: string[]; ops?: unknown[] }
   | { type: "discardPending" }
   | { type: "togglePendingDiff" }
   | { type: "openSettings" }
@@ -281,10 +309,12 @@ export type WebviewToHost =
   | { type: "rewindToMessage"; uiIndex: number }
   | { type: "compactSession"; query?: string }
   | { type: "slashCommand"; cmd: string; arg?: string }
+  | { type: "cancelQueuedSend"; id: string }
+  | { type: "cancelTurn" }
   | { type: "openFile"; path: string; focus?: boolean }
   | { type: "previewAttachment"; path: string; name?: string; kind?: string; focus?: boolean }
   | { type: "attachBytes"; name: string; mime?: string; dataBase64: string }
-  | { type: "openDiff"; path: string; before?: string; after?: string; focus?: boolean }
+  | { type: "openDiff"; path: string; before?: string; after?: string; focus?: boolean; sideBySide?: boolean }
   | {
       type: "highlightCode";
       requestId: string;

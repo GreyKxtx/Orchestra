@@ -1,7 +1,7 @@
 # Команды, режимы и пайплайны Orchestra
 
 > **Режимы агента:** authoritative источник — [`modes.md`](./modes.md) (`build`, `plan`, `orchestra`, `worker`, …).  
-> Этот документ — CLI/RPC справочник; таблицы сравнения с OpenCode могут отставать от кода.
+> Этот документ — CLI/RPC справочник; §3 сравнение с OpenCode синхронизировано с кодом (2026-08-10).
 
 Документ фиксирует **текущее** состояние CLI Orchestra (vNext):
 команды, режимы агента, набор инструментов, сценарии запуска и сравнение с
@@ -10,9 +10,13 @@
 
 Источники правды:
 - `internal/cli/*.go` — все команды CLI;
-- `internal/agent/agent.go` — режимы и цикл агента;
+- [`modes.md`](./modes.md) — режимы агента (authoritative);
+- [`tools-status.md`](./tools-status.md) — сводка CLI + tools;
+- [`architecture/paths.md`](./architecture/paths.md) — карта пакетов vNext;
+- `internal/agent/` — цикл агента;
 - `internal/tools/registry.go` — набор инструментов;
 - `internal/core/rpc_handler.go` — JSON-RPC методы;
+- `patch/resolver/`, `patch/applier/` — External → Internal Ops;
 - `internal/pipeline/pipeline.go` — мульти-агентный пайплайн.
 
 ---
@@ -36,10 +40,19 @@
 | `--http-port`, `--http-token` | Настройки отладочного HTTP |
 
 Поддерживаемые JSON-RPC методы (`internal/core/rpc_handler.go`):
-`core.health`, `initialize`, `agent.run`, `tool.call`, `session.start`,
-`session.message`, `session.history`, `session.cancel`, `session.close`,
-`session.apply_pending`. До `initialize` доступны только `core.health` и
-`initialize` — остальные возвращают `NotInitialized`.
+`core.health`, `initialize`, `agent.run`, `tool.call`, `ops.apply`,
+`session.start`, `session.get`, `session.list`, `session.message`,
+`session.history`, `session.ui_sync`, `session.compact`, `session.rewind`,
+`session.cancel`, `session.close`, `session.apply_pending`,
+`runtime.set_model`, `runtime.list_models`, `runtime.list_providers`,
+`runtime.get_llm`, `runtime.configure_llm`,
+`runtime.get_system_prompt`, `runtime.set_system_prompt`,
+`mcp.list`, `mcp.upsert`, `mcp.delete`, `mcp.set_disabled`, `mcp.test`,
+`agents.list`, `agents.upsert`, `agents.delete`,
+`index.status`, `index.configure`, `index.rebuild`, `index.embed`,
+`workflow.list`, `workflow.run`, `skill.list`, `skill.invoke`.
+До `initialize` доступны только `core.health` и `initialize` — остальные
+возвращают `NotInitialized`.
 
 ### 1.3. `orchestra apply [query]`
 Главный сценарий «один шот»: `query` → план изменений → (опционально) запись.
@@ -51,15 +64,22 @@
 | `--plan-only` | Не звать LLM-edit, только plan |
 | `--from-plan plan.json` | Воспроизвести сохранённый план без LLM |
 | `--via-core` | Запустить агента в подпроцессе `orchestra core` через JSON-RPC |
-| `--mode plan\|build` | Режим агента (см. §2) |
+| `--mode <name>` | Режим агента или кастомный agent из `agents:` (см. §2, [`modes.md`](./modes.md)) |
+| `--provider <name>` | Override LLM-провайдера из `providers:` в `.orchestra.yml` |
+| `--skill <name>` | Запуск с file-based skill из `.orchestra/skills/` |
+| `--image <path>` | Вложение изображения к user message (multimodal LLM); repeatable |
+| `--profile fast\|precision` | Adaptive execution presets |
+| `--output-patch [path]` | Экспорт unified `.patch` без записи в workspace |
+| `--allow-web` | Разрешить `webfetch` / `websearch` |
+| `--allow-browser` | Разрешить `browser.*` (Playwright MCP) |
 | `--pipeline` | Многоагентный пайплайн Investigator → Coder → Critic |
 | `--pipeline-attempts N` | Лимит циклов Coder ↔ Critic |
 | `--trace-id <id>` | Префетч runtime-evidence из CKG для пайплайна |
-| `--allow-exec` | Разрешить tool `exec.run` (по умолчанию запрещён) |
+| `--allow-exec` | Разрешить `bash` / `exec.run` (по умолчанию запрещён) |
 | `--git-strict` | Падать если репозиторий грязный |
 | `--git-commit` | Создать коммит после применения (нужен `--apply`) |
 | `--debug` | Метрики и подробные логи |
-| `--stream` | Стримить токены в stdout (в pipe/CI); в TTY токены идут на stderr автоматически |
+| `--stream` | Стримить токены в stdout (в pipe/CI); в TTY — на stderr |
 
 LLM всегда ходит через SSE (`CompleteStream`); `OnEvent` управляет только отображением.
 Подробнее: `docs/architecture/streaming.md`.
@@ -92,6 +112,27 @@ Smoke-test провайдера LLM. Шлёт минимальный запро�
 content:"ping"}]`), без tool-defs. Замеряет латентность, парсит код ошибки
 из сообщения. Результат пишется в `.orchestra/llm_ping_result.json`.
 
+### 1.7. Дополнительные CLI-команды
+
+Полная сводка — [`tools-status.md`](./tools-status.md). Кратко:
+
+| Команда | Назначение |
+|---|---|
+| `orchestra skills list\|show\|install\|uninstall` | File-based skills (`~/.orchestra/skills/`, `.orchestra/skills/`) |
+| `orchestra mcp list-tools` | Introspect MCP-серверов из конфига |
+| `orchestra workflow list\|show\|run` | YAML-workflows из `.orchestra/workflows/` |
+| `orchestra model select\|status` | Выбор модели LM Studio + `num_ctx` в `.orchestra.yml` |
+| `orchestra lsp list\|status\|doctor\|ensure\|upgrade` | Управление language servers |
+| `orchestra ckg embed` | Эмбеддинги CKG для `semantic_search` |
+| `orchestra repo-map` | Repo map для промпта (CKG snapshot) |
+| `orchestra usage` | Статистика токенов последних прогонов |
+| `orchestra instrument [dir]` | Авто-инструментация OTel для проекта |
+| `orchestra auth list\|set-key` | API-ключи провайдеров (E2 lite) |
+| `orchestra session list\|export\|import` | Бэкап/перенос сессий (`orchestra.session.v1`) |
+| `orchestra worktree list\|add\|remove\|prune\|path` | Git worktrees под `.orchestra/worktrees/` (E3) |
+
+> **Нет** отдельного `orchestra chat` REPL и **нет** `orchestra daemon` — multi-turn UX через TUI / VS Code (`session.*`).
+
 ### 1.8. `orchestra runtime ingest <file>`
 Загружает OTel JSON-трейс в SQLite-хранилище CKG (`.orchestra/ckg.db`),
 связывает spans с узлами графа (Sub-project 2, Runtime Observability Bridge).
@@ -119,47 +160,58 @@ content:"ping"}]`), без tool-defs. Замеряет латентность, �
 
 ## 2. Режимы агента
 
-Режим выбирается флагом `--mode` команды `apply`, либо параметром в
-`agent.run` через JSON-RPC. Реализация — `internal/agent/agent.go` (константы
-`ModeBuild/ModePlan/ModeExplore`) и `internal/tools/registry.go::ListToolsForMode`.
+Authoritative описание каждого режима — [`modes.md`](./modes.md). Здесь — краткая карта.
 
-### 2.1. `build` (по умолчанию)
-Полный набор инструментов: чтение, запись, edit, exec (если разрешён),
-sub-tasks, todo, plan_enter. Это «рабочий» режим — агент пишет код.
+Режим задаётся `--mode` в `apply`, `mode` в `agent.run` / `session.message`, или
+именем кастомного agent из `agents:` в `.orchestra.yml` (+ RPC `agents.*`).
 
-Доступные tools:
-`fs.list`, `fs.read`, `fs.glob`, `fs.write`, `fs.edit`,
-`search.text`, `code.symbols`, `explore_codebase`, `runtime.query`,
-`todo.write`, `todo.read`, `plan_enter`,
-`exec.run` (опционально), `task.spawn|wait|cancel` (если включён
-`SubtaskRunner`), `question` (если есть `QuestionAsker`).
+Реализация: `internal/agent/` (`Mode*`), `internal/tools/registry.go::ListToolsForMode`.
 
-### 2.2. `plan` (read-only анализ)
-Запись запрещена везде, **кроме `.orchestra/plan.md`** — это
-жёстко проверяется в `agent.go:441` (`Plan-mode write guard`). `fs.edit`
-заблокирован полностью; `fs.write` пропускается только для `plan.md`.
-Вместо `plan_enter` агент видит `plan_exit` — единственный способ выйти из
-режима. Реализован в недавнем коммите `016b459`.
+### 2.1. Top-level режимы (Tab / `--mode`)
 
-`plan_exit` спрашивает пользователя через `QuestionAsker`: переключиться ли
-в `build` для применения. Если да — агент возвращает `Result.SwitchToBuild=true`,
-и вызывающий код перезапускает агент в режиме `build` с флагом
-`JustSwitchedFromPlan`, который инжектит одноразовый reminder.
+| Режим | Назначение |
+|---|---|
+| `build` (default) | Полный цикл: read + write/edit + tools |
+| `plan` | Read-only анализ; write только в `.orchestra/plans/*.md`; выход через `plan_exit` |
+| `explore` | Read-only subagent (child через `task`) |
+| `ask` | Read-only Q&A по коду |
+| `debug` | Root cause + точечный фикс |
+| `architecture` | Архитектурный обзор без правок |
+| `orchestra` | Lead-режим: делегирование через `task` / `worker` |
+| `agent` | Alias orchestration surface (см. `modes.md`) |
 
-Используется для безопасного исследования кодовой базы и составления
-плана-документа без риска что-либо испортить.
+### 2.2. Child / internal режимы
 
-### 2.3. `explore` (subagent для поиска)
-Минимальный набор только для чтения: `fs.list`, `fs.read`, `fs.glob`,
-`search.text`, `code.symbols`, плюс `task.result` для сообщения родителю.
-Не пишет, не выполняет команды, не порождает дальнейшие subtasks.
-Используется как ребёнок в `task.spawn`.
+| Режим | Назначение |
+|---|---|
+| `general` | Универсальный child: read+write, завершение через `task_result` |
+| `worker` | Исполнитель с `tier` (fast/precision) для Lead |
+| `compaction` | Internal: сжатие истории (`session.compact`, auto-threshold) |
+| `title`, `summary` | Internal: заголовок сессии / autosummary в memory |
 
-### 2.4. Скрытые служебные роли (через `pipeline`, не отдельный режим)
-В пайплайне (`internal/pipeline/pipeline.go`):
-- **Investigator** — собирает evidence (read-only + `runtime.query`);
-- **Coder** — пишет патчи (build-режим, всегда dry-run внутри);
-- **Critic** — проверяет результат, может развернуть в новый цикл.
+### 2.3. `build` — инструменты (короткие имена LLM)
+
+`ls`, `read`, `glob`, `write`, `edit`, `grep`, `symbols`, `explore`, `runtime_query`,
+`todowrite`, `todoread`, `bash` (если `--allow-exec`), `task` + spawn/wait/cancel
+(если SubtaskRunner), `question`, LSP (`lsp.*`), git read-only + mutating (exec-gated),
+`gh.pr.*` / `gh.issue.*`, `webfetch`/`websearch` (`--allow-web`), `skill_invoke`,
+MCP tools (`mcp:<server>:<tool>`), browser.* (`--allow-browser`).
+
+Полный per-tool статус: [`tools-status.md`](./tools-status.md).
+
+### 2.4. `plan` — ограничения
+
+Запись запрещена везде, **кроме `.orchestra/plans/*.md`** (и legacy `.orchestra/plan.md`).
+`edit` заблокирован; `write` пропускается только для plan-файла. Вместо `plan_enter`
+агент видит `plan_exit`. При одобрении пользователя core перезапускает прогон в `build`
+с `JustSwitchedFromPlan`.
+
+### 2.5. Pipeline-роли (не отдельные Tab-режимы)
+
+В `--pipeline` (`internal/pipeline/pipeline.go`):
+- **Investigator** — read-only + `runtime.query`;
+- **Coder** — build, dry-run внутри;
+- **Critic** — review, цикл Coder ↔ Critic.
 
 ---
 
@@ -175,12 +227,12 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 | `build` | ✅ primary | ✅ default | Совпадает |
 | `plan` | ✅ primary | ✅ `--mode plan` | Совпадает по сути; в OpenCode переключение по `Tab`, у нас — флагом |
 | `explore` | ✅ subagent | ✅ Mode `explore` (только как child) | Совпадает |
-| `general` | ✅ subagent | ❌ | Нет универсального «делай-всё-в-параллели» субагента — есть только `task.spawn` с произвольной целью |
-| `compaction` | ✅ hidden | ❌ | Нет авто-сжатия истории; только `truncateMessages` по байтовому бюджету |
-| `title` | ✅ hidden | ❌ | Нет автогенерации заголовков сессии |
-| `summary` | ✅ hidden | ❌ | Нет автосаммари |
-| Кастомные агенты в конфиге | ✅ (`cfg.agent`) | ❌ | OpenCode позволяет описать агента в конфиге; у нас режимы захардкожены |
-| Permission-rules per tool/glob | ✅ | ⚠️ частично | У нас только `exec.allow/deny` + write-guard для plan |
+| `general` | ✅ subagent | ✅ `task` + `subagent_type: general` | Параллельный child с read/write |
+| `compaction` | ✅ hidden | ⚠️ internal + `session.compact` | Нет OpenCode-style auto-compaction в TUI; есть threshold + ручной RPC |
+| `title` | ✅ hidden | ⚠️ internal | Заголовки сессий — частично (не полный UX OpenCode) |
+| `summary` | ✅ hidden | ⚠️ internal + `auto_summary_memory` | Autosummary в project memory после длинных turn'ов |
+| Кастомные агенты в конфиге | ✅ (`cfg.agent`) | ✅ `agents:` в `.orchestra.yml` + RPC `agents.*` | Свой prompt, tools[], model, provider |
+| Permission-rules per tool/glob | ✅ allow/ask/deny | ⚠️ `permissions.rules` allow/deny | Нет интерактивного `ask` в CLI; deny/allow по tool+glob |
 
 ### 3.2. CLI-команды
 
@@ -190,19 +242,18 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 | Headless server | `opencode serve` | ✅ `orchestra core` (stdio) + `--http` |
 | Один-шот запуск | `opencode run <prompt>` | ✅ `orchestra apply` |
 | Интерактивный chat | TUI | ✅ `orchestra` (Bubbletea TUI) |
-| Управление провайдерами | `opencode providers`, `models`, `auth` | ❌ конфигурируется только через `.orchestra.yml` |
-| Импорт/экспорт сессий | `import`, `export` | ❌ |
-| GitHub-интеграция | `opencode github`, `pr` | ❌ |
-| MCP | `opencode mcp` (CLI команды управления) | ⚠️ есть `internal/mcp`, но без отдельной CLI |
+| Управление провайдерами | `opencode providers`, `models`, `auth` | ⚠️ `.orchestra.yml` `providers:` + `--provider` + RPC `runtime.*`; `orchestra model select` (LM Studio) |
+| Импорт/экспорт сессий | `import`, `export` | ✅ `orchestra session export/import` |
+| GitHub-интеграция | `opencode github`, `pr` | ⚠️ tools `gh.pr.*`, `gh.issue.*` + `git.*` (не отдельный GitHub CLI) |
+| MCP | `opencode mcp` | ⚠️ `orchestra mcp list-tools` + RPC `mcp.*`; config in `.orchestra.yml` |
 | Веб-консоль / Console | `opencode web`, `console` | ❌ |
 | Удалённый share | `share` | ❌ |
-| Git worktrees | первоклассно (`worktree/`) | ❌ |
-| LSP-интеграция в tools | `tool/lsp.ts` | ✅ `lsp.*` (`internal/tools/toolslsp/`) |
-| WebFetch/WebSearch | ✅ | ✅ `internal/tools/web/` |
+| Git worktrees | первоклассно (`worktree/`) | ✅ `orchestra worktree`, `git.worktree.*`, `--apply --worktree` |
+| LSP-интеграция в tools | `tool/lsp.ts` | ✅ `lsp.*` + `orchestra lsp` CLI |
+| WebFetch/WebSearch | ✅ | ✅ `--allow-web` |
 | Skills | ✅ | ✅ `orchestra skills`, `skill_invoke`, `~/.orchestra/skills/` |
-| MCP CLI | `opencode mcp` | ⚠️ `orchestra mcp list-tools`; config in `.orchestra.yml` |
 | Auto-upgrade | `opencode upgrade` | ❌ |
-| Stats / heap-debug | `stats`, `heap` | частично через `metrics.go` |
+| Stats / heap-debug | `stats`, `heap` | ⚠️ `orchestra usage`, debug metrics |
 | **CKG (Code Knowledge Graph)** | ❌ | ✅ `orchestra ckg-ui`, `runtime ingest` |
 | **Runtime Observability Bridge** | ❌ | ✅ — наша уникальная фича |
 | **Eval-харнес** | ❌ (есть тесты, не CLI) | ✅ `orchestra eval` |
@@ -211,16 +262,14 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 
 **Что у OpenCode есть, а у нас нет** (актуальный список «дыр», 2026-08):
 
-1. **Compaction/title/summary** — авто-сжатие истории, заголовки сессий (у нас partial compact в agent).
-2. **Кастомные агенты в `cfg.agent`** — описать роль через конфиг без правки кода.
-3. **Permission ruleset per tool + glob** — fine-grained `allow/ask/deny` (у нас частично: exec, plan write-guard).
-4. **Worktree-first** — встроенное управление git worktrees.
-5. **Multi-provider auth CLI** (`opencode auth`) — у нас только `.orchestra.yml`.
-6. **Plugins SDK** — у нас skills + MCP, не general plugins.
-7. **Web console / remote share** — нет.
-8. **Auto-upgrade CLI** — нет.
+1. **Интерактивный permission `ask`** — fine-grained allow/ask/deny в момент действия (`ctx.ask`); у нас `permissions.rules` + глобальные gates.
+2. **Multi-provider auth CLI** (`opencode auth`) — у нас `orchestra auth set-key` + конфиг + RPC runtime, без OAuth-flow CLI.
+3. **Plugins SDK** — у нас skills + MCP, не general plugins.
+4. **Web console / remote share** — нет.
+5. **Auto-upgrade CLI** — нет.
+6. **9-strategy forgiving edit** — ✅ 9-pass (fuzzy-block + double-anchor); без multi-occurrence replace-all.
 
-> TUI, LSP-tools, WebFetch/WebSearch, GitHub tools, eval, pipeline — **у нас есть**. См. §1 и `docs/architecture/paths.md`.
+> TUI, LSP, WebFetch/WebSearch, GitHub tools, skills, MCP, eval, pipeline, attachments — **у нас есть**. См. §1, [`tools-status.md`](./tools-status.md), [`architecture/paths.md`](./architecture/paths.md).
 
 **Что у нас есть, а у OpenCode нет:**
 1. **CKG** (Code Knowledge Graph) — символьный граф проекта в SQLite.
@@ -233,51 +282,27 @@ sub-tasks, todo, plan_enter. Это «рабочий» режим — агент
 
 ### 3.3. Инструменты агента — именование
 
-В моём предыдущем сообщении мы выяснили: то, что я в разделе 1 описал как
-«CLI-команды», и то, что агент вызывает через `tool_call` — это два разных
-слоя. Посмотрим, как они называются у нас и у OpenCode, и какой из подходов
-объективно лучше.
+LLM видит **короткие имена** (Claude Code / Cursor convention). Canonical FQN —
+в `Runner.Call`. Сводка: [`tools-status.md`](./tools-status.md). Короткие алиасы — default (ToolsVersion 3).
 
-| Орчестра (`internal/tools/registry.go`) | OpenCode (`packages/opencode/src/tool/<name>.ts`) | Назначение |
-|---|---|---|
-| `fs.read` | `read` | прочитать файл |
-| `fs.list` (+ pattern) | `glob` | листинг файлов / маски |
-| `search.text` | `grep` | regex-поиск в содержимом |
-| `code.symbols` | `lsp` (definitions/references/hover) | символьный поиск |
-| `exec.run` | `bash` | shell-команды |
-| внешний патч `file.search_replace` | `edit` | прицельная замена |
-| внешний патч `file.unified_diff` | `apply_patch` | unified diff |
-| внешний патч `file.write_atomic` | `write` | полная перезапись |
-| `agent.question` | `question` | уточняющий вопрос пользователю |
-| `runtime.query` | — | запрос к Runtime Observability Bridge |
-| `explore_codebase` | `task` | делегирование под-агенту |
-| `todo` | `todowrite` (+ `todo` структура) | TODO-лист сессии |
-| — | `webfetch`, `websearch` | сеть |
-| — | `skill` | загрузка скилла |
-| — | `plan_exit` | выход из plan-режима (у нас — флаг режима) |
-
-**Кто называет лучше?**
-
-OpenCode: короткие, одно-словные, совпадают с конвенцией Claude Code / Cursor /
-Cline. LLM такие имена уже видели в обучающей выборке десятки тысяч раз —
-first-shot tool-calling точнее. Минусы: `bash` вводит в заблуждение под
-Windows (по факту запускается `cmd.exe`/`pwsh`), `edit` неоднозначно (это
-search/replace или diff?), `write` по умолчанию деструктивно перезаписывает.
-
-Orchestra: namespaced (`fs.*`, `search.*`, `code.*`, `exec.*`, `agent.*`,
-`runtime.*`). Когда инструментов будет 30-50, namespace спасает от коллизий
-и позволяет легко делить permission-наборы по неймспейсам. Минусы: точка в
-имени не разрешена в OpenAI tool-name regex (`^[a-zA-Z0-9_-]+$`), мы фактически
-конвертируем `fs.list` → `fs_list` на стыке, что добавляет один шаг
-рассинхронизации; LLM-ы хуже узнают эти имена «из коробки».
-
-**Вывод**: для тулов, которые видит модель, имена OpenCode объективно
-выгоднее (выше first-shot accuracy). Наша namespaced-схема лучше для
-внутреннего API и масштабирования. Разумный путь — оставить namespaced
-имена внутри (`internal/tools`), но в `ListToolsForMode` отдавать LLM
-«короткие» алиасы (`read`, `glob`, `grep`, `bash`, `edit`, `apply_patch`,
-`write`, `question`, `task`). Тонкий compatibility-слой на регистре, без
-переписывания логики.
+| Orchestra (LLM) | Canonical (Runner) | OpenCode | Назначение |
+|---|---|---|---|
+| `read` | `fs.read` | `read` | файл + line numbers + `file_hash` |
+| `ls` | `fs.list` | — | листинг |
+| `glob` | `fs.glob` | `glob` | маски файлов |
+| `grep` | `search.text` | `grep` | regex (rg fallback) |
+| `symbols` | `code.symbols` | `lsp` (частично) | символы / CKG |
+| `bash` | `exec.run` | `bash` | shell |
+| `edit` | `fs.edit` | `edit` | search-and-replace |
+| `write` | `fs.write` | `write` | перезапись |
+| `question` | `agent.question` | `question` | вопрос пользователю |
+| `runtime_query` | `runtime.query` | — | Runtime Bridge |
+| `task` | `explore_codebase` / spawn | `task` | subagent |
+| `todowrite` | `todo.write` | `todowrite` | TODO |
+| `webfetch`, `websearch` | `web.*` | same | сеть |
+| `skill_invoke` | `skill.invoke` | `skill` | skills |
+| `plan_exit` | `plan.exit` | `plan_exit` | выход из plan |
+| `lsp.*` | `lsp.*` | via `lsp.ts` | LSP tools |
 
 ### 3.4. Инструменты агента — реализация
 
@@ -296,57 +321,40 @@ Orchestra: namespaced (`fs.*`, `search.*`, `code.*`, `exec.*`, `agent.*`,
 попадают обратно в ответ модели как «LSP errors detected, please fix».
 
 **Orchestra (`internal/tools/fs/edit.go` + `patch/resolver/external_patches.go`)**:
-строгий контракт. `search` должен встречаться в файле ровно один раз. Если
-ноль вхождений — `StaleContent`; если больше одного — `AmbiguousMatch`.
-Хард-фейл, без fuzzy-fallback. Перед записью проверяется `file_hash` против
-зачитанной версии. Если файл был модифицирован параллельно — снова
-`StaleContent`.
+three-pass matching (exact → `lineTrimmedFind` → `indentFlexibleFind`), затем
+строгий контракт уникальности. Ноль вхождений — `StaleContent`; больше одного —
+`AmbiguousMatch`. Обязательный `file_hash` перед записью. После `edit`/`write`
+LSP-диагностика возвращается в tool result и инжектится в history как
+`LSP_ERRORS` hint (`internal/agent/tool_dispatch.go`).
 
 | Критерий | OpenCode | Orchestra |
 |---|---|---|
-| Прощает форматирование LLM | ✅ (9 стратегий) | ❌ (строго) |
-| First-shot success rate | выше | ниже |
-| Риск «фуззи в чужой блок» | ненулевой (Levenshtein@0.3) | 0 |
+| Прощает форматирование LLM | ✅ (9 стратегий) | ⚠️ (3-pass, не 9) |
+| First-shot success rate | выше | средний |
+| Риск «фуззи в чужой блок» | ненулевой (Levenshtein@0.3) | 0 (после match) |
 | Per-file lock | ✅ Semaphore | ❌ (один процесс, atomic write) |
-| Hash-проверка устаревания | ⚠ только «обязан был Read раньше в сессии» | ✅ обязательный `file_hash` параметр |
-| LSP-фидбэк после правки | ✅ | ❌ (есть CKG, но не в feedback-loop) |
-| Permission-prompt в момент edit | ✅ | ❌ (только глобальный `--apply`) |
+| Hash-проверка устаревания | ⚠ session Read-gate | ✅ обязательный `file_hash` |
+| LSP-фидбэк после правки | ✅ | ✅ (inject + diag fingerprint streak) |
+| Permission-prompt в момент edit | ✅ `ctx.ask` | ⚠️ `permissions.rules` + `--apply` |
 
-Здесь нельзя сказать «у одного лучше» — это **компромисс**. OpenCode
-ориентирован на то, чтобы агент не зацикливался из-за пропущенного пробела;
-Orchestra — на то, чтобы патч либо лёг точно, либо вернул понятный диагностик
-до записи. Для CI/eval-сценариев (детерминизм важнее) — наш подход; для
-интерактивной работы — их.
-
-**Что стоит позаимствовать**: первые две-три forgiving-стратегии
-(`LineTrimmed`, `IndentationFlexible`) — добавить как опциональный
-второй проход в резолвере, если строгий поиск дал `StaleContent`.
-Это сократит число «ребоунсов» к LLM, не теряя гарантий — `file_hash`
-по-прежнему отсекает реальные конфликты.
+Компромисс: OpenCode прощает больше ошибок форматирования; Orchestra —
+детерминизм + `file_hash` + audit. Three-pass резолвер уже закрывает типичные
+whitespace/indent промахи.
 
 #### Read
 
 | Критерий | OpenCode | Orchestra |
 |---|---|---|
-| Префикс номеров строк в выдаче | ✅ `1: foo` | ❌ |
-| Image / PDF как attachments | ✅ | ❌ |
+| Префикс номеров строк в выдаче | ✅ `1: foo` | ✅ (`addLineNumbers` в `fs.read`) |
+| Image / PDF attachments | ✅ | ✅ v13: `apply --image`, TUI `/attach`, RPC attachments |
 | Хеш-возврат для anti-staleness | ❌ | ✅ |
 | Truncation длинных строк | 2000 символов | по байтам |
 
-Префикс номеров — мелочь, но **сильно** улучшает следующий `edit`: модель
-ссылается на строки, а не угадывает их. Стоит прикрутить нам тоже (через
-флаг ответа, чтобы не ломать существующих потребителей).
-
 #### Glob / Grep
 
-OpenCode оборачивает `ripgrep` (`Ripgrep.Service` из `@opencode-ai/core`) —
-быстрее на крупных репах, сортировка по mtime «из коробки». У нас —
-go-native walk + кастомный glob-матчер (поддерживает `**`). Без внешних
-зависимостей, работает где угодно, но на репозитории в десятки тысяч файлов
-будет медленнее.
-
-Идея: при наличии `rg` в PATH — использовать его, иначе fallback на
-go-native. У нас уже есть `internal/cli/search.go`, можно поднять туда же.
+`grep` / `search.text` автоматически использует `rg` при наличии в PATH
+(`internal/search/`), иначе go-native. OpenCode быстрее на очень крупных monorepo
+за счёт Ripgrep service + mtime sort из `@opencode-ai/core`.
 
 #### Bash / Exec
 
@@ -356,9 +364,9 @@ OpenCode (`tool/bash.txt`, 119 строк): persistent shell session, `workdir`
 git-workflow** (как делать commit, PR, не использовать `--no-verify`, и т.д.) —
 фактически кусок системного промпта спрятан в `description`.
 
-Orchestra (`internal/tools/exec.go`, 215 строк): one-shot exec, hard timeout,
-output cap, обязательный `--allow-exec`. Никаких git-инструкций в
-description нет.
+Orchestra (`internal/tools/exec/`): one-shot `bash` + optional background
+helpers (`bash_background`, `bash_output`, `bash_kill`), hard timeout, output cap,
+`--allow-exec`. Отдельные `git.*` / `gh.*` tools вместо git-инструкций в bash description.
 
 Здесь у нас чище. OpenCode-овский подход «зашить guidelines в description
 тула» — антипаттерн: эти инструкции релевантны контексту (нужно ли вообще
@@ -397,58 +405,39 @@ OpenCode так не умеет в принципе — у них нет «пл�
 архитектурная фишка, и в UML она выделена не зря (см. `architecture-uml.md`,
 раздел 4 и 6).
 
-#### LSP
+#### LSP + CKG
 
-OpenCode имеет `tool/lsp.ts` + интеграцию в `edit.ts` (диагностика после
-правки). Мы — нет. У нас вместо этого CKG + Runtime Observability Bridge.
-Это **разные ставки**:
-
-- LSP — живой и точный, но локальный для языка и привязан к процессу
-  language-server'а.
-- CKG — холодный (требует индексации), но кросс-языковой и кросс-репозиторный,
-  и его легко связывать с runtime-данными (трейсами, ошибками).
-
-Не «лучше / хуже». Скорее: на горизонте 6 мес. стоит добавить LSP-тул как
-**дополнение** к CKG — для feedback-loop'а сразу после edit'ов. Но не
-вместо CKG.
+OpenCode: `tool/lsp.ts` + post-edit diagnostics. Orchestra: **`lsp.*` tools**
+(`internal/tools/toolslsp/`), auto-inject `LSP_ERRORS` после `edit`/`write`,
+**плюс** CKG + Runtime Observability Bridge. LSP — feedback loop; CKG — уникальный
+static+runtime слой; оба coexist.
 
 #### Сводная таблица: «у кого реализация выигрывает»
 
 | Аспект | Победитель | Почему |
 |---|---|---|
-| Forgiving edit (whitespace/indent) | OpenCode | 9 fallback-стратегий |
-| Per-file локирование | OpenCode | Semaphore из `effect` |
-| Permission в момент действия | OpenCode | `ctx.ask` интерактив |
-| LSP feedback после правки | OpenCode | replan по диагностике |
-| Skill для UX чтения файла (нумерация строк) | OpenCode | LLM проще ссылаться |
-| ripgrep по умолчанию | OpenCode | скорость на крупных репах |
-| Image/PDF в `read` | OpenCode | мульти-модальность |
+| Forgiving edit (whitespace/indent) | OpenCode | 9 vs 3-pass |
+| Per-file локирование | OpenCode | Semaphore |
+| Permission в момент действия | OpenCode | `ctx.ask` |
+| LSP feedback после правки | ≈ parity | оба inject diagnostics |
+| Line numbers в `read` | ≈ parity | оба |
+| ripgrep | ≈ parity | rg auto-fallback |
+| Image/PDF attachments | ≈ parity | v13 + TUI `/attach` |
 | **Двухслойная архитектура патчей** | **Orchestra** | Replayability, аудит, типизация |
 | **`file_hash` как обязательный contract** | **Orchestra** | Hard-проверка устаревания |
 | **Чистота `exec`** | **Orchestra** | Без git-промпта в description |
 | **Детерминизм edit'а** | **Orchestra** | 0 шансов «фуззи в чужой блок» |
 | **Plan как самостоятельный артефакт** | **Orchestra** | `--from-plan` без LLM |
 | **CKG / Runtime Bridge** | **Orchestra** | Уникальная фича |
-| **Намeнование тулов** | **OpenCode** | LLM-конвенция, выше accuracy |
-| Pipeline Investigator→Coder→Critic | Orchestra | Архитектурный уровень, не тул |
-| Compaction/title/summary | OpenCode | UX-фичи поверх агента |
+| **Короткие имена тулов** | ≈ parity | ToolsVersion 3 |
+| Pipeline Investigator→Coder→Critic | Orchestra | Архитектурный уровень |
+| Compaction/title/summary UX | OpenCode | richer session UX |
 
-**Итог**: OpenCode выигрывает на UX-слое (forgiving edit, ripgrep, LSP-фидбэк,
-имена). Orchestra — на архитектурном (две-слойные патчи, контрактные хеши,
-plan как объект, CKG). Если совсем грубо: они дальше «вглубь UX», мы дальше
-«вглубь корректности и аудита». Ни у кого нет «всего» — это разные ставки.
+**Итог (2026-08):** паритет по tool UX (aliases, LSP loop, rg, line numbers,
+attachments). Orchestra впереди по patch architecture, `file_hash`, plan replay,
+CKG/Runtime. OpenCode — forgiving edit depth, interactive permissions, worktrees.
 
-**Топ-5 заимствований — ВСЕ ЗАКРЫТЫ ✅** (см. CHANGELOG за 2026-05):
-
-1. ✅ **Короткие алиасы тулов** — `internal/tools/aliases.go`, ToolsVersion 3.
-2. ✅ **LineTrimmed + IndentationFlexible fallback** в резолвере (`patch/resolver/external_patches.go`, three-pass matching).
-3. ✅ **Префикс номеров строк** в `fs.read` — возвращается в response.
-4. ✅ **ripgrep-detection** в `search.text` — авто-fallback на `rg` если в PATH (`internal/search/`).
-5. ✅ **LSP-тул** — 5 функций (`lsp.definition/references/hover/diagnostics/rename`); диагностика авто-инжектится в history после `edit`/`write`.
-
-**Competitive gap roadmap 1–6 (2026-05) — ВСЕ ЗАКРЫТЫ ✅**: ripgrep, GitHub tools, LSP diagnostics, MCP-CLI (`orchestra mcp list-tools`), multi-provider auth (`providers:` map + `--provider` флаг + per-agent provider), skills (CLI `--skill`/`skills list|show` + LLM-invokable `skill_invoke` + `$ARGUMENTS` + user-global `~/.orchestra/skills/`).
-
-Compare-таблицы выше написаны до закрытия roadmap'ов — на момент 2026-05-18 пункты «ripgrep по умолчанию», «LSP feedback после правки», «Skill для UX чтения файла», «Forgiving edit» больше не являются преимуществом OpenCode. Двухслойная архитектура патчей, `file_hash` контракт, plan-as-artefact, CKG/Runtime Bridge — по-прежнему уникальны для Orchestra.
+> Исторические roadmap-закрытия (2026-05): см. CHANGELOG. Таблицы §3 синхронизированы с кодом на 2026-08-10.
 
 ---
 
@@ -468,7 +457,7 @@ sequenceDiagram
     participant LLM as LLM (OpenAI-compat)
     participant Ag as agent.Agent
     participant Tools as tools.Runner
-    participant Res as resolver
+    participant Res as patch/resolver
     participant FS as Project FS
 
     U->>CLI: orchestra apply "<query>"
@@ -477,7 +466,7 @@ sequenceDiagram
     CLI->>Ag: New(llmClient, validator, tools, opts{Mode, Apply, …})
     CLI->>Ag: Run(ctx, history=nil, query)
     loop steps < MaxSteps
-        Ag->>LLM: Complete(messages + tool_defs)
+        Ag->>LLM: CompleteStream(messages + tool_defs)
         LLM-->>Ag: tool_call OR final
         alt tool_call
             Ag->>Tools: Call(name, input)
@@ -518,7 +507,7 @@ sequenceDiagram
     CLI->>Child: JSON-RPC: agent.run{query, mode, apply}
     Child->>Ag: AgentRun
     loop streaming events
-        Ag->>LLM: Complete(...)
+        Ag->>LLM: CompleteStream(...)
         LLM-->>Ag: chunks
         Ag-->>CLI: notification "agent/event" (tool_call_start, message_delta, done)
     end
@@ -578,13 +567,13 @@ sequenceDiagram
     participant U as User (TTY)
     participant TUI as orchestra TUI
     participant Core as orchestra core (subprocess)
-    participant Agent as agent.run
+    participant Agent as session.message
 
     U->>TUI: orchestra [--apply] [--allow-exec]
     TUI->>Core: spawn + initialize
     loop session
         U->>TUI: prompt / slash commands
-        TUI->>Core: agent.run{query, apply, allow_exec}
+        TUI->>Core: session.message{query, apply, attachments}
         loop streaming
             Core-->>TUI: notification agent/event
             TUI-->>U: live transcript + tool blocks
@@ -606,7 +595,7 @@ sequenceDiagram
 flowchart TD
     S[nextStep] --> P[build system+user prompt<br/>+ todos block + CKG context<br/>+ mode reminder]
     P --> T[truncateMessages<br/>fit MaxPromptBytes]
-    T --> L[llm.Complete or stream]
+    T --> L[llm.CompleteStream]
     L --> N[NormalizeLLM via schema validator]
     N -- invalid --> RETRY[retry up to MaxInvalidRetries<br/>inject VALIDATION_ERROR]
     N -- ok --> SW{step.Type}
@@ -615,7 +604,7 @@ flowchart TD
     POL -- ok --> CALL[tools.Runner.Call]
     CALL -- error --> CB2[CircuitBreaker.RecordToolError]
     CALL -- ok --> APPEND[append tool message<br/>resetToolErrors]
-    SW -- final --> RES[resolver.ResolveExternalPatches]
+    SW -- final --> RES[patch/resolver.ResolveExternalPatches]
     RES -- StaleContent / AmbiguousMatch --> CB3[CircuitBreaker.RecordFinalFailure<br/>inject hint, continue loop]
     RES -- ok --> APP[FSApplyOps dryRun=!Apply]
     APP --> DONE[Result + history]

@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Phase 11 (local model stability)
+
+- **Forgiving edit 7-pass** — `patch/resolver`: passes 4–6 (whitespace/escape/trimmed-boundary) + **BlockAnchor** strict (A2); `strategy` in ambiguous errors.
+- **`orchestra eval`** — column **RESOLVE** (`resolve_failed` from `llm_log.jsonl`); avg summary line.
+- **`permissions.rules` `ask`** — interactive consent for matched tools (edit/write/…) via TUI/IDE `PermissionRequester`.
+- **`orchestra auth list` / `orchestra auth set-key`** — provider API key management (E2 lite).
+- **`orchestra session list|export|import`** — portable session bundles (`orchestra.session.v1`) for backup/transfer (E1).
+- **`orchestra worktree list|add|remove|prune|path`** — orchestra-managed git worktrees under `.orchestra/worktrees/` (E3); agent tools `git.worktree.*`; `orchestra apply --worktree <name>`.
+- **Resolver 9-pass forgiving edit** — passes 8–9: `fuzzy-block` (bounded Levenshtein) + `double-anchor` (E4).
+- **Grep** — default cap 200 matches, sort by file mtime (newer first).
+- **Prompts** — `build-local.txt` / `orchestra.txt`: repo_map → explore before blind grep; Lead delegates broad search to `explore` subagent.
+- **Docs** — `docs/architecture/forgiving-edit.md`, Phase 11 section in `ROADMAP.md`, CKG embed ops in `planner-worker.md`.
+
+### Changed — Phase 11 streaming (C5)
+
+- **Core `agent/event` debounce** — `buildAgentOnEvent` batches consecutive `message_delta` / `reasoning_delta` (~30 ms default) before JSON-RPC notify; tool boundaries flush immediately. Env: `ORCH_STREAM_DEBOUNCE_MS` (`0` = disable).
+
 ### Added — Attachments & vision (protocol v13)
 
 Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.orchestra/attachments/`; RPC `session.message` / `agent.run` param `attachments[]`.
@@ -15,6 +32,7 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 - **`internal/attachments`** — path validation, MIME detection, workspace-safe staging copy.
 - **TUI** — `/attach <path>`, chips in user bubble, persist in session v4 `UIMessage.attachments`.
 - **VS Code extension** (`ui/vscode/`) — drag-drop / picker, open attachment or diff in workspace editor (not webview), LSP install modal, per-file diff review (↑↓ a x Enter), `@`-mention without webview reload.
+- **VS Code Marketplace packaging** — bundled `orchestra` core in `bin/<platform>-<arch>/`; CI workflow `.github/workflows/vscode-vsix.yml` (matrix: win/linux/mac → merge → `.vsix` artifact; optional `VSCE_PAT` publish on tag `vscode-v*`).
 - **Session roundtrip** — `llm.Message` JSON unmarshals multimodal `parts` for reload.
 - **E2E** — `tests/e2e_real_llm/vision_test.go` (gated by `ORCH_E2E_LLM=1`).
 

@@ -40,6 +40,16 @@
 
 **Сегодняшний `build` mode** = монолит (Planner+Worker в одной модели). **Целевое состояние:** пользователь общается с Lead; Lead спавнит Workers; Workers крутятся в semantic dry-run до зелёного LSP или лимита попыток.
 
+### CKG / semantic_search (Phase 11)
+
+Перед широкими задачами Lead (`repo_map`, `semantic_search`, «найди где…»):
+
+```bash
+orchestra ckg embed --rebuild   # индекс эмбеддингов CKG; нужен embed.model в .orchestra.yml
+```
+
+Без индекса `semantic_search` недоступен; Lead должен опираться на `repo_map` → `explore` → `grep`.
+
 ---
 
 ## 3. Роли и ответственность

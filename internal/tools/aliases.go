@@ -40,6 +40,14 @@ type (
 	GitCheckoutResponse = git.GitCheckoutResponse
 	GitPushRequest      = git.GitPushRequest
 	GitPushResponse     = git.GitPushResponse
+	GitWorktreeListRequest   = git.GitWorktreeListRequest
+	GitWorktreeListResponse  = git.GitWorktreeListResponse
+	GitWorktreeAddRequest    = git.GitWorktreeAddRequest
+	GitWorktreeAddResponse   = git.GitWorktreeAddResponse
+	GitWorktreeRemoveRequest = git.GitWorktreeRemoveRequest
+	GitWorktreeRemoveResponse = git.GitWorktreeRemoveResponse
+	GitWorktreePruneRequest  = git.GitWorktreePruneRequest
+	GitWorktreePruneResponse = git.GitWorktreePruneResponse
 	GHPRListRequest     = git.GHPRListRequest
 	GHPRListResponse    = git.GHPRListResponse
 	GHPRListItem        = git.GHPRListItem

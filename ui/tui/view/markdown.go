@@ -5,7 +5,11 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// streamingPlainMaxRunes caps plain-text streaming render cost for very long replies.
+const streamingPlainMaxRunes = 24_000
 
 // glamourCache holds up to glamourCacheMax recently constructed term renderers
 // keyed by word-wrap width. Building a fresh glamour.TermRenderer takes
@@ -44,6 +48,23 @@ func renderMarkdown(text string, width int) string {
 		return text
 	}
 	return strings.TrimSpace(out)
+}
+
+// renderPlainStreamingText renders in-flight assistant prose without glamour.
+// Full markdown runs once when Streaming=false (FinishAssistant).
+func renderPlainStreamingText(text string, width int) string {
+	if width < 10 {
+		width = 10
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) > streamingPlainMaxRunes {
+		text = "…" + string(runes[len(runes)-streamingPlainMaxRunes:])
+	}
+	return lipgloss.NewStyle().Width(width).Render(text)
 }
 
 // acquireGlamour returns a cached renderer for the given word-wrap width,

@@ -67,12 +67,14 @@ func (s *Session) SetCancel(fn context.CancelFunc) { s.cancelFn = fn }
 func (s *Session) ClearCancel() { s.cancelFn = nil }
 
 // Cancel cancels the currently running turn (no-op if idle).
+// Keeps cancelFn non-nil until ClearCancel so IsBusy stays true while the
+// turn is still unwinding (and still holding core.runMu). Clearing it here
+// let a second session.message pass the busy check and deadlock on runMu.
 func (s *Session) Cancel() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cancelFn != nil {
 		s.cancelFn()
-		s.cancelFn = nil
 	}
 }
 
@@ -113,6 +115,16 @@ func (s *Session) SetPending(pending []ops.AnyOp) {
 func (s *Session) TakePending() []ops.AnyOp {
 	out := s.pendingOps
 	s.pendingOps = nil
+	return out
+}
+
+// CopyPending returns a shallow copy of pending ops without clearing. Must be called with lock held.
+func (s *Session) CopyPending() []ops.AnyOp {
+	if len(s.pendingOps) == 0 {
+		return nil
+	}
+	out := make([]ops.AnyOp, len(s.pendingOps))
+	copy(out, s.pendingOps)
 	return out
 }
 

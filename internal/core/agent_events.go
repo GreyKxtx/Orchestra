@@ -64,72 +64,77 @@ func buildAgentOnEvent(notify func(method string, params any), env EventEnvelope
 // buildAgentOnEventWithChild is like buildAgentOnEvent but tags every notification
 // with child scope metadata (task_id, parent_tool_call_id, subagent_type).
 func buildAgentOnEventWithChild(notify func(method string, params any), env EventEnvelope, child *ChildScopeMeta) func(agent.AgentEvent) {
-	return func(ev agent.AgentEvent) {
-		if ev.Stream.Kind == llm.StreamEventExecOutput {
-			notify("exec/output_chunk", mergeAgentEvent(map[string]any{
-				"step":  ev.Step,
-				"chunk": ev.Stream.Content,
-			}, env, child))
-			return
-		}
-		if ev.Stream.Kind == llm.StreamEventPendingOps {
-			var data any
-			if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
-				notify("agent/event", mergeAgentEvent(map[string]any{
-					"step": ev.Step,
-					"type": "pending_ops",
-					"data": data,
-				}, env, child))
-				return
-			}
-		}
-		if ev.Stream.Kind == llm.StreamEventError {
-			msg := ""
-			if ev.Stream.Err != nil {
-				msg = ev.Stream.Err.Error()
-			}
+	emit := func(ev agent.AgentEvent) {
+		emitAgentStreamEvent(notify, env, child, ev)
+	}
+	return wrapStreamDebounce(emit)
+}
+
+func emitAgentStreamEvent(notify func(method string, params any), env EventEnvelope, child *ChildScopeMeta, ev agent.AgentEvent) {
+	if ev.Stream.Kind == llm.StreamEventExecOutput {
+		notify("exec/output_chunk", mergeAgentEvent(map[string]any{
+			"step":  ev.Step,
+			"chunk": ev.Stream.Content,
+		}, env, child))
+		return
+	}
+	if ev.Stream.Kind == llm.StreamEventPendingOps {
+		var data any
+		if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
 			notify("agent/event", mergeAgentEvent(map[string]any{
-				"step":    ev.Step,
-				"type":    string(ev.Stream.Kind),
-				"content": msg,
-				"error":   msg,
+				"step": ev.Step,
+				"type": "pending_ops",
+				"data": data,
 			}, env, child))
 			return
 		}
-		if ev.Stream.Kind == llm.StreamEventStepUsage {
-			var data any
-			if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
-				notify("agent/event", mergeAgentEvent(map[string]any{
-					"step": ev.Step,
-					"type": string(llm.StreamEventStepUsage),
-					"data": data,
-				}, env, child))
-				return
-			}
-		}
-		if ev.Stream.Kind == llm.StreamEventDone {
-			if ev.Stream.Response != nil && ev.Stream.Response.Usage != nil {
-				u := ev.Stream.Response.Usage
-				notify("agent/event", mergeAgentEvent(map[string]any{
-					"step": ev.Step,
-					"type": string(llm.StreamEventStepUsage),
-					"data": map[string]any{
-						"prompt_tokens":     u.PromptTokens,
-						"completion_tokens": u.CompletionTokens,
-						"total_tokens":      u.TotalTokens,
-					},
-				}, env, child))
-			}
+	}
+	if ev.Stream.Kind == llm.StreamEventError {
+		msg := ""
+		if ev.Stream.Err != nil {
+			msg = ev.Stream.Err.Error()
 		}
 		notify("agent/event", mergeAgentEvent(map[string]any{
-			"step":            ev.Step,
-			"type":            string(ev.Stream.Kind),
-			"content":         ev.Stream.Content,
-			"tool_call_id":    ev.Stream.ToolCallID,
-			"tool_call_name":  ev.Stream.ToolCallName,
-			"tool_call_index": ev.Stream.ToolCallIndex,
-			"args_delta":      ev.Stream.ArgsDelta,
-			"diagnostics":     json.RawMessage(ev.Stream.Diagnostics),
+			"step":    ev.Step,
+			"type":    string(ev.Stream.Kind),
+			"content": msg,
+			"error":   msg,
 		}, env, child))
+		return
 	}
+	if ev.Stream.Kind == llm.StreamEventStepUsage {
+		var data any
+		if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
+			notify("agent/event", mergeAgentEvent(map[string]any{
+				"step": ev.Step,
+				"type": string(llm.StreamEventStepUsage),
+				"data": data,
+			}, env, child))
+			return
+		}
+	}
+	if ev.Stream.Kind == llm.StreamEventDone {
+		if ev.Stream.Response != nil && ev.Stream.Response.Usage != nil {
+			u := ev.Stream.Response.Usage
+			notify("agent/event", mergeAgentEvent(map[string]any{
+				"step": ev.Step,
+				"type": string(llm.StreamEventStepUsage),
+				"data": map[string]any{
+					"prompt_tokens":     u.PromptTokens,
+					"completion_tokens": u.CompletionTokens,
+					"total_tokens":      u.TotalTokens,
+				},
+			}, env, child))
+		}
+	}
+	notify("agent/event", mergeAgentEvent(map[string]any{
+		"step":            ev.Step,
+		"type":            string(ev.Stream.Kind),
+		"content":         ev.Stream.Content,
+		"tool_call_id":    ev.Stream.ToolCallID,
+		"tool_call_name":  ev.Stream.ToolCallName,
+		"tool_call_index": ev.Stream.ToolCallIndex,
+		"args_delta":      ev.Stream.ArgsDelta,
+		"diagnostics":     json.RawMessage(ev.Stream.Diagnostics),
+	}, env, child))
 }

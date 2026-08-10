@@ -55,20 +55,26 @@ func TestFillRetryLimits_ProviderAuto(t *testing.T) {
 }
 
 func TestResolveResponseFormat_LocalAutoSchema(t *testing.T) {
-	rf := ResolveResponseFormat(llm.LLMConfig{}, "lmstudio")
+	rf := ResolveResponseFormat(llm.LLMConfig{}, "lmstudio", ResponseFormatLegacyJSON)
 	if rf == nil || rf.Type != "json_schema" || len(rf.Schema) == 0 {
-		t.Fatalf("local auto: got %#v", rf)
+		t.Fatalf("local auto legacy: got %#v", rf)
+	}
+}
+
+func TestResolveResponseFormat_ToolAgentNoAutoSchema(t *testing.T) {
+	if rf := ResolveResponseFormat(llm.LLMConfig{}, "lmstudio", ResponseFormatToolAgent); rf != nil {
+		t.Fatalf("tool agent should not auto json_schema: got %#v", rf)
 	}
 }
 
 func TestResolveResponseFormat_FrontierNoAuto(t *testing.T) {
-	if rf := ResolveResponseFormat(llm.LLMConfig{}, "anthropic"); rf != nil {
+	if rf := ResolveResponseFormat(llm.LLMConfig{}, "anthropic", ResponseFormatLegacyJSON); rf != nil {
 		t.Fatalf("frontier without explicit type: got %#v", rf)
 	}
 }
 
 func TestResolveResponseFormat_ExplicitType(t *testing.T) {
-	rf := ResolveResponseFormat(llm.LLMConfig{ResponseFormatType: "json_object"}, "anthropic")
+	rf := ResolveResponseFormat(llm.LLMConfig{ResponseFormatType: "json_object"}, "anthropic", ResponseFormatToolAgent)
 	if rf == nil || rf.Type != "json_object" {
 		t.Fatalf("explicit json_object: got %#v", rf)
 	}
@@ -76,7 +82,7 @@ func TestResolveResponseFormat_ExplicitType(t *testing.T) {
 
 func TestResolveResponseFormat_LocalOptOut(t *testing.T) {
 	off := false
-	rf := ResolveResponseFormat(llm.LLMConfig{SupportsJSONSchema: &off}, "local")
+	rf := ResolveResponseFormat(llm.LLMConfig{SupportsJSONSchema: &off}, "local", ResponseFormatLegacyJSON)
 	if rf != nil {
 		t.Fatalf("supports_json_schema false should disable auto: got %#v", rf)
 	}

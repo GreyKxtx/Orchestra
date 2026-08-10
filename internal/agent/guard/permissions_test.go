@@ -150,13 +150,21 @@ func TestCheckPermissions(t *testing.T) {
 			wantMatched: false,
 		},
 		{
-			name: "wildcard deny overrides everything with no pattern",
+			name:        "wildcard deny overrides everything with no pattern",
 			rules: []config.PermissionRule{
 				deny("*", ""),
 			},
 			tool:        "read",
 			subject:     "main.go",
 			wantAction:  "deny",
+			wantMatched: true,
+		},
+		{
+			name:        "ask action",
+			rules:       []config.PermissionRule{{Tool: "edit", Pattern: "", Action: "ask"}},
+			tool:        "edit",
+			subject:     "main.go",
+			wantAction:  "ask",
 			wantMatched: true,
 		},
 	}

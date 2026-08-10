@@ -126,7 +126,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 
 	var respFmt *llm.ResponseFormat
-	respFmt = agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg))
+	respFmt = agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
 
 	maxSteps := spec.MaxSteps
 	if maxSteps <= 0 {

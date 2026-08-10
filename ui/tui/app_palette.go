@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,13 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
+
+// maxMentionFiles caps @-mention index size for very large repos (fuzzy still searches all indexed).
+const maxMentionFiles = 12000
+
+var defaultMentionExclude = []string{
+	".git", "node_modules", "dist", "build", ".orchestra", "vendor", "out",
+}
 
 // syncPalette refreshes the slash-palette and mention-palette state to match
 // the current input value. When the input starts with "/" and contains no
@@ -39,9 +47,9 @@ func (a *App) syncMention() {
 		a.mentionActive = false
 		return
 	}
-	// Lazy-load workspace files.
+	// Lazy-load workspace files (full tree, not depth-limited).
 	if a.workspaceFiles == nil && a.cfg.WorkspaceRoot != "" {
-		a.workspaceFiles = listWorkspaceFiles(a.cfg.WorkspaceRoot, 4)
+		a.workspaceFiles = listWorkspaceFiles(a.cfg.WorkspaceRoot, a.cfg.ExcludeDirs)
 	}
 
 	var items []string
@@ -65,36 +73,90 @@ func (a *App) syncMention() {
 	a.mentionActive = len(items) > 0
 }
 
-// listWorkspaceFiles walks root up to maxDepth levels, skipping hidden dirs,
-// and returns relative POSIX paths. Result is capped at 500 entries.
-func listWorkspaceFiles(root string, maxDepth int) []string {
+// listWorkspaceFiles walks the project (no depth cap), honoring exclude_dirs
+// and skipping hidden directories. Returns sorted relative POSIX paths.
+func listWorkspaceFiles(root string, excludeDirs []string) []string {
 	if root == "" {
 		return nil
 	}
+	root = filepath.Clean(root)
+	exclude := make(map[string]struct{}, len(defaultMentionExclude)+len(excludeDirs))
+	for _, d := range defaultMentionExclude {
+		exclude[normalizeExcludeDir(d)] = struct{}{}
+	}
+	for _, d := range excludeDirs {
+		exclude[normalizeExcludeDir(d)] = struct{}{}
+	}
+
 	var files []string
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if relSlash == "." {
+			return nil
+		}
+
 		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
+			name := d.Name()
+			if strings.HasPrefix(name, ".") {
+				return fs.SkipDir
 			}
-			rel, _ := filepath.Rel(root, path)
-			depth := len(strings.Split(rel, string(filepath.Separator)))
-			if depth > maxDepth {
-				return filepath.SkipDir
+			if shouldExcludePath(relSlash, name, exclude) {
+				return fs.SkipDir
 			}
 			return nil
 		}
-		rel, _ := filepath.Rel(root, path)
-		files = append(files, filepath.ToSlash(rel))
-		if len(files) >= 500 {
-			return filepath.SkipDir
+
+		if strings.HasSuffix(path, ".orchestra.bak") {
+			return nil
+		}
+		// Skip files inside excluded path segments (WalkDir may still visit if parent wasn't excluded).
+		if inExcludedTree(relSlash, exclude) {
+			return nil
+		}
+
+		files = append(files, relSlash)
+		if len(files) >= maxMentionFiles {
+			return fs.SkipAll
 		}
 		return nil
 	})
+	sort.Strings(files)
 	return files
+}
+
+func normalizeExcludeDir(d string) string {
+	return strings.Trim(filepath.ToSlash(strings.TrimSpace(d)), "/")
+}
+
+func shouldExcludePath(relSlash, baseName string, exclude map[string]struct{}) bool {
+	if _, ok := exclude[baseName]; ok {
+		return true
+	}
+	if _, ok := exclude[relSlash]; ok {
+		return true
+	}
+	return inExcludedTree(relSlash, exclude)
+}
+
+func inExcludedTree(relSlash string, exclude map[string]struct{}) bool {
+	parts := strings.Split(relSlash, "/")
+	for i := 1; i <= len(parts); i++ {
+		prefix := strings.Join(parts[:i], "/")
+		if _, ok := exclude[prefix]; ok {
+			return true
+		}
+		if _, ok := exclude[parts[i-1]]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // mentionQuery returns the text after @ in the last in-progress @-mention,

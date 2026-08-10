@@ -19,9 +19,33 @@ import type {
   WorkflowStagePayload,
 } from "../protocol/events";
 import { SettingsView } from "./settings";
+import { stripFinalEnvelope, sanitizeAssistantStream, shouldSuppressStreamChunk, looksLikeCorruptedStream, isBenignTurnError } from "./streamSanitize";
+import {
+  buildAssistantProjection,
+  effectiveContextLimit,
+  estimatePromptTokensFromUI,
+  joinAssistantStreamSegments,
+  reasoningFromUIMessage,
+  sumCompletionTokensFromUI,
+  diffFromToolArgs,
+  toolBlocksFromUIMessage,
+  toolStatusFromResult,
+  type TurnToolTracker,
+} from "./turnProjection";
+import { PendingHighlightManager } from "./pendingHighlight";
 
 /** Matches core `attachments.MaxImageBytes` (20 MB). */
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/** Must match webview `send` payload (+ stable id for queue cancel). */
+interface PendingSend {
+  id: string;
+  text: string;
+  mode?: string;
+  profile?: string;
+  allowExec?: boolean;
+  files?: ChatFileRef[];
+}
 
 export class ChatPanel implements vscode.Disposable {
   public static readonly viewType = "orchestra.chat";
@@ -32,9 +56,23 @@ export class ChatPanel implements vscode.Disposable {
   private readonly extensionUri: vscode.Uri;
   private readonly settings: SettingsView;
   private readonly disposables: vscode.Disposable[] = [];
+  /** Streamed assistant text for the active LLM step (reset after each tool batch). */
+  private turnAssistantText = "";
+  /** Committed prose segments before tool blocks within the same user turn. */
+  private turnAssistantSegments: string[] = [];
+  private turnReasoning = "";
+  private readonly turnToolBlocks = new Map<string, TurnToolTracker>();
+  private turnPromptCtx = 0;
+  private turnTokensIn = 0;
+  private turnTokensOut = 0;
+  /** FIFO of user sends while an agent turn is in flight. */
+  private readonly sendQueue: PendingSend[] = [];
+  private sendInFlight = false;
+  /** Prevent repeated auto-cancel on corrupted stream spam. */
   /** Parent dirs of chat attachments outside workspace — added to webview localResourceRoots. */
   private readonly extraResourceRoots: vscode.Uri[] = [];
   private rootsUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly pendingHighlights = new PendingHighlightManager();
 
   constructor(session: CoreSession, extensionUri: vscode.Uri) {
     this.session = session;
@@ -109,6 +147,7 @@ export class ChatPanel implements vscode.Disposable {
       clearTimeout(this.rootsUpdateTimer);
       this.rootsUpdateTimer = undefined;
     }
+    this.pendingHighlights.dispose();
     this.panel?.dispose();
     for (const d of this.disposables) {
       d.dispose();
@@ -230,7 +269,7 @@ export class ChatPanel implements vscode.Disposable {
     this.post({
       type: "contextInfo",
       info: {
-        contextLimit: 128000,
+        contextLimit: effectiveContextLimit(llm.numCtx, llm.contextTokens),
         maxResponseTokens: llm.maxTokens > 0 ? llm.maxTokens : 4096,
         model: health.model || llm.model,
       },
@@ -241,14 +280,24 @@ export class ChatPanel implements vscode.Disposable {
       text: string;
       uiIndex?: number;
       files?: ChatFileRef[];
+      reasoning?: string;
+      toolBlocks?: Array<{
+        id?: string;
+        name: string;
+        argsRaw?: string;
+        status?: string;
+        result?: string;
+        diagnostics?: import("../protocol/events").ToolDiagnosticPayload[];
+      }>;
+      promptCtx?: number;
+      tokensIn?: number;
+      tokensOut?: number;
     }> = [];
+    let restoredPrompt = 0;
+    let restoredCompletion = 0;
+    let restoredEstimated = false;
     for (let idx = 0; idx < view.uiMessages.length; idx++) {
-      const m = view.uiMessages[idx] as {
-        role?: string;
-        text?: string;
-        content?: string;
-        attachments?: Array<{ path?: string; name?: string; kind?: string; ext?: string; mime?: string }>;
-      };
+      const m = view.uiMessages[idx];
       const raw = (m.text || m.content || "").trim();
       const role = (m.role || "assistant").toLowerCase();
       let files: ChatFileRef[] | undefined;
@@ -272,18 +321,64 @@ export class ChatPanel implements vscode.Disposable {
         }
       }
       const text = uiDisplayText(raw);
-      if (text.length > 0 || (files && files.length > 0)) {
+      const reasoning = reasoningFromUIMessage(m);
+      const toolBlocks = toolBlocksFromUIMessage(m).map((t) => {
+        const diff = diffFromToolArgs(t.name, t.args_raw);
+        return {
+          id: t.id,
+          name: t.name,
+          argsRaw: t.args_raw,
+          status: t.status,
+          result: t.result,
+          diagnostics: t.diagnostics,
+          diffBefore: diff?.before,
+          diffAfter: diff?.after,
+        };
+      });
+      if (role === "assistant") {
+        if (typeof m.prompt_ctx === "number" && m.prompt_ctx > 0) {
+          restoredPrompt = m.prompt_ctx;
+        }
+        if (typeof m.tokens_out === "number" && m.tokens_out > 0) {
+          restoredCompletion = m.tokens_out;
+        } else if (typeof m.tokens_in === "number" && m.tokens_in > 0 && restoredPrompt === 0) {
+          restoredPrompt = m.tokens_in;
+        }
+      }
+      const hasTools = toolBlocks.length > 0;
+      const hasReasoning = reasoning.length > 0;
+      if (text.length > 0 || (files && files.length > 0) || hasTools || hasReasoning) {
         history.push({
           role,
           text,
           uiIndex: role === "user" ? idx : undefined,
           files: files?.length ? files : undefined,
+          reasoning: hasReasoning ? reasoning : undefined,
+          toolBlocks: hasTools ? toolBlocks : undefined,
+          promptCtx: role === "assistant" ? m.prompt_ctx : undefined,
+          tokensIn: role === "assistant" ? m.tokens_in : undefined,
+          tokensOut: role === "assistant" ? m.tokens_out : undefined,
         });
       }
     }
     if (history.length > 0) {
       this.post({ type: "history", messages: history });
     }
+    if (restoredPrompt <= 0 && view.uiMessages.length > 0) {
+      restoredPrompt = estimatePromptTokensFromUI(view.uiMessages);
+      restoredEstimated = restoredPrompt > 0;
+    }
+    if (restoredCompletion <= 0 && view.uiMessages.length > 0) {
+      restoredCompletion = sumCompletionTokensFromUI(view.uiMessages);
+    }
+    this.post({
+      type: "stepUsage",
+      usage: {
+        prompt_tokens: restoredPrompt,
+        completion_tokens: restoredCompletion,
+        source: restoredEstimated ? "estimate" : restoredPrompt > 0 ? "restored" : "session",
+      },
+    });
     await this.refreshSessionTabs();
   }
 
@@ -388,11 +483,15 @@ export class ChatPanel implements vscode.Disposable {
           return;
         }
         case "newSession": {
+          this.clearSendQueue();
+          this.resetTurnProjection();
           await this.session.startSession({ forceNew: true });
           await this.refreshHeaderAndHistory();
           return;
         }
         case "openSession": {
+          this.clearSendQueue();
+          this.resetTurnProjection();
           await this.session.startSession({ sessionId: msg.sessionId });
           await this.refreshHeaderAndHistory();
           return;
@@ -462,78 +561,62 @@ export class ChatPanel implements vscode.Disposable {
           return;
         }
         case "send": {
-          const userText = msg.text.trim();
-          const hasFiles = Boolean(msg.files && msg.files.length > 0);
-          if (!userText && !hasFiles) {
+          await this.handleSendRequest({
+            id: crypto.randomUUID(),
+            text: msg.text,
+            mode: msg.mode,
+            profile: msg.profile,
+            allowExec: msg.allowExec,
+            files: msg.files,
+          });
+          return;
+        }
+        case "cancelQueuedSend": {
+          const id = (msg.id || "").trim();
+          if (!id) {
             return;
           }
-          const prepared = hasFiles
-            ? await Promise.all(msg.files!.map((f) => this.prepareAttachmentForSend(f)))
-            : undefined;
-          const echoFiles = prepared
-            ? await Promise.all(prepared.map((f) => this.enrichFileRef(f)))
-            : undefined;
-          this.post({
-            type: "userEcho",
-            text: userText,
-            files: echoFiles,
-          });
-          this.post({ type: "status", status: "running" });
+          const before = this.sendQueue.length;
+          this.sendQueue.splice(
+            0,
+            this.sendQueue.length,
+            ...this.sendQueue.filter((q) => q.id !== id)
+          );
+          if (this.sendQueue.length !== before) {
+            this.postQueueUpdate();
+          }
+          return;
+        }
+        case "cancelTurn": {
+          this.clearSendQueue();
           try {
-            await this.session.maybeSetSessionTitle(
-              userText ||
-                msg.files?.map((f) => f.name).filter(Boolean).join(", ") ||
-                "Attachment"
-            );
-            const apply = msg.apply === true;
-            await this.session.sendMessage(userText, {
-              apply,
-              mode: msg.mode,
-              profile: msg.profile,
-              attachments: prepared,
-            });
-            if (apply) {
-              this.post({ type: "pendingCleared" });
-            }
-            const id = this.session.getSessionId();
-            if (id) {
-              const [view, health] = await Promise.all([
-                this.session.getSession(id),
-                this.session.healthInfo(),
-              ]);
-              this.post({
-                type: "header",
-                sessionId: id,
-                title: view.title || "New chat",
-                model: health.model || view.model || "Model",
-                provider: health.provider,
-              });
-            }
-            this.post({ type: "turnComplete", ok: true });
-            this.post({ type: "status", status: "ready" });
+            await this.session.cancelTurn();
+            this.post({ type: "systemNote", text: "Turn stopped." });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.post({ type: "error", message });
-            this.post({ type: "turnComplete", ok: false });
-            this.post({ type: "status", status: "error", detail: message });
           }
           return;
         }
         case "applyPending": {
           try {
-            const ops = Array.isArray(msg.ops) ? msg.ops : undefined;
-            if (ops && ops.length > 0) {
-              await this.session.applyOps(ops, true);
+            const paths = Array.isArray(msg.paths)
+              ? msg.paths.filter((p): p is string => typeof p === "string" && p.trim() !== "")
+              : undefined;
+            const res = await this.session.applyPending(true, paths);
+            if (res.applied) {
               void vscode.window.showInformationMessage("Orchestra: changes applied");
-              this.post({ type: "pendingCleared" });
-            } else {
-              const res = await this.session.applyPending(true);
-              if (res.applied) {
-                void vscode.window.showInformationMessage("Orchestra: changes applied");
-                this.post({ type: "pendingCleared" });
+              const remaining = res.remainingOps;
+              if (remaining && remaining.length > 0) {
+                this.post({
+                  type: "pendingOps",
+                  payload: { ops: remaining, diff: [], applied: false },
+                });
               } else {
-                void vscode.window.showWarningMessage("Orchestra: no pending changes to apply");
+                this.post({ type: "pendingCleared" });
               }
+            } else {
+              void vscode.window.showWarningMessage("Orchestra: no pending changes to apply");
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -542,7 +625,13 @@ export class ChatPanel implements vscode.Disposable {
           return;
         }
         case "discardPending": {
-          this.post({ type: "pendingCleared" });
+          try {
+            await this.session.discardPending();
+            this.post({ type: "pendingCleared" });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.post({ type: "error", message });
+          }
           return;
         }
         case "permissionReply": {
@@ -575,14 +664,40 @@ export class ChatPanel implements vscode.Disposable {
             return;
           }
           try {
-            const res = await this.session.rewindSession(msg.uiIndex);
+            if (this.sendInFlight) {
+              this.clearSendQueue();
+              await this.session.cancelTurn();
+            }
+            let res: { uiMessages: number; historyMessages: number } | undefined;
+            let lastErr: unknown;
+            for (let attempt = 0; attempt < 8; attempt++) {
+              try {
+                res = await this.session.rewindSession(msg.uiIndex);
+                lastErr = undefined;
+                break;
+              } catch (err) {
+                lastErr = err;
+                const message = err instanceof Error ? err.message : String(err);
+                if (attempt < 7 && /busy/i.test(message)) {
+                  await new Promise((r) => setTimeout(r, 150));
+                  continue;
+                }
+                throw err;
+              }
+            }
+            if (!res) {
+              throw lastErr instanceof Error ? lastErr : new Error("rewind failed");
+            }
             void vscode.window.showInformationMessage(
               `Orchestra: rewound to message (${res.uiMessages} UI msgs)`
             );
+            this.resetTurnProjection();
             await this.refreshHeaderAndHistory();
+            this.post({ type: "pendingCleared" });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.post({ type: "error", message });
+            void vscode.window.showErrorMessage(`Orchestra rewind: ${message}`);
           }
           return;
         }
@@ -630,12 +745,21 @@ export class ChatPanel implements vscode.Disposable {
           if (!fp) {
             return;
           }
-          await this.openSideBySideDiff(
-            fp,
-            msg.before ?? "",
-            msg.after ?? "",
-            msg.focus === true
-          );
+          if (msg.sideBySide === true) {
+            await this.openSideBySideDiff(
+              fp,
+              msg.before ?? "",
+              msg.after ?? "",
+              msg.focus === true
+            );
+          } else {
+            await this.openFileWithChangeHighlights(
+              fp,
+              msg.before ?? "",
+              msg.after ?? "",
+              msg.focus !== false
+            );
+          }
           return;
         }
         case "highlightCode": {
@@ -671,6 +795,243 @@ export class ChatPanel implements vscode.Disposable {
     }
   }
 
+  private resetTurnProjection(): void {
+    this.turnAssistantText = "";
+    this.turnAssistantSegments = [];
+    this.turnReasoning = "";
+    this.turnToolBlocks.clear();
+    this.turnPromptCtx = 0;
+    this.turnTokensIn = 0;
+    this.turnTokensOut = 0;
+  }
+
+  private clearSendQueue(): void {
+    if (this.sendQueue.length === 0) {
+      return;
+    }
+    this.sendQueue.length = 0;
+    this.postQueueUpdate();
+  }
+
+  private queuePreview(item: PendingSend): string {
+    const t = item.text.trim();
+    if (t) {
+      return t.length > 96 ? `${t.slice(0, 93)}…` : t;
+    }
+    const n = item.files?.length || 0;
+    return n > 0 ? `${n} attachment${n === 1 ? "" : "s"}` : "";
+  }
+
+  private postQueueUpdate(): void {
+    this.post({
+      type: "queueUpdate",
+      items: this.sendQueue.map((q) => ({
+        id: q.id,
+        preview: this.queuePreview(q),
+        fileCount: q.files?.length || 0,
+      })),
+    });
+  }
+
+  private async handleSendRequest(item: PendingSend): Promise<void> {
+    const userText = item.text.trim();
+    const hasFiles = Boolean(item.files && item.files.length > 0);
+    if (!userText && !hasFiles) {
+      return;
+    }
+    if (this.sendInFlight) {
+      this.sendQueue.push(item);
+      this.postQueueUpdate();
+      return;
+    }
+    this.sendInFlight = true;
+    let drainOk = true;
+    try {
+      drainOk = await this.runSendTurn(item);
+      while (this.sendQueue.length > 0) {
+        const next = this.sendQueue.shift()!;
+        this.postQueueUpdate();
+        const ok = await this.runSendTurn(next);
+        drainOk = drainOk && ok;
+      }
+    } finally {
+      this.sendInFlight = false;
+      this.postQueueUpdate();
+      this.post({ type: "status", status: drainOk ? "ready" : "error" });
+    }
+  }
+
+  private async runSendTurn(item: PendingSend): Promise<boolean> {
+    const userText = item.text.trim();
+    const hasFiles = Boolean(item.files && item.files.length > 0);
+    const prepared = hasFiles
+      ? await Promise.all(item.files!.map((f) => this.prepareAttachmentForSend(f)))
+      : undefined;
+    const echoFiles = prepared
+      ? await Promise.all(prepared.map((f) => this.enrichFileRef(f)))
+      : undefined;
+    let echoUiIndex: number | undefined;
+    try {
+      const sid = this.session.getSessionId();
+      if (sid) {
+        const view = await this.session.getSession(sid);
+        echoUiIndex = view.uiMessages.length;
+      }
+    } catch {
+      echoUiIndex = undefined;
+    }
+    this.post({ type: "turnStart" });
+    this.post({
+      type: "userEcho",
+      text: userText,
+      files: echoFiles,
+      uiIndex: echoUiIndex,
+    });
+    this.post({ type: "status", status: "running" });
+    this.resetTurnProjection();
+    let ok = true;
+    try {
+      // Clear any leftover busy turn from a previous Stop that didn't unwind.
+      try {
+        await this.session.clearServerBusy();
+      } catch {
+        /* idle */
+      }
+      await this.session.maybeSetSessionTitle(
+        userText ||
+          item.files?.map((f) => f.name).filter(Boolean).join(", ") ||
+          "Attachment"
+      );
+      await this.session.sendMessage(userText, {
+        apply: item.allowExec === true,
+        allowExec: item.allowExec === true,
+        mode: item.mode,
+        profile: item.profile,
+        attachments: prepared,
+      });
+      const id = this.session.getSessionId();
+      if (id) {
+        const [view, health] = await Promise.all([
+          this.session.getSession(id),
+          this.session.healthInfo(),
+        ]);
+        this.post({
+          type: "header",
+          sessionId: id,
+          title: view.title || "New chat",
+          model: health.model || view.model || "Model",
+          provider: health.provider,
+        });
+      }
+      await this.ensureTurnPromptEstimate(id);
+      if (
+        looksLikeCorruptedStream(this.turnAssistantText) &&
+        this.turnToolBlocks.size === 0
+      ) {
+        this.post({ type: "discardAssistantBubble" });
+        this.post({
+          type: "systemNote",
+          text:
+            "Модель вернула некорректный поток вместо вызова edit/write. " +
+            "Попробуйте ещё раз, уточните запрос или смените модель в composer.",
+        });
+      }
+      await this.syncTurnProjection();
+      this.resetTurnProjection();
+    } catch (err) {
+      ok = false;
+      const message = err instanceof Error ? err.message : String(err);
+      if (!isBenignTurnError(message)) {
+        this.post({ type: "error", message });
+      }
+      if (this.turnAssistantText.trim() || this.turnToolBlocks.size > 0) {
+        await this.ensureTurnPromptEstimate();
+        await this.syncTurnProjection();
+      }
+      this.resetTurnProjection();
+    } finally {
+      const queuedNext = this.sendQueue.length > 0;
+      this.post({ type: "turnComplete", ok, queuedNext });
+    }
+    return ok;
+  }
+
+  private currentStreamVisibleText(): string {
+    return sanitizeAssistantStream(stripFinalEnvelope(this.turnAssistantText));
+  }
+
+  /** Finalize streamed prose before tool blocks (matches webview commitPreToolText). */
+  private commitAssistantStreamSegment(): void {
+    const seg = this.currentStreamVisibleText().trim();
+    if (seg) {
+      this.turnAssistantSegments.push(seg);
+    }
+    this.turnAssistantText = "";
+  }
+
+  private assistantVisibleText(): string {
+    return joinAssistantStreamSegments(this.turnAssistantSegments, this.currentStreamVisibleText());
+  }
+
+  private async syncTurnProjection(): Promise<void> {
+    const projection = buildAssistantProjection({
+      text: this.assistantVisibleText(),
+      reasoning: this.turnReasoning,
+      tools: this.turnToolBlocks,
+      promptCtx: this.turnPromptCtx,
+      tokensIn: this.turnTokensIn,
+      tokensOut: this.turnTokensOut,
+    });
+    if (projection) {
+      await this.session.syncUIProjection(projection);
+    }
+  }
+
+  /** Fill prompt_ctx when the provider omits stream usage (common with LM Studio). */
+  private async ensureTurnPromptEstimate(sessionId?: string): Promise<void> {
+    if (this.turnPromptCtx > 0) {
+      return;
+    }
+    const id = (sessionId || this.session.getSessionId() || "").trim();
+    if (!id) {
+      return;
+    }
+    const view = await this.session.getSession(id);
+    const proj = buildAssistantProjection({
+      text: this.assistantVisibleText(),
+      reasoning: this.turnReasoning,
+      tools: this.turnToolBlocks,
+      promptCtx: 0,
+      tokensIn: this.turnTokensIn,
+      tokensOut: this.turnTokensOut,
+    });
+    const ui = [...view.uiMessages];
+    if (proj) {
+      ui.push({
+        role: "assistant",
+        text: proj.text,
+        reasoning: proj.reasoning,
+        tool_blocks: proj.tool_blocks,
+      });
+    }
+    const est = estimatePromptTokensFromUI(ui);
+    if (est <= 0) {
+      return;
+    }
+    this.turnPromptCtx = est;
+    if (this.turnTokensOut <= 0 && proj?.text) {
+      this.turnTokensOut = Math.max(1, Math.ceil(proj.text.length / 4));
+    }
+    this.post({
+      type: "stepUsage",
+      usage: {
+        prompt_tokens: est,
+        completion_tokens: this.turnTokensOut,
+        source: "estimate",
+      },
+    });
+  }
+
   private forwardAgentEvent(event: AgentEventParams): void {
     const childCtx = {
       scope: event.scope,
@@ -702,15 +1063,31 @@ export class ChatPanel implements vscode.Disposable {
         break;
       case "message_delta":
         if (event.content && event.scope !== "child") {
-          this.post({ type: "delta", content: event.content });
+          if (!shouldSuppressStreamChunk(event.content)) {
+            this.turnAssistantText += event.content;
+          }
+          this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
         }
         break;
       case "reasoning_delta":
         if (event.content && event.scope !== "child") {
-          this.post({ type: "delta", content: event.content });
+          this.turnReasoning += event.content;
+          this.post({ type: "reasoningDelta", content: event.content });
         }
         break;
       case "tool_call_start":
+        if (event.scope !== "child") {
+          this.commitAssistantStreamSegment();
+        }
+        if (event.scope !== "child" && event.tool_call_id) {
+          this.turnToolBlocks.set(event.tool_call_id, {
+            id: event.tool_call_id,
+            name: event.tool_call_name || "tool",
+            argsRaw: "",
+            status: "running",
+            result: "",
+          });
+        }
         this.post({
           type: "toolBlock",
           phase: "start",
@@ -721,6 +1098,12 @@ export class ChatPanel implements vscode.Disposable {
         });
         break;
       case "tool_call_delta":
+        if (event.args_delta && event.tool_call_id) {
+          const tb = this.turnToolBlocks.get(event.tool_call_id);
+          if (tb) {
+            tb.argsRaw += event.args_delta;
+          }
+        }
         if (event.args_delta) {
           this.post({
             type: "toolBlock",
@@ -734,6 +1117,18 @@ export class ChatPanel implements vscode.Disposable {
         }
         break;
       case "tool_call_completed":
+        if (event.tool_call_id) {
+          const content = event.content || "";
+          const existing = this.turnToolBlocks.get(event.tool_call_id);
+          this.turnToolBlocks.set(event.tool_call_id, {
+            id: event.tool_call_id,
+            name: event.tool_call_name || existing?.name || "tool",
+            argsRaw: existing?.argsRaw || "",
+            status: toolStatusFromResult(content),
+            result: content,
+            diagnostics: event.diagnostics,
+          });
+        }
         this.post({
           type: "toolBlock",
           phase: "complete",
@@ -755,18 +1150,32 @@ export class ChatPanel implements vscode.Disposable {
       case "step_usage": {
         const usage = parseStepUsage(event.data);
         if (usage) {
+          if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
+            this.turnPromptCtx = usage.prompt_tokens;
+          }
+          if (typeof usage.completion_tokens === "number" && usage.completion_tokens > 0) {
+            this.turnTokensOut = usage.completion_tokens;
+          }
+          if (typeof usage.total_tokens === "number" && usage.total_tokens > 0) {
+            this.turnTokensIn = usage.total_tokens;
+          } else if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
+            this.turnTokensIn = usage.prompt_tokens;
+          }
           this.post({ type: "stepUsage", usage });
         }
         break;
       }
       case "recoverable_error":
       case "error":
-        if (event.content) {
+        if (event.content && !isBenignTurnError(event.content)) {
           this.post({ type: "error", message: event.content });
         }
         break;
       case "pending_ops": {
-        const payload = parsePendingOps(event.data);
+        let payload = parsePendingOps(event.data);
+        if (!payload && event.content) {
+          payload = parsePendingOps(parseJSONSafe(event.content));
+        }
         if (payload && !payload.applied) {
           this.post({ type: "pendingOps", payload });
         } else if (payload?.applied) {
@@ -783,6 +1192,8 @@ export class ChatPanel implements vscode.Disposable {
     const name = (cmd || "").trim().toLowerCase();
     switch (name) {
       case "/clear":
+        this.clearSendQueue();
+        this.resetTurnProjection();
         await this.session.startSession({ forceNew: true });
         await this.refreshHeaderAndHistory();
         break;
@@ -828,47 +1239,58 @@ export class ChatPanel implements vscode.Disposable {
   private async searchMentions(query: string): Promise<ChatFileRef[]> {
     const q = query.trim().toLowerCase();
     const exclude = "**/{node_modules,.git,.orchestra,dist,build,out,vendor}/**";
+    type Scored = ChatFileRef & { score: number };
+    const byPath = new Map<string, Scored>();
 
-    if (!q) {
-      const seen = new Set<string>();
-      const out: ChatFileRef[] = [];
-      for (const doc of vscode.workspace.textDocuments) {
-        if (doc.uri.scheme !== "file") {
-          continue;
-        }
-        const fp = doc.uri.fsPath;
-        if (seen.has(fp)) {
-          continue;
-        }
-        seen.add(fp);
-        out.push(this.mentionFileRef(doc.uri));
-        if (out.length >= 14) {
-          break;
-        }
+    const consider = (uri: vscode.Uri) => {
+      if (uri.scheme !== "file") {
+        return;
       }
-      if (out.length < 20) {
-        const uris = await vscode.workspace.findFiles("**/*", exclude, 30);
-        for (const u of uris) {
-          if (seen.has(u.fsPath)) {
-            continue;
-          }
-          seen.add(u.fsPath);
-          out.push(this.mentionFileRef(u));
-          if (out.length >= 20) {
-            break;
-          }
-        }
+      const fp = uri.fsPath;
+      const name = path.basename(fp).toLowerCase();
+      const rel = vscode.workspace.asRelativePath(uri).replace(/\\/g, "/").toLowerCase();
+      let score = 0;
+      if (!q) {
+        score = 10;
+      } else if (name === q) {
+        score = 100;
+      } else if (name.startsWith(q)) {
+        score = 80;
+      } else if (name.includes(q)) {
+        score = 60;
+      } else if (rel.includes(q.replace(/\\/g, "/"))) {
+        score = 40;
+      } else {
+        return;
       }
-      return out;
+      const prev = byPath.get(fp);
+      if (!prev || prev.score < score) {
+        byPath.set(fp, { ...this.mentionFileRef(uri), score });
+      }
+    };
+
+    for (const doc of vscode.workspace.textDocuments) {
+      consider(doc.uri);
     }
 
-    const pattern = q.includes("/") || q.includes("\\") ? `**/*${q}*` : `**/*${q}*`;
-    const uris = await vscode.workspace.findFiles(pattern, exclude, 25);
-    const out: ChatFileRef[] = [];
+    const scanLimit = q ? 250 : 60;
+    const uris = await vscode.workspace.findFiles("**/*", exclude, scanLimit);
     for (const u of uris) {
-      out.push(this.mentionFileRef(u));
+      consider(u);
     }
-    return out;
+
+    if (q && byPath.size < 8) {
+      const globPart = q.replace(/[\\[\]{}()?+*^$|]/g, "[$&]");
+      const extra = await vscode.workspace.findFiles(`**/*${globPart}*`, exclude, 80);
+      for (const u of extra) {
+        consider(u);
+      }
+    }
+
+    return [...byPath.values()]
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, 20)
+      .map(({ score: _score, ...ref }) => ref);
   }
 
   /** Lightweight file ref for @-mention palette — no staging, no webview root churn. */
@@ -894,7 +1316,10 @@ export class ChatPanel implements vscode.Disposable {
   }
 
   private getLocalResourceRoots(): vscode.Uri[] {
-    const roots = [vscode.Uri.joinPath(this.extensionUri, "media")];
+    const roots = [
+      vscode.Uri.joinPath(this.extensionUri, "media"),
+      vscode.Uri.joinPath(this.extensionUri, "images"),
+    ];
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       roots.push(folder.uri);
     }
@@ -1110,6 +1535,47 @@ export class ChatPanel implements vscode.Disposable {
     }
   }
 
+  private resolveWorkspaceFilePath(filePath: string): vscode.Uri | undefined {
+    const trimmed = filePath.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (path.isAbsolute(trimmed)) {
+      return vscode.Uri.file(trimmed);
+    }
+    const root = this.workspaceRoot();
+    if (!root) {
+      return undefined;
+    }
+    return vscode.Uri.file(path.join(root, trimmed.split("/").join(path.sep)));
+  }
+
+  /** Open the real workspace file with Cursor-style inline change highlights. */
+  private async openFileWithChangeHighlights(
+    filePath: string,
+    before: string,
+    after: string,
+    focus = true
+  ): Promise<void> {
+    const uri = this.resolveWorkspaceFilePath(filePath);
+    if (!uri) {
+      void vscode.window.showErrorMessage("Orchestra: cannot resolve file path");
+      return;
+    }
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(doc, {
+        viewColumn: this.editorViewColumn(),
+        preserveFocus: !focus,
+        preview: false,
+      });
+      this.pendingHighlights.apply(editor, before, after);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(`Orchestra: cannot open ${filePath}: ${message}`);
+    }
+  }
+
   private async openSideBySideDiff(
     filePath: string,
     before: string,
@@ -1216,6 +1682,9 @@ export class ChatPanel implements vscode.Disposable {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "media", "chat.js")
     ).with({ query: `v=${v}` });
+    const logoUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "media", "logo.png")
+    ).with({ query: `v=${v}` });
     const nonce = getNonce();
     const csp = [
       `default-src 'none'`,
@@ -1234,10 +1703,13 @@ export class ChatPanel implements vscode.Disposable {
   <title>Orchestra</title>
 </head>
 <body>
-  <div id="app">
+  <div id="app" data-mode="agent">
     <header id="chrome-strip">
       <div id="top-accent" aria-hidden="true"></div>
       <div id="chrome-inner">
+        <div id="chrome-brand" class="chrome-brand" title="Orchestra" aria-hidden="true">
+          <img src="${logoUri}" alt="" width="22" height="22" class="chrome-logo" />
+        </div>
         <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Chat sessions"></div>
         <div class="chrome-actions">
           <button type="button" id="session-new-btn" class="chrome-action" title="New chat" aria-label="New chat">
@@ -1277,26 +1749,18 @@ export class ChatPanel implements vscode.Disposable {
       </div>
       <div id="workflow-stages" class="workflow-stages"></div>
     </div>
-    <div id="todos-bar" class="todos-bar hidden">
-      <div class="todos-head">
-        <span id="todos-title" class="todos-title">Tasks</span>
-        <span id="todos-progress" class="todos-progress"></span>
-      </div>
-      <div id="todos-list" class="todos-list"></div>
-    </div>
     <div id="messages"></div>
     <div id="pending-bar" class="pending-bar hidden">
-      <div class="pending-summary">
-        <span id="pending-label">0 pending changes</span>
-        <span id="pending-review-hint" class="pending-review-hint hidden">↑↓ · a accept · x reject · Enter apply</span>
-        <div class="pending-actions">
-          <button type="button" id="pending-diff-btn" class="pill small">Review</button>
-          <button type="button" id="pending-discard-btn" class="pill small">Discard</button>
-          <button type="button" id="pending-apply-btn" class="pill small primary">Apply</button>
+      <div class="pending-card">
+        <div class="pending-head">
+          <span id="pending-label" class="pending-label">0 pending changes</span>
+          <div class="pending-head-actions">
+            <button type="button" id="pending-apply-btn" class="pending-icon-btn pending-apply-btn" title="Apply changes" aria-label="Apply">✓</button>
+            <button type="button" id="pending-reject-btn" class="pending-icon-btn pending-reject-btn" title="Discard changes" aria-label="Discard">✗</button>
+          </div>
         </div>
+        <div id="pending-review-list" class="pending-review-list"></div>
       </div>
-      <div id="pending-files" class="pending-files"></div>
-      <div id="pending-diff" class="pending-diff hidden"></div>
     </div>
     <div id="diff-viewer" class="diff-viewer hidden" role="dialog" aria-modal="true">
       <div class="diff-viewer-card">
@@ -1346,21 +1810,17 @@ export class ChatPanel implements vscode.Disposable {
       </div>
     </div>
     <div id="composer-wrap">
-      <div id="mode-menu" class="menu" role="menu">
-        <button type="button" class="menu-item selected" data-id="agent"><span class="mi">∞</span>Agent</button>
-        <button type="button" class="menu-item" data-id="plan"><span class="mi">≡</span>Plan</button>
-        <button type="button" class="menu-item" data-id="debug"><span class="mi">⌁</span>Debug</button>
-        <button type="button" class="menu-item" data-id="multitask"><span class="mi">◎</span>Multitask</button>
-        <button type="button" class="menu-item" data-id="ask"><span class="mi">◇</span>Ask</button>
+      <div id="todos-bar" class="todos-bar hidden">
+        <button type="button" id="todos-chip" class="todos-chip" aria-expanded="false" aria-label="Task checklist">
+          <span id="todos-chip-glyph" class="todos-chip-glyph" aria-hidden="true">□</span>
+          <span id="todos-chip-summary" class="todos-chip-summary"></span>
+          <span id="todos-chip-chev" class="todos-chip-chev" aria-hidden="true">▾</span>
+        </button>
+        <div id="todos-list" class="todos-list hidden" role="list"></div>
       </div>
-      <div id="effort-menu" class="menu effort" role="menu">
-        <div class="menu-section">Effort</div>
-        <button type="button" class="menu-item" data-effort="low">Low</button>
-        <button type="button" class="menu-item selected" data-effort="medium">Medium</button>
-        <button type="button" class="menu-item" data-effort="high">High</button>
-        <div class="menu-section">Options</div>
-        <div class="menu-row">Fast <button type="button" id="fast-toggle" class="toggle" role="switch" aria-checked="false"></button></div>
-      </div>
+      <div id="mode-menu" class="menu" role="menu"></div>
+      <div id="effort-menu" class="menu effort" role="menu"></div>
+      <div id="access-menu" class="menu access" role="menu"></div>
       <div id="model-menu" class="menu model-pop" role="menu">
         <div class="menu-section">Models</div>
         <div id="model-menu-list" class="model-list">
@@ -1370,20 +1830,29 @@ export class ChatPanel implements vscode.Disposable {
       <div id="palette-menu" class="menu palette-menu hidden" role="listbox"></div>
       <div id="composer">
         <div id="chip-files" class="chip-files"></div>
-        <textarea id="input" rows="2" placeholder="Plan, @ for files, / for commands…"></textarea>
+        <div id="message-queue" class="message-queue hidden" aria-label="Queued messages"></div>
+        <div id="composer-status" class="composer-status hidden" aria-live="polite" aria-busy="false">
+          <span class="composer-status-spinner" aria-hidden="true"></span>
+          <span id="composer-status-label">Working…</span>
+        </div>
+        <textarea id="input" rows="2" placeholder="Message, @ for files, / for commands…"></textarea>
         <div id="toolbar">
           <div id="toolbar-left">
             <button type="button" class="pill" id="mode-btn" aria-haspopup="menu">
-              <span class="ico" id="mode-icon">∞</span>
+              <span class="ico mode-icon mode-agent" id="mode-icon">∞</span>
               <span id="mode-label">Agent</span>
               <span class="chev">▾</span>
             </button>
-            <button type="button" class="pill" id="effort-btn" aria-haspopup="menu">
+            <button type="button" class="pill" id="effort-btn" data-effort="medium" aria-haspopup="menu" title="Medium">
+              <span class="ico effort-icon effort-medium" id="effort-icon"><span class="effort-meter effort-medium"><i></i><i></i></span></span>
               <span id="effort-label">Medium</span>
+              <span id="effort-fast-mark" class="effort-fast-mark" hidden aria-hidden="true">⚡</span>
               <span class="chev">▾</span>
             </button>
-            <button type="button" class="pill" id="apply-toggle" role="switch" aria-checked="false" title="Apply edits to disk">
-              <span id="apply-label">Dry-run</span>
+            <button type="button" class="pill" id="access-btn" data-access="ask" aria-haspopup="menu" title="Ask — shell с подтверждением; правки через Accept/Reject">
+              <span class="ico access-icon access-ask" id="access-icon">◌</span>
+              <span id="access-label">Ask</span>
+              <span class="chev">▾</span>
             </button>
             <button type="button" class="pill" id="model-pill" aria-haspopup="menu" title="Model">
               <span id="model-label">Model</span>
@@ -1439,7 +1908,18 @@ function getNonce(): string {
   return out;
 }
 
+function parseJSONSafe(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 function parsePendingOps(data: unknown): PendingOpsPayload | undefined {
+  if (typeof data === "string") {
+    data = parseJSONSafe(data);
+  }
   if (!data || typeof data !== "object") {
     return undefined;
   }
@@ -1499,9 +1979,9 @@ function parseTodosUpdated(content: string | undefined): TodoItemPayload[] {
   }
 }
 
-/** Hide @path refs in chat bubbles — paths belong on attachment chips only. */
+/** Hide @path refs and agent final JSON from chat bubbles. */
 function uiDisplayText(raw: string): string {
-  const t = raw.trim();
+  let t = sanitizeAssistantStream(stripFinalEnvelope(raw)).trim();
   if (!t) {
     return "";
   }

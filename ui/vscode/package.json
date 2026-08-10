@@ -1,19 +1,35 @@
 {
   "name": "orchestra",
   "displayName": "Orchestra",
-  "description": "Local AI coding assistant — JSON-RPC client for orchestra core",
+  "description": "Local AI coding assistant for VS Code and Cursor — chat, tools, dry-run apply, bundled orchestra core.",
   "version": "0.1.0",
-  "publisher": "orchestra",
+  "publisher": "Screamgxne",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "homepage": "https://github.com/GreyKxtx/Orchestra#readme",
+  "bugs": {
+    "url": "https://github.com/GreyKxtx/Orchestra/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding assistant",
+    "llm",
+    "agent",
+    "local",
+    "orchestra",
+    "cursor"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/orchestra/orchestra"
+    "url": "https://github.com/GreyKxtx/Orchestra"
   },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other",
-    "Machine Learning"
+    "Machine Learning",
+    "Programming Languages",
+    "Other"
   ],
   "activationEvents": [
     "onCommand:orchestra.openChat"
@@ -44,7 +60,7 @@
         "orchestra.binaryPath": {
           "type": "string",
           "default": "",
-          "description": "Full path to orchestra(.exe). Empty = auto-detect next to workspace or in the Orchestra repo (ui/vscode → ../../)."
+          "description": "Full path to orchestra(.exe). Empty = bundled bin/<platform>-<arch>/ in the VSIX, then workspace/repo fallbacks."
         },
         "orchestra.projectRoot": {
           "type": "string",
@@ -58,7 +74,12 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && vsce package --no-dependencies"
+    "test": "npm run compile && node --test out/**/*.test.js",
+    "bundle:core": "node scripts/bundle-core.mjs",
+    "bundle:core:all": "node scripts/bundle-core.mjs --all",
+    "bundle:core:target": "node scripts/bundle-core.mjs --target",
+    "package": "npm run compile && vsce package --no-dependencies",
+    "package:marketplace": "npm run bundle:core:all && npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

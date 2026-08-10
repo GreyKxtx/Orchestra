@@ -117,12 +117,24 @@ func IsFrontierProvider(provider string) bool {
 	}
 }
 
+// ResponseFormatUse indicates whether the caller uses OpenAI tool_calls (agent/TUI/core)
+// or a legacy JSON-only path (plan replay, grammar-only servers).
+type ResponseFormatUse int
+
+const (
+	// ResponseFormatToolAgent: do not auto-enable json_schema — it fights tool calling
+	// on local servers (Qwen/LM Studio) and TUI stripFinalEnvelope hides the JSON answer.
+	ResponseFormatToolAgent ResponseFormatUse = iota
+	// ResponseFormatLegacyJSON: auto json_schema for local providers when unset (pre-tool era).
+	ResponseFormatLegacyJSON
+)
+
 // ResolveResponseFormat builds grammar-constrained sampling config from llm.* YAML.
 // When response_format_type is unset and the provider is local/open-weight, json_schema
-// is enabled unless supports_json_schema: false (OpenAI client auto-disables on reject).
-func ResolveResponseFormat(cfg llm.LLMConfig, providerLabel string) *llm.ResponseFormat {
+// is enabled for LegacyJSON unless supports_json_schema: false (OpenAI client auto-disables on reject).
+func ResolveResponseFormat(cfg llm.LLMConfig, providerLabel string, use ResponseFormatUse) *llm.ResponseFormat {
 	formatType := strings.TrimSpace(cfg.ResponseFormatType)
-	if formatType == "" && !IsFrontierProvider(providerLabel) {
+	if formatType == "" && use == ResponseFormatLegacyJSON && !IsFrontierProvider(providerLabel) {
 		if cfg.SupportsJSONSchema == nil || *cfg.SupportsJSONSchema {
 			formatType = "json_schema"
 		}

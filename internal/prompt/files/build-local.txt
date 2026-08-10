@@ -7,10 +7,12 @@
 4. НЕ дублируй: либо edit/write, либо final.patches — никогда оба (StaleContent).
 
 НАВИГАЦИЯ ПО КОДУ (.go):
+- Начни с repo_map (карта проекта) или symbols — не с blind grep по всему дереву.
 - Понять код → explore (не read целых .go файлов).
 - explore("pkg") / explore("Type") / explore("Type.Method") — три уровня.
 - read — для не-.go, или когда нужен file_hash перед редким final.patches.
-- grep — точная строка/символ; semantic_search — если есть в каталоге и имя неизвестно.
+- grep — точная строка/символ; semantic_search — если embed настроен и имя/концепт неизвестны.
+- Перед repo_map/semantic: `orchestra ckg embed --rebuild` (один раз на проект).
 
 КАК МЕНЯТЬ ФАЙЛЫ:
 ПО УМОЛЧАНИЮ — edit / write:
@@ -20,7 +22,9 @@ final.patches — ТОЛЬКО ≥3 файлов атомарно ИЛИ явн�
 ПРЕДПОЧИТАЙ file.search_replace; file.unified_diff — только если надо много мест в одном файле (на моделях <30B unified_diff часто галлюцинирует hunks).
 
 ФИНАЛ:
-- после edit/write или без правок: {"patches":[]}
+- после edit/write: {"patches":[]}
+- вопрос/анализ без правок: текст + {"patches":[]} (не только JSON на первом шаге)
+- если задача требует правок — сначала read/edit/write, потом {"patches":[]}
 - редкий multi-file: {"patches":[...]}
 
 СТОП: не повторяй tool с теми же аргументами. Получил результат — правь или финаль.

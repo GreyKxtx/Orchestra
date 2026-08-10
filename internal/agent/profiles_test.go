@@ -37,9 +37,6 @@ func TestApplyProfile_Precision(t *testing.T) {
 	if opts.MaxPromptBytes != 128*1024 {
 		t.Fatalf("MaxPromptBytes=%d", opts.MaxPromptBytes)
 	}
-	if opts.ResponseFormat == nil || opts.ResponseFormat.Type != "json_schema" {
-		t.Fatalf("expected json_schema ResponseFormat, got %#v", opts.ResponseFormat)
-	}
 }
 
 func TestApplyProfile_PreserveNonZero(t *testing.T) {

@@ -47,25 +47,33 @@ func (a *App) noticeTurnStop(stopReason string, openTodos int, todos []rpcclient
 		}
 	}
 	reason := strings.ToLower(strings.TrimSpace(stopReason))
+	var msg string
+	var kind state.SystemKind
 	switch reason {
 	case "max_steps":
-		msg := "Лимит шагов — ход прерван (не ошибка сети). Напиши «продолжай»."
+		msg = "Лимит шагов — ход прерван (не ошибка сети). Напиши «продолжай»."
 		if openTodos > 0 {
 			msg = fmt.Sprintf("Лимит шагов — ход прерван. Ещё %d задач открыто. Напиши «продолжай».", openTodos)
 		}
-		a.session.AppendAssistantNotice(state.SystemKindInfo, msg)
+		kind = state.SystemKindInfo
 	case "partial":
-		a.session.AppendAssistantNotice(state.SystemKindInfo,
-			fmt.Sprintf("Ход завершён частично: ещё %d задач в списке. Это не обрыв связи — напиши «продолжай».", openTodos))
+		msg = fmt.Sprintf("Ход завершён частично: ещё %d задач в списке. Это не обрыв связи — напиши «продолжай».", openTodos)
+		kind = state.SystemKindInfo
 	case "completed":
-		a.session.AppendAssistantNotice(state.SystemKindSuccess, "Ход завершён — можно идти дальше или дать следующую задачу")
+		// Normal success — the assistant reply is enough; skip footer noise.
+		return
 	default:
 		if openTodos > 0 {
-			a.session.AppendAssistantNotice(state.SystemKindInfo,
-				fmt.Sprintf("Ход завершён частично: ещё %d задач в списке. Напиши «продолжай».", openTodos))
+			msg = fmt.Sprintf("Ход завершён частично: ещё %d задач в списке. Напиши «продолжай».", openTodos)
+			kind = state.SystemKindInfo
+		} else {
+			return
 		}
 	}
-	a.chatDirty = true
+	if msg != "" {
+		a.session.AppendAssistantNotice(kind, msg)
+		a.chatDirty = true
+	}
 }
 
 func stepDoneUserHint(reason string) string {
@@ -79,7 +87,7 @@ func stepDoneUserHint(reason string) string {
 	}
 }
 
-// listenForEvents returns a Cmd that reads one event from the rpc channel.
+// listenForEvents returns a Cmd that reads one or more events from the rpc channel.
 func (a *App) listenForEvents() tea.Cmd {
 	if a.rpc == nil {
 		return nil
@@ -90,7 +98,24 @@ func (a *App) listenForEvents() tea.Cmd {
 		if !ok {
 			return rpcEventMsg{Kind: rpcclient.EventConnectionClosed}
 		}
-		return rpcEventMsg(ev)
+		batch := []rpcclient.Event{ev}
+		const maxBatch = 32
+		for len(batch) < maxBatch {
+			select {
+			case ev2, ok2 := <-ch:
+				if !ok2 {
+					goto done
+				}
+				batch = append(batch, ev2)
+			default:
+				goto done
+			}
+		}
+	done:
+		if len(batch) == 1 {
+			return rpcEventMsg(batch[0])
+		}
+		return rpcBatchMsg(batch)
 	}
 }
 
@@ -126,7 +151,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 	}
 
 	if !skipRender {
-		a.chat.SetMessages(a.session.Messages)
+		a.flushChat(true)
 	}
 	a.updateStatusHints()
 	switch ev.Kind {

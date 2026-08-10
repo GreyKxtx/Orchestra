@@ -6,14 +6,43 @@
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
 
-  /** @type {ModeOpt[]} */
+  /** @type {ModeOpt[]} — must match TUI `agentModes` / docs/modes.md top-level modes */
   const MODES = [
-    { id: "agent", label: "Agent", icon: "∞", mode: "build" },
+    { id: "build", label: "Build", icon: "▣", mode: "build" },
     { id: "plan", label: "Plan", icon: "≡", mode: "plan" },
-    { id: "debug", label: "Debug", icon: "⌁", mode: "explore" },
-    { id: "multitask", label: "Multitask", icon: "◎", mode: "build" },
-    { id: "ask", label: "Ask", icon: "◇", mode: "explore" },
+    { id: "explore", label: "Explore", icon: "⌕", mode: "explore" },
+    { id: "ask", label: "Ask", icon: "◇", mode: "ask" },
+    { id: "debug", label: "Debug", icon: "⌁", mode: "debug" },
+    { id: "architecture", label: "Architecture", icon: "◫", mode: "architecture" },
+    { id: "agent", label: "Agent", icon: "∞", mode: "agent" },
+    { id: "orchestra", label: "Orchestra", icon: "◎", mode: "orchestra" },
   ];
+
+  /** @type {{ label: string; ids: string[] }[]} */
+  const MODE_GROUPS = [
+    { label: "Основные", ids: ["agent", "orchestra", "build", "plan"] },
+    { label: "Дополнительные", ids: ["explore", "ask", "debug", "architecture"] },
+  ];
+
+  /** @typedef {{ id: string; label: string; hint: string; icon: string }} AccessOpt */
+
+  /** @type {AccessOpt[]} */
+  const ACCESS_MODES = [
+    {
+      id: "ask",
+      label: "Ask",
+      hint: "Shell с подтверждением; правки через Accept/Reject",
+      icon: "◌",
+    },
+    {
+      id: "auto",
+      label: "Auto",
+      hint: "Shell и запись файлов сразу на диск (без Accept/Reject)",
+      icon: "▶",
+    },
+  ];
+
+  /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
 
   /** @type {EffortOpt[]} */
   const EFFORTS = [
@@ -27,6 +56,9 @@
   const inputEl = /** @type {HTMLTextAreaElement | null} */ (document.getElementById("input"));
   const sendBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("send"));
   const modeBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("mode-btn"));
+  const accessBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("access-btn"));
+  const accessMenu = document.getElementById("access-menu");
+  const accessLabel = document.getElementById("access-label");
   const effortBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("effort-btn"));
   const modeMenu = document.getElementById("mode-menu");
   const effortMenu = document.getElementById("effort-menu");
@@ -41,8 +73,11 @@
   const ctxRows = document.getElementById("ctx-rows");
   const attachBtn = document.getElementById("attach-btn");
   const filesEl = document.getElementById("chip-files");
-  const fastToggle = /** @type {HTMLButtonElement | null} */ (document.getElementById("fast-toggle"));
+  const fastToggleRef = /** @type {{ el: HTMLButtonElement | null }} */ ({ el: null });
   const composerWrap = document.getElementById("composer-wrap");
+  const composerStatus = document.getElementById("composer-status");
+  const composerStatusLabel = document.getElementById("composer-status-label");
+  const messageQueueEl = document.getElementById("message-queue");
   const sessionTabsEl = document.getElementById("session-tabs");
   const sessionNewBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("session-new-btn"));
   const sessionHistoryBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("session-history-btn"));
@@ -53,16 +88,11 @@
   const modelPill = /** @type {HTMLButtonElement | null} */ (document.getElementById("model-pill"));
   const modelMenu = document.getElementById("model-menu");
   const modelMenuList = document.getElementById("model-menu-list");
-  const applyToggle = /** @type {HTMLButtonElement | null} */ (document.getElementById("apply-toggle"));
-  const applyLabel = document.getElementById("apply-label");
   const pendingBar = document.getElementById("pending-bar");
   const pendingLabel = document.getElementById("pending-label");
-  const pendingReviewHint = document.getElementById("pending-review-hint");
-  const pendingFilesEl = document.getElementById("pending-files");
-  const pendingDiff = document.getElementById("pending-diff");
+  const pendingReviewListEl = document.getElementById("pending-review-list");
   const pendingApplyBtn = document.getElementById("pending-apply-btn");
-  const pendingDiscardBtn = document.getElementById("pending-discard-btn");
-  const pendingDiffBtn = document.getElementById("pending-diff-btn");
+  const pendingRejectBtn = document.getElementById("pending-reject-btn");
   const overlay = document.getElementById("overlay");
   const overlayTitle = document.getElementById("overlay-title");
   const overlayBody = document.getElementById("overlay-body");
@@ -72,8 +102,10 @@
   const paletteMenu = document.getElementById("palette-menu");
   const todosBar = document.getElementById("todos-bar");
   const todosList = document.getElementById("todos-list");
-  const todosProgress = document.getElementById("todos-progress");
-  const todosTitle = document.getElementById("todos-title");
+  const todosChip = document.getElementById("todos-chip");
+  const todosChipGlyph = document.getElementById("todos-chip-glyph");
+  const todosChipSummary = document.getElementById("todos-chip-summary");
+  const todosChipChev = document.getElementById("todos-chip-chev");
   const workflowBar = document.getElementById("workflow-bar");
   const workflowLabel = document.getElementById("workflow-label");
   const workflowStagesEl = document.getElementById("workflow-stages");
@@ -114,6 +146,9 @@
   const execSteps = new Map();
   /** @type {{ id: string; content: string; status: string }[]} */
   let todos = [];
+  let todosExpanded = false;
+  let todosHadOpen = false;
+  let todosDoneFlashTimer = 0;
   let paletteMode = "";
   let paletteIndex = 0;
   /** @type {any[]} */
@@ -146,10 +181,35 @@
   let questionState = { questions: [], index: 0, answers: [], mode: "" };
 
   const saved = vscode.getState() || {};
-  let applyOn = saved.applyOn === true;
+  let accessId =
+    typeof saved.accessId === "string" && ACCESS_MODES.some((m) => m.id === saved.accessId)
+      ? saved.accessId
+      : "ask";
   let assistantBubble = null;
+  /** @type {HTMLElement | null} */
+  let assistantTurn = null;
+  /** @type {HTMLElement | null} */
+  let assistantTurnInner = null;
+  /** @type {HTMLDetailsElement | null} */
+  let toolTraceEl = null;
+  /** @type {HTMLElement | null} */
+  let toolTraceSummary = null;
+  /** @type {HTMLDetailsElement | null} */
+  let reasoningDetails = null;
+  /** @type {HTMLElement | null} */
+  let reasoningBody = null;
+  let reasoningStarted = 0;
+  /** @type {{ read: number; search: number; write: number; other: number }} */
+  let turnToolCount = { read: 0, search: 0, write: 0, other: 0 };
   let busy = false;
-  let modeId = "agent";
+  let busyStatusText = "Working…";
+  /** @type {Array<{ id: string; preview: string; fileCount?: number }>} */
+  let sendQueue = [];
+  /** @type {HTMLElement | null} */
+  let typingIndicatorEl = null;
+  /** Raw streamed assistant text before final-envelope stripping. */
+  let streamRawText = "";
+  let modeId = typeof saved.modeId === "string" && MODES.some((m) => m.id === saved.modeId) ? saved.modeId : "agent";
   let effortId = "medium";
   let fastOn = false;
   let currentModel = "";
@@ -313,15 +373,57 @@
     return currentEffort().profile;
   }
 
-  function syncApplyUi() {
-    if (applyToggle) {
-      applyToggle.classList.toggle("on", applyOn);
-      applyToggle.setAttribute("aria-checked", applyOn ? "true" : "false");
+  function currentAccess() {
+    return ACCESS_MODES.find((m) => m.id === accessId) || ACCESS_MODES[0];
+  }
+
+  function initAccessMenu() {
+    if (!accessMenu) {
+      return;
     }
-    if (applyLabel) {
-      applyLabel.textContent = applyOn ? "Apply" : "Dry-run";
+    accessMenu.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "menu-section";
+    head.textContent = "Доступ";
+    accessMenu.appendChild(head);
+    ACCESS_MODES.forEach((m) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menu-item access-item";
+      btn.dataset.access = m.id;
+      btn.title = m.hint;
+      btn.innerHTML =
+        `<span class="mi access-icon access-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>` +
+        `<span class="access-item-text"><span class="access-item-label">${escapeAttr(m.label)}</span>` +
+        `<span class="access-item-hint">${escapeAttr(m.hint)}</span></span>`;
+      accessMenu.appendChild(btn);
+    });
+    const note = document.createElement("div");
+    note.className = "menu-hint access-menu-note";
+    note.textContent =
+      "Ask: правки в staging + Accept/Reject. Auto: правки пишутся на диск сразу.";
+    accessMenu.appendChild(note);
+  }
+
+  function syncAccessUi() {
+    const m = currentAccess();
+    if (accessLabel) {
+      accessLabel.textContent = m.label;
     }
-    vscode.setState({ ...(vscode.getState() || {}), applyOn });
+    const icon = document.getElementById("access-icon");
+    if (icon) {
+      icon.textContent = m.icon;
+      icon.className = `ico access-icon access-${m.id}`;
+    }
+    if (accessBtn) {
+      accessBtn.dataset.access = accessId;
+      accessBtn.title = m.hint;
+    }
+    accessMenu?.querySelectorAll("[data-access]").forEach((el) => {
+      const id = el.getAttribute("data-access");
+      el.classList.toggle("selected", id === accessId);
+    });
+    vscode.setState({ ...(vscode.getState() || {}), accessId });
   }
 
   function statsHtml(stats) {
@@ -362,6 +464,295 @@
       .replace(/>/g, "&gt;");
   }
 
+  /** @param {string} s */
+  function markdownInline(s) {
+    let x = escapeHtml(s);
+    x = x.replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>');
+    x = x.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    x = x.replace(/(?<![*])\*([^*\n]+)\*(?![*])/g, "<em>$1</em>");
+    x = x.replace(
+      /\[([^\]]+)\]\(([^)\s]+)\)/g,
+      '<a class="md-link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+    );
+    return x;
+  }
+
+  function pathLooksLikeFile(s) {
+    const t = (s || "").trim();
+    return /[./\\]/.test(t) || /\.[a-z0-9]{1,6}$/i.test(t);
+  }
+
+  /** @returns {{ lang?: string; path?: string; startLine?: number; endLine?: number }} */
+  function parseCodeFenceMeta(openRest) {
+    const raw = (openRest || "").trim();
+    if (!raw) {
+      return { lang: "plain" };
+    }
+    const gh = raw.match(/^(\d+):(\d+):(.+)$/);
+    if (gh) {
+      const fp = gh[3].trim();
+      return { lang: langFromPath(fp), path: fp, startLine: +gh[1], endLine: +gh[2] };
+    }
+    const parts = raw.split(/\s+/);
+    const first = parts[0] || "";
+    const rest = parts.slice(1).join(" ").trim();
+
+    /** @param {string} s */
+    function parsePathLines(s) {
+      const m1 = s.match(/^(.+?)\s+[Ll]ines?\s+(\d+)\s*[-–]\s*(\d+)$/);
+      if (m1) {
+        return { path: m1[1].trim(), startLine: +m1[2], endLine: +m1[3] };
+      }
+      const m2 = s.match(/^(.+?):(\d+)\s*[-–]\s*(\d+)$/);
+      if (m2) {
+        return { path: m2[1].trim(), startLine: +m2[2], endLine: +m2[3] };
+      }
+      const m3 = s.match(/^(.+?):(\d+)$/);
+      if (m3) {
+        return { path: m3[1].trim(), startLine: +m3[2], endLine: +m3[2] };
+      }
+      if (pathLooksLikeFile(s)) {
+        return { path: s.trim() };
+      }
+      return null;
+    }
+
+    const combined = rest ? `${first} ${rest}` : first;
+    const pl =
+      parsePathLines(combined) ||
+      parsePathLines(rest) ||
+      (pathLooksLikeFile(first) && !rest ? parsePathLines(first) : null) ||
+      (pathLooksLikeFile(rest) ? parsePathLines(rest) : null);
+
+    if (pl?.path) {
+      const lang =
+        first && !pathLooksLikeFile(first) && first !== pl.path ? first : langFromPath(pl.path);
+      return {
+        lang,
+        path: pl.path,
+        startLine: pl.startLine,
+        endLine: pl.endLine,
+      };
+    }
+    if (first && !pathLooksLikeFile(first)) {
+      return { lang: first };
+    }
+    return { lang: "plain" };
+  }
+
+  function codeRefTitle(filePath, startLine, endLine) {
+    const base = basename(filePath);
+    if (startLine && endLine && endLine !== startLine) {
+      return `${base} Lines ${startLine}-${endLine}`;
+    }
+    if (startLine) {
+      return `${base} Line ${startLine}`;
+    }
+    return base;
+  }
+
+  function buildCodeRefCardHtml(filePath, lang, startLine, endLine, code) {
+    const title = codeRefTitle(filePath, startLine, endLine);
+    return (
+      `<div class="code-ref-card diff-preview-card"` +
+      ` data-path="${escapeAttr(filePath)}" data-lang="${escapeAttr(lang || langFromPath(filePath))}"` +
+      (startLine ? ` data-start-line="${startLine}"` : "") +
+      (endLine ? ` data-end-line="${endLine}"` : "") +
+      `>` +
+      `<div class="diff-preview-head code-ref-head">` +
+      diffExtBadgeHtml(filePath) +
+      `<button type="button" class="diff-preview-name code-ref-title" title="Open file">${escapeAttr(title)}</button>` +
+      `</div>` +
+      `<pre class="code-ref-body md-pre"><code>${escapeHtml(code)}</code></pre>` +
+      `</div>`
+    );
+  }
+
+  function bindCodeRefCard(card) {
+    if (!card || card.dataset.bound === "1") {
+      return;
+    }
+    card.dataset.bound = "1";
+    const path = card.dataset.path || "";
+    card.querySelector(".code-ref-title")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!path) {
+        return;
+      }
+      if (/** @type {MouseEvent} */ (e).shiftKey) {
+        openExternalFile(path, true);
+      } else {
+        openExternalFile(path, true);
+      }
+    });
+  }
+
+  async function enhanceCodeRefCards(root) {
+    if (!root) {
+      return;
+    }
+    const cards = root.querySelectorAll(".code-ref-card:not([data-enhanced])");
+    for (const card of cards) {
+      card.dataset.enhanced = "1";
+      bindCodeRefCard(card);
+      const path = card.dataset.path || "";
+      const lang = card.dataset.lang || langFromPath(path);
+      const pre = card.querySelector(".code-ref-body code");
+      if (!pre) {
+        continue;
+      }
+      const code = pre.textContent || "";
+      const lines = code.split("\n");
+      const startLine = Number(card.dataset.startLine) || 1;
+      const htmlLines = await requestHighlight(lines, lang);
+      const body = document.createElement("div");
+      body.className = "code-ref-body diff-preview-body";
+      lines.forEach((line, idx) => {
+        const row = document.createElement("div");
+        row.className = "code-ref-row";
+        row.innerHTML =
+          `<span class="code-ref-ln">${startLine + idx}</span>` +
+          `<span class="code-ref-code">${htmlLines[idx] || escapeHtml(line) || "&nbsp;"}</span>`;
+        body.appendChild(row);
+      });
+      pre.closest(".code-ref-body")?.replaceWith(body);
+    }
+  }
+
+  /** @param {string} raw */
+  function renderMarkdownToHtml(raw) {
+    const text = String(raw || "");
+    if (!text.trim()) {
+      return "";
+    }
+    const lines = text.split("\n");
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (trimmed.startsWith("```")) {
+        const meta = parseCodeFenceMeta(trimmed.slice(3).trim());
+        i++;
+        const codeLines = [];
+        while (i < lines.length && !lines[i].trim().startsWith("```")) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length) {
+          i++;
+        }
+        const code = codeLines.join("\n");
+        if (meta.path) {
+          out.push(
+            buildCodeRefCardHtml(
+              meta.path,
+              meta.lang || langFromPath(meta.path),
+              meta.startLine,
+              meta.endLine,
+              code
+            )
+          );
+        } else {
+          out.push(`<pre class="md-pre"><code>${escapeHtml(code)}</code></pre>`);
+        }
+        continue;
+      }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+        out.push('<hr class="md-hr">');
+        i++;
+        continue;
+      }
+      const h3 = line.match(/^###\s+(.+)$/);
+      if (h3) {
+        out.push(`<h3 class="md-h3">${markdownInline(h3[1])}</h3>`);
+        i++;
+        continue;
+      }
+      const h2 = line.match(/^##\s+(.+)$/);
+      if (h2) {
+        out.push(`<h2 class="md-h2">${markdownInline(h2[1])}</h2>`);
+        i++;
+        continue;
+      }
+      const h1 = line.match(/^#\s+(.+)$/);
+      if (h1) {
+        out.push(`<h1 class="md-h1">${markdownInline(h1[1])}</h1>`);
+        i++;
+        continue;
+      }
+      if (/^[-*+]\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length && /^[-*+]\s+/.test(lines[i])) {
+          items.push(`<li>${markdownInline(lines[i].replace(/^[-*+]\s+/, ""))}</li>`);
+          i++;
+        }
+        out.push(`<ul class="md-ul">${items.join("")}</ul>`);
+        continue;
+      }
+      if (/^\d+\.\s+/.test(line)) {
+        const items = [];
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+          items.push(`<li>${markdownInline(lines[i].replace(/^\d+\.\s+/, ""))}</li>`);
+          i++;
+        }
+        out.push(`<ol class="md-ol">${items.join("")}</ol>`);
+        continue;
+      }
+      if (!trimmed) {
+        i++;
+        continue;
+      }
+      const para = [];
+      while (
+        i < lines.length &&
+        lines[i].trim() &&
+        !lines[i].trim().startsWith("```") &&
+        !/^#{1,3}\s+/.test(lines[i]) &&
+        !/^[-*+]\s+/.test(lines[i]) &&
+        !/^\d+\.\s+/.test(lines[i]) &&
+        !/^(-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim())
+      ) {
+        para.push(lines[i]);
+        i++;
+      }
+      out.push(`<p class="md-p">${markdownInline(para.join(" "))}</p>`);
+    }
+    return out.join("");
+  }
+
+  /** @param {HTMLElement} el @param {string} raw */
+  function applyAssistantMarkdown(el, raw) {
+    el.classList.add("turn-text", "md-body");
+    el.innerHTML = renderMarkdownToHtml(raw);
+    void enhanceCodeRefCards(el);
+  }
+
+  /** @type {number | null} */
+  let mdRenderPending = null;
+
+  /** @param {HTMLElement} el @param {string} raw */
+  function scheduleAssistantMarkdown(el, raw) {
+    if (mdRenderPending !== null) {
+      cancelAnimationFrame(mdRenderPending);
+    }
+    mdRenderPending = requestAnimationFrame(() => {
+      mdRenderPending = null;
+      applyAssistantMarkdown(el, raw);
+    });
+  }
+
+  function flushAssistantMarkdown() {
+    if (mdRenderPending !== null) {
+      cancelAnimationFrame(mdRenderPending);
+      mdRenderPending = null;
+    }
+    if (assistantBubble) {
+      applyAssistantMarkdown(assistantBubble, sanitizeAssistantStream(stripFinalEnvelope(streamRawText)));
+    }
+  }
+
   function highlightCode(line, lang) {
     let s = escapeHtml(line);
     if (lang === "plain" || !line.trim()) return s;
@@ -389,19 +780,76 @@
     return s;
   }
 
+  function isMutatingToolBlock(block) {
+    return block?.classList?.contains("kind-write") === true;
+  }
+
   function findDiffForPath(filePath) {
-    if (!filePath || !pendingState.diff.length) return null;
+    if (!filePath) return null;
     const norm = filePath.replace(/\\/g, "/");
-    return (
-      pendingState.diff.find((d) => {
+    if (pendingState.diff.length) {
+      const hit = pendingState.diff.find((d) => {
         const p = (d.path || "").replace(/\\/g, "/");
         return p === norm || p.endsWith("/" + norm) || norm.endsWith("/" + p) || basename(p) === basename(norm);
-      }) || null
-    );
+      });
+      if (hit) {
+        return hit;
+      }
+    }
+    for (const block of toolBlocks.values()) {
+      if (!isMutatingToolBlock(block)) continue;
+      const fp = block.dataset.filePath || "";
+      if (!fp) continue;
+      const p = fp.replace(/\\/g, "/");
+      if (
+        p !== norm &&
+        !p.endsWith("/" + norm) &&
+        !norm.endsWith("/" + p) &&
+        basename(p) !== basename(norm)
+      ) {
+        continue;
+      }
+      if (block.dataset.diffBefore !== undefined || block.dataset.diffAfter !== undefined) {
+        return {
+          path: fp,
+          before: block.dataset.diffBefore || "",
+          after: block.dataset.diffAfter || "",
+        };
+      }
+    }
+    return null;
+  }
+
+  function extractDiffFromTool(name, argsRaw, result) {
+    const path = toolPathFromArgs(name, argsRaw, result || "");
+    if (!path) {
+      return null;
+    }
+    const args = parseToolArgs(argsRaw);
+    const n = (name || "").toLowerCase();
+    if (n === "write" || n === "fs.write" || n === "file.write_atomic") {
+      const content = typeof args.content === "string" ? args.content : "";
+      return { path, before: "", after: content };
+    }
+    if (n === "edit" || n === "fs.edit") {
+      const search = typeof args.search === "string" ? args.search : "";
+      const replace = typeof args.replace === "string" ? args.replace : "";
+      if (search || replace) {
+        return { path, before: search, after: replace };
+      }
+    }
+    return null;
+  }
+
+  function rememberBlockDiff(block, before, after) {
+    if (!block) return;
+    block.dataset.diffBefore = before || "";
+    block.dataset.diffAfter = after || "";
   }
 
   function syncToolDiffStats() {
     for (const block of toolBlocks.values()) {
+      if (!isMutatingToolBlock(block)) continue;
       const fp = block.dataset.filePath || "";
       if (!fp) continue;
       const diff = findDiffForPath(fp);
@@ -412,10 +860,66 @@
     }
   }
 
+  /** Upgrade write/edit tool blocks to Cursor-style inline diff when pending data arrives. */
+  async function syncToolDiffPreviews() {
+    syncToolDiffStats();
+    const jobs = [];
+    for (const block of toolBlocks.values()) {
+      if (!isMutatingToolBlock(block)) continue;
+      const fp = block.dataset.filePath || "";
+      if (!fp) continue;
+      const diff = findDiffForPath(fp);
+      if (!diff || (!diff.before && !diff.after)) continue;
+      block.querySelector(".file-change-card")?.remove();
+      jobs.push(attachInlineToolDiff(block, fp, diff.before || "", diff.after || ""));
+    }
+    if (jobs.length) {
+      await Promise.all(jobs);
+    }
+  }
+
+  function attachToolDiffShell(block, filePath) {
+    if (!block || !filePath) return;
+    if (block.querySelector(".tool-diff-body.diff-preview-card")) return;
+    block.querySelector(".file-change-card")?.remove();
+    block.querySelector(".tool-head")?.remove();
+    const body = block.querySelector(".tool-body");
+    const diffWrap = document.createElement("div");
+    diffWrap.className = "tool-body tool-diff-body diff-preview-card";
+    const head = document.createElement("div");
+    head.className = "diff-preview-head";
+    head.innerHTML =
+      diffExtBadgeHtml(filePath) +
+      `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
+      `<span class="tool-diff-pending">…</span>`;
+    const lines = document.createElement("div");
+    lines.className = "diff-preview-body tool-diff-pending-body";
+    lines.textContent = "Loading diff preview…";
+    diffWrap.appendChild(head);
+    diffWrap.appendChild(lines);
+    head.querySelector(".diff-preview-name")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const d = findDiffForPath(filePath) || extractDiffFromTool("write", block.dataset.argsRaw || "", "");
+      openDiffMessage(
+        filePath,
+        d?.before || block.dataset.diffBefore || "",
+        d?.after || block.dataset.diffAfter || "",
+        /** @type {MouseEvent} */ (e).shiftKey
+      );
+    });
+    if (body) {
+      body.replaceWith(diffWrap);
+    } else {
+      block.appendChild(diffWrap);
+    }
+    block.classList.add("write-card-only");
+  }
+
   function renderPendingBar() {
     const n = pendingState.diff.length || pendingState.ops.length;
     if (!pendingBar) return;
-    if (!n || applyOn) {
+    if (!n) {
       pendingBar.classList.add("hidden");
       return;
     }
@@ -426,7 +930,66 @@
         ? `${fileCount} file${fileCount === 1 ? "" : "s"} changed`
         : `${n} pending change${n === 1 ? "" : "s"}`;
     }
-    renderPendingFiles();
+    renderPendingReviewList();
+  }
+
+  function diffExtBadgeHtml(filePath) {
+    const ext = fileExtLabel(filePath || "");
+    const lang = langFromPath(filePath || "");
+    return `<span class="diff-ext-badge lang-${escapeAttr(lang)}">${escapeAttr(ext)}</span>`;
+  }
+
+  function diffStatsHtml(stats) {
+    if (!stats || (!stats.add && !stats.del)) return "";
+    return (
+      `<span class="fcc-stats">` +
+      (stats.add ? `<span class="fcc-add">+${stats.add}</span>` : "") +
+      (stats.del ? `<span class="fcc-del">−${stats.del}</span>` : "") +
+      `</span>`
+    );
+  }
+
+  async function renderPendingReviewList() {
+    if (!pendingReviewListEl) return;
+    bindPendingReviewListEvents();
+    pendingReviewListEl.innerHTML = "";
+    if (!pendingState.diff.length) {
+      return;
+    }
+    for (let idx = 0; idx < pendingState.diff.length; idx++) {
+      const d = pendingState.diff[idx];
+      const stats = countDiffStats(d.before, d.after);
+      const item = document.createElement("div");
+      item.className = "pending-review-item diff-preview-card";
+      item.setAttribute("data-idx", String(idx));
+      if (idx === diffReviewCursor) item.classList.add("selected");
+
+      const head = document.createElement("div");
+      head.className = "diff-preview-head";
+      head.innerHTML =
+        diffExtBadgeHtml(d.path || "") +
+        `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(d.path || "file"))}</button>` +
+        diffStatsHtml(stats);
+
+      const body = document.createElement("div");
+      body.className = "diff-preview-body";
+
+      item.appendChild(head);
+      item.appendChild(body);
+      pendingReviewListEl.appendChild(item);
+      await renderUnifiedDiffLines(body, d.before || "", d.after || "", d.path || "", 28);
+      if (idx === diffReviewCursor) {
+        item.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+  }
+
+  function applyPendingChanges() {
+    vscode.postMessage({ type: "applyPending" });
+  }
+
+  function discardPendingChanges() {
+    vscode.postMessage({ type: "discardPending" });
   }
 
   function countDiffStats(before, after) {
@@ -563,13 +1126,14 @@
     vscode.postMessage({ type: "openFile", path: filePath, focus: Boolean(focus) });
   }
 
-  function openDiffMessage(path, before, after, focus) {
+  function openDiffMessage(path, before, after, sideBySide) {
     vscode.postMessage({
       type: "openDiff",
       path,
       before: before || "",
       after: after || "",
-      focus: Boolean(focus),
+      focus: !sideBySide,
+      sideBySide: Boolean(sideBySide),
     });
   }
 
@@ -658,6 +1222,157 @@
     }
   }
 
+  function resetTurnState() {
+    assistantTurn = null;
+    assistantTurnInner = null;
+    assistantBubble = null;
+    streamRawText = "";
+    toolTraceEl = null;
+    toolTraceSummary = null;
+    reasoningDetails = null;
+    reasoningBody = null;
+    reasoningStarted = 0;
+    turnToolCount = { read: 0, search: 0, write: 0, other: 0 };
+  }
+
+  /** @returns {HTMLElement | null} */
+  function ensureTurn() {
+    if (assistantTurnInner) {
+      return assistantTurnInner;
+    }
+    if (!messagesEl) {
+      return null;
+    }
+    assistantTurn = document.createElement("div");
+    assistantTurn.className = "msg assistant-turn";
+    assistantTurnInner = document.createElement("div");
+    assistantTurnInner.className = "turn-inner";
+    assistantTurn.appendChild(assistantTurnInner);
+    messagesEl.appendChild(assistantTurn);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return assistantTurnInner;
+  }
+
+  function commitPreToolText() {
+    flushAssistantMarkdown();
+    if (!assistantBubble) {
+      streamRawText = "";
+      return;
+    }
+    const visible = sanitizeAssistantStream(stripFinalEnvelope(streamRawText)).trim();
+    if (!visible) {
+      assistantBubble.remove();
+      assistantBubble = null;
+      streamRawText = "";
+      return;
+    }
+    assistantBubble.classList.add("turn-text-segment");
+    assistantBubble = null;
+    streamRawText = "";
+  }
+
+  /** @returns {HTMLElement | null} */
+  function ensureToolTraceList() {
+    const inner = ensureTurn();
+    if (!inner) {
+      return null;
+    }
+    if (!toolTraceEl) {
+      toolTraceEl = document.createElement("details");
+      toolTraceEl.className = "tool-trace trace-details";
+      toolTraceSummary = document.createElement("summary");
+      toolTraceSummary.className = "trace-summary";
+      toolTraceSummary.textContent = "Running tools…";
+      const list = document.createElement("div");
+      list.className = "tool-trace-list";
+      toolTraceEl.appendChild(toolTraceSummary);
+      toolTraceEl.appendChild(list);
+      inner.appendChild(toolTraceEl);
+      toolTraceEl.open = false;
+    }
+    return toolTraceEl.querySelector(".tool-trace-list");
+  }
+
+  function bumpToolTraceCount(name) {
+    const kind = toolKind(name);
+    if (kind === "read" || kind === "list") {
+      turnToolCount.read++;
+    } else if (kind === "search" || kind === "glob") {
+      turnToolCount.search++;
+    } else if (kind === "write") {
+      turnToolCount.write++;
+    } else {
+      turnToolCount.other++;
+    }
+    updateToolTraceSummary();
+  }
+
+  function updateToolTraceSummary() {
+    if (!toolTraceSummary) {
+      return;
+    }
+    const parts = [];
+    if (turnToolCount.read) {
+      const n = turnToolCount.read;
+      parts.push(`${n} ${n === 1 ? "read" : "reads"}`);
+    }
+    if (turnToolCount.search) {
+      const n = turnToolCount.search;
+      parts.push(`${n} ${n === 1 ? "search" : "searches"}`);
+    }
+    if (turnToolCount.write) {
+      const n = turnToolCount.write;
+      parts.push(`${n} ${n === 1 ? "edit" : "edits"}`);
+    }
+    if (turnToolCount.other) {
+      const n = turnToolCount.other;
+      parts.push(`${n} tool${n === 1 ? "" : "s"}`);
+    }
+    toolTraceSummary.textContent = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
+  }
+
+  /** @returns {HTMLElement | null} */
+  function ensureReasoning() {
+    const inner = ensureTurn();
+    if (!inner) {
+      return null;
+    }
+    if (!reasoningDetails) {
+      reasoningDetails = document.createElement("details");
+      reasoningDetails.className = "reasoning-trace trace-details";
+      const sum = document.createElement("summary");
+      sum.className = "trace-summary";
+      sum.textContent = "Thought briefly";
+      reasoningBody = document.createElement("pre");
+      reasoningBody.className = "trace-body reasoning-body";
+      reasoningDetails.appendChild(sum);
+      reasoningDetails.appendChild(reasoningBody);
+      inner.insertBefore(reasoningDetails, toolTraceEl || null);
+      reasoningDetails.open = false;
+      reasoningStarted = Date.now();
+    }
+    return reasoningBody;
+  }
+
+  function finalizeReasoningSummary() {
+    if (!reasoningDetails || !reasoningBody) {
+      return;
+    }
+    const text = (reasoningBody.textContent || "").trim();
+    if (!text) {
+      reasoningDetails.remove();
+      reasoningDetails = null;
+      reasoningBody = null;
+      return;
+    }
+    const sum = reasoningDetails.querySelector(".trace-summary");
+    if (sum) {
+      const sec = reasoningStarted ? Math.round((Date.now() - reasoningStarted) / 1000) : 0;
+      sum.textContent = sec >= 2 ? `Thought for ${sec}s` : "Thought briefly";
+    }
+    reasoningDetails.open = false;
+  }
+
   function messagesHostFor(msg) {
     if (msg.scope === "child" && msg.taskId) {
       const node = subagentByTask.get(msg.taskId);
@@ -668,7 +1383,45 @@
         if (node.toolsEl) return node.toolsEl;
       }
     }
-    return messagesEl;
+    // Write/edit diffs stay in the main turn stream — never inside collapsed tool trace.
+    if (toolKind(msg.toolName) === "write") {
+      return ensureTurn();
+    }
+    return ensureToolTraceList() || messagesEl;
+  }
+
+  function bindWriteToolHead(block, head) {
+    head.classList.add("tool-head-write");
+    const chev = head.querySelector(".tool-chev");
+    if (chev) chev.remove();
+    head.addEventListener("click", (e) => {
+      if (e.target.closest?.(".diff-preview-name")) return;
+      const fp = block.dataset.filePath || "";
+      if (!fp) return;
+      const d = findDiffForPath(fp);
+      e.preventDefault();
+      openDiffMessage(fp, d?.before || "", d?.after || "", /** @type {MouseEvent} */ (e).shiftKey);
+    });
+  }
+
+  function tryShowWriteDiff(block, name, argsRaw, content) {
+    if (!block || toolKind(name) !== "write") return;
+    const filePath = toolPathFromArgs(name, argsRaw, content || "");
+    if (!filePath) return;
+    block.dataset.filePath = filePath;
+    block.dataset.argsRaw = argsRaw || "";
+    let diff = findDiffForPath(filePath);
+    if (!diff) {
+      diff = extractDiffFromTool(name, argsRaw, content || "");
+    }
+    if (diff) {
+      rememberBlockDiff(block, diff.before || "", diff.after || "");
+    }
+    if (diff && (diff.before || diff.after)) {
+      void attachInlineToolDiff(block, filePath, diff.before || "", diff.after || "");
+    } else {
+      attachToolDiffShell(block, filePath);
+    }
   }
 
   function basename(path) {
@@ -681,160 +1434,144 @@
     return (p || "").replace(/\\/g, "/").toLowerCase();
   }
 
-  function ensureDiffReviewFields() {
-    pendingState.diff = pendingState.diff.map((d) => ({
-      ...d,
-      reviewStatus: d.reviewStatus || "",
-    }));
+  function pathsMatch(a, b) {
+    const na = normalizePath(a);
+    const nb = normalizePath(b);
+    if (!na || !nb) return false;
+    if (na === nb) return true;
+    if (na.endsWith("/" + nb) || nb.endsWith("/" + na)) return true;
+    const ba = basename(na);
+    const bb = basename(nb);
+    return ba !== "" && ba === bb;
   }
 
-  function acceptedDiffPaths() {
-    const set = new Set();
-    for (const d of pendingState.diff) {
-      if (d.reviewStatus !== "rejected" && d.path) {
-        set.add(normalizePath(d.path));
+  function bindPendingReviewListEvents() {
+    if (!pendingReviewListEl || pendingReviewListEl.dataset.bound === "1") return;
+    pendingReviewListEl.dataset.bound = "1";
+    pendingReviewListEl.addEventListener("click", (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement)) return;
+      const item = t.closest(".pending-review-item");
+      if (!item) return;
+      const idx = Number(item.getAttribute("data-idx"));
+      if (!Number.isFinite(idx) || idx < 0 || idx >= pendingState.diff.length) return;
+      const d = pendingState.diff[idx];
+      if (!d) return;
+
+      const nameBtn = t.closest(".diff-preview-name");
+      if (nameBtn) {
+        diffReviewCursor = idx;
+        renderPendingReviewList();
+        if (!d.path) return;
+        if (/** @type {MouseEvent} */ (e).altKey) {
+          openExternalFile(d.path, true);
+          return;
+        }
+        openDiffMessage(d.path, d.before || "", d.after || "", /** @type {MouseEvent} */ (e).shiftKey);
       }
-    }
-    return set;
-  }
-
-  function filterOpsByPaths(ops, paths) {
-    if (!Array.isArray(ops) || paths.size === 0) return [];
-    return ops.filter((op) => {
-      const p = op && typeof op.path === "string" ? normalizePath(op.path) : "";
-      return p && paths.has(p);
     });
   }
 
   function diffReviewActive() {
-    return pendingState.diff.length > 0 && !applyOn && document.activeElement !== inputEl;
+    return pendingState.diff.length > 0 && document.activeElement !== inputEl;
   }
 
-  function syncDiffReviewHint() {
-    if (!pendingReviewHint) return;
-    const show = pendingState.diff.length > 0 && !applyOn;
-    pendingReviewHint.classList.toggle("hidden", !show);
-  }
-
-  function renderPendingFiles() {
-    if (!pendingFilesEl) return;
-    pendingFilesEl.innerHTML = "";
-    if (!pendingState.diff.length) {
-      pendingFilesEl.classList.remove("has-files");
+  async function renderUnifiedDiffLines(container, before, after, filePath, maxLines = 32) {
+    const lang = langFromPath(filePath || "");
+    const allRows = alignDiffLines(before, after);
+    const changedRows = allRows.filter((r) => r.type !== "same");
+    const displayRows = changedRows.slice(0, maxLines);
+    if (displayRows.length === 0) {
+      const hint = document.createElement("div");
+      hint.className = "diff-empty-hint";
+      hint.textContent =
+        (before || "") === (after || "")
+          ? "No line changes detected"
+          : "Diff preview unavailable";
+      container.appendChild(hint);
       return;
     }
-    pendingFilesEl.classList.add("has-files");
-    pendingState.diff.forEach((d, idx) => {
-      const stats = countDiffStats(d.before, d.after);
-      const chip = document.createElement("button");
-      chip.type = "button";
-      let cls = "file-change-chip";
-      if (idx === diffReviewCursor) cls += " selected";
-      if (d.reviewStatus === "accepted") cls += " accepted";
-      if (d.reviewStatus === "rejected") cls += " rejected";
-      chip.className = cls;
-      const statusMark =
-        d.reviewStatus === "accepted" ? " ✓" : d.reviewStatus === "rejected" ? " ✗" : "";
-      chip.innerHTML =
-        `<span class="fcc-name">${escapeAttr(basename(d.path))}${statusMark}</span>` +
-        `<span class="fcc-stats">` +
-        (stats.add ? `<span class="fcc-add">+${stats.add}</span>` : "") +
-        (stats.del ? `<span class="fcc-del">−${stats.del}</span>` : "") +
-        `</span>`;
-      chip.title =
-        (d.path || "") +
-        " — click: diff in editor · Shift+click: focus · Alt+click: open file";
-      chip.addEventListener("click", (e) => {
-        diffReviewCursor = idx;
-        renderPendingFiles();
-        if (!d.path) return;
-        if (e.altKey) {
-          openExternalFile(d.path, true);
-          return;
-        }
-        openDiffMessage(d.path, d.before || "", d.after || "", e.shiftKey);
-      });
-      pendingFilesEl.appendChild(chip);
+    const codeLines = displayRows.map((r) =>
+      r.type === "del" ? r.left ?? "" : r.type === "add" ? r.right ?? "" : ""
+    );
+    const htmlLines = await requestHighlight(codeLines, lang);
+    displayRows.forEach((r, idx) => {
+      const row = document.createElement("div");
+      row.className = "diff-u-row " + r.type;
+      const ln = r.type === "del" ? r.leftNum : r.rightNum;
+      const gutter = r.type === "del" ? "−" : "+";
+      row.innerHTML =
+        `<span class="diff-u-ln">${ln || ""}</span>` +
+        `<span class="diff-u-gutter">${gutter}</span>` +
+        `<span class="diff-u-code">${htmlLines[idx] || "&nbsp;"}</span>`;
+      container.appendChild(row);
     });
-    syncDiffReviewHint();
-  }
-
-  function renderPendingDiff() {
-    if (!pendingDiff) return;
-    pendingDiff.innerHTML = "";
-    if (!pendingState.diff.length) {
-      pendingDiff.classList.add("hidden");
-      return;
+    if (changedRows.length > maxLines) {
+      const more = document.createElement("div");
+      more.className = "diff-more";
+      more.textContent = `… ${changedRows.length - maxLines} more changed lines`;
+      container.appendChild(more);
     }
-    pendingState.diff.forEach((d) => {
-      const block = document.createElement("div");
-      block.className = "diff-file";
-      const head = document.createElement("button");
-      head.type = "button";
-      head.className = "diff-path";
-      const stats = countDiffStats(d.before, d.after);
-      head.innerHTML =
-        `<span class="diff-path-name">${escapeAttr(d.path || "file")}</span>` +
-        `<span class="fcc-stats">` +
-        (stats.add ? `<span class="fcc-add">+${stats.add}</span>` : "") +
-        (stats.del ? `<span class="fcc-del">−${stats.del}</span>` : "") +
-        `</span>`;
-      head.title = "Open diff in VS Code editor · Shift+click: focus";
-      head.addEventListener("click", (e) => {
-        if (!d.path) return;
-        openDiffMessage(d.path, d.before || "", d.after || "", e.shiftKey);
-      });
-      block.appendChild(head);
-      if (d.before || d.after) {
-        void appendDiffLines(block, d.before, d.after, d.path);
-      }
-      pendingDiff.appendChild(block);
-    });
   }
 
   async function appendDiffLines(container, before, after, filePath, maxLines = 32) {
     const wrap = document.createElement("div");
-    wrap.className = "diff-lines";
-    const lang = langFromPath(filePath || "");
-    const bLines = (before || "").split("\n");
-    const aLines = (after || "").split("\n");
-    let shown = 0;
-    const delLines = [];
-    const addLines = [];
-    for (const line of bLines) {
-      if (shown >= maxLines) break;
-      delLines.push(line);
-      shown++;
-    }
-    for (const line of aLines) {
-      if (shown >= maxLines) break;
-      addLines.push(line);
-      shown++;
-    }
-    const [delHtml, addHtml] = await Promise.all([
-      requestHighlight(delLines, lang),
-      requestHighlight(addLines, lang),
-    ]);
-    delHtml.forEach((html) => {
-      const row = document.createElement("div");
-      row.className = "diff-line del";
-      row.innerHTML = "− " + html;
-      wrap.appendChild(row);
-    });
-    addHtml.forEach((html) => {
-      const row = document.createElement("div");
-      row.className = "diff-line add";
-      row.innerHTML = "+ " + html;
-      wrap.appendChild(row);
-    });
-    const total = bLines.length + aLines.length;
-    if (total > maxLines) {
-      const more = document.createElement("div");
-      more.className = "diff-more";
-      more.textContent = `… ${total - maxLines} more lines`;
-      wrap.appendChild(more);
-    }
+    wrap.className = "diff-u-block";
+    await renderUnifiedDiffLines(wrap, before, after, filePath, maxLines);
     container.appendChild(wrap);
+  }
+
+  async function attachInlineToolDiff(block, filePath, before, after) {
+    if (!block || !filePath) return;
+    rememberBlockDiff(block, before, after);
+    block.querySelector(".file-change-card")?.remove();
+    block.querySelector(".tool-head")?.remove();
+    block.classList.add("write-card-only");
+    const stats = countDiffStats(before, after);
+    let diffWrap = block.querySelector(".tool-diff-body.diff-preview-card");
+    if (!diffWrap) {
+      const body = block.querySelector(".tool-body");
+      diffWrap = document.createElement("div");
+      diffWrap.className = "tool-body tool-diff-body diff-preview-card";
+      const head = document.createElement("div");
+      head.className = "diff-preview-head";
+      head.innerHTML =
+        diffExtBadgeHtml(filePath) +
+        `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
+        diffStatsHtml(stats);
+      const lines = document.createElement("div");
+      lines.className = "diff-preview-body";
+      diffWrap.appendChild(head);
+      diffWrap.appendChild(lines);
+      if (body) {
+        body.replaceWith(diffWrap);
+      } else {
+        block.appendChild(diffWrap);
+      }
+      head.querySelector(".diff-preview-name")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openDiffMessage(filePath, before, after, /** @type {MouseEvent} */ (e).shiftKey);
+      });
+    } else {
+      const head = diffWrap.querySelector(".diff-preview-head");
+      if (head) {
+        head.innerHTML =
+          diffExtBadgeHtml(filePath) +
+          `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
+          diffStatsHtml(stats);
+        head.querySelector(".diff-preview-name")?.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openDiffMessage(filePath, before, after, /** @type {MouseEvent} */ (e).shiftKey);
+        });
+      }
+    }
+    const lines = diffWrap.querySelector(".diff-preview-body");
+    if (!lines) return;
+    lines.classList.remove("tool-diff-pending-body");
+    lines.textContent = "";
+    await renderUnifiedDiffLines(lines, before, after, filePath, 40);
   }
 
   function hideOverlay() {
@@ -937,6 +1674,214 @@
     overlay.classList.remove("hidden");
   }
 
+  function matchJSONObject(s, start) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let j = start; j < s.length; j++) {
+      const c = s[j];
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (c === "\\") {
+        esc = true;
+        continue;
+      }
+      if (c === '"') {
+        inStr = !inStr;
+        continue;
+      }
+      if (inStr) {
+        continue;
+      }
+      if (c === "{") {
+        depth++;
+      } else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          return j;
+        }
+      }
+    }
+    return -1;
+  }
+
+  /** @param {string} text */
+  function sanitizeAssistantStream(text) {
+    let t = String(text || "").trim();
+    if (!t) return "";
+    if (t.startsWith('"') && !t.endsWith('"') && t.length < 400) {
+      t = t.replace(/^"+/, "").trim();
+    }
+    function digitLikeRatio(s) {
+      if (!s.length) return 0;
+      let n = 0;
+      for (const c of s) {
+        if (/[\d.eE+\-]/.test(c)) n++;
+      }
+      return n / s.length;
+    }
+    function looksCorrupted(s) {
+      const x = s.trim();
+      if (x.length < 40) return false;
+      if (/0{48,}/.test(x)) return true;
+      if (x.length >= 120 && digitLikeRatio(x) > 0.75) return true;
+      if (/Serving user request/i.test(x) && digitLikeRatio(x.slice(30)) > 0.6) return true;
+      return false;
+    }
+    const numericRun = t.match(/([\d.eE+\-]{80,}|0{32,})/);
+    if (numericRun && numericRun.index > 0) {
+      t = t.slice(0, numericRun.index).trimEnd().replace(/^"+|"+$/g, "").trim();
+    }
+    if (looksCorrupted(t)) {
+      const prefix = (t.split(/[\d.eE]{20,}/)[0] || "").trim().replace(/^"+|"+$/g, "").trim();
+      if (prefix.length > 0 && prefix.length < 240 && !looksCorrupted(prefix)) return prefix;
+      return "";
+    }
+    return t;
+  }
+
+  function stripFinalEnvelope(text) {
+    let out = text;
+    for (;;) {
+      const i = out.indexOf("{");
+      if (i < 0) {
+        return out;
+      }
+      const end = matchJSONObject(out, i);
+      if (end < 0) {
+        const tail = out.slice(i);
+        if (
+          tail.includes('"patches"') ||
+          (tail.includes('"type"') && tail.includes('"final"'))
+        ) {
+          return out.slice(0, i).trimEnd();
+        }
+        return out;
+      }
+      const blob = out.slice(i, end + 1);
+      if (blob.includes('"patches"')) {
+        out = (out.slice(0, i) + out.slice(end + 1)).trim();
+        continue;
+      }
+      return out.slice(0, end + 1) + stripFinalEnvelope(out.slice(end + 1));
+    }
+  }
+
+  function runStatusLabel() {
+    const hint = chromeHint?.textContent?.trim();
+    if (hint && !chromeHint.classList.contains("hidden")) {
+      return hint;
+    }
+    let base = busyStatusText || "Working…";
+    if (busy && sendQueue.length > 0) {
+      const n = sendQueue.length;
+      base += ` · ${n} queued`;
+    }
+    return base;
+  }
+
+  function renderSendQueue() {
+    if (!messageQueueEl) {
+      return;
+    }
+    if (!sendQueue.length) {
+      messageQueueEl.classList.add("hidden");
+      messageQueueEl.replaceChildren();
+      return;
+    }
+    messageQueueEl.classList.remove("hidden");
+    messageQueueEl.replaceChildren();
+    const head = document.createElement("div");
+    head.className = "queue-head";
+    head.textContent =
+      sendQueue.length === 1 ? "1 message queued" : `${sendQueue.length} messages queued`;
+    messageQueueEl.appendChild(head);
+    sendQueue.forEach((item, idx) => {
+      const row = document.createElement("div");
+      row.className = "queue-item";
+      row.dataset.queueId = item.id;
+      const pos = document.createElement("span");
+      pos.className = "queue-pos";
+      pos.textContent = String(idx + 1);
+      const text = document.createElement("span");
+      text.className = "queue-text";
+      const preview = (item.preview || "").trim();
+      text.textContent = preview || (item.fileCount ? `${item.fileCount} attachment(s)` : "…");
+      text.title = preview;
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "queue-cancel";
+      rm.setAttribute("aria-label", "Remove from queue");
+      rm.textContent = "×";
+      rm.addEventListener("click", () => {
+        vscode.postMessage({ type: "cancelQueuedSend", id: item.id });
+      });
+      row.appendChild(pos);
+      row.appendChild(text);
+      row.appendChild(rm);
+      messageQueueEl.appendChild(row);
+    });
+    updateBusyUi();
+  }
+
+  function beginTurn() {
+    assistantBubble = null;
+    resetTurnState();
+    toolBlocks.clear();
+    toolArgs.clear();
+    execSteps.clear();
+  }
+
+  function setTypingIndicator(show, label) {
+    if (!messagesEl) {
+      return;
+    }
+    if (!show) {
+      typingIndicatorEl?.remove();
+      typingIndicatorEl = null;
+      return;
+    }
+    if (!typingIndicatorEl) {
+      typingIndicatorEl = document.createElement("div");
+      typingIndicatorEl.className = "msg typing-indicator";
+      typingIndicatorEl.setAttribute("aria-label", "Assistant is working");
+      typingIndicatorEl.innerHTML =
+        '<span class="typing-dots" aria-hidden="true">' +
+        '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>' +
+        "</span>" +
+        '<span class="typing-label"></span>';
+      messagesEl.appendChild(typingIndicatorEl);
+    }
+    const lab = typingIndicatorEl.querySelector(".typing-label");
+    if (lab) {
+      lab.textContent = label || "Working…";
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function updateBusyUi() {
+    const label = runStatusLabel();
+    if (composerStatus) {
+      composerStatus.classList.toggle("hidden", !busy);
+      composerStatus.setAttribute("aria-busy", busy ? "true" : "false");
+    }
+    if (composerStatusLabel) {
+      composerStatusLabel.textContent = label;
+    }
+    if (composerWrap) {
+      composerWrap.classList.toggle("composer-busy", busy);
+    }
+    if (sendBtn) {
+      sendBtn.classList.toggle("is-busy", busy);
+      sendBtn.setAttribute("aria-busy", busy ? "true" : "false");
+      sendBtn.title = busy ? "Stop" : "Send";
+      sendBtn.setAttribute("aria-label", busy ? "Stop" : "Send");
+    }
+    setTypingIndicator(busy && !assistantBubble?.textContent?.trim(), label);
+  }
+
   function setChromeHint(text, isError) {
     if (!chromeHint) {
       return;
@@ -946,42 +1891,77 @@
       chromeHint.textContent = "";
       chromeHint.classList.add("hidden");
       chromeHint.classList.remove("error");
+      if (busy) {
+        busyStatusText = "Working…";
+        updateBusyUi();
+      }
       return;
     }
     chromeHint.textContent = t;
     chromeHint.classList.remove("hidden");
     chromeHint.classList.toggle("error", Boolean(isError));
+    if (busy && !isError) {
+      busyStatusText = t;
+      updateBusyUi();
+    }
   }
 
   function setBusy(next) {
     busy = next;
-    if (sendBtn) {
-      sendBtn.disabled = next;
-    }
-    if (inputEl) {
-      inputEl.disabled = next;
-    }
     if (contextBtn) {
       contextBtn.classList.toggle("busy", next);
     }
+    if (next) {
+      if (!busyStatusText) {
+        busyStatusText = "Working…";
+      }
+    } else {
+      busyStatusText = "Working…";
+    }
+    updateBusyUi();
     if (todos.length) {
       renderTodos();
     }
     if (!next) {
-      setChromeHint("", false);
+      if (!todosDoneFlashTimer) {
+        if (chromeHint) {
+          chromeHint.textContent = "";
+          chromeHint.classList.add("hidden");
+          chromeHint.classList.remove("error");
+        }
+      }
       if (workflowActiveName) {
         setWorkflow("", false);
       }
     }
   }
 
+  function flashTodosDone() {
+    setChromeHint("✓ Tasks done", false);
+    clearTimeout(todosDoneFlashTimer);
+    todosDoneFlashTimer = window.setTimeout(() => {
+      todosDoneFlashTimer = 0;
+      setChromeHint("", false);
+    }, 2500);
+  }
+
+  function truncateTodoLabel(text, max) {
+    const t = (text || "").trim();
+    if (t.length <= max) {
+      return t;
+    }
+    return t.slice(0, max - 1) + "…";
+  }
+
   function closeMenus() {
     modeMenu?.classList.remove("open");
     effortMenu?.classList.remove("open");
+    accessMenu?.classList.remove("open");
     sessionMenu?.classList.remove("open");
     modelMenu?.classList.remove("open");
     modeBtn?.classList.remove("open");
     effortBtn?.classList.remove("open");
+    accessBtn?.classList.remove("open");
     sessionHistoryBtn?.classList.remove("open");
     modelPill?.classList.remove("open");
     hidePalette();
@@ -1020,6 +2000,18 @@
     paletteIndex = 0;
     paletteMenu.innerHTML = "";
     if (!items.length) {
+      if (mode === "mention") {
+        const head = document.createElement("div");
+        head.className = "menu-section palette-head";
+        head.textContent = "Files";
+        paletteMenu.appendChild(head);
+        const empty = document.createElement("div");
+        empty.className = "palette-empty";
+        empty.textContent = "No files found";
+        paletteMenu.appendChild(empty);
+        paletteMenu.classList.remove("hidden");
+        return;
+      }
       hidePalette();
       return;
     }
@@ -1120,7 +2112,9 @@
     if (!todos.length) {
       todosBar.classList.add("hidden");
       todosList.innerHTML = "";
-      if (todosProgress) todosProgress.textContent = "";
+      todosList.classList.add("hidden");
+      todosHadOpen = false;
+      todosExpanded = false;
       return;
     }
     const normalized = todos.map((t) => ({
@@ -1135,32 +2129,57 @@
     }
     const open = normalized.filter((t) => t.status !== "done" && t.status !== "cancelled");
     const total = normalized.length - cancelled;
+
     if (!open.length) {
-      if (done > 0) {
-        todosBar.classList.remove("hidden");
-        if (todosTitle) todosTitle.textContent = "Tasks";
-        if (todosProgress) todosProgress.textContent = `${done}/${total} done`;
-        todosList.innerHTML = "";
-        const row = document.createElement("div");
-        row.className = "todo-row status-done";
-        row.innerHTML = '<span class="todo-glyph">✓</span><span class="todo-text">All tasks completed</span>';
-        todosList.appendChild(row);
-      } else {
-        todosBar.classList.add("hidden");
+      if (done > 0 && todosHadOpen) {
+        flashTodosDone();
       }
+      todosHadOpen = false;
+      todosExpanded = false;
+      todosBar.classList.add("hidden");
+      todosList.innerHTML = "";
+      todosList.classList.add("hidden");
       return;
     }
+
+    todosHadOpen = true;
     todosBar.classList.remove("hidden");
-    if (todosTitle) todosTitle.textContent = busy ? "Working…" : "Tasks";
-    if (todosProgress) todosProgress.textContent = `${done}/${total} done`;
+
+    const inProg = open.find((t) => t.status === "in_progress");
+    const focus = inProg || open[0];
+    const focusLabel = truncateTodoLabel(focus.content || focus.id || "Task", 52);
+    const spinning = Boolean(inProg && busy);
+
+    if (todosChipGlyph) {
+      todosChipGlyph.textContent = inProg ? "◉" : "□";
+      todosChipGlyph.classList.toggle("spinning", spinning);
+    }
+    if (todosChipSummary) {
+      todosChipSummary.textContent = `${done}/${total} · ${focusLabel}`;
+    }
+    if (todosChipChev) {
+      todosChipChev.textContent = todosExpanded ? "▴" : "▾";
+    }
+    if (todosChip) {
+      todosChip.setAttribute("aria-expanded", todosExpanded ? "true" : "false");
+    }
+
+    if (!todosExpanded) {
+      todosList.classList.add("hidden");
+      todosList.innerHTML = "";
+      return;
+    }
+
+    todosList.classList.remove("hidden");
     todosList.innerHTML = "";
     const sorted = [...open].sort((a, b) => {
       const rank = (s) => (s === "in_progress" ? 0 : 1);
       return rank(a.status) - rank(b.status);
     });
-    sorted.slice(0, 10).forEach((t) => {
+    sorted.slice(0, 12).forEach((t) => {
       const row = document.createElement("div");
       row.className = "todo-row status-" + t.status;
+      row.setAttribute("role", "listitem");
       const glyph = document.createElement("span");
       glyph.className = "todo-glyph" + (t.status === "in_progress" && busy ? " spinning" : "");
       glyph.textContent = todoGlyph(t.status);
@@ -1171,10 +2190,10 @@
       row.appendChild(text);
       todosList.appendChild(row);
     });
-    if (open.length > 10) {
+    if (open.length > 12) {
       const more = document.createElement("div");
       more.className = "todo-more";
-      more.textContent = `+${open.length - 10} more`;
+      more.textContent = `+${open.length - 12} more`;
       todosList.appendChild(more);
     }
   }
@@ -1344,7 +2363,7 @@
     if (sub) {
       sub.textContent = filePath && filePath.includes("/") ? filePath : "";
     }
-    if (statsEl && filePath) {
+    if (statsEl && filePath && toolKind(name) === "write") {
       const diff = findDiffForPath(filePath);
       if (diff) {
         statsEl.innerHTML = statsHtml(countDiffStats(diff.before, diff.after));
@@ -1352,33 +2371,19 @@
     }
   }
 
-  function insertFileChangeCard(path, content) {
-    if (!messagesEl || !path) return;
+  function insertFileChangeCard(path, content, parent) {
+    const host = parent || messagesEl;
+    if (!host || !path) return;
+    if (parent && parent.classList.contains("tool-block")) {
+      attachToolDiffShell(parent, path);
+      return;
+    }
     const diff = findDiffForPath(path);
-    const stats = diff ? countDiffStats(diff.before, diff.after) : null;
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "file-change-card";
-    const ext = path.split(".").pop() || "file";
-    card.innerHTML =
-      `<span class="fcc-ext">${escapeAttr(ext.slice(0, 4).toUpperCase())}</span>` +
-      `<span class="fcc-body">` +
-      `<span class="fcc-name">${escapeAttr(basename(path))}</span>` +
-      `<span class="fcc-path">${escapeAttr(path)}</span>` +
-      `</span>` +
-      statsHtml(stats) +
-      `<span class="fcc-action">Diff</span>`;
-    card.title = "Open diff in VS Code · Shift+click: focus · Alt+click: open file";
-    card.addEventListener("click", (e) => {
-      if (e.altKey) {
-        openExternalFile(path, true);
-        return;
-      }
-      const d = findDiffForPath(path);
-      openDiffMessage(path, d?.before || "", d?.after || "", e.shiftKey);
-    });
-    messagesEl.appendChild(card);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (diff && (diff.before || diff.after)) {
+      void attachInlineToolDiff(parent || document.createElement("div"), path, diff.before || "", diff.after || "");
+      return;
+    }
+    attachToolDiffShell(parent || document.createElement("div"), path);
   }
 
   function renderSubagents() {
@@ -1485,6 +2490,13 @@
     if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
     if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, "") + "K";
     return String(v);
+  }
+
+  function resetContextUsage() {
+    ctxState.prompt = 0;
+    ctxState.completion = 0;
+    ctxState.estimated = false;
+    renderContextUi();
   }
 
   function renderContextUi() {
@@ -1707,7 +2719,79 @@
     parent.appendChild(wrap);
   }
 
-  /** @param {string} role @param {string} text @param {{ uiIndex?: number; files?: any[] }} [opts] */
+  /** @param {string} text @param {{ reasoning?: string; toolBlocks?: any[] }} opts */
+  function appendHistoryAssistantTurn(text, opts) {
+    if (!messagesEl) {
+      return;
+    }
+    resetTurnState();
+    assistantTurn = document.createElement("div");
+    assistantTurn.className = "msg assistant-turn";
+    assistantTurnInner = document.createElement("div");
+    assistantTurnInner.className = "assistant-turn-inner";
+    assistantTurn.appendChild(assistantTurnInner);
+    messagesEl.appendChild(assistantTurn);
+
+    const reasoning = (opts?.reasoning || "").trim();
+    if (reasoning) {
+      reasoningDetails = document.createElement("details");
+      reasoningDetails.className = "reasoning-trace trace-details";
+      const sum = document.createElement("summary");
+      sum.className = "trace-summary";
+      sum.textContent = "Thought briefly";
+      reasoningBody = document.createElement("pre");
+      reasoningBody.className = "trace-body reasoning-body";
+      reasoningBody.textContent = reasoning;
+      reasoningDetails.appendChild(sum);
+      reasoningDetails.appendChild(reasoningBody);
+      assistantTurnInner.appendChild(reasoningDetails);
+      reasoningDetails.open = false;
+    }
+
+    const tools = Array.isArray(opts?.toolBlocks) ? opts.toolBlocks : [];
+    for (const tb of tools) {
+      const id = tb.id || `${tb.name}-${toolBlocks.size}`;
+      handleToolBlock({ phase: "start", toolCallId: id, toolName: tb.name || "tool" });
+      if (tb.argsRaw) {
+        handleToolBlock({
+          phase: "update",
+          toolCallId: id,
+          toolName: tb.name || "tool",
+          argsDelta: tb.argsRaw,
+        });
+      }
+      handleToolBlock({
+        phase: "complete",
+        toolCallId: id,
+        toolName: tb.name || "tool",
+        content: tb.result || "",
+        diagnostics: tb.diagnostics,
+      });
+      if (toolKind(tb.name) === "write" && (tb.diffBefore !== undefined || tb.diffAfter !== undefined)) {
+        const block = toolBlocks.get(id);
+        const fp = toolPathFromArgs(tb.name || "", tb.argsRaw || "", tb.result || "");
+        if (block && fp) {
+          rememberBlockDiff(block, tb.diffBefore || "", tb.diffAfter || "");
+          void attachInlineToolDiff(block, fp, tb.diffBefore || "", tb.diffAfter || "");
+        }
+      }
+    }
+
+    if (text) {
+      assistantBubble = document.createElement("div");
+      applyAssistantMarkdown(assistantBubble, text);
+      assistantTurnInner.appendChild(assistantBubble);
+    }
+
+    if (toolTraceEl) {
+      toolTraceEl.open = false;
+    }
+    resetTurnState();
+    void syncToolDiffPreviews();
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  /** @param {string} role @param {string} text @param {{ uiIndex?: number; files?: any[]; reasoning?: string; toolBlocks?: any[] }} [opts] */
   function appendMsg(role, text, opts) {
     if (!messagesEl) {
       return null;
@@ -1733,17 +2817,29 @@
         rewind.className = "rewind-btn";
         rewind.title = "Rewind to here";
         rewind.textContent = "↩ Rewind";
-        rewind.addEventListener("click", () => {
-          vscode.postMessage({ type: "rewindToMessage", uiIndex: opts.uiIndex });
+        rewind.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const idx = typeof opts.uiIndex === "number" ? opts.uiIndex : Number(el.dataset.uiIndex);
+          if (!Number.isFinite(idx) || idx < 0) {
+            return;
+          }
+          rewind.disabled = true;
+          vscode.postMessage({ type: "rewindToMessage", uiIndex: idx });
         });
         wrap.appendChild(rewind);
       }
-      if (text) {
+      if (text || wrap.querySelector(".rewind-btn")) {
         el.appendChild(wrap);
       }
     } else if (role === "system") {
       el.className = "msg system";
       el.textContent = text;
+    } else if (role === "assistant" && (opts?.toolBlocks?.length || opts?.reasoning)) {
+      appendHistoryAssistantTurn(text, opts);
+      return null;
+    } else if (role === "assistant") {
+      applyAssistantMarkdown(el, text);
     } else {
       el.textContent = text;
     }
@@ -1761,6 +2857,9 @@
 
     if (msg.phase === "start") {
       if (msg.scope !== "child") {
+        commitPreToolText();
+        bumpToolTraceCount(msg.toolName);
+      } else {
         assistantBubble = null;
       }
       toolArgs.set(id, "");
@@ -1774,6 +2873,24 @@
           execSteps.set(msg.step, block);
         }
       }
+      if (kind === "write" && msg.scope !== "child") {
+        block.classList.add("write-card-only");
+        (host || messagesEl).appendChild(block);
+        toolBlocks.set(id, block);
+        if (msg.scope === "child" && msg.taskId) {
+          const node = subagentByTask.get(msg.taskId);
+          if (node) {
+            node.toolCount = (node.toolCount || 0) + 1;
+            renderSubagents();
+          }
+        } else {
+          trackSubagent(msg, "start", "");
+        }
+        setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        if (host) host.scrollTop = host.scrollHeight;
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return;
+      }
       const head = document.createElement("button");
       head.type = "button";
       head.className = "tool-head";
@@ -1783,24 +2900,29 @@
         `<span class="tool-sub"></span>` +
         `<span class="tool-stats"></span>` +
         `<span class="tool-spinner"></span>` +
-        `<span class="tool-chev">▾</span>`;
-      const body = document.createElement("pre");
-      body.className = "tool-body hidden";
-      head.addEventListener("click", (e) => {
-        const stats = e.target.closest?.(".tool-stats");
-        const fp = block.dataset.filePath || "";
-        if (stats && fp && stats.textContent.trim()) {
-          e.preventDefault();
-          e.stopPropagation();
-          const d = findDiffForPath(fp);
-          openDiffMessage(fp, d?.before || "", d?.after || "", e.shiftKey);
-          return;
-        }
-        body.classList.toggle("hidden");
-        head.classList.toggle("open");
-      });
+        (kind === "write" ? "" : `<span class="tool-chev">▾</span>`);
+      let body = null;
+      if (kind !== "write") {
+        body = document.createElement("pre");
+        body.className = "tool-body hidden";
+        head.addEventListener("click", (e) => {
+          const stats = e.target.closest?.(".tool-stats");
+          const fp = block.dataset.filePath || "";
+          if (stats && fp && stats.textContent.trim()) {
+            e.preventDefault();
+            e.stopPropagation();
+            const d = findDiffForPath(fp);
+            openDiffMessage(fp, d?.before || "", d?.after || "", e.shiftKey);
+            return;
+          }
+          body.classList.toggle("hidden");
+          head.classList.toggle("open");
+        });
+      } else {
+        bindWriteToolHead(block, head);
+      }
       block.appendChild(head);
-      block.appendChild(body);
+      if (body) block.appendChild(body);
       (host || messagesEl).appendChild(block);
       toolBlocks.set(id, block);
       if (msg.scope === "child" && msg.taskId) {
@@ -1826,6 +2948,9 @@
       const next = prev + msg.argsDelta;
       toolArgs.set(id, next);
       updateToolHead(block, msg.toolName, next, "", true);
+      if (toolKind(msg.toolName) === "write") {
+        tryShowWriteDiff(block, msg.toolName, next, "");
+      }
       if (msg.scope !== "child") {
         trackSubagent(msg, "update", next);
       }
@@ -1843,11 +2968,11 @@
       const spinner = block.querySelector(".tool-spinner");
       if (spinner) spinner.remove();
       updateToolHead(block, msg.toolName, argsRaw, msg.content || "", false);
-      if (head) head.classList.add("open");
+      if (head && kind !== "write") head.classList.remove("open");
 
-      if (body && msg.content) {
+      if (body && msg.content && kind !== "write") {
         body.textContent = msg.content.length > 8000 ? msg.content.slice(0, 8000) + "\n…" : msg.content;
-        body.classList.remove("hidden");
+        body.classList.add("hidden");
       }
 
       if (msg.diagnostics && msg.diagnostics.length) {
@@ -1863,11 +2988,7 @@
       }
 
       if (kind === "write") {
-        const filePath = toolPathFromArgs(msg.toolName, argsRaw, msg.content || "");
-        if (filePath) {
-          block.dataset.filePath = filePath;
-          insertFileChangeCard(filePath, msg.content || "");
-        }
+        tryShowWriteDiff(block, msg.toolName, argsRaw, msg.content || "");
       }
 
       if (msg.scope !== "child") {
@@ -1896,6 +3017,34 @@
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function initModeMenu() {
+    if (!modeMenu) {
+      return;
+    }
+    modeMenu.innerHTML = "";
+    const byId = new Map(MODES.map((m) => [m.id, m]));
+    MODE_GROUPS.forEach((group) => {
+      const head = document.createElement("div");
+      head.className = "menu-section";
+      head.textContent = group.label;
+      modeMenu.appendChild(head);
+      group.ids.forEach((id) => {
+        const m = byId.get(id);
+        if (!m) {
+          return;
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "menu-item";
+        btn.dataset.id = m.id;
+        btn.title = m.mode;
+        btn.innerHTML =
+          `<span class="mi mode-icon mode-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>${escapeAttr(m.label)}`;
+        modeMenu.appendChild(btn);
+      });
+    });
+  }
+
   function syncModeUi() {
     const m = currentMode();
     if (modeLabel) {
@@ -1904,6 +3053,14 @@
     const icon = document.getElementById("mode-icon");
     if (icon) {
       icon.textContent = m.icon;
+      icon.className = `ico mode-icon mode-${m.id}`;
+    }
+    if (modeBtn) {
+      modeBtn.dataset.mode = modeId;
+    }
+    const app = document.getElementById("app");
+    if (app) {
+      app.dataset.mode = modeId;
     }
     modeMenu?.querySelectorAll(".menu-item").forEach((el) => {
       const id = el.getAttribute("data-id");
@@ -1911,24 +3068,89 @@
     });
   }
 
+  function effortMeterHtml(id) {
+    const bars = id === "low" ? 1 : id === "medium" ? 2 : 3;
+    let inner = "";
+    for (let b = 0; b < bars; b++) {
+      inner += "<i></i>";
+    }
+    return `<span class="effort-meter effort-${escapeAttr(id)}">${inner}</span>`;
+  }
+
+  /** @param {HTMLElement} el @param {string} id @param {boolean} [pill] */
+  function setEffortIconEl(el, id, pill) {
+    el.className = pill ? `ico effort-icon effort-${id}` : `mi effort-icon effort-${id}`;
+    el.innerHTML = effortMeterHtml(id);
+  }
+
+  function initEffortMenu() {
+    if (!effortMenu) {
+      return;
+    }
+    effortMenu.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "menu-section";
+    head.textContent = "Effort";
+    effortMenu.appendChild(head);
+    EFFORTS.forEach((e) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menu-item";
+      btn.dataset.effort = e.id;
+      btn.innerHTML = `<span class="mi effort-icon effort-${escapeAttr(e.id)}">${effortMeterHtml(e.id)}</span>${escapeAttr(e.label)}`;
+      effortMenu.appendChild(btn);
+    });
+    const optHead = document.createElement("div");
+    optHead.className = "menu-section";
+    optHead.textContent = "Options";
+    effortMenu.appendChild(optHead);
+    const fastRow = document.createElement("div");
+    fastRow.className = "menu-row menu-row-fast";
+    fastRow.innerHTML =
+      '<span class="menu-row-label"><span class="mi effort-icon effort-fast" aria-hidden="true">⚡</span>Fast</span>' +
+      '<button type="button" id="fast-toggle" class="toggle" role="switch" aria-checked="false"></button>';
+    effortMenu.appendChild(fastRow);
+    fastToggleRef.el = /** @type {HTMLButtonElement | null} */ (document.getElementById("fast-toggle"));
+  }
+
   function syncEffortUi() {
     const e = currentEffort();
     if (effortLabel) {
       effortLabel.textContent = e.label;
     }
+    const icon = document.getElementById("effort-icon");
+    if (icon) {
+      setEffortIconEl(icon, e.id, true);
+    }
+    if (effortBtn) {
+      effortBtn.dataset.effort = effortId;
+      effortBtn.title = fastOn ? `${e.label} · Fast profile` : e.label;
+    }
+    const fastMark = document.getElementById("effort-fast-mark");
+    if (fastMark) {
+      fastMark.hidden = !fastOn;
+    }
     effortMenu?.querySelectorAll("[data-effort]").forEach((el) => {
       const id = el.getAttribute("data-effort");
       el.classList.toggle("selected", id === effortId);
     });
-    if (fastToggle) {
-      fastToggle.classList.toggle("on", fastOn);
-      fastToggle.setAttribute("aria-checked", fastOn ? "true" : "false");
+    const toggle = fastToggleRef.el;
+    if (toggle) {
+      toggle.classList.toggle("on", fastOn);
+      toggle.setAttribute("aria-checked", fastOn ? "true" : "false");
     }
+    effortMenu?.querySelector(".menu-row-fast")?.classList.toggle("fast-on", fastOn);
   }
 
   function ensureAssistant() {
+    const inner = ensureTurn();
+    if (!inner) {
+      return null;
+    }
     if (!assistantBubble) {
-      assistantBubble = appendMsg("assistant", "");
+      assistantBubble = document.createElement("div");
+      assistantBubble.className = "turn-text";
+      inner.appendChild(assistantBubble);
     }
     return assistantBubble;
   }
@@ -1993,7 +3215,11 @@
   }
 
   function send() {
-    if (!inputEl || busy) {
+    if (busy) {
+      vscode.postMessage({ type: "cancelTurn" });
+      return;
+    }
+    if (!inputEl) {
       return;
     }
     let text = inputEl.value.trim();
@@ -2014,7 +3240,8 @@
       text,
       mode: currentMode().mode,
       profile: effectiveProfile(),
-      apply: applyOn,
+      apply: false,
+      allowExec: accessId === "auto",
       files: files.map((f) => ({
         name: f.name,
         path: f.path,
@@ -2027,13 +3254,6 @@
     autoGrow();
     files = [];
     renderFiles();
-    assistantBubble = null;
-    toolBlocks.clear();
-    toolArgs.clear();
-    execSteps.clear();
-    ctxState.prompt = 0;
-    ctxState.completion = 0;
-    renderContextUi();
     closeMenus();
     vscode.postMessage(payload);
   }
@@ -2044,6 +3264,16 @@
     }
     inputEl.style.height = "auto";
     inputEl.style.height = Math.min(140, Math.max(44, inputEl.scrollHeight)) + "px";
+  }
+
+  function positionAccessMenu() {
+    if (!accessMenu || !accessBtn || !composerWrap) {
+      return;
+    }
+    const wrapRect = composerWrap.getBoundingClientRect();
+    const btnRect = accessBtn.getBoundingClientRect();
+    accessMenu.style.left = Math.max(12, btnRect.left - wrapRect.left) + "px";
+    accessMenu.style.right = "auto";
   }
 
   function positionEffortMenu() {
@@ -2190,6 +3420,31 @@
     }
   });
 
+  accessBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !accessMenu?.classList.contains("open");
+    closeMenus();
+    if (open) {
+      positionAccessMenu();
+      accessMenu?.classList.add("open");
+      accessBtn.classList.add("open");
+    }
+  });
+
+  accessMenu?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const item = /** @type {HTMLElement | null} */ (e.target.closest("[data-access]"));
+    if (!item || !accessMenu.contains(item)) {
+      return;
+    }
+    const id = item.getAttribute("data-access");
+    if (id) {
+      accessId = id;
+      syncAccessUi();
+      closeMenus();
+    }
+  });
+
   effortBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     const open = !effortMenu?.classList.contains("open");
@@ -2213,25 +3468,26 @@
     }
     modeId = id;
     syncModeUi();
+    vscode.setState({ ...(vscode.getState() || {}), modeId });
     closeMenus();
   });
 
-  effortMenu?.querySelectorAll("[data-effort]").forEach((el) => {
-    el.addEventListener("click", () => {
-      const id = el.getAttribute("data-effort");
-      if (!id) {
-        return;
+  effortMenu?.addEventListener("click", (e) => {
+    const effortItem = /** @type {HTMLElement | null} */ (e.target.closest("[data-effort]"));
+    if (effortItem && effortMenu.contains(effortItem)) {
+      const id = effortItem.getAttribute("data-effort");
+      if (id) {
+        effortId = id;
+        syncEffortUi();
+        closeMenus();
       }
-      effortId = id;
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#fast-toggle")) {
+      e.stopPropagation();
+      fastOn = !fastOn;
       syncEffortUi();
-      closeMenus();
-    });
-  });
-
-  fastToggle?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    fastOn = !fastOn;
-    syncEffortUi();
+    }
   });
 
   attachBtn?.addEventListener("click", () => {
@@ -2276,47 +3532,13 @@
     }
   });
 
-  applyToggle?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    applyOn = !applyOn;
-    syncApplyUi();
-    renderPendingBar();
-  });
-
-  pendingApplyBtn?.addEventListener("click", () => {
-    const paths = acceptedDiffPaths();
-    const filtered =
-      pendingState.diff.length > 0 ? filterOpsByPaths(pendingState.ops, paths) : pendingState.ops;
-    if (pendingState.diff.length && filtered.length === 0) {
-      appendMsg("system", "No accepted files to apply");
-      return;
-    }
-    vscode.postMessage({
-      type: "applyPending",
-      ops: filtered.length ? filtered : undefined,
-    });
-  });
-  pendingDiscardBtn?.addEventListener("click", () => {
-    pendingState = { ops: [], diff: [] };
-    renderPendingBar();
-    renderPendingDiff();
-    vscode.postMessage({ type: "discardPending" });
-  });
-  pendingDiffBtn?.addEventListener("click", () => {
-    if (!pendingDiff) return;
-    const willShow = pendingDiff.classList.contains("hidden");
-    if (willShow) {
-      renderPendingDiff();
-      pendingDiff.classList.remove("hidden");
-    } else {
-      pendingDiff.classList.add("hidden");
-    }
-  });
+  pendingApplyBtn?.addEventListener("click", () => applyPendingChanges());
+  pendingRejectBtn?.addEventListener("click", () => discardPendingChanges());
 
   diffViewerCloseBtn?.addEventListener("click", hideDiffViewer);
   diffViewerEditorBtn?.addEventListener("click", () => {
     if (!diffViewerState.path) return;
-    openDiffMessage(diffViewerState.path, diffViewerState.before, diffViewerState.after, true);
+    openDiffMessage(diffViewerState.path, diffViewerState.before, diffViewerState.after, false);
   });
   diffViewer?.addEventListener("click", (e) => {
     if (e.target === diffViewer) hideDiffViewer();
@@ -2399,6 +3621,12 @@
     vscode.postMessage({ type: "openSettings" });
   });
 
+  todosChip?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    todosExpanded = !todosExpanded;
+    renderTodos();
+  });
+
   sessionMenu?.addEventListener("click", (e) => {
     e.stopPropagation();
     const t = /** @type {HTMLElement} */ (e.target);
@@ -2456,7 +3684,11 @@
         if (st === "error") {
           setChromeHint(msg.detail || "connection error", true);
         } else if (st === "connecting") {
-          setChromeHint(msg.detail || "connecting…", false);
+          busyStatusText = msg.detail || "Connecting…";
+          setChromeHint(msg.detail || "Connecting…", false);
+        } else if (st === "running") {
+          busyStatusText = "Working…";
+          setChromeHint("Working…", false);
         } else {
           setChromeHint("", false);
         }
@@ -2474,7 +3706,6 @@
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
         }
-        setBusy(false);
         break;
       case "sessionList": {
         if (!sessionMenuList) {
@@ -2519,10 +3750,9 @@
           ops: Array.isArray(payload.ops) ? payload.ops : [],
           diff: Array.isArray(payload.diff) ? payload.diff : [],
         };
-        ensureDiffReviewFields();
         diffReviewCursor = 0;
         renderPendingBar();
-        syncToolDiffStats();
+        void syncToolDiffPreviews();
         break;
       }
       case "pendingCleared":
@@ -2530,7 +3760,6 @@
         diffReviewCursor = 0;
         renderPendingBar();
         syncToolDiffStats();
-        if (pendingDiff) pendingDiff.classList.add("hidden");
         break;
       case "permissionRequest":
         showPermissionOverlay(msg.request || {});
@@ -2539,14 +3768,20 @@
         showQuestionOverlay(Array.isArray(msg.questions) ? msg.questions : []);
         break;
       case "clearMessages":
+        sendQueue = [];
+        renderSendQueue();
+        resetContextUsage();
         if (messagesEl) {
           messagesEl.innerHTML = "";
         }
         assistantBubble = null;
+        resetTurnState();
         toolBlocks.clear();
         toolArgs.clear();
         execSteps.clear();
         todos = [];
+        todosExpanded = false;
+        todosHadOpen = false;
         subagents = [];
         subagentByTask.clear();
         renderSubagents();
@@ -2560,25 +3795,67 @@
           const opts = {
             uiIndex: typeof m.uiIndex === "number" ? m.uiIndex : undefined,
             files: Array.isArray(m.files) ? m.files : undefined,
+            reasoning: typeof m.reasoning === "string" ? m.reasoning : undefined,
+            toolBlocks: Array.isArray(m.toolBlocks) ? m.toolBlocks : undefined,
           };
           appendMsg(role, m.text || "", opts);
         });
+        void syncToolDiffPreviews();
         break;
       }
+      case "queueUpdate":
+        sendQueue = Array.isArray(msg.items) ? msg.items : [];
+        renderSendQueue();
+        break;
+      case "turnStart":
+        beginTurn();
+        break;
       case "userEcho":
         appendMsg("user", msg.text, {
           uiIndex: typeof msg.uiIndex === "number" ? msg.uiIndex : undefined,
           files: Array.isArray(msg.files) ? msg.files : undefined,
         });
         break;
-      case "delta": {
-        const bubble = ensureAssistant();
-        if (bubble && typeof msg.content === "string") {
-          bubble.textContent = (bubble.textContent || "") + msg.content;
+      case "reasoningDelta": {
+        const body = ensureReasoning();
+        if (body && typeof msg.content === "string") {
+          body.textContent = (body.textContent || "") + msg.content;
           if (messagesEl) {
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         }
+        break;
+      }
+      case "delta":
+      case "deltaSync": {
+        if (busy) {
+          busyStatusText = "Writing…";
+          updateBusyUi();
+        }
+        const bubble = ensureAssistant();
+        if (bubble && typeof msg.content === "string") {
+          if (msg.type === "deltaSync") {
+            streamRawText = msg.content;
+          } else {
+            streamRawText += msg.content;
+          }
+          scheduleAssistantMarkdown(
+            bubble,
+            sanitizeAssistantStream(stripFinalEnvelope(streamRawText))
+          );
+          if (messagesEl) {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        }
+        break;
+      }
+      case "discardAssistantBubble": {
+        flushAssistantMarkdown();
+        if (assistantBubble) {
+          assistantBubble.remove();
+          assistantBubble = null;
+        }
+        streamRawText = "";
         break;
       }
       case "attachmentPreview":
@@ -2616,14 +3893,10 @@
         break;
       case "stepUsage": {
         const u = msg.usage || {};
-        const prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
-        const completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
-        if (prompt > 0 || completion > 0) {
-          ctxState.prompt = prompt;
-          ctxState.completion = completion;
-          ctxState.estimated = u.source === "estimate";
-          renderContextUi();
-        }
+        ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
+        ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
+        ctxState.estimated = u.source === "estimate";
+        renderContextUi();
         break;
       }
       case "contextInfo": {
@@ -2681,9 +3954,14 @@
       case "systemNote":
         appendMsg("system", msg.text || "");
         break;
-      case "mentionResults":
+      case "mentionResults": {
+        const hit = inputEl ? detectPaletteQuery(inputEl.value) : null;
+        if (!hit || hit.mode !== "mention" || hit.query !== (msg.query ?? "")) {
+          break;
+        }
         renderPalette("mention", Array.isArray(msg.files) ? msg.files : []);
         break;
+      }
       case "tool": {
         const toolName = msg.toolName || "tool";
         const line = msg.done
@@ -2695,11 +3973,18 @@
       }
       case "error":
         appendMsg("error", msg.message || "error");
-        setBusy(false);
         break;
       case "turnComplete":
-        setBusy(false);
+        flushAssistantMarkdown();
+        finalizeReasoningSummary();
+        if (toolTraceEl) {
+          toolTraceEl.open = false;
+        }
+        if (!msg.queuedNext) {
+          setBusy(false);
+        }
         assistantBubble = null;
+        resetTurnState();
         if (!msg.ok) {
           setChromeHint("turn failed", true);
         }
@@ -2724,36 +4009,27 @@
     if (e.key === "ArrowUp") {
       e.preventDefault();
       diffReviewCursor = Math.max(0, diffReviewCursor - 1);
-      renderPendingFiles();
+      renderPendingReviewList();
       return;
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       diffReviewCursor = Math.min(n - 1, diffReviewCursor + 1);
-      renderPendingFiles();
-      return;
-    }
-    if (e.key === "a" || e.key === "A") {
-      e.preventDefault();
-      pendingState.diff[diffReviewCursor].reviewStatus = "accepted";
-      renderPendingFiles();
-      return;
-    }
-    if (e.key === "x" || e.key === "X") {
-      e.preventDefault();
-      pendingState.diff[diffReviewCursor].reviewStatus = "rejected";
-      renderPendingFiles();
+      renderPendingReviewList();
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      pendingApplyBtn?.click();
+      applyPendingChanges();
     }
   });
 
+  initModeMenu();
+  initEffortMenu();
+  initAccessMenu();
   syncModeUi();
   syncEffortUi();
-  syncApplyUi();
+  syncAccessUi();
   renderContextUi();
   autoGrow();
   vscode.postMessage({ type: "ready" });

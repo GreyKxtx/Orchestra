@@ -102,7 +102,8 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if len(a.opts.PermissionRules) > 0 {
 		subject := subjectForTool(name, tc.Input)
 		if act, matched := checkPermissions(a.opts.PermissionRules, name, subject); matched {
-			if act == "deny" {
+			switch act {
+			case "deny":
 				toolResult := formatToolDeniedJSON(name, tc.Input, "tool call denied by permission ruleset")
 				*history = append(*history, llm.Message{
 					Role:       llm.RoleTool,
@@ -113,9 +114,28 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 					return serialToolOutcome{}, cbErr
 				}
 				return serialToolOutcome{}, nil
+			case "allow":
+				effectiveAllowExec = true
+				effectiveAllowWeb = true
+			case "ask":
+				approved, permErr := a.requestInteractivePermission(ctx, name, subject, tc.Input)
+				if permErr != nil || !approved {
+					reason := "tool call denied by interactive permission requester"
+					if permErr != nil {
+						reason = permErr.Error()
+					}
+					toolResult := formatToolDeniedJSON(name, tc.Input, reason)
+					*history = append(*history, llm.Message{
+						Role:       llm.RoleTool,
+						ToolCallID: toolCallID,
+						Content:    toolResult,
+					})
+					if cbErr := cb.RecordDenied(name); cbErr != nil {
+						return serialToolOutcome{}, cbErr
+					}
+					return serialToolOutcome{}, nil
+				}
 			}
-			effectiveAllowExec = true
-			effectiveAllowWeb = true
 		}
 	}
 
@@ -504,7 +524,10 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	})
 
 	if name == "write" || name == "edit" {
-		a.commitStagedAfterMutatingTool(ctx, steps, extractWriteOrEditPath(tc.Input))
+		toolPath := extractWriteOrEditPath(tc.Input)
+		a.commitStagedAfterMutatingTool(ctx, steps, toolPath)
+		a.previewStagedAfterMutatingTool(ctx, steps)
+		a.maybeHintStagedReady(history, toolPath)
 	}
 
 	if a.opts.MultimodalLLM && name == "browser.screenshot" {
@@ -554,4 +577,30 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	cb.ResetDeniedForTool(name)
 	cb.ResetFinalFailures()
 	return serialToolOutcome{}, nil
+}
+
+func (a *Agent) requestInteractivePermission(ctx context.Context, toolName, subject string, input json.RawMessage) (bool, error) {
+	if a.opts.PermissionRequester == nil {
+		return false, fmt.Errorf("%s requires interactive approval (permission ask); connect TUI/IDE or use allow/deny rules", toolName)
+	}
+	desc := subject
+	if desc == "" {
+		desc = string(input)
+	}
+	if len(desc) > 240 {
+		desc = desc[:240] + "..."
+	}
+	kind := toolName
+	if toolName == "bash" {
+		kind = "exec"
+	}
+	resp, err := a.opts.PermissionRequester.RequestPermission(ctx, PermissionRequest{
+		Tool:        toolName,
+		Kind:        kind,
+		Description: desc,
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.Approved, nil
 }

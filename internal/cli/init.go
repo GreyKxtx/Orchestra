@@ -71,7 +71,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 		"#\n" +
 		"# Planner–Worker (recommended for local models):\n" +
 		"#   orchestra apply --mode orchestra \"…\"   # Lead delegates via task(worker)\n" +
-		"#   orchestra:\n" +
+		"# providers:\n" +
+		"#   fast:                          # Worker / compaction / auto-router\n" +
+		"#     api_base: http://localhost:8000/v1\n" +
+		"#     model: nemotron-4b\n" +
+		"# llm:\n" +
+		"#   model: qwen-27b                 # Lead (main)\n" +
+		"#   extra_body:\n" +
+		"#     num_ctx: 20000\n" +
+		"# llm.router.fast_provider: fast\n" +
+		"# orchestra:\n" +
 		"#     planner:\n" +
 		"#       provider: fast          # reasoning / strong model for Lead\n" +
 		"#       model: …\n" +

@@ -121,7 +121,15 @@ func (s *Session) AppendAssistantReasoningDelta(delta string) {
 	m := &s.Messages[s.activeAssistant]
 	i := m.EnsureOpenSegment(SegmentReasoning)
 	m.Segments[i].Text += delta
-	m.SyncProjections()
+}
+
+// SyncActiveAssistantProjections refreshes flat Text/Reasoning/ToolBlocks on the
+// in-flight assistant turn. Call before rendering — not on every stream delta.
+func (s *Session) SyncActiveAssistantProjections() {
+	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
+		return
+	}
+	s.Messages[s.activeAssistant].SyncProjections()
 }
 
 // SetAssistantUsage records token counts on the active assistant message.
@@ -149,7 +157,6 @@ func (s *Session) AppendAssistantDelta(delta string) {
 	m := &s.Messages[s.activeAssistant]
 	i := m.EnsureOpenSegment(SegmentText)
 	m.Segments[i].Text += delta
-	m.SyncProjections()
 }
 
 // TruncateAssistantText is a no-op kept for call-site compatibility.
@@ -158,12 +165,18 @@ func (s *Session) TruncateAssistantText(n int) {
 	_ = n
 }
 
-// AssistantTextLen returns the current byte length of the active assistant's Text projection.
+// AssistantTextLen returns the current byte length of the active assistant text segment.
 func (s *Session) AssistantTextLen() int {
 	if s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
 		return 0
 	}
-	return len(s.Messages[s.activeAssistant].Text)
+	m := &s.Messages[s.activeAssistant]
+	for _, seg := range m.Segments {
+		if seg.Kind == SegmentText {
+			return len(seg.Text)
+		}
+	}
+	return len(m.Text)
 }
 
 // FindToolBlock looks up a tool block by its id in the active assistant message.
@@ -206,7 +219,6 @@ func (s *Session) AppendToolArgsDelta(id, delta string) {
 		si, ti := m.FindToolBlockLoc(id)
 		if si >= 0 && m.Segments[si].Tools[ti].Status == ToolBlockRunning {
 			m.Segments[si].Tools[ti].ArgsRaw += delta
-			m.SyncProjections()
 			return
 		}
 	}
@@ -218,7 +230,6 @@ func (s *Session) AppendToolArgsDelta(id, delta string) {
 		return
 	}
 	m.Segments[si].Tools[ti].ArgsRaw += delta
-	m.SyncProjections()
 }
 
 // UpdateToolBlock finds the tool block by ID and updates its status / result.
@@ -257,6 +268,9 @@ func (s *Session) FinalizeRunningTools() {
 	m.SyncProjections()
 }
 
+// maxRunningToolOutputRunes caps exec/bash scrollback stored in the active turn.
+const maxRunningToolOutputRunes = 32_000
+
 // AppendRunningToolOutput appends streamed stdout to the last running exec/bash tool block.
 func (s *Session) AppendRunningToolOutput(chunk string) {
 	if chunk == "" || s.activeAssistant < 0 || s.activeAssistant >= len(s.Messages) {
@@ -273,8 +287,12 @@ func (s *Session) AppendRunningToolOutput(chunk string) {
 			}
 			name := strings.ToLower(m.Segments[si].Tools[ti].Name)
 			if name == "exec.run" || name == "bash" {
-				m.Segments[si].Tools[ti].Result += chunk
-				m.SyncProjections()
+				out := m.Segments[si].Tools[ti].Result + chunk
+				runes := []rune(out)
+				if len(runes) > maxRunningToolOutputRunes {
+					out = "…" + string(runes[len(runes)-maxRunningToolOutputRunes:])
+				}
+				m.Segments[si].Tools[ti].Result = out
 				return
 			}
 		}
@@ -285,6 +303,7 @@ func (s *Session) AppendRunningToolOutput(chunk string) {
 func (s *Session) FinishAssistant() {
 	if s.activeAssistant >= 0 && s.activeAssistant < len(s.Messages) {
 		m := &s.Messages[s.activeAssistant]
+		m.SyncProjections()
 		m.Streaming = false
 		if !m.StartedAt.IsZero() {
 			m.Duration = time.Since(m.StartedAt)

@@ -1,0 +1,157 @@
+name: vscode-vsix
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to VS Marketplace (requires VSCE_PAT secret)
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "vscode-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-core:
+    name: core (${{ matrix.bin_dir }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            bin_dir: win32-x64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            cc: ""
+          - runner: ubuntu-latest
+            bin_dir: linux-x64
+            goos: linux
+            goarch: amd64
+            ext: ""
+            cc: ""
+          - runner: macos-latest
+            bin_dir: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ""
+            cc: ""
+          - runner: macos-latest
+            bin_dir: darwin-x64
+            goos: darwin
+            goarch: amd64
+            ext: ""
+            cc: "clang -arch x86_64 -mmacosx-version-min=11.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Add MinGW to PATH (Windows / CGO)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Download modules
+        run: go work sync
+
+      - name: Build orchestra core
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+          CC: ${{ matrix.cc }}
+        run: |
+          set -euo pipefail
+          out_dir="ui/vscode/bin/${{ matrix.bin_dir }}"
+          mkdir -p "$out_dir"
+          out="${out_dir}/orchestra${{ matrix.ext }}"
+          echo "Building ${out} (GOOS=${GOOS} GOARCH=${GOARCH} CC=${CC:-default})"
+          go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/orchestra
+          ls -la "$out_dir"
+
+      - name: Upload core artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-${{ matrix.bin_dir }}
+          path: ui/vscode/bin/${{ matrix.bin_dir }}
+          retention-days: 14
+
+  package-vsix:
+    name: package VSIX
+    needs: build-core
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download core artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: _cores
+          pattern: core-*
+
+      - name: Merge cores into bin/
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ui/vscode/bin
+          for dir in _cores/core-*; do
+            name="$(basename "$dir")"
+            name="${name#core-}"
+            dest="ui/vscode/bin/${name}"
+            mkdir -p "$dest"
+            cp -a "$dir/." "$dest/"
+            echo "→ $dest"
+            ls -la "$dest"
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/vscode/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ui/vscode
+        run: npm ci
+
+      - name: Compile TypeScript
+        working-directory: ui/vscode
+        run: npm run compile
+
+      - name: Package VSIX
+        working-directory: ui/vscode
+        run: npx @vscode/vsce package --no-dependencies
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestra-vsix
+          path: ui/vscode/*.vsix
+          retention-days: 30
+
+      - name: Publish to Marketplace
+        if: >-
+          (github.event_name == 'workflow_dispatch' && inputs.publish) ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/vscode-v'))
+        working-directory: ui/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "VSCE_PAT secret not set — skipping publish"
+            exit 0
+          fi
+          npx @vscode/vsce publish --no-dependencies

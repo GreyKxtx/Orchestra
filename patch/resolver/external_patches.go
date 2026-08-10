@@ -97,55 +97,33 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 		return ops.ReplaceRangeOp{}, err
 	}
 
-	start, end, matches := findUnique(string(before), p.Search)
+	start, end, matches, strategy := forgivingFind(string(before), p.Search)
 	if matches == 0 {
-		// Pass 2: retry ignoring trailing whitespace on every line and
-		// CRLF/LF differences.
-		ltStart, ltEnd, ltMatches := lineTrimmedFind(string(before), p.Search)
-		switch ltMatches {
-		case 0:
-			// Pass 3: retry additionally normalising leading whitespace
-			// (tabs expanded to spaces). Handles tab↔space mismatches.
-			ifStart, ifEnd, ifMatches := indentFlexibleFind(string(before), p.Search)
-			switch ifMatches {
-			case 0:
-				return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
-					"path":     p.Path,
-					"search":   preview(p.Search, 200),
-					"fileHash": cache.ComputeSHA256(before),
-				})
-			case 1:
-				start, end = ifStart, ifEnd
-			default:
-				return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (indent-flexible)", map[string]any{
-					"path":    p.Path,
-					"matches": ifMatches,
-					"search":  preview(p.Search, 200),
-				})
-			}
-		case 1:
-			start, end = ltStart, ltEnd
-			// Fall through to position computation below.
-		default: // >1
-			return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (line-trimmed)", map[string]any{
-				"path":    p.Path,
-				"matches": ltMatches,
-				"search":  preview(p.Search, 200),
-			})
-		}
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+			"path":     p.Path,
+			"search":   preview(p.Search, 200),
+			"fileHash": cache.ComputeSHA256(before),
+		})
 	}
 	if matches > 1 {
 		// M13 in audit ledger: surface up to 5 line numbers so the model
 		// can tell which spans collide and pick disambiguating context.
 		// Re-scans the file (findUnique returned early at matches==2);
 		// cost is amortised — only fires on the ambiguous path.
-		lines := findAllMatchLines(string(before), p.Search, 5)
-		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous", map[string]any{
-			"path":        p.Path,
-			"matches":     matches,
-			"match_lines": lines,
-			"search":      preview(p.Search, 200),
-		})
+		detail := map[string]any{
+			"path":     p.Path,
+			"matches":  matches,
+			"search":   preview(p.Search, 200),
+			"strategy": strategy,
+		}
+		if strategy == "exact" {
+			detail["match_lines"] = findAllMatchLines(string(before), p.Search, 5)
+		}
+		msg := "search block is ambiguous"
+		if strategy != "" && strategy != "exact" {
+			msg = "search block is ambiguous (" + strategy + ")"
+		}
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.AmbiguousMatch, msg, detail)
 	}
 
 	startPos, err := posFromOffset(before, start)
@@ -540,6 +518,33 @@ func normalizeLeadingAndTrailingWS(s string) (normalized string, origIdx []int) 
 // immediately after '\n' in the normalised haystack). This prevents false
 // positives such as a 1-tab-indented needle matching inside a 2-tab-indented
 // line (e.g. "    hello" found at offset 4 of "        hello").
+func forgivingFind(haystack, needle string) (start, end, matches int, strategy string) {
+	start, end, matches = findUnique(haystack, needle)
+	if matches != 0 {
+		return start, end, matches, "exact"
+	}
+	passes := []struct {
+		name string
+		fn   func(string, string) (int, int, int)
+	}{
+		{"line-trimmed", lineTrimmedFind},
+		{"indent-flexible", indentFlexibleFind},
+		{"whitespace-normalized", whitespaceNormalizedFind},
+		{"escape-normalized", escapeNormalizedFind},
+		{"trimmed-boundary", trimmedBoundaryFind},
+		{"block-anchor", blockAnchorFind},
+		{"fuzzy-block", fuzzyBlockFind},
+		{"double-anchor", doubleAnchorFind},
+	}
+	for _, p := range passes {
+		start, end, matches = p.fn(haystack, needle)
+		if matches != 0 {
+			return start, end, matches, p.name
+		}
+	}
+	return 0, 0, 0, ""
+}
+
 func indentFlexibleFind(haystack, needle string) (start, end, matches int) {
 	if needle == "" {
 		return 0, 0, 0
@@ -573,6 +578,269 @@ func indentFlexibleFind(haystack, needle string) (start, end, matches int) {
 		idx = absJ + max(1, len(normNeedle))
 	}
 	return start, end, matches
+}
+
+// whitespaceNormalizedFind collapses runs of spaces/tabs within each line to a
+// single space (after CRLF→LF and per-line trailing trim). Phase 11 pass 4.
+func whitespaceNormalizedFind(haystack, needle string) (start, end, matches int) {
+	if needle == "" {
+		return 0, 0, 0
+	}
+	normHay, hayMap := normalizeWhitespaceInternal(haystack)
+	normNeedle, _ := normalizeWhitespaceInternal(needle)
+	if normNeedle == "" {
+		return 0, 0, 0
+	}
+
+	idx := 0
+	for {
+		j := strings.Index(normHay[idx:], normNeedle)
+		if j < 0 {
+			break
+		}
+		matches++
+		if matches == 1 {
+			start = hayMap[idx+j]
+			end = hayMap[idx+j+len(normNeedle)]
+		}
+		if matches > 1 {
+			return start, end, matches
+		}
+		idx = idx + j + max(1, len(normNeedle))
+	}
+	return start, end, matches
+}
+
+// normalizeWhitespaceInternal normalises each line: CRLF→LF, trailing WS stripped,
+// consecutive spaces/tabs collapsed to one space. origIdx maps normalized bytes
+// back to original offsets (same contract as normalizeTrailingWS).
+func normalizeWhitespaceInternal(s string) (normalized string, origIdx []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	origIdx = make([]int, 0, len(s)+1)
+
+	i := 0
+	for i < len(s) {
+		nl := strings.IndexByte(s[i:], '\n')
+		var lineEnd int
+		hasNL := false
+		if nl < 0 {
+			lineEnd = len(s)
+		} else {
+			lineEnd = i + nl
+			hasNL = true
+		}
+
+		contentEnd := lineEnd
+		if hasNL && contentEnd > i && s[contentEnd-1] == '\r' {
+			contentEnd--
+		}
+		for contentEnd > i {
+			c := s[contentEnd-1]
+			if c == ' ' || c == '\t' {
+				contentEnd--
+			} else {
+				break
+			}
+		}
+
+		k := i
+		inWSRun := false
+		for k < contentEnd {
+			c := s[k]
+			if c == ' ' || c == '\t' {
+				if !inWSRun {
+					b.WriteByte(' ')
+					origIdx = append(origIdx, k)
+					inWSRun = true
+				}
+				k++
+				continue
+			}
+			inWSRun = false
+			b.WriteByte(c)
+			origIdx = append(origIdx, k)
+			k++
+		}
+
+		if hasNL {
+			b.WriteByte('\n')
+			origIdx = append(origIdx, lineEnd)
+			i = lineEnd + 1
+		} else {
+			i = lineEnd
+		}
+	}
+
+	origIdx = append(origIdx, len(s))
+	return b.String(), origIdx
+}
+
+// escapeNormalizedFind unescapes JSON-style sequences in needle (\n, \t, \",
+// \\, etc.) then retries strict substring search. Phase 11 pass 5.
+func escapeNormalizedFind(haystack, needle string) (start, end, matches int) {
+	unescaped := unescapeSearchString(needle)
+	if unescaped == needle {
+		return 0, 0, 0
+	}
+	return findUnique(haystack, unescaped)
+}
+
+func unescapeSearchString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		switch s[i+1] {
+		case 'n':
+			b.WriteByte('\n')
+			i++
+		case 't':
+			b.WriteByte('\t')
+			i++
+		case 'r':
+			b.WriteByte('\r')
+			i++
+		case '\\':
+			b.WriteByte('\\')
+			i++
+		case '"':
+			b.WriteByte('"')
+			i++
+		case '\'':
+			b.WriteByte('\'')
+			i++
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+const boundaryTrimChars = " \t\r\n"
+
+// trimmedBoundaryFind trims whitespace only at the start/end of the whole search
+// block, finds the inner core in haystack, and maps back to original bytes.
+// Phase 11 pass 6.
+func trimmedBoundaryFind(haystack, needle string) (start, end, matches int) {
+	inner := strings.Trim(needle, boundaryTrimChars)
+	if inner == "" {
+		return 0, 0, 0
+	}
+	leadTrim := len(needle) - len(strings.TrimLeft(needle, boundaryTrimChars))
+	trailTrim := len(needle) - len(strings.TrimRight(needle, boundaryTrimChars))
+
+	idx := 0
+	for {
+		j := strings.Index(haystack[idx:], inner)
+		if j < 0 {
+			break
+		}
+		absStart := idx + j
+		absEnd := absStart + len(inner)
+
+		expStart := absStart
+		for trimmed := 0; trimmed < leadTrim && expStart > 0 && isBoundaryWS(haystack[expStart-1]); trimmed++ {
+			expStart--
+		}
+
+		expEnd := absEnd
+		for trimmed := 0; trimmed < trailTrim && expEnd < len(haystack) && isBoundaryWS(haystack[expEnd]); trimmed++ {
+			expEnd++
+		}
+
+		matches++
+		if matches == 1 {
+			start, end = expStart, expEnd
+		}
+		if matches > 1 {
+			return start, end, matches
+		}
+		idx = absStart + max(1, len(inner))
+	}
+	return start, end, matches
+}
+
+func isBoundaryWS(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
+}
+
+// blockAnchorFind locates a multi-line block by matching trimmed first and last
+// lines (strict anchors) with the same line count as needle. Middle lines are
+// taken verbatim from the file — no Levenshtein. Phase 11 pass 7 (A2).
+func blockAnchorFind(haystack, needle string) (start, end, matches int) {
+	needleLines := splitBlockLines(needle)
+	if len(needleLines) < 2 {
+		return 0, 0, 0
+	}
+	firstAnchor := trimAnchorLine(needleLines[0])
+	lastAnchor := trimAnchorLine(needleLines[len(needleLines)-1])
+	if firstAnchor == "" || lastAnchor == "" {
+		return 0, 0, 0
+	}
+
+	hayLines, lineStarts := blockLinesAndOffsets(haystack)
+	if len(hayLines) < len(needleLines) {
+		return 0, 0, 0
+	}
+
+	for i := 0; i <= len(hayLines)-len(needleLines); i++ {
+		if trimAnchorLine(hayLines[i]) != firstAnchor {
+			continue
+		}
+		j := i + len(needleLines) - 1
+		if trimAnchorLine(hayLines[j]) != lastAnchor {
+			continue
+		}
+		matches++
+		if matches == 1 {
+			start = lineStarts[i]
+			if j+1 < len(lineStarts) {
+				end = lineStarts[j+1]
+			} else {
+				end = len(haystack)
+			}
+		}
+		if matches > 1 {
+			return start, end, matches
+		}
+	}
+	return start, end, matches
+}
+
+func splitBlockLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if strings.HasSuffix(s, "\n") {
+		s = strings.TrimSuffix(s, "\n")
+	}
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
+
+func trimAnchorLine(s string) string {
+	return strings.TrimRight(strings.ReplaceAll(s, "\r\n", "\n"), " \t\r")
+}
+
+func blockLinesAndOffsets(haystack string) (lines []string, starts []int) {
+	s := strings.ReplaceAll(haystack, "\r\n", "\n")
+	starts = append(starts, 0)
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, b.String())
+			b.Reset()
+			starts = append(starts, i+1)
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	lines = append(lines, b.String())
+	return lines, starts
 }
 
 func max(a, b int) int {
@@ -842,8 +1110,8 @@ func atoi(s string) int {
 	return n
 }
 
-// ApplySearchReplace applies search→replace on content using the 3-pass matching algorithm
-// (exact → line-trimmed → indent-flexible). Returns new content, or StaleContent /
+// ApplySearchReplace applies search→replace on content using the forgiving
+// matching cascade (see forgivingFind). Returns new content, or StaleContent /
 // AmbiguousMatch protocol error if the search block is not found or ambiguous.
 func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) {
 	if strings.TrimSpace(search) == "" {
@@ -851,40 +1119,24 @@ func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) 
 	}
 	s := string(content)
 
-	start, end, matches := findUnique(s, search)
+	start, end, matches, strategy := forgivingFind(s, search)
 	if matches == 0 {
-		ltStart, ltEnd, ltMatches := lineTrimmedFind(s, search)
-		switch ltMatches {
-		case 0:
-			ifStart, ifEnd, ifMatches := indentFlexibleFind(s, search)
-			switch ifMatches {
-			case 0:
-				return nil, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
-					"search":   preview(search, 200),
-					"fileHash": cache.ComputeSHA256(content),
-				})
-			case 1:
-				start, end = ifStart, ifEnd
-			default:
-				return nil, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (indent-flexible)", map[string]any{
-					"matches": ifMatches,
-					"search":  preview(search, 200),
-				})
-			}
-		case 1:
-			start, end = ltStart, ltEnd
-		default:
-			return nil, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous (line-trimmed)", map[string]any{
-				"matches": ltMatches,
-				"search":  preview(search, 200),
-			})
-		}
+		return nil, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+			"search":   preview(search, 200),
+			"fileHash": cache.ComputeSHA256(content),
+		})
 	}
 	if matches > 1 {
-		return nil, protocol.NewError(protocol.AmbiguousMatch, "search block is ambiguous", map[string]any{
-			"matches": matches,
-			"search":  preview(search, 200),
-		})
+		detail := map[string]any{
+			"matches":  matches,
+			"search":   preview(search, 200),
+			"strategy": strategy,
+		}
+		msg := "search block is ambiguous"
+		if strategy != "" && strategy != "exact" {
+			msg = "search block is ambiguous (" + strategy + ")"
+		}
+		return nil, protocol.NewError(protocol.AmbiguousMatch, msg, detail)
 	}
 
 	var buf strings.Builder

@@ -311,6 +311,11 @@ func (o *Overlay) unstagePath(relSlash string) {
 	o.mu.Unlock()
 }
 
+// UnstagePath removes relSlash from the overlay (exported for post-apply cleanup).
+func (o *Overlay) UnstagePath(relSlash string) {
+	o.unstagePath(relSlash)
+}
+
 // StagedFileContent returns path→content snapshot of the overlay.
 func (o *Overlay) StagedFileContent() map[string]string {
 	if o == nil {

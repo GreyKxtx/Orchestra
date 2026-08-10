@@ -132,6 +132,68 @@ func ToolGitDiff() llm.ToolDef {
 	}
 }
 
+func ToolGitWorktreeList() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.worktree.list",
+			Description: "List all git worktrees (main + linked). Orchestra-managed entries include name and managed=true.",
+			Parameters:  toolschema.MustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
+		},
+	}
+}
+
+func ToolGitWorktreeAdd() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.worktree.add",
+			Description: "Create an orchestra-managed linked worktree under .orchestra/worktrees/<name> with branch orchestra/<name> by default.",
+			Parameters: toolschema.MustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "name":     { "type": "string", "minLength": 1, "description": "Worktree name (letters, digits, -, _)." },
+    "branch":   { "type": "string", "description": "Branch name. Default: orchestra/<name>." },
+    "base_ref": { "type": "string", "description": "Start point ref. Default: HEAD." },
+    "force":    { "type": "boolean", "description": "Pass --force to git worktree add." }
+  }
+}`),
+		},
+	}
+}
+
+func ToolGitWorktreeRemove() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.worktree.remove",
+			Description: "Remove an orchestra-managed worktree by name (from .orchestra/worktrees.json registry).",
+			Parameters: toolschema.MustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "name":  { "type": "string", "minLength": 1, "description": "Registered worktree name." },
+    "force": { "type": "boolean", "description": "Force removal with dirty tree." }
+  }
+}`),
+		},
+	}
+}
+
+func ToolGitWorktreePrune() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        "git.worktree.prune",
+			Description: "Run git worktree prune and drop stale entries from orchestra worktree registry.",
+			Parameters:  toolschema.MustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
+		},
+	}
+}
+
 func toolBrowserNavigate() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",

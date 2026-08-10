@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/applier"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
@@ -353,6 +357,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		if ev.Stream.Kind == llm.StreamEventTodosUpdated {
 			persistSessionTodos(c.workspaceRoot, sess, ev.Stream.Content)
 		}
+		if !params.Apply && ev.Stream.Kind == llm.StreamEventPendingOps {
+			persistSessionPendingFromEvent(c.workspaceRoot, sess, ev.Stream.Content)
+		}
 		if innerOnEvent != nil {
 			innerOnEvent(ev)
 		}
@@ -426,6 +433,28 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 // in-memory session and snapshots to disk. Safe to call after failed turns —
 // empty outHistory is a no-op for ReplaceHistory only when nil; we still want
 // to keep prior history if the agent returned nothing.
+func persistSessionPendingFromEvent(workspaceRoot string, sess *coresession.Session, content string) {
+	if sess == nil || strings.TrimSpace(content) == "" {
+		return
+	}
+	var payload struct {
+		Ops     []ops.AnyOp `json:"ops"`
+		Applied bool        `json:"applied"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return
+	}
+	if payload.Applied || len(payload.Ops) == 0 {
+		return
+	}
+	sess.Lock()
+	sess.SetPending(payload.Ops)
+	sess.Unlock()
+	if snapErr := sess.Snapshot(workspaceRoot); snapErr != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s pending snapshot failed: %v\n", sess.ID, snapErr)
+	}
+}
+
 func countOpenTodoItems(todos []tools.TodoItem) int {
 	n := 0
 	for _, t := range todos {
@@ -476,13 +505,53 @@ func (c *Core) persistSessionTurn(
 }
 
 type SessionApplyPendingParams struct {
-	SessionID string `json:"session_id"`
-	Backup    bool   `json:"backup,omitempty"`
+	SessionID string   `json:"session_id"`
+	Backup    bool     `json:"backup,omitempty"`
+	Paths     []string `json:"paths,omitempty"` // optional: apply only ops whose path matches one of these (workspace-relative)
 }
 
 type SessionApplyPendingResult struct {
 	Applied       bool                      `json:"applied"`
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
+	RemainingOps  []ops.AnyOp               `json:"remaining_ops,omitempty"`
+}
+
+type SessionDiscardPendingParams struct {
+	SessionID string `json:"session_id"`
+}
+
+type SessionDiscardPendingResult struct {
+	Discarded bool `json:"discarded"`
+}
+
+// SessionDiscardPending drops staged overlay changes and session pending ops
+// without writing to disk (VS Code / TUI "reject all").
+func (c *Core) SessionDiscardPending(params SessionDiscardPendingParams) (*SessionDiscardPendingResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	if strings.TrimSpace(params.SessionID) == "" {
+		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
+	}
+	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	hadStaging := c.tools != nil && c.tools.HasStagedChanges()
+	sess.Lock()
+	hadPending := len(sess.CopyPending()) > 0
+	sess.SetPending(nil)
+	sess.Unlock()
+	if c.tools != nil {
+		c.tools.ClearStaged()
+	}
+	if snapErr := sess.Snapshot(c.workspaceRoot); snapErr != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s discard snapshot failed: %v\n", sess.ID, snapErr)
+	}
+	return &SessionDiscardPendingResult{Discarded: hadPending || hadStaging}, nil
 }
 
 // SessionApplyPending applies ops stored from the last dry-run turn of the session.
@@ -499,15 +568,23 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 	}
 
 	sess.Lock()
-	pendingOps := sess.TakePending()
+	allPending := sess.CopyPending()
 	sess.Unlock()
-
-	if len(pendingOps) == 0 {
-		return &SessionApplyPendingResult{Applied: false}, nil
-	}
 
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
+
+	// Live staging overlay is authoritative during an in-flight dry-run turn.
+	if c.tools != nil && c.tools.HasStagedChanges() {
+		return c.sessionApplyFromStaging(ctx, sess, params, allPending)
+	}
+
+	pendingOps, remaining := filterPendingOpsByPaths(allPending, params.Paths)
+	if len(pendingOps) == 0 {
+		return &SessionApplyPendingResult{Applied: false}, nil
+	}
+	refreshPendingWriteHashes(c.workspaceRoot, pendingOps)
+
 	resp, err := c.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
 		Ops:    pendingOps,
 		Backup: params.Backup,
@@ -517,11 +594,190 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 		// newer ops that a concurrent turn may have added while we were applying.
 		sess.Lock()
 		newer := sess.TakePending()
-		sess.SetPending(append(pendingOps, newer...))
+		sess.SetPending(append(allPending, newer...))
 		sess.Unlock()
-		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+		return nil, rpcApplyError(err)
 	}
-	return &SessionApplyPendingResult{Applied: true, ApplyResponse: resp}, nil
+
+	sess.Lock()
+	if len(params.Paths) > 0 {
+		sess.SetPending(remaining)
+	} else {
+		sess.SetPending(nil)
+	}
+	sess.Unlock()
+
+	if len(remaining) == 0 {
+		c.tools.ClearStaged()
+	} else {
+		for _, op := range pendingOps {
+			if p := strings.TrimSpace(op.Path); p != "" {
+				c.tools.UnstagePath(p)
+			}
+		}
+	}
+
+	return &SessionApplyPendingResult{
+		Applied:       true,
+		ApplyResponse: resp,
+		RemainingOps:  remaining,
+	}, nil
+}
+
+func (c *Core) sessionApplyFromStaging(
+	ctx context.Context,
+	sess *coresession.Session,
+	params SessionApplyPendingParams,
+	allPending []ops.AnyOp,
+) (*SessionApplyPendingResult, error) {
+	paths := c.tools.ListStagedPaths()
+	if len(params.Paths) > 0 {
+		paths = filterStagedPaths(paths, params.Paths)
+	}
+	if len(paths) == 0 {
+		return &SessionApplyPendingResult{Applied: false}, nil
+	}
+
+	merged := &tools.FSApplyOpsResponse{
+		Diffs:        make([]applier.FileDiff, 0, len(paths)),
+		ChangedFiles: make([]string, 0, len(paths)),
+	}
+	for _, path := range paths {
+		resp, err := c.tools.CommitStagedPath(ctx, path, params.Backup)
+		if err != nil {
+			return nil, rpcApplyError(err)
+		}
+		if resp == nil {
+			continue
+		}
+		merged.Diffs = append(merged.Diffs, resp.Diffs...)
+		merged.ChangedFiles = append(merged.ChangedFiles, resp.ChangedFiles...)
+	}
+	if len(merged.ChangedFiles) == 0 && len(merged.Diffs) == 0 {
+		return &SessionApplyPendingResult{Applied: false}, nil
+	}
+
+	var remaining []ops.AnyOp
+	sess.Lock()
+	if len(params.Paths) > 0 {
+		_, remaining = filterPendingOpsByPaths(allPending, params.Paths)
+		sess.SetPending(remaining)
+	} else {
+		sess.SetPending(nil)
+	}
+	sess.Unlock()
+
+	return &SessionApplyPendingResult{
+		Applied:       true,
+		ApplyResponse: merged,
+		RemainingOps:  remaining,
+	}, nil
+}
+
+func rpcApplyError(err error) error {
+	if pe, ok := protocol.AsError(err); ok {
+		return pe
+	}
+	return protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+}
+
+// refreshPendingWriteHashes re-reads disk so stored pending ops match the current
+// file before apply (session reload paths where overlay was cleared).
+func refreshPendingWriteHashes(workspaceRoot string, pendingOps []ops.AnyOp) {
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		return
+	}
+	for i := range pendingOps {
+		wa := pendingOps[i].WriteAtomic
+		if wa == nil {
+			continue
+		}
+		rel := filepath.ToSlash(strings.TrimSpace(wa.Path))
+		if rel == "" {
+			continue
+		}
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		b, err := os.ReadFile(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				wa.Conditions.FileHash = ""
+				wa.Conditions.MustNotExist = true
+			}
+			continue
+		}
+		wa.Conditions.MustNotExist = false
+		wa.Conditions.FileHash = cache.ComputeSHA256(b)
+	}
+}
+
+func filterStagedPaths(staged []string, paths []string) []string {
+	if len(staged) == 0 || len(paths) == 0 {
+		return staged
+	}
+	out := make([]string, 0, len(staged))
+	for _, p := range staged {
+		if pendingPathMatches(p, paths) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func filterPendingOpsByPaths(all []ops.AnyOp, paths []string) (toApply, remaining []ops.AnyOp) {
+	if len(all) == 0 {
+		return nil, nil
+	}
+	if len(paths) == 0 {
+		return append([]ops.AnyOp(nil), all...), nil
+	}
+	toApply = make([]ops.AnyOp, 0, len(all))
+	remaining = make([]ops.AnyOp, 0)
+	for _, op := range all {
+		if pendingPathMatches(op.Path, paths) {
+			toApply = append(toApply, op)
+		} else {
+			remaining = append(remaining, op)
+		}
+	}
+	return toApply, remaining
+}
+
+func pendingPathMatches(opPath string, paths []string) bool {
+	opPath = filepath.ToSlash(strings.TrimSpace(opPath))
+	if opPath == "" {
+		return false
+	}
+	for _, raw := range paths {
+		p := filepath.ToSlash(strings.TrimSpace(raw))
+		if p == "" {
+			continue
+		}
+		if pendingPathsEqual(opPath, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingPathsEqual(a, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	a = filepath.ToSlash(a)
+	b = filepath.ToSlash(b)
+	if runtime.GOOS == "windows" {
+		if strings.EqualFold(a, b) {
+			return true
+		}
+	} else if a == b {
+		return true
+	}
+	if strings.HasSuffix(a, "/"+b) || strings.HasSuffix(b, "/"+a) {
+		return true
+	}
+	baseA := filepath.Base(a)
+	baseB := filepath.Base(b)
+	return baseA != "" && baseA == baseB
 }
 
 type SessionHistoryParams struct {

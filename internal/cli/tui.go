@@ -51,6 +51,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	themeName := ""
 	profile := ""
 	allowExec := false
+	excludeDirs := []string(nil)
 	needsOnboarding := false
 
 	if cfg, loadErr := config.Load(cfgPath); loadErr == nil && cfg != nil {
@@ -58,6 +59,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		themeName = cfg.UI.Theme
 		profile = strings.TrimSpace(cfg.Agent.Profile)
 		allowExec = cfg.UI.AllowExec
+		if len(cfg.ExcludeDirs) > 0 {
+			excludeDirs = append([]string(nil), cfg.ExcludeDirs...)
+		}
 	}
 	if cmd.Flags().Changed("allow-exec") {
 		allowExec = tuiAllowExec
@@ -78,6 +82,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		Theme:           themeName,
 		Profile:         profile,
 		AllowExec:       allowExec,
+		ExcludeDirs:     excludeDirs,
 	})
 }
 

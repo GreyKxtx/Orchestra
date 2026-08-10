@@ -9,6 +9,7 @@ import (
 )
 
 func TestBuildAgentOnEvent_Envelope(t *testing.T) {
+	t.Setenv("ORCH_STREAM_DEBOUNCE_MS", "0")
 	env := EventEnvelope{SessionID: "sess-1", TurnID: "turn-1"}
 	var got []struct {
 		method string
@@ -53,6 +54,7 @@ func TestBuildAgentOnEvent_Envelope(t *testing.T) {
 }
 
 func TestBuildAgentOnEvent_AgentRunOmitsSessionID(t *testing.T) {
+	t.Setenv("ORCH_STREAM_DEBOUNCE_MS", "0")
 	env := EventEnvelope{TurnID: "turn-only"}
 	var params map[string]any
 	onEvent := buildAgentOnEvent(func(_ string, p any) {
@@ -74,6 +76,7 @@ func TestBuildAgentOnEvent_AgentRunOmitsSessionID(t *testing.T) {
 }
 
 func TestBuildAgentOnEvent_StreamErrorCarriesMessage(t *testing.T) {
+	t.Setenv("ORCH_STREAM_DEBOUNCE_MS", "0")
 	env := EventEnvelope{TurnID: "turn-1"}
 	var params map[string]any
 	onEvent := buildAgentOnEvent(func(_ string, p any) {

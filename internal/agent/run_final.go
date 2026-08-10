@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/applier"
+	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/protocol"
@@ -175,16 +177,7 @@ func (a *Agent) handleFinalStep(
 		*history = append(*history, llmResp.Message)
 	}
 	if a.opts.OnEvent != nil && resp != nil {
-		payload := map[string]any{
-			"ops":     stagedOps,
-			"diff":    resp.Diffs,
-			"applied": a.opts.Apply,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-			Kind:    llm.StreamEventPendingOps,
-			Content: string(payloadJSON),
-		}})
+		a.emitPendingOpsEvent(steps, stagedOps, resp.Diffs, a.opts.Apply)
 	}
 	emitStepDone("final")
 	return finalStepOutcome{Result: &Result{
@@ -230,20 +223,70 @@ func (a *Agent) commitStagedAfterMutatingTool(ctx context.Context, steps int, to
 		return
 	}
 	a.logf("incremental commit path=%s files=%d", toolPath, len(resp.ChangedFiles))
-	if a.opts.OnEvent != nil {
-		stagedOps := a.tools.StagedOps()
-		payload := map[string]any{
-			"ops":     stagedOps,
-			"diff":    resp.Diffs,
-			"applied": true,
-		}
-		if len(stagedOps) == 0 {
-			payload["ops"] = []any{}
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
-			Kind:    llm.StreamEventPendingOps,
-			Content: string(payloadJSON),
-		}})
+	a.emitPendingOpsEvent(steps, a.tools.StagedOps(), resp.Diffs, true)
+}
+
+// previewStagedAfterMutatingTool emits pending_ops (dry-run) after each successful
+// write/edit when Apply=false so VS Code/webview can show inline diff and the
+// apply bar without waiting for the final step.
+func (a *Agent) previewStagedAfterMutatingTool(ctx context.Context, steps int) {
+	if a.opts.Apply || a.opts.OnEvent == nil {
+		return
 	}
+	stagedOps := a.tools.StagedOps()
+	if len(stagedOps) == 0 {
+		return
+	}
+	resp, err := a.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{
+		Ops:    stagedOps,
+		DryRun: true,
+	})
+	if err != nil {
+		a.logf("staged preview err=%v", err)
+		return
+	}
+	if resp == nil || len(resp.Diffs) == 0 {
+		return
+	}
+	a.logf("staged preview ops=%d diffs=%d step=%d", len(stagedOps), len(resp.Diffs), steps)
+	a.emitPendingOpsEvent(steps, stagedOps, resp.Diffs, false)
+}
+
+func (a *Agent) emitPendingOpsEvent(steps int, stagedOps []ops.AnyOp, diffs []applier.FileDiff, applied bool) {
+	if a.opts.OnEvent == nil {
+		return
+	}
+	payload := map[string]any{
+		"ops":     stagedOps,
+		"diff":    diffs,
+		"applied": applied,
+	}
+	if len(stagedOps) == 0 {
+		payload["ops"] = []any{}
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+		Kind:    llm.StreamEventPendingOps,
+		Content: string(payloadJSON),
+	}})
+}
+
+func (a *Agent) maybeHintStagedReady(history *[]llm.Message, toolPath string) {
+	toolPath = strings.TrimSpace(toolPath)
+	if toolPath == "" || a.opts.Apply {
+		return
+	}
+	if a.turnMutatingTools < 1 {
+		return
+	}
+	if a.tools == nil || len(a.tools.StagedOps()) == 0 {
+		return
+	}
+	*history = append(*history, llm.Message{
+		Role: llm.RoleUser,
+		Content: fmt.Sprintf(
+			"Staged changes for %s are ready for the user to review/apply. If the task is complete, respond with final {\"patches\":[]} — avoid another read/edit/write on the same file unless the last change failed.",
+			toolPath,
+		),
+	})
 }

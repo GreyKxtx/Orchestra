@@ -41,6 +41,7 @@ type Result struct {
 	Passed           bool
 	Steps            int
 	InvalidRetries   int // validation_error events from llm_log
+	ResolveFailed    int // resolve_failed events from llm_log
 	ToolCalls        int
 	Duration         time.Duration
 	Error            error
@@ -96,6 +97,7 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 
 	if metrics, mErr := ParseLLMLog(filepath.Join(tmpDir, ".orchestra", "llm_log.jsonl")); mErr == nil {
 		result.InvalidRetries = metrics.ValidationErrors
+		result.ResolveFailed = metrics.ResolveFailed
 		result.ToolCalls = metrics.ToolCalls
 	}
 

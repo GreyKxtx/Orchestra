@@ -380,6 +380,15 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionApplyPending(ctx, p)
 
+	case "session.discard_pending":
+		var p SessionDiscardPendingParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionDiscardPending(p)
+
 	case "session.close":
 		var p SessionCloseParams
 		if err := decodeParams(params, &p); err != nil {

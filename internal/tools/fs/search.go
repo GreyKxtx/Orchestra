@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/search"
 	"github.com/orchestra/orchestra/protocol"
 )
+
+const defaultGrepMaxMatches = 200
 
 func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*SearchTextResponse, error) {
 	if c == nil {
@@ -115,14 +118,34 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 		out = append(out, sm)
 	}
 
+	maxOut := req.MaxMatches
+	if maxOut <= 0 {
+		maxOut = defaultGrepMaxMatches
+	}
+
+	mtimeCache := make(map[string]time.Time)
+	for _, m := range out {
+		if _, ok := mtimeCache[m.Path]; ok {
+			continue
+		}
+		abs := filepath.Join(c.Root, filepath.FromSlash(m.Path))
+		if st, err := os.Stat(abs); err == nil {
+			mtimeCache[m.Path] = st.ModTime()
+		}
+	}
+
 	sort.Slice(out, func(i, j int) bool {
+		ti, tj := mtimeCache[out[i].Path], mtimeCache[out[j].Path]
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
 		if out[i].Path != out[j].Path {
 			return out[i].Path < out[j].Path
 		}
 		return out[i].Line < out[j].Line
 	})
-	if req.MaxMatches > 0 && len(out) > req.MaxMatches {
-		out = out[:req.MaxMatches]
+	if len(out) > maxOut {
+		out = out[:maxOut]
 	}
 
 	return &SearchTextResponse{Matches: out}, nil

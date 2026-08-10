@@ -63,11 +63,24 @@ func (c Chat) renderAssistantMessage(m state.Message, width int, isLast bool, us
 			}
 			parts = append(parts, c.renderToolGroup(seg.Tools, width, toolsExpanded, m.Streaming, 0, userQuery, msgMode))
 		case state.SegmentText:
-			text := stripFinalEnvelope(seg.Text)
+			text := seg.Text
+			if m.Streaming {
+				text = stripFinalEnvelopeStreaming(text)
+			} else {
+				text = stripFinalEnvelope(text)
+			}
+			if isPlaceholderAssistantText(text) {
+				continue
+			}
 			if strings.TrimSpace(text) == "" {
 				continue
 			}
-			body := renderMarkdown(text, width-2)
+			var body string
+			if m.Streaming {
+				body = renderPlainStreamingText(text, width-2)
+			} else {
+				body = renderMarkdown(text, width-2)
+			}
 			// No mid-message ▋ caret — it sat above the mode footer and blinked
 			// the viewport. Busy state is the spinner in assistantFooter.
 			parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(body))
@@ -86,7 +99,7 @@ func (c Chat) renderAssistantMessage(m state.Message, width int, isLast bool, us
 		// Reasoning models sometimes finish with blank content and no tool_calls.
 		t := theme.CurrentTheme()
 		hint := lipgloss.NewStyle().Foreground(t.TextMuted()).Italic(true).
-			Render("Model finished with no text. Check tool calling in LM Studio or set enable_thinking: false.")
+			Render("Модель не вернула текст. Проверьте tool calling в LM Studio или задайте llm.response_format_type: \"\" в .orchestra.yml.")
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(hint))
 	}
 

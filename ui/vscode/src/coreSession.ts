@@ -3,6 +3,11 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
+import {
+  coreBinaryCandidates,
+  coreExecutableName,
+  pickExistingBinary,
+} from "./coreBinary";
 import type {
   AgentEventParams,
   ConnectionStatus,
@@ -12,6 +17,7 @@ import type {
   ToolDiagnosticPayload,
   WorkflowStagePayload,
 } from "./protocol/events";
+import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjection";
 import { RpcClient } from "./rpc/client";
 
 /** Must match internal/protocol/version.go */
@@ -39,7 +45,7 @@ export interface SessionView {
   sessionId: string;
   title: string;
   model: string;
-  uiMessages: Array<{ role?: string; text?: string; content?: string }>;
+  uiMessages: RawUIMessage[];
 }
 
 export interface ModelInfo {
@@ -79,9 +85,12 @@ export interface CoreSessionEvents {
  * Long-lived orchestra core session: ensure → initialize → session.start → session.message.
  */
 export class CoreSession extends EventEmitter implements vscode.Disposable {
+  private static readonly LAST_SESSION_KEY = "orchestra.lastSessionId";
+
   private client: RpcClient | undefined;
   private readonly output: vscode.OutputChannel;
   private readonly extensionPath: string;
+  private readonly context: vscode.ExtensionContext | undefined;
   private workspaceRoot: string | undefined;
   private sessionId: string | undefined;
   private coreInitialized = false;
@@ -89,11 +98,18 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
   private ensurePromise: Promise<void> | undefined;
   private permissionResolver: ((result: Record<string, unknown>) => void) | undefined;
   private questionResolver: ((result: Record<string, unknown>) => void) | undefined;
+  /** In-flight session.message JSON-RPC id (for $/cancelRequest). */
+  private messageRequestId: number | undefined;
 
-  constructor(output: vscode.OutputChannel, extensionPath: string) {
+  constructor(
+    output: vscode.OutputChannel,
+    extensionPath: string,
+    context?: vscode.ExtensionContext
+  ) {
     super();
     this.output = output;
     this.extensionPath = extensionPath;
+    this.context = context;
   }
 
   dispose(): void {
@@ -106,6 +122,33 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
 
   getSessionId(): string | undefined {
     return this.sessionId;
+  }
+
+  private getPersistedSessionId(): string | undefined {
+    const id = this.context?.workspaceState.get<string>(CoreSession.LAST_SESSION_KEY);
+    const trimmed = typeof id === "string" ? id.trim() : "";
+    return trimmed || undefined;
+  }
+
+  private async persistSessionId(id: string): Promise<void> {
+    const trimmed = id.trim();
+    if (!trimmed || !this.context) {
+      return;
+    }
+    await this.context.workspaceState.update(CoreSession.LAST_SESSION_KEY, trimmed);
+  }
+
+  /** Pick the most recently updated on-disk session. */
+  private async mostRecentSessionId(): Promise<string | undefined> {
+    const sessions = await this.listSessions();
+    if (sessions.length === 0) {
+      return undefined;
+    }
+    const sorted = [...sessions].sort((a, b) =>
+      (b.updated_at || "").localeCompare(a.updated_at || "")
+    );
+    const id = sorted[0]?.id?.trim();
+    return id || undefined;
   }
 
   stop(): void {
@@ -155,7 +198,14 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     }
 
     const forceNew = options?.forceNew === true;
-    const reopenId = options?.sessionId?.trim() || "";
+    let reopenId = options?.sessionId?.trim() || "";
+
+    if (!forceNew && !reopenId) {
+      reopenId = this.getPersistedSessionId() || "";
+    }
+    if (!forceNew && !reopenId) {
+      reopenId = (await this.mostRecentSessionId()) || "";
+    }
 
     if (!forceNew && !reopenId && this.sessionId) {
       this.setStatus("ready", this.sessionId);
@@ -189,8 +239,62 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     }
     this.sessionId = id;
     this.output.appendLine(`[orchestra] session_id: ${id}`);
+    await this.persistSessionId(id);
     this.setStatus("ready", id);
     return id;
+  }
+
+  /**
+   * Append or update the assistant turn in ui_messages (TUI-compatible projection).
+   */
+  async syncUIProjection(projection?: AssistantTurnProjection | string): Promise<void> {
+    const id = this.sessionId;
+    if (!id || !this.client) {
+      return;
+    }
+    const turn: AssistantTurnProjection | undefined =
+      typeof projection === "string"
+        ? { text: projection.trim() }
+        : projection;
+    if (!turn || (!turn.text && !turn.reasoning && !turn.tool_blocks?.length)) {
+      return;
+    }
+    try {
+      const view = await this.getSession(id);
+      const health = await this.healthInfo();
+      const ui: RawUIMessage[] = [...view.uiMessages];
+      const msg: RawUIMessage = {
+        role: "assistant",
+        text: turn.text,
+        reasoning: turn.reasoning,
+        tool_blocks: turn.tool_blocks,
+        prompt_ctx: turn.prompt_ctx,
+        tokens_in: turn.tokens_in,
+        tokens_out: turn.tokens_out,
+      };
+      const last = ui[ui.length - 1];
+      const lastRole = String(last?.role || "").toLowerCase();
+      const lastText = String(last?.text || last?.content || "").trim();
+      if (lastRole === "assistant" && lastText === turn.text) {
+        ui[ui.length - 1] = { ...last, ...msg };
+      } else {
+        ui.push(msg);
+      }
+      await this.client.request(
+        "session.ui_sync",
+        {
+          session_id: id,
+          title: view.title || undefined,
+          model: health.model || view.model || undefined,
+          ui_messages: ui,
+        },
+        30_000
+      );
+    } catch (err) {
+      this.output.appendLine(
+        `[orchestra] ui_sync skipped: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   async listSessions(): Promise<SessionMeta[]> {
@@ -221,7 +325,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       session_id?: string;
       title?: string;
       model?: string;
-      ui_messages?: Array<{ role?: string; text?: string; content?: string }>;
+      ui_messages?: RawUIMessage[];
     };
     return {
       sessionId: result.session_id || id,
@@ -393,6 +497,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     timeoutS: number;
     promptFamily: string;
     multimodal: boolean;
+    numCtx: number;
+    contextTokens: number;
   }> {
     await this.ensure();
     if (!this.client) {
@@ -409,6 +515,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       timeout_s?: number;
       prompt_family?: string;
       multimodal?: boolean;
+      num_ctx?: number;
+      context_tokens?: number;
     };
     return {
       provider: r.provider || "",
@@ -421,6 +529,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       timeoutS: typeof r.timeout_s === "number" ? r.timeout_s : 0,
       promptFamily: r.prompt_family || "",
       multimodal: Boolean(r.multimodal),
+      numCtx: typeof r.num_ctx === "number" ? r.num_ctx : 0,
+      contextTokens: typeof r.context_tokens === "number" ? r.context_tokens : 0,
     };
   }
 
@@ -908,6 +1018,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         (options?.profile ? ` profile=${options.profile}` : "") +
         "…"
     );
+    this.messageRequestId = undefined;
     try {
       const params: Record<string, unknown> = {
         session_id: sessionId,
@@ -925,16 +1036,92 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       if (attachments.length > 0) {
         params.attachments = attachments;
       }
-      const result = await this.client.request("session.message", params, MESSAGE_TIMEOUT_MS);
+      // If a previous Stop left the server mid-unwind, wait out "session is busy"
+      // instead of hanging forever on runMu behind a false-idle busy flag.
+      let result: unknown;
+      const busyDeadline = Date.now() + 15_000;
+      for (;;) {
+        try {
+          result = await this.client.request(
+            "session.message",
+            params,
+            MESSAGE_TIMEOUT_MS,
+            (id) => {
+              this.messageRequestId = id;
+            }
+          );
+          break;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/session is busy/i.test(msg) && Date.now() < busyDeadline) {
+            await new Promise((r) => setTimeout(r, 200));
+            try {
+              await this.client.request("session.cancel", { session_id: sessionId }, 3_000);
+            } catch {
+              /* ignore */
+            }
+            continue;
+          }
+          throw err;
+        }
+      }
       this.setStatus("ready", sessionId);
       return result;
     } catch (err) {
-      this.setStatus("error", err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/cancel/i.test(msg)) {
+        this.setStatus("ready", sessionId);
+      } else {
+        this.setStatus("error", msg);
+      }
       throw err;
+    } finally {
+      this.messageRequestId = undefined;
     }
   }
 
-  async applyPending(backup = true): Promise<{ applied: boolean }> {
+  /** Abort the in-flight session turn (session.cancel first, then $/cancelRequest). */
+  async cancelTurn(): Promise<void> {
+    const sessionId = this.sessionId;
+    const client = this.client;
+    const reqId = this.messageRequestId;
+    // Cancel the agent turn on the server BEFORE rejecting the local RPC
+    // promise — otherwise UI thinks the turn is idle while runMu is still held
+    // and the next session.message hangs forever on "Working…".
+    if (sessionId && client && !client.isClosed) {
+      try {
+        await client.request("session.cancel", { session_id: sessionId }, 5_000);
+      } catch {
+        // idle session or already finished
+      }
+    }
+    if (reqId !== undefined && client && !client.isClosed) {
+      client.cancelRequest(reqId);
+    }
+    if (this.getConnectionStatus() === "running") {
+      this.setStatus("ready", sessionId);
+    }
+    this.output.appendLine("[orchestra] turn cancelled");
+  }
+
+  /** Best-effort: clear a stuck busy flag without aborting a local promise. */
+  async clearServerBusy(): Promise<void> {
+    const sessionId = this.sessionId;
+    const client = this.client;
+    if (!sessionId || !client || client.isClosed) {
+      return;
+    }
+    try {
+      await client.request("session.cancel", { session_id: sessionId }, 3_000);
+    } catch {
+      /* idle */
+    }
+  }
+
+  async applyPending(
+    backup = true,
+    paths?: string[]
+  ): Promise<{ applied: boolean; remainingOps?: unknown[] }> {
     await this.ensure();
     if (!this.client) {
       throw new Error("core client missing");
@@ -943,12 +1130,38 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     if (!sessionId) {
       throw new Error("session_id required");
     }
+    const params: { session_id: string; backup: boolean; paths?: string[] } = {
+      session_id: sessionId,
+      backup,
+    };
+    if (paths && paths.length > 0) {
+      params.paths = paths;
+    }
     const r = (await this.client.request(
       "session.apply_pending",
-      { session_id: sessionId, backup },
+      params,
       5 * 60_000
-    )) as { applied?: boolean };
-    return { applied: Boolean(r.applied) };
+    )) as { applied?: boolean; remaining_ops?: unknown[] };
+    return {
+      applied: Boolean(r.applied),
+      remainingOps: Array.isArray(r.remaining_ops) ? r.remaining_ops : undefined,
+    };
+  }
+
+  async discardPending(): Promise<void> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const sessionId = (this.sessionId || "").trim();
+    if (!sessionId) {
+      throw new Error("session_id required");
+    }
+    await this.client.request(
+      "session.discard_pending",
+      { session_id: sessionId },
+      30_000
+    );
   }
 
   async applyOps(ops: unknown[], backup = true): Promise<void> {
@@ -1410,7 +1623,7 @@ export async function resolveProjectRoot(): Promise<string> {
 }
 
 export function resolveBinaryPath(workspaceRoot: string, extensionPath: string): string {
-  const exeName = process.platform === "win32" ? "orchestra.exe" : "orchestra";
+  const exeName = coreExecutableName();
 
   const configured = vscode.workspace
     .getConfiguration("orchestra")
@@ -1426,56 +1639,15 @@ export function resolveBinaryPath(workspaceRoot: string, extensionPath: string):
     return configured;
   }
 
-  const candidates: string[] = [
-    path.join(workspaceRoot, exeName),
-    path.join(extensionPath, "..", "..", exeName),
-    path.join(extensionPath, "..", exeName),
-    path.join(extensionPath, exeName),
-  ];
-  if (process.platform === "win32") {
-    // Fallback when orchestra.exe is locked mid-rebuild.
-    candidates.push(
-      path.join(workspaceRoot, "orchestra-new.exe"),
-      path.join(extensionPath, "..", "..", "orchestra-new.exe")
-    );
-  }
-
-  let dir = workspaceRoot;
-  for (let i = 0; i < 6; i++) {
-    candidates.push(path.join(dir, exeName));
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-
-  const seen = new Set<string>();
-  let best = "";
-  let bestMtime = 0;
-  for (const c of candidates) {
-    const abs = path.resolve(c);
-    if (seen.has(abs)) {
-      continue;
-    }
-    seen.add(abs);
-    try {
-      const st = fs.statSync(abs);
-      if (st.isFile() && st.mtimeMs >= bestMtime) {
-        best = abs;
-        bestMtime = st.mtimeMs;
-      }
-    } catch {
-      // missing
-    }
-  }
+  const best = pickExistingBinary(coreBinaryCandidates(workspaceRoot, extensionPath));
   if (best) {
     return best;
   }
 
   throw new Error(
-    `orchestra binary not found (looked for ${exeName}).\n` +
+    `orchestra binary not found (looked for ${exeName} including bundled bin/${process.platform}-${process.arch}/).\n` +
       `Build: go build -o ${exeName} ./cmd/orchestra\n` +
+      `Or run: npm run bundle:core (from ui/vscode)\n` +
       `Or set Settings → Orchestra: Binary Path.`
   );
 }

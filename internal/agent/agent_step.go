@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
@@ -211,7 +213,7 @@ func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.S
 			// Context overflow is handled by the Run loop (compact + replay);
 			// emitting a hard error here would show the user a failure for a
 			// step that is about to be retried successfully.
-			if a.opts.OnEvent != nil && !llm.IsContextOverflowError(err) {
+			if a.opts.OnEvent != nil && !llm.IsContextOverflowError(err) && !isBenignCancelErr(ctx, err) {
 				a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 					Kind: llm.StreamEventError,
 					Err:  err,
@@ -367,4 +369,21 @@ func (a *Agent) modeReminder() string {
 		}
 	}
 	return ""
+}
+
+func isBenignCancelErr(ctx context.Context, err error) bool {
+	if err == nil {
+		return ctx.Err() != nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "context canceled") || strings.Contains(msg, "context cancelled") {
+		return true
+	}
+	if strings.Contains(msg, "sse read error") && strings.Contains(msg, "cancel") {
+		return true
+	}
+	return ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled)
 }

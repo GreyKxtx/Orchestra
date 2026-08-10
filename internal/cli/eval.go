@@ -97,10 +97,10 @@ func runEval(cmd *cobra.Command, args []string) error {
 	runner := &evalharness.Runner{RunAgent: runAgent}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TASK\tSTATUS\tSTEPS\tRETRIES\tDURATION\tDETAILS")
+	fmt.Fprintln(tw, "TASK\tSTATUS\tSTEPS\tRETRIES\tRESOLVE\tDURATION\tDETAILS")
 
 	passed, failed := 0, 0
-	var totalSteps, totalRetries int
+	var totalSteps, totalRetries, totalResolve int
 	for _, task := range tasks {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(evalTimeout)*time.Second)
 		result := runner.RunTask(ctx, task)
@@ -121,13 +121,14 @@ func runEval(cmd *cobra.Command, args []string) error {
 			details = strings.Join(result.Failures, "; ")
 		}
 
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%s\n",
-			task.Name, status, result.Steps, result.InvalidRetries,
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+			task.Name, status, result.Steps, result.InvalidRetries, result.ResolveFailed,
 			result.Duration.Round(time.Millisecond),
 			details)
 
 		totalSteps += result.Steps
 		totalRetries += result.InvalidRetries
+		totalResolve += result.ResolveFailed
 
 		if result.Passed && result.Error == nil {
 			passed++
@@ -140,8 +141,10 @@ func runEval(cmd *cobra.Command, args []string) error {
 	n := len(tasks)
 	avgSteps := float64(totalSteps) / float64(n)
 	avgRetries := float64(totalRetries) / float64(n)
+	avgResolve := float64(totalResolve) / float64(n)
 	fmt.Fprintf(os.Stderr, "\n%d passed, %d failed (total: %d)\n", passed, failed, n)
-	fmt.Fprintf(os.Stderr, "avg steps: %.1f  avg invalid retries: %.1f  (Phase 1 target: <3.0)\n", avgSteps, avgRetries)
+	fmt.Fprintf(os.Stderr, "avg steps: %.1f  avg invalid retries: %.1f  avg resolve_failed: %.1f  (Phase 1 target retries: <3.0)\n",
+		avgSteps, avgRetries, avgResolve)
 	if failed > 0 {
 		return fmt.Errorf("%d task(s) failed", failed)
 	}

@@ -203,16 +203,18 @@ type RuntimeGetLLMParams struct{}
 
 // RuntimeGetLLMResult exposes current LLM connection settings (key masked).
 type RuntimeGetLLMResult struct {
-	Provider     string  `json:"provider"`
-	APIBase      string  `json:"api_base"`
-	Model        string  `json:"model"`
-	APIKeySet    bool    `json:"api_key_set"`
-	APIKeyHint   string  `json:"api_key_hint,omitempty"`
-	Temperature  float32 `json:"temperature"`
-	MaxTokens    int     `json:"max_tokens"`
-	TimeoutS     int     `json:"timeout_s"`
-	PromptFamily string  `json:"prompt_family,omitempty"`
+	Provider       string  `json:"provider"`
+	APIBase        string  `json:"api_base"`
+	Model          string  `json:"model"`
+	APIKeySet      bool    `json:"api_key_set"`
+	APIKeyHint     string  `json:"api_key_hint,omitempty"`
+	Temperature    float32 `json:"temperature"`
+	MaxTokens      int     `json:"max_tokens"`
+	TimeoutS       int     `json:"timeout_s"`
+	PromptFamily   string  `json:"prompt_family,omitempty"`
 	Multimodal     bool    `json:"multimodal"`
+	NumCtx         int     `json:"num_ctx,omitempty"`
+	ContextTokens  int     `json:"context_tokens,omitempty"`
 }
 
 // RuntimeConfigureLLMParams updates connection fields. Empty api_key leaves the existing key.
@@ -244,17 +246,24 @@ func (c *Core) RuntimeGetLLM(_ RuntimeGetLLMParams) (*RuntimeGetLLMResult, error
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
 	key := strings.TrimSpace(c.cfg.LLM.APIKey)
+	ctxTok := int(c.cfg.EffectiveNumCtx())
+	discCtx := 0
+	if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
+		discCtx = oc.ContextTokens()
+	}
 	return &RuntimeGetLLMResult{
-		Provider:     c.cfg.LLM.Provider,
-		APIBase:      c.cfg.LLM.APIBase,
-		Model:        c.cfg.LLM.Model,
-		APIKeySet:    key != "",
-		APIKeyHint:   maskAPIKey(key),
-		Temperature:  c.cfg.LLM.Temperature,
-		MaxTokens:    c.cfg.LLM.MaxTokens,
-		TimeoutS:     c.cfg.LLM.TimeoutS,
-		PromptFamily: c.cfg.LLM.PromptFamily,
-		Multimodal:   c.cfg.LLM.Multimodal,
+		Provider:      c.cfg.LLM.Provider,
+		APIBase:       c.cfg.LLM.APIBase,
+		Model:         c.cfg.LLM.Model,
+		APIKeySet:     key != "",
+		APIKeyHint:    maskAPIKey(key),
+		Temperature:   c.cfg.LLM.Temperature,
+		MaxTokens:     c.cfg.LLM.MaxTokens,
+		TimeoutS:      c.cfg.LLM.TimeoutS,
+		PromptFamily:  c.cfg.LLM.PromptFamily,
+		Multimodal:    c.cfg.LLM.Multimodal,
+		NumCtx:        ctxTok,
+		ContextTokens: discCtx,
 	}, nil
 }
 

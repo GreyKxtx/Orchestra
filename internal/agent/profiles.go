@@ -3,9 +3,6 @@ package agent
 import (
 	"fmt"
 	"strings"
-
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // Named execution profiles (adaptive presets over Options).
@@ -65,13 +62,6 @@ func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 		setInt(&opts.MaxFinalFailures, 8, preserveNonZero)
 		setInt(&opts.MaxToolErrorRepeats, 8, preserveNonZero)
 		setInt(&opts.CompactThresholdPct, 75, preserveNonZero)
-		if opts.ResponseFormat == nil {
-			opts.ResponseFormat = &llm.ResponseFormat{
-				Type:       "json_schema",
-				Schema:     schema.AgentStepSchemaRaw(),
-				SchemaName: "agent_step",
-			}
-		}
 	}
 	return nil
 }

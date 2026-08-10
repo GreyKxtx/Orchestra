@@ -50,6 +50,7 @@ func TestSession_StartAndDeltaAssistant(t *testing.T) {
 	s.StartAssistant("", "")
 	s.AppendAssistantDelta("hel")
 	s.AppendAssistantDelta("lo")
+	s.SyncActiveAssistantProjections()
 
 	if len(s.Messages) != 1 {
 		t.Fatalf("want 1 message, got %d", len(s.Messages))

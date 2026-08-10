@@ -47,6 +47,7 @@ type Config struct {
 	Theme           string // registered theme name; empty → default
 	AllowExec       bool   // allow bash/exec.run in TUI agent runs
 	Profile         string // agent.profile: fast | precision | ""
+	ExcludeDirs     []string // from .orchestra.yml exclude_dirs
 }
 
 // App is the root Bubble Tea Model.
@@ -158,7 +159,8 @@ type App struct {
 	// chatDirty is set by handleRPCEvent whenever a streaming delta has been
 	// recorded into the session, and cleared by the next tick that flushes
 	// it to chat.SetMessages. Lets us avoid full re-renders on quiet ticks.
-	chatDirty bool
+	chatDirty      bool
+	lastChatRender time.Time
 
 	toastText string // non-empty while toast is visible
 	toastTick int    // countdown ticks until toast clears
@@ -204,6 +206,9 @@ type App struct {
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
 type rpcEventMsg rpcclient.Event
+
+// rpcBatchMsg delivers several RPC events in one Update (reduces UI thread churn).
+type rpcBatchMsg []rpcclient.Event
 
 // tickMsg drives the spinner and streaming cursor animation.
 type tickMsg time.Time

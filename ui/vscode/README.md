@@ -58,22 +58,48 @@ Restart Extension Host after rebuilding `orchestra.exe` if the binary was locked
 
 ## Package / Marketplace
 
-Build a `.vsix` locally:
+Bundled core layout (inside `.vsix`):
+
+```
+bin/win32-x64/orchestra.exe
+bin/linux-x64/orchestra
+bin/darwin-arm64/orchestra
+bin/darwin-x64/orchestra
+```
+
+Extension auto-picks `bin/<platform>-<arch>/` for the current machine. Override with **Settings → Orchestra: Binary Path**.
+
+### Build VSIX locally
 
 ```bash
 cd ui/vscode
 npm ci
-npm run compile
-npm run package   # produces orchestra-*.vsix
+npm run bundle:core        # current OS only (F5 dev)
+npm run package            # → orchestra-*.vsix
 ```
 
-**Before publishing:**
+Cross-platform **fat VSIX** (all four cores) — use CI, not `bundle:core:all` from Windows (cgo/tree-sitter):
 
-- Bump `version` in `package.json`
-- Ensure `orchestra` is on PATH on target machines, or document install (bundled binary in the VSIX is not shipped yet — users build from source or install the CLI separately)
-- Publish: `npx @vscode/vsce publish` (requires Azure DevOps publisher token)
+```bash
+# Tag push or manual run in GitHub Actions → vscode-vsix workflow
+git tag vscode-v0.1.0 && git push origin vscode-v0.1.0
+```
 
-CI builds the extension on every push (`.github/workflows/ci.yml` → `vscode-extension` job).
+Or **Actions → vscode-vsix → Run workflow** (optional **Publish** if `VSCE_PAT` is set).
+
+Matrix builds natively on `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64 + x64 cross), merges into `bin/`, packages `.vsix`, uploads artifact **orchestra-vsix**.
+
+### Publish checklist
+
+1. **Publisher** — [create publisher](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#create-a-publisher) on Marketplace; `publisher` in `package.json` must match.
+2. **Version** — bump `version` in `package.json` (semver).
+3. **Assets** — icon `images/icon.png` (from repo `logo.png`), README, LICENSE, repo URL.
+4. **Fat VSIX** — run **vscode-vsix** workflow (native matrix build); do not rely on `bundle:core:all` from a single dev machine.
+5. **Token** — repo secret `VSCE_PAT` (Personal Access Token with Marketplace publish scope).
+6. **Publish** — tag `vscode-v0.1.0`, or workflow_dispatch with **Publish** checked; or download `.vsix` artifact and upload manually.
+7. **LLM config** — bundled core ≠ LLM: users still configure provider/API in Orchestra Settings (LM Studio, OpenAI-compatible, etc.).
+
+CI: TypeScript compile on every push (`.github/workflows/ci.yml`); full multi-platform VSIX on tag / workflow_dispatch (`.github/workflows/vscode-vsix.yml`).
 
 ## Layout
 

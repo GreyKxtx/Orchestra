@@ -38,13 +38,15 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 	hasTools := len(a.buildToolDefs()) > 0
 	visible := strings.TrimSpace(stripThinkBlocks(raw))
 
-	// Step 1 with tools advertised: empty or patches-only JSON is never "done".
+	// Step 1 with tools advertised: empty response is never "done".
+	// Patches-only JSON is rejected only when the query expects code changes —
+	// prompts allow {"patches":[]} for pure Q&A without edit/write.
 	if steps == 1 && hasTools {
 		if visible == "" {
 			return "Model returned an empty response. Call a tool (read, grep, ls) or answer in plain text.", true
 		}
-		if isContentOnlyPatchesJSON(raw) {
-			return "Do not emit {\"patches\":[]} without tool calls. Call read, then edit or write.", true
+		if isContentOnlyPatchesJSON(raw) && queryRequiresCodeChanges(userQuery, a.todos, a.opts.Mode) {
+			return "Do not emit {\"patches\":[]} without tool calls. Start with read on the target file(s), then edit or write if changes are needed.", true
 		}
 	}
 
@@ -73,7 +75,9 @@ func countOpenTodos(todos []tools.TodoItem) int {
 }
 
 func isSilentPrematureFinalHint(hint string) bool {
-	return strings.Contains(hint, "Model returned an empty response")
+	// Recoverable final-step validation is injected into LLM history only —
+	// do not surface as user-visible errors while the agent retries.
+	return strings.TrimSpace(hint) != ""
 }
 
 // isContentOnlyPatchesJSON reports whether visible content (after stripping

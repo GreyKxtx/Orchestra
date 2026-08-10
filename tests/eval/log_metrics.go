@@ -11,6 +11,7 @@ import (
 // RunMetrics summarizes observability events from .orchestra/llm_log.jsonl.
 type RunMetrics struct {
 	ValidationErrors int
+	ResolveFailed    int
 	ToolCalls        int
 	ToolResults      int
 	ClassifiedSteps  int
@@ -50,8 +51,11 @@ func ParseLLMLog(path string) (RunMetrics, error) {
 			m.ToolResults++
 		case "step.classified":
 			m.ClassifiedSteps++
-			if e.Kind == "validation_error" {
+			switch e.Kind {
+			case "validation_error":
 				m.ValidationErrors++
+			case "resolve_failed":
+				m.ResolveFailed++
 			}
 		}
 	}

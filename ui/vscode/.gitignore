@@ -2,3 +2,5 @@ node_modules/
 out/
 *.vsix
 .DS_Store
+bin/**/orchestra
+bin/**/orchestra.exe

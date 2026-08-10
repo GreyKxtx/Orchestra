@@ -252,7 +252,7 @@ type BrowserConfig struct {
 //     URL for webfetch, file path for fs tools). Omit or set to "" to match any subject.
 //     Glob syntax: standard path.Match — '*' matches any sequence of non-separator chars,
 //     '?' matches a single non-separator char. '**' is NOT supported.
-//   - action: "allow" or "deny".
+//   - action: "allow", "deny", or "ask" (ask requires PermissionRequester for edit/write/bash).
 //
 // An explicit "allow" rule permits the tool call even when --allow-exec / --allow-web
 // are not set. An explicit "deny" always blocks the call with TOOL_DENIED.
@@ -260,7 +260,7 @@ type BrowserConfig struct {
 type PermissionRule struct {
 	Tool    string `yaml:"tool"`
 	Pattern string `yaml:"pattern,omitempty"`
-	Action  string `yaml:"action"` // "allow" | "deny"
+	Action  string `yaml:"action"` // "allow" | "deny" | "ask"
 }
 
 // PermissionsConfig holds the ordered permission ruleset evaluated before

@@ -548,3 +548,202 @@ func TestResolveSearchReplace_IndentFlexible_AmbiguousFails(t *testing.T) {
 		t.Fatalf("expected AmbiguousMatch, got %v", err)
 	}
 }
+
+// --- Phase 11 passes 4–6 ---
+
+func TestWhitespaceNormalizedFind_Unit(t *testing.T) {
+	cases := []struct {
+		name     string
+		hay      string
+		needle   string
+		wantS    int
+		wantE    int
+		wantHits int
+	}{
+		{"double spaces in hay", "foo    bar\n", "foo bar\n", 0, 11, 1},
+		{"tab run collapsed", "foo\t\tbar\n", "foo bar\n", 0, 9, 1},
+		{"absent", "abc\n", "a b c", 0, 0, 0},
+		{"two matches", "x y\nx y\n", "x y\n", 0, 4, 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, e, hits := whitespaceNormalizedFind(c.hay, c.needle)
+			if hits != c.wantHits {
+				t.Fatalf("hits: want %d, got %d", c.wantHits, hits)
+			}
+			if hits == 1 && (s != c.wantS || e != c.wantE) {
+				t.Errorf("offsets: want [%d,%d), got [%d,%d). substring=%q", c.wantS, c.wantE, s, e, c.hay[s:e])
+			}
+		})
+	}
+}
+
+func TestResolveSearchReplace_WhitespaceNormalized(t *testing.T) {
+	root := t.TempDir()
+	path := "ws.go"
+	original := "x := foo    bar\n"
+	if err := os.WriteFile(filepath.Join(root, path), []byte(original), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := ResolveExternalPatches(root, []patches.Patch{
+		{
+			Type:    patches.TypeFileSearchReplace,
+			Path:    path,
+			Search:  "x := foo bar\n",
+			Replace: "x := foo baz\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	op := got[0].ReplaceRange
+	if op.Expected != original {
+		t.Errorf("Expected: want verbatim %q, got %q", original, op.Expected)
+	}
+}
+
+func TestEscapeNormalizedFind_Unit(t *testing.T) {
+	hay := "fmt.Println(\"hi\")\n"
+	needle := `fmt.Println(\"hi\")\n`
+	s, e, hits := escapeNormalizedFind(hay, needle)
+	if hits != 1 {
+		t.Fatalf("hits: want 1, got %d", hits)
+	}
+	if hay[s:e] != "fmt.Println(\"hi\")\n" {
+		t.Errorf("match: got %q", hay[s:e])
+	}
+}
+
+func TestResolveSearchReplace_EscapeNormalized(t *testing.T) {
+	root := t.TempDir()
+	path := "esc.go"
+	original := "msg := \"hello\"\n"
+	if err := os.WriteFile(filepath.Join(root, path), []byte(original), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := ResolveExternalPatches(root, []patches.Patch{
+		{
+			Type:    patches.TypeFileSearchReplace,
+			Path:    path,
+			Search:  `msg := \"hello\"\n`,
+			Replace: `msg := \"world\"\n`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	op := got[0].ReplaceRange
+	if op.Expected != original {
+		t.Errorf("Expected: want %q, got %q", original, op.Expected)
+	}
+}
+
+func TestTrimmedBoundaryFind_Unit(t *testing.T) {
+	cases := []struct {
+		name     string
+		hay      string
+		needle   string
+		wantS    int
+		wantE    int
+		wantHits int
+	}{
+		{"leading newline in needle only", "foo\n", "\n\nfoo\n", 0, 4, 1},
+		{"needle trailing trim only", "foo   \n", "foo\n", 0, 4, 1},
+		{"two inner matches", "aa\naa\n", "\naa\n", 0, 3, 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, e, hits := trimmedBoundaryFind(c.hay, c.needle)
+			if hits != c.wantHits {
+				t.Fatalf("hits: want %d, got %d", c.wantHits, hits)
+			}
+			if hits == 1 && (s != c.wantS || e != c.wantE) {
+				t.Errorf("offsets: want [%d,%d), got [%d,%d). substring=%q", c.wantS, c.wantE, s, e, c.hay[s:e])
+			}
+		})
+	}
+}
+
+func TestResolveSearchReplace_TrimmedBoundary(t *testing.T) {
+	root := t.TempDir()
+	path := "trim.go"
+	original := "func main() {}\n"
+	if err := os.WriteFile(filepath.Join(root, path), []byte(original), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := ResolveExternalPatches(root, []patches.Patch{
+		{
+			Type:    patches.TypeFileSearchReplace,
+			Path:    path,
+			Search:  "\n\nfunc main() {}\n\n",
+			Replace: "func main() { return }\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	op := got[0].ReplaceRange
+	if op.Expected != original {
+		t.Errorf("Expected: want %q, got %q", original, op.Expected)
+	}
+}
+
+func TestApplySearchReplace_WhitespaceNormalized(t *testing.T) {
+	content := []byte("a    b\n")
+	got, err := ApplySearchReplace(content, "a b\n", "a c\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "a c\n" {
+		t.Fatalf("got %q, want %q", string(got), "a c\n")
+	}
+}
+
+func TestBlockAnchorFind_Unit(t *testing.T) {
+	hay := "func f() {\n\t\treturn 1\n\t\tx := 2\n}\n"
+	needle := "func f() {\n    return 1\n\tx := 2\n}\n"
+	s, e, hits := blockAnchorFind(hay, needle)
+	if hits != 1 {
+		t.Fatalf("hits: want 1, got %d", hits)
+	}
+	if hay[s:e] != hay {
+		t.Errorf("match span: got %q", hay[s:e])
+	}
+}
+
+func TestResolveSearchReplace_BlockAnchor_IndentDrift(t *testing.T) {
+	root := t.TempDir()
+	path := "anchor.go"
+	original := "func f() {\n\t\treturn 1\n\t\tx := 2\n}\n"
+	if err := os.WriteFile(filepath.Join(root, path), []byte(original), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := ResolveExternalPatches(root, []patches.Patch{
+		{
+			Type:    patches.TypeFileSearchReplace,
+			Path:    path,
+			Search:  "func f() {\n    return 1\n\tx := 2\n}\n",
+			Replace: "func f() {\n\treturn 9\n}\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	op := got[0].ReplaceRange
+	if op.Expected != original {
+		t.Errorf("Expected verbatim file bytes, got %q", op.Expected)
+	}
+}
+
+func TestBlockAnchorFind_Ambiguous(t *testing.T) {
+	hay := "func f() {\n\ta\n}\nfunc f() {\n\ta\n}\n"
+	needle := "func f() {\n\ta\n}\n"
+	_, _, hits := blockAnchorFind(hay, needle)
+	if hits != 2 {
+		t.Fatalf("hits: want 2, got %d", hits)
+	}
+}

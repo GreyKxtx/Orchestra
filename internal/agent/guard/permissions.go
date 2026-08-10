@@ -106,7 +106,7 @@ func subjectKey(name string) string {
 // checkPermissions evaluates the ordered ruleset against the resolved tool name
 // and its subject. First matching rule wins.
 //
-// Returns action ("allow" or "deny") and matched=true when a rule fires.
+// Returns action ("allow", "deny", or "ask") and matched=true when a rule fires.
 // Returns matched=false when no rule matches → caller falls through to existing
 // consent gates (no change in behaviour).
 //
@@ -125,10 +125,12 @@ func CheckPermissions(rules []config.PermissionRule, name, subject string) (acti
 			}
 		}
 		act := strings.ToLower(strings.TrimSpace(r.Action))
-		if act != "allow" && act != "deny" {
+		switch act {
+		case "allow", "deny", "ask":
+			return act, true
+		default:
 			continue // skip malformed rules silently
 		}
-		return act, true
 	}
 	return "", false
 }
