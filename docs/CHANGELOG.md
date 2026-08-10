@@ -28,7 +28,12 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 - **Always-stream agent path** — `CompleteStream` whenever client implements `Streamer`; `OnEvent` controls UI only (fixes LM Studio tool_calls without dummy callback).
 - **Unified `Complete()`** — OpenAI + Anthropic clients drain `CompleteStream`; removed separate non-streaming OpenAI POST from production path.
 - **Anthropic streaming** — `ParseAnthropicSSEStream` + `AnthropicClient.CompleteStream`.
-- **CLI** — `→ tool` / `← preview` rendering; TTY detection on stdout **or** stderr; see `docs/architecture/streaming.md`.
+- **CLI** — `→ tool` / `← preview` rendering; TTY detection on stdout **or** stderr.
+- **Docs** — `docs/architecture/streaming.md` (architecture + operational notes: backpressure, cancel, partial streams).
+
+### Changed — Roadmap / product scope
+
+- **Dropped `orchestra chat` REPL** from scope — multi-turn UX is TUI + VS Code (+ future IDE); `session.*` API remains the contract. ROADMAP Phase 3 rewritten accordingly.
 
 ### Changed — Phase 1 local-model hardening ✅
 

@@ -8,7 +8,7 @@
 
 ## Принципы (держим сквозь все фазы)
 
-1. **Stateless ядро + stateful сессия снаружи.** `Agent` не накапливает состояние между ходами, история живёт в `Session`. Это нужно, чтобы один и тот же код обслуживал и `apply` (один ход), и `chat` (много ходов).
+1. **Stateless ядро + stateful сессия снаружи.** `Agent` не накапливает состояние между ходами, история живёт в `Session`. Это нужно, чтобы один и тот же код обслуживал и `apply` (один ход), и multi-turn клиенты (TUI, VS Code, IDE).
 2. **Провайдер-нейтральность изнутри `internal/llm/`.** OpenAI-семантика (`tool` role, `tool_call_id`, `ToolCalls` на assistant) — внутренний lingua franca. Не утекает в `agent`/`core`/`ops`.
 3. **Защитные слои не убираем.** External Patches → Resolver → Internal Ops с `file_hash`/anchors/atomic write — это моат под локалки. Любая оптимизация скорости не должна снимать эти инварианты.
 4. **JSON-RPC контракт расширяется аддитивно.** Новые методы — да; ломать существующие `initialize`/`agent.run`/`tool.call` — нет. Версии (`protocol/ops/tools`) бампим осознанно.
@@ -23,7 +23,7 @@
 | 0. Стабилизация | ✅ Готово | зелёная база, без мёртвого кода |
 | 1. Усиление под локалки | ✅ Готово | модель реально слушается формата |
 | 2. Стриминг | ✅ Готово | пользователь видит прогресс |
-| 3. Сессии и `chat` | ✅ Готово | многораундовый диалог |
+| 3. Сессии и multi-turn UI | ✅ Готово | TUI / VS Code / `session.*` |
 | 4. Минимальный набор инструментов | ✅ Готово | можно реально редактировать проект |
 | ✅ Контрольная точка | ✅ Готово | тест на реальном проекте |
 | 5. Субагенты (`task.spawn/wait/cancel`) | ✅ Готово | защита контекста, параллельные задачи |
@@ -60,7 +60,7 @@
 | 0. Стабилизация | зелёная база, без мёртвого кода | да |
 | 1. Усиление под локалки | модель реально слушается формата | да |
 | 2. Стриминг | пользователь видит прогресс | да |
-| 3. Сессии и `chat` | многораундовый диалог | да |
+| 3. Сессии и multi-turn UI | TUI / VS Code / `session.*` | да |
 | 4. Минимальный набор инструментов | можно реально редактировать проект | да |
 
 После Фазы 4 → **Контрольная точка: тест на реальном проекте**. Только потом фазы 5+.
@@ -148,49 +148,32 @@
 
 ---
 
-## Фаза 3 — Сессии и интерактивный `chat`
+## Фаза 3 — Сессии и multi-turn UI ✅
 
-**Цель:** один процесс держит многораундовую беседу. Это водораздел между "одноразовый аппликатор" и "Claude Code-shaped".
+**Цель:** один `orchestra core` держит многораундовую беседу. Это водораздел между «одноразовый `apply`» и «Claude Code-shaped» ассистент.
 
-### Задачи
+**Интерактив — через клиенты, не через отдельную CLI-команду.** Отдельный `orchestra chat` (простой readline-REPL) **не планируется и не нужен**: TUI, VS Code extension и будущая IDE покрывают UX. Ядро остаётся headless (`core` + JSON-RPC).
 
-1. **`internal/core/session`** — новый пакет. `Session` хранит:
-   - `id` (uuid)
-   - `history []llm.Message`
-   - `working_set` (опционально — список файлов, которые модель уже читала, для prefetch)
-   - `permissions` (см. фазу 6, пока заглушка)
-   - `created_at`, `last_activity`
-2. **JSON-RPC методы:**
-   - `session.start { project_root, project_id, options } → { session_id }`
-   - `session.message { session_id, content, allow_exec? } → notifications + final result`
-   - `session.cancel { session_id }`
-   - `session.history { session_id } → messages`
-   - `session.close { session_id }`
-   - `agent.run` остаётся, теперь работает поверх временной анонимной сессии (для бэк-совместимости).
-3. **CLI команда `orchestra chat`.** Простой REPL:
-   ```
-   you> добавь тест на функцию Sum
-   ← fs.read sum.go (45 lines)
-   ← fs.list (12 files)
-   → создаю sum_test.go
-   apply changes? [y/N/d(iff)] _
-   ```
-   - Поддерживает `/exit`, `/clear`, `/diff`, `/apply`, `/cancel` (Ctrl-C прерывает текущий ход, но сессию не убивает).
-   - Использует JSON-RPC под капотом (subprocess `orchestra core` через stdio) — переиспользует `--via-core` инфраструктуру.
-4. **Persistence сессий (опционально, можно отложить).** Сессии в `.orchestra/sessions/<id>.json`. Для MVP — только in-memory, при падении core теряются. Это нормально.
-5. **Cancel semantics.** Cancel должен реально прерывать текущий LLM-вызов и tool-call. Использовать `context.Context` корректно по всей цепочке (некоторые вызовы её не получают).
+### Реализовано
 
-### Definition of Done
+1. **`internal/core/session`** — `history`, todos, pending ops, compaction, persistence.
+2. **JSON-RPC:** `session.start`, `session.message`, `session.cancel`, `session.history`, `session.close`, `session.ui_sync`, `session.apply_pending`. One-shot `agent.run` сохранён для `apply` / CI.
+3. **Клиенты:**
+   - **TUI** — `orchestra` / `orchestra tui` (`ui/tui/`), multi-turn через `session.message`.
+   - **VS Code** — webview chat (`ui/vscode/src/chat/`).
+4. **Persistence** — `.orchestra/sessions/<id>.json` (schema v3/v4).
+5. **Cancel** — `session.cancel` → `context.Cancel()` до HTTP SSE и tool execution.
 
-- `orchestra chat` запускается, держит беседу из 5+ ходов на одной модели.
-- Cancel (Ctrl-C) прерывает текущий ход, не разрушая сессию.
-- Тесты на конкурентные сессии в одном core-процессе (изоляция history).
-- В `docs/PROTOCOL.md` описаны новые методы.
+### Definition of Done (фактический)
 
-### Риски
+- TUI держит беседу из 5+ ходов на одной модели.
+- `session.cancel` / Esc в TUI прерывает текущий ход, сессия сохраняется.
+- Тесты на конкурентные сессии и cancel (`internal/core/rpc_handler_test.go`, e2e).
+- `docs/PROTOCOL.md` описывает `session.*`.
 
-- Самая большая фаза по объёму. Можно разбить на две: "session API в core" и "REPL в CLI".
-- Интерактивный TTY на Windows капризный — проверить на cmd, PowerShell, Windows Terminal.
+### Намеренно не делаем
+
+- **`orchestra chat` REPL** — дублировал бы TUI без value; headless сценарии остаются за `orchestra apply`.
 
 ---
 
@@ -238,7 +221,7 @@
 ### Сценарий теста
 
 1. **Инициализация.** Создать пустой каталог, `git init`, `orchestra init`. Настроить `.orchestra.yml` под локальную модель.
-2. **Maiden voyage.** `orchestra chat`, описать модели маленький проект на Go (например, "CLI для парсинга .env файлов с командами get/set/list"). Дать ей построить с нуля: придумать структуру, написать main.go, написать тесты, прогнать `go test`, поправить баги.
+2. **Maiden voyage.** `orchestra` (TUI), описать модели маленький проект на Go (например, "CLI для парсинга .env файлов с командами get/set/list"). Дать ей построить с нуля: придумать структуру, написать main.go, написать тесты, прогнать `go test`, поправить баги.
 3. **Расширение.** Через ту же сессию добавить вторую фичу (например, "поддержка комментариев в .env"). Проверить что модель помнит контекст.
 4. **Edit-flow.** Закрыть сессию, открыть новую, дать задачу "перепиши команду list с использованием cobra". Проверить что заходит в новый файл, читает существующие, делает корректные правки.
 5. **Failure modes.** Намеренно дать сложную задачу (напр., "добавь поддержку YAML с сохранением порядка ключей"). Документировать как модель ломается: уходит в петлю, выдаёт галлюцинации, теряет контекст и т.п.
@@ -326,7 +309,7 @@
 | 0. Стабилизация | 1-2 дня |
 | 1. Усиление под локалки | 4-7 дней |
 | 2. Стриминг | 3-5 дней |
-| 3. Сессии и chat | 7-10 дней |
+| 3. Сессии и multi-turn UI | 7-10 дней |
 | 4. Инструменты | 4-6 дней |
 | **MVP до контрольной точки** | **~3-5 недель** |
 | 5. Субагенты | 4-6 дней |
@@ -359,10 +342,10 @@
 
 Следующий фокус:
 
-1. **Фаза 3 — сессии и `orchestra chat`** — multi-turn REPL поверх `session.*` RPC.
-2. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance).
-3. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm`.
-4. **VS Code marketplace** — `npm run package` / vsce publish.
+1. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance).
+2. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm`.
+3. **VS Code marketplace** — `npm run package` / vsce publish.
+4. **Streaming hardening** — см. «Operational notes» в `docs/architecture/streaming.md` (core debounce, async notify — опционально).
 
 ### Фаза 1 — knobs в `.orchestra.yml`
 

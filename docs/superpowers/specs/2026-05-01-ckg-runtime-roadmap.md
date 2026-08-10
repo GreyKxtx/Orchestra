@@ -9,7 +9,7 @@
 
 ## 1. Контекст и цель
 
-Orchestra на 2026-05-01 — это работающее ядро vNext: stateless `Agent.Run`, JSON-RPC over stdio, потоковый вывод, сессии, MCP bridge, hooks, eval. Все 9 фаз исходного roadmap закрыты. Базовый CLI (`apply` / `chat`) работает на локальной модели (qwen3.6-27b на момент написания).
+Orchestra на 2026-05-01 — это работающее ядро vNext: stateless `Agent.Run`, JSON-RPC over stdio, потоковый вывод, сессии, MCP bridge, hooks, eval. Все 9 фаз исходного roadmap закрыты. Базовый CLI (`apply` / TUI) работает на локальной модели (qwen3.6-27b на момент написания).
 
 Следующий рывок — превратить продукт из «локального Claude Code» в инструмент с уникальным дифференциатором. План:
 
@@ -27,7 +27,7 @@ SVG в корне репозитория описывает lifecycle одног
 
 ```
 User query
-  → CLI (apply / chat)
+  → CLI (apply / TUI)
   → JSON-RPC (stdio / HTTP)
   → Core (session, config merge, agent build)
   → Agent loop:
