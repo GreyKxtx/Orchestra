@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/daemon"
 	"github.com/orchestra/orchestra/internal/search"
 	"github.com/spf13/cobra"
 )
@@ -33,7 +32,6 @@ func init() {
 func runSearch(cmd *cobra.Command, args []string) error {
 	query := args[0]
 
-	// Load config
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
@@ -45,23 +43,6 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
 	}
 
-	// Prefer daemon if available; fallback to direct search.
-	if dClient, ok := getDaemonClient(cmd.Context(), cfg); ok {
-		resp, err := dClient.Search(cmd.Context(), daemon.SearchRequest{
-			Query: query,
-			Options: daemon.SearchOptions{
-				MaxMatchesPerFile: searchMaxPerFile,
-				CaseInsensitive:   searchCaseInsensitive,
-				ContextLines:      2,
-			},
-		})
-		if err == nil && resp != nil {
-			fmt.Fprintln(os.Stderr, "[orchestra] Using daemon for search")
-			return printDaemonSearchResults(query, resp.Matches)
-		}
-	}
-
-	// Direct search (v0.2)
 	opts := search.DefaultOptions()
 	opts.CaseInsensitive = searchCaseInsensitive
 	opts.MaxMatchesPerFile = searchMaxPerFile
@@ -71,7 +52,6 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	// Output results
 	if len(matches) == 0 {
 		fmt.Printf("No matches found for \"%s\"\n", query)
 		return nil
@@ -81,7 +61,6 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	currentFile := ""
 	for _, match := range matches {
-		// Show file header if it's a new file
 		if match.FilePath != currentFile {
 			if currentFile != "" {
 				fmt.Println()
@@ -89,42 +68,6 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			relPath, _ := filepath.Rel(cfg.ProjectRoot, match.FilePath)
 			fmt.Printf("📄 %s\n", relPath)
 			currentFile = match.FilePath
-		}
-
-		// Show context before
-		for _, ctxLine := range match.ContextBefore {
-			fmt.Printf("  %s\n", ctxLine)
-		}
-
-		// Show matching line
-		fmt.Printf("→ %d: %s\n", match.Line, match.LineText)
-
-		// Show context after
-		for _, ctxLine := range match.ContextAfter {
-			fmt.Printf("  %s\n", ctxLine)
-		}
-		fmt.Println()
-	}
-
-	return nil
-}
-
-func printDaemonSearchResults(query string, matches []daemon.SearchMatch) error {
-	if len(matches) == 0 {
-		fmt.Printf("No matches found for \"%s\"\n", query)
-		return nil
-	}
-
-	fmt.Printf("Found %d match(es) for \"%s\":\n\n", len(matches), query)
-
-	currentFile := ""
-	for _, match := range matches {
-		if match.Path != currentFile {
-			if currentFile != "" {
-				fmt.Println()
-			}
-			fmt.Printf("📄 %s\n", match.Path)
-			currentFile = match.Path
 		}
 
 		for _, ctxLine := range match.ContextBefore {

@@ -17,7 +17,6 @@
 | `orchestra runtime ingest` | ✅ | OTel → SQLite CKG |
 | `orchestra ckg-ui` | ✅ | HTTP-визуализатор CKG (`:6061`) |
 | `orchestra demo tiny-go` | ✅ | Smoke-test пайплайна патчей без LLM |
-| `orchestra daemon` | ✅ (legacy) | HTTP v0.3 демон, только loopback |
 | `orchestra mcp list-tools` | ✅ | Перечень тулов всех enabled MCP-серверов |
 | `orchestra ckg embed` | ✅ | Индексирует CKG-узлы в эмбеддинги для `semantic_search`; `--rebuild` / `--limit` / `--batch-size` |
 | `orchestra skills list \| show` | ✅ | Скиллы из `.orchestra/skills/` (user + project) |

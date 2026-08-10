@@ -1,0 +1,370 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/internal/tools"
+
+	"github.com/orchestra/orchestra/llm"
+)
+// nextStep returns the next step, raw response, full LLM response, and error.
+// stepNum is the current step count (used for streaming event tagging).
+func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
+	toolDefs := a.buildToolDefs()
+	systemPrompt := a.buildSystemPrompt()
+	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
+	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
+	if block := renderTodosBlock(a.todos); block != "" {
+		userPrompt = block + "\n" + userPrompt
+	}
+	if block := a.injectWorkingPromptBlocks(); block != "" {
+		userPrompt += "\n\n" + block
+	}
+	// CKG context only on step 1 (saves tokens; later steps use explore/grep in history).
+	if stepNum == 1 && a.ckgContext != "" {
+		userPrompt += "\n\n" + a.ckgContext
+	}
+	// Mode reminder injected last (freshest in attention window).
+	if reminder := a.modeReminder(); reminder != "" {
+		userPrompt += "\n\n" + reminder
+	}
+
+	// Build messages: system + user (initial) + history (assistant tool calls + tool results)
+	messages := make([]llm.Message, 0, len(history)+2)
+	messages = append(messages, llm.Message{
+		Role:    llm.RoleSystem,
+		Content: systemPrompt,
+	})
+	if len(a.opts.UserImages) > 0 {
+		parts := make([]llm.ContentPart, 0, 1+len(a.opts.UserImages))
+		parts = append(parts, llm.ContentPart{Kind: llm.PartText, Text: userPrompt})
+		parts = append(parts, a.opts.UserImages...)
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Parts: parts})
+	} else {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: userPrompt,
+		})
+	}
+	messages = append(messages, history...)
+
+	// Debug: log history length before truncation
+	if a.opts.Debug {
+		a.logf("agent.nextStep history_len=%d messages_before_truncate=%d", len(history), len(messages))
+	}
+
+	// Truncate messages if needed to stay within budget (best-effort)
+	if a.opts.MaxPromptBytes > 0 {
+		beforeTruncate := len(messages)
+		messages = truncateMessages(messages, a.opts.MaxPromptBytes)
+		if a.opts.Debug && len(messages) != beforeTruncate {
+			a.logf("agent.nextStep messages truncated: %d -> %d (budget=%d)", beforeTruncate, len(messages), a.opts.MaxPromptBytes)
+		}
+	}
+
+	// Track the request size so real Usage.PromptTokens can calibrate our
+	// bytes-per-token heuristic (see calibrateFromRealPrompt).
+	a.lastPromptBytes = messagesBytes(messages) + toolDefsBytes(toolDefs)
+
+	if a.opts.Debug {
+		totalBytes := 0
+		for _, m := range messages {
+			totalBytes += m.TextLen()
+		}
+		// Build roles string for debug logging
+		roles := make([]string, 0, len(messages))
+		for _, m := range messages {
+			roleStr := string(m.Role)
+			if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+				roleStr = fmt.Sprintf("%s(tool_calls=%d)", roleStr, len(m.ToolCalls))
+			}
+			if m.Role == llm.RoleTool && m.ToolCallID != "" {
+				roleStr = fmt.Sprintf("%s(id=%s)", roleStr, truncateID(m.ToolCallID, 12))
+			}
+			roles = append(roles, roleStr)
+		}
+		a.logf("agent.step messages_count=%d roles=%v total_bytes=%d tools=%d", len(messages), roles, totalBytes, len(toolDefs))
+	}
+
+	var lastInvalid *protocol.Error
+	var lastRaw string
+
+	// Determine streaming availability once; steps is captured in closure below.
+	streamer, canStream := a.llm.(llm.Streamer)
+
+	for attempt := 0; attempt <= a.opts.MaxInvalidRetries; attempt++ {
+		stepCtx := ctx
+		var cancel context.CancelFunc
+		if a.opts.LLMStepTimeout > 0 {
+			stepCtx, cancel = context.WithTimeout(ctx, a.opts.LLMStepTimeout)
+		}
+		llmReq := llm.CompleteRequest{
+			Messages:       a.messagesWithAssistantPrefill(messages),
+			Tools:          toolDefs,
+			ResponseFormat: a.opts.ResponseFormat,
+		}
+		var resp *llm.CompleteResponse
+		var err error
+		if canStream && a.opts.OnEvent != nil {
+			resp, err = a.streamStep(stepCtx, llmReq, streamer, stepNum)
+		} else {
+			resp, err = a.llm.Complete(stepCtx, llmReq)
+		}
+		// Snapshot before cancel(): after Cancel, a WithTimeout context that has
+		// not yet expired reports context.Canceled, hiding a real deadline miss.
+		stepDeadlineExceeded := stepCtx.Err() == context.DeadlineExceeded
+		if cancel != nil {
+			cancel() // Always cancel timeout context to free resources
+		}
+		if err != nil {
+			// Surface LLMStepTimeout clearly  -  raw "SSE read error: context
+			// deadline exceeded" hides that llm.timeout_s / LLMStepTimeout fired.
+			if stepDeadlineExceeded && ctx.Err() == nil && a.opts.LLMStepTimeout > 0 {
+				sec := int(a.opts.LLMStepTimeout / time.Second)
+				return nil, "", nil, fmt.Errorf(
+					"LLM step timed out after %s (llm.timeout_s=%d; raise it and restart core): %w",
+					a.opts.LLMStepTimeout.Round(time.Second), sec, err)
+			}
+			return nil, "", nil, err
+		}
+		if !canStream || a.opts.OnEvent == nil {
+			a.emitStepUsage(stepNum, resp)
+		}
+		a.mergeResponsePrefill(resp)
+		if a.opts.UsageTracker != nil && resp != nil {
+			if resp.Usage != nil {
+				a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,
+					resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+			} else {
+				// M4 in audit ledger: log when the provider returned no
+				// usage payload so usage.jsonl silently understating tokens
+				// is at least visible to the operator. Common with local
+				// LLM proxies and some streaming back-ends.
+				a.logf("usage: provider %q returned nil Usage; this run undercounts tokens for one step", a.opts.ProviderLabel)
+			}
+		}
+		step, raw, nerr := NormalizeLLMWithDefs(a.validator, resp, toolDefs)
+		lastRaw = raw
+
+		if nerr != nil {
+			// Inject validation error as user message and retry
+			if pe, ok := protocol.AsError(nerr); ok {
+				lastInvalid = pe
+			} else {
+				lastInvalid = protocol.NewError(protocol.InvalidLLMOutput, nerr.Error(), nil)
+			}
+			// Add error feedback to messages for retry
+			errorMsg := llm.Message{
+				Role:    llm.RoleUser,
+				Content: formatValidatorErrorCompact(lastInvalid.Message),
+			}
+			messages = append(messages, errorMsg)
+			// Truncate again if needed
+			if a.opts.MaxPromptBytes > 0 {
+				messages = truncateMessages(messages, a.opts.MaxPromptBytes)
+			}
+			if a.opts.OnEvent != nil {
+				msg := "schema invalid: " + lastInvalid.Message
+				msg = truncate(msg, 200)
+				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+					Kind:    llm.StreamEventRecoverableError,
+					Content: msg,
+				}})
+			}
+			continue
+		}
+
+		// Note: exec.run policy validation is handled in Run() after adding assistant message to history.
+		// This allows proper tool calling loop with tool messages.
+
+		return step, raw, resp, nil
+	}
+
+	if lastInvalid != nil {
+		return nil, lastRaw, nil, lastInvalid
+	}
+	return nil, lastRaw, nil, protocol.NewError(protocol.InvalidLLMOutput, "Invalid JSON format: unknown validation failure", nil)
+}
+
+// streamStep calls CompleteStream and forwards events to OnEvent, returning
+// the final assembled CompleteResponse from the Done event. Transient stream
+// failures (dead tunnel, stall, reset) before any assistant content arrived
+// are retried in place so one network hiccup doesn't kill a long agent turn.
+func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.Streamer, step int) (*llm.CompleteResponse, error) {
+	const maxStreamAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxStreamAttempts; attempt++ {
+		resp, contentStarted, err := a.streamStepOnce(ctx, req, s, step)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		// Content already streamed to the UI: retrying would duplicate it and
+		// diverge from what the user saw  -  surface the error instead.
+		if ctx.Err() != nil || contentStarted || !llm.IsTransientLLMError(err) || attempt == maxStreamAttempts {
+			// Context overflow is handled by the Run loop (compact + replay);
+			// emitting a hard error here would show the user a failure for a
+			// step that is about to be retried successfully.
+			if a.opts.OnEvent != nil && !llm.IsContextOverflowError(err) {
+				a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
+					Kind: llm.StreamEventError,
+					Err:  err,
+				}})
+			}
+			return nil, err
+		}
+		a.logf("stream attempt %d/%d failed (transient): %v  -  retrying", attempt, maxStreamAttempts, err)
+		if a.opts.OnEvent != nil {
+			a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
+				Kind:    llm.StreamEventRecoverableError,
+				Content: truncate(fmt.Sprintf("LLM stream interrupted, retry %d/%d: %v", attempt, maxStreamAttempts-1, err), 200),
+			}})
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		}
+	}
+	return nil, lastErr
+}
+
+// streamStepOnce runs one streaming attempt. contentStarted reports whether
+// any assistant text or tool-call delta was already forwarded to OnEvent.
+func (a *Agent) streamStepOnce(ctx context.Context, req llm.CompleteRequest, s llm.Streamer, step int) (*llm.CompleteResponse, bool, error) {
+	contentStarted := false
+	ch, err := s.CompleteStream(ctx, req)
+	if err != nil {
+		return nil, contentStarted, err
+	}
+	var final *llm.CompleteResponse
+	for ev := range ch {
+		switch ev.Kind {
+		case llm.StreamEventMessageDelta, llm.StreamEventToolCallStart, llm.StreamEventToolCallDelta:
+			contentStarted = true
+		}
+		// Error events are not forwarded here: streamStep decides whether to
+		// retry silently (recoverable notice) or surface the failure.
+		if ev.Kind == llm.StreamEventError {
+			// Drain remaining events so the producer goroutine can exit.
+			for range ch {
+			}
+			return nil, contentStarted, ev.Err
+		}
+		if a.opts.OnEvent != nil {
+			a.opts.OnEvent(AgentEvent{Step: step, Stream: ev})
+		}
+		if ev.Kind == llm.StreamEventDone {
+			final = ev.Response
+			// Streaming path: OnEvent already forwarded usage to the UI, but the
+			// agent's own budgeting state must be updated too, otherwise the
+			// usage-based compaction trigger never fires in the TUI.
+			if final != nil && final.Usage != nil && final.Usage.PromptTokens > 0 {
+				a.lastPromptTokens = final.Usage.PromptTokens
+				a.calibrateFromRealPrompt(final.Usage.PromptTokens)
+			}
+		}
+	}
+	if final == nil {
+		return nil, contentStarted, fmt.Errorf("stream ended without Done event")
+	}
+	return final, contentStarted, nil
+}
+
+func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
+	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
+		a.lastPromptTokens = resp.Usage.PromptTokens
+		a.calibrateFromRealPrompt(resp.Usage.PromptTokens)
+	}
+	if a.opts.OnEvent == nil || resp == nil || resp.Usage == nil {
+		return
+	}
+	u := resp.Usage
+	payload, _ := json.Marshal(map[string]int{
+		"prompt_tokens":     u.PromptTokens,
+		"completion_tokens": u.CompletionTokens,
+		"total_tokens":      u.TotalTokens,
+	})
+	a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
+		Kind:    llm.StreamEventStepUsage,
+		Content: string(payload),
+	}})
+}
+
+// bytesPerToken returns the calibration factor for token estimates. A value
+// learned from real provider usage wins over config when it is more
+// pessimistic  -  under-estimating the prompt is what triggers 400s.
+func (a *Agent) bytesPerToken() int {
+	if a == nil {
+		return DefaultBytesPerContextToken
+	}
+	base := a.opts.BytesPerContextToken
+	if base <= 0 {
+		base = DefaultBytesPerContextToken
+	}
+	if c := a.calibratedBytesPerToken; c > 0 && c < base {
+		return c
+	}
+	return base
+}
+
+// messagesBytes approximates the serialized size of a request's messages.
+func messagesBytes(msgs []llm.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += estimateMessageSize(m)
+	}
+	return total
+}
+
+// toolDefsBytes approximates the serialized size of advertised tool schemas,
+// which count against the model window just like messages do.
+func toolDefsBytes(defs []llm.ToolDef) int {
+	total := 0
+	for _, d := range defs {
+		total += len(d.Function.Name) + len(d.Function.Description) + len(d.Function.Parameters)
+	}
+	return total
+}
+
+func (a *Agent) logf(format string, args ...any) {
+	if !a.opts.Debug {
+		return
+	}
+	if a.opts.Logger != nil {
+		a.opts.Logger.Printf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
+}
+
+// handleTodoTool handles todo.read and todo.write in-process (no runner involvement).
+
+// modeReminder returns the reminder string to append to the user prompt for the current mode.
+// The build-switch reminder fires at most once (cleared after the first call).
+func (a *Agent) modeReminder() string {
+	switch a.opts.Mode {
+	case ModePlan:
+		return a.substitutePlanPath(promptpkg.PlanModeReminder)
+	case ModeArchitecture:
+		return a.substitutePlanPath("Architecture mode: design only  -  write plans under {{PLAN_PATH}}; no production edits.")
+	case ModeAsk:
+		return "Ask mode: read-only answers. Do not edit code."
+	case ModeDebug:
+		return "Debug mode: find root cause with evidence; fix narrowly or delegate worker."
+	case ModeOrchestra:
+		return "You are Orchestra Lead: plan and delegate via task(subagent_type=worker|ask|debug|architecture|explore, tier= - ). Do not edit production code."
+	case ModeBuild, "":
+		if a.justSwitchedFromPlan {
+			a.justSwitchedFromPlan = false
+			return a.substitutePlanPath(promptpkg.BuildSwitchReminder)
+		}
+	}
+	return ""
+}

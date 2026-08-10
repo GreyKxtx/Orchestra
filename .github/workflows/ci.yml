@@ -28,6 +28,9 @@ jobs:
       - name: Test
         run: go test ./... ./protocol/... ./patch/... ./llm/...
 
+      - name: Import rules
+        run: go test ./tests/importrules/... -count=1
+
       - name: Test (race)
         run: go test -race ./... ./protocol/... ./patch/... ./llm/...
 
@@ -53,6 +56,9 @@ jobs:
 
       - name: Test (Windows)
         run: go test ./... ./protocol/... ./patch/... ./llm/...
+
+      - name: Import rules
+        run: go test ./tests/importrules/... -count=1
 
       - name: Test (Windows, race)
         run: go test -race ./... ./protocol/... ./patch/... ./llm/...

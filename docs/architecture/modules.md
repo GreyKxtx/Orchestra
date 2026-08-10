@@ -76,15 +76,49 @@ Shared UI DTOs (client-neutral):
 - [x] Root `Runner` delegates via `*_delegate.go`; public API preserved with type aliases in `aliases.go` / `web_delegate.go`
 - [x] `fs/` — write/edit/staging overlay, list/read/glob/grep, delete/rename, diff.preview, ast_rename; `Client` + `Hooks` for LSP/CKG/memory integration without importing parent `tools`
 
-## Phase 5+
+## Phase 4b (done)
 
-## In-repo splits (before multi-module)
+- [x] **`internal/tools/nav/`** — `explore`, `symbols`, `semantic_search`, `repo_map`, CKG admin (`CKGIndexStatus`, `RebuildCKG`, `RunCKGEmbed`); `Client` + CKG/LSP snapshots
+- [x] **`internal/tools/session/`** — `todowrite/todoread` types + `ValidateTodos`, `memory_*`, `runtime_query`, `question`; `Client` with session/memory/CKG callbacks
+- [x] Root **`nav_delegate.go`**, **`session_delegate.go`**; **`aliases.go`** re-exports nav/session types + `ToolSemanticSearch` / `ToolRepoMap`
+- [x] Monolith `registry.go` trimmed — nav/session tool defs removed; `ListTools*` calls `nav.Tool*` / `session.Tool*`
+
+## Phase 4c (done)
+
+- [x] **`internal/tools/task/`** — `task_spawn/wait/cancel/result`, unified `task`, `plan_enter/exit`, `ToolSkillInvoke`
+- [x] Root **`registry.go`** delegates task/plan/skill defs to `task.*`; removed `path_shim.go`
+
+## Phase 5 — governance (done)
+
+- [x] **`tests/importrules/`** — CI gate: no `ui/*` imports in core layers; agent must not import `cli`; sessionstore must not import `ui/*`
+- [x] **`.github/workflows/ci.yml`** — `go test ./tests/importrules/...` on Linux + Windows
+
+## Phase 5a — core split (done)
+
+- [x] **`internal/core/session_rpc.go`** — Session JSON-RPC surface extracted from `core.go`
+- [x] **`internal/core/core_agent.go`** — `agent.run`, `tool.call`, usage helpers, MCP/custom-agent tool defs
+
+## Phase 5b — agent split (done)
+
+- [x] **`internal/agent/tool_parallel.go`** — parallel tool batch + JSON error/denial helpers
+- [x] **`internal/agent/agent_run.go`** — main `Run` loop
+- [x] **`internal/agent/agent_step.go`** — `nextStep`, streaming, token estimate helpers
+- [x] **`internal/agent/agent_prompt.go`** — system prompt + tool def assembly
+
+## Phase 6 — tools cleanup (done)
+
+- [x] **`call.go` split** — `call.go` (entry + MCP routing), `call_dispatch.go` (table-driven dispatch), `call_decode.go` (JSON helpers)
+- [x] **Tests colocated with subpackages** — `exec/`, `git/`, `web/` (incl. browser), `nav/`, `session/`, `task/`, `toolslsp/`, `fs/`; root keeps only `Runner`-level integration tests
+- [x] **Removed root test duplicates** and legacy **`orchestra daemon` CLI** (package `internal/daemon` kept for benchmarks only)
+- [x] **`internal/daemon/doc.go`** — deprecated; CLI removed
+
+## Phase 6+
 
 Prefer **subpackages** over new modules when coupling is high:
 
 | Package | Subdirs |
 |---------|---------|
-| `internal/tools` | `exec/`, `git/`, `web/`, `toolslsp/`, `toolpath/`, `toolschema/` — registry stays root; **`fs/` pending** |
+| `internal/tools` | `exec/`, `git/`, `web/`, `toolslsp/`, `fs/`, `nav/`, `session/`, `task/`, `toolpath/`, `toolschema/` — registry + `Runner` stay root |
 | `internal/core` | already split: `runtime_*.go`, `session/` |
 | `internal/agent` | already has `digest/`, `guard/`, `history/`, … |
 
@@ -93,9 +127,8 @@ Do **not** extract `internal/daemon` — legacy; deprecate instead.
 ## Verification
 
 ```bash
-# No internal→ui imports (except ui/tui itself)
-go list -f '{{.ImportPath}} {{.Imports}}' ./internal/... | findstr ui/tui
-# Should return nothing outside allowed paths
+# Layer import rules (also enforced in CI via tests/importrules)
+go test ./tests/importrules/... -count=1
 
 go vet ./...
 go test ./internal/uimodel/... ./internal/sessionstore/... ./ui/tui/...

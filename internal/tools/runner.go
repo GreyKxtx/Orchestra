@@ -18,7 +18,6 @@ import (
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
-	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/internal/permission"
 )
 
@@ -392,46 +391,6 @@ func (r *Runner) WarmupCKG(ctx context.Context) {
 	}()
 }
 
-// SeedCKGSymbolForTest registers a symbol line range for E2E / eval harnesses.
-func (r *Runner) SeedCKGSymbolForTest(ctx context.Context, relPath, fileHash, symbol string, lineStart, lineEnd int) error {
-	if r == nil || r.ckgStore == nil {
-		return fmt.Errorf("ckg store unavailable")
-	}
-	symbol = strings.TrimSpace(symbol)
-	if symbol == "" {
-		return fmt.Errorf("symbol is empty")
-	}
-	nodes := []ckg.Node{{
-		FQN:       "eval." + symbol,
-		ShortName: symbol,
-		Kind:      "func",
-		LineStart: lineStart,
-		LineEnd:   lineEnd,
-	}}
-	return r.ckgStore.SaveFileNodes(ctx, relPath, fileHash, "go", "eval", "eval", nodes, nil)
-}
-
-// FetchCKGContext returns a <ckg_context> block of up to 12 nodes relevant to
-// the query, or an empty string if the CKG store is unavailable or has no matches.
-func (r *Runner) FetchCKGContext(ctx context.Context, query string) string {
-	r.ckgMu.RLock()
-	store := r.ckgStore
-	r.ckgMu.RUnlock()
-	if store == nil {
-		return ""
-	}
-	// Ensure the graph is populated before querying (same as ExploreCodebase does).
-	orch := ckg.NewOrchestrator(store, r.workspaceRoot)
-	if err := orch.UpdateGraph(ctx); err != nil {
-		return "" // non-fatal: empty context is better than crashing
-	}
-	nodes, err := store.FindRelevantNodes(ctx, query, 12)
-	if err != nil || len(nodes) == 0 {
-		return ""
-	}
-	return ckg.FormatNodesForPrompt(nodes, 800)
-}
-
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).
 // Safe to call multiple times.
 func (r *Runner) Close() error {
@@ -457,6 +416,15 @@ func (r *Runner) Close() error {
 
 // SetMCPCaller registers an MCP manager for routing mcp:* tool calls.
 func (r *Runner) SetMCPCaller(caller MCPCaller) { r.mcpCaller = caller }
+
+func (r *Runner) memoryStore() *memory.Store {
+	if r == nil {
+		return memory.NewStore("", "", memory.DefaultConfig())
+	}
+	cfg := r.memoryCfg
+	cfg.Normalize()
+	return memory.NewStore(r.workspaceRoot, r.sessionID, cfg)
+}
 
 // discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
 // in directories not yet seen. Returns the combined text, or empty string if nothing new.
@@ -491,23 +459,6 @@ func (r *Runner) discoverInstructions(dir string) string {
 	}
 
 	return strings.Join(parts, "\n\n---\n\n")
-}
-
-// --- code.symbols ---
-
-type CodeSymbolsRequest struct {
-	Path string `json:"path"`
-}
-
-type Symbol struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	// Optional location in file.
-	Range *ops.Range `json:"range,omitempty"`
-}
-
-type CodeSymbolsResponse struct {
-	Symbols []Symbol `json:"symbols"`
 }
 
 // --- exec.run types moved to internal/tools/exec; see aliases.go ---

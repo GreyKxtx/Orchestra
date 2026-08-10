@@ -7,10 +7,12 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/llm"
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/internal/tools/git"
+	"github.com/orchestra/orchestra/internal/tools/nav"
+	"github.com/orchestra/orchestra/internal/tools/session"
+	"github.com/orchestra/orchestra/internal/tools/task"
 	"github.com/orchestra/orchestra/internal/tools/toolschema"
 	"github.com/orchestra/orchestra/internal/tools/toolslsp"
 	"github.com/orchestra/orchestra/internal/tools/web"
@@ -60,7 +62,7 @@ func appendBrowserTools(out []llm.ToolDef) []llm.ToolDef {
 
 // appendSubtaskTools adds unified task + async spawn/wait/cancel to out.
 func appendSubtaskTools(out []llm.ToolDef) []llm.ToolDef {
-	return append(out, toolTask(), toolTaskSpawn(), toolTaskWait(), toolTaskCancel())
+	return append(out, task.ToolTask(), task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel())
 }
 
 // appendCapabilityTools layers exec / web / browser conditionally — the
@@ -111,16 +113,16 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 		fs.ToolFSRename(),
 		fs.ToolASTRename(),
 		fs.ToolSearchText(),
-		toolCodeSymbols(),
-		toolExploreCodebase(),
-		ToolRepoMap(),
+		nav.ToolCodeSymbols(),
+		nav.ToolExploreCodebase(),
+		nav.ToolRepoMap(),
 		fs.ToolDiffPreview(),
-		toolRuntimeQuery(),
-		toolTodoWrite(),
-		toolTodoRead(),
-		toolMemoryWrite(),
-		toolMemoryRead(),
-		toolMemorySearch(),
+		session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(),
+		session.ToolTodoRead(),
+		session.ToolMemoryWrite(),
+		session.ToolMemoryRead(),
+		session.ToolMemorySearch(),
 		toolslsp.ToolLSPDefinition(),
 		toolslsp.ToolLSPReferences(),
 		toolslsp.ToolLSPHover(),
@@ -198,88 +200,7 @@ func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 // the agent layer (agent.computeToolDefs) after one of the surviving
 // ListTools* functions returns the base set. Removed in this audit.
 
-// ToolSemanticSearch returns the semantic_search tool definition. Only
-// added to the agent's tool list when embed.model is configured AND a
-// CKG store is wired into the Runner.
-func ToolSemanticSearch() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "semantic_search",
-			Description: "Поиск по смыслу: эмбеддит query и возвращает top-K CKG-узлов (функции/методы/типы) по cosine similarity. Используй когда text-поиск (grep) не находит — например, ищешь концепт без точного имени. Требует индекса: orchestra ckg embed.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["query"],
-  "properties": {
-    "query":   { "type": "string", "minLength": 1 },
-    "top_k":   { "type": "integer", "minimum": 1, "maximum": 50 },
-    "snippet": { "type": "boolean", "description": "Включить фрагмент кода (первые 40 строк) каждого узла" }
-  }
-}`),
-		},
-		ParallelSafe: true,
-	}
-}
-
-// ToolRepoMap returns the repo_map tool definition.
-// no external dependencies beyond the tree-sitter grammars baked into the
-// binary. Returns a compact outline of the workspace fitting an optional byte
-// budget so the model can pick interesting files without first listing them.
-func ToolRepoMap() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "repo_map",
-			Description: "Быстрая карта репозитория: per-file outline (функции/типы/методы) по всем поддерживаемым языкам. Не требует индекса. Полезно для первичной ориентации перед ls/glob. budget_bytes ограничивает размер вывода (default 8192).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "budget_bytes":  { "type": "integer", "minimum": 256, "maximum": 65536, "description": "Max bytes of output. Smaller = pruned aggressively. Default 8192." },
-    "max_files":     { "type": "integer", "minimum": 1, "maximum": 5000, "description": "Hard cap on files scanned. 0/omit = no cap." }
-  }
-}`),
-		},
-		ParallelSafe: true,
-	}
-}
-
-// ToolSkillInvoke returns the skill_invoke tool definition with the
-// caller-supplied list of valid skill names embedded in the JSON Schema
-// enum. This narrows the model's choice and gives strict-schema providers
-// the metadata to reject invalid skill names early.
-func ToolSkillInvoke(skillNames []string) llm.ToolDef {
-	skillProp := map[string]any{
-		"type":        "string",
-		"description": "Name of the skill to invoke (must match an available skill).",
-	}
-	if len(skillNames) > 0 {
-		skillProp["enum"] = skillNames
-	}
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"skill": skillProp,
-			"task": map[string]any{
-				"type":        "string",
-				"description": "Task description / arguments passed to the skill. Becomes the user message and replaces $ARGUMENTS in the skill body.",
-			},
-		},
-		"required":             []string{"skill", "task"},
-		"additionalProperties": false,
-	}
-	raw, _ := json.Marshal(schema)
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "skill_invoke",
-			Description: "Run a named skill synchronously as a child agent and return its result. Skills are reusable agent bundles (prompt + tools + model) loaded from .orchestra/skills/. Use this when a subtask matches an available skill's description.",
-			Parameters:  raw,
-		},
-		Mutating: true,
-	}
-}
+// ListToolsWithMCP and ListToolsWithSubtasks AndMCP were dead code — see comment above.
 
 // ToolNames returns tool function names for prompt/debug usage.
 func ToolNames(defs []llm.ToolDef) []string {
@@ -289,92 +210,6 @@ func ToolNames(defs []llm.ToolDef) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func toolCodeSymbols() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "symbols",
-			Description: "Outline/символы файла (если доступно).",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["path"],
-  "properties": {
-    "path": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
-
-func toolExploreCodebase() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "explore",
-			Description: "Три уровня глубины — выбираются автоматически по форме запроса:\n• Пакет: explore(\"internal/agent\") → все типы, методы, функции без кода тел\n• Тип: explore(\"Agent\") → определение struct/interface + полный список методов\n• Символ: explore(\"Agent.Run\") → полный код метода/функции + callers + callees\nДля метода пиши 'Agent.Run', не просто 'Run'. При неоднозначности — используй FQN из ответа.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["symbol_name"],
-  "properties": {
-    "symbol_name": {
-      "type": "string",
-      "description": "Пакет: 'internal/agent'. Тип: 'Agent'. Метод: 'Agent.Run'. Функция: 'ResolveExternalPatches'. FQN: 'internal/agent.Agent.Run'."
-    }
-  }
-}`),
-		},
-	}
-}
-
-
-func toolTodoWrite() llm.ToolDef {
-	fallback := "Обновить список задач (чеклист). Список отображается в каждом ходу — используй для отслеживания прогресса на длинных задачах."
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "todowrite",
-			Description: promptpkg.BuildToolDescription("todowrite", fallback),
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["todos"],
-  "properties": {
-    "todos": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "content", "status"],
-        "properties": {
-          "id":      { "type": "string", "minLength": 1 },
-          "content": { "type": "string", "minLength": 1 },
-          "status":  { "type": "string", "enum": ["pending", "in_progress", "done", "completed", "cancelled"] }
-        }
-      }
-    }
-  }
-}`),
-		},
-	}
-}
-
-func toolTodoRead() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "todoread",
-			Description: "Прочитать текущий список задач.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {}
-}`),
-		},
-	}
 }
 
 // ListToolsWithSubtasks returns tools including task.spawn/wait/cancel for parent agents.
@@ -392,16 +227,16 @@ func ListToolsForChild() []llm.ToolDef {
 		fs.ToolFSRead(),
 		fs.ToolFSGlob(),
 		fs.ToolSearchText(),
-		toolCodeSymbols(),
+		nav.ToolCodeSymbols(),
 		fs.ToolDiffPreview(),
-		toolTaskResult(),
+		task.ToolTaskResult(),
 	})
 }
 
 // ListToolsForInvestigator returns the Investigator tool set: read-only tools + task.result + runtime.query.
 // The Investigator can call runtime.query to correlate trace spans with CKG nodes.
 func ListToolsForInvestigator() []llm.ToolDef {
-	return applyParallelFlags(append(ListToolsForChild(), toolRuntimeQuery()))
+	return applyParallelFlags(append(ListToolsForChild(), session.ToolRuntimeQuery()))
 }
 
 // ListToolsForMode returns tools for the given agent mode.
@@ -438,8 +273,8 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
@@ -448,7 +283,7 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
-		out = append(out, toolQuestion())
+		out = append(out, session.ToolQuestion())
 	}
 	return applyParallelFlags(out)
 }
@@ -457,8 +292,8 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	// fs.write is kept so the model can write .orchestra/plan.md — enforced at runtime.
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		// lsp.rename excluded: plan mode is read-only.
 	}
@@ -466,7 +301,7 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
-		out = append(out, toolQuestion())
+		out = append(out, session.ToolQuestion())
 	}
 	return applyParallelFlags(out)
 }
@@ -474,7 +309,7 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsExplore() []llm.ToolDef {
 	return applyParallelFlags([]llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		// lsp.rename excluded: explore mode is read-only.
 		// task_result is appended for child explore via childToolsForSubagent.
@@ -485,11 +320,11 @@ func listToolsExplore() []llm.ToolDef {
 func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 	}
 	if hasQuestionAsker {
-		out = append(out, toolQuestion())
+		out = append(out, session.ToolQuestion())
 	}
 	return applyParallelFlags(out)
 }
@@ -498,8 +333,8 @@ func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
 func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolPlanExit(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
@@ -507,7 +342,7 @@ func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
-		out = append(out, toolQuestion())
+		out = append(out, session.ToolQuestion())
 	}
 	return applyParallelFlags(out)
 }
@@ -516,8 +351,8 @@ func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
@@ -526,7 +361,7 @@ func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
-		out = append(out, toolQuestion())
+		out = append(out, session.ToolQuestion())
 	}
 	return applyParallelFlags(out)
 }
@@ -537,8 +372,8 @@ func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), toolTaskResult(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), task.ToolTaskResult(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
@@ -553,8 +388,8 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 	}
@@ -562,7 +397,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		out = appendSubtaskTools(out)
 	}
 	if hasQuestionAsker {
-		out = append(out, toolQuestion())
+		out = append(out, session.ToolQuestion())
 	}
 	return applyParallelFlags(out)
 }
@@ -571,274 +406,12 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsWorker(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(),
-		toolTaskResult(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(),
+		task.ToolTaskResult(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 	}
 	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
-}
-
-func toolTask() llm.ToolDef {
-	fallback := "Child agent (sync spawn+wait) for HEAVY/parallel work only. Prefer edit/write yourself for quick fixes. subagent_type: explore|ask|debug|architecture|general|worker. Do NOT use for 1–3 known-file edits."
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "task",
-			Description: promptpkg.BuildToolDescription("task", fallback),
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "anyOf": [
-    { "required": ["prompt"] },
-    { "required": ["goal"] }
-  ],
-  "properties": {
-    "description": { "type": "string", "description": "Short 3-5 word label" },
-    "prompt": { "type": "string", "minLength": 1, "description": "Detailed task or WorkOrder JSON for the child (or use goal)" },
-    "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt — provide exactly one of prompt/goal" },
-    "subagent_type": {
-      "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "general", "worker"],
-      "description": "Child agent mode (default: explore)"
-    },
-    "tier": { "type": "string", "description": "Orchestra worker tier name (complex|focused|micro)" },
-    "provider": { "type": "string", "description": "Optional named providers: map entry for child LLM" },
-    "model": { "type": "string", "description": "Optional model id override for child LLM" },
-    "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
-    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Wait timeout (default 120000)" }
-  }
-}`),
-		},
-	}
-}
-
-func toolTaskSpawn() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "task_spawn",
-			Description: "Spawn a child asynchronously (rare). Prefer doing quick/concrete edits yourself with edit/write. Use only for parallel independent work; then task_wait.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "anyOf": [
-    { "required": ["goal"] },
-    { "required": ["prompt"] }
-  ],
-  "properties": {
-    "goal": { "type": "string", "minLength": 1, "description": "Provide exactly one of goal/prompt" },
-    "prompt": { "type": "string", "minLength": 1, "description": "Alias for goal" },
-    "subagent_type": {
-      "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "general", "worker"],
-      "description": "Child agent mode (default: explore)"
-    },
-    "tier": { "type": "string", "description": "Orchestra worker tier name" },
-    "provider": { "type": "string" },
-    "model": { "type": "string" },
-    "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
-    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Child lifetime (default 120000); 0 also uses 120000" }
-  }
-}`),
-		},
-	}
-}
-
-func toolTaskWait() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "task_wait",
-			Description: "Подождать завершения дочерней задачи и получить её результат.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["task_id"],
-  "properties": {
-    "task_id": { "type": "string", "minLength": 1 },
-    "timeout_ms": { "type": "integer", "minimum": 0 }
-  }
-}`),
-		},
-	}
-}
-
-func toolTaskCancel() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "task_cancel",
-			Description: "Отменить дочернюю задачу.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["task_id"],
-  "properties": {
-    "task_id": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
-
-func toolTaskResult() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "task_result",
-			Description: "Сообщить результат исследования родительскому агенту. Вызови когда закончил анализ.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["content"],
-  "properties": {
-    "content": { "type": "string", "minLength": 1 }
-  }
-}`),
-		},
-	}
-}
-
-// ToolTaskResult is the public task_result tool (appended to child subagent tool lists).
-func ToolTaskResult() llm.ToolDef { return toolTaskResult() }
-
-func toolRuntimeQuery() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "runtime_query",
-			Description: "Получить spans OTel-трейса с привязкой к узлам CKG (code_file, code_lineno, node_fqn). Используй для диагностики багов по trace_id.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["trace_id"],
-  "properties": {
-    "trace_id": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Hex trace_id из OTel (128-бит, 32 символа)"
-    },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 1000,
-      "description": "Максимальное число spans (по умолчанию 500)"
-    }
-  }
-}`),
-		},
-	}
-}
-
-func toolPlanEnter() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "plan_enter",
-			Description: "Переключиться в режим ПЛАНИРОВАНИЯ (read-only). Используй для детального анализа задачи перед внесением изменений.",
-			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
-		},
-	}
-}
-
-func toolPlanExit() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "plan_exit",
-			Description: "Завершить планирование и запросить переключение в build-режим. Вызывай только когда план в {{PLAN_PATH}} полностью готов.",
-			Parameters:  mustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
-		},
-	}
-}
-
-func toolQuestion() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "question",
-			Description: "Задать пользователю уточняющий вопрос (блокирует выполнение до ответа). Используй для критичных трейдоффов при планировании.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["questions"],
-  "properties": {
-    "questions": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["question"],
-        "properties": {
-          "question": {"type": "string", "minLength": 1},
-          "options":  {"type": "array", "items": {"type": "string"}}
-        }
-      }
-    }
-  }
-}`),
-		},
-	}
-}
-
-
-func toolMemoryWrite() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "memory_write",
-			Description: "Сохранить факт в постоянную память. scope=project → .orchestra/memory/agent.md. Начните с [pin] для sticky facts. scope=session → память сессии.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["content"],
-  "properties": {
-    "content": { "type": "string", "minLength": 1, "description": "Факт или контекст для сохранения" },
-    "scope":   { "type": "string", "enum": ["project", "session"], "description": "project (default) или session" }
-  }
-}`),
-		},
-	}
-}
-
-func toolMemoryRead() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "memory_read",
-			Description: "Прочитать слоистую память проекта (ORCHESTRA.md, .orchestra/memory/, session, global). Без аргументов — список источников. Экономит контекст vs полный inject.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "layer":  { "type": "string", "enum": ["orchestra", "session", "repo", "global", "all"], "description": "Слой памяти" },
-    "path":   { "type": "string", "description": "ORCHESTRA.md или .orchestra/memory/agent.md" },
-    "max_kb": { "type": "integer", "minimum": 1, "maximum": 64, "description": "Лимит ответа в KiB" }
-  }
-}`),
-		},
-	}
-}
-
-func toolMemorySearch() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "memory_search",
-			Description: "Поиск по слоям памяти (agent.md, session, global, ORCHESTRA.md) по подстроке. Для точных фактов без полного memory_read.",
-			Parameters: mustSchema(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["query"],
-  "properties": {
-    "query": { "type": "string", "minLength": 1, "description": "Подстрока поиска" },
-    "limit": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Макс. хитов (default 8)" }
-  }
-}`),
-		},
-	}
 }
 
 // allToolDefsMap returns a map of every known tool definition keyed by its
@@ -846,10 +419,10 @@ func toolMemorySearch() llm.ToolDef {
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), toolCodeSymbols(), toolExploreCodebase(), fs.ToolDiffPreview(), toolRuntimeQuery(),
-		toolTodoWrite(), toolTodoRead(), toolMemoryWrite(), toolMemoryRead(), toolMemorySearch(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), ToolSemanticSearch(), ToolRepoMap(), fs.ToolASTRename(),
-		toolTaskSpawn(), toolTaskWait(), toolTaskCancel(), toolTaskResult(),
-		toolPlanEnter(), toolPlanExit(), toolQuestion(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), nav.ToolRepoMap(), fs.ToolASTRename(),
+		task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
+		task.ToolPlanEnter(), task.ToolPlanExit(), session.ToolQuestion(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
 		git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush(),

@@ -75,27 +75,15 @@
 
 Настройки UI также читаются из `.orchestra.yml`: `ui.auto_apply`, `ui.allow_exec`, `ui.theme`.
 
-### 1.5. `orchestra daemon`
-Локальный HTTP-демон v0.3 (legacy, остаётся для совместимости с командой
-`search`). Жёстко биндится на `127.0.0.1`. Сервит сканирование/кэш файлов.
-
-| Флаг | |
-|---|---|
-| `--project-root` (обязателен) | Корень проекта |
-| `--address`, `--port` | Адрес/порт |
-| `--scan-interval` | Интервал периодического скана, секунды |
-
-### 1.6. `orchestra search <query>`
-Текстовый поиск по проекту с уважением `exclude_dirs` из конфига. Если рядом
-поднят `daemon` — ходит через него (быстрее за счёт кэша); иначе — прямой
-скан (`internal/search`).
+### 1.5. `orchestra search <query>`
+Текстовый поиск по проекту с уважением `exclude_dirs` из конфига (`internal/search`).
 
 | Флаг | |
 |---|---|
 | `-i`, `--insensitive` | Регистронезависимо |
 | `--max-per-file` | Лимит совпадений на файл (10 по умолчанию) |
 
-### 1.7. `orchestra llm-ping`
+### 1.6. `orchestra llm-ping`
 Smoke-test провайдера LLM. Шлёт минимальный запрос (`messages: [{role:"user",
 content:"ping"}]`), без tool-defs. Замеряет латентность, парсит код ошибки
 из сообщения. Результат пишется в `.orchestra/llm_ping_result.json`.

@@ -52,7 +52,6 @@ orchestra llm-ping                           # smoke-check the configured LLM
 orchestra search "regex"                     # text search using project excludes
 orchestra skills list|show <name>            # introspect file-based skills
 orchestra mcp list-tools                     # list tools from configured MCP servers
-orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced to 127.0.0.1)
 ```
 
 `.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
@@ -106,5 +105,5 @@ orchestra daemon --project-root .            # legacy v0.3 HTTP daemon (forced t
 ## Conventions to preserve
 
 - Idiomatic Go, no panics for expected failures, errors wrap with `fmt.Errorf("...: %w", err)`. Concurrency uses `context.Context` + `sync.Mutex/RWMutex`; goroutines must have a stop path.
-- Don't reintroduce the v0.2 patterns being deleted: `pkg/cli`, `internal/context` builder, the old `daemon.json`/`cache.json` discovery dance. The HTTP daemon (`orchestra daemon`) and the HTTP debug endpoint on `core --http` are kept but are debug/legacy; the supported transport is stdio JSON-RPC.
+- Don't reintroduce the v0.2 patterns being deleted: `pkg/cli`, `internal/context` builder, the old `daemon.json`/`cache.json` discovery dance. The HTTP debug endpoint on `core --http` is debug-only; the supported transport is stdio JSON-RPC. (`orchestra daemon` CLI was removed; `internal/daemon` remains for in-repo benchmarks only.)
 - Public CLI flags and the JSON-RPC method names/params are part of the contract. Bump `ProtocolVersion` / `OpsVersion` / `ToolsVersion` rather than silently changing them.

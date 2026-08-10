@@ -18,7 +18,12 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 - **Session roundtrip** — `llm.Message` JSON unmarshals multimodal `parts` for reload.
 - **E2E** — `tests/e2e_real_llm/vision_test.go` (gated by `ORCH_E2E_LLM=1`).
 
-### Changed — Core runtime modularization
+### Changed — Phase 6 tools cleanup (complete)
+
+- **`call_dispatch.go`** — table-driven tool dispatch via `toolDispatchTable` + generic `dispatchRunnerTool`.
+- **Test colocation** — browser tests moved to `internal/tools/web/browser_test.go`; root duplicates removed.
+- **Removed `orchestra daemon` CLI** — `internal/cli/daemon.go` and daemon client discovery in `orchestra search`; `internal/daemon` package kept for in-repo benchmarks only.
+
 
 `internal/core` split: `runtime_agents.go`, `runtime_llm.go`, `runtime_mcp.go`, `runtime_providers.go`, `runtime_prompt.go`, `runtime_index.go`, `message_attachments.go`. CI adds `vscode-extension` job (`npm ci` + `compile`).
 
@@ -38,6 +43,30 @@ Split tool implementations into subpackages while keeping the registry and publi
 - **`internal/tools/fs/`** — filesystem tools (`Client`, `Overlay`, staging, list/read/write/edit/glob/grep, delete/rename, diff.preview, ast_rename) + tool defs
 - Root **`registry.go`** — `ListTools*` / `allToolDefsMap` / parallel flags; delegates to subpackage `Tool*` constructors
 - Root **`aliases.go`**, **`*_delegate.go`** — backward-compatible types and `Runner` methods
+
+### Changed — Phase 4b tools nav/session (`internal/tools/nav`, `internal/tools/session`)
+
+- **`internal/tools/nav/`** — explore, symbols, semantic_search, repo_map, CKG admin; tool defs in `nav/registry.go`
+- **`internal/tools/session/`** — todo types/validation, memory_*, runtime_query, question; tool defs in `session/registry.go`
+- Root **`nav_delegate.go`**, **`session_delegate.go`**; monolith **`registry.go`** delegates tool defs to subpackages
+
+### Changed — Phase 4c tools task subpackage (`internal/tools/task`)
+
+- **`internal/tools/task/`** — subagent tools (`task`, `task_spawn/wait/cancel/result`), plan mode (`plan_enter/exit`), `ToolSkillInvoke`
+- Removed root **`path_shim.go`**; skill tests moved to `task/skill_invoke_test.go`
+
+### Changed — Phase 6 tools cleanup (partial)
+
+- Split **`internal/tools/call.go`** → `call_dispatch.go`, `call_decode.go`
+- Moved tests: **`git/github_test.go`**, **`web/webfetch_ssrf_test.go`**, **`session/memory_write_test.go`**
+- **`internal/daemon/doc.go`** — explicit deprecated package doc
+
+
+- **`tests/importrules/`** + CI job — enforce layer import direction from `modules.md`
+- **`internal/core/session_rpc.go`** — Session JSON-RPC surface extracted from `core.go`
+- **`internal/core/core_agent.go`** — `AgentRun`, `ToolCall`, usage/MCP/custom-agent helpers
+- **`internal/agent/tool_parallel.go`** — parallel tool batch + JSON error/denial helpers
+- **`internal/agent/agent_run.go`**, **`agent_step.go`**, **`agent_prompt.go`** — split from monolith `agent.go`
 
 ### Changed — Phase 3 LLM module (`llm/`)
 

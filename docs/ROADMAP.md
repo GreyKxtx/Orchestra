@@ -76,7 +76,7 @@
 1. **Разобрать `git status`.** Сейчас в рабочем дереве 30+ удалённых v0.2 файлов и десятки новых vNext (см. статус: `D pkg/cli/...`, `D internal/context/...`, `D internal/gitutil/...`, `?? internal/agent/...`). Разбить на 3-5 коммитов: "remove v0.2", "vNext core", "vNext agent+tools", "vNext tests", "docs".
 2. **Решить судьбу `code.symbols`.** Сейчас `symbols_treesitter.go` + `symbols_notreesitter.go` + `tree-sitter // indirect` в `go.mod`. Либо доделать build tag и сделать его first-class, либо убрать инструмент из `ListTools` и удалить файлы.
 3. **Удалить мёртвые артефакты тестов из корня:** `e2e_real_llm_results.txt`, `e2e_llm_*_report.md`, `test_results.txt`, `test_e2e.exe`, `e2e_real_llm.test.exe`, `update_report.exe`, `orchestra.exe`. Скомпилированные бинарники не должны лежать в репо. Проверить, что `.gitignore` это покрывает (уже есть `*.exe`, но `.test.exe` мог проскочить).
-4. **Решить судьбу старых режимов.** `orchestra daemon` (HTTP v0.3) и `orchestra core --http` помечены debug/legacy. Либо явно зафиксировать как поддерживаемые debug-сурфейсы, либо удалить. Не оставлять в подвешенном состоянии.
+4. **~~Решить судьбу старых режимов.~~** `orchestra daemon` CLI удалён (vNext). `orchestra core --http` остаётся debug-only — зафиксировать или удалить отдельно.
 5. **Привести `docs/` в порядок.** `Task_project.md`, `task_v4.md`, `V0.2_CHECKLIST.md` (удалён), `READINESS_CRITERIA.md`, `VERIFICATION.md` — много пересекающихся документов разной актуальности. Оставить актуальные, удалить устаревшие, обновить `README.md` чтобы ссылался только на живые.
 
 ### Definition of Done
@@ -346,7 +346,11 @@
 
 **Phase 3:** sub-module `llm/` + `lmstudio/`. См. `docs/architecture/modules.md`.
 
-**Phase 4:** in-repo split `internal/tools` → `exec/`, `git/`, `web/`, `toolslsp/` (+ `toolpath/`, `toolschema/`); registry и публичный API остаются в корне `tools`. **`fs/`** — следующий шаг.
+**Phase 4:** in-repo split `internal/tools` → `exec/`, `git/`, `web/`, `toolslsp/`, `fs/`, `nav/`, `session/`, `task/` (+ `toolpath/`, `toolschema/`); registry и публичный API остаются в корне `tools`.
+
+**Phase 5 (done):** CI import-rules gate; `core/session_rpc.go`, `core/core_agent.go`; agent split (`tool_parallel`, `agent_run`, `agent_step`, `agent_prompt`). См. `docs/architecture/modules.md`.
+
+**Phase 6 (done):** `call.go` split + table-driven dispatch; subpackage test colocation; `orchestra daemon` CLI removed (`internal/daemon` kept for benchmarks).
 
 Следующий фокус:
 
