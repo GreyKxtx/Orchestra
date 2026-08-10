@@ -104,6 +104,39 @@ func TestCoreDoesNotImportUI(t *testing.T) {
 	}
 }
 
+// TestNoLegacyInternalSubmodules ensures deleted pre-modularization paths are not
+// reintroduced (packages moved to protocol/, patch/, llm/ sub-modules).
+func TestNoLegacyInternalSubmodules(t *testing.T) {
+	root := repoRoot(t)
+	banned := []string{
+		"github.com/orchestra/orchestra/internal/protocol",
+		"github.com/orchestra/orchestra/internal/jsonrpc",
+		"github.com/orchestra/orchestra/internal/schema",
+		"github.com/orchestra/orchestra/internal/ops",
+		"github.com/orchestra/orchestra/internal/applier",
+		"github.com/orchestra/orchestra/internal/patches",
+		"github.com/orchestra/orchestra/internal/resolver",
+		"github.com/orchestra/orchestra/internal/fsutil",
+		"github.com/orchestra/orchestra/internal/cache",
+		"github.com/orchestra/orchestra/internal/relpath",
+		"github.com/orchestra/orchestra/internal/llm",
+	}
+	for _, e := range listPackages(t, root, "./...") {
+		if strings.HasPrefix(e.ImportPath, "github.com/orchestra/orchestra/protocol") ||
+			strings.HasPrefix(e.ImportPath, "github.com/orchestra/orchestra/patch") ||
+			strings.HasPrefix(e.ImportPath, "github.com/orchestra/orchestra/llm") {
+			continue
+		}
+		for _, imp := range e.Imports {
+			for _, b := range banned {
+				if imp == b || strings.HasPrefix(imp, b+"/") {
+					t.Errorf("%s imports removed package %s (use sub-module)", e.ImportPath, imp)
+				}
+			}
+		}
+	}
+}
+
 // TestSessionstoreDoesNotImportUI mirrors Phase 0 uimodel extraction.
 func TestSessionstoreDoesNotImportUI(t *testing.T) {
 	root := repoRoot(t)

@@ -1,6 +1,6 @@
 # Module layout & dependency rules
 
-Orchestra is a **monorepo** with one Go module (`github.com/orchestra/orchestra`) today. Logical layers are enforced by import direction; future phases may extract layers into separate Go modules with `go.work`.
+Orchestra is a **monorepo** with a root module plus extracted sub-modules (`protocol/`, `patch/`, `llm/`) wired via **`go.work`**. Logical layers are enforced by import direction and CI (`tests/importrules`).
 
 ## Layer diagram
 

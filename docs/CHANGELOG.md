@@ -35,6 +35,11 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 
 - **Dropped `orchestra chat` REPL** from scope — multi-turn UX is TUI + VS Code (+ future IDE); `session.*` API remains the contract. ROADMAP Phase 3 rewritten accordingly.
 
+### Changed — Modularization status (P0–P6)
+
+- **Documented complete** — `protocol/`, `patch/`, `llm/` sub-modules + `go.work`; `internal/tools` split; legacy `internal/{protocol,llm,ops,...}` removed.
+- **CI** — `TestNoLegacyInternalSubmodules` bans reintroducing deleted import paths.
+
 ### Changed — Phase 1 local-model hardening ✅
 
 - **Provider-aware retry limits** — `FillRetryLimits` / `RetryLimitsForProvider`; config `0` = auto (frontier → 1, local → 5). Wired in core, apply, pipeline.

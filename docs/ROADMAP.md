@@ -322,25 +322,25 @@
 
 ## Что делаем дальше
 
-Фазы 0–10 (MVP + Planner–Worker) закрыты. Фаза 1 hardening (grammar / classify / logging) — в коде.
+Фазы 0–10 (MVP + Planner–Worker) закрыты. Phase 1 hardening (grammar / classify / logging) — в коде.
 
-**Закрыто недавно (P1/P2):** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension, session persist multimodal parts.
+**Modularization (P0–P6) — ✅ закрыто.** Источник истины: `docs/architecture/modules.md`.
 
-**Phase 0 modularization:** `internal/uimodel` — neutral chat DTOs; `sessionstore` больше не импортирует `ui/tui`.
+| Phase | Статус | Артефакт |
+|-------|--------|----------|
+| P0 | ✅ | `internal/uimodel`, sessionstore без `ui/*` |
+| P1 | ✅ | sub-module `protocol/` + `go.work` |
+| P2 | ✅ | sub-module `patch/` (ops/resolver/applier/fsutil/cache/relpath) |
+| P3 | ✅ | sub-module `llm/` + `lmstudio/` |
+| P4 | ✅ | `internal/tools/{exec,git,web,toolslsp,fs,nav,session,task,toolpath,toolschema}/` |
+| P5 | ✅ | import-rules CI, core/agent split |
+| P6 | ✅ | `call_dispatch`, test colocation, `orchestra daemon` CLI removed |
 
-**Phase 1:** sub-module `protocol/` + `go.work`.
+Legacy `internal/{protocol,jsonrpc,schema,ops,applier,patches,resolver,fsutil,cache,relpath,llm}/` **удалены** — импорты только через sub-modules.
 
-**Phase 2:** sub-module `patch/` (ops/resolver/applier/fsutil).
+**Закрыто недавно:** attachments + vision (protocol **v13**), TUI `/attach`, VS Code extension, Phase 2 streaming.
 
-**Phase 3:** sub-module `llm/` + `lmstudio/`. См. `docs/architecture/modules.md`.
-
-**Phase 4:** in-repo split `internal/tools` → `exec/`, `git/`, `web/`, `toolslsp/`, `fs/`, `nav/`, `session/`, `task/` (+ `toolpath/`, `toolschema/`); registry и публичный API остаются в корне `tools`.
-
-**Phase 5 (done):** CI import-rules gate; `core/session_rpc.go`, `core/core_agent.go`; agent split (`tool_parallel`, `agent_run`, `agent_step`, `agent_prompt`). См. `docs/architecture/modules.md`.
-
-**Phase 6 (done):** `call.go` split + table-driven dispatch; subpackage test colocation; `orchestra daemon` CLI removed (`internal/daemon` kept for benchmarks).
-
-Следующий фокус:
+Следующий фокус (продукт, не modularization):
 
 1. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance).
 2. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm`.
