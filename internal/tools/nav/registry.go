@@ -10,7 +10,7 @@ func ToolCodeSymbols() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "symbols",
-			Description: "Outline/символы файла (если доступно).",
+			Description: "Outline символов файла. Порядок: LSP document symbols → tree-sitter (Go, при CGO) → regex (Go). Для не-Go без LSP — пустой список.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

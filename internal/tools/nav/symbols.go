@@ -1,10 +1,16 @@
 package nav
 
+// CodeSymbols resolves file outlines via a three-tier fallback:
+//  1. LSP document symbols (when gopls/other servers are configured)
+//  2. tree-sitter Go parse (when CGO is enabled at build time)
+//  3. line-based regex heuristics for Go (always available, no CGO)
+//
+// Non-Go files without LSP return an empty symbol list.
+
 import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -78,7 +84,6 @@ func (c *Client) CodeSymbols(ctx context.Context, req CodeSymbolsRequest) (*Code
 		return &CodeSymbolsResponse{Symbols: syms}, nil
 	}
 
-	_ = filepath.ToSlash(relSlash)
 	return &CodeSymbolsResponse{Symbols: nil}, nil
 }
 
@@ -102,12 +107,25 @@ func goSymbolsViaRegex(src []byte) []Symbol {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 
-	reFunc := regexp.MustCompile(`^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	reMethod := regexp.MustCompile(`^\s*func\s+\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	reFunc := regexp.MustCompile(`^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 	reType := regexp.MustCompile(`^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
 
 	var out []Symbol
 
 	for i, line := range lines {
+		if m := reMethod.FindStringSubmatchIndex(line); m != nil {
+			name := line[m[2]:m[3]]
+			col := m[2]
+			out = append(out, Symbol{
+				Name: name, Kind: "method",
+				Range: &ops.Range{
+					Start: ops.Position{Line: i, Col: col},
+					End:   ops.Position{Line: i, Col: col + len(name)},
+				},
+			})
+			continue
+		}
 		if m := reFunc.FindStringSubmatchIndex(line); m != nil {
 			name := line[m[2]:m[3]]
 			col := m[2]

@@ -74,10 +74,10 @@
 ### Задачи
 
 1. **Разобрать `git status`.** Сейчас в рабочем дереве 30+ удалённых v0.2 файлов и десятки новых vNext (см. статус: `D pkg/cli/...`, `D internal/context/...`, `D internal/gitutil/...`, `?? internal/agent/...`). Разбить на 3-5 коммитов: "remove v0.2", "vNext core", "vNext agent+tools", "vNext tests", "docs".
-2. **Решить судьбу `code.symbols`.** Сейчас `symbols_treesitter.go` + `symbols_notreesitter.go` + `tree-sitter // indirect` в `go.mod`. Либо доделать build tag и сделать его first-class, либо убрать инструмент из `ListTools` и удалить файлы.
-3. **Удалить мёртвые артефакты тестов из корня:** `e2e_real_llm_results.txt`, `e2e_llm_*_report.md`, `test_results.txt`, `test_e2e.exe`, `e2e_real_llm.test.exe`, `update_report.exe`, `orchestra.exe`. Скомпилированные бинарники не должны лежать в репо. Проверить, что `.gitignore` это покрывает (уже есть `*.exe`, но `.test.exe` мог проскочить).
-4. **~~Решить судьбу старых режимов.~~** `orchestra daemon` CLI удалён (vNext). `orchestra core --http` остаётся debug-only — зафиксировать или удалить отдельно.
-5. **Привести `docs/` в порядок.** `Task_project.md`, `task_v4.md`, `V0.2_CHECKLIST.md` (удалён), `READINESS_CRITERIA.md`, `VERIFICATION.md` — много пересекающихся документов разной актуальности. Оставить актуальные, удалить устаревшие, обновить `README.md` чтобы ссылался только на живые.
+2. **~~Решить судьбу `code.symbols`.~~** Зафиксировано: LSP → tree-sitter (CGO) → regex для Go; инструмент остаётся в registry. См. `internal/tools/nav/symbols*.go`.
+3. **Удалить мёртвые артефакты тестов из корня:** `e2e_real_llm_results.txt`, … — проверить `.gitignore` (в репо сейчас чисто).
+4. **~~Решить судьбу `orchestra core --http`.~~** Оставлен как **debug-only** (loopback + token); stdio — supported transport. CLI/doc предупреждения добавлены.
+5. **Привести `docs/` в порядок.** Устаревшие task/checklist файлы удалены; периодически сверять `README.md` с `docs/commands-and-modes.md`.
 
 ### Definition of Done
 

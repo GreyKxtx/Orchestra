@@ -1,5 +1,8 @@
 //go:build cgo
 
+// tree-sitter Go symbols (tier 2). Built only when CGO is enabled; otherwise
+// symbols_notreesitter.go provides a no-op stub and regex fallback runs.
+
 package nav
 
 import (

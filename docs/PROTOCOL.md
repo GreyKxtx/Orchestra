@@ -67,9 +67,9 @@ Content-Length: <bytes>\r\n
 - Лимит payload: `DefaultMaxContentBytes=4MiB`.
 - `\r\n` и `\n` принимаются, пробелы вокруг `:` допускаются.
 
-### HTTP (debug-only)
+### HTTP (debug-only, not the supported transport)
 
-Включается флагом `orchestra core --http`.
+Включается флагом `orchestra core --http`. Биндится только на `127.0.0.1`, требует token. Пишет discovery в `.orchestra/core.http.json`. Для production-клиентов используйте **stdio** (см. выше).
 
 - Bind: **только** `127.0.0.1`.
 - Token обязателен (если не задан, генерируется).

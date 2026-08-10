@@ -18,7 +18,11 @@ Multimodal user messages: images (PNG/JPEG/GIF/WebP), SVG, PDF; staging under `.
 - **Session roundtrip** — `llm.Message` JSON unmarshals multimodal `parts` for reload.
 - **E2E** — `tests/e2e_real_llm/vision_test.go` (gated by `ORCH_E2E_LLM=1`).
 
-### Changed — Phase 6 tools cleanup (complete)
+### Changed — Phase 0 stabilization
+
+- **`code.symbols`** — documented three-tier resolution (LSP → tree-sitter when CGO → regex); method vs function kinds in regex fallback; CGO integration test.
+- **`orchestra core --http`** — explicitly debug-only in CLI help and stderr notice; stdio remains the supported transport.
+
 
 - **`call_dispatch.go`** — table-driven tool dispatch via `toolDispatchTable` + generic `dispatchRunnerTool`.
 - **Test colocation** — browser tests moved to `internal/tools/web/browser_test.go`; root duplicates removed.

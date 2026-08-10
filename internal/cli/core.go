@@ -29,15 +29,19 @@ var (
 var coreCmd = &cobra.Command{
 	Use:   "core",
 	Short: "Start Orchestra core (JSON-RPC over stdio)",
-	Long:  "Runs the Orchestra core as a JSON-RPC 2.0 server over stdio (LSP-style framing).",
-	Args:  cobra.NoArgs,
-	RunE:  runCore,
+	Long: `Runs the Orchestra core as a JSON-RPC 2.0 server over stdio (LSP-style framing).
+
+Supported transport: stdio (default). Optional --http enables a loopback-only
+JSON-RPC debug server for IDE/extension prototyping; it is not part of the
+stable contract and may change. See docs/PROTOCOL.md.`,
+	Args: cobra.NoArgs,
+	RunE: runCore,
 }
 
 func init() {
 	coreCmd.Flags().StringVar(&coreWorkspaceRoot, "workspace-root", "", "Workspace root (default: current directory)")
 	coreCmd.Flags().BoolVar(&coreDebug, "debug", false, "Enable debug logs to stderr")
-	coreCmd.Flags().BoolVar(&coreHTTP, "http", false, "Enable local HTTP JSON-RPC server (debug)")
+	coreCmd.Flags().BoolVar(&coreHTTP, "http", false, "Enable loopback HTTP JSON-RPC (debug-only; stdio is the supported transport)")
 	coreCmd.Flags().IntVar(&coreHTTPPort, "http-port", 0, "HTTP port (0 = auto)")
 	coreCmd.Flags().StringVar(&coreHTTPToken, "http-token", "", "HTTP token (auto-generated if empty)")
 	rootCmd.AddCommand(coreCmd)
@@ -74,8 +78,9 @@ func runCore(cmd *cobra.Command, args []string) error {
 	// Detect languages and auto-install missing language servers (lsp.auto_install).
 	c.WarmupLSP(ctx)
 
-	// Optional HTTP debug server.
+	// Optional HTTP debug server (not the supported transport — see docs/PROTOCOL.md).
 	if coreHTTP {
+		fmt.Fprintln(os.Stderr, "[orchestra] NOTE: core --http is debug-only; use stdio JSON-RPC for production clients.")
 		// Clean up stale discovery file before starting.
 		_ = cleanupStaleHTTPDiscovery(workspace)
 

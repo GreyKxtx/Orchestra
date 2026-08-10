@@ -31,13 +31,18 @@ func (f Foo) Baz() {}
 		t.Fatalf("CodeSymbols failed: %v", err)
 	}
 
-	got := make(map[string]bool)
+	got := make(map[string]string)
 	for _, s := range resp.Symbols {
-		got[s.Name] = true
+		got[s.Name] = s.Kind
 	}
-	for _, want := range []string{"Foo", "Bar", "Baz"} {
-		if !got[want] {
-			t.Fatalf("expected symbol %q, got %+v", want, resp.Symbols)
+	want := map[string]string{
+		"Foo": "type",
+		"Bar": "function",
+		"Baz": "method",
+	}
+	for name, kind := range want {
+		if got[name] != kind {
+			t.Fatalf("symbol %q: want kind %q, got %q (all: %+v)", name, kind, got[name], resp.Symbols)
 		}
 	}
 }
