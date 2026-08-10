@@ -55,8 +55,15 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+  statusBar.text = "$(comment-discussion) Orchestra";
+  statusBar.tooltip = "Orchestra: Open Chat";
+  statusBar.command = "orchestra.openChat";
+  statusBar.show();
+  context.subscriptions.push(statusBar);
+
   output.appendLine(
-    "Orchestra extension activated. Commands: Open Chat · Settings · Ping Core"
+    "Orchestra extension activated. Commands: Open Chat · Settings · Ping Core · status bar"
   );
 }
 

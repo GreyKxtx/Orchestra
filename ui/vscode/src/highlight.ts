@@ -1,42 +1,10 @@
-import { createHighlighter, type Highlighter } from "shiki";
+/** Syntax highlight for diff previews. Shiki is optional (dev-only); VSIX ships without node_modules. */
 
-let highlighterPromise: Promise<Highlighter> | undefined;
-
-const COMMON_LANGS = [
-  "go",
-  "typescript",
-  "tsx",
-  "javascript",
-  "jsx",
-  "python",
-  "rust",
-  "json",
-  "yaml",
-  "markdown",
-  "css",
-  "html",
-  "bash",
-  "shell",
-  "sql",
-  "toml",
-  "xml",
-  "csharp",
-  "java",
-  "kotlin",
-  "swift",
-  "ruby",
-  "php",
-  "plaintext",
-] as const;
-
-async function getHighlighter(): Promise<Highlighter> {
-  if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: ["dark-plus"],
-      langs: [...COMMON_LANGS],
-    });
-  }
-  return highlighterPromise;
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 export function languageFromPath(filePath: string): string {
@@ -73,28 +41,23 @@ export function languageFromPath(filePath: string): string {
   return map[ext] || "plaintext";
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-/** Render one line with TextMate tokens (Shiki). Returns inner HTML only. */
-export async function highlightLine(line: string, lang: string): Promise<string> {
+/** Render one line. Uses Shiki when available locally; otherwise escaped plain text. */
+export async function highlightLine(line: string, _lang: string): Promise<string> {
   if (!line.trim()) {
     return escapeHtml(line);
   }
-  const h = await getHighlighter();
-  let grammar = lang;
-  if (!h.getLoadedLanguages().includes(grammar as (typeof COMMON_LANGS)[number])) {
-    grammar = "plaintext";
-  }
   try {
-    const full = h.codeToHtml(line, {
-      lang: grammar,
-      theme: "dark-plus",
+    // Dynamic import: works in F5 dev (node_modules present); VSIX falls back to plain text.
+    const { createHighlighter } = await import("shiki");
+    const h = await createHighlighter({
+      themes: ["dark-plus"],
+      langs: ["go", "typescript", "javascript", "python", "json", "markdown", "bash", "plaintext"],
     });
+    let grammar = _lang;
+    if (!h.getLoadedLanguages().includes(grammar)) {
+      grammar = "plaintext";
+    }
+    const full = h.codeToHtml(line, { lang: grammar, theme: "dark-plus" });
     const inner = full.replace(/^[\s\S]*?<code[^>]*>/, "").replace(/<\/code>[\s\S]*$/, "");
     return inner || escapeHtml(line);
   } catch {
@@ -102,10 +65,7 @@ export async function highlightLine(line: string, lang: string): Promise<string>
   }
 }
 
-export async function highlightLines(
-  lines: string[],
-  lang: string
-): Promise<string[]> {
+export async function highlightLines(lines: string[], lang: string): Promise<string[]> {
   const out: string[] = [];
   for (const line of lines) {
     out.push(await highlightLine(line, lang));

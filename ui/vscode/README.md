@@ -48,11 +48,23 @@ General · **Models** (provider catalog + API models, vision toggle) · Index & 
 
 ## Run (Cursor / VS Code)
 
+1. Install **Orchestra AI Code** from Marketplace (or VSIX)
+2. Open a **folder** (File → Open Folder) — core needs a project root
+3. Launch chat — any of:
+   - **Status bar** (bottom-right): click **Orchestra**
+   - **Command Palette** (`Ctrl+Shift+P`): `Orchestra: Open Chat`
+   - **Shortcut**: `Ctrl+Shift+O` (`Cmd+Shift+O` on macOS)
+   - **Editor title bar**: chat icon when a file is open
+4. First run: configure LLM in **Orchestra: Settings** (LM Studio / OpenAI-compatible API)
+5. Debug wire: **Output → Orchestra**
+
+There is **no Activity Bar sidebar icon** yet (chat opens as an editor panel). Use status bar or shortcut.
+
+### Dev (F5 from repo)
+
 1. `go build -o orchestra.exe ./cmd/orchestra` in repo root
 2. `cd ui/vscode` → `npm install` → `npm run compile`
 3. Open Orchestra workspace → **Run Orchestra Extension** (F5)
-4. **Orchestra: Open Chat** → type a message
-5. Debug wire: **Output → Orchestra**
 
 Restart Extension Host after rebuilding `orchestra.exe` if the binary was locked.
 

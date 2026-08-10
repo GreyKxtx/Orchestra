@@ -2,7 +2,7 @@
   "name": "orchestra-ai-code",
   "displayName": "Orchestra AI Code",
   "description": "Local AI coding assistant (Orchestra) for VS Code and Cursor — chat, tools, dry-run apply, bundled core.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "Screamgxne",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -32,14 +32,15 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:orchestra.openChat"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "orchestra.openChat",
-        "title": "Orchestra: Open Chat"
+        "title": "Orchestra: Open Chat",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "orchestra.pingCore",
@@ -52,6 +53,35 @@
       {
         "command": "orchestra.showOutput",
         "title": "Orchestra: Show Output"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "orchestra.openChat",
+          "when": "true"
+        },
+        {
+          "command": "orchestra.openSettings",
+          "when": "true"
+        },
+        {
+          "command": "orchestra.pingCore",
+          "when": "true"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "orchestra.openChat",
+          "group": "navigation@99"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "orchestra.openChat",
+        "key": "ctrl+shift+o",
+        "mac": "cmd+shift+o"
       }
     ],
     "configuration": {
@@ -85,9 +115,7 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.9.2",
+    "shiki": "^4.4.2",
     "typescript": "^5.3.3"
-  },
-  "dependencies": {
-    "shiki": "^4.4.2"
   }
 }
