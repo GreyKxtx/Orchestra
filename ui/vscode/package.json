@@ -2,7 +2,7 @@
   "name": "orchestra-ai-code",
   "displayName": "Orchestra AI Code",
   "description": "Local AI coding assistant (Orchestra) for VS Code and Cursor — chat, tools, dry-run apply, bundled core.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "Screamgxne",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -84,6 +84,25 @@
         "mac": "cmd+shift+o"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "orchestra",
+          "title": "Orchestra",
+          "icon": "images/orchestra.svg"
+        }
+      ]
+    },
+    "views": {
+      "orchestra": [
+        {
+          "type": "webview",
+          "id": "orchestra.chatSidebar",
+          "name": "Chat",
+          "icon": "images/orchestra.svg"
+        }
+      ]
+    },
     "configuration": {
       "title": "Orchestra",
       "properties": {

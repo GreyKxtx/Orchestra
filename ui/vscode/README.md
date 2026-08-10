@@ -51,6 +51,7 @@ General · **Models** (provider catalog + API models, vision toggle) · Index & 
 1. Install **Orchestra AI Code** from Marketplace (or VSIX)
 2. Open a **folder** (File → Open Folder) — core needs a project root
 3. Launch chat — any of:
+   - **Activity Bar** (left): icon **Orchestra** (chat bubble) → sidebar chat
    - **Status bar** (bottom-right): click **Orchestra**
    - **Command Palette** (`Ctrl+Shift+P`): `Orchestra: Open Chat`
    - **Shortcut**: `Ctrl+Shift+O` (`Cmd+Shift+O` on macOS)
@@ -58,7 +59,9 @@ General · **Models** (provider catalog + API models, vision toggle) · Index & 
 4. First run: configure LLM in **Orchestra: Settings** (LM Studio / OpenAI-compatible API)
 5. Debug wire: **Output → Orchestra**
 
-There is **no Activity Bar sidebar icon** yet (chat opens as an editor panel). Use status bar or shortcut.
+There is **no separate Cursor-style floating panel** — chat lives in the **left sidebar** (Activity Bar → Orchestra). The editor-panel fallback remains if the sidebar view is unavailable.
+
+Restart / **Developer: Reload Window** after updating the extension.
 
 ### Dev (F5 from repo)
 

@@ -47,10 +47,12 @@ interface PendingSend {
   files?: ChatFileRef[];
 }
 
-export class ChatPanel implements vscode.Disposable {
+export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider {
   public static readonly viewType = "orchestra.chat";
+  public static readonly sidebarViewType = "orchestra.chatSidebar";
 
   private panel: vscode.WebviewPanel | undefined;
+  private sidebar: vscode.WebviewView | undefined;
   private view: "chat" | "settings" = "chat";
   private readonly session: CoreSession;
   private readonly extensionUri: vscode.Uri;
@@ -79,7 +81,7 @@ export class ChatPanel implements vscode.Disposable {
     this.extensionUri = extensionUri;
     this.settings = new SettingsView(session, extensionUri);
     this.settings.bindPost((msg) => {
-      void this.panel?.webview.postMessage(msg);
+      void this.webviewTarget()?.postMessage(msg);
     });
 
     const onAgent = (event: AgentEventParams): void => {
@@ -149,17 +151,70 @@ export class ChatPanel implements vscode.Disposable {
     }
     this.pendingHighlights.dispose();
     this.panel?.dispose();
+    this.sidebar = undefined;
     for (const d of this.disposables) {
       d.dispose();
     }
   }
 
+  /** Activity Bar icon → sidebar chat webview. */
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this.sidebar = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: this.allLocalResourceRoots(),
+    };
+    webviewView.webview.onDidReceiveMessage(
+      (msg: unknown) => {
+        void this.onAnyMessage(msg);
+      },
+      null,
+      this.disposables
+    );
+    webviewView.onDidDispose(
+      () => {
+        if (this.sidebar === webviewView) {
+          this.sidebar = undefined;
+        }
+      },
+      null,
+      this.disposables
+    );
+    void this.showChat();
+  }
+
   async show(): Promise<void> {
+    if (this.sidebar) {
+      this.sidebar.show?.(true);
+      await this.showChat();
+      return;
+    }
+    try {
+      await vscode.commands.executeCommand(`${ChatPanel.sidebarViewType}.focus`);
+    } catch {
+      // Fall back to editor panel if sidebar is unavailable.
+    }
+    if (this.sidebar) {
+      await this.showChat();
+      return;
+    }
     await this.ensurePanel();
     await this.showChat();
   }
 
   async showSettings(): Promise<void> {
+    const webview = this.webviewTarget();
+    if (this.sidebar && webview) {
+      this.view = "settings";
+      this.sidebar.title = "Settings";
+      webview.html = this.settings.getHtml(webview);
+      this.sidebar.show?.(true);
+      return;
+    }
     await this.ensurePanel();
     this.view = "settings";
     if (this.panel) {
@@ -172,12 +227,18 @@ export class ChatPanel implements vscode.Disposable {
 
   private async showChat(): Promise<void> {
     this.view = "chat";
-    if (!this.panel) {
+    const webview = this.webviewTarget();
+    if (!webview) {
       return;
     }
-    this.panel.title = "Orchestra";
-    this.panel.webview.html = this.getHtml(this.panel.webview);
-    this.panel.reveal(vscode.ViewColumn.Beside);
+    if (this.sidebar) {
+      this.sidebar.title = "Chat";
+    }
+    if (this.panel) {
+      this.panel.title = "Orchestra";
+    }
+    webview.html = this.getHtml(webview);
+    this.panel?.reveal(vscode.ViewColumn.Beside);
 
     this.post({
       type: "status",
@@ -1304,7 +1365,7 @@ export class ChatPanel implements vscode.Disposable {
       ext: ext || undefined,
       kind,
     };
-    const webview = this.panel?.webview;
+    const webview = this.webviewTarget();
     if (kind === "image" && webview && uri.scheme === "file" && this.isUnderWorkspace(uri.fsPath)) {
       try {
         ref.previewUri = webview.asWebviewUri(uri).toString();
@@ -1358,9 +1419,10 @@ export class ChatPanel implements vscode.Disposable {
     }
     this.rootsUpdateTimer = setTimeout(() => {
       this.rootsUpdateTimer = undefined;
-      if (this.panel?.webview) {
-        this.panel.webview.options = {
-          ...this.panel.webview.options,
+      const webview = this.webviewTarget();
+      if (webview) {
+        webview.options = {
+          ...webview.options,
           localResourceRoots: this.allLocalResourceRoots(),
         };
       }
@@ -1458,7 +1520,7 @@ export class ChatPanel implements vscode.Disposable {
   }
 
   private async imagePreviewUri(uri: vscode.Uri, ext: string): Promise<string | undefined> {
-    const webview = this.panel?.webview;
+    const webview = this.webviewTarget();
     if (!webview || uri.scheme !== "file") {
       return undefined;
     }
@@ -1610,8 +1672,12 @@ export class ChatPanel implements vscode.Disposable {
     }
   }
 
+  private webviewTarget(): vscode.Webview | undefined {
+    return this.sidebar?.webview ?? this.panel?.webview;
+  }
+
   private post(msg: HostToWebview): void {
-    void this.panel?.webview.postMessage(msg);
+    void this.webviewTarget()?.postMessage(msg);
   }
 
   private async showPermissionDialog(request: PermissionRequestPayload): Promise<void> {

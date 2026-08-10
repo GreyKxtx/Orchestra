@@ -7,6 +7,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const session = new CoreSession(output, context.extensionPath, context);
   const chat = new ChatPanel(session, context.extensionUri);
 
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ChatPanel.sidebarViewType,
+      chat,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+
   context.subscriptions.push(output, session, chat);
 
   context.subscriptions.push(

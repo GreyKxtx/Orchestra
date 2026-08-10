@@ -51,6 +51,7 @@ opencode/
 # Screenshots, debug logs, transient assets (not part of source)
 *.png
 !ui/vscode/images/icon.png
+!ui/vscode/images/orchestra.svg
 !ui/vscode/media/logo.png
 !logo.png
 sse.log
