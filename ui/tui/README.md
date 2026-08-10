@@ -106,7 +106,7 @@ ui/tui/
 
 **LSP (status bar `LSP ●/◐ N%`)**: lazy spawn по расширению; без бинарника — modal `lsp.install`. Долгий download — async ensure (status `LSP ◐ gopls 42%`), edit/write могут вернуть `diagnostics_pending`. Shell + lsp modals — FIFO. Worker diagnostics inline + expand. См. `docs/architecture/lsp-auto-provision.md`.
 
-**Manual smoke (LSP + Worker diagnostics):**
+**Manual smoke (LSP + Worker diagnostics):** unit-тест modal — `go test ./ui/tui/view -run TestModal_LSPInstall`. Полный UX:
 
 1. Rebuild TUI, открыть Go-проект без gopls в cache → modal `lsp.install`.
 2. Запустить orchestra mode task с worker → после `edit` на `.go` видны `· N LSP error(s)` на tool line.

@@ -144,6 +144,31 @@ func TestResolveToolNames_PreservesOrder(t *testing.T) {
 	}
 }
 
+func TestListToolsForMode_BuildNoPlanEnter(t *testing.T) {
+	for _, d := range ListToolsForMode("build", Capabilities{}, true, true) {
+		if d.Function.Name == "plan_enter" {
+			t.Fatal("build mode must not advertise plan_enter")
+		}
+	}
+}
+
+func TestListToolsForMode_OrchestraLeadSurface(t *testing.T) {
+	names := make(map[string]bool)
+	for _, d := range ListToolsForMode("orchestra", Capabilities{}, true, true) {
+		names[d.Function.Name] = true
+	}
+	for _, want := range []string{"read", "write", "task", "repo_map", "explore"} {
+		if !names[want] {
+			t.Fatalf("orchestra mode missing tool %q", want)
+		}
+	}
+	for _, forbid := range []string{"edit", "plan_enter"} {
+		if names[forbid] {
+			t.Fatalf("orchestra mode must not expose %q", forbid)
+		}
+	}
+}
+
 func TestToolRegistry_SchemasAreValidJSON(t *testing.T) {
 	defs := ListTools(Capabilities{Exec: true, Web: true, Browser: false})
 	for _, d := range defs {

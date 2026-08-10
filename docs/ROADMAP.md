@@ -49,7 +49,7 @@
 4. ✅ `orchestra.tiers` + prefilling `{` для Worker
 5. ✅ Lead guard: delegate через `task(worker)`, не monolithic `edit`
 
-**Осталось вручную:** TUI smoke LSP install modal (чеклист в `ui/tui/README.md`).
+**Осталось вручную:** полный TUI smoke LSP install modal (чеклист в `ui/tui/README.md`); unit-тест modal — `ui/tui/view/modal_test.go`. Field eval / Real LLM E2E — см. [field-eval-e2e.md](./architecture/field-eval-e2e.md).
 
 ---
 

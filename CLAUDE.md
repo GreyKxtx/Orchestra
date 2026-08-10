@@ -81,7 +81,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 - **Exec / web**: `bash` (`exec.run`, gated by `--allow-exec` or `exec.confirm:false`), `webfetch`, `websearch` (`--allow-web`).
 - **Git / GitHub**: read-only `git.status/log/diff`, mutating `git.commit/branch/checkout/push` (allowExec-gated), `gh.pr.list/view/create`, `gh.issue.list/view`.
 - **Browser**: 10 Playwright-MCP tools registered only under `--allow-browser`.
-- **Subagents/session**: `task_spawn/wait/cancel/result`, `todowrite/todoread`, `memory_write`, `plan_enter/exit`, `question`, `runtime_query`.
+- **Subagents/session**: `task_spawn/wait/cancel/result`, `todowrite/todoread`, `memory_write`, `plan_exit` (plan mode), legacy `plan_enter` stub, `question`, `runtime_query`.
 - **Skills** (`internal/skills/`): file-based agent bundles in `~/.orchestra/skills/` (user-global) and `<project>/.orchestra/skills/` (project overrides user). Invokable two ways — CLI `apply --skill <name>` (whole run uses the skill), or in-process `skill_invoke{skill, task}` (model delegates a subtask synchronously). When any skill is discovered, the agent advertises them in a `<available_skills>` block and gets the `skill_invoke` tool. `$ARGUMENTS` in a skill body is substituted with the user query / task arg. See `docs/skills.md`.
 - **MCP**: external server tools appear as `mcp:<server>:<tool>`; `orchestra mcp list-tools` introspects.
 
