@@ -118,28 +118,33 @@
 
 ---
 
-## Фаза 2 — Стриминг
+## Фаза 2 — Стриминг ✅
 
-**Цель:** пользователь видит токены модели и вывод инструментов в реальном времени, а не молчаливый блок на 60 секунд.
+**Цель:** пользователь видит токены модели и вывод инструментов в реальном времени.
 
 ### Задачи
 
-1. **`llm.Client.CompleteStream`.** Новый метод интерфейса: `CompleteStream(ctx, req) (<-chan StreamEvent, error)`. События: `MessageDelta{token}`, `ToolCallStart{id, name}`, `ToolCallDelta{id, args_chunk}`, `Done{response}`. Старый `Complete` остаётся, реализуется через стрим (drain в полный response).
-2. **OpenAI стрим** (SSE с `data: {...}`). Аккуратно собирать `tool_calls` по индексам — они приходят чанками.
-3. **Стриминг в агенте.** `Agent.Run` теперь умеет звать `CompleteStream` и эмитить события наружу. Через `Options.OnEvent func(AgentEvent)` или `<-chan AgentEvent`. Не ломать существующий синхронный путь.
-4. **JSON-RPC notifications.** Стрим из `core.AgentRun` пробрасывается как notifications в JSON-RPC: `agent/event` с payload `{type, ...}`. Спецификация — в `docs/PROTOCOL.md`.
-5. **CLI рендеринг.** В `apply` добавить TTY-рендеринг: токены модели вывести курсивом, tool calls — `→ fs.read main.go`, tool results — `← 152 lines`. Когда не TTY (pipe, CI) — fallback на текущий поведение.
+1. **`llm.Client.CompleteStream`.** ✅ `llm/stream.go`, OpenAI + Anthropic clients.
+2. **OpenAI SSE + tool_calls assembly.** ✅ `ParseSSEStream`, tests in `stream_accumulator_test.go`.
+3. **Стриминг в агенте.** ✅ `streamStep` whenever client implements `Streamer`; `OnEvent` optional (UI only).
+4. **JSON-RPC notifications.** ✅ `agent/event`, `exec/output_chunk` — `docs/PROTOCOL.md`.
+5. **CLI рендеринг.** ✅ `buildCLIRenderer`: tokens, `→ tool`, `← preview`; `--stream` for pipes; TTY checks stdout+stderr.
+
+### Unified Complete path
+
+- `OpenAIClient.Complete` и `AnthropicClient.Complete` drain `CompleteStream` (non-streaming POST removed for OpenAI).
+- Fixes LM Studio tool_calls on blocking path.
 
 ### Definition of Done
 
-- `orchestra apply --apply "..."` при работе локалки выводит токены модели по мере генерации.
-- Долгий `exec.run` (когда дойдём до стриминга его вывода в фазе 4) рендерит вывод инкрементально.
-- JSON-RPC клиент получает notifications и может их рендерить.
-- Тесты на сборку чанков `tool_calls` (приходящих по частям) в `internal/llm/`.
+- `orchestra apply` в TTY показывает токены — ✅
+- JSON-RPC клиент получает notifications — ✅ (TUI, VS Code)
+- Тесты сборки чанков tool_calls — ✅
+- Anthropic streaming — ✅
 
-### Риски
+### Документация
 
-- vLLM иногда отправляет `tool_calls` целиком в одном chunk, иногда по индексам. Парсер должен быть толерантным.
+- `docs/architecture/streaming.md`
 
 ---
 
@@ -354,10 +359,10 @@
 
 Следующий фокус:
 
-1. **Фаза 2 — стриминг** — `CompleteStream`, JSON-RPC notifications, CLI TTY render.
-2. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm` когда LLM-сервер доступен.
-3. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance: avg invalid retries <3).
-4. **VS Code marketplace** — `npm run package` / vsce publish (см. `ui/vscode/README.md`).
+1. **Фаза 3 — сессии и `orchestra chat`** — multi-turn REPL поверх `session.*` RPC.
+2. **Field eval** — `orchestra eval` на локальной Qwen/Llama (Phase 1 acceptance).
+3. **Real LLM E2E** — `ORCH_E2E_LLM=1 go test ./tests/e2e_real_llm`.
+4. **VS Code marketplace** — `npm run package` / vsce publish.
 
 ### Фаза 1 — knobs в `.orchestra.yml`
 

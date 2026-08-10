@@ -22,6 +22,15 @@ func fastRetries(t *testing.T) {
 
 const okChatResponse = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
 
+// writeAssistantSSE writes a minimal OpenAI-compatible SSE body for stream:true tests.
+func writeAssistantSSE(w http.ResponseWriter, content string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	enc, _ := json.Marshal(content)
+	fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":%s},\"finish_reason\":null}]}\n", enc)
+	fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n")
+	fmt.Fprint(w, "data: [DONE]\n")
+}
+
 func TestComplete_RetriesOn5xx(t *testing.T) {
 	fastRetries(t)
 	var calls atomic.Int32
@@ -33,7 +42,7 @@ func TestComplete_RetriesOn5xx(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(okChatResponse))
+		writeAssistantSSE(w, "ok")
 	}))
 	t.Cleanup(srv.Close)
 
@@ -93,7 +102,7 @@ func TestComplete_ContextOverflowAutoFix(t *testing.T) {
 		}
 		secondMaxTokens.Store(int64(req.MaxTokens))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(okChatResponse))
+		writeAssistantSSE(w, "ok")
 	}))
 	t.Cleanup(srv.Close)
 
@@ -165,7 +174,7 @@ func TestComplete_ContextOverflowAutoFix_NewVLLMWording(t *testing.T) {
 		}
 		secondMaxTokens.Store(int64(req.MaxTokens))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(okChatResponse))
+		writeAssistantSSE(w, "ok")
 	}))
 	t.Cleanup(srv.Close)
 

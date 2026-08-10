@@ -111,7 +111,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		}
 		var resp *llm.CompleteResponse
 		var err error
-		if canStream && a.opts.OnEvent != nil {
+		if canStream {
 			resp, err = a.streamStep(stepCtx, llmReq, streamer, stepNum)
 		} else {
 			resp, err = a.llm.Complete(stepCtx, llmReq)
@@ -133,7 +133,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			}
 			return nil, "", nil, err
 		}
-		if !canStream || a.opts.OnEvent == nil {
+		if !canStream {
 			a.emitStepUsage(stepNum, resp)
 		}
 		a.mergeResponsePrefill(resp)

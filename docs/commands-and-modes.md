@@ -59,6 +59,10 @@
 | `--git-strict` | Падать если репозиторий грязный |
 | `--git-commit` | Создать коммит после применения (нужен `--apply`) |
 | `--debug` | Метрики и подробные логи |
+| `--stream` | Стримить токены в stdout (в pipe/CI); в TTY токены идут на stderr автоматически |
+
+LLM всегда ходит через SSE (`CompleteStream`); `OnEvent` управляет только отображением.
+Подробнее: `docs/architecture/streaming.md`.
 
 Артефакты пишутся в `.orchestra/`: `plan.json`, `diff.txt`, `last_run.jsonl`,
 `last_result.json`, `llm_log.jsonl`. На запись делается `*.orchestra.bak`.

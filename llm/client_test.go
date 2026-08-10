@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,27 +27,10 @@ func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
 		}
 		gotBody = b
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-  "choices": [
-    {
-      "message": {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": [
-          {
-            "id": "call_1",
-            "type": "function",
-            "function": {
-              "name": "read",
-              "arguments": "{\"path\":\"a.txt\",\"max_bytes\":123}"
-            }
-          }
-        ]
-      }
-    }
-  ]
-}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"max_bytes\\\":123}\"}}]},\"finish_reason\":null}]}\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n")
+		fmt.Fprint(w, "data: [DONE]\n")
 	}))
 	t.Cleanup(srv.Close)
 
@@ -109,6 +93,9 @@ func TestOpenAIClient_BuildsToolsPayload_AndParsesToolCalls(t *testing.T) {
 	if req["tool_choice"] != "auto" {
 		t.Fatalf("expected tool_choice=auto, got %#v", req["tool_choice"])
 	}
+	if req["stream"] != true {
+		t.Fatalf("expected stream=true, got %#v", req["stream"])
+	}
 }
 
 func TestOpenAIClient_VLLMOmitsToolChoice(t *testing.T) {
@@ -116,8 +103,7 @@ func TestOpenAIClient_VLLMOmitsToolChoice(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = b
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+		writeAssistantSSE(w, "hi")
 	}))
 	t.Cleanup(srv.Close)
 
@@ -296,8 +282,7 @@ func TestOpenAIClient_DefaultsMaxTokensWhenZero(t *testing.T) {
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+		writeAssistantSSE(w, "ok")
 	}))
 	t.Cleanup(srv.Close)
 

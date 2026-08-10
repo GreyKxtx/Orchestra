@@ -71,8 +71,8 @@ func TestComplete_AutoDisablesJSONSchema(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"response_format json_schema is not supported"}}`))
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeAssistantSSE(w, "ok")
 	}))
 	t.Cleanup(srv.Close)
 

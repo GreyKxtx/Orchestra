@@ -21,6 +21,7 @@ type AnthropicClient struct {
 	maxTokens int
 	baseURL   string
 	client    *http.Client
+	streamClient *http.Client
 }
 
 // NewAnthropicClient creates an Anthropic client from config.
@@ -43,6 +44,7 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 		maxTokens: maxTokens,
 		baseURL:   base,
 		client:    &http.Client{Timeout: timeout},
+		streamClient: &http.Client{Timeout: 0}, // per-request ctx controls stream lifetime
 	}
 }
 
@@ -106,11 +108,17 @@ type anthropicResponse struct {
 // ── Complete ──────────────────────────────────────────────────────────────────
 
 func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*CompleteResponse, error) {
+	ch, err := c.CompleteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return DrainStreamEvents(ch)
+}
+
+// CompleteStream implements Streamer for the Anthropic Messages API.
+func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteRequest) (<-chan StreamEvent, error) {
 	system, msgs := convertToAnthropic(req.Messages)
 
-	// Use structured system blocks with cache_control so Anthropic can cache the
-	// system prompt across turns. Cache writes cost ~25% more, but reads save ~90%.
-	// Over a 24-step session this is a net win from step 2 onward.
 	var systemField any = system
 	if system != "" {
 		systemField = []anthropicSystemBlock{{
@@ -120,40 +128,37 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*C
 		}}
 	}
 
-	body := anthropicRequest{
+	body := anthropicStreamRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
 		System:    systemField,
 		Messages:  msgs,
 		Tools:     convertTools(req.Tools),
+		Stream:    true,
 	}
 
 	jsonData, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
+		return nil, fmt.Errorf("anthropic: marshal stream request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("anthropic: create request: %w", err)
+		return nil, fmt.Errorf("anthropic: create stream request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("x-api-key", c.apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 
-	resp, err := c.client.Do(httpReq)
+	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic: send request: %w", err)
+		return nil, fmt.Errorf("anthropic: send stream request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic: read response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		var errResp anthropicResponse
 		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error.Message != "" {
 			return nil, fmt.Errorf("anthropic API error (status %d): %s", resp.StatusCode, errResp.Error.Message)
@@ -161,24 +166,15 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*C
 		return nil, fmt.Errorf("anthropic API status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var apiResp anthropicResponse
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return nil, fmt.Errorf("anthropic: parse response: %w", err)
-	}
-	if apiResp.Error.Message != "" {
-		return nil, fmt.Errorf("anthropic error: %s", apiResp.Error.Message)
-	}
-
-	msg := convertFromAnthropic(apiResp.Content)
-	out := &CompleteResponse{Message: msg}
-	if apiResp.Usage != nil {
-		prompt := apiResp.Usage.InputTokens + apiResp.Usage.CacheCreationInputTokens + apiResp.Usage.CacheReadInputTokens
-		out.Usage = &TokenUsage{
-			PromptTokens:     prompt,
-			CompletionTokens: apiResp.Usage.OutputTokens,
-			TotalTokens:      prompt + apiResp.Usage.OutputTokens,
+	raw := ParseAnthropicSSEStream(ctx, resp.Body)
+	out := make(chan StreamEvent, 16)
+	go func() {
+		defer resp.Body.Close()
+		defer close(out)
+		for ev := range raw {
+			out <- ev
 		}
-	}
+	}()
 	return out, nil
 }
 

@@ -1110,10 +1110,11 @@ func namedLLMClient(cfg *config.ProjectConfig, provider, model string, logger *l
 }
 
 // buildCLIRenderer returns an OnEvent callback that renders streaming events to stderr
-// when stdout is an interactive terminal. Returns nil (disables streaming display) when
-// stdout is piped, redirected, or NO_COLOR is set.
+// when stderr or stdout is an interactive terminal. Returns nil (display only) when
+// both are piped/redirected and --stream is not set. LLM streaming still runs without
+// this callback — OnEvent controls UI output only.
 func buildCLIRenderer() func(agent.AgentEvent) {
-	if !isTTY() && !applyStream {
+	if !isInteractiveTerminal() && !applyStream {
 		return nil
 	}
 	// In --stream mode, route deltas to stdout so they're pipeable; otherwise
@@ -1134,6 +1135,15 @@ func buildCLIRenderer() func(agent.AgentEvent) {
 				lastStep = ev.Step
 			}
 			fmt.Fprintf(dst, "\n→ %s", ev.Stream.ToolCallName)
+		case llm.StreamEventToolCallCompleted:
+			preview := strings.TrimSpace(ev.Stream.Content)
+			if preview == "" {
+				preview = "ok"
+			}
+			if len(preview) > 80 {
+				preview = preview[:80] + "…"
+			}
+			fmt.Fprintf(dst, " ← %s\n", preview)
 		case llm.StreamEventDone:
 			if ev.Stream.Response != nil && ev.Stream.Response.Message.Content != "" {
 				fmt.Fprintln(dst) // newline after streamed text
@@ -1153,13 +1163,22 @@ func buildQuestionAsker(mode string) tools.QuestionAsker {
 	return nil
 }
 
-// isTTY reports whether os.Stdout is connected to an interactive terminal.
-// Returns false when NO_COLOR is set or when stdout is piped/redirected.
-func isTTY() bool {
+// isInteractiveTerminal reports whether stderr or stdout is a character device.
+func isInteractiveTerminal() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
-	fi, err := os.Stdout.Stat()
+	return isCharDevice(os.Stdout) || isCharDevice(os.Stderr)
+}
+
+// isTTY reports whether os.Stdout is connected to an interactive terminal.
+// Returns false when NO_COLOR is set or when stdout is piped/redirected.
+func isTTY() bool {
+	return isInteractiveTerminal() && isCharDevice(os.Stdout)
+}
+
+func isCharDevice(f *os.File) bool {
+	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}

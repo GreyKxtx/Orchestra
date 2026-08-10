@@ -270,3 +270,21 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 	}()
 	return ch
 }
+
+// DrainStreamEvents consumes a stream channel and returns the Done response.
+// Used by Client.Complete implementations that delegate to CompleteStream.
+func DrainStreamEvents(ch <-chan StreamEvent) (*CompleteResponse, error) {
+	var final *CompleteResponse
+	for ev := range ch {
+		if ev.Kind == StreamEventError {
+			return nil, ev.Err
+		}
+		if ev.Kind == StreamEventDone {
+			final = ev.Response
+		}
+	}
+	if final == nil {
+		return nil, fmt.Errorf("stream ended without Done event")
+	}
+	return final, nil
+}

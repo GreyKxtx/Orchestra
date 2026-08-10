@@ -794,58 +794,15 @@ func (c *OpenAIClient) chatCompletionsURL() (string, error) {
 	return baseURL + "/chat/completions", nil
 }
 
-// Complete generates a single assistant turn (content and/or tool calls).
-// Transient failures (network, 429/5xx, empty responses) are retried with
-// backoff; a context-overflow 400 is retried once with the server-corrected
-// max_tokens.
+// Complete generates a single assistant turn by draining CompleteStream.
+// All OpenAI-compatible providers (including LM Studio) share one code path
+// for tool_calls assembly — the legacy non-streaming POST is not used.
 func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*CompleteResponse, error) {
-	url, err := c.chatCompletionsURL()
+	ch, err := c.CompleteStream(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	maxTok, err := c.maxTokensForRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	c.warnImplicitToolChoiceOnce(len(req.Tools))
-
-	var lastErr error
-	ctxFixed := false
-	schemaRetried := false
-	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
-		out, err := c.completeOnce(ctx, url, req, maxTok)
-		if err == nil {
-			return out, nil
-		}
-		lastErr = err
-		if ctx.Err() != nil {
-			return nil, err
-		}
-		// Capability-detect: backend rejected json_schema → disable and retry once.
-		if !schemaRetried && c.requestUsedJSONSchema(req) && isUnsupportedJSONSchemaError(err) {
-			schemaRetried = true
-			c.disableJSONSchema(err.Error())
-			continue
-		}
-		// Context overflow: recompute max_tokens from the server's own numbers.
-		if !ctxFixed {
-			if fixed, ok := c.fixMaxTokensFromError(err.Error()); ok {
-				ctxFixed = true
-				maxTok = fixed
-				if c.logger != nil {
-					c.logger.LogError(400, fmt.Sprintf("context overflow — retrying with max_tokens=%d", fixed), 0)
-				}
-				continue
-			}
-		}
-		if !IsTransientLLMError(err) || attempt == llmRetryAttempts {
-			return nil, err
-		}
-		if serr := sleepBackoff(ctx, attempt); serr != nil {
-			return nil, err
-		}
-	}
-	return nil, lastErr
+	return DrainStreamEvents(ch)
 }
 
 // completeOnce performs a single non-streaming chat completion HTTP exchange.
