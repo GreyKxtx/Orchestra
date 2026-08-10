@@ -100,19 +100,22 @@ Cross-platform **fat VSIX** (all four cores) — use CI, not `bundle:core:all` f
 git tag vscode-v0.1.0 && git push origin vscode-v0.1.0
 ```
 
-Or **Actions → vscode-vsix → Run workflow** (optional **Publish** if `VSCE_PAT` is set).
+Or **Actions → vscode-vsix → Run workflow** (optional **Publish** if `VSCE_PAT` / `OVSX_PAT` are set).
 
 Matrix builds natively on `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64 + x64 cross), merges into `bin/`, packages `.vsix`, uploads artifact **orchestra-vsix**.
 
 ### Publish checklist
 
-1. **Publisher** — [create publisher](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#create-a-publisher) on Marketplace; `publisher` in `package.json` must match.
+1. **Publisher** — [Marketplace publisher](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#create-a-publisher) + [Open VSX namespace](https://open-vsx.org/) (`Screamgxne`); `publisher` in `package.json` must match.
 2. **Version** — bump `version` in `package.json` (semver).
 3. **Assets** — icon `images/icon.png` (from repo `logo.png`), README, LICENSE, repo URL.
 4. **Fat VSIX** — run **vscode-vsix** workflow (native matrix build); do not rely on `bundle:core:all` from a single dev machine.
-5. **Token** — repo secret `VSCE_PAT` (Personal Access Token with Marketplace publish scope).
-6. **Publish** — tag `vscode-v0.1.0`, or workflow_dispatch with **Publish** checked; or download `.vsix` artifact and upload manually.
-7. **LLM config** — bundled core ≠ LLM: users still configure provider/API in Orchestra Settings (LM Studio, OpenAI-compatible, etc.).
+5. **GitHub secrets**
+   - `VSCE_PAT` — Microsoft [Marketplace](https://marketplace.visualstudio.com/) (Azure DevOps PAT, Marketplace publish scope)
+   - `OVSX_PAT` — [Open VSX](https://open-vsx.org/) → Profile → Access Tokens (for **Cursor** / VSCodium)
+6. **Publish** — tag `vscode-v0.1.2`, or workflow_dispatch with **Publish** checked; CI runs `vsce publish` + `ovsx publish`.
+7. **Open VSX review** — new extensions may show **Deactivated** until Eclipse/Open VSX approves the namespace/extension; Cursor won't list it until active.
+8. **LLM config** — bundled core ≠ LLM: users still configure provider/API in Orchestra Settings (LM Studio, OpenAI-compatible, etc.).
 
 CI: TypeScript compile on every push (`.github/workflows/ci.yml`); full multi-platform VSIX on tag / workflow_dispatch (`.github/workflows/vscode-vsix.yml`).
 
