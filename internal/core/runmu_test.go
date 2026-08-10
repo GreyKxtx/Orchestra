@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,20 +70,24 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 	}
 
 	applyP, _ := json.Marshal(OpsApplyParams{Ops: nil})
-	var applyDone atomic.Bool
+	applyDone := make(chan struct{}, 1)
 	go func() {
 		_, _ = h.Handle(context.Background(), "ops.apply", applyP)
-		applyDone.Store(true)
+		close(applyDone)
 	}()
 
 	deadline := time.After(300 * time.Millisecond)
 	select {
 	case <-deadline:
-		if applyDone.Load() {
+		select {
+		case <-applyDone:
 			t.Fatal("ops.apply finished while session.message still held runMu")
+		default:
 		}
 	case err := <-msgDone:
 		t.Fatalf("session.message returned early: %v", err)
+	case <-applyDone:
+		t.Fatal("ops.apply finished while session.message still held runMu")
 	}
 
 	close(release)
@@ -96,8 +99,10 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("session.message did not complete")
 	}
-	time.Sleep(20 * time.Millisecond)
-	if !applyDone.Load() {
+
+	select {
+	case <-applyDone:
+	case <-time.After(2 * time.Second):
 		t.Fatal("ops.apply should complete after session.message releases runMu")
 	}
 }
