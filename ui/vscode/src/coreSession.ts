@@ -51,6 +51,7 @@ export interface SessionView {
 export interface ModelInfo {
   id: string;
   owned_by?: string;
+  context_tokens?: number;
 }
 
 export interface ProviderEntry {
@@ -62,6 +63,7 @@ export interface ProviderEntry {
   ready: boolean;
   configured: boolean;
   api_key_set: boolean;
+  api_key?: string;
   needs_key: boolean;
   named: boolean;
   custom: boolean;
@@ -69,6 +71,37 @@ export interface ProviderEntry {
   models?: ModelInfo[];
   models_error?: string;
   model_count: number;
+}
+
+export interface OrchestraRoleView {
+  key: string;
+  label: string;
+  provider: string;
+  model: string;
+  models?: string[];
+}
+
+export interface OrchestraNamedProviderView {
+  key: string;
+  apiBase: string;
+  apiKeySet: boolean;
+  model: string;
+  needsKey: boolean;
+  label: string;
+  configured: boolean;
+}
+
+export interface OrchestraConfigView {
+  roles: OrchestraRoleView[];
+  defaultTier: string;
+  maxWorkerRetries: number;
+  workerVerifyEnabled: boolean;
+  maxWorkerVerifyRetries: number;
+  workerLLMVerifyEnabled: boolean;
+  mainProvider: string;
+  mainModel: string;
+  fastProvider: string;
+  named: Record<string, OrchestraNamedProviderView>;
 }
 
 export interface CoreSessionEvents {
@@ -431,6 +464,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
   async listProviders(options?: {
     probe?: boolean;
     probeKey?: string;
+    includeSecrets?: boolean;
   }): Promise<{
     providers: ProviderEntry[];
     activeProvider: string;
@@ -446,6 +480,9 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     }
     if (options?.probeKey?.trim()) {
       params.probe_key = options.probeKey.trim();
+    }
+    if (options?.includeSecrets) {
+      params.include_secrets = true;
     }
     const result = (await this.client.request("runtime.list_providers", params, 90_000)) as {
       providers?: ProviderEntry[];
@@ -575,6 +612,91 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     };
   }
 
+  async getOrchestra(): Promise<OrchestraConfigView> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request("runtime.get_orchestra", {}, 15_000)) as Record<string, unknown>;
+    const rolesRaw = Array.isArray(r.roles) ? r.roles : [];
+    const roles: OrchestraRoleView[] = rolesRaw.map((row) => {
+      const o = row as Record<string, unknown>;
+      const modelsRaw = Array.isArray(o.models) ? o.models : [];
+      const models = modelsRaw.filter((m): m is string => typeof m === "string");
+      return {
+        key: String(o.key || ""),
+        label: String(o.label || ""),
+        provider: String(o.provider || ""),
+        model: String(o.model || ""),
+        models,
+      };
+    });
+    const namedRaw = r.named && typeof r.named === "object" ? (r.named as Record<string, unknown>) : {};
+    const named: Record<string, OrchestraNamedProviderView> = {};
+    for (const [k, v] of Object.entries(namedRaw)) {
+      const o = v as Record<string, unknown>;
+      named[k] = {
+        key: k,
+        apiBase: String(o.api_base || ""),
+        apiKeySet: Boolean(o.api_key_set),
+        model: String(o.model || ""),
+        needsKey: Boolean(o.needs_key),
+        label: String(o.label || k),
+        configured: Boolean(o.configured),
+      };
+    }
+    return {
+      roles,
+      defaultTier: String(r.default_tier || "focused"),
+      maxWorkerRetries: typeof r.max_worker_retries === "number" ? r.max_worker_retries : 3,
+      workerVerifyEnabled: r.worker_verify_enabled !== false,
+      maxWorkerVerifyRetries:
+        typeof r.max_worker_verify_retries === "number" ? r.max_worker_verify_retries : 1,
+      workerLLMVerifyEnabled: Boolean(r.worker_llm_verify_enabled),
+      mainProvider: String(r.main_provider || ""),
+      mainModel: String(r.main_model || ""),
+      fastProvider: String(r.fast_provider || ""),
+      named,
+    };
+  }
+
+  async configureOrchestra(input: {
+    roles: OrchestraRoleView[];
+    defaultTier?: string;
+    maxWorkerRetries?: number;
+    workerVerifyEnabled?: boolean;
+    maxWorkerVerifyRetries?: number;
+    workerLLMVerifyEnabled?: boolean;
+  }): Promise<{ saved: boolean }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = {
+      roles: input.roles.map((r) => ({
+        key: r.key,
+        label: r.label,
+        provider: r.provider,
+        model: r.model,
+        models: r.models?.length ? r.models : undefined,
+      })),
+      persist: true,
+    };
+    if (input.defaultTier) params.default_tier = input.defaultTier;
+    if (input.maxWorkerRetries !== undefined) params.max_worker_retries = input.maxWorkerRetries;
+    if (input.workerVerifyEnabled !== undefined) params.worker_verify_enabled = input.workerVerifyEnabled;
+    if (input.maxWorkerVerifyRetries !== undefined) {
+      params.max_worker_verify_retries = input.maxWorkerVerifyRetries;
+    }
+    if (input.workerLLMVerifyEnabled !== undefined) {
+      params.worker_llm_verify_enabled = input.workerLLMVerifyEnabled;
+    }
+    const r = (await this.client.request("runtime.configure_orchestra", params, 30_000)) as {
+      saved?: boolean;
+    };
+    return { saved: Boolean(r.saved) };
+  }
+
   async getSystemPrompt(): Promise<{
     content: string;
     hasOverride: boolean;
@@ -638,6 +760,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       provider?: string;
     }>;
     builtInModes: string[];
+    availableTools: string[];
   }> {
     await this.ensure();
     if (!this.client) {
@@ -652,10 +775,12 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         provider?: string;
       }>;
       built_in_modes?: string[];
+      available_tools?: string[];
     };
     return {
       agents: Array.isArray(r.agents) ? r.agents : [],
       builtInModes: Array.isArray(r.built_in_modes) ? r.built_in_modes : [],
+      availableTools: Array.isArray(r.available_tools) ? r.available_tools : [],
     };
   }
 
@@ -691,6 +816,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       allowed_tools?: string[];
       status: string;
       tool_count: number;
+      tools?: string[];
       error?: string;
     }>;
   }> {
@@ -708,6 +834,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         allowed_tools?: string[];
         status: string;
         tool_count: number;
+        tools?: string[];
         error?: string;
       }>;
     };

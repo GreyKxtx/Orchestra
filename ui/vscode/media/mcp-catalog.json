@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "filesystem",
+      "name": "filesystem",
+      "title": "Filesystem",
+      "description": "Read and write files under the project root via MCP.",
+      "category": "Local",
+      "command": "npx -y @modelcontextprotocol/server-filesystem ${workspaceRoot}",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem"
+    },
+    {
+      "id": "memory",
+      "name": "memory",
+      "title": "Memory",
+      "description": "Local knowledge-graph memory for facts across sessions.",
+      "category": "Local",
+      "command": "npx -y @modelcontextprotocol/server-memory",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory"
+    },
+    {
+      "id": "git",
+      "name": "git",
+      "title": "Git",
+      "description": "Inspect git status, log, and diffs for a repository.",
+      "category": "Local",
+      "command": "npx -y @modelcontextprotocol/server-git --repository ${workspaceRoot}",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/git"
+    },
+    {
+      "id": "time",
+      "name": "time",
+      "title": "Time",
+      "description": "Current time and timezone conversion helpers.",
+      "category": "Local",
+      "command": "npx -y @modelcontextprotocol/server-time",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/time"
+    },
+    {
+      "id": "sequential-thinking",
+      "name": "sequential-thinking",
+      "title": "Sequential Thinking",
+      "description": "Structured multi-step reasoning tool for harder problems.",
+      "category": "Local",
+      "command": "npx -y @modelcontextprotocol/server-sequential-thinking",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking"
+    },
+    {
+      "id": "everything",
+      "name": "everything",
+      "title": "Everything (reference)",
+      "description": "Official MCP reference server — useful for testing the bridge.",
+      "category": "Local",
+      "command": "npx -y @modelcontextprotocol/server-everything",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/everything"
+    },
+    {
+      "id": "github",
+      "name": "github",
+      "title": "GitHub",
+      "description": "Issues, PRs, and repo tools. Needs a personal access token.",
+      "category": "Dev",
+      "command": "npx -y @modelcontextprotocol/server-github",
+      "env": ["GITHUB_PERSONAL_ACCESS_TOKEN="],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/github"
+    },
+    {
+      "id": "gitlab",
+      "name": "gitlab",
+      "title": "GitLab",
+      "description": "GitLab issues and merge requests via personal access token.",
+      "category": "Dev",
+      "command": "npx -y @modelcontextprotocol/server-gitlab",
+      "env": ["GITLAB_PERSONAL_ACCESS_TOKEN=", "GITLAB_API_URL=https://gitlab.com/api/v4"],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab"
+    },
+    {
+      "id": "sentry",
+      "name": "sentry",
+      "title": "Sentry",
+      "description": "Query Sentry issues and events for debugging.",
+      "category": "Dev",
+      "command": "npx -y @modelcontextprotocol/server-sentry",
+      "env": ["SENTRY_AUTH_TOKEN=", "SENTRY_ORG=", "SENTRY_PROJECT="],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/sentry"
+    },
+    {
+      "id": "postgres",
+      "name": "postgres",
+      "title": "PostgreSQL",
+      "description": "Read-only SQL access. Edit the connection string in Command after install.",
+      "category": "Data",
+      "command": "npx -y @modelcontextprotocol/server-postgres postgresql://localhost/mydb",
+      "env": [],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres"
+    },
+    {
+      "id": "sqlite",
+      "name": "sqlite",
+      "title": "SQLite",
+      "description": "Query a local SQLite database (uvx). Edit --db-path if needed.",
+      "category": "Data",
+      "command": "uvx mcp-server-sqlite --db-path ${workspaceRoot}/data.db",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers"
+    },
+    {
+      "id": "fetch",
+      "name": "fetch",
+      "title": "Fetch",
+      "description": "Fetch URL content and convert HTML to markdown for the model.",
+      "category": "Web",
+      "command": "npx -y @modelcontextprotocol/server-fetch",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch"
+    },
+    {
+      "id": "brave-search",
+      "name": "brave-search",
+      "title": "Brave Search",
+      "description": "Web search via Brave Search API.",
+      "category": "Web",
+      "command": "npx -y @modelcontextprotocol/server-brave-search",
+      "env": ["BRAVE_API_KEY="],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search"
+    },
+    {
+      "id": "puppeteer",
+      "name": "puppeteer",
+      "title": "Puppeteer",
+      "description": "Browser automation: navigate, screenshot, click, fill forms.",
+      "category": "Web",
+      "command": "npx -y @modelcontextprotocol/server-puppeteer",
+      "env": [],
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer"
+    },
+    {
+      "id": "slack",
+      "name": "slack",
+      "title": "Slack",
+      "description": "List channels and post messages with a Slack bot token.",
+      "category": "Productivity",
+      "command": "npx -y @modelcontextprotocol/server-slack",
+      "env": ["SLACK_BOT_TOKEN=", "SLACK_TEAM_ID="],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/slack"
+    },
+    {
+      "id": "google-maps",
+      "name": "google-maps",
+      "title": "Google Maps",
+      "description": "Places, directions, and geocoding via Google Maps API.",
+      "category": "Productivity",
+      "command": "npx -y @modelcontextprotocol/server-google-maps",
+      "env": ["GOOGLE_MAPS_API_KEY="],
+      "envRequired": true,
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/google-maps"
+    }
+  ]
+}

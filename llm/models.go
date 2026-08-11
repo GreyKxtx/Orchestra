@@ -12,8 +12,21 @@ import (
 
 // RemoteModel is one entry from OpenAI-compatible GET …/models.
 type RemoteModel struct {
-	ID      string `json:"id"`
-	OwnedBy string `json:"owned_by,omitempty"`
+	ID               string `json:"id"`
+	OwnedBy          string `json:"owned_by,omitempty"`
+	MaxModelLen      int64  `json:"max_model_len,omitempty"`
+	MaxContextLength int64  `json:"max_context_length,omitempty"`
+	ContextLength    int64  `json:"context_length,omitempty"`
+}
+
+// ContextTokens returns the server-advertised context window when present.
+func (m RemoteModel) ContextTokens() int {
+	for _, n := range []int64{m.MaxModelLen, m.MaxContextLength, m.ContextLength} {
+		if n > 0 {
+			return int(n)
+		}
+	}
+	return 0
 }
 
 // ListRemoteModels fetches models from cfg.APIBase (/v1/models or /models).

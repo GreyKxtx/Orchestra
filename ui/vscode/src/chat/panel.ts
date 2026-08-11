@@ -206,7 +206,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     await this.showChat();
   }
 
-  async showSettings(): Promise<void> {
+  async showSettings(section = "general"): Promise<void> {
+    this.settings.pendingSection = section;
     const webview = this.webviewTarget();
     if (this.sidebar && webview) {
       this.view = "settings";
@@ -593,7 +594,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             activeProvider: catalog.activeProvider,
             activeModel: catalog.activeModel,
             providers: catalog.providers
-              .filter((p) => p.configured || p.active)
+              .filter((p) => p.configured || p.active || (p.ready && (p.model_count > 0 || (p.models?.length ?? 0) > 0)))
               .map((p) => ({
                 key: p.key,
                 name: p.name,
@@ -618,7 +619,12 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           return;
         }
         case "openSettings": {
-          await this.showSettings();
+          const section = typeof msg.section === "string" ? msg.section : "general";
+          await this.showSettings(section);
+          return;
+        }
+        case "openOrchestraSettings": {
+          await this.showSettings("orchestra");
           return;
         }
         case "send": {
@@ -1746,7 +1752,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       vscode.Uri.joinPath(this.extensionUri, "media", "chat.css")
     ).with({ query: `v=${v}` });
     const scriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, "media", "chat.js")
+      vscode.Uri.joinPath(this.extensionUri, "media", "chat.bundle.js")
     ).with({ query: `v=${v}` });
     const logoUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "media", "logo.png")
@@ -1889,6 +1895,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       <div id="access-menu" class="menu access" role="menu"></div>
       <div id="model-menu" class="menu model-pop" role="menu">
         <div class="menu-section">Models</div>
+        <input id="model-menu-search" type="search" class="model-menu-search" placeholder="Search models…" autocomplete="off" />
         <div id="model-menu-list" class="model-list">
           <button type="button" class="menu-item" data-model-action="refresh">Refresh list</button>
         </div>
@@ -1919,6 +1926,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               <span class="ico access-icon access-ask" id="access-icon">◌</span>
               <span id="access-label">Ask</span>
               <span class="chev">▾</span>
+            </button>
+            <button type="button" class="pill" id="orch-config-btn" hidden title="Orchestra roles & tiers">
+              <span class="ico">◎</span>
+              <span>Orchestra</span>
             </button>
             <button type="button" class="pill" id="model-pill" aria-haspopup="menu" title="Model">
               <span id="model-label">Model</span>

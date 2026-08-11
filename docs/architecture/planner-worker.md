@@ -1,7 +1,7 @@
 # Planner–Worker: целевой режим Orchestra (локальные модели)
 
 **Статус:** MVP ✅ — см. также [orchestra-vnext.md](./orchestra-vnext.md) (6 улучшений автономии).
-**Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [architecture-uml.md](../architecture-uml.md)
+**Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [architecture-uml.md](../architecture-uml.md), [orchestra-routing.md](./orchestra-routing.md)
 
 ---
 

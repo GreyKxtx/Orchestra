@@ -216,6 +216,19 @@ func (c *Client) Tools() []MCPTool {
 	return out
 }
 
+// AllToolNames returns every tool discovered from the server, ignoring the
+// per-server allowlist. Used by settings UI so toggles can re-enable tools.
+func (c *Client) AllToolNames() []string {
+	if c == nil || len(c.tools) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.tools))
+	for _, t := range c.tools {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
 // ServerName returns the configured name of this server.
 func (c *Client) ServerName() string { return c.name }
 

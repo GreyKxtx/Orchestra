@@ -1,0 +1,3 @@
+//@ts-check
+/* Generated from media/settings-src — edit fragments there, then: npm run bundle:webview */
+(function () {

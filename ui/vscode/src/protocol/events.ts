@@ -298,7 +298,8 @@ export type WebviewToHost =
   | { type: "applyPending"; paths?: string[]; ops?: unknown[] }
   | { type: "discardPending" }
   | { type: "togglePendingDiff" }
-  | { type: "openSettings" }
+  | { type: "openSettings"; section?: string }
+  | { type: "openOrchestraSettings" }
   | {
       type: "permissionReply";
       approved: boolean;

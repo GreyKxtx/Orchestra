@@ -229,6 +229,24 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.RuntimeConfigureLLM(ctx, p)
 
+	case "runtime.get_orchestra":
+		var p RuntimeGetOrchestraParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeGetOrchestra(p)
+
+	case "runtime.configure_orchestra":
+		var p RuntimeConfigureOrchestraParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeConfigureOrchestra(p)
+
 	case "runtime.get_system_prompt":
 		var p RuntimeGetSystemPromptParams
 		if err := decodeParams(params, &p); err != nil {

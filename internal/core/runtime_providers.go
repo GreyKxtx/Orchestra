@@ -17,6 +17,8 @@ type RuntimeListProvidersParams struct {
 	Probe *bool `json:"probe,omitempty"`
 	// ProbeKey limits probe to one provider key (catalog or named).
 	ProbeKey string `json:"probe_key,omitempty"`
+	// IncludeSecrets returns api_key in entries (settings UI only — local trusted client).
+	IncludeSecrets *bool `json:"include_secrets,omitempty"`
 }
 
 // RuntimeProviderEntry is one selectable provider in settings UI.
@@ -29,6 +31,7 @@ type RuntimeProviderEntry struct {
 	Ready        bool                `json:"ready"`
 	Configured   bool                `json:"configured"`
 	APIKeySet    bool                `json:"api_key_set"`
+	APIKey       string              `json:"api_key,omitempty"`
 	NeedsKey     bool                `json:"needs_key"`
 	Named        bool                `json:"named"`
 	Custom       bool                `json:"custom"`
@@ -55,6 +58,10 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 		probe = *params.Probe
 	}
 	probeKey := strings.TrimSpace(params.ProbeKey)
+	includeSecrets := false
+	if params.IncludeSecrets != nil {
+		includeSecrets = *params.IncludeSecrets
+	}
 	active := strings.TrimSpace(c.cfg.LLM.Provider)
 
 	seen := make(map[string]struct{})
@@ -70,7 +77,7 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 		}
 		seen[key] = struct{}{}
 
-		llmCfg, catEntry, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), key)
+		llmCfg, catEntry, ok := c.resolveProviderConfig(key)
 		if !ok {
 			return
 		}
@@ -99,6 +106,9 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 		}
 		if entry.Active {
 			entry.CurrentModel = strings.TrimSpace(c.cfg.LLM.Model)
+		}
+		if includeSecrets {
+			entry.APIKey = strings.TrimSpace(llmCfg.APIKey)
 		}
 		out = append(out, entry)
 	}
@@ -158,8 +168,20 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 	}, nil
 }
 
+func (c *Core) resolveProviderConfig(key string) (config.LLMConfig, llm.CatalogEntry, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return config.LLMConfig{}, llm.CatalogEntry{}, false
+	}
+	if pc, ok := c.cfg.FindProvider(key); ok {
+		cat, _ := llm.FindCatalogProvider(key)
+		return pc, cat, true
+	}
+	return llm.ResolveProviderConfig(c.cfg.LLMRegistry(), key)
+}
+
 func (c *Core) listModelsForProvider(ctx context.Context, key string) ([]RuntimeModelEntry, error) {
-	llmCfg, _, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), key)
+	llmCfg, _, ok := c.resolveProviderConfig(key)
 	if !ok {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "unknown provider", map[string]any{"provider": key})
 	}
@@ -173,7 +195,7 @@ func (c *Core) listModelsForProvider(ctx context.Context, key string) ([]Runtime
 		if id == "" {
 			continue
 		}
-		out = append(out, RuntimeModelEntry{ID: id, OwnedBy: m.OwnedBy})
+		out = append(out, RuntimeModelEntry{ID: id, OwnedBy: m.OwnedBy, ContextTokens: m.ContextTokens()})
 	}
 	return out, nil
 }

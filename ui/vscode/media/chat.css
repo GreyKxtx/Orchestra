@@ -304,13 +304,24 @@ body {
 }
 
 .menu.model-pop {
-  min-width: 200px;
-  max-width: 320px;
+  min-width: 240px;
+  max-width: 360px;
   bottom: calc(100% + 2px);
 }
 
+.model-menu-search {
+  width: calc(100% - 16px);
+  margin: 4px 8px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg, #1a1a1a);
+  color: var(--fg);
+  font-size: 12px;
+}
+
 .model-list {
-  max-height: 200px;
+  max-height: min(52vh, 420px);
   overflow-y: auto;
 }
 

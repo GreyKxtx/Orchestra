@@ -12,8 +12,24 @@ type AgentsListParams struct{}
 
 // AgentsListResult lists custom agents and built-in mode names.
 type AgentsListResult struct {
-	Agents        []config.AgentDefinition `json:"agents"`
-	BuiltInModes  []string                 `json:"built_in_modes"`
+	Agents          []config.AgentDefinition `json:"agents"`
+	BuiltInModes    []string                 `json:"built_in_modes"`
+	AvailableTools  []string                 `json:"available_tools"`
+}
+
+// AgentsList returns custom agents from cfg.
+func (c *Core) AgentsList(_ AgentsListParams) (*AgentsListResult, error) {
+	if c == nil || c.cfg == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
+	agents := append([]config.AgentDefinition(nil), c.cfg.Agents...)
+	return &AgentsListResult{
+		Agents:         agents,
+		BuiltInModes:   config.BuiltInModeNames(),
+		AvailableTools: config.ValidAgentToolNames(),
+	}, nil
 }
 
 // AgentsUpsertParams adds or replaces a custom agent.
@@ -38,20 +54,6 @@ type AgentsDeleteParams struct {
 type AgentsDeleteResult struct {
 	Agents    []config.AgentDefinition `json:"agents"`
 	Persisted bool                     `json:"persisted"`
-}
-
-// AgentsList returns custom agents from cfg.
-func (c *Core) AgentsList(_ AgentsListParams) (*AgentsListResult, error) {
-	if c == nil || c.cfg == nil {
-		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
-	}
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
-	agents := append([]config.AgentDefinition(nil), c.cfg.Agents...)
-	return &AgentsListResult{
-		Agents:       agents,
-		BuiltInModes: config.BuiltInModeNames(),
-	}, nil
 }
 
 // AgentsUpsert validates and saves a custom agent definition.

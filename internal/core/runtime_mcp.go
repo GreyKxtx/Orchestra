@@ -33,6 +33,7 @@ type MCPServerView struct {
 	AllowedTools []string          `json:"allowed_tools,omitempty"`
 	Status       string            `json:"status"` // running | disabled | error | stopped
 	ToolCount    int               `json:"tool_count"`
+	Tools        []string          `json:"tools,omitempty"` // discovered tool names (for settings toggles)
 	Error        string            `json:"error,omitempty"`
 }
 
@@ -174,6 +175,7 @@ func (c *Core) mcpViews() []MCPServerView {
 			} else {
 				v.Status = "running"
 				v.ToolCount = rs.ToolCount
+				v.Tools = append([]string(nil), rs.Tools...)
 			}
 		} else if errMsg, ok := c.mcpStartErrs[srv.Name]; ok {
 			v.Status = "error"

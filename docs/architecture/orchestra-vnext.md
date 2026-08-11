@@ -2,7 +2,7 @@
 
 **Статус:** roadmap (2026-08)  
 **Базовая архитектура:** [planner-worker.md](./planner-worker.md) (MVP ✅)  
-**Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md)
+**Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [orchestra-routing.md](./orchestra-routing.md) (L1–L5 + Fab 5)
 
 ---
 

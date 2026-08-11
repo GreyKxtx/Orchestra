@@ -68,3 +68,52 @@ func TestRuntimeListProviders_CatalogAndReady(t *testing.T) {
 		t.Fatalf("named work entry: %+v", work)
 	}
 }
+
+func TestRuntimeListProviders_IncludeSecrets(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.DefaultConfig(root)
+	cfg.ProjectRoot = root
+	cfg.LLM.Provider = "openai"
+	cfg.LLM.APIBase = "https://api.openai.com/v1"
+	cfg.LLM.APIKey = "sk-secret-key"
+	cfg.LLM.Model = "gpt-4o"
+	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := core.New(root, core.Options{LLMClient: stubLLM{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	without, err := c.RuntimeListProviders(context.Background(), core.RuntimeListProvidersParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	includeSecrets := true
+	with, err := c.RuntimeListProviders(context.Background(), core.RuntimeListProvidersParams{
+		IncludeSecrets: &includeSecrets,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var openaiNo, openaiYes *core.RuntimeProviderEntry
+	for i := range without.Providers {
+		if without.Providers[i].Key == "openai" {
+			openaiNo = &without.Providers[i]
+		}
+	}
+	for i := range with.Providers {
+		if with.Providers[i].Key == "openai" {
+			openaiYes = &with.Providers[i]
+		}
+	}
+	if openaiNo == nil || openaiNo.APIKey != "" {
+		t.Fatalf("without secrets: api_key should be empty, got %q", openaiNo.APIKey)
+	}
+	if openaiYes == nil || openaiYes.APIKey != "sk-secret-key" {
+		t.Fatalf("with secrets: api_key=%q", openaiYes.APIKey)
+	}
+}

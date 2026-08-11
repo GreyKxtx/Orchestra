@@ -121,7 +121,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "bundle:webview": "node scripts/bundle-chat.mjs && node scripts/bundle-settings.mjs",
+    "compile": "npm run bundle:webview && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test out/**/*.test.js",
     "bundle:core": "node scripts/bundle-core.mjs",

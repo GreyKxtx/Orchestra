@@ -1,6 +1,7 @@
+/* AUTO-GENERATED — do not edit. Sources: media/chat-src/*.js  →  npm run bundle:webview */
 //@ts-check
+/* Generated from media/chat-src — edit fragments there, then: npm run bundle:webview */
 (function () {
-  // @ts-ignore
   const vscode = acquireVsCodeApi();
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
@@ -88,6 +89,8 @@
   const modelPill = /** @type {HTMLButtonElement | null} */ (document.getElementById("model-pill"));
   const modelMenu = document.getElementById("model-menu");
   const modelMenuList = document.getElementById("model-menu-list");
+  const modelMenuSearch = /** @type {HTMLInputElement | null} */ (document.getElementById("model-menu-search"));
+  const orchConfigBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("orch-config-btn"));
   const pendingBar = document.getElementById("pending-bar");
   const pendingLabel = document.getElementById("pending-label");
   const pendingReviewListEl = document.getElementById("pending-review-list");
@@ -210,13 +213,14 @@
   /** Raw streamed assistant text before final-envelope stripping. */
   let streamRawText = "";
   let modeId = typeof saved.modeId === "string" && MODES.some((m) => m.id === saved.modeId) ? saved.modeId : "agent";
+  let providerModelsCatalog = null;
+  let modelMenuFilter = "";
   let effortId = "medium";
   let fastOn = false;
   let currentModel = "";
   let activeSessionId = "";
   /** @type {{ name: string; path?: string; ext?: string; kind?: string; previewUri?: string }[]} */
   let files = [];
-
   function escapeAttr(value) {
     return String(value || "")
       .replace(/&/g, "&amp;")
@@ -456,7 +460,6 @@
     };
     return map[ext] || "plain";
   }
-
   function escapeHtml(text) {
     return String(text || "")
       .replace(/&/g, "&amp;")
@@ -779,7 +782,6 @@
     s = apply(s, /(\/\/.*$|#.*$)/g, "cm");
     return s;
   }
-
   function isMutatingToolBlock(block) {
     return block?.classList?.contains("kind-write") === true;
   }
@@ -1136,7 +1138,6 @@
       sideBySide: Boolean(sideBySide),
     });
   }
-
   function upsertSubagentTask(taskId, fields) {
     if (!taskId) return;
     const prev =
@@ -1573,7 +1574,6 @@
     lines.textContent = "";
     await renderUnifiedDiffLines(lines, before, after, filePath, 40);
   }
-
   function hideOverlay() {
     overlay?.classList.add("hidden");
     if (overlayOptions) overlayOptions.innerHTML = "";
@@ -1768,7 +1768,6 @@
       return out.slice(0, end + 1) + stripFinalEnvelope(out.slice(end + 1));
     }
   }
-
   function runStatusLabel() {
     const hint = chromeHint?.textContent?.trim();
     if (hint && !chromeHint.classList.contains("hidden")) {
@@ -2212,7 +2211,6 @@
     if (s === "in_progress") return "◉";
     return "□";
   }
-
   function toolKind(name) {
     const n = (name || "").toLowerCase();
     if (["read", "fs.read"].includes(n)) return "read";
@@ -3016,7 +3014,6 @@
     body.textContent = (body.textContent || "") + chunk;
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
-
   function initModeMenu() {
     if (!modeMenu) {
       return;
@@ -3066,6 +3063,9 @@
       const id = el.getAttribute("data-id");
       el.classList.toggle("selected", id === modeId);
     });
+    if (orchConfigBtn) {
+      orchConfigBtn.hidden = modeId !== "orchestra";
+    }
   }
 
   function effortMeterHtml(id) {
@@ -3298,9 +3298,11 @@
 
   function renderProviderModels(catalog) {
     if (!modelMenuList) return;
+    providerModelsCatalog = catalog;
     modelMenuList.innerHTML = "";
     const providers = Array.isArray(catalog.providers) ? catalog.providers : [];
     const activeModel = catalog.activeModel || currentModel;
+    const q = (modelMenuFilter || "").trim().toLowerCase();
     if (!providers.length) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -3310,12 +3312,20 @@
       modelMenuList.appendChild(btn);
       return;
     }
+    let shown = 0;
     providers.forEach((p) => {
+      const models = Array.isArray(p.models) ? p.models : [];
+      const filtered = q
+        ? models.filter((m) => (m.id || "").toLowerCase().includes(q))
+        : models;
+      if (!filtered.length && models.length && q) {
+        return;
+      }
       const head = document.createElement("div");
       head.className = "menu-section";
-      head.textContent = p.name || p.key;
+      const count = filtered.length || models.length;
+      head.textContent = `${p.name || p.key}${count ? ` (${count})` : ""}`;
       modelMenuList.appendChild(head);
-      const models = Array.isArray(p.models) ? p.models : [];
       if (!models.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
@@ -3323,7 +3333,15 @@
         modelMenuList.appendChild(empty);
         return;
       }
-      models.slice(0, 40).forEach((m) => {
+      if (!filtered.length) {
+        const empty = document.createElement("div");
+        empty.className = "menu-hint";
+        empty.textContent = "No matches";
+        modelMenuList.appendChild(empty);
+        return;
+      }
+      filtered.forEach((m) => {
+        shown++;
         const id = m.id || "";
         const btn = document.createElement("button");
         btn.type = "button";
@@ -3335,6 +3353,12 @@
         modelMenuList.appendChild(btn);
       });
     });
+    if (shown === 0 && q) {
+      const empty = document.createElement("div");
+      empty.className = "menu-hint";
+      empty.textContent = `No models match “${modelMenuFilter}”`;
+      modelMenuList.appendChild(empty);
+    }
   }
 
   function renderModelList(models, current) {
@@ -3610,11 +3634,31 @@
     const open = !modelMenu?.classList.contains("open");
     closeMenus();
     if (open) {
+      modelMenuFilter = "";
+      if (modelMenuSearch) {
+        modelMenuSearch.value = "";
+      }
       positionModelMenu();
       modelMenu?.classList.add("open");
       modelPill.classList.add("open");
       vscode.postMessage({ type: "listProviderModels" });
+      setTimeout(() => modelMenuSearch?.focus(), 30);
     }
+  });
+
+  modelMenuSearch?.addEventListener("input", () => {
+    modelMenuFilter = modelMenuSearch?.value || "";
+    if (providerModelsCatalog) {
+      renderProviderModels(providerModelsCatalog);
+    }
+  });
+
+  modelMenuSearch?.addEventListener("click", (e) => e.stopPropagation());
+
+  orchConfigBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeMenus();
+    vscode.postMessage({ type: "openOrchestraSettings" });
   });
 
   settingsBtn?.addEventListener("click", () => {
@@ -3672,7 +3716,6 @@
   effortMenu?.addEventListener("click", (e) => e.stopPropagation());
   sessionMenu?.addEventListener("click", (e) => e.stopPropagation());
   modelMenu?.addEventListener("click", (e) => e.stopPropagation());
-
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (!msg || typeof msg !== "object") {

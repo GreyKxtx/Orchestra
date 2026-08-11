@@ -1,0 +1,3 @@
+//@ts-check
+/* Generated from media/chat-src — edit fragments there, then: npm run bundle:webview */
+(function () {

@@ -141,6 +141,8 @@ orchestra:
 
 **Промпт:** `orchestra.txt`. TUI: `/orchestra` — настройки planner/tiers; badge `orchestra · lead`. Tab: `… → agent → orchestra`.
 
+**Маршрутизация по tiers (L1–L5, Fab 5):** [architecture/orchestra-routing.md](./architecture/orchestra-routing.md).
+
 ---
 
 ### `worker` — atomic WorkOrder executor (child only)

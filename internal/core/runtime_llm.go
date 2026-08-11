@@ -35,8 +35,9 @@ type RuntimeListModelsParams struct {
 
 // RuntimeModelEntry is one remote model id.
 type RuntimeModelEntry struct {
-	ID      string `json:"id"`
-	OwnedBy string `json:"owned_by,omitempty"`
+	ID            string `json:"id"`
+	OwnedBy       string `json:"owned_by,omitempty"`
+	ContextTokens int    `json:"context_tokens,omitempty"`
 }
 
 // RuntimeListModelsResult is returned by runtime.list_models.
@@ -188,7 +189,7 @@ func (c *Core) RuntimeListModels(ctx context.Context, params RuntimeListModelsPa
 		if id == "" {
 			continue
 		}
-		out = append(out, RuntimeModelEntry{ID: id, OwnedBy: m.OwnedBy})
+		out = append(out, RuntimeModelEntry{ID: id, OwnedBy: m.OwnedBy, ContextTokens: m.ContextTokens()})
 	}
 	return &RuntimeListModelsResult{
 		Models:   out,
@@ -267,7 +268,8 @@ func (c *Core) RuntimeGetLLM(_ RuntimeGetLLMParams) (*RuntimeGetLLMResult, error
 	}, nil
 }
 
-// RuntimeConfigureLLM updates API base/key/model and rebuilds the client.
+// RuntimeConfigureLLM updates API base/key/model. When model is omitted, credentials
+// are stored under providers:<key> without switching the active llm: client.
 func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureLLMParams) (*RuntimeConfigureLLMResult, error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
@@ -281,70 +283,128 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
 
-	if p := strings.TrimSpace(params.Provider); p != "" {
-		c.cfg.LLM.Provider = p
-	}
-	if base := strings.TrimSpace(params.APIBase); base != "" {
-		c.cfg.LLM.APIBase = base
-	}
-	if key := strings.TrimSpace(params.APIKey); key != "" {
-		c.cfg.LLM.APIKey = key
-	}
-	if model := strings.TrimSpace(params.Model); model != "" {
-		c.cfg.LLM.Model = model
-	}
-	if params.Temperature != nil {
-		c.cfg.LLM.Temperature = *params.Temperature
-	}
-	if params.MaxTokens != nil && *params.MaxTokens > 0 {
-		c.cfg.LLM.MaxTokens = *params.MaxTokens
-	}
-	if params.TimeoutS != nil && *params.TimeoutS > 0 {
-		c.cfg.LLM.TimeoutS = *params.TimeoutS
-	}
-	if params.PromptFamily != nil {
-		c.cfg.LLM.PromptFamily = strings.TrimSpace(*params.PromptFamily)
-	}
-	if params.Multimodal != nil {
-		c.cfg.LLM.Multimodal = *params.Multimodal
+	targetProv := strings.TrimSpace(params.Provider)
+	activeProv := strings.TrimSpace(c.cfg.LLM.Provider)
+	if targetProv == "" {
+		targetProv = activeProv
 	}
 
-	if strings.TrimSpace(c.cfg.LLM.APIBase) == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "api_base is empty", nil)
-	}
-	if strings.TrimSpace(c.cfg.LLM.Model) == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "model is empty", nil)
-	}
+	incomingModel := strings.TrimSpace(params.Model)
+	incomingBase := strings.TrimSpace(params.APIBase)
+	incomingKey := strings.TrimSpace(params.APIKey)
 
-	if !c.llmClientInjected {
-		client := llm.NewClient(c.cfg.LLM)
-		if oc, ok := client.(*llm.OpenAIClient); ok {
-			_, _ = oc.DiscoverAndApplyLimits(ctx)
-		}
-		c.llmClient = client
-	}
-
-	pkey := strings.TrimSpace(c.cfg.LLM.Provider)
-	if pkey != "" {
+	if targetProv != "" {
 		if c.cfg.Providers == nil {
 			c.cfg.Providers = map[string]config.LLMConfig{}
 		}
-		pc := c.cfg.Providers[pkey]
+		pc := c.cfg.Providers[targetProv]
 		if pc.Provider == "" {
-			pc.Provider = pkey
+			pc.Provider = targetProv
 		}
-		pc.APIBase = c.cfg.LLM.APIBase
-		if k := strings.TrimSpace(c.cfg.LLM.APIKey); k != "" {
-			pc.APIKey = k
+		if incomingBase != "" {
+			pc.APIBase = incomingBase
+		} else if strings.TrimSpace(pc.APIBase) == "" {
+			if cat, ok := llm.FindCatalogProvider(targetProv); ok {
+				pc.APIBase = cat.DefaultAPIBase
+			}
 		}
-		pc.Model = c.cfg.LLM.Model
-		pc.Temperature = c.cfg.LLM.Temperature
-		pc.MaxTokens = c.cfg.LLM.MaxTokens
-		pc.Multimodal = c.cfg.LLM.Multimodal
-		if c.cfg.LLM.TimeoutS > 0 {
-			pc.TimeoutS = c.cfg.LLM.TimeoutS
+		if incomingKey != "" {
+			pc.APIKey = incomingKey
 		}
-		c.cfg.Providers[pkey] = pc
+		if incomingModel != "" {
+			pc.Model = incomingModel
+		}
+		if params.Temperature != nil {
+			pc.Temperature = *params.Temperature
+		}
+		if params.MaxTokens != nil && *params.MaxTokens > 0 {
+			pc.MaxTokens = *params.MaxTokens
+		}
+		if params.TimeoutS != nil && *params.TimeoutS > 0 {
+			pc.TimeoutS = *params.TimeoutS
+		}
+		if params.Multimodal != nil {
+			pc.Multimodal = *params.Multimodal
+		}
+		c.cfg.Providers[targetProv] = pc
+	}
+
+	shouldActivate := incomingModel != ""
+	if !shouldActivate && strings.TrimSpace(params.Provider) != "" && strings.EqualFold(targetProv, activeProv) {
+		// Active provider tuning / key rotation — keep current model.
+		shouldActivate = strings.TrimSpace(c.cfg.LLM.Model) != "" || incomingModel != ""
+	}
+	if !shouldActivate && strings.TrimSpace(params.Provider) == "" {
+		shouldActivate = incomingModel != "" || strings.TrimSpace(c.cfg.LLM.Model) != ""
+	}
+
+	if shouldActivate {
+		if strings.TrimSpace(params.Provider) != "" {
+			c.cfg.LLM.Provider = targetProv
+		}
+		pc := c.cfg.LLM
+		if entry, ok := c.cfg.Providers[targetProv]; ok {
+			pc = mergeLLMFromProvider(entry, pc)
+		}
+		if incomingBase != "" {
+			pc.APIBase = incomingBase
+		}
+		if incomingKey != "" {
+			pc.APIKey = incomingKey
+		}
+		if incomingModel != "" {
+			pc.Model = incomingModel
+		}
+		if params.Temperature != nil {
+			pc.Temperature = *params.Temperature
+		}
+		if params.MaxTokens != nil && *params.MaxTokens > 0 {
+			pc.MaxTokens = *params.MaxTokens
+		}
+		if params.TimeoutS != nil && *params.TimeoutS > 0 {
+			pc.TimeoutS = *params.TimeoutS
+		}
+		if params.PromptFamily != nil {
+			pc.PromptFamily = strings.TrimSpace(*params.PromptFamily)
+		}
+		if params.Multimodal != nil {
+			pc.Multimodal = *params.Multimodal
+		}
+		c.cfg.LLM = pc
+
+		if strings.TrimSpace(c.cfg.LLM.APIBase) == "" {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "api_base is empty", nil)
+		}
+		if strings.TrimSpace(c.cfg.LLM.Model) == "" {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "model is empty", nil)
+		}
+
+		if !c.llmClientInjected {
+			client := llm.NewClient(c.cfg.LLM)
+			if oc, ok := client.(*llm.OpenAIClient); ok {
+				_, _ = oc.DiscoverAndApplyLimits(ctx)
+			}
+			c.llmClient = client
+		}
+
+		if targetProv != "" {
+			pc := c.cfg.Providers[targetProv]
+			if pc.Provider == "" {
+				pc.Provider = targetProv
+			}
+			pc.APIBase = c.cfg.LLM.APIBase
+			if k := strings.TrimSpace(c.cfg.LLM.APIKey); k != "" {
+				pc.APIKey = k
+			}
+			pc.Model = c.cfg.LLM.Model
+			pc.Temperature = c.cfg.LLM.Temperature
+			pc.MaxTokens = c.cfg.LLM.MaxTokens
+			pc.Multimodal = c.cfg.LLM.Multimodal
+			if c.cfg.LLM.TimeoutS > 0 {
+				pc.TimeoutS = c.cfg.LLM.TimeoutS
+			}
+			c.cfg.Providers[targetProv] = pc
+		}
 	}
 
 	persisted := false
@@ -356,13 +416,46 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 		persisted = true
 	}
 
+	keySet := strings.TrimSpace(c.cfg.LLM.APIKey) != ""
+	if targetProv != "" {
+		if pc, ok := c.cfg.Providers[targetProv]; ok && strings.TrimSpace(pc.APIKey) != "" {
+			keySet = true
+		}
+	}
+
 	return &RuntimeConfigureLLMResult{
-		Provider:  c.cfg.LLM.Provider,
-		APIBase:   c.cfg.LLM.APIBase,
-		Model:     c.cfg.LLM.Model,
+		Provider:  firstNonEmpty(targetProv, c.cfg.LLM.Provider),
+		APIBase:   firstNonEmpty(incomingBase, c.cfg.LLM.APIBase),
+		Model:     firstNonEmpty(incomingModel, c.cfg.LLM.Model),
 		Persisted: persisted,
-		APIKeySet: strings.TrimSpace(c.cfg.LLM.APIKey) != "",
+		APIKeySet: keySet,
 	}, nil
+}
+
+func mergeLLMFromProvider(entry config.LLMConfig, base config.LLMConfig) config.LLMConfig {
+	out := base
+	if strings.TrimSpace(out.Provider) == "" {
+		out.Provider = entry.Provider
+	}
+	if strings.TrimSpace(out.APIBase) == "" && strings.TrimSpace(entry.APIBase) != "" {
+		out.APIBase = entry.APIBase
+	}
+	if strings.TrimSpace(out.APIKey) == "" && strings.TrimSpace(entry.APIKey) != "" {
+		out.APIKey = entry.APIKey
+	}
+	if strings.TrimSpace(out.Model) == "" && strings.TrimSpace(entry.Model) != "" {
+		out.Model = entry.Model
+	}
+	if out.MaxTokens <= 0 && entry.MaxTokens > 0 {
+		out.MaxTokens = entry.MaxTokens
+	}
+	if out.Temperature == 0 && entry.Temperature != 0 {
+		out.Temperature = entry.Temperature
+	}
+	if out.TimeoutS <= 0 && entry.TimeoutS > 0 {
+		out.TimeoutS = entry.TimeoutS
+	}
+	return out
 }
 
 func maskAPIKey(key string) string {

@@ -334,6 +334,17 @@ func ValidAgentTool(name string) bool {
 	return validAgentToolNames[name]
 }
 
+// ValidAgentToolNames returns every short tool name allowed in AgentDefinition.Tools,
+// sorted for stable UI / RPC catalogs.
+func ValidAgentToolNames() []string {
+	out := make([]string, 0, len(validAgentToolNames))
+	for name := range validAgentToolNames {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // HooksConfig configures pre/post tool call hooks (Phase 6).
 type HooksConfig struct {
 	// Enabled gates all hook execution. Hooks are disabled by default.

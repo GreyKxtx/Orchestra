@@ -25,9 +25,10 @@ type OrchestraRole struct {
 
 // OrchestraTier is one worker difficulty band (Claude-like opus/sonnet/haiku).
 type OrchestraTier struct {
-	Name     string `yaml:"name"` // complex | focused | micro
-	Provider string `yaml:"provider,omitempty"`
-	Model    string `yaml:"model,omitempty"`
+	Name     string   `yaml:"name"` // complex | focused | micro
+	Provider string   `yaml:"provider,omitempty"`
+	Model    string   `yaml:"model,omitempty"`
+	Models   []string `yaml:"models,omitempty"` // optional pool from same provider (Model is primary)
 }
 
 // OrchestraConfig configures Lead + worker tiers for mode=orchestra.

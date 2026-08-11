@@ -258,7 +258,8 @@ func (m *Manager) findClient(serverName string) *Client {
 // ServerStatus describes one connected MCP server's runtime view.
 type ServerStatus struct {
 	Name      string
-	ToolCount int
+	ToolCount int      // tools currently exposed (after allowlist)
+	Tools     []string // all discovered tool names (before allowlist)
 	Dead      bool
 }
 
@@ -272,6 +273,7 @@ func (m *Manager) RuntimeStatuses() []ServerStatus {
 		out = append(out, ServerStatus{
 			Name:      c.ServerName(),
 			ToolCount: len(c.Tools()),
+			Tools:     c.AllToolNames(),
 			Dead:      c.IsDead(),
 		})
 	}
