@@ -9,7 +9,7 @@ import (
 )
 
 func ToolTask() llm.ToolDef {
-	fallback := "Child agent (sync spawn+wait) for HEAVY/parallel work only. Prefer edit/write yourself for quick fixes. subagent_type: explore|ask|debug|architecture|general|worker. Do NOT use for 1–3 known-file edits."
+	fallback := "Child agent (sync spawn+wait) for HEAVY/parallel work only. Prefer edit/write yourself for quick fixes. subagent_type: explore|ask|debug|architecture|verifier|general|worker. Do NOT use for 1–3 known-file edits."
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
@@ -28,7 +28,7 @@ func ToolTask() llm.ToolDef {
     "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt — provide exactly one of prompt/goal" },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "general", "worker"],
+      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker"],
       "description": "Child agent mode (default: explore)"
     },
     "tier": { "type": "string", "description": "Orchestra worker tier name (complex|focused|micro)" },
@@ -60,7 +60,7 @@ func ToolTaskSpawn() llm.ToolDef {
     "prompt": { "type": "string", "minLength": 1, "description": "Alias for goal" },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "general", "worker"],
+      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker"],
       "description": "Child agent mode (default: explore)"
     },
     "tier": { "type": "string", "description": "Orchestra worker tier name" },

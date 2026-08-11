@@ -102,6 +102,64 @@ func PruneRetroactiveToolHistory(messages []llm.Message, digestBudget, keepRecen
 	return result
 }
 
+// TaskToolCompactor rewrites task/task_wait tool payloads (orchestra Lead worker summaries).
+type TaskToolCompactor func(toolName, content string) (replacement string, ok bool)
+
+// CollapseOrchestraWorkerTaskOutputs compacts older task/task_wait worker results
+// while keeping the last keepRecent tool-bearing atoms intact.
+func CollapseOrchestraWorkerTaskOutputs(messages []llm.Message, keepRecent int, compact TaskToolCompactor) []llm.Message {
+	if compact == nil || len(messages) <= 2 {
+		return messages
+	}
+	if keepRecent <= 0 {
+		keepRecent = DefaultHistoryPruneKeepRecent
+	}
+	prefix := messages[:2]
+	rest := messages[2:]
+	atoms := BuildHistoryAtoms(rest)
+	toolAtomIdx := make([]int, 0, len(atoms))
+	for i, a := range atoms {
+		if AtomHasToolRole(a) {
+			toolAtomIdx = append(toolAtomIdx, i)
+		}
+	}
+	if len(toolAtomIdx) == 0 {
+		return messages
+	}
+	protectFrom := 0
+	if len(toolAtomIdx) > keepRecent {
+		protectFrom = toolAtomIdx[len(toolAtomIdx)-keepRecent]
+	}
+	var flat []llm.Message
+	for i, a := range atoms {
+		msgs := AtomMessages(a)
+		if i < protectFrom {
+			meta := ToolCallMapFromAtom(a)
+			for j, m := range msgs {
+				if m.Role != llm.RoleTool || m.ToolCallID == "" {
+					continue
+				}
+				cm, ok := meta[m.ToolCallID]
+				if !ok {
+					continue
+				}
+				name := digest.NormalizeToolName(cm.name)
+				if name != "task" && name != "task_wait" {
+					continue
+				}
+				if repl, ok := compact(name, m.Content); ok && repl != "" {
+					msgs[j].Content = repl
+				}
+			}
+		}
+		flat = append(flat, msgs...)
+	}
+	result := make([]llm.Message, 0, len(prefix)+len(flat))
+	result = append(result, prefix...)
+	result = append(result, flat...)
+	return result
+}
+
 func normalizeProtectPaths(paths []string) map[string]bool {
 	if len(paths) == 0 {
 		return nil

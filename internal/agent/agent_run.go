@@ -69,16 +69,19 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 		}
 
 		// Retroactive prune: shrink older tool outputs already in history.
+		keep := a.opts.HistoryPruneKeepRecent
+		if keep <= 0 {
+			keep = defaultHistoryPruneKeepRecent
+		}
+		var protect []string
+		if a.working != nil {
+			protect = a.working.ActiveFiles()
+		}
 		if a.opts.ToolDigestBytes > 0 {
-			keep := a.opts.HistoryPruneKeepRecent
-			if keep <= 0 {
-				keep = defaultHistoryPruneKeepRecent
-			}
-			var protect []string
-			if a.working != nil {
-				protect = a.working.ActiveFiles()
-			}
 			history = pruneRetroactiveToolHistory(history, a.opts.ToolDigestBytes, keep, protect...)
+		}
+		if a.opts.Mode == ModeOrchestra {
+			history = collapseOrchestraWorkerTaskHistory(history, keep)
 		}
 
 		// Soft notice once when context approaches the compact threshold

@@ -45,6 +45,11 @@ func (a *Agent) observeWorkingTool(name string, input json.RawMessage, out []byt
 
 func (a *Agent) injectWorkingPromptBlocks() string {
 	var parts []string
+	if a.opts.Mode == ModeOrchestra {
+		if sp := readOrchestraScratchpad(a.tools.WorkspaceRoot()); sp != "" {
+			parts = append(parts, sp)
+		}
+	}
 	if a.working != nil {
 		if ws := a.working.FormatWorkingState(); ws != "" {
 			parts = append(parts, ws)

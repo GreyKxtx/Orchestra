@@ -407,6 +407,11 @@ func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent
 	out.ProviderLabel = providerLabelOf(cfg)
 	out.ModelLabel = cfg.LLM.Model
 	out.MaxWorkerRetries = cfg.Orchestra.ResolvedMaxWorkerRetries()
+	enabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
+	out.WorkerVerifyEnabled = &enabled
+	out.MaxWorkerVerifyRetries = cfg.Orchestra.ResolvedMaxWorkerVerifyRetries()
+	llmVerify := cfg.Orchestra.ResolvedWorkerLLMVerifyEnabled()
+	out.WorkerLLMVerifyEnabled = &llmVerify
 	out.LLMStepTimeout = time.Duration(cfg.LLM.TimeoutS) * time.Second
 	out.MaxStepsCap = cfg.Agent.ResolvedChildMaxSteps()
 	return out

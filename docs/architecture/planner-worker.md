@@ -1,6 +1,6 @@
 # Planner–Worker: целевой режим Orchestra (локальные модели)
 
-**Статус:** MVP ✅ — `mode=orchestra` Lead + `subagent_type=worker` + WorkOrder JSON + `target_symbol` scoping + E2E eval (§11). Осталось: manual TUI smoke LSP install.
+**Статус:** MVP ✅ — см. также [orchestra-vnext.md](./orchestra-vnext.md) (6 улучшений автономии).
 **Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [architecture-uml.md](../architecture-uml.md)
 
 ---

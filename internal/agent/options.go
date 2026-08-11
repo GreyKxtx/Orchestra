@@ -48,7 +48,7 @@ type SubtaskRunner interface {
 // SubtaskSpawnRequest is the request for spawning a child agent task.
 type SubtaskSpawnRequest struct {
 	Goal         string
-	SubagentType string // explore|ask|debug|architecture|general|worker (or ListToolsForMode key)
+	SubagentType string // explore|ask|debug|architecture|verifier|general|worker (or ListToolsForMode key)
 	MaxSteps     int
 	TimeoutMS    int
 	// Provider / Model optionally override the child LLM (named providers: map entry).
@@ -109,6 +109,7 @@ const (
 	ModeAgent        Mode = "agent"        // auto-route to build|plan|explore before Run
 	ModeOrchestra    Mode = "orchestra"    // Lead planner; delegates to worker tiers
 	ModeWorker       Mode = "worker"       // atomic WorkOrder executor (child only)
+	ModeVerifier     Mode = "verifier"     // goal-backward read-only verification (child only)
 	ModeCompaction   Mode = "compaction"   // internal: compresses history into a summary.
 	ModeTitle        Mode = "title"        // internal: generates a short task title from the user query.
 	ModeSummary      Mode = "summary"      // internal: produces a brief summary of completed work.
@@ -120,7 +121,7 @@ const (
 var knownModes = map[Mode]bool{
 	ModeBuild: true, ModePlan: true, ModeExplore: true,
 	ModeAsk: true, ModeDebug: true, ModeArchitecture: true,
-	ModeGeneral: true, ModeAgent: true, ModeOrchestra: true, ModeWorker: true,
+	ModeGeneral: true, ModeAgent: true, ModeOrchestra: true, ModeWorker: true, ModeVerifier: true,
 	ModeCompaction: true, ModeTitle: true, ModeSummary: true,
 }
 
@@ -329,6 +330,10 @@ type Options struct {
 	// TurnDigestEveryN writes a mid-run micro-digest every N agent steps (0 = end-of-run only).
 	// Does not compact or rewrite LLM history.
 	TurnDigestEveryN int
+
+	// WorkerEditPaths limits edit/write to WorkOrder target_file(s) when ModeWorker.
+	// Empty = no path restriction (legacy / free-form goals).
+	WorkerEditPaths []string
 
 	Debug  bool
 	Logger *log.Logger

@@ -36,6 +36,9 @@ type OrchestraConfig struct {
 	Tiers            []OrchestraTier `yaml:"tiers,omitempty"`
 	DefaultTier      string          `yaml:"default_tier,omitempty"` // default focused
 	MaxWorkerRetries int             `yaml:"max_worker_retries,omitempty"`
+	WorkerVerifyEnabled *bool         `yaml:"worker_verify_enabled,omitempty"`
+	MaxWorkerVerifyRetries int       `yaml:"max_worker_verify_retries,omitempty"`
+	WorkerLLMVerifyEnabled *bool      `yaml:"worker_llm_verify_enabled,omitempty"`
 }
 
 // ResolvedDefaultTier returns the default worker tier name.
@@ -52,6 +55,30 @@ func (o OrchestraConfig) ResolvedMaxWorkerRetries() int {
 		return 3
 	}
 	return o.MaxWorkerRetries
+}
+
+// ResolvedMaxWorkerVerifyRetries returns post-worker verify retry budget (default 1).
+func (o OrchestraConfig) ResolvedMaxWorkerVerifyRetries() int {
+	if o.MaxWorkerVerifyRetries <= 0 {
+		return 1
+	}
+	return o.MaxWorkerVerifyRetries
+}
+
+// ResolvedWorkerVerifyEnabled reports whether deterministic worker verification runs (default true).
+func (o OrchestraConfig) ResolvedWorkerVerifyEnabled() bool {
+	if o.WorkerVerifyEnabled == nil {
+		return true
+	}
+	return *o.WorkerVerifyEnabled
+}
+
+// ResolvedWorkerLLMVerifyEnabled reports whether an LLM verifier child runs after deterministic worker checks (default false).
+func (o OrchestraConfig) ResolvedWorkerLLMVerifyEnabled() bool {
+	if o.WorkerLLMVerifyEnabled == nil {
+		return false
+	}
+	return *o.WorkerLLMVerifyEnabled
 }
 
 // FindTier looks up a worker tier by name (case-insensitive).

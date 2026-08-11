@@ -21,7 +21,7 @@ func TestParallelFlags_AllBuiltinsClassified(t *testing.T) {
 	// skill_invoke).
 	maximal := ListTools(Capabilities{Exec: true, Web: true, Browser: true})
 	maximal = append(maximal, ListToolsWithSubtasks(Capabilities{Exec: true, Web: true, Browser: true})...)
-	for _, mode := range []string{"build", "plan", "explore", "general"} {
+	for _, mode := range []string{"build", "plan", "explore", "general", "orchestra", "worker", "verifier"} {
 		maximal = append(maximal, ListToolsForMode(mode, Capabilities{Exec: true, Web: true, Browser: true}, true, true)...)
 	}
 	maximal = append(maximal, ToolSemanticSearch())

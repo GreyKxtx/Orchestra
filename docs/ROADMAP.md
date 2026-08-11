@@ -53,6 +53,23 @@
 
 ---
 
+## Фаза 11 — Orchestra vNext (автономия Lead–Worker)
+
+**Цель:** автоматизировать верификацию Worker до Lead, CKG-enriched WorkOrder, parallel workers, Lead scratchpad.
+
+**Design doc:** [docs/architecture/orchestra-vnext.md](./architecture/orchestra-vnext.md)
+
+| # | Улучшение | Статус |
+|---|-----------|--------|
+| 1 | Verifier / Critic subagent | ✅ deterministic hook; LLM verifier 🔲 |
+| 2 | CKG fields в WorkOrder | ✅ schema + runtime guard |
+| 3 | Parallel workers (prompt + eval) | 🟡 infra ✅ |
+| 4 | Spec constraints enforcement | 🟡 prompt ✅ |
+| 5 | Lead scratchpad (`.orchestra/state.md`) | ✅ Done |
+| 6 | Forced LSP on `task_result` | ✅ Done |
+
+---
+
 ## MVP: что входит в первую тестируемую версию
 
 | Фаза | Что даёт пользователю | Без чего нельзя выйти |

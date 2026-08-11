@@ -8,15 +8,18 @@ import (
 
 // WorkOrder is the Lead → Worker JSON contract (docs/architecture/planner-worker.md).
 type WorkOrder struct {
-	TaskID             string         `json:"task_id,omitempty"`
-	Tier               string         `json:"tier,omitempty"`
-	TargetFile         string         `json:"target_file,omitempty"`
-	TargetSymbol       string         `json:"target_symbol,omitempty"`
-	Intent             string         `json:"intent,omitempty"`
-	Context            map[string]any `json:"context,omitempty"`
-	Instructions       []string       `json:"instructions,omitempty"`
-	Constraints        []string       `json:"constraints,omitempty"`
-	AcceptanceCriteria []string       `json:"acceptance_criteria,omitempty"`
+	TaskID              string         `json:"task_id,omitempty"`
+	Tier                string         `json:"tier,omitempty"`
+	TargetFile          string         `json:"target_file,omitempty"`
+	TargetFiles         []string       `json:"target_files,omitempty"`
+	TargetSymbol        string         `json:"target_symbol,omitempty"`
+	Intent              string         `json:"intent,omitempty"`
+	Context             map[string]any `json:"context,omitempty"`
+	Instructions        []string       `json:"instructions,omitempty"`
+	Constraints         []string       `json:"constraints,omitempty"`
+	ReadonlyReferences  []string       `json:"readonly_references,omitempty"`
+	AllowedSymbols      []string       `json:"allowed_symbols,omitempty"`
+	AcceptanceCriteria  []string       `json:"acceptance_criteria,omitempty"`
 }
 
 // ValidateWorkOrder checks a parsed WorkOrder; returns error when intent is missing.
@@ -26,6 +29,29 @@ func ValidateWorkOrder(wo *WorkOrder) error {
 	}
 	if strings.TrimSpace(wo.Intent) == "" && len(wo.Instructions) == 0 {
 		return fmt.Errorf("workorder: intent or instructions[] required")
+	}
+	return nil
+}
+
+// EditScopePaths returns normalized paths the worker may edit/write.
+// target_files[] wins over target_file; empty slice = no runtime restriction.
+func EditScopePaths(wo *WorkOrder) []string {
+	if wo == nil {
+		return nil
+	}
+	if len(wo.TargetFiles) > 0 {
+		out := make([]string, 0, len(wo.TargetFiles))
+		for _, p := range wo.TargetFiles {
+			if s := strings.TrimSpace(p); s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if s := strings.TrimSpace(wo.TargetFile); s != "" {
+		return []string{s}
 	}
 	return nil
 }

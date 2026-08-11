@@ -348,6 +348,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 func skillsAllowedInMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case string(agent.ModeAsk), string(agent.ModePlan), string(agent.ModeExplore),
+		string(agent.ModeVerifier),
 		string(agent.ModeArchitecture), string(agent.ModeCompaction),
 		string(agent.ModeTitle), string(agent.ModeSummary):
 		return false
@@ -501,6 +502,11 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 	out.ProviderLabel = providerLabelOf(c.cfg)
 	out.ModelLabel = c.cfg.LLM.Model
 	out.MaxWorkerRetries = c.cfg.Orchestra.ResolvedMaxWorkerRetries()
+	enabled := c.cfg.Orchestra.ResolvedWorkerVerifyEnabled()
+	out.WorkerVerifyEnabled = &enabled
+	out.MaxWorkerVerifyRetries = c.cfg.Orchestra.ResolvedMaxWorkerVerifyRetries()
+	llmVerify := c.cfg.Orchestra.ResolvedWorkerLLMVerifyEnabled()
+	out.WorkerLLMVerifyEnabled = &llmVerify
 	out.LLMStepTimeout = time.Duration(c.cfg.LLM.TimeoutS) * time.Second
 	out.MaxStepsCap = c.cfg.Agent.ResolvedChildMaxSteps()
 	if c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm {

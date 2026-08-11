@@ -27,12 +27,14 @@ type DiagTracker struct {
 	mu     sync.Mutex
 	last   map[string]string // path → last fingerprint
 	repeat map[string]int    // path → consecutive identical fingerprints
+	hint   map[string]string // path → last LSP error hint (for task_result gate)
 }
 
 func NewDiagTracker() *DiagTracker {
 	return &DiagTracker{
 		last:   make(map[string]string),
 		repeat: make(map[string]int),
+		hint:   make(map[string]string),
 	}
 }
 
@@ -43,8 +45,9 @@ func NewDiagTracker() *DiagTracker {
 // means "model ran write/edit on this file and the diagnostic state
 // did not change".
 //
-// Empty fingerprint (no errors) resets the streak.
-func (t *DiagTracker) Observe(path, fingerprint string) int {
+// Empty fingerprint (no errors) resets the streak. When hint is
+// non-empty it is stored for PathsWithErrors / ErrorHint.
+func (t *DiagTracker) Observe(path, fingerprint, hint string) int {
 	if t == nil || path == "" {
 		return 0
 	}
@@ -54,7 +57,11 @@ func (t *DiagTracker) Observe(path, fingerprint string) int {
 		// Clean state: any past repeats become irrelevant.
 		delete(t.last, path)
 		delete(t.repeat, path)
+		delete(t.hint, path)
 		return 0
+	}
+	if hint != "" {
+		t.hint[path] = hint
 	}
 	prev, had := t.last[path]
 	t.last[path] = fingerprint
@@ -64,6 +71,37 @@ func (t *DiagTracker) Observe(path, fingerprint string) int {
 	}
 	t.repeat[path] = 0
 	return 1
+}
+
+// PathsWithErrors returns sorted paths whose last write/edit still has
+// LSP error-severity diagnostics (non-empty fingerprint).
+func (t *DiagTracker) PathsWithErrors() []string {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.last) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(t.last))
+	for p, fp := range t.last {
+		if fp != "" {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ErrorHint returns the last stored LSP hint for path (may be "").
+func (t *DiagTracker) ErrorHint(path string) string {
+	if t == nil || path == "" {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.hint[path]
 }
 
 // fingerprintLSPErrors extracts a stable hash of error-severity

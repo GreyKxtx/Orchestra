@@ -30,3 +30,21 @@ func TestParseWorkOrderJSON_NotJSON(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestEditScopePaths(t *testing.T) {
+	wo := &tasks.WorkOrder{TargetFile: "a.go"}
+	if got := tasks.EditScopePaths(wo); len(got) != 1 || got[0] != "a.go" {
+		t.Fatalf("target_file: %v", got)
+	}
+	wo2 := &tasks.WorkOrder{
+		TargetFile:  "ignored.go",
+		TargetFiles: []string{"x.go", "y.go"},
+	}
+	got := tasks.EditScopePaths(wo2)
+	if len(got) != 2 || got[0] != "x.go" || got[1] != "y.go" {
+		t.Fatalf("target_files wins: %v", got)
+	}
+	if tasks.EditScopePaths(nil) != nil {
+		t.Fatal("nil wo")
+	}
+}

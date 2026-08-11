@@ -170,7 +170,7 @@ var parallelSafeTools = map[string]bool{
 var mutatingTools = map[string]bool{
 	"write": true, "edit": true,
 	"bash": true, "bash.output": true, "bash.kill": true,
-	"todowrite": true, "todoread": true, "memory_write": true, "memory_read": true, "memory_search": true,
+	"todowrite": true, "todoread": true, "update_working_state": true, "memory_write": true, "memory_read": true, "memory_search": true,
 	"lsp.rename": true,
 	"plan_exit":  true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
@@ -262,6 +262,8 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 		return listToolsOrchestra(hasSubtasks, hasQuestionAsker)
 	case "worker":
 		return listToolsWorker(caps)
+	case "verifier":
+		return listToolsVerifier(caps)
 	case "agent":
 		// Mode agent is resolved to build|plan|explore|ask before tool listing;
 		// if still seen here, treat as build.
@@ -392,7 +394,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolUpdateWorkingState(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
@@ -402,6 +404,18 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	if hasQuestionAsker {
 		out = append(out, session.ToolQuestion())
 	}
+	return applyParallelFlags(out)
+}
+
+// listToolsVerifier is goal-backward verification: read-only + diagnostics + optional bash.
+func listToolsVerifier(caps Capabilities) []llm.ToolDef {
+	out := []llm.ToolDef{
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(),
+		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
+		git.ToolGitStatus(), git.ToolGitDiff(),
+	}
+	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
 }
 
@@ -423,7 +437,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), nav.ToolRepoMap(), fs.ToolASTRename(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), session.ToolUpdateWorkingState(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), nav.ToolRepoMap(), fs.ToolASTRename(),
 		task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
 		task.ToolPlanEnter(), task.ToolPlanExit(), session.ToolQuestion(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),

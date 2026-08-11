@@ -38,6 +38,12 @@ type ChildAgentConfig struct {
 	ResolveTier            TierResolver
 	// MaxWorkerRetries caps validation/final failures for worker children (orchestra).
 	MaxWorkerRetries int
+	// MaxWorkerVerifyRetries is how many times to re-run the worker after verify failure (default 1).
+	MaxWorkerVerifyRetries int
+	// WorkerVerifyEnabled disables deterministic post-worker checks when false.
+	WorkerVerifyEnabled *bool
+	// WorkerLLMVerifyEnabled runs a read-only verifier child after deterministic checks pass (default false).
+	WorkerLLMVerifyEnabled *bool
 	// LLMStepTimeout bounds each child LLM call. When 0, agent.Options defaults
 	// to 25s — far too short for local/tunnelled models. Always set from
 	// cfg.LLM.TimeoutS (see Core.buildChildAgentConfig).
@@ -122,6 +128,8 @@ func modeForSubagent(subagentType string) agent.Mode {
 		return agent.ModeGeneral
 	case "worker":
 		return agent.ModeWorker
+	case "verifier":
+		return agent.ModeVerifier
 	default:
 		return agent.Mode(subagentType)
 	}
@@ -291,13 +299,24 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		opts.MaxInvalidRetries = r.child.MaxWorkerRetries
 		opts.MaxToolErrorRepeats = r.child.MaxWorkerRetries
 	}
-	ag, err := agent.New(client, r.validator, r.toolRunner, opts)
-	if err != nil {
-		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
-	}
-
 	childGoal := FormatChildGoal(subagentType, req.Tier, req.Goal)
-	hist, res, runErr := ag.Run(ctx, nil, childGoal)
+	if mode == agent.ModeWorker {
+		if wo, err := ParseWorkOrderJSON(childGoal); err == nil {
+			opts.WorkerEditPaths = EditScopePaths(wo)
+		}
+	}
+	var hist []llm.Message
+	var res *agent.Result
+	var runErr error
+	if mode == agent.ModeWorker {
+		hist, res, runErr = r.runWorkerWithVerification(ctx, client, opts, childGoal)
+	} else {
+		ag, err := agent.New(client, r.validator, r.toolRunner, opts)
+		if err != nil {
+			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
+		}
+		hist, res, runErr = ag.Run(ctx, nil, childGoal)
+	}
 	status := "done"
 	errMsg := ""
 	if runErr != nil {

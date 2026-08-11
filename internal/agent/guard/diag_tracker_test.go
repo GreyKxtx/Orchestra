@@ -7,53 +7,71 @@ import (
 
 func TestDiagTracker_StreaksOnIdenticalFingerprint(t *testing.T) {
 	tk := NewDiagTracker()
-	if n := tk.Observe("foo.go", "abc"); n != 1 {
+	if n := tk.Observe("foo.go", "abc", ""); n != 1 {
 		t.Fatalf("first observe: streak=%d, want 1", n)
 	}
-	if n := tk.Observe("foo.go", "abc"); n != 2 {
+	if n := tk.Observe("foo.go", "abc", ""); n != 2 {
 		t.Fatalf("second identical observe: streak=%d, want 2", n)
 	}
-	if n := tk.Observe("foo.go", "abc"); n != 3 {
+	if n := tk.Observe("foo.go", "abc", ""); n != 3 {
 		t.Fatalf("third identical observe: streak=%d, want 3", n)
 	}
 }
 
 func TestDiagTracker_ResetOnDifferentFingerprint(t *testing.T) {
 	tk := NewDiagTracker()
-	tk.Observe("foo.go", "abc")
-	tk.Observe("foo.go", "abc")
-	if n := tk.Observe("foo.go", "xyz"); n != 1 {
+	tk.Observe("foo.go", "abc", "")
+	tk.Observe("foo.go", "abc", "")
+	if n := tk.Observe("foo.go", "xyz", ""); n != 1 {
 		t.Errorf("changed fingerprint: streak=%d, want 1 (reset)", n)
 	}
 }
 
 func TestDiagTracker_EmptyFingerprintClearsState(t *testing.T) {
 	tk := NewDiagTracker()
-	tk.Observe("foo.go", "abc")
-	tk.Observe("foo.go", "abc")
-	if n := tk.Observe("foo.go", ""); n != 0 {
+	tk.Observe("foo.go", "abc", "")
+	tk.Observe("foo.go", "abc", "")
+	if n := tk.Observe("foo.go", "", ""); n != 0 {
 		t.Errorf("clean state: streak=%d, want 0", n)
 	}
 	// And the next non-empty observe should restart from 1, not continue
 	// the previous streak.
-	if n := tk.Observe("foo.go", "abc"); n != 1 {
+	if n := tk.Observe("foo.go", "abc", ""); n != 1 {
 		t.Errorf("after clear: streak=%d, want 1", n)
 	}
 }
 
 func TestDiagTracker_PerPathIsolation(t *testing.T) {
 	tk := NewDiagTracker()
-	tk.Observe("foo.go", "abc")
-	tk.Observe("foo.go", "abc")
-	if n := tk.Observe("bar.go", "abc"); n != 1 {
+	tk.Observe("foo.go", "abc", "")
+	tk.Observe("foo.go", "abc", "")
+	if n := tk.Observe("bar.go", "abc", ""); n != 1 {
 		t.Errorf("different path with same fingerprint: streak=%d, want 1", n)
 	}
 }
 
 func TestDiagTracker_NilSafe(t *testing.T) {
 	var tk *DiagTracker
-	if n := tk.Observe("foo.go", "abc"); n != 0 {
+	if n := tk.Observe("foo.go", "abc", ""); n != 0 {
 		t.Errorf("nil tracker: streak=%d, want 0", n)
+	}
+}
+
+func TestDiagTracker_PathsWithErrors(t *testing.T) {
+	tk := NewDiagTracker()
+	if paths := tk.PathsWithErrors(); len(paths) != 0 {
+		t.Fatalf("expected no paths initially, got %v", paths)
+	}
+	tk.Observe("a.go", "fp1", "hint a")
+	tk.Observe("b.go", "fp2", "hint b")
+	paths := tk.PathsWithErrors()
+	if len(paths) != 2 || paths[0] != "a.go" || paths[1] != "b.go" {
+		t.Fatalf("paths=%v", paths)
+	}
+	tk.Observe("a.go", "", "")
+	paths = tk.PathsWithErrors()
+	if len(paths) != 1 || paths[0] != "b.go" {
+		t.Fatalf("after clear a.go: paths=%v", paths)
 	}
 }
 

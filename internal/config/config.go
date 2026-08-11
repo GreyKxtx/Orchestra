@@ -296,7 +296,7 @@ type AgentDefinition struct {
 // builtInAgentModes are reserved names that cannot be used for custom agents.
 var builtInAgentModes = map[string]bool{
 	"build": true, "plan": true, "explore": true, "general": true,
-	"ask": true, "debug": true, "architecture": true,
+	"ask": true, "debug": true, "architecture": true, "verifier": true,
 	"agent": true, "orchestra": true, "worker": true,
 	"compaction": true, "title": true, "summary": true,
 }

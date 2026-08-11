@@ -621,6 +621,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 
+		workerVerifyEnabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
 			MaxPromptBytes:         cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:    cfg.Agent.CompactThresholdPct,
@@ -634,6 +635,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			ProviderLabel:          providerLabelFor(cfg, applyProvider),
 			ModelLabel:             cfg.LLM.Model,
 			MaxWorkerRetries:       cfg.Orchestra.ResolvedMaxWorkerRetries(),
+			MaxWorkerVerifyRetries: cfg.Orchestra.ResolvedMaxWorkerVerifyRetries(),
+			WorkerVerifyEnabled:    &workerVerifyEnabled,
 			Caps: tools.Capabilities{
 				Exec:    allowExecEffective,
 				Web:     allowWebEffective,

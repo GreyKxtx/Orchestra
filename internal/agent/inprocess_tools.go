@@ -142,7 +142,12 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			out["description"] = req.Description
 		}
 		if result.Result != "" {
-			out["result"] = result.Result
+			if strings.EqualFold(subagentType, "worker") {
+				a.maybeRecordWorkerToScratchpad(subagentType, result.Result)
+				out["result"] = CompactWorkerResultForLead(result.Result, workerLeadResultMaxBytes)
+			} else {
+				out["result"] = result.Result
+			}
 		}
 		if result.Error != "" {
 			out["error"] = result.Error
@@ -209,6 +214,10 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		result, err := a.opts.SubtaskRunner.Wait(ctx, req.TaskID, req.TimeoutMS)
 		if err != nil {
 			return nil, fmt.Errorf("task.wait: %w", err)
+		}
+		if a.opts.Mode == ModeOrchestra && result.Result != "" && looksLikeWorkerResult(result.Result) {
+			a.maybeRecordWorkerToScratchpad("worker", result.Result)
+			result.Result = CompactWorkerResultForLead(result.Result, workerLeadResultMaxBytes)
 		}
 		resp, _ := json.Marshal(result)
 		return resp, nil

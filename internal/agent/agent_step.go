@@ -360,8 +360,10 @@ func (a *Agent) modeReminder() string {
 		return "Ask mode: read-only answers. Do not edit code."
 	case ModeDebug:
 		return "Debug mode: find root cause with evidence; fix narrowly or delegate worker."
+	case ModeVerifier:
+		return "Verifier mode: goal-backward read-only checks; finish with ## VERIFICATION PASSED or ## VERIFICATION FAILED."
 	case ModeOrchestra:
-		return "You are Orchestra Lead: plan and delegate via task(subagent_type=worker|ask|debug|architecture|explore, tier=complex|focused|micro). Do not edit production code."
+		return "You are Orchestra Lead: plan and delegate via task(subagent_type=worker|verifier|ask|debug|architecture|explore, tier=complex|focused|micro). Do not edit production code."
 	case ModeBuild, "":
 		if a.justSwitchedFromPlan {
 			a.justSwitchedFromPlan = false

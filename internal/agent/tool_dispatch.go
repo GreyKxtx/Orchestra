@@ -16,7 +16,7 @@ import (
 // (session state, subtasks, skills, plan mode) rather than tools.Runner.Call.
 func isAgentInProcessTool(name string) bool {
 	switch normalizeToolName(name) {
-	case "todowrite", "todoread",
+	case "todowrite", "todoread", "update_working_state",
 		"task", "task_spawn", "task_wait", "task_cancel", "task_result",
 		"plan_enter", "plan_exit", "question", "skill_invoke":
 		return true
@@ -220,6 +220,17 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			Content string `json:"content"`
 		}
 		_ = json.Unmarshal(tc.Input, &req)
+		if blockErr := a.blockWorkerTaskResult(req.Content); blockErr != nil {
+			*history = append(*history, llm.Message{
+				Role:       llm.RoleTool,
+				ToolCallID: toolCallID,
+				Content:    formatToolErrorJSON(name, tc.Input, blockErr),
+			})
+			if cbErr := cb.RecordToolError(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+			return serialToolOutcome{}, nil
+		}
 		emitStepDone("final")
 		return serialToolOutcome{
 			EarlyResult: &Result{
@@ -293,6 +304,30 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 					Content: string(payload),
 				}})
 			}
+		}
+		*history = append(*history, llm.Message{
+			Role:       llm.RoleTool,
+			ToolCallID: toolCallID,
+			Content:    content,
+		})
+		if err != nil {
+			if cbErr := cb.RecordToolError(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+		} else {
+			cb.ResetToolErrors()
+		}
+		return serialToolOutcome{}, nil
+	}
+
+	if name == "update_working_state" {
+		out, err := a.handleUpdateWorkingState(tc.Input)
+		a.observeWorkingTool(name, tc.Input, out, err)
+		var content string
+		if err != nil {
+			content = formatToolErrorJSON(name, tc.Input, err)
+		} else {
+			content = string(out)
 		}
 		*history = append(*history, llm.Message{
 			Role:       llm.RoleTool,
@@ -388,7 +423,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 		allowed := false
 		if json.Unmarshal(tc.Input, &pathReq) == nil {
-			allowed = plan.IsWritablePath(pathReq.Path, a.effectivePlanPath())
+			if a.opts.Mode == ModeOrchestra {
+				allowed = plan.IsOrchestraLeadWritablePath(pathReq.Path, a.effectivePlanPath())
+			} else {
+				allowed = plan.IsWritablePath(pathReq.Path, a.effectivePlanPath())
+			}
 		}
 		if !allowed {
 			label := "plan mode"
@@ -398,7 +437,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			case ModeArchitecture:
 				label = "architecture mode"
 			}
-			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s or .orchestra/plans/*.md", label, a.effectivePlanPath()))
+			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s, .orchestra/plans/*.md, or .orchestra/state.md", label, a.effectivePlanPath()))
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
@@ -406,8 +445,27 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			return serialToolOutcome{}, nil
 		}
 	}
+
+	if scopeErr := a.checkWorkerEditScope(name, tc.Input); scopeErr != nil {
+		toolResult := formatToolDeniedJSON(name, tc.Input, scopeErr.Error())
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+		if cbErr := cb.RecordDenied(name); cbErr != nil {
+			return serialToolOutcome{}, cbErr
+		}
+		return serialToolOutcome{}, nil
+	}
+
 	if a.opts.Mode == ModeAsk && (name == "write" || name == "edit" || name == "bash" || name == "fs.delete" || name == "fs.rename" || name == "skill_invoke") {
 		toolResult := formatToolDeniedJSON(name, tc.Input, "ask mode is read-only")
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+		if cbErr := cb.RecordDenied(name); cbErr != nil {
+			return serialToolOutcome{}, cbErr
+		}
+		return serialToolOutcome{}, nil
+	}
+
+	if a.opts.Mode == ModeVerifier && (name == "write" || name == "edit" || name == "fs.delete" || name == "fs.rename" || name == "skill_invoke" || name == "lsp.rename") {
+		toolResult := formatToolDeniedJSON(name, tc.Input, "verifier mode is read-only (bash allowed for verification commands)")
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -545,7 +603,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if name == "write" || name == "edit" {
 		if hint := extractLSPErrors(out); hint != "" {
 			path := extractWriteOrEditPath(tc.Input)
-			streak := a.diags.Observe(path, fingerprintLSPErrors(out))
+			streak := a.diags.Observe(path, fingerprintLSPErrors(out), hint)
 			if streak >= 2 && path != "" {
 				hint = "LSP_ERRORS — your last edit on " + path + " did not change diagnostics (same error set, attempt #" + fmt.Sprint(streak) + "). Stop write/edit'ing this file and diagnose the cause via lsp.references / lsp.hover / read.\n" + hint
 			}
@@ -561,7 +619,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 				}})
 			}
 		} else {
-			_ = a.diags.Observe(extractWriteOrEditPath(tc.Input), "")
+			_ = a.diags.Observe(extractWriteOrEditPath(tc.Input), "", "")
 		}
 	}
 

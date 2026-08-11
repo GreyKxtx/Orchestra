@@ -9,6 +9,16 @@ import (
 func (a *Agent) prepareToolHistoryContent(name string, input json.RawMessage, out []byte) string {
 	a.observeWorkingTool(name, input, out, nil)
 	content := string(out)
+	if a.opts.Mode == ModeOrchestra {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "task", "task_wait":
+			if compact := orchestraCompactTaskToolOutput(content); compact != "" {
+				content = compact
+				a.maybeAutoSessionMemory(name, input, content)
+				return content
+			}
+		}
+	}
 	budget := a.opts.ToolDigestBytes
 	if budget <= 0 {
 		a.maybeAutoSessionMemory(name, input, content)

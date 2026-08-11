@@ -9,7 +9,7 @@ import (
 func TestAllPrimaryModesHaveSystemPrompt(t *testing.T) {
 	modes := []string{
 		"build", "plan", "explore", "ask", "debug", "architecture",
-		"general", "orchestra", "worker",
+		"general", "orchestra", "worker", "verifier",
 		"compaction", "title", "summary",
 	}
 	for _, mode := range modes {

@@ -272,6 +272,7 @@ func TestModeForSubagent(t *testing.T) {
 		"architecture": agent.ModeArchitecture,
 		"general":      agent.ModeGeneral,
 		"worker":       agent.ModeWorker,
+		"verifier":     agent.ModeVerifier,
 	}
 	for in, want := range cases {
 		if got := modeForSubagent(in); got != want {
@@ -349,5 +350,34 @@ func TestChildToolsForExploreHasLSP(t *testing.T) {
 	}
 	if !hasResult {
 		t.Fatal("explore child should include task_result")
+	}
+}
+
+func TestChildToolsForVerifierReadOnlyWithBash(t *testing.T) {
+	withExec := childToolsForSubagent("verifier", tools.Capabilities{Exec: true})
+	hasBash, hasRead, hasWrite, hasResult := false, false, false, false
+	for _, d := range withExec {
+		switch d.Function.Name {
+		case "bash":
+			hasBash = true
+		case "read":
+			hasRead = true
+		case "write", "edit":
+			hasWrite = true
+		case "task_result":
+			hasResult = true
+		}
+	}
+	if !hasBash || !hasRead || !hasResult {
+		t.Fatalf("verifier tools: bash=%v read=%v result=%v", hasBash, hasRead, hasResult)
+	}
+	if hasWrite {
+		t.Fatal("verifier must not include write/edit")
+	}
+	noExec := childToolsForSubagent("verifier", tools.Capabilities{})
+	for _, d := range noExec {
+		if d.Function.Name == "bash" {
+			t.Fatal("verifier without exec cap should not expose bash")
+		}
 	}
 }
