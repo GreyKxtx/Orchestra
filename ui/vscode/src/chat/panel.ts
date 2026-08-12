@@ -1114,6 +1114,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           taskId: event.task_id || "",
           parentToolCallId: event.parent_tool_call_id,
           subagentType: event.subagent_type,
+          tier: event.tier,
+          model: event.model,
           content: event.content,
         });
         break;

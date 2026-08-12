@@ -415,6 +415,10 @@ type ProjectConfig struct {
 	// Pricing maps provider → model → per-1M-token USD rates for cost telemetry.
 	// Optional; when missing, .orchestra/usage.jsonl records only token counts.
 	Pricing PricingConfig `yaml:"pricing,omitempty"`
+	// Routing is the parsed orchestra_routing.yaml (tier → provider/model
+	// bindings). Loaded from the config directory by Load; never marshalled
+	// back into .orchestra.yml.
+	Routing *OrchestraRouting `yaml:"-"`
 }
 
 // ModelPricing is the per-1M-token USD price for one model.
@@ -660,6 +664,17 @@ func Load(path string) (*ProjectConfig, error) {
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	routing, err := LoadOrchestraRouting(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	if routing != nil {
+		if err := routing.Validate(cfg.Providers); err != nil {
+			return nil, err
+		}
+		cfg.Routing = routing
 	}
 
 	return &cfg, nil
@@ -936,6 +951,23 @@ func (c *ProjectConfig) validateOrchestra() error {
 	if def := strings.TrimSpace(o.DefaultTier); def != "" && len(o.Tiers) > 0 {
 		if o.FindTier(def) == nil {
 			return fmt.Errorf("orchestra.default_tier %q not found in tiers", def)
+		}
+	}
+	switch o.ResolvedPhaseEnforcement() {
+	case "strict", "prompt_only":
+	default:
+		return fmt.Errorf("orchestra.phase_enforcement must be strict or prompt_only, got %q", o.PhaseEnforcement)
+	}
+	for k, v := range o.Gates {
+		switch k {
+		case GateGitCommit, GateGitPush, GateContractFreeze:
+		default:
+			return fmt.Errorf("orchestra.gates: unknown gate %q (known: %s, %s, %s)", k, GateGitCommit, GateGitPush, GateContractFreeze)
+		}
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "required", "off":
+		default:
+			return fmt.Errorf("orchestra.gates.%s must be required or off, got %q", k, v)
 		}
 	}
 	return nil

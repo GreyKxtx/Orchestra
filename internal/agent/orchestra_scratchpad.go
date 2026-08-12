@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
-	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/internal/agent/history"
+	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 const workerLeadResultMaxBytes = 1200
@@ -37,12 +39,31 @@ func readOrchestraScratchpad(root string) string {
 	return "<orchestra_scratchpad>\n" + body + "\n</orchestra_scratchpad>"
 }
 
+// DeptScratchpadDir is where department-instance scratchpads live (spec §5.8):
+// .orchestra/state.md belongs to the Orchestrator, .orchestra/depts/{instance}.md
+// to Dept Leads (one file per instance, e.g. frontend@web.md).
+const DeptScratchpadDir = ".orchestra/depts"
+
+// deptInstanceRe validates a department instance id: `frontend` or `frontend@web`.
+var deptInstanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*(@[a-z0-9][a-z0-9_-]*)?$`)
+
+// DeptScratchpadRelPath maps a dept instance id to its scratchpad path, or ""
+// when the id is malformed.
+func DeptScratchpadRelPath(instance string) string {
+	instance = strings.TrimSpace(instance)
+	if !deptInstanceRe.MatchString(instance) {
+		return ""
+	}
+	return DeptScratchpadDir + "/" + instance + ".md"
+}
+
 func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage, error) {
 	if a.opts.Mode != ModeOrchestra {
 		return nil, fmt.Errorf("update_working_state is only available in orchestra Lead mode")
 	}
 	var req struct {
 		Content string `json:"content"`
+		Dept    string `json:"dept"`
 	}
 	if err := json.Unmarshal(input, &req); err != nil {
 		return nil, fmt.Errorf("update_working_state: invalid input: %w", err)
@@ -51,18 +72,47 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 	if content == "" {
 		return nil, fmt.Errorf("update_working_state: content is required")
 	}
-	path := orchestraScratchpadAbs(a.tools.WorkspaceRoot())
+	relPath := plan.OrchestraStateRelPath
+	if dept := strings.TrimSpace(req.Dept); dept != "" {
+		relPath = DeptScratchpadRelPath(dept)
+		if relPath == "" {
+			return nil, fmt.Errorf("update_working_state: invalid dept instance %q (expected e.g. frontend or frontend@web)", dept)
+		}
+	}
+	path := filepath.Join(a.tools.WorkspaceRoot(), filepath.FromSlash(relPath))
+	// Phase stamp (spec §4.5): remember the pre-write phase so the runtime
+	// can refresh phase_since when the orchestrator switches phases.
+	var prevPhase orchestrastate.Phase
+	if relPath == plan.OrchestraStateRelPath {
+		if prev, found, err := orchestrastate.Load(a.tools.WorkspaceRoot()); err == nil && found {
+			prevPhase = prev.Phase
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 	if err := fsutil.AtomicWriteFile(path, []byte(content+"\n"), 0o644); err != nil {
 		return nil, err
 	}
-	resp, _ := json.Marshal(map[string]any{
-		"path":    plan.OrchestraStateRelPath,
+	respFields := map[string]any{
+		"path":    relPath,
 		"written": len(content),
 		"status":  "ok",
-	})
+	}
+	// Context budget (spec §6.4): oversized state.md gets its older head
+	// archived deterministically; the model keeps only the active tail.
+	if relPath == plan.OrchestraStateRelPath {
+		if err := orchestrastate.TouchPhaseStamp(a.tools.WorkspaceRoot(), prevPhase); err != nil {
+			a.logf("phase stamp update failed: %v", err)
+		}
+		if arch, err := orchestrastate.ArchiveOverflow(a.tools.WorkspaceRoot(), a.opts.StateMaxBytes); err != nil {
+			a.logf("state archive failed: %v", err)
+		} else if arch != "" {
+			respFields["archived_to"] = arch
+			respFields["note"] = "state.md exceeded state_max_bytes; older content moved to " + arch
+		}
+	}
+	resp, _ := json.Marshal(respFields)
 	return resp, nil
 }
 

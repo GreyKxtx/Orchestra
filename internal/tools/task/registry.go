@@ -28,9 +28,10 @@ func ToolTask() llm.ToolDef {
     "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt — provide exactly one of prompt/goal" },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker"],
+      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker", "product", "documentation"],
       "description": "Child agent mode (default: explore)"
     },
+    "task_type": { "type": "string", "description": "Orchestra routing key (orchestra_routing.yaml); defaults subagent_type/tier/model from the routing rule" },
     "tier": { "type": "string", "description": "Orchestra worker tier name (complex|focused|micro)" },
     "provider": { "type": "string", "description": "Optional named providers: map entry for child LLM" },
     "model": { "type": "string", "description": "Optional model id override for child LLM" },
@@ -47,22 +48,31 @@ func ToolTaskSpawn() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_spawn",
-			Description: "Spawn a child asynchronously (rare). Prefer doing quick/concrete edits yourself with edit/write. Use only for parallel independent work; then task_wait.",
+			Description: "Spawn a child asynchronously (rare). Prefer doing quick/concrete edits yourself with edit/write. Use only for parallel independent work; then task_wait. Batch: pass workorders[] (worker-only) to spawn one worker per WorkOrder in a single call; the runtime serializes WorkOrders with overlapping target_files.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "anyOf": [
     { "required": ["goal"] },
-    { "required": ["prompt"] }
+    { "required": ["prompt"] },
+    { "required": ["workorders"] }
   ],
   "properties": {
-    "goal": { "type": "string", "minLength": 1, "description": "Provide exactly one of goal/prompt" },
+    "goal": { "type": "string", "minLength": 1, "description": "Provide exactly one of goal/prompt/workorders" },
     "prompt": { "type": "string", "minLength": 1, "description": "Alias for goal" },
+    "workorders": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "type": "object" },
+      "description": "Batch of WorkOrder JSON objects (worker-only). Returns task_ids[] in spawn order; overlapping target_files are serialized automatically."
+    },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker"],
+      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker", "product", "documentation"],
       "description": "Child agent mode (default: explore)"
     },
+    "task_type": { "type": "string", "description": "Orchestra routing key (orchestra_routing.yaml); defaults subagent_type/tier/model from the routing rule" },
     "tier": { "type": "string", "description": "Orchestra worker tier name" },
     "provider": { "type": "string" },
     "model": { "type": "string" },

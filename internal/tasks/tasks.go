@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -19,8 +23,62 @@ import (
 // Returns client plus labels for usage tracking. Nil resolver → always use TaskRunner.llmClient.
 type ChildClientResolver func(provider, model string) (client llm.Client, providerLabel, modelLabel string, err error)
 
-// TierResolver maps a worker tier name to provider/model (orchestra.tiers).
+// TierResolver maps a worker tier name to provider/model (orchestra.tiers
+// or orchestra_routing.yaml roles).
 type TierResolver func(tier string) (provider, model string, ok bool)
+
+// TaskTypeRoute is the routing decision for a task_type (orchestra_routing.yaml).
+type TaskTypeRoute struct {
+	SubagentType string
+	Tier         string // legacy worker band (complex|focused|micro)
+	Provider     string
+	Model        string
+}
+
+// TaskTypeRouter resolves a task_type into default spawn parameters.
+type TaskTypeRouter func(taskType string) (TaskTypeRoute, bool)
+
+// TierEscalationSettings mirrors orchestra.tier_escalation (spec §5.5):
+// after FailuresBeforeEscalation failed verification rounds on the assigned
+// tier, the same WorkOrder is re-run on EscalationTier; when that fails too
+// the result stays verification_failed for the Lead to replan.
+type TierEscalationSettings struct {
+	Enabled                  bool
+	FailuresBeforeEscalation int    // base-tier attempts (default 2)
+	MaxEscalatedRetries      int    // escalated-tier attempts (default 1)
+	EscalationTier           string // tier name resolved via TierResolver (default "complex")
+}
+
+func (t TierEscalationSettings) baseRounds() int {
+	if t.FailuresBeforeEscalation <= 0 {
+		return 2
+	}
+	return t.FailuresBeforeEscalation
+}
+
+func (t TierEscalationSettings) escalatedRounds() int {
+	if t.MaxEscalatedRetries <= 0 {
+		return 1
+	}
+	return t.MaxEscalatedRetries
+}
+
+func (t TierEscalationSettings) tierName() string {
+	if v := strings.TrimSpace(t.EscalationTier); v != "" {
+		return v
+	}
+	return "complex"
+}
+
+// SpawnGuard is the fail-closed phase gate evaluated before a child starts
+// (orchestrastate.GuardSpawn wired by core/CLI). A non-nil error blocks the
+// spawn; the error text must contain an unblock path.
+type SpawnGuard func(subagentType string) error
+
+// ContractRefsGuard is the Contract Epoch gate (spec §5.3, wired to
+// orchestrastate.GuardWorkOrderContract): verifies a worker WorkOrder's
+// contract_refs against EPOCH.yaml at spawn and again on success.
+type ContractRefsGuard func(refs []contract.Ref) error
 
 // ChildAgentConfig holds history/memory settings propagated to child agents.
 type ChildAgentConfig struct {
@@ -36,14 +94,35 @@ type ChildAgentConfig struct {
 	Caps                   tools.Capabilities
 	ResolveClient          ChildClientResolver
 	ResolveTier            TierResolver
+	RouteTaskType          TaskTypeRouter
+	GuardSpawn             SpawnGuard
+	GuardContractRefs      ContractRefsGuard
+	// QuestionAsker enables the runtime Question Barrier (spec §4.3):
+	// open_questions[] from task_result are relayed to the user without an
+	// orchestrator turn. Nil = barrier off (e.g. core stdio mode).
+	QuestionAsker tools.QuestionAsker
+	// MaxClarificationRounds caps user round-trips per phase (default 2).
+	MaxClarificationRounds int
+	// RelayViaLLM disables the runtime barrier (questions stay in the
+	// result for the orchestrator to handle — legacy/debug mode).
+	RelayViaLLM bool
+	// PhaseTimeouts are the resolved orchestra.phase_timeouts values
+	// (spec §4.5): stale-phase advisories, Lead brief cap, blocked escalation.
+	PhaseTimeouts orchestrastate.PhaseTimeouts
 	// MaxWorkerRetries caps validation/final failures for worker children (orchestra).
 	MaxWorkerRetries int
 	// MaxWorkerVerifyRetries is how many times to re-run the worker after verify failure (default 1).
 	MaxWorkerVerifyRetries int
+	// WorkerVerifyAffectedTests runs `go test` on packages the worker edited (default true).
+	WorkerVerifyAffectedTests *bool
+	// WorkerVerifyFrontendTypecheck runs `tsc --noEmit` when frontend files were edited (default true).
+	WorkerVerifyFrontendTypecheck *bool
 	// WorkerVerifyEnabled disables deterministic post-worker checks when false.
 	WorkerVerifyEnabled *bool
 	// WorkerLLMVerifyEnabled runs a read-only verifier child after deterministic checks pass (default false).
 	WorkerLLMVerifyEnabled *bool
+	// TierEscalation re-runs a failing WorkOrder on a senior tier (spec §5.5).
+	TierEscalation TierEscalationSettings
 	// LLMStepTimeout bounds each child LLM call. When 0, agent.Options defaults
 	// to 25s — far too short for local/tunnelled models. Always set from
 	// cfg.LLM.TimeoutS (see Core.buildChildAgentConfig).
@@ -77,6 +156,12 @@ type taskEntry struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	result *agent.SubtaskResult
+	// editPaths is the normalized WorkOrder edit scope for worker tasks;
+	// used by the disjoint check (spec §5.6) to serialize conflicting spawns.
+	editPaths map[string]struct{}
+	// contractRefs pins the running worker to contract artifact versions;
+	// used by InvalidateStaleContractTasks on epoch change (spec §5.3).
+	contractRefs []contract.Ref
 }
 
 // New creates a new TaskRunner.
@@ -130,6 +215,10 @@ func modeForSubagent(subagentType string) agent.Mode {
 		return agent.ModeWorker
 	case "verifier":
 		return agent.ModeVerifier
+	case "product":
+		return agent.ModeProduct
+	case "documentation":
+		return agent.ModeDocs
 	default:
 		return agent.Mode(subagentType)
 	}
@@ -159,16 +248,37 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 		maxSteps = capSteps
 	}
 
+	r.applyTaskTypeRoute(&req)
 	subagentType := req.SubagentType
 	if subagentType == "" {
 		subagentType = "explore"
 	}
+	if r.child.GuardSpawn != nil {
+		if err := r.child.GuardSpawn(subagentType); err != nil {
+			return "", err
+		}
+	}
+	var editPaths map[string]struct{}
+	var contractRefs []contract.Ref
 	if strings.EqualFold(subagentType, "worker") {
 		goal := strings.TrimSpace(req.Goal)
 		if goal != "" && json.Valid([]byte(goal)) {
-			if _, err := ParseWorkOrderJSON(goal); err != nil {
+			wo, err := ParseWorkOrderJSON(goal)
+			if err != nil {
 				return "", err
 			}
+			if r.child.GuardContractRefs != nil {
+				if err := r.child.GuardContractRefs(wo.ContractRefs); err != nil {
+					return "", err
+				}
+			}
+			// Brief completeness gate (spec §6.2): active only when the
+			// dept playbook opted in via brief_required_fields.
+			if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), wo); err != nil {
+				return "", err
+			}
+			editPaths = normalizeEditPathSet(EditScopePaths(wo))
+			contractRefs = wo.ContractRefs
 		}
 	}
 	childTools := childToolsForSubagent(subagentType, r.child.Caps)
@@ -181,25 +291,54 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 	}
 	var taskCtx context.Context
 	var cancel context.CancelFunc
-	if req.TimeoutMS > 0 {
-		taskCtx, cancel = context.WithTimeout(parent, time.Duration(req.TimeoutMS)*time.Millisecond)
+	// lead_brief_s (spec §4.5): architecture children without an explicit
+	// timeout get the Lead brief wall-clock cap in orchestrated sessions.
+	effectiveTimeoutMS := r.leadBriefTimeoutMS(subagentType, req.TimeoutMS)
+	if effectiveTimeoutMS > 0 {
+		taskCtx, cancel = context.WithTimeout(parent, time.Duration(effectiveTimeoutMS)*time.Millisecond)
 	} else {
 		taskCtx, cancel = context.WithCancel(parent)
 	}
 
 	entry := &taskEntry{
-		id:     taskID,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		id:           taskID,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		editPaths:    editPaths,
+		contractRefs: contractRefs,
 	}
 
+	// Disjoint check (spec §5.6): collect running worker tasks whose edit
+	// scope intersects ours. Registration and conflict collection happen
+	// under one lock, so two overlapping spawns cannot both see a clear
+	// field. Each task waits only for tasks registered before it — the
+	// wait graph is acyclic by construction.
 	r.mu.Lock()
+	conflicts := r.conflictingTasksLocked(editPaths)
 	r.tasks[taskID] = entry
 	r.mu.Unlock()
 
 	go func() {
 		defer close(entry.done)
 		defer cancel()
+
+		if len(conflicts) > 0 {
+			r.notifyQueued(taskID, req.ParentToolCallID, conflicts)
+			for _, c := range conflicts {
+				select {
+				case <-c.done:
+				case <-taskCtx.Done():
+					r.mu.Lock()
+					entry.result = &agent.SubtaskResult{
+						TaskID: taskID,
+						Status: "timeout",
+						Error:  "cancelled while queued behind a conflicting WorkOrder (overlapping target_files)",
+					}
+					r.mu.Unlock()
+					return
+				}
+			}
+		}
 
 		result := r.runChild(taskCtx, taskID, req, subagentType, maxSteps, childTools)
 
@@ -209,6 +348,92 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 	}()
 
 	return taskID, nil
+}
+
+// conflictingTasksLocked returns unfinished tasks whose edit scope overlaps
+// paths. Caller must hold r.mu.
+func (r *TaskRunner) conflictingTasksLocked(paths map[string]struct{}) []*taskEntry {
+	if len(paths) == 0 {
+		return nil
+	}
+	var out []*taskEntry
+	for _, e := range r.tasks {
+		if len(e.editPaths) == 0 {
+			continue
+		}
+		select {
+		case <-e.done:
+			continue
+		default:
+		}
+		for p := range paths {
+			if _, hit := e.editPaths[p]; hit {
+				out = append(out, e)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (r *TaskRunner) notifyQueued(taskID, parentToolCallID string, conflicts []*taskEntry) {
+	if r.child.NotifyAgentEvent == nil {
+		return
+	}
+	ids := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		ids = append(ids, c.id)
+	}
+	r.child.NotifyAgentEvent(map[string]any{
+		"type":                "child_queued",
+		"task_id":             taskID,
+		"parent_tool_call_id": parentToolCallID,
+		"waiting_for":         ids,
+		"reason":              "overlapping target_files; serialized per spec §5.6",
+	})
+}
+
+// normalizeEditPathSet builds the comparable path set for the disjoint check.
+func normalizeEditPathSet(paths []string) map[string]struct{} {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		p = filepath.ToSlash(strings.TrimSpace(p))
+		p = strings.TrimPrefix(p, "./")
+		if p != "" {
+			out[p] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// applyTaskTypeRoute fills empty spawn fields from the orchestra_routing.yaml
+// rule for req.TaskType. Explicit caller values always win; for workers the
+// provider/model binding is left to ResolveTier (tier band precedence).
+func (r *TaskRunner) applyTaskTypeRoute(req *agent.SubtaskSpawnRequest) {
+	if req == nil || strings.TrimSpace(req.TaskType) == "" || r.child.RouteTaskType == nil {
+		return
+	}
+	route, ok := r.child.RouteTaskType(strings.TrimSpace(req.TaskType))
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(req.SubagentType) == "" && route.SubagentType != "" {
+		req.SubagentType = route.SubagentType
+	}
+	if strings.TrimSpace(req.Tier) == "" && route.Tier != "" {
+		req.Tier = route.Tier
+	}
+	worker := strings.EqualFold(strings.TrimSpace(req.SubagentType), "worker")
+	if !worker && strings.TrimSpace(req.Provider) == "" && strings.TrimSpace(req.Model) == "" {
+		req.Provider = route.Provider
+		req.Model = route.Model
+	}
 }
 
 func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType string) (llm.Client, string, string) {
@@ -236,12 +461,15 @@ func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType
 }
 
 func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, subagentType string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+	var workOrder *WorkOrder
 	if strings.EqualFold(subagentType, "worker") {
 		goal := strings.TrimSpace(req.Goal)
 		if goal != "" && json.Valid([]byte(goal)) {
-			if _, err := ParseWorkOrderJSON(goal); err != nil {
+			wo, err := ParseWorkOrderJSON(goal)
+			if err != nil {
 				return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
 			}
+			workOrder = wo
 		}
 	}
 	client, providerLabel, modelLabel := r.resolveChildLLM(req, subagentType)
@@ -291,6 +519,8 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 			"task_id":              taskID,
 			"parent_tool_call_id":  req.ParentToolCallID,
 			"subagent_type":        subagentType,
+			"tier":                 strings.TrimSpace(req.Tier),
+			"model":                modelLabel,
 			"content":              req.Goal,
 		})
 	}
@@ -300,9 +530,18 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		opts.MaxToolErrorRepeats = r.child.MaxWorkerRetries
 	}
 	childGoal := FormatChildGoal(subagentType, req.Tier, req.Goal)
+	if conv := loadProjectConventions(r.toolRunner.WorkspaceRoot(), mode); conv != "" {
+		childGoal = conv + "\n\n" + childGoal
+	}
+	if dec := loadDecisionLog(r.toolRunner.WorkspaceRoot(), mode); dec != "" {
+		childGoal = dec + "\n\n" + childGoal
+	}
 	if mode == agent.ModeWorker {
 		if wo, err := ParseWorkOrderJSON(childGoal); err == nil {
 			opts.WorkerEditPaths = EditScopePaths(wo)
+			// WorkOrder-driven worker → schema-enforced task_result
+			// (spec checklist 31, local L3/L1 drift protection).
+			opts.WorkerStrictResult = true
 		}
 	}
 	var hist []llm.Message
@@ -341,6 +580,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		r.child.NotifyAgentEvent(params)
 	}
 	if runErr != nil {
+		r.recordWorkerToDeptScratchpad(workOrder, "", status, errMsg)
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: runErr.Error()}
 		}
@@ -359,6 +599,32 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		taskResult = agent.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
 
+	// Question Barrier (spec §4.3): relay open_questions[] to the user via
+	// the runtime, append answers to decisions.md, attach them to the result.
+	taskResult = r.relayOpenQuestions(ctx, taskResult)
+
+	// Phase timeouts (spec §4.5): stale-phase advisory + blocked escalation.
+	taskResult = r.annotatePhaseTimeout(taskResult)
+	taskResult = r.trackBlockedEscalation(ctx, taskResult)
+
+	// Re-check contract_refs on success (spec §5.3): the contract may have
+	// changed while the worker ran; a stale result must not reach the Lead
+	// as success — staged patches are dropped with the dry-run overlay.
+	if mode == agent.ModeWorker && workOrder != nil && r.child.GuardContractRefs != nil {
+		if err := r.child.GuardContractRefs(workOrder.ContractRefs); err != nil {
+			msg := "stale_contract: contract changed during execution — result discarded, Lead must regenerate the WorkOrder; " + err.Error()
+			r.recordWorkerToDeptScratchpad(workOrder, "", "stale_contract", err.Error())
+			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
+		}
+	}
+
+	// Doc debt (spec §2.3.2): verified worker edits that hit a MANIFEST
+	// trigger put the mapped doc into state.md doc_debt for 6b.
+	if mode == agent.ModeWorker && workerTaskResultSuccess(taskResult) {
+		recordDocDebt(r.toolRunner.WorkspaceRoot(), CollectEditedPaths(hist, ""))
+	}
+
+	r.recordWorkerToDeptScratchpad(workOrder, taskResult, "done", "")
 	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
 }
 
@@ -415,6 +681,46 @@ func (r *TaskRunner) Wait(ctx context.Context, taskID string, timeoutMS int) (*a
 }
 
 // Cancel aborts a running task.
+// InvalidateStaleContractTasks cancels running worker tasks whose
+// contract_refs no longer match EPOCH.yaml — the spec §5.3 "смена epoch →
+// task_cancel + drop staged patches" rule. Staged patches live in the child's
+// dry-run overlay, so cancellation discards them without touching disk.
+// Returns the cancelled task IDs (sorted, for deterministic logs).
+func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
+	if r == nil || r.child.GuardContractRefs == nil {
+		return nil
+	}
+	type candidate struct {
+		id     string
+		refs   []contract.Ref
+		cancel context.CancelFunc
+	}
+	r.mu.Lock()
+	var cands []candidate
+	for id, e := range r.tasks {
+		if len(e.contractRefs) == 0 {
+			continue
+		}
+		select {
+		case <-e.done:
+			continue
+		default:
+		}
+		cands = append(cands, candidate{id: id, refs: e.contractRefs, cancel: e.cancel})
+	}
+	r.mu.Unlock()
+
+	var cancelled []string
+	for _, c := range cands {
+		if err := r.child.GuardContractRefs(c.refs); err != nil {
+			c.cancel()
+			cancelled = append(cancelled, c.id)
+		}
+	}
+	sort.Strings(cancelled)
+	return cancelled
+}
+
 func (r *TaskRunner) Cancel(_ context.Context, taskID string) error {
 	r.mu.Lock()
 	entry, ok := r.tasks[taskID]

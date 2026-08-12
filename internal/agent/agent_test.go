@@ -1259,6 +1259,84 @@ func (m *mockSubtaskRunner) Cancel(_ context.Context, _ string) error {
 	return nil
 }
 
+// recordingSubtaskRunner captures spawn requests for batch assertions.
+type recordingSubtaskRunner struct {
+	mockSubtaskRunner
+	spawned []SubtaskSpawnRequest
+}
+
+func (m *recordingSubtaskRunner) Spawn(_ context.Context, req SubtaskSpawnRequest) (string, error) {
+	m.spawned = append(m.spawned, req)
+	return fmt.Sprintf("task_mock_%d", len(m.spawned)), nil
+}
+
+func TestHandleTaskTool_SpawnBatchWorkOrders(t *testing.T) {
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(t.TempDir(), tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	rec := &recordingSubtaskRunner{}
+	ag, err := New(&scriptedLLM{}, v, tr, Options{SubtaskRunner: rec})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	out, err := ag.handleTaskTool(context.Background(), "task_spawn", "call-batch-1", json.RawMessage(`{
+		"workorders": [
+			{"intent":"edit a","target_files":["pkg/a.go"]},
+			{"intent":"edit b","target_files":["pkg/b.go"]}
+		],
+		"tier": "focused"
+	}`))
+	if err != nil {
+		t.Fatalf("handleTaskTool: %v", err)
+	}
+	var resp struct {
+		TaskIDs []string `json:"task_ids"`
+		Status  string   `json:"status"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Status != "spawned" || len(resp.TaskIDs) != 2 {
+		t.Fatalf("resp = %+v, want 2 spawned task_ids", resp)
+	}
+	if len(rec.spawned) != 2 {
+		t.Fatalf("spawned %d children, want 2", len(rec.spawned))
+	}
+	for i, req := range rec.spawned {
+		if req.SubagentType != "worker" {
+			t.Fatalf("workorders[%d]: subagent_type = %q, want worker", i, req.SubagentType)
+		}
+		if req.Tier != "focused" {
+			t.Fatalf("workorders[%d]: tier = %q, want focused", i, req.Tier)
+		}
+		if !json.Valid([]byte(req.Goal)) || !strings.Contains(req.Goal, "target_files") {
+			t.Fatalf("workorders[%d]: goal must be the WorkOrder JSON, got %q", i, req.Goal)
+		}
+	}
+
+	// goal + workorders together is rejected.
+	if _, err := ag.handleTaskTool(context.Background(), "task_spawn", "call-batch-2", json.RawMessage(`{
+		"goal": "x", "workorders": [{"intent":"y"}]
+	}`)); err == nil {
+		t.Fatal("goal+workorders must be rejected")
+	}
+
+	// workorders with a non-worker subagent_type is rejected.
+	if _, err := ag.handleTaskTool(context.Background(), "task_spawn", "call-batch-3", json.RawMessage(`{
+		"workorders": [{"intent":"y"}], "subagent_type": "explore"
+	}`)); err == nil {
+		t.Fatal("workorders must be worker-only")
+	}
+}
+
 func TestHandleTaskTool_UnifiedTaskSync(t *testing.T) {
 	v, err := schema.NewValidator()
 	if err != nil {

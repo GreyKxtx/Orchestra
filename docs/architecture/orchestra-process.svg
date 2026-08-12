@@ -1,123 +1,229 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
-  <title>Orchestra Process - phases 0-6 x departments</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 850" width="1200" height="850">
+  <title>Orchestra Process - phases 0 - 1 - 2 - 2.5 - 3 - 4 - 5 - 6a - 6b - 6c</title>
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M2 1 L8 5 L2 9" fill="none" stroke="#636e72" stroke-width="1.5"/>
     </marker>
-    <marker id="arr-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M2 1 L8 5 L2 9" fill="none" stroke="#e17055" stroke-width="1.5"/>
+    <marker id="arr-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M2 1 L8 5 L2 9" fill="none" stroke="#d63031" stroke-width="1.5"/>
     </marker>
   </defs>
-  <rect width="1200" height="800" fill="#ffffff"/>
+  <rect width="1200" height="850" fill="#ffffff"/>
 
-  <text x="600" y="28" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="16" font-weight="bold" fill="#2d3436">B. Orchestra Process (phases 0-6 x departments)</text>
-  <text x="600" y="48" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#636e72">PM stage 0 - Orchestrator hub - engineering - Platform delivery</text>
+  <text x="600" y="26" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="16" font-weight="bold" fill="#2d3436">B. Orchestra Process (0 - 1 - 2 - 2.5 - 3 - 4 - 5 - 6a - 6b - 6c)</text>
+  <text x="600" y="44" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#636e72">Contract Freeze at 2.5 unlocks 5 departments in parallel; WorkOrders pin contract hashes (Contract Epoch)</text>
 
-  <rect x="40" y="62" width="1120" height="36" rx="6" fill="#e8f4ff" stroke="#0984e3"/>
-  <text x="600" y="84" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#0984e3">Phase 0 Product Mgmt - PRD approved via Orchestrator - before epics</text>
+  <!-- Timeline ribbon: 10 stages -->
+  <rect x="44" y="58" width="104" height="56" rx="6" fill="#74b9ff" stroke="#0984e3"/>
+  <text x="96" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">0 Product</text>
+  <text x="96" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#2d3436">PRD.md, G1</text>
+  <rect x="156" y="58" width="104" height="56" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="208" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">1 Intake</text>
+  <text x="208" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">Concept, conventions L1</text>
+  <rect x="268" y="58" width="104" height="56" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="320" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">2 Epics</text>
+  <text x="320" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">state.md tracker</text>
+  <rect x="380" y="58" width="104" height="56" rx="6" fill="#fab1a0" stroke="#d63031" stroke-width="2"/>
+  <text x="432" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">2.5 Freeze</text>
+  <text x="432" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#2d3436">contracts + G6</text>
+  <rect x="492" y="58" width="104" height="56" rx="6" fill="#a29bfe" stroke="#6c5ce7"/>
+  <text x="544" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">3 Briefs</text>
+  <text x="544" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#2d3436">5 depts parallel</text>
+  <rect x="604" y="58" width="104" height="56" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="656" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">4 WorkOrders</text>
+  <text x="656" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs</text>
+  <rect x="716" y="58" width="104" height="56" rx="6" fill="#55efc4" stroke="#00b894"/>
+  <text x="768" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">5 Workers</text>
+  <text x="768" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">L3 / L1</text>
+  <rect x="828" y="58" width="104" height="56" rx="6" fill="#26de81" stroke="#20bf6b"/>
+  <text x="880" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6a Verify</text>
+  <text x="880" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#ffffff">code + artifacts</text>
+  <rect x="940" y="58" width="104" height="56" rx="6" fill="#26de81" stroke="#20bf6b"/>
+  <text x="992" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6b Platform</text>
+  <text x="992" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#ffffff">staging, docs</text>
+  <rect x="1052" y="58" width="104" height="56" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="1104" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">6c Release</text>
+  <text x="1104" y="94" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">G3 / G4 User</text>
+  <line x1="148" y1="86" x2="155" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="260" y1="86" x2="267" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="372" y1="86" x2="379" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="484" y1="86" x2="491" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="596" y1="86" x2="603" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="708" y1="86" x2="715" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="820" y1="86" x2="827" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="932" y1="86" x2="939" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="1044" y1="86" x2="1051" y2="86" stroke="#636e72" marker-end="url(#arr)"/>
 
-  <rect x="40" y="108" width="120" height="40" rx="6" fill="#74b9ff" stroke="#0984e3"/>
-  <text x="100" y="126" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">1 Intake</text>
-  <text x="100" y="140" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">Orchestrator</text>
-  <rect x="175" y="108" width="120" height="40" rx="6" fill="#ffeaa7" stroke="#e17055"/>
-  <text x="235" y="126" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">2 Epics</text>
-  <text x="235" y="140" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">Tracker</text>
-  <rect x="310" y="108" width="120" height="40" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="370" y="126" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">3 Spec TZ</text>
-  <text x="370" y="140" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">Lead Scout</text>
-  <rect x="445" y="108" width="120" height="40" rx="6" fill="#ffeaa7" stroke="#e17055"/>
-  <text x="505" y="126" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">4 Tasks</text>
-  <text x="505" y="140" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">WorkOrders</text>
-  <rect x="580" y="108" width="120" height="40" rx="6" fill="#55efc4" stroke="#00b894"/>
-  <text x="640" y="126" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">5 Workers</text>
-  <text x="640" y="140" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">L3 L1</text>
-  <rect x="715" y="108" width="180" height="40" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="805" y="126" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6 Delivery</text>
-  <text x="805" y="140" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#ffffff">6a Verify 6b Platform 6c User</text>
-  <line x1="160" y1="128" x2="173" y2="128" stroke="#636e72" marker-end="url(#arr)"/>
-  <line x1="295" y1="128" x2="308" y2="128" stroke="#636e72" marker-end="url(#arr)"/>
-  <line x1="430" y1="128" x2="443" y2="128" stroke="#636e72" marker-end="url(#arr)"/>
-  <line x1="565" y1="128" x2="578" y2="128" stroke="#636e72" marker-end="url(#arr)"/>
-  <line x1="700" y1="128" x2="713" y2="128" stroke="#636e72" marker-end="url(#arr)"/>
+  <!-- Stage 2.5 detail: contract artifacts -->
+  <rect x="40" y="128" width="1120" height="76" rx="8" fill="#fff5f2" stroke="#d63031" stroke-width="1.5"/>
+  <text x="60" y="148" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#d63031">2.5 Contract and Domain Freeze - .orchestra/contract/ (Artifact Verify + human gate G6)</text>
+  <rect x="70" y="156" width="170" height="38" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="155" y="179" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">Domain_Model.md</text>
+  <rect x="256" y="156" width="130" height="38" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="321" y="179" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">NFR.md</text>
+  <rect x="402" y="156" width="170" height="38" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="487" y="179" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">OpenAPI.v0.yaml</text>
+  <rect x="588" y="156" width="190" height="38" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="683" y="179" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">UI_Tokens.skeleton.json</text>
+  <rect x="794" y="156" width="160" height="38" rx="6" fill="#fab1a0" stroke="#d63031"/>
+  <text x="874" y="172" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">EPOCH.yaml</text>
+  <text x="874" y="186" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#2d3436">sha256 + epoch N</text>
+  <ellipse cx="1050" cy="175" rx="80" ry="22" fill="#2d3436" stroke="#fab1a0"/>
+  <text x="1050" y="172" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">G6 freeze approve</text>
+  <text x="1050" y="184" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#fab1a0">User</text>
+  <line x1="954" y1="175" x2="968" y2="175" stroke="#d63031" marker-end="url(#arr-r)"/>
 
-  <text x="600" y="172" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#636e72">Phases 3-5 - per engineering department</text>
+  <!-- Stages 3-5: five departments in parallel -->
+  <text x="600" y="228" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#636e72">Stages 3-5 - five departments start in parallel after 2.5; every WorkOrder pins contract hashes (contract_refs)</text>
 
-  <rect x="40" y="188" width="180" height="380" rx="8" fill="#e8f4ff" stroke="#0984e3" stroke-width="1.5"/>
-  <text x="130" y="211" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#0984e3">Product PM</text>
-  <text x="130" y="228" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" fill="#636e72">stage 0 only</text>
-  <rect x="70" y="244" width="120" height="28" rx="6" fill="#0984e3" stroke="#74b9ff"/>
-  <text x="130" y="262" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Product Lead</text>
-  <rect x="70" y="280" width="120" height="24" rx="4" fill="#fdcb6e" stroke="#ffeaa7"/>
-  <text x="130" y="296" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" fill="#2d3436">Market Scout</text>
-  <rect x="70" y="312" width="120" height="36" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="130" y="330" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">Competitive</text>
-  <text x="130" y="342" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" fill="#636e72">Analysis</text>
-  <rect x="70" y="356" width="120" height="36" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="130" y="378" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">PRD.md</text>
-  <rect x="70" y="502" width="120" height="24" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="130" y="518" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">to Orchestrator</text>
+  <rect x="40" y="240" width="200" height="264" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
+  <text x="140" y="262" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">Design</text>
+  <rect x="55" y="274" width="170" height="30" rx="6" fill="#6c5ce7" stroke="#a29bfe"/>
+  <text x="140" y="293" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Design Lead L4</text>
+  <rect x="55" y="318" width="170" height="34" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="140" y="333" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">3 Brief / TZ + L2 playbook</text>
+  <text x="140" y="346" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">brief gate</text>
+  <rect x="55" y="366" width="170" height="34" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="140" y="381" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">4 WorkOrder JSON</text>
+  <text x="140" y="394" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs + checks</text>
+  <rect x="55" y="414" width="170" height="34" rx="6" fill="#55efc4" stroke="#00b894"/>
+  <text x="140" y="429" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">5 Workers L3/L1</text>
+  <text x="140" y="442" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">isolated patches</text>
+  <line x1="140" y1="304" x2="140" y2="316" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="140" y1="352" x2="140" y2="364" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="140" y1="400" x2="140" y2="412" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="140" y1="448" x2="140" y2="470" stroke="#00b894" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="140" y="486" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#00b894">to 6a</text>
 
-  <rect x="240" y="188" width="170" height="380" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
-  <text x="325" y="211" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">Design</text>
-  <rect x="265" y="330" width="120" height="36" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="325" y="352" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">TZ UI_Tokens</text>
-  <rect x="265" y="502" width="120" height="24" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="325" y="518" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">to Verify</text>
+  <rect x="260" y="240" width="200" height="264" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
+  <text x="360" y="258" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">Frontend</text>
+  <text x="360" y="269" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="7" fill="#636e72">instances: @web @mobile</text>
+  <rect x="275" y="274" width="170" height="30" rx="6" fill="#6c5ce7" stroke="#a29bfe"/>
+  <text x="360" y="293" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Frontend Lead L4</text>
+  <rect x="275" y="318" width="170" height="34" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="360" y="333" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">3 Brief / TZ + L2 playbook</text>
+  <text x="360" y="346" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">brief gate</text>
+  <rect x="275" y="366" width="170" height="34" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="360" y="381" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">4 WorkOrder JSON</text>
+  <text x="360" y="394" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs + checks</text>
+  <rect x="275" y="414" width="170" height="34" rx="6" fill="#55efc4" stroke="#00b894"/>
+  <text x="360" y="429" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">5 Workers L3/L1</text>
+  <text x="360" y="442" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">isolated patches</text>
+  <line x1="360" y1="304" x2="360" y2="316" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="360" y1="352" x2="360" y2="364" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="360" y1="400" x2="360" y2="412" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="360" y1="448" x2="360" y2="470" stroke="#00b894" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="360" y="486" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#00b894">to 6a</text>
 
-  <rect x="430" y="188" width="170" height="380" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
-  <text x="515" y="211" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">Frontend</text>
-  <rect x="455" y="330" width="120" height="36" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="515" y="352" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">TZ API reqs</text>
-  <rect x="455" y="502" width="120" height="24" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="515" y="518" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">to Verify</text>
+  <rect x="480" y="240" width="200" height="264" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
+  <text x="580" y="262" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">Backend</text>
+  <rect x="495" y="274" width="170" height="30" rx="6" fill="#6c5ce7" stroke="#a29bfe"/>
+  <text x="580" y="293" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Backend Lead L4</text>
+  <rect x="495" y="318" width="170" height="34" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="580" y="333" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">3 Brief / TZ + L2 playbook</text>
+  <text x="580" y="346" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">brief gate</text>
+  <rect x="495" y="366" width="170" height="34" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="580" y="381" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">4 WorkOrder JSON</text>
+  <text x="580" y="394" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs + checks</text>
+  <rect x="495" y="414" width="170" height="34" rx="6" fill="#55efc4" stroke="#00b894"/>
+  <text x="580" y="429" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">5 Workers L3/L1</text>
+  <text x="580" y="442" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">isolated patches</text>
+  <line x1="580" y1="304" x2="580" y2="316" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="580" y1="352" x2="580" y2="364" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="580" y1="400" x2="580" y2="412" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="580" y1="448" x2="580" y2="470" stroke="#00b894" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="580" y="486" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#00b894">to 6a</text>
 
-  <rect x="620" y="188" width="170" height="380" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
-  <text x="705" y="211" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">Backend</text>
-  <rect x="645" y="330" width="120" height="36" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="705" y="352" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">OpenAPI</text>
-  <rect x="645" y="502" width="120" height="24" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="705" y="518" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">to Verify</text>
+  <rect x="700" y="240" width="200" height="264" rx="8" fill="#fff5f5" stroke="#d63031" stroke-width="1.5"/>
+  <text x="800" y="262" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#d63031">Security</text>
+  <rect x="715" y="274" width="170" height="30" rx="6" fill="#d63031" stroke="#e17055"/>
+  <text x="800" y="293" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Security Auditor L4</text>
+  <rect x="715" y="318" width="170" height="34" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="800" y="333" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">3 Threat model + ASVS</text>
+  <text x="800" y="346" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">methodology L1 override</text>
+  <rect x="715" y="366" width="170" height="34" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="800" y="381" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">4 WorkOrder JSON</text>
+  <text x="800" y="394" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs + checks</text>
+  <rect x="715" y="414" width="170" height="34" rx="6" fill="#55efc4" stroke="#00b894"/>
+  <text x="800" y="429" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">5 Audit workers</text>
+  <text x="800" y="442" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">findings, fixes</text>
+  <line x1="800" y1="304" x2="800" y2="316" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="800" y1="352" x2="800" y2="364" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="800" y1="400" x2="800" y2="412" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="800" y1="448" x2="800" y2="470" stroke="#00b894" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="800" y="486" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#00b894">to 6a</text>
 
-  <rect x="810" y="188" width="170" height="380" rx="8" fill="#fff5f5" stroke="#d63031" stroke-width="1.5"/>
-  <text x="895" y="211" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#d63031">Security</text>
-  <rect x="835" y="260" width="120" height="40" rx="6" fill="#d63031" stroke="#e17055"/>
-  <text x="895" y="278" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Auditor L4</text>
-  <text x="895" y="292" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#ffe0e0">SAST secrets</text>
-  <rect x="835" y="308" width="120" height="32" rx="6" fill="#d63031" stroke="#e17055"/>
-  <text x="895" y="328" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">Pentest L3</text>
-  <rect x="835" y="502" width="120" height="24" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="895" y="518" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">to Verify</text>
+  <rect x="920" y="240" width="200" height="264" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
+  <text x="1020" y="262" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">QA</text>
+  <rect x="935" y="274" width="170" height="30" rx="6" fill="#6c5ce7" stroke="#a29bfe"/>
+  <text x="1020" y="293" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">QA Lead L4</text>
+  <rect x="935" y="318" width="170" height="34" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="1020" y="333" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">3 Test matrix + L2 playbook</text>
+  <text x="1020" y="346" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">brief gate</text>
+  <rect x="935" y="366" width="170" height="34" rx="6" fill="#ffeaa7" stroke="#e17055"/>
+  <text x="1020" y="381" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">4 WorkOrder JSON</text>
+  <text x="1020" y="394" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs + checks</text>
+  <rect x="935" y="414" width="170" height="34" rx="6" fill="#55efc4" stroke="#00b894"/>
+  <text x="1020" y="429" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#2d3436">5 Test workers</text>
+  <text x="1020" y="442" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">tests, e2e</text>
+  <line x1="1020" y1="304" x2="1020" y2="316" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="1020" y1="352" x2="1020" y2="364" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="1020" y1="400" x2="1020" y2="412" stroke="#636e72" marker-end="url(#arr)"/>
+  <line x1="1020" y1="448" x2="1020" y2="470" stroke="#00b894" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="1020" y="486" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#00b894">to 6a</text>
 
-  <rect x="1000" y="188" width="160" height="380" rx="8" fill="#f5f3ff" stroke="#6c5ce7" stroke-width="1.5"/>
-  <text x="1080" y="211" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#6c5ce7">QA</text>
-  <rect x="1020" y="330" width="120" height="36" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="1080" y="352" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">Test Matrix</text>
-  <rect x="1020" y="502" width="120" height="24" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="1080" y="518" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">to Verify</text>
+  <!-- Phase 6: Delivery -->
+  <rect x="40" y="512" width="1120" height="86" rx="10" fill="#e8fff8" stroke="#26de81" stroke-width="2"/>
+  <text x="60" y="534" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#20bf6b">Phase 6 - Delivery (Leads hand off to Platform only after 6a verified tasks)</text>
+  <rect x="80" y="546" width="270" height="40" rx="6" fill="#26de81" stroke="#20bf6b"/>
+  <text x="215" y="562" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6a Worker + Artifact Verify</text>
+  <text x="215" y="578" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#ffffff">LSP + build + tests + openapi lint + JSON Schema</text>
+  <line x1="350" y1="566" x2="388" y2="566" stroke="#636e72" marker-end="url(#arr)"/>
+  <rect x="390" y="546" width="270" height="40" rx="6" fill="#26de81" stroke="#20bf6b"/>
+  <text x="525" y="562" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6b Platform Lead L4</text>
+  <text x="525" y="578" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#ffffff">staging build + docs sync (doc_debt must be empty)</text>
+  <line x1="660" y1="566" x2="698" y2="566" stroke="#636e72" marker-end="url(#arr)"/>
+  <rect x="700" y="546" width="220" height="40" rx="6" fill="#dfe6e9" stroke="#636e72"/>
+  <text x="810" y="562" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">6c Prod Release Gate</text>
+  <text x="810" y="578" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">G3 git push / G4 deploy - human gates</text>
+  <line x1="920" y1="566" x2="958" y2="566" stroke="#636e72" marker-end="url(#arr)"/>
+  <ellipse cx="1030" cy="566" rx="66" ry="24" fill="#2d3436" stroke="#81ecec"/>
+  <text x="1030" y="563" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">User</text>
+  <text x="1030" y="576" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#81ecec">Product Owner</text>
 
-  <line x1="410" y1="348" x2="428" y2="348" stroke="#e17055" stroke-width="2" marker-end="url(#arr-o)"/>
-  <line x1="600" y1="348" x2="618" y2="348" stroke="#e17055" stroke-width="2" marker-end="url(#arr-o)"/>
-  <line x1="790" y1="348" x2="808" y2="348" stroke="#e17055" stroke-width="2" marker-end="url(#arr-o)"/>
-  <line x1="790" y1="362" x2="1018" y2="348" stroke="#e17055" stroke-width="2" stroke-dasharray="4 2" marker-end="url(#arr-o)"/>
+  <!-- Go runtime hooks -->
+  <rect x="40" y="614" width="1120" height="118" rx="10" fill="#f0f0f0" stroke="#636e72" stroke-width="1.5"/>
+  <text x="60" y="636" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#2d3436">Go runtime - deterministic hooks (L5 is never a question translator)</text>
+  <rect x="56" y="648" width="208" height="70" rx="6" fill="#ffffff" stroke="#0984e3"/>
+  <text x="160" y="664" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#0984e3">Question Barrier</text>
+  <text x="160" y="678" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">open_questions[] -> User (TUI)</text>
+  <text x="160" y="690" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">answers -> decisions.md</text>
+  <text x="160" y="702" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">max_clarification_rounds = 2</text>
+  <rect x="280" y="648" width="208" height="70" rx="6" fill="#ffffff" stroke="#0984e3"/>
+  <text x="384" y="664" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#0984e3">Phase guard</text>
+  <text x="384" y="678" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">state.md phase machine</text>
+  <text x="384" y="690" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">PRD / contract / playbooks /</text>
+  <text x="384" y="702" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">brief gates, fail-closed</text>
+  <rect x="504" y="648" width="208" height="70" rx="6" fill="#ffffff" stroke="#d63031"/>
+  <text x="608" y="664" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#d63031">Contract Epoch guard</text>
+  <text x="608" y="678" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">contract_refs vs EPOCH.yaml</text>
+  <text x="608" y="690" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">at spawn + on success</text>
+  <text x="608" y="702" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">stale -> cancel worker</text>
+  <rect x="728" y="648" width="208" height="70" rx="6" fill="#ffffff" stroke="#e17055"/>
+  <text x="832" y="664" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#e17055">Deadlock breakers</text>
+  <text x="832" y="678" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">phase: maintenance, waivers</text>
+  <text x="832" y="690" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">phase_timeouts (900/900/600)</text>
+  <text x="832" y="702" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">blocked_escalate_s = 300</text>
+  <rect x="952" y="648" width="192" height="70" rx="6" fill="#ffffff" stroke="#00b894"/>
+  <text x="1048" y="664" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="9" font-weight="bold" fill="#00b894">Context budget</text>
+  <text x="1048" y="678" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">state_max_bytes = 16K</text>
+  <text x="1048" y="690" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">old epics -> .orchestra/archive/</text>
+  <text x="1048" y="702" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="8" fill="#636e72">dept scratchpads per instance</text>
 
-  <text x="600" y="590" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#636e72">Phase 6 Delivery (all departments)</text>
-
-  <rect x="200" y="610" width="800" height="72" rx="10" fill="#e8fff8" stroke="#26de81" stroke-width="2"/>
-  <rect x="240" y="642" width="140" height="32" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="310" y="662" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6a Worker Verify</text>
-  <line x1="380" y1="658" x2="418" y2="658" stroke="#636e72" marker-end="url(#arr)"/>
-  <rect x="420" y="642" width="160" height="32" rx="6" fill="#26de81" stroke="#20bf6b"/>
-  <text x="500" y="662" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">6b Platform L4</text>
-  <line x1="580" y1="658" x2="618" y2="658" stroke="#636e72" marker-end="url(#arr)"/>
-  <rect x="620" y="642" width="120" height="32" rx="6" fill="#dfe6e9" stroke="#636e72"/>
-  <text x="680" y="662" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#2d3436">6c User gate</text>
-  <line x1="740" y1="658" x2="768" y2="658" stroke="#636e72" marker-end="url(#arr)"/>
-  <ellipse cx="820" cy="658" rx="56" ry="22" fill="#2d3436" stroke="#81ecec"/>
-  <text x="820" y="662" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="bold" fill="#ffffff">User PO</text>
-
-  <rect x="40" y="710" width="1120" height="70" rx="8" fill="#f0f4ff" stroke="#0984e3"/>
-  <text x="60" y="734" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#0984e3">Hub-and-spoke</text>
-  <text x="60" y="754" font-family="Segoe UI, sans-serif" font-size="10" fill="#636e72">User talks only to Orchestrator L5 - PM is stage 0 subagent - no production code in .orchestra/plans/ and state.md only</text>
-  <text x="60" y="770" font-family="Segoe UI, sans-serif" font-size="10" fill="#636e72">Approved PRD feeds phases 1-2 - engineering columns run phases 3-5 in parallel per dept</text>
+  <!-- Footer -->
+  <rect x="40" y="748" width="1120" height="76" rx="8" fill="#f0f4ff" stroke="#0984e3"/>
+  <text x="60" y="772" font-family="Segoe UI, sans-serif" font-size="11" font-weight="bold" fill="#0984e3">Hub-and-spoke - org chart frozen by type, scaled by instances (frontend@web, frontend@mobile)</text>
+  <text x="60" y="792" font-family="Segoe UI, sans-serif" font-size="10" fill="#636e72">User manages via Orchestrator L5; dept questions reach the User through the runtime Question Barrier, not through L5 relay</text>
+  <text x="60" y="810" font-family="Segoe UI, sans-serif" font-size="10" fill="#636e72">Docs dept works twice: stage 1 (conventions L1 + playbooks scaffold) and 6b (project docs + ADR from decisions.md)</text>
 </svg>

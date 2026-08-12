@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -39,6 +40,26 @@ func (a *App) syncStatusBar() {
 	a.statusBar.SetTokensEstimated(a.chrome.tokensEstimated)
 	a.statusBar.SetCostUSD(a.chrome.sessionCostUSD)
 	a.statusBar.SetShowCost(a.chrome.showCost)
+}
+
+// refreshOrchestraPhase reads the SDLC phase from .orchestra/state.md for the
+// status-bar badge. Missing or unreadable state clears the badge (the phase
+// machine is inactive for pre-vNext projects).
+func (a *App) refreshOrchestraPhase() {
+	root := strings.TrimSpace(a.cfg.WorkspaceRoot)
+	if root == "" {
+		root = strings.TrimSpace(a.cfg.CWD)
+	}
+	if root == "" {
+		a.statusBar.SetPhase("")
+		return
+	}
+	st, found, err := orchestrastate.Load(root)
+	if err != nil || !found || st == nil {
+		a.statusBar.SetPhase("")
+		return
+	}
+	a.statusBar.SetPhase(string(st.Phase))
 }
 
 type lspStatusMsg struct {
@@ -154,5 +175,7 @@ func (a *App) recordTurnUsage(prompt, completion int, costUSD float64) {
 	if costUSD > 0 {
 		a.chrome.sessionCostUSD += costUSD
 	}
+	// The agent may have advanced the SDLC phase during the turn.
+	a.refreshOrchestraPhase()
 	a.syncStatusBar()
 }

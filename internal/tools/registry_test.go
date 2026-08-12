@@ -169,6 +169,44 @@ func TestListToolsForMode_OrchestraLeadSurface(t *testing.T) {
 	}
 }
 
+func TestListToolsForMode_ProductSurface(t *testing.T) {
+	names := make(map[string]bool)
+	for _, d := range ListToolsForMode("product", Capabilities{}, true, true) {
+		names[d.Function.Name] = true
+	}
+	// Product Lead: reads + PRD writes + web research + question/task_result.
+	for _, want := range []string{"read", "write", "edit", "websearch", "webfetch", "task_result", "question"} {
+		if !names[want] {
+			t.Fatalf("product mode missing tool %q", want)
+		}
+	}
+	// No code execution, no git mutation, no nested spawn.
+	for _, forbid := range []string{"bash", "git.commit", "git.push", "task", "task_spawn", "plan_enter"} {
+		if names[forbid] {
+			t.Fatalf("product mode must not expose %q", forbid)
+		}
+	}
+}
+
+func TestListToolsForMode_DocumentationSurface(t *testing.T) {
+	names := make(map[string]bool)
+	for _, d := range ListToolsForMode("documentation", Capabilities{}, true, true) {
+		names[d.Function.Name] = true
+	}
+	// Docs Lead: repository reads + docs writes + git read-only + question/task_result.
+	for _, want := range []string{"read", "write", "edit", "grep", "explore", "git.diff", "git.log", "task_result", "question"} {
+		if !names[want] {
+			t.Fatalf("documentation mode missing tool %q", want)
+		}
+	}
+	// No web, no exec, no git mutation, no nested spawn.
+	for _, forbid := range []string{"websearch", "webfetch", "bash", "git.commit", "git.push", "task", "task_spawn", "plan_enter"} {
+		if names[forbid] {
+			t.Fatalf("documentation mode must not expose %q", forbid)
+		}
+	}
+}
+
 func TestToolRegistry_SchemasAreValidJSON(t *testing.T) {
 	defs := ListTools(Capabilities{Exec: true, Web: true, Browser: false})
 	for _, d := range defs {

@@ -76,6 +76,8 @@ export interface ProviderEntry {
 export interface OrchestraRoleView {
   key: string;
   label: string;
+  /** Canonical Orchestra tier (L1–L5) resolved by core via legacy_map. */
+  tier?: string;
   provider: string;
   model: string;
   models?: string[];
@@ -626,6 +628,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       return {
         key: String(o.key || ""),
         label: String(o.label || ""),
+        tier: String(o.tier || ""),
         provider: String(o.provider || ""),
         model: String(o.model || ""),
         models,
@@ -1594,6 +1597,8 @@ function normalizeAgentEvent(params: unknown): AgentEventParams | undefined {
     parent_tool_call_id:
       typeof p.parent_tool_call_id === "string" ? p.parent_tool_call_id : undefined,
     subagent_type: typeof p.subagent_type === "string" ? p.subagent_type : undefined,
+    tier: typeof p.tier === "string" ? p.tier : undefined,
+    model: typeof p.model === "string" ? p.model : undefined,
     status: typeof p.status === "string" ? p.status : undefined,
     error: typeof p.error === "string" ? p.error : undefined,
   };

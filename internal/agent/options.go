@@ -56,6 +56,9 @@ type SubtaskSpawnRequest struct {
 	Model    string
 	// Tier selects orchestra.tiers[] when SubagentType is "worker" (e.g. complex|focused|micro).
 	Tier string
+	// TaskType is the Orchestra routing key (orchestra_routing.yaml). When set,
+	// empty SubagentType/Tier/Provider/Model default from the routing rule.
+	TaskType string
 	// ParentToolCallID is the parent agent's tool_call_id for task/task_spawn.
 	ParentToolCallID string
 }
@@ -110,6 +113,8 @@ const (
 	ModeOrchestra    Mode = "orchestra"    // Lead planner; delegates to worker tiers
 	ModeWorker       Mode = "worker"       // atomic WorkOrder executor (child only)
 	ModeVerifier     Mode = "verifier"     // goal-backward read-only verification (child only)
+	ModeProduct      Mode = "product"      // Product Lead: PRD/user stories in .orchestra/product/ only (child only)
+	ModeDocs         Mode = "documentation" // Docs Lead: L1 conventions.md, MANIFEST, docs/ scaffold+content (child only)
 	ModeCompaction   Mode = "compaction"   // internal: compresses history into a summary.
 	ModeTitle        Mode = "title"        // internal: generates a short task title from the user query.
 	ModeSummary      Mode = "summary"      // internal: produces a brief summary of completed work.
@@ -122,6 +127,7 @@ var knownModes = map[Mode]bool{
 	ModeBuild: true, ModePlan: true, ModeExplore: true,
 	ModeAsk: true, ModeDebug: true, ModeArchitecture: true,
 	ModeGeneral: true, ModeAgent: true, ModeOrchestra: true, ModeWorker: true, ModeVerifier: true,
+	ModeProduct: true, ModeDocs: true,
 	ModeCompaction: true, ModeTitle: true, ModeSummary: true,
 }
 
@@ -200,6 +206,23 @@ type Options struct {
 	// QuestionAsker, if non-nil, enables the question tool (interactive user Q&A).
 	// Use StdinQuestionAsker for direct CLI mode. Must be nil for orchestra core (stdio conflict).
 	QuestionAsker tools.QuestionAsker
+
+	// HumanGates marks human gates (spec §4.4) as required: keys
+	// config.GateGitCommit (G2) / config.GateGitPush (G3). A required gate
+	// asks the user via QuestionAsker before the tool runs; without an
+	// asker the call is denied (fail-closed). Empty map = no gates.
+	HumanGates map[string]bool
+
+	// WorkerStrictResult enforces the JSON task_result schema for
+	// WorkOrder-driven workers (spec checklist 31): local L3/L1 models must
+	// return {"status": ..., ...}, not free text.
+	WorkerStrictResult bool
+
+	// StateMaxBytes is the .orchestra/state.md size budget: when an
+	// update_working_state write pushes the file above it, the runtime
+	// archives the older head to .orchestra/archive/ (spec §6.4).
+	// 0 = orchestrastate.DefaultStateMaxBytes.
+	StateMaxBytes int
 
 	// JustSwitchedFromPlan, when true, injects a one-shot build-switch reminder on the first step.
 	// Set by the caller when restarting an agent in build mode after plan approval.

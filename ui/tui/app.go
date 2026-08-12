@@ -277,6 +277,7 @@ func NewApp(cfg Config) (*App, error) {
 	}
 	a.taskPanel = view.NewTaskPanel(0) // tests only; sticky checklist is live UI
 	a.loadConfigPrefs()
+	a.refreshOrchestraPhase()
 	a.syncStatusBar()
 	a.statusBar.SetModel(cfg.Model)
 	a.statusBar.SetProject(cfg.CWD)

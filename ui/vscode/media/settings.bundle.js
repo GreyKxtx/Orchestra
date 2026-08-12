@@ -650,6 +650,14 @@
     return roles.find((r) => r.key === key);
   }
 
+  /** Canonical L-tier for a role: core-provided or legacy_map defaults. */
+  /** @param {any} role */
+  function orchRoleTier(role) {
+    if (role && role.tier) return String(role.tier);
+    const defaults = { planner: "L5", complex: "L3", focused: "L3", micro: "L1" };
+    return defaults[role && role.key] || "";
+  }
+
   /** Effective provider key for a role (never unrelated fallbacks). */
   /** @param {any} role */
   function effectiveRoleProvider(role) {
@@ -732,7 +740,18 @@
       row.className = "orch-row";
       const title = document.createElement("div");
       title.className = "orch-row-title";
-      title.textContent = role.label || role.key;
+      const tier = orchRoleTier(role);
+      if (tier) {
+        const badge = document.createElement("span");
+        badge.className = "orch-tier orch-tier-" + tier.toLowerCase();
+        badge.textContent = tier;
+        badge.title = "Orchestra tier " + tier + " (см. orchestra-routing §1)";
+        title.appendChild(badge);
+      }
+      const name = document.createElement("span");
+      name.className = "orch-role-name";
+      name.textContent = role.label || role.key;
+      title.appendChild(name);
       const provValue =
         role.provider !== undefined && role.provider !== null ? role.provider : orchSharedProvider || "";
       const provWrap = buildOrchProviderSelect(provValue, (key) => {

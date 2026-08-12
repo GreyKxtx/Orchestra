@@ -18,6 +18,7 @@ type StatusBar struct {
 	agentBusy  bool
 	spinFrame  int
 	project    string
+	phase      string // orchestra phase from .orchestra/state.md; "" = no badge
 	profile    string // fast | precision | "" (default)
 	lspStatus  string // off | idle | installing | active
 	lspPercent int    // 0–100 while installing; 0 = omit
@@ -44,6 +45,7 @@ func (s *StatusBar) SetAgentBusy(busy bool)    { s.agentBusy = busy }
 func (s *StatusBar) AdvanceSpin()              { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
 func (s *StatusBar) SetModel(_ string)         {} // model shown in input box row
 func (s *StatusBar) SetProject(p string)       { s.project = p }
+func (s *StatusBar) SetPhase(p string)         { s.phase = p }
 func (s *StatusBar) SetProfile(p string)       { s.profile = p }
 func (s *StatusBar) SetLSPStatus(st string) { s.lspStatus = st }
 func (s *StatusBar) SetLSPProgress(percent int, id string) {
@@ -251,6 +253,28 @@ func (s *StatusBar) renderCostPart(t theme.Theme, muted lipgloss.Style) string {
 	}
 	_ = muted
 	return lipgloss.NewStyle().Foreground(col).Render(formatCostUSD(s.costUSD))
+}
+
+// renderPhasePart shows the Orchestra SDLC phase badge (spec §4.2).
+// discovery/documentation/contract — pre-code (warning tint), execution —
+// active coding (primary), delivery — post-merge (success), maintenance — muted.
+func (s *StatusBar) renderPhasePart(t theme.Theme) string {
+	p := strings.ToLower(strings.TrimSpace(s.phase))
+	if p == "" {
+		return ""
+	}
+	col := t.Text()
+	switch p {
+	case "discovery", "documentation", "contract":
+		col = t.Warning()
+	case "execution":
+		col = t.Primary()
+	case "delivery":
+		col = t.Success()
+	case "maintenance":
+		col = t.TextMuted()
+	}
+	return lipgloss.NewStyle().Foreground(col).Render("⦿ " + p)
 }
 
 func formatProfileLabel(p string) string {

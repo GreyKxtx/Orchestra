@@ -186,13 +186,18 @@
       row.className = "subagent-row status-" + sa.status;
       const icon = sa.status === "done" ? "✓" : sa.status === "error" ? "✗" : sa.status === "waiting" ? "⏳" : "◉";
       const toolHint = sa.toolCount ? ` · ${sa.toolCount} tools` : "";
+      const tierL = subagentTierLabel(sa.tier);
+      const tierHtml = tierL
+        ? `<span class="subagent-tier subagent-tier-${tierL.toLowerCase()}" title="${escapeAttr(sa.model || "")}">${tierL}</span>`
+        : "";
       row.innerHTML =
         `<span class="subagent-icon">${icon}</span>` +
         `<span class="subagent-type">${escapeAttr(sa.type || "agent")}</span>` +
+        tierHtml +
         `<span class="subagent-label">${escapeAttr(sa.label || sa.taskId || sa.id)}${toolHint}</span>`;
       if (sa.taskId) {
         row.dataset.taskId = sa.taskId;
-        row.title = sa.taskId;
+        row.title = sa.model ? `${sa.taskId} · ${sa.model}` : sa.taskId;
       }
       subagentsTree.appendChild(row);
       const node = sa.taskId ? subagentByTask.get(sa.taskId) : null;

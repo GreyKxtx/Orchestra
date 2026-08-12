@@ -156,7 +156,7 @@ export class SettingsView {
 
       <section id="sec-orchestra" class="panel">
         <h1>Orchestra</h1>
-        <p class="sub">Lead planner and worker tiers (complex / focused / micro). Up to 3 models per role for failover.</p>
+        <p class="sub">Orchestrator (L5) and worker tiers: complex / focused (L3), micro (L1). Up to 3 models per role for failover.</p>
         <label>Shared provider
           <div id="orchSharedProviderWrap"></div>
         </label>
@@ -170,9 +170,9 @@ export class SettingsView {
           <label>Max verify retries <input id="orchMaxVerifyRetries" type="number" min="0" max="6" value="1" /></label>
           <label>Default tier
             <select id="orchDefaultTier">
-              <option value="complex">complex</option>
-              <option value="focused" selected>focused</option>
-              <option value="micro">micro</option>
+              <option value="complex">complex · L3</option>
+              <option value="focused" selected>focused · L3</option>
+              <option value="micro">micro · L1</option>
             </select>
           </label>
         </details>

@@ -32,6 +32,10 @@ export interface AgentEventParams {
   task_id?: string;
   parent_tool_call_id?: string;
   subagent_type?: string;
+  /** Worker tier band (complex|focused|micro) for child_started events. */
+  tier?: string;
+  /** Resolved model label for child_started events. */
+  model?: string;
   status?: string;
   error?: string;
 }
@@ -233,6 +237,8 @@ export type HostToWebview =
       taskId: string;
       parentToolCallId?: string;
       subagentType?: string;
+      tier?: string;
+      model?: string;
       status?: string;
       content?: string;
       error?: string;

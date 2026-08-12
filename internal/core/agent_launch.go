@@ -10,6 +10,8 @@ import (
 	"github.com/orchestra/orchestra/internal/autorouter"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/hooks"
+	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/protocol"
@@ -215,6 +217,9 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
+	// Question Barrier (spec §4.3) shares the interactive channel with the
+	// question tool; nil (core stdio mode) keeps the barrier off.
+	childCfg.QuestionAsker = spec.QuestionAsker
 	if spec.OnEvent != nil {
 		childCfg.NotifyAgentEvent = func(params map[string]any) {
 			if _, ok := params["task_id"]; ok {
@@ -280,6 +285,8 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		ExtraTools:           c.extraToolDefs(),
 		PermissionRequester:  convertPermissionRequester(spec.PermissionRequester),
 		QuestionAsker:        spec.QuestionAsker,
+		HumanGates:           c.cfg.Orchestra.RequiredGates(),
+		StateMaxBytes:        c.cfg.Orchestra.ResolvedStateMaxBytes(),
 		UsageTracker:         usageTracker,
 		ProviderLabel:        providerLabel,
 		ModelLabel:           modelLabel,
@@ -438,6 +445,13 @@ func (c *Core) resolveOrchestraPlanner(logger *llm.Logger) (llm.Client, string, 
 	p := strings.TrimSpace(c.cfg.Orchestra.Planner.Provider)
 	m := strings.TrimSpace(c.cfg.Orchestra.Planner.Model)
 	if p == "" && m == "" {
+		// Fall back to the L5 role binding from orchestra_routing.yaml.
+		if role, ok := c.cfg.Routing.ResolveRole("L5"); ok {
+			p = strings.TrimSpace(role.Provider)
+			m = strings.TrimSpace(role.Model)
+		}
+	}
+	if p == "" && m == "" {
 		return nil, "", "", false
 	}
 	client, pl, ml, err := c.resolveNamedClient(p, m, logger)
@@ -483,6 +497,16 @@ func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (l
 	return c.llmClient, providerLabelOf(c.cfg), c.cfg.LLM.Model, nil
 }
 
+// tierEscalationSettings converts config → tasks settings (spec §5.5).
+func tierEscalationSettings(t config.TierEscalationConfig) tasks.TierEscalationSettings {
+	return tasks.TierEscalationSettings{
+		Enabled:                  t.ResolvedEnabled(),
+		FailuresBeforeEscalation: t.ResolvedFailuresBeforeEscalation(),
+		MaxEscalatedRetries:      t.ResolvedMaxEscalatedRetries(),
+		EscalationTier:           t.ResolvedEscalationTier(),
+	}
+}
+
 func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecorder, allowExec bool, logger *llm.Logger) tasks.ChildAgentConfig {
 	out := tasks.ChildAgentConfig{
 		MaxPromptBytes: maxPromptBytes,
@@ -507,6 +531,17 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 	out.MaxWorkerVerifyRetries = c.cfg.Orchestra.ResolvedMaxWorkerVerifyRetries()
 	llmVerify := c.cfg.Orchestra.ResolvedWorkerLLMVerifyEnabled()
 	out.WorkerLLMVerifyEnabled = &llmVerify
+	out.WorkerVerifyAffectedTests = c.cfg.Orchestra.WorkerVerifyAffectedTests
+	out.WorkerVerifyFrontendTypecheck = c.cfg.Orchestra.WorkerVerifyFrontendTypecheck
+	out.MaxClarificationRounds = c.cfg.Orchestra.ResolvedMaxClarificationRounds()
+	out.RelayViaLLM = c.cfg.Orchestra.ResolvedRelayViaLLM()
+	out.PhaseTimeouts = orchestrastate.PhaseTimeouts{
+		DiscoveryS:       c.cfg.Orchestra.PhaseTimeouts.ResolvedDiscoveryS(),
+		ContractS:        c.cfg.Orchestra.PhaseTimeouts.ResolvedContractS(),
+		LeadBriefS:       c.cfg.Orchestra.PhaseTimeouts.ResolvedLeadBriefS(),
+		BlockedEscalateS: c.cfg.Orchestra.PhaseTimeouts.ResolvedBlockedEscalateS(),
+	}
+	out.TierEscalation = tierEscalationSettings(c.cfg.Orchestra.TierEscalation)
 	out.LLMStepTimeout = time.Duration(c.cfg.LLM.TimeoutS) * time.Second
 	out.MaxStepsCap = c.cfg.Agent.ResolvedChildMaxSteps()
 	if c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm {
@@ -516,11 +551,28 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 		return c.resolveNamedClient(provider, model, logger)
 	}
 	out.ResolveTier = func(tier string) (provider, model string, ok bool) {
-		t := c.cfg.Orchestra.FindTier(tier)
-		if t == nil {
-			return "", "", false
+		return c.cfg.ResolveTierBinding(tier)
+	}
+	out.GuardSpawn = func(subagentType string) error {
+		return orchestrastate.GuardSpawn(c.cfg.ProjectRoot, c.cfg.Orchestra.ResolvedPhaseEnforcement(), subagentType)
+	}
+	out.GuardContractRefs = func(refs []contract.Ref) error {
+		return orchestrastate.GuardWorkOrderContract(c.cfg.ProjectRoot, c.cfg.Orchestra.ResolvedPhaseEnforcement(), refs)
+	}
+	out.RouteTaskType = func(taskType string) (tasks.TaskTypeRoute, bool) {
+		rule, ok := c.cfg.Routing.Route(taskType)
+		if !ok {
+			return tasks.TaskTypeRoute{}, false
 		}
-		return t.Provider, t.Model, true
+		route := tasks.TaskTypeRoute{
+			SubagentType: rule.SubagentType,
+			Tier:         rule.Tier,
+		}
+		if role, found := c.cfg.Routing.ResolveRole(rule.RequiredTier); found {
+			route.Provider = strings.TrimSpace(role.Provider)
+			route.Model = strings.TrimSpace(role.Model)
+		}
+		return route, true
 	}
 	return out
 }

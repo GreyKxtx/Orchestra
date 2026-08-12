@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/contract"
 )
 
 // mockTaskResultLLM returns a task.result tool call immediately, simulating a
@@ -273,6 +275,8 @@ func TestModeForSubagent(t *testing.T) {
 		"general":      agent.ModeGeneral,
 		"worker":       agent.ModeWorker,
 		"verifier":     agent.ModeVerifier,
+		"product":       agent.ModeProduct,
+		"documentation": agent.ModeDocs,
 	}
 	for in, want := range cases {
 		if got := modeForSubagent(in); got != want {
@@ -310,6 +314,112 @@ func TestResolveChildLLM_Tier(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("nil client")
+	}
+}
+
+func TestApplyTaskTypeRoute(t *testing.T) {
+	r := &TaskRunner{
+		child: ChildAgentConfig{
+			RouteTaskType: func(taskType string) (TaskTypeRoute, bool) {
+				switch taskType {
+				case "write_function":
+					return TaskTypeRoute{SubagentType: "worker", Tier: "focused", Provider: "lmstudio", Model: "qwen-32b"}, true
+				case "explore_codebase":
+					return TaskTypeRoute{SubagentType: "explore", Provider: "google", Model: "gemini-flash"}, true
+				}
+				return TaskTypeRoute{}, false
+			},
+		},
+	}
+
+	// Worker rule: subagent/tier filled, provider/model left to ResolveTier.
+	req := agent.SubtaskSpawnRequest{TaskType: "write_function"}
+	r.applyTaskTypeRoute(&req)
+	if req.SubagentType != "worker" || req.Tier != "focused" {
+		t.Fatalf("worker route: %+v", req)
+	}
+	if req.Provider != "" || req.Model != "" {
+		t.Fatalf("worker route must not set provider/model, got %s/%s", req.Provider, req.Model)
+	}
+
+	// Non-worker rule: provider/model default from the role binding.
+	req = agent.SubtaskSpawnRequest{TaskType: "explore_codebase"}
+	r.applyTaskTypeRoute(&req)
+	if req.SubagentType != "explore" || req.Provider != "google" || req.Model != "gemini-flash" {
+		t.Fatalf("explore route: %+v", req)
+	}
+
+	// Explicit caller values always win over the routing rule.
+	req = agent.SubtaskSpawnRequest{TaskType: "write_function", SubagentType: "verifier", Tier: "complex"}
+	r.applyTaskTypeRoute(&req)
+	if req.SubagentType != "verifier" || req.Tier != "complex" {
+		t.Fatalf("explicit values overridden: %+v", req)
+	}
+
+	// Unknown task_type is a no-op.
+	req = agent.SubtaskSpawnRequest{TaskType: "no_such"}
+	r.applyTaskTypeRoute(&req)
+	if req.SubagentType != "" {
+		t.Fatalf("unknown task_type must not mutate request: %+v", req)
+	}
+}
+
+func TestSpawnGuardBlocksWorker(t *testing.T) {
+	r := newTestTaskRunner(t)
+	r.child.GuardSpawn = func(subagentType string) error {
+		if strings.EqualFold(subagentType, "worker") {
+			return fmt.Errorf("runtime_guard: PRD status != approved; unblock: spawn product")
+		}
+		return nil
+	}
+
+	if _, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "x", SubagentType: "worker"}); err == nil {
+		t.Fatal("guard must block worker spawn")
+	} else if !strings.Contains(err.Error(), "unblock:") {
+		t.Fatalf("guard error must reach caller verbatim: %v", err)
+	}
+
+	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "x", SubagentType: "explore"})
+	if err != nil {
+		t.Fatalf("explore must pass the guard: %v", err)
+	}
+	if _, err := r.Wait(context.Background(), id, 5000); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+}
+
+func TestContractRefsGuardBlocksWorkerSpawn(t *testing.T) {
+	r := newTestTaskRunner(t)
+	var gotRefs []contract.Ref
+	r.child.GuardContractRefs = func(refs []contract.Ref) error {
+		gotRefs = refs
+		if len(refs) > 0 && refs[0].SHA256 == "stale" {
+			return fmt.Errorf("runtime_guard: stale_contract: NFR.md hash mismatch; unblock: Lead regenerates the WorkOrder")
+		}
+		return nil
+	}
+
+	stale := `{"intent":"edit","target_files":["pkg/a.go"],"contract_refs":[{"path":"NFR.md","sha256":"stale"}]}`
+	if _, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: stale, SubagentType: "worker"}); err == nil {
+		t.Fatal("stale contract_refs must block worker spawn")
+	} else if !strings.Contains(err.Error(), "stale_contract") {
+		t.Fatalf("error must carry stale_contract: %v", err)
+	}
+	if len(gotRefs) != 1 || gotRefs[0].Path != "NFR.md" {
+		t.Fatalf("guard must receive parsed refs: %+v", gotRefs)
+	}
+
+	// Non-worker spawn never triggers the contract guard.
+	gotRefs = nil
+	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "look around", SubagentType: "explore"})
+	if err != nil {
+		t.Fatalf("explore spawn: %v", err)
+	}
+	if _, err := r.Wait(context.Background(), id, 5000); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if gotRefs != nil {
+		t.Fatal("contract guard must not run for non-worker spawns")
 	}
 }
 

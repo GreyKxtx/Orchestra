@@ -6,6 +6,43 @@ import (
 	"strings"
 )
 
+// workerResultStatuses is the closed status set for WorkOrder-driven workers
+// (spec checklist 31: schema-enforced task_result for local L3 models).
+var workerResultStatuses = map[string]bool{
+	"success": true, "ok": true, "done": true, "error": true, "blocked": true,
+}
+
+// checkWorkerResultSchema rejects a WorkOrder-driven worker task_result that
+// is not a JSON object with a valid status. Local L3/L1 models drift into
+// free-text summaries; the Lead's parser then misroutes them, so the runtime
+// forces the shape before accepting the result.
+func (a *Agent) checkWorkerResultSchema(content string) error {
+	if a == nil || a.opts.Mode != ModeWorker || !a.opts.WorkerStrictResult {
+		return nil
+	}
+	const template = `task_result content must be a JSON object: {"status":"success|error|blocked","path":"<main file>","summary":"<1-3 sentences>","blocked_reason":"<taxonomy, only when blocked>"}. Resend task_result with that JSON.`
+	content = strings.TrimSpace(content)
+	if content == "" || !strings.HasPrefix(content, "{") || !json.Valid([]byte(content)) {
+		return fmt.Errorf("task_result blocked: not a JSON object. %s", template)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(content), &m); err != nil {
+		return fmt.Errorf("task_result blocked: not a JSON object. %s", template)
+	}
+	st, _ := m["status"].(string)
+	st = strings.ToLower(strings.TrimSpace(st))
+	if !workerResultStatuses[st] {
+		return fmt.Errorf("task_result blocked: status %q is not in success|ok|done|error|blocked. %s", st, template)
+	}
+	if st == "blocked" {
+		if br, _ := m["blocked_reason"].(string); strings.TrimSpace(br) == "" {
+			return fmt.Errorf("task_result blocked: status=blocked requires blocked_reason from the taxonomy [%s]. %s",
+				strings.Join(BlockedReasons(), " | "), template)
+		}
+	}
+	return nil
+}
+
 // blockWorkerTaskResult rejects task_result when the worker reports success
 // but staged edits still carry LSP error-severity diagnostics (orchestra
 // "forced LSP resolution" gate — docs/architecture/orchestra-vnext.md §6).

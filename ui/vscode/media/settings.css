@@ -1343,7 +1343,41 @@ button.primary:hover {
   font-size: 12px;
   color: var(--fg);
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
+
+.orch-role-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Canonical Orchestra tier badge (L1–L5). Palette mirrors spec §1.2:
+   L5 red · L4 orange · L3 yellow · L2 green · L1 blue. */
+.orch-tier {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: #2b2b2b;
+  border: 1px solid #3a3a3a;
+  color: var(--muted);
+}
+
+.orch-tier-l5 { color: #ff7b72; border-color: #5c2c2c; background: #2d1e1e; }
+.orch-tier-l4 { color: #ffa657; border-color: #5c452c; background: #2d261e; }
+.orch-tier-l3 { color: #e3c15c; border-color: #57512c; background: #2b291c; }
+.orch-tier-l2 { color: #7ee787; border-color: #2c5c34; background: #1e2d21; }
+.orch-tier-l1 { color: #79c0ff; border-color: #2c445c; background: #1e252d; }
 
 .orch-pick {
   text-align: left;

@@ -170,7 +170,7 @@ var parallelSafeTools = map[string]bool{
 var mutatingTools = map[string]bool{
 	"write": true, "edit": true,
 	"bash": true, "bash.output": true, "bash.kill": true,
-	"todowrite": true, "todoread": true, "update_working_state": true, "memory_write": true, "memory_read": true, "memory_search": true,
+	"todowrite": true, "todoread": true, "update_working_state": true, "contract_freeze": true, "memory_write": true, "memory_read": true, "memory_search": true,
 	"lsp.rename": true,
 	"plan_exit":  true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
@@ -264,6 +264,10 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 		return listToolsWorker(caps)
 	case "verifier":
 		return listToolsVerifier(caps)
+	case "product":
+		return listToolsProduct(hasQuestionAsker)
+	case "documentation":
+		return listToolsDocs(hasQuestionAsker)
 	case "agent":
 		// Mode agent is resolved to build|plan|explore|ask before tool listing;
 		// if still seen here, treat as build.
@@ -394,7 +398,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolUpdateWorkingState(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolUpdateWorkingState(), session.ToolContractFreeze(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
@@ -419,6 +423,43 @@ func listToolsVerifier(caps Capabilities) []llm.ToolDef {
 	return applyParallelFlags(out)
 }
 
+// listToolsProduct is the Product Lead surface (spec §3.2, routing matrix §7.1):
+// repository reads for brownfield context, writes limited to .orchestra/product/
+// (enforced by agent.checkProductEditScope), websearch/webfetch always listed —
+// product discovery needs market research; runtime web consent still applies.
+// No exec, no git-mutating tools, no nested spawn.
+func listToolsProduct(hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
+		fs.ToolSearchText(),
+		session.ToolTodoWrite(), session.ToolTodoRead(),
+		task.ToolTaskResult(),
+	}
+	out = appendWebTools(out)
+	if hasQuestionAsker {
+		out = append(out, session.ToolQuestion())
+	}
+	return applyParallelFlags(out)
+}
+
+// listToolsDocs is the Docs Lead surface (spec §2.3.2, routing matrix §7.1):
+// full repository reads for stack detect and brownfield docs, writes limited
+// to conventions.md / .orchestra/docs/ / docs/ (enforced by
+// agent.checkDocsEditScope). No web, no exec, no git mutators, no spawn.
+func listToolsDocs(hasQuestionAsker bool) []llm.ToolDef {
+	out := []llm.ToolDef{
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(),
+		session.ToolTodoWrite(), session.ToolTodoRead(),
+		task.ToolTaskResult(),
+		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
+	}
+	if hasQuestionAsker {
+		out = append(out, session.ToolQuestion())
+	}
+	return applyParallelFlags(out)
+}
+
 // listToolsWorker is the atomic implementer: edit/write + LSP, no nested spawn.
 func listToolsWorker(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
@@ -439,7 +480,7 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), session.ToolUpdateWorkingState(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), nav.ToolRepoMap(), fs.ToolASTRename(),
 		task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
-		task.ToolPlanEnter(), task.ToolPlanExit(), session.ToolQuestion(),
+		task.ToolPlanEnter(), task.ToolPlanExit(), session.ToolQuestion(), session.ToolContractFreeze(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 		git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush(),

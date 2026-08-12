@@ -23,6 +23,32 @@ func TestWorkerPathInEditScope(t *testing.T) {
 	}
 }
 
+func TestCheckProductEditScope(t *testing.T) {
+	a := &Agent{opts: Options{Mode: ModeProduct}}
+
+	// Reads are unrestricted (brownfield context).
+	if err := a.checkProductEditScope("read", []byte(`{"path":"internal/core/core.go"}`)); err != nil {
+		t.Fatalf("read should pass: %v", err)
+	}
+	// Writes inside .orchestra/product/ are allowed.
+	for _, p := range []string{".orchestra/product/PRD.md", "./.orchestra/product/User_Stories.md"} {
+		if err := a.checkProductEditScope("write", []byte(`{"path":"`+p+`","content":"x"}`)); err != nil {
+			t.Fatalf("write %s should pass: %v", p, err)
+		}
+	}
+	// Writes anywhere else are denied.
+	for _, p := range []string{"main.go", ".orchestra/state.md", "docs/PRD.md"} {
+		if err := a.checkProductEditScope("edit", []byte(`{"path":"`+p+`","search":"x","replace":"y"}`)); err == nil {
+			t.Fatalf("edit %s must be denied", p)
+		}
+	}
+	// Other modes are untouched by this check.
+	b := &Agent{opts: Options{Mode: ModeBuild}}
+	if err := b.checkProductEditScope("write", []byte(`{"path":"main.go","content":"x"}`)); err != nil {
+		t.Fatalf("build mode must not be product-scoped: %v", err)
+	}
+}
+
 func TestCheckWorkerEditScope(t *testing.T) {
 	a := &Agent{
 		opts: Options{

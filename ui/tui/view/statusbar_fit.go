@@ -61,6 +61,9 @@ func (s *StatusBar) renderMetricsFit(t theme.Theme, base, muted lipgloss.Style, 
 	if s.agentBusy {
 		segments = append(segments, s.renderBusyPart(t, base))
 	}
+	if phase := s.renderPhasePart(t); phase != "" {
+		segments = append(segments, phase)
+	}
 	if ctxPart := s.renderContextPart(t, muted); ctxPart != "" {
 		segments = append(segments, ctxPart)
 	}

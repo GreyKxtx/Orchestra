@@ -91,10 +91,10 @@ func NewOrchestraDialog(roles []OrchestraRoleDraft, ctx OrchestraDialogCtx) *Orc
 
 func defaultOrchestraRoles() []OrchestraRoleDraft {
 	return []OrchestraRoleDraft{
-		{Key: OrchestraRolePlanner, Label: "Lead planner"},
-		{Key: OrchestraRoleComplex, Label: "Worker · complex"},
-		{Key: OrchestraRoleFocused, Label: "Worker · focused"},
-		{Key: OrchestraRoleMicro, Label: "Worker · micro"},
+		{Key: OrchestraRolePlanner, Label: "L5 · Orchestrator"},
+		{Key: OrchestraRoleComplex, Label: "L3 · Worker complex"},
+		{Key: OrchestraRoleFocused, Label: "L3 · Worker focused"},
+		{Key: OrchestraRoleMicro, Label: "L1 · Worker micro"},
 	}
 }
 

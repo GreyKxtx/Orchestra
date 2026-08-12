@@ -2644,6 +2644,25 @@ body {
   border-radius: 4px;
 }
 
+/* Canonical Orchestra tier badge (L1–L5); palette mirrors spec §1.2. */
+.subagent-tier {
+  flex: 0 0 auto;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.subagent-tier-l5 { color: #ff7b72; border-color: #5c2c2c; }
+.subagent-tier-l4 { color: #ffa657; border-color: #5c452c; }
+.subagent-tier-l3 { color: #e3c15c; border-color: #57512c; }
+.subagent-tier-l2 { color: #7ee787; border-color: #2c5c34; }
+.subagent-tier-l1 { color: #79c0ff; border-color: #2c445c; }
+
 .subagent-label {
   flex: 1 1 auto;
   min-width: 0;

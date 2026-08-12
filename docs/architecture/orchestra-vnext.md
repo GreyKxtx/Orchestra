@@ -2,7 +2,7 @@
 
 **Статус:** roadmap (2026-08)  
 **Базовая архитектура:** [planner-worker.md](./planner-worker.md) (MVP ✅)  
-**Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [orchestra-routing.md](./orchestra-routing.md) (L1–L5 + Fab 5)
+**Связано:** [semantic-dry-run-tz.md](./semantic-dry-run-tz.md), [modes.md](../modes.md), [orchestra-routing.md](./orchestra-routing.md) (L1–L5; [runtime D](./orchestra-routing.md#d-runtime-улучшения-production-ready), [PR roadmap F](./orchestra-routing.md#f-roadmap-реализации-pr))
 
 ---
 
@@ -253,6 +253,9 @@ Worker → task_result(error) — пропускается (эскалация L
 - [ ] Lead spawn 2+ parallel workers, `task_wait`, merge без conflict
 - [ ] Verifier (build/test) между Worker и Lead без участия Lead LLM
 - [ ] `.orchestra/state.md` persists across Lead turns; worker blobs pruned
+- [ ] `.orchestra/depts/*.md` per Lead (см. [orchestra-routing D.5](./orchestra-routing.md#d5-dept-scratchpads))
+- [ ] Tier escalation L3→L4 on repeated verify fail ([D.2](./orchestra-routing.md#d2-tier-escalation-policy))
+- [ ] Batch parallel workers with disjoint scope ([D.3](./orchestra-routing.md#d3-batch-spawn--parallel-execution))
 
 ---
 

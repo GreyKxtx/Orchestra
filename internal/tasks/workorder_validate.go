@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/contract"
 )
 
 // WorkOrder is the Lead → Worker JSON contract (docs/architecture/planner-worker.md).
@@ -20,6 +22,23 @@ type WorkOrder struct {
 	ReadonlyReferences  []string       `json:"readonly_references,omitempty"`
 	AllowedSymbols      []string       `json:"allowed_symbols,omitempty"`
 	AcceptanceCriteria  []string       `json:"acceptance_criteria,omitempty"`
+
+	// ContractRefs pin the WorkOrder to contract artifact versions
+	// (spec §5.3): each ref carries the sha256 the Lead read. The runtime
+	// verifies them against EPOCH.yaml at spawn and again on success.
+	ContractRefs []contract.Ref `json:"contract_refs,omitempty"`
+
+	// AcceptanceChecks are machine-executable acceptance criteria
+	// (spec §5.4, ADR-4). Executed by the runtime, never self-assessed.
+	AcceptanceChecks []AcceptanceCheck `json:"acceptance_checks,omitempty"`
+}
+
+// AcceptanceCheck is one runnable acceptance probe. Execution follows the
+// exec.run consent policy (--allow-exec / exec.confirm: false).
+type AcceptanceCheck struct {
+	Cmd          string `json:"cmd"`
+	ExpectExit   int    `json:"expect_exit,omitempty"`
+	ExpectStdout string `json:"expect_stdout,omitempty"`
 }
 
 // ValidateWorkOrder checks a parsed WorkOrder; returns error when intent is missing.

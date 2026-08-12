@@ -22,6 +22,7 @@ const (
 type RuntimeOrchestraRole struct {
 	Key      string   `json:"key"`
 	Label    string   `json:"label"`
+	Tier     string   `json:"tier,omitempty"` // canonical L1–L5 tier (spec §1.4 / legacy_map)
 	Provider string   `json:"provider,omitempty"`
 	Model    string   `json:"model,omitempty"`
 	Models   []string `json:"models,omitempty"`
@@ -82,10 +83,13 @@ type RuntimeConfigureOrchestraResult struct {
 
 func defaultOrchestraRoles(cfg *config.ProjectConfig) []RuntimeOrchestraRole {
 	roles := []RuntimeOrchestraRole{
-		{Key: string(orchestraRolePlanner), Label: "Lead planner"},
+		{Key: string(orchestraRolePlanner), Label: "Orchestrator"},
 		{Key: string(orchestraRoleComplex), Label: "Worker · complex"},
 		{Key: string(orchestraRoleFocused), Label: "Worker · focused"},
 		{Key: string(orchestraRoleMicro), Label: "Worker · micro"},
+	}
+	for i := range roles {
+		roles[i].Tier = roleTierLabel(cfg, roles[i].Key)
 	}
 	if cfg == nil {
 		return roles
@@ -109,6 +113,16 @@ func defaultOrchestraRoles(cfg *config.ProjectConfig) []RuntimeOrchestraRole {
 		}
 	}
 	return roles
+}
+
+// roleTierLabel maps a legacy role key (planner/complex/focused/micro) to its
+// canonical L1–L5 tier, honoring legacy_map overrides from orchestra_routing.yaml.
+func roleTierLabel(cfg *config.ProjectConfig, key string) string {
+	var routing *config.OrchestraRouting
+	if cfg != nil {
+		routing = cfg.Routing
+	}
+	return routing.MapLegacy(key)
 }
 
 func orchestraNamedSnapshot(cfg *config.ProjectConfig) map[string]RuntimeOrchestraNamedProvider {

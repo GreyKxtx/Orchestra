@@ -754,10 +754,10 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 
 func (a *App) openOrchestraDialog() {
 	drafts := []view.OrchestraRoleDraft{
-		{Key: view.OrchestraRolePlanner, Label: "Lead planner"},
-		{Key: view.OrchestraRoleComplex, Label: "Worker · complex"},
-		{Key: view.OrchestraRoleFocused, Label: "Worker · focused"},
-		{Key: view.OrchestraRoleMicro, Label: "Worker · micro"},
+		{Key: view.OrchestraRolePlanner, Label: "L5 · Orchestrator"},
+		{Key: view.OrchestraRoleComplex, Label: "L3 · Worker complex"},
+		{Key: view.OrchestraRoleFocused, Label: "L3 · Worker focused"},
+		{Key: view.OrchestraRoleMicro, Label: "L1 · Worker micro"},
 	}
 	ctx := view.OrchestraDialogCtx{Named: map[string]view.OrchestraNamedProvider{}}
 	if a.cfg.ConfigPath != "" {

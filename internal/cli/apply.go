@@ -21,6 +21,8 @@ import (
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/mcp"
+	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/internal/pipeline"
@@ -547,6 +549,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if strings.EqualFold(agentMode, string(agent.ModeOrchestra)) && getTestLLMClient() == nil {
 			p := strings.TrimSpace(cfg.Orchestra.Planner.Provider)
 			m := strings.TrimSpace(cfg.Orchestra.Planner.Model)
+			if p == "" && m == "" {
+				if role, ok := cfg.Routing.ResolveRole("L5"); ok {
+					p = strings.TrimSpace(role.Provider)
+					m = strings.TrimSpace(role.Model)
+				}
+			}
 			if p != "" || m != "" {
 				if c, err := namedLLMClient(cfg, p, m, agentLogger); err == nil {
 					llmClient = c
@@ -622,6 +630,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		workerVerifyEnabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
+		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
 			MaxPromptBytes:         cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:    cfg.Agent.CompactThresholdPct,
@@ -637,6 +646,23 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxWorkerRetries:       cfg.Orchestra.ResolvedMaxWorkerRetries(),
 			MaxWorkerVerifyRetries: cfg.Orchestra.ResolvedMaxWorkerVerifyRetries(),
 			WorkerVerifyEnabled:    &workerVerifyEnabled,
+			WorkerVerifyAffectedTests:     cfg.Orchestra.WorkerVerifyAffectedTests,
+			WorkerVerifyFrontendTypecheck: cfg.Orchestra.WorkerVerifyFrontendTypecheck,
+			QuestionAsker:                 cliQuestionAsker,
+			MaxClarificationRounds:        cfg.Orchestra.ResolvedMaxClarificationRounds(),
+			RelayViaLLM:                   cfg.Orchestra.ResolvedRelayViaLLM(),
+			PhaseTimeouts: orchestrastate.PhaseTimeouts{
+				DiscoveryS:       cfg.Orchestra.PhaseTimeouts.ResolvedDiscoveryS(),
+				ContractS:        cfg.Orchestra.PhaseTimeouts.ResolvedContractS(),
+				LeadBriefS:       cfg.Orchestra.PhaseTimeouts.ResolvedLeadBriefS(),
+				BlockedEscalateS: cfg.Orchestra.PhaseTimeouts.ResolvedBlockedEscalateS(),
+			},
+			TierEscalation: tasks.TierEscalationSettings{
+				Enabled:                  cfg.Orchestra.TierEscalation.ResolvedEnabled(),
+				FailuresBeforeEscalation: cfg.Orchestra.TierEscalation.ResolvedFailuresBeforeEscalation(),
+				MaxEscalatedRetries:      cfg.Orchestra.TierEscalation.ResolvedMaxEscalatedRetries(),
+				EscalationTier:           cfg.Orchestra.TierEscalation.ResolvedEscalationTier(),
+			},
 			Caps: tools.Capabilities{
 				Exec:    allowExecEffective,
 				Web:     allowWebEffective,
@@ -660,11 +686,28 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				return c, pl, ml, nil
 			},
 			ResolveTier: func(tier string) (provider, model string, ok bool) {
-				t := cfg.Orchestra.FindTier(tier)
-				if t == nil {
-					return "", "", false
+				return cfg.ResolveTierBinding(tier)
+			},
+			GuardSpawn: func(subagentType string) error {
+				return orchestrastate.GuardSpawn(cfg.ProjectRoot, cfg.Orchestra.ResolvedPhaseEnforcement(), subagentType)
+			},
+			GuardContractRefs: func(refs []contract.Ref) error {
+				return orchestrastate.GuardWorkOrderContract(cfg.ProjectRoot, cfg.Orchestra.ResolvedPhaseEnforcement(), refs)
+			},
+			RouteTaskType: func(taskType string) (tasks.TaskTypeRoute, bool) {
+				rule, ok := cfg.Routing.Route(taskType)
+				if !ok {
+					return tasks.TaskTypeRoute{}, false
 				}
-				return t.Provider, t.Model, true
+				route := tasks.TaskTypeRoute{
+					SubagentType: rule.SubagentType,
+					Tier:         rule.Tier,
+				}
+				if role, found := cfg.Routing.ResolveRole(rule.RequiredTier); found {
+					route.Provider = strings.TrimSpace(role.Provider)
+					route.Model = strings.TrimSpace(role.Model)
+				}
+				return route, true
 			},
 		})
 		var hooksRunner agent.HooksRunner
@@ -711,7 +754,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			SystemPromptOverride: systemPromptOverride,
 			CustomTools:          customAgentTools,
 			ExtraTools:           mcpExtraTools,
-			QuestionAsker:        buildQuestionAsker(agentMode),
+			QuestionAsker:        cliQuestionAsker,
+			HumanGates:           cfg.Orchestra.RequiredGates(),
+			StateMaxBytes:        cfg.Orchestra.ResolvedStateMaxBytes(),
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
 			SubtaskRunner:        taskRunner,
@@ -1168,9 +1213,14 @@ func buildCLIRenderer() func(agent.AgentEvent) {
 }
 
 // buildQuestionAsker returns a StdinQuestionAsker when mode requires it and stdin is a terminal.
+// hasGates forces the asker in any mode: required human gates (G2/G3) must be
+// confirmable interactively, otherwise they deny fail-closed.
 // Returns nil otherwise (disables the question tool) to avoid corrupting stdio JSON-RPC in core mode.
-func buildQuestionAsker(mode string) tools.QuestionAsker {
-	if agent.Mode(mode) == agent.ModePlan && isTTY() {
+func buildQuestionAsker(mode string, hasGates bool) tools.QuestionAsker {
+	if !isTTY() {
+		return nil
+	}
+	if agent.Mode(mode) == agent.ModePlan || hasGates {
 		return &tools.StdinQuestionAsker{}
 	}
 	return nil

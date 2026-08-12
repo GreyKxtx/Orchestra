@@ -1138,6 +1138,15 @@
       sideBySide: Boolean(sideBySide),
     });
   }
+  /** Canonical Orchestra tier label (L1–L5) from a legacy band name. */
+  function subagentTierLabel(tier) {
+    const t = String(tier || "").trim();
+    if (!t) return "";
+    if (/^L[1-5]$/i.test(t)) return t.toUpperCase();
+    const map = { planner: "L5", complex: "L3", focused: "L3", micro: "L1", explore: "L2" };
+    return map[t.toLowerCase()] || "";
+  }
+
   function upsertSubagentTask(taskId, fields) {
     if (!taskId) return;
     const prev =
@@ -1157,6 +1166,8 @@
       taskId,
       type: prev.type,
       label: prev.label,
+      tier: prev.tier,
+      model: prev.model,
       status: prev.status,
       parentToolCallId: prev.parentToolCallId,
       toolsEl: prev.toolsEl,
@@ -1186,9 +1197,14 @@
     const panel = document.createElement("div");
     panel.className = "subagent-panel";
     panel.dataset.taskId = taskId;
+    const tierL = subagentTierLabel(node.tier);
+    const tierHtml = tierL
+      ? `<span class="subagent-tier subagent-tier-${tierL.toLowerCase()}" title="${escapeAttr(node.model || "")}">${tierL}</span>`
+      : "";
     panel.innerHTML =
       `<div class="subagent-panel-head">` +
       `<span class="subagent-type">${escapeAttr(node.type || "agent")}</span>` +
+      tierHtml +
       `<span class="subagent-label">${escapeAttr(node.label || taskId)}</span>` +
       `</div>`;
     const host = document.createElement("div");
@@ -1207,6 +1223,8 @@
       upsertSubagentTask(taskId, {
         parentToolCallId: msg.parentToolCallId,
         type: msg.subagentType || "agent",
+        tier: msg.tier || "",
+        model: msg.model || "",
         label: label.length > 48 ? label.slice(0, 45) + "…" : label || taskId,
         status: "running",
         toolCount: 0,
@@ -2399,13 +2417,18 @@
       row.className = "subagent-row status-" + sa.status;
       const icon = sa.status === "done" ? "✓" : sa.status === "error" ? "✗" : sa.status === "waiting" ? "⏳" : "◉";
       const toolHint = sa.toolCount ? ` · ${sa.toolCount} tools` : "";
+      const tierL = subagentTierLabel(sa.tier);
+      const tierHtml = tierL
+        ? `<span class="subagent-tier subagent-tier-${tierL.toLowerCase()}" title="${escapeAttr(sa.model || "")}">${tierL}</span>`
+        : "";
       row.innerHTML =
         `<span class="subagent-icon">${icon}</span>` +
         `<span class="subagent-type">${escapeAttr(sa.type || "agent")}</span>` +
+        tierHtml +
         `<span class="subagent-label">${escapeAttr(sa.label || sa.taskId || sa.id)}${toolHint}</span>`;
       if (sa.taskId) {
         row.dataset.taskId = sa.taskId;
-        row.title = sa.taskId;
+        row.title = sa.model ? `${sa.taskId} · ${sa.model}` : sa.taskId;
       }
       subagentsTree.appendChild(row);
       const node = sa.taskId ? subagentByTask.get(sa.taskId) : null;

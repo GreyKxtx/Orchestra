@@ -93,6 +93,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			Prompt       string `json:"prompt"`
 			Goal         string `json:"goal"`
 			SubagentType string `json:"subagent_type"`
+			TaskType     string `json:"task_type"`
 			Tier         string `json:"tier"`
 			Provider     string `json:"provider"`
 			Model        string `json:"model"`
@@ -110,7 +111,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			return nil, fmt.Errorf("task: prompt is required")
 		}
 		subagentType := strings.TrimSpace(req.SubagentType)
-		if subagentType == "" {
+		// With task_type the router picks the subagent; only default to
+		// explore when there is nothing to route on.
+		if subagentType == "" && strings.TrimSpace(req.TaskType) == "" {
 			subagentType = "explore"
 		}
 		timeoutMS := req.TimeoutMS
@@ -120,6 +123,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 			Goal:             goal,
 			SubagentType:     subagentType,
+			TaskType:         strings.TrimSpace(req.TaskType),
 			Tier:             strings.TrimSpace(req.Tier),
 			Provider:         strings.TrimSpace(req.Provider),
 			Model:            strings.TrimSpace(req.Model),
@@ -157,14 +161,16 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 
 	case "task_spawn":
 		var req struct {
-			Goal         string `json:"goal"`
-			Prompt       string `json:"prompt"`
-			SubagentType string `json:"subagent_type"`
-			Tier         string `json:"tier"`
-			Provider     string `json:"provider"`
-			Model        string `json:"model"`
-			MaxSteps     int    `json:"max_steps"`
-			TimeoutMS    int    `json:"timeout_ms"`
+			Goal         string            `json:"goal"`
+			Prompt       string            `json:"prompt"`
+			WorkOrders   []json.RawMessage `json:"workorders"`
+			SubagentType string            `json:"subagent_type"`
+			TaskType     string            `json:"task_type"`
+			Tier         string            `json:"tier"`
+			Provider     string            `json:"provider"`
+			Model        string            `json:"model"`
+			MaxSteps     int               `json:"max_steps"`
+			TimeoutMS    int               `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("task.spawn: invalid input: %w", err)
@@ -173,20 +179,56 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		if goal == "" {
 			goal = strings.TrimSpace(req.Prompt)
 		}
-		if goal == "" {
-			return nil, fmt.Errorf("task.spawn: goal is required")
-		}
 		subagentType := strings.TrimSpace(req.SubagentType)
-		if subagentType == "" {
+		if subagentType == "" && strings.TrimSpace(req.TaskType) == "" && len(req.WorkOrders) == 0 {
 			subagentType = "explore"
 		}
 		timeoutMS := req.TimeoutMS
 		if timeoutMS <= 0 {
 			timeoutMS = 120_000 // same default as sync task — avoid orphan children
 		}
+
+		// Batch mode (spec §5.6): workorders[] spawns one worker per WorkOrder.
+		// The runner serializes WorkOrders with overlapping target_files.
+		if len(req.WorkOrders) > 0 {
+			if goal != "" {
+				return nil, fmt.Errorf("task.spawn: pass either goal or workorders, not both")
+			}
+			if subagentType == "" {
+				subagentType = "worker"
+			}
+			if !strings.EqualFold(subagentType, "worker") {
+				return nil, fmt.Errorf("task.spawn: workorders[] is worker-only (got subagent_type=%q)", subagentType)
+			}
+			taskIDs := make([]string, 0, len(req.WorkOrders))
+			for i, wo := range req.WorkOrders {
+				taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
+					Goal:             strings.TrimSpace(string(wo)),
+					SubagentType:     subagentType,
+					TaskType:         strings.TrimSpace(req.TaskType),
+					Tier:             strings.TrimSpace(req.Tier),
+					Provider:         strings.TrimSpace(req.Provider),
+					Model:            strings.TrimSpace(req.Model),
+					MaxSteps:         req.MaxSteps,
+					TimeoutMS:        timeoutMS,
+					ParentToolCallID: parentToolCallID,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("task.spawn: workorders[%d]: %w (already spawned: %s)", i, err, strings.Join(taskIDs, ", "))
+				}
+				taskIDs = append(taskIDs, taskID)
+			}
+			resp, _ := json.Marshal(map[string]any{"task_ids": taskIDs, "status": "spawned"})
+			return resp, nil
+		}
+
+		if goal == "" {
+			return nil, fmt.Errorf("task.spawn: goal is required")
+		}
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 			Goal:             goal,
 			SubagentType:     subagentType,
+			TaskType:         strings.TrimSpace(req.TaskType),
 			Tier:             strings.TrimSpace(req.Tier),
 			Provider:         strings.TrimSpace(req.Provider),
 			Model:            strings.TrimSpace(req.Model),

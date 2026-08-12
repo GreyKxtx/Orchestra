@@ -46,7 +46,7 @@ func TestGoBuildPackages(t *testing.T) {
 }
 
 func TestVerifyWorkerOutcome_EmptyPaths(t *testing.T) {
-	report := VerifyWorkerOutcome(t.Context(), nil, nil)
+	report := VerifyWorkerOutcome(t.Context(), nil, nil, WorkerVerifyOptions{})
 	if !report.Passed {
 		t.Fatal("empty paths should pass")
 	}
