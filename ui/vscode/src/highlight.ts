@@ -41,18 +41,43 @@ export function languageFromPath(filePath: string): string {
   return map[ext] || "plaintext";
 }
 
+/**
+ * Lazy singleton: each createHighlighter() spins up its own Oniguruma WASM
+ * engine — creating one per line leaked memory and burned CPU on every diff.
+ */
+type ShikiHighlighter = {
+  getLoadedLanguages(): string[];
+  codeToHtml(code: string, options: { lang: string; theme: string }): string;
+};
+
+let highlighterPromise: Promise<ShikiHighlighter | undefined> | undefined;
+
+function getHighlighter(): Promise<ShikiHighlighter | undefined> {
+  highlighterPromise ??= (async () => {
+    try {
+      // Dynamic import: works in F5 dev (node_modules present); VSIX falls back to plain text.
+      const { createHighlighter } = await import("shiki");
+      return (await createHighlighter({
+        themes: ["dark-plus"],
+        langs: ["go", "typescript", "javascript", "python", "json", "markdown", "bash", "plaintext"],
+      })) as unknown as ShikiHighlighter;
+    } catch {
+      return undefined;
+    }
+  })();
+  return highlighterPromise;
+}
+
 /** Render one line. Uses Shiki when available locally; otherwise escaped plain text. */
 export async function highlightLine(line: string, _lang: string): Promise<string> {
   if (!line.trim()) {
     return escapeHtml(line);
   }
   try {
-    // Dynamic import: works in F5 dev (node_modules present); VSIX falls back to plain text.
-    const { createHighlighter } = await import("shiki");
-    const h = await createHighlighter({
-      themes: ["dark-plus"],
-      langs: ["go", "typescript", "javascript", "python", "json", "markdown", "bash", "plaintext"],
-    });
+    const h = await getHighlighter();
+    if (!h) {
+      return escapeHtml(line);
+    }
     let grammar = _lang;
     if (!h.getLoadedLanguages().includes(grammar)) {
       grammar = "plaintext";

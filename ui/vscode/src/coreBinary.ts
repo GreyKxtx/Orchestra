@@ -15,7 +15,12 @@ export function bundledCorePath(extensionPath: string): string {
   return path.join(extensionPath, "bin", corePlatformArch(), exeName);
 }
 
-/** Candidate paths in priority order (dedupe happens in resolveBinaryPath). */
+/**
+ * Candidate paths in priority order (dedupe happens in resolveBinaryPath).
+ * Deliberately limited to the bundled binary, the extension dev tree and the
+ * workspace root — walking parent directories used to pick up random stale
+ * orchestra.exe builds (→ tools_version mismatch).
+ */
 export function coreBinaryCandidates(workspaceRoot: string, extensionPath: string): string[] {
   const exeName = coreExecutableName();
   const out: string[] = [
@@ -30,15 +35,6 @@ export function coreBinaryCandidates(workspaceRoot: string, extensionPath: strin
       path.join(workspaceRoot, "orchestra-new.exe"),
       path.join(extensionPath, "..", "..", "orchestra-new.exe")
     );
-  }
-  let dir = workspaceRoot;
-  for (let i = 0; i < 6; i++) {
-    out.push(path.join(dir, exeName));
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
   }
   return out;
 }

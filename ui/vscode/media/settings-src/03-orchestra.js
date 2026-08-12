@@ -53,8 +53,68 @@
   /** @param {any} role */
   function orchRoleTier(role) {
     if (role && role.tier) return String(role.tier);
-    const defaults = { planner: "L5", complex: "L3", focused: "L3", micro: "L1" };
+    const defaults = { planner: "L5", lead: "L4", complex: "L3", focused: "L3", micro: "L1", embed: "EMB" };
     return defaults[role && role.key] || "";
+  }
+
+  /** Per-role hover help: what the role does + model examples (spec §1–2). */
+  const ORCH_ROLE_INFO = {
+    planner: {
+      title: "L5 · Orchestrator",
+      desc: "Reads the PRD, plans epics, splits work into WorkOrders and coordinates every department. Never edits code itself. Use your strongest reasoning model — it drives the whole run.",
+      example: "e.g. Claude Sonnet / Opus, GPT-5, DeepSeek-R1",
+    },
+    lead: {
+      title: "L4 · Department Leads",
+      desc: "Product & Documentation leads: write PRD.md, user stories, L1 conventions and decompose work for workers. Needs solid reasoning, but cheaper than L5.",
+      example: "e.g. Claude Sonnet, GPT-5 mini, Qwen3-235B · empty = uses the Orchestrator model",
+    },
+    complex: {
+      title: "L3 · Worker (complex)",
+      desc: "Big multi-file WorkOrders: new features, cross-module refactors, tricky bug fixes. Strongest of the worker tiers.",
+      example: "e.g. Qwen3-Coder-32B, DeepSeek-V3, Claude Haiku",
+    },
+    focused: {
+      title: "L3 · Worker (focused)",
+      desc: "Default tier: standard single-scope tasks — one function / file / test per WorkOrder. Most of the work runs here.",
+      example: "e.g. Qwen2.5-Coder-14B/32B, Codestral",
+    },
+    micro: {
+      title: "L1 · Worker (micro)",
+      desc: "Mechanical micro-edits: renames, comments, config tweaks, tiny fixes. Pick the cheapest / fastest model — quality demands are minimal.",
+      example: "e.g. Qwen2.5-Coder-7B, Llama-3.1-8B, local LM Studio model",
+    },
+    embed: {
+      title: "Embeddings",
+      desc: "Vector model for semantic_search and Index → Run embed. Must support POST /v1/embeddings — a chat model will fail. Uses the same provider credentials as Orchestra (OpenRouter, LM Studio, …).",
+      example: "e.g. openai/text-embedding-3-small, nomic-embed-text, bge-m3",
+    },
+  };
+
+  /** @param {any} role @returns {HTMLElement | null} */
+  function buildOrchInfoIcon(role) {
+    const info = ORCH_ROLE_INFO[role && role.key];
+    if (!info) return null;
+    const wrap = document.createElement("span");
+    wrap.className = "orch-info";
+    wrap.tabIndex = 0;
+    wrap.setAttribute("aria-label", `${info.title}: ${info.desc}`);
+    wrap.textContent = "i";
+    const tip = document.createElement("span");
+    tip.className = "orch-tip";
+    const t = document.createElement("strong");
+    t.textContent = info.title;
+    tip.appendChild(t);
+    const d = document.createElement("span");
+    d.className = "orch-tip-desc";
+    d.textContent = info.desc;
+    tip.appendChild(d);
+    const ex = document.createElement("span");
+    ex.className = "orch-tip-example";
+    ex.textContent = info.example;
+    tip.appendChild(ex);
+    wrap.appendChild(tip);
+    return wrap;
   }
 
   /** Effective provider key for a role (never unrelated fallbacks). */
@@ -92,7 +152,7 @@
     } else if (models.length) {
       models = [];
     }
-    models = models.slice(0, MAX_ORCH_MODELS);
+    models = models.slice(0, maxModelsForRole(role));
     role.models = models;
     role.model = models[0] || "";
   }
@@ -107,6 +167,16 @@
     role.provider = provKey;
     role.models = [];
     role.model = "";
+  }
+
+  function maxModelsForRole(role) {
+    return role && role.key === "embed" ? 1 : MAX_ORCH_MODELS;
+  }
+
+  /** @param {string} id */
+  function isEmbeddingModelId(id) {
+    const s = String(id || "").toLowerCase();
+    return /embed|embedding|nomic|bge-|e5-|gte-|minilm|voyage/.test(s);
   }
 
   function roleModelsList(role) {
@@ -151,6 +221,8 @@
       name.className = "orch-role-name";
       name.textContent = role.label || role.key;
       title.appendChild(name);
+      const infoIcon = buildOrchInfoIcon(role);
+      if (infoIcon) title.appendChild(infoIcon);
       const provValue =
         role.provider !== undefined && role.provider !== null ? role.provider : orchSharedProvider || "";
       const provWrap = buildOrchProviderSelect(provValue, (key) => {
@@ -161,7 +233,11 @@
       const pick = document.createElement("button");
       pick.type = "button";
       pick.className = "orch-pick" + (models.length ? " has-models" : "");
-      pick.title = models.length ? models.map((m, i) => `${i + 1}. ${m}`).join("\n") : "Pick up to 3 models (failover order)";
+      pick.title = models.length
+        ? models.map((m, i) => `${i + 1}. ${m}`).join("\n")
+        : role.key === "embed"
+          ? "Pick an embedding model"
+          : "Pick up to 3 models (failover order)";
       const pickInner = document.createElement("span");
       pickInner.className = "orch-pick-inner";
       renderOrchPickChips(models, pickInner);
@@ -188,13 +264,15 @@
   function renderOrchModalSlots() {
     const slots = el("orchModalSlots");
     if (!slots) return;
+    const role = orchModalRoleKey ? orchRoleByKey(orchModalRoleKey) : null;
+    const max = maxModelsForRole(role);
     slots.innerHTML = "";
-    for (let i = 0; i < MAX_ORCH_MODELS; i++) {
+    for (let i = 0; i < max; i++) {
       const slot = document.createElement("div");
       slot.className = "orch-slot" + (orchModalSelection[i] ? " filled" : "");
       const label = document.createElement("span");
       label.className = "orch-slot-label";
-      label.textContent = ORCH_SLOT_LABELS[i] || `Slot ${i + 1}`;
+      label.textContent = role && role.key === "embed" ? "Embedding model" : ORCH_SLOT_LABELS[i] || `Slot ${i + 1}`;
       slot.appendChild(label);
       const val = document.createElement("span");
       val.className = "orch-slot-val";
@@ -205,10 +283,14 @@
     }
     const hint = el("orchModalHint");
     if (hint) {
-      hint.textContent =
-        orchModalSelection.length >= MAX_ORCH_MODELS
-          ? "Maximum 3 models — click a selected row to remove"
-          : `Select up to ${MAX_ORCH_MODELS} models in failover order (primary first)`;
+      if (role && role.key === "embed") {
+        hint.textContent = "Pick one embedding model (text-embedding-…, nomic, bge). Chat models fail on /v1/embeddings.";
+      } else {
+        hint.textContent =
+          orchModalSelection.length >= max
+            ? "Maximum 3 models — click a selected row to remove"
+            : `Select up to ${max} models in failover order (primary first)`;
+      }
     }
   }
 
@@ -216,7 +298,7 @@
     const idx = orchModalSelection.indexOf(id);
     if (idx >= 0) {
       orchModalSelection.splice(idx, 1);
-    } else if (orchModalSelection.length < MAX_ORCH_MODELS) {
+    } else if (orchModalSelection.length < maxModelsForRole(orchRoleByKey(orchModalRoleKey))) {
       orchModalSelection.push(id);
     }
     renderOrchModalSlots();
@@ -229,10 +311,16 @@
     sanitizeRoleModels(role);
     orchModalRoleKey = roleKey;
     const existing = roleModelsList(role);
-    orchModalSelection = existing.slice(0, MAX_ORCH_MODELS);
+    orchModalSelection = existing.slice(0, maxModelsForRole(role));
     orchModalSearch = "";
+    orchModalMinContext = 0;
     const search = input("orchModelSearch");
     if (search) search.value = "";
+    const contextFilter = /** @type {HTMLSelectElement | null} */ (el("orchContextFilter"));
+    if (contextFilter) {
+      contextFilter.value = "0";
+      contextFilter.classList.toggle("hidden", roleKey === "embed");
+    }
     const title = el("orchModalTitle");
     if (title) title.textContent = `Models · ${role.label || roleKey}`;
     renderOrchModalSlots();
@@ -255,8 +343,24 @@
       return;
     }
     const q = (orchModalSearch || "").trim().toLowerCase();
-    const models = q ? p.models.filter((m) => (m.id || "").toLowerCase().includes(q)) : p.models;
-    const atMax = orchModalSelection.length >= MAX_ORCH_MODELS;
+    let models = p.models.filter((m) => {
+      const matchesSearch = !q || (m.id || "").toLowerCase().includes(q);
+      const contextTokens = Number(m.context_tokens) || 0;
+      const matchesContext = orchModalMinContext <= 0 || contextTokens >= orchModalMinContext;
+      return matchesSearch && matchesContext;
+    });
+    if (role && role.key === "embed") {
+      const embeddingOnly = models.filter((m) => isEmbeddingModelId(m.id));
+      if (embeddingOnly.length) models = embeddingOnly;
+    }
+    if (!models.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint orch-filter-empty";
+      empty.textContent = "No models match the selected name and context window.";
+      list.appendChild(empty);
+      return;
+    }
+    const atMax = orchModalSelection.length >= maxModelsForRole(role);
     models.forEach((m) => {
       const id = m.id || "";
       const selIdx = orchModalSelection.indexOf(id);
@@ -299,6 +403,12 @@
     renderOrchModalList();
   });
 
+  el("orchContextFilter")?.addEventListener("change", () => {
+    const filter = /** @type {HTMLSelectElement | null} */ (el("orchContextFilter"));
+    orchModalMinContext = Number(filter?.value) || 0;
+    renderOrchModalList();
+  });
+
   el("orchModalClose")?.addEventListener("click", () => {
     el("orchModelModal")?.classList.add("hidden");
     orchModalRoleKey = null;
@@ -307,7 +417,7 @@
   el("orchModalApply")?.addEventListener("click", () => {
     const role = orchModalRoleKey ? orchRoleByKey(orchModalRoleKey) : null;
     if (role) {
-      role.models = orchModalSelection.slice(0, MAX_ORCH_MODELS);
+      role.models = orchModalSelection.slice(0, maxModelsForRole(role));
       role.model = role.models[0] || "";
     }
     el("orchModelModal")?.classList.add("hidden");

@@ -1,5 +1,5 @@
 :root {
-  --bg: #121212;
+  --bg: #181818;
   --fg: #e4e4e4;
   --muted: #737373;
   --border: #2e2e2e;
@@ -70,29 +70,51 @@ body {
 /* ── Header strip (full width) ── */
 #chrome-strip {
   flex: 0 0 auto;
-  width: 100%;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.03) 0%,
-    rgba(255, 255, 255, 0.008) 100%
-  );
+  width: calc(100% - 16px);
+  margin: 8px 8px 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background:
+    radial-gradient(
+      48% 180% at -8% 50%,
+      color-mix(in srgb, var(--mode-accent) 10%, transparent),
+      transparent 68%
+    ),
+    radial-gradient(
+      48% 180% at 108% 50%,
+      color-mix(in srgb, var(--mode-accent) 10%, transparent),
+      transparent 68%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)),
+    rgba(24, 24, 24, 0.8);
+  -webkit-backdrop-filter: blur(28px) saturate(115%);
+  backdrop-filter: blur(28px) saturate(115%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.025),
+    0 10px 30px rgba(0, 0, 0, 0.3);
   position: relative;
+  z-index: 20;
+  overflow: hidden;
 }
 
 #top-accent {
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(74, 158, 255, 0.12) 15%,
-    rgba(110, 179, 255, 0.5) 35%,
-    rgba(167, 139, 250, 0.65) 50%,
-    rgba(110, 179, 255, 0.5) 65%,
-    rgba(74, 158, 255, 0.12) 85%,
-    transparent 100%
-  );
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  background:
+    radial-gradient(
+      42% 160% at -5% 50%,
+      color-mix(in srgb, var(--mode-accent) 16%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      42% 160% at 105% 50%,
+      color-mix(in srgb, var(--mode-accent) 16%, transparent),
+      transparent 70%
+    );
+  pointer-events: none;
 }
 
 #chrome-strip::after {
@@ -102,14 +124,7 @@ body {
   right: 0;
   bottom: 0;
   height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 5%,
-    rgba(110, 179, 255, 0.1) 35%,
-    rgba(167, 139, 250, 0.14) 50%,
-    rgba(110, 179, 255, 0.1) 65%,
-    transparent 95%
-  );
+  background: rgba(255, 255, 255, 0.035);
   pointer-events: none;
 }
 
@@ -118,7 +133,7 @@ body {
   align-items: stretch;
   gap: 0;
   width: 100%;
-  min-height: 36px;
+  min-height: 41px;
   padding: 0;
 }
 
@@ -134,7 +149,8 @@ body {
   height: 22px;
   object-fit: contain;
   border-radius: 5px;
-  opacity: 0.96;
+  filter: grayscale(1);
+  opacity: 0.9;
 }
 
 .session-tabs {
@@ -184,8 +200,8 @@ body {
 }
 
 .session-tab.active {
-  color: var(--fg);
-  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.065);
 }
 
 .session-tab-icon {

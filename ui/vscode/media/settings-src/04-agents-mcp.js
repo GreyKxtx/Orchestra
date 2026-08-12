@@ -6,9 +6,6 @@
       excludeDirs: area("excludeDirs")?.value || "",
       contextLimitKB: input("contextLimitKB") ? Number(input("contextLimitKB").value) : undefined,
       limitsMaxFiles: input("limitsMaxFiles") ? Number(input("limitsMaxFiles").value) : undefined,
-      embedAPIBase: input("embedAPIBase")?.value || "",
-      embedAPIKey: input("embedAPIKey")?.value || "",
-      embedModel: input("embedModel")?.value || "",
       embedBatchSize: input("embedBatchSize") ? Number(input("embedBatchSize").value) : undefined,
       semanticAutoExplore: sem ? sem.checked : undefined,
     });
@@ -419,16 +416,79 @@
     });
   }
 
+  /** @param {number} v */
+  function fmtStatNum(v) {
+    const n = Number(v) || 0;
+    if (n >= 100000) return `${Math.round(n / 1000)}k`;
+    if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
+    return String(n);
+  }
+
+  /** @param {string} language */
+  function languageVisual(language) {
+    const raw = String(language || "").trim();
+    const key = raw.toLowerCase().replace(/[^a-z0-9+#]/g, "");
+    if (key === "go" || key === "golang") return { key: "go", mark: "GO" };
+    if (key === "tsx" || key === "jsx") return { key: "react", mark: "⚛" };
+    if (key === "typescript" || key === "ts") return { key: "typescript", mark: "TS" };
+    if (key === "javascript" || key === "js") return { key: "javascript", mark: "JS" };
+    if (key === "python" || key === "py") return { key: "python", mark: "Py" };
+    if (key === "rust" || key === "rs") return { key: "rust", mark: "Rs" };
+    if (key === "java") return { key: "java", mark: "Jv" };
+    if (key === "c#" || key === "csharp" || key === "cs") return { key: "csharp", mark: "C#" };
+    if (key === "c++" || key === "cpp" || key === "cplusplus") return { key: "cpp", mark: "C+" };
+    if (key === "c") return { key: "c", mark: "C" };
+    if (key === "html") return { key: "html", mark: "H5" };
+    if (key === "css" || key === "scss" || key === "sass") return { key: "css", mark: "CSS" };
+    if (key === "shell" || key === "bash" || key === "powershell") return { key: "shell", mark: ">_" };
+    return { key: "other", mark: raw.slice(0, 2).toUpperCase() || "·" };
+  }
+
   function renderIndexStats(index) {
     const g = (index && index.graph) || {};
     const set = (id, v) => {
       const n = el(id);
-      if (n) n.textContent = g.available ? String(v ?? 0) : "—";
+      if (n) {
+        n.textContent = g.available ? fmtStatNum(v) : "—";
+        n.title = g.available ? String(Number(v) || 0) : "";
+      }
     };
     set("statFiles", g.files);
     set("statNodes", g.nodes);
     set("statEdges", g.edges);
     set("statEmb", g.embeddings);
+    set("statFuncs", g.funcs);
+    set("statTypes", g.types);
+    set("statTests", g.tests);
+    set("statPkgs", g.packages);
+
+    const langsHost = el("indexLangs");
+    if (langsHost) {
+      langsHost.innerHTML = "";
+      const langs = (g.available && g.langs && typeof g.langs === "object" && g.langs) || {};
+      const entries = Object.entries(langs)
+        .filter(([, n]) => Number(n) > 0)
+        .sort((a, b) => Number(b[1]) - Number(a[1]));
+      const total = entries.reduce((acc, [, n]) => acc + Number(n), 0);
+      for (const [lang, n] of entries.slice(0, 6)) {
+        const chip = document.createElement("span");
+        chip.className = "lang-chip";
+        const pct = total > 0 ? Math.round((Number(n) / total) * 100) : 0;
+        const visual = languageVisual(lang);
+        const logo = document.createElement("span");
+        logo.className = `lang-logo lang-${visual.key}`;
+        logo.textContent = visual.mark;
+        logo.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.textContent = `${lang} · ${pct}%`;
+        chip.appendChild(logo);
+        chip.appendChild(label);
+        chip.title = `${n} files`;
+        langsHost.appendChild(chip);
+      }
+      langsHost.classList.toggle("hidden", entries.length === 0);
+    }
+
     const hint = el("indexStatusHint");
     if (hint) {
       if (!g.available) {
@@ -437,8 +497,21 @@
         const miss = g.missing_embeddings || 0;
         hint.textContent =
           miss > 0
-            ? `${miss} nodes need embedding · ${g.db_path || ".orchestra/ckg.db"}`
+            ? `${miss} symbols need embedding — press “Run embed” · ${g.db_path || ".orchestra/ckg.db"}`
             : `Graph ready · ${g.db_path || ".orchestra/ckg.db"}`;
+      }
+    }
+    const embedHint = el("indexEmbedHint");
+    if (embedHint) {
+      const emb = (index && index.embed) || {};
+      const model = String(emb.model || "").trim();
+      const provider = String(emb.provider || "").trim();
+      if (!model) {
+        embedHint.textContent = "No embedding model selected — pick one in General, then press Run embed.";
+      } else {
+        embedHint.textContent = provider
+          ? `Embedding model: ${model} · via ${provider}`
+          : `Embedding model: ${model}`;
       }
     }
   }

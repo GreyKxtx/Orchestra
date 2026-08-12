@@ -134,9 +134,6 @@
       input("limitsMaxFiles").value = index.limits?.max_files ? String(index.limits.max_files) : "";
     }
     const emb = index.embed || {};
-    if (input("embedAPIBase")) input("embedAPIBase").value = emb.api_base || "";
-    if (input("embedAPIKey")) input("embedAPIKey").value = "";
-    if (input("embedModel")) input("embedModel").value = emb.model || "";
     if (input("embedBatchSize")) input("embedBatchSize").value = emb.batch_size ? String(emb.batch_size) : "";
     const sem = /** @type {HTMLInputElement | null} */ (el("semanticAutoExplore"));
     if (sem) sem.checked = emb.semantic_auto_explore !== false;
@@ -144,12 +141,6 @@
     renderIndexStats(index);
 
     if (area("systemPrompt")) area("systemPrompt").value = prompt.content || "";
-    const pathEl = el("promptPath");
-    if (pathEl) {
-      pathEl.textContent = prompt.hasOverride
-        ? `Override active · ${prompt.path || ""}`
-        : `No override · ${prompt.path || ".orchestra/system.txt"}`;
-    }
     agents = (msg.agents && msg.agents.agents) || [];
     agentAvailableTools =
       (msg.agents && Array.isArray(msg.agents.availableTools) && msg.agents.availableTools) ||

@@ -23,10 +23,10 @@ import { RpcClient } from "./rpc/client";
 /** Must match internal/protocol/version.go */
 const PROTOCOL_VERSION = 13;
 const OPS_VERSION = 1;
-const TOOLS_VERSION = 12;
+const TOOLS_VERSION = 13;
 
-/** session.message can run a long agent turn */
-const MESSAGE_TIMEOUT_MS = 10 * 60 * 1000;
+/** session.message can run a long agent turn (orchestrated multi-department runs). */
+const MESSAGE_TIMEOUT_MS = 60 * 60 * 1000;
 
 export interface HealthResult {
   ok: boolean;
@@ -131,8 +131,19 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
   private coreInitialized = false;
   private status: ConnectionStatus = "idle";
   private ensurePromise: Promise<void> | undefined;
-  private permissionResolver: ((result: Record<string, unknown>) => void) | undefined;
-  private questionResolver: ((result: Record<string, unknown>) => void) | undefined;
+  /**
+   * Server-request resolvers keyed by JSON-RPC id. A single slot deadlocks the
+   * core when two permission/question requests overlap (parallel subagents).
+   * FIFO order is preserved by Map insertion order.
+   */
+  private readonly permissionResolvers = new Map<
+    number | string,
+    (result: Record<string, unknown>) => void
+  >();
+  private readonly questionResolvers = new Map<
+    number | string,
+    (result: Record<string, unknown>) => void
+  >();
   /** In-flight session.message JSON-RPC id (for $/cancelRequest). */
   private messageRequestId: number | undefined;
 
@@ -193,6 +204,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
   }
 
   private teardownClient(): void {
+    this.rejectPendingResolvers("core client torn down");
     if (this.client) {
       this.client.dispose();
       this.client = undefined;
@@ -294,41 +306,53 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     if (!turn || (!turn.text && !turn.reasoning && !turn.tool_blocks?.length)) {
       return;
     }
-    try {
-      const view = await this.getSession(id);
-      const health = await this.healthInfo();
-      const ui: RawUIMessage[] = [...view.uiMessages];
-      const msg: RawUIMessage = {
-        role: "assistant",
-        text: turn.text,
-        reasoning: turn.reasoning,
-        tool_blocks: turn.tool_blocks,
-        prompt_ctx: turn.prompt_ctx,
-        tokens_in: turn.tokens_in,
-        tokens_out: turn.tokens_out,
-      };
-      const last = ui[ui.length - 1];
-      const lastRole = String(last?.role || "").toLowerCase();
-      const lastText = String(last?.text || last?.content || "").trim();
-      if (lastRole === "assistant" && lastText === turn.text) {
-        ui[ui.length - 1] = { ...last, ...msg };
-      } else {
-        ui.push(msg);
+    // One retry with backoff: a failed ui_sync silently drops the last
+    // assistant answer from persisted history.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const view = await this.getSession(id);
+        const health = await this.healthInfo();
+        const ui: RawUIMessage[] = [...view.uiMessages];
+        const msg: RawUIMessage = {
+          role: "assistant",
+          text: turn.text,
+          reasoning: turn.reasoning,
+          tool_blocks: turn.tool_blocks,
+          prompt_ctx: turn.prompt_ctx,
+          tokens_in: turn.tokens_in,
+          tokens_out: turn.tokens_out,
+        };
+        const last = ui[ui.length - 1];
+        const lastRole = String(last?.role || "").toLowerCase();
+        const lastText = String(last?.text || last?.content || "").trim();
+        if (lastRole === "assistant" && lastText === turn.text) {
+          ui[ui.length - 1] = { ...last, ...msg };
+        } else {
+          ui.push(msg);
+        }
+        await this.client.request(
+          "session.ui_sync",
+          {
+            session_id: id,
+            title: view.title || undefined,
+            model: health.model || view.model || undefined,
+            ui_messages: ui,
+          },
+          30_000
+        );
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.output.appendLine(
+          `[orchestra] ui_sync attempt ${attempt + 1} failed: ${message}`
+        );
+        if (attempt === 0 && this.client) {
+          await new Promise((r) => setTimeout(r, 1_000));
+          continue;
+        }
+        // Surface the problem instead of silently losing the turn from history.
+        this.emit("stderr", `ui_sync failed — последний ответ может не сохраниться в истории: ${message}\n`);
       }
-      await this.client.request(
-        "session.ui_sync",
-        {
-          session_id: id,
-          title: view.title || undefined,
-          model: health.model || view.model || undefined,
-          ui_messages: ui,
-        },
-        30_000
-      );
-    } catch (err) {
-      this.output.appendLine(
-        `[orchestra] ui_sync skipped: ${err instanceof Error ? err.message : String(err)}`
-      );
     }
   }
 
@@ -916,6 +940,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     contextLimitKB: number;
     limits: { context_kb?: number; max_files?: number; max_bytes_per_file?: number };
     embed: {
+      provider?: string;
       api_base?: string;
       model?: string;
       batch_size?: number;
@@ -931,6 +956,11 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       edges: number;
       embeddings: number;
       missing_embeddings: number;
+      funcs: number;
+      types: number;
+      packages: number;
+      tests: number;
+      langs: Record<string, number>;
     };
     graphUIPort: number;
   }> {
@@ -952,6 +982,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         max_bytes_per_file: Number(limits.max_bytes_per_file) || undefined,
       },
       embed: {
+        provider: String(embed.provider || ""),
         api_base: String(embed.api_base || ""),
         model: String(embed.model || ""),
         batch_size: Number(embed.batch_size) || undefined,
@@ -970,6 +1001,14 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         edges: Number(graph.edges) || 0,
         embeddings: Number(graph.embeddings) || 0,
         missing_embeddings: Number(graph.missing_embeddings) || 0,
+        funcs: Number(graph.funcs) || 0,
+        types: Number(graph.types) || 0,
+        packages: Number(graph.packages) || 0,
+        tests: Number(graph.tests) || 0,
+        langs:
+          graph.langs && typeof graph.langs === "object"
+            ? (graph.langs as Record<string, number>)
+            : {},
       },
       graphUIPort: Number(r.graph_ui_port) || 6061,
     };
@@ -1167,7 +1206,9 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         params.attachments = attachments;
       }
       // If a previous Stop left the server mid-unwind, wait out "session is busy"
-      // instead of hanging forever on runMu behind a false-idle busy flag.
+      // passively. Do NOT auto-send session.cancel here: it would silently kill
+      // a legitimately running long turn (panel already calls clearServerBusy()
+      // once before each send for the stale-flag case).
       let result: unknown;
       const busyDeadline = Date.now() + 15_000;
       for (;;) {
@@ -1184,13 +1225,13 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (/session is busy/i.test(msg) && Date.now() < busyDeadline) {
-            await new Promise((r) => setTimeout(r, 200));
-            try {
-              await this.client.request("session.cancel", { session_id: sessionId }, 3_000);
-            } catch {
-              /* ignore */
-            }
+            await new Promise((r) => setTimeout(r, 300));
             continue;
+          }
+          if (/session is busy/i.test(msg)) {
+            throw new Error(
+              "session is busy: предыдущий ход ещё выполняется. Нажмите Stop, чтобы прервать его."
+            );
           }
           throw err;
         }
@@ -1212,6 +1253,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
 
   /** Abort the in-flight session turn (session.cancel first, then $/cancelRequest). */
   async cancelTurn(): Promise<void> {
+    // Unblock the core if it is parked on a permission/question dialog.
+    this.rejectPendingResolvers("turn cancelled");
     const sessionId = this.sessionId;
     const client = this.client;
     const reqId = this.messageRequestId;
@@ -1358,12 +1401,19 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     };
   }
 
+  /** Whether any permission/question dialog is still waiting for an answer. */
+  hasPendingServerRequests(): boolean {
+    return this.permissionResolvers.size > 0 || this.questionResolvers.size > 0;
+  }
+
   resolvePermission(decision: { approved: boolean; always?: boolean; reason?: string }): void {
-    const resolve = this.permissionResolver;
-    this.permissionResolver = undefined;
-    if (!resolve) {
+    // FIFO: answer the oldest outstanding request (UI shows them in order).
+    const first = this.permissionResolvers.entries().next();
+    if (first.done) {
       return;
     }
+    const [id, resolve] = first.value;
+    this.permissionResolvers.delete(id);
     resolve({
       approved: decision.approved,
       always: Boolean(decision.always),
@@ -1372,12 +1422,25 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
   }
 
   resolveQuestion(answers: string[]): void {
-    const resolve = this.questionResolver;
-    this.questionResolver = undefined;
-    if (!resolve) {
+    const first = this.questionResolvers.entries().next();
+    if (first.done) {
       return;
     }
+    const [id, resolve] = first.value;
+    this.questionResolvers.delete(id);
     resolve({ answers });
+  }
+
+  /** Deny/blank out all outstanding server requests (cancel, teardown, core exit). */
+  private rejectPendingResolvers(reason: string): void {
+    for (const [, resolve] of this.permissionResolvers) {
+      resolve({ approved: false, always: false, reason });
+    }
+    this.permissionResolvers.clear();
+    for (const [, resolve] of this.questionResolvers) {
+      resolve({ answers: [] });
+    }
+    this.questionResolvers.clear();
   }
 
   /**
@@ -1420,25 +1483,44 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     this.workspaceRoot = workspaceRoot;
     this.coreInitialized = false;
 
+    // Every handler checks identity: after a restart, late events from the
+    // torn-down client must not clobber state that now belongs to the new one
+    // (otherwise the fresh core process leaks as an orphan with no reference).
     client.on("stderr", (line: string) => {
+      if (this.client !== client) {
+        return;
+      }
       this.output.append(`[core stderr] ${line}`);
       this.emit("stderr", line);
     });
     client.on("error", (err: Error) => {
+      if (this.client !== client) {
+        return;
+      }
       this.output.appendLine(`[orchestra] rpc error: ${err.message}`);
       this.setStatus("error", err.message);
     });
     client.on("exit", () => {
+      if (this.client !== client) {
+        return;
+      }
       this.output.appendLine("[orchestra] core process exited");
       this.client = undefined;
       this.sessionId = undefined;
       this.coreInitialized = false;
+      this.rejectPendingResolvers("core exited");
       this.setStatus("idle", "core exited");
     });
     client.on("notification", (method: string, params: unknown) => {
+      if (this.client !== client) {
+        return;
+      }
       this.handleNotification(method, params);
     });
     client.setServerRequestHandler(async (method, params, id) => {
+      if (this.client !== client) {
+        throw new Error("stale core client");
+      }
       return this.handleServerRequest(method, params, id);
     });
 
@@ -1529,7 +1611,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     if (method === "permission/request") {
       const req = parsePermissionRequest(params);
       return new Promise((resolve) => {
-        this.permissionResolver = resolve;
+        this.permissionResolvers.set(id, resolve);
         this.emit("permissionRequest", req);
       });
     }
@@ -1537,7 +1619,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     if (method === "question/ask") {
       const questions = parseQuestionRequest(params);
       return new Promise((resolve) => {
-        this.questionResolver = resolve;
+        this.questionResolvers.set(id, resolve);
         this.emit("questionAsk", questions);
       });
     }

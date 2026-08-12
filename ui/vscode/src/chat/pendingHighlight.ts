@@ -7,6 +7,9 @@ export class PendingHighlightManager implements vscode.Disposable {
   private changedLine?: vscode.TextEditorDecorationType;
   private ghostLine?: vscode.TextEditorDecorationType;
   private disposables: vscode.Disposable[] = [];
+  private changeListener: vscode.Disposable | undefined;
+  /** Snapshot the plan was built against; any edit invalidates the decorations. */
+  private tracked: { uriKey: string; version: number; editor: vscode.TextEditor } | undefined;
 
   apply(editor: vscode.TextEditor, before: string, after: string): void {
     this.clearEditor(editor);
@@ -29,6 +32,16 @@ export class PendingHighlightManager implements vscode.Disposable {
       editor.setDecorations(this.ghostLine, plan.ghostDecorations);
     }
 
+    // The plan is a snapshot of this document version. If the user edits the
+    // file, line anchors drift and ghost insertions point at the wrong lines —
+    // clearing beats highlighting the wrong code.
+    this.tracked = {
+      uriKey: editor.document.uri.toString(),
+      version: editor.document.version,
+      editor,
+    };
+    this.ensureChangeListener();
+
     const line = Math.min(plan.revealLine, Math.max(0, editor.document.lineCount - 1));
     const pos = new vscode.Position(line, 0);
     editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
@@ -44,9 +57,22 @@ export class PendingHighlightManager implements vscode.Disposable {
     if (this.ghostLine) {
       editor.setDecorations(this.ghostLine, []);
     }
+    if (this.tracked?.editor === editor) {
+      this.tracked = undefined;
+    }
+  }
+
+  /** Clear highlights everywhere (e.g. pending changes applied or discarded). */
+  clearAll(): void {
+    if (this.tracked) {
+      this.clearEditor(this.tracked.editor);
+    }
+    this.tracked = undefined;
   }
 
   dispose(): void {
+    this.changeListener?.dispose();
+    this.changeListener = undefined;
     for (const d of this.disposables) {
       d.dispose();
     }
@@ -54,6 +80,23 @@ export class PendingHighlightManager implements vscode.Disposable {
     this.addedLine = undefined;
     this.changedLine = undefined;
     this.ghostLine = undefined;
+    this.tracked = undefined;
+  }
+
+  private ensureChangeListener(): void {
+    if (this.changeListener) {
+      return;
+    }
+    this.changeListener = vscode.workspace.onDidChangeTextDocument((e) => {
+      const t = this.tracked;
+      if (
+        t &&
+        e.document.uri.toString() === t.uriKey &&
+        e.document.version !== t.version
+      ) {
+        this.clearEditor(t.editor);
+      }
+    });
   }
 
   private ensureTypes(): void {

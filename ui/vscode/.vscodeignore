@@ -3,7 +3,9 @@
 src/**
 node_modules/**
 .gitignore
+.orchestra.yml
 tsconfig.json
 **/*.map
 **/*.ts
+bin/**/*.exe~
 !out/**/*.js

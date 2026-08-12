@@ -38,6 +38,8 @@
   let orchModalSelection = [];
   /** @type {string} */
   let orchModalSearch = "";
+  /** Minimum model context window in tokens; zero disables filtering. */
+  let orchModalMinContext = 0;
   /** @type {boolean} */
   let apiKeyVisible = false;
   /** @type {{ version?: number, entries?: any[] }} */
@@ -177,9 +179,9 @@
     }
     if (k) {
       const letter = k.slice(0, 1).toUpperCase();
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="5" fill="#333"/><text x="12" y="16" text-anchor="middle" fill="#ccc" font-size="11" font-family="Segoe UI,sans-serif" font-weight="600">${letter}</text></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="rgba(255,255,255,0.08)"/><text x="12" y="16" text-anchor="middle" fill="#b9bac2" font-size="11" font-family="Segoe UI,sans-serif" font-weight="600">${letter}</text></svg>`;
     }
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="#aaa" stroke-width="1.5" fill="none"/><path d="M8 12h8M12 8v8" stroke="#ccc" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" fill="none"/><path d="M8 12h8M12 8v8" stroke="#b9bac2" stroke-width="1.5" stroke-linecap="round"/></svg>`;
   }
   const MAX_ORCH_MODELS = 3;
 
@@ -654,8 +656,68 @@
   /** @param {any} role */
   function orchRoleTier(role) {
     if (role && role.tier) return String(role.tier);
-    const defaults = { planner: "L5", complex: "L3", focused: "L3", micro: "L1" };
+    const defaults = { planner: "L5", lead: "L4", complex: "L3", focused: "L3", micro: "L1", embed: "EMB" };
     return defaults[role && role.key] || "";
+  }
+
+  /** Per-role hover help: what the role does + model examples (spec §1–2). */
+  const ORCH_ROLE_INFO = {
+    planner: {
+      title: "L5 · Orchestrator",
+      desc: "Reads the PRD, plans epics, splits work into WorkOrders and coordinates every department. Never edits code itself. Use your strongest reasoning model — it drives the whole run.",
+      example: "e.g. Claude Sonnet / Opus, GPT-5, DeepSeek-R1",
+    },
+    lead: {
+      title: "L4 · Department Leads",
+      desc: "Product & Documentation leads: write PRD.md, user stories, L1 conventions and decompose work for workers. Needs solid reasoning, but cheaper than L5.",
+      example: "e.g. Claude Sonnet, GPT-5 mini, Qwen3-235B · empty = uses the Orchestrator model",
+    },
+    complex: {
+      title: "L3 · Worker (complex)",
+      desc: "Big multi-file WorkOrders: new features, cross-module refactors, tricky bug fixes. Strongest of the worker tiers.",
+      example: "e.g. Qwen3-Coder-32B, DeepSeek-V3, Claude Haiku",
+    },
+    focused: {
+      title: "L3 · Worker (focused)",
+      desc: "Default tier: standard single-scope tasks — one function / file / test per WorkOrder. Most of the work runs here.",
+      example: "e.g. Qwen2.5-Coder-14B/32B, Codestral",
+    },
+    micro: {
+      title: "L1 · Worker (micro)",
+      desc: "Mechanical micro-edits: renames, comments, config tweaks, tiny fixes. Pick the cheapest / fastest model — quality demands are minimal.",
+      example: "e.g. Qwen2.5-Coder-7B, Llama-3.1-8B, local LM Studio model",
+    },
+    embed: {
+      title: "Embeddings",
+      desc: "Vector model for semantic_search and Index → Run embed. Must support POST /v1/embeddings — a chat model will fail. Uses the same provider credentials as Orchestra (OpenRouter, LM Studio, …).",
+      example: "e.g. openai/text-embedding-3-small, nomic-embed-text, bge-m3",
+    },
+  };
+
+  /** @param {any} role @returns {HTMLElement | null} */
+  function buildOrchInfoIcon(role) {
+    const info = ORCH_ROLE_INFO[role && role.key];
+    if (!info) return null;
+    const wrap = document.createElement("span");
+    wrap.className = "orch-info";
+    wrap.tabIndex = 0;
+    wrap.setAttribute("aria-label", `${info.title}: ${info.desc}`);
+    wrap.textContent = "i";
+    const tip = document.createElement("span");
+    tip.className = "orch-tip";
+    const t = document.createElement("strong");
+    t.textContent = info.title;
+    tip.appendChild(t);
+    const d = document.createElement("span");
+    d.className = "orch-tip-desc";
+    d.textContent = info.desc;
+    tip.appendChild(d);
+    const ex = document.createElement("span");
+    ex.className = "orch-tip-example";
+    ex.textContent = info.example;
+    tip.appendChild(ex);
+    wrap.appendChild(tip);
+    return wrap;
   }
 
   /** Effective provider key for a role (never unrelated fallbacks). */
@@ -693,7 +755,7 @@
     } else if (models.length) {
       models = [];
     }
-    models = models.slice(0, MAX_ORCH_MODELS);
+    models = models.slice(0, maxModelsForRole(role));
     role.models = models;
     role.model = models[0] || "";
   }
@@ -708,6 +770,16 @@
     role.provider = provKey;
     role.models = [];
     role.model = "";
+  }
+
+  function maxModelsForRole(role) {
+    return role && role.key === "embed" ? 1 : MAX_ORCH_MODELS;
+  }
+
+  /** @param {string} id */
+  function isEmbeddingModelId(id) {
+    const s = String(id || "").toLowerCase();
+    return /embed|embedding|nomic|bge-|e5-|gte-|minilm|voyage/.test(s);
   }
 
   function roleModelsList(role) {
@@ -752,6 +824,8 @@
       name.className = "orch-role-name";
       name.textContent = role.label || role.key;
       title.appendChild(name);
+      const infoIcon = buildOrchInfoIcon(role);
+      if (infoIcon) title.appendChild(infoIcon);
       const provValue =
         role.provider !== undefined && role.provider !== null ? role.provider : orchSharedProvider || "";
       const provWrap = buildOrchProviderSelect(provValue, (key) => {
@@ -762,7 +836,11 @@
       const pick = document.createElement("button");
       pick.type = "button";
       pick.className = "orch-pick" + (models.length ? " has-models" : "");
-      pick.title = models.length ? models.map((m, i) => `${i + 1}. ${m}`).join("\n") : "Pick up to 3 models (failover order)";
+      pick.title = models.length
+        ? models.map((m, i) => `${i + 1}. ${m}`).join("\n")
+        : role.key === "embed"
+          ? "Pick an embedding model"
+          : "Pick up to 3 models (failover order)";
       const pickInner = document.createElement("span");
       pickInner.className = "orch-pick-inner";
       renderOrchPickChips(models, pickInner);
@@ -789,13 +867,15 @@
   function renderOrchModalSlots() {
     const slots = el("orchModalSlots");
     if (!slots) return;
+    const role = orchModalRoleKey ? orchRoleByKey(orchModalRoleKey) : null;
+    const max = maxModelsForRole(role);
     slots.innerHTML = "";
-    for (let i = 0; i < MAX_ORCH_MODELS; i++) {
+    for (let i = 0; i < max; i++) {
       const slot = document.createElement("div");
       slot.className = "orch-slot" + (orchModalSelection[i] ? " filled" : "");
       const label = document.createElement("span");
       label.className = "orch-slot-label";
-      label.textContent = ORCH_SLOT_LABELS[i] || `Slot ${i + 1}`;
+      label.textContent = role && role.key === "embed" ? "Embedding model" : ORCH_SLOT_LABELS[i] || `Slot ${i + 1}`;
       slot.appendChild(label);
       const val = document.createElement("span");
       val.className = "orch-slot-val";
@@ -806,10 +886,14 @@
     }
     const hint = el("orchModalHint");
     if (hint) {
-      hint.textContent =
-        orchModalSelection.length >= MAX_ORCH_MODELS
-          ? "Maximum 3 models — click a selected row to remove"
-          : `Select up to ${MAX_ORCH_MODELS} models in failover order (primary first)`;
+      if (role && role.key === "embed") {
+        hint.textContent = "Pick one embedding model (text-embedding-…, nomic, bge). Chat models fail on /v1/embeddings.";
+      } else {
+        hint.textContent =
+          orchModalSelection.length >= max
+            ? "Maximum 3 models — click a selected row to remove"
+            : `Select up to ${max} models in failover order (primary first)`;
+      }
     }
   }
 
@@ -817,7 +901,7 @@
     const idx = orchModalSelection.indexOf(id);
     if (idx >= 0) {
       orchModalSelection.splice(idx, 1);
-    } else if (orchModalSelection.length < MAX_ORCH_MODELS) {
+    } else if (orchModalSelection.length < maxModelsForRole(orchRoleByKey(orchModalRoleKey))) {
       orchModalSelection.push(id);
     }
     renderOrchModalSlots();
@@ -830,10 +914,16 @@
     sanitizeRoleModels(role);
     orchModalRoleKey = roleKey;
     const existing = roleModelsList(role);
-    orchModalSelection = existing.slice(0, MAX_ORCH_MODELS);
+    orchModalSelection = existing.slice(0, maxModelsForRole(role));
     orchModalSearch = "";
+    orchModalMinContext = 0;
     const search = input("orchModelSearch");
     if (search) search.value = "";
+    const contextFilter = /** @type {HTMLSelectElement | null} */ (el("orchContextFilter"));
+    if (contextFilter) {
+      contextFilter.value = "0";
+      contextFilter.classList.toggle("hidden", roleKey === "embed");
+    }
     const title = el("orchModalTitle");
     if (title) title.textContent = `Models · ${role.label || roleKey}`;
     renderOrchModalSlots();
@@ -856,8 +946,24 @@
       return;
     }
     const q = (orchModalSearch || "").trim().toLowerCase();
-    const models = q ? p.models.filter((m) => (m.id || "").toLowerCase().includes(q)) : p.models;
-    const atMax = orchModalSelection.length >= MAX_ORCH_MODELS;
+    let models = p.models.filter((m) => {
+      const matchesSearch = !q || (m.id || "").toLowerCase().includes(q);
+      const contextTokens = Number(m.context_tokens) || 0;
+      const matchesContext = orchModalMinContext <= 0 || contextTokens >= orchModalMinContext;
+      return matchesSearch && matchesContext;
+    });
+    if (role && role.key === "embed") {
+      const embeddingOnly = models.filter((m) => isEmbeddingModelId(m.id));
+      if (embeddingOnly.length) models = embeddingOnly;
+    }
+    if (!models.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint orch-filter-empty";
+      empty.textContent = "No models match the selected name and context window.";
+      list.appendChild(empty);
+      return;
+    }
+    const atMax = orchModalSelection.length >= maxModelsForRole(role);
     models.forEach((m) => {
       const id = m.id || "";
       const selIdx = orchModalSelection.indexOf(id);
@@ -900,6 +1006,12 @@
     renderOrchModalList();
   });
 
+  el("orchContextFilter")?.addEventListener("change", () => {
+    const filter = /** @type {HTMLSelectElement | null} */ (el("orchContextFilter"));
+    orchModalMinContext = Number(filter?.value) || 0;
+    renderOrchModalList();
+  });
+
   el("orchModalClose")?.addEventListener("click", () => {
     el("orchModelModal")?.classList.add("hidden");
     orchModalRoleKey = null;
@@ -908,7 +1020,7 @@
   el("orchModalApply")?.addEventListener("click", () => {
     const role = orchModalRoleKey ? orchRoleByKey(orchModalRoleKey) : null;
     if (role) {
-      role.models = orchModalSelection.slice(0, MAX_ORCH_MODELS);
+      role.models = orchModalSelection.slice(0, maxModelsForRole(role));
       role.model = role.models[0] || "";
     }
     el("orchModelModal")?.classList.add("hidden");
@@ -944,9 +1056,6 @@
       excludeDirs: area("excludeDirs")?.value || "",
       contextLimitKB: input("contextLimitKB") ? Number(input("contextLimitKB").value) : undefined,
       limitsMaxFiles: input("limitsMaxFiles") ? Number(input("limitsMaxFiles").value) : undefined,
-      embedAPIBase: input("embedAPIBase")?.value || "",
-      embedAPIKey: input("embedAPIKey")?.value || "",
-      embedModel: input("embedModel")?.value || "",
       embedBatchSize: input("embedBatchSize") ? Number(input("embedBatchSize").value) : undefined,
       semanticAutoExplore: sem ? sem.checked : undefined,
     });
@@ -1357,16 +1466,79 @@
     });
   }
 
+  /** @param {number} v */
+  function fmtStatNum(v) {
+    const n = Number(v) || 0;
+    if (n >= 100000) return `${Math.round(n / 1000)}k`;
+    if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
+    return String(n);
+  }
+
+  /** @param {string} language */
+  function languageVisual(language) {
+    const raw = String(language || "").trim();
+    const key = raw.toLowerCase().replace(/[^a-z0-9+#]/g, "");
+    if (key === "go" || key === "golang") return { key: "go", mark: "GO" };
+    if (key === "tsx" || key === "jsx") return { key: "react", mark: "⚛" };
+    if (key === "typescript" || key === "ts") return { key: "typescript", mark: "TS" };
+    if (key === "javascript" || key === "js") return { key: "javascript", mark: "JS" };
+    if (key === "python" || key === "py") return { key: "python", mark: "Py" };
+    if (key === "rust" || key === "rs") return { key: "rust", mark: "Rs" };
+    if (key === "java") return { key: "java", mark: "Jv" };
+    if (key === "c#" || key === "csharp" || key === "cs") return { key: "csharp", mark: "C#" };
+    if (key === "c++" || key === "cpp" || key === "cplusplus") return { key: "cpp", mark: "C+" };
+    if (key === "c") return { key: "c", mark: "C" };
+    if (key === "html") return { key: "html", mark: "H5" };
+    if (key === "css" || key === "scss" || key === "sass") return { key: "css", mark: "CSS" };
+    if (key === "shell" || key === "bash" || key === "powershell") return { key: "shell", mark: ">_" };
+    return { key: "other", mark: raw.slice(0, 2).toUpperCase() || "·" };
+  }
+
   function renderIndexStats(index) {
     const g = (index && index.graph) || {};
     const set = (id, v) => {
       const n = el(id);
-      if (n) n.textContent = g.available ? String(v ?? 0) : "—";
+      if (n) {
+        n.textContent = g.available ? fmtStatNum(v) : "—";
+        n.title = g.available ? String(Number(v) || 0) : "";
+      }
     };
     set("statFiles", g.files);
     set("statNodes", g.nodes);
     set("statEdges", g.edges);
     set("statEmb", g.embeddings);
+    set("statFuncs", g.funcs);
+    set("statTypes", g.types);
+    set("statTests", g.tests);
+    set("statPkgs", g.packages);
+
+    const langsHost = el("indexLangs");
+    if (langsHost) {
+      langsHost.innerHTML = "";
+      const langs = (g.available && g.langs && typeof g.langs === "object" && g.langs) || {};
+      const entries = Object.entries(langs)
+        .filter(([, n]) => Number(n) > 0)
+        .sort((a, b) => Number(b[1]) - Number(a[1]));
+      const total = entries.reduce((acc, [, n]) => acc + Number(n), 0);
+      for (const [lang, n] of entries.slice(0, 6)) {
+        const chip = document.createElement("span");
+        chip.className = "lang-chip";
+        const pct = total > 0 ? Math.round((Number(n) / total) * 100) : 0;
+        const visual = languageVisual(lang);
+        const logo = document.createElement("span");
+        logo.className = `lang-logo lang-${visual.key}`;
+        logo.textContent = visual.mark;
+        logo.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.textContent = `${lang} · ${pct}%`;
+        chip.appendChild(logo);
+        chip.appendChild(label);
+        chip.title = `${n} files`;
+        langsHost.appendChild(chip);
+      }
+      langsHost.classList.toggle("hidden", entries.length === 0);
+    }
+
     const hint = el("indexStatusHint");
     if (hint) {
       if (!g.available) {
@@ -1375,8 +1547,21 @@
         const miss = g.missing_embeddings || 0;
         hint.textContent =
           miss > 0
-            ? `${miss} nodes need embedding · ${g.db_path || ".orchestra/ckg.db"}`
+            ? `${miss} symbols need embedding — press “Run embed” · ${g.db_path || ".orchestra/ckg.db"}`
             : `Graph ready · ${g.db_path || ".orchestra/ckg.db"}`;
+      }
+    }
+    const embedHint = el("indexEmbedHint");
+    if (embedHint) {
+      const emb = (index && index.embed) || {};
+      const model = String(emb.model || "").trim();
+      const provider = String(emb.provider || "").trim();
+      if (!model) {
+        embedHint.textContent = "No embedding model selected — pick one in General, then press Run embed.";
+      } else {
+        embedHint.textContent = provider
+          ? `Embedding model: ${model} · via ${provider}`
+          : `Embedding model: ${model}`;
       }
     }
   }
@@ -2161,9 +2346,6 @@
       input("limitsMaxFiles").value = index.limits?.max_files ? String(index.limits.max_files) : "";
     }
     const emb = index.embed || {};
-    if (input("embedAPIBase")) input("embedAPIBase").value = emb.api_base || "";
-    if (input("embedAPIKey")) input("embedAPIKey").value = "";
-    if (input("embedModel")) input("embedModel").value = emb.model || "";
     if (input("embedBatchSize")) input("embedBatchSize").value = emb.batch_size ? String(emb.batch_size) : "";
     const sem = /** @type {HTMLInputElement | null} */ (el("semanticAutoExplore"));
     if (sem) sem.checked = emb.semantic_auto_explore !== false;
@@ -2171,12 +2353,6 @@
     renderIndexStats(index);
 
     if (area("systemPrompt")) area("systemPrompt").value = prompt.content || "";
-    const pathEl = el("promptPath");
-    if (pathEl) {
-      pathEl.textContent = prompt.hasOverride
-        ? `Override active · ${prompt.path || ""}`
-        : `No override · ${prompt.path || ".orchestra/system.txt"}`;
-    }
     agents = (msg.agents && msg.agents.agents) || [];
     agentAvailableTools =
       (msg.agents && Array.isArray(msg.agents.availableTools) && msg.agents.availableTools) ||

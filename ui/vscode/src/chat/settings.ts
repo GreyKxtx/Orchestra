@@ -90,17 +90,18 @@ export class SettingsView {
 <body>
   <div id="layout">
     <nav id="nav">
-      <div class="nav-top">
-        <button type="button" id="backChat" class="back">← Chat</button>
-      </div>
-      <div class="nav-items">
-        <button type="button" class="nav-item active" data-section="general">General</button>
-        <button type="button" class="nav-item" data-section="models">Models</button>
-        <button type="button" class="nav-item" data-section="orchestra">Orchestra</button>
-        <button type="button" class="nav-item" data-section="index">Index &amp; Graph</button>
-        <button type="button" class="nav-item" data-section="agent">Agent</button>
-        <button type="button" class="nav-item" data-section="tools">Tools &amp; MCP</button>
-        <button type="button" class="nav-item" data-section="plugins">Plugins</button>
+      <div class="header-accent" aria-hidden="true"></div>
+      <div class="nav-shell">
+        <div class="nav-items">
+          <button type="button" class="nav-item active" data-section="general"><span class="nav-ico">${navIcon("general")}</span>General</button>
+          <button type="button" class="nav-item" data-section="models"><span class="nav-ico">${navIcon("models")}</span>Models</button>
+          <button type="button" class="nav-item" data-section="index"><span class="nav-ico">${navIcon("index")}</span>Index &amp; Graph</button>
+          <button type="button" class="nav-item" data-section="agent"><span class="nav-ico">${navIcon("agent")}</span>Agent</button>
+          <button type="button" class="nav-item" data-section="tools"><span class="nav-ico">${navIcon("tools")}</span>Tools &amp; MCP</button>
+        </div>
+        <div class="nav-top">
+          <button type="button" id="backChat" class="back" aria-label="Back to chat">${headerBackIcon()}<span>Chat</span></button>
+        </div>
       </div>
     </nav>
     <main id="main">
@@ -116,6 +117,58 @@ export class SettingsView {
           <button type="button" id="reload" class="secondary">Reload all</button>
           <button type="button" id="saveGeneral" class="primary">Save</button>
         </footer>
+        <div class="section-divider"></div>
+        <h2 class="section-title">Orchestra routing</h2>
+        <p class="sub">Orchestrator (L5), department leads (L4), worker tiers, and the embedding model for semantic search. Pick models from the same provider — hover the <em>i</em> icon for what each role does.</p>
+        <label>Shared provider
+          <div id="orchSharedProviderWrap"></div>
+        </label>
+        <p class="hint">Pick one gateway (OpenRouter) and assign different models per role. Primary model = first selected.</p>
+        <div id="orchRoles" class="orch-roles"></div>
+        <details class="adv">
+          <summary>Verification &amp; retries</summary>
+          <label class="row check"><input id="orchVerifyEnabled" type="checkbox" checked /> Deterministic worker verify (LSP + go build)</label>
+          <label class="row check"><input id="orchLLMVerify" type="checkbox" /> LLM verifier after deterministic pass</label>
+          <label>Max worker retries <input id="orchMaxRetries" type="number" min="1" max="12" value="3" /></label>
+          <label>Max verify retries <input id="orchMaxVerifyRetries" type="number" min="0" max="6" value="1" /></label>
+          <label>Default tier
+            <select id="orchDefaultTier">
+              <option value="complex">complex · L3</option>
+              <option value="focused" selected>focused · L3</option>
+              <option value="micro">micro · L1</option>
+            </select>
+          </label>
+        </details>
+        <footer class="inline-footer">
+          <button type="button" id="refreshOrchModels" class="secondary">Refresh models</button>
+          <button type="button" id="saveOrchestra" class="secondary">Save orchestra</button>
+        </footer>
+        <div id="orchModelModal" class="orch-modal hidden" role="dialog" aria-modal="true">
+          <div class="orch-modal-card">
+            <div class="orch-modal-head">
+              <strong id="orchModalTitle">Pick models</strong>
+              <button type="button" id="orchModalClose" class="secondary">✕</button>
+            </div>
+            <div class="orch-filter-row">
+              <input id="orchModelSearch" type="search" class="search-input" placeholder="Search models…" autocomplete="off" />
+              <select id="orchContextFilter" aria-label="Minimum context window">
+                <option value="0">Any context</option>
+                <option value="32768">32k+</option>
+                <option value="65536">64k+</option>
+                <option value="131072">128k+</option>
+                <option value="262144">256k+</option>
+                <option value="524288">512k+</option>
+                <option value="1000000">1M+</option>
+              </select>
+            </div>
+            <div id="orchModalSlots" class="orch-modal-slots"></div>
+            <p id="orchModalHint" class="hint orch-modal-hint"></p>
+            <div id="orchModelPickList" class="orch-pick-list"></div>
+            <footer class="inline-footer">
+              <button type="button" id="orchModalApply" class="secondary">Apply</button>
+            </footer>
+          </div>
+        </div>
       </section>
 
       <section id="sec-models" class="panel">
@@ -154,94 +207,51 @@ export class SettingsView {
         </footer>
       </section>
 
-      <section id="sec-orchestra" class="panel">
-        <h1>Orchestra</h1>
-        <p class="sub">Orchestrator (L5) and worker tiers: complex / focused (L3), micro (L1). Up to 3 models per role for failover.</p>
-        <label>Shared provider
-          <div id="orchSharedProviderWrap"></div>
-        </label>
-        <p class="hint">Pick one gateway (OpenRouter) and assign different models per role. Primary model = first selected.</p>
-        <div id="orchRoles" class="orch-roles"></div>
-        <details class="adv">
-          <summary>Verification &amp; retries</summary>
-          <label class="row check"><input id="orchVerifyEnabled" type="checkbox" checked /> Deterministic worker verify (LSP + go build)</label>
-          <label class="row check"><input id="orchLLMVerify" type="checkbox" /> LLM verifier after deterministic pass</label>
-          <label>Max worker retries <input id="orchMaxRetries" type="number" min="1" max="12" value="3" /></label>
-          <label>Max verify retries <input id="orchMaxVerifyRetries" type="number" min="0" max="6" value="1" /></label>
-          <label>Default tier
-            <select id="orchDefaultTier">
-              <option value="complex">complex · L3</option>
-              <option value="focused" selected>focused · L3</option>
-              <option value="micro">micro · L1</option>
-            </select>
-          </label>
-        </details>
-        <footer class="inline-footer">
-          <button type="button" id="refreshOrchModels" class="secondary">Refresh models</button>
-          <button type="button" id="saveOrchestra" class="secondary">Save orchestra</button>
-        </footer>
-        <div id="orchModelModal" class="orch-modal hidden" role="dialog" aria-modal="true">
-          <div class="orch-modal-card">
-            <div class="orch-modal-head">
-              <strong id="orchModalTitle">Pick models</strong>
-              <button type="button" id="orchModalClose" class="secondary">✕</button>
-            </div>
-            <input id="orchModelSearch" type="search" class="search-input" placeholder="Search models…" autocomplete="off" />
-            <div id="orchModalSlots" class="orch-modal-slots"></div>
-            <p id="orchModalHint" class="hint orch-modal-hint"></p>
-            <div id="orchModelPickList" class="orch-pick-list"></div>
-            <footer class="inline-footer">
-              <button type="button" id="orchModalApply" class="secondary">Apply</button>
-            </footer>
-          </div>
-        </div>
-      </section>
-
       <section id="sec-index" class="panel">
         <h1>Index &amp; Graph</h1>
         <p class="sub">CKG structural graph + semantic embeddings for <code>explore</code> / <code>semantic_search</code></p>
         <div id="indexStats" class="stat-grid">
-          <div class="stat"><span class="stat-val" id="statFiles">—</span><span class="stat-lbl">files</span></div>
-          <div class="stat"><span class="stat-val" id="statNodes">—</span><span class="stat-lbl">nodes</span></div>
-          <div class="stat"><span class="stat-val" id="statEdges">—</span><span class="stat-lbl">edges</span></div>
-          <div class="stat"><span class="stat-val" id="statEmb">—</span><span class="stat-lbl">embeddings</span></div>
+          <div class="stat stat-files"><span class="stat-ico">${metricIcon("files")}</span><span class="stat-val" id="statFiles">—</span><span class="stat-lbl">indexed files</span></div>
+          <div class="stat stat-symbols"><span class="stat-ico">${metricIcon("symbols")}</span><span class="stat-val" id="statNodes">—</span><span class="stat-lbl">symbols</span></div>
+          <div class="stat stat-links"><span class="stat-ico">${metricIcon("links")}</span><span class="stat-val" id="statEdges">—</span><span class="stat-lbl">links</span></div>
+          <div class="stat stat-embeddings"><span class="stat-ico">${metricIcon("embeddings")}</span><span class="stat-val" id="statEmb">—</span><span class="stat-lbl">embeddings</span></div>
+          <div class="stat stat-functions"><span class="stat-ico">${metricIcon("functions")}</span><span class="stat-val" id="statFuncs">—</span><span class="stat-lbl">functions</span></div>
+          <div class="stat stat-types"><span class="stat-ico">${metricIcon("types")}</span><span class="stat-val" id="statTypes">—</span><span class="stat-lbl">types</span></div>
+          <div class="stat stat-tests"><span class="stat-ico">${metricIcon("tests")}</span><span class="stat-val" id="statTests">—</span><span class="stat-lbl">tests</span></div>
+          <div class="stat stat-packages"><span class="stat-ico">${metricIcon("packages")}</span><span class="stat-val" id="statPkgs">—</span><span class="stat-lbl">packages</span></div>
         </div>
+        <div id="indexLangs" class="lang-chips"></div>
         <p id="indexStatusHint" class="hint"></p>
+        <p id="indexEmbedHint" class="hint"></p>
         <div class="action-row">
           <button type="button" id="rebuildGraph" class="secondary">Rebuild graph</button>
           <button type="button" id="runEmbed" class="secondary">Run embed</button>
           <button type="button" id="openGraph" class="secondary">Open graph viewer</button>
         </div>
         <p id="indexActionOut" class="hint"></p>
-        <h2>Scope</h2>
-        <label>Exclude dirs (one per line) <textarea id="excludeDirs" rows="4" placeholder=".git&#10;node_modules"></textarea></label>
-        <label>Context limit (KB) <input id="contextLimitKB" type="number" min="0" step="1" /></label>
-        <label>Max files <input id="limitsMaxFiles" type="number" min="0" step="1" placeholder="optional" /></label>
-        <h2>Semantic search (embed)</h2>
-        <label>Embed API base <input id="embedAPIBase" type="text" placeholder="http://127.0.0.1:8000/v1" /></label>
-        <label>Embed API key <input id="embedAPIKey" type="password" placeholder="leave blank to keep" autocomplete="off" /></label>
-        <label>Embed model <input id="embedModel" type="text" placeholder="text-embedding-…" /></label>
-        <label>Batch size <input id="embedBatchSize" type="number" min="1" step="1" /></label>
-        <label class="row check"><input id="semanticAutoExplore" type="checkbox" /> Auto-explore top semantic hits</label>
-        <footer><button type="button" id="saveIndex">Save index settings</button></footer>
         <details class="adv">
-          <summary>LSP enhancement</summary>
-          <p class="hint">Language servers improve diagnostics and navigation. Configure <code>lsp.servers</code> in <code>.orchestra.yml</code> for now.</p>
+          <summary>Scope &amp; limits</summary>
+          <label>Exclude dirs (one per line) <textarea id="excludeDirs" rows="4" placeholder=".git&#10;node_modules"></textarea></label>
+          <label>Context limit (KB) <input id="contextLimitKB" type="number" min="0" step="1" /></label>
+          <label>Max files <input id="limitsMaxFiles" type="number" min="0" step="1" placeholder="optional" /></label>
         </details>
+        <details class="adv">
+          <summary>Semantic search options</summary>
+          <label>Batch size <input id="embedBatchSize" type="number" min="1" step="1" /></label>
+          <label class="row check"><input id="semanticAutoExplore" type="checkbox" /> Auto-explore top semantic hits</label>
+        </details>
+        <footer><button type="button" id="saveIndex">Save index settings</button></footer>
       </section>
 
       <section id="sec-agent" class="panel">
         <h1>Agent</h1>
-        <p class="sub">Prompts are model-independent — one shared prompt, plus optional project override. Custom agents add a named prompt and tool set.</p>
         <h2>System prompt</h2>
         <label>Project override<textarea id="systemPrompt" rows="10" placeholder="Leave empty to use the built-in / shared prompt…"></textarea></label>
-        <p id="promptPath" class="hint"></p>
         <footer class="inline-footer">
           <button type="button" id="clearPrompt" class="secondary">Clear override</button>
           <button type="button" id="savePrompt">Save prompt</button>
         </footer>
         <h2>Custom agents</h2>
-        <p class="sub">Use as <code>mode</code> in chat / <code>agent.run</code>. Prompt applies to all models.</p>
         <div id="agentsList" class="list"></div>
         <label>Name <input id="agentName" type="text" placeholder="reviewer" /></label>
         <label>System prompt <textarea id="agentPrompt" rows="5"></textarea></label>
@@ -286,12 +296,6 @@ export class SettingsView {
         </details>
       </section>
 
-      <section id="sec-plugins" class="panel">
-        <h1>Plugins</h1>
-        <p class="sub">Installed skills / packs — install via CLI: <code>orchestra skills install …</code></p>
-        <div id="skillsList" class="list"></div>
-        <p class="hint">Plugins bundle skills, rules, and optional MCP configs. MCP servers are managed under Tools &amp; MCP.</p>
-      </section>
     </main>
   </div>
   <div id="mcpConfigure" class="mcp-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mcpCfgTitle">
@@ -647,9 +651,6 @@ export class SettingsView {
           excludeDirs,
           contextLimitKB: posIntOrUndef(msg.contextLimitKB),
           limitsMaxFiles: posIntOrUndef(msg.limitsMaxFiles),
-          embedAPIBase: String(msg.embedAPIBase || "").trim() || undefined,
-          embedAPIKey: String(msg.embedAPIKey || "").trim() || undefined,
-          embedModel: String(msg.embedModel || "").trim() || undefined,
           embedBatchSize: posIntOrUndef(msg.embedBatchSize),
           semanticAutoExplore:
             msg.semanticAutoExplore === undefined ? undefined : Boolean(msg.semanticAutoExplore),
@@ -869,4 +870,72 @@ function getNonce(): string {
     out += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return out;
+}
+
+/** Monochrome stroke icons for the settings tab bar (inherit currentColor). */
+function navIcon(section: string): string {
+  const wrap = (paths: string): string =>
+    `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  switch (section) {
+    case "general": // gear
+      return wrap(
+        `<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M12.4 3.6l-1.2 1.2M4.8 11.2l-1.2 1.2"/>`
+      );
+    case "models": // cpu chip
+      return wrap(
+        `<rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/>`
+      );
+    case "orchestra": // hub and spokes
+      return wrap(
+        `<circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="2.6" r="1.2"/><circle cx="13.4" cy="11" r="1.2"/><circle cx="2.6" cy="11" r="1.2"/><path d="M8 4v2.2M9.5 9l2.8 1.5M6.5 9l-2.8 1.5"/>`
+      );
+    case "index": // graph nodes
+      return wrap(
+        `<circle cx="3.2" cy="12.8" r="1.6"/><circle cx="8" cy="4" r="1.6"/><circle cx="12.8" cy="12.8" r="1.6"/><path d="M4.2 11.4 7 5.6M9 5.6l2.8 5.8M4.8 12.8h6.4"/>`
+      );
+    case "agent": // terminal prompt
+      return wrap(
+        `<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.8"/><path d="M4.6 6.4 6.8 8.3 4.6 10.2M8.4 10.4h3"/>`
+      );
+    case "tools": // wrench
+      return wrap(
+        `<path d="M9.8 2.4a3.4 3.4 0 0 0-4.5 4.2L2 9.9a1.6 1.6 0 0 0 2.3 2.3l3.3-3.3a3.4 3.4 0 0 0 4.2-4.5L9.6 6.6 7.6 6.2 7.2 4.2z"/>`
+      );
+    case "plugins": // puzzle piece
+      return wrap(
+        `<path d="M6 2.6h2.6v2a1.4 1.4 0 1 0 2.8 0v-2h2v2.6h-2a1.4 1.4 0 1 0 0 2.8h2v2.6H11a1.4 1.4 0 1 0-2.8 0v2H6v-2.6"/><path d="M6 2.6v2.6H3.4a1.4 1.4 0 1 0 0 2.8H6v2.6"/>`
+      );
+    default:
+      return "";
+  }
+}
+
+function headerBackIcon(): string {
+  return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8h-11M6.5 4 2.5 8l4 4"/></svg>`;
+}
+
+/** Neutral metric glyphs; semantics are expressed by shape, never emoji color. */
+function metricIcon(metric: string): string {
+  const wrap = (paths: string): string =>
+    `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  switch (metric) {
+    case "files":
+      return wrap(`<path d="M5 2.5h6l4 4v11H5z"/><path d="M11 2.5v4h4M7.5 10h5M7.5 13h5"/>`);
+    case "symbols":
+      return wrap(`<path d="m7 5-3 5 3 5M13 5l3 5-3 5M11.5 3.5l-3 13"/>`);
+    case "links":
+      return wrap(`<path d="M8.1 12.8 6.7 14.2a3 3 0 0 1-4.2-4.2l2.8-2.8a3 3 0 0 1 4.2 0M11.9 7.2l1.4-1.4a3 3 0 1 1 4.2 4.2l-2.8 2.8a3 3 0 0 1-4.2 0M7.3 12.7l5.4-5.4"/>`);
+    case "embeddings":
+      return wrap(`<circle cx="5" cy="6" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="10" cy="15" r="1.5"/><path d="m6.4 6.6 7.2-1.2M5.9 7.3l3.2 6.4M14.2 6.3l-3.4 7.4"/>`);
+    case "functions":
+      return wrap(`<path d="M8.5 3H7.2a2 2 0 0 0-2 1.7L3.8 15.3a2 2 0 0 1-2 1.7M2.8 8h5.8M11 8l6 6M17 8l-6 6"/>`);
+    case "types":
+      return wrap(`<path d="M4 3H2.5v14H4M16 3h1.5v14H16M7 6h6M10 6v8M7.5 14h5"/>`);
+    case "tests":
+      return wrap(`<path d="M7 2.5h6M8 2.5v5l-4.7 7.3a1.8 1.8 0 0 0 1.5 2.7h10.4a1.8 1.8 0 0 0 1.5-2.7L12 7.5v-5M6.3 12h7.4"/>`);
+    case "packages":
+      return wrap(`<path d="m10 2.5 7 3.7v7.6l-7 3.7-7-3.7V6.2zM3.3 6.4 10 10l6.7-3.6M10 10v7.5M6.5 4.4l7 3.8"/>`);
+    default:
+      return "";
+  }
 }

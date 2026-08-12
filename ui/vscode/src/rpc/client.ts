@@ -55,6 +55,17 @@ export class RpcClient extends EventEmitter {
       windowsHide: true,
     });
 
+    // Stream write errors (EPIPE after a core crash) arrive asynchronously as
+    // "error" events — without a listener they throw an uncaught exception in
+    // the extension host. The process "exit" handler owns pending cleanup.
+    this.proc.stdin.on("error", (err: Error) => {
+      this.emit("stderr", `[rpc] stdin error: ${err.message}\n`);
+    });
+
+    this.decoder.onDiagnostic = (message) => {
+      this.emit("stderr", `[rpc] framing: ${message}\n`);
+    };
+
     this.proc.stdout.on("data", (chunk: Buffer) => {
       try {
         for (const body of this.decoder.push(chunk)) {
@@ -136,14 +147,25 @@ export class RpcClient extends EventEmitter {
         timer,
       });
 
-      try {
-        this.proc.stdin.write(encodeMessage(payload));
-      } catch (err) {
+      if (!this.safeWrite(payload)) {
         clearTimeout(timer);
         this.pending.delete(id);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(new Error(`rpc write failed (core dead?): ${method}`));
       }
     });
+  }
+
+  /** Write a frame; never throws (dead pipe → false). */
+  private safeWrite(payload: string): boolean {
+    if (this.closed || this.proc.stdin.destroyed || !this.proc.stdin.writable) {
+      return false;
+    }
+    try {
+      this.proc.stdin.write(encodeMessage(payload));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Best-effort LSP-style cancel for an in-flight request (also rejects local promise). */
@@ -156,11 +178,7 @@ export class RpcClient extends EventEmitter {
       method: "$/cancelRequest",
       params: { id },
     });
-    try {
-      this.proc.stdin.write(encodeMessage(payload));
-    } catch {
-      // ignore broken pipe
-    }
+    this.safeWrite(payload);
     const pending = this.pending.get(id);
     if (!pending) {
       return;
@@ -180,7 +198,7 @@ export class RpcClient extends EventEmitter {
       id,
       result,
     });
-    this.proc.stdin.write(encodeMessage(payload));
+    this.safeWrite(payload);
   }
 
   respondError(id: number | string, code: number, message: string): void {
@@ -192,7 +210,7 @@ export class RpcClient extends EventEmitter {
       id,
       error: { code, message },
     });
-    this.proc.stdin.write(encodeMessage(payload));
+    this.safeWrite(payload);
   }
 
   dispose(): void {

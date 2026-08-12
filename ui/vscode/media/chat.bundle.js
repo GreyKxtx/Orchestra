@@ -1143,7 +1143,7 @@
     const t = String(tier || "").trim();
     if (!t) return "";
     if (/^L[1-5]$/i.test(t)) return t.toUpperCase();
-    const map = { planner: "L5", complex: "L3", focused: "L3", micro: "L1", explore: "L2" };
+    const map = { planner: "L5", lead: "L4", complex: "L3", focused: "L3", micro: "L1", explore: "L2" };
     return map[t.toLowerCase()] || "";
   }
 

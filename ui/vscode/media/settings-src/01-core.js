@@ -34,6 +34,8 @@
   let orchModalSelection = [];
   /** @type {string} */
   let orchModalSearch = "";
+  /** Minimum model context window in tokens; zero disables filtering. */
+  let orchModalMinContext = 0;
   /** @type {boolean} */
   let apiKeyVisible = false;
   /** @type {{ version?: number, entries?: any[] }} */

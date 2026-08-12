@@ -45,7 +45,7 @@
     }
     if (k) {
       const letter = k.slice(0, 1).toUpperCase();
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="5" fill="#333"/><text x="12" y="16" text-anchor="middle" fill="#ccc" font-size="11" font-family="Segoe UI,sans-serif" font-weight="600">${letter}</text></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="rgba(255,255,255,0.08)"/><text x="12" y="16" text-anchor="middle" fill="#b9bac2" font-size="11" font-family="Segoe UI,sans-serif" font-weight="600">${letter}</text></svg>`;
     }
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="#aaa" stroke-width="1.5" fill="none"/><path d="M8 12h8M12 8v8" stroke="#ccc" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" fill="none"/><path d="M8 12h8M12 8v8" stroke="#b9bac2" stroke-width="1.5" stroke-linecap="round"/></svg>`;
   }

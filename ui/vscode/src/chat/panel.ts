@@ -75,6 +75,14 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   private readonly extraResourceRoots: vscode.Uri[] = [];
   private rootsUpdateTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pendingHighlights = new PendingHighlightManager();
+  /** Webview whose html is currently the chat page (idempotent showChat). */
+  private chatHtmlWebview: vscode.Webview | undefined;
+  /** Coalesced streaming: deltaSync snapshots are flushed at most every 40 ms. */
+  private deltaSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Critical messages re-posted after a webview reload ("ready"). */
+  private pendingPermission: PermissionRequestPayload | undefined;
+  private pendingQuestions: QuestionItemPayload[] | undefined;
+  private lastPendingOps: PendingOpsPayload | undefined;
 
   constructor(session: CoreSession, extensionUri: vscode.Uri) {
     this.session = session;
@@ -85,10 +93,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     });
 
     const onAgent = (event: AgentEventParams): void => {
-      if (this.view !== "chat") {
-        return;
-      }
-      this.forwardAgentEvent(event);
+      // Always accumulate the turn projection (otherwise opening Settings
+      // mid-stream permanently truncates the assistant turn saved to history);
+      // only rendering is gated on the active view.
+      this.forwardAgentEvent(event, this.view === "chat");
     };
     const onExecChunk = (payload: { step: number; chunk: string }): void => {
       if (this.view !== "chat") {
@@ -120,6 +128,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         void this.showPermissionDialog(request);
         return;
       }
+      this.pendingPermission = request;
       this.post({ type: "permissionRequest", request });
     };
     const onQuestion = (questions: QuestionItemPayload[]): void => {
@@ -127,6 +136,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         void this.showQuestionDialog(questions);
         return;
       }
+      this.pendingQuestions = questions;
       this.post({ type: "questionAsk", questions });
     };
     this.session.on("permissionRequest", onPermission);
@@ -142,12 +152,61 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         this.session.off("questionAsk", onQuestion);
       },
     });
+
+    this.watchProjectConfig();
+  }
+
+  /**
+   * Shared-config invariant: .orchestra.yml is the single source of truth for
+   * this project — the TUI/CLI edit the same file. The core hot-reloads it per
+   * RPC; here we refresh the open view so the UI reflects external changes.
+   */
+  private watchProjectConfig(): void {
+    const root = this.workspaceRoot();
+    if (!root) {
+      return;
+    }
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(root), ".orchestra.yml")
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onConfigChanged = (): void => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      // Debounce: our own persists also fire the watcher.
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (this.view === "settings") {
+          void this.settings.pushState();
+        } else if (
+          this.session.getSessionId() &&
+          this.session.getConnectionStatus() !== "running"
+        ) {
+          // Not mid-turn: safe to re-render header/history with fresh config.
+          void this.refreshHeaderAndHistory().catch(() => undefined);
+        }
+      }, 700);
+    };
+    watcher.onDidChange(onConfigChanged, null, this.disposables);
+    watcher.onDidCreate(onConfigChanged, null, this.disposables);
+    this.disposables.push(watcher, {
+      dispose: () => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      },
+    });
   }
 
   dispose(): void {
     if (this.rootsUpdateTimer) {
       clearTimeout(this.rootsUpdateTimer);
       this.rootsUpdateTimer = undefined;
+    }
+    if (this.deltaSyncTimer) {
+      clearTimeout(this.deltaSyncTimer);
+      this.deltaSyncTimer = undefined;
     }
     this.pendingHighlights.dispose();
     this.panel?.dispose();
@@ -180,6 +239,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         if (this.sidebar === webviewView) {
           this.sidebar = undefined;
         }
+        if (this.chatHtmlWebview === webviewView.webview) {
+          this.chatHtmlWebview = undefined;
+        }
       },
       null,
       this.disposables
@@ -207,12 +269,15 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   async showSettings(section = "general"): Promise<void> {
-    this.settings.pendingSection = section;
+    const targetSection =
+      section === "orchestra" || section === "plugins" ? "general" : section;
+    this.settings.pendingSection = targetSection;
     const webview = this.webviewTarget();
     if (this.sidebar && webview) {
       this.view = "settings";
       this.sidebar.title = "Settings";
       webview.html = this.settings.getHtml(webview);
+      this.chatHtmlWebview = undefined;
       this.sidebar.show?.(true);
       return;
     }
@@ -221,6 +286,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     if (this.panel) {
       this.panel.title = "Orchestra Settings";
       this.panel.webview.html = this.settings.getHtml(this.panel.webview);
+      this.chatHtmlWebview = undefined;
       this.panel.reveal(vscode.ViewColumn.Beside);
     }
     // settings.js posts ready → pushState
@@ -238,8 +304,27 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     if (this.panel) {
       this.panel.title = "Orchestra";
     }
-    webview.html = this.getHtml(webview);
+    // Idempotent: re-assigning html rebuilds the whole DOM and loses the input
+    // draft / scroll / streaming bubble. Only (re)load when this webview does
+    // not already show the chat page.
+    const needsHtml = this.chatHtmlWebview !== webview;
+    if (needsHtml) {
+      webview.html = this.getHtml(webview);
+      this.chatHtmlWebview = webview;
+    }
     this.panel?.reveal(vscode.ViewColumn.Beside);
+
+    if (!needsHtml) {
+      // Webview state is intact — just make sure the session is alive.
+      try {
+        await this.session.startSession();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.post({ type: "error", message });
+        this.post({ type: "status", status: "error", detail: message });
+      }
+      return;
+    }
 
     this.post({
       type: "status",
@@ -273,6 +358,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     );
     this.panel.onDidDispose(
       () => {
+        if (this.chatHtmlWebview === this.panel?.webview) {
+          this.chatHtmlWebview = undefined;
+        }
         this.panel = undefined;
         this.view = "chat";
       },
@@ -483,6 +571,17 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           if (this.session.getSessionId()) {
             await this.refreshHeaderAndHistory();
           }
+          // Re-deliver dialogs/state that were posted while the webview was
+          // being recreated — otherwise the core waits forever on an answer.
+          if (this.pendingPermission && this.session.hasPendingServerRequests()) {
+            this.post({ type: "permissionRequest", request: this.pendingPermission });
+          }
+          if (this.pendingQuestions && this.session.hasPendingServerRequests()) {
+            this.post({ type: "questionAsk", questions: this.pendingQuestions });
+          }
+          if (this.lastPendingOps) {
+            this.post({ type: "pendingOps", payload: this.lastPendingOps });
+          }
           return;
         case "attach": {
           const picked = await vscode.window.showOpenDialog({
@@ -624,7 +723,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           return;
         }
         case "openOrchestraSettings": {
-          await this.showSettings("orchestra");
+          await this.showSettings("general");
           return;
         }
         case "send": {
@@ -702,6 +801,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           return;
         }
         case "permissionReply": {
+          this.pendingPermission = undefined;
           this.session.resolvePermission({
             approved: Boolean(msg.approved),
             always: Boolean(msg.always),
@@ -709,6 +809,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           return;
         }
         case "questionReply": {
+          this.pendingQuestions = undefined;
           const answers = Array.isArray(msg.answers)
             ? msg.answers.filter((a): a is string => typeof a === "string")
             : [];
@@ -863,6 +964,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   private resetTurnProjection(): void {
+    this.flushDeltaSync(false);
     this.turnAssistantText = "";
     this.turnAssistantSegments = [];
     this.turnReasoning = "";
@@ -976,6 +1078,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         profile: item.profile,
         attachments: prepared,
       });
+      // Deliver the tail of the coalesced stream before finalizing the turn.
+      this.flushDeltaSync();
       const id = this.session.getSessionId();
       if (id) {
         const [view, health] = await Promise.all([
@@ -1007,6 +1111,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.resetTurnProjection();
     } catch (err) {
       ok = false;
+      this.flushDeltaSync();
       const message = err instanceof Error ? err.message : String(err);
       if (!isBenignTurnError(message)) {
         this.post({ type: "error", message });
@@ -1017,6 +1122,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       }
       this.resetTurnProjection();
     } finally {
+      this.flushDeltaSync();
       const queuedNext = this.sendQueue.length > 0;
       this.post({ type: "turnComplete", ok, queuedNext });
     }
@@ -1099,7 +1205,44 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     });
   }
 
-  private forwardAgentEvent(event: AgentEventParams): void {
+  /** Coalesce full-snapshot deltaSync posts (O(n²) traffic otherwise). */
+  private scheduleDeltaSync(): void {
+    if (this.deltaSyncTimer) {
+      return;
+    }
+    this.deltaSyncTimer = setTimeout(() => {
+      this.deltaSyncTimer = undefined;
+      if (this.view === "chat") {
+        this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
+      }
+    }, 40);
+  }
+
+  /** Flush (or drop) a scheduled deltaSync so ordered messages stay ordered. */
+  private flushDeltaSync(emit = true): void {
+    if (!this.deltaSyncTimer) {
+      return;
+    }
+    clearTimeout(this.deltaSyncTimer);
+    this.deltaSyncTimer = undefined;
+    if (emit && this.view === "chat") {
+      this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
+    }
+  }
+
+  /**
+   * Handle one agent/event. State (turn projection) is always accumulated;
+   * `render` gates webview posts (false while the Settings view is open).
+   */
+  private forwardAgentEvent(event: AgentEventParams, render = true): void {
+    const post = (msg: HostToWebview): void => {
+      if (render) {
+        this.post(msg);
+      } else if (msg.type === "pendingOps" || msg.type === "pendingCleared") {
+        // Keep pending-changes state in sync even without rendering.
+        this.lastPendingOps = msg.type === "pendingOps" ? msg.payload : undefined;
+      }
+    };
     const childCtx = {
       scope: event.scope,
       taskId: event.task_id,
@@ -1108,7 +1251,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     };
     switch (event.type) {
       case "child_started":
-        this.post({
+        post({
           type: "childLifecycle",
           phase: "started",
           taskId: event.task_id || "",
@@ -1120,7 +1263,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         });
         break;
       case "child_done":
-        this.post({
+        post({
           type: "childLifecycle",
           phase: "done",
           taskId: event.task_id || "",
@@ -1135,17 +1278,21 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           if (!shouldSuppressStreamChunk(event.content)) {
             this.turnAssistantText += event.content;
           }
-          this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
+          if (render) {
+            this.scheduleDeltaSync();
+          }
         }
         break;
       case "reasoning_delta":
         if (event.content && event.scope !== "child") {
           this.turnReasoning += event.content;
-          this.post({ type: "reasoningDelta", content: event.content });
+          post({ type: "reasoningDelta", content: event.content });
         }
         break;
       case "tool_call_start":
         if (event.scope !== "child") {
+          // Ordered delivery: push the buffered stream text before the tool block.
+          this.flushDeltaSync();
           this.commitAssistantStreamSegment();
         }
         if (event.scope !== "child" && event.tool_call_id) {
@@ -1157,7 +1304,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             result: "",
           });
         }
-        this.post({
+        post({
           type: "toolBlock",
           phase: "start",
           toolCallId: event.tool_call_id,
@@ -1174,7 +1321,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           }
         }
         if (event.args_delta) {
-          this.post({
+          post({
             type: "toolBlock",
             phase: "update",
             toolCallId: event.tool_call_id,
@@ -1198,7 +1345,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             diagnostics: event.diagnostics,
           });
         }
-        this.post({
+        post({
           type: "toolBlock",
           phase: "complete",
           toolCallId: event.tool_call_id,
@@ -1212,7 +1359,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       case "todos_updated": {
         const todos = parseTodosUpdated(event.content);
         if (todos.length > 0) {
-          this.post({ type: "todosUpdate", todos });
+          post({ type: "todosUpdate", todos });
         }
         break;
       }
@@ -1230,14 +1377,14 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           } else if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
             this.turnTokensIn = usage.prompt_tokens;
           }
-          this.post({ type: "stepUsage", usage });
+          post({ type: "stepUsage", usage });
         }
         break;
       }
       case "recoverable_error":
       case "error":
         if (event.content && !isBenignTurnError(event.content)) {
-          this.post({ type: "error", message: event.content });
+          post({ type: "error", message: event.content });
         }
         break;
       case "pending_ops": {
@@ -1246,9 +1393,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           payload = parsePendingOps(parseJSONSafe(event.content));
         }
         if (payload && !payload.applied) {
-          this.post({ type: "pendingOps", payload });
+          post({ type: "pendingOps", payload });
         } else if (payload?.applied) {
-          this.post({ type: "pendingCleared" });
+          post({ type: "pendingCleared" });
         }
         break;
       }
@@ -1610,14 +1757,21 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     if (!trimmed) {
       return undefined;
     }
-    if (path.isAbsolute(trimmed)) {
+    // On Windows path.isAbsolute("/foo") is true (drive-relative) and would map
+    // to the current drive root — treat only fully-qualified paths as absolute.
+    const fullyQualified =
+      process.platform === "win32"
+        ? /^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("\\\\")
+        : path.isAbsolute(trimmed);
+    if (fullyQualified) {
       return vscode.Uri.file(trimmed);
     }
     const root = this.workspaceRoot();
     if (!root) {
       return undefined;
     }
-    return vscode.Uri.file(path.join(root, trimmed.split("/").join(path.sep)));
+    const rel = trimmed.replace(/^[\\/]+/, "");
+    return vscode.Uri.file(path.join(root, rel.split("/").join(path.sep)));
   }
 
   /** Open the real workspace file with Cursor-style inline change highlights. */
@@ -1685,6 +1839,14 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   private post(msg: HostToWebview): void {
+    // Track pending-changes state so it can be re-delivered after a webview reload.
+    if (msg.type === "pendingOps") {
+      this.lastPendingOps = msg.payload;
+    } else if (msg.type === "pendingCleared") {
+      this.lastPendingOps = undefined;
+      // Applied/discarded — inline highlights no longer describe reality.
+      this.pendingHighlights.clearAll();
+    }
     void this.webviewTarget()?.postMessage(msg);
   }
 
