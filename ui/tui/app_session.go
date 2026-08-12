@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/sessionstore"
+	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
@@ -16,12 +18,19 @@ import (
 type coreSessionStartedMsg struct {
 	sessionID string
 	restored  bool
+	got       *rpcclient.SessionGetResult // prefetched session.get (nil on error)
 	err       error
 }
+
+// startCoreSessionTimeout bounds session.start + session.get: without it a
+// hung core would leak the goroutine forever (the Cmd never returns).
+const startCoreSessionTimeout = 30 * time.Second
 
 // startCoreSession opens or creates the unified v2 session in core.
 // When currentSessionID is set (reopen), the same id is passed so agent
 // history and UI projection reload from one on-disk snapshot.
+// SessionGet runs here too — inside the Cmd goroutine — so Update() never
+// performs a blocking RPC round-trip (a slow core would freeze the UI).
 func (a *App) startCoreSession() tea.Cmd {
 	if a.rpc == nil {
 		return nil
@@ -29,8 +38,17 @@ func (a *App) startCoreSession() tea.Cmd {
 	rpc := a.rpc
 	sessionID := strings.TrimSpace(a.currentSessionID)
 	return func() tea.Msg {
-		sid, restored, err := rpc.SessionStart(context.Background(), sessionID)
-		return coreSessionStartedMsg{sessionID: sid, restored: restored, err: err}
+		ctx, cancel := context.WithTimeout(context.Background(), startCoreSessionTimeout)
+		defer cancel()
+		sid, restored, err := rpc.SessionStart(ctx, sessionID)
+		if err != nil {
+			return coreSessionStartedMsg{sessionID: sid, restored: restored, err: err}
+		}
+		got, gErr := rpc.SessionGet(ctx, sid)
+		if gErr != nil {
+			got = nil
+		}
+		return coreSessionStartedMsg{sessionID: sid, restored: restored, got: got}
 	}
 }
 
@@ -45,13 +63,8 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	}
 	a.coreSessionID = m.sessionID
 	a.currentSessionID = m.sessionID
-	if a.rpc == nil {
-		return
-	}
-	// Always SessionGet after start: restored flag used to skip when only
-	// todos/plan existed; also refreshes checklist after reopen.
-	got, err := a.rpc.SessionGet(context.Background(), m.sessionID)
-	if err != nil {
+	got := m.got
+	if got == nil {
 		return
 	}
 	if len(a.session.Messages) == 0 && len(got.UIMessages) > 0 {
@@ -87,22 +100,6 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	}
 }
 
-// runAgentTurn starts an agent turn via session.message when a core session
-// exists, otherwise falls back to one-shot agent.run.
-func (a *App) runAgentTurn(ctx context.Context, query, mode string) error {
-	opts := a.agentRunOptions()
-	if a.coreSessionID != "" {
-		return a.rpc.SessionMessage(ctx, a.coreSessionID, query, mode, opts)
-	}
-	// Prefer binding to the on-disk session id so we never silently start a
-	// one-shot AgentRun that cannot restore history on the next message.
-	if sid := strings.TrimSpace(a.currentSessionID); sid != "" {
-		a.coreSessionID = sid
-		return a.rpc.SessionMessage(ctx, sid, query, mode, opts)
-	}
-	return a.rpc.AgentRun(ctx, query, mode, opts)
-}
-
 // persistSessionCmd saves UI projection via core session.ui_sync (unified v2).
 func (a *App) persistSessionCmd() tea.Cmd {
 	if a.cfg.WorkspaceRoot == "" || len(a.session.Messages) == 0 {
@@ -125,7 +122,9 @@ func (a *App) persistSessionCmd() tea.Cmd {
 	title := sessionstore.TitleFromMessages(msgs)
 	rpc := a.rpc
 	return func() tea.Msg {
-		if err := rpc.SessionUISync(context.Background(), id, title, model, ui, cost); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := rpc.SessionUISync(ctx, id, title, model, ui, cost); err != nil {
 			return sessionPersistMsg{err: err}
 		}
 		return sessionPersistMsg{id: id}

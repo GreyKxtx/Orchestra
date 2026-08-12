@@ -33,16 +33,30 @@ type Client struct {
 	rpc *jsonrpc.Client
 
 	events chan Event
+	// done is closed on Close. It unblocks any producer goroutine that is
+	// blocked delivering a critical event into the (full) events channel,
+	// so Close can safely wait for in-flight sends before closing events.
+	done chan struct{}
 
 	closeOnce sync.Once
-	mu        sync.Mutex
-	closed    bool
+	// sendMu serializes send() against Close(): senders hold RLock for the
+	// whole delivery, Close takes Lock after closing done — guaranteeing no
+	// goroutine can be mid-send when the events channel is closed (which
+	// would panic with "send on closed channel").
+	sendMu sync.RWMutex
+	closed bool
 
 	coalesceMu sync.Mutex
-	coalesce   Event // merged delta when events channel is saturated
+	coalesce   []Event // FIFO of merged deltas when events channel is saturated
 
-	permCh     chan PermissionDecision // receives user's decision for permission/request
-	questionCh chan []string           // receives user's answers for pending question/ask
+	// reqMu guards correlation state for server-initiated requests
+	// (permission/request, question/ask). Each in-flight request gets its
+	// own id + response channel so a stale answer can never be delivered
+	// to a different request.
+	reqMu           sync.Mutex
+	reqSeq          int64
+	permWaiters     map[int64]chan PermissionDecision
+	questionWaiters map[int64]chan []string
 }
 
 // PermissionDecision is the TUI answer to permission/request.
@@ -80,19 +94,22 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	c := &Client{
-		cfg:        cfg,
-		cmd:        cmd,
-		stdin:      stdin,
-		stdout:     stdout,
-		stderr:     stderr,
-		rpc:        jsonrpc.NewClient(stdout, stdin),
-		events:     make(chan Event, 64),
-		permCh:     make(chan PermissionDecision, 1),
-		questionCh: make(chan []string, 1),
+		cfg:             cfg,
+		cmd:             cmd,
+		stdin:           stdin,
+		stdout:          stdout,
+		stderr:          stderr,
+		rpc:             jsonrpc.NewClient(stdout, stdin),
+		events:          make(chan Event, 64),
+		done:            make(chan struct{}),
+		permWaiters:     map[int64]chan PermissionDecision{},
+		questionWaiters: map[int64]chan []string{},
 	}
 
-	// Drain stderr to avoid pipe blocking.
+	// Drain stderr to avoid pipe blocking. A panic here must never crash the
+	// host process (the terminal would be left in raw/alt-screen mode).
 	go func() {
+		defer func() { _ = recover() }()
 		buf := make([]byte, 4096)
 		for {
 			_, err := stderr.Read(buf)
@@ -434,9 +451,18 @@ func (c *Client) ToolCall(ctx context.Context, tool string, input json.RawMessag
 // Close kills the subprocess and closes the events channel.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
-		c.mu.Lock()
+		// Unblock producers first: any goroutine blocked in a critical-event
+		// send selects on done and bails out.
+		close(c.done)
+		// Wait for all in-flight sends to finish, then flip closed so no new
+		// send can touch the channel after this point.
+		c.sendMu.Lock()
 		c.closed = true
-		c.mu.Unlock()
+		c.sendMu.Unlock()
+
+		// Deny all outstanding permission/question requests so the core-side
+		// turn unwinds instead of waiting forever.
+		c.failPendingRequests()
 
 		_ = c.stdin.Close()
 		if c.cmd != nil && c.cmd.Process != nil {
@@ -447,11 +473,15 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// send delivers an event to the TUI. Coalescable stream deltas may be merged
+// when the channel is saturated; every other event kind is delivered
+// reliably (blocking until the consumer drains the channel or the client is
+// closed) — losing e.g. EventAgentRunCompleted or EventPermissionRequest
+// would wedge the UI or deadlock the agent turn.
 func (c *Client) send(ev Event) {
-	c.mu.Lock()
-	closed := c.closed
-	c.mu.Unlock()
-	if closed {
+	c.sendMu.RLock()
+	defer c.sendMu.RUnlock()
+	if c.closed {
 		return
 	}
 	c.flushCoalesce()
@@ -461,10 +491,12 @@ func (c *Client) send(ev Event) {
 	if c.mergeCoalesce(ev) {
 		return
 	}
-	// Non-coalescable or coalesce buffer full: one blocking attempt.
+	// Critical event with a full channel: deliver pending deltas first so
+	// ordering is preserved, then block on the event itself.
+	c.drainCoalesceBlocking()
 	select {
 	case c.events <- ev:
-	default:
+	case <-c.done:
 	}
 }
 
@@ -477,52 +509,76 @@ func (c *Client) trySend(ev Event) bool {
 	}
 }
 
+// isCoalescable reports whether consecutive events of this kind can be merged
+// into one without losing information.
+func isCoalescable(k EventKind) bool {
+	switch k {
+	case EventMessageDelta, EventReasoningDelta, EventToolCallDelta, EventExecOutputChunk:
+		return true
+	}
+	return false
+}
+
+// flushCoalesce pushes as many queued deltas as fit into the channel (FIFO).
 func (c *Client) flushCoalesce() {
 	c.coalesceMu.Lock()
-	pending := c.coalesce
-	c.coalesce = Event{}
-	c.coalesceMu.Unlock()
-	if pending.Kind == "" {
-		return
-	}
-	select {
-	case c.events <- pending:
-	default:
-		c.coalesceMu.Lock()
-		if c.coalesce.Kind == "" {
-			c.coalesce = pending
-		} else {
-			c.mergeCoalesceLocked(pending)
-		}
-		c.coalesceMu.Unlock()
-	}
-}
-
-func (c *Client) mergeCoalesce(ev Event) bool {
-	c.coalesceMu.Lock()
 	defer c.coalesceMu.Unlock()
-	return c.mergeCoalesceLocked(ev)
+	for len(c.coalesce) > 0 {
+		select {
+		case c.events <- c.coalesce[0]:
+			c.coalesce = c.coalesce[1:]
+		default:
+			return
+		}
+	}
 }
 
-func (c *Client) mergeCoalesceLocked(ev Event) bool {
-	switch ev.Kind {
-	case EventMessageDelta:
-		if c.coalesce.Kind == EventMessageDelta {
-			c.coalesce.Content += ev.Content
-			return true
+// drainCoalesceBlocking delivers every queued delta, blocking on a full
+// channel. Used right before a blocking critical-event send.
+func (c *Client) drainCoalesceBlocking() {
+	for {
+		c.coalesceMu.Lock()
+		if len(c.coalesce) == 0 {
+			c.coalesceMu.Unlock()
+			return
 		}
-		c.coalesce = ev
-		return true
-	case EventToolCallDelta:
-		if c.coalesce.Kind == EventToolCallDelta && c.coalesce.ToolCallID == ev.ToolCallID {
-			c.coalesce.ArgsDelta += ev.ArgsDelta
-			return true
+		pending := c.coalesce[0]
+		c.coalesce = c.coalesce[1:]
+		c.coalesceMu.Unlock()
+		select {
+		case c.events <- pending:
+		case <-c.done:
+			return
 		}
-		c.coalesce = ev
-		return true
-	default:
+	}
+}
+
+// mergeCoalesce appends ev to the delta queue, merging with the queue tail
+// when kinds (and tool-call ids) match. Returns false for non-coalescable
+// kinds — the caller must deliver those reliably.
+func (c *Client) mergeCoalesce(ev Event) bool {
+	if !isCoalescable(ev.Kind) {
 		return false
 	}
+	c.coalesceMu.Lock()
+	defer c.coalesceMu.Unlock()
+	if n := len(c.coalesce); n > 0 {
+		last := &c.coalesce[n-1]
+		if last.Kind == ev.Kind {
+			switch ev.Kind {
+			case EventMessageDelta, EventReasoningDelta, EventExecOutputChunk:
+				last.Content += ev.Content
+				return true
+			case EventToolCallDelta:
+				if last.ToolCallID == ev.ToolCallID {
+					last.ArgsDelta += ev.ArgsDelta
+					return true
+				}
+			}
+		}
+	}
+	c.coalesce = append(c.coalesce, ev)
+	return true
 }
 
 func (c *Client) handleNotification(method string, params json.RawMessage) {
@@ -639,11 +695,16 @@ func (c *Client) handleRequest(ctx context.Context, method string, params json.R
 		if err := json.Unmarshal(params, &req); err != nil {
 			return map[string]any{"approved": false}, nil
 		}
-		c.send(Event{Kind: EventPermissionRequest, PermReq: &req})
+		id, ch := c.registerPermWaiter()
+		defer c.unregisterPermWaiter(id)
+		req.ReqID = id
+		c.send(Event{Kind: EventPermissionRequest, ReqID: id, PermReq: &req})
 		select {
-		case d := <-c.permCh:
+		case d := <-ch:
 			return map[string]any{"approved": d.Approved, "always": d.Always}, nil
 		case <-ctx.Done():
+			return map[string]any{"approved": false}, nil
+		case <-c.done:
 			return map[string]any{"approved": false}, nil
 		}
 	case "question/ask":
@@ -653,11 +714,15 @@ func (c *Client) handleRequest(ctx context.Context, method string, params json.R
 		if err := json.Unmarshal(params, &req); err != nil || len(req.Questions) == 0 {
 			return map[string]any{"answers": []string{}}, nil
 		}
-		c.send(Event{Kind: EventQuestionAsked, Questions: req.Questions})
+		id, ch := c.registerQuestionWaiter()
+		defer c.unregisterQuestionWaiter(id)
+		c.send(Event{Kind: EventQuestionAsked, ReqID: id, Questions: req.Questions})
 		select {
-		case answers := <-c.questionCh:
+		case answers := <-ch:
 			return map[string]any{"answers": answers}, nil
 		case <-ctx.Done():
+			return map[string]any{"answers": []string{}}, nil
+		case <-c.done:
 			return map[string]any{"answers": []string{}}, nil
 		}
 	default:
@@ -665,25 +730,102 @@ func (c *Client) handleRequest(ctx context.Context, method string, params json.R
 	}
 }
 
-// RespondPermission answers the pending permission/request from the core.
-// Must be called exactly once per EventPermissionRequest event.
-func (c *Client) RespondPermission(approved bool) {
-	c.RespondPermissionDecision(PermissionDecision{Approved: approved})
+func (c *Client) registerPermWaiter() (int64, chan PermissionDecision) {
+	c.reqMu.Lock()
+	defer c.reqMu.Unlock()
+	c.reqSeq++
+	id := c.reqSeq
+	ch := make(chan PermissionDecision, 1)
+	if c.permWaiters == nil {
+		c.permWaiters = map[int64]chan PermissionDecision{}
+	}
+	c.permWaiters[id] = ch
+	return id, ch
+}
+
+func (c *Client) unregisterPermWaiter(id int64) {
+	c.reqMu.Lock()
+	delete(c.permWaiters, id)
+	c.reqMu.Unlock()
+}
+
+func (c *Client) registerQuestionWaiter() (int64, chan []string) {
+	c.reqMu.Lock()
+	defer c.reqMu.Unlock()
+	c.reqSeq++
+	id := c.reqSeq
+	ch := make(chan []string, 1)
+	if c.questionWaiters == nil {
+		c.questionWaiters = map[int64]chan []string{}
+	}
+	c.questionWaiters[id] = ch
+	return id, ch
+}
+
+func (c *Client) unregisterQuestionWaiter(id int64) {
+	c.reqMu.Lock()
+	delete(c.questionWaiters, id)
+	c.reqMu.Unlock()
+}
+
+// failPendingRequests denies every outstanding permission/question request.
+// Called from Close so core-side turns unwind instead of waiting forever.
+func (c *Client) failPendingRequests() {
+	c.reqMu.Lock()
+	defer c.reqMu.Unlock()
+	for id, ch := range c.permWaiters {
+		select {
+		case ch <- PermissionDecision{Approved: false}:
+		default:
+		}
+		delete(c.permWaiters, id)
+	}
+	for id, ch := range c.questionWaiters {
+		select {
+		case ch <- nil:
+		default:
+		}
+		delete(c.questionWaiters, id)
+	}
+}
+
+// RespondPermission answers the permission/request identified by reqID.
+// A stale or duplicate answer (unknown id) is silently dropped — it can
+// never be misdelivered to a different request.
+func (c *Client) RespondPermission(reqID int64, approved bool) {
+	c.RespondPermissionDecision(reqID, PermissionDecision{Approved: approved})
 }
 
 // RespondPermissionDecision answers with approved + always (lsp.auto_install).
-func (c *Client) RespondPermissionDecision(d PermissionDecision) {
+func (c *Client) RespondPermissionDecision(reqID int64, d PermissionDecision) {
+	c.reqMu.Lock()
+	ch, ok := c.permWaiters[reqID]
+	if ok {
+		delete(c.permWaiters, reqID)
+	}
+	c.reqMu.Unlock()
+	if !ok {
+		return
+	}
 	select {
-	case c.permCh <- d:
+	case ch <- d:
 	default:
 	}
 }
 
-// RespondQuestion answers the pending question/ask from the core.
-// Must be called exactly once per EventQuestionAsked event.
-func (c *Client) RespondQuestion(answers []string) {
+// RespondQuestion answers the question/ask identified by reqID.
+func (c *Client) RespondQuestion(reqID int64, answers []string) {
+	c.reqMu.Lock()
+	ch, ok := c.questionWaiters[reqID]
+	if ok {
+		delete(c.questionWaiters, reqID)
+	}
+	c.reqMu.Unlock()
+	if !ok {
+		return
+	}
 	select {
-	case c.questionCh <- answers:
+	case ch <- answers:
 	default:
 	}
 }

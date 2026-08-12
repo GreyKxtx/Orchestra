@@ -12,8 +12,7 @@ func TestActionBarActive_requiresPendingOps(t *testing.T) {
 	if a.actionBarActive() {
 		t.Fatal("expected inactive without pending ops")
 	}
-	a.pendingReview = true
-	a.pendingOps = []map[string]any{{"op": "file.write_atomic", "path": "a.go"}}
+	a.review.Arm([]map[string]any{{"op": "file.write_atomic", "path": "a.go"}})
 	if !a.actionBarActive() {
 		t.Fatal("expected active with pending ops")
 	}
@@ -25,12 +24,11 @@ func TestActionBarActive_requiresPendingOps(t *testing.T) {
 
 func TestDiscardPendingOps_clearsState(t *testing.T) {
 	a := testChromeApp(t)
-	a.pendingReview = true
-	a.pendingOps = []map[string]any{{"op": "file.write_atomic", "path": "a.go"}}
+	a.review.Arm([]map[string]any{{"op": "file.write_atomic", "path": "a.go"}})
 	a.session.AddDiffFiles([]state.DiffFile{{Path: "a.go", Before: "a", After: "b"}})
 	a.discardPendingOps()
-	if len(a.pendingOps) != 0 || a.pendingReview {
-		t.Fatalf("pending not cleared: ops=%d review=%v", len(a.pendingOps), a.pendingReview)
+	if len(a.review.PendingOps()) != 0 || a.review.PendingReview() {
+		t.Fatalf("pending not cleared: ops=%d review=%v", len(a.review.PendingOps()), a.review.PendingReview())
 	}
 	if a.session.HasDiff() {
 		t.Fatal("diff should be removed")
@@ -39,8 +37,7 @@ func TestDiscardPendingOps_clearsState(t *testing.T) {
 
 func TestSyncActionBar_rendersInChat(t *testing.T) {
 	a := testChromeApp(t)
-	a.pendingReview = true
-	a.pendingOps = []map[string]any{{"op": "file.write_atomic", "path": "a.go"}}
+	a.review.Arm([]map[string]any{{"op": "file.write_atomic", "path": "a.go"}})
 	a.session.AddDiffFiles([]state.DiffFile{{Path: "a.go", Before: "a", After: "b"}})
 	a.syncActionBar()
 	a.chat.SetMessages(a.session.Messages)

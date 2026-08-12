@@ -143,7 +143,7 @@ func TestSyncDiffStateFromSession_restoresLastCommitDiff(t *testing.T) {
 	if len(a.lastCommitDiff) != 1 || a.lastCommitDiff[0].Path != "a.go" {
 		t.Fatalf("lastCommitDiff=%v", a.lastCommitDiff)
 	}
-	if !a.diffShown {
-		t.Fatal("diffShown should be true after restore")
+	if !a.review.Shown() {
+		t.Fatal("diff must be marked shown after restore")
 	}
 }

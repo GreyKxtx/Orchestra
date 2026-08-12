@@ -89,8 +89,28 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 	a.beginAgentTurn()
 	a.layout()
 	a.updateStatusHints()
-	go func(query, mode string, atts []state.Attachment) {
-		_ = a.runAgentTurnWithAttachments(ctx, query, mode, atts)
-	}(text, a.cfg.Mode, atts)
-	return saveCmd
+
+	// Snapshot everything the turn needs on the UI thread: the tea.Cmd runs
+	// in its own goroutine and must never touch App fields (data race with
+	// Update). Results come back exclusively through the RPC event stream.
+	rpc := a.rpc
+	sid := strings.TrimSpace(a.coreSessionID)
+	if sid == "" {
+		// Bind to the on-disk session id so we never silently start a
+		// one-shot AgentRun that cannot restore history on the next message.
+		sid = strings.TrimSpace(a.currentSessionID)
+		a.coreSessionID = sid
+	}
+	opts := a.agentRunOptions()
+	opts.Attachments = rpcAttachmentsFromState(atts)
+	mode := a.cfg.Mode
+	turnCmd := func() tea.Msg {
+		if sid != "" {
+			_ = rpc.SessionMessage(ctx, sid, text, mode, opts)
+		} else {
+			_ = rpc.AgentRun(ctx, text, mode, opts)
+		}
+		return nil
+	}
+	return tea.Batch(saveCmd, turnCmd)
 }

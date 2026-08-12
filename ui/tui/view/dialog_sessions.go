@@ -85,15 +85,15 @@ func (d *SessionsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.confirmDel = false
 			return d, nil
 		}
-		return d, dialogResultCmd("session", "cancel", nil)
+		return d, resultCmd(SessionsDialogMsg{Action: SessionsCancel})
 	case "enter", "right":
 		if d.cursor >= 0 && d.cursor < len(visible) {
 			if d.confirmDel {
 				id := visible[d.cursor].ID
 				d.confirmDel = false
-				return d, dialogResultCmd("session", "delete", id)
+				return d, resultCmd(SessionsDialogMsg{Action: SessionsDelete, ID: id})
 			}
-			return d, dialogResultCmd("session", "select", visible[d.cursor].ID)
+			return d, resultCmd(SessionsDialogMsg{Action: SessionsSelect, ID: visible[d.cursor].ID})
 		}
 	case "ctrl+d":
 		if d.cursor >= 0 && d.cursor < len(visible) {

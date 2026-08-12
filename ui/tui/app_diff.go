@@ -24,7 +24,7 @@ func (a *App) showCommitDiff() {
 	// Prefer toggling in-chat RoleDiff when lastCommitDiff is empty (reopen).
 	if len(a.lastCommitDiff) == 0 {
 		if a.session.ToggleLastDiff() {
-			a.diffShown = a.session.HasDiff()
+			a.review.SetShown(a.session.HasDiff())
 			a.syncDiffReviewCursor()
 			a.chat.SetMessages(a.session.Messages)
 			a.layout()
@@ -32,15 +32,14 @@ func (a *App) showCommitDiff() {
 		}
 		return
 	}
-	if a.diffShown {
+	if a.review.Shown() {
 		a.session.RemoveDiff()
-		a.diffShown = false
+		a.review.Hide()
 		a.chat.SetDiffReviewCursor(-1)
 	} else {
 		a.session.AddDiffFiles(a.buildDiffFiles())
 		a.session.ExpandLastDiff()
-		a.diffShown = true
-		a.diffCursor = 0
+		a.review.Show()
 	}
 	a.syncDiffReviewCursor()
 	a.chat.SetMessages(a.session.Messages)
@@ -52,7 +51,7 @@ func (a *App) showCommitDiff() {
 // /diff and d work after session reopen.
 func (a *App) syncDiffStateFromSession() {
 	a.lastCommitDiff = nil
-	a.diffShown = false
+	a.review.SetShown(false)
 	for _, m := range a.session.Messages {
 		if m.Role != state.RoleDiff || len(m.DiffFiles) == 0 {
 			continue
@@ -62,9 +61,9 @@ func (a *App) syncDiffStateFromSession() {
 			out[i] = rpcclient.FileDiff{Path: df.Path, Before: df.Before, After: df.After}
 		}
 		a.lastCommitDiff = out
-		a.diffShown = true
+		a.review.SetShown(true)
 		if m.DiffExpanded {
-			a.diffCursor = 0
+			a.review.ResetCursor()
 		}
 		return
 	}

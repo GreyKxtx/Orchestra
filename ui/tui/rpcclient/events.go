@@ -53,6 +53,7 @@ type WorkflowStagePayload struct {
 // Event is a TUI-side representation of a streaming event.
 type Event struct {
 	Kind         EventKind
+	ReqID        int64 // correlation id for permission/question server requests
 	Step         int
 	SessionID    string // from agent/event envelope (session.message turns)
 	TurnID       string // from agent/event envelope
@@ -129,6 +130,7 @@ type PermissionRequestPayload struct {
 	Description string `json:"description"`
 	Kind        string `json:"kind,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+	ReqID       int64  `json:"-"` // local correlation id (not part of the wire payload)
 }
 
 // QuestionItemPayload is one question in a question/ask server request.

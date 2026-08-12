@@ -15,15 +15,15 @@ func (a *App) actionBarActive() bool {
 	if !a.inputEmpty() {
 		return false
 	}
-	return a.pendingReview && len(a.pendingOps) > 0
+	return a.review.HasPendingOps()
 }
 
 func (a *App) actionBarState() view.ActionBarState {
 	st := view.ActionBarState{
-		OpCount:   len(a.pendingOps),
+		OpCount:   len(a.review.PendingOps()),
 		FileCount: a.session.DiffFileCount(),
 		Expanded:  a.session.LastDiffExpanded(),
-		Review:    a.pendingReview,
+		Review:    a.review.PendingReview(),
 	}
 	if st.FileCount == 0 && len(a.lastCommitDiff) > 0 {
 		st.FileCount = len(a.lastCommitDiff)
@@ -67,11 +67,8 @@ func (a *App) tryActionBarHotkey(key string) (tea.Cmd, bool) {
 }
 
 func (a *App) discardPendingOps() {
-	a.pendingOps = nil
-	a.pendingReview = false
+	a.review.Reset()
 	a.lastCommitDiff = nil
-	a.diffShown = false
-	a.diffCursor = 0
 	a.session.RemoveDiff()
 	a.syncDiffReviewCursor()
 	a.syncActionBar()

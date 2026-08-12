@@ -15,9 +15,11 @@ type OrchestraRoleKey string
 
 const (
 	OrchestraRolePlanner OrchestraRoleKey = "planner"
+	OrchestraRoleLead    OrchestraRoleKey = "lead"
 	OrchestraRoleComplex OrchestraRoleKey = "complex"
 	OrchestraRoleFocused OrchestraRoleKey = "focused"
 	OrchestraRoleMicro   OrchestraRoleKey = "micro"
+	OrchestraRoleEmbed   OrchestraRoleKey = "embed"
 )
 
 // OrchestraRoleDraft is one editable role row.
@@ -92,9 +94,11 @@ func NewOrchestraDialog(roles []OrchestraRoleDraft, ctx OrchestraDialogCtx) *Orc
 func defaultOrchestraRoles() []OrchestraRoleDraft {
 	return []OrchestraRoleDraft{
 		{Key: OrchestraRolePlanner, Label: "L5 · Orchestrator"},
+		{Key: OrchestraRoleLead, Label: "L4 · Dept Leads"},
 		{Key: OrchestraRoleComplex, Label: "L3 · Worker complex"},
 		{Key: OrchestraRoleFocused, Label: "L3 · Worker focused"},
 		{Key: OrchestraRoleMicro, Label: "L1 · Worker micro"},
+		{Key: OrchestraRoleEmbed, Label: "Embeddings"},
 	}
 }
 
@@ -193,9 +197,9 @@ func (d *OrchestraDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	case "enter":
 		switch d.col {
 		case 1:
-			return d, dialogResultCmd("orchestra", "pick_provider", d.cursor)
+			return d, resultCmd(OrchestraDialogMsg{Action: OrchestraPickProvider, RoleIdx: d.cursor})
 		case 2:
-			return d, dialogResultCmd("orchestra", "pick_model", d.cursor)
+			return d, resultCmd(OrchestraDialogMsg{Action: OrchestraPickModel, RoleIdx: d.cursor})
 		default:
 			return d, d.trySave()
 		}
@@ -207,7 +211,7 @@ func (d *OrchestraDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	case "ctrl+s":
 		return d, d.trySave()
 	case "esc":
-		return d, dialogResultCmd("orchestra", "cancel", nil)
+		return d, resultCmd(OrchestraDialogMsg{Action: OrchestraCancel})
 	}
 	return d, nil
 }
@@ -221,10 +225,10 @@ func (d *OrchestraDialog) trySave() tea.Cmd {
 	for k, v := range d.ctx.Named {
 		named[k] = v
 	}
-	return dialogResultCmd("orchestra", "ok", OrchestraDialogResult{
+	return resultCmd(OrchestraDialogMsg{Action: OrchestraSave, Result: OrchestraDialogResult{
 		Roles: append([]OrchestraRoleDraft(nil), d.roles...),
 		Named: named,
-	})
+	}})
 }
 
 // SetRole updates one role's provider/model (used after nested pick dialogs).
@@ -313,6 +317,9 @@ func (d *OrchestraDialog) providerLabel(key string) string {
 }
 
 func (d *OrchestraDialog) roleStatus(r OrchestraRoleDraft) (ok bool, detail string) {
+	if r.Key == OrchestraRoleEmbed && strings.TrimSpace(r.Model) == "" {
+		return true, "○ optional"
+	}
 	model := strings.TrimSpace(r.Model)
 	if r.Provider == "" {
 		if strings.TrimSpace(d.ctx.MainAPIBase) == "" {

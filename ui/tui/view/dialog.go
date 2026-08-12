@@ -18,14 +18,6 @@ type Dialog interface {
 	Render(screenW, screenH int) string
 }
 
-// DialogResultMsg is emitted by a dialog when the user makes a choice or
-// cancels. App.go inspects Source/Action to chain dialogs and persist state.
-type DialogResultMsg struct {
-	Source string // "provider" | "model" | "settings"
-	Action string // "select" | "cancel" | "save"
-	Data   any    // payload (ProviderEntry, ModelEntry, ModelSettings, etc.)
-}
-
 // listDialogItem is one row rendered by renderListDialog.
 type listDialogItem struct {
 	Title       string
@@ -232,11 +224,4 @@ func renderListDialog(
 		Render(body)
 
 	return lipgloss.Place(screenW, screenH, lipgloss.Center, lipgloss.Center, box)
-}
-
-// dialogResultCmd returns a tea.Cmd that emits a DialogResultMsg.
-func dialogResultCmd(source, action string, data any) tea.Cmd {
-	return func() tea.Msg {
-		return DialogResultMsg{Source: source, Action: action, Data: data}
-	}
 }

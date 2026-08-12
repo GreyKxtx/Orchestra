@@ -39,7 +39,7 @@ func (d *RewindDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	case tea.KeyMsg:
 		switch m.String() {
 		case "esc":
-			return d, dialogResultCmd("rewind", "cancel", nil)
+			return d, resultCmd(RewindDialogMsg{Cancel: true})
 		case "up", "shift+up":
 			if d.cursor > 0 {
 				d.cursor--
@@ -52,10 +52,10 @@ func (d *RewindDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			}
 		case "enter":
 			if len(d.items) == 0 {
-				return d, dialogResultCmd("rewind", "cancel", nil)
+				return d, resultCmd(RewindDialogMsg{Cancel: true})
 			}
 			cp := d.items[d.cursor]
-			return d, dialogResultCmd("rewind", "select", cp)
+			return d, resultCmd(RewindDialogMsg{Checkpoint: cp})
 		}
 	}
 	return d, nil

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,249 +11,242 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/sessionstore"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
-// handleDialogResult orchestrates the Provider → Model → Settings flow.
-// Each dialog emits one of these via DialogResultMsg; we push the next dialog
-// onto the stack, persist on save, or pop on cancel.
-func (a *App) handleDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
-	switch m.Source {
-	case "provider":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			return a, nil
-		case "select":
-			p, _ := m.Data.(view.ProviderEntry)
-			p = a.hydrateProviderEndpoint(p)
-			if a.orchFlow {
-				a.orchPending = p.Key
-				a.orchPendingP = p
-			}
-			// Credentials step for every provider (API key; URL if editable).
-			a.pushDialog(a.newEndpointDialog(p))
-			return a, nil
-		}
-	case "endpoint":
-		switch m.Action {
-		case "cancel":
-			a.pendingAPIKey = ""
-			a.popDialog()
-			return a, nil
-		case "save":
-			r, ok := m.Data.(view.EndpointDialogResult)
-			if !ok {
-				if p, ok2 := m.Data.(view.ProviderEntry); ok2 {
-					r = view.EndpointDialogResult{Provider: p}
-				}
-			}
-			p := r.Provider
-			a.pendingAPIKey = r.APIKey
-			if a.orchFlow {
-				a.orchPendingP = p
-				a.orchPending = p.Key
-			}
-			if ed, ok := a.topDialog().(*view.EndpointDialog); ok {
-				ed.ClearError()
-			}
-			a.showToast("Проверяю endpoint / API key…")
-			return a, a.probeLLMCmd("endpoint", p, r.APIKey, "")
-		}
-	case "model":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			if a.orchFlow {
-				a.popUntilOrchestra()
-			}
-			return a, nil
-		case "select":
-			me, _ := m.Data.(view.ModelEntry)
-			if a.orchFlow {
-				a.applyOrchestraRoleChoice(a.orchPending, a.orchPendingP, me.ID, a.pendingAPIKey)
-				a.popUntilOrchestra()
-				a.orchPending = ""
-				a.pendingAPIKey = ""
-				return a, nil
-			}
-			// Find the underlying ModelDialog to learn which provider we picked.
-			var provider view.ProviderEntry
-			if md, ok := a.topDialog().(*view.ModelDialog); ok {
-				provider = md.Provider()
-			}
-			sd := view.NewSettingsDialog(provider, me)
-			apiKey := a.pendingAPIKey
-			if apiKey == "" {
-				apiKey = a.loadProviderAPIKey(provider.Key)
-			}
-			// Hydrate with an existing preset for this model id, if any.
-			if a.cfg.ConfigPath != "" {
-				if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
-					timeoutS := cfg.LLM.TimeoutS
-					if preset, ok := cfg.LLM.ModelPresets[me.ID]; ok {
-						var thinking bool
-						if preset.EnableThinking != nil {
-							thinking = *preset.EnableThinking
-						}
-						if apiKey == "" {
-							apiKey = cfg.LLM.APIKey
-						}
-						sd.SetInitial(preset.Temperature, preset.MaxTokens, preset.NumCtx, timeoutS, thinking, apiKey)
-					} else if cfg.LLM.Model == me.ID {
-						if apiKey == "" {
-							apiKey = cfg.LLM.APIKey
-						}
-						sd.SetInitial(cfg.LLM.Temperature, cfg.LLM.MaxTokens, cfg.EffectiveNumCtx(), timeoutS, false, apiKey)
-					} else {
-						if apiKey == "" {
-							apiKey = cfg.LLM.APIKey
-						}
-						sd.SetInitial(0, 0, 0, timeoutS, false, apiKey)
-					}
-				} else {
-					sd.SetInitial(0, 0, 0, 0, false, apiKey)
-				}
-			} else {
-				sd.SetInitial(0, 0, 0, 0, false, apiKey)
-			}
-			// Keep pendingAPIKey until settings save — merge if Settings field empty.
-			a.pushDialog(sd)
-			return a, nil
-		}
-	case "settings":
-		switch m.Action {
-		case "cancel":
-			a.pendingAPIKey = ""
-			a.popDialog()
-			return a, nil
-		case "save":
-			r, _ := m.Data.(view.SettingsDialogResult)
-			if strings.TrimSpace(r.APIKey) == "" {
-				r.APIKey = strings.TrimSpace(a.pendingAPIKey)
-			}
-			a.pendingAPIKey = ""
-			a.dialogStack = nil
-			a.closeCommandModal()
-			return a, a.persistSettingsCmd(r)
-		}
-	case "orchestra":
-		switch m.Action {
-		case "cancel":
-			a.clearOrchFlow()
-			a.popDialog()
-			return a, nil
-		case "ok":
-			r, _ := m.Data.(view.OrchestraDialogResult)
-			a.clearOrchFlow()
-			a.dialogStack = nil
-			a.closeCommandModal()
-			return a, a.persistOrchestraCmd(r)
-		case "pick_provider":
-			idx, _ := m.Data.(int)
-			od := a.findOrchestraDialog()
-			if od == nil {
-				return a, nil
-			}
-			a.orchFlow = true
-			a.orchRoleIdx = idx
-			a.pushDialog(view.NewOrchestraSourceDialog(od.Ctx()))
-			return a, nil
-		case "pick_model":
-			idx, _ := m.Data.(int)
-			od := a.findOrchestraDialog()
-			if od == nil || idx < 0 || idx >= len(od.RolesSnapshot()) {
-				return a, nil
-			}
-			a.orchFlow = true
-			a.orchRoleIdx = idx
-			role := od.RolesSnapshot()[idx]
-			a.orchPending = role.Provider
-			p := a.providerEntryForOrchestra(role.Provider, od.Ctx())
-			a.orchPendingP = p
-			return a, a.pushModelDialog(p)
-		}
-	case "orchestra_source":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			a.orchPending = ""
-			return a, nil
-		case "select":
-			pick, _ := m.Data.(view.OrchestraSourcePick)
-			if pick.IsMain {
-				a.applyOrchestraRoleMain()
-				a.popDialog() // source
-				return a, nil
-			}
-			p := a.hydrateProviderEndpoint(pick.Provider)
-			if p.Key == "" {
-				p.Key = pick.Key
-			}
-			a.orchPending = pick.Key
-			a.orchPendingP = p
-			a.popDialog() // source
-			a.pushDialog(a.newEndpointDialog(p))
-			return a, nil
-		}
-	case "session":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			return a, nil
-		case "select":
-			id, _ := m.Data.(string)
-			a.popDialog()
-			a.closeCommandModal()
-			return a, a.loadSession(id)
-		case "delete":
-			id, _ := m.Data.(string)
-			_ = sessionstore.Delete(a.cfg.WorkspaceRoot, id)
-			// Refresh list in-place.
-			metas, _ := sessionstore.List(a.cfg.WorkspaceRoot)
-			a.popDialog()
-			a.pushDialog(view.NewSessionsDialog(metas))
-			return a, nil
-		}
-	case "rewind":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			return a, nil
-		case "select":
-			cp, _ := m.Data.(view.RewindCheckpoint)
-			a.popDialog()
-			a.handleRewindSelect(cp)
-			return a, nil
-		}
-	case "message_action":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			return a, nil
-		case "copy":
-			if text, ok := m.Data.(string); ok && text != "" {
-				_ = clipboard.WriteAll(text)
-				a.showToast("Скопировано")
-			}
-			a.popDialog()
-			return a, nil
-		case "edit":
-			if text, ok := m.Data.(string); ok && text != "" {
-				a.input.SetValue(text)
-				a.input.SyncHeight(5)
-				a.layout()
-			}
-			a.popDialog()
-			return a, nil
-		}
-	case "mcp", "mcp_preset", "mcp_edit":
-		return a.handleMCPDialogResult(m)
+// Dialog result handlers. Each dialog emits its own typed message
+// (view.*DialogMsg); Update routes them here. Together they orchestrate the
+// Provider → Endpoint → Model → Settings flow, the Orchestra roles flow and
+// the standalone dialogs (sessions, rewind, message actions, MCP).
+
+// handleProviderDialog — provider picked: run the credentials step.
+func (a *App) handleProviderDialog(m view.ProviderDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.popDialog()
+		return a, nil
 	}
+	p := a.hydrateProviderEndpoint(m.Provider)
+	if a.orchFlow {
+		a.orchPending = p.Key
+		a.orchPendingP = p
+	}
+	// Credentials step for every provider (API key; URL if editable).
+	a.pushDialog(a.newEndpointDialog(p))
+	return a, nil
+}
+
+// handleEndpointDialog — credentials entered: probe the endpoint before
+// letting the user pick a model.
+func (a *App) handleEndpointDialog(m view.EndpointDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.pendingAPIKey = ""
+		a.popDialog()
+		return a, nil
+	}
+	p := m.Result.Provider
+	a.pendingAPIKey = m.Result.APIKey
+	if a.orchFlow {
+		a.orchPendingP = p
+		a.orchPending = p.Key
+	}
+	if ed, ok := a.topDialog().(*view.EndpointDialog); ok {
+		ed.ClearError()
+	}
+	a.showToast("Проверяю endpoint / API key…")
+	return a, a.probeLLMCmd("endpoint", p, m.Result.APIKey, "")
+}
+
+// handleModelDialog — model picked: either feed the orchestra flow or open
+// the settings dialog hydrated from presets.
+func (a *App) handleModelDialog(m view.ModelDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.popDialog()
+		if a.orchFlow {
+			a.popUntilOrchestra()
+		}
+		return a, nil
+	}
+	me := m.Model
+	if a.orchFlow {
+		a.applyOrchestraRoleChoice(a.orchPending, a.orchPendingP, me.ID, a.pendingAPIKey)
+		a.popUntilOrchestra()
+		a.orchPending = ""
+		a.pendingAPIKey = ""
+		return a, nil
+	}
+	// Find the underlying ModelDialog to learn which provider we picked.
+	var provider view.ProviderEntry
+	if md, ok := a.topDialog().(*view.ModelDialog); ok {
+		provider = md.Provider()
+	}
+	sd := view.NewSettingsDialog(provider, me)
+	apiKey := a.pendingAPIKey
+	if apiKey == "" {
+		apiKey = a.loadProviderAPIKey(provider.Key)
+	}
+	// Hydrate with an existing preset for this model id, if any.
+	if a.cfg.ConfigPath != "" {
+		if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
+			timeoutS := cfg.LLM.TimeoutS
+			if preset, ok := cfg.LLM.ModelPresets[me.ID]; ok {
+				var thinking bool
+				if preset.EnableThinking != nil {
+					thinking = *preset.EnableThinking
+				}
+				if apiKey == "" {
+					apiKey = cfg.LLM.APIKey
+				}
+				sd.SetInitial(preset.Temperature, preset.MaxTokens, preset.NumCtx, timeoutS, thinking, apiKey)
+			} else if cfg.LLM.Model == me.ID {
+				if apiKey == "" {
+					apiKey = cfg.LLM.APIKey
+				}
+				sd.SetInitial(cfg.LLM.Temperature, cfg.LLM.MaxTokens, cfg.EffectiveNumCtx(), timeoutS, false, apiKey)
+			} else {
+				if apiKey == "" {
+					apiKey = cfg.LLM.APIKey
+				}
+				sd.SetInitial(0, 0, 0, timeoutS, false, apiKey)
+			}
+		} else {
+			sd.SetInitial(0, 0, 0, 0, false, apiKey)
+		}
+	} else {
+		sd.SetInitial(0, 0, 0, 0, false, apiKey)
+	}
+	// Keep pendingAPIKey until settings save — merge if Settings field empty.
+	a.pushDialog(sd)
+	return a, nil
+}
+
+// handleSettingsDialog — tuning saved: persist to .orchestra.yml.
+func (a *App) handleSettingsDialog(m view.SettingsDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.pendingAPIKey = ""
+		a.popDialog()
+		return a, nil
+	}
+	r := m.Result
+	if strings.TrimSpace(r.APIKey) == "" {
+		r.APIKey = strings.TrimSpace(a.pendingAPIKey)
+	}
+	a.pendingAPIKey = ""
+	a.dialogStack = nil
+	a.closeCommandModal()
+	return a, a.persistSettingsCmd(r)
+}
+
+// handleOrchestraDialog — roles editor: save all roles or drill into one.
+func (a *App) handleOrchestraDialog(m view.OrchestraDialogMsg) (tea.Model, tea.Cmd) {
+	switch m.Action {
+	case view.OrchestraCancel:
+		a.clearOrchFlow()
+		a.popDialog()
+		return a, nil
+	case view.OrchestraSave:
+		a.clearOrchFlow()
+		a.dialogStack = nil
+		a.closeCommandModal()
+		return a, a.persistOrchestraCmd(m.Result)
+	case view.OrchestraPickProvider:
+		od := a.findOrchestraDialog()
+		if od == nil {
+			return a, nil
+		}
+		a.orchFlow = true
+		a.orchRoleIdx = m.RoleIdx
+		a.pushDialog(view.NewOrchestraSourceDialog(od.Ctx()))
+		return a, nil
+	case view.OrchestraPickModel:
+		od := a.findOrchestraDialog()
+		if od == nil || m.RoleIdx < 0 || m.RoleIdx >= len(od.RolesSnapshot()) {
+			return a, nil
+		}
+		a.orchFlow = true
+		a.orchRoleIdx = m.RoleIdx
+		role := od.RolesSnapshot()[m.RoleIdx]
+		a.orchPending = role.Provider
+		p := a.providerEntryForOrchestra(role.Provider, od.Ctx())
+		a.orchPendingP = p
+		return a, a.pushModelDialog(p)
+	}
+	return a, nil
+}
+
+// handleOrchestraSourceDialog — provider source picked for a role.
+func (a *App) handleOrchestraSourceDialog(m view.OrchestraSourceDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.popDialog()
+		a.orchPending = ""
+		return a, nil
+	}
+	pick := m.Pick
+	if pick.IsMain {
+		a.applyOrchestraRoleMain()
+		a.popDialog() // source
+		return a, nil
+	}
+	p := a.hydrateProviderEndpoint(pick.Provider)
+	if p.Key == "" {
+		p.Key = pick.Key
+	}
+	a.orchPending = pick.Key
+	a.orchPendingP = p
+	a.popDialog() // source
+	a.pushDialog(a.newEndpointDialog(p))
+	return a, nil
+}
+
+// handleSessionsDialog — open or delete a stored session.
+func (a *App) handleSessionsDialog(m view.SessionsDialogMsg) (tea.Model, tea.Cmd) {
+	switch m.Action {
+	case view.SessionsCancel:
+		a.popDialog()
+		return a, nil
+	case view.SessionsSelect:
+		a.popDialog()
+		a.closeCommandModal()
+		return a, a.loadSession(m.ID)
+	case view.SessionsDelete:
+		_ = sessionstore.Delete(a.cfg.WorkspaceRoot, m.ID)
+		// Refresh list in-place.
+		metas, _ := sessionstore.List(a.cfg.WorkspaceRoot)
+		a.popDialog()
+		a.pushDialog(view.NewSessionsDialog(metas))
+		return a, nil
+	}
+	return a, nil
+}
+
+// handleRewindDialog — checkpoint picked in the rewind dialog.
+func (a *App) handleRewindDialog(m view.RewindDialogMsg) (tea.Model, tea.Cmd) {
+	a.popDialog()
+	if !m.Cancel {
+		a.handleRewindSelect(m.Checkpoint)
+	}
+	return a, nil
+}
+
+// handleMessageActionDialog — chat message context menu (copy / edit).
+func (a *App) handleMessageActionDialog(m view.MessageActionDialogMsg) (tea.Model, tea.Cmd) {
+	switch m.Action {
+	case view.MessageActionCopy:
+		if m.Text != "" {
+			_ = clipboard.WriteAll(m.Text)
+			a.showToast("Скопировано")
+		}
+	case view.MessageActionEdit:
+		if m.Text != "" {
+			a.input.SetValue(m.Text)
+			a.input.SyncHeight(5)
+			a.layout()
+		}
+	}
+	a.popDialog()
 	return a, nil
 }
 
@@ -455,77 +449,80 @@ func (a *App) currentProvider() view.ProviderEntry {
 // .orchestra.yml and stores them as a preset keyed by model id, so future
 // returns to this model auto-restore tuning.
 func (a *App) persistSettingsCmd(r view.SettingsDialogResult) tea.Cmd {
-	cfgPath := a.cfg.ConfigPath
-	workspaceRoot := a.cfg.WorkspaceRoot
+	store := a.cfgStore
 	return func() tea.Msg {
-		cfg, err := config.Load(cfgPath)
-		if err != nil || cfg == nil {
-			cfg = config.DefaultConfig(workspaceRoot)
-			cfg.ProjectRoot = workspaceRoot
-		}
-		cfg.LLM.Provider = r.Provider.Key
-		cfg.LLM.APIBase = view.NormalizeEndpoint(r.Provider.Endpoint)
-		// Always persist non-empty API key (incl. local/vLLM/ngrok). Never wipe an
-		// existing key with an empty field from the settings dialog.
-		if k := strings.TrimSpace(r.APIKey); k != "" {
-			cfg.LLM.APIKey = k
-		}
-		cfg.LLM.Model = r.Model.ID
-		cfg.LLM.Temperature = r.Temperature
-		cfg.LLM.MaxTokens = r.MaxTokens
-		if r.TimeoutS > 0 {
-			cfg.LLM.TimeoutS = r.TimeoutS
-		}
-		if cfg.LLM.ExtraBody == nil {
-			cfg.LLM.ExtraBody = map[string]any{}
-		}
-		cfg.LLM.ExtraBody["num_ctx"] = r.NumCtx
-		// Always persist an explicit thinking flag. Qwen3 defaults to thinking-on;
-		// deleting the key leaves empty assistant content with no tool calls.
-		cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": r.EnableThinking}
-		// Mirror into providers: so named lookups (orchestra / router) keep the key.
-		if key := strings.TrimSpace(r.Provider.Key); key != "" {
-			if cfg.Providers == nil {
-				cfg.Providers = map[string]config.LLMConfig{}
-			}
-			pc := cfg.Providers[key]
-			if pc.Provider == "" {
-				pc.Provider = key
-			}
-			pc.APIBase = cfg.LLM.APIBase
-			if k := strings.TrimSpace(cfg.LLM.APIKey); k != "" {
-				pc.APIKey = k
-			}
-			pc.Model = cfg.LLM.Model
-			pc.MaxTokens = cfg.LLM.MaxTokens
-			pc.Temperature = cfg.LLM.Temperature
-			pc.ToolChoice = cfg.LLM.ToolChoice
-			if r.TimeoutS > 0 {
-				pc.TimeoutS = r.TimeoutS
-			}
-			if pc.ExtraBody == nil {
-				pc.ExtraBody = map[string]any{}
-			}
-			pc.ExtraBody["num_ctx"] = r.NumCtx
-			pc.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": r.EnableThinking}
-			cfg.Providers[key] = pc
-		}
-		if cfg.LLM.ModelPresets == nil {
-			cfg.LLM.ModelPresets = map[string]config.ModelPreset{}
-		}
-		thinkingVal := r.EnableThinking
-		cfg.LLM.ModelPresets[r.Model.ID] = config.ModelPreset{
-			Provider:       r.Provider.Key,
-			APIBase:        view.NormalizeEndpoint(r.Provider.Endpoint),
-			Temperature:    r.Temperature,
-			MaxTokens:      r.MaxTokens,
-			NumCtx:         r.NumCtx,
-			EnableThinking: &thinkingVal,
-		}
-		if err := config.Save(cfgPath, cfg); err != nil {
+		err := store.Mutate(func(cfg *config.ProjectConfig) error {
+			applySettingsResult(cfg, r)
+			return nil
+		})
+		if err != nil {
 			return settingsSavedMsg{err: err}
 		}
 		return settingsSavedMsg{provider: r.Provider, model: r.Model, numCtx: r.NumCtx, maxTokens: r.MaxTokens}
+	}
+}
+
+// applySettingsResult writes the settings-dialog result into cfg (main LLM
+// block, providers mirror, per-model preset).
+func applySettingsResult(cfg *config.ProjectConfig, r view.SettingsDialogResult) {
+	cfg.LLM.Provider = r.Provider.Key
+	cfg.LLM.APIBase = view.NormalizeEndpoint(r.Provider.Endpoint)
+	// Always persist non-empty API key (incl. local/vLLM/ngrok). Never wipe an
+	// existing key with an empty field from the settings dialog.
+	if k := strings.TrimSpace(r.APIKey); k != "" {
+		cfg.LLM.APIKey = k
+	}
+	cfg.LLM.Model = r.Model.ID
+	cfg.LLM.Temperature = r.Temperature
+	cfg.LLM.MaxTokens = r.MaxTokens
+	if r.TimeoutS > 0 {
+		cfg.LLM.TimeoutS = r.TimeoutS
+	}
+	if cfg.LLM.ExtraBody == nil {
+		cfg.LLM.ExtraBody = map[string]any{}
+	}
+	cfg.LLM.ExtraBody["num_ctx"] = r.NumCtx
+	// Always persist an explicit thinking flag. Qwen3 defaults to thinking-on;
+	// deleting the key leaves empty assistant content with no tool calls.
+	cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": r.EnableThinking}
+	// Mirror into providers: so named lookups (orchestra / router) keep the key.
+	if key := strings.TrimSpace(r.Provider.Key); key != "" {
+		if cfg.Providers == nil {
+			cfg.Providers = map[string]config.LLMConfig{}
+		}
+		pc := cfg.Providers[key]
+		if pc.Provider == "" {
+			pc.Provider = key
+		}
+		pc.APIBase = cfg.LLM.APIBase
+		if k := strings.TrimSpace(cfg.LLM.APIKey); k != "" {
+			pc.APIKey = k
+		}
+		pc.Model = cfg.LLM.Model
+		pc.MaxTokens = cfg.LLM.MaxTokens
+		pc.Temperature = cfg.LLM.Temperature
+		pc.ToolChoice = cfg.LLM.ToolChoice
+		if r.TimeoutS > 0 {
+			pc.TimeoutS = r.TimeoutS
+		}
+		if pc.ExtraBody == nil {
+			pc.ExtraBody = map[string]any{}
+		}
+		pc.ExtraBody["num_ctx"] = r.NumCtx
+		pc.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": r.EnableThinking}
+		cfg.Providers[key] = pc
+	}
+	if cfg.LLM.ModelPresets == nil {
+		cfg.LLM.ModelPresets = map[string]config.ModelPreset{}
+	}
+	thinkingVal := r.EnableThinking
+	cfg.LLM.ModelPresets[r.Model.ID] = config.ModelPreset{
+		Provider:       r.Provider.Key,
+		APIBase:        view.NormalizeEndpoint(r.Provider.Endpoint),
+		Temperature:    r.Temperature,
+		MaxTokens:      r.MaxTokens,
+		NumCtx:         r.NumCtx,
+		EnableThinking: &thinkingVal,
 	}
 }
 
@@ -542,6 +539,7 @@ func (a *App) applySavedSettings(m settingsSavedMsg) tea.Cmd {
 		return nil
 	}
 	a.cfg.Model = m.model.ID
+	a.providerName = m.provider.Name
 	a.statusBar.SetModel(m.model.ID)
 	limit := int(m.numCtx)
 	if limit <= 0 {
@@ -663,35 +661,37 @@ func (a *App) persistDiscoveredLimitsCmd(res llm.ProbeResult) tea.Cmd {
 	if res.ContextTokens <= 0 {
 		return nil
 	}
-	cfgPath := a.cfg.ConfigPath
-	workspaceRoot := a.cfg.WorkspaceRoot
+	store := a.cfgStore
 	ctxTok := res.ContextTokens
 	return func() tea.Msg {
-		cfg, err := config.Load(cfgPath)
-		if err != nil || cfg == nil {
-			cfg = config.DefaultConfig(workspaceRoot)
-			cfg.ProjectRoot = workspaceRoot
-		}
-		lim := llm.ModelLimits{ContextTokens: ctxTok, MaxTokensCap: res.MaxTokensCap}
-		beforeTok := cfg.LLM.MaxTokens
-		beforeCtx := int(cfg.EffectiveNumCtx())
-		if !llm.ApplyDiscoveredLimits(&cfg.LLM, lim) {
+		var out limitsAppliedMsg
+		err := store.Mutate(func(cfg *config.ProjectConfig) error {
+			lim := llm.ModelLimits{ContextTokens: ctxTok, MaxTokensCap: res.MaxTokensCap}
+			beforeTok := cfg.LLM.MaxTokens
+			beforeCtx := int(cfg.EffectiveNumCtx())
+			if !llm.ApplyDiscoveredLimits(&cfg.LLM, lim) {
+				return errConfigUnchanged
+			}
+			applied := int(cfg.EffectiveNumCtx())
+			if applied <= 0 {
+				applied = contextLenFromCfgExtra(cfg)
+			}
+			out = limitsAppliedMsg{
+				contextTokens: applied,
+				serverMax:     ctxTok,
+				maxTokens:     cfg.LLM.MaxTokens,
+				clamped:       beforeTok > 0 && cfg.LLM.MaxTokens < beforeTok,
+				ctxClamped:    beforeCtx > 0 && applied > 0 && beforeCtx > applied,
+			}
+			return nil
+		})
+		if errors.Is(err, errConfigUnchanged) {
 			return nil
 		}
-		if err := config.Save(cfgPath, cfg); err != nil {
+		if err != nil {
 			return limitsAppliedMsg{err: err}
 		}
-		applied := int(cfg.EffectiveNumCtx())
-		if applied <= 0 {
-			applied = contextLenFromCfgExtra(cfg)
-		}
-		return limitsAppliedMsg{
-			contextTokens: applied,
-			serverMax:     ctxTok,
-			maxTokens:     cfg.LLM.MaxTokens,
-			clamped:       beforeTok > 0 && cfg.LLM.MaxTokens < beforeTok,
-			ctxClamped:    beforeCtx > 0 && applied > 0 && beforeCtx > applied,
-		}
+		return out
 	}
 }
 
@@ -721,6 +721,7 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 	oldCancel := a.rpcCancel
 	a.rpc = nil
 	a.rpcCancel = nil
+	a.rpcGen++ // old listener's pending events (incl. ConnectionClosed) become stale
 	a.coreSessionID = ""
 	// In-flight agent activity is killed by the close; reset UI state so the
 	// header/status bar don't spin forever after respawn.
@@ -731,6 +732,11 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 	}
 	a.lastCommitDiff = nil
 	a.permModal = nil
+	a.perms.Reset()
+	// Outstanding question/ask reqIDs die with the old client — a stale modal
+	// would send its answer to the new core where nobody is waiting.
+	a.questionModal = nil
+	a.questionReqID = 0
 
 	binary := a.cfg.Binary
 	workspaceRoot := a.cfg.WorkspaceRoot
@@ -755,9 +761,11 @@ func (a *App) respawnRPCCmd() tea.Cmd {
 func (a *App) openOrchestraDialog() {
 	drafts := []view.OrchestraRoleDraft{
 		{Key: view.OrchestraRolePlanner, Label: "L5 · Orchestrator"},
+		{Key: view.OrchestraRoleLead, Label: "L4 · Dept Leads"},
 		{Key: view.OrchestraRoleComplex, Label: "L3 · Worker complex"},
 		{Key: view.OrchestraRoleFocused, Label: "L3 · Worker focused"},
 		{Key: view.OrchestraRoleMicro, Label: "L1 · Worker micro"},
+		{Key: view.OrchestraRoleEmbed, Label: "Embeddings"},
 	}
 	ctx := view.OrchestraDialogCtx{Named: map[string]view.OrchestraNamedProvider{}}
 	if a.cfg.ConfigPath != "" {
@@ -821,10 +829,18 @@ func (a *App) openOrchestraDialog() {
 			for _, t := range cfg.Orchestra.Tiers {
 				tierMap[strings.ToLower(t.Name)] = t
 			}
-			for i, key := range []view.OrchestraRoleKey{view.OrchestraRoleComplex, view.OrchestraRoleFocused, view.OrchestraRoleMicro} {
-				if t, ok := tierMap[string(key)]; ok {
-					drafts[i+1].Provider = t.Provider
-					drafts[i+1].Model = t.Model
+			for i := range drafts {
+				if drafts[i].Key == view.OrchestraRolePlanner {
+					continue
+				}
+				if drafts[i].Key == view.OrchestraRoleEmbed {
+					drafts[i].Provider = cfg.Embed.Provider
+					drafts[i].Model = cfg.Embed.Model
+					continue
+				}
+				if t, ok := tierMap[string(drafts[i].Key)]; ok {
+					drafts[i].Provider = t.Provider
+					drafts[i].Model = t.Model
 				}
 			}
 		}
@@ -837,91 +853,96 @@ type orchestraSavedMsg struct {
 }
 
 func (a *App) persistOrchestraCmd(r view.OrchestraDialogResult) tea.Cmd {
-	cfgPath := a.cfg.ConfigPath
-	workspaceRoot := a.cfg.WorkspaceRoot
+	store := a.cfgStore
 	return func() tea.Msg {
-		cfg, err := config.Load(cfgPath)
-		if err != nil || cfg == nil {
-			cfg = config.DefaultConfig(workspaceRoot)
-			cfg.ProjectRoot = workspaceRoot
+		err := store.Mutate(func(cfg *config.ProjectConfig) error {
+			applyOrchestraResult(cfg, r)
+			return nil
+		})
+		return orchestraSavedMsg{err: err}
+	}
+}
+
+// applyOrchestraResult writes the orchestra-dialog result into cfg (named
+// provider snapshots, planner/embed roles, tier list).
+func applyOrchestraResult(cfg *config.ProjectConfig, r view.OrchestraDialogResult) {
+	if cfg.Providers == nil {
+		cfg.Providers = map[string]config.LLMConfig{}
+	}
+	// Persist Named snapshots (URL + API key) for providers used by roles.
+	for name, n := range r.Named {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
 		}
-		if cfg.Providers == nil {
-			cfg.Providers = map[string]config.LLMConfig{}
-		}
-		// Persist Named snapshots (URL + API key) for providers used by roles.
-		for name, n := range r.Named {
-			name = strings.TrimSpace(name)
-			if name == "" {
-				continue
-			}
-			used := false
-			for _, role := range r.Roles {
-				if strings.TrimSpace(role.Provider) == name {
-					used = true
-					break
-				}
-			}
-			if !used {
-				continue
-			}
-			pc := cfg.Providers[name]
-			if pc.Provider == "" {
-				pc.Provider = name
-			}
-			if base := strings.TrimSpace(n.APIBase); base != "" {
-				pc.APIBase = view.NormalizeEndpoint(base)
-			}
-			if k := strings.TrimSpace(n.APIKey); k != "" {
-				pc.APIKey = k
-			}
-			if m := strings.TrimSpace(n.Model); m != "" {
-				pc.Model = m
-			}
-			cfg.Providers[name] = pc
-		}
-		tiers := make([]config.OrchestraTier, 0, 3)
+		used := false
 		for _, role := range r.Roles {
-			prov := strings.TrimSpace(role.Provider)
-			model := strings.TrimSpace(role.Model)
-			// Ensure named provider exists in providers: (seed from catalog).
-			if prov != "" {
-				if _, ok := cfg.Providers[prov]; !ok {
-					entry := config.LLMConfig{Provider: prov, Model: model}
-					if cat, ok := view.FindProviderByKey(prov); ok {
-						entry.APIBase = cat.Endpoint
-						if cat.Key != "" && entry.Provider == "" {
-							entry.Provider = cat.Key
-						}
+			if strings.TrimSpace(role.Provider) == name {
+				used = true
+				break
+			}
+		}
+		if !used {
+			continue
+		}
+		pc := cfg.Providers[name]
+		if pc.Provider == "" {
+			pc.Provider = name
+		}
+		if base := strings.TrimSpace(n.APIBase); base != "" {
+			pc.APIBase = view.NormalizeEndpoint(base)
+		}
+		if k := strings.TrimSpace(n.APIKey); k != "" {
+			pc.APIKey = k
+		}
+		if m := strings.TrimSpace(n.Model); m != "" {
+			pc.Model = m
+		}
+		cfg.Providers[name] = pc
+	}
+	tiers := make([]config.OrchestraTier, 0, 3)
+	for _, role := range r.Roles {
+		prov := strings.TrimSpace(role.Provider)
+		model := strings.TrimSpace(role.Model)
+		// Ensure named provider exists in providers: (seed from catalog).
+		if prov != "" {
+			if _, ok := cfg.Providers[prov]; !ok {
+				entry := config.LLMConfig{Provider: prov, Model: model}
+				if cat, ok := view.FindProviderByKey(prov); ok {
+					entry.APIBase = cat.Endpoint
+					if cat.Key != "" && entry.Provider == "" {
+						entry.Provider = cat.Key
 					}
-					cfg.Providers[prov] = entry
-				} else if model != "" {
-					pc := cfg.Providers[prov]
-					pc.Model = model
-					cfg.Providers[prov] = pc
 				}
-			}
-			switch role.Key {
-			case view.OrchestraRolePlanner:
-				cfg.Orchestra.Planner.Provider = prov
-				cfg.Orchestra.Planner.Model = model
-			case view.OrchestraRoleComplex, view.OrchestraRoleFocused, view.OrchestraRoleMicro:
-				tiers = append(tiers, config.OrchestraTier{
-					Name:     string(role.Key),
-					Provider: prov,
-					Model:    model,
-				})
+				cfg.Providers[prov] = entry
+			} else if model != "" {
+				pc := cfg.Providers[prov]
+				pc.Model = model
+				cfg.Providers[prov] = pc
 			}
 		}
-		if len(tiers) > 0 {
-			cfg.Orchestra.Tiers = tiers
-			if cfg.Orchestra.DefaultTier == "" {
-				cfg.Orchestra.DefaultTier = "focused"
-			}
+		switch role.Key {
+		case view.OrchestraRolePlanner:
+			cfg.Orchestra.Planner.Provider = prov
+			cfg.Orchestra.Planner.Model = model
+		case view.OrchestraRoleEmbed:
+			cfg.Embed.Provider = prov
+			cfg.Embed.Model = model
+			cfg.Embed.APIBase = ""
+			cfg.Embed.APIKey = ""
+		case view.OrchestraRoleLead, view.OrchestraRoleComplex, view.OrchestraRoleFocused, view.OrchestraRoleMicro:
+			tiers = append(tiers, config.OrchestraTier{
+				Name:     string(role.Key),
+				Provider: prov,
+				Model:    model,
+			})
 		}
-		if err := config.Save(cfgPath, cfg); err != nil {
-			return orchestraSavedMsg{err: err}
+	}
+	if len(tiers) > 0 {
+		cfg.Orchestra.Tiers = tiers
+		if cfg.Orchestra.DefaultTier == "" {
+			cfg.Orchestra.DefaultTier = "focused"
 		}
-		return orchestraSavedMsg{}
 	}
 }
 

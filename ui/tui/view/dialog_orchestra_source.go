@@ -188,10 +188,10 @@ func (d *OrchestraSourceDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.cursor++
 		}
 	case "esc", "left":
-		return d, dialogResultCmd("orchestra_source", "cancel", nil)
+		return d, resultCmd(OrchestraSourceDialogMsg{Cancel: true})
 	case "enter", "right":
 		if d.cursor >= 0 && d.cursor < len(vis) {
-			return d, dialogResultCmd("orchestra_source", "select", vis[d.cursor].pick)
+			return d, resultCmd(OrchestraSourceDialogMsg{Pick: vis[d.cursor].pick})
 		}
 	case "backspace":
 		if len(d.filter) > 0 {

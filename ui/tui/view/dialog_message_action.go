@@ -20,18 +20,18 @@ func NewMessageActionDialog(text string, isUser bool) *MessageActionDialog {
 
 type msgAction struct {
 	title  string
-	action string
+	action MessageActionKind
 }
 
 func (d *MessageActionDialog) actions() []msgAction {
 	if d.isUser {
 		return []msgAction{
-			{"Копировать", "copy"},
-			{"Редактировать", "edit"},
+			{"Копировать", MessageActionCopy},
+			{"Редактировать", MessageActionEdit},
 		}
 	}
 	return []msgAction{
-		{"Копировать", "copy"},
+		{"Копировать", MessageActionCopy},
 	}
 }
 
@@ -52,10 +52,10 @@ func (d *MessageActionDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.cursor++
 		}
 	case "esc":
-		return d, dialogResultCmd("message_action", "cancel", nil)
+		return d, resultCmd(MessageActionDialogMsg{Action: MessageActionCancel})
 	case "enter":
 		if d.cursor < len(acts) {
-			return d, dialogResultCmd("message_action", acts[d.cursor].action, d.text)
+			return d, resultCmd(MessageActionDialogMsg{Action: acts[d.cursor].action, Text: d.text})
 		}
 	}
 	return d, nil

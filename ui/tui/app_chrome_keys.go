@@ -60,7 +60,7 @@ func (a *App) handleCtrlTCascade() bool {
 		}
 	}
 	if a.session.ToggleLastDiff() {
-		a.diffShown = a.session.HasDiff()
+		a.review.SetShown(a.session.HasDiff())
 		a.syncDiffReviewCursor()
 		a.chat.SetMessages(a.session.Messages)
 		a.layout()

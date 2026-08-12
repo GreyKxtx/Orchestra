@@ -10,6 +10,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
 // chromeMetrics groups status-bar / session gauges owned by App (not chat history).
@@ -75,7 +76,9 @@ func (a *App) refreshLSPStatusCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		st, pct, id, err := rpc.QueryLSPStatusDetail(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		st, pct, id, err := rpc.QueryLSPStatusDetail(ctx)
 		if err != nil {
 			return nil
 		}
@@ -95,7 +98,9 @@ func (a *App) awaitLSPWarmupCmd() tea.Cmd {
 		deadline := time.Now().Add(10 * time.Second)
 		last := lspStatusMsg{}
 		for {
-			st, pct, id, err := rpc.QueryLSPStatusDetail(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			st, pct, id, err := rpc.QueryLSPStatusDetail(ctx)
+			cancel()
 			if err == nil && st != "" {
 				last = lspStatusMsg{status: st, percent: pct, id: id}
 				if st == "active" || st == "off" {
@@ -148,6 +153,11 @@ func (a *App) loadConfigPrefs() {
 	}
 	a.cfg.Profile = strings.TrimSpace(cfg.Agent.Profile)
 	a.chrome.showCost = isPaidProvider(cfg.LLM.Provider)
+	if p, ok := view.FindProviderByKey(cfg.LLM.Provider); ok {
+		a.providerName = p.Name
+	} else if key := strings.TrimSpace(cfg.LLM.Provider); key != "" {
+		a.providerName = key
+	}
 	a.setContextLimitFromConfig(cfg)
 	a.syncStatusBar()
 }

@@ -181,15 +181,15 @@ func (d *ModelDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.cursor++
 		}
 	case "esc", "left":
-		return d, dialogResultCmd("model", "cancel", nil)
+		return d, resultCmd(ModelDialogMsg{Cancel: true})
 	case "enter", "right":
 		filtered := d.visibleModels()
 		if d.cursor >= 0 && d.cursor < len(filtered) {
-			return d, dialogResultCmd("model", "select", filtered[d.cursor])
+			return d, resultCmd(ModelDialogMsg{Model: filtered[d.cursor]})
 		}
 		// Allow typing a custom model id when search has no list match.
 		if id := strings.TrimSpace(d.filter); id != "" {
-			return d, dialogResultCmd("model", "select", ModelEntry{ID: id})
+			return d, resultCmd(ModelDialogMsg{Model: ModelEntry{ID: id}})
 		}
 	case "backspace":
 		if len(d.filter) > 0 {

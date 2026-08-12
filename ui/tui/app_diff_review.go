@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -32,17 +33,10 @@ func (a *App) diffReviewActive() bool {
 
 func (a *App) syncDiffReviewCursor() {
 	if a.diffReviewActive() {
-		n := a.session.DiffFileCount()
-		if a.diffCursor < 0 {
-			a.diffCursor = 0
-		}
-		if a.diffCursor >= n {
-			a.diffCursor = n - 1
-		}
-		a.chat.SetDiffReviewCursor(a.diffCursor)
+		a.chat.SetDiffReviewCursor(a.review.Clamp(a.session.DiffFileCount()))
 		return
 	}
-	a.diffCursor = 0
+	a.review.ResetCursor()
 	a.chat.SetDiffReviewCursor(-1)
 }
 
@@ -84,23 +78,21 @@ func (a *App) tryDiffReviewHotkey(key string) (tea.Cmd, bool) {
 	}
 	switch key {
 	case "up", "shift+up":
-		if a.diffCursor > 0 {
-			a.diffCursor--
+		if a.review.Move(-1, n) {
 			a.refreshDiffView()
 		}
 		return nil, true
 	case "down", "shift+down":
-		if a.diffCursor < n-1 {
-			a.diffCursor++
+		if a.review.Move(+1, n) {
 			a.refreshDiffView()
 		}
 		return nil, true
 	case "a":
-		return a.acceptDiffFileCmd(a.diffCursor), true
+		return a.acceptDiffFileCmd(a.review.Cursor()), true
 	case "x":
-		return a.rejectDiffFileCmd(a.diffCursor), true
+		return a.rejectDiffFileCmd(a.review.Cursor()), true
 	case "enter":
-		if a.pendingReview {
+		if a.review.PendingReview() {
 			return a.applyPendingDiffReviewCmd(), true
 		}
 		a.session.AcceptAllDiffFiles()
@@ -117,7 +109,7 @@ func (a *App) acceptDiffFileCmd(fileIdx int) tea.Cmd {
 		return nil
 	}
 	a.refreshDiffView()
-	if a.pendingReview {
+	if a.review.PendingReview() {
 		a.showToast("файл принят · Enter — применить")
 		return nil
 	}
@@ -126,7 +118,7 @@ func (a *App) acceptDiffFileCmd(fileIdx int) tea.Cmd {
 }
 
 func (a *App) rejectDiffFileCmd(fileIdx int) tea.Cmd {
-	if a.pendingReview {
+	if a.review.PendingReview() {
 		a.session.SetDiffFileReviewStatus(fileIdx, state.DiffReviewRejected)
 		a.refreshDiffView()
 		a.showToast("файл исключён · Enter — применить остальное")
@@ -152,7 +144,8 @@ func (a *App) revertDiffFileCmd(fileIdx int) tea.Cmd {
 		if rpc == nil {
 			return diffRevertResultMsg{fileIdx: fileIdx, path: path, err: fmt.Errorf("core недоступен")}
 		}
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
 		var err error
 		if df.Before == "" && df.After != "" {
 			in, _ := json.Marshal(map[string]string{"path": path})
@@ -199,7 +192,7 @@ func (a *App) syncRevertedFile(fileIdx int) {
 }
 
 func (a *App) applyPendingDiffReviewCmd() tea.Cmd {
-	if !a.pendingReview || len(a.pendingOps) == 0 || a.rpc == nil {
+	if !a.review.HasPendingOps() || a.rpc == nil {
 		return nil
 	}
 	accepted := a.acceptedDiffPaths()
@@ -207,7 +200,7 @@ func (a *App) applyPendingDiffReviewCmd() tea.Cmd {
 		a.showToast("нет принятых файлов")
 		return nil
 	}
-	ops := filterOpsByPaths(a.pendingOps, accepted)
+	ops := filterOpsByPaths(a.review.PendingOps(), accepted)
 	if len(ops) == 0 {
 		a.showToast("нет ops для принятых файлов")
 		return nil
@@ -217,7 +210,9 @@ func (a *App) applyPendingDiffReviewCmd() tea.Cmd {
 	}
 	rpc := a.rpc
 	return func() tea.Msg {
-		err := rpc.ApplyOps(context.Background(), ops)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := rpc.ApplyOps(ctx, ops)
 		return diffApplyResultMsg{applied: len(ops), err: err}
 	}
 }
@@ -229,8 +224,7 @@ func (a *App) handleDiffApplyResult(m diffApplyResultMsg) tea.Cmd {
 		a.chat.SetMessages(a.session.Messages)
 		return a.persistSessionCmd()
 	}
-	a.pendingOps = nil
-	a.pendingReview = false
+	a.review.ClearPending()
 	a.syncActionBar()
 	a.session.AppendSystemNotice(state.SystemKindSuccess,
 		fmt.Sprintf("записано на диск: %d ops", m.applied))

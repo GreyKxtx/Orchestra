@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -92,7 +93,9 @@ type skillResultMsg struct {
 func (a *App) cmdListWorkflows() tea.Cmd {
 	rpc := a.rpc
 	return func() tea.Msg {
-		ws, err := rpc.WorkflowList(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ws, err := rpc.WorkflowList(ctx)
 		if err != nil {
 			return systemMsgMsg{text: "[error] workflow.list: " + err.Error()}
 		}
@@ -111,7 +114,9 @@ func (a *App) cmdListWorkflows() tea.Cmd {
 func (a *App) cmdListSkills() tea.Cmd {
 	rpc := a.rpc
 	return func() tea.Msg {
-		ss, err := rpc.SkillList(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ss, err := rpc.SkillList(ctx)
 		if err != nil {
 			return systemMsgMsg{text: "[error] skill.list: " + err.Error()}
 		}

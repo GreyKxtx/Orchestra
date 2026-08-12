@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -48,13 +47,11 @@ func (a *App) cycleShellPerms() {
 // or for lsp.install sets lsp.auto_install=true.
 // toolAlways remembers this tool so ask-mode skips the modal next time.
 func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
-	tool := ""
-	kind := ""
-	if a.permModal != nil {
-		tool = a.permModal.Tool
-		kind = a.permModal.Kind
-	}
+	req, _ := a.perms.Answer()
+	tool := req.Tool
+	kind := req.Kind
 	isLSP := strings.EqualFold(kind, "lsp.install") || tool == "lsp.install"
+	reqID := req.ReqID
 	a.permModal = nil
 	if approved && sessionAllow {
 		if isLSP {
@@ -81,7 +78,7 @@ func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 	a.updateStatusHints()
 	a.layout()
 	if a.rpc != nil {
-		a.rpc.RespondPermissionDecision(rpcclient.PermissionDecision{
+		a.rpc.RespondPermissionDecision(reqID, rpcclient.PermissionDecision{
 			Approved: approved,
 			Always:   approved && sessionAllow && isLSP,
 		})
@@ -91,37 +88,37 @@ func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 }
 
 func (a *App) showNextPermissionModal() {
-	if a.permModal != nil || len(a.permQueue) == 0 {
+	if a.permModal != nil {
 		return
 	}
-	next := a.permQueue[0]
-	a.permQueue = a.permQueue[1:]
-	if a.toolAllowedThisSession(next.Tool) {
-		if a.rpc != nil {
-			a.rpc.RespondPermission(true)
+	for {
+		next, ok := a.perms.Promote()
+		if !ok {
+			return
 		}
-		a.showNextPermissionModal()
+		if a.toolAllowedThisSession(next.Tool) {
+			// Auto-approve without showing a modal, then keep draining.
+			if a.rpc != nil {
+				a.rpc.RespondPermission(next.ReqID, true)
+			}
+			a.perms.Answer()
+			continue
+		}
+		a.permModal = view.NewPermissionModal(next.Tool, next.Description, next.Kind)
+		a.layout()
 		return
 	}
-	a.permModal = view.NewPermissionModal(next.Tool, next.Description, next.Kind)
-	a.layout()
 }
 
 func (a *App) persistLSPAutoInstall(on bool) error {
-	if a.cfg.ConfigPath == "" {
-		return fmt.Errorf("no .orchestra.yml path configured")
-	}
-	cfg, err := config.Load(a.cfg.ConfigPath)
-	if err != nil || cfg == nil {
-		cfg = config.DefaultConfig(a.cfg.WorkspaceRoot)
-		cfg.ProjectRoot = a.cfg.WorkspaceRoot
-	}
-	if on {
-		cfg.LSP.AutoInstall = "true"
-	} else {
-		cfg.LSP.AutoInstall = "ask"
-	}
-	return config.Save(a.cfg.ConfigPath, cfg)
+	return a.cfgStore.Mutate(func(cfg *config.ProjectConfig) error {
+		if on {
+			cfg.LSP.AutoInstall = "true"
+		} else {
+			cfg.LSP.AutoInstall = "ask"
+		}
+		return nil
+	})
 }
 
 func (a *App) toolAllowedThisSession(tool string) bool {
@@ -135,19 +132,15 @@ func (a *App) toolAllowedThisSession(tool string) bool {
 }
 
 func (a *App) persistUIPrefs() error {
-	if a.cfg.ConfigPath == "" {
-		return fmt.Errorf("no .orchestra.yml path configured")
-	}
-	cfg, err := config.Load(a.cfg.ConfigPath)
-	if err != nil || cfg == nil {
-		cfg = config.DefaultConfig(a.cfg.WorkspaceRoot)
-		cfg.ProjectRoot = a.cfg.WorkspaceRoot
-	}
-	cfg.UI.AllowExec = a.allowExec
-	if a.cfg.Theme != "" {
-		cfg.UI.Theme = a.cfg.Theme
-	}
-	return config.Save(a.cfg.ConfigPath, cfg)
+	allowExec := a.allowExec
+	themeName := a.cfg.Theme
+	return a.cfgStore.Mutate(func(cfg *config.ProjectConfig) error {
+		cfg.UI.AllowExec = allowExec
+		if themeName != "" {
+			cfg.UI.Theme = themeName
+		}
+		return nil
+	})
 }
 
 // cycleTheme toggles between registered themes and persists the choice.

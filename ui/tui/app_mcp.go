@@ -42,86 +42,75 @@ func (a *App) refreshMCPListDialog() {
 	}
 }
 
-// handleMCPDialogResult handles mcp / mcp_preset / mcp_edit dialog results.
-func (a *App) handleMCPDialogResult(m view.DialogResultMsg) (tea.Model, tea.Cmd) {
-	switch m.Source {
-	case "mcp":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
+// handleMCPListDialog — MCP server list actions (add/edit/delete/toggle/test).
+func (a *App) handleMCPListDialog(m view.MCPListDialogMsg) (tea.Model, tea.Cmd) {
+	switch m.Action {
+	case view.MCPListCancel:
+		a.popDialog()
+		return a, nil
+	case view.MCPListAdd:
+		a.pushDialog(view.NewMCPPresetDialog(a.cfg.WorkspaceRoot))
+		return a, nil
+	case view.MCPListEdit:
+		a.pushDialog(view.NewMCPEditDialogFromView(m.Server))
+		return a, nil
+	case view.MCPListDelete:
+		if err := a.mutateMCPConfig(func(cfg *config.ProjectConfig) {
+			cfg.MCP.Servers = filterMCPServers(cfg.MCP.Servers, m.ServerName)
+		}); err != nil {
+			a.showToast("mcp: " + err.Error())
 			return a, nil
-		case "add":
-			a.pushDialog(view.NewMCPPresetDialog(a.cfg.WorkspaceRoot))
-			return a, nil
-		case "edit":
-			srv, _ := m.Data.(view.MCPServerView)
-			a.pushDialog(view.NewMCPEditDialogFromView(srv))
-			return a, nil
-		case "delete":
-			name, _ := m.Data.(string)
-			if err := a.mutateMCPConfig(func(cfg *config.ProjectConfig) {
-				cfg.MCP.Servers = filterMCPServers(cfg.MCP.Servers, name)
-			}); err != nil {
-				a.showToast("mcp: " + err.Error())
-				return a, nil
-			}
-			a.refreshMCPListDialog()
-			a.showToast("удалён · " + name)
-			return a, a.respawnRPCCmd()
-		case "toggle":
-			name, _ := m.Data.(string)
-			if err := a.mutateMCPConfig(func(cfg *config.ProjectConfig) {
-				for i := range cfg.MCP.Servers {
-					if cfg.MCP.Servers[i].Name == name {
-						cfg.MCP.Servers[i].Disabled = !cfg.MCP.Servers[i].Disabled
-						break
-					}
+		}
+		a.refreshMCPListDialog()
+		a.showToast("удалён · " + m.ServerName)
+		return a, a.respawnRPCCmd()
+	case view.MCPListToggle:
+		if err := a.mutateMCPConfig(func(cfg *config.ProjectConfig) {
+			for i := range cfg.MCP.Servers {
+				if cfg.MCP.Servers[i].Name == m.ServerName {
+					cfg.MCP.Servers[i].Disabled = !cfg.MCP.Servers[i].Disabled
+					break
 				}
-			}); err != nil {
-				a.showToast("mcp: " + err.Error())
-				return a, nil
 			}
-			a.refreshMCPListDialog()
-			a.showToast("toggle · " + name)
-			return a, a.respawnRPCCmd()
-		case "test":
-			name, _ := m.Data.(string)
-			a.showToast("MCP test…")
-			return a, a.testMCPCmd(name)
-		}
-	case "mcp_preset":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			return a, nil
-		case "select":
-			p, _ := m.Data.(view.MCPPreset)
-			a.popDialog() // leave list underneath
-			a.pushDialog(view.NewMCPEditDialogFromPreset(p))
+		}); err != nil {
+			a.showToast("mcp: " + err.Error())
 			return a, nil
 		}
-	case "mcp_edit":
-		switch m.Action {
-		case "cancel":
-			a.popDialog()
-			return a, nil
-		case "save":
-			r, ok := m.Data.(view.MCPEditDialogResult)
-			if !ok {
-				a.popDialog()
-				return a, nil
-			}
-			if err := a.saveMCPServer(r); err != nil {
-				a.showToast("mcp: " + err.Error())
-				return a, nil
-			}
-			a.popDialog() // back to list
-			a.refreshMCPListDialog()
-			a.showToast("saved · " + r.Server.Name + " — reloading core…")
-			return a, a.respawnRPCCmd()
-		}
+		a.refreshMCPListDialog()
+		a.showToast("toggle · " + m.ServerName)
+		return a, a.respawnRPCCmd()
+	case view.MCPListTest:
+		a.showToast("MCP test…")
+		return a, a.testMCPCmd(m.ServerName)
 	}
 	return a, nil
+}
+
+// handleMCPPresetDialog — preset picked from the catalog: open the editor.
+func (a *App) handleMCPPresetDialog(m view.MCPPresetDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.popDialog()
+		return a, nil
+	}
+	a.popDialog() // leave list underneath
+	a.pushDialog(view.NewMCPEditDialogFromPreset(m.Preset))
+	return a, nil
+}
+
+// handleMCPEditDialog — server editor saved: persist and reload the core.
+func (a *App) handleMCPEditDialog(m view.MCPEditDialogMsg) (tea.Model, tea.Cmd) {
+	if m.Cancel {
+		a.popDialog()
+		return a, nil
+	}
+	if err := a.saveMCPServer(m.Result); err != nil {
+		a.showToast("mcp: " + err.Error())
+		return a, nil
+	}
+	a.popDialog() // back to list
+	a.refreshMCPListDialog()
+	a.showToast("saved · " + m.Result.Server.Name + " — reloading core…")
+	return a, a.respawnRPCCmd()
 }
 
 func filterMCPServers(servers []config.MCPServerConfig, removeName string) []config.MCPServerConfig {
@@ -136,15 +125,12 @@ func filterMCPServers(servers []config.MCPServerConfig, removeName string) []con
 }
 
 func (a *App) mutateMCPConfig(fn func(*config.ProjectConfig)) error {
-	if a.cfg.ConfigPath == "" {
-		return fmt.Errorf("нет .orchestra.yml")
-	}
-	cfg, err := config.Load(a.cfg.ConfigPath)
-	if err != nil {
-		return err
-	}
-	fn(cfg)
-	return config.Save(a.cfg.ConfigPath, cfg)
+	// MutateExisting: a broken/missing .orchestra.yml must surface as an
+	// error here, not be silently replaced with defaults.
+	return a.cfgStore.MutateExisting(func(cfg *config.ProjectConfig) error {
+		fn(cfg)
+		return nil
+	})
 }
 
 func (a *App) saveMCPServer(r view.MCPEditDialogResult) error {

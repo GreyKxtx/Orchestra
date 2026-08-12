@@ -88,15 +88,19 @@ func stepDoneUserHint(reason string) string {
 }
 
 // listenForEvents returns a Cmd that reads one or more events from the rpc channel.
+// The command is stamped with the current client generation: Update() drops
+// messages (and does not re-arm the listener) when the generation no longer
+// matches, so a respawn can never leave two competing consumers on one channel.
 func (a *App) listenForEvents() tea.Cmd {
 	if a.rpc == nil {
 		return nil
 	}
 	ch := a.rpc.Events()
+	gen := a.rpcGen
 	return func() tea.Msg {
 		ev, ok := <-ch
 		if !ok {
-			return rpcEventMsg{Kind: rpcclient.EventConnectionClosed}
+			return rpcEventMsg{gen: gen, ev: rpcclient.Event{Kind: rpcclient.EventConnectionClosed}}
 		}
 		batch := []rpcclient.Event{ev}
 		const maxBatch = 32
@@ -113,9 +117,9 @@ func (a *App) listenForEvents() tea.Cmd {
 		}
 	done:
 		if len(batch) == 1 {
-			return rpcEventMsg(batch[0])
+			return rpcEventMsg{gen: gen, ev: batch[0]}
 		}
-		return rpcBatchMsg(batch)
+		return rpcBatchMsg{gen: gen, evs: batch}
 	}
 }
 
@@ -375,43 +379,9 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 func (a *App) handleRPCChrome(ev rpcclient.Event) {
 	switch ev.Kind {
 	case rpcclient.EventPendingOps:
-		if ev.PendingOps == nil {
-			return
+		if ev.PendingOps != nil {
+			a.applyPendingOpsEvent(ev.PendingOps)
 		}
-		if ev.PendingOps.Applied {
-			if n := len(ev.PendingOps.Ops); n > 0 {
-				a.session.AppendSystemNotice(state.SystemKindSuccess,
-					fmt.Sprintf("записано на диск: %d ops", n))
-			}
-			if len(ev.PendingOps.Diff) > 0 {
-				a.lastCommitDiff = append([]rpcclient.FileDiff(nil), ev.PendingOps.Diff...)
-				if a.diffShown {
-					a.session.RemoveDiff()
-				}
-				a.session.AddDiffFiles(a.buildDiffFiles())
-				a.session.ExpandLastDiff()
-				a.diffShown = true
-				a.diffCursor = 0
-				a.syncDiffReviewCursor()
-			}
-		} else if len(ev.PendingOps.Ops) > 0 || len(ev.PendingOps.Diff) > 0 {
-			a.pendingOps = append([]map[string]any(nil), ev.PendingOps.Ops...)
-			a.pendingReview = true
-			if len(ev.PendingOps.Diff) > 0 {
-				a.lastCommitDiff = append([]rpcclient.FileDiff(nil), ev.PendingOps.Diff...)
-			}
-			if a.diffShown {
-				a.session.RemoveDiff()
-			}
-			a.session.AddDiffFiles(a.buildDiffFiles())
-			a.session.ExpandLastDiff()
-			a.diffShown = true
-			a.diffCursor = 0
-			a.syncDiffReviewCursor()
-			a.syncActionBar()
-			a.chat.SetMessages(a.session.Messages)
-		}
-		a.layout()
 	case rpcclient.EventTurnUsage:
 		if ev.Usage != nil {
 			a.recordTurnUsage(ev.Usage.PromptTokens, ev.Usage.CompletionTokens, ev.Usage.CostUSD)
@@ -429,28 +399,7 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 		a.syncStatusBar()
 	case rpcclient.EventPermissionRequest:
 		if ev.PermReq != nil {
-			if a.toolAllowedThisSession(ev.PermReq.Tool) {
-				if a.rpc != nil {
-					a.rpc.RespondPermission(true)
-				}
-				return
-			}
-			kind := ev.PermReq.Kind
-			if kind == "" && ev.PermReq.Tool == "lsp.install" {
-				kind = "lsp.install"
-			}
-			req := pendingPermReq{
-				Tool:        ev.PermReq.Tool,
-				Description: ev.PermReq.Description,
-				Kind:        kind,
-			}
-			if a.permModal != nil {
-				// FIFO: show after the current modal is answered.
-				a.permQueue = append(a.permQueue, req)
-				return
-			}
-			a.permModal = view.NewPermissionModal(req.Tool, req.Description, req.Kind)
-			a.layout()
+			a.handlePermissionRequestEvent(ev.PermReq)
 		}
 	case rpcclient.EventQuestionAsked:
 		if len(ev.Questions) > 0 {
@@ -458,40 +407,13 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 			for i, q := range ev.Questions {
 				items[i] = view.QuestionItem{Question: q.Question, Options: q.Options}
 			}
+			a.questionReqID = ev.ReqID
 			a.questionModal = view.NewQuestionModal(items)
 			a.layout()
 		}
-	case rpcclient.EventWorkflowStageStart:
+	case rpcclient.EventWorkflowStageStart, rpcclient.EventWorkflowStageDone:
 		if ev.Stage != nil {
-			if a.workflowProgress != nil {
-				if !a.workflowProgress.Active() {
-					a.workflowProgress.Begin(ev.Stage.Name)
-				}
-				a.workflowProgress.StageStart(ev.Stage.StageID)
-			}
-			a.session.AppendMessage(state.Message{
-				Role:       state.RoleSystem,
-				SystemKind: state.SystemKindInfo,
-				Text: fmt.Sprintf("workflow «%s»: этап %s (попытка %d)",
-					ev.Stage.Name, ev.Stage.StageID, ev.Stage.Attempt),
-			})
-			a.layout()
-		}
-	case rpcclient.EventWorkflowStageDone:
-		if ev.Stage != nil {
-			if a.workflowProgress != nil {
-				a.workflowProgress.StageDone(ev.Stage.StageID, ev.Stage.Action)
-			}
-			marker := ev.Stage.Marker
-			if marker == "" {
-				marker = "—"
-			}
-			a.session.AppendMessage(state.Message{
-				Role:       state.RoleSystem,
-				SystemKind: state.SystemKindInfo,
-				Text: fmt.Sprintf("workflow «%s»: этап %s готов · marker=%s · %s · %dKB",
-					ev.Stage.Name, ev.Stage.StageID, marker, ev.Stage.Action, ev.Stage.OutputKB),
-			})
+			a.handleWorkflowStageEvent(ev)
 		}
 	case rpcclient.EventModeRoute:
 		if ev.ModeRoute != nil && ev.ModeRoute.To != "" {
@@ -503,4 +425,101 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 			a.showToast(a.routeBadge)
 		}
 	}
+}
+
+// applyPendingOpsEvent shows an applied-ops notice or arms the diff review
+// for dry-run ops awaiting user confirmation.
+func (a *App) applyPendingOpsEvent(po *rpcclient.PendingOpsPayload) {
+	if po.Applied {
+		if n := len(po.Ops); n > 0 {
+			a.session.AppendSystemNotice(state.SystemKindSuccess,
+				fmt.Sprintf("записано на диск: %d ops", n))
+		}
+		if len(po.Diff) > 0 {
+			a.lastCommitDiff = append([]rpcclient.FileDiff(nil), po.Diff...)
+			a.showDiffReview()
+		}
+	} else if len(po.Ops) > 0 || len(po.Diff) > 0 {
+		a.review.Arm(po.Ops)
+		if len(po.Diff) > 0 {
+			a.lastCommitDiff = append([]rpcclient.FileDiff(nil), po.Diff...)
+		}
+		a.showDiffReview()
+		a.syncActionBar()
+		a.chat.SetMessages(a.session.Messages)
+	}
+	a.layout()
+}
+
+// showDiffReview (re)inserts the expanded diff block and resets the cursor.
+func (a *App) showDiffReview() {
+	if a.review.Shown() {
+		a.session.RemoveDiff()
+	}
+	a.session.AddDiffFiles(a.buildDiffFiles())
+	a.session.ExpandLastDiff()
+	a.review.Show()
+	a.syncDiffReviewCursor()
+}
+
+// handlePermissionRequestEvent answers session-allowed tools immediately and
+// otherwise pushes the request into the permission FSM, presenting a modal
+// when it became current.
+func (a *App) handlePermissionRequestEvent(pr *rpcclient.PermissionRequestPayload) {
+	if a.toolAllowedThisSession(pr.Tool) {
+		if a.rpc != nil {
+			a.rpc.RespondPermission(pr.ReqID, true)
+		}
+		return
+	}
+	kind := pr.Kind
+	if kind == "" && pr.Tool == "lsp.install" {
+		kind = "lsp.install"
+	}
+	req := state.PermRequest{
+		ReqID:       pr.ReqID,
+		Tool:        pr.Tool,
+		Description: pr.Description,
+		Kind:        kind,
+	}
+	if a.perms.Push(req) {
+		a.permModal = view.NewPermissionModal(req.Tool, req.Description, req.Kind)
+		a.layout()
+	}
+	// else: FIFO — shown after the current modal is answered.
+}
+
+// handleWorkflowStageEvent mirrors workflow stage progress into the progress
+// panel and the chat transcript.
+func (a *App) handleWorkflowStageEvent(ev rpcclient.Event) {
+	st := ev.Stage
+	if ev.Kind == rpcclient.EventWorkflowStageStart {
+		if a.workflowProgress != nil {
+			if !a.workflowProgress.Active() {
+				a.workflowProgress.Begin(st.Name)
+			}
+			a.workflowProgress.StageStart(st.StageID)
+		}
+		a.session.AppendMessage(state.Message{
+			Role:       state.RoleSystem,
+			SystemKind: state.SystemKindInfo,
+			Text: fmt.Sprintf("workflow «%s»: этап %s (попытка %d)",
+				st.Name, st.StageID, st.Attempt),
+		})
+		a.layout()
+		return
+	}
+	if a.workflowProgress != nil {
+		a.workflowProgress.StageDone(st.StageID, st.Action)
+	}
+	marker := st.Marker
+	if marker == "" {
+		marker = "—"
+	}
+	a.session.AppendMessage(state.Message{
+		Role:       state.RoleSystem,
+		SystemKind: state.SystemKindInfo,
+		Text: fmt.Sprintf("workflow «%s»: этап %s готов · marker=%s · %s · %dKB",
+			st.Name, st.StageID, marker, st.Action, st.OutputKB),
+	})
 }

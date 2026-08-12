@@ -45,7 +45,7 @@ func TestDiffReviewActive_requiresExpandedDiff(t *testing.T) {
 		t.Fatal("collapsed diff must not activate review hotkeys")
 	}
 	a.session.ExpandLastDiff()
-	a.diffCursor = 0
+	a.review.ResetCursor()
 	a.syncDiffReviewCursor()
 	if !a.diffReviewActive() {
 		t.Fatal("expanded diff should activate review")

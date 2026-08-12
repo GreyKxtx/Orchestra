@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/sessionstore"
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
@@ -165,14 +164,12 @@ func (a *App) shellPermsSpan(muted lipgloss.Style) string {
 }
 
 // providerDisplayName returns a human-readable provider name for the welcome
-// line, derived from the saved config.
+// line. The value is cached on the App (refreshed by loadConfigPrefs after
+// every settings save / onboarding): View() runs many times per second and
+// must never touch the disk or parse YAML.
 func (a *App) providerDisplayName() string {
-	if a.cfg.ConfigPath != "" {
-		if cfg, err := config.Load(a.cfg.ConfigPath); err == nil && cfg != nil {
-			if p, ok := view.FindProviderByKey(cfg.LLM.Provider); ok {
-				return p.Name
-			}
-		}
+	if a.providerName != "" {
+		return a.providerName
 	}
 	return "LM Studio"
 }

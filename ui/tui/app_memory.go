@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -28,7 +29,11 @@ func (a *App) cmdSessionCompact() tea.Cmd {
 	}
 	a.showToast("сжимаю контекст…")
 	return func() tea.Msg {
-		res, err := rpc.SessionCompact(context.Background(), sid, "")
+		// Compaction runs an LLM summarization — give it generous headroom,
+		// but never let a hung core leak this goroutine forever.
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		res, err := rpc.SessionCompact(ctx, sid, "")
 		if err != nil {
 			return sessionCompactDoneMsg{err: err}
 		}

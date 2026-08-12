@@ -75,10 +75,10 @@ func (d *MCPListDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.confirmDel = false
 			return d, nil
 		}
-		return d, dialogResultCmd("mcp", "cancel", nil)
+		return d, resultCmd(MCPListDialogMsg{Action: MCPListCancel})
 	case "enter", "right":
 		if d.cursor == len(d.servers) {
-			return d, dialogResultCmd("mcp", "add", nil)
+			return d, resultCmd(MCPListDialogMsg{Action: MCPListAdd})
 		}
 		if d.cursor < 0 || d.cursor >= len(d.servers) {
 			return d, nil
@@ -86,24 +86,24 @@ func (d *MCPListDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		if d.confirmDel {
 			name := d.servers[d.cursor].Name
 			d.confirmDel = false
-			return d, dialogResultCmd("mcp", "delete", name)
+			return d, resultCmd(MCPListDialogMsg{Action: MCPListDelete, ServerName: name})
 		}
-		return d, dialogResultCmd("mcp", "edit", d.servers[d.cursor])
+		return d, resultCmd(MCPListDialogMsg{Action: MCPListEdit, Server: d.servers[d.cursor]})
 	case "a", "n":
 		d.confirmDel = false
-		return d, dialogResultCmd("mcp", "add", nil)
+		return d, resultCmd(MCPListDialogMsg{Action: MCPListAdd})
 	case "d":
 		// Toggle disabled for the selected server.
 		if d.cursor >= 0 && d.cursor < len(d.servers) {
 			d.confirmDel = false
-			return d, dialogResultCmd("mcp", "toggle", d.servers[d.cursor].Name)
+			return d, resultCmd(MCPListDialogMsg{Action: MCPListToggle, ServerName: d.servers[d.cursor].Name})
 		}
 	case "t":
 		if d.cursor >= 0 && d.cursor < len(d.servers) {
 			d.confirmDel = false
-			return d, dialogResultCmd("mcp", "test", d.servers[d.cursor].Name)
+			return d, resultCmd(MCPListDialogMsg{Action: MCPListTest, ServerName: d.servers[d.cursor].Name})
 		}
-		return d, dialogResultCmd("mcp", "test", "") // empty = all
+		return d, resultCmd(MCPListDialogMsg{Action: MCPListTest}) // empty = all
 	case "ctrl+d":
 		if d.cursor >= 0 && d.cursor < len(d.servers) {
 			d.confirmDel = true
@@ -227,10 +227,10 @@ func (d *MCPPresetDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.cursor++
 		}
 	case "esc", "left":
-		return d, dialogResultCmd("mcp_preset", "cancel", nil)
+		return d, resultCmd(MCPPresetDialogMsg{Cancel: true})
 	case "enter", "right":
 		if d.cursor >= 0 && d.cursor < len(d.presets) {
-			return d, dialogResultCmd("mcp_preset", "select", d.presets[d.cursor])
+			return d, resultCmd(MCPPresetDialogMsg{Preset: d.presets[d.cursor]})
 		}
 	}
 	return d, nil
@@ -372,7 +372,7 @@ func (d *MCPEditDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	}
 	switch km.String() {
 	case "esc":
-		return d, dialogResultCmd("mcp_edit", "cancel", nil)
+		return d, resultCmd(MCPEditDialogMsg{Cancel: true})
 	case "tab", "down", "ctrl+n":
 		d.field = (d.field + 1) % mcpFieldCount
 		d.errMsg = ""
@@ -385,10 +385,10 @@ func (d *MCPEditDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.errMsg = err.Error()
 			return d, nil
 		}
-		return d, dialogResultCmd("mcp_edit", "save", MCPEditDialogResult{
+		return d, resultCmd(MCPEditDialogMsg{Result: MCPEditDialogResult{
 			OriginalName: d.originalName,
 			Server:       srv,
-		})
+		}})
 	case " ":
 		if d.field == mcpFieldDisabled {
 			d.disabled = !d.disabled

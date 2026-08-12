@@ -72,7 +72,7 @@ func (d *EndpointDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	}
 	switch km.String() {
 	case "esc":
-		return d, dialogResultCmd("endpoint", "cancel", nil)
+		return d, resultCmd(EndpointDialogMsg{Cancel: true})
 	case "tab", "shift+tab", "up", "down":
 		if !d.urlEditable {
 			d.field = 1
@@ -97,10 +97,10 @@ func (d *EndpointDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.errMsg = "нужен API key"
 			return d, nil
 		}
-		return d, dialogResultCmd("endpoint", "save", EndpointDialogResult{
+		return d, resultCmd(EndpointDialogMsg{Result: EndpointDialogResult{
 			Provider: p,
 			APIKey:   key,
-		})
+		}})
 	case "backspace":
 		d.errMsg = ""
 		if d.field == 0 && d.urlEditable {

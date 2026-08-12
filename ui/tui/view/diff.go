@@ -2,7 +2,9 @@ package view
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -28,10 +30,61 @@ type diffLine struct {
 // all" rendering instead — still informative, never blocking.
 const maxLCSCells = 4_000_000
 
-// computeDiff returns an edit script between a and b using LCS. For huge
-// files where the full DP table would be too expensive, falls back to a
-// trivial "remove everything in a, add everything in b" diff.
+// diffCache memoizes computeDiff results. During streaming, SetMessages
+// re-renders an expanded diff on every flush (~10 fps); without the cache the
+// O(n*m) LCS (up to ~32MB of DP table) re-runs on identical inputs, causing
+// GC storms and visible stutter. Callers must treat the returned slice as
+// read-only (they do — renderers only iterate it).
+var (
+	diffCacheMu   sync.Mutex
+	diffCache     = map[uint64][]diffLine{}
+	diffCacheKeys []uint64 // insertion order for cheap FIFO eviction
+)
+
+const diffCacheMax = 64
+
+func diffCacheKey(a, b []string) uint64 {
+	h := fnv.New64a()
+	for _, s := range a {
+		_, _ = h.Write([]byte(s))
+		_, _ = h.Write([]byte{0})
+	}
+	_, _ = h.Write([]byte{1})
+	for _, s := range b {
+		_, _ = h.Write([]byte(s))
+		_, _ = h.Write([]byte{0})
+	}
+	return h.Sum64()
+}
+
+// computeDiff returns an edit script between a and b using LCS, memoized by
+// content hash. For huge files where the full DP table would be too
+// expensive, falls back to a trivial "remove everything in a, add everything
+// in b" diff.
 func computeDiff(a, b []string) []diffLine {
+	key := diffCacheKey(a, b)
+	diffCacheMu.Lock()
+	if cached, ok := diffCache[key]; ok {
+		diffCacheMu.Unlock()
+		return cached
+	}
+	diffCacheMu.Unlock()
+
+	result := computeDiffUncached(a, b)
+
+	diffCacheMu.Lock()
+	if len(diffCacheKeys) >= diffCacheMax {
+		evict := diffCacheKeys[0]
+		diffCacheKeys = diffCacheKeys[1:]
+		delete(diffCache, evict)
+	}
+	diffCache[key] = result
+	diffCacheKeys = append(diffCacheKeys, key)
+	diffCacheMu.Unlock()
+	return result
+}
+
+func computeDiffUncached(a, b []string) []diffLine {
 	n, m := len(a), len(b)
 	if int64(n+1)*int64(m+1) > maxLCSCells {
 		result := make([]diffLine, 0, n+m)

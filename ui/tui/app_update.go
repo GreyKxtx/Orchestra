@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -31,8 +32,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		a.spinFrame++
-		if a.spinFrame%5 == 0 {
+		// Cursor blink is wall-clock based (~500ms) so the cadence stays the
+		// same whether the adaptive ticker runs at 100ms or 500ms.
+		now := time.Time(m)
+		if now.Sub(a.lastBlinkAt) >= 450*time.Millisecond {
 			a.cursorBlink = !a.cursorBlink
+			a.lastBlinkAt = now
 		}
 		a.statusBar.AdvanceSpin()
 		a.chat.SetSpinFrame(a.spinFrame)
@@ -44,7 +49,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmds []tea.Cmd
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, a.nextTickCmd())
 		// Poll install progress while LSP is installing (status bar %).
 		if a.chrome.lspStatus == "installing" && a.spinFrame%8 == 0 {
 			if c := a.refreshLSPStatusCmd(); c != nil {
@@ -87,6 +92,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.cfg.Model = cfg.LLM.Model
+		if p, ok := view.FindProviderByKey(cfg.LLM.Provider); ok {
+			a.providerName = p.Name
+		}
 		a.statusBar.SetModel(cfg.LLM.Model)
 		a.setContextLimitFromConfig(cfg)
 		a.chat.SetMeta(a.cfg.Mode, a.cfg.Model)
@@ -106,12 +114,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case rpcSpawnedMsg:
 		if m.err != nil {
+			if m.cancel != nil {
+				m.cancel() // release the spawn context — otherwise it leaks
+			}
 			a.session.AppendMessage(state.Message{Role: state.RoleSystem, Text: "[error] failed to connect to core: " + m.err.Error()})
 			a.chat.SetMessages(a.session.Messages)
 			return a, nil
 		}
 		a.rpc = m.client
 		a.rpcCancel = m.cancel
+		a.rpcGen++ // invalidate any listener still attached to the old client
 		a.coreSessionID = ""
 		return a, tea.Batch(a.listenForEvents(), a.startCoreSession())
 
@@ -126,8 +138,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, tea.Batch(cmds...)
 
-	case view.DialogResultMsg:
-		return a.handleDialogResult(m)
+	case view.ProviderDialogMsg:
+		return a.handleProviderDialog(m)
+	case view.EndpointDialogMsg:
+		return a.handleEndpointDialog(m)
+	case view.ModelDialogMsg:
+		return a.handleModelDialog(m)
+	case view.SettingsDialogMsg:
+		return a.handleSettingsDialog(m)
+	case view.OrchestraDialogMsg:
+		return a.handleOrchestraDialog(m)
+	case view.OrchestraSourceDialogMsg:
+		return a.handleOrchestraSourceDialog(m)
+	case view.SessionsDialogMsg:
+		return a.handleSessionsDialog(m)
+	case view.RewindDialogMsg:
+		return a.handleRewindDialog(m)
+	case view.MessageActionDialogMsg:
+		return a.handleMessageActionDialog(m)
+	case view.MCPListDialogMsg:
+		return a.handleMCPListDialog(m)
+	case view.MCPPresetDialogMsg:
+		return a.handleMCPPresetDialog(m)
+	case view.MCPEditDialogMsg:
+		return a.handleMCPEditDialog(m)
 
 	case view.ModelsLoadedMsg:
 		if len(a.dialogStack) > 0 {
@@ -196,13 +230,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case rpcEventMsg:
-		saveCmd := a.handleRPCEvent(rpcclient.Event(m))
+		if m.gen != a.rpcGen {
+			return a, nil // stale listener from a pre-respawn client — drop, don't re-arm
+		}
+		saveCmd := a.handleRPCEvent(m.ev)
 		listenCmd := a.listenForEvents()
 		return a, tea.Batch(saveCmd, listenCmd)
 
 	case rpcBatchMsg:
+		if m.gen != a.rpcGen {
+			return a, nil
+		}
 		var saveCmds []tea.Cmd
-		for _, ev := range m {
+		for _, ev := range m.evs {
 			if cmd := a.handleRPCEvent(ev); cmd != nil {
 				saveCmds = append(saveCmds, cmd)
 			}

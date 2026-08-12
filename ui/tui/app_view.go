@@ -237,7 +237,7 @@ func (a *App) updateStatusHints() {
 			a.statusBar.SetHints("[a] apply · [d] diff · [x] discard")
 		}
 	case !a.turn.ShowBusySpinner() && a.session.LastDiffExpanded():
-		if a.pendingReview {
+		if a.review.PendingReview() {
 			a.statusBar.SetHints("↑↓ · a принять · x откат · Enter apply")
 		} else {
 			a.statusBar.SetHints("↑↓ · a принять · x откат · Enter все")

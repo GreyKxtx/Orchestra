@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 
@@ -79,17 +78,4 @@ func (a *App) takeStagedAttachments() []state.Attachment {
 	out := append([]state.Attachment(nil), a.stagedAttachments...)
 	a.stagedAttachments = nil
 	return out
-}
-
-func (a *App) runAgentTurnWithAttachments(ctx context.Context, query, mode string, atts []state.Attachment) error {
-	opts := a.agentRunOptions()
-	opts.Attachments = rpcAttachmentsFromState(atts)
-	if a.coreSessionID != "" {
-		return a.rpc.SessionMessage(ctx, a.coreSessionID, query, mode, opts)
-	}
-	if sid := strings.TrimSpace(a.currentSessionID); sid != "" {
-		a.coreSessionID = sid
-		return a.rpc.SessionMessage(ctx, sid, query, mode, opts)
-	}
-	return a.rpc.AgentRun(ctx, query, mode, opts)
 }

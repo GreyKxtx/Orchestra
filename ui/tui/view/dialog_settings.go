@@ -12,7 +12,7 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// SettingsDialogResult is the payload of DialogResultMsg{Source:"settings"}.
+// SettingsDialogResult is the payload of SettingsDialogMsg on save.
 type SettingsDialogResult struct {
 	Provider       ProviderEntry
 	Model          ModelEntry
@@ -146,7 +146,7 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 		d.commitEdit()
 		d.adjustField(kind, +1)
 	case "esc":
-		return d, dialogResultCmd("settings", "cancel", nil)
+		return d, resultCmd(SettingsDialogMsg{Cancel: true})
 	case "enter":
 		d.commitEdit()
 		d.syncAutoAnswer()
@@ -154,7 +154,7 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.maxTokens = clampTokensForCtx(d.maxTokens, d.numCtx)
 		}
 		d.timeoutS = clampTimeoutS(d.timeoutS)
-		return d, dialogResultCmd("settings", "save", SettingsDialogResult{
+		return d, resultCmd(SettingsDialogMsg{Result: SettingsDialogResult{
 			Provider:       d.provider,
 			Model:          d.model,
 			APIKey:         d.apiKey,
@@ -163,7 +163,7 @@ func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			NumCtx:         d.numCtx,
 			TimeoutS:       d.timeoutS,
 			EnableThinking: d.enableThinking,
-		})
+		}})
 	case "backspace":
 		if len(d.editBuf) > 0 {
 			d.editBuf = d.editBuf[:len(d.editBuf)-1]

@@ -358,12 +358,14 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return a, nil, true
 		}
 		if a.questionModal != nil {
+			reqID := a.questionReqID
+			a.questionReqID = 0
 			a.questionModal = nil
 			a.input.Reset()
 			a.updateStatusHints()
 			a.layout()
 			if a.rpc != nil {
-				a.rpc.RespondQuestion(nil)
+				a.rpc.RespondQuestion(reqID, nil)
 			}
 			return a, nil, true
 		}
@@ -455,11 +457,13 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 		a.input.Reset()
 		if done {
 			answers := append([]string(nil), a.questionModal.Answers...)
+			reqID := a.questionReqID
+			a.questionReqID = 0
 			a.questionModal = nil
 			a.layout()
 			a.updateStatusHints()
 			if a.rpc != nil {
-				a.rpc.RespondQuestion(answers)
+				a.rpc.RespondQuestion(reqID, answers)
 			}
 		}
 		return a, nil, true

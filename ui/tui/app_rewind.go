@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -87,17 +88,16 @@ func (a *App) rewindToCheckpointCmd(cp view.RewindCheckpoint) tea.Cmd {
 	sid := a.coreSessionID
 	rpc := a.rpc
 	return func() tea.Msg {
-		_, err := rpc.SessionRewind(context.Background(), sid, idx)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := rpc.SessionRewind(ctx, sid, idx)
 		return sessionRewindResultMsg{label: label, err: err}
 	}
 }
 
 func (a *App) resetStateAfterRewind() {
 	a.lastCommitDiff = nil
-	a.diffShown = false
-	a.pendingOps = nil
-	a.pendingReview = false
-	a.diffCursor = 0
+	a.review.Reset()
 	a.msgQueue = nil
 	a.setTodos(nil)
 	a.syncDiffReviewCursor()

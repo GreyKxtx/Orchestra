@@ -51,15 +51,9 @@ type Config struct {
 }
 
 // App is the root Bubble Tea Model.
-// pendingPermReq is one permission/request waiting in the TUI FIFO queue.
-type pendingPermReq struct {
-	Tool        string
-	Description string
-	Kind        string
-}
-
 type App struct {
 	cfg       Config
+	cfgStore  *configStore // single write path to .orchestra.yml
 	session   *state.Session
 	chat      view.Chat
 	input     view.Input
@@ -76,23 +70,24 @@ type App struct {
 	height      int
 	initialized bool
 
-	rpc       *rpcclient.Client
+	rpc       coreClient // *rpcclient.Client in production; fake in tests
 	rpcCancel context.CancelFunc
+	rpcGen    int // bumped on every client swap; stale listener msgs are dropped
+
+	providerName string // cached display name for View(); refreshed by loadConfigPrefs
 
 	lastCommitDiff []rpcclient.FileDiff // diff from last auto-commit (for /diff)
-	diffShown      bool                 // true while diff messages are in session
-	diffCursor     int                  // selected file index in expanded diff review
+	review         state.DiffReview     // FSM: diff panel visibility, cursor, pending dry-run ops
 
-	pendingOps    []map[string]any // dry-run ops awaiting user apply
-	pendingReview bool             // true when pendingOps must be confirmed
-	turn           *state.TurnFSM       // turn lifecycle FSM (M3)
-	turnError      string
+	turn      *state.TurnFSM // turn lifecycle FSM (M3)
+	turnError string
 
 	chrome chromeMetrics
 
 	permModal     *view.Modal         // non-nil while the front permission request is shown
-	permQueue     []pendingPermReq    // FIFO of permission requests waiting behind permModal
+	perms         state.PermQueue     // FSM: current permission request + FIFO behind it
 	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
+	questionReqID int64               // correlation id of the request shown in questionModal
 
 	slashPalette  *view.SlashPalette
 	paletteActive bool
@@ -120,6 +115,7 @@ type App struct {
 	showOnboarding bool
 	showWelcome    bool      // true on every startup until user sends first message
 	cursorBlink    bool      // toggles every ~500ms while turn is running/applying
+	lastBlinkAt    time.Time // wall-clock of the last cursorBlink toggle (adaptive tick)
 	spinFrame      int       // monotonically increments every tick — drives all spinners
 	turnStartedAt  time.Time // moment the current agent.run was kicked off
 
@@ -205,10 +201,19 @@ type App struct {
 }
 
 // rpcEventMsg wraps an rpcclient.Event for the Bubble Tea event loop.
-type rpcEventMsg rpcclient.Event
+// gen ties the message to the client generation that produced it: after a
+// core respawn, events from the old client's listener are dropped instead of
+// corrupting the new session (and the stale listener is not re-armed).
+type rpcEventMsg struct {
+	gen int
+	ev  rpcclient.Event
+}
 
 // rpcBatchMsg delivers several RPC events in one Update (reduces UI thread churn).
-type rpcBatchMsg []rpcclient.Event
+type rpcBatchMsg struct {
+	gen int
+	evs []rpcclient.Event
+}
 
 // tickMsg drives the spinner and streaming cursor animation.
 type tickMsg time.Time
@@ -270,6 +275,7 @@ func NewApp(cfg Config) (*App, error) {
 	}
 	a := &App{
 		cfg:              cfg,
+		cfgStore:         newConfigStore(cfg.ConfigPath, cfg.WorkspaceRoot),
 		session:          state.NewSession(),
 		turn:             state.NewTurnFSM(),
 		allowExec:        cfg.AllowExec,
@@ -313,18 +319,27 @@ func NewApp(cfg Config) (*App, error) {
 
 // Init satisfies tea.Model.
 func (a *App) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, tea.EnableBracketedPaste, a.listenForEvents(), tickCmd()}
+	cmds := []tea.Cmd{textarea.Blink, tea.EnableBracketedPaste, a.listenForEvents(), a.nextTickCmd()}
 	if a.rpc != nil {
 		cmds = append(cmds, a.startCoreSession())
 	}
 	return tea.Batch(cmds...)
 }
 
-// tickCmd schedules the next tick at 100ms — fast enough for a smooth spinner
-// (10 fps). Cursor blink toggles every 5 ticks (≈500ms) so the textarea cursor
-// behavior stays the same.
-func tickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+// nextTickCmd schedules the next animation tick adaptively: 100ms (10 fps)
+// while something is actually animating (busy spinner, streaming flush, LSP
+// install progress, toast countdown), 500ms when idle — enough for cursor
+// blink without burning CPU/battery on constant Update/View cycles.
+func (a *App) nextTickCmd() tea.Cmd {
+	d := 500 * time.Millisecond
+	if a.turn.ShowBusySpinner() ||
+		a.chatDirty ||
+		a.toastTick > 0 ||
+		a.chrome.lspStatus == "installing" ||
+		(a.workflowProgress != nil && a.workflowProgress.Active()) {
+		d = 100 * time.Millisecond
+	}
+	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }

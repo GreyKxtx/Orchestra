@@ -120,9 +120,9 @@ func (d *ProviderDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			d.cursor++
 		}
 	case "esc", "left":
-		return d, dialogResultCmd("provider", "cancel", nil)
+		return d, resultCmd(ProviderDialogMsg{Cancel: true})
 	case "enter", "right":
-		return d, dialogResultCmd("provider", "select", DialogProviders[d.cursor])
+		return d, resultCmd(ProviderDialogMsg{Provider: DialogProviders[d.cursor]})
 	}
 	return d, nil
 }

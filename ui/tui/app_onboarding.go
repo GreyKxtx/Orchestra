@@ -102,25 +102,24 @@ func (a *App) saveOnboardingConfig() tea.Cmd {
 	p := ob.SelectedProvider()
 	endpoint := ob.SelectedEndpoint()
 	cfgPath := a.cfg.ConfigPath
-	workspaceRoot := a.cfg.WorkspaceRoot
+	store := a.cfgStore
+	settings := ob.Settings
 
 	return func() tea.Msg {
-		cfg, err := config.Load(cfgPath)
+		err := store.Mutate(func(cfg *config.ProjectConfig) error {
+			cfg.LLM.Provider = p.Key
+			cfg.LLM.APIBase = view.NormalizeEndpoint(endpoint)
+			cfg.LLM.Model = sel.ID
+			cfg.LLM.Temperature = settings.Temperature
+			cfg.LLM.MaxTokens = settings.MaxTokens
+			if cfg.LLM.ExtraBody == nil {
+				cfg.LLM.ExtraBody = map[string]any{}
+			}
+			cfg.LLM.ExtraBody["num_ctx"] = settings.NumCtx
+			cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": settings.EnableThinking}
+			return nil
+		})
 		if err != nil {
-			cfg = config.DefaultConfig(workspaceRoot)
-			cfg.ProjectRoot = workspaceRoot
-		}
-		cfg.LLM.Provider = p.Key
-		cfg.LLM.APIBase = view.NormalizeEndpoint(endpoint)
-		cfg.LLM.Model = sel.ID
-		cfg.LLM.Temperature = ob.Settings.Temperature
-		cfg.LLM.MaxTokens = ob.Settings.MaxTokens
-		if cfg.LLM.ExtraBody == nil {
-			cfg.LLM.ExtraBody = map[string]any{}
-		}
-		cfg.LLM.ExtraBody["num_ctx"] = ob.Settings.NumCtx
-		cfg.LLM.ExtraBody["chat_template_kwargs"] = map[string]any{"enable_thinking": ob.Settings.EnableThinking}
-		if err := config.Save(cfgPath, cfg); err != nil {
 			return modelsLoadedMsg{err: fmt.Errorf("save config: %w", err)}
 		}
 		return onboardingDoneMsg{configPath: cfgPath}
