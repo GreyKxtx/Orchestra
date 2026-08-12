@@ -10,28 +10,28 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/internal/autorouter"
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/hooks"
-	"github.com/orchestra/orchestra/protocol/jsonrpc"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/mcp"
-	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
-	"github.com/orchestra/orchestra/patch/ops"
-	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/internal/pipeline"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/applier"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
+	"github.com/orchestra/orchestra/patch/ops"
+	"github.com/orchestra/orchestra/patch/patches"
+	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
+	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/spf13/cobra"
 )
 
@@ -282,7 +282,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			DryRun:             dryRun,
 			Browser:            cfg.Browser,
 			AllowBrowser:       allowBrowserEffective,
-			Embed:              cfg.Embed,
+			Embed:              cfg.ResolvedEmbed(),
 		})
 		if err != nil {
 			retErr = err
@@ -365,7 +365,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			DryRun:             dryRun,
 			Browser:            cfg.Browser,
 			AllowBrowser:       allowBrowserEffective,
-			Embed:              cfg.Embed,
+			Embed:              cfg.ResolvedEmbed(),
 		})
 		if err != nil {
 			retErr = err
@@ -373,7 +373,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		defer runner.Close()
 
-	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
+		respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -483,7 +483,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			DryRun:             dryRun,
 			Browser:            cfg.Browser,
 			AllowBrowser:       allowBrowserEffective,
-			Embed:              cfg.Embed,
+			Embed:              cfg.ResolvedEmbed(),
 		})
 		if err != nil {
 			retErr = err
@@ -509,12 +509,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		// The tool short-circuits with a clear error if the CKG index is empty;
 		// gating just by config keeps the model from "discovering" it on every
 		// run that doesn't have embeddings set up.
-		if cfg.Embed.Model != "" {
+		if cfg.ResolvedEmbed().Model != "" {
 			mcpExtraTools = append(mcpExtraTools, tools.ToolSemanticSearch())
 		}
 		mcpExtraTools = append(mcpExtraTools, tools.ToolRepoMap())
 
-	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
+		respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
 
 		var agentLogger *llm.Logger
 		if openAIClient, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -632,20 +632,20 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		workerVerifyEnabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
 		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
-			MaxPromptBytes:         cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:    cfg.Agent.CompactThresholdPct,
-			ModelContextTokens:     int(cfg.EffectiveNumCtx()),
-			CompletionMaxTokens:    cfg.LLM.MaxTokens,
-			ToolDigestBytes:        cfg.Agent.ResolvedToolDigestBytes(),
-			HistoryPruneKeepRecent: cfg.Agent.ResolvedHistoryPruneKeepRecent(),
-			LLMStepTimeout:         time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			MaxStepsCap:            cfg.Agent.ResolvedChildMaxSteps(),
-			UsageTracker:           usageTracker,
-			ProviderLabel:          providerLabelFor(cfg, applyProvider),
-			ModelLabel:             cfg.LLM.Model,
-			MaxWorkerRetries:       cfg.Orchestra.ResolvedMaxWorkerRetries(),
-			MaxWorkerVerifyRetries: cfg.Orchestra.ResolvedMaxWorkerVerifyRetries(),
-			WorkerVerifyEnabled:    &workerVerifyEnabled,
+			MaxPromptBytes:                cfg.EffectiveMaxPromptBytes(),
+			CompactThresholdPct:           cfg.Agent.CompactThresholdPct,
+			ModelContextTokens:            int(cfg.EffectiveNumCtx()),
+			CompletionMaxTokens:           cfg.LLM.MaxTokens,
+			ToolDigestBytes:               cfg.Agent.ResolvedToolDigestBytes(),
+			HistoryPruneKeepRecent:        cfg.Agent.ResolvedHistoryPruneKeepRecent(),
+			LLMStepTimeout:                time.Duration(cfg.LLM.TimeoutS) * time.Second,
+			MaxStepsCap:                   cfg.Agent.ResolvedChildMaxSteps(),
+			UsageTracker:                  usageTracker,
+			ProviderLabel:                 providerLabelFor(cfg, applyProvider),
+			ModelLabel:                    cfg.LLM.Model,
+			MaxWorkerRetries:              cfg.Orchestra.ResolvedMaxWorkerRetries(),
+			MaxWorkerVerifyRetries:        cfg.Orchestra.ResolvedMaxWorkerVerifyRetries(),
+			WorkerVerifyEnabled:           &workerVerifyEnabled,
 			WorkerVerifyAffectedTests:     cfg.Orchestra.WorkerVerifyAffectedTests,
 			WorkerVerifyFrontendTypecheck: cfg.Orchestra.WorkerVerifyFrontendTypecheck,
 			QuestionAsker:                 cliQuestionAsker,

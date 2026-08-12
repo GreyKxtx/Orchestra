@@ -222,7 +222,7 @@ func (c *Client) RebuildCKG(ctx context.Context) error {
 		if snap.Store == nil {
 			return fmt.Errorf("ckg store unavailable")
 		}
-		orch := ckg.NewOrchestrator(snap.Store, c.Root)
+		orch := ckg.NewOrchestratorWithIgnores(snap.Store, c.Root, c.ExcludeDirs)
 		return orch.UpdateGraph(ctx)
 	})
 }
@@ -236,7 +236,7 @@ func (c *Client) SetEmbedCfg(cfg config.EmbedConfig) {
 
 // SetExcludeDirs updates exclude list for repo_map scans.
 func (c *Client) SetExcludeDirs(exclude []string) {
-	if c != nil && len(exclude) > 0 {
+	if c != nil {
 		c.ExcludeDirs = append([]string(nil), exclude...)
 	}
 }

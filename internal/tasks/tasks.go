@@ -436,12 +436,34 @@ func (r *TaskRunner) applyTaskTypeRoute(req *agent.SubtaskSpawnRequest) {
 	}
 }
 
+// isLeadGradeSubagent reports whether subagentType is an L4 department lead
+// (spec §2.1): resolves the "lead" tier binding instead of worker bands.
+func isLeadGradeSubagent(subagentType string) bool {
+	switch strings.ToLower(strings.TrimSpace(subagentType)) {
+	case "product", "documentation":
+		return true
+	}
+	return false
+}
+
 func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType string) (llm.Client, string, string) {
 	provider := strings.TrimSpace(req.Provider)
 	model := strings.TrimSpace(req.Model)
-	if provider == "" && model == "" && strings.EqualFold(subagentType, "worker") && r.child.ResolveTier != nil {
-		if p, m, ok := r.child.ResolveTier(req.Tier); ok {
-			provider, model = p, m
+	if provider == "" && model == "" && r.child.ResolveTier != nil {
+		if strings.EqualFold(subagentType, "worker") {
+			if p, m, ok := r.child.ResolveTier(req.Tier); ok {
+				provider, model = p, m
+			}
+		} else if isLeadGradeSubagent(subagentType) {
+			// L4 leads: explicit tier from spawn wins, else the "lead" band.
+			// Unbound → fall through to the parent (orchestrator) client.
+			tier := strings.TrimSpace(req.Tier)
+			if tier == "" {
+				tier = "lead"
+			}
+			if p, m, ok := r.child.ResolveTier(tier); ok {
+				provider, model = p, m
+			}
 		}
 	}
 	if r.child.ResolveClient != nil && (provider != "" || model != "") {
@@ -514,12 +536,16 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		opts.OnEvent = r.child.ChildEventSink(taskID, req.ParentToolCallID, subagentType)
 	}
 	if r.child.NotifyAgentEvent != nil {
+		eventTier := strings.TrimSpace(req.Tier)
+		if eventTier == "" && isLeadGradeSubagent(subagentType) {
+			eventTier = "lead" // L4 badge in UI even without explicit spawn tier
+		}
 		r.child.NotifyAgentEvent(map[string]any{
 			"type":                 "child_started",
 			"task_id":              taskID,
 			"parent_tool_call_id":  req.ParentToolCallID,
 			"subagent_type":        subagentType,
-			"tier":                 strings.TrimSpace(req.Tier),
+			"tier":                 eventTier,
 			"model":                modelLabel,
 			"content":              req.Goal,
 		})

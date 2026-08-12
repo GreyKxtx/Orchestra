@@ -56,11 +56,12 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w (run 'orchestra init' first)", err)
 	}
-	if cfg.Embed.Model == "" {
-		return fmt.Errorf("embed.model is empty in .orchestra.yml — set provider/model/api_base/api_key under embed")
+	emb := cfg.ResolvedEmbed()
+	if emb.Model == "" {
+		return fmt.Errorf("embed.model is empty — pick an embedding model in General (or set embed.provider + embed.model in .orchestra.yml)")
 	}
 	if ckgEmbedBatchSize > 0 {
-		cfg.Embed.BatchSize = ckgEmbedBatchSize
+		emb.BatchSize = ckgEmbedBatchSize
 	}
 	dbPath := filepath.Join(cfg.ProjectRoot, ".orchestra", "ckg.db")
 	store, err := ckg.NewStore(dbPath)
@@ -70,7 +71,7 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 	defer store.Close()
 
 	w := cmd.OutOrStdout()
-	client := embed.New(cfg.Embed)
+	client := embed.New(emb)
 	model := client.Model()
 
 	if ckgEmbedRebuild {
@@ -92,7 +93,7 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(w, "Embedding %d node(s) under model %q...\n", len(pending), model)
 
 	start := time.Now()
-	batch := cfg.Embed.BatchSize
+	batch := emb.BatchSize
 	if batch <= 0 {
 		batch = 32
 	}

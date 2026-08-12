@@ -142,9 +142,9 @@ type LSPServerConfig struct {
 type LSPConfig struct {
 	Enabled              *bool             `yaml:"enabled,omitempty"`
 	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
-	DiagnosticsTimeoutMS   int               `yaml:"diagnostics_timeout_ms,omitempty"`
-	InitializeTimeoutMS    int               `yaml:"initialize_timeout_ms,omitempty"`
-	LazyStart              *bool             `yaml:"lazy_start,omitempty"`
+	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	InitializeTimeoutMS  int               `yaml:"initialize_timeout_ms,omitempty"`
+	LazyStart            *bool             `yaml:"lazy_start,omitempty"`
 	IdleTTLSeconds       *int              `yaml:"idle_ttl_seconds,omitempty"`
 	// AutoInstall controls language-server provisioning: ask | true | false.
 	// Empty default = true (auto-install after workspace language detect).
@@ -213,7 +213,11 @@ type WebSearchConfig struct {
 // for semantic_search. OpenAI-compatible HTTP shape — works with OpenAI,
 // Ollama (/v1/embeddings), LM Studio, Voyage. When Model is empty the
 // embed CLI / semantic_search tool refuse to run.
+//
+// Prefer Provider + Model (same named gateway as Orchestra roles). APIBase/APIKey
+// are legacy overrides; ResolvedEmbed inherits credentials from Provider.
 type EmbedConfig struct {
+	Provider   string `yaml:"provider,omitempty"`
 	APIBase    string `yaml:"api_base,omitempty"`
 	APIKey     string `yaml:"api_key,omitempty"`
 	Model      string `yaml:"model,omitempty"`
@@ -497,6 +501,37 @@ func (c *ProjectConfig) LLMRegistry() llmpkg.ProviderRegistry {
 		return llmpkg.ProviderRegistry{}
 	}
 	return llmpkg.NewProviderRegistry(c.LLM, c.Providers)
+}
+
+// ResolvedEmbed returns embed settings with credentials inherited from the
+// selected named provider (or the main llm: block when provider is empty).
+// When Provider is set, that gateway's api_base/api_key win over a stale
+// embed.api_base leftover (for example an offline ngrok tunnel).
+func (c *ProjectConfig) ResolvedEmbed() EmbedConfig {
+	if c == nil {
+		return EmbedConfig{}
+	}
+	out := c.Embed
+	prov := strings.TrimSpace(out.Provider)
+	if prov != "" {
+		resolved, _, ok := llmpkg.ResolveProviderConfig(c.LLMRegistry(), prov)
+		if ok {
+			if base := strings.TrimSpace(resolved.APIBase); base != "" {
+				out.APIBase = base
+			}
+			if key := strings.TrimSpace(resolved.APIKey); key != "" {
+				out.APIKey = key
+			}
+		}
+		return out
+	}
+	if strings.TrimSpace(out.APIBase) == "" {
+		out.APIBase = strings.TrimSpace(c.LLM.APIBase)
+	}
+	if strings.TrimSpace(out.APIKey) == "" {
+		out.APIKey = strings.TrimSpace(c.LLM.APIKey)
+	}
+	return out
 }
 
 // NormalizeAPIBase trims trailing slashes for endpoint comparison.

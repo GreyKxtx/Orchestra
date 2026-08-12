@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -19,14 +20,31 @@ type Scanner struct {
 
 // NewScanner creates a new scanner and loads ignore files.
 func NewScanner(store *Store, root string) *Scanner {
+	return NewScannerWithIgnores(store, root, nil)
+}
+
+// NewScannerWithIgnores creates a scanner with project-configured exclusions
+// in addition to the built-in and ignore-file rules.
+func NewScannerWithIgnores(store *Store, root string, ignores []string) *Scanner {
 	s := &Scanner{
 		store:   store,
 		root:    root,
 		ignores: []string{".git", "vendor", "node_modules", "dist", "build", ".orchestra"},
 	}
+	for _, ignore := range ignores {
+		s.addIgnore(ignore)
+	}
 	s.loadIgnoreFile(".gitignore")
 	s.loadIgnoreFile(".orchestraignore")
 	return s
+}
+
+func (s *Scanner) addIgnore(ignore string) {
+	ignore = filepath.ToSlash(strings.TrimSpace(ignore))
+	ignore = strings.Trim(ignore, "/")
+	if ignore != "" && !strings.HasPrefix(ignore, "!") {
+		s.ignores = append(s.ignores, ignore)
+	}
 }
 
 func (s *Scanner) loadIgnoreFile(filename string) {
@@ -43,10 +61,7 @@ func (s *Scanner) loadIgnoreFile(filename string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Basic cleanup for simple match
-		line = strings.TrimPrefix(line, "/")
-		line = strings.TrimSuffix(line, "/")
-		s.ignores = append(s.ignores, line)
+		s.addIgnore(line)
 	}
 }
 
@@ -59,9 +74,19 @@ func (s *Scanner) isIgnored(path string) bool {
 		return false
 	}
 
-	parts := strings.Split(rel, string(filepath.Separator))
-	for _, part := range parts {
-		for _, ignore := range s.ignores {
+	relSlash := filepath.ToSlash(rel)
+	parts := strings.Split(relSlash, "/")
+	for _, ignore := range s.ignores {
+		if strings.Contains(ignore, "/") {
+			if relSlash == ignore || strings.HasPrefix(relSlash, ignore+"/") {
+				return true
+			}
+			if matched, _ := pathpkg.Match(ignore, relSlash); matched {
+				return true
+			}
+			continue
+		}
+		for _, part := range parts {
 			if part == ignore {
 				return true
 			}
@@ -72,17 +97,6 @@ func (s *Scanner) isIgnored(path string) bool {
 		}
 	}
 	return false
-}
-
-var supportedExtensions = map[string]bool{
-	".go":   true,
-	".py":   true,
-	".ts":   true,
-	".js":   true,
-	".java": true,
-	".c":    true,
-	".cpp":  true,
-	".rs":   true,
 }
 
 // Scan performs an incremental scan of the workspace.
@@ -104,9 +118,12 @@ func (s *Scanner) Scan(ctx context.Context) (toParse []string, toDelete []string
 		if info.IsDir() {
 			return nil
 		}
-		
-		ext := filepath.Ext(info.Name())
-		if !supportedExtensions[ext] {
+
+		// Keep discovery aligned with the actual parser registry. The previous
+		// hand-maintained allowlist omitted React sources (.jsx/.tsx) and most
+		// languages already supported by tree-sitter.
+		ext := strings.ToLower(filepath.Ext(info.Name()))
+		if SitterLanguageFor(ext) == nil {
 			return nil
 		}
 
@@ -119,7 +136,7 @@ func (s *Scanner) Scan(ctx context.Context) (toParse []string, toDelete []string
 		if relErr != nil {
 			return nil
 		}
-		
+
 		normalizedPath := filepath.ToSlash(rel)
 		currentFiles[normalizedPath] = hash
 		return nil

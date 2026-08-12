@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -12,7 +13,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	indexMu sync.Mutex
 }
 
 type Node struct {

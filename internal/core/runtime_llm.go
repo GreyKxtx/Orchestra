@@ -140,6 +140,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist model: "+err.Error(), nil)
 		}
 		persisted = true
+		c.noteConfigMTime()
 	}
 
 	ctxTokens := 0
@@ -414,6 +415,7 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist llm config: "+err.Error(), nil)
 		}
 		persisted = true
+		c.noteConfigMTime()
 	}
 
 	keySet := strings.TrimSpace(c.cfg.LLM.APIKey) != ""

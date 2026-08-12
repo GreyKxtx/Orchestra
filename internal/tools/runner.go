@@ -16,9 +16,9 @@ import (
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/lsp/provision"
 	"github.com/orchestra/orchestra/internal/memory"
+	"github.com/orchestra/orchestra/internal/permission"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
-	"github.com/orchestra/orchestra/internal/permission"
 )
 
 // MCPCaller routes mcp:<server>:<tool> calls to the appropriate MCP server.
@@ -381,14 +381,13 @@ func (r *Runner) WarmupLSP(ctx context.Context) {
 func (r *Runner) WarmupCKG(ctx context.Context) {
 	r.ckgMu.RLock()
 	store := r.ckgStore
+	excludeDirs := append([]string(nil), r.excludeDirs...)
 	r.ckgMu.RUnlock()
 	if store == nil {
 		return
 	}
-	go func() {
-		orch := ckg.NewOrchestrator(store, r.workspaceRoot)
-		_ = orch.UpdateGraph(ctx)
-	}()
+	orch := ckg.NewOrchestratorWithIgnores(store, r.workspaceRoot, excludeDirs)
+	_ = orch.UpdateGraphAsync(ctx)
 }
 
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).

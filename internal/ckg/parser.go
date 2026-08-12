@@ -27,15 +27,19 @@ import (
 
 // LanguageFromExt maps file extension to the language name stored in the DB.
 func LanguageFromExt(ext string) string {
-	switch ext {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
 	case ".go":
 		return "go"
 	case ".py":
 		return "python"
-	case ".ts", ".tsx":
+	case ".ts":
 		return "typescript"
-	case ".js", ".jsx":
+	case ".tsx":
+		return "tsx"
+	case ".js":
 		return "javascript"
+	case ".jsx":
+		return "jsx"
 	case ".java":
 		return "java"
 	case ".rs":

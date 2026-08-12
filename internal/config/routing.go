@@ -43,6 +43,7 @@ type OrchestraRouting struct {
 // defaultLegacyMap maps pre-tier names (orchestra.tiers / planner) to L1–L5.
 var defaultLegacyMap = map[string]string{
 	"planner": "L5",
+	"lead":    "L4",
 	"complex": "L3",
 	"focused": "L3",
 	"micro":   "L1",

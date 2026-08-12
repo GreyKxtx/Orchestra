@@ -53,6 +53,13 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		})
 	}
 
+	// Shared-config invariant: if another client (TUI, CLI, manual edit)
+	// changed .orchestra.yml since we last read/wrote it, reload before
+	// dispatching so read-modify-write persists never clobber external edits.
+	if method != "initialize" {
+		h.core.RefreshConfigIfChanged()
+	}
+
 	switch method {
 	case "core.health":
 		return h.core.Health(), nil

@@ -60,9 +60,7 @@ func (r *Runner) SetIndexRuntime(excludeDirs []string, embedCfg config.EmbedConf
 	}
 	r.ckgMu.Lock()
 	defer r.ckgMu.Unlock()
-	if len(excludeDirs) > 0 {
-		r.excludeDirs = append([]string(nil), excludeDirs...)
-	}
+	r.excludeDirs = append([]string(nil), excludeDirs...)
 	r.embedCfg = embedCfg
 }
 

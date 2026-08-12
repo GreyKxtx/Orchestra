@@ -69,3 +69,36 @@ func (a *Animal) Speak() {}
 		t.Fatalf("Expected 2 files in DB, got %d", len(files))
 	}
 }
+
+func TestOrchestratorIndexesReactSourcesWithDistinctLanguages(t *testing.T) {
+	root := t.TempDir()
+	sources := map[string]string{
+		"App.jsx":  `export function App() { return <main>Hello</main> }`,
+		"main.tsx": `const Main = (): JSX.Element => <App />; export default Main;`,
+	}
+	for name, source := range sources {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(source), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := NewOrchestrator(store, root).UpdateGraph(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.IndexStats(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Files != 2 {
+		t.Fatalf("indexed files = %d, want 2", stats.Files)
+	}
+	if stats.Langs["jsx"] != 1 || stats.Langs["tsx"] != 1 {
+		t.Fatalf("language distribution = %#v, want jsx=1 and tsx=1", stats.Langs)
+	}
+}

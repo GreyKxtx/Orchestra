@@ -10,14 +10,15 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/usage"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/internal/usage"
 )
+
 type AgentRunParams struct {
 	Query string `json:"query"`
 
@@ -353,7 +354,7 @@ func (c *Core) extraToolDefs() []llm.ToolDef {
 	}
 	// semantic_search needs an embedding model; the Runner already has
 	// embedCfg + ckgStore from New. Empty index returns zero hits, not a crash.
-	if strings.TrimSpace(c.cfg.Embed.Model) != "" {
+	if strings.TrimSpace(c.cfg.ResolvedEmbed().Model) != "" {
 		out = append(out, tools.ToolSemanticSearch())
 	}
 	// repo_map is always safe (tree-sitter outline, no network).

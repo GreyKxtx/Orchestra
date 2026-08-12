@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -13,49 +14,72 @@ type IndexStatusParams struct{}
 
 // IndexStatusResult exposes CKG graph stats and index-related config.
 type IndexStatusResult struct {
-	ProjectRoot     string   `json:"project_root"`
-	ExcludeDirs     []string `json:"exclude_dirs"`
-	ContextLimitKB  int      `json:"context_limit_kb"`
-	Limits          config.LimitsConfig `json:"limits"`
-	Embed           config.EmbedConfig  `json:"embed"`
-	Graph           toolsCKGView        `json:"graph"`
-	GraphUIPort     int                 `json:"graph_ui_port"`
+	ProjectRoot    string              `json:"project_root"`
+	ExcludeDirs    []string            `json:"exclude_dirs"`
+	ContextLimitKB int                 `json:"context_limit_kb"`
+	Limits         config.LimitsConfig `json:"limits"`
+	Embed          config.EmbedConfig  `json:"embed"`
+	Graph          toolsCKGView        `json:"graph"`
+	GraphUIPort    int                 `json:"graph_ui_port"`
 }
 
 type toolsCKGView struct {
-	Available          bool   `json:"available"`
-	DBPath             string `json:"db_path,omitempty"`
-	Files              int    `json:"files"`
-	Nodes              int    `json:"nodes"`
-	Edges              int    `json:"edges"`
-	Embeddings         int    `json:"embeddings"`
-	MissingEmbeddings  int    `json:"missing_embeddings"`
+	Available         bool           `json:"available"`
+	DBPath            string         `json:"db_path,omitempty"`
+	Files             int            `json:"files"`
+	Nodes             int            `json:"nodes"`
+	Edges             int            `json:"edges"`
+	Embeddings        int            `json:"embeddings"`
+	MissingEmbeddings int            `json:"missing_embeddings"`
+	Funcs             int            `json:"funcs"`
+	Types             int            `json:"types"`
+	Packages          int            `json:"packages"`
+	Tests             int            `json:"tests"`
+	Langs             map[string]int `json:"langs,omitempty"`
+}
+
+// ckgViewToRPC maps the tools-layer CKG snapshot onto the RPC view.
+func ckgViewToRPC(view tools.CKGIndexView) toolsCKGView {
+	return toolsCKGView{
+		Available:         view.Available,
+		DBPath:            view.DBPath,
+		Files:             view.Files,
+		Nodes:             view.Nodes,
+		Edges:             view.Edges,
+		Embeddings:        view.Embeddings,
+		MissingEmbeddings: view.MissingEmb,
+		Funcs:             view.Funcs,
+		Types:             view.Types,
+		Packages:          view.Packages,
+		Tests:             view.Tests,
+		Langs:             view.Langs,
+	}
 }
 
 // IndexConfigureParams updates scope + embed settings in .orchestra.yml.
 type IndexConfigureParams struct {
-	ExcludeDirs            []string `json:"exclude_dirs,omitempty"`
-	ContextLimitKB         *int     `json:"context_limit_kb,omitempty"`
-	LimitsContextKB        *int     `json:"limits_context_kb,omitempty"`
-	LimitsMaxFiles         *int     `json:"limits_max_files,omitempty"`
-	LimitsMaxBytesPerFile  *int64   `json:"limits_max_bytes_per_file,omitempty"`
-	EmbedAPIBase           string   `json:"embed_api_base,omitempty"`
-	EmbedAPIKey            string   `json:"embed_api_key,omitempty"`
-	EmbedModel             string   `json:"embed_model,omitempty"`
-	EmbedBatchSize         *int     `json:"embed_batch_size,omitempty"`
-	EmbedTimeoutS          *int     `json:"embed_timeout_s,omitempty"`
-	SemanticAutoExplore    *bool    `json:"semantic_auto_explore,omitempty"`
-	SemanticAutoExploreTopK *int    `json:"semantic_auto_explore_top_k,omitempty"`
-	Persist                *bool    `json:"persist,omitempty"`
+	ExcludeDirs             []string `json:"exclude_dirs,omitempty"`
+	ContextLimitKB          *int     `json:"context_limit_kb,omitempty"`
+	LimitsContextKB         *int     `json:"limits_context_kb,omitempty"`
+	LimitsMaxFiles          *int     `json:"limits_max_files,omitempty"`
+	LimitsMaxBytesPerFile   *int64   `json:"limits_max_bytes_per_file,omitempty"`
+	EmbedAPIBase            string   `json:"embed_api_base,omitempty"`
+	EmbedAPIKey             string   `json:"embed_api_key,omitempty"`
+	EmbedModel              string   `json:"embed_model,omitempty"`
+	EmbedBatchSize          *int     `json:"embed_batch_size,omitempty"`
+	EmbedTimeoutS           *int     `json:"embed_timeout_s,omitempty"`
+	SemanticAutoExplore     *bool    `json:"semantic_auto_explore,omitempty"`
+	SemanticAutoExploreTopK *int     `json:"semantic_auto_explore_top_k,omitempty"`
+	Persist                 *bool    `json:"persist,omitempty"`
 }
 
 // IndexConfigureResult mirrors saved index settings.
 type IndexConfigureResult struct {
-	ExcludeDirs    []string           `json:"exclude_dirs"`
-	ContextLimitKB int                `json:"context_limit_kb"`
+	ExcludeDirs    []string            `json:"exclude_dirs"`
+	ContextLimitKB int                 `json:"context_limit_kb"`
 	Limits         config.LimitsConfig `json:"limits"`
 	Embed          config.EmbedConfig  `json:"embed"`
-	Persisted      bool               `json:"persisted"`
+	Persisted      bool                `json:"persisted"`
 }
 
 // IndexRebuildParams triggers a synchronous CKG rescan.
@@ -91,26 +115,20 @@ func (c *Core) IndexStatus(_ IndexStatusParams) (*IndexStatusResult, error) {
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
 	}
-	graph := toolsCKGView{
-		Available:         view.Available,
-		DBPath:            view.DBPath,
-		Files:             view.Files,
-		Nodes:             view.Nodes,
-		Edges:             view.Edges,
-		Embeddings:        view.Embeddings,
-		MissingEmbeddings: view.MissingEmb,
-	}
+	graph := ckgViewToRPC(view)
 	exclude := append([]string(nil), c.cfg.ExcludeDirs...)
 	ctxKB := c.cfg.ContextLimit
 	if c.cfg.Limits.ContextKB > 0 {
 		ctxKB = c.cfg.Limits.ContextKB
 	}
+	emb := c.cfg.ResolvedEmbed()
+	emb.APIKey = ""
 	return &IndexStatusResult{
 		ProjectRoot:    c.cfg.ProjectRoot,
 		ExcludeDirs:    exclude,
 		ContextLimitKB: ctxKB,
 		Limits:         c.cfg.Limits,
-		Embed:          c.cfg.Embed,
+		Embed:          emb,
 		Graph:          graph,
 		GraphUIPort:    6061,
 	}, nil
@@ -175,7 +193,7 @@ func (c *Core) IndexConfigure(params IndexConfigureParams) (*IndexConfigureResul
 		c.cfg.Embed.SemanticAutoExploreTopK = *params.SemanticAutoExploreTopK
 	}
 
-	c.tools.SetIndexRuntime(c.cfg.ExcludeDirs, c.cfg.Embed)
+	c.applyEmbedRuntime()
 
 	persisted := false
 	cfgPath := c.configFilePath()
@@ -184,17 +202,20 @@ func (c *Core) IndexConfigure(params IndexConfigureParams) (*IndexConfigureResul
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist index config: "+err.Error(), nil)
 		}
 		persisted = true
+		c.noteConfigMTime()
 	}
 
 	ctxKB := c.cfg.ContextLimit
 	if c.cfg.Limits.ContextKB > 0 {
 		ctxKB = c.cfg.Limits.ContextKB
 	}
+	emb := c.cfg.ResolvedEmbed()
+	emb.APIKey = ""
 	return &IndexConfigureResult{
 		ExcludeDirs:    append([]string(nil), c.cfg.ExcludeDirs...),
 		ContextLimitKB: ctxKB,
 		Limits:         c.cfg.Limits,
-		Embed:          c.cfg.Embed,
+		Embed:          emb,
 		Persisted:      persisted,
 	}, nil
 }
@@ -213,17 +234,7 @@ func (c *Core) IndexRebuild(ctx context.Context, _ IndexRebuildParams) (*IndexRe
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
 	}
-	return &IndexRebuildResult{
-		Graph: toolsCKGView{
-			Available:         view.Available,
-			DBPath:            view.DBPath,
-			Files:             view.Files,
-			Nodes:             view.Nodes,
-			Edges:             view.Edges,
-			Embeddings:        view.Embeddings,
-			MissingEmbeddings: view.MissingEmb,
-		},
-	}, nil
+	return &IndexRebuildResult{Graph: ckgViewToRPC(view)}, nil
 }
 
 // IndexEmbed vectorizes CKG nodes for semantic_search.

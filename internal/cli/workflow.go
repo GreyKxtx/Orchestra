@@ -10,12 +10,12 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/hooks"
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/stageinvoke"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/workflow"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/spf13/cobra"
 )
 
@@ -215,7 +215,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 		LSP:                cfg.LSP,
 		DryRun:             dryRun,
 		Browser:            cfg.Browser,
-		Embed:              cfg.Embed,
+		Embed:              cfg.ResolvedEmbed(),
 	})
 	if err != nil {
 		return err

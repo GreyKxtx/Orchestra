@@ -13,9 +13,11 @@ type RuntimeOrchestraRoleKey string
 
 const (
 	orchestraRolePlanner RuntimeOrchestraRoleKey = "planner"
+	orchestraRoleLead    RuntimeOrchestraRoleKey = "lead"
 	orchestraRoleComplex RuntimeOrchestraRoleKey = "complex"
 	orchestraRoleFocused RuntimeOrchestraRoleKey = "focused"
 	orchestraRoleMicro   RuntimeOrchestraRoleKey = "micro"
+	orchestraRoleEmbed   RuntimeOrchestraRoleKey = "embed"
 )
 
 // RuntimeOrchestraRole is one editable orchestra role row.
@@ -44,15 +46,15 @@ type RuntimeGetOrchestraParams struct{}
 
 // RuntimeGetOrchestraResult exposes orchestra planner/tiers for settings UI.
 type RuntimeGetOrchestraResult struct {
-	Roles                  []RuntimeOrchestraRole            `json:"roles"`
-	DefaultTier            string                            `json:"default_tier"`
-	MaxWorkerRetries       int                               `json:"max_worker_retries"`
-	WorkerVerifyEnabled    bool                              `json:"worker_verify_enabled"`
-	MaxWorkerVerifyRetries int                               `json:"max_worker_verify_retries"`
-	WorkerLLMVerifyEnabled bool                              `json:"worker_llm_verify_enabled"`
-	MainProvider           string                            `json:"main_provider"`
-	MainModel              string                            `json:"main_model"`
-	FastProvider           string                            `json:"fast_provider,omitempty"`
+	Roles                  []RuntimeOrchestraRole                   `json:"roles"`
+	DefaultTier            string                                   `json:"default_tier"`
+	MaxWorkerRetries       int                                      `json:"max_worker_retries"`
+	WorkerVerifyEnabled    bool                                     `json:"worker_verify_enabled"`
+	MaxWorkerVerifyRetries int                                      `json:"max_worker_verify_retries"`
+	WorkerLLMVerifyEnabled bool                                     `json:"worker_llm_verify_enabled"`
+	MainProvider           string                                   `json:"main_provider"`
+	MainModel              string                                   `json:"main_model"`
+	FastProvider           string                                   `json:"fast_provider,omitempty"`
 	Named                  map[string]RuntimeOrchestraNamedProvider `json:"named,omitempty"`
 }
 
@@ -84,9 +86,11 @@ type RuntimeConfigureOrchestraResult struct {
 func defaultOrchestraRoles(cfg *config.ProjectConfig) []RuntimeOrchestraRole {
 	roles := []RuntimeOrchestraRole{
 		{Key: string(orchestraRolePlanner), Label: "Orchestrator"},
+		{Key: string(orchestraRoleLead), Label: "Dept Leads"},
 		{Key: string(orchestraRoleComplex), Label: "Worker · complex"},
 		{Key: string(orchestraRoleFocused), Label: "Worker · focused"},
 		{Key: string(orchestraRoleMicro), Label: "Worker · micro"},
+		{Key: string(orchestraRoleEmbed), Label: "Embeddings"},
 	}
 	for i := range roles {
 		roles[i].Tier = roleTierLabel(cfg, roles[i].Key)
@@ -103,12 +107,23 @@ func defaultOrchestraRoles(cfg *config.ProjectConfig) []RuntimeOrchestraRole {
 	for _, t := range cfg.Orchestra.Tiers {
 		tierMap[strings.ToLower(strings.TrimSpace(t.Name))] = t
 	}
-	for i, key := range []RuntimeOrchestraRoleKey{orchestraRoleComplex, orchestraRoleFocused, orchestraRoleMicro} {
-		if t, ok := tierMap[string(key)]; ok {
-			roles[i+1].Provider = strings.TrimSpace(t.Provider)
-			roles[i+1].Model = strings.TrimSpace(t.Model)
+	for i := range roles {
+		if roles[i].Key == string(orchestraRolePlanner) {
+			continue
+		}
+		if roles[i].Key == string(orchestraRoleEmbed) {
+			roles[i].Provider = strings.TrimSpace(cfg.Embed.Provider)
+			roles[i].Model = strings.TrimSpace(cfg.Embed.Model)
+			if roles[i].Model != "" {
+				roles[i].Models = []string{roles[i].Model}
+			}
+			continue
+		}
+		if t, ok := tierMap[roles[i].Key]; ok {
+			roles[i].Provider = strings.TrimSpace(t.Provider)
+			roles[i].Model = strings.TrimSpace(t.Model)
 			if len(t.Models) > 0 {
-				roles[i+1].Models = append([]string(nil), t.Models...)
+				roles[i].Models = append([]string(nil), t.Models...)
 			}
 		}
 	}
@@ -141,7 +156,7 @@ func orchestraNamedSnapshot(cfg *config.ProjectConfig) map[string]RuntimeOrchest
 			needs = cat.NeedsKey
 			label = cat.Name
 		} else if pcfg.Provider != "" {
-				if cat, ok := llm.FindCatalogProvider(pcfg.Provider); ok {
+			if cat, ok := llm.FindCatalogProvider(pcfg.Provider); ok {
 				needs = cat.NeedsKey
 				label = cat.Name
 			}
@@ -275,7 +290,13 @@ func (c *Core) RuntimeConfigureOrchestra(params RuntimeConfigureOrchestraParams)
 		case orchestraRolePlanner:
 			cfg.Orchestra.Planner.Provider = prov
 			cfg.Orchestra.Planner.Model = model
-		case orchestraRoleComplex, orchestraRoleFocused, orchestraRoleMicro:
+		case orchestraRoleEmbed:
+			cfg.Embed.Provider = prov
+			cfg.Embed.Model = model
+			// Inherit gateway credentials; drop stale embed.api_base (ngrok, etc.).
+			cfg.Embed.APIBase = ""
+			cfg.Embed.APIKey = ""
+		case orchestraRoleLead, orchestraRoleComplex, orchestraRoleFocused, orchestraRoleMicro:
 			tiers = append(tiers, config.OrchestraTier{
 				Name:     string(key),
 				Provider: prov,
@@ -311,9 +332,18 @@ func (c *Core) RuntimeConfigureOrchestra(params RuntimeConfigureOrchestraParams)
 		if err := config.Save(c.configFilePath(), cfg); err != nil {
 			return nil, protocol.NewError(protocol.ExecFailed, "save orchestra config: "+err.Error(), nil)
 		}
+		c.noteConfigMTime()
 	}
 	c.cfg = cfg
+	c.applyEmbedRuntime()
 	return &RuntimeConfigureOrchestraResult{Saved: persist}, nil
+}
+
+func (c *Core) applyEmbedRuntime() {
+	if c == nil || c.tools == nil || c.cfg == nil {
+		return
+	}
+	c.tools.SetIndexRuntime(c.cfg.ExcludeDirs, c.cfg.ResolvedEmbed())
 }
 
 func cleanStringList(in []string) []string {

@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/mcp"
@@ -32,8 +32,12 @@ type Core struct {
 	initialized   bool
 	initParams    *InitializeParams
 
-	cfg               *config.ProjectConfig
-	configPath        string
+	cfg        *config.ProjectConfig
+	configPath string
+	// cfgMu guards cfgMTime — the on-disk .orchestra.yml mtime this process
+	// last observed (see config_refresh.go).
+	cfgMu             sync.Mutex
+	cfgMTime          time.Time
 	llmClient         llm.Client
 	llmClientInjected bool // true when LLMClient was set via Options (test/DI mode)
 
@@ -44,7 +48,7 @@ type Core struct {
 	// concurrent agent.run / session.message / workflow.run / skill.invoke /
 	// ops.apply / session.apply_pending calls race over the dry-run flag and
 	// can leak staged ops between requests.
-	runMu      sync.Mutex
+	runMu        sync.Mutex
 	sessions     *coresession.Manager
 	mcpManager   *mcp.Manager
 	mcpStartErrs map[string]string // last ReplaceMCP/New failures by server name
@@ -91,7 +95,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		WebMaxContentBytes: cfg.Web.MaxContentBytes,
 		WebSearch:          cfg.Web.Search,
 		LSP:                cfg.LSP,
-		Embed:              cfg.Embed,
+		Embed:              cfg.ResolvedEmbed(),
 		// JSON-RPC core makes a hard "no side effects in dry-run" promise to
 		// remote clients (TUI / IDE / web). Block bash bypassing the staging
 		// overlay. CLI's plan-mode uses its own Runner without this flag so
@@ -142,7 +146,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 	tr.SetMemoryContext("", cfg.Memory.Resolve())
 
-	return &Core{
+	c := &Core{
 		workspaceRoot:     rootAbs,
 		projectID:         projectID,
 		debug:             opts.Debug,
@@ -155,7 +159,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		sessions:          coresession.NewManager(),
 		mcpManager:        mcpMgr,
 		mcpStartErrs:      mcpErrs,
-	}, nil
+	}
+	c.noteConfigMTime()
+	return c, nil
 }
 
 // WarmupCKG starts a background CKG scan bound to ctx. Call once after New
@@ -334,8 +340,6 @@ func (c *Core) IsInitialized() bool {
 	defer c.initMu.Unlock()
 	return c.initialized
 }
-
-
 
 // OpsApplyParams holds the ops to apply.
 type OpsApplyParams struct {

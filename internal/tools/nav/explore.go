@@ -22,7 +22,7 @@ func (c *Client) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest
 		if snap.Store == nil || snap.Provider == nil {
 			return fmt.Errorf("ckg store not initialized")
 		}
-		orch := ckg.NewOrchestrator(snap.Store, c.Root)
+		orch := ckg.NewOrchestratorWithIgnores(snap.Store, c.Root, c.ExcludeDirs)
 		if err := orch.UpdateGraph(ctx); err != nil {
 			return fmt.Errorf("update ckg: %w", err)
 		}
@@ -47,7 +47,7 @@ func (c *Client) FetchCKGContext(ctx context.Context, query string) string {
 	if snap.Store == nil {
 		return ""
 	}
-	orch := ckg.NewOrchestrator(snap.Store, c.Root)
+	orch := ckg.NewOrchestratorWithIgnores(snap.Store, c.Root, c.ExcludeDirs)
 	if err := orch.UpdateGraph(ctx); err != nil {
 		return ""
 	}

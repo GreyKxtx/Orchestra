@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 )
 
@@ -74,6 +75,14 @@ func (c *Client) SetRequestHandler(fn func(ctx context.Context, method string, p
 
 func (c *Client) readLoop(r *Reader) {
 	defer func() {
+		// A panic in the read loop (malformed payload, handler bug) must not
+		// crash the host process: for a TUI that would leave the terminal in
+		// raw/alt-screen mode ("bricked"). Treat it as a connection loss —
+		// the cleanup below drains pending calls and closes the client.
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "jsonrpc: read loop panic: %v\n", rec)
+		}
+
 		// Snapshot and clear pending before closing so new Calls see empty map.
 		c.pMu.Lock()
 		pending := c.pending
@@ -118,6 +127,20 @@ func (c *Client) readLoop(r *Reader) {
 				continue
 			}
 			go func(id json.RawMessage, method string, params json.RawMessage) {
+				// A panicking request handler must not kill the process;
+				// answer with an internal error instead so the server-side
+				// caller unwinds.
+				defer func() {
+					if rec := recover(); rec != nil {
+						c.wMu.Lock()
+						_ = c.w.WriteMessage(Response{
+							JSONRPC: "2.0",
+							ID:      id,
+							Error:   &Error{Code: -32603, Message: fmt.Sprintf("client handler panic: %v", rec)},
+						})
+						c.wMu.Unlock()
+					}
+				}()
 				ctx := context.Background()
 				result, err := fn(ctx, method, params)
 				c.wMu.Lock()

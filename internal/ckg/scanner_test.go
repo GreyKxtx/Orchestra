@@ -99,3 +99,80 @@ func TestScannerIncremental(t *testing.T) {
 
 	t.Logf("Initial scan: %v, Unchanged scan: %v, Modified scan: %v", elapsed1, elapsed2, elapsed3)
 }
+
+func TestScannerIncludesReactSourcesAndAllParserLanguages(t *testing.T) {
+	tempDir := t.TempDir()
+	files := map[string]string{
+		"src/App.jsx":       "export function App() { return <main /> }\n",
+		"src/main.tsx":      "export const Main = () => <App />\n",
+		"src/util.ts":       "export const value = 1\n",
+		"src/legacy.JS":     "export function legacy() {}\n",
+		"src/styles.css":    "main { display: block; }\n",
+		"public/index.html": "<main></main>\n",
+	}
+	for rel, content := range files {
+		path := filepath.Join(tempDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	toParse, _, err := NewScanner(store, tempDir).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]bool, len(toParse))
+	for _, path := range toParse {
+		got[path] = true
+	}
+	for _, want := range []string{"src/App.jsx", "src/main.tsx", "src/util.ts", "src/legacy.JS"} {
+		if !got[want] {
+			t.Errorf("supported source %q was not discovered: %v", want, toParse)
+		}
+	}
+	for _, unwanted := range []string{"src/styles.css", "public/index.html"} {
+		if got[unwanted] {
+			t.Errorf("non-AST source %q should not be indexed", unwanted)
+		}
+	}
+}
+
+func TestScannerRespectsConfiguredIgnores(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"src/app.ts", "generated/api/client.ts", "web/cache/runtime.js"} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("export const value = 1\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	toParse, _, err := NewScannerWithIgnores(
+		store,
+		root,
+		[]string{"generated/api", "cache"},
+	).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toParse) != 1 || toParse[0] != "src/app.ts" {
+		t.Fatalf("discovered files = %v, want only src/app.ts", toParse)
+	}
+}

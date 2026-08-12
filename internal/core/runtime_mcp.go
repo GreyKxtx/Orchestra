@@ -226,6 +226,7 @@ func (c *Core) saveConfigLocked() (bool, error) {
 	if err := config.Save(cfgPath, c.cfg); err != nil {
 		return false, err
 	}
+	c.noteConfigMTime()
 	return true, nil
 }
 
