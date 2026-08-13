@@ -36,9 +36,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	configPath := filepath.Join(cwd, ".orchestra.yml")
 
-	// Check if config already exists
+	// Already initialized: never touch the existing config, but refresh the
+	// supplementary artifacts (idempotent re-run migrates older projects to
+	// the current .gitignore layout and secrets guidance).
 	if _, err := os.Stat(configPath); err == nil {
-		return fmt.Errorf(".orchestra.yml already exists in %s", cwd)
+		fmt.Printf(".orchestra.yml already exists — leaving it untouched.\n")
+		if err := ensureGitignore(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not update .gitignore: %v\n", err)
+		}
+		suggestLocalOverlay(cwd, configPath)
+		return nil
 	}
 
 	// Create default config
@@ -183,6 +190,32 @@ func ensureGitignore(projectRoot string) error {
 	}
 	fmt.Printf("Updated .gitignore: ignoring .orchestra runtime artifacts and .orchestra.local.yml.\n")
 	return nil
+}
+
+// suggestLocalOverlay warns when the committed config still carries API keys
+// while no .orchestra.local.yml exists — the one migration step init cannot
+// do safely on its own (moving a secret means editing the user's config).
+func suggestLocalOverlay(projectRoot, configPath string) {
+	if _, err := os.Stat(filepath.Join(projectRoot, config.LocalOverlayName)); err == nil {
+		return
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if key, val, ok := strings.Cut(trimmed, ":"); ok &&
+			strings.TrimSpace(key) == "api_key" && strings.Trim(strings.TrimSpace(val), `"'`) != "" {
+			fmt.Printf("Hint: .orchestra.yml contains an api_key. Move secrets to %s (gitignored):\n", config.LocalOverlayName)
+			fmt.Printf("  llm:\n    api_key: <your key>\n")
+			fmt.Printf("It is merged over .orchestra.yml at load time and never written back.\n")
+			return
+		}
+	}
 }
 
 func lspServersFromInit(projectRoot string) []config.LSPServerConfig {

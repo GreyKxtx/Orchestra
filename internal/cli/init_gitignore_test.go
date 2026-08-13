@@ -33,6 +33,20 @@ func TestEnsureGitignore_CreatesAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSuggestLocalOverlay_DetectsInlineKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".orchestra.yml")
+	if err := os.WriteFile(cfgPath, []byte("llm:\n  api_key: sk-123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Smoke test: must not panic and must be silent once the overlay exists.
+	suggestLocalOverlay(dir, cfgPath)
+	if err := os.WriteFile(filepath.Join(dir, ".orchestra.local.yml"), []byte("llm:\n  api_key: sk-123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	suggestLocalOverlay(dir, cfgPath)
+}
+
 func TestEnsureGitignore_AppendsToExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitignore")
