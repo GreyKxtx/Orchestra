@@ -358,6 +358,15 @@ body {
   color: var(--muted);
 }
 
+/* Orchestra mode: read-only tier → model rows in the model dropdown. */
+.orch-tier-model {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .menu.top-menu {
   top: 38px;
   bottom: auto;

@@ -230,10 +230,16 @@
 
   el("saveGeneral")?.addEventListener("click", () => {
     showError("");
+    // orchestraSavePayload() lives in 03-orchestra.js (same bundle scope):
+    // the General tab contains the Orchestra routing section, so its Save
+    // must persist the role/model picks too — otherwise pushState() would
+    // re-render from disk and silently wipe the unsaved selections.
+    const orch = orchestraSavePayload();
     vscode.postMessage({
       type: "saveGeneral",
       binaryPath: input("binaryPath")?.value || "",
       projectRoot: input("projectRoot")?.value || "",
+      ...(orch || {}),
     });
   });
 

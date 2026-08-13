@@ -33,7 +33,7 @@ function loadMcpCatalogFile(extensionUri: vscode.Uri): McpCatalogFile {
 
 /**
  * Settings UI hosted inside the Orchestra chat panel (same webview, swap HTML).
- * Six tabs: General, Models, Index & Graph, Agent, Tools & MCP, Plugins.
+ * Tabs: General, Providers, Index & Graph, Agent, Tools & MCP.
  */
 export class SettingsView {
   private readonly session: CoreSession;
@@ -94,7 +94,7 @@ export class SettingsView {
       <div class="nav-shell">
         <div class="nav-items">
           <button type="button" class="nav-item active" data-section="general"><span class="nav-ico">${navIcon("general")}</span>General</button>
-          <button type="button" class="nav-item" data-section="models"><span class="nav-ico">${navIcon("models")}</span>Models</button>
+          <button type="button" class="nav-item" data-section="models"><span class="nav-ico">${navIcon("models")}</span>Providers</button>
           <button type="button" class="nav-item" data-section="index"><span class="nav-ico">${navIcon("index")}</span>Index &amp; Graph</button>
           <button type="button" class="nav-item" data-section="agent"><span class="nav-ico">${navIcon("agent")}</span>Agent</button>
           <button type="button" class="nav-item" data-section="tools"><span class="nav-ico">${navIcon("tools")}</span>Tools &amp; MCP</button>
@@ -113,10 +113,6 @@ export class SettingsView {
         <label>Binary path <input id="binaryPath" type="text" placeholder="auto-detect orchestra.exe" /></label>
         <label>Project root <input id="projectRoot" type="text" placeholder="workspace folder" /></label>
         <p class="hint">Restart core after changing binary or project root.</p>
-        <footer>
-          <button type="button" id="reload" class="secondary">Reload all</button>
-          <button type="button" id="saveGeneral" class="primary">Save</button>
-        </footer>
         <div class="section-divider"></div>
         <h2 class="section-title">Orchestra routing</h2>
         <p class="sub">Orchestrator (L5), department leads (L4), worker tiers, and the embedding model for semantic search. Pick models from the same provider — hover the <em>i</em> icon for what each role does.</p>
@@ -139,9 +135,10 @@ export class SettingsView {
             </select>
           </label>
         </details>
-        <footer class="inline-footer">
+        <footer>
+          <button type="button" id="reload" class="secondary">Reload all</button>
           <button type="button" id="refreshOrchModels" class="secondary">Refresh models</button>
-          <button type="button" id="saveOrchestra" class="secondary">Save orchestra</button>
+          <button type="button" id="saveGeneral" class="primary">Save</button>
         </footer>
         <div id="orchModelModal" class="orch-modal hidden" role="dialog" aria-modal="true">
           <div class="orch-modal-card">
@@ -172,7 +169,7 @@ export class SettingsView {
       </section>
 
       <section id="sec-models" class="panel">
-        <h1>Models</h1>
+        <h1>Providers</h1>
         <p class="sub">LLM provider and model — saved to <code>.orchestra.yml</code></p>
         <h2>Provider</h2>
         <div id="providerList" class="pick-list"></div>
@@ -395,6 +392,55 @@ export class SettingsView {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
   }
 
+  /** Persists orchestra roles/verification settings from a webview message. */
+  private async saveOrchestraFromMessage(msg: { [k: string]: unknown }): Promise<void> {
+    await this.session.configureOrchestra({
+      roles: msg.roles as {
+        key: string;
+        label: string;
+        provider: string;
+        model: string;
+        models?: string[];
+      }[],
+      defaultTier: String(msg.defaultTier || "focused"),
+      maxWorkerRetries: posIntOrUndef(msg.maxWorkerRetries),
+      workerVerifyEnabled:
+        msg.workerVerifyEnabled === undefined ? undefined : Boolean(msg.workerVerifyEnabled),
+      maxWorkerVerifyRetries: posIntOrUndef(msg.maxWorkerVerifyRetries),
+      workerLLMVerifyEnabled:
+        msg.workerLLMVerifyEnabled === undefined ? undefined : Boolean(msg.workerLLMVerifyEnabled),
+    });
+    await this.warnMissingRoleKeys();
+  }
+
+  /**
+   * Post-save sanity check: a role provider without an API key makes every
+   * tier request die at the gateway with an opaque 401 — surface it now.
+   */
+  private async warnMissingRoleKeys(): Promise<void> {
+    try {
+      const orch = await this.session.getOrchestra();
+      const missing = new Set<string>();
+      for (const role of orch.roles) {
+        const prov = (role.provider || "").trim();
+        if (!prov) {
+          continue;
+        }
+        const info = orch.named[prov];
+        if (info && info.needsKey && !info.apiKeySet) {
+          missing.add(prov);
+        }
+      }
+      if (missing.size > 0) {
+        void vscode.window.showWarningMessage(
+          `Orchestra: no API key for ${[...missing].join(", ")} — add it on the Providers tab, otherwise requests will fail (401).`
+        );
+      }
+    } catch {
+      // Advisory only — never block the save flow.
+    }
+  }
+
   private featuredLocalEntries(workspaceRoot?: string): McpCatalogEntry[] {
     return mapLocalCatalog(loadMcpCatalogFile(this.extensionUri), workspaceRoot || this.workspaceRootPath());
   }
@@ -561,6 +607,11 @@ export class SettingsView {
           String(msg.projectRoot || "").trim(),
           vscode.ConfigurationTarget.Workspace
         );
+        // The General tab hosts the Orchestra routing section too — persist the
+        // roles in the same click so one Save covers the whole tab.
+        if (Array.isArray(msg.roles)) {
+          await this.saveOrchestraFromMessage(msg);
+        }
         void vscode.window.showInformationMessage("General settings saved");
         await this.pushState();
         return true;
@@ -617,26 +668,10 @@ export class SettingsView {
         return true;
       }
       if (t === "saveOrchestra") {
-        const rolesRaw = msg.roles;
-        if (!Array.isArray(rolesRaw)) {
+        if (!Array.isArray(msg.roles)) {
           throw new Error("roles required");
         }
-        await this.session.configureOrchestra({
-          roles: rolesRaw as {
-            key: string;
-            label: string;
-            provider: string;
-            model: string;
-            models?: string[];
-          }[],
-          defaultTier: String(msg.defaultTier || "focused"),
-          maxWorkerRetries: posIntOrUndef(msg.maxWorkerRetries),
-          workerVerifyEnabled:
-            msg.workerVerifyEnabled === undefined ? undefined : Boolean(msg.workerVerifyEnabled),
-          maxWorkerVerifyRetries: posIntOrUndef(msg.maxWorkerVerifyRetries),
-          workerLLMVerifyEnabled:
-            msg.workerLLMVerifyEnabled === undefined ? undefined : Boolean(msg.workerLLMVerifyEnabled),
-        });
+        await this.saveOrchestraFromMessage(msg);
         void vscode.window.showInformationMessage("Orchestra settings saved");
         await this.pushState();
         return true;

@@ -88,6 +88,7 @@
   const modelLabelEl = document.getElementById("model-label");
   const modelPill = /** @type {HTMLButtonElement | null} */ (document.getElementById("model-pill"));
   const modelMenu = document.getElementById("model-menu");
+  const modelMenuTitle = document.getElementById("model-menu-title");
   const modelMenuList = document.getElementById("model-menu-list");
   const modelMenuSearch = /** @type {HTMLInputElement | null} */ (document.getElementById("model-menu-search"));
   const orchConfigBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("orch-config-btn"));
@@ -215,6 +216,8 @@
   let modeId = typeof saved.modeId === "string" && MODES.some((m) => m.id === saved.modeId) ? saved.modeId : "agent";
   let providerModelsCatalog = null;
   let modelMenuFilter = "";
+  /** @type {{ roles: any[]; defaultTier: string } | null} Orchestra tier map for the footer pill. */
+  let orchestraRolesInfo = null;
   let effortId = "medium";
   let fastOn = false;
   let currentModel = "";
@@ -3089,6 +3092,89 @@
     if (orchConfigBtn) {
       orchConfigBtn.hidden = modeId !== "orchestra";
     }
+    // Orchestra routes work across tiers, so a single-model pill would lie
+    // about which model actually runs. Swap it for the tier breakdown.
+    if (modeId === "orchestra") {
+      renderOrchestraPill();
+      vscode.postMessage({ type: "listOrchestraRoles" });
+    } else if (modelLabelEl) {
+      setModelLabel(currentModel);
+      if (modelPill) modelPill.title = "Model";
+    }
+  }
+
+  /** Models actually configured for one orchestra role. @param {any} r */
+  function orchRoleModels(r) {
+    if (Array.isArray(r?.models) && r.models.length) return r.models.filter(Boolean);
+    return r?.model ? [r.model] : [];
+  }
+
+  /** Footer pill in orchestra mode: "L5 <planner> +N" + full map in tooltip. */
+  function renderOrchestraPill() {
+    if (!modelLabelEl) return;
+    const roles = orchestraRolesInfo?.roles || [];
+    const planner = roles.find((r) => r.key === "planner");
+    const plannerModels = planner ? orchRoleModels(planner) : [];
+    const others = roles.filter((r) => r.key !== "planner" && orchRoleModels(r).length > 0);
+    if (!roles.length) {
+      modelLabelEl.textContent = "Orchestra tiers";
+      modelLabelEl.title = "Loading tier map…";
+      if (modelPill) modelPill.title = "Orchestra tier models";
+      return;
+    }
+    const base = plannerModels.length
+      ? `L5 ${shortModel(plannerModels[0])}`
+      : "L5 not set";
+    modelLabelEl.textContent = others.length ? `${base} +${others.length}` : base;
+    const lines = roles.map((r) => {
+      const models = orchRoleModels(r);
+      const tier = r.tier ? `${r.tier} · ` : "";
+      return `${tier}${r.label}: ${models.length ? models.join(", ") : "— (main model fallback)"}`;
+    });
+    modelLabelEl.title = lines.join("\n");
+    if (modelPill) modelPill.title = "Orchestra tier models";
+  }
+
+  /** Read-only tier → models breakdown inside the model dropdown. */
+  function renderOrchestraRolesMenu() {
+    if (!modelMenuList) return;
+    if (modelMenuTitle) modelMenuTitle.textContent = "Orchestra tiers";
+    if (modelMenuSearch) modelMenuSearch.style.display = "none";
+    modelMenuList.innerHTML = "";
+    const roles = orchestraRolesInfo?.roles || [];
+    if (!roles.length) {
+      const hint = document.createElement("div");
+      hint.className = "menu-hint";
+      hint.textContent = "Loading tier map…";
+      modelMenuList.appendChild(hint);
+    }
+    roles.forEach((r) => {
+      const head = document.createElement("div");
+      head.className = "menu-section";
+      head.textContent = r.tier ? `${r.label} · ${r.tier}` : r.label;
+      modelMenuList.appendChild(head);
+      const models = orchRoleModels(r);
+      if (!models.length) {
+        const empty = document.createElement("div");
+        empty.className = "menu-hint";
+        empty.textContent = "not set — falls back to the main model";
+        modelMenuList.appendChild(empty);
+        return;
+      }
+      models.forEach((id, i) => {
+        const row = document.createElement("div");
+        row.className = "menu-hint orch-tier-model";
+        row.textContent = i === 0 ? id : `${id} (failover ${i + 1})`;
+        row.title = id;
+        modelMenuList.appendChild(row);
+      });
+    });
+    const cfg = document.createElement("button");
+    cfg.type = "button";
+    cfg.className = "menu-item";
+    cfg.setAttribute("data-model-action", "configure-orchestra");
+    cfg.textContent = "Configure tiers…";
+    modelMenuList.appendChild(cfg);
   }
 
   function effortMeterHtml(id) {
@@ -3656,7 +3742,17 @@
     e.stopPropagation();
     const open = !modelMenu?.classList.contains("open");
     closeMenus();
+    if (open && modeId === "orchestra") {
+      renderOrchestraRolesMenu();
+      positionModelMenu();
+      modelMenu?.classList.add("open");
+      modelPill.classList.add("open");
+      vscode.postMessage({ type: "listOrchestraRoles" });
+      return;
+    }
     if (open) {
+      if (modelMenuTitle) modelMenuTitle.textContent = "Models";
+      if (modelMenuSearch) modelMenuSearch.style.display = "";
       modelMenuFilter = "";
       if (modelMenuSearch) {
         modelMenuSearch.value = "";
@@ -3725,6 +3821,11 @@
       vscode.postMessage({ type: "listProviderModels" });
       return;
     }
+    if (item.getAttribute("data-model-action") === "configure-orchestra") {
+      closeMenus();
+      vscode.postMessage({ type: "openOrchestraSettings" });
+      return;
+    }
     const model = item.getAttribute("data-model");
     const provider = item.getAttribute("data-provider") || undefined;
     if (model) {
@@ -3772,6 +3873,10 @@
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
         }
+        if (modeId === "orchestra") {
+          // Keep the tier breakdown pill; header carries the single main model.
+          renderOrchestraPill();
+        }
         break;
       case "sessionList": {
         if (!sessionMenuList) {
@@ -3810,6 +3915,19 @@
       case "providerModels":
         renderProviderModels(msg);
         break;
+      case "orchestraRoles": {
+        orchestraRolesInfo = {
+          roles: Array.isArray(msg.roles) ? msg.roles : [],
+          defaultTier: msg.defaultTier || "",
+        };
+        if (modeId === "orchestra") {
+          renderOrchestraPill();
+          if (modelMenu?.classList.contains("open")) {
+            renderOrchestraRolesMenu();
+          }
+        }
+        break;
+      }
       case "pendingOps": {
         const payload = msg.payload || {};
         pendingState = {

@@ -84,6 +84,7 @@
   const modelLabelEl = document.getElementById("model-label");
   const modelPill = /** @type {HTMLButtonElement | null} */ (document.getElementById("model-pill"));
   const modelMenu = document.getElementById("model-menu");
+  const modelMenuTitle = document.getElementById("model-menu-title");
   const modelMenuList = document.getElementById("model-menu-list");
   const modelMenuSearch = /** @type {HTMLInputElement | null} */ (document.getElementById("model-menu-search"));
   const orchConfigBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("orch-config-btn"));
@@ -211,6 +212,8 @@
   let modeId = typeof saved.modeId === "string" && MODES.some((m) => m.id === saved.modeId) ? saved.modeId : "agent";
   let providerModelsCatalog = null;
   let modelMenuFilter = "";
+  /** @type {{ roles: any[]; defaultTier: string } | null} Orchestra tier map for the footer pill. */
+  let orchestraRolesInfo = null;
   let effortId = "medium";
   let fastOn = false;
   let currentModel = "";

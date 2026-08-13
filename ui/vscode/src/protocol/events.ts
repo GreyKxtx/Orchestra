@@ -211,6 +211,19 @@ export type HostToWebview =
       activeModel: string;
       providers: ProviderPickerEntry[];
     }
+  | {
+      type: "orchestraRoles";
+      roles: Array<{
+        key: string;
+        label: string;
+        tier?: string;
+        provider: string;
+        model: string;
+        models?: string[];
+      }>;
+      defaultTier: string;
+      error?: string;
+    }
   | { type: "userEcho"; text: string; uiIndex?: number; files?: ChatFileRef[] }
   | { type: "delta"; content: string }
   | { type: "deltaSync"; content: string }
@@ -300,6 +313,7 @@ export type WebviewToHost =
   | { type: "closeSession"; sessionId: string }
   | { type: "listModels" }
   | { type: "listProviderModels" }
+  | { type: "listOrchestraRoles" }
   | { type: "setModel"; model: string; provider?: string }
   | { type: "applyPending"; paths?: string[]; ops?: unknown[] }
   | { type: "discardPending" }

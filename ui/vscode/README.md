@@ -36,7 +36,7 @@ orchestra core (subprocess)
 
 ### Settings (in-panel, 6 tabs)
 
-General · **Models** (provider catalog + API models, vision toggle) · Index & Graph · Agent · Tools & MCP · Plugins
+General · **Providers** (provider catalog + API models, vision toggle) · Index & Graph · Agent · Tools & MCP
 
 ### Commands
 

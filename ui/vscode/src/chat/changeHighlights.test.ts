@@ -1,3 +1,4 @@
+import "../testing/vscodeShim";
 import * as assert from "assert";
 import * as vscode from "vscode";
 import { alignDiffLines, buildHighlightPlan } from "./changeHighlights";

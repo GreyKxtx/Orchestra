@@ -568,10 +568,16 @@
 
   el("saveGeneral")?.addEventListener("click", () => {
     showError("");
+    // orchestraSavePayload() lives in 03-orchestra.js (same bundle scope):
+    // the General tab contains the Orchestra routing section, so its Save
+    // must persist the role/model picks too — otherwise pushState() would
+    // re-render from disk and silently wipe the unsaved selections.
+    const orch = orchestraSavePayload();
     vscode.postMessage({
       type: "saveGeneral",
       binaryPath: input("binaryPath")?.value || "",
       projectRoot: input("projectRoot")?.value || "",
+      ...(orch || {}),
     });
   });
 
@@ -750,10 +756,15 @@
     const allowed = new Set(providerModelIds(effectiveRoleProvider(role)));
     let models =
       role.models && role.models.length ? role.models.slice() : role.model ? [role.model] : [];
+    // Filter only when we actually know the provider's model list. An empty
+    // list means the catalog probe hasn't loaded (or failed) — wiping the
+    // persisted picks here would destroy saved settings on the next Save.
     if (allowed.size > 0) {
-      models = models.filter((id) => allowed.has(id));
-    } else if (models.length) {
-      models = [];
+      const filtered = models.filter((id) => allowed.has(id));
+      if (filtered.length > 0 || models.length === 0) {
+        models = filtered;
+      }
+      // else: none matched — likely a stale/partial catalog; keep saved picks.
     }
     models = models.slice(0, maxModelsForRole(role));
     role.models = models;
@@ -1028,11 +1039,14 @@
     renderOrchestra();
   });
 
-  el("saveOrchestra")?.addEventListener("click", () => {
-    showError("");
-    if (!orchestraConfig) return;
-    vscode.postMessage({
-      type: "saveOrchestra",
+  /**
+   * Orchestra routing fields for a save message (roles + verification knobs).
+   * Used by the General tab Save button so one click persists the whole tab.
+   * @returns {Record<string, any> | null}
+   */
+  function orchestraSavePayload() {
+    if (!orchestraConfig) return null;
+    return {
       roles: orchestraConfig.roles,
       defaultTier: el("orchDefaultTier")?.value || "focused",
       maxWorkerRetries: input("orchMaxRetries") ? Number(input("orchMaxRetries").value) : undefined,
@@ -1041,8 +1055,8 @@
         ? Number(input("orchMaxVerifyRetries").value)
         : undefined,
       workerLLMVerifyEnabled: /** @type {HTMLInputElement | null} */ (el("orchLLMVerify"))?.checked,
-    });
-  });
+    };
+  }
 
   el("refreshOrchModels")?.addEventListener("click", () => {
     showError("");

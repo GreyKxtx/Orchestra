@@ -223,6 +223,12 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     _token: vscode.CancellationToken
   ): void {
     this.sidebar = webviewView;
+    // Single-surface invariant: post()/webviewTarget() prefer the sidebar, so a
+    // leftover editor panel would silently stop receiving messages ("connecting…"
+    // forever). Close it as soon as the sidebar takes over.
+    if (this.panel) {
+      this.panel.dispose();
+    }
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: this.allLocalResourceRoots(),
@@ -260,12 +266,35 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     } catch {
       // Fall back to editor panel if sidebar is unavailable.
     }
-    if (this.sidebar) {
-      await this.showChat();
+    // The focus command resolves before resolveWebviewView() runs, so give the
+    // sidebar a moment to attach. Creating an editor panel here while the
+    // sidebar is coming up would leave two webviews with post() feeding only
+    // one of them — the other would show "connecting…" forever.
+    if (await this.waitForSidebar(2000)) {
+      // resolveWebviewView() has already kicked off showChat().
       return;
     }
     await this.ensurePanel();
     await this.showChat();
+  }
+
+  /** Resolves true once resolveWebviewView() has attached the sidebar. */
+  private waitForSidebar(timeoutMs: number): Promise<boolean> {
+    if (this.sidebar) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const timer = setInterval(() => {
+        if (this.sidebar) {
+          clearInterval(timer);
+          resolve(true);
+        } else if (Date.now() - started >= timeoutMs) {
+          clearInterval(timer);
+          resolve(false);
+        }
+      }, 50);
+    });
   }
 
   async showSettings(section = "general"): Promise<void> {
@@ -724,6 +753,26 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         }
         case "openOrchestraSettings": {
           await this.showSettings("general");
+          return;
+        }
+        case "listOrchestraRoles": {
+          // Orchestra mode footer: the single-model pill is replaced by the
+          // tier breakdown so the user sees which model each role really uses.
+          try {
+            const orch = await this.session.getOrchestra();
+            this.post({
+              type: "orchestraRoles",
+              roles: orch.roles,
+              defaultTier: orch.defaultTier,
+            });
+          } catch (err) {
+            this.post({
+              type: "orchestraRoles",
+              roles: [],
+              defaultTier: "",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
           return;
         }
         case "send": {
@@ -2058,7 +2107,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       <div id="effort-menu" class="menu effort" role="menu"></div>
       <div id="access-menu" class="menu access" role="menu"></div>
       <div id="model-menu" class="menu model-pop" role="menu">
-        <div class="menu-section">Models</div>
+        <div class="menu-section" id="model-menu-title">Models</div>
         <input id="model-menu-search" type="search" class="model-menu-search" placeholder="Search models…" autocomplete="off" />
         <div id="model-menu-list" class="model-list">
           <button type="button" class="menu-item" data-model-action="refresh">Refresh list</button>

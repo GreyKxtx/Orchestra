@@ -31,6 +31,10 @@
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
         }
+        if (modeId === "orchestra") {
+          // Keep the tier breakdown pill; header carries the single main model.
+          renderOrchestraPill();
+        }
         break;
       case "sessionList": {
         if (!sessionMenuList) {
@@ -69,6 +73,19 @@
       case "providerModels":
         renderProviderModels(msg);
         break;
+      case "orchestraRoles": {
+        orchestraRolesInfo = {
+          roles: Array.isArray(msg.roles) ? msg.roles : [],
+          defaultTier: msg.defaultTier || "",
+        };
+        if (modeId === "orchestra") {
+          renderOrchestraPill();
+          if (modelMenu?.classList.contains("open")) {
+            renderOrchestraRolesMenu();
+          }
+        }
+        break;
+      }
       case "pendingOps": {
         const payload = msg.payload || {};
         pendingState = {
