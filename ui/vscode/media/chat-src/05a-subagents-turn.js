@@ -7,6 +7,25 @@
     return map[t.toLowerCase()] || "";
   }
 
+  /**
+   * Worker goals are often raw WorkOrder JSON ('{ "intent": "...", ... }').
+   * Extract the human field instead of showing the JSON blob.
+   */
+  function humanizeTaskLabel(text) {
+    const t = String(text || "").trim();
+    if (!t.startsWith("{")) return t;
+    try {
+      const o = JSON.parse(t);
+      const s = o.intent || o.goal || o.title || o.description || o.task_id || "";
+      if (s) return String(s).trim();
+    } catch {
+      // Partial/invalid JSON — best-effort regex extraction.
+      const m = t.match(/"(?:intent|goal|title|description)"\s*:\s*"((?:[^"\\]|\\.)*)/);
+      if (m && m[1]) return m[1].replace(/\\"/g, '"');
+    }
+    return t;
+  }
+
   function upsertSubagentTask(taskId, fields) {
     if (!taskId) return;
     const prev =
@@ -20,7 +39,12 @@
       });
     Object.assign(prev, fields);
     subagentByTask.set(taskId, prev);
-    const idx = subagents.findIndex((s) => s.taskId === taskId);
+    let idx = subagents.findIndex((s) => s.taskId === taskId);
+    if (idx < 0 && prev.parentToolCallId) {
+      // Upgrade the generic tool-call row (created on task/task_spawn start)
+      // in place instead of appending a duplicate.
+      idx = subagents.findIndex((s) => !s.taskId && s.id === prev.parentToolCallId);
+    }
     const row = {
       id: prev.parentToolCallId || taskId,
       taskId,
@@ -29,6 +53,7 @@
       tier: prev.tier,
       model: prev.model,
       status: prev.status,
+      error: prev.error,
       parentToolCallId: prev.parentToolCallId,
       toolsEl: prev.toolsEl,
       toolCount: prev.toolCount,
@@ -79,7 +104,7 @@
     const taskId = msg.taskId || "";
     if (!taskId) return;
     if (msg.phase === "started") {
-      const label = (msg.content || "").trim();
+      const label = humanizeTaskLabel(msg.content || "");
       upsertSubagentTask(taskId, {
         parentToolCallId: msg.parentToolCallId,
         type: msg.subagentType || "agent",
@@ -97,7 +122,11 @@
           : msg.status === "error" || msg.status === "timeout"
             ? "error"
             : "done";
-      upsertSubagentTask(taskId, { status: st });
+      const patch = { status: st };
+      if (st === "error" && msg.error) {
+        patch.error = String(msg.error);
+      }
+      upsertSubagentTask(taskId, patch);
     }
   }
 

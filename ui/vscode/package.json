@@ -53,6 +53,10 @@
       {
         "command": "orchestra.showOutput",
         "title": "Orchestra: Show Output"
+      },
+      {
+        "command": "orchestra.collectDiagnostics",
+        "title": "Orchestra: Collect Diagnostics"
       }
     ],
     "menus": {

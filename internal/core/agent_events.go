@@ -123,6 +123,7 @@ func emitAgentStreamEvent(notify func(method string, params any), env EventEnvel
 					"prompt_tokens":     u.PromptTokens,
 					"completion_tokens": u.CompletionTokens,
 					"total_tokens":      u.TotalTokens,
+					"cost_usd":          u.CostUSD,
 				},
 			}, env, child))
 		}

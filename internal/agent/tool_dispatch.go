@@ -278,7 +278,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			Content:    content,
 		})
 		if skillErr != nil {
-			if cbErr := cb.RecordToolError(name); cbErr != nil {
+			if cbErr := cb.RecordToolErrorDetail(name, skillErr); cbErr != nil {
 				return serialToolOutcome{}, cbErr
 			}
 		} else {
@@ -288,7 +288,20 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if a.opts.SubtaskRunner != nil && (name == "task" || name == "task_spawn" || name == "task_wait" || name == "task_cancel") {
+		// In-process tools bypass tools.Runner, so mirror its llm_log entries
+		// here — otherwise failed spawns leave no trace in .orchestra logs.
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogToolCall(name, len(tc.Input))
+		}
+		taskStart := time.Now()
 		out, taskErr := a.handleTaskTool(ctx, name, toolCallID, tc.Input)
+		if a.opts.AgentLogger != nil {
+			errStr := ""
+			if taskErr != nil {
+				errStr = taskErr.Error()
+			}
+			a.opts.AgentLogger.LogToolResult(name, len(out), time.Since(taskStart).Milliseconds(), errStr)
+		}
 		a.observeWorkingTool(name, tc.Input, out, taskErr)
 		var content string
 		if taskErr != nil {
@@ -302,7 +315,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			Content:    content,
 		})
 		if taskErr != nil {
-			if cbErr := cb.RecordToolError(name); cbErr != nil {
+			if cbErr := cb.RecordToolErrorDetail(name, taskErr); cbErr != nil {
 				return serialToolOutcome{}, cbErr
 			}
 		} else {

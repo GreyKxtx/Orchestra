@@ -183,3 +183,7 @@ func (r *recordingTracker) Record(provider, model string, prompt, completion int
 	r.lastProvider = provider
 	r.lastModel = model
 }
+
+func (r *recordingTracker) RecordCost(provider, model string, prompt, completion int, _ float64) {
+	r.Record(provider, model, prompt, completion)
+}

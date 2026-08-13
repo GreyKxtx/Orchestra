@@ -17,13 +17,16 @@ type AgentsListResult struct {
 	AvailableTools  []string                 `json:"available_tools"`
 }
 
-// AgentsList returns custom agents from cfg.
+// AgentsList returns custom agents from cfg. Read-only: takes cfgMu.RLock
+// instead of runMu so it responds instantly during a long agent turn
+// (session.message holds runMu for the whole turn — an RPC-side timeout here
+// looked like "rpc timeout after 15000ms: agents.list" in the extension).
 func (c *Core) AgentsList(_ AgentsListParams) (*AgentsListResult, error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	c.cfgMu.RLock()
+	defer c.cfgMu.RUnlock()
 	agents := append([]config.AgentDefinition(nil), c.cfg.Agents...)
 	return &AgentsListResult{
 		Agents:         agents,
@@ -75,6 +78,7 @@ func (c *Core) AgentsUpsert(params AgentsUpsertParams) (*AgentsUpsertResult, err
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
 
+	c.cfgMu.Lock()
 	prev := append([]config.AgentDefinition(nil), c.cfg.Agents...)
 	found := false
 	for i := range c.cfg.Agents {
@@ -90,14 +94,18 @@ func (c *Core) AgentsUpsert(params AgentsUpsertParams) (*AgentsUpsertResult, err
 	// Re-run agent validation by checking via a temp ProjectConfig copy path:
 	if err := c.cfg.ValidateAgentsOnly(); err != nil {
 		c.cfg.Agents = prev
+		c.cfgMu.Unlock()
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
+	c.cfgMu.Unlock()
 
 	persisted := false
 	if persistDefaultTrue(params.Persist) {
 		ok, err := c.saveConfigLocked()
 		if err != nil {
+			c.cfgMu.Lock()
 			c.cfg.Agents = prev
+			c.cfgMu.Unlock()
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist agents: "+err.Error(), nil)
 		}
 		persisted = ok
@@ -132,7 +140,9 @@ func (c *Core) AgentsDelete(params AgentsDeleteParams) (*AgentsDeleteResult, err
 	if !found {
 		return nil, protocol.NewError(protocol.InvalidParams, "agent not found", map[string]any{"name": name})
 	}
+	c.cfgMu.Lock()
 	c.cfg.Agents = next
+	c.cfgMu.Unlock()
 	persisted := false
 	if persistDefaultTrue(params.Persist) {
 		ok, err := c.saveConfigLocked()

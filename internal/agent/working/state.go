@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 const (
@@ -302,7 +304,9 @@ func trimTurnDigestFile(path string, keep int) error {
 		b.WriteString(d)
 		b.WriteString("\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0644)
+	// Atomic rewrite: a crash mid-truncation must not leave a torn digest
+	// file (it is injected into future prompts).
+	return fsutil.AtomicWriteFile(path, []byte(b.String()), 0644)
 }
 
 // FormatRecentTurnDigests loads last keep digests for prompt inject.

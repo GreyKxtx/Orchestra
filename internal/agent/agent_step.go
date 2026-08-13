@@ -141,8 +141,8 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		a.mergeResponsePrefill(resp)
 		if a.opts.UsageTracker != nil && resp != nil {
 			if resp.Usage != nil {
-				a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,
-					resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+				a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,
+					resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CostUSD)
 			} else {
 				// M4 in audit ledger: log when the provider returned no
 				// usage payload so usage.jsonl silently understating tokens
@@ -288,10 +288,11 @@ func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
 		return
 	}
 	u := resp.Usage
-	payload, _ := json.Marshal(map[string]int{
+	payload, _ := json.Marshal(map[string]any{
 		"prompt_tokens":     u.PromptTokens,
 		"completion_tokens": u.CompletionTokens,
 		"total_tokens":      u.TotalTokens,
+		"cost_usd":          u.CostUSD,
 	})
 	a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 		Kind:    llm.StreamEventStepUsage,

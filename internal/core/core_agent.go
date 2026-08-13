@@ -100,6 +100,9 @@ type UsageSnapshot struct {
 	CompletionTokens int     `json:"completion_tokens"`
 	TotalTokens      int     `json:"total_tokens"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
+	// Entries is the per-(provider, model) breakdown — in orchestra mode each
+	// tier model gets its own row, so the caller can show what each cost.
+	Entries []usage.Entry `json:"entries,omitempty"`
 }
 
 func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunResult, error) {
@@ -280,6 +283,7 @@ func usageSnapshotFrom(t *usage.Tracker) *UsageSnapshot {
 		CompletionTokens: completion,
 		TotalTokens:      total,
 		CostUSD:          cost,
+		Entries:          t.Snapshot(),
 	}
 }
 

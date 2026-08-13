@@ -65,6 +65,13 @@
   const effortMenu = document.getElementById("effort-menu");
   const modeLabel = document.getElementById("mode-label");
   const effortLabel = document.getElementById("effort-label");
+  const costWrap = document.getElementById("cost-wrap");
+  const costBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("cost-btn"));
+  const costLabelEl = document.getElementById("cost-label");
+  const costPopover = document.getElementById("cost-popover");
+  const costBalanceEl = document.getElementById("cost-balance");
+  const costSummaryEl = document.getElementById("cost-summary");
+  const costRowsEl = document.getElementById("cost-rows");
   const contextBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("context-btn"));
   const contextRingFill = document.getElementById("context-ring-fill");
   const contextPopover = document.getElementById("context-popover");
@@ -158,8 +165,8 @@
   /** @type {any[]} */
   let paletteItems = [];
   let mentionTimer = 0;
-  /** @type {{ prompt: number; completion: number; limit: number; maxResponse: number; estimated: boolean }} */
-  let ctxState = { prompt: 0, completion: 0, limit: 128000, maxResponse: 4096, estimated: false };
+  /** @type {{ prompt: number; completion: number; limit: number; maxResponse: number; estimated: boolean; breakdown: { key: string; label: string; tokens: number }[] }} */
+  let ctxState = { prompt: 0, completion: 0, limit: 128000, maxResponse: 4096, estimated: false, breakdown: [] };
   let ctxPopoverOpen = false;
 
   /** @type {{ ops: any[]; diff: { path?: string; before?: string; after?: string; reviewStatus?: string }[] }} */
@@ -221,6 +228,18 @@
   let effortId = "medium";
   let fastOn = false;
   let currentModel = "";
+  /** Accumulated session spend in USD (provider-reported). */
+  let sessionCostUSD = 0;
+  /**
+   * Live cost of the in-flight turn, summed from per-step step_usage events
+   * (each LLM call reports its cost when its stream finishes). Replaced by
+   * the authoritative server total on turnUsage, then reset to 0.
+   */
+  let turnCostAccum = 0;
+  /** @type {{ cost_usd?: number; total_tokens?: number; entries?: any[] } | null} Last turn usage summary. */
+  let lastTurnUsage = null;
+  /** @type {{ supported: boolean; provider?: string; balance?: number } | null} Provider balance (OpenRouter). */
+  let creditsInfo = null;
   let activeSessionId = "";
   /** @type {{ name: string; path?: string; ext?: string; kind?: string; previewUri?: string }[]} */
   let files = [];
@@ -464,10 +483,20 @@
     return map[ext] || "plain";
   }
   function escapeHtml(text) {
+    // Quotes must be escaped too: escaped text is interpolated into
+    // attribute values (e.g. link href) — an unescaped `"` would break out
+    // of the attribute (XSS defense-in-depth on top of the CSP).
     return String(text || "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  /** Only allow benign navigation schemes in model-authored links. */
+  function safeLinkHref(url) {
+    return /^(https?:|mailto:)/i.test(url) ? url : "";
   }
 
   /** @param {string} s */
@@ -476,10 +505,14 @@
     x = x.replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>');
     x = x.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
     x = x.replace(/(?<![*])\*([^*\n]+)\*(?![*])/g, "<em>$1</em>");
-    x = x.replace(
-      /\[([^\]]+)\]\(([^)\s]+)\)/g,
-      '<a class="md-link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-    );
+    x = x.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label, url) => {
+      const href = safeLinkHref(url);
+      if (!href) {
+        // javascript:, command:, data: etc. — render as plain text.
+        return `${label} (${url})`;
+      }
+      return `<a class="md-link" href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    });
     return x;
   }
 
@@ -1150,6 +1183,25 @@
     return map[t.toLowerCase()] || "";
   }
 
+  /**
+   * Worker goals are often raw WorkOrder JSON ('{ "intent": "...", ... }').
+   * Extract the human field instead of showing the JSON blob.
+   */
+  function humanizeTaskLabel(text) {
+    const t = String(text || "").trim();
+    if (!t.startsWith("{")) return t;
+    try {
+      const o = JSON.parse(t);
+      const s = o.intent || o.goal || o.title || o.description || o.task_id || "";
+      if (s) return String(s).trim();
+    } catch {
+      // Partial/invalid JSON — best-effort regex extraction.
+      const m = t.match(/"(?:intent|goal|title|description)"\s*:\s*"((?:[^"\\]|\\.)*)/);
+      if (m && m[1]) return m[1].replace(/\\"/g, '"');
+    }
+    return t;
+  }
+
   function upsertSubagentTask(taskId, fields) {
     if (!taskId) return;
     const prev =
@@ -1163,7 +1215,12 @@
       });
     Object.assign(prev, fields);
     subagentByTask.set(taskId, prev);
-    const idx = subagents.findIndex((s) => s.taskId === taskId);
+    let idx = subagents.findIndex((s) => s.taskId === taskId);
+    if (idx < 0 && prev.parentToolCallId) {
+      // Upgrade the generic tool-call row (created on task/task_spawn start)
+      // in place instead of appending a duplicate.
+      idx = subagents.findIndex((s) => !s.taskId && s.id === prev.parentToolCallId);
+    }
     const row = {
       id: prev.parentToolCallId || taskId,
       taskId,
@@ -1172,6 +1229,7 @@
       tier: prev.tier,
       model: prev.model,
       status: prev.status,
+      error: prev.error,
       parentToolCallId: prev.parentToolCallId,
       toolsEl: prev.toolsEl,
       toolCount: prev.toolCount,
@@ -1222,7 +1280,7 @@
     const taskId = msg.taskId || "";
     if (!taskId) return;
     if (msg.phase === "started") {
-      const label = (msg.content || "").trim();
+      const label = humanizeTaskLabel(msg.content || "");
       upsertSubagentTask(taskId, {
         parentToolCallId: msg.parentToolCallId,
         type: msg.subagentType || "agent",
@@ -1240,7 +1298,11 @@
           : msg.status === "error" || msg.status === "timeout"
             ? "error"
             : "done";
-      upsertSubagentTask(taskId, { status: st });
+      const patch = { status: st };
+      if (st === "error" && msg.error) {
+        patch.error = String(msg.error);
+      }
+      upsertSubagentTask(taskId, patch);
     }
   }
 
@@ -2433,7 +2495,18 @@
         row.dataset.taskId = sa.taskId;
         row.title = sa.model ? `${sa.taskId} · ${sa.model}` : sa.taskId;
       }
+      if (sa.status === "error" && sa.error) {
+        row.title = row.title ? `${row.title}\n${sa.error}` : sa.error;
+      }
       subagentsTree.appendChild(row);
+      if (sa.status === "error" && sa.error) {
+        const errHint = document.createElement("div");
+        errHint.className = "subagent-nested-hint subagent-error-hint";
+        const short = String(sa.error);
+        errHint.textContent = short.length > 120 ? short.slice(0, 117) + "…" : short;
+        errHint.title = String(sa.error);
+        subagentsTree.appendChild(errHint);
+      }
       const node = sa.taskId ? subagentByTask.get(sa.taskId) : null;
       if (node?.toolsEl && node.toolCount > 0) {
         const nest = document.createElement("div");
@@ -2468,13 +2541,26 @@
       if (!sa) return;
       const args = parseToolArgs(argsRaw || "");
       const st = args.subagent_type || args.subagentType || sa.type;
-      const desc = args.description || args.prompt || args.goal || "";
       if (st) sa.type = String(st);
+      if (args.tier) sa.tier = String(args.tier);
+      if (args.model) sa.model = String(args.model);
+      let desc = humanizeTaskLabel(args.description || args.prompt || args.goal || "");
+      if (!desc && Array.isArray(args.workorders) && args.workorders.length) {
+        const first = args.workorders[0] || {};
+        const wo = first.intent || first.title || first.goal || first.description || "";
+        desc = wo
+          ? args.workorders.length > 1
+            ? `${wo} (+${args.workorders.length - 1})`
+            : String(wo)
+          : `${args.workorders.length} workorders`;
+      }
       if (desc) {
         const d = String(desc).trim();
         sa.label = d.length > 48 ? d.slice(0, 45) + "…" : d;
       }
-      if (phase === "complete") {
+      if (phase === "complete" && !sa.taskId) {
+        // Rows adopted by a child (taskId set) get their status from
+        // childLifecycle events; a completed spawn call must not override it.
         const err = (msg.content || "").toLowerCase().startsWith("error");
         sa.status = err ? "error" : "done";
       }
@@ -2520,7 +2606,53 @@
     ctxState.prompt = 0;
     ctxState.completion = 0;
     ctxState.estimated = false;
+    ctxState.breakdown = [];
     renderContextUi();
+  }
+
+  /** Category colors for the context breakdown (Cursor-like palette). */
+  const CTX_COLORS = {
+    system: "#8b8b8b", // grey
+    tools: "#a78bfa", // purple
+    rules: "#34d399", // green
+    skills: "#fbbf24", // orange
+    conversation: "#f472b6", // pink
+    completion: "#60a5fa", // blue
+    reserved: "#4a4a4a", // dark grey
+  };
+
+  /**
+   * Rows for the context popover. Uses the agent's per-category breakdown when
+   * available; the conversation row absorbs the difference between the real
+   * prompt total and the fixed categories so the numbers always add up.
+   */
+  function contextRowsData() {
+    const used = ctxState.prompt;
+    const bd = Array.isArray(ctxState.breakdown) ? ctxState.breakdown : [];
+    const rows = [];
+    if (bd.length > 0) {
+      let fixedSum = 0;
+      let convRow = null;
+      bd.forEach((c) => {
+        if (c.key === "conversation") {
+          convRow = { key: c.key, label: c.label || "Conversation", tokens: c.tokens };
+        } else {
+          fixedSum += c.tokens;
+          rows.push({ key: c.key, label: c.label || c.key, tokens: c.tokens });
+        }
+      });
+      let conv = convRow ? convRow.tokens : 0;
+      if (used > 0) {
+        conv = Math.max(conv, used - fixedSum);
+      }
+      rows.push({ key: "conversation", label: "Conversation", tokens: Math.max(0, conv) });
+    } else if (used > 0) {
+      rows.push({ key: "conversation", label: "Prompt context", tokens: used });
+    }
+    if (ctxState.completion > 0) {
+      rows.push({ key: "completion", label: "Completion", tokens: ctxState.completion });
+    }
+    return rows;
   }
 
   function renderContextUi() {
@@ -2538,34 +2670,36 @@
       ctxSummary.textContent =
         used > 0 ? `${est}${formatTok(used)} / ${formatTok(limit)} tokens` : `Up to ${formatTok(limit)} tokens`;
     }
+    const rows = contextRowsData();
     if (ctxBar) {
+      // The bar spans the whole context window: colored segments for each
+      // category, a dark segment for the reserved reply budget, the rest of
+      // the track is free space.
       ctxBar.innerHTML = "";
-      const rows = [
-        { label: "Prompt", tokens: ctxState.prompt, color: "#888888" },
-        { label: "Completion", tokens: ctxState.completion, color: "#a78bfa" },
-        { label: "Reply budget", tokens: ctxState.maxResponse, color: "#555555" },
-      ];
-      const total = Math.max(used + ctxState.maxResponse, 1);
-      rows.forEach((r) => {
-        if (r.tokens <= 0 && r.label !== "Reply budget") return;
+      const total = Math.max(limit, 1);
+      const segs = rows.slice();
+      if (ctxState.maxResponse > 0) {
+        segs.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
+      }
+      segs.forEach((r) => {
+        if (r.tokens <= 0) return;
         const seg = document.createElement("div");
         seg.className = "ctx-bar-seg";
-        seg.style.width = `${Math.max(2, (r.tokens / total) * 100)}%`;
-        seg.style.background = r.color;
+        seg.style.width = `${Math.min(100, Math.max(0.8, (r.tokens / total) * 100))}%`;
+        seg.style.background = CTX_COLORS[r.key] || "#888888";
+        seg.title = `${r.label}: ${formatTok(r.tokens)}`;
         ctxBar.appendChild(seg);
       });
     }
     if (ctxRows) {
       ctxRows.innerHTML = "";
-      const items = [
-        { label: "Prompt context", tokens: ctxState.prompt, color: "#888888" },
-        { label: "Completion", tokens: ctxState.completion, color: "#a78bfa" },
-        { label: "Reserved for reply", tokens: ctxState.maxResponse, color: "#555555" },
-      ];
+      const items = rows.slice();
+      items.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
       items.forEach((item) => {
+        if (item.tokens <= 0 && item.key !== "reserved") return;
         const row = document.createElement("div");
         row.className = "ctx-row";
-        row.innerHTML = `<span class="ctx-swatch" style="background:${item.color}"></span><span class="ctx-row-label">${item.label}</span><span class="ctx-row-val">${formatTok(item.tokens)}</span>`;
+        row.innerHTML = `<span class="ctx-swatch" style="background:${CTX_COLORS[item.key] || "#888888"}"></span><span class="ctx-row-label">${item.label}</span><span class="ctx-row-val">${formatTok(item.tokens)}</span>`;
         ctxRows.appendChild(row);
       });
     }
@@ -3457,7 +3591,8 @@
         btn.className = "menu-item" + (id === activeModel && p.active ? " selected" : "");
         btn.setAttribute("data-model", id);
         btn.setAttribute("data-provider", p.key);
-        btn.innerHTML = id;
+        // textContent, not innerHTML: model ids come from a remote catalog.
+        btn.textContent = id;
         btn.title = id;
         modelMenuList.appendChild(btn);
       });
@@ -3493,7 +3628,8 @@
       btn.type = "button";
       btn.className = "menu-item" + (id === currentModel ? " selected" : "");
       btn.setAttribute("data-model", id);
-      btn.innerHTML = id;
+      // textContent, not innerHTML: model ids come from a remote catalog.
+      btn.textContent = id;
       btn.title = id;
       modelMenuList.appendChild(btn);
     });
@@ -3510,6 +3646,99 @@
   contextBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     showContextPopover(!ctxPopoverOpen);
+  });
+
+  // ---- Spend / balance chip (provider-reported cost, OpenRouter balance) ----
+
+  /** Format a USD amount compactly: $1.24, $0.031, <$0.001. */
+  function formatUsd(v) {
+    if (!(typeof v === "number") || !isFinite(v) || v <= 0) {
+      return "$0.00";
+    }
+    if (v < 0.001) {
+      return "<$0.001";
+    }
+    if (v < 0.1) {
+      return "$" + v.toFixed(3);
+    }
+    return "$" + v.toFixed(2);
+  }
+
+  function shortModelName(id) {
+    const parts = String(id || "").split("/");
+    return parts[parts.length - 1] || String(id || "");
+  }
+
+  function renderCostChip() {
+    if (!costWrap) {
+      return;
+    }
+    const liveTotal = sessionCostUSD + turnCostAccum;
+    const hasSpend = liveTotal > 0 || (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0);
+    const hasBalance = !!(creditsInfo && creditsInfo.supported);
+    if (!hasSpend && !hasBalance) {
+      costWrap.classList.add("hidden");
+      return;
+    }
+    costWrap.classList.remove("hidden");
+    if (costLabelEl) {
+      costLabelEl.textContent = hasSpend ? formatUsd(liveTotal) : formatUsd(creditsInfo?.balance || 0);
+      costLabelEl.title = hasSpend ? "Session spend" : "Balance";
+    }
+    if (costBalanceEl) {
+      costBalanceEl.textContent = hasBalance ? "balance " + formatUsd(creditsInfo?.balance || 0) : "";
+    }
+    if (costSummaryEl) {
+      const bits = [];
+      bits.push("session " + formatUsd(liveTotal));
+      if (turnCostAccum > 0) {
+        bits.push("current turn " + formatUsd(turnCostAccum));
+      } else if (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0) {
+        bits.push("last turn " + formatUsd(lastTurnUsage.cost_usd));
+      }
+      costSummaryEl.textContent = bits.join(" · ");
+    }
+    if (costRowsEl) {
+      costRowsEl.innerHTML = "";
+      const entries = (lastTurnUsage && Array.isArray(lastTurnUsage.entries)) ? lastTurnUsage.entries : [];
+      entries.forEach((en) => {
+        const row = document.createElement("div");
+        row.className = "cost-row";
+        const name = document.createElement("span");
+        name.className = "cost-row-model";
+        name.textContent = shortModelName(en.model);
+        name.title = (en.provider ? en.provider + " / " : "") + (en.model || "");
+        const meta = document.createElement("span");
+        meta.className = "cost-row-meta";
+        const calls = typeof en.calls === "number" && en.calls > 0 ? en.calls + "× · " : "";
+        const toks = typeof en.total_tokens === "number" && en.total_tokens > 0
+          ? Math.round(en.total_tokens / 1000) + "k tok · "
+          : "";
+        meta.textContent = calls + toks + formatUsd(en.cost_usd || 0);
+        row.appendChild(name);
+        row.appendChild(meta);
+        costRowsEl.appendChild(row);
+      });
+    }
+  }
+
+  let costPopoverOpen = false;
+  function showCostPopover(show) {
+    costPopoverOpen = show;
+    costPopover?.classList.toggle("hidden", !show);
+    costBtn?.classList.toggle("open", show);
+  }
+  costBtn?.addEventListener("mouseenter", () => showCostPopover(true));
+  costBtn?.addEventListener("mouseleave", () => {
+    window.setTimeout(() => {
+      if (!costPopover?.matches(":hover")) showCostPopover(false);
+    }, 120);
+  });
+  costPopover?.addEventListener("mouseenter", () => showCostPopover(true));
+  costPopover?.addEventListener("mouseleave", () => showCostPopover(false));
+  costBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showCostPopover(!costPopoverOpen);
   });
 
   sendBtn?.addEventListener("click", send);
@@ -3876,12 +4105,27 @@
         setChromeHint("", false);
         setBusy(false);
         break;
+      case "turnInFlight":
+        // Webview was rebuilt (e.g. returning from Settings) while the agent
+        // turn is still running — re-arm the busy UI before the replayed
+        // projection arrives.
+        setBusy(true);
+        break;
       case "header":
+        if (msg.sessionId && msg.sessionId !== activeSessionId) {
+          // Session switch: drop the previous session's turn breakdown.
+          lastTurnUsage = null;
+          turnCostAccum = 0;
+        }
         activeSessionId = msg.sessionId || activeSessionId;
         updateActiveTabTitle(msg.title || "New chat");
         setModelLabel(msg.model || "");
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
+        }
+        if (typeof msg.sessionCost === "number") {
+          sessionCostUSD = msg.sessionCost;
+          renderCostChip();
         }
         if (modeId === "orchestra") {
           // Keep the tier breakdown pill; header carries the single main model.
@@ -4036,7 +4280,7 @@
         break;
       case "history": {
         const list = Array.isArray(msg.messages) ? msg.messages : [];
-        list.forEach((m) => {
+        const renderOne = (m) => {
           const role = m.role === "user" ? "user" : m.role === "system" ? "error" : "assistant";
           const opts = {
             uiIndex: typeof m.uiIndex === "number" ? m.uiIndex : undefined,
@@ -4045,7 +4289,42 @@
             toolBlocks: Array.isArray(m.toolBlocks) ? m.toolBlocks : undefined,
           };
           appendMsg(role, m.text || "", opts);
-        });
+        };
+        // Long sessions: render only the tail eagerly. Hundreds of markdown
+        // bubbles + diff cards freeze the webview for seconds; older messages
+        // expand on demand.
+        const HISTORY_RENDER_CAP = 60;
+        if (list.length > HISTORY_RENDER_CAP) {
+          const hidden = list.slice(0, list.length - HISTORY_RENDER_CAP);
+          const shown = list.slice(list.length - HISTORY_RENDER_CAP);
+          const moreBtn = document.createElement("button");
+          moreBtn.type = "button";
+          moreBtn.className = "history-more";
+          moreBtn.textContent = `Show ${hidden.length} older messages`;
+          moreBtn.addEventListener("click", () => {
+            moreBtn.remove();
+            const frag = document.createDocumentFragment();
+            const anchor = messagesEl?.firstChild || null;
+            // Temporarily redirect appendMsg output by rendering then moving:
+            // simplest correct approach — render into the live container and
+            // reinsert before the previously-first node in order.
+            const beforeCount = messagesEl ? messagesEl.childNodes.length : 0;
+            hidden.forEach(renderOne);
+            if (messagesEl && anchor) {
+              const added = [];
+              for (let i = beforeCount; i < messagesEl.childNodes.length; i++) {
+                added.push(messagesEl.childNodes[i]);
+              }
+              added.forEach((n) => frag.appendChild(n));
+              messagesEl.insertBefore(frag, anchor);
+            }
+            void syncToolDiffPreviews();
+          });
+          messagesEl?.appendChild(moreBtn);
+          shown.forEach(renderOne);
+        } else {
+          list.forEach(renderOne);
+        }
         void syncToolDiffPreviews();
         break;
       }
@@ -4139,10 +4418,45 @@
         break;
       case "stepUsage": {
         const u = msg.usage || {};
-        ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
-        ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
-        ctxState.estimated = u.source === "estimate";
-        renderContextUi();
+        if (msg.scope !== "child") {
+          // Context gauge tracks the main agent only; worker windows differ.
+          ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
+          ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
+          ctxState.estimated = u.source === "estimate";
+          if (Array.isArray(u.breakdown) && u.breakdown.length > 0) {
+            ctxState.breakdown = u.breakdown;
+          }
+          renderContextUi();
+        }
+        // Live spend: each finished LLM call (planner step, worker step)
+        // reports its cost here — update the chip mid-turn instead of
+        // waiting for the end-of-turn turnUsage summary.
+        if (typeof u.cost_usd === "number" && u.cost_usd > 0) {
+          turnCostAccum += u.cost_usd;
+          renderCostChip();
+        }
+        break;
+      }
+      case "turnUsage": {
+        // Server total is authoritative — drop the live per-step estimate.
+        turnCostAccum = 0;
+        lastTurnUsage = msg.usage || null;
+        if (typeof msg.sessionCost === "number" && msg.sessionCost > 0) {
+          sessionCostUSD = msg.sessionCost;
+        } else if (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0) {
+          sessionCostUSD += lastTurnUsage.cost_usd;
+        }
+        renderCostChip();
+        appendTurnCostNote(lastTurnUsage);
+        break;
+      }
+      case "credits": {
+        creditsInfo = {
+          supported: msg.supported === true,
+          provider: msg.provider || "",
+          balance: typeof msg.balance === "number" ? msg.balance : 0,
+        };
+        renderCostChip();
         break;
       }
       case "contextInfo": {
@@ -4247,6 +4561,34 @@
         break;
     }
   });
+
+  /**
+   * Small grey transcript note with the turn cost. In orchestra mode (or any
+   * multi-model turn) each model gets its own "model $cost · N×" segment so
+   * it is clear what each tier position cost.
+   */
+  function appendTurnCostNote(usage) {
+    if (!messagesEl || !usage) {
+      return;
+    }
+    const cost = typeof usage.cost_usd === "number" ? usage.cost_usd : 0;
+    if (cost <= 0) {
+      return;
+    }
+    const entries = Array.isArray(usage.entries) ? usage.entries : [];
+    const parts = ["turn " + formatUsd(cost)];
+    if (entries.length > 1 || (modeId === "orchestra" && entries.length > 0)) {
+      entries.forEach((en) => {
+        const calls = typeof en.calls === "number" && en.calls > 1 ? " ×" + en.calls : "";
+        parts.push(shortModelName(en.model) + " " + formatUsd(en.cost_usd || 0) + calls);
+      });
+    }
+    const el = document.createElement("div");
+    el.className = "usage-note";
+    el.textContent = parts.join("   ·   ");
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 
   document.addEventListener("keydown", (e) => {
     if (!diffReviewActive()) return;

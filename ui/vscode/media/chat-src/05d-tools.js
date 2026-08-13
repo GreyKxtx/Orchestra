@@ -199,7 +199,18 @@
         row.dataset.taskId = sa.taskId;
         row.title = sa.model ? `${sa.taskId} · ${sa.model}` : sa.taskId;
       }
+      if (sa.status === "error" && sa.error) {
+        row.title = row.title ? `${row.title}\n${sa.error}` : sa.error;
+      }
       subagentsTree.appendChild(row);
+      if (sa.status === "error" && sa.error) {
+        const errHint = document.createElement("div");
+        errHint.className = "subagent-nested-hint subagent-error-hint";
+        const short = String(sa.error);
+        errHint.textContent = short.length > 120 ? short.slice(0, 117) + "…" : short;
+        errHint.title = String(sa.error);
+        subagentsTree.appendChild(errHint);
+      }
       const node = sa.taskId ? subagentByTask.get(sa.taskId) : null;
       if (node?.toolsEl && node.toolCount > 0) {
         const nest = document.createElement("div");
@@ -234,13 +245,26 @@
       if (!sa) return;
       const args = parseToolArgs(argsRaw || "");
       const st = args.subagent_type || args.subagentType || sa.type;
-      const desc = args.description || args.prompt || args.goal || "";
       if (st) sa.type = String(st);
+      if (args.tier) sa.tier = String(args.tier);
+      if (args.model) sa.model = String(args.model);
+      let desc = humanizeTaskLabel(args.description || args.prompt || args.goal || "");
+      if (!desc && Array.isArray(args.workorders) && args.workorders.length) {
+        const first = args.workorders[0] || {};
+        const wo = first.intent || first.title || first.goal || first.description || "";
+        desc = wo
+          ? args.workorders.length > 1
+            ? `${wo} (+${args.workorders.length - 1})`
+            : String(wo)
+          : `${args.workorders.length} workorders`;
+      }
       if (desc) {
         const d = String(desc).trim();
         sa.label = d.length > 48 ? d.slice(0, 45) + "…" : d;
       }
-      if (phase === "complete") {
+      if (phase === "complete" && !sa.taskId) {
+        // Rows adopted by a child (taskId set) get their status from
+        // childLifecycle events; a completed spawn call must not override it.
         const err = (msg.content || "").toLowerCase().startsWith("error");
         sa.status = err ? "error" : "done";
       }
@@ -286,7 +310,53 @@
     ctxState.prompt = 0;
     ctxState.completion = 0;
     ctxState.estimated = false;
+    ctxState.breakdown = [];
     renderContextUi();
+  }
+
+  /** Category colors for the context breakdown (Cursor-like palette). */
+  const CTX_COLORS = {
+    system: "#8b8b8b", // grey
+    tools: "#a78bfa", // purple
+    rules: "#34d399", // green
+    skills: "#fbbf24", // orange
+    conversation: "#f472b6", // pink
+    completion: "#60a5fa", // blue
+    reserved: "#4a4a4a", // dark grey
+  };
+
+  /**
+   * Rows for the context popover. Uses the agent's per-category breakdown when
+   * available; the conversation row absorbs the difference between the real
+   * prompt total and the fixed categories so the numbers always add up.
+   */
+  function contextRowsData() {
+    const used = ctxState.prompt;
+    const bd = Array.isArray(ctxState.breakdown) ? ctxState.breakdown : [];
+    const rows = [];
+    if (bd.length > 0) {
+      let fixedSum = 0;
+      let convRow = null;
+      bd.forEach((c) => {
+        if (c.key === "conversation") {
+          convRow = { key: c.key, label: c.label || "Conversation", tokens: c.tokens };
+        } else {
+          fixedSum += c.tokens;
+          rows.push({ key: c.key, label: c.label || c.key, tokens: c.tokens });
+        }
+      });
+      let conv = convRow ? convRow.tokens : 0;
+      if (used > 0) {
+        conv = Math.max(conv, used - fixedSum);
+      }
+      rows.push({ key: "conversation", label: "Conversation", tokens: Math.max(0, conv) });
+    } else if (used > 0) {
+      rows.push({ key: "conversation", label: "Prompt context", tokens: used });
+    }
+    if (ctxState.completion > 0) {
+      rows.push({ key: "completion", label: "Completion", tokens: ctxState.completion });
+    }
+    return rows;
   }
 
   function renderContextUi() {
@@ -304,34 +374,36 @@
       ctxSummary.textContent =
         used > 0 ? `${est}${formatTok(used)} / ${formatTok(limit)} tokens` : `Up to ${formatTok(limit)} tokens`;
     }
+    const rows = contextRowsData();
     if (ctxBar) {
+      // The bar spans the whole context window: colored segments for each
+      // category, a dark segment for the reserved reply budget, the rest of
+      // the track is free space.
       ctxBar.innerHTML = "";
-      const rows = [
-        { label: "Prompt", tokens: ctxState.prompt, color: "#888888" },
-        { label: "Completion", tokens: ctxState.completion, color: "#a78bfa" },
-        { label: "Reply budget", tokens: ctxState.maxResponse, color: "#555555" },
-      ];
-      const total = Math.max(used + ctxState.maxResponse, 1);
-      rows.forEach((r) => {
-        if (r.tokens <= 0 && r.label !== "Reply budget") return;
+      const total = Math.max(limit, 1);
+      const segs = rows.slice();
+      if (ctxState.maxResponse > 0) {
+        segs.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
+      }
+      segs.forEach((r) => {
+        if (r.tokens <= 0) return;
         const seg = document.createElement("div");
         seg.className = "ctx-bar-seg";
-        seg.style.width = `${Math.max(2, (r.tokens / total) * 100)}%`;
-        seg.style.background = r.color;
+        seg.style.width = `${Math.min(100, Math.max(0.8, (r.tokens / total) * 100))}%`;
+        seg.style.background = CTX_COLORS[r.key] || "#888888";
+        seg.title = `${r.label}: ${formatTok(r.tokens)}`;
         ctxBar.appendChild(seg);
       });
     }
     if (ctxRows) {
       ctxRows.innerHTML = "";
-      const items = [
-        { label: "Prompt context", tokens: ctxState.prompt, color: "#888888" },
-        { label: "Completion", tokens: ctxState.completion, color: "#a78bfa" },
-        { label: "Reserved for reply", tokens: ctxState.maxResponse, color: "#555555" },
-      ];
+      const items = rows.slice();
+      items.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
       items.forEach((item) => {
+        if (item.tokens <= 0 && item.key !== "reserved") return;
         const row = document.createElement("div");
         row.className = "ctx-row";
-        row.innerHTML = `<span class="ctx-swatch" style="background:${item.color}"></span><span class="ctx-row-label">${item.label}</span><span class="ctx-row-val">${formatTok(item.tokens)}</span>`;
+        row.innerHTML = `<span class="ctx-swatch" style="background:${CTX_COLORS[item.key] || "#888888"}"></span><span class="ctx-row-label">${item.label}</span><span class="ctx-row-val">${formatTok(item.tokens)}</span>`;
         ctxRows.appendChild(row);
       });
     }

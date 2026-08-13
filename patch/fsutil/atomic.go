@@ -51,6 +51,7 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := os.Rename(tmpName, path); err == nil {
 		_ = os.Chmod(path, perm)
+		syncDir(dir)
 		return nil
 	}
 	// Windows: os.Rename fails if destination exists. Try remove + rename.
@@ -60,5 +61,19 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 	_ = os.Chmod(path, perm)
+	syncDir(dir)
 	return nil
+}
+
+// syncDir fsyncs the directory so the rename itself survives a power loss
+// (POSIX: directory metadata is not flushed by the file's own fsync).
+// Best-effort: on Windows directories cannot be opened for sync this way
+// and NTFS journals metadata anyway, so errors are ignored.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }

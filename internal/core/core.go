@@ -34,9 +34,15 @@ type Core struct {
 
 	cfg        *config.ProjectConfig
 	configPath string
-	// cfgMu guards cfgMTime — the on-disk .orchestra.yml mtime this process
-	// last observed (see config_refresh.go).
-	cfgMu             sync.Mutex
+	// cfgMu guards cfgMTime plus reader-visible config state: the c.cfg
+	// pointer swap (config_refresh) and the mutable collections read by
+	// list RPCs (cfg.Agents, cfg.MCP.Servers, mcpManager). Read-only
+	// endpoints (agents.list, mcp.list) take RLock only — they must never
+	// queue behind runMu, which a session.message turn holds for minutes.
+	// Writers already serialize on runMu and additionally take cfgMu.Lock
+	// for the short in-memory mutation window (never across file I/O:
+	// saveConfigLocked → noteConfigMTime locks cfgMu itself).
+	cfgMu             sync.RWMutex
 	cfgMTime          time.Time
 	llmClient         llm.Client
 	llmClientInjected bool // true when LLMClient was set via Options (test/DI mode)

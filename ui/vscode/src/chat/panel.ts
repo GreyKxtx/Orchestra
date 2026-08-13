@@ -15,11 +15,12 @@ import type {
   QuestionItemPayload,
   StepUsagePayload,
   TodoItemPayload,
+  TurnUsagePayload,
   WebviewToHost,
   WorkflowStagePayload,
 } from "../protocol/events";
 import { SettingsView } from "./settings";
-import { stripFinalEnvelope, sanitizeAssistantStream, shouldSuppressStreamChunk, looksLikeCorruptedStream, isBenignTurnError } from "./streamSanitize";
+import { stripFinalEnvelope, sanitizeAssistantStream, shouldSuppressStreamChunk, looksLikeCorruptedStream, isBenignTurnError, compactionNoticeText } from "./streamSanitize";
 import {
   buildAssistantProjection,
   effectiveContextLimit,
@@ -53,7 +54,11 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
 
   private panel: vscode.WebviewPanel | undefined;
   private sidebar: vscode.WebviewView | undefined;
-  private view: "chat" | "settings" = "chat";
+  /**
+   * Settings live in their own editor panel so opening them never replaces
+   * the chat webview HTML (that used to kill the live stream view mid-turn).
+   */
+  private settingsPanel: vscode.WebviewPanel | undefined;
   private readonly session: CoreSession;
   private readonly extensionUri: vscode.Uri;
   private readonly settings: SettingsView;
@@ -70,6 +75,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   /** FIFO of user sends while an agent turn is in flight. */
   private readonly sendQueue: PendingSend[] = [];
   private sendInFlight = false;
+  /** Poll timer while a detached background core finishes a turn on the active session. */
+  private externalTurnTimer: NodeJS.Timeout | undefined;
+  /** Session id the "finishing in background" notice was already shown for. */
+  private externalTurnNoticeFor = "";
   /** Prevent repeated auto-cancel on corrupted stream spam. */
   /** Parent dirs of chat attachments outside workspace — added to webview localResourceRoots. */
   private readonly extraResourceRoots: vscode.Uri[] = [];
@@ -101,31 +110,21 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     }
     this.settings = new SettingsView(session, extensionUri);
     this.settings.bindPost((msg) => {
-      void this.webviewTarget()?.postMessage(msg);
+      void this.settingsPanel?.webview.postMessage(msg);
     });
 
     const onAgent = (event: AgentEventParams): void => {
-      // Always accumulate the turn projection (otherwise opening Settings
-      // mid-stream permanently truncates the assistant turn saved to history);
-      // only rendering is gated on the active view.
-      this.forwardAgentEvent(event, this.view === "chat");
+      // Settings open in a separate panel, so the chat webview always stays
+      // alive — render unconditionally.
+      this.forwardAgentEvent(event, true);
     };
     const onExecChunk = (payload: { step: number; chunk: string }): void => {
-      if (this.view !== "chat") {
-        return;
-      }
       this.post({ type: "execChunk", step: payload.step, chunk: payload.chunk });
     };
     const onWorkflow = (phase: "start" | "done", stage: WorkflowStagePayload): void => {
-      if (this.view !== "chat") {
-        return;
-      }
       this.post({ type: "workflowStage", phase, stage });
     };
     const onStatus = (status: ConnectionStatus, detail?: string): void => {
-      if (this.view !== "chat") {
-        return;
-      }
       const pass =
         status === "error" || status === "connecting" ? detail : undefined;
       this.post({ type: "status", status, detail: pass });
@@ -136,7 +135,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     this.session.on("status", onStatus);
 
     const onPermission = (request: PermissionRequestPayload): void => {
-      if (this.view !== "chat") {
+      if (!this.webviewTarget()) {
+        // No chat webview attached at all — fall back to a native dialog so
+        // the core is not left waiting forever on an answer.
         void this.showPermissionDialog(request);
         return;
       }
@@ -144,7 +145,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.post({ type: "permissionRequest", request });
     };
     const onQuestion = (questions: QuestionItemPayload[]): void => {
-      if (this.view !== "chat") {
+      if (!this.webviewTarget()) {
         void this.showQuestionDialog(questions);
         return;
       }
@@ -189,9 +190,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       // Debounce: our own persists also fire the watcher.
       timer = setTimeout(() => {
         timer = undefined;
-        if (this.view === "settings") {
+        if (this.settingsPanel) {
           void this.settings.pushState();
-        } else if (
+        }
+        if (
           this.session.getSessionId() &&
           this.session.getConnectionStatus() !== "running"
         ) {
@@ -220,8 +222,13 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       clearTimeout(this.deltaSyncTimer);
       this.deltaSyncTimer = undefined;
     }
+    if (this.externalTurnTimer) {
+      clearTimeout(this.externalTurnTimer);
+      this.externalTurnTimer = undefined;
+    }
     this.pendingHighlights.dispose();
     this.panel?.dispose();
+    this.settingsPanel?.dispose();
     this.sidebar = undefined;
     for (const d of this.disposables) {
       d.dispose();
@@ -313,28 +320,52 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     const targetSection =
       section === "orchestra" || section === "plugins" ? "general" : section;
     this.settings.pendingSection = targetSection;
-    const webview = this.webviewTarget();
-    if (this.sidebar && webview) {
-      this.view = "settings";
-      this.sidebar.title = "Settings";
-      webview.html = this.settings.getHtml(webview);
-      this.chatHtmlWebview = undefined;
-      this.sidebar.show?.(true);
+    // Dedicated editor panel: the chat webview (sidebar or editor) keeps its
+    // DOM and continues rendering an in-flight stream untouched.
+    if (this.settingsPanel) {
+      this.settingsPanel.reveal(this.settingsPanel.viewColumn ?? vscode.ViewColumn.Active);
+      await this.settings.pushState();
       return;
     }
-    await this.ensurePanel();
-    this.view = "settings";
-    if (this.panel) {
-      this.panel.title = "Orchestra Settings";
-      this.panel.webview.html = this.settings.getHtml(this.panel.webview);
-      this.chatHtmlWebview = undefined;
-      this.panel.reveal(vscode.ViewColumn.Beside);
-    }
+    const panel = vscode.window.createWebviewPanel(
+      "orchestra.settings",
+      "Orchestra Settings",
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [this.extensionUri],
+      }
+    );
+    this.settingsPanel = panel;
+    panel.webview.html = this.settings.getHtml(panel.webview);
+    panel.webview.onDidReceiveMessage(
+      (raw: unknown) => {
+        void (async () => {
+          if (raw && typeof raw === "object" && (raw as { type?: string }).type === "backToChat") {
+            panel.dispose();
+            await this.show();
+            return;
+          }
+          await this.settings.handleMessage(raw);
+        })();
+      },
+      null,
+      this.disposables
+    );
+    panel.onDidDispose(
+      () => {
+        if (this.settingsPanel === panel) {
+          this.settingsPanel = undefined;
+        }
+      },
+      null,
+      this.disposables
+    );
     // settings.js posts ready → pushState
   }
 
   private async showChat(): Promise<void> {
-    this.view = "chat";
     const webview = this.webviewTarget();
     if (!webview) {
       return;
@@ -403,7 +434,6 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           this.chatHtmlWebview = undefined;
         }
         this.panel = undefined;
-        this.view = "chat";
       },
       null,
       this.disposables
@@ -418,14 +448,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   private async onAnyMessage(raw: unknown): Promise<void> {
-    if (this.view === "settings") {
-      if (raw && typeof raw === "object" && (raw as { type?: string }).type === "backToChat") {
-        await this.showChat();
-        return;
-      }
-      await this.settings.handleMessage(raw);
-      return;
-    }
+    // Settings messages arrive on the dedicated settings panel's own
+    // listener; everything on the chat webviews is chat traffic.
     await this.onWebviewMessage(raw as WebviewToHost);
   }
 
@@ -448,6 +472,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       title,
       model,
       provider: health.provider,
+      sessionCost: view.costUSD,
     });
     this.post({ type: "status", status: "ready" });
     const healthRaw = health.raw as { lsp_status?: string } | undefined;
@@ -570,7 +595,56 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         source: restoredEstimated ? "estimate" : restoredPrompt > 0 ? "restored" : "session",
       },
     });
+    this.trackExternalTurn(id, view.externalTurn, view.interrupted);
     await this.refreshSessionTabs();
+  }
+
+  /**
+   * A detached background core (previous VS Code window / reload) may still be
+   * finishing a paid agent turn on this session. Show a neutral notice once and
+   * poll session.get until the turn-lock clears — the core refreshes the session
+   * from disk on each poll, so the finished turn lands in the UI automatically
+   * and no spent tokens are lost.
+   */
+  private trackExternalTurn(sessionId: string, externalTurn: boolean, interrupted: boolean): void {
+    if (this.externalTurnTimer) {
+      clearTimeout(this.externalTurnTimer);
+      this.externalTurnTimer = undefined;
+    }
+    if (interrupted && this.externalTurnNoticeFor !== `int:${sessionId}`) {
+      this.externalTurnNoticeFor = `int:${sessionId}`;
+      this.post({
+        type: "systemNote",
+        text: "Предыдущий ход был прерван (процесс завершился аварийно). История сохранена до последнего выполненного шага.",
+      });
+      return;
+    }
+    if (!externalTurn) {
+      if (this.externalTurnNoticeFor === sessionId) {
+        // Background turn just finished — the refreshed history is already
+        // rendered above; tell the user why it appeared.
+        this.externalTurnNoticeFor = "";
+        this.post({
+          type: "systemNote",
+          text: "Фоновый ход завершён — история обновлена.",
+        });
+      }
+      return;
+    }
+    if (this.externalTurnNoticeFor !== sessionId) {
+      this.externalTurnNoticeFor = sessionId;
+      this.post({
+        type: "systemNote",
+        text: "Предыдущий ход этой сессии ещё завершается в фоновом процессе. История обновится автоматически, когда он закончит.",
+      });
+    }
+    this.externalTurnTimer = setTimeout(() => {
+      this.externalTurnTimer = undefined;
+      if (this.session.getSessionId() !== sessionId || this.sendInFlight) {
+        return;
+      }
+      void this.refreshHeaderAndHistory().catch(() => undefined);
+    }, 4000);
   }
 
   private sortSessionsByRecent(sessions: SessionMeta[]): SessionMeta[] {
@@ -623,6 +697,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           if (this.session.getSessionId()) {
             await this.refreshHeaderAndHistory();
           }
+          void this.refreshCredits();
           // Re-deliver dialogs/state that were posted while the webview was
           // being recreated — otherwise the core waits forever on an answer.
           if (this.pendingPermission && this.session.hasPendingServerRequests()) {
@@ -633,6 +708,13 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           }
           if (this.lastPendingOps) {
             this.post({ type: "pendingOps", payload: this.lastPendingOps });
+          }
+          // Opening Settings replaces the chat webview HTML; coming back
+          // rebuilds the DOM from scratch while the turn may still be running
+          // in the core. Replay the accumulated projection so the stream
+          // does not look "cut off".
+          if (this.sendInFlight) {
+            this.restoreLiveTurn();
           }
           return;
         case "attach": {
@@ -1199,15 +1281,29 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           item.files?.map((f) => f.name).filter(Boolean).join(", ") ||
           "Attachment"
       );
-      await this.session.sendMessage(userText, {
+      const turnResult = (await this.session.sendMessage(userText, {
         apply: item.allowExec === true,
         allowExec: item.allowExec === true,
         mode: item.mode,
         profile: item.profile,
         attachments: prepared,
-      });
+      })) as {
+        usage?: TurnUsagePayload;
+        session_cost_usd?: number;
+      } | null;
       // Deliver the tail of the coalesced stream before finalizing the turn.
       this.flushDeltaSync();
+      if (turnResult && turnResult.usage) {
+        this.post({
+          type: "turnUsage",
+          usage: turnResult.usage,
+          sessionCost:
+            typeof turnResult.session_cost_usd === "number"
+              ? turnResult.session_cost_usd
+              : undefined,
+        });
+      }
+      void this.refreshCredits();
       const id = this.session.getSessionId();
       if (id) {
         const [view, health] = await Promise.all([
@@ -1220,6 +1316,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           title: view.title || "New chat",
           model: health.model || view.model || "Model",
           provider: health.provider,
+          sessionCost: view.costUSD,
         });
       }
       await this.ensureTurnPromptEstimate(id);
@@ -1257,6 +1354,44 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     return ok;
   }
 
+  /**
+   * Replay the in-flight turn into a freshly (re)created chat webview:
+   * busy indicator, reasoning, tool blocks and the streamed text so far.
+   * Ongoing deltas keep appending on top (deltaSync carries full snapshots).
+   */
+  private restoreLiveTurn(): void {
+    this.post({ type: "turnInFlight" });
+    if (this.turnReasoning) {
+      this.post({ type: "reasoningDelta", content: this.turnReasoning });
+    }
+    for (const tb of this.turnToolBlocks.values()) {
+      this.post({ type: "toolBlock", phase: "start", toolCallId: tb.id, toolName: tb.name });
+      if (tb.argsRaw) {
+        this.post({
+          type: "toolBlock",
+          phase: "update",
+          toolCallId: tb.id,
+          toolName: tb.name,
+          argsDelta: tb.argsRaw,
+        });
+      }
+      if (tb.status !== "running") {
+        this.post({
+          type: "toolBlock",
+          phase: "complete",
+          toolCallId: tb.id,
+          toolName: tb.name,
+          content: tb.result,
+          diagnostics: tb.diagnostics,
+        });
+      }
+    }
+    const text = this.assistantVisibleText();
+    if (text) {
+      this.post({ type: "deltaSync", content: text });
+    }
+  }
+
   private currentStreamVisibleText(): string {
     return sanitizeAssistantStream(stripFinalEnvelope(this.turnAssistantText));
   }
@@ -1285,6 +1420,25 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     });
     if (projection) {
       await this.session.syncUIProjection(projection);
+    }
+  }
+
+  /**
+   * Best-effort provider balance refresh (OpenRouter GET /credits). Posted to
+   * the webview cost popover; silently skipped for providers without a
+   * balance API or when the key is missing.
+   */
+  private async refreshCredits(): Promise<void> {
+    try {
+      const c = await this.session.credits();
+      this.post({
+        type: "credits",
+        supported: c.supported,
+        provider: c.provider,
+        balance: c.balance,
+      });
+    } catch {
+      // No balance API / no key — the cost popover just omits the balance row.
     }
   }
 
@@ -1340,9 +1494,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     }
     this.deltaSyncTimer = setTimeout(() => {
       this.deltaSyncTimer = undefined;
-      if (this.view === "chat") {
-        this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
-      }
+      this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
     }, 40);
   }
 
@@ -1353,7 +1505,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     }
     clearTimeout(this.deltaSyncTimer);
     this.deltaSyncTimer = undefined;
-    if (emit && this.view === "chat") {
+    if (emit) {
       this.post({ type: "deltaSync", content: this.currentStreamVisibleText() });
     }
   }
@@ -1494,27 +1646,38 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       case "step_usage": {
         const usage = parseStepUsage(event.data);
         if (usage) {
-          if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
-            this.turnPromptCtx = usage.prompt_tokens;
+          // Worker (child) usage must not overwrite the main agent's context
+          // gauge — only its cost matters for the live spend counter.
+          if (event.scope !== "child") {
+            if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
+              this.turnPromptCtx = usage.prompt_tokens;
+            }
+            if (typeof usage.completion_tokens === "number" && usage.completion_tokens > 0) {
+              this.turnTokensOut = usage.completion_tokens;
+            }
+            if (typeof usage.total_tokens === "number" && usage.total_tokens > 0) {
+              this.turnTokensIn = usage.total_tokens;
+            } else if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
+              this.turnTokensIn = usage.prompt_tokens;
+            }
           }
-          if (typeof usage.completion_tokens === "number" && usage.completion_tokens > 0) {
-            this.turnTokensOut = usage.completion_tokens;
-          }
-          if (typeof usage.total_tokens === "number" && usage.total_tokens > 0) {
-            this.turnTokensIn = usage.total_tokens;
-          } else if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
-            this.turnTokensIn = usage.prompt_tokens;
-          }
-          post({ type: "stepUsage", usage });
+          post({ type: "stepUsage", usage, scope: event.scope });
         }
         break;
       }
       case "recoverable_error":
-      case "error":
-        if (event.content && !isBenignTurnError(event.content)) {
-          post({ type: "error", message: event.content });
+      case "error": {
+        const content = event.content || "";
+        const compactNote = compactionNoticeText(content);
+        if (compactNote) {
+          post({ type: "systemNote", text: compactNote });
+          break;
+        }
+        if (content && !isBenignTurnError(content)) {
+          post({ type: "error", message: content });
         }
         break;
+      }
       case "pending_ops": {
         let payload = parsePendingOps(event.data);
         if (!payload && event.content) {
@@ -2231,6 +2394,20 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             <div id="status-footer" class="status-footer">
               <span id="status-lsp"></span>
             </div>
+            <div id="cost-wrap" class="cost-wrap hidden">
+              <button type="button" id="cost-btn" class="cost-btn" aria-label="Spend and balance">
+                <span id="cost-label">$0.00</span>
+              </button>
+              <div id="cost-popover" class="cost-popover hidden" role="dialog" aria-label="Spend and balance">
+                <div class="cost-head">
+                  <span class="cost-title">Spend</span>
+                  <span id="cost-balance" class="cost-balance"></span>
+                </div>
+                <div id="cost-summary" class="cost-summary"></div>
+                <div id="cost-rows" class="cost-rows"></div>
+                <p class="cost-note">Provider-reported cost · OpenRouter usage accounting</p>
+              </div>
+            </div>
             <div id="context-wrap" class="context-wrap">
               <button type="button" id="context-btn" class="context-btn" aria-label="Context usage">
                 <span class="context-ring-fill" id="context-ring-fill"></span>
@@ -2243,7 +2420,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
                 <div id="ctx-summary" class="ctx-summary"></div>
                 <div id="ctx-bar" class="ctx-bar"></div>
                 <div id="ctx-rows" class="ctx-rows"></div>
-                <p class="ctx-note">Estimate from last LLM step · full breakdown later</p>
+                <p class="ctx-note">Estimate from last LLM step · conversation grows during the turn</p>
               </div>
             </div>
             <button type="button" class="icon-btn" id="attach-btn" title="Attach files" aria-label="Attach files">
@@ -2459,11 +2636,22 @@ function parseStepUsage(data: unknown): StepUsagePayload | undefined {
     return undefined;
   }
   const d = data as Record<string, unknown>;
+  const breakdown = Array.isArray(d.breakdown)
+    ? (d.breakdown as Array<Record<string, unknown>>)
+        .filter((b) => b && typeof b === "object")
+        .map((b) => ({
+          key: typeof b.key === "string" ? b.key : "",
+          label: typeof b.label === "string" ? b.label : "",
+          tokens: typeof b.tokens === "number" ? b.tokens : 0,
+        }))
+        .filter((b) => b.key !== "" && b.tokens > 0)
+    : undefined;
   return {
     prompt_tokens: typeof d.prompt_tokens === "number" ? d.prompt_tokens : undefined,
     completion_tokens: typeof d.completion_tokens === "number" ? d.completion_tokens : undefined,
     total_tokens: typeof d.total_tokens === "number" ? d.total_tokens : undefined,
     cost_usd: typeof d.cost_usd === "number" ? d.cost_usd : undefined,
     source: typeof d.source === "string" ? d.source : undefined,
+    breakdown: breakdown && breakdown.length > 0 ? breakdown : undefined,
   };
 }

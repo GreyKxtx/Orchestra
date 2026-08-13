@@ -319,6 +319,55 @@ func TestFindProvider_InheritsMaxTokensFromLLM(t *testing.T) {
 	}
 }
 
+func TestFindProvider_CloudDoesNotInheritNumCtx(t *testing.T) {
+	cfg := &ProjectConfig{
+		LLM: LLMConfig{
+			Provider: "vllm",
+			APIBase:  "https://example.ngrok-free.dev/v1",
+			ExtraBody: map[string]any{
+				"num_ctx":              122880,
+				"chat_template_kwargs": map[string]any{"enable_thinking": false},
+			},
+		},
+		Providers: map[string]LLMConfig{
+			"openrouter": {Provider: "openrouter", APIBase: "https://openrouter.ai/api/v1", APIKey: "k"},
+		},
+	}
+	prov, ok := cfg.FindProvider("openrouter")
+	if !ok {
+		t.Fatal("expected find")
+	}
+	if _, has := prov.ExtraBody["num_ctx"]; has {
+		t.Fatal("cloud provider must not inherit num_ctx (fakes a smaller context window)")
+	}
+	if prov.ExtraBody["chat_template_kwargs"] == nil {
+		t.Fatal("other extra_body keys must still be inherited")
+	}
+	// Main llm extra_body must stay untouched (no aliasing mutation).
+	if cfg.LLM.ExtraBody["num_ctx"] == nil {
+		t.Fatal("main llm extra_body mutated")
+	}
+}
+
+func TestFindProvider_CloudInheritsExtraWithoutNumCtxUnchanged(t *testing.T) {
+	cfg := &ProjectConfig{
+		LLM: LLMConfig{
+			Provider:  "vllm",
+			ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
+		},
+		Providers: map[string]LLMConfig{
+			"openrouter": {Provider: "openrouter", APIKey: "k"},
+		},
+	}
+	prov, ok := cfg.FindProvider("openrouter")
+	if !ok {
+		t.Fatal("expected find")
+	}
+	if prov.ExtraBody["chat_template_kwargs"] == nil {
+		t.Fatal("extra_body without num_ctx must be inherited as-is")
+	}
+}
+
 func TestFindProvider_Found(t *testing.T) {
 	cfg := &ProjectConfig{
 		Providers: map[string]LLMConfig{

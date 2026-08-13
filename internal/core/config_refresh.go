@@ -29,8 +29,8 @@ func (c *Core) noteConfigMTime() {
 }
 
 func (c *Core) knownConfigMTime() time.Time {
-	c.cfgMu.Lock()
-	defer c.cfgMu.Unlock()
+	c.cfgMu.RLock()
+	defer c.cfgMu.RUnlock()
 	return c.cfgMTime
 }
 
@@ -68,8 +68,8 @@ func (c *Core) RefreshConfigIfChanged() {
 		return
 	}
 	oldLLM := c.cfg.LLM
-	c.cfg = fresh
 	c.cfgMu.Lock()
+	c.cfg = fresh
 	c.cfgMTime = st.ModTime()
 	c.cfgMu.Unlock()
 

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -151,9 +153,29 @@ type TaskRunner struct {
 	seq   int
 }
 
+// Cancellation causes (resilience audit P4): recorded via
+// context.WithCancelCause so runChild can report *why* a child was cancelled
+// instead of collapsing everything into context.Canceled.
+var (
+	// ErrCauseStaleContract marks children cancelled by an EPOCH change.
+	ErrCauseStaleContract = errors.New("cancelled: contract epoch changed (stale contract_refs)")
+	// ErrCauseUserCancel marks children cancelled by an explicit task_cancel.
+	ErrCauseUserCancel = errors.New("cancelled: explicit task_cancel")
+	// ErrCauseWaitAbandoned marks children cancelled because the parent's
+	// task_wait timed out or the parent turn ended.
+	ErrCauseWaitAbandoned = errors.New("cancelled: parent stopped waiting (wait timeout or turn end)")
+	// ErrCauseShutdown marks children cancelled by TaskRunner.Close.
+	ErrCauseShutdown = errors.New("cancelled: task runner shutting down")
+)
+
+// childReapTimeout bounds how long Wait/Close block for a cancelled child
+// goroutine to actually exit. A tool stuck in a syscall that ignores ctx
+// must not freeze the orchestrator turn forever (resilience audit P5).
+var childReapTimeout = 30 * time.Second
+
 type taskEntry struct {
 	id     string
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	done   chan struct{}
 	result *agent.SubtaskResult
 	// editPaths is the normalized WorkOrder edit scope for worker tasks;
@@ -290,14 +312,21 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 		parent = context.Background()
 	}
 	var taskCtx context.Context
-	var cancel context.CancelFunc
+	var cancel context.CancelCauseFunc
 	// lead_brief_s (spec §4.5): architecture children without an explicit
 	// timeout get the Lead brief wall-clock cap in orchestrated sessions.
 	effectiveTimeoutMS := r.leadBriefTimeoutMS(subagentType, req.TimeoutMS)
 	if effectiveTimeoutMS > 0 {
-		taskCtx, cancel = context.WithTimeout(parent, time.Duration(effectiveTimeoutMS)*time.Millisecond)
+		var tcancel context.CancelFunc
+		taskCtx, tcancel = context.WithTimeout(parent, time.Duration(effectiveTimeoutMS)*time.Millisecond)
+		cancelable, ccancel := context.WithCancelCause(taskCtx)
+		taskCtx = cancelable
+		cancel = func(cause error) {
+			ccancel(cause)
+			tcancel()
+		}
 	} else {
-		taskCtx, cancel = context.WithCancel(parent)
+		taskCtx, cancel = context.WithCancelCause(parent)
 	}
 
 	entry := &taskEntry{
@@ -320,7 +349,35 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 
 	go func() {
 		defer close(entry.done)
-		defer cancel()
+		defer cancel(nil)
+		// Resilience audit P1: a panic escaping runChild (agent loop, prompt
+		// assembly, verification pipeline) in this goroutine would kill the
+		// whole core process — parent orchestrator, sibling workers and the
+		// RPC server. Contain it and surface it as a normal task error.
+		defer func() {
+			if rec := recover(); rec != nil {
+				fmt.Fprintf(os.Stderr, "tasks: child %s panicked: %v\n%s\n", taskID, rec, debug.Stack())
+				r.mu.Lock()
+				if entry.result == nil {
+					entry.result = &agent.SubtaskResult{
+						TaskID: taskID,
+						Status: "error",
+						Error:  fmt.Sprintf("child agent panicked: %v", rec),
+					}
+				}
+				r.mu.Unlock()
+				if r.child.NotifyAgentEvent != nil {
+					r.child.NotifyAgentEvent(map[string]any{
+						"type":                "child_done",
+						"task_id":             taskID,
+						"parent_tool_call_id": req.ParentToolCallID,
+						"subagent_type":       subagentType,
+						"status":              "error",
+						"error":               fmt.Sprintf("child agent panicked: %v", rec),
+					})
+				}
+			}
+		}()
 
 		if len(conflicts) > 0 {
 			r.notifyQueued(taskID, req.ParentToolCallID, conflicts)
@@ -585,12 +642,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	status := "done"
 	errMsg := ""
 	if runErr != nil {
-		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
-			status = "timeout"
-		} else {
-			status = "error"
-		}
-		errMsg = runErr.Error()
+		status, errMsg = classifyChildRunErr(ctx, runErr)
 	}
 	if r.child.NotifyAgentEvent != nil {
 		params := map[string]any{
@@ -607,10 +659,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	}
 	if runErr != nil {
 		r.recordWorkerToDeptScratchpad(workOrder, "", status, errMsg)
-		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
-			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: runErr.Error()}
-		}
-		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: runErr.Error()}
+		return &agent.SubtaskResult{TaskID: taskID, Status: status, Error: errMsg}
 	}
 
 	taskResult := ""
@@ -654,6 +703,27 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
 }
 
+// classifyChildRunErr maps a child run error to a SubtaskResult status,
+// using context.Cause to distinguish deliberate cancellations (task_cancel,
+// epoch invalidation, shutdown) from timeouts and real failures.
+func classifyChildRunErr(ctx context.Context, runErr error) (status, errMsg string) {
+	errMsg = runErr.Error()
+	if !errors.Is(runErr, context.DeadlineExceeded) && !errors.Is(runErr, context.Canceled) {
+		return "error", errMsg
+	}
+	cause := context.Cause(ctx)
+	switch {
+	case errors.Is(cause, ErrCauseStaleContract),
+		errors.Is(cause, ErrCauseUserCancel),
+		errors.Is(cause, ErrCauseWaitAbandoned),
+		errors.Is(cause, ErrCauseShutdown):
+		return "cancelled", cause.Error()
+	default:
+		// Plain deadline (task timeout / lead brief cap) or parent turn end.
+		return "timeout", errMsg
+	}
+}
+
 func (r *TaskRunner) removeTask(taskID string) {
 	r.mu.Lock()
 	delete(r.tasks, taskID)
@@ -687,11 +757,25 @@ func (r *TaskRunner) Wait(ctx context.Context, taskID string, timeoutMS int) (*a
 		}
 		return result, nil
 	case <-waitCtx.Done():
-		entry.cancel()
+		entry.cancel(ErrCauseWaitAbandoned)
 		// Wait for the child goroutine to exit before returning so callers
 		// (and t.TempDir cleanup on Windows) do not race with late writes
-		// under .orchestra/.
-		<-entry.done
+		// under .orchestra/. Bounded (resilience audit P5): a tool stuck in
+		// a syscall that ignores ctx must not freeze the parent turn forever.
+		reap := time.NewTimer(childReapTimeout)
+		defer reap.Stop()
+		select {
+		case <-entry.done:
+		case <-reap.C:
+			// Leave the entry registered so Close() can still observe it;
+			// report a zombie instead of blocking the orchestrator.
+			fmt.Fprintf(os.Stderr, "tasks: child %s did not exit %s after cancel — reporting zombie\n", taskID, childReapTimeout)
+			return &agent.SubtaskResult{
+				TaskID: taskID,
+				Status: "error",
+				Error:  fmt.Sprintf("child did not exit %s after cancellation (stuck tool call?); it was left to terminate in the background", childReapTimeout),
+			}, nil
+		}
 		r.mu.Lock()
 		result := entry.result
 		r.mu.Unlock()
@@ -719,7 +803,7 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 	type candidate struct {
 		id     string
 		refs   []contract.Ref
-		cancel context.CancelFunc
+		cancel context.CancelCauseFunc
 	}
 	r.mu.Lock()
 	var cands []candidate
@@ -739,7 +823,7 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 	var cancelled []string
 	for _, c := range cands {
 		if err := r.child.GuardContractRefs(c.refs); err != nil {
-			c.cancel()
+			c.cancel(ErrCauseStaleContract)
 			cancelled = append(cancelled, c.id)
 		}
 	}
@@ -754,7 +838,7 @@ func (r *TaskRunner) Cancel(_ context.Context, taskID string) error {
 	if !ok {
 		return fmt.Errorf("task %q not found", taskID)
 	}
-	entry.cancel()
+	entry.cancel(ErrCauseUserCancel)
 	return nil
 }
 
@@ -774,9 +858,18 @@ func (r *TaskRunner) Close() {
 	r.tasks = make(map[string]*taskEntry)
 	r.mu.Unlock()
 	for _, e := range entries {
-		e.cancel()
+		e.cancel(ErrCauseShutdown)
 	}
+	// Bounded reap (resilience audit P5): a zombie child (tool stuck in a
+	// syscall that ignores ctx) must not hang core shutdown forever.
+	deadline := time.NewTimer(childReapTimeout)
+	defer deadline.Stop()
 	for _, e := range entries {
-		<-e.done
+		select {
+		case <-e.done:
+		case <-deadline.C:
+			fmt.Fprintf(os.Stderr, "tasks: Close: child %s did not exit %s after cancel — abandoning\n", e.id, childReapTimeout)
+			return
+		}
 	}
 }

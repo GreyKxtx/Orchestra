@@ -213,6 +213,14 @@ export class RpcClient extends EventEmitter {
     this.safeWrite(payload);
   }
 
+  /**
+   * Graceful detach (resilience audit P3): closing stdin makes the core's
+   * Serve loop return on EOF; the core finishes any in-flight agent turn
+   * (persisting session snapshots along the way) and exits on its own. We
+   * only hard-kill if the process is still alive after a grace period —
+   * that means it never got the EOF (broken pipe state), not that it is
+   * busy finishing a turn.
+   */
   dispose(): void {
     if (this.closed) {
       return;
@@ -227,7 +235,22 @@ export class RpcClient extends EventEmitter {
     } catch {
       // ignore
     }
-    this.proc.kill();
+    // Do NOT kill immediately: an in-flight turn keeps running in the
+    // background and the process self-terminates when it completes.
+    // Safety net: if the core is somehow still around after 10 minutes
+    // (stuck turn), reap it so we never leak processes indefinitely.
+    const proc = this.proc;
+    const reaper = setTimeout(() => {
+      try {
+        if (proc.exitCode === null && !proc.killed) {
+          proc.kill();
+        }
+      } catch {
+        // ignore
+      }
+    }, 10 * 60 * 1000);
+    // Don't hold the extension host open just for the reaper.
+    reaper.unref?.();
   }
 
   private handleMessage(body: string): void {

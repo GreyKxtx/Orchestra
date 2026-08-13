@@ -62,6 +62,29 @@ export interface StepUsagePayload {
   total_tokens?: number;
   cost_usd?: number;
   source?: string;
+  /** Per-category context split (system / tools / rules / skills / conversation). */
+  breakdown?: ContextBreakdownItem[];
+}
+
+/** Per-(provider, model) usage row — orchestra tiers each get their own row. */
+export interface UsageModelEntry {
+  provider?: string;
+  model?: string;
+  calls?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost_usd?: number;
+}
+
+/** Whole-turn usage summary from session.message. */
+export interface TurnUsagePayload {
+  calls?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost_usd?: number;
+  entries?: UsageModelEntry[];
 }
 
 export interface ContextInfoPayload {
@@ -74,7 +97,8 @@ export interface ContextBreakdownItem {
   key: string;
   label: string;
   tokens: number;
-  color: string;
+  /** Optional — the webview maps key → color when omitted. */
+  color?: string;
 }
 
 export interface WorkflowStagePayload {
@@ -201,6 +225,8 @@ export type HostToWebview =
       title: string;
       model: string;
       provider?: string;
+      /** Accumulated session spend in USD; resets the webview cost chip on session switch. */
+      sessionCost?: number;
     }
   | { type: "sessionList"; sessions: SessionListItem[] }
   | { type: "sessionTabs"; activeId: string; tabs: SessionListItem[] }
@@ -272,7 +298,11 @@ export type HostToWebview =
     }
   | { type: "execChunk"; step: number; chunk: string }
   | { type: "todosUpdate"; todos: TodoItemPayload[] }
-  | { type: "stepUsage"; usage: StepUsagePayload }
+  | { type: "stepUsage"; usage: StepUsagePayload; scope?: string }
+  /** A turn is still running — re-arm the busy UI after a webview reload. */
+  | { type: "turnInFlight" }
+  | { type: "turnUsage"; usage: TurnUsagePayload; sessionCost?: number }
+  | { type: "credits"; supported: boolean; provider?: string; balance?: number }
   | {
       type: "workflowStage";
       phase: "start" | "done";

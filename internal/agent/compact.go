@@ -61,8 +61,8 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 		return nil, fmt.Errorf("compaction LLM call: %w", err)
 	}
 	if a.opts.UsageTracker != nil && resp != nil && resp.Usage != nil {
-		a.opts.UsageTracker.Record(a.opts.ProviderLabel, a.opts.ModelLabel,
-			resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+		a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,
+			resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CostUSD)
 	}
 
 	summary := strings.TrimSpace(resp.Message.Content)

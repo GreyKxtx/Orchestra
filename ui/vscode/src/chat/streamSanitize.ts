@@ -106,6 +106,28 @@ export function isBenignTurnError(message: string): boolean {
   return false;
 }
 
+/**
+ * Context-compaction housekeeping events arrive on the error channel
+ * (recoverable_error) but are not failures — render them as a neutral gray
+ * system note instead of a red error. Returns null for real errors.
+ */
+export function compactionNoticeText(message: string): string | null {
+  const m = message.trim();
+  if (!m) {
+    return null;
+  }
+  if (m === "CONTEXT_PRESSURE") {
+    return "Контекст почти заполнен — история чата будет суммаризирована";
+  }
+  if (m === "CONTEXT_COMPACTED") {
+    return "Суммаризация чата: история сжата, работа продолжается";
+  }
+  if (/контекст переполнен/i.test(m)) {
+    return `Суммаризация чата — ${m}`;
+  }
+  return null;
+}
+
 /** True when accumulated assistant text is mostly non-human garbage. */
 export function looksLikeCorruptedStream(text: string): boolean {
   const t = text.trim();

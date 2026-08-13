@@ -97,7 +97,8 @@ type MCPTestResult struct {
 	Elapsed string   `json:"elapsed,omitempty"`
 }
 
-// ReplaceMCP hot-swaps the MCP manager and rebinds tools.Runner. Caller must hold runMu.
+// ReplaceMCP hot-swaps the MCP manager and rebinds tools.Runner. Caller must
+// hold runMu and cfgMu (mcp.list readers see mcpManager under cfgMu.RLock).
 func (c *Core) ReplaceMCP(ctx context.Context, mcpCfg config.MCPConfig) []string {
 	if c == nil {
 		return nil
@@ -230,13 +231,15 @@ func (c *Core) saveConfigLocked() (bool, error) {
 	return true, nil
 }
 
-// MCPList returns configured servers with runtime status.
+// MCPList returns configured servers with runtime status. Read-only: takes
+// cfgMu.RLock instead of runMu so the settings UI can list servers while an
+// agent turn (which holds runMu for its whole duration) is in flight.
 func (c *Core) MCPList(_ MCPListParams) (*MCPListResult, error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	c.cfgMu.RLock()
+	defer c.cfgMu.RUnlock()
 	return &MCPListResult{Servers: c.mcpViews()}, nil
 }
 
@@ -259,6 +262,7 @@ func (c *Core) MCPUpsert(ctx context.Context, params MCPUpsertParams) (*MCPUpser
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
 
+	c.cfgMu.Lock()
 	prev := append([]config.MCPServerConfig(nil), c.cfg.MCP.Servers...)
 	found := false
 	for i := range c.cfg.MCP.Servers {
@@ -273,10 +277,12 @@ func (c *Core) MCPUpsert(ctx context.Context, params MCPUpsertParams) (*MCPUpser
 	}
 	if err := c.cfg.ValidateMCPOnly(); err != nil {
 		c.cfg.MCP.Servers = prev
+		c.cfgMu.Unlock()
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
 
 	warnings := c.ReplaceMCP(ctx, c.cfg.MCP)
+	c.cfgMu.Unlock()
 	persisted := false
 	if persistDefaultTrue(params.Persist) {
 		ok, err := c.saveConfigLocked()
@@ -312,8 +318,10 @@ func (c *Core) MCPDelete(ctx context.Context, params MCPDeleteParams) (*MCPDelet
 	if !found {
 		return nil, protocol.NewError(protocol.InvalidParams, "mcp server not found", map[string]any{"name": name})
 	}
+	c.cfgMu.Lock()
 	c.cfg.MCP.Servers = next
 	warnings := c.ReplaceMCP(ctx, c.cfg.MCP)
+	c.cfgMu.Unlock()
 	persisted := false
 	if persistDefaultTrue(params.Persist) {
 		ok, err := c.saveConfigLocked()
@@ -337,6 +345,7 @@ func (c *Core) MCPSetDisabled(ctx context.Context, params MCPSetDisabledParams) 
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
 
+	c.cfgMu.Lock()
 	found := false
 	for i := range c.cfg.MCP.Servers {
 		if c.cfg.MCP.Servers[i].Name == name {
@@ -346,9 +355,11 @@ func (c *Core) MCPSetDisabled(ctx context.Context, params MCPSetDisabledParams) 
 		}
 	}
 	if !found {
+		c.cfgMu.Unlock()
 		return nil, protocol.NewError(protocol.InvalidParams, "mcp server not found", map[string]any{"name": name})
 	}
 	warnings := c.ReplaceMCP(ctx, c.cfg.MCP)
+	c.cfgMu.Unlock()
 	persisted := false
 	if persistDefaultTrue(params.Persist) {
 		ok, err := c.saveConfigLocked()

@@ -127,30 +127,50 @@ func (a *Agent) substitutePlanPath(s string) string {
 // 4/5/6 append) was implicit and easy to mis-order on edit. Moving it to
 // a method documents the contract and centralises the order so a new
 // prompt source can be added in one place.
-func (a *Agent) buildSystemPrompt() string {
+// systemPromptParts holds the system prompt split by origin so the context
+// popover can show a per-category token breakdown. Concatenation order in
+// buildSystemPrompt: base + memory + catalog + skills.
+type systemPromptParts struct {
+	base    string // mode prompt / override
+	memory  string // injected project memory (rules)
+	catalog string // live tool catalog block
+	skills  string // <available_skills> advertisement
+}
+
+func (a *Agent) buildSystemPromptParts() systemPromptParts {
+	var p systemPromptParts
 	// 1+2+3: base  -  first non-empty replacement wins (.orchestra/system.txt
 	// > Options.SystemPromptOverride > mode default).
-	prompt := promptpkg.BuildSystemPromptForMode(string(a.opts.Mode), a.opts.PromptFamily)
+	p.base = promptpkg.BuildSystemPromptForMode(string(a.opts.Mode), a.opts.PromptFamily)
 	if a.opts.SystemPromptOverride != "" {
-		prompt = a.opts.SystemPromptOverride
+		p.base = a.opts.SystemPromptOverride
 	}
 	if fs := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); fs != "" {
-		prompt = fs
+		p.base = fs
 	}
-	// 4: append project memory (tiered, config-driven).
+	// 4: project memory (tiered, config-driven).
 	// Workers/focused children skip this - they only need the WorkOrder.
 	if !a.opts.SkipMemoryInject && a.opts.Mode != ModeWorker {
 		memCfg := a.opts.Memory
 		memCfg.Normalize()
 		store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
-		if block := store.FormatInject(memCfg.InjectBytes()); block != "" {
-			prompt += "\n\n" + block
-		}
+		p.memory = store.FormatInject(memCfg.InjectBytes())
 	}
 	// 5: live tool catalog (mode/caps accurate  -  better than hardcoded lists in *.txt).
-	prompt += formatToolsCatalog(a.buildToolDefs())
-	// 6: append skills advertisement.
-	prompt += a.skillsAdvertisement()
+	p.catalog = formatToolsCatalog(a.buildToolDefs())
+	// 6: skills advertisement.
+	p.skills = a.skillsAdvertisement()
+	return p
+}
+
+func (a *Agent) buildSystemPrompt() string {
+	p := a.buildSystemPromptParts()
+	prompt := p.base
+	if p.memory != "" {
+		prompt += "\n\n" + p.memory
+	}
+	prompt += p.catalog
+	prompt += p.skills
 	if a.opts.Mode == ModePlan || strings.TrimSpace(a.opts.PlanPath) != "" {
 		prompt = a.substitutePlanPath(prompt)
 	}

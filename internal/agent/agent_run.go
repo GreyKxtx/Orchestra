@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
@@ -14,7 +15,27 @@ import (
 
 // Run executes the agent loop for userQuery and returns the updated history, result, and error.
 // Pass a nil history for a fresh (one-shot) run; pass an existing history to continue a session.
-func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string) ([]llm.Message, *Result, error) {
+//
+// Panic containment (resilience audit P1): tool calls already convert panics
+// to errors inside tools.Runner.Call, but the loop itself (compaction,
+// resolver, prompt assembly) did not. A panic here inside a child-agent
+// goroutine would crash the entire core process — parent orchestrator,
+// sibling workers and the RPC server included. Recover at the boundary and
+// surface it as a regular error instead.
+func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string) (outHistory []llm.Message, result *Result, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			// Best effort: return the history we started with so the caller
+			// can still persist the session up to the last completed turn.
+			outHistory = history
+			result = nil
+			err = fmt.Errorf("agent run panicked: %v\n%s", rec, debug.Stack())
+		}
+	}()
+	return a.run(ctx, history, userQuery)
+}
+
+func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string) ([]llm.Message, *Result, error) {
 	userQuery = strings.TrimSpace(userQuery)
 	if userQuery == "" {
 		return nil, nil, fmt.Errorf("user query is empty")
@@ -55,6 +76,19 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				Content: reason,
 			}})
 		}
+	}
+
+	// Mid-turn persistence hook (resilience audit P2): after each completed
+	// tool step, hand the caller a copy of the accumulated history so a
+	// crash/kill mid-turn loses at most one step of LLM work, not the whole
+	// turn. Hook panics must not kill the loop.
+	notifyStepHistory := func(h []llm.Message) {
+		if a.opts.OnStepHistory == nil {
+			return
+		}
+		snap := append([]llm.Message(nil), h...)
+		step := steps
+		safeRun("OnStepHistory", func() { a.opts.OnStepHistory(step, snap) })
 	}
 
 	for steps < a.opts.MaxSteps {
@@ -222,6 +256,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 					return history, nil, cbErr
 				}
 				emitStepDone("tool_call")
+				notifyStepHistory(history)
 				a.maybePersistMicroDigest(steps)
 				continue
 			}
@@ -248,6 +283,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 				}
 			}
 			emitStepDone("tool_call")
+			notifyStepHistory(history)
 			a.maybePersistMicroDigest(steps)
 			continue
 

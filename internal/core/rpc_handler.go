@@ -227,6 +227,15 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.RuntimeGetLLM(p)
 
+	case "runtime.credits":
+		var p RuntimeCreditsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.RuntimeCredits(ctx, p)
+
 	case "runtime.configure_llm":
 		var p RuntimeConfigureLLMParams
 		if err := decodeParams(params, &p); err != nil {

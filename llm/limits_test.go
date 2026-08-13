@@ -53,6 +53,42 @@ func TestApplyDiscoveredLimits_KeepsUserBelowServer(t *testing.T) {
 	}
 }
 
+func TestApplyDiscoveredLimits_CloudProviderTrustsServer(t *testing.T) {
+	// Stale num_ctx from an earlier local (vLLM/ngrok) setup must not shrink
+	// the window of a cloud model: openrouter reports 1M, config says 122880.
+	cfg := &LLMConfig{
+		Provider:  "openrouter",
+		Model:     "big/model",
+		MaxTokens: 8192,
+		ExtraBody: map[string]any{"num_ctx": 122880},
+		ModelPresets: map[string]ModelPreset{
+			"big/model": {NumCtx: 122880},
+		},
+	}
+	if !ApplyDiscoveredLimits(cfg, ModelLimits{ContextTokens: 1000000}) {
+		t.Fatal("expected cloud window to be raised to server value")
+	}
+	if cfg.ExtraBody["num_ctx"] != 1000000 {
+		t.Fatalf("num_ctx=%v want 1000000 (server wins for cloud)", cfg.ExtraBody["num_ctx"])
+	}
+	if cfg.ModelPresets["big/model"].NumCtx != 1000000 {
+		t.Fatalf("preset NumCtx=%d want 1000000", cfg.ModelPresets["big/model"].NumCtx)
+	}
+}
+
+func TestApplyDiscoveredLimits_LocalProviderKeepsUserWindow(t *testing.T) {
+	cfg := &LLMConfig{
+		Provider:  "lmstudio",
+		Model:     "m",
+		MaxTokens: 3000,
+		ExtraBody: map[string]any{"num_ctx": 20000},
+	}
+	_ = ApplyDiscoveredLimits(cfg, ModelLimits{ContextTokens: 51200})
+	if cfg.ExtraBody["num_ctx"] != 20000 {
+		t.Fatalf("num_ctx=%v want 20000 (local RAM cap must survive)", cfg.ExtraBody["num_ctx"])
+	}
+}
+
 func TestApplyDiscoveredLimits_ClampsUserAboveServer(t *testing.T) {
 	cfg := &LLMConfig{
 		Model:     "m",

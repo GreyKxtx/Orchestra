@@ -61,6 +61,13 @@
   const effortMenu = document.getElementById("effort-menu");
   const modeLabel = document.getElementById("mode-label");
   const effortLabel = document.getElementById("effort-label");
+  const costWrap = document.getElementById("cost-wrap");
+  const costBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("cost-btn"));
+  const costLabelEl = document.getElementById("cost-label");
+  const costPopover = document.getElementById("cost-popover");
+  const costBalanceEl = document.getElementById("cost-balance");
+  const costSummaryEl = document.getElementById("cost-summary");
+  const costRowsEl = document.getElementById("cost-rows");
   const contextBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("context-btn"));
   const contextRingFill = document.getElementById("context-ring-fill");
   const contextPopover = document.getElementById("context-popover");
@@ -154,8 +161,8 @@
   /** @type {any[]} */
   let paletteItems = [];
   let mentionTimer = 0;
-  /** @type {{ prompt: number; completion: number; limit: number; maxResponse: number; estimated: boolean }} */
-  let ctxState = { prompt: 0, completion: 0, limit: 128000, maxResponse: 4096, estimated: false };
+  /** @type {{ prompt: number; completion: number; limit: number; maxResponse: number; estimated: boolean; breakdown: { key: string; label: string; tokens: number }[] }} */
+  let ctxState = { prompt: 0, completion: 0, limit: 128000, maxResponse: 4096, estimated: false, breakdown: [] };
   let ctxPopoverOpen = false;
 
   /** @type {{ ops: any[]; diff: { path?: string; before?: string; after?: string; reviewStatus?: string }[] }} */
@@ -217,6 +224,18 @@
   let effortId = "medium";
   let fastOn = false;
   let currentModel = "";
+  /** Accumulated session spend in USD (provider-reported). */
+  let sessionCostUSD = 0;
+  /**
+   * Live cost of the in-flight turn, summed from per-step step_usage events
+   * (each LLM call reports its cost when its stream finishes). Replaced by
+   * the authoritative server total on turnUsage, then reset to 0.
+   */
+  let turnCostAccum = 0;
+  /** @type {{ cost_usd?: number; total_tokens?: number; entries?: any[] } | null} Last turn usage summary. */
+  let lastTurnUsage = null;
+  /** @type {{ supported: boolean; provider?: string; balance?: number } | null} Provider balance (OpenRouter). */
+  let creditsInfo = null;
   let activeSessionId = "";
   /** @type {{ name: string; path?: string; ext?: string; kind?: string; previewUri?: string }[]} */
   let files = [];

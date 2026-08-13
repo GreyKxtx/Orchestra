@@ -655,6 +655,14 @@ type chatCompletionRequest struct {
 	ResponseFormat *responseFormatWire `json:"response_format,omitempty"`
 	Stream         bool                `json:"stream,omitempty"`
 	StreamOptions  *streamOptions      `json:"stream_options,omitempty"`
+	// Usage is OpenRouter's usage accounting toggle: {"include": true} makes
+	// the response usage object carry the real cost in credits (USD).
+	Usage *usageInclude `json:"usage,omitempty"`
+}
+
+// usageInclude is OpenRouter's request-level usage accounting switch.
+type usageInclude struct {
+	Include bool `json:"include"`
 }
 
 // streamOptions toggles OpenAI streaming extras. include_usage asks the server
@@ -685,9 +693,10 @@ type chatCompletionResponse struct {
 		} `json:"message"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens     int     `json:"prompt_tokens"`
+		CompletionTokens int     `json:"completion_tokens"`
+		TotalTokens      int     `json:"total_tokens"`
+		Cost             float64 `json:"cost"` // OpenRouter: credits (USD) for this completion
 	} `json:"usage,omitempty"`
 	Error struct {
 		Message string `json:"message"`
@@ -709,6 +718,9 @@ func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream boo
 	}
 	if stream {
 		reqBody.StreamOptions = &streamOptions{IncludeUsage: true}
+	}
+	if c.reportsCost() {
+		reqBody.Usage = &usageInclude{Include: true}
 	}
 	if c.temperature != 0 {
 		temp := c.temperature
@@ -924,9 +936,16 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 			PromptTokens:     apiResp.Usage.PromptTokens,
 			CompletionTokens: apiResp.Usage.CompletionTokens,
 			TotalTokens:      apiResp.Usage.TotalTokens,
+			CostUSD:          apiResp.Usage.Cost,
 		}
 	}
 	return out, nil
+}
+
+// reportsCost reports whether the endpoint returns real cost in the usage
+// object when asked (currently OpenRouter only).
+func (c *OpenAIClient) reportsCost() bool {
+	return strings.Contains(strings.ToLower(c.baseURL), "openrouter.ai")
 }
 
 // Plan generates a plan from LLM (same API as Complete, but with different prompt expectations)

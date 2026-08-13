@@ -200,6 +200,60 @@ func (c *Core) RuntimeListModels(ctx context.Context, params RuntimeListModelsPa
 	}, nil
 }
 
+// RuntimeCreditsParams selects which provider's balance to query.
+// Empty Provider uses the primary llm config.
+type RuntimeCreditsParams struct {
+	Provider string `json:"provider,omitempty"`
+}
+
+// RuntimeCreditsResult is returned by runtime.credits. Supported=false means
+// the provider has no balance API we know (local servers, plain OpenAI base).
+type RuntimeCreditsResult struct {
+	Provider     string  `json:"provider"`
+	Supported    bool    `json:"supported"`
+	TotalCredits float64 `json:"total_credits,omitempty"`
+	TotalUsage   float64 `json:"total_usage,omitempty"`
+	Balance      float64 `json:"balance,omitempty"`
+}
+
+// RuntimeCredits queries the provider's credits/balance endpoint (OpenRouter).
+func (c *Core) RuntimeCredits(ctx context.Context, params RuntimeCreditsParams) (*RuntimeCreditsResult, error) {
+	if c == nil || c.cfg == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+
+	llmCfg := c.cfg.LLM
+	provKey := strings.TrimSpace(params.Provider)
+	if provKey != "" {
+		resolved, _, ok := llm.ResolveProviderConfig(c.cfg.LLMRegistry(), provKey)
+		if !ok {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "unknown provider", map[string]any{
+				"provider": provKey,
+			})
+		}
+		llmCfg = resolved
+		if strings.TrimSpace(llmCfg.Provider) == "" {
+			llmCfg.Provider = provKey
+		}
+	}
+
+	out := &RuntimeCreditsResult{Provider: llmCfg.Provider}
+	if !llm.SupportsCredits(llmCfg) {
+		return out, nil
+	}
+	credits, err := llm.FetchCredits(ctx, llmCfg)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{
+			"api_base": llmCfg.APIBase,
+		})
+	}
+	out.Supported = true
+	out.TotalCredits = credits.TotalCredits
+	out.TotalUsage = credits.TotalUsage
+	out.Balance = credits.Balance()
+	return out, nil
+}
+
 // RuntimeGetLLMParams is empty for now (reserved).
 type RuntimeGetLLMParams struct{}
 

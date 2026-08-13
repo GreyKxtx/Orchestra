@@ -32,6 +32,13 @@ type Session struct {
 	profile     string
 	applyOutput string
 	costUSD     float64
+
+	// lastSnapshotAt is the UpdatedAt of the snapshot this in-memory state
+	// was last synced with (own Snapshot() write or LoadFromDisk). Used by
+	// RefreshFromDiskIfNewer to detect writes from *other* core processes
+	// (a detached background core finishing a turn) without ever mistaking
+	// our own saves for external updates.
+	lastSnapshotAt time.Time
 }
 
 // New creates a new session with a sortable TUI-compatible ID.

@@ -377,4 +377,8 @@ type TokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// CostUSD is the provider-reported cost of this completion in USD.
+	// OpenRouter returns it when the request carries usage:{include:true};
+	// zero for providers that do not report cost (use pricing tables instead).
+	CostUSD float64 `json:"cost_usd,omitempty"`
 }

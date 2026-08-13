@@ -137,9 +137,10 @@ type sseChunk struct {
 	// Usage is sent in the final SSE chunk when stream_options.include_usage=true.
 	// Most chunks omit it; only the last one carries totals.
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens     int     `json:"prompt_tokens"`
+		CompletionTokens int     `json:"completion_tokens"`
+		TotalTokens      int     `json:"total_tokens"`
+		Cost             float64 `json:"cost"` // OpenRouter: credits (USD), needs usage:{include:true}
 	} `json:"usage,omitempty"`
 	Error struct {
 		Message string `json:"message"`
@@ -201,6 +202,7 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 					PromptTokens:     chunk.Usage.PromptTokens,
 					CompletionTokens: chunk.Usage.CompletionTokens,
 					TotalTokens:      chunk.Usage.TotalTokens,
+					CostUSD:          chunk.Usage.Cost,
 				})
 			}
 			if len(chunk.Choices) == 0 {

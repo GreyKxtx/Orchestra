@@ -243,6 +243,13 @@ type Options struct {
 	// take down the agent loop, but the event is then dropped silently.
 	OnEvent func(AgentEvent)
 
+	// OnStepHistory, when set, receives a snapshot of the LLM history after
+	// each completed tool step so the caller can persist mid-turn progress
+	// (crash recovery, resilience audit P2). Called synchronously from the
+	// agent loop — implementations must be fast and/or throttled. The slice
+	// is a fresh copy; the callback may retain it.
+	OnStepHistory func(step int, history []llm.Message)
+
 	// AgentLogger, if non-nil, writes tool_call / tool_result events to llm_log.jsonl.
 	AgentLogger *llm.Logger
 
@@ -391,6 +398,10 @@ type Options struct {
 // (test fakes, alternative metrics sinks) need to as well.
 type UsageRecorder interface {
 	Record(provider, model string, prompt, completion int)
+	// RecordCost is Record plus the provider-reported cost in USD (0 when the
+	// provider does not report cost; implementations then fall back to their
+	// own pricing, if any).
+	RecordCost(provider, model string, prompt, completion int, providerCostUSD float64)
 }
 
 // AgentEvent wraps a streaming event with agent-level context.
@@ -448,6 +459,12 @@ type Agent struct {
 	// Г— N steps re-serialised on each LLM request.
 	toolDefsOnce  sync.Once
 	toolDefsCache []llm.ToolDef
+
+	// ctxBreakdownOnce memoises the fixed part of the context breakdown
+	// (system prompt / rules / tool defs / skills sizes) — same inputs as
+	// toolDefsCache, stable for the agent's lifetime.
+	ctxBreakdownOnce  sync.Once
+	ctxBreakdownFixed []ctxCategory
 
 	// diags tracks LSP diagnostic fingerprints per file across write/
 	// edit attempts so a model that re-writes the same file with the

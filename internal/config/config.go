@@ -478,9 +478,39 @@ func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
 		cfg.ToolChoice = c.LLM.ToolChoice
 	}
 	if len(cfg.ExtraBody) == 0 && len(c.LLM.ExtraBody) > 0 {
-		cfg.ExtraBody = c.LLM.ExtraBody
+		cfg.ExtraBody = inheritedExtraBody(name, cfg, c.LLM.ExtraBody)
 	}
 	return cfg, true
+}
+
+// inheritedExtraBody prepares the main llm.extra_body for a named provider.
+// num_ctx describes the MAIN endpoint's local context window (vLLM/Ollama
+// RAM budget); inheriting it into a cloud provider fakes a smaller window and
+// makes the client preflight reject prompts the real model would accept
+// ("prompt too large (~N) for model context num_ctx"). Cloud providers get
+// the extras without num_ctx; local providers keep it as before.
+func inheritedExtraBody(name string, cfg LLMConfig, extra map[string]any) map[string]any {
+	if _, hasNumCtx := extra["num_ctx"]; !hasNumCtx {
+		return extra
+	}
+	provider := strings.TrimSpace(cfg.Provider)
+	if provider == "" {
+		provider = strings.TrimSpace(name)
+	}
+	cat, ok := llmpkg.FindCatalogProvider(provider)
+	if !ok || cat.Local {
+		return extra
+	}
+	out := make(map[string]any, len(extra))
+	for k, v := range extra {
+		if k != "num_ctx" {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // LLMRegistry exposes llm + providers for the llm sub-module (no config→llm cycle).
@@ -719,6 +749,12 @@ func Save(path string, cfg *ProjectConfig) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
+
+	// Serialise writers across processes (TUI core + extension core on the
+	// same project): concurrent load→modify→Save cycles silently drop each
+	// other's changes without this.
+	unlock := acquireFileLock(path)
+	defer unlock()
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/protocol"
@@ -76,7 +77,12 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("rpcclient: Config.WorkspaceRoot is empty")
 	}
 
-	cmd := exec.CommandContext(ctx, cfg.Binary, "core", "--workspace-root", cfg.WorkspaceRoot)
+	// Deliberately NOT exec.CommandContext (resilience audit P3): the core
+	// must be able to outlive the TUI to finish an in-flight agent turn.
+	// Closing stdin (Close) makes the core's Serve loop return; the core
+	// finishes the running turn, persists session snapshots and exits on
+	// its own. A ctx-bound command would hard-kill it mid-write instead.
+	cmd := exec.Command(cfg.Binary, "core", "--workspace-root", cfg.WorkspaceRoot)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("rpcclient: stdin pipe: %w", err)
@@ -136,6 +142,11 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 		} `json:"health"`
 	}
 	if err := c.rpc.Call(ctx, "initialize", initParams, &initResult); err != nil {
+		// Handshake failure: nothing valuable is running yet — hard-kill so
+		// a broken core cannot linger in the background.
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		_ = c.Close()
 		return nil, fmt.Errorf("rpcclient: initialize: %w", err)
 	}
@@ -197,6 +208,11 @@ type SessionGetResult struct {
 	HistoryLen int                     `json:"history_len"`
 	HasPending bool                    `json:"has_pending,omitempty"`
 	Restored   bool                    `json:"restored,omitempty"`
+	// ExternalTurn: a detached background core is still finishing a turn on
+	// this session. Interrupted: the previous turn holder died mid-turn.
+	ExternalTurn bool `json:"external_turn,omitempty"`
+	ExternalPID  int  `json:"external_pid,omitempty"`
+	Interrupted  bool `json:"interrupted,omitempty"`
 }
 
 // SessionGet returns the unified v2 session view.
@@ -448,7 +464,14 @@ func (c *Client) ToolCall(ctx context.Context, tool string, input json.RawMessag
 	return c.rpc.Call(ctx, "tool.call", params, &result)
 }
 
-// Close kills the subprocess and closes the events channel.
+// coreDetachGrace is how long Close waits for the core subprocess to exit
+// after stdin EOF before detaching (leaving it to finish in the background).
+var coreDetachGrace = 2 * time.Second
+
+// Close closes the subprocess stdin (EOF makes the core's Serve loop return)
+// and waits briefly for it to exit. If the core is still busy — e.g. an agent
+// turn is in flight — it is deliberately NOT killed: the core finishes the
+// turn, persists session snapshots and exits on its own (resilience audit P3).
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		// Unblock producers first: any goroutine blocked in a critical-event
@@ -466,7 +489,18 @@ func (c *Client) Close() error {
 
 		_ = c.stdin.Close()
 		if c.cmd != nil && c.cmd.Process != nil {
-			_ = c.cmd.Process.Kill()
+			exited := make(chan struct{})
+			go func() {
+				defer close(exited)
+				_, _ = c.cmd.Process.Wait()
+			}()
+			select {
+			case <-exited:
+				// Fast path: idle core exits right after EOF.
+			case <-time.After(coreDetachGrace):
+				// Turn still running — detach. The core self-terminates once
+				// the turn completes (Serve's dispatchWG drains, defers run).
+			}
 		}
 		close(c.events)
 	})

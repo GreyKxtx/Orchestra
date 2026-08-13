@@ -157,6 +157,18 @@ func (cb *CircuitBreaker) RecordToolError(toolName string) *protocol.Error {
 	return cb.Record(ErrorKindToolError, RecordMeta{ToolName: toolName})
 }
 
+// RecordToolErrorDetail is RecordToolError with the error text preserved, so
+// step.classified entries in llm_log.jsonl carry an actionable detail.
+// The text goes through Detail (not Err) on purpose: Classify must not
+// reinterpret an in-process tool failure as another error kind.
+func (cb *CircuitBreaker) RecordToolErrorDetail(toolName string, err error) *protocol.Error {
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	return cb.Record(ErrorKindToolError, RecordMeta{ToolName: toolName, Detail: detail})
+}
+
 func (cb *CircuitBreaker) recordToolError(toolName string) *protocol.Error {
 	cb.consecutiveToolErrs++
 	if cb.consecutiveToolErrs > cb.maxToolErr {

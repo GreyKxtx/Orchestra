@@ -415,7 +415,8 @@
         btn.className = "menu-item" + (id === activeModel && p.active ? " selected" : "");
         btn.setAttribute("data-model", id);
         btn.setAttribute("data-provider", p.key);
-        btn.innerHTML = id;
+        // textContent, not innerHTML: model ids come from a remote catalog.
+        btn.textContent = id;
         btn.title = id;
         modelMenuList.appendChild(btn);
       });
@@ -451,7 +452,8 @@
       btn.type = "button";
       btn.className = "menu-item" + (id === currentModel ? " selected" : "");
       btn.setAttribute("data-model", id);
-      btn.innerHTML = id;
+      // textContent, not innerHTML: model ids come from a remote catalog.
+      btn.textContent = id;
       btn.title = id;
       modelMenuList.appendChild(btn);
     });
@@ -468,6 +470,99 @@
   contextBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     showContextPopover(!ctxPopoverOpen);
+  });
+
+  // ---- Spend / balance chip (provider-reported cost, OpenRouter balance) ----
+
+  /** Format a USD amount compactly: $1.24, $0.031, <$0.001. */
+  function formatUsd(v) {
+    if (!(typeof v === "number") || !isFinite(v) || v <= 0) {
+      return "$0.00";
+    }
+    if (v < 0.001) {
+      return "<$0.001";
+    }
+    if (v < 0.1) {
+      return "$" + v.toFixed(3);
+    }
+    return "$" + v.toFixed(2);
+  }
+
+  function shortModelName(id) {
+    const parts = String(id || "").split("/");
+    return parts[parts.length - 1] || String(id || "");
+  }
+
+  function renderCostChip() {
+    if (!costWrap) {
+      return;
+    }
+    const liveTotal = sessionCostUSD + turnCostAccum;
+    const hasSpend = liveTotal > 0 || (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0);
+    const hasBalance = !!(creditsInfo && creditsInfo.supported);
+    if (!hasSpend && !hasBalance) {
+      costWrap.classList.add("hidden");
+      return;
+    }
+    costWrap.classList.remove("hidden");
+    if (costLabelEl) {
+      costLabelEl.textContent = hasSpend ? formatUsd(liveTotal) : formatUsd(creditsInfo?.balance || 0);
+      costLabelEl.title = hasSpend ? "Session spend" : "Balance";
+    }
+    if (costBalanceEl) {
+      costBalanceEl.textContent = hasBalance ? "balance " + formatUsd(creditsInfo?.balance || 0) : "";
+    }
+    if (costSummaryEl) {
+      const bits = [];
+      bits.push("session " + formatUsd(liveTotal));
+      if (turnCostAccum > 0) {
+        bits.push("current turn " + formatUsd(turnCostAccum));
+      } else if (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0) {
+        bits.push("last turn " + formatUsd(lastTurnUsage.cost_usd));
+      }
+      costSummaryEl.textContent = bits.join(" · ");
+    }
+    if (costRowsEl) {
+      costRowsEl.innerHTML = "";
+      const entries = (lastTurnUsage && Array.isArray(lastTurnUsage.entries)) ? lastTurnUsage.entries : [];
+      entries.forEach((en) => {
+        const row = document.createElement("div");
+        row.className = "cost-row";
+        const name = document.createElement("span");
+        name.className = "cost-row-model";
+        name.textContent = shortModelName(en.model);
+        name.title = (en.provider ? en.provider + " / " : "") + (en.model || "");
+        const meta = document.createElement("span");
+        meta.className = "cost-row-meta";
+        const calls = typeof en.calls === "number" && en.calls > 0 ? en.calls + "× · " : "";
+        const toks = typeof en.total_tokens === "number" && en.total_tokens > 0
+          ? Math.round(en.total_tokens / 1000) + "k tok · "
+          : "";
+        meta.textContent = calls + toks + formatUsd(en.cost_usd || 0);
+        row.appendChild(name);
+        row.appendChild(meta);
+        costRowsEl.appendChild(row);
+      });
+    }
+  }
+
+  let costPopoverOpen = false;
+  function showCostPopover(show) {
+    costPopoverOpen = show;
+    costPopover?.classList.toggle("hidden", !show);
+    costBtn?.classList.toggle("open", show);
+  }
+  costBtn?.addEventListener("mouseenter", () => showCostPopover(true));
+  costBtn?.addEventListener("mouseleave", () => {
+    window.setTimeout(() => {
+      if (!costPopover?.matches(":hover")) showCostPopover(false);
+    }, 120);
+  });
+  costPopover?.addEventListener("mouseenter", () => showCostPopover(true));
+  costPopover?.addEventListener("mouseleave", () => showCostPopover(false));
+  costBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showCostPopover(!costPopoverOpen);
   });
 
   sendBtn?.addEventListener("click", send);

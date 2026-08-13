@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,4 +55,35 @@ func TestLogger_NilSafe(t *testing.T) {
 	l.LogStepClassified(1, "tool_failed", "read", "boom")
 	l.LogToolCall("x", 1)
 	l.LogToolResult("x", 0, 0, "err")
+}
+
+// TestSanitizeSecrets: key material in previews, error bodies and URLs must
+// never survive into llm_log.jsonl (users attach these logs to bug reports).
+func TestSanitizeSecrets(t *testing.T) {
+	cases := []struct {
+		in       string
+		mustHide string
+	}{
+		{`Authorization: Bearer sk-or-v1-abcdef1234567890`, "sk-or-v1-abcdef1234567890"},
+		{`{"api_key":"sk-live-XYZ"}`, "sk-live-XYZ"},
+		{`{"authorization":"Basic dXNlcjpwYXNz"}`, "dXNlcjpwYXNz"},
+		{`error: invalid key sk-ant-api03-verylongkeymaterial`, "sk-ant-api03-verylongkeymaterial"},
+		{`https://generativelanguage.googleapis.com/v1?key=AIzaSyABCDEF1234567890abcdef`, "AIzaSyABCDEF1234567890abcdef"},
+		{`https://api.example.com/v1?api_key=secret123&x=1`, "secret123"},
+		{`token ghp_abcdefghijklmnopqrstuvwxyz123456`, "ghp_abcdefghijklmnopqrstuvwxyz123456"},
+	}
+	for _, c := range cases {
+		out := sanitizeSecrets(c.in)
+		if out == c.in {
+			t.Errorf("not sanitized: %q", c.in)
+		}
+		if strings.Contains(out, c.mustHide) {
+			t.Errorf("secret leaked: %q -> %q", c.in, out)
+		}
+	}
+	// Plain text must pass through untouched.
+	plain := "hello world, no secrets here"
+	if got := sanitizeSecrets(plain); got != plain {
+		t.Errorf("plain text mangled: %q", got)
+	}
 }

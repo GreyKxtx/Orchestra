@@ -85,6 +85,18 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	a.restorePromptTokensFromSession()
 	a.updateStatusHints()
 
+	// Cross-process turn state (resilience follow-up): a detached background
+	// core may still be finishing a paid turn, or the previous holder died.
+	if got.ExternalTurn {
+		a.session.AppendSystemNotice(state.SystemKindInfo,
+			"Предыдущий ход этой сессии ещё завершается в фоновом процессе — новый ход будет отклонён, пока он не закончит. Переоткройте сессию позже, чтобы увидеть результат.")
+		a.chat.SetMessages(a.session.Messages)
+	} else if got.Interrupted {
+		a.session.AppendSystemNotice(state.SystemKindInfo,
+			"Предыдущий ход был прерван (процесс завершился аварийно). История сохранена до последнего выполненного шага.")
+		a.chat.SetMessages(a.session.Messages)
+	}
+
 	// Surface whether agent LLM history actually came back. UI scrollback can
 	// look full while history_len=0 (failed turns used to skip ReplaceHistory).
 	if m.restored || got.HistoryLen > 0 || len(got.UIMessages) > 0 || len(a.session.Messages) > 0 {

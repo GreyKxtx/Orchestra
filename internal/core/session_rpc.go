@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,6 +102,15 @@ type SessionGetResult struct {
 	HistoryLen int                     `json:"history_len"`
 	HasPending bool                    `json:"has_pending,omitempty"`
 	Restored   bool                    `json:"restored,omitempty"`
+	// ExternalTurn is true while another core process (detached background
+	// core) is still running a turn on this session. UIs should show a
+	// neutral notice and poll session.get until it clears — the refreshed
+	// history is picked up automatically.
+	ExternalTurn bool `json:"external_turn,omitempty"`
+	ExternalPID  int  `json:"external_pid,omitempty"`
+	// Interrupted is true when a previous turn holder died mid-turn (stale
+	// lock reclaimed). History is preserved up to the last persisted step.
+	Interrupted bool `json:"interrupted,omitempty"`
 }
 
 // SessionGet returns the unified v2 session view for TUI reopen.
@@ -111,24 +121,49 @@ func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
 	if strings.TrimSpace(params.SessionID) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
 	}
+	// Pick up snapshots written by a detached background core since we
+	// last loaded this session.
+	c.sessions.RefreshFromDiskIfNewer(c.workspaceRoot, params.SessionID)
+
 	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
 	}
+
+	// Turn-lock state: is another process still finishing a turn here?
+	externalTurn := false
+	externalPID := 0
+	interrupted := false
+	if info, stale := coresession.CheckTurnLock(c.workspaceRoot, params.SessionID); info != nil {
+		switch {
+		case stale:
+			// Holder died mid-turn. History is intact up to the last
+			// persisted step (mid-turn snapshots); reclaim the lock.
+			coresession.ClearStaleTurnLock(c.workspaceRoot, params.SessionID)
+			interrupted = true
+		case info.PID != os.Getpid():
+			externalTurn = true
+			externalPID = info.PID
+		}
+	}
+
 	sess.Lock()
 	defer sess.Unlock()
 	ui := sess.UIMessages()
 	return &SessionGetResult{
-		SessionID:  sess.ID,
-		Title:      sess.Title(),
-		Model:      sess.Model(),
-		UIMessages: ui,
-		Todos:      sess.CopyTodos(),
-		PlanPath:   sess.PlanPath(),
-		CostUSD:    sess.CostUSD(),
-		HistoryLen: len(sess.History),
-		HasPending: sess.HasPending(),
-		Restored:   sessionLooksRestoredLocked(sess),
+		SessionID:    sess.ID,
+		Title:        sess.Title(),
+		Model:        sess.Model(),
+		UIMessages:   ui,
+		Todos:        sess.CopyTodos(),
+		PlanPath:     sess.PlanPath(),
+		CostUSD:      sess.CostUSD(),
+		HistoryLen:   len(sess.History),
+		HasPending:   sess.HasPending(),
+		Restored:     sessionLooksRestoredLocked(sess),
+		ExternalTurn: externalTurn,
+		ExternalPID:  externalPID,
+		Interrupted:  interrupted,
 	}, nil
 }
 
@@ -245,6 +280,8 @@ type SessionMessageResult struct {
 
 	// Usage summarises token consumption for this turn.
 	Usage *UsageSnapshot `json:"usage,omitempty"`
+	// SessionCostUSD is the accumulated spend for the whole session so far.
+	SessionCostUSD float64 `json:"session_cost_usd,omitempty"`
 
 	EffectiveMode string `json:"effective_mode,omitempty"`
 	RoutedFrom    string `json:"routed_from,omitempty"`
@@ -282,10 +319,36 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 
+	// A detached background core may have finished a turn and written a newer
+	// snapshot since we loaded this session — pick it up before starting.
+	c.sessions.RefreshFromDiskIfNewer(c.workspaceRoot, params.SessionID)
+
 	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
 	}
+
+	// Cross-process turn lock: refuse to run a second turn on the same
+	// session while a detached core is still finishing one — two parallel
+	// agents would burn tokens twice and race on the snapshot file.
+	releaseTurnLock, lockErr := coresession.AcquireTurnLock(c.workspaceRoot, params.SessionID)
+	if lockErr != nil {
+		var active *coresession.TurnActiveError
+		if errors.As(lockErr, &active) {
+			msg := "session is busy"
+			if active.PID != os.Getpid() {
+				msg = fmt.Sprintf("предыдущий ход этой сессии ещё завершается в фоновом процессе (pid %d) — подождите несколько секунд и повторите", active.PID)
+			}
+			return nil, protocol.NewError(protocol.ExecFailed, msg, map[string]any{
+				"session_id": params.SessionID,
+				"holder_pid": active.PID,
+			})
+		}
+		// Lock is advisory: a filesystem error must not block the turn.
+		fmt.Fprintf(os.Stderr, "core: session %s turn lock: %v\n", params.SessionID, lockErr)
+		releaseTurnLock = func() {}
+	}
+	defer releaseTurnLock()
 
 	// Prevent concurrent turns on the same session.
 	sess.Lock()
@@ -365,6 +428,28 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		}
 	}
 
+	// Mid-turn history persistence (resilience audit P2): snapshot the
+	// accumulated agent history after tool steps (throttled) so a crash or
+	// kill mid-turn loses at most a few seconds of LLM work instead of the
+	// whole turn. persistSessionTurn below remains authoritative at turn end.
+	// OnStepHistory is invoked synchronously from the single agent-loop
+	// goroutine, so lastStepPersist needs no lock.
+	const stepPersistInterval = 5 * time.Second
+	var lastStepPersist time.Time
+	launch.Opts.OnStepHistory = func(_ int, hist []llm.Message) {
+		if time.Since(lastStepPersist) < stepPersistInterval {
+			return
+		}
+		lastStepPersist = time.Now()
+		sess.Lock()
+		sess.ReplaceHistory(hist)
+		snapErr := sess.Snapshot(c.workspaceRoot)
+		sess.Unlock()
+		if snapErr != nil {
+			fmt.Fprintf(os.Stderr, "core: session %s mid-turn history snapshot failed: %v\n", sess.ID, snapErr)
+		}
+	}
+
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
 		return nil, err
@@ -376,6 +461,16 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	}
 	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
 	profileName := launch.Profile
+
+	// Accumulate this turn's spend into the session before the snapshot so
+	// clients (VS Code, TUI reopen) see the running total. TUI's ui_sync may
+	// later overwrite with its own accumulated value — both track the same
+	// per-turn usage, so last-writer-wins is fine.
+	if _, _, _, _, turnCost := launch.Usage.Total(); turnCost > 0 {
+		sess.Lock()
+		sess.SetCostUSD(sess.CostUSD() + turnCost)
+		sess.Unlock()
+	}
 
 	// Always persist whatever history we have — including failed turns.
 	// Previously err != nil skipped ReplaceHistory, so TUI reopen showed the
@@ -401,6 +496,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Todos:            res.Todos,
 		PlanPath:         launch.Opts.PlanPath,
 		Usage:            usageSnapshotFrom(launch.Usage),
+		SessionCostUSD:   sess.CostUSD(),
 		EffectiveMode:    launch.EffectiveMode,
 		StopReason:       res.StopReason,
 		MaxStepsExceeded: res.MaxStepsExceeded,
@@ -794,6 +890,7 @@ func (c *Core) SessionHistory(params SessionHistoryParams) (*SessionHistoryResul
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
+	c.sessions.RefreshFromDiskIfNewer(c.workspaceRoot, params.SessionID)
 	sess, err := c.sessions.GetOrLoad(c.workspaceRoot, params.SessionID)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})

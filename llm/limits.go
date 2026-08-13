@@ -65,7 +65,9 @@ func DiscoverModelLimits(ctx context.Context, cfg LLMConfig) (ModelLimits, error
 // configured num_ctx:
 //
 //   - unset num_ctx  → fill with server max
-//   - user ≤ server  → keep user (intentional smaller window / RAM)
+//   - user ≤ server  → keep user, but only for local providers (intentional
+//     smaller window / RAM); cloud providers trust the server-reported window
+//     so a stale num_ctx from an old local setup cannot shrink e.g. a 1M model
 //   - user > server  → clamp down to server (avoid 400 overflow)
 //
 // Also clamps max_tokens to the effective window and syncs ModelPresets[model].NumCtx
@@ -81,12 +83,8 @@ func ApplyDiscoveredLimits(cfg *LLMConfig, lim ModelLimits) bool {
 
 	user := userConfiguredNumCtx(cfg)
 	target := lim.ContextTokens
-	if user > 0 {
-		if user < lim.ContextTokens {
-			target = user
-		} else {
-			target = lim.ContextTokens
-		}
+	if user > 0 && user < lim.ContextTokens && providerHonorsUserWindow(cfg.Provider) {
+		target = user
 	}
 
 	prevExtra := contextLenFromExtra(cfg.ExtraBody)
@@ -113,6 +111,23 @@ func ApplyDiscoveredLimits(cfg *LLMConfig, lim ModelLimits) bool {
 		changed = true
 	}
 	return changed
+}
+
+// providerHonorsUserWindow reports whether a user num_ctx below the server
+// window should be kept. For local runtimes (ollama, lmstudio, vllm, custom)
+// num_ctx reflects real RAM/KV-cache limits. For known cloud providers the
+// value is usually a leftover from an earlier local setup, and the
+// provider-reported context window is authoritative. Unknown/empty providers
+// keep the conservative local behavior.
+func providerHonorsUserWindow(provider string) bool {
+	p := strings.TrimSpace(provider)
+	if p == "" {
+		return true
+	}
+	if cat, ok := FindCatalogProvider(p); ok {
+		return cat.Local
+	}
+	return true
 }
 
 // userConfiguredNumCtx returns the operator's intended window: preset for the

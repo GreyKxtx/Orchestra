@@ -1,8 +1,18 @@
   function escapeHtml(text) {
+    // Quotes must be escaped too: escaped text is interpolated into
+    // attribute values (e.g. link href) — an unescaped `"` would break out
+    // of the attribute (XSS defense-in-depth on top of the CSP).
     return String(text || "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  /** Only allow benign navigation schemes in model-authored links. */
+  function safeLinkHref(url) {
+    return /^(https?:|mailto:)/i.test(url) ? url : "";
   }
 
   /** @param {string} s */
@@ -11,10 +21,14 @@
     x = x.replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>');
     x = x.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
     x = x.replace(/(?<![*])\*([^*\n]+)\*(?![*])/g, "<em>$1</em>");
-    x = x.replace(
-      /\[([^\]]+)\]\(([^)\s]+)\)/g,
-      '<a class="md-link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-    );
+    x = x.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label, url) => {
+      const href = safeLinkHref(url);
+      if (!href) {
+        // javascript:, command:, data: etc. — render as plain text.
+        return `${label} (${url})`;
+      }
+      return `<a class="md-link" href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    });
     return x;
   }
 

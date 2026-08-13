@@ -106,3 +106,61 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 		t.Fatal("ops.apply should complete after session.message releases runMu")
 	}
 }
+
+// TestReadOnlyListsRespondDuringTurn: agents.list and mcp.list are read-only
+// and must NOT queue behind runMu while a session.message turn is in flight
+// (regression: the settings UI got "rpc timeout after 15000ms: agents.list"
+// whenever it was opened during a long orchestra run).
+func TestReadOnlyListsRespondDuringTurn(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	_, h := setupInitializedCore(t, root, &gateLLM{release: release, entered: entered})
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	startRes, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := startRes.(*SessionStartResult).SessionID
+
+	msgP, _ := json.Marshal(SessionMessageParams{SessionID: sessionID, Content: "hello"})
+	msgDone := make(chan error, 1)
+	go func() {
+		_, err := h.Handle(context.Background(), "session.message", msgP)
+		msgDone <- err
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session.message did not reach LLM Complete")
+	}
+
+	// Turn is in flight and holds runMu — the list RPCs must still answer.
+	for _, method := range []string{"agents.list", "mcp.list"} {
+		done := make(chan error, 1)
+		go func(m string) {
+			_, err := h.Handle(context.Background(), m, json.RawMessage(`{}`))
+			done <- err
+		}(method)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("%s during turn: %v", method, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s blocked behind runMu during an in-flight turn", method)
+		}
+	}
+
+	close(release)
+	select {
+	case err := <-msgDone:
+		if err != nil {
+			t.Fatalf("session.message: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session.message did not complete")
+	}
+}

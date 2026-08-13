@@ -17,7 +17,13 @@ func (s *Session) Snapshot(workspaceRoot string) error {
 		return nil
 	}
 	snap := s.toSnapshot()
-	return sessionfile.Save(workspaceRoot, snap)
+	if err := sessionfile.Save(workspaceRoot, snap); err != nil {
+		return err
+	}
+	// Save stamps snap.UpdatedAt with the write time; remember it so
+	// RefreshFromDiskIfNewer never treats our own write as external.
+	s.lastSnapshotAt = snap.UpdatedAt
+	return nil
 }
 
 func (s *Session) toSnapshot() *sessionfile.Snapshot {
@@ -74,11 +80,13 @@ func sessionFromSnapshot(snap *sessionfile.Snapshot) *Session {
 	if s.uiMessages == nil {
 		s.uiMessages = make([]sessionfile.UIMessage, 0, 8)
 	}
+	s.lastSnapshotAt = snap.UpdatedAt
 	return s
 }
 
-// DeleteSnapshot removes the on-disk snapshot for id.
+// DeleteSnapshot removes the on-disk snapshot for id (and its turn lock).
 func DeleteSnapshot(workspaceRoot, id string) error {
+	_ = os.Remove(turnLockPath(workspaceRoot, id))
 	return sessionfile.Delete(workspaceRoot, id)
 }
 
@@ -157,6 +165,54 @@ func todosFromFile(items []sessionfile.TodoItem) []tools.TodoItem {
 		}
 	}
 	return out
+}
+
+// RefreshFromDiskIfNewer replaces the in-memory session state with the
+// on-disk snapshot when another process wrote a newer version — the typical
+// case is a detached background core that finished an agent turn after this
+// core already loaded the session. No-op when the session is not cached,
+// is busy with a local turn, or the disk version is not newer than what we
+// last synced with. Returns true when the state was refreshed.
+func (m *Manager) RefreshFromDiskIfNewer(workspaceRoot, id string) bool {
+	if workspaceRoot == "" || id == "" {
+		return false
+	}
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok {
+		// Not cached — the next GetOrLoad reads the latest snapshot anyway.
+		return false
+	}
+	snap, err := sessionfile.Load(workspaceRoot, id)
+	if err != nil || snap.Version != sessionfile.Version {
+		return false
+	}
+
+	s.Lock()
+	defer s.Unlock()
+	if s.IsBusy() {
+		// Never clobber a running local turn.
+		return false
+	}
+	if !snap.UpdatedAt.After(s.lastSnapshotAt) {
+		return false
+	}
+	fresh := sessionFromSnapshot(snap)
+	s.History = fresh.History
+	s.CreatedAt = fresh.CreatedAt
+	s.LastActivity = fresh.LastActivity
+	s.pendingOps = fresh.pendingOps
+	s.todos = fresh.todos
+	s.planPath = fresh.planPath
+	s.title = fresh.title
+	s.model = fresh.model
+	s.uiMessages = fresh.uiMessages
+	s.profile = fresh.profile
+	s.applyOutput = fresh.applyOutput
+	s.costUSD = fresh.costUSD
+	s.lastSnapshotAt = fresh.lastSnapshotAt
+	return true
 }
 
 // LoadOrCreate returns an existing session if a snapshot is present,

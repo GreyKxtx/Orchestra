@@ -24,12 +24,27 @@
         setChromeHint("", false);
         setBusy(false);
         break;
+      case "turnInFlight":
+        // Webview was rebuilt (e.g. returning from Settings) while the agent
+        // turn is still running — re-arm the busy UI before the replayed
+        // projection arrives.
+        setBusy(true);
+        break;
       case "header":
+        if (msg.sessionId && msg.sessionId !== activeSessionId) {
+          // Session switch: drop the previous session's turn breakdown.
+          lastTurnUsage = null;
+          turnCostAccum = 0;
+        }
         activeSessionId = msg.sessionId || activeSessionId;
         updateActiveTabTitle(msg.title || "New chat");
         setModelLabel(msg.model || "");
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
+        }
+        if (typeof msg.sessionCost === "number") {
+          sessionCostUSD = msg.sessionCost;
+          renderCostChip();
         }
         if (modeId === "orchestra") {
           // Keep the tier breakdown pill; header carries the single main model.
@@ -184,7 +199,7 @@
         break;
       case "history": {
         const list = Array.isArray(msg.messages) ? msg.messages : [];
-        list.forEach((m) => {
+        const renderOne = (m) => {
           const role = m.role === "user" ? "user" : m.role === "system" ? "error" : "assistant";
           const opts = {
             uiIndex: typeof m.uiIndex === "number" ? m.uiIndex : undefined,
@@ -193,7 +208,42 @@
             toolBlocks: Array.isArray(m.toolBlocks) ? m.toolBlocks : undefined,
           };
           appendMsg(role, m.text || "", opts);
-        });
+        };
+        // Long sessions: render only the tail eagerly. Hundreds of markdown
+        // bubbles + diff cards freeze the webview for seconds; older messages
+        // expand on demand.
+        const HISTORY_RENDER_CAP = 60;
+        if (list.length > HISTORY_RENDER_CAP) {
+          const hidden = list.slice(0, list.length - HISTORY_RENDER_CAP);
+          const shown = list.slice(list.length - HISTORY_RENDER_CAP);
+          const moreBtn = document.createElement("button");
+          moreBtn.type = "button";
+          moreBtn.className = "history-more";
+          moreBtn.textContent = `Show ${hidden.length} older messages`;
+          moreBtn.addEventListener("click", () => {
+            moreBtn.remove();
+            const frag = document.createDocumentFragment();
+            const anchor = messagesEl?.firstChild || null;
+            // Temporarily redirect appendMsg output by rendering then moving:
+            // simplest correct approach — render into the live container and
+            // reinsert before the previously-first node in order.
+            const beforeCount = messagesEl ? messagesEl.childNodes.length : 0;
+            hidden.forEach(renderOne);
+            if (messagesEl && anchor) {
+              const added = [];
+              for (let i = beforeCount; i < messagesEl.childNodes.length; i++) {
+                added.push(messagesEl.childNodes[i]);
+              }
+              added.forEach((n) => frag.appendChild(n));
+              messagesEl.insertBefore(frag, anchor);
+            }
+            void syncToolDiffPreviews();
+          });
+          messagesEl?.appendChild(moreBtn);
+          shown.forEach(renderOne);
+        } else {
+          list.forEach(renderOne);
+        }
         void syncToolDiffPreviews();
         break;
       }
@@ -287,10 +337,45 @@
         break;
       case "stepUsage": {
         const u = msg.usage || {};
-        ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
-        ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
-        ctxState.estimated = u.source === "estimate";
-        renderContextUi();
+        if (msg.scope !== "child") {
+          // Context gauge tracks the main agent only; worker windows differ.
+          ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
+          ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
+          ctxState.estimated = u.source === "estimate";
+          if (Array.isArray(u.breakdown) && u.breakdown.length > 0) {
+            ctxState.breakdown = u.breakdown;
+          }
+          renderContextUi();
+        }
+        // Live spend: each finished LLM call (planner step, worker step)
+        // reports its cost here — update the chip mid-turn instead of
+        // waiting for the end-of-turn turnUsage summary.
+        if (typeof u.cost_usd === "number" && u.cost_usd > 0) {
+          turnCostAccum += u.cost_usd;
+          renderCostChip();
+        }
+        break;
+      }
+      case "turnUsage": {
+        // Server total is authoritative — drop the live per-step estimate.
+        turnCostAccum = 0;
+        lastTurnUsage = msg.usage || null;
+        if (typeof msg.sessionCost === "number" && msg.sessionCost > 0) {
+          sessionCostUSD = msg.sessionCost;
+        } else if (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0) {
+          sessionCostUSD += lastTurnUsage.cost_usd;
+        }
+        renderCostChip();
+        appendTurnCostNote(lastTurnUsage);
+        break;
+      }
+      case "credits": {
+        creditsInfo = {
+          supported: msg.supported === true,
+          provider: msg.provider || "",
+          balance: typeof msg.balance === "number" ? msg.balance : 0,
+        };
+        renderCostChip();
         break;
       }
       case "contextInfo": {
@@ -395,6 +480,34 @@
         break;
     }
   });
+
+  /**
+   * Small grey transcript note with the turn cost. In orchestra mode (or any
+   * multi-model turn) each model gets its own "model $cost · N×" segment so
+   * it is clear what each tier position cost.
+   */
+  function appendTurnCostNote(usage) {
+    if (!messagesEl || !usage) {
+      return;
+    }
+    const cost = typeof usage.cost_usd === "number" ? usage.cost_usd : 0;
+    if (cost <= 0) {
+      return;
+    }
+    const entries = Array.isArray(usage.entries) ? usage.entries : [];
+    const parts = ["turn " + formatUsd(cost)];
+    if (entries.length > 1 || (modeId === "orchestra" && entries.length > 0)) {
+      entries.forEach((en) => {
+        const calls = typeof en.calls === "number" && en.calls > 1 ? " ×" + en.calls : "";
+        parts.push(shortModelName(en.model) + " " + formatUsd(en.cost_usd || 0) + calls);
+      });
+    }
+    const el = document.createElement("div");
+    el.className = "usage-note";
+    el.textContent = parts.join("   ·   ");
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
 
   document.addEventListener("keydown", (e) => {
     if (!diffReviewActive()) return;

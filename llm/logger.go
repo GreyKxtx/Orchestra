@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"time"
 )
 
@@ -66,7 +67,7 @@ func (l *Logger) LogRequest(url, model string, timeoutS int, requestBytes int, t
 	entry := LLMLogEntry{
 		TSUnix:         time.Now().Unix(),
 		Event:          "llm_request",
-		URL:            url,
+		URL:            sanitizeSecrets(url),
 		Model:          model,
 		TimeoutS:       timeoutS,
 		RequestBytes:   requestBytes,
@@ -165,6 +166,11 @@ func (l *Logger) LogStepClassified(step int, kind, toolName, detail string) {
 // llm_log.jsonl.1 (one old generation kept), so the log never grows unbounded.
 const maxLogBytes = 5 << 20 // 5 MB
 
+// appendMu serializes append+rotate across goroutines. Parallel workers share
+// one logger; without the lock the separate body/newline writes interleave
+// and corrupt the JSONL stream ({"a":1}{"b":2}\n\n).
+var appendMu sync.Mutex
+
 func (l *Logger) appendLog(entry LLMLogEntry) {
 	// Ensure directory exists
 	dir := filepath.Dir(l.logPath)
@@ -172,13 +178,17 @@ func (l *Logger) appendLog(entry LLMLogEntry) {
 		return // Best-effort, don't fail on logging errors
 	}
 
-	rotateIfLarge(l.logPath, maxLogBytes)
-
-	// Append to JSONL file
+	// Marshal before taking the lock; a single write keeps each JSONL line atomic.
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return
 	}
+	data = append(data, '\n')
+
+	appendMu.Lock()
+	defer appendMu.Unlock()
+
+	rotateIfLarge(l.logPath, maxLogBytes)
 
 	file, err := os.OpenFile(l.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -186,8 +196,7 @@ func (l *Logger) appendLog(entry LLMLogEntry) {
 	}
 	defer file.Close()
 
-	file.Write(data)
-	file.WriteString("\n")
+	_, _ = file.Write(data)
 }
 
 // rotateIfLarge renames path to path+".1" (replacing a previous generation)
@@ -228,14 +237,22 @@ func truncateAndSanitize(s string, maxBytes int) string {
 
 var (
 	reBearer    = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-]+`)
-	reAPIKeyDbl = regexp.MustCompile(`(?i)("api_key"\s*:\s*")[^"]*("?)`)
-	reAPIKeySgl = regexp.MustCompile(`(?i)('api_key'\s*:\s*')[^']*('?)`)
+	reAPIKeyDbl = regexp.MustCompile(`(?i)("(?:api_key|apikey|api-key|authorization|x-api-key)"\s*:\s*")[^"]*("?)`)
+	reAPIKeySgl = regexp.MustCompile(`(?i)('(?:api_key|apikey|api-key|authorization|x-api-key)'\s*:\s*')[^']*('?)`)
+	// Bare provider key material that can be echoed back in error bodies:
+	// OpenAI/OpenRouter (sk-, sk-or-v1-), Anthropic (sk-ant-), Google (AIza…),
+	// GitHub (ghp_/gho_), generic 32+ char hex-ish tokens after key= params.
+	reBareKey  = regexp.MustCompile(`\b(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b`)
+	reURLToken = regexp.MustCompile(`(?i)([?&](?:key|api_key|apikey|token|access_token)=)[^&\s"']+`)
 )
 
-// sanitizeSecrets removes Bearer tokens and api_key values from strings.
+// sanitizeSecrets removes Bearer tokens, api_key values and bare key
+// material from strings before they land in llm_log.jsonl.
 func sanitizeSecrets(s string) string {
 	s = reBearer.ReplaceAllString(s, "${1}***")
 	s = reAPIKeyDbl.ReplaceAllString(s, "${1}***${2}")
 	s = reAPIKeySgl.ReplaceAllString(s, "${1}***${2}")
+	s = reBareKey.ReplaceAllString(s, "***")
+	s = reURLToken.ReplaceAllString(s, "${1}***")
 	return s
 }

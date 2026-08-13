@@ -47,6 +47,12 @@ export interface SessionView {
   title: string;
   model: string;
   uiMessages: RawUIMessage[];
+  /** Accumulated session spend in USD (0 when unknown). */
+  costUSD: number;
+  /** A detached background core is still finishing a turn on this session. */
+  externalTurn: boolean;
+  /** A previous turn holder died mid-turn; history kept up to the last persisted step. */
+  interrupted: boolean;
 }
 
 export interface ModelInfo {
@@ -386,12 +392,18 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       title?: string;
       model?: string;
       ui_messages?: RawUIMessage[];
+      cost_usd?: number;
+      external_turn?: boolean;
+      interrupted?: boolean;
     };
     return {
       sessionId: result.session_id || id,
       title: (result.title || "").trim(),
       model: (result.model || "").trim(),
       uiMessages: Array.isArray(result.ui_messages) ? result.ui_messages : [],
+      costUSD: typeof result.cost_usd === "number" ? result.cost_usd : 0,
+      externalTurn: result.external_turn === true,
+      interrupted: result.interrupted === true,
     };
   }
 
@@ -464,6 +476,38 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       model: typeof health.model === "string" ? health.model : "",
       provider: typeof health.provider === "string" ? health.provider : "",
       raw: health,
+    };
+  }
+
+  /** Provider account balance (OpenRouter GET /credits); supported=false for local/plain-OpenAI endpoints. */
+  async credits(provider?: string): Promise<{
+    supported: boolean;
+    provider: string;
+    balance: number;
+    totalCredits: number;
+    totalUsage: number;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const params: Record<string, unknown> = {};
+    if (provider?.trim()) {
+      params.provider = provider.trim();
+    }
+    const r = (await this.client.request("runtime.credits", params, 20_000)) as {
+      supported?: boolean;
+      provider?: string;
+      balance?: number;
+      total_credits?: number;
+      total_usage?: number;
+    };
+    return {
+      supported: r.supported === true,
+      provider: typeof r.provider === "string" ? r.provider : "",
+      balance: typeof r.balance === "number" ? r.balance : 0,
+      totalCredits: typeof r.total_credits === "number" ? r.total_credits : 0,
+      totalUsage: typeof r.total_usage === "number" ? r.total_usage : 0,
     };
   }
 
@@ -1859,11 +1903,16 @@ export function resolveBinaryPath(workspaceRoot: string, extensionPath: string):
     return best;
   }
 
+  const platformArch = `${process.platform}-${process.arch}`;
+  const bundledForThisPlatform = platformArch === "win32-x64";
   throw new Error(
-    `orchestra binary not found (looked for ${exeName} including bundled bin/${process.platform}-${process.arch}/).\n` +
-      `Build: go build -o ${exeName} ./cmd/orchestra\n` +
+    `orchestra binary not found (looked for ${exeName} including bundled bin/${platformArch}/).\n` +
+      (bundledForThisPlatform
+        ? ""
+        : `Note: this VSIX currently ships a core binary only for win32-x64 — on ${platformArch} you must build it yourself.\n`) +
+      `Build on this machine: go build -o ${exeName} ./cmd/orchestra\n` +
       `Or run: npm run bundle:core (from ui/vscode)\n` +
-      `Or set Settings → Orchestra: Binary Path.`
+      `Or set Settings → Orchestra: Binary Path to an existing build.`
   );
 }
 

@@ -66,6 +66,13 @@ func NewTracker(runID, command string, pricing Pricing) *Tracker {
 // have to check; this makes wiring through agent.Options safe even when
 // telemetry is disabled.
 func (t *Tracker) Record(provider, model string, prompt, completion int) {
+	t.RecordCost(provider, model, prompt, completion, 0)
+}
+
+// RecordCost is Record with a provider-reported cost (USD). When the provider
+// returns real cost (OpenRouter usage accounting), it wins over the local
+// pricing table; zero falls back to the pricing calculation.
+func (t *Tracker) RecordCost(provider, model string, prompt, completion int, providerCostUSD float64) {
 	if t == nil {
 		return
 	}
@@ -87,7 +94,9 @@ func (t *Tracker) Record(provider, model string, prompt, completion int) {
 	e.PromptTokens += prompt
 	e.CompletionTokens += completion
 	e.TotalTokens += prompt + completion
-	if mp, ok := lookupPrice(t.pricing, provider, model); ok {
+	if providerCostUSD > 0 {
+		e.CostUSD += providerCostUSD
+	} else if mp, ok := lookupPrice(t.pricing, provider, model); ok {
 		e.CostUSD += float64(prompt)/1_000_000*mp.InputPer1M + float64(completion)/1_000_000*mp.OutputPer1M
 	}
 }
