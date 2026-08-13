@@ -38,6 +38,7 @@ export interface SessionMeta {
   title: string;
   model?: string;
   msg_count?: number;
+  created_at?: string;
   updated_at?: string;
 }
 

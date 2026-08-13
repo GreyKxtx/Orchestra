@@ -3793,6 +3793,16 @@
   sessionMenu?.addEventListener("click", (e) => {
     e.stopPropagation();
     const t = /** @type {HTMLElement} */ (e.target);
+    // Delete is nested inside the row — check it first so the click does not
+    // also open the session. The menu stays open; the host pushes a fresh list.
+    const delEl = t.closest("[data-delete-session]");
+    if (delEl) {
+      const delId = delEl.getAttribute("data-delete-session");
+      if (delId) {
+        vscode.postMessage({ type: "deleteSession", sessionId: delId });
+      }
+      return;
+    }
     const item = t.closest("[data-session-action], [data-session-id]");
     if (!item) {
       return;
@@ -3891,16 +3901,68 @@
           sessionMenuList.appendChild(empty);
           break;
         }
-        sessions.slice(0, 20).forEach((s) => {
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "menu-item";
-          btn.setAttribute("data-session-id", s.id);
-          btn.textContent = s.title || s.id;
-          if (s.model) {
-            btn.title = s.model;
+        /** Timestamp for grouping: prefer updated_at, fall back to the id (YYYYMMDDTHHMMSS-xxxx). */
+        const sessionDate = (s) => {
+          const iso = s.updated_at || s.created_at || "";
+          const d = iso ? new Date(iso) : null;
+          if (d && !Number.isNaN(d.getTime())) {
+            return d;
           }
-          sessionMenuList.appendChild(btn);
+          const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(s.id || "");
+          return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
+        };
+        const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        const now = new Date();
+        const todayKey = dayKey(now);
+        const yesterdayKey = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+        const dayLabel = (d) => {
+          const k = dayKey(d);
+          if (k === todayKey) {
+            return "Today";
+          }
+          if (k === yesterdayKey) {
+            return "Yesterday";
+          }
+          return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+        };
+        let lastGroup = "";
+        sessions.slice(0, 100).forEach((s) => {
+          const d = sessionDate(s);
+          const group = d ? dayLabel(d) : "Older";
+          if (group !== lastGroup) {
+            lastGroup = group;
+            const header = document.createElement("div");
+            header.className = "menu-section";
+            header.textContent = group;
+            sessionMenuList.appendChild(header);
+          }
+          const row = document.createElement("div");
+          row.className = "menu-item session-row";
+          row.setAttribute("role", "button");
+          row.setAttribute("tabindex", "0");
+          row.setAttribute("data-session-id", s.id);
+          row.title = [s.model, s.msg_count ? `${s.msg_count} messages` : ""].filter(Boolean).join(" · ");
+
+          const label = document.createElement("span");
+          label.className = "session-row-title";
+          label.textContent = s.title || s.id;
+          row.appendChild(label);
+
+          if (d) {
+            const time = document.createElement("span");
+            time.className = "session-row-time";
+            time.textContent = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+            row.appendChild(time);
+          }
+
+          const del = document.createElement("span");
+          del.className = "session-row-del";
+          del.setAttribute("data-delete-session", s.id);
+          del.title = "Delete chat";
+          del.textContent = "✕";
+          row.appendChild(del);
+
+          sessionMenuList.appendChild(row);
         });
         break;
       }

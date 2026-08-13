@@ -751,6 +751,16 @@
   sessionMenu?.addEventListener("click", (e) => {
     e.stopPropagation();
     const t = /** @type {HTMLElement} */ (e.target);
+    // Delete is nested inside the row — check it first so the click does not
+    // also open the session. The menu stays open; the host pushes a fresh list.
+    const delEl = t.closest("[data-delete-session]");
+    if (delEl) {
+      const delId = delEl.getAttribute("data-delete-session");
+      if (delId) {
+        vscode.postMessage({ type: "deleteSession", sessionId: delId });
+      }
+      return;
+    }
     const item = t.closest("[data-session-action], [data-session-id]");
     if (!item) {
       return;

@@ -1479,6 +1479,48 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* History menu rows: title · time · delete */
+.session-row {
+  cursor: pointer;
+  user-select: none;
+}
+
+.session-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row-time {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-row-del {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.session-row:hover .session-row-del {
+  opacity: 0.7;
+}
+
+.session-row .session-row-del:hover {
+  opacity: 1;
+  color: #f7768e;
+  background: rgba(247, 118, 142, 0.12);
+}
+
 .menu-row {
   display: flex;
   align-items: center;

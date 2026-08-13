@@ -83,10 +83,22 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   private pendingPermission: PermissionRequestPayload | undefined;
   private pendingQuestions: QuestionItemPayload[] | undefined;
   private lastPendingOps: PendingOpsPayload | undefined;
+  /**
+   * Sessions hidden from the tab strip. Closing a tab must NOT delete the
+   * chat from disk (that is session.close semantics in the core) — deletion
+   * is a separate explicit action in the history menu.
+   */
+  private readonly hiddenTabIds = new Set<string>();
+  private readonly workspaceState: vscode.Memento | undefined;
+  private static readonly HIDDEN_TABS_KEY = "orchestra.hiddenTabIds";
 
-  constructor(session: CoreSession, extensionUri: vscode.Uri) {
+  constructor(session: CoreSession, extensionUri: vscode.Uri, workspaceState?: vscode.Memento) {
     this.session = session;
     this.extensionUri = extensionUri;
+    this.workspaceState = workspaceState;
+    for (const id of workspaceState?.get<string[]>(ChatPanel.HIDDEN_TABS_KEY) ?? []) {
+      this.hiddenTabIds.add(id);
+    }
     this.settings = new SettingsView(session, extensionUri);
     this.settings.bindPost((msg) => {
       void this.webviewTarget()?.postMessage(msg);
@@ -569,18 +581,29 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     });
   }
 
+  private async persistHiddenTabs(): Promise<void> {
+    await this.workspaceState?.update(ChatPanel.HIDDEN_TABS_KEY, [...this.hiddenTabIds]);
+  }
+
   private async refreshSessionTabs(): Promise<void> {
     const activeId = this.session.getSessionId();
     if (!activeId) {
       return;
     }
+    // Opening a previously hidden chat (e.g. from the history menu) unhides it.
+    if (this.hiddenTabIds.delete(activeId)) {
+      await this.persistHiddenTabs();
+    }
     const sessions = this.sortSessionsByRecent(await this.session.listSessions());
-    const tabs = sessions.slice(0, 16).map((s) => ({
-      id: s.id,
-      title: (s.title || "New chat").trim() || "New chat",
-      model: s.model,
-      msg_count: s.msg_count,
-    }));
+    const tabs = sessions
+      .filter((s) => !this.hiddenTabIds.has(s.id))
+      .slice(0, 16)
+      .map((s) => ({
+        id: s.id,
+        title: (s.title || "New chat").trim() || "New chat",
+        model: s.model,
+        msg_count: s.msg_count,
+      }));
     if (!tabs.some((t) => t.id === activeId)) {
       const view = await this.session.getSession(activeId);
       tabs.unshift({
@@ -660,7 +683,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           return;
         }
         case "listSessions": {
-          const sessions = await this.session.listSessions();
+          const sessions = this.sortSessionsByRecent(await this.session.listSessions());
           this.post({
             type: "sessionList",
             sessions: sessions.map((s) => ({
@@ -668,6 +691,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               title: s.title || "New chat",
               model: s.model,
               msg_count: s.msg_count,
+              updated_at: s.updated_at,
+              created_at: s.created_at,
             })),
           });
           return;
@@ -687,14 +712,19 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           return;
         }
         case "closeSession": {
+          // Closing a tab only hides it — the chat stays on disk and remains
+          // reachable from the history menu. Permanent removal is deleteSession.
           const sid = msg.sessionId.trim();
           if (!sid) {
             return;
           }
+          this.hiddenTabIds.add(sid);
+          await this.persistHiddenTabs();
           const active = this.session.getSessionId();
-          await this.session.closeSession(sid);
           if (sid === active) {
-            const remaining = this.sortSessionsByRecent(await this.session.listSessions());
+            const remaining = this.sortSessionsByRecent(await this.session.listSessions()).filter(
+              (s) => !this.hiddenTabIds.has(s.id)
+            );
             if (remaining.length > 0) {
               await this.session.startSession({ sessionId: remaining[0].id });
             } else {
@@ -704,6 +734,55 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           } else {
             await this.refreshSessionTabs();
           }
+          return;
+        }
+        case "deleteSession": {
+          const sid = msg.sessionId.trim();
+          if (!sid) {
+            return;
+          }
+          const sessions = await this.session.listSessions();
+          const meta = sessions.find((s) => s.id === sid);
+          const label = (meta?.title || "").trim() || sid;
+          const choice = await vscode.window.showWarningMessage(
+            `Delete chat "${label}"? This cannot be undone.`,
+            { modal: true },
+            "Delete"
+          );
+          if (choice !== "Delete") {
+            return;
+          }
+          const active = this.session.getSessionId();
+          await this.session.closeSession(sid);
+          if (this.hiddenTabIds.delete(sid)) {
+            await this.persistHiddenTabs();
+          }
+          if (sid === active) {
+            const remaining = this.sortSessionsByRecent(await this.session.listSessions()).filter(
+              (s) => !this.hiddenTabIds.has(s.id)
+            );
+            if (remaining.length > 0) {
+              await this.session.startSession({ sessionId: remaining[0].id });
+            } else {
+              await this.session.startSession({ forceNew: true });
+            }
+            await this.refreshHeaderAndHistory();
+          } else {
+            await this.refreshSessionTabs();
+          }
+          // The history menu is open while deleting — push the updated list.
+          const refreshed = this.sortSessionsByRecent(await this.session.listSessions());
+          this.post({
+            type: "sessionList",
+            sessions: refreshed.map((s) => ({
+              id: s.id,
+              title: s.title || "New chat",
+              model: s.model,
+              msg_count: s.msg_count,
+              updated_at: s.updated_at,
+              created_at: s.created_at,
+            })),
+          });
           return;
         }
         case "listModels": {
@@ -2020,7 +2099,6 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     </header>
     <div id="session-menu" class="menu top-menu" role="menu">
       <button type="button" class="menu-item menu-item-action" data-session-action="new">New chat</button>
-      <div class="menu-section">Recent</div>
       <div id="session-menu-list"></div>
     </div>
     <div id="subagents-bar" class="subagents-bar hidden">

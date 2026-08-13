@@ -5,7 +5,7 @@ import { CoreSession } from "./coreSession";
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Orchestra");
   const session = new CoreSession(output, context.extensionPath, context);
-  const chat = new ChatPanel(session, context.extensionUri);
+  const chat = new ChatPanel(session, context.extensionUri, context.workspaceState);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(

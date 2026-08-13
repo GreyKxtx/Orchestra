@@ -116,6 +116,8 @@ export interface SessionListItem {
   title: string;
   model?: string;
   msg_count?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ChatHistoryToolBlock {
@@ -311,6 +313,7 @@ export type WebviewToHost =
   | { type: "newSession" }
   | { type: "openSession"; sessionId: string }
   | { type: "closeSession"; sessionId: string }
+  | { type: "deleteSession"; sessionId: string }
   | { type: "listModels" }
   | { type: "listProviderModels" }
   | { type: "listOrchestraRoles" }
