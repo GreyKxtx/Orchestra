@@ -61,7 +61,24 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	if strings.EqualFold(a.opts.Profile, ProfileFast) && len(a.opts.CustomTools) == 0 {
 		base = filterFastProfileTools(base)
 	}
-	return base
+	// Mode lists and ExtraTools can overlap (e.g. orchestra mode ships repo_map
+	// and core's ExtraTools appends it again). Strict providers (Anthropic)
+	// reject requests with duplicate tool names, so keep the first occurrence.
+	return dedupToolDefs(base)
+}
+
+// dedupToolDefs removes tools with duplicate names, keeping first occurrences.
+func dedupToolDefs(in []llm.ToolDef) []llm.ToolDef {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, t := range in {
+		if seen[t.Function.Name] {
+			continue
+		}
+		seen[t.Function.Name] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 func filterFastProfileTools(in []llm.ToolDef) []llm.ToolDef {

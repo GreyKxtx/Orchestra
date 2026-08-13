@@ -476,6 +476,15 @@ func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (l
 		if !ok {
 			return nil, "", "", fmt.Errorf("provider %q not found in providers", provider)
 		}
+		// Fail fast with an actionable message instead of letting the request
+		// bounce off the gateway as an opaque 401 ("User not found").
+		if cat, catOK := llm.FindCatalogProvider(provider); catOK && cat.NeedsKey &&
+			strings.TrimSpace(provCfg.APIKey) == "" {
+			return nil, "", "", fmt.Errorf(
+				"provider %q has no api_key configured — add it in Settings → Providers (or providers.%s.api_key in .orchestra.yml)",
+				provider, provider,
+			)
+		}
 		if model != "" {
 			provCfg.Model = model
 		}

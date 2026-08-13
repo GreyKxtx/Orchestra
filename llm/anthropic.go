@@ -117,7 +117,10 @@ func (c *AnthropicClient) Complete(ctx context.Context, req CompleteRequest) (*C
 
 // CompleteStream implements Streamer for the Anthropic Messages API.
 func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteRequest) (<-chan StreamEvent, error) {
-	system, msgs := convertToAnthropic(req.Messages)
+	// Anthropic enforces ^[a-zA-Z0-9_-]{1,128}$ on tool names; MCP tools are
+	// canonically "mcp:server:tool". Rename on the wire, restore on the way back.
+	nameMapper := newToolNameMapper(req.Tools)
+	system, msgs := convertToAnthropic(nameMapper.WireMessages(req.Messages))
 
 	var systemField any = system
 	if system != "" {
@@ -133,7 +136,7 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 		MaxTokens: c.maxTokens,
 		System:    systemField,
 		Messages:  msgs,
-		Tools:     convertTools(req.Tools),
+		Tools:     convertTools(sanitizeWireToolSchemas(nameMapper.WireTools(req.Tools))),
 		Stream:    true,
 	}
 
@@ -172,6 +175,14 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 		defer resp.Body.Close()
 		defer close(out)
 		for ev := range raw {
+			if nameMapper != nil {
+				if ev.Kind == StreamEventToolCallStart {
+					ev.ToolCallName = nameMapper.Restore(ev.ToolCallName)
+				}
+				if ev.Kind == StreamEventDone {
+					nameMapper.RestoreResponse(ev.Response)
+				}
+			}
 			out <- ev
 		}
 	}()

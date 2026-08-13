@@ -567,10 +567,26 @@ func formatAPIError(status int, body string) error {
 		Error struct {
 			Message string `json:"message"`
 			Type    string `json:"type"`
+			// OpenRouter puts the upstream provider's error into metadata
+			// ("Provider returned error" alone is useless for debugging).
+			Metadata struct {
+				Raw          string `json:"raw"`
+				ProviderName string `json:"provider_name"`
+			} `json:"metadata"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(body), &errorResp); err == nil && errorResp.Error.Message != "" {
 		msg = errorResp.Error.Message
+		if raw := strings.TrimSpace(errorResp.Error.Metadata.Raw); raw != "" {
+			if prov := strings.TrimSpace(errorResp.Error.Metadata.ProviderName); prov != "" {
+				msg += fmt.Sprintf(" [%s]", prov)
+			}
+			const maxRaw = 600
+			if len(raw) > maxRaw {
+				raw = raw[:maxRaw] + "…"
+			}
+			msg += ": " + raw
+		}
 	}
 	if strings.Contains(msg, "enable-auto-tool-choice") || strings.Contains(msg, "tool-call-parser") {
 		return fmt.Errorf("request failed (status %d): %s\n\n"+
@@ -679,12 +695,16 @@ type chatCompletionResponse struct {
 }
 
 // buildChatBody assembles the wire JSON for one chat completion request.
+// Tool names invalid on strict providers (Anthropic requires ^[a-zA-Z0-9_-]{1,128}$;
+// MCP tools are canonically "mcp:server:tool") are renamed on the wire; the
+// matching mapper (newToolNameMapper) restores them in the response path.
 func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream bool) ([]byte, error) {
+	mapper := newToolNameMapper(req.Tools)
 	reqBody := chatCompletionRequest{
 		Model:     c.model,
-		Messages:  req.Messages,
+		Messages:  mapper.WireMessages(req.Messages),
 		MaxTokens: maxTok,
-		Tools:     req.Tools,
+		Tools:     sanitizeWireToolSchemas(mapper.WireTools(req.Tools)),
 		Stream:    stream,
 	}
 	if stream {
@@ -898,6 +918,7 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 		msg.Content = strings.TrimSpace(choice.Message.ReasoningContent)
 	}
 	out := &CompleteResponse{Message: msg}
+	newToolNameMapper(req.Tools).RestoreResponse(out)
 	if apiResp.Usage != nil {
 		out.Usage = &TokenUsage{
 			PromptTokens:     apiResp.Usage.PromptTokens,
@@ -1013,6 +1034,9 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	// ParseSSEStream owns reading; we wrap its output to close the body on
 	// finish and to detect stalls (no SSE data for stall duration).
 	raw := ParseSSEStream(streamCtx, resp.Body)
+	// Mirror of the rename done in buildChatBody: the model calls tools by
+	// their wire names; the agent expects canonical registry names.
+	nameMapper := newToolNameMapper(req.Tools)
 	out := make(chan StreamEvent, 16)
 	go func() {
 		defer cancelStream()
@@ -1034,6 +1058,14 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 					}
 				}
 				timer.Reset(stall)
+				if nameMapper != nil {
+					if ev.Kind == StreamEventToolCallStart {
+						ev.ToolCallName = nameMapper.Restore(ev.ToolCallName)
+					}
+					if ev.Kind == StreamEventDone {
+						nameMapper.RestoreResponse(ev.Response)
+					}
+				}
 				out <- ev
 			case <-timer.C:
 				// Force the transport to close the connection, then drain the

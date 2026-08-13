@@ -715,7 +715,12 @@ func Load(path string) (*ProjectConfig, error) {
 	return &cfg, nil
 }
 
-// Save saves configuration to file
+// Save saves configuration to file.
+//
+// The write is atomic (temp file → fsync → rename): .orchestra.yml is shared
+// by every frontend (TUI, VS Code extension, CLI), so a crash or a concurrent
+// reader must never observe a half-written config — that would lose all
+// user settings at once.
 func Save(path string, cfg *ProjectConfig) error {
 	// Ensure directory exists
 	dir := filepath.Dir(path)
@@ -728,10 +733,35 @@ func Save(path string, cfg *ProjectConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp config file: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
-
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to sync config file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to close config file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to chmod config file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to replace config file: %w", err)
+	}
 	return nil
 }
 
