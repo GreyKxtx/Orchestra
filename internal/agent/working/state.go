@@ -189,12 +189,19 @@ func (s *State) FormatWorkingState() string {
 
 // BuildTurnDigest returns a rule-based turn digest body (without --- wrappers).
 // When step > 0, a step: line marks a mid-run micro-summary (history untouched).
+// Returns "" when the turn produced nothing worth remembering (no done items,
+// todos, files, tools, or errors) — a goal-only digest would just litter
+// .orchestra/memory/sessions/ with junk files for every opened session.
 func (s *State) BuildTurnDigest(step int) string {
 	if s == nil {
 		return ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.done) == 0 && len(openTodos(s.todos)) == 0 &&
+		len(s.files) == 0 && len(s.tools) == 0 && len(s.errors) == 0 {
+		return ""
+	}
 	var b strings.Builder
 	b.WriteString("[turn_digest]\n")
 	if step > 0 {

@@ -201,6 +201,12 @@ func (t *Tracker) Finalize(projectRoot string) (*persistedRecord, string, error)
 		return nil, "", fmt.Errorf("usage: mkdir .orchestra: %w", err)
 	}
 	path := filepath.Join(dir, "usage.jsonl")
+	// Unbounded-growth guard: rotate to usage.jsonl.1 past 5 MB (one old
+	// generation kept). Best-effort — rotation failure must not lose the record.
+	if info, statErr := os.Stat(path); statErr == nil && info.Size() >= 5<<20 {
+		_ = os.Remove(path + ".1")
+		_ = os.Rename(path, path+".1")
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, "", fmt.Errorf("usage: open %s: %w", path, err)

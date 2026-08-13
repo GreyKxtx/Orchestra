@@ -161,12 +161,18 @@ func (l *Logger) LogStepClassified(step int, kind, toolName, detail string) {
 	})
 }
 
+// maxLogBytes caps llm_log.jsonl growth: past the limit the file rotates to
+// llm_log.jsonl.1 (one old generation kept), so the log never grows unbounded.
+const maxLogBytes = 5 << 20 // 5 MB
+
 func (l *Logger) appendLog(entry LLMLogEntry) {
 	// Ensure directory exists
 	dir := filepath.Dir(l.logPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return // Best-effort, don't fail on logging errors
 	}
+
+	rotateIfLarge(l.logPath, maxLogBytes)
 
 	// Append to JSONL file
 	data, err := json.Marshal(entry)
@@ -182,6 +188,19 @@ func (l *Logger) appendLog(entry LLMLogEntry) {
 
 	file.Write(data)
 	file.WriteString("\n")
+}
+
+// rotateIfLarge renames path to path+".1" (replacing a previous generation)
+// when it exceeds maxBytes. Best-effort: rotation failure must never block
+// logging.
+func rotateIfLarge(path string, maxBytes int64) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() < maxBytes {
+		return
+	}
+	old := path + ".1"
+	_ = os.Remove(old)
+	_ = os.Rename(path, old)
 }
 
 func (l *Logger) writeLastError(errorData map[string]interface{}) {

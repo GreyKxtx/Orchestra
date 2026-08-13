@@ -138,6 +138,19 @@ mcp:
       disabled: false
 ```
 
+### Секреты: `.orchestra.local.yml`
+
+API-ключи и личные оверрайды кладите в `.orchestra.local.yml` рядом с `.orchestra.yml` (файл в `.gitignore`, `orchestra init` добавляет его туда автоматически). Оверлей deep-merge'ится поверх основного конфига при загрузке; при сохранении настроек (TUI / VS Code) значения из оверлея **не** записываются в общий `.orchestra.yml`:
+
+```yaml
+# .orchestra.local.yml — не коммитится
+llm:
+  api_key: sk-or-...
+providers:
+  openrouter:
+    api_key: sk-or-...   # маскируется только этот лист, остальные поля провайдера — из .orchestra.yml
+```
+
 ### Память проекта
 
 Создайте `ORCHESTRA.md` в корне проекта — он будет автоматически инжектироваться в системный промпт агента (макс. 2 КБ). Альтернативно: `.orchestra/memory/*.md` или `~/.orchestra/memory.md`.

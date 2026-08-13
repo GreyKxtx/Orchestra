@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/instrument"
@@ -62,6 +63,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Append custom-agent examples as commented blocks.
 	comment := "\n" +
+		"# Secrets: put api_key / personal overrides into .orchestra.local.yml (gitignored);\n" +
+		"# it is deep-merged over this file at load time and never written back here.\n" +
 		"# LSP: active servers from workspace detect (or go+ts+py fallback). See orchestra lsp list.\n" +
 		"# Optional extras (uncomment under lsp.servers): csharp-ls, rust-analyzer — docs/architecture/lsp-auto-provision.md\n" +
 		"\n" +
@@ -117,12 +120,68 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Created .orchestra.yml with default settings.\n")
 
+	if err := ensureGitignore(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not update .gitignore: %v\n", err)
+	}
+
 	if initInstrument {
 		if err := runInstrument(cwd, initDryRun); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: instrument failed: %v\n", err)
 		}
 	}
 
+	return nil
+}
+
+// gitignoreMarker makes the bootstrap idempotent: init appends the block only
+// when the marker line is absent from an existing .gitignore.
+const gitignoreMarker = "# Orchestra: local secrets & runtime artifacts"
+
+// gitignoreBlock ignores runtime/secret artifacts while keeping the knowledge
+// files (state, decisions, plans, specs, playbooks, product docs) tracked.
+const gitignoreBlock = gitignoreMarker + ` (added by orchestra init)
+.orchestra.local.yml
+*.orchestra.bak
+.orchestra/*
+!.orchestra/state.md
+!.orchestra/decisions.md
+!.orchestra/system.txt
+!.orchestra/plans/
+!.orchestra/specs/
+!.orchestra/playbooks/
+!.orchestra/product/
+!.orchestra/docs/
+`
+
+// ensureGitignore creates or appends the Orchestra ignore block. Secrets can
+// live in .orchestra.local.yml and runtime logs under .orchestra/, so a bare
+// `git add .` after init must not be able to commit them.
+func ensureGitignore(projectRoot string) error {
+	path := filepath.Join(projectRoot, ".gitignore")
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(existing), gitignoreMarker) {
+		return nil
+	}
+	block := gitignoreBlock
+	if len(existing) > 0 {
+		sep := "\n"
+		if !strings.HasSuffix(string(existing), "\n") {
+			sep = "\n\n"
+		}
+		block = sep + block
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(block); err != nil {
+		return err
+	}
+	fmt.Printf("Updated .gitignore: ignoring .orchestra runtime artifacts and .orchestra.local.yml.\n")
 	return nil
 }
 

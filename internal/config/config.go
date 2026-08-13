@@ -70,17 +70,6 @@ type ApplyConfig struct {
 	PatchDir string `yaml:"patch_dir,omitempty"`
 }
 
-// DaemonConfig contains local daemon settings (v0.3+).
-type DaemonConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	Address      string `yaml:"address"`
-	Port         int    `yaml:"port"`
-	ScanInterval int    `yaml:"scan_interval"` // seconds
-
-	CacheEnabled *bool  `yaml:"cache_enabled"`
-	CachePath    string `yaml:"cache_path"` // default: .orchestra/cache.json
-}
-
 // LimitsConfig contains context/IO limits (vNext).
 type LimitsConfig struct {
 	ContextKB       int   `yaml:"context_kb"`
@@ -396,7 +385,6 @@ type ProjectConfig struct {
 	LLM          LLMConfig         `yaml:"llm"`
 	Agent        AgentConfig       `yaml:"agent"`
 	Apply        ApplyConfig       `yaml:"apply,omitempty"`
-	Daemon       DaemonConfig      `yaml:"daemon"`
 	Exec         ExecConfig        `yaml:"exec"`
 	Hooks        HooksConfig       `yaml:"hooks"`
 	MCP          MCPConfig         `yaml:"mcp"`
@@ -652,14 +640,6 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			AutoSummaryMemory:   boolPtr(true),
 			TurnDigestEveryN:    intPtr(4),
 		},
-		Daemon: DaemonConfig{
-			Enabled:      false,
-			Address:      "127.0.0.1",
-			Port:         8080,
-			ScanInterval: 10,
-			CacheEnabled: boolPtr(true),
-			CachePath:    ".orchestra/cache.json",
-		},
 		Exec: ExecConfig{
 			Confirm:       boolPtr(true),
 			TimeoutS:      30,
@@ -683,11 +663,18 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 	}
 }
 
-// Load loads configuration from file
+// Load loads configuration from file. When a .orchestra.local.yml overlay
+// exists next to it, overlay values are deep-merged on top (secrets and
+// personal overrides live there — see local_overlay.go).
 func Load(path string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	data, err = mergeLocalOverlay(path, data)
+	if err != nil {
+		return nil, err
 	}
 
 	var cfg ProjectConfig
@@ -721,6 +708,11 @@ func Load(path string) (*ProjectConfig, error) {
 // by every frontend (TUI, VS Code extension, CLI), so a crash or a concurrent
 // reader must never observe a half-written config — that would lose all
 // user settings at once.
+//
+// Keys defined in .orchestra.local.yml are masked back to their on-disk
+// values before writing: the in-memory cfg holds merged overlay values (e.g.
+// api_key), and persisting them here would leak local secrets into the
+// shared config.
 func Save(path string, cfg *ProjectConfig) error {
 	// Ensure directory exists
 	dir := filepath.Dir(path)
@@ -731,6 +723,10 @@ func Save(path string, cfg *ProjectConfig) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	data, err = maskLocalOverlay(path, data)
+	if err != nil {
+		return err
 	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
@@ -766,24 +762,6 @@ func Save(path string, cfg *ProjectConfig) error {
 }
 
 func (c *ProjectConfig) applyDefaults() {
-	// Daemon defaults (so older configs without daemon section still work).
-	if c.Daemon.Address == "" {
-		c.Daemon.Address = "127.0.0.1"
-	}
-	if c.Daemon.Port == 0 {
-		c.Daemon.Port = 8080
-	}
-	if c.Daemon.ScanInterval == 0 {
-		c.Daemon.ScanInterval = 10
-	}
-	if c.Daemon.CachePath == "" {
-		c.Daemon.CachePath = ".orchestra/cache.json"
-	}
-	// Default true for cache unless explicitly set to false.
-	if c.Daemon.CacheEnabled == nil {
-		c.Daemon.CacheEnabled = boolPtr(true)
-	}
-
 	// vNext limits: inherit legacy context_limit_kb if limits.context_kb is missing.
 	if c.Limits.ContextKB <= 0 && c.ContextLimit > 0 {
 		c.Limits.ContextKB = c.ContextLimit
@@ -901,13 +879,6 @@ func (c *ProjectConfig) Validate() error {
 	}
 	if c.Exec.OutputLimitKB <= 0 {
 		return fmt.Errorf("exec.output_limit_kb must be > 0")
-	}
-
-	if c.Daemon.Port < 0 || c.Daemon.Port > 65535 {
-		return fmt.Errorf("daemon.port must be between 0 and 65535")
-	}
-	if c.Daemon.ScanInterval < 0 {
-		return fmt.Errorf("daemon.scan_interval must be >= 0")
 	}
 
 	if err := c.validateAgents(); err != nil {

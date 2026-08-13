@@ -161,6 +161,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		mcpStartErrs:      mcpErrs,
 	}
 	c.noteConfigMTime()
+	// Startup GC for staged runtime artifacts (attachments, diff-preview).
+	// Self-terminating goroutine — see artifacts_gc.go.
+	go cleanupWorkspaceArtifacts(rootAbs)
 	return c, nil
 }
 

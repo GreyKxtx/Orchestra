@@ -108,6 +108,12 @@ func TestPersistWorkingTurnDigest_RespectsKeep(t *testing.T) {
 		t.Fatalf("should not persist when keep=0: %v", err)
 	}
 	a.opts.TurnDigestKeep = 3
+	// Goal-only turns produce no digest — nothing happened, no junk file.
+	a.persistWorkingTurnDigest()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("empty turn should not create a digest file: %v", err)
+	}
+	a.working.ObserveTool("read", json.RawMessage(`{"path":"y.go"}`), []byte(`{}`), nil)
 	a.persistWorkingTurnDigest()
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)

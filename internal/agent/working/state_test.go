@@ -63,6 +63,7 @@ func TestPersistTurnDigest_TrimsOld(t *testing.T) {
 	sid := "trim"
 	for i := 0; i < 30; i++ {
 		s := New(fmt.Sprintf("g%d", i))
+		s.ObserveTool("read", json.RawMessage(fmt.Sprintf(`{"path":"f%d.go"}`, i)), nil, nil)
 		if err := PersistTurnDigest(root, sid, s.BuildTurnDigest(i+1)); err != nil {
 			t.Fatal(err)
 		}

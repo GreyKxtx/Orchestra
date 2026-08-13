@@ -907,5 +907,14 @@ func (c *Core) SessionClose(params SessionCloseParams) error {
 	if err := coresession.DeleteSnapshot(c.workspaceRoot, params.SessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "core: session %s snapshot delete failed: %v\n", params.SessionID, err)
 	}
+	// Session memory (turn digests, session notes) is useless without the
+	// session — deleting it here keeps .orchestra/memory/sessions/ from
+	// accumulating orphan files. filepath.Base guards against path escape
+	// via a crafted session_id.
+	if sid := filepath.Base(strings.TrimSpace(params.SessionID)); sid != "" && sid != "." && sid != string(filepath.Separator) {
+		memDir := filepath.Join(c.workspaceRoot, ".orchestra", "memory", "sessions")
+		_ = os.Remove(filepath.Join(memDir, sid+".md"))
+		_ = os.Remove(filepath.Join(memDir, sid+".turns.md"))
+	}
 	return nil
 }
