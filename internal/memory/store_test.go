@@ -57,6 +57,31 @@ func TestStore_MemoryRead_List(t *testing.T) {
 	}
 }
 
+func TestStore_MemoryRead_LessonsLayer(t *testing.T) {
+	dir := t.TempDir()
+	lessonsDir := filepath.Join(dir, ".orchestra", "memory", "lessons")
+	writeFile(t, filepath.Join(lessonsDir, "engineering.md"), "## lesson\n- task: smoke\n")
+	cfg := DefaultConfig()
+	store := NewStore(dir, "", cfg)
+	res := store.Read("lessons", "", 4096)
+	if !strings.Contains(res.Content, "smoke") {
+		t.Fatalf("lessons layer: %+v", res)
+	}
+	if res.Layer != layerLessons {
+		t.Fatalf("layer=%q", res.Layer)
+	}
+	list := store.Read("", "", 0)
+	found := false
+	for _, e := range list.Entries {
+		if e.Layer == layerLessons {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("list entries=%+v", list.Entries)
+	}
+}
+
 func TestStore_CompactAgentFile(t *testing.T) {
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, ".orchestra", "memory")

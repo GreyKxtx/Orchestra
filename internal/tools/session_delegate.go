@@ -25,10 +25,6 @@ func (r *Runner) sessionClient() *session.Client {
 	)
 }
 
-func (r *Runner) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*MemoryWriteResponse, error) {
-	return r.sessionClient().MemoryWrite(ctx, req)
-}
-
 func (r *Runner) MemoryRead(ctx context.Context, req MemoryReadRequest) (*MemoryReadResponse, error) {
 	return r.sessionClient().MemoryRead(ctx, req)
 }

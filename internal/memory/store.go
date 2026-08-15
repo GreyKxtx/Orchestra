@@ -12,6 +12,7 @@ const (
 	layerOrchestra = "orchestra"
 	layerSession   = "session"
 	layerRepo      = "repo"
+	layerLessons   = "lessons"
 	layerGlobal    = "global"
 )
 

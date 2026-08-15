@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/lessons"
 )
 
 func (s *Store) readLayerRaw(layer string) string {
@@ -73,6 +76,26 @@ func (s *Store) List() []LayerSummary {
 			})
 		}
 	}
+	if entries, err := os.ReadDir(filepath.Join(s.workspaceRoot, filepath.FromSlash(lessons.RelDir))); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			f := filepath.Join(s.workspaceRoot, filepath.FromSlash(lessons.RelDir), e.Name())
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			raw := strings.TrimSpace(string(data))
+			if raw == "" {
+				continue
+			}
+			out = append(out, LayerSummary{
+				Layer: layerLessons, Path: relPath(f, s.workspaceRoot),
+				Bytes: len(raw), Preview: preview(raw, 120),
+			})
+		}
+	}
 	if s.cfg.GlobalEnabled {
 		if raw := s.readLayerRaw(layerGlobal); raw != "" {
 			out = append(out, LayerSummary{
@@ -118,14 +141,52 @@ func (s *Store) Read(layer, path string, maxBytes int) ReadResult {
 	case layerRepo:
 		raw := s.sliceRepoMemory(maxBytes)
 		return ReadResult{Layer: layerRepo, Path: ".orchestra/memory/", Content: raw, Truncated: len(raw) >= maxBytes}
+	case layerLessons:
+		raw := s.sliceLessonsMemory(maxBytes)
+		rel := filepath.ToSlash(lessons.RelDir) + "/"
+		return ReadResult{Layer: layerLessons, Path: rel, Content: raw, Truncated: len(raw) >= maxBytes}
 	case layerGlobal:
 		raw := s.sliceLayer(layerGlobal, maxBytes)
 		return ReadResult{Layer: layerGlobal, Path: "~/.orchestra/memory.md", Content: raw}
 	case "all":
 		return ReadResult{Content: s.tieredInject(maxBytes), Truncated: true}
 	default:
-		return ReadResult{Content: fmt.Sprintf("unknown layer %q (want orchestra|session|repo|global|all)", layer)}
+		return ReadResult{Content: fmt.Sprintf("unknown layer %q (want orchestra|session|repo|lessons|global|all)", layer)}
 	}
+}
+
+func (s *Store) sliceLessonsMemory(maxBytes int) string {
+	if maxBytes <= 0 || s.workspaceRoot == "" {
+		return ""
+	}
+	dir := filepath.Join(s.workspaceRoot, filepath.FromSlash(lessons.RelDir))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	var parts []string
+	remaining := maxBytes
+	for _, name := range names {
+		dept := strings.TrimSuffix(name, ".md")
+		chunk := lessons.Tail(s.workspaceRoot, dept, remaining)
+		if chunk == "" {
+			continue
+		}
+		parts = append(parts, chunk)
+		remaining -= len(chunk)
+		if remaining <= 0 {
+			break
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (s *Store) readByPath(path string, maxBytes int) (content, layer string, err error) {
@@ -135,6 +196,19 @@ func (s *Store) readByPath(path string, maxBytes int) (content, layer string, er
 		layer = layerOrchestra
 		content = s.sliceLayer(layerOrchestra, maxBytes)
 	case strings.HasPrefix(path, ".orchestra/memory/"):
+		if strings.HasPrefix(path, lessons.RelDir+"/") {
+			abs := filepath.Join(s.workspaceRoot, filepath.FromSlash(path))
+			data, readErr := os.ReadFile(abs)
+			if readErr != nil {
+				return "", layerLessons, readErr
+			}
+			layer = layerLessons
+			content = strings.TrimSpace(string(data))
+			if len(content) > maxBytes {
+				content = tailBytes(content, maxBytes)
+			}
+			break
+		}
 		abs := filepath.Join(s.workspaceRoot, filepath.FromSlash(path))
 		data, readErr := os.ReadFile(abs)
 		if readErr != nil {

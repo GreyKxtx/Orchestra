@@ -57,14 +57,14 @@ func ToolMemoryWrite() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_write",
-			Description: "Сохранить факт в постоянную память. scope=project → .orchestra/memory/agent.md. Начните с [pin] для sticky facts. scope=session → память сессии.",
+			Description: "Сохранить факт в постоянную память. scope=project → .orchestra/memory/agent.md; scope=session → память сессии; scope=<dept> (engineering, frontend@web, …) → episodic lessons (.orchestra/memory/lessons/<dept>.md, max 3/run, 400 chars). [pin] — sticky project facts.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["content"],
   "properties": {
     "content": { "type": "string", "minLength": 1, "description": "Факт или контекст для сохранения" },
-    "scope":   { "type": "string", "enum": ["project", "session"], "description": "project (default) или session" }
+    "scope":   { "type": "string", "description": "project (default), session, or dept key (engineering, qa@prod, …)" }
   }
 }`),
 		},
@@ -76,13 +76,13 @@ func ToolMemoryRead() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_read",
-			Description: "Прочитать слоистую память проекта (ORCHESTRA.md, .orchestra/memory/, session, global). Без аргументов — список источников. Экономит контекст vs полный inject.",
+			Description: "Прочитать слоистую память проекта (ORCHESTRA.md, .orchestra/memory/, dept lessons, session, global). Без аргументов — список источников. Экономит контекст vs полный inject.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "layer":  { "type": "string", "enum": ["orchestra", "session", "repo", "global", "all"], "description": "Слой памяти" },
-    "path":   { "type": "string", "description": "ORCHESTRA.md или .orchestra/memory/agent.md" },
+    "layer":  { "type": "string", "enum": ["orchestra", "session", "repo", "lessons", "global", "all"], "description": "Слой памяти" },
+    "path":   { "type": "string", "description": "ORCHESTRA.md, .orchestra/memory/agent.md или .orchestra/memory/lessons/<dept>.md" },
     "max_kb": { "type": "integer", "minimum": 1, "maximum": 64, "description": "Лимит ответа в KiB" }
   }
 }`),
@@ -95,7 +95,7 @@ func ToolMemorySearch() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_search",
-			Description: "Поиск по слоям памяти (agent.md, session, global, ORCHESTRA.md) по подстроке. Для точных фактов без полного memory_read.",
+			Description: "Поиск по слоям памяти (agent.md, session, global, ORCHESTRA.md, dept lessons) по подстроке. Для точных фактов без полного memory_read.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

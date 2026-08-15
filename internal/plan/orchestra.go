@@ -1,6 +1,10 @@
 package plan
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orchestra/orchestra/internal/playbooks"
+)
 
 // OrchestraStateRelPath is the Lead scratchpad file (relative to project root).
 const OrchestraStateRelPath = ".orchestra/state.md"
@@ -17,6 +21,9 @@ func IsOrchestraLeadWritablePath(path, assignedPlan string) bool {
 	}
 	p := NormalizeRelPath(path)
 	if p == NormalizeRelPath(OrchestraStateRelPath) {
+		return true
+	}
+	if _, ok := playbooks.ParseLocalOverlayPath(p); ok {
 		return true
 	}
 	return strings.HasPrefix(p, OrchestraDeptsRelDir) && strings.HasSuffix(p, ".md") &&
@@ -45,6 +52,9 @@ func IsDeptLeadWritablePath(path, assignedPlan string) bool {
 	}
 	if p == NormalizeRelPath(OrchestraConventionsRel) {
 		return false
+	}
+	if _, ok := playbooks.ParseLocalOverlayPath(p); ok {
+		return true
 	}
 	return strings.HasPrefix(p, OrchestraPlaybooksRelDir) && strings.HasSuffix(p, ".md") &&
 		!strings.Contains(strings.TrimPrefix(p, OrchestraPlaybooksRelDir), "/")

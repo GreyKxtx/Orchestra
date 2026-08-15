@@ -69,7 +69,11 @@
 | `bash.kill` | — | ✅ | Терминирует bg-процесс |
 | `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита; требует `--allow-web` |
 | `websearch` | `web.search` | ✅ | Поиск через Tavily / Brave (provider в `.orchestra.yml`); требует `--allow-web` |
-| `memory_write` | `memory.write` | ✅ | Записывает факт в `.orchestra/memory/agent.md` с timestamp |
+| `memory_write` | `memory.write` | ✅ | `scope=project` → `.orchestra/memory/agent.md`; `session` → session file; `<dept>` → `.orchestra/memory/lessons/<dept>.md` (400 chars, 3/run) |
+| `memory_read` | `memory.read` | ✅ | Слои: `orchestra`, `session`, `repo`, `lessons`, `global`, `all`; без args — список источников |
+| `memory_search` | `memory.search` | ✅ | Substring-поиск по agent/session/global/ORCHESTRA + dept lessons |
+| `lesson_promote` | — | ✅ | Dept/Orchestra Lead: draft local playbook overlay из pattern lesson; Question Barrier auto-seals `decision_ref` |
+| `playbook_promote` | — | ✅ | Dept/Orchestra Lead: merge approved overlay → L2 `.orchestra/playbooks/<dept>.md` |
 
 ### Git и GitHub
 

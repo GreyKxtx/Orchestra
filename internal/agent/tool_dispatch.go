@@ -17,6 +17,7 @@ import (
 func isAgentInProcessTool(name string) bool {
 	switch normalizeToolName(name) {
 	case "todowrite", "todoread", "update_working_state", "contract_freeze",
+		"lesson_promote", "playbook_promote",
 		"task", "task_spawn", "task_wait", "task_cancel", "task_result",
 		"plan_enter", "plan_exit", "question", "skill_invoke":
 		return true
@@ -88,13 +89,20 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if name == "" {
 		return serialToolOutcome{}, nil
 	}
-	if name == "write" || name == "edit" {
-		a.turnMutatingTools++
-	}
-
 	toolCallID := strings.TrimSpace(tc.ID)
 	if toolCallID == "" {
 		toolCallID = fmt.Sprintf("call_%d_%d", steps, time.Now().UnixNano())
+	}
+	if scopeErr := a.checkExploreFirstGate(name, *history); scopeErr != nil {
+		toolResult := formatToolDeniedJSON(name, tc.Input, scopeErr.Error())
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+		if cbErr := cb.RecordDenied(name); cbErr != nil {
+			return serialToolOutcome{}, cbErr
+		}
+		return serialToolOutcome{}, nil
+	}
+	if name == "write" || name == "edit" {
+		a.turnMutatingTools++
 	}
 
 	effectiveAllowExec := a.opts.AllowExec
@@ -379,6 +387,46 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		return serialToolOutcome{}, nil
 	}
 
+	if name == "lesson_promote" {
+		out, err := a.handleLessonPromote(ctx, tc.Input)
+		a.observeWorkingTool(name, tc.Input, out, err)
+		var content string
+		if err != nil {
+			content = formatToolErrorJSON(name, tc.Input, err)
+		} else {
+			content = string(out)
+		}
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: content})
+		if err != nil {
+			if cbErr := cb.RecordToolError(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+		} else {
+			cb.ResetToolErrors()
+		}
+		return serialToolOutcome{}, nil
+	}
+
+	if name == "playbook_promote" {
+		out, err := a.handlePlaybookPromote(ctx, tc.Input)
+		a.observeWorkingTool(name, tc.Input, out, err)
+		var content string
+		if err != nil {
+			content = formatToolErrorJSON(name, tc.Input, err)
+		} else {
+			content = string(out)
+		}
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: content})
+		if err != nil {
+			if cbErr := cb.RecordToolError(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+		} else {
+			cb.ResetToolErrors()
+		}
+		return serialToolOutcome{}, nil
+	}
+
 	if name == "update_working_state" {
 		out, err := a.handleUpdateWorkingState(tc.Input)
 		a.observeWorkingTool(name, tc.Input, out, err)
@@ -501,7 +549,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 				label = "orchestra lead"
 			case ModeArchitecture:
 				label = "architecture mode"
-				scope = fmt.Sprintf("%s, .orchestra/plans/*.md, .orchestra/playbooks/{dept}.md (not conventions.md — Docs Lead owns L1), or .orchestra/specs/**", a.effectivePlanPath())
+				scope = fmt.Sprintf("%s, .orchestra/plans/*.md, .orchestra/playbooks/{dept}.md, .orchestra/playbooks/local/{dept}.md (decision_ref required), .orchestra/specs/** (not conventions.md)", a.effectivePlanPath())
 			}
 			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s", label, scope))
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
@@ -512,6 +560,14 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 		if narrowErr := a.checkDeptPlaybookNarrowing(tc.Input); narrowErr != nil {
 			toolResult := formatToolDeniedJSON(name, tc.Input, narrowErr.Error())
+			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+			if cbErr := cb.RecordDenied(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+			return serialToolOutcome{}, nil
+		}
+		if overlayErr := a.checkLocalPlaybookOverlayGate(name, tc.Input); overlayErr != nil {
+			toolResult := formatToolDeniedJSON(name, tc.Input, overlayErr.Error())
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
@@ -676,6 +732,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if a.opts.AgentLogger != nil {
 		a.opts.AgentLogger.LogToolResult(name, len(out), dur, "")
 	}
+	a.markExploreFirstSatisfied(name)
 	*history = append(*history, llm.Message{
 		Role:       llm.RoleTool,
 		ToolCallID: toolCallID,

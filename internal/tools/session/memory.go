@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
 )
 
@@ -113,6 +114,16 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 	}
 	if res := store.Read("orchestra", "", 64*1024); res.Content != "" && len(hits) < limit {
 		add("orchestra", res.Content)
+	}
+	for _, lh := range lessons.Search(c.Root, q, limit-len(hits)) {
+		snip := lh.Snippet
+		if lh.Dept != "" {
+			snip = "[" + lh.Dept + "] " + snip
+		}
+		hits = append(hits, MemorySearchHit{Layer: "lessons", Snippet: snip})
+		if len(hits) >= limit {
+			break
+		}
 	}
 	return &MemorySearchResponse{Hits: hits}, nil
 }

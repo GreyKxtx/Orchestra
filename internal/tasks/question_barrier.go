@@ -7,6 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/decisions"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	"github.com/orchestra/orchestra/internal/playbooks"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -111,6 +112,7 @@ func (r *TaskRunner) relayOpenQuestions(ctx context.Context, taskResult string) 
 		answerObjs = append(answerObjs, map[string]string{"id": q.ID, "answer": ans})
 	}
 	_ = decisions.Append(root, entries)
+	playbooks.TrySealAllPendingOverlays(root)
 
 	return attachBarrierPayload(taskResult, map[string]any{
 		"answers":       answerObjs,

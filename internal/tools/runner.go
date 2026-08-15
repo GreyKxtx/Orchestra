@@ -52,6 +52,10 @@ type Runner struct {
 	memoryCfg memory.Config
 	sessionID string
 
+	// deptLessonMu guards deptLessonWrites (memory_write with dept scope → lessons).
+	deptLessonMu     sync.Mutex
+	deptLessonWrites int
+
 	// Web fetch settings.
 	webFetchTimeout    time.Duration
 	webMaxContentBytes int
@@ -474,4 +478,29 @@ func (r *Runner) extraTestDiagnostics(content string) []lsp.ToolDiagnostic {
 		out = append(out, r.forceDiagnosticsHook(content)...)
 	}
 	return out
+}
+
+const maxDeptLessonWritesPerRun = 3
+
+// ResetDeptLessonBudget clears the per-run cap for memory_write dept scopes.
+func (r *Runner) ResetDeptLessonBudget() {
+	if r == nil {
+		return
+	}
+	r.deptLessonMu.Lock()
+	r.deptLessonWrites = 0
+	r.deptLessonMu.Unlock()
+}
+
+func (r *Runner) consumeDeptLessonWrite() error {
+	if r == nil {
+		return fmt.Errorf("runner is nil")
+	}
+	r.deptLessonMu.Lock()
+	defer r.deptLessonMu.Unlock()
+	if r.deptLessonWrites >= maxDeptLessonWritesPerRun {
+		return fmt.Errorf("dept lesson budget exhausted (max %d memory_write calls with dept scope per agent run)", maxDeptLessonWritesPerRun)
+	}
+	r.deptLessonWrites++
+	return nil
 }

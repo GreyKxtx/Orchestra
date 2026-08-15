@@ -9,6 +9,7 @@ Orchestra memory is **file-based** and optimized for **small-context local LLMs*
 | **orchestra** | `ORCHESTRA.md` | Committable project rules (like CLAUDE.md) |
 | **session** | `.orchestra/memory/sessions/<session_id>.md` | Facts for one chat session |
 | **repo** | `.orchestra/memory/*.md` | Durable agent notes (`agent.md` from `memory_write`) |
+| **lessons** | `.orchestra/memory/lessons/<dept>.md` | Episodic dept learning (L1 runtime + L2 `memory_write` scope=dept) |
 | **global** | `~/.orchestra/memory.md` | User-wide preferences |
 
 ## Inject modes (`.orchestra.yml`)
@@ -31,9 +32,25 @@ Budget split in eager/hybrid: orchestra 35%, session 25%, repo 30%, global remai
 
 ## Tools
 
-- **`memory_write`** — `{ content, scope?: "project"|"session" }` — prefix `[pin]` for sticky facts
-- **`memory_read`** — `{ layer?, path?, max_kb? }` — list sources or read a layer
-- **`memory_search`** — `{ query, limit? }` — substring search across memory layers
+- **`memory_write`** — `{ content, scope?: "project"|"session"|<dept> }` — prefix `[pin]` for sticky facts. Dept scope (`engineering`, `frontend@web`, …) appends to `.orchestra/memory/lessons/<dept>.md` (max 3/run, 400 chars, deduped).
+- **`memory_read`** — `{ layer?, path?, max_kb? }` — list sources or read a layer (`orchestra|session|repo|lessons|global|all`)
+- **`memory_search`** — `{ query, limit? }` — substring search across memory layers including dept lessons
+- **`lesson_promote`** — `{ dept, note?, source? }` — Dept/Orchestra Lead only: draft local playbook overlay from last pattern lesson (`.orchestra/playbooks/local/<dept>.md`, `decision_ref: PENDING:…`)
+- **`playbook_promote`** — `{ dept, promotion_ref }` — merge approved local overlay into L2 `.orchestra/playbooks/<dept>.md` (requires User approvals in `decisions.md`)
+
+### Learning stack (L0–L3)
+
+| Level | Mechanism | Path |
+|-------|-----------|------|
+| L0 | working_state, turn_digest | agent history |
+| L1 | Episodic lessons after worker verify | `.orchestra/memory/lessons/<dept>.md` |
+| L2 | `memory_write` scope=dept | same lessons files (`agent_note`) |
+| L3 inject | `<dept_playbook>` | L2 playbook + local overlay |
+| L3 write | local overlay gate | `decision_ref` in `decisions.md` (auto-sealed via Question Barrier) |
+
+Signals: repeated anti-patterns (3×) → `lesson_promote_suggestion` in worker `task_result`. After overlay approval → `playbook_promote_suggestion`.
+
+Explore-first gate blocks `write`/`edit` for Worker, Orchestra Lead, and Dept Lead (`architecture`) until `read`/`grep`/`explore` on scope.
 
 ## Integration
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/decisions"
 	"github.com/orchestra/orchestra/internal/plan"
+	"github.com/orchestra/orchestra/internal/playbooks"
 )
 
 // L2 playbook narrowing floor (spec §6.1, checklist 14b): a Dept Lead may only
@@ -32,6 +33,9 @@ func (a *Agent) checkDeptPlaybookNarrowing(input json.RawMessage) error {
 		return nil
 	}
 	p := plan.NormalizeRelPath(req.Path)
+	if _, ok := playbooks.ParseLocalOverlayPath(p); ok {
+		return nil
+	}
 	if !strings.HasPrefix(p, plan.OrchestraPlaybooksRelDir) {
 		return nil
 	}
@@ -87,6 +91,63 @@ func parseAcceptedRisks(body string) []string {
 		return nil
 	}
 	return out
+}
+
+// checkLocalPlaybookOverlayGate requires decision_ref frontmatter approved in
+// decisions.md before a Dept/Orchestra Lead may create or replace a local L3
+// overlay (.orchestra/playbooks/local/{dept}.md). Edits to an already-approved
+// file are allowed without repeating the ref in the patch.
+func (a *Agent) checkLocalPlaybookOverlayGate(name string, input json.RawMessage) error {
+	if a == nil || (a.opts.Mode != ModeArchitecture && a.opts.Mode != ModeOrchestra) {
+		return nil
+	}
+	if name != "write" && name != "edit" {
+		return nil
+	}
+	var req struct {
+		Path      string `json:"path"`
+		Content   string `json:"content"`
+		NewString string `json:"new_string"`
+	}
+	if err := json.Unmarshal(input, &req); err != nil {
+		return nil
+	}
+	if _, ok := playbooks.ParseLocalOverlayPath(req.Path); !ok {
+		return nil
+	}
+	log := readDecisionLogRaw(a.tools.WorkspaceRoot())
+	if name == "write" {
+		if playbooks.LocalOverlayApproved(req.Content, log) {
+			return nil
+		}
+		return localOverlayGateError(req.Path)
+	}
+	existing := readProjectFile(a.tools.WorkspaceRoot(), req.Path)
+	if playbooks.LocalOverlayApproved(existing, log) {
+		return nil
+	}
+	if playbooks.LocalOverlayApproved(req.NewString, log) {
+		return nil
+	}
+	return localOverlayGateError(req.Path)
+}
+
+func localOverlayGateError(path string) error {
+	return fmt.Errorf(
+		"local playbook overlay %q requires YAML frontmatter decision_ref approved in %s; "+
+			"unblock: ask the User via open_questions — the runtime records the answer in decisions.md and auto-seals decision_ref; "+
+			"or write with frontmatter like ---\\ndecision_ref: \"<exact approval text>\"\\n---",
+		plan.NormalizeRelPath(path), decisions.FileRel,
+	)
+}
+
+func readProjectFile(root, relPath string) string {
+	p := plan.NormalizeRelPath(relPath)
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func readDecisionLogRaw(root string) string {

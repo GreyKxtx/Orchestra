@@ -170,7 +170,8 @@ var parallelSafeTools = map[string]bool{
 var mutatingTools = map[string]bool{
 	"write": true, "edit": true,
 	"bash": true, "bash.output": true, "bash.kill": true,
-	"todowrite": true, "todoread": true, "update_working_state": true, "contract_freeze": true, "memory_write": true, "memory_read": true, "memory_search": true,
+	"todowrite": true, "todoread": true, "update_working_state": true, "contract_freeze": true,
+	"lesson_promote": true, "playbook_promote": true, "memory_write": true, "memory_read": true, "memory_search": true,
 	"lsp.rename": true,
 	"plan_exit":  true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
@@ -344,6 +345,8 @@ func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
+		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
+		session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
@@ -399,6 +402,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolUpdateWorkingState(), session.ToolContractFreeze(),
+		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}

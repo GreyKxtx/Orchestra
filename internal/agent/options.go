@@ -478,6 +478,9 @@ type Agent struct {
 	// denied or failed mutating attempt.
 	turnMutatingTools int
 
+	// exploreFirstSatisfied is set after read/grep/explore (explore-first gate).
+	exploreFirstSatisfied bool
+
 	// lastPromptTokens is the most recent real Usage.PromptTokens (0 if unknown).
 	lastPromptTokens int
 

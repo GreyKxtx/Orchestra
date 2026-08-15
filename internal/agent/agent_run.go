@@ -43,8 +43,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// Initialize todos from session state (empty for one-shot runs).
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
 	a.turnMutatingTools = 0
+	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0
 	a.contextPressureWarned = false
+	a.tools.ResetDeptLessonBudget()
 	a.initWorkingState(userQuery)
 	defer a.persistWorkingTurnDigest()
 	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).

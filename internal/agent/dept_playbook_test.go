@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,4 +56,43 @@ func TestCheckDeptPlaybookNarrowing(t *testing.T) {
 	if err := b.checkDeptPlaybookNarrowing([]byte(risky)); err != nil {
 		t.Fatalf("build mode exempt: %v", err)
 	}
+}
+
+func TestCheckLocalPlaybookOverlayGate(t *testing.T) {
+	root := t.TempDir()
+	a := newArchAgent(t, root)
+	ref := "approve vitest for frontend local overlay"
+	write := func(content string) error {
+		payload := `{"path":".orchestra/playbooks/local/frontend.md","content":` + mustJSON(content) + `}`
+		return a.checkLocalPlaybookOverlayGate("write", []byte(payload))
+	}
+	if err := write("---\ndecision_ref: " + ref + "\n---\n\n## Local\n"); err == nil {
+		t.Fatal("expected gate without decisions log")
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".orchestra"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := "# Decision log\n\n- A: " + ref + "\n"
+	if err := os.WriteFile(filepath.Join(root, ".orchestra", "decisions.md"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := write("---\ndecision_ref: " + ref + "\n---\n\n## Local\n"); err != nil {
+		t.Fatalf("approved write must pass: %v", err)
+	}
+	localPath := filepath.Join(root, ".orchestra", "playbooks", "local", "frontend.md")
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("---\ndecision_ref: "+ref+"\n---\n\nold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit := `{"path":".orchestra/playbooks/local/frontend.md","new_string":"\nmore rules\n"}`
+	if err := a.checkLocalPlaybookOverlayGate("edit", []byte(edit)); err != nil {
+		t.Fatalf("edit on approved file must pass: %v", err)
+	}
+}
+
+func mustJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

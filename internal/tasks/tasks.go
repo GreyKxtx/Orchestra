@@ -619,6 +619,12 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if dec := loadDecisionLog(r.toolRunner.WorkspaceRoot(), mode); dec != "" {
 		childGoal = dec + "\n\n" + childGoal
 	}
+	if les := loadDeptLessons(r.toolRunner.WorkspaceRoot(), mode, workOrder); les != "" {
+		childGoal = les + "\n\n" + childGoal
+	}
+	if pb := loadDeptPlaybook(r.toolRunner.WorkspaceRoot(), mode, workOrder); pb != "" {
+		childGoal = pb + "\n\n" + childGoal
+	}
 	if mode == agent.ModeWorker {
 		if wo, err := ParseWorkOrderJSON(childGoal); err == nil {
 			opts.WorkerEditPaths = EditScopePaths(wo)
@@ -659,7 +665,13 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	}
 	if runErr != nil {
 		r.recordWorkerToDeptScratchpad(workOrder, "", status, errMsg)
-		return &agent.SubtaskResult{TaskID: taskID, Status: status, Error: errMsg}
+		out := &agent.SubtaskResult{TaskID: taskID, Status: status, Error: errMsg}
+		if mode == agent.ModeWorker {
+			if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, errMsg, status); hint != "" {
+				out.Result = annotateLessonPromoteSuggestion(`{"status":"error"}`, hint)
+			}
+		}
+		return out
 	}
 
 	taskResult := ""
@@ -677,6 +689,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// Question Barrier (spec §4.3): relay open_questions[] to the user via
 	// the runtime, append answers to decisions.md, attach them to the result.
 	taskResult = r.relayOpenQuestions(ctx, taskResult)
+	taskResult = r.attachPlaybookPromoteHints(taskResult, workOrder)
 
 	// Phase timeouts (spec §4.5): stale-phase advisory + blocked escalation.
 	taskResult = r.annotatePhaseTimeout(taskResult)
@@ -689,7 +702,13 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		if err := r.child.GuardContractRefs(workOrder.ContractRefs); err != nil {
 			msg := "stale_contract: contract changed during execution — result discarded, Lead must regenerate the WorkOrder; " + err.Error()
 			r.recordWorkerToDeptScratchpad(workOrder, "", "stale_contract", err.Error())
-			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
+			out := &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
+			if mode == agent.ModeWorker {
+				if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, msg, "error"); hint != "" {
+					out.Result = annotateLessonPromoteSuggestion(`{"status":"error","reason":"stale_contract"}`, hint)
+				}
+			}
+			return out
 		}
 	}
 
@@ -700,6 +719,11 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	}
 
 	r.recordWorkerToDeptScratchpad(workOrder, taskResult, "done", "")
+	if mode == agent.ModeWorker {
+		if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, taskResult, "done"); hint != "" {
+			taskResult = annotateLessonPromoteSuggestion(taskResult, hint)
+		}
+	}
 	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
 }
 
