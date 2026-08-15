@@ -42,6 +42,19 @@ func (l *workerLSPFixLLM) Complete(_ context.Context, req llm.CompleteRequest) (
 		return &llm.CompleteResponse{Message: llm.Message{
 			Role: llm.RoleAssistant,
 			ToolCalls: []llm.ToolCall{{
+				ID:   "call_read_main",
+				Type: "function",
+				Function: llm.ToolCallFunc{
+					Name: "read",
+					Arguments: llm.ToolArguments(`{"path":"main.go"}`),
+				},
+			}},
+		}}, nil
+	case 1:
+		l.step++
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
 				ID:   "call_edit_bad",
 				Type: "function",
 				Function: llm.ToolCallFunc{
@@ -52,7 +65,7 @@ func (l *workerLSPFixLLM) Complete(_ context.Context, req llm.CompleteRequest) (
 				},
 			}},
 		}}, nil
-	case 1:
+	case 2:
 		l.step++
 		for _, m := range req.Messages {
 			if m.Role == llm.RoleUser && strings.Contains(m.Content, "LSP_ERRORS") {
