@@ -22,7 +22,7 @@ func TestAllPrimaryModesHaveSystemPrompt(t *testing.T) {
 
 func TestOrchestraPrompt_MentionsDelegation(t *testing.T) {
 	got := BuildSystemPromptForMode("orchestra", "default")
-	for _, needle := range []string{"worker", "WorkOrder", "task", "Do NOT edit"} {
+	for _, needle := range []string{"worker", "WorkOrder", "task", "Do NOT edit", "direction='upstream'", "lesson_promote", "playbook_promote"} {
 		if !strings.Contains(got, needle) {
 			t.Fatalf("orchestra prompt missing %q:\n%s", needle, got)
 		}

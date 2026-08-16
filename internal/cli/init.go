@@ -44,6 +44,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := ensureGitignore(cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not update .gitignore: %v\n", err)
 		}
+		if err := ensureLearningDirs(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not create learning dirs: %v\n", err)
+		}
 		suggestLocalOverlay(cwd, configPath)
 		return nil
 	}
@@ -130,6 +133,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := ensureGitignore(cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not update .gitignore: %v\n", err)
 	}
+	if err := ensureLearningDirs(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not create learning dirs: %v\n", err)
+	}
 
 	if initInstrument {
 		if err := runInstrument(cwd, initDryRun); err != nil {
@@ -141,7 +147,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 // gitignoreMarker makes the bootstrap idempotent: init appends the block only
-// when the marker line is absent from an existing .gitignore.
+// when the marker line is absent from an existing .gitignore. The local
+// playbooks ignore line is also backfilled on older projects that already
+// have the marker.
 const gitignoreMarker = "# Orchestra: local secrets & runtime artifacts"
 
 // gitignoreBlock ignores runtime/secret artifacts while keeping the knowledge
@@ -156,9 +164,12 @@ const gitignoreBlock = gitignoreMarker + ` (added by orchestra init)
 !.orchestra/plans/
 !.orchestra/specs/
 !.orchestra/playbooks/
+.orchestra/playbooks/local/
 !.orchestra/product/
 !.orchestra/docs/
 `
+
+const gitignoreLocalPlaybooks = ".orchestra/playbooks/local/"
 
 // ensureGitignore creates or appends the Orchestra ignore block. Secrets can
 // live in .orchestra.local.yml and runtime logs under .orchestra/, so a bare
@@ -169,26 +180,52 @@ func ensureGitignore(projectRoot string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if strings.Contains(string(existing), gitignoreMarker) {
-		return nil
-	}
-	block := gitignoreBlock
-	if len(existing) > 0 {
-		sep := "\n"
-		if !strings.HasSuffix(string(existing), "\n") {
-			sep = "\n\n"
+	body := string(existing)
+	var extra strings.Builder
+	if !strings.Contains(body, gitignoreMarker) {
+		block := gitignoreBlock
+		if len(existing) > 0 {
+			sep := "\n"
+			if !strings.HasSuffix(body, "\n") {
+				sep = "\n\n"
+			}
+			block = sep + block
 		}
-		block = sep + block
+		extra.WriteString(block)
+		body += block
+	}
+	if !strings.Contains(body, gitignoreLocalPlaybooks) {
+		if extra.Len() == 0 && len(body) > 0 && !strings.HasSuffix(body, "\n") {
+			extra.WriteByte('\n')
+		}
+		extra.WriteString(gitignoreLocalPlaybooks + "\n")
+	}
+	if extra.Len() == 0 {
+		return nil
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(block); err != nil {
+	if _, err := f.WriteString(extra.String()); err != nil {
 		return err
 	}
 	fmt.Printf("Updated .gitignore: ignoring .orchestra runtime artifacts and .orchestra.local.yml.\n")
+	return nil
+}
+
+// ensureLearningDirs creates the on-disk learning stack so lessons and local
+// playbook overlays can accumulate between sessions without the first write.
+func ensureLearningDirs(projectRoot string) error {
+	for _, rel := range []string{
+		filepath.Join(".orchestra", "memory", "lessons"),
+		filepath.Join(".orchestra", "playbooks", "local"),
+	} {
+		if err := os.MkdirAll(filepath.Join(projectRoot, rel), 0o755); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

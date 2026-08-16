@@ -54,17 +54,17 @@ func (a *Agent) checkExploreFirstGate(name string, history []llm.Message) error 
 	switch a.opts.Mode {
 	case ModeOrchestra:
 		return fmt.Errorf(
-			"explore-first gate: call read, grep, or explore on the repository before write/edit; " +
+			"Policy violation: explore-first gate: call read, grep, or explore on the repository before write/edit; " +
 				"Orchestra Lead must gather evidence before mutating plans or scratchpads",
 		)
 	case ModeArchitecture:
 		return fmt.Errorf(
-			"explore-first gate: call read, grep, or explore on the repository before write/edit; " +
+			"Policy violation: explore-first gate: call read, grep, or explore on the repository before write/edit; " +
 				"Dept Lead must read relevant code and specs before writing Brief/ТЗ or playbooks",
 		)
 	default:
 		return fmt.Errorf(
-			"explore-first gate: call read, grep, or explore on the WorkOrder scope before edit/write; " +
+			"Policy violation: explore-first gate: call read, grep, or explore on the WorkOrder scope before edit/write; " +
 				"target_files must be read at least once",
 		)
 	}

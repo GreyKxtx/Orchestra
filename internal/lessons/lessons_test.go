@@ -38,6 +38,11 @@ func TestAppendDedupAndInject(t *testing.T) {
 	if inject == "" || !strings.Contains(inject, "<dept_lessons") || !strings.Contains(inject, "add retry helper") {
 		t.Fatalf("FormatInject = %q", inject)
 	}
+
+	lead := FormatLeadInject(root)
+	if lead == "" || !strings.Contains(lead, "<dept_lessons_all>") || !strings.Contains(lead, "add retry helper") {
+		t.Fatalf("FormatLeadInject = %q", lead)
+	}
 }
 
 func TestNormalizeDept(t *testing.T) {

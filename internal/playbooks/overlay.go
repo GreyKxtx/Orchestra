@@ -3,6 +3,7 @@ package playbooks
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/decisions"
@@ -13,7 +14,8 @@ const (
 	// LocalRelDir holds runtime-learned playbook overlays (gitignored under .orchestra/).
 	LocalRelDir = ".orchestra/playbooks/local"
 
-	deptPlaybookInjectMaxBytes = 2048
+	deptPlaybookInjectMaxBytes  = 2048
+	leadPlaybooksInjectMaxBytes = 1800
 )
 
 // FormatDeptPlaybookInject returns an XML block with the dept L2 playbook and
@@ -62,6 +64,72 @@ func FormatDeptPlaybookInject(projectRoot, dept string) string {
 	}
 	b.WriteString("\n</dept_playbook>")
 	return b.String()
+}
+
+// FormatLeadPlaybooksInject concatenates L2 playbooks + local overlays for
+// Orchestra/Architecture Lead prompts so codebase rules persist across sessions.
+func FormatLeadPlaybooksInject(projectRoot string) string {
+	if projectRoot == "" {
+		return ""
+	}
+	depts := listPlaybookDepts(projectRoot)
+	if len(depts) == 0 {
+		return ""
+	}
+	remaining := leadPlaybooksInjectMaxBytes
+	var b strings.Builder
+	b.WriteString("<dept_playbooks>\n")
+	wrote := false
+	for _, dept := range depts {
+		if remaining <= 80 {
+			b.WriteString("…(more playbooks truncated; read .orchestra/playbooks/)\n")
+			break
+		}
+		chunk := FormatDeptPlaybookInject(projectRoot, dept)
+		if chunk == "" {
+			continue
+		}
+		if len(chunk) > remaining {
+			chunk = chunk[:remaining] + "\n...(truncated)"
+		}
+		b.WriteString(chunk)
+		b.WriteByte('\n')
+		remaining -= len(chunk)
+		wrote = true
+	}
+	if !wrote {
+		return ""
+	}
+	b.WriteString("</dept_playbooks>")
+	return b.String()
+}
+
+func listPlaybookDepts(root string) []string {
+	seen := make(map[string]struct{})
+	addDir := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			if e.Name() == "conventions.md" {
+				continue
+			}
+			dept := lessons.NormalizeDept(strings.TrimSuffix(e.Name(), ".md"))
+			seen[dept] = struct{}{}
+		}
+	}
+	addDir(filepath.Join(root, ".orchestra", "playbooks"))
+	addDir(filepath.Join(root, filepath.FromSlash(LocalRelDir)))
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func readFirstPlaybook(root, dept string) (body, rel string) {

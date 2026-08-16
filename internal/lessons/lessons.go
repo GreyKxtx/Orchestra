@@ -1,7 +1,8 @@
 // Package lessons stores rule-based episodic learning artifacts at
 // .orchestra/memory/lessons/<dept>.md — append-only, no LLM required.
 // Runtime writes after worker verify; agents may append via memory_write
-// (scoped). Injected into child worker prompts as <dept_lessons>.
+// (scoped). Workers get <dept_lessons>; Orchestra/Architecture Leads get
+// FormatLeadInject so anti-patterns survive across sessions.
 package lessons
 
 import (
@@ -19,9 +20,11 @@ const (
 	// RelDir is the lessons root relative to project root.
 	RelDir = ".orchestra/memory/lessons"
 
-	maxStoredEntries   = 48
-	defaultInjectKeep  = 5
-	defaultInjectBytes = 900
+	maxStoredEntries       = 48
+	defaultInjectKeep      = 5
+	defaultInjectBytes     = 900
+	leadInjectMaxBytes     = 1500
+	leadInjectPerDeptBytes = 400
 	// MaxAgentNoteBytes caps memory_write notes routed to dept lessons.
 	MaxAgentNoteBytes = 400
 )
@@ -32,10 +35,10 @@ var deptNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*(@[a-z0-9][a-z0-9_-]*)?
 type Kind string
 
 const (
-	KindPattern      Kind = "pattern"
-	KindAntiPattern  Kind = "anti_pattern"
-	KindEscalation   Kind = "escalation"
-	KindAgentNote    Kind = "agent_note"
+	KindPattern     Kind = "pattern"
+	KindAntiPattern Kind = "anti_pattern"
+	KindEscalation  Kind = "escalation"
+	KindAgentNote   Kind = "agent_note"
 )
 
 // Entry is one append-only lesson record.
@@ -254,6 +257,51 @@ func FormatInject(projectRoot, dept string) string {
 	}
 	rel := filepath.ToSlash(filepath.Join(RelDir, dept+".md"))
 	return "<dept_lessons source=\"" + rel + "\">\n" + tail + "\n</dept_lessons>"
+}
+
+// FormatLeadInject concatenates recent tails of every dept lessons file for
+// Orchestra/Architecture Lead prompts (cross-session recall). Empty when none.
+func FormatLeadInject(projectRoot string) string {
+	if projectRoot == "" {
+		return ""
+	}
+	dir := filepath.Join(projectRoot, filepath.FromSlash(RelDir))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	remaining := leadInjectMaxBytes
+	var b strings.Builder
+	for _, e := range entries {
+		if remaining <= 80 {
+			b.WriteString("…(more lessons truncated; use memory_read layer=lessons)\n")
+			break
+		}
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		dept := strings.TrimSuffix(e.Name(), ".md")
+		budget := leadInjectPerDeptBytes
+		if budget > remaining {
+			budget = remaining
+		}
+		tail := Tail(projectRoot, dept, budget)
+		if tail == "" {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(RelDir, e.Name()))
+		chunk := "<dept_lessons source=\"" + rel + "\">\n" + tail + "\n</dept_lessons>\n"
+		if len(chunk) > remaining {
+			chunk = chunk[:remaining] + "\n...(truncated)\n"
+		}
+		b.WriteString(chunk)
+		remaining -= len(chunk)
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return ""
+	}
+	return "<dept_lessons_all>\n" + out + "\n</dept_lessons_all>"
 }
 
 // IsDeptScope reports whether a memory_write scope maps to a lessons file.

@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/lessons"
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/plan"
+	"github.com/orchestra/orchestra/internal/playbooks"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/internal/memory"
 )
+
 // P1 in audit ledger (Sprint 6).
 func (a *Agent) buildToolDefs() []llm.ToolDef {
 	a.toolDefsOnce.Do(func() {
@@ -109,9 +112,9 @@ func (a *Agent) substitutePlanPath(s string) string {
 // becomes the *base*, the rest *append* on top:
 //
 //  1. BASE candidate: promptpkg.BuildSystemPromptForMode(Mode, PromptFamily)
-//      -  the built-in prompt for the agent's mode.
+//     -  the built-in prompt for the agent's mode.
 //  2. BASE override: Options.SystemPromptOverride
-//      -  when a custom agent declares a system_prompt in .orchestra.yml,
+//     -  when a custom agent declares a system_prompt in .orchestra.yml,
 //     it REPLACES the mode default.
 //  3. BASE override (highest precedence): .orchestra/system.txt in the
 //     workspace root, loaded via promptpkg.LoadSystemOverride. If this
@@ -155,6 +158,29 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 		memCfg.Normalize()
 		store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
 		p.memory = store.FormatInject(memCfg.InjectBytes())
+	}
+	// 4b: cross-session learning stack (L1 lessons + L2 playbooks / local overlays).
+	// Workers already receive dept-scoped inject via spawn; Lead/Dept Lead need
+	// the full catalog so rules survive between sessions.
+	if a.opts.Mode == ModeOrchestra || a.opts.Mode == ModeArchitecture {
+		root := a.tools.WorkspaceRoot()
+		var extra strings.Builder
+		if s := lessons.FormatLeadInject(root); s != "" {
+			extra.WriteString(s)
+		}
+		if s := playbooks.FormatLeadPlaybooksInject(root); s != "" {
+			if extra.Len() > 0 {
+				extra.WriteString("\n\n")
+			}
+			extra.WriteString(s)
+		}
+		if extra.Len() > 0 {
+			if p.memory != "" {
+				p.memory += "\n\n" + extra.String()
+			} else {
+				p.memory = extra.String()
+			}
+		}
 	}
 	// 5: live tool catalog (mode/caps accurate  -  better than hardcoded lists in *.txt).
 	p.catalog = formatToolsCatalog(a.buildToolDefs())

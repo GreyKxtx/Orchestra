@@ -40,7 +40,12 @@ const (
 	//      plan mode uses per-session `.orchestra/plans/<id>.md`.
 	// v13: task / task_spawn accept optional `task_type` (Orchestra routing key,
 	//      resolved via orchestra_routing.yaml to subagent_type/tier/model).
-	ToolsVersion = 13
+	// v14: learning stack tools — `lesson_promote`, `playbook_promote`; dept-scoped
+	//      `memory_write`; `memory_read` layer `lessons`; hybrid semantic
+	//      `memory_search` when embed.model is configured; explore-first spawn
+	//      policy for workers; single-approval playbook_promote; child_done
+	//      promote suggestion fields for UI.
+	ToolsVersion = 14
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

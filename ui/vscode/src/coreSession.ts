@@ -23,7 +23,7 @@ import { RpcClient } from "./rpc/client";
 /** Must match internal/protocol/version.go */
 const PROTOCOL_VERSION = 13;
 const OPS_VERSION = 1;
-const TOOLS_VERSION = 13;
+export const TOOLS_VERSION = 14;
 
 /** session.message can run a long agent turn (orchestrated multi-department runs). */
 const MESSAGE_TIMEOUT_MS = 60 * 60 * 1000;
@@ -1728,6 +1728,10 @@ function normalizeAgentEvent(params: unknown): AgentEventParams | undefined {
     model: typeof p.model === "string" ? p.model : undefined,
     status: typeof p.status === "string" ? p.status : undefined,
     error: typeof p.error === "string" ? p.error : undefined,
+    lesson_promote_suggestion:
+      typeof p.lesson_promote_suggestion === "string" ? p.lesson_promote_suggestion : undefined,
+    playbook_promote_suggestion:
+      typeof p.playbook_promote_suggestion === "string" ? p.playbook_promote_suggestion : undefined,
   };
 }
 

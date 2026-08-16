@@ -200,7 +200,7 @@ func NeedsPlaybookPromoteHint(projectRoot, dept, localBody, decisionLog string) 
 func FormatPlaybookPromoteHint(dept string) string {
 	dept = lessons.NormalizeDept(dept)
 	return fmt.Sprintf(
-		"Approved local overlay for dept %q is ready — ask the User to approve merging into L2 playbook, record the exact promotion_ref in decisions.md, then playbook_promote{\"dept\":%q,\"promotion_ref\":\"<exact approval text>\"}",
+		"Approved local overlay for dept %q is ready — call playbook_promote{\"dept\":%q} to merge into L2 (uses the same decision_ref approval; promotion_ref optional)",
 		dept, dept,
 	)
 }

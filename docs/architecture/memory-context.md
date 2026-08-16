@@ -35,6 +35,8 @@ flowchart TB
 | Layer | Purpose | Code |
 |-------|---------|------|
 | File memory | Durable facts (project/session/global) | `internal/memory/` |
+| **Lessons (L1 episodic)** | Dept-scoped anti-patterns / fixes from workers | `.orchestra/memory/lessons/<dept>.md`, `internal/lessons/` |
+| **Playbooks (L2/L3)** | Dept rules + local overlay → merge | `.orchestra/playbooks/`, `internal/playbooks/` |
 | LLM history | Working turn memory | `internal/agent`, `session.History` |
 | Tool digests / prune | Shrink large tool outputs | `internal/agent/digest`, `history/prune.go` |
 | Working state / turn digest | Rule-based ledger + end-of-turn digest (no LLM) | `internal/agent/working` |
@@ -71,6 +73,23 @@ This includes **failed / soft-stopped turns** (`max_steps`, mid-turn errors that
 
 UIMessages stay full for the human; only LLM History is compacted.
 
+## Learning stack (L0–L3)
+
+Episodic learning is **file-backed** and separate from session compaction:
+
+| Layer | Path | Who writes | Promote flow |
+|-------|------|------------|--------------|
+| L0 scratch | `.orchestra/depts/<instance>.md` | workers (auto-append) | — |
+| L1 lessons | `.orchestra/memory/lessons/<dept>.md` | `memory_write` (dept Lead) / worker recorder | 3× same anti-pattern → `lesson_promote_suggestion` → `lesson_promote` → local overlay |
+| L2 playbook | `.orchestra/playbooks/<dept>.md` | Dept Lead + merge | sealed overlay → `playbook_promote_suggestion` → `playbook_promote` (single User approval) |
+| L3 global | `.orchestra/playbooks/conventions.md` | Docs Lead | out of scope for auto-promote |
+
+Runtime injects `<explore_first_policy>` on worker spawn and gates `write`/`edit` until explore (read/grep/explore). After merge to L2, `.orchestra/playbooks/local/<dept>.md` is removed. Orchestra/Architecture Lead prompts also receive `<dept_lessons_all>` and `<dept_playbooks>` so lessons and L2 rules persist across sessions. `orchestra init` creates `.orchestra/memory/lessons/` and `.orchestra/playbooks/local/` (local overlays are gitignored).
+
+`memory_read` layer `lessons` and `memory_search` rank hits with hybrid semantic scoring when `embed.model` is set in `.orchestra.yml`; otherwise substring match (see `internal/memory/semantic.go`).
+
+UI: `child_done` agent/event may include `lesson_promote_suggestion` / `playbook_promote_suggestion` (VS Code subagent badge + TUI system notice).
+
 ## Gaps vs ideal (Cursor / Claude Code / OpenCode)
 
 | Capability | Status |
@@ -79,7 +98,7 @@ UIMessages stay full for the human; only LLM History is compacted.
 | Structured in-prompt compact | Done |
 | Persist compact across turns | Phase 0 |
 | Sticky prefix + usage trigger + `/compact` | Phase 1 |
-| Sticky facts / ModeSummary→memory / `memory_search` | Phase 2 |
+| Sticky facts / ModeSummary→memory / `memory_search` | Phase 2 (+ hybrid semantic when `embed.model` set) |
 | UI collapse old turns / `/memory` / ctx source | Phase 3 |
 | Tokenizer calibration + metrics | Phase 4 |
 

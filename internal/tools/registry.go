@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/internal/tools/git"
@@ -16,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools/toolschema"
 	"github.com/orchestra/orchestra/internal/tools/toolslsp"
 	"github.com/orchestra/orchestra/internal/tools/web"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // Capabilities is the bundle of capability flags every tool-listing
@@ -89,10 +89,8 @@ func appendCapabilityTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
 // the surface to enumerate.
 //
 // Differs from listToolsBuild (the build-mode set) by including
-// ast_rename and repo_map but excluding plan_enter. The differences
-// are intentional: ListTools is the "no mode preference" surface,
-// listToolsBuild is the "actively coding" surface that includes the
-// plan-to-build transition tool.
+// ast_rename and repo_map. plan_enter is not advertised on any surface
+// (legacy stub only — enter plan via --mode plan / RPC mode).
 //
 // Other ListTools* surfaces in this file are intentionally distinct:
 //   - ListToolsWithSubtasks → ListTools + task_spawn/wait/cancel
@@ -403,6 +401,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolUpdateWorkingState(), session.ToolContractFreeze(),
 		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
+		session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
@@ -484,7 +483,8 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), session.ToolUpdateWorkingState(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), nav.ToolRepoMap(), fs.ToolASTRename(),
 		task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
-		task.ToolPlanEnter(), task.ToolPlanExit(), session.ToolQuestion(), session.ToolContractFreeze(),
+		task.ToolPlanExit(), session.ToolQuestion(), session.ToolContractFreeze(),
+		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 		git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush(),
@@ -553,7 +553,6 @@ func isWebGated(name string) bool {
 func isBrowserGated(name string) bool {
 	return strings.HasPrefix(name, "browser.") || strings.HasPrefix(name, "browser_")
 }
-
 
 func mustSchema(s string) json.RawMessage {
 	return toolschema.MustSchema(s)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/embed"
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
 )
@@ -90,6 +91,16 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 		limit = 8
 	}
 	store := c.memoryStore()
+	embCfg := c.embedConfig()
+	if strings.TrimSpace(embCfg.Model) != "" {
+		if hits, err := memory.SemanticSearch(ctx, store, c.Root, q, limit, embed.New(embCfg)); err == nil && len(hits) > 0 {
+			out := make([]MemorySearchHit, 0, len(hits))
+			for _, h := range hits {
+				out = append(out, MemorySearchHit{Layer: h.Layer, Snippet: h.Snippet})
+			}
+			return &MemorySearchResponse{Hits: out}, nil
+		}
+	}
 	var hits []MemorySearchHit
 	add := func(layer, content string) {
 		for _, e := range memory.SearchEntries(content, q, limit-len(hits)) {

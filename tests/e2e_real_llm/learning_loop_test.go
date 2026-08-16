@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/ckg"
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
 	toolsession "github.com/orchestra/orchestra/internal/tools/session"
@@ -45,7 +46,7 @@ func TestLearningLoop_DeptMemoryTools(t *testing.T) {
 		t.Fatalf("memory_read lessons: %+v", read)
 	}
 
-	sess := toolsession.NewClient(root, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() *ckg.Store { return nil })
+	sess := toolsession.NewClient(root, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() config.EmbedConfig { return config.EmbedConfig{} }, func() *ckg.Store { return nil })
 	search, err := sess.MemorySearch(context.Background(), toolsession.MemorySearchRequest{Query: "go test", Limit: 5})
 	if err != nil {
 		t.Fatal(err)

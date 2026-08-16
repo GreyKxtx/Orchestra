@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/ckg"
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
 )
 
@@ -38,7 +39,7 @@ func TestRuntimeQuery_JoinsCKG(t *testing.T) {
 		t.Fatalf("IngestTrace: %v", err)
 	}
 
-	c := NewClient(root, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() *ckg.Store { return store })
+	c := NewClient(root, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() config.EmbedConfig { return config.EmbedConfig{} }, func() *ckg.Store { return store })
 
 	resp, err := c.RuntimeQuery(ctx, RuntimeQueryRequest{TraceID: td.TraceID})
 	if err != nil {
@@ -70,7 +71,7 @@ func TestRuntimeQuery_NotFound(t *testing.T) {
 	}
 	defer store.Close()
 
-	c := NewClient(root, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() *ckg.Store { return store })
+	c := NewClient(root, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() config.EmbedConfig { return config.EmbedConfig{} }, func() *ckg.Store { return store })
 
 	_, err = c.RuntimeQuery(context.Background(), RuntimeQueryRequest{TraceID: "deadbeefdeadbeefdeadbeefdeadbeef"})
 	if err == nil {

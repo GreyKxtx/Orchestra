@@ -2,6 +2,7 @@ package session
 
 import (
 	"github.com/orchestra/orchestra/internal/ckg"
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
 )
 
@@ -10,6 +11,7 @@ type Client struct {
 	Root      string
 	sessionID func() string
 	memoryCfg func() memory.Config
+	embedCfg  func() config.EmbedConfig
 	ckgStore  func() *ckg.Store
 }
 
@@ -18,12 +20,14 @@ func NewClient(
 	root string,
 	sessionID func() string,
 	memoryCfg func() memory.Config,
+	embedCfg func() config.EmbedConfig,
 	ckgStore func() *ckg.Store,
 ) *Client {
 	return &Client{
 		Root:      root,
 		sessionID: sessionID,
 		memoryCfg: memoryCfg,
+		embedCfg:  embedCfg,
 		ckgStore:  ckgStore,
 	}
 }
@@ -42,6 +46,13 @@ func (c *Client) memCfg() memory.Config {
 	cfg := c.memoryCfg()
 	cfg.Normalize()
 	return cfg
+}
+
+func (c *Client) embedConfig() config.EmbedConfig {
+	if c == nil || c.embedCfg == nil {
+		return config.EmbedConfig{}
+	}
+	return c.embedCfg()
 }
 
 func (c *Client) store() *ckg.Store {

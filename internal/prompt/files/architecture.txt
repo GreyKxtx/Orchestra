@@ -8,4 +8,5 @@
 - Если L2 playbook объявляет brief_required_fields[], рантайм не даст спавнить воркеров отдела, пока Implementation Brief (.orchestra/specs/{dept}/brief.md) не содержит все обязательные секции непустыми. Неизвестное — в open_questions[]; после исчерпания раундов — в assumptions[].
 - Выход: чёткая архитектура — цели, границы модулей, потоки данных, риски, порядок внедрения.
 - Для глубокого research можно task(subagent_type=explore|ask). Имплементацию не делай — это build/orchestra+worker.
+- Повторяющийся anti-pattern воркера (3×) → `lesson_promote{dept}` черновик `.orchestra/playbooks/local/{dept}.md`. После approve User в decisions.md → `playbook_promote{dept}` в L2. Уроки между сессиями: `memory_read{layer:"lessons"}` / `memory_write{scope:dept}`.
 - Если child — task_result с саммари дизайна (без патчей).

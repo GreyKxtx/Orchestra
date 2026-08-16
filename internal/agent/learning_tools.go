@@ -49,7 +49,7 @@ func (a *Agent) handleLessonPromote(ctx context.Context, input json.RawMessage) 
 		"path":         rel,
 		"status":       "draft",
 		"decision_ref": pendingRef,
-		"message":      "Draft local overlay written. Ask the User via open_questions; the runtime appends the answer to decisions.md and auto-seals decision_ref. After merge approval in decisions.md, call playbook_promote.",
+		"message":      "Draft local overlay written. Ask the User via open_questions; the runtime auto-seals decision_ref. Then call playbook_promote (same approval covers merge).",
 	})
 	return resp, nil
 }
@@ -68,11 +68,18 @@ func (a *Agent) handlePlaybookPromote(ctx context.Context, input json.RawMessage
 	}
 	dept := lessons.NormalizeDept(req.Dept)
 	ref := strings.TrimSpace(req.PromotionRef)
-	if dept == "" || ref == "" {
-		return nil, fmt.Errorf("playbook_promote: dept and promotion_ref are required")
-	}
 	root := a.tools.WorkspaceRoot()
 	log := readDecisionLogRaw(root)
+	if ref == "" {
+		body, err := playbooks.ReadLocalOverlayBody(root, dept)
+		if err != nil {
+			return nil, fmt.Errorf("playbook_promote: %w", err)
+		}
+		ref = playbooks.ParseDecisionRef(body)
+	}
+	if dept == "" || ref == "" {
+		return nil, fmt.Errorf("playbook_promote: dept is required; promotion_ref defaults to approved overlay decision_ref")
+	}
 	l2Rel, err := playbooks.MergeApprovedLocalToL2(root, dept, ref, log)
 	if err != nil {
 		return nil, fmt.Errorf("playbook_promote: %w", err)

@@ -34,9 +34,9 @@ Budget split in eager/hybrid: orchestra 35%, session 25%, repo 30%, global remai
 
 - **`memory_write`** — `{ content, scope?: "project"|"session"|<dept> }` — prefix `[pin]` for sticky facts. Dept scope (`engineering`, `frontend@web`, …) appends to `.orchestra/memory/lessons/<dept>.md` (max 3/run, 400 chars, deduped).
 - **`memory_read`** — `{ layer?, path?, max_kb? }` — list sources or read a layer (`orchestra|session|repo|lessons|global|all`)
-- **`memory_search`** — `{ query, limit? }` — substring search across memory layers including dept lessons
+- **`memory_search`** — `{ query, limit? }` — hybrid search across memory layers (substring always; when `embed.model` is set, semantic re-ranking via shared embed client)
 - **`lesson_promote`** — `{ dept, note?, source? }` — Dept/Orchestra Lead only: draft local playbook overlay from last pattern lesson (`.orchestra/playbooks/local/<dept>.md`, `decision_ref: PENDING:…`)
-- **`playbook_promote`** — `{ dept, promotion_ref }` — merge approved local overlay into L2 `.orchestra/playbooks/<dept>.md` (requires User approvals in `decisions.md`)
+- **`playbook_promote`** — `{ dept, promotion_ref? }` — merge approved local overlay into L2 `.orchestra/playbooks/<dept>.md`; `promotion_ref` optional — defaults to overlay `decision_ref` (single User approval in `decisions.md`). Local overlay file removed after merge.
 
 ### Learning stack (L0–L3)
 
@@ -55,6 +55,8 @@ Explore-first gate blocks `write`/`edit` for Worker, Orchestra Lead, and Dept Le
 ## Integration
 
 - System prompt: `Agent.buildSystemPrompt()` → `memory.Store.FormatInject()`
+- Orchestra / Architecture Lead: also `lessons.FormatLeadInject` + `playbooks.FormatLeadPlaybooksInject` (cross-session L1 lessons + L2 playbooks / local overlays)
+- Workers: dept-scoped `<dept_lessons>` + `<dept_playbook>` at spawn (not the Lead catalog)
 - Lazy: `fs.read` → `Runner.discoverInstructions()` (capped ORCHESTRA.md)
 - Session: `Core.SessionMessage` sets `session_id` on runner + agent options; **ReplaceHistory** persists compaction
 - TUI: `/compact` → `session.compact`; `/memory` lists layers + pins
@@ -81,6 +83,5 @@ Architecture + phases: [`architecture/memory-context.md`](./architecture/memory-
 
 ## Not in v1 (remaining)
 
-- Semantic embeddings over memory (substring `memory_search` ships first)
 - Full TUI memory editor
 - Session-start hooks

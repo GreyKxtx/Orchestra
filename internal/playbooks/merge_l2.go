@@ -12,19 +12,23 @@ import (
 )
 
 // MergeApprovedLocalToL2 appends an approved local overlay into the dept L2 playbook.
-// promotionRef must appear verbatim in decisions.md (User approved the merge).
+// When promotionRef is empty, the overlay decision_ref (already in decisions.md) is used.
 func MergeApprovedLocalToL2(projectRoot, dept, promotionRef, decisionLog string) (l2Rel string, err error) {
 	dept = lessons.NormalizeDept(dept)
-	promotionRef = strings.TrimSpace(promotionRef)
-	if promotionRef == "" {
-		return "", fmt.Errorf("promotion_ref must not be empty")
-	}
-	if !strings.Contains(decisionLog, promotionRef) {
-		return "", fmt.Errorf("promotion_ref %q not found in decisions log — ask the User and record approval first", promotionRef)
-	}
 	localBody, err := readLocalOverlayFile(projectRoot, dept)
 	if err != nil {
 		return "", err
+	}
+	decisionRef := ParseDecisionRef(localBody)
+	promotionRef = strings.TrimSpace(promotionRef)
+	if promotionRef == "" {
+		promotionRef = decisionRef
+	}
+	if promotionRef == "" || IsPendingDecisionRef(promotionRef) {
+		return "", fmt.Errorf("promotion_ref must not be empty — approve the local overlay via Question Barrier first")
+	}
+	if !strings.Contains(decisionLog, promotionRef) {
+		return "", fmt.Errorf("promotion_ref %q not found in decisions log — ask the User and record approval first", promotionRef)
 	}
 	if !LocalOverlayApproved(localBody, decisionLog) {
 		return "", fmt.Errorf("local overlay is not approved — set decision_ref in frontmatter to text present in decisions.md first")
@@ -61,6 +65,8 @@ func MergeApprovedLocalToL2(projectRoot, dept, promotionRef, decisionLog string)
 	if err := fsutil.AtomicWriteFile(l2Abs, []byte(b.String()), 0o644); err != nil {
 		return "", err
 	}
+	localAbs := filepath.Join(projectRoot, filepath.FromSlash(LocalOverlayRel(dept)))
+	_ = os.Remove(localAbs)
 	return l2Rel, nil
 }
 
@@ -74,6 +80,11 @@ func readLocalOverlayFile(root, dept string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ReadLocalOverlayBody returns the raw local overlay file for a dept.
+func ReadLocalOverlayBody(root, dept string) (string, error) {
+	return readLocalOverlayFile(root, dept)
 }
 
 func extractOverlayBody(body string) string {

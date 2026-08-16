@@ -17,7 +17,7 @@ func TestEnsureGitignore_CreatesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{".orchestra.local.yml", ".orchestra/*", "!.orchestra/state.md", "*.orchestra.bak"} {
+	for _, want := range []string{".orchestra.local.yml", ".orchestra/*", "!.orchestra/state.md", "*.orchestra.bak", ".orchestra/playbooks/local/"} {
 		if !strings.Contains(string(first), want) {
 			t.Errorf("gitignore missing %q:\n%s", want, first)
 		}
@@ -62,5 +62,44 @@ func TestEnsureGitignore_AppendsToExisting(t *testing.T) {
 	}
 	if !strings.Contains(string(got), gitignoreMarker) {
 		t.Errorf("orchestra block not appended:\n%s", got)
+	}
+}
+
+func TestEnsureGitignore_MigratesLocalPlaybooksIgnore(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	old := gitignoreMarker + " (added by orchestra init)\n.orchestra.local.yml\n.orchestra/*\n!.orchestra/playbooks/\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatalf("ensureGitignore: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), gitignoreLocalPlaybooks) {
+		t.Errorf("missing local playbooks ignore:\n%s", got)
+	}
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := os.ReadFile(path)
+	if string(again) != string(got) {
+		t.Errorf("migration not idempotent:\n%s", again)
+	}
+}
+
+func TestEnsureLearningDirs(t *testing.T) {
+	dir := t.TempDir()
+	if err := ensureLearningDirs(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		filepath.Join(".orchestra", "memory", "lessons"),
+		filepath.Join(".orchestra", "playbooks", "local"),
+	} {
+		st, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil || !st.IsDir() {
+			t.Fatalf("%s: %v", rel, err)
+		}
 	}
 }

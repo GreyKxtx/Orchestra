@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/orchestra/orchestra/llm"
 	"github.com/xeipuuv/gojsonschema"
 )
 
@@ -73,7 +74,7 @@ func TestResolveToolNames(t *testing.T) {
 		{"all tools", []string{"ls", "read", "glob", "write", "edit", "grep", "symbols",
 			"explore", "bash", "webfetch", "todowrite", "todoread", "memory_write", "memory_read", "memory_search",
 			"runtime_query", "task_spawn", "task_wait", "task_cancel", "task_result",
-			"plan_enter", "plan_exit", "question", "diff.preview"}, 24, false},
+			"plan_exit", "question", "diff.preview", "lesson_promote", "playbook_promote"}, 25, false},
 		{"unknown tool", []string{"read", "fly"}, 0, true},
 		{"empty list", []string{}, 0, false},
 	}
@@ -152,12 +153,38 @@ func TestListToolsForMode_BuildNoPlanEnter(t *testing.T) {
 	}
 }
 
+func TestListToolsForMode_NoPlanEnterInAnySurface(t *testing.T) {
+	caps := Capabilities{Exec: true, Web: true, Browser: true}
+	surfaces := [][]llm.ToolDef{
+		ListTools(caps),
+		ListToolsWithSubtasks(caps),
+		ListToolsForChild(),
+	}
+	for _, mode := range []string{"build", "plan", "explore", "general", "orchestra", "worker", "verifier", "ask", "debug"} {
+		surfaces = append(surfaces, ListToolsForMode(mode, caps, true, true))
+	}
+	for _, defs := range surfaces {
+		for _, d := range defs {
+			if d.Function.Name == "plan_enter" {
+				t.Fatal("plan_enter must not be advertised to the model")
+			}
+		}
+	}
+}
+
+func TestResolveToolNames_PlanEnterUnknown(t *testing.T) {
+	_, err := ResolveToolNames([]string{"plan_enter"})
+	if err == nil {
+		t.Fatal("plan_enter must not resolve as a known tool")
+	}
+}
+
 func TestListToolsForMode_OrchestraLeadSurface(t *testing.T) {
 	names := make(map[string]bool)
 	for _, d := range ListToolsForMode("orchestra", Capabilities{}, true, true) {
 		names[d.Function.Name] = true
 	}
-	for _, want := range []string{"read", "write", "task", "repo_map", "explore"} {
+	for _, want := range []string{"read", "write", "task", "repo_map", "explore", "memory_read", "memory_write", "memory_search", "lesson_promote", "playbook_promote"} {
 		if !names[want] {
 			t.Fatalf("orchestra mode missing tool %q", want)
 		}

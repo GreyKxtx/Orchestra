@@ -33,14 +33,14 @@ func ToolPlaybookPromote() llm.ToolDef {
 		Function: llm.ToolFunctionDef{
 			Name: "playbook_promote",
 			Description: "Merge an approved local overlay into the dept L2 playbook (.orchestra/playbooks/{dept}.md). " +
-				"Requires local overlay decision_ref approved in decisions.md plus promotion_ref approved in decisions.md.",
+				"Requires overlay decision_ref approved in decisions.md. promotion_ref is optional (defaults to decision_ref).",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
-  "required": ["dept", "promotion_ref"],
+  "required": ["dept"],
   "properties": {
     "dept":           { "type": "string", "description": "Department key" },
-    "promotion_ref":  { "type": "string", "description": "Exact approval text recorded in decisions.md for this merge" }
+    "promotion_ref":  { "type": "string", "description": "Optional; defaults to approved overlay decision_ref" }
   }
 }`),
 		},

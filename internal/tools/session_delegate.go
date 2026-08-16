@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/orchestra/orchestra/internal/ckg"
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/tools/session"
 )
@@ -16,6 +17,7 @@ func (r *Runner) sessionClient() *session.Client {
 		r.workspaceRoot,
 		func() string { return r.sessionID },
 		func() memory.Config { return r.memoryCfg },
+		func() config.EmbedConfig { return r.embedCfg },
 		func() *ckg.Store {
 			r.ckgMu.RLock()
 			s := r.ckgStore

@@ -40,17 +40,17 @@ func TestMergeApprovedLocalToL2(t *testing.T) {
 	root := t.TempDir()
 	dept := "frontend"
 	localRef := "approve vitest local overlay"
-	mergeRef := "merge vitest rules to L2 playbook"
 	localBody := "---\ndecision_ref: " + localRef + "\n---\n\n- Prefer vitest\n"
 	localDir := filepath.Join(root, filepath.FromSlash(LocalRelDir))
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(localDir, dept+".md"), []byte(localBody), 0o644); err != nil {
+	localAbs := filepath.Join(localDir, dept+".md")
+	if err := os.WriteFile(localAbs, []byte(localBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	log := "- A: " + localRef + "\n- A: " + mergeRef + "\n"
-	l2Rel, err := MergeApprovedLocalToL2(root, dept, mergeRef, log)
+	log := "- A: " + localRef + "\n"
+	l2Rel, err := MergeApprovedLocalToL2(root, dept, "", log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,10 @@ func TestMergeApprovedLocalToL2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Prefer vitest") || !strings.Contains(string(data), mergeRef) {
+	if !strings.Contains(string(data), "Prefer vitest") || !strings.Contains(string(data), localRef) {
 		t.Fatalf("l2=%q", data)
+	}
+	if _, err := os.Stat(localAbs); !os.IsNotExist(err) {
+		t.Fatalf("local overlay should be removed after merge, stat err=%v", err)
 	}
 }

@@ -26,6 +26,11 @@ func TestFormatDeptPlaybookInject_BaseAndLocal(t *testing.T) {
 	if !strings.Contains(got, "local overlay") {
 		t.Fatalf("missing overlay marker: %q", got)
 	}
+
+	lead := FormatLeadPlaybooksInject(root)
+	if !strings.Contains(lead, "<dept_playbooks>") || !strings.Contains(lead, "use pnpm") || !strings.Contains(lead, "prefer vitest") {
+		t.Fatalf("lead inject = %q", lead)
+	}
 }
 
 func TestFormatDeptPlaybookInject_ApprovedOverlayMarker(t *testing.T) {

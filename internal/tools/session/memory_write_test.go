@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
 )
 
 func testMemoryClient(t *testing.T, dir string) *Client {
 	t.Helper()
-	return NewClient(dir, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, nil)
+	return NewClient(dir, func() string { return "" }, func() memory.Config { return memory.DefaultConfig() }, func() config.EmbedConfig { return config.EmbedConfig{} }, nil)
 }
 
 func TestMemoryWrite_CreatesFile(t *testing.T) {
