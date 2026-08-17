@@ -34,6 +34,11 @@
 | Reasoning Stream | Парсинг `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 через LM Studio); автоматическое заворачивание в `<think>…</think>` для `ReasoningSplitter`; SSE-tap по env-флагу `ORCH_STREAM_DEBUG` | ✅ |
 | TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy-indicator в статус-баре, mouse wheel scroll, "Thinking:" блок с `┃` бордером, render-cache invalidation на Ctrl+T, mode-aware accent colors | ✅ |
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
+| Orchestra Lead surface | Strict allowlist **14 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
+| CKG v5 | Multi-hop explore (`depth`/`direction`), subgraph cap 1500 tokens, protocol **ToolsVersion 14** | ✅ |
+| Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote` | ✅ |
+| LLM fail-fast | Unreachable endpoint (dial / refused / i/o timeout) aborts the turn — no false `prompt too large` compaction loop | ✅ |
+| TUI Subagent Bar | Live child tasks (`child_started` / `child_queued` / `child_done`) | ✅ |
 | Attachments / Vision | Protocol **v13**: images/SVG/PDF, staging `.orchestra/attachments/`, TUI `/attach`, VS Code drag-drop | ✅ |
 | VS Code extension | Webview chat + settings, LSP install modal, per-file diff review, workspace editor for previews | ✅ |
 
@@ -107,7 +112,7 @@ exclude_dirs: [.git, node_modules, dist]
 
 llm:
   provider: openai          # "openai" | "anthropic"
-  api_base: http://localhost:1234   # LM Studio, vLLM, OpenAI…
+  api_base: http://localhost:1234/v1   # LM Studio (Ollama: :11434/v1, vLLM: :8000/v1)
   api_key: ""
   model: qwen2.5-coder-7b-instruct
   max_tokens: 4096

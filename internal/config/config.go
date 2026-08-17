@@ -651,7 +651,7 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			MaxBytesPerFile: 200 * 1024,
 		},
 		LLM: LLMConfig{
-			APIBase:     "http://localhost:8000/v1",
+			APIBase:     "http://localhost:1234/v1",
 			Model:       "qwen2.5-coder-7b",
 			Temperature: 0.7,
 			MaxTokens:   4096,

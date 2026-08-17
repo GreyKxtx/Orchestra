@@ -48,6 +48,8 @@ agent:
 - история после сжатия **не уменьшилась** (окно забито system prompt + tool schemas);
 - или исчерпан лимит `maxOverflowRecoveries` (2 цикла compact→retry за ход).
 
+**Сеть / LM Studio выключен:** `dial tcp`, `connection refused`, `i/o timeout` на POST **не** запускают compaction. Ход сразу падает с `LLM Endpoint unreachable at <url>. Check if LM Studio / vLLM is running.`
+
 UI: полный текст ошибки **переносится** по строкам (не обрезается `…`).
 
 В чате при успешной компакции: notice **Info · Контекст сжат…** / `CONTEXT_COMPACTED`.

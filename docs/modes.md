@@ -137,7 +137,7 @@ orchestra:
   max_worker_retries: 3
 ```
 
-**Инструменты:** research + plan write + `task`/`task_spawn` (`worker|ask|debug|architecture|explore`, `tier=…` для worker) + `question`.
+**Инструменты (строго 14):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans|state.md|depts`), `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
 
 **Промпт:** `orchestra.txt`. TUI: `/orchestra` — настройки planner/tiers; badge `orchestra · lead`. Tab: `… → agent → orchestra`.
 

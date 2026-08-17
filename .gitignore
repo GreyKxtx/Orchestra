@@ -34,8 +34,14 @@ Thumbs.db
 
 # Orchestra specific
 .orchestra/
-*.orchestra.bak
+.orchestra/*.db*
+.orchestra/plans/local/
+.orchestra/playbooks/local/
+.orchestra.local.yml
 .orchestra.yml.local
+*.orchestra.bak
+*.bak
+*.tmp
 
 # Test run reports (generated during e2e/real-llm runs)
 e2e_llm_*.md

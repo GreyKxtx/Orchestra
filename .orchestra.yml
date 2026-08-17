@@ -1,4 +1,4 @@
-project_root: D:\CursorProjects\Orchestra
+project_root: .
 exclude_dirs:
     - .git
     - node_modules
@@ -7,34 +7,19 @@ exclude_dirs:
     - .orchestra
 context_limit_kb: 64
 llm:
-    api_base: http://10.5.0.2:1234
-    api_key: "lm-studio"
-    model: qwen/qwen3.6-27b
+    api_base: http://localhost:1234/v1
+    api_key: ""
+    model: qwen2.5-coder-7b-instruct
     max_tokens: 8192
     temperature: 0.2
     timeout_s: 180
     multimodal: true
     extra_body:
-        num_ctx: 20000
-providers:
-    fast:
-        api_base: http://10.5.0.2:1234
-        api_key: "lm-studio"
-        model: nvidia/nemotron-3-nano-4b
-        max_tokens: 4096
-        temperature: 0.2
-        timeout_s: 90
-        extra_body:
-            num_ctx: 20000
-embed:
-    api_base: http://10.5.0.2:1234/v1
-    api_key: "lm-studio"
-    model: text-embedding-nomic-embed-text-v1.5
-    batch_size: 16
-    timeout_s: 60
+        num_ctx: 32768
 lsp:
     servers:
         - language: go
           extensions: [".go"]
           command: ["gopls", "serve"]
     diagnostics_timeout_ms: 5000
+    auto_install: ask

@@ -147,3 +147,4 @@
 - **Core-parity roadmap A–G** — закрыт. Tool aliases, forgiving resolver (LineTrimmed + IndentationFlexible), compaction-агент, кастомные агенты, permission ruleset, webfetch, memory tool, LSP.
 - **Competitive gap roadmap 1–6** — закрыт. ripgrep, GitHub tools, LSP diagnostics, MCP-CLI, multi-provider auth, skills (CLI + `skill_invoke` + `$ARGUMENTS` + user-global dir).
 - **Двухслойная архитектура патчей + staging overlay в dry-run** — `--apply` корректно отделяет план от записи; `write`/`edit` в dry-run пишут в memory overlay, на диск не попадают.
+- **Orchestra Lead (`--mode orchestra`)** — `listToolsOrchestra()` ≤ 14 инструментов; Worker-тулы (edit/LSP/bash/`task_result`) не входят в схему Лида. Step-1 budget ≤ 8k tokens.

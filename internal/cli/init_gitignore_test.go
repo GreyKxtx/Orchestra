@@ -17,7 +17,7 @@ func TestEnsureGitignore_CreatesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{".orchestra.local.yml", ".orchestra/*", "!.orchestra/state.md", "*.orchestra.bak", ".orchestra/playbooks/local/"} {
+	for _, want := range []string{".orchestra.local.yml", ".orchestra/*", "!.orchestra/state.md", "*.orchestra.bak", "*.bak", "*.tmp", ".orchestra/*.db*", ".orchestra/playbooks/local/", ".orchestra/plans/local/"} {
 		if !strings.Contains(string(first), want) {
 			t.Errorf("gitignore missing %q:\n%s", want, first)
 		}

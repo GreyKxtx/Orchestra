@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — Orchestra Lead token budget, CKG v5, LLM fail-fast (2026-08)
+
+- **Lead tool isolation** — `listToolsOrchestra()` allowlist of **14** tools (orchestration + read-only research + plan write + memory/promote). Worker extras (`edit`, `lsp_*`, `bash`, `task_result`, MCP) are stripped from the Lead schema.
+- **Step-1 budget ≤ 8k tokens** — compact Lead schemas, capped lessons (5/dept, ~1000 tok) and playbooks (~1000 tok), CKG subgraph ≤ 1500, no duplicate `<available_tools>` / skills dump on Orchestra Lead.
+- **LLM unreachable fail-fast** — `dial tcp` / `connection refused` / `i/o timeout` abort the turn with `LLM Endpoint unreachable at <url>…`; LLM compaction is skipped after infrastructure errors.
+- **CKG v5** — multi-hop traversal (`explore` depth/direction), TUI Subagent Bar, `ToolsVersion` **14** handshake.
+
 ### Added — Phase 11 (local model stability)
 
 - **Forgiving edit 7-pass** — `patch/resolver`: passes 4–6 (whitespace/escape/trimmed-boundary) + **BlockAnchor** strict (A2); `strategy` in ambiguous errors.

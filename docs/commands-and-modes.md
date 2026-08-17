@@ -25,7 +25,7 @@
 
 ### 1.1. `orchestra init`
 Создаёт `.orchestra.yml` в текущей директории. Пишет дефолтный конфиг
-(`internal/config/config.go`) с `LLM.APIBase = http://localhost:8000/v1`
+(`internal/config/config.go`) с `LLM.APIBase = http://localhost:1234/v1` (LM Studio; vLLM часто `:8000/v1`)
 и моделью `qwen2.5-coder-7b`. Идемпотентно отказывает, если файл уже есть.
 
 ### 1.2. `orchestra core`

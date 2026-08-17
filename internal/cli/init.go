@@ -53,7 +53,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Create default config
 	cfg := config.DefaultConfig(cwd)
-	cfg.LLM.APIBase = "http://localhost:8000/v1"
+	cfg.LLM.APIBase = "http://localhost:1234/v1"
 	cfg.LLM.Model = "qwen2.5-coder-7b"
 	cfg.ContextLimit = 50
 	cfg.Limits.ContextKB = 50
@@ -86,7 +86,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		"#   orchestra apply --mode orchestra \"…\"   # Lead delegates via task(worker)\n" +
 		"# providers:\n" +
 		"#   fast:                          # Worker / compaction / auto-router\n" +
-		"#     api_base: http://localhost:8000/v1\n" +
+		"#     api_base: http://localhost:1234/v1\n" +
 		"#     model: nemotron-4b\n" +
 		"# llm:\n" +
 		"#   model: qwen-27b                 # Lead (main)\n" +
@@ -157,11 +157,15 @@ const gitignoreMarker = "# Orchestra: local secrets & runtime artifacts"
 const gitignoreBlock = gitignoreMarker + ` (added by orchestra init)
 .orchestra.local.yml
 *.orchestra.bak
+*.bak
+*.tmp
 .orchestra/*
+.orchestra/*.db*
 !.orchestra/state.md
 !.orchestra/decisions.md
 !.orchestra/system.txt
 !.orchestra/plans/
+.orchestra/plans/local/
 !.orchestra/specs/
 !.orchestra/playbooks/
 .orchestra/playbooks/local/
@@ -170,6 +174,8 @@ const gitignoreBlock = gitignoreMarker + ` (added by orchestra init)
 `
 
 const gitignoreLocalPlaybooks = ".orchestra/playbooks/local/"
+const gitignoreLocalPlans = ".orchestra/plans/local/"
+const gitignoreSQLite = ".orchestra/*.db*"
 
 // ensureGitignore creates or appends the Orchestra ignore block. Secrets can
 // live in .orchestra.local.yml and runtime logs under .orchestra/, so a bare
@@ -194,11 +200,15 @@ func ensureGitignore(projectRoot string) error {
 		extra.WriteString(block)
 		body += block
 	}
-	if !strings.Contains(body, gitignoreLocalPlaybooks) {
+	for _, line := range []string{gitignoreLocalPlaybooks, gitignoreLocalPlans, gitignoreSQLite, "*.bak", "*.tmp"} {
+		if strings.Contains(body, line) {
+			continue
+		}
 		if extra.Len() == 0 && len(body) > 0 && !strings.HasSuffix(body, "\n") {
 			extra.WriteByte('\n')
 		}
-		extra.WriteString(gitignoreLocalPlaybooks + "\n")
+		extra.WriteString(line + "\n")
+		body += line + "\n"
 	}
 	if extra.Len() == 0 {
 		return nil
