@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // overflowLLM mimics vLLM: any step whose prompt exceeds rejectAboveBytes is
@@ -191,5 +191,41 @@ func TestBuildCompactionCorpus_FitsBudget(t *testing.T) {
 	}
 	if !strings.Contains(corpus, "[clipped]") {
 		t.Error("expected oversized entries to be clipped")
+	}
+}
+
+type unreachableLLM struct {
+	complete int
+	compact  int
+}
+
+func (u *unreachableLLM) Plan(ctx context.Context, prompt string) (string, error) { return "{}", nil }
+
+func (u *unreachableLLM) Complete(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	for _, m := range req.Messages {
+		if m.Role == llm.RoleSystem && strings.Contains(m.Content, "Context Manager") {
+			u.compact++
+			return nil, fmt.Errorf("compaction must not run after connect failure")
+		}
+	}
+	u.complete++
+	return nil, fmt.Errorf(`failed to send stream request: Post "http://127.0.0.1:1234/v1/chat/completions": dial tcp 127.0.0.1:1234: connect: connection refused`)
+}
+
+func TestRun_UnreachableLLMFailsFast(t *testing.T) {
+	client := &unreachableLLM{}
+	ag := newOverflowAgent(t, client)
+	_, _, err := ag.Run(context.Background(), nil, "test")
+	if err == nil {
+		t.Fatal("expected unreachable error")
+	}
+	if !llm.IsUnreachableError(err) && !strings.Contains(err.Error(), "connection refused") && !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("err = %v", err)
+	}
+	if client.compact != 0 {
+		t.Fatalf("compaction ran %d times; want 0", client.compact)
+	}
+	if client.complete < 1 {
+		t.Fatal("expected at least one Complete attempt")
 	}
 }

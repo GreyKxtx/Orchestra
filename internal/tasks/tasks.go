@@ -16,9 +16,9 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // ChildClientResolver builds an LLM client for a child from optional provider/model overrides.
@@ -398,6 +398,7 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 		}
 
 		result := r.runChild(taskCtx, taskID, req, subagentType, maxSteps, childTools)
+		r.notifyChildDone(taskID, req.ParentToolCallID, subagentType, result)
 
 		r.mu.Lock()
 		entry.result = result
@@ -579,6 +580,9 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		// Workers: no parent dialog, no project memory inject, no session notes.
 		AutoSessionMemory: false,
 		SkipMemoryInject:  mode == agent.ModeWorker,
+		AllowExec:         r.child.Caps.Exec,
+		AllowWeb:          r.child.Caps.Web,
+		AllowBrowser:      r.child.Caps.Browser,
 	}
 	if mode == agent.ModeWorker {
 		wsOff := false
@@ -598,13 +602,13 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 			eventTier = "lead" // L4 badge in UI even without explicit spawn tier
 		}
 		r.child.NotifyAgentEvent(map[string]any{
-			"type":                 "child_started",
-			"task_id":              taskID,
-			"parent_tool_call_id":  req.ParentToolCallID,
-			"subagent_type":        subagentType,
-			"tier":                 eventTier,
-			"model":                modelLabel,
-			"content":              req.Goal,
+			"type":                "child_started",
+			"task_id":             taskID,
+			"parent_tool_call_id": req.ParentToolCallID,
+			"subagent_type":       subagentType,
+			"tier":                eventTier,
+			"model":               modelLabel,
+			"content":             req.Goal,
 		})
 	}
 	if mode == agent.ModeWorker && r.child.MaxWorkerRetries > 0 {
@@ -613,6 +617,9 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		opts.MaxToolErrorRepeats = r.child.MaxWorkerRetries
 	}
 	childGoal := FormatChildGoal(subagentType, req.Tier, req.Goal)
+	if mode == agent.ModeWorker {
+		childGoal = exploreFirstWorkerPolicy(workOrder) + "\n\n" + childGoal
+	}
 	if conv := loadProjectConventions(r.toolRunner.WorkspaceRoot(), mode); conv != "" {
 		childGoal = conv + "\n\n" + childGoal
 	}
@@ -625,13 +632,11 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if pb := loadDeptPlaybook(r.toolRunner.WorkspaceRoot(), mode, workOrder); pb != "" {
 		childGoal = pb + "\n\n" + childGoal
 	}
-	if mode == agent.ModeWorker {
-		if wo, err := ParseWorkOrderJSON(childGoal); err == nil {
-			opts.WorkerEditPaths = EditScopePaths(wo)
-			// WorkOrder-driven worker → schema-enforced task_result
-			// (spec checklist 31, local L3/L1 drift protection).
-			opts.WorkerStrictResult = true
-		}
+	if mode == agent.ModeWorker && workOrder != nil {
+		opts.WorkerEditPaths = EditScopePaths(workOrder)
+		// WorkOrder-driven worker → schema-enforced task_result
+		// (spec checklist 31, local L3/L1 drift protection).
+		opts.WorkerStrictResult = true
 	}
 	var hist []llm.Message
 	var res *agent.Result
@@ -649,19 +654,6 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	errMsg := ""
 	if runErr != nil {
 		status, errMsg = classifyChildRunErr(ctx, runErr)
-	}
-	if r.child.NotifyAgentEvent != nil {
-		params := map[string]any{
-			"type":                "child_done",
-			"task_id":             taskID,
-			"parent_tool_call_id": req.ParentToolCallID,
-			"subagent_type":       subagentType,
-			"status":              status,
-		}
-		if errMsg != "" {
-			params["error"] = errMsg
-		}
-		r.child.NotifyAgentEvent(params)
 	}
 	if runErr != nil {
 		r.recordWorkerToDeptScratchpad(workOrder, "", status, errMsg)

@@ -1,6 +1,7 @@
 package lessons
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,32 @@ func TestTrimFileKeepsTail(t *testing.T) {
 	}
 	if strings.Count(string(data), "## ") > maxStoredEntries {
 		t.Fatalf("trim failed: %d entries", strings.Count(string(data), "## "))
+	}
+}
+
+func TestFormatLeadInject_CapsEntriesPerDept(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 8; i++ {
+		if err := Append(root, Entry{
+			Dept: "engineering",
+			Kind: KindAgentNote,
+			Note: fmt.Sprintf("lesson-%d unique", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := FormatLeadInject(root)
+	if got == "" {
+		t.Fatal("empty inject")
+	}
+	if strings.Count(got, "## ") > leadInjectMaxEntriesPerDept {
+		t.Fatalf("entries = %d, want ≤ %d\n%s", strings.Count(got, "## "), leadInjectMaxEntriesPerDept, got)
+	}
+	if !strings.Contains(got, "lesson-7 unique") {
+		t.Fatalf("missing newest lesson: %s", got)
+	}
+	if strings.Contains(got, "lesson-0 unique") {
+		t.Fatalf("oldest lesson should be dropped: %s", got)
 	}
 }
 

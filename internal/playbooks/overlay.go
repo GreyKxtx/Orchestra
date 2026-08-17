@@ -15,7 +15,7 @@ const (
 	LocalRelDir = ".orchestra/playbooks/local"
 
 	deptPlaybookInjectMaxBytes  = 2048
-	leadPlaybooksInjectMaxBytes = 1800
+	leadPlaybooksInjectMaxBytes = 4000 // ~1000 tokens for active dept + overlay
 )
 
 // FormatDeptPlaybookInject returns an XML block with the dept L2 playbook and
@@ -66,42 +66,30 @@ func FormatDeptPlaybookInject(projectRoot, dept string) string {
 	return b.String()
 }
 
-// FormatLeadPlaybooksInject concatenates L2 playbooks + local overlays for
-// Orchestra/Architecture Lead prompts so codebase rules persist across sessions.
-func FormatLeadPlaybooksInject(projectRoot string) string {
+// FormatLeadPlaybooksInject injects the active dept L2 playbook + local overlay
+// (≤ leadPlaybooksInjectMaxBytes). When activeDept is empty, only a filename
+// index is emitted so the Lead can memory_read / read the file on demand.
+func FormatLeadPlaybooksInject(projectRoot, activeDept string) string {
 	if projectRoot == "" {
 		return ""
+	}
+	activeDept = strings.TrimSpace(activeDept)
+	if activeDept != "" {
+		chunk := FormatDeptPlaybookInject(projectRoot, activeDept)
+		if chunk == "" {
+			return ""
+		}
+		if len(chunk) > leadPlaybooksInjectMaxBytes {
+			chunk = chunk[:leadPlaybooksInjectMaxBytes] + "\n...(truncated; read .orchestra/playbooks/)"
+		}
+		return "<dept_playbooks>\n" + chunk + "\n</dept_playbooks>"
 	}
 	depts := listPlaybookDepts(projectRoot)
 	if len(depts) == 0 {
 		return ""
 	}
-	remaining := leadPlaybooksInjectMaxBytes
-	var b strings.Builder
-	b.WriteString("<dept_playbooks>\n")
-	wrote := false
-	for _, dept := range depts {
-		if remaining <= 80 {
-			b.WriteString("…(more playbooks truncated; read .orchestra/playbooks/)\n")
-			break
-		}
-		chunk := FormatDeptPlaybookInject(projectRoot, dept)
-		if chunk == "" {
-			continue
-		}
-		if len(chunk) > remaining {
-			chunk = chunk[:remaining] + "\n...(truncated)"
-		}
-		b.WriteString(chunk)
-		b.WriteByte('\n')
-		remaining -= len(chunk)
-		wrote = true
-	}
-	if !wrote {
-		return ""
-	}
-	b.WriteString("</dept_playbooks>")
-	return b.String()
+	return "<dept_playbooks>\navailable: " + strings.Join(depts, ", ") +
+		"\n(read a dept file via memory_read / read .orchestra/playbooks/{dept}.md)\n</dept_playbooks>"
 }
 
 func listPlaybookDepts(root string) []string {

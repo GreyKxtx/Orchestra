@@ -59,9 +59,8 @@ func TestLearningLoopPromoteSuggestions(t *testing.T) {
 		t.Fatalf("playbook hint=%q result=%q", got, result)
 	}
 
-	mergeRef := "merge engineering rules to L2"
-	log += "- A: " + mergeRef + "\n"
-	l2Rel, err := playbooks.MergeApprovedLocalToL2(root, dept, mergeRef, log)
+	mergeRef := "approve engineering overlay"
+	l2Rel, err := playbooks.MergeApprovedLocalToL2(root, dept, "", log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +68,7 @@ func TestLearningLoopPromoteSuggestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "run tests") {
+	if !strings.Contains(string(data), "run tests") || !strings.Contains(string(data), mergeRef) {
 		t.Fatalf("l2=%q", data)
 	}
 }

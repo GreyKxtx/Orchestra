@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent/history"
-	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // historyBytes returns the approximate size of the history in bytes.
@@ -26,6 +26,9 @@ const checkpointHeader = "[Session checkpoint — structured summary]"
 // compactHistory calls the LLM in compaction mode and returns a sticky
 // checkpoint: summary message + last keepRecent tool-bearing atoms intact.
 func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm.Message) ([]llm.Message, error) {
+	if a.llmInfraErr != nil {
+		return nil, fmt.Errorf("compaction skipped: %w", a.llmInfraErr)
+	}
 	family := a.opts.PromptFamily
 	sysprompt := promptpkg.BuildSystemPromptForMode(string(ModeCompaction), family)
 
@@ -58,7 +61,11 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	}
 	resp, err := client.Complete(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("compaction LLM call: %w", err)
+		err = fmt.Errorf("compaction LLM call: %w", err)
+		if llm.IsUnreachableError(err) {
+			a.llmInfraErr = err
+		}
+		return nil, err
 	}
 	if a.opts.UsageTracker != nil && resp != nil && resp.Usage != nil {
 		a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,

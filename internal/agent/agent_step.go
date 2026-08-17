@@ -10,11 +10,12 @@ import (
 	"time"
 
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/protocol"
 
 	"github.com/orchestra/orchestra/llm"
 )
+
 // nextStep returns the next step, raw response, full LLM response, and error.
 // stepNum is the current step count (used for streaming event tagging).
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
@@ -111,6 +112,20 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			Tools:          toolDefs,
 			ResponseFormat: a.opts.ResponseFormat,
 		}
+		if ctxTok := a.opts.ModelContextTokens; ctxTok > 0 {
+			est := llm.EstimateCompleteRequestTokens(llmReq)
+			if est >= ctxTok {
+				a.logf("warning: estimated prompt ~%d tokens exceeds model context %d; raise Context Length in LM Studio / extra_body.num_ctx", est, ctxTok)
+				if stepNum == 1 && len(history) == 0 && est >= ctxTok-256 {
+					if cancel != nil {
+						cancel()
+					}
+					return nil, "", nil, fmt.Errorf(
+						"prompt too large (~%d tokens) for model context %d — raise Context Length (num_ctx) in LM Studio / .orchestra.yml extra_body.num_ctx",
+						est, ctxTok)
+				}
+			}
+		}
 		var resp *llm.CompleteResponse
 		var err error
 		if canStream {
@@ -125,6 +140,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			cancel() // Always cancel timeout context to free resources
 		}
 		if err != nil {
+			if llm.IsUnreachableError(err) {
+				a.llmInfraErr = err
+			}
 			// Surface LLMStepTimeout clearly  -  raw "SSE read error: context
 			// deadline exceeded" hides that llm.timeout_s / LLMStepTimeout fired.
 			if stepDeadlineExceeded && ctx.Err() == nil && a.opts.LLMStepTimeout > 0 {
@@ -207,6 +225,16 @@ func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.S
 			return resp, nil
 		}
 		lastErr = err
+		if llm.IsUnreachableError(err) {
+			a.llmInfraErr = err
+			if a.opts.OnEvent != nil {
+				a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
+					Kind: llm.StreamEventError,
+					Err:  err,
+				}})
+			}
+			return nil, err
+		}
 		// Content already streamed to the UI: retrying would duplicate it and
 		// diverge from what the user saw  -  surface the error instead.
 		if ctx.Err() != nil || contentStarted || !llm.IsTransientLLMError(err) || attempt == maxStreamAttempts {

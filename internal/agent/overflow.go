@@ -40,8 +40,15 @@ func (a *Agent) syncModelContextFromClient() {
 //
 // Returns the new history and ok=true when a retry is worth attempting.
 func (a *Agent) recoverFromOverflow(ctx context.Context, userQuery string, hist []llm.Message, err error, step int) ([]llm.Message, bool) {
+	if llm.IsUnreachableError(err) || a.llmInfraErr != nil {
+		return hist, false
+	}
 	info, ok := llm.ParseContextOverflow(err)
 	if !ok {
+		return hist, false
+	}
+	if historyBytes(hist) == 0 {
+		a.logf("context overflow on empty history — prompt itself exceeds the model window; skip compaction")
 		return hist, false
 	}
 	if a.overflowRecoveries >= maxOverflowRecoveries {
@@ -67,9 +74,16 @@ func (a *Agent) recoverFromOverflow(ctx context.Context, userQuery string, hist 
 		info.PromptTokens, info.ContextTokens))
 
 	out := hist
-	if compacted, cerr := a.compactHistory(ctx, userQuery, hist); cerr == nil {
+	if a.llmInfraErr != nil {
+		a.logf("overflow compaction skipped: previous LLM call was unreachable")
+	} else if compacted, cerr := a.compactHistory(ctx, userQuery, hist); cerr == nil {
 		out = compacted
 	} else {
+		if llm.IsUnreachableError(cerr) {
+			a.llmInfraErr = cerr
+			a.logf("overflow compaction aborted (LLM unreachable): %v", cerr)
+			return hist, false
+		}
 		a.logf("overflow compaction failed (non-fatal): %v", cerr)
 	}
 	// Always enforce the hard byte target: a checkpoint that stayed too big

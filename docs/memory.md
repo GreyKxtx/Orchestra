@@ -55,7 +55,7 @@ Explore-first gate blocks `write`/`edit` for Worker, Orchestra Lead, and Dept Le
 ## Integration
 
 - System prompt: `Agent.buildSystemPrompt()` → `memory.Store.FormatInject()`
-- Orchestra / Architecture Lead: also `lessons.FormatLeadInject` + `playbooks.FormatLeadPlaybooksInject` (cross-session L1 lessons + L2 playbooks / local overlays)
+- Orchestra Lead: `lessons.FormatLeadInject` (≤5 entries/dept, ~1000 tokens) + `playbooks.FormatLeadPlaybooksInject` (active dept or filename index, ~1000 tokens; combined ≤2000 tokens)
 - Workers: dept-scoped `<dept_lessons>` + `<dept_playbook>` at spawn (not the Lead catalog)
 - Lazy: `fs.read` → `Runner.discoverInstructions()` (capped ORCHESTRA.md)
 - Session: `Core.SessionMessage` sets `session_id` on runner + agent options; **ReplaceHistory** persists compaction

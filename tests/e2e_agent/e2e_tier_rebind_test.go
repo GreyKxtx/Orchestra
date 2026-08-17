@@ -22,9 +22,18 @@ type finishingWorkerLLM struct{}
 func (l *finishingWorkerLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
 
 func (l *finishingWorkerLLM) Complete(_ context.Context, _ llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	content := `{"status":"success","path":"main.go","summary":"noop"}`
+	input, _ := json.Marshal(map[string]string{"content": content})
 	return &llm.CompleteResponse{Message: llm.Message{
-		Role:    llm.RoleAssistant,
-		Content: `{"type":"final","final":{"patches":[]}}`,
+		Role: llm.RoleAssistant,
+		ToolCalls: []llm.ToolCall{{
+			ID:   "call_finish",
+			Type: "function",
+			Function: llm.ToolCallFunc{
+				Name:      "task_result",
+				Arguments: llm.ToolArguments(input),
+			},
+		}},
 	}}, nil
 }
 

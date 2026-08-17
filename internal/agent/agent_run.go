@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/protocol"
 
 	"github.com/orchestra/orchestra/llm"
 )
@@ -45,6 +45,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.turnMutatingTools = 0
 	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0
+	a.llmInfraErr = nil
 	a.contextPressureWarned = false
 	a.tools.ResetDeptLessonBudget()
 	a.initWorkingState(userQuery)
@@ -152,7 +153,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		//
 		// H15 in audit ledger: convergence guard. The previous loop kept calling
 		// compactHistory every step when the summary itself still exceeded the
-		// threshold â each step burning an LLM call to produce a slightly larger
+		// threshold -- each step burning an LLM call to produce a slightly larger
 		// summary-of-summary until MaxSteps tripped. We now (a) refuse to use a
 		// "compacted" result that didn't actually shrink history by at least 20%,
 		// and (b) fall back to plain truncateMessages when compaction declines
@@ -169,17 +170,23 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 				a.opts.CompletionMaxTokens,
 				a.bytesPerToken(),
 			)
-			if need {
+			if need && historyBytes(history) > 0 {
+				if a.llmInfraErr != nil {
+					return history, nil, a.llmInfraErr
+				}
 				before := historyBytes(history)
 				compacted, compactErr := a.compactHistory(ctx, userQuery, history)
 				if compactErr != nil {
+					if llm.IsUnreachableError(compactErr) {
+						return history, nil, compactErr
+					}
 					a.logf("compaction failed (non-fatal), continuing with truncation: %v", compactErr)
 					history = truncateMessages(history, a.opts.MaxPromptBytes)
 					a.recordCompactMetrics(before, historyBytes(history), false)
 				} else {
 					after := historyBytes(compacted)
 					if after*5 >= before*4 { // < 20% shrink
-						a.logf("compaction did not converge: %d > %d bytes (?80%% retained); falling back to truncation", before, after)
+						a.logf("compaction did not converge: %d > %d bytes (>=80%% retained); falling back to truncation", before, after)
 						history = truncateMessages(history, a.opts.MaxPromptBytes)
 						a.recordCompactMetrics(before, historyBytes(history), false)
 					} else {
@@ -217,14 +224,26 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 
 		step, raw, llmResp, err := a.nextStep(ctx, userQuery, history, steps)
 		if err != nil {
+			if llm.IsUnreachableError(err) {
+				a.llmInfraErr = err
+				return history, nil, err
+			}
 			// Provider rejected the request because prompt + max_tokens exceeds
 			// the model window. Compact and replay the step (OpenCode-style)
 			// instead of failing the turn.
 			if ctx.Err() == nil && llm.IsContextOverflowError(err) {
+				if historyBytes(history) == 0 {
+					return history, nil, fmt.Errorf(
+						"%w — raise Context Length (num_ctx) in LM Studio / .orchestra.yml extra_body.num_ctx",
+						err)
+				}
 				if shrunk, ok := a.recoverFromOverflow(ctx, userQuery, history, err, steps); ok {
 					history = shrunk
 					steps--
 					continue
+				}
+				if a.llmInfraErr != nil {
+					return history, nil, a.llmInfraErr
 				}
 			}
 			return history, nil, err

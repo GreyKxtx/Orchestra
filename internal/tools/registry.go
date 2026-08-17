@@ -394,16 +394,87 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	return applyParallelFlags(out)
 }
 
-// listToolsOrchestra is the Lead planner surface: research + plan write + task spawn, no production edit.
+// orchestraLeadToolNames is the strict Lead allowlist (≤14). Lead delegates
+// code/LSP/exec to workers; ExtraTools (MCP, semantic_search, …) are filtered
+// to this set in the agent layer.
+var orchestraLeadToolNames = map[string]bool{
+	"read": true, "grep": true, "explore": true, "repo_map": true, "write": true,
+	"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true, "question": true,
+	"memory_read": true, "memory_search": true, "lesson_promote": true, "playbook_promote": true,
+}
+
+// FilterOrchestraLeadTools keeps only the Orchestra Lead allowlist. Unknown
+// ExtraTools / skills are dropped so the Lead schema stays ≤14 tools.
+func FilterOrchestraLeadTools(in []llm.ToolDef) []llm.ToolDef {
+	out := make([]llm.ToolDef, 0, len(orchestraLeadToolNames))
+	seen := make(map[string]bool, len(orchestraLeadToolNames))
+	for _, d := range in {
+		name := d.Function.Name
+		if !orchestraLeadToolNames[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, compactLeadToolDef(d))
+	}
+	return out
+}
+
+func compactLeadToolDef(d llm.ToolDef) llm.ToolDef {
+	d.Function.Description = compactLeadDesc(d.Function.Description)
+	if stripped := stripSchemaDescriptions(d.Function.Parameters); len(stripped) > 0 {
+		d.Function.Parameters = stripped
+	}
+	return d
+}
+
+func compactLeadDesc(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, ".\n"); i > 0 && i < 120 {
+		s = strings.TrimSpace(s[:i+1])
+	}
+	if len(s) > 120 {
+		s = s[:119] + "…"
+	}
+	return s
+}
+
+func stripSchemaDescriptions(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw
+	}
+	stripDesc(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func stripDesc(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		delete(t, "description")
+		for _, child := range t {
+			stripDesc(child)
+		}
+	case []any:
+		for _, child := range t {
+			stripDesc(child)
+		}
+	}
+}
+
+// listToolsOrchestra is the Lead planner surface: read-only research, plan
+// write, memory/promote, and delegation. No edit/LSP/bash/task_result.
 func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolUpdateWorkingState(), session.ToolContractFreeze(),
+		fs.ToolFSRead(), fs.ToolSearchText(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolFSWrite(),
+		session.ToolMemoryRead(), session.ToolMemorySearch(),
 		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
-		session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
@@ -411,7 +482,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	if hasQuestionAsker {
 		out = append(out, session.ToolQuestion())
 	}
-	return applyParallelFlags(out)
+	return applyParallelFlags(FilterOrchestraLeadTools(out))
 }
 
 // listToolsVerifier is goal-backward verification: read-only + diagnostics + optional bash.

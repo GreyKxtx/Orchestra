@@ -48,7 +48,7 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
 	}
-	if a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {
+	if a.opts.Mode != ModeOrchestra && a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {
 		names := make([]string, len(a.opts.Skills))
 		for i, s := range a.opts.Skills {
 			names[i] = s.Name
@@ -67,7 +67,11 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	// Mode lists and ExtraTools can overlap (e.g. orchestra mode ships repo_map
 	// and core's ExtraTools appends it again). Strict providers (Anthropic)
 	// reject requests with duplicate tool names, so keep the first occurrence.
-	return dedupToolDefs(base)
+	base = dedupToolDefs(base)
+	if a.opts.Mode == ModeOrchestra {
+		base = tools.FilterOrchestraLeadTools(base)
+	}
+	return base
 }
 
 // dedupToolDefs removes tools with duplicate names, keeping first occurrences.
@@ -156,36 +160,44 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	if !a.opts.SkipMemoryInject && a.opts.Mode != ModeWorker {
 		memCfg := a.opts.Memory
 		memCfg.Normalize()
+		if a.opts.Mode == ModeOrchestra && memCfg.InjectKB > 2 {
+			memCfg.InjectKB = 2 // Lead: ORCHESTRA.md header only; rest via memory_read
+		}
 		store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
 		p.memory = store.FormatInject(memCfg.InjectBytes())
 	}
-	// 4b: cross-session learning stack (L1 lessons + L2 playbooks / local overlays).
-	// Workers already receive dept-scoped inject via spawn; Lead/Dept Lead need
-	// the full catalog so rules survive between sessions.
-	if a.opts.Mode == ModeOrchestra || a.opts.Mode == ModeArchitecture {
+	// 4b: Lead learning stack — capped so lessons+playbooks stay ≤ ~2000 tokens.
+	// Dept Leads / workers get dept-scoped inject at spawn, not the full catalog.
+	if a.opts.Mode == ModeOrchestra {
 		root := a.tools.WorkspaceRoot()
 		var extra strings.Builder
 		if s := lessons.FormatLeadInject(root); s != "" {
 			extra.WriteString(s)
 		}
-		if s := playbooks.FormatLeadPlaybooksInject(root); s != "" {
+		if s := playbooks.FormatLeadPlaybooksInject(root, ""); s != "" {
 			if extra.Len() > 0 {
 				extra.WriteString("\n\n")
 			}
 			extra.WriteString(s)
 		}
 		if extra.Len() > 0 {
+			clipped := clipLeadLearning(extra.String(), leadLearningMaxBytes)
 			if p.memory != "" {
-				p.memory += "\n\n" + extra.String()
+				p.memory += "\n\n" + clipped
 			} else {
-				p.memory = extra.String()
+				p.memory = clipped
 			}
 		}
 	}
-	// 5: live tool catalog (mode/caps accurate  -  better than hardcoded lists in *.txt).
-	p.catalog = formatToolsCatalog(a.buildToolDefs())
+	// 5: live tool catalog. Orchestra Lead already has a 14-tool schema — skip
+	// the duplicate <available_tools> block (~1–2k tokens).
+	if a.opts.Mode != ModeOrchestra {
+		p.catalog = formatToolsCatalog(a.buildToolDefs())
+	}
 	// 6: skills advertisement.
-	p.skills = a.skillsAdvertisement()
+	if a.opts.Mode != ModeOrchestra {
+		p.skills = a.skillsAdvertisement()
+	}
 	return p
 }
 
@@ -218,4 +230,19 @@ func (a *Agent) skillsAdvertisement() string {
 	}
 	b.WriteString("</available_skills>")
 	return b.String()
+}
+
+// leadLearningMaxBytes caps <dept_lessons_all> + <dept_playbooks> (~2000 tokens at 4 B/tok).
+const leadLearningMaxBytes = 8000
+
+func clipLeadLearning(s string, maxBytes int) string {
+	s = strings.TrimSpace(s)
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	cut := s[:maxBytes]
+	if i := strings.LastIndex(cut, "\n"); i > maxBytes/2 {
+		cut = cut[:i]
+	}
+	return cut + "\n...(truncated; use memory_read layer=lessons)"
 }

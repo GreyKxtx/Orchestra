@@ -10,14 +10,14 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent/working"
 	configpkg "github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/permission"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // PermissionRequester / PermissionRequest / PermissionResponse are
@@ -102,22 +102,22 @@ type Mode string
 
 // Agent mode constants.
 const (
-	ModeBuild        Mode = "build"        // default: full tool access
-	ModePlan         Mode = "plan"         // read-only + plan tools
-	ModeExplore      Mode = "explore"      // grep/glob/read only (subagent)
-	ModeAsk          Mode = "ask"          // Q&A read-only
-	ModeDebug        Mode = "debug"        // root-cause + targeted fix
-	ModeArchitecture Mode = "architecture" // design / plan md only
-	ModeGeneral      Mode = "general"      // multi-step execution subagent: full read+write tools, returns via task_result.
-	ModeAgent        Mode = "agent"        // auto-route to build|plan|explore before Run
-	ModeOrchestra    Mode = "orchestra"    // Lead planner; delegates to worker tiers
-	ModeWorker       Mode = "worker"       // atomic WorkOrder executor (child only)
-	ModeVerifier     Mode = "verifier"     // goal-backward read-only verification (child only)
-	ModeProduct      Mode = "product"      // Product Lead: PRD/user stories in .orchestra/product/ only (child only)
+	ModeBuild        Mode = "build"         // default: full tool access
+	ModePlan         Mode = "plan"          // read-only + plan tools
+	ModeExplore      Mode = "explore"       // grep/glob/read only (subagent)
+	ModeAsk          Mode = "ask"           // Q&A read-only
+	ModeDebug        Mode = "debug"         // root-cause + targeted fix
+	ModeArchitecture Mode = "architecture"  // design / plan md only
+	ModeGeneral      Mode = "general"       // multi-step execution subagent: full read+write tools, returns via task_result.
+	ModeAgent        Mode = "agent"         // auto-route to build|plan|explore before Run
+	ModeOrchestra    Mode = "orchestra"     // Lead planner; delegates to worker tiers
+	ModeWorker       Mode = "worker"        // atomic WorkOrder executor (child only)
+	ModeVerifier     Mode = "verifier"      // goal-backward read-only verification (child only)
+	ModeProduct      Mode = "product"       // Product Lead: PRD/user stories in .orchestra/product/ only (child only)
 	ModeDocs         Mode = "documentation" // Docs Lead: L1 conventions.md, MANIFEST, docs/ scaffold+content (child only)
-	ModeCompaction   Mode = "compaction"   // internal: compresses history into a summary.
-	ModeTitle        Mode = "title"        // internal: generates a short task title from the user query.
-	ModeSummary      Mode = "summary"      // internal: produces a brief summary of completed work.
+	ModeCompaction   Mode = "compaction"    // internal: compresses history into a summary.
+	ModeTitle        Mode = "title"         // internal: generates a short task title from the user query.
+	ModeSummary      Mode = "summary"       // internal: produces a brief summary of completed work.
 )
 
 // knownModes is the closed set of modes registered in this package.
@@ -494,6 +494,10 @@ type Agent struct {
 	// overflowRecoveries counts compact→retry cycles triggered by provider
 	// context-window rejections during this Run.
 	overflowRecoveries int
+
+	// llmInfraErr is set when an LLM call fails at connect (unreachable).
+	// Compaction must not issue another LLM request after this.
+	llmInfraErr error
 
 	// contextPressureWarned is set after emitting a soft approaching-threshold
 	// notice once this Run (avoid per-step spam).

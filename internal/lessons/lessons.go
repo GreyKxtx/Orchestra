@@ -20,11 +20,12 @@ const (
 	// RelDir is the lessons root relative to project root.
 	RelDir = ".orchestra/memory/lessons"
 
-	maxStoredEntries       = 48
-	defaultInjectKeep      = 5
-	defaultInjectBytes     = 900
-	leadInjectMaxBytes     = 1500
-	leadInjectPerDeptBytes = 400
+	maxStoredEntries            = 48
+	defaultInjectKeep           = 5
+	defaultInjectBytes          = 900
+	leadInjectMaxBytes          = 4000 // ~1000 tokens
+	leadInjectMaxEntriesPerDept = 5
+	leadInjectTruncationNote    = `...(truncated; use memory_read layer=lessons)`
 	// MaxAgentNoteBytes caps memory_write notes routed to dept lessons.
 	MaxAgentNoteBytes = 400
 )
@@ -260,7 +261,8 @@ func FormatInject(projectRoot, dept string) string {
 }
 
 // FormatLeadInject concatenates recent tails of every dept lessons file for
-// Orchestra/Architecture Lead prompts (cross-session recall). Empty when none.
+// Orchestra Lead prompts (cross-session recall). At most 5 entries per dept
+// and leadInjectMaxBytes overall. Empty when none.
 func FormatLeadInject(projectRoot string) string {
 	if projectRoot == "" {
 		return ""
@@ -272,27 +274,31 @@ func FormatLeadInject(projectRoot string) string {
 	}
 	remaining := leadInjectMaxBytes
 	var b strings.Builder
+	truncated := false
 	for _, e := range entries {
 		if remaining <= 80 {
-			b.WriteString("…(more lessons truncated; use memory_read layer=lessons)\n")
+			truncated = true
 			break
 		}
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
 		dept := strings.TrimSuffix(e.Name(), ".md")
-		budget := leadInjectPerDeptBytes
-		if budget > remaining {
-			budget = remaining
-		}
-		tail := Tail(projectRoot, dept, budget)
-		if tail == "" {
+		body := lastNEntries(readLessonFile(projectRoot, dept), leadInjectMaxEntriesPerDept)
+		if body == "" {
 			continue
 		}
+		if len(body) > remaining {
+			body = body[:remaining]
+			truncated = true
+		}
 		rel := filepath.ToSlash(filepath.Join(RelDir, e.Name()))
-		chunk := "<dept_lessons source=\"" + rel + "\">\n" + tail + "\n</dept_lessons>\n"
+		chunk := "<dept_lessons source=\"" + rel + "\">\n" + body + "\n</dept_lessons>\n"
 		if len(chunk) > remaining {
-			chunk = chunk[:remaining] + "\n...(truncated)\n"
+			b.WriteString(chunk[:remaining])
+			truncated = true
+			remaining = 0
+			break
 		}
 		b.WriteString(chunk)
 		remaining -= len(chunk)
@@ -301,7 +307,47 @@ func FormatLeadInject(projectRoot string) string {
 	if out == "" {
 		return ""
 	}
+	if truncated {
+		out += "\n" + leadInjectTruncationNote
+	}
 	return "<dept_lessons_all>\n" + out + "\n</dept_lessons_all>"
+}
+
+func readLessonFile(projectRoot, dept string) string {
+	data, err := os.ReadFile(lessonPath(projectRoot, dept))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func lastNEntries(fileBody string, n int) string {
+	fileBody = strings.TrimSpace(fileBody)
+	if fileBody == "" || n <= 0 {
+		return ""
+	}
+	raw := strings.Split(fileBody, "\n## ")
+	entries := make([]string, 0, len(raw))
+	for i, p := range raw {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if i == 0 {
+			p = strings.TrimPrefix(p, "## ")
+		}
+		entries = append(entries, p)
+	}
+	if len(entries) > n {
+		entries = entries[len(entries)-n:]
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString("## ")
+		b.WriteString(e)
+		b.WriteByte('\n')
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // IsDeptScope reports whether a memory_write scope maps to a lessons file.

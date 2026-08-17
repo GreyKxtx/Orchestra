@@ -2,6 +2,8 @@ package tools
 
 import (
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/tools/session"
 )
 
 // TestParallelFlags_AllBuiltinsClassified is the safety net for H1
@@ -26,6 +28,9 @@ func TestParallelFlags_AllBuiltinsClassified(t *testing.T) {
 	}
 	maximal = append(maximal, ToolSemanticSearch())
 	maximal = append(maximal, ToolSkillInvoke([]string{"sample"}))
+	// Orchestra Lead no longer advertises these, but custom agents / architecture
+	// surfaces still resolve them via allToolDefsMap.
+	maximal = append(maximal, session.ToolContractFreeze(), session.ToolUpdateWorkingState())
 
 	seen := make(map[string]bool, len(maximal))
 	for _, def := range maximal {

@@ -270,6 +270,12 @@ func estimateRequestTokens(req CompleteRequest) int {
 	return EstimateTokensFromBytes(estimateRequestBytes(req))
 }
 
+// EstimateCompleteRequestTokens is the public counterpart of the wire clamp
+// estimator (messages + tool schemas). Used for start-of-turn warnings.
+func EstimateCompleteRequestTokens(req CompleteRequest) int {
+	return estimateRequestTokens(req)
+}
+
 // clampMaxTokensForPrompt picks max_tokens so promptEst + max_tokens + safety
 // fits in the model context window (vLLM hard-fails otherwise).
 func clampMaxTokensForPrompt(want, contextLen, promptTok int) int {
@@ -497,6 +503,9 @@ func parseContextLengthError(msg string) (ctxLen, promptTok int, ok bool) {
 // LLMStepTimeout does not get retried.
 func IsTransientLLMError(err error) bool {
 	if err == nil {
+		return false
+	}
+	if IsUnreachableError(err) {
 		return false
 	}
 	s := strings.ToLower(err.Error())
@@ -984,9 +993,12 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 		if err == nil {
 			return out, nil
 		}
-		lastErr = err
+		lastErr = wrapUnreachable(c.baseURL, err)
 		if ctx.Err() != nil {
-			return nil, err
+			return nil, lastErr
+		}
+		if IsUnreachableError(lastErr) {
+			return nil, lastErr
 		}
 		if !schemaRetried && c.requestUsedJSONSchema(req) && isUnsupportedJSONSchemaError(err) {
 			schemaRetried = true
@@ -1004,10 +1016,10 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 			}
 		}
 		if !IsTransientLLMError(err) || attempt == llmRetryAttempts {
-			return nil, err
+			return nil, lastErr
 		}
 		if serr := sleepBackoff(ctx, attempt); serr != nil {
-			return nil, err
+			return nil, lastErr
 		}
 	}
 	return nil, lastErr
