@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -129,5 +130,49 @@ func (c *Car) Drive() {
 		t.Errorf("Car.Drive node missing or invalid: %+v", driveNode)
 	} else if driveNode.LineStart != 22 || driveNode.LineEnd != 24 {
 		t.Errorf("Car.Drive node has wrong coordinates: %d-%d", driveNode.LineStart, driveNode.LineEnd)
+	}
+}
+
+func TestParseGoInstantiatesAndExternalCall(t *testing.T) {
+	tempDir := t.TempDir()
+	src := `package main
+
+import "fmt"
+
+type Car struct{}
+
+func NewCar() *Car {
+	c := &Car{}
+	_ = new(Car)
+	return c
+}
+
+func (c *Car) Drive() {
+	fmt.Println("Driving...")
+}
+`
+	filePath := filepath.Join(tempDir, "sample.go")
+	if err := os.WriteFile(filePath, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, edges, _, err := ParseFile(context.Background(), "example.com/mod", tempDir, filePath)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+
+	var sawInstantiates, sawExternal bool
+	for _, e := range edges {
+		if e.Relation == "instantiates" && strings.HasSuffix(e.TargetFQN, ".Car") {
+			sawInstantiates = true
+		}
+		if e.Relation == "calls" && e.TargetFQN == "fmt.Println" && e.IsExternal {
+			sawExternal = true
+		}
+	}
+	if !sawInstantiates {
+		t.Fatalf("expected instantiates → Car, edges=%+v", edges)
+	}
+	if !sawExternal {
+		t.Fatalf("expected external call fmt.Println, edges=%+v", edges)
 	}
 }

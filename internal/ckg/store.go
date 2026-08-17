@@ -13,8 +13,11 @@ import (
 )
 
 type Store struct {
-	db      *sql.DB
-	indexMu sync.Mutex
+	db *sql.DB
+	// indexMu serializes full-graph rebuilds (write) vs worker queries (read).
+	// Do not lock it inside SaveFileNodes/GetAllFiles — Orchestrator.UpdateGraph
+	// already holds the write lock and Scanner reads the store under it.
+	indexMu sync.RWMutex
 }
 
 type Node struct {
@@ -22,10 +25,12 @@ type Node struct {
 	FileID     int64
 	FQN        string // "github.com/x/y/internal/agent.Agent.Run"
 	ShortName  string // "Run" or "Agent.Run" for methods
-	Kind       string // "func" | "method" | "struct" | "interface" | "type" | "package"
+	Kind       string // "func" | "method" | "struct" | "interface" | "type" | "package" | "external"
 	LineStart  int
 	LineEnd    int
 	Complexity int
+	Package    string // package/module short or import path; indexed for FQN linking
+	RelPath    string // file path; filled by traversal queries, not a DB column
 }
 
 // Edge represents a directed relation in the graph.
@@ -33,9 +38,10 @@ type Node struct {
 // inside SaveFileNodes). TargetFQN may reference any node (internal or external);
 // the resolver fills in TargetID where possible.
 type Edge struct {
-	SourceFQN string
-	TargetFQN string
-	Relation  string // "calls" | "imports" | "instantiates"
+	SourceFQN  string
+	TargetFQN  string
+	Relation   string // "calls" | "imports" | "instantiates"
+	IsExternal bool   // stdlib / other-module; no node row is created
 }
 
 // NewStore initializes the SQLite database with the given path.
@@ -45,13 +51,16 @@ func NewStore(dbPath string) (*Store, error) {
 	if strings.Contains(dbPath, "?") {
 		sep = "&"
 	}
-	db, err := sql.Open("sqlite", dbPath+sep+"_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", dbPath+sep+"_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
+	// One connection: SQLite writers and the in-process RWMutex stay aligned.
+	// Concurrent TraverseBFS calls queue here instead of hitting SQLITE_BUSY.
+	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
 		return nil, err
@@ -65,7 +74,7 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("migrate: read user_version: %w", err)
 	}
 
-	const targetVersion = 4 // bump for each new schema version
+	const targetVersion = 5 // bump for each new schema version
 
 	if version > targetVersion {
 		return fmt.Errorf("ckg store: database schema version %d is newer than supported %d; upgrade the binary", version, targetVersion)
@@ -75,7 +84,9 @@ func (s *Store) migrate() error {
 		return nil
 	}
 
-	// Local cache — drop+recreate is acceptable. Incremental scan rebuilds quickly.
+	// Local cache: any older user_version (including v4 without package /
+	// is_external / the v5 indexes) is drop+recreate. Incremental scan rebuilds
+	// the graph on the next UpdateGraph; do not try in-place ALTER.
 	drop := `
         DROP TABLE IF EXISTS node_embeddings;
         DROP TABLE IF EXISTS spans;
@@ -105,24 +116,30 @@ func (s *Store) migrate() error {
         line_start  INTEGER NOT NULL,
         line_end    INTEGER NOT NULL,
         complexity  INTEGER NOT NULL DEFAULT 0,
+        package     TEXT NOT NULL DEFAULT '',
         FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
     );
     CREATE INDEX idx_nodes_fqn        ON nodes(fqn);
     CREATE INDEX idx_nodes_short_name ON nodes(short_name);
     CREATE INDEX idx_nodes_file_id    ON nodes(file_id);
+    CREATE INDEX idx_nodes_package    ON nodes(package, short_name);
 
     CREATE TABLE edges (
-        id         INTEGER PRIMARY KEY,
-        source_id  INTEGER NOT NULL,
-        target_id  INTEGER,
-        target_fqn TEXT NOT NULL,
-        relation   TEXT NOT NULL,
+        id          INTEGER PRIMARY KEY,
+        source_id   INTEGER NOT NULL,
+        target_id   INTEGER,
+        target_fqn  TEXT NOT NULL,
+        relation    TEXT NOT NULL,
+        is_external INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(source_id) REFERENCES nodes(id) ON DELETE CASCADE,
         FOREIGN KEY(target_id) REFERENCES nodes(id) ON DELETE SET NULL
     );
     CREATE INDEX idx_edges_source_id  ON edges(source_id);
     CREATE INDEX idx_edges_target_id  ON edges(target_id);
     CREATE INDEX idx_edges_target_fqn ON edges(target_fqn);
+    -- source_id stands in for source_fqn: edges always originate at a node row.
+    CREATE INDEX idx_edges_source_rel ON edges(source_id, relation);
+    CREATE INDEX idx_edges_target_rel ON edges(target_fqn, relation);
     CREATE UNIQUE INDEX idx_edges_unique ON edges(source_id, target_fqn, relation);
 
     CREATE TABLE traces (
@@ -189,7 +206,34 @@ func (s *Store) migrate() error {
 
 // Close closes the database connection.
 func (s *Store) Close() error {
-	return s.db.Close()
+	if s == nil {
+		return nil
+	}
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	if s.db == nil {
+		return nil
+	}
+	err := s.db.Close()
+	s.db = nil
+	return err
+}
+
+// LockIndex / UnlockIndex wrap the graph write lock for callers that mutate
+// the store outside Orchestrator.UpdateGraph (eval seeding). Do not call from
+// SaveFileNodes — UpdateGraph already holds the lock.
+func (s *Store) LockIndex() {
+	if s == nil {
+		return
+	}
+	s.indexMu.Lock()
+}
+
+func (s *Store) UnlockIndex() {
+	if s == nil {
+		return
+	}
+	s.indexMu.Unlock()
 }
 
 // DB returns the underlying *sql.DB for advanced queries (e.g. runtime.query tool).
@@ -243,7 +287,9 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 	}
 	defer tx.Rollback()
 
-	// 1. Cascading delete of the old file row clears its nodes and edges.
+	// 1. Cascading delete of the old file row clears its nodes and every edge
+	//    whose source_id pointed at those nodes (ON DELETE CASCADE). Incoming
+	//    edges keep the row with target_id NULL until RelinkUnresolvedEdges.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM files WHERE path = ?", path); err != nil {
 		return fmt.Errorf("delete old file: %w", err)
 	}
@@ -266,15 +312,16 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 	fqnToID := make(map[string]int64, len(nodes))
 	if len(nodes) > 0 {
 		stmt, err := tx.PrepareContext(ctx,
-			`INSERT INTO nodes (file_id, fqn, short_name, kind, line_start, line_end, complexity)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO nodes (file_id, fqn, short_name, kind, line_start, line_end, complexity, package)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(fqn) DO UPDATE SET
                  file_id    = excluded.file_id,
                  short_name = excluded.short_name,
                  kind       = excluded.kind,
                  line_start = excluded.line_start,
                  line_end   = excluded.line_end,
-                 complexity = excluded.complexity
+                 complexity = excluded.complexity,
+                 package    = excluded.package
              RETURNING id`)
 		if err != nil {
 			return fmt.Errorf("prepare insert node: %w", err)
@@ -282,10 +329,15 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 		defer stmt.Close()
 
 		for i := range nodes {
+			pkg := nodes[i].Package
+			if pkg == "" {
+				pkg = pkgName
+			}
+			nodes[i].Package = pkg
 			var newID int64
 			err := stmt.QueryRowContext(ctx,
 				fileID, nodes[i].FQN, nodes[i].ShortName, nodes[i].Kind,
-				nodes[i].LineStart, nodes[i].LineEnd, nodes[i].Complexity,
+				nodes[i].LineStart, nodes[i].LineEnd, nodes[i].Complexity, pkg,
 			).Scan(&newID)
 			if err != nil {
 				return fmt.Errorf("insert node %s: %w", nodes[i].FQN, err)
@@ -299,8 +351,8 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 	//    TargetFQN may resolve to any node (same file, other file, or external/unknown).
 	if len(edges) > 0 {
 		ins, err := tx.PrepareContext(ctx,
-			`INSERT OR IGNORE INTO edges (source_id, target_id, target_fqn, relation)
-             VALUES (?, ?, ?, ?)`)
+			`INSERT OR IGNORE INTO edges (source_id, target_id, target_fqn, relation, is_external)
+             VALUES (?, ?, ?, ?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare insert edge: %w", err)
 		}
@@ -318,7 +370,7 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 				// Source was not in our nodes — likely a parser bug; skip silently.
 				continue
 			}
-			targetID, resolvedTargetFQN, err := resolveEdgeTarget(ctx, tx, sel, e.TargetFQN, e.Relation)
+			targetID, resolvedTargetFQN, err := resolveEdgeTarget(ctx, tx, sel, e.TargetFQN, e.Relation, pkgName)
 			if err != nil {
 				return err
 			}
@@ -326,7 +378,11 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 			if resolvedTargetFQN != "" {
 				targetFQN = resolvedTargetFQN
 			}
-			if _, err := ins.ExecContext(ctx, sourceID, targetID, targetFQN, e.Relation); err != nil {
+			ext := 0
+			if e.IsExternal || (targetID == nil && isExternalTarget(targetFQN, modulePath)) {
+				ext = 1
+			}
+			if _, err := ins.ExecContext(ctx, sourceID, targetID, targetFQN, e.Relation, ext); err != nil {
 				return fmt.Errorf("insert edge %s→%s: %w", e.SourceFQN, e.TargetFQN, err)
 			}
 		}
@@ -377,52 +433,6 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 	return tx.Commit()
 }
 
-func resolveEdgeTarget(ctx context.Context, tx *sql.Tx, selByFQN *sql.Stmt, rawTarget, relation string) (*int64, string, error) {
-	var tid int64
-	err := selByFQN.QueryRowContext(ctx, rawTarget).Scan(&tid)
-	if err == nil {
-		return &tid, rawTarget, nil
-	}
-	if err != sql.ErrNoRows {
-		return nil, "", fmt.Errorf("resolve target %s: %w", rawTarget, err)
-	}
-
-	// Parser currently emits short names for calls (known limitation). If a short name
-	// maps to exactly one node in the graph, resolve it and canonicalize target_fqn.
-	if relation != "calls" && relation != "instantiates" {
-		return nil, rawTarget, nil
-	}
-	if strings.Contains(rawTarget, "/") {
-		return nil, rawTarget, nil
-	}
-
-	rows, err := tx.QueryContext(ctx, `SELECT id, fqn FROM nodes WHERE short_name = ? LIMIT 2`, rawTarget)
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve short_name %s: %w", rawTarget, err)
-	}
-	defer rows.Close()
-
-	type candidate struct {
-		id  int64
-		fqn string
-	}
-	var cands []candidate
-	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.id, &c.fqn); err != nil {
-			return nil, "", fmt.Errorf("scan short_name candidate %s: %w", rawTarget, err)
-		}
-		cands = append(cands, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, "", fmt.Errorf("iterate short_name candidates %s: %w", rawTarget, err)
-	}
-	if len(cands) == 1 {
-		return &cands[0].id, cands[0].fqn, nil
-	}
-	return nil, rawTarget, nil
-}
-
 // DeleteFile deletes a file and cascades its deletion to nodes and edges.
 func (s *Store) DeleteFile(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM files WHERE path = ?", path)
@@ -458,6 +468,11 @@ func tokenizeQuery(q string) []string {
 // FindRelevantNodes returns up to limit nodes whose FQN or short_name contains
 // at least one token from query. Results are ranked by number of matching tokens.
 func (s *Store) FindRelevantNodes(ctx context.Context, query string, limit int) ([]Node, error) {
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
+	if s.db == nil {
+		return nil, nil
+	}
 	tokens := tokenizeQuery(query)
 	if len(tokens) == 0 {
 		return nil, nil

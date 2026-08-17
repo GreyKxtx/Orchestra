@@ -20,14 +20,41 @@ func NewProvider(store *Store, root string) *Provider {
 	return &Provider{store: store, root: root}
 }
 
+// ExploreOptions tunes the multi-hop neighborhood attached to a symbol snippet.
+// Zero values mean Depth=2 and Direction=both. Extra opts after the first are ignored.
+type ExploreOptions struct {
+	Depth     int    // 1..4, default 2
+	Direction string // downstream|upstream|both (aliases: callees|callers)
+}
+
+func (o ExploreOptions) normalized() ExploreOptions {
+	if o.Depth <= 0 {
+		o.Depth = 2
+	}
+	if o.Depth > 4 {
+		o.Depth = 4
+	}
+	if strings.TrimSpace(o.Direction) == "" {
+		o.Direction = "both"
+	}
+	return o
+}
+
 // ExploreSymbol is the single entry-point for the LLM explore tool.
 // It automatically picks the right depth level based on the query shape:
 //
 //   - "internal/agent"    → package overview (structs, funcs, methods — no code bodies)
 //   - "Agent"             → struct/interface definition + full method list
-//   - "Agent.Run"         → full source code of the method/function + callers + callees
+//   - "Agent.Run"         → full source code of the method/function + multi-hop subgraph
 //   - "RecordSuccessfulCall" → finds CircuitBreaker.RecordSuccessfulCall via suffix search
-func (p *Provider) ExploreSymbol(ctx context.Context, query string) (string, error) {
+//
+// opts is optional; existing callers that pass only (ctx, query) keep compiling.
+func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...ExploreOptions) (string, error) {
+	var opt ExploreOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	opt = opt.normalized()
 	// Package-level: query contains "/" but no "." after the last "/" segment.
 	// e.g. "internal/agent" yes, "internal/agent.Agent" no.
 	if isPackagePath(query) {
@@ -196,74 +223,14 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string) (string, err
 			}
 		}
 
-		// Callers (capped to avoid overwhelming the model)
-		cRows, err := p.store.db.QueryContext(ctx,
-			`SELECT src.fqn, e.relation
-			 FROM edges e
-			 JOIN nodes src ON e.source_id = src.id
-			 LEFT JOIN nodes tgt ON e.target_id = tgt.id
-			 WHERE tgt.fqn = ? OR e.target_fqn = ?`, h.fqn, h.fqn)
-		if err != nil {
-			return "", fmt.Errorf("explore symbol: query callers: %w", err)
-		}
-		var callers []struct{ fqn, rel string }
-		for cRows.Next() {
-			var srcFQN, rel string
-			if err := cRows.Scan(&srcFQN, &rel); err != nil {
-				cRows.Close()
-				return "", fmt.Errorf("explore symbol: scan caller: %w", err)
-			}
-			callers = append(callers, struct{ fqn, rel string }{srcFQN, rel})
-		}
-		if err := cRows.Err(); err != nil {
-			cRows.Close()
-			return "", fmt.Errorf("explore symbol: iterate callers: %w", err)
-		}
-		cRows.Close()
-		if len(callers) > 0 {
-			const maxCallers = 5
-			sb.WriteString("**Вызывается из (callers):**\n")
-			shown := callers
-			if len(callers) > maxCallers {
-				shown = callers[:maxCallers]
-			}
-			for _, c := range shown {
-				sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", c.fqn, c.rel))
-			}
-			if len(callers) > maxCallers {
-				sb.WriteString(fmt.Sprintf("- ...и ещё %d callers\n", len(callers)-maxCallers))
-			}
-		}
-		first := len(callers) == 0
-		if !first {
-			sb.WriteString("\n")
-		}
-
-		// Callees
-		dRows, err := p.store.db.QueryContext(ctx,
-			`SELECT e.target_fqn, e.relation FROM edges e WHERE e.source_id = ?`, h.id)
-		if err != nil {
-			return "", fmt.Errorf("explore symbol: query callees: %w", err)
-		}
-		first = true
-		for dRows.Next() {
-			if first {
-				sb.WriteString("**Зависит от (callees):**\n")
-				first = false
-			}
-			var tgtFQN, rel string
-			if err := dRows.Scan(&tgtFQN, &rel); err != nil {
-				dRows.Close()
-				return "", fmt.Errorf("explore symbol: scan callee: %w", err)
-			}
-			sb.WriteString(fmt.Sprintf("- `%s` (%s)\n", tgtFQN, rel))
-		}
-		if err := dRows.Err(); err != nil {
-			dRows.Close()
-			return "", fmt.Errorf("explore symbol: iterate callees: %w", err)
-		}
-		dRows.Close()
-		if !first {
+		// Multi-hop neighborhood (BFS) instead of a flat 1-hop list.
+		sg, trErr := p.store.TraverseBFS(ctx, h.fqn, ParseTraversalDirection(opt.Direction), TraversalOptions{
+			MaxDepth:     opt.Depth,
+			MaxNodes:     50,
+			IncludeTypes: true,
+		})
+		if trErr == nil && sg != nil && (len(sg.Edges) > 0 || len(sg.Nodes) > 1) {
+			sb.WriteString(FormatSubgraphContext(sg, 400))
 			sb.WriteString("\n")
 		}
 	}

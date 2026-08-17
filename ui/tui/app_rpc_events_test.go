@@ -404,3 +404,91 @@ func TestNoticeTurnStop_CompletedIsSilent(t *testing.T) {
 		t.Fatal("no continue hint expected on completed")
 	}
 }
+
+func TestChildEvents_DoNotPolluteLeadChat(t *testing.T) {
+	a, _ := startedTurnApp(t)
+
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:         rpcclient.EventChildStarted,
+		TaskID:       "task_1",
+		SubagentType: "worker",
+		Content:      `{"intent":"edit jwt","target_files":["internal/auth/jwt.go"]}`,
+	})
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:         rpcclient.EventToolCallStart,
+		Scope:        "child",
+		TaskID:       "task_1",
+		ToolCallID:   "c1",
+		ToolCallName: "read",
+		Content:      "reading jwt.go",
+	})
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:    rpcclient.EventMessageDelta,
+		Scope:   "child",
+		TaskID:  "task_1",
+		Content: "worker token stream must not appear in Lead chat",
+	})
+
+	m := lastAssistant(t, a)
+	if len(m.ToolBlocks) != 0 {
+		t.Fatalf("child tool_call must not create Lead tool blocks, got %d", len(m.ToolBlocks))
+	}
+	if strings.Contains(m.Text, "worker token stream") {
+		t.Fatal("child message_delta must not land in Lead text")
+	}
+	snaps := a.subagents.Snapshot(m.StartedAt)
+	if len(snaps) != 1 || snaps[0].Status != "running" {
+		t.Fatalf("expected running subagent, got %+v", snaps)
+	}
+	if snaps[0].Goal != "internal/auth/jwt.go" {
+		t.Fatalf("goal=%q", snaps[0].Goal)
+	}
+}
+
+func TestChildDone_CollapsesToBadge(t *testing.T) {
+	a, _ := startedTurnApp(t)
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:         rpcclient.EventChildStarted,
+		TaskID:       "task_1",
+		SubagentType: "worker",
+		Content:      "internal/auth/jwt.go",
+	})
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:         rpcclient.EventChildDone,
+		TaskID:       "task_1",
+		SubagentType: "worker",
+		ChildStatus:  "done",
+		Content:      "Modified ValidateToken (verified by go test)",
+	})
+
+	snaps := a.subagents.Snapshot(lastAssistant(t, a).StartedAt)
+	if len(snaps) != 1 || snaps[0].Status != "done" {
+		t.Fatalf("expected done badge, got %+v", snaps)
+	}
+	if !strings.Contains(snaps[0].ResultSummary, "ValidateToken") {
+		t.Fatalf("summary=%q", snaps[0].ResultSummary)
+	}
+	view := a.chat.View()
+	if !strings.Contains(view, "Done") && !strings.Contains(view, "ValidateToken") {
+		t.Fatalf("subagent bar missing done badge, view=%q", view)
+	}
+}
+
+func TestChildQueued_ShowsWaitingLock(t *testing.T) {
+	a, _ := startedTurnApp(t)
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:          rpcclient.EventChildQueued,
+		TaskID:        "task_2",
+		SubagentType:  "worker",
+		Content:       `{"target_files":["internal/server/router.go"]}`,
+		WaitingReason: "overlapping target_files; serialized per spec §5.6",
+	})
+	snaps := a.subagents.Snapshot(lastAssistant(t, a).StartedAt)
+	if len(snaps) != 1 || snaps[0].Status != "queued" {
+		t.Fatalf("expected queued, got %+v", snaps)
+	}
+	view := a.chat.View()
+	if !strings.Contains(view, "queued") {
+		t.Fatalf("queued worker missing from bar: %q", view)
+	}
+}

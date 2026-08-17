@@ -32,22 +32,23 @@ type msgYRange struct {
 
 // Chat renders the scrollable history of messages.
 type Chat struct {
-	vp            viewport.Model
-	streamCursor  bool           // when true, appends ▋ to last assistant token
-	welcome       WelcomeInfo    // metadata for the empty-state welcome screen
-	forceWelcome  bool           // when true, always show welcome regardless of content
-	chatMode      string         // current agent mode; drives ┃ color + footer
-	chatModel     string         // current model name; rendered in per-turn footer
-	spinFrame     int            // current spinner frame; advanced by App every tick
-	userScrolled  bool           // true while user is reading scrolled-back history
-	expandedTurns map[int64]bool // mirror of Message.ToolsExpanded for cache skip / invalidation
-	cache         renderCache    // per-message render cache for completed assistant turns
-	msgRanges     []msgYRange    // content-line ranges for click-to-action detection
-	diffReviewCursor int // >=0 when diff review hotkeys active; -1 otherwise
+	vp               viewport.Model
+	streamCursor     bool           // when true, appends ▋ to last assistant token
+	welcome          WelcomeInfo    // metadata for the empty-state welcome screen
+	forceWelcome     bool           // when true, always show welcome regardless of content
+	chatMode         string         // current agent mode; drives ┃ color + footer
+	chatModel        string         // current model name; rendered in per-turn footer
+	spinFrame        int            // current spinner frame; advanced by App every tick
+	userScrolled     bool           // true while user is reading scrolled-back history
+	expandedTurns    map[int64]bool // mirror of Message.ToolsExpanded for cache skip / invalidation
+	cache            renderCache    // per-message render cache for completed assistant turns
+	msgRanges        []msgYRange    // content-line ranges for click-to-action detection
+	diffReviewCursor int            // >=0 when diff review hotkeys active; -1 otherwise
 	actionBar        ActionBarState
 	showActionBar    bool
-	width         int
-	height        int
+	subagents        []state.SubagentTask
+	width            int
+	height           int
 }
 
 // NewChat creates an empty chat view sized to width × height.
@@ -93,6 +94,9 @@ func (c *Chat) SetStreamCursor(on bool) { c.streamCursor = on }
 
 // SetSpinFrame sets the current spinner frame index.
 func (c *Chat) SetSpinFrame(n int) { c.spinFrame = n }
+
+// SetSubagents attaches the current-turn child worker tree for the last assistant message.
+func (c *Chat) SetSubagents(tasks []state.SubagentTask) { c.subagents = tasks }
 
 // SetTurnExpanded mirrors Message.ToolsExpanded into the chat expand cache
 // and invalidates the render cache entry. Prefer flipping ToolsExpanded on
@@ -233,6 +237,11 @@ func (c *Chat) SetMessages(msgs []state.Message) {
 				}
 			} else {
 				rendered = c.renderAssistantMessage(m, width, isLast, userQueryFor[i])
+			}
+			if isLast {
+				if bar := RenderSubagentBar(c.subagents, width, c.spinFrame); bar != "" {
+					rendered += "\n" + bar
+				}
 			}
 
 		case state.RoleSystem:

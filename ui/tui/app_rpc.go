@@ -132,6 +132,15 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 	// rebuilds chat when chatDirty while the turn is busy (~10 fps).
 	skipRender := false
 
+	if strings.EqualFold(strings.TrimSpace(ev.Scope), "child") && strings.TrimSpace(ev.TaskID) != "" {
+		skipRender = a.handleChildScopedEvent(ev)
+		if !skipRender {
+			a.flushChat(true)
+		}
+		a.updateStatusHints()
+		return saveCmd
+	}
+
 	switch ev.Kind {
 	case rpcclient.EventReasoningDelta, rpcclient.EventMessageDelta,
 		rpcclient.EventDone, rpcclient.EventStepUsage:
@@ -150,7 +159,8 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated,
 		rpcclient.EventInitialized, rpcclient.EventPermissionRequest,
 		rpcclient.EventQuestionAsked, rpcclient.EventWorkflowStageStart,
-		rpcclient.EventWorkflowStageDone, rpcclient.EventModeRoute:
+		rpcclient.EventWorkflowStageDone, rpcclient.EventModeRoute,
+		rpcclient.EventChildDone, rpcclient.EventChildStarted, rpcclient.EventChildQueued:
 		a.handleRPCChrome(ev)
 	}
 
@@ -424,6 +434,76 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 			a.routeBadge = from + "→" + ev.ModeRoute.To
 			a.showToast(a.routeBadge)
 		}
+	case rpcclient.EventChildStarted:
+		if a.subagents != nil {
+			a.subagents.OnStarted(ev.TaskID, ev.SubagentType, ev.Content, time.Now())
+			a.chatDirty = true
+		}
+	case rpcclient.EventChildQueued:
+		if a.subagents != nil {
+			reason := ev.WaitingReason
+			if reason == "" {
+				reason = "waiting target_file lock"
+			}
+			a.subagents.OnQueued(ev.TaskID, ev.SubagentType, ev.Content, reason)
+			a.chatDirty = true
+		}
+	case rpcclient.EventChildDone:
+		if a.subagents != nil {
+			a.subagents.OnDone(ev.TaskID, ev.SubagentType, ev.ChildStatus, ev.Content, ev.Err, time.Now())
+			a.chatDirty = true
+		}
+		var parts []string
+		if ev.LessonPromoteSuggestion != "" {
+			parts = append(parts, "lesson_promote")
+		}
+		if ev.PlaybookPromoteSuggestion != "" {
+			parts = append(parts, "playbook_promote")
+		}
+		if len(parts) == 0 {
+			break
+		}
+		label := strings.TrimSpace(ev.SubagentType)
+		if label == "" {
+			label = "worker"
+		}
+		if tid := strings.TrimSpace(ev.TaskID); tid != "" {
+			label += " · " + tid
+		}
+		a.session.AppendSystemNotice(state.SystemKindInfo,
+			fmt.Sprintf("Learning (%s): %s — Lead: review task_result / promote tool", label, strings.Join(parts, " + ")))
+		a.chatDirty = true
+	}
+}
+
+// handleChildScopedEvent absorbs worker tool/stream events so they never
+// land in the Lead chat. Returns true when the caller should skip a rebuild.
+func (a *App) handleChildScopedEvent(ev rpcclient.Event) (skipRender bool) {
+	if a.subagents == nil {
+		return true
+	}
+	switch ev.Kind {
+	case rpcclient.EventToolCallStart, rpcclient.EventToolCallDelta:
+		a.subagents.OnChildTool(ev.TaskID, ev.ToolCallName, string(ev.Kind))
+		return true
+	case rpcclient.EventToolCallCompleted:
+		a.subagents.OnChildTool(ev.TaskID, ev.ToolCallName, "completed")
+		return false
+	case rpcclient.EventMessageDelta, rpcclient.EventReasoningDelta, rpcclient.EventExecOutputChunk:
+		if ev.Content != "" {
+			a.subagents.AppendLog(ev.TaskID, ev.Content)
+		}
+		return true
+	case rpcclient.EventStepDone, rpcclient.EventRecoverableError:
+		if ev.Content != "" {
+			a.subagents.AppendLog(ev.TaskID, ev.Content)
+		}
+		return true
+	default:
+		if ev.Content != "" {
+			a.subagents.AppendLog(ev.TaskID, ev.Content)
+		}
+		return true
 	}
 }
 

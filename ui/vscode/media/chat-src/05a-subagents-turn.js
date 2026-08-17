@@ -126,7 +126,20 @@
       if (st === "error" && msg.error) {
         patch.error = String(msg.error);
       }
+      const lessonHint = String(msg.lessonPromoteSuggestion || "").trim();
+      const playbookHint = String(msg.playbookPromoteSuggestion || "").trim();
+      if (lessonHint) patch.lessonPromote = lessonHint;
+      if (playbookHint) patch.playbookPromote = playbookHint;
       upsertSubagentTask(taskId, patch);
+      const hints = [];
+      if (lessonHint) hints.push("lesson_promote");
+      if (playbookHint) hints.push("playbook_promote");
+      if (hints.length) {
+        appendMsg(
+          "system",
+          `Learning: worker finished with ${hints.join(" + ")} suggestion — Lead should review task_result / call promote tool.`
+        );
+      }
     }
   }
 

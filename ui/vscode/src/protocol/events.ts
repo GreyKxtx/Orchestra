@@ -38,6 +38,8 @@ export interface AgentEventParams {
   model?: string;
   status?: string;
   error?: string;
+  lesson_promote_suggestion?: string;
+  playbook_promote_suggestion?: string;
 }
 
 export interface ToolDiagnosticPayload {
@@ -283,6 +285,8 @@ export type HostToWebview =
       status?: string;
       content?: string;
       error?: string;
+      lessonPromoteSuggestion?: string;
+      playbookPromoteSuggestion?: string;
     }
   | {
       type: "diffViewer";

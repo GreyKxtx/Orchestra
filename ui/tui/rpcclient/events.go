@@ -38,6 +38,10 @@ const (
 	// LSP-style notification naming used by agent/event, exec/output_chunk, etc.
 	EventWorkflowStageStart EventKind = "workflow/stage_start"
 	EventWorkflowStageDone  EventKind = "workflow/stage_done"
+
+	EventChildDone    EventKind = "child_done"    // subagent finished; may carry learning promote hints
+	EventChildStarted EventKind = "child_started" // subagent goroutine started
+	EventChildQueued  EventKind = "child_queued"  // waiting on overlapping target_files
 )
 
 // WorkflowStagePayload carries the data for workflow/stage_start / stage_done.
@@ -52,27 +56,35 @@ type WorkflowStagePayload struct {
 
 // Event is a TUI-side representation of a streaming event.
 type Event struct {
-	Kind         EventKind
-	ReqID        int64 // correlation id for permission/question server requests
-	Step         int
-	SessionID    string // from agent/event envelope (session.message turns)
-	TurnID       string // from agent/event envelope
-	Content      string
-	ToolCallID   string
-	ToolCallName string
-	ArgsDelta    string                    // only set on tool_call_delta — partial JSON of arguments
-	PendingOps   *PendingOpsPayload        // only set when Kind == EventPendingOps
-	PermReq      *PermissionRequestPayload // only set when Kind == EventPermissionRequest
-	Questions    []QuestionItemPayload     // only set when Kind == EventQuestionAsked
-	Stage        *WorkflowStagePayload     // only set when Kind == EventWorkflowStageStart / EventWorkflowStageDone
-	Diagnostics  []ToolDiagnosticPayload   // LSP diagnostics on write/edit tool_call_completed
-	Usage        *UsageTurnPayload         // token/cost totals for completed turn
-	Todos        []TodoItem                // model checklist after turn / todowrite
-	StopReason   string                    // completed | partial | max_steps (turn end)
-	OpenTodos    int                       // open pending/in_progress todos at turn end
-	ModeRoute    *ModeRoutePayload         // agent→effective mode
-	LSPStatus    string                    // from core.health on init
-	Err          string                    // only set on connection/agent error events
+	Kind                      EventKind
+	ReqID                     int64 // correlation id for permission/question server requests
+	Step                      int
+	SessionID                 string // from agent/event envelope (session.message turns)
+	TurnID                    string // from agent/event envelope
+	Content                   string
+	ToolCallID                string
+	ToolCallName              string
+	ArgsDelta                 string                    // only set on tool_call_delta — partial JSON of arguments
+	PendingOps                *PendingOpsPayload        // only set when Kind == EventPendingOps
+	PermReq                   *PermissionRequestPayload // only set when Kind == EventPermissionRequest
+	Questions                 []QuestionItemPayload     // only set when Kind == EventQuestionAsked
+	Stage                     *WorkflowStagePayload     // only set when Kind == EventWorkflowStageStart / EventWorkflowStageDone
+	Diagnostics               []ToolDiagnosticPayload   // LSP diagnostics on write/edit tool_call_completed
+	Usage                     *UsageTurnPayload         // token/cost totals for completed turn
+	Todos                     []TodoItem                // model checklist after turn / todowrite
+	StopReason                string                    // completed | partial | max_steps (turn end)
+	OpenTodos                 int                       // open pending/in_progress todos at turn end
+	ModeRoute                 *ModeRoutePayload         // agent→effective mode
+	LSPStatus                 string                    // from core.health on init
+	TaskID                    string                    // child_* lifecycle
+	SubagentType              string                    // child_* lifecycle
+	ChildStatus               string                    // child_done status field
+	Scope                     string                    // "child" tags worker tool/stream events
+	WaitingFor                []string                  // child_queued: blocking task ids
+	WaitingReason             string                    // child_queued reason
+	LessonPromoteSuggestion   string                    // child_done learning hint
+	PlaybookPromoteSuggestion string                    // child_done learning hint
+	Err                       string                    // only set on connection/agent error events
 }
 
 // ModeRoutePayload is emitted when mode=agent classifies the turn.

@@ -1551,6 +1551,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           subagentType: event.subagent_type,
           status: event.status,
           error: event.error,
+          lessonPromoteSuggestion: event.lesson_promote_suggestion,
+          playbookPromoteSuggestion: event.playbook_promote_suggestion,
         });
         break;
       case "message_delta":

@@ -3471,6 +3471,19 @@ body {
   text-overflow: ellipsis;
 }
 
+.subagent-promote-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--mode-accent) 85%, #fff);
+  background: color-mix(in srgb, var(--mode-accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 35%, var(--border));
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 .subagent-tools {
   margin: 4px 0 8px 12px;
   padding-left: 10px;

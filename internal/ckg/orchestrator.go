@@ -110,5 +110,7 @@ func (o *Orchestrator) updateGraph(ctx context.Context) error {
 		}
 	}
 
-	return nil
+	// Always relink after the pass — including a single-file incremental
+	// update — so new calls from B attach to already-indexed nodes in A.
+	return o.store.RelinkUnresolvedEdges(ctx)
 }

@@ -31,8 +31,11 @@ func (s *Store) IndexStats(ctx context.Context, model string) (IndexStats, error
 	// A graph refresh writes files one-by-one. Wait for it to finish so status
 	// never exposes a misleading partial snapshot (for example 5 JS files
 	// before the scanner reaches TS/TSX sources).
-	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
+	if s.db == nil {
+		return st, nil
+	}
 
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.Files); err != nil {
 		return st, err

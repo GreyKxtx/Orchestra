@@ -193,11 +193,13 @@ func parseGoFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []E
 
 	pkgName := singleCapture(fc, root, `(package_clause (package_identifier) @name)`, "name")
 	pkgFQN := GoPackageFQN(fc.modulePath, fc.rootDir, fc.filePath)
+	importMap := scanGoImportMap(fc, root)
 
 	nodes = append(nodes, Node{
 		FQN:       pkgFQN,
 		ShortName: pkgName,
 		Kind:      "package",
+		Package:   pkgName,
 		LineStart: 1,
 		LineEnd:   1,
 	})
@@ -252,6 +254,7 @@ func parseGoFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []E
 				FQN:        fqn,
 				ShortName:  shortName,
 				Kind:       kind,
+				Package:    pkgName,
 				LineStart:  lineStart,
 				LineEnd:    lineEnd,
 				Complexity: countComplexity(root, lineStart, lineEnd, ctypes),
@@ -259,35 +262,25 @@ func parseGoFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []E
 		}
 	}
 
-	// Import edges
-	impQ, err := sitter.NewQuery([]byte(`(import_spec path: (interpreted_string_literal) @path)`), fc.lang)
-	if err == nil {
-		impQC := sitter.NewQueryCursor()
-		impQC.Exec(impQ, root)
-		for {
-			m, ok := impQC.NextMatch()
-			if !ok {
-				break
-			}
-			for _, c := range m.Captures {
-				if impQ.CaptureNameForId(c.Index) == "path" {
-					importPath := strings.Trim(c.Node.Content(fc.src), `"`)
-					if importPath != "" {
-						edges = append(edges, Edge{
-							SourceFQN: pkgFQN,
-							TargetFQN: importPath,
-							Relation:  "imports",
-						})
-					}
-				}
-			}
+	// Import edges (package → imported path).
+	for alias, importPath := range importMap {
+		if alias == "_" || importPath == "" {
+			continue
 		}
+		edges = append(edges, Edge{
+			SourceFQN:  pkgFQN,
+			TargetFQN:  importPath,
+			Relation:   "imports",
+			IsExternal: isGoExternalImport(importPath, fc.modulePath),
+		})
 	}
 
-	// Call edges
+	local := localNameIndex(nodes)
+
+	// Call edges — phase 1: qualify via import map + file-local symbols.
 	goCallQueries := []string{
 		`(call_expression function: (identifier) @called_name) @call`,
-		`(call_expression function: (selector_expression field: (field_identifier) @called_name)) @call`,
+		`(call_expression function: (selector_expression operand: (_) @operand field: (field_identifier) @called_name)) @call`,
 	}
 	for _, qStr := range goCallQueries {
 		q, err := sitter.NewQuery([]byte(qStr), fc.lang)
@@ -301,12 +294,16 @@ func parseGoFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []E
 			if !ok {
 				break
 			}
-			var calledName string
+			var calledName, operand string
 			var callNode *sitter.Node
 			for _, c := range m.Captures {
 				switch q.CaptureNameForId(c.Index) {
 				case "called_name":
 					calledName = c.Node.Content(fc.src)
+				case "operand":
+					if c.Node.Type() == "identifier" {
+						operand = c.Node.Content(fc.src)
+					}
 				case "call":
 					callNode = c.Node
 				}
@@ -314,16 +311,25 @@ func parseGoFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []E
 			if calledName == "" || callNode == nil {
 				continue
 			}
-			callLine := int(callNode.StartPoint().Row) + 1
-			if sourceFQN := findEnclosingFQN(nodes, callLine); sourceFQN != "" {
-				edges = append(edges, Edge{
-					SourceFQN: sourceFQN,
-					TargetFQN: calledName,
-					Relation:  "calls",
-				})
+			if operand == "" && goBuiltins[calledName] {
+				continue
 			}
+			callLine := int(callNode.StartPoint().Row) + 1
+			sourceFQN := findEnclosingFQN(nodes, callLine)
+			if sourceFQN == "" {
+				continue
+			}
+			tgt, ext := qualifyGoRef(calledName, operand, importMap, pkgFQN, local, fc.modulePath)
+			edges = append(edges, Edge{
+				SourceFQN:  sourceFQN,
+				TargetFQN:  tgt,
+				Relation:   "calls",
+				IsExternal: ext,
+			})
 		}
 	}
+
+	edges = append(edges, scanGoInstantiates(fc, root, nodes, importMap, pkgFQN, local)...)
 
 	return nodes, edges, pkgName, nil
 }
@@ -1183,4 +1189,180 @@ func extractGoReceiverType(recvNode *sitter.Node, src []byte) string {
 		}
 	}
 	return ""
+}
+
+// scanGoImportMap returns alias → import path. "_" imports are omitted from
+// the alias map but still recorded by the caller via a full walk if needed;
+// blank imports are skipped for call qualification.
+func scanGoImportMap(fc *fileCtx, root *sitter.Node) map[string]string {
+	out := map[string]string{}
+	q, err := sitter.NewQuery([]byte(`(import_spec) @spec`), fc.lang)
+	if err != nil {
+		return out
+	}
+	qc := sitter.NewQueryCursor()
+	qc.Exec(q, root)
+	for {
+		m, ok := qc.NextMatch()
+		if !ok {
+			break
+		}
+		var spec *sitter.Node
+		for _, c := range m.Captures {
+			if q.CaptureNameForId(c.Index) == "spec" {
+				spec = c.Node
+			}
+		}
+		if spec == nil {
+			continue
+		}
+		pathNode := spec.ChildByFieldName("path")
+		if pathNode == nil {
+			continue
+		}
+		importPath := strings.Trim(pathNode.Content(fc.src), `"`)
+		if importPath == "" {
+			continue
+		}
+		alias := ""
+		if name := spec.ChildByFieldName("name"); name != nil {
+			switch name.Type() {
+			case "dot":
+				alias = "."
+			case "blank_identifier":
+				continue
+			default:
+				alias = name.Content(fc.src)
+			}
+		}
+		if alias == "" {
+			alias = defaultImportAlias(importPath)
+		}
+		out[alias] = importPath
+	}
+	return out
+}
+
+func defaultImportAlias(importPath string) string {
+	base := importPath
+	if i := strings.LastIndex(importPath, "/"); i >= 0 {
+		base = importPath[i+1:]
+	}
+	// github.com/foo/bar/v2 → bar
+	if len(base) > 1 && base[0] == 'v' && base[1] >= '0' && base[1] <= '9' {
+		rest := importPath[:strings.LastIndex(importPath, "/")]
+		if j := strings.LastIndex(rest, "/"); j >= 0 {
+			base = rest[j+1:]
+		}
+	}
+	return base
+}
+
+func localNameIndex(nodes []Node) map[string]string {
+	out := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.Kind == "package" || n.ShortName == "" {
+			continue
+		}
+		out[n.ShortName] = n.FQN
+		if i := strings.LastIndex(n.ShortName, "."); i >= 0 {
+			out[n.ShortName[i+1:]] = n.FQN
+		}
+	}
+	return out
+}
+
+func isGoExternalImport(importPath, modulePath string) bool {
+	if modulePath != "" && (importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")) {
+		return false
+	}
+	first, _, _ := strings.Cut(importPath, "/")
+	return !strings.Contains(first, ".")
+}
+
+// qualifyGoRef maps a call/type identifier (+ optional selector operand) to a
+// best-effort FQN. Unresolved method-on-variable calls stay as the short name
+// for phase-2 unique linking.
+func qualifyGoRef(name, operand string, imports map[string]string, pkgFQN string, local map[string]string, modulePath string) (string, bool) {
+	if operand == "" {
+		if fqn, ok := local[name]; ok {
+			return fqn, false
+		}
+		if goBuiltins[name] {
+			return name, true
+		}
+		if pkgFQN != "" {
+			return pkgFQN + "." + name, false
+		}
+		return name, false
+	}
+	if path, ok := imports[operand]; ok {
+		fqn := path + "." + name
+		return fqn, isGoExternalImport(path, modulePath)
+	}
+	if fqn, ok := local[operand+"."+name]; ok {
+		return fqn, false
+	}
+	if typeFQN, ok := local[operand]; ok {
+		return typeFQN + "." + name, false
+	}
+	return name, false
+}
+
+func scanGoInstantiates(fc *fileCtx, root *sitter.Node, nodes []Node, imports map[string]string, pkgFQN string, local map[string]string) []Edge {
+	var edges []Edge
+	queries := []string{
+		`(composite_literal type: (type_identifier) @type) @lit`,
+		`(composite_literal type: (qualified_type package: (package_identifier) @pkg name: (type_identifier) @type)) @lit`,
+		`(composite_literal type: (pointer_type (type_identifier) @type)) @lit`,
+		`(call_expression function: (identifier) @fn arguments: (argument_list (type_identifier) @type)) @lit`,
+		`(call_expression function: (identifier) @fn arguments: (argument_list (qualified_type package: (package_identifier) @pkg name: (type_identifier) @type))) @lit`,
+	}
+	for _, qStr := range queries {
+		q, err := sitter.NewQuery([]byte(qStr), fc.lang)
+		if err != nil {
+			continue
+		}
+		qc := sitter.NewQueryCursor()
+		qc.Exec(q, root)
+		for {
+			m, ok := qc.NextMatch()
+			if !ok {
+				break
+			}
+			var typeName, pkg, fn string
+			var lit *sitter.Node
+			for _, c := range m.Captures {
+				switch q.CaptureNameForId(c.Index) {
+				case "type":
+					typeName = c.Node.Content(fc.src)
+				case "pkg":
+					pkg = c.Node.Content(fc.src)
+				case "fn":
+					fn = c.Node.Content(fc.src)
+				case "lit":
+					lit = c.Node
+				}
+			}
+			if typeName == "" || lit == nil {
+				continue
+			}
+			if fn != "" && fn != "new" {
+				continue
+			}
+			line := int(lit.StartPoint().Row) + 1
+			src := findEnclosingFQN(nodes, line)
+			if src == "" {
+				continue
+			}
+			tgt, ext := qualifyGoRef(typeName, pkg, imports, pkgFQN, local, fc.modulePath)
+			edges = append(edges, Edge{
+				SourceFQN:  src,
+				TargetFQN:  tgt,
+				Relation:   "instantiates",
+				IsExternal: ext,
+			})
+		}
+	}
+	return edges
 }

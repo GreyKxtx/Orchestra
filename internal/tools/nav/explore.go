@@ -10,6 +10,8 @@ import (
 
 type ExploreCodebaseRequest struct {
 	SymbolName string `json:"symbol_name"`
+	Depth      int    `json:"depth,omitempty"`      // 1..4, default 2
+	Direction  string `json:"direction,omitempty"`  // downstream|upstream|both
 }
 
 type ExploreCodebaseResponse struct {
@@ -26,7 +28,10 @@ func (c *Client) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest
 		if err := orch.UpdateGraph(ctx); err != nil {
 			return fmt.Errorf("update ckg: %w", err)
 		}
-		content, err := snap.Provider.ExploreSymbol(ctx, req.SymbolName)
+		content, err := snap.Provider.ExploreSymbol(ctx, req.SymbolName, ckg.ExploreOptions{
+			Depth:     req.Depth,
+			Direction: req.Direction,
+		})
 		if err != nil {
 			return fmt.Errorf("explore symbol: %w", err)
 		}
@@ -39,8 +44,8 @@ func (c *Client) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest
 	return out, nil
 }
 
-// FetchCKGContext returns a <ckg_context> block of up to 12 nodes relevant to
-// the query, or an empty string if the CKG store is unavailable or has no matches.
+// FetchCKGContext returns a <ckg_context> block for step-1 prompt injection:
+// ranked FQNs plus a depth-1 neighborhood, capped at ~1500 tokens.
 func (c *Client) FetchCKGContext(ctx context.Context, query string) string {
 	snap, unlock := c.ckgSnap()
 	defer unlock()
@@ -55,7 +60,7 @@ func (c *Client) FetchCKGContext(ctx context.Context, query string) string {
 	if err != nil || len(nodes) == 0 {
 		return ""
 	}
-	return ckg.FormatNodesForPrompt(nodes, 800)
+	return snap.Store.FormatPromptContext(ctx, nodes, 1500)
 }
 
 // SeedCKGSymbolForTest registers a symbol line range for E2E / eval harnesses.
@@ -76,5 +81,7 @@ func (c *Client) SeedCKGSymbolForTest(ctx context.Context, relPath, fileHash, sy
 		LineStart: lineStart,
 		LineEnd:   lineEnd,
 	}}
+	snap.Store.LockIndex()
+	defer snap.Store.UnlockIndex()
 	return snap.Store.SaveFileNodes(ctx, relPath, fileHash, "go", "eval", "eval", nodes, nil)
 }

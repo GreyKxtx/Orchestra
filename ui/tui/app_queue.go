@@ -70,6 +70,9 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 
 	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
 	a.reasoning.Reset()
+	if a.subagents != nil {
+		a.subagents.Reset()
+	}
 	a.stepTextLen = 0
 	a.turnStartedAt = time.Now()
 	a.chat.ScrollToBottom()

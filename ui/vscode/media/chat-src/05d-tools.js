@@ -202,6 +202,15 @@
       if (sa.status === "error" && sa.error) {
         row.title = row.title ? `${row.title}\n${sa.error}` : sa.error;
       }
+      const promoteBits = [];
+      if (sa.lessonPromote) promoteBits.push("lesson↑");
+      if (sa.playbookPromote) promoteBits.push("playbook↑");
+      if (promoteBits.length) {
+        row.innerHTML +=
+          `<span class="subagent-promote-badge" title="${escapeAttr(
+            (sa.lessonPromote || sa.playbookPromote || "").slice(0, 240)
+          )}">${promoteBits.join(" · ")}</span>`;
+      }
       subagentsTree.appendChild(row);
       if (sa.status === "error" && sa.error) {
         const errHint = document.createElement("div");

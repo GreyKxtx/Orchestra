@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/protocol/jsonrpc"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
 
 // Config configures the spawn + initialize handshake.
@@ -638,30 +638,46 @@ func (c *Client) handleWorkflowStage(kind EventKind, params json.RawMessage) {
 
 func (c *Client) handleAgentEvent(params json.RawMessage) {
 	var p struct {
-		Step         int             `json:"step"`
-		Type         string          `json:"type"`
-		SessionID    string          `json:"session_id"`
-		TurnID       string          `json:"turn_id"`
-		Content      string          `json:"content"`
-		Error        string          `json:"error"`
-		ToolCallID   string          `json:"tool_call_id"`
-		ToolCallName string          `json:"tool_call_name"`
-		ArgsDelta    string          `json:"args_delta"`
-		Data         json.RawMessage `json:"data"`
-		Diagnostics  json.RawMessage `json:"diagnostics"`
+		Step                      int             `json:"step"`
+		Type                      string          `json:"type"`
+		SessionID                 string          `json:"session_id"`
+		TurnID                    string          `json:"turn_id"`
+		Content                   string          `json:"content"`
+		Error                     string          `json:"error"`
+		ToolCallID                string          `json:"tool_call_id"`
+		ToolCallName              string          `json:"tool_call_name"`
+		ArgsDelta                 string          `json:"args_delta"`
+		Data                      json.RawMessage `json:"data"`
+		Diagnostics               json.RawMessage `json:"diagnostics"`
+		TaskID                    string          `json:"task_id"`
+		SubagentType              string          `json:"subagent_type"`
+		Status                    string          `json:"status"`
+		Scope                     string          `json:"scope"`
+		WaitingFor                []string        `json:"waiting_for"`
+		Reason                    string          `json:"reason"`
+		LessonPromoteSuggestion   string          `json:"lesson_promote_suggestion"`
+		PlaybookPromoteSuggestion string          `json:"playbook_promote_suggestion"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
 	ev := Event{
-		Kind:         EventKind(p.Type),
-		Step:         p.Step,
-		SessionID:    p.SessionID,
-		TurnID:       p.TurnID,
-		Content:      p.Content,
-		ToolCallID:   p.ToolCallID,
-		ToolCallName: p.ToolCallName,
-		ArgsDelta:    p.ArgsDelta,
+		Kind:                      EventKind(p.Type),
+		Step:                      p.Step,
+		SessionID:                 p.SessionID,
+		TurnID:                    p.TurnID,
+		Content:                   p.Content,
+		ToolCallID:                p.ToolCallID,
+		ToolCallName:              p.ToolCallName,
+		ArgsDelta:                 p.ArgsDelta,
+		TaskID:                    p.TaskID,
+		SubagentType:              p.SubagentType,
+		ChildStatus:               p.Status,
+		Scope:                     strings.TrimSpace(p.Scope),
+		WaitingFor:                p.WaitingFor,
+		WaitingReason:             strings.TrimSpace(p.Reason),
+		LessonPromoteSuggestion:   strings.TrimSpace(p.LessonPromoteSuggestion),
+		PlaybookPromoteSuggestion: strings.TrimSpace(p.PlaybookPromoteSuggestion),
 	}
 	if EventKind(p.Type) == EventPendingOps && len(p.Data) > 0 {
 		var payload PendingOpsPayload
@@ -681,12 +697,16 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 			ev.ModeRoute = &route
 		}
 	}
-	if EventKind(p.Type) == EventError {
+	if EventKind(p.Type) == EventError || EventKind(p.Type) == EventChildDone {
 		errMsg := strings.TrimSpace(p.Error)
 		if errMsg == "" {
 			errMsg = strings.TrimSpace(p.Content)
 		}
-		ev.Err = errMsg
+		if EventKind(p.Type) == EventError {
+			ev.Err = errMsg
+		} else if strings.TrimSpace(p.Error) != "" {
+			ev.Err = strings.TrimSpace(p.Error)
+		}
 	}
 	if EventKind(p.Type) == EventTodosUpdated && strings.TrimSpace(p.Content) != "" {
 		var items []TodoItem

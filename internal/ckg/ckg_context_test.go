@@ -163,3 +163,41 @@ func TestFormatNodesForPrompt_ByteBudget(t *testing.T) {
 		t.Errorf("output not properly closed: %q", out)
 	}
 }
+
+func TestFormatPromptContext_Depth1SubgraphAndTokenBudget(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	nodes := []Node{
+		{FQN: "ex.ValidateToken", ShortName: "ValidateToken", Kind: "func", Package: "auth", LineStart: 10, LineEnd: 20},
+		{FQN: "ex.HandleAPI", ShortName: "HandleAPI", Kind: "func", Package: "router", LineStart: 45, LineEnd: 50},
+		{FQN: "ex.ParseClaims", ShortName: "ParseClaims", Kind: "func", Package: "jwt", LineStart: 12, LineEnd: 18},
+	}
+	edges := []Edge{
+		{SourceFQN: "ex.HandleAPI", TargetFQN: "ex.ValidateToken", Relation: "calls"},
+		{SourceFQN: "ex.ValidateToken", TargetFQN: "ex.ParseClaims", Relation: "calls"},
+	}
+	if err := s.SaveFileNodes(ctx, "auth.go", "h", "go", "ex", "auth", nodes, edges); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := s.FindRelevantNodes(ctx, "ValidateToken", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("expected ValidateToken hit")
+	}
+	out := s.FormatPromptContext(ctx, hits, 1500)
+	if !strings.Contains(out, "<ckg_context>") || !strings.Contains(out, "</ckg_context>") {
+		t.Fatalf("missing wrapper:\n%s", out)
+	}
+	if !strings.Contains(out, "ex.ValidateToken") {
+		t.Fatalf("missing seed FQN:\n%s", out)
+	}
+	if !strings.Contains(out, "<ckg_subgraph") {
+		t.Fatalf("expected depth-1 subgraph in step-1 context:\n%s", out)
+	}
+	if len(out) > 1500*bytesPerToken {
+		t.Fatalf("context %d bytes exceeds ~1500 tokens", len(out))
+	}
+}

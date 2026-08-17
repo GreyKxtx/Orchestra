@@ -1302,7 +1302,20 @@
       if (st === "error" && msg.error) {
         patch.error = String(msg.error);
       }
+      const lessonHint = String(msg.lessonPromoteSuggestion || "").trim();
+      const playbookHint = String(msg.playbookPromoteSuggestion || "").trim();
+      if (lessonHint) patch.lessonPromote = lessonHint;
+      if (playbookHint) patch.playbookPromote = playbookHint;
       upsertSubagentTask(taskId, patch);
+      const hints = [];
+      if (lessonHint) hints.push("lesson_promote");
+      if (playbookHint) hints.push("playbook_promote");
+      if (hints.length) {
+        appendMsg(
+          "system",
+          `Learning: worker finished with ${hints.join(" + ")} suggestion — Lead should review task_result / call promote tool.`
+        );
+      }
     }
   }
 
@@ -2497,6 +2510,15 @@
       }
       if (sa.status === "error" && sa.error) {
         row.title = row.title ? `${row.title}\n${sa.error}` : sa.error;
+      }
+      const promoteBits = [];
+      if (sa.lessonPromote) promoteBits.push("lesson↑");
+      if (sa.playbookPromote) promoteBits.push("playbook↑");
+      if (promoteBits.length) {
+        row.innerHTML +=
+          `<span class="subagent-promote-badge" title="${escapeAttr(
+            (sa.lessonPromote || sa.playbookPromote || "").slice(0, 240)
+          )}">${promoteBits.join(" · ")}</span>`;
       }
       subagentsTree.appendChild(row);
       if (sa.status === "error" && sa.error) {

@@ -28,7 +28,7 @@ func ToolExploreCodebase() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "explore",
-			Description: "Три уровня глубины — выбираются автоматически по форме запроса:\n• Пакет: explore(\"internal/agent\") → все типы, методы, функции без кода тел\n• Тип: explore(\"Agent\") → определение struct/interface + полный список методов\n• Символ: explore(\"Agent.Run\") → полный код метода/функции + callers + callees\nДля метода пиши 'Agent.Run', не просто 'Run'. При неоднозначности — используй FQN из ответа.",
+			Description: "Три уровня глубины — выбираются автоматически по форме запроса:\n• Пакет: explore(\"internal/agent\") → все типы, методы, функции без кода тел\n• Тип: explore(\"Agent\") → определение struct/interface + полный список методов\n• Символ: explore(\"Agent.Run\") → полный код метода/функции + multi-hop subgraph (callers/callees)\nОпционально: depth (1..4, default 2), direction (downstream|upstream|both).\nДля метода пиши 'Agent.Run', не просто 'Run'. При неоднозначности — используй FQN из ответа.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -37,6 +37,17 @@ func ToolExploreCodebase() llm.ToolDef {
     "symbol_name": {
       "type": "string",
       "description": "Пакет: 'internal/agent'. Тип: 'Agent'. Метод: 'Agent.Run'. Функция: 'ResolveExternalPatches'. FQN: 'internal/agent.Agent.Run'."
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "depth: 1..4 (глубина поиска, default 2)"
+    },
+    "direction": {
+      "type": "string",
+      "enum": ["downstream", "upstream", "both", "callees", "callers"],
+      "description": "direction: downstream (кого вызывает / callees) | upstream (кто вызывает / callers) | both"
     }
   }
 }`),

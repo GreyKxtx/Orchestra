@@ -26,6 +26,9 @@ func (a *App) flushChat(force bool) {
 		}
 	}
 	a.session.SyncActiveAssistantProjections()
+	if a.subagents != nil {
+		a.chat.SetSubagents(a.subagents.Snapshot(time.Now()))
+	}
 	a.chat.SetMessages(a.session.Messages)
 	a.chatDirty = false
 	a.lastChatRender = time.Now()

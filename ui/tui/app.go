@@ -42,11 +42,11 @@ type Config struct {
 	Model           string
 	Mode            string
 	CWD             string
-	NeedsOnboarding bool   // true when no model is configured
-	ConfigPath      string // path to .orchestra.yml for saving onboarding result
-	Theme           string // registered theme name; empty → default
-	AllowExec       bool   // allow bash/exec.run in TUI agent runs
-	Profile         string // agent.profile: fast | precision | ""
+	NeedsOnboarding bool     // true when no model is configured
+	ConfigPath      string   // path to .orchestra.yml for saving onboarding result
+	Theme           string   // registered theme name; empty → default
+	AllowExec       bool     // allow bash/exec.run in TUI agent runs
+	Profile         string   // agent.profile: fast | precision | ""
 	ExcludeDirs     []string // from .orchestra.yml exclude_dirs
 }
 
@@ -59,8 +59,8 @@ type App struct {
 	input     view.Input
 	statusBar view.StatusBar
 
-	taskPanel     *view.TaskPanel
-	todos         []rpcclient.TodoItem
+	taskPanel *view.TaskPanel
+	todos     []rpcclient.TodoItem
 
 	msgQueue []string // FIFO prompts submitted while agent busy
 
@@ -81,6 +81,7 @@ type App struct {
 
 	turn      *state.TurnFSM // turn lifecycle FSM (M3)
 	turnError string
+	subagents *state.SubagentTracker
 
 	chrome chromeMetrics
 
@@ -256,8 +257,8 @@ type llmProbeMsg struct {
 
 // limitsAppliedMsg reports that server-discovered context was reconciled into config.
 type limitsAppliedMsg struct {
-	contextTokens int  // effective num_ctx after reconcile
-	serverMax     int  // raw max_model_len from probe
+	contextTokens int // effective num_ctx after reconcile
+	serverMax     int // raw max_model_len from probe
 	maxTokens     int
 	clamped       bool // max_tokens reduced
 	ctxClamped    bool // user num_ctx reduced to server max
@@ -278,6 +279,7 @@ func NewApp(cfg Config) (*App, error) {
 		cfgStore:         newConfigStore(cfg.ConfigPath, cfg.WorkspaceRoot),
 		session:          state.NewSession(),
 		turn:             state.NewTurnFSM(),
+		subagents:        state.NewSubagentTracker(),
 		allowExec:        cfg.AllowExec,
 		sessionToolAllow: map[string]bool{},
 	}
@@ -336,7 +338,8 @@ func (a *App) nextTickCmd() tea.Cmd {
 		a.chatDirty ||
 		a.toastTick > 0 ||
 		a.chrome.lspStatus == "installing" ||
-		(a.workflowProgress != nil && a.workflowProgress.Active()) {
+		(a.workflowProgress != nil && a.workflowProgress.Active()) ||
+		(a.subagents != nil && a.subagents.HasActive()) {
 		d = 100 * time.Millisecond
 	}
 	return tea.Tick(d, func(t time.Time) tea.Msg {
