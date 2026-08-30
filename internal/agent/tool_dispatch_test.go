@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestNormalizeToolName(t *testing.T) {
@@ -85,5 +88,38 @@ func TestNormalizeLLMWithDefs_mixedBatchReturnsAllTools(t *testing.T) {
 	}
 	if step.Tools[0].Name != "read" || step.Tools[1].Name != "edit" {
 		t.Fatalf("tools = %+v", step.Tools)
+	}
+}
+
+func TestFormatToolErrorJSON_KeepsResolverDetails(t *testing.T) {
+	err := protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+		"path":    "pkg/a.go",
+		"nearest": "file has 12 lines; current text around line 5:\n     5| func Greet(name string) string {",
+		"empty":   "",
+	})
+	out := formatToolErrorJSON("edit", json.RawMessage(`{"path":"pkg/a.go"}`), err)
+
+	var got map[string]any
+	if e := json.Unmarshal([]byte(out), &got); e != nil {
+		t.Fatalf("unmarshal: %v (%s)", e, out)
+	}
+	details, ok := got["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("details dropped — the model cannot act on the error: %s", out)
+	}
+	if s, _ := details["nearest"].(string); !strings.Contains(s, "func Greet") {
+		t.Fatalf("nearest region missing: %#v", details)
+	}
+	if _, present := details["empty"]; present {
+		t.Fatalf("empty detail values should be dropped: %#v", details)
+	}
+}
+
+func TestCompactErrorDetails_ClipsLongValues(t *testing.T) {
+	long := strings.Repeat("x", toolErrorDetailMaxChars*2)
+	out, _ := compactErrorDetails(map[string]any{"nearest": long}).(map[string]any)
+	s, _ := out["nearest"].(string)
+	if len(s) > toolErrorDetailMaxChars+16 {
+		t.Fatalf("detail not clipped: %d chars", len(s))
 	}
 }

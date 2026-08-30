@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — failed edits explain themselves (2026-08)
+
+- **`nearest` region on StaleContent** (`patch/resolver/nearest.go`) — a search block that matches nothing now comes back with a numbered excerpt of the file text it most resembles (Levenshtein line similarity, ±6/10 lines, ≤1.2 KB), so the model can fix the block instead of re-reading the whole file. Silent when nothing in the file resembles the search.
+- **Tool errors keep their structured detail** (`internal/agent/tool_parallel.go`) — `formatToolErrorJSON` dropped `protocol.Error.Data` entirely, so the resolver's nearest-region excerpt and the ambiguous-match line numbers never reached the model. Details are now passed through with per-value clipping.
+- **`ApplyErrorCompact`** appends the nearest region to the StaleContent hint on the final-patch path.
+
 ### Changed — truncation leaves a visible gap marker (2026-08)
 
 - **`TruncateMessages` no longer drops the middle silently** (`internal/agent/history/history.go`) — it inserts a `[history trimmed: N earlier step(s) …]` user message naming the dropped step count and the files those steps touched, plus an explicit "re-read before editing" instruction. Markers replace each other instead of stacking, and the byte budget reserves room for one.

@@ -1,4 +1,4 @@
-﻿package agent
+package agent
 
 import (
 	"context"
@@ -8,9 +8,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol"
 )
+
 // execCommandFromInput extracts the command basename from exec.run JSON input.
 func execCommandFromInput(input json.RawMessage) string {
 	var req struct {
@@ -69,6 +70,13 @@ func formatToolErrorJSON(name string, input json.RawMessage, err error) string {
 	if pe, ok := protocol.AsError(err); ok {
 		result["code"] = string(pe.Code)
 		result["error"] = pe.Message
+		// Structured detail (the resolver's nearest-region excerpt, ambiguous
+		// match line numbers, …) used to be dropped here, so the model saw
+		// "search block not found" and nothing it could act on — its only
+		// recovery was to re-read the whole file and guess again.
+		if d := compactErrorDetails(pe.Data); d != nil {
+			result["details"] = d
+		}
 	} else {
 		result["error"] = err.Error()
 	}
@@ -77,6 +85,37 @@ func formatToolErrorJSON(name string, input json.RawMessage, err error) string {
 		return fmt.Sprintf(`{"status":"error","tool":"%s","error":"%s"}`, name, err.Error())
 	}
 	return string(b)
+}
+
+// toolErrorDetailMaxChars caps one detail value pasted back into history.
+const toolErrorDetailMaxChars = 2000
+
+// compactErrorDetails prepares protocol error data for the model: string values
+// are clipped so a large excerpt cannot dominate the history, and empty values
+// are dropped.
+func compactErrorDetails(data any) any {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return data
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		switch tv := v.(type) {
+		case nil:
+			continue
+		case string:
+			if tv == "" {
+				continue
+			}
+			out[k] = truncate(tv, toolErrorDetailMaxChars)
+		default:
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // parallelBatchWorkerLimit caps simultaneous goroutines fanned out from a

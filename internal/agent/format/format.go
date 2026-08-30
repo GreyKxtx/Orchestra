@@ -119,8 +119,14 @@ func ApplyErrorCompact(err error, code protocol.ErrorCode) string {
 	}
 	switch code {
 	case protocol.StaleContent:
-		return "APPLY_ERROR code=StaleContent" + pathSuffix +
+		msg := "APPLY_ERROR code=StaleContent" + pathSuffix +
 			"\nFile changed on disk. Re-read it (fs.read) and update the patch with the new file_hash."
+		// The resolver attaches the current text around the place the search
+		// block was aiming at; passing it through often saves the re-read.
+		if nearest := errorDataString(pe, "nearest"); nearest != "" {
+			msg += "\n" + nearest
+		}
+		return msg
 	case protocol.AmbiguousMatch:
 		matches := errorDataInt(pe, "matches")
 		linesPart := ""

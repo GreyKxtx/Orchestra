@@ -99,11 +99,15 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 
 	start, end, matches, strategy := forgivingFind(string(before), p.Search)
 	if matches == 0 {
-		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+		detail := map[string]any{
 			"path":     p.Path,
 			"search":   preview(p.Search, 200),
 			"fileHash": cache.ComputeSHA256(before),
-		})
+		}
+		if hint := NearestRegionHint(before, p.Search); hint != "" {
+			detail["nearest"] = hint
+		}
+		return ops.ReplaceRangeOp{}, protocol.NewError(protocol.StaleContent, "search block not found", detail)
 	}
 	if matches > 1 {
 		// M13 in audit ledger: surface up to 5 line numbers so the model
@@ -1121,10 +1125,14 @@ func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) 
 
 	start, end, matches, strategy := forgivingFind(s, search)
 	if matches == 0 {
-		return nil, protocol.NewError(protocol.StaleContent, "search block not found", map[string]any{
+		detail := map[string]any{
 			"search":   preview(search, 200),
 			"fileHash": cache.ComputeSHA256(content),
-		})
+		}
+		if hint := NearestRegionHint(content, search); hint != "" {
+			detail["nearest"] = hint
+		}
+		return nil, protocol.NewError(protocol.StaleContent, "search block not found", detail)
 	}
 	if matches > 1 {
 		detail := map[string]any{
