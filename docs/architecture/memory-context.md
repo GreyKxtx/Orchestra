@@ -63,7 +63,10 @@ in bytes). When the previous step's real `PromptTokens` already cannot leave roo
    over the **older** history only; the recent tail (`splitHistoryForCompaction`:
    30% of the prompt budget, min `history_prune_keep_recent` tool atoms, capped
    at half the history) is carried over verbatim
-4. Guard: &lt;20% shrink or LLM fail → `truncateMessages`
+4. Guard: &lt;20% shrink or LLM fail → `truncateMessages`, which drops the middle
+   and leaves a `[history trimmed: …]` marker in its place naming how many steps
+   went and which files they touched (`history.buildGapMarker`) — a silent hole
+   makes the model re-decide settled questions and edit from remembered content
 5. Persist: session `ReplaceHistory(outHistory)` after turn (Phase 0)
 6. Event `CONTEXT_COMPACTED` → TUI notice
 

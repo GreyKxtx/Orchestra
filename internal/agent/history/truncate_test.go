@@ -1,6 +1,7 @@
 package history
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -161,6 +162,64 @@ func TestTruncateMessages_DropsAssistantWhenAllToolCallsOrphaned(t *testing.T) {
 	for _, m := range got {
 		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
 			t.Fatalf("empty-content assistant with all-orphan tool_calls survived: %+v", m)
+		}
+	}
+}
+
+func TestTruncateMessages_MarksTheGap(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "goal"},
+	}
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		msgs = append(msgs,
+			llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:   id,
+				Type: "function",
+				Function: llm.ToolCallFunc{
+					Name:      "read",
+					Arguments: llm.ToolArguments(json.RawMessage(`{"path":"pkg/` + id + `.go"}`)),
+				},
+			}}},
+			llm.Message{Role: llm.RoleTool, ToolCallID: id, Content: strings.Repeat(id, 500)},
+		)
+	}
+
+	out := TruncateMessages(msgs, 2500)
+	if len(out) >= len(msgs) {
+		t.Fatalf("nothing was truncated: %d messages", len(out))
+	}
+	if out[2].Role != llm.RoleUser || !strings.HasPrefix(out[2].Content, GapMarkerPrefix) {
+		t.Fatalf("no gap marker after the required head: %+v", out[2])
+	}
+	if !strings.Contains(out[2].Content, "pkg/a.go") {
+		t.Fatalf("marker does not name the dropped files: %q", out[2].Content)
+	}
+
+	// Truncating again must not stack markers: the old one is dropped with the
+	// atoms it described and replaced by a fresh one.
+	again := TruncateMessages(out, 2000)
+	markers := 0
+	for _, m := range again {
+		if strings.HasPrefix(m.Content, GapMarkerPrefix) {
+			markers++
+		}
+	}
+	if markers > 1 {
+		t.Fatalf("gap markers accumulated: %d", markers)
+	}
+}
+
+func TestTruncateMessages_NoMarkerWhenNothingDropped(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "goal"},
+		{Role: llm.RoleAssistant, Content: "ok"},
+	}
+	out := TruncateMessages(msgs, 64*1024)
+	for _, m := range out {
+		if strings.HasPrefix(m.Content, GapMarkerPrefix) {
+			t.Fatal("marker added although the history fit")
 		}
 	}
 }

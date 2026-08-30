@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — truncation leaves a visible gap marker (2026-08)
+
+- **`TruncateMessages` no longer drops the middle silently** (`internal/agent/history/history.go`) — it inserts a `[history trimmed: N earlier step(s) …]` user message naming the dropped step count and the files those steps touched, plus an explicit "re-read before editing" instruction. Markers replace each other instead of stacking, and the byte budget reserves room for one.
+
 ### Changed — prompt cache: stable prefix + Anthropic breakpoints (2026-08)
 
 - **Volatile context moved behind the history** (`internal/agent/agent_step.go`) — todos, `<working_state>`, turn digests and the mode reminder were rebuilt into the *leading* user message on every step, so the common prefix broke at message #2 and no provider prompt cache could match past the system block. They are now appended after the history, leaving a stable append-only prefix (and landing in the freshest part of the attention window).

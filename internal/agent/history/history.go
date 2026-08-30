@@ -1,6 +1,9 @@
 package history
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -83,6 +86,12 @@ func TruncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 	budget := maxBytes - requiredSize
 	atoms := BuildHistoryAtoms(messages[2:])
 
+	// Reserve room for the gap marker; without it a tight budget could push the
+	// request back over maxBytes exactly when we are trying to get under it.
+	if budget > gapMarkerReserveBytes*2 {
+		budget -= gapMarkerReserveBytes
+	}
+
 	// Greedy-pick atoms from the tail until budget is exhausted.
 	tailStart := len(atoms)
 	size := 0
@@ -96,10 +105,88 @@ func TruncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 
 	result := make([]llm.Message, 0, len(required)+len(messages)-2)
 	result = append(result, required...)
+	// Truncation drops the middle of the conversation. Say so: silently handing
+	// the model a transcript with a hole in it is how a run ends up re-deciding
+	// something it already settled, or editing a file from remembered content.
+	if tailStart > 0 {
+		if marker := buildGapMarker(atoms[:tailStart]); marker.Content != "" {
+			result = append(result, marker)
+		}
+	}
 	for i := tailStart; i < len(atoms); i++ {
 		result = append(result, atoms[i].msgs...)
 	}
 	return result
+}
+
+// GapMarkerPrefix opens the synthetic message that stands in for dropped
+// history. Exported so callers can recognise (and not re-count) it.
+const GapMarkerPrefix = "[history trimmed:"
+
+// gapMarkerReserveBytes is the budget held back for the marker itself.
+const gapMarkerReserveBytes = 512
+
+// gapMarkerMaxPaths caps the file list in the marker.
+const gapMarkerMaxPaths = 8
+
+// buildGapMarker describes the dropped atoms: how many steps disappeared and
+// which files they touched, so the model knows to re-read before editing
+// instead of trusting a memory the transcript no longer supports.
+func buildGapMarker(dropped []Atom) llm.Message {
+	if len(dropped) == 0 {
+		return llm.Message{}
+	}
+	steps := 0
+	var paths []string
+	seen := map[string]bool{}
+	for _, a := range dropped {
+		isMarker := false
+		for _, m := range a.msgs {
+			if m.Role == llm.RoleUser && strings.HasPrefix(m.Content, GapMarkerPrefix) {
+				// An earlier marker being dropped in turn: fold, don't count.
+				isMarker = true
+				continue
+			}
+			for _, tc := range m.ToolCalls {
+				if p := pathFromToolInput(tc.Function.Arguments.Raw()); p != "" && !seen[p] {
+					seen[p] = true
+					paths = append(paths, p)
+				}
+			}
+			if m.Role == llm.RoleTool {
+				if p := pathFromToolContent(m.Content); p != "" && !seen[p] {
+					seen[p] = true
+					paths = append(paths, p)
+				}
+			}
+		}
+		if !isMarker {
+			steps++
+		}
+	}
+	if steps == 0 {
+		return llm.Message{}
+	}
+
+	var b strings.Builder
+	b.WriteString(GapMarkerPrefix)
+	fmt.Fprintf(&b, " %d earlier step(s) were dropped to fit the context budget.", steps)
+	if len(paths) > 0 {
+		shown := paths
+		extra := 0
+		if len(shown) > gapMarkerMaxPaths {
+			extra = len(shown) - gapMarkerMaxPaths
+			shown = shown[:gapMarkerMaxPaths]
+		}
+		b.WriteString(" Files touched there: ")
+		b.WriteString(strings.Join(shown, ", "))
+		if extra > 0 {
+			fmt.Fprintf(&b, " (+%d more)", extra)
+		}
+		b.WriteString(".")
+	}
+	b.WriteString(" Re-read a file before editing it — its earlier content is no longer in this transcript.]")
+	return llm.Message{Role: llm.RoleUser, Content: b.String()}
 }
 
 // estimateMessageSize estimates the byte size of a message for truncation purposes.
