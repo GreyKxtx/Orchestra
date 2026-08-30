@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — a failed subagent reports what it got done (2026-08)
+
+- **`FormatSubagentFiles` / `FormatSubagentProgress`** (`internal/agent/history/subagent.go`) — the child's history was discarded on failure, so the Lead saw an error string and redid the task from nothing. A failing child's error now carries the files it touched (with the tools used on each), the findings it had, and what it was doing last. The success summary for explore subagents gains the same "Files touched" section.
+
 ### Changed — first-step token estimate follows the script of the prompt (2026-08)
 
 - **`detectBytesPerToken`** (`internal/agent/context_estimate.go`) — before the provider reports any usage, bytes-per-token is estimated from the prompt itself: a predominantly non-ASCII prompt (≥30% non-ASCII bytes — Cyrillic, CJK) uses 3 instead of the Latin-shaped default of 4. Applies to step 1 only; `calibrateFromRealPrompt` supersedes it from the first response on, and an explicit `agent.bytes_per_context_token` still wins when it is more pessimistic.

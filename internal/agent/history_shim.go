@@ -28,3 +28,8 @@ func formatToolsCatalog(defs []llm.ToolDef) string {
 }
 
 const defaultHistoryPruneKeepRecent = history.DefaultHistoryPruneKeepRecent
+
+// FormatSubagentProgress re-exports history.FormatSubagentProgress.
+func FormatSubagentProgress(subagentType, goal string, hist []llm.Message, digestBudget int) string {
+	return history.FormatSubagentProgress(subagentType, goal, hist, digestBudget)
+}

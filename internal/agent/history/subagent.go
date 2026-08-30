@@ -33,6 +33,9 @@ func FormatSubagentResult(subagentType, goal string, history []llm.Message, task
 			b.WriteByte('\n')
 		}
 	}
+	if files := FormatSubagentFiles(history); files != "" {
+		b.WriteString(files)
+	}
 	if tr := strings.TrimSpace(taskResult); tr != "" {
 		b.WriteString("## Result\n")
 		if digestBudget > 0 && len(tr) > digestBudget*3 {
@@ -125,4 +128,128 @@ func summarizeToolFinding(name string, input json.RawMessage, content string, bu
 		}
 	}
 	return name + ": " + body
+}
+
+// subagentFileTools are the tools whose path argument says what the child
+// actually worked on.
+var subagentFileTools = map[string]bool{
+	"read": true, "edit": true, "write": true, "diff_preview": true, "fs.delete": true, "fs.rename": true,
+}
+
+const subagentMaxFiles = 12
+
+// FormatSubagentFiles lists the files a child agent touched, with the tools it
+// used on each. The parent otherwise sees only prose findings and cannot tell
+// what was already read or edited — so it re-reads, or edits blind.
+func FormatSubagentFiles(history []llm.Message) string {
+	if len(history) == 0 {
+		return ""
+	}
+	type entry struct {
+		path string
+		ops  []string
+	}
+	var order []string
+	byPath := map[string]*entry{}
+
+	for _, a := range BuildHistoryAtoms(history) {
+		for _, m := range a.msgs {
+			for _, tc := range m.ToolCalls {
+				name := digest.NormalizeToolName(tc.Function.Name)
+				if !subagentFileTools[name] {
+					continue
+				}
+				path := pathFromToolInput(tc.Function.Arguments.Raw())
+				if path == "" {
+					continue
+				}
+				e, ok := byPath[path]
+				if !ok {
+					e = &entry{path: path}
+					byPath[path] = e
+					order = append(order, path)
+				}
+				if !containsString(e.ops, name) {
+					e.ops = append(e.ops, name)
+				}
+			}
+		}
+	}
+	if len(order) == 0 {
+		return ""
+	}
+	if len(order) > subagentMaxFiles {
+		order = order[len(order)-subagentMaxFiles:]
+	}
+
+	var b strings.Builder
+	b.WriteString("## Files touched\n")
+	for _, p := range order {
+		e := byPath[p]
+		fmt.Fprintf(&b, "- %s (%s)\n", e.path, strings.Join(e.ops, ", "))
+	}
+	return b.String()
+}
+
+// subagentLastActivityMaxChars caps the tail excerpt in a failure report.
+const subagentLastActivityMaxChars = 800
+
+// FormatSubagentProgress describes what a *failed* child got done before it
+// stopped: which files it touched and what it was doing last.
+//
+// On failure the child's history is discarded, so the parent used to see only
+// an error string and had to redo the work from nothing — including the reads
+// the child had already paid for.
+func FormatSubagentProgress(subagentType, goal string, history []llm.Message, digestBudget int) string {
+	if len(history) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if files := FormatSubagentFiles(history); files != "" {
+		b.WriteString(files)
+	}
+	if findings := extractSubagentFindings(history, digestBudget); len(findings) > 0 {
+		b.WriteString("## Findings before the failure\n")
+		for _, f := range findings {
+			b.WriteString("- ")
+			b.WriteString(f)
+			b.WriteByte('\n')
+		}
+	}
+	if last := lastActivity(history); last != "" {
+		b.WriteString("## Last activity\n")
+		b.WriteString(agentformat.Truncate(last, subagentLastActivityMaxChars))
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// lastActivity returns the child's final assistant text, or its final tool
+// result when it ended mid-tool.
+func lastActivity(history []llm.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if strings.TrimSpace(m.Content) == "" {
+			continue
+		}
+		switch m.Role {
+		case llm.RoleAssistant:
+			return m.Content
+		case llm.RoleTool:
+			return "tool result: " + m.Content
+		}
+	}
+	return ""
+}
+
+func containsString(in []string, s string) bool {
+	for _, v := range in {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

@@ -666,6 +666,12 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	}
 	if runErr != nil {
 		r.recordWorkerToDeptScratchpad(workOrder, "", status, errMsg)
+		// Attach what the child did manage to do. Without it the parent sees
+		// only an error string and redoes the whole task from nothing —
+		// including the reads the child already paid for.
+		if progress := agent.FormatSubagentProgress(subagentType, req.Goal, hist, r.child.ToolDigestBytes); progress != "" {
+			errMsg = errMsg + "\n\n" + progress
+		}
 		out := &agent.SubtaskResult{TaskID: taskID, Status: status, Error: errMsg}
 		if mode == agent.ModeWorker {
 			if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, errMsg, status); hint != "" {
