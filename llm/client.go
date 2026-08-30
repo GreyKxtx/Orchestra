@@ -702,10 +702,15 @@ type chatCompletionResponse struct {
 		} `json:"message"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int     `json:"prompt_tokens"`
-		CompletionTokens int     `json:"completion_tokens"`
-		TotalTokens      int     `json:"total_tokens"`
-		Cost             float64 `json:"cost"` // OpenRouter: credits (USD) for this completion
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+		// PromptTokensDetails.CachedTokens is the prompt-cache hit reported by
+		// OpenAI, DeepSeek and compatible gateways.
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
+		Cost float64 `json:"cost"` // OpenRouter: credits (USD) for this completion
 	} `json:"usage,omitempty"`
 	Error struct {
 		Message string `json:"message"`
@@ -942,10 +947,11 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 	newToolNameMapper(req.Tools).RestoreResponse(out)
 	if apiResp.Usage != nil {
 		out.Usage = &TokenUsage{
-			PromptTokens:     apiResp.Usage.PromptTokens,
-			CompletionTokens: apiResp.Usage.CompletionTokens,
-			TotalTokens:      apiResp.Usage.TotalTokens,
-			CostUSD:          apiResp.Usage.Cost,
+			PromptTokens:       apiResp.Usage.PromptTokens,
+			CompletionTokens:   apiResp.Usage.CompletionTokens,
+			CachedPromptTokens: apiResp.Usage.PromptTokensDetails.CachedTokens,
+			TotalTokens:        apiResp.Usage.TotalTokens,
+			CostUSD:            apiResp.Usage.Cost,
 		}
 	}
 	return out, nil

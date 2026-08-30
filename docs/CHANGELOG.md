@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — prompt cache: stable prefix + Anthropic breakpoints (2026-08)
+
+- **Volatile context moved behind the history** (`internal/agent/agent_step.go`) — todos, `<working_state>`, turn digests and the mode reminder were rebuilt into the *leading* user message on every step, so the common prefix broke at message #2 and no provider prompt cache could match past the system block. They are now appended after the history, leaving a stable append-only prefix (and landing in the freshest part of the attention window).
+- **Anthropic cache breakpoints** (`llm/anthropic.go`) — added `cache_control` on the last tool schema and a rolling breakpoint on the last message before the volatile tail, next to the existing system-block marker. `convertToAnthropic` now folds a trailing user message into the preceding one (the API requires alternating roles).
+- **Cache observability** — `TokenUsage.CachedPromptTokens` / `CacheWriteTokens` parsed from Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens` and OpenAI-compatible `prompt_tokens_details.cached_tokens`; both are emitted in the per-step usage event. Previously a cache hit was invisible.
+- **Docs** — `docs/architecture/prompt-cache.md`.
+
 ### Changed — agent working memory: real context window, later & partial compaction (2026-08)
 
 - **Static model-window catalog** (`llm/model_context.go`, `llm.ResolveModelLimits`) — cloud providers do not report a window through `/v1/models`, so the history budget silently fell back to the flat `limits.context_kb` (128 KB ≈ 30k tokens) even on a 200k-token model. Discovery now falls back to a per-family catalog (Claude, GPT, Gemini, DeepSeek, Grok, Kimi, Mistral, Qwen, Llama…).

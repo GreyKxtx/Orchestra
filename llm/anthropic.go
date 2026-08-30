@@ -16,11 +16,11 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicClient implements llm.Client for the Anthropic Messages API.
 type AnthropicClient struct {
-	apiKey    string
-	model     string
-	maxTokens int
-	baseURL   string
-	client    *http.Client
+	apiKey       string
+	model        string
+	maxTokens    int
+	baseURL      string
+	client       *http.Client
 	streamClient *http.Client
 }
 
@@ -39,11 +39,11 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 		maxTokens = 4096
 	}
 	return &AnthropicClient{
-		apiKey:    cfg.APIKey,
-		model:     cfg.Model,
-		maxTokens: maxTokens,
-		baseURL:   base,
-		client:    &http.Client{Timeout: timeout},
+		apiKey:       cfg.APIKey,
+		model:        cfg.Model,
+		maxTokens:    maxTokens,
+		baseURL:      base,
+		client:       &http.Client{Timeout: timeout},
 		streamClient: &http.Client{Timeout: 0}, // per-request ctx controls stream lifetime
 	}
 }
@@ -76,19 +76,21 @@ type anthropicMessage struct {
 }
 
 type anthropicBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"` // tool_result text
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        json.RawMessage        `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      string                 `json:"content,omitempty"` // tool_result text
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  json.RawMessage        `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicResponse struct {
@@ -131,12 +133,16 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 		}}
 	}
 
+	tools := convertTools(sanitizeWireToolSchemas(nameMapper.WireTools(req.Tools)))
+	markToolsCacheBreakpoint(tools)
+	markPrefixCacheBreakpoint(msgs)
+
 	body := anthropicStreamRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
 		System:    systemField,
 		Messages:  msgs,
-		Tools:     convertTools(sanitizeWireToolSchemas(nameMapper.WireTools(req.Tools))),
+		Tools:     tools,
 		Stream:    true,
 	}
 
@@ -209,6 +215,16 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 		case RoleSystem:
 			sysBlocks = append(sysBlocks, msg.Content)
 		case RoleUser:
+			// The agent appends a volatile block (working state, todos) as its
+			// own user message after the tool results. Anthropic requires
+			// alternating roles, so fold it into the preceding user message.
+			if len(out) > 0 && out[len(out)-1].Role == "user" {
+				out[len(out)-1].Content = append(
+					userContentBlocks(out[len(out)-1].Content),
+					anthropicBlock{Type: "text", Text: msg.Content},
+				)
+				continue
+			}
 			out = append(out, anthropicMessage{Role: "user", Content: msg.Content})
 		case RoleAssistant:
 			var blocks []anthropicBlock
@@ -240,10 +256,8 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 				Content:   msg.Content,
 			}
 			if len(out) > 0 && out[len(out)-1].Role == "user" {
-				if arr, ok := out[len(out)-1].Content.([]anthropicBlock); ok && len(arr) > 0 && arr[0].Type == "tool_result" {
-					out[len(out)-1].Content = append(arr, block)
-					continue
-				}
+				out[len(out)-1].Content = append(userContentBlocks(out[len(out)-1].Content), block)
+				continue
 			}
 			out = append(out, anthropicMessage{Role: "user", Content: []anthropicBlock{block}})
 		}
@@ -294,4 +308,58 @@ func convertTools(defs []ToolDef) []anthropicTool {
 		})
 	}
 	return out
+}
+
+// userContentBlocks normalises a user message's content (string or block list)
+// into a block list so another block can be appended to it.
+func userContentBlocks(content any) []anthropicBlock {
+	switch v := content.(type) {
+	case []anthropicBlock:
+		return v
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []anthropicBlock{{Type: "text", Text: v}}
+	case nil:
+		return nil
+	default:
+		return nil
+	}
+}
+
+// markToolsCacheBreakpoint caches the tool schemas, which are identical on
+// every step of an agent run and are several KB of prompt.
+func markToolsCacheBreakpoint(tools []anthropicTool) {
+	if len(tools) == 0 {
+		return
+	}
+	tools[len(tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+}
+
+// markPrefixCacheBreakpoint caches the conversation up to (but not including)
+// the last message.
+//
+// The agent rebuilds volatile context — working state, todos, reminders — on
+// every step and appends it last, so the last message is the one part of the
+// prompt that reliably differs between steps. Everything before it is a stable,
+// append-only prefix: putting the breakpoint there makes each step read the
+// previous step's history from cache and write only what was appended, instead
+// of re-paying for the whole transcript.
+func markPrefixCacheBreakpoint(msgs []anthropicMessage) {
+	if len(msgs) < 2 {
+		return
+	}
+	m := &msgs[len(msgs)-2]
+	blocks := userContentBlocks(m.Content)
+	if len(blocks) == 0 {
+		if arr, ok := m.Content.([]anthropicBlock); ok {
+			blocks = arr
+		}
+	}
+	if len(blocks) == 0 {
+		return
+	}
+	blocks[len(blocks)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+	m.Content = blocks
 }

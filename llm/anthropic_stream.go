@@ -35,15 +35,9 @@ type anthropicStreamEvent struct {
 		StopSequence string `json:"stop_sequence,omitempty"`
 	} `json:"delta,omitempty"`
 	Message struct {
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage,omitempty"`
+		Usage *anthropicStreamUsage `json:"usage,omitempty"`
 	} `json:"message,omitempty"`
-	Usage *struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage,omitempty"`
+	Usage *anthropicStreamUsage `json:"usage,omitempty"`
 	Error struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -137,17 +131,9 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 				}
 			case "message_delta":
 				if ev.Usage != nil {
-					acc.usage = &TokenUsage{
-						PromptTokens:     ev.Usage.InputTokens,
-						CompletionTokens: ev.Usage.OutputTokens,
-						TotalTokens:      ev.Usage.InputTokens + ev.Usage.OutputTokens,
-					}
+					acc.usage = ev.Usage.toTokenUsage()
 				} else if ev.Message.Usage != nil {
-					acc.usage = &TokenUsage{
-						PromptTokens:     ev.Message.Usage.InputTokens,
-						CompletionTokens: ev.Message.Usage.OutputTokens,
-						TotalTokens:      ev.Message.Usage.InputTokens + ev.Message.Usage.OutputTokens,
-					}
+					acc.usage = ev.Message.Usage.toTokenUsage()
 				}
 			case "message_stop":
 				emitDone()
@@ -168,4 +154,28 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 		emitDone()
 	}()
 	return ch
+}
+
+// anthropicStreamUsage is the usage payload on message_start / message_delta.
+// Cache counters are reported separately from input_tokens: a cached request
+// shows a small input_tokens plus a large cache_read_input_tokens.
+type anthropicStreamUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+}
+
+func (u *anthropicStreamUsage) toTokenUsage() *TokenUsage {
+	if u == nil {
+		return nil
+	}
+	prompt := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+	return &TokenUsage{
+		PromptTokens:       prompt,
+		CompletionTokens:   u.OutputTokens,
+		TotalTokens:        prompt + u.OutputTokens,
+		CachedPromptTokens: u.CacheReadInputTokens,
+		CacheWriteTokens:   u.CacheCreationInputTokens,
+	}
 }

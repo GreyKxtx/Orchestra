@@ -381,4 +381,13 @@ type TokenUsage struct {
 	// OpenRouter returns it when the request carries usage:{include:true};
 	// zero for providers that do not report cost (use pricing tables instead).
 	CostUSD float64 `json:"cost_usd,omitempty"`
+	// CachedPromptTokens is the part of PromptTokens served from the provider's
+	// prompt cache (Anthropic cache_read_input_tokens, OpenAI-compatible
+	// prompt_tokens_details.cached_tokens). Zero when the provider reports none.
+	// A long agent run that keeps this at zero is re-paying for its whole
+	// history every step — see docs/architecture/prompt-cache.md.
+	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+	// CacheWriteTokens is what the provider charged to *populate* the cache
+	// (Anthropic cache_creation_input_tokens).
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }

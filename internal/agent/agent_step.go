@@ -23,20 +23,31 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	systemPrompt := a.buildSystemPrompt()
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
 	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
-	if block := renderTodosBlock(a.todos); block != "" {
-		userPrompt = block + "\n" + userPrompt
-	}
-	if block := a.injectWorkingPromptBlocks(); block != "" {
-		userPrompt += "\n\n" + block
-	}
 	// CKG context only on step 1 (saves tokens; later steps use explore/grep in history).
 	if stepNum == 1 && a.ckgContext != "" {
 		userPrompt += "\n\n" + a.ckgContext
 	}
-	// Mode reminder injected last (freshest in attention window).
-	if reminder := a.modeReminder(); reminder != "" {
-		userPrompt += "\n\n" + reminder
+
+	// Volatile context — todos, working state, turn digests, mode reminder —
+	// goes AFTER the history, not into the leading user message.
+	//
+	// These blocks change on nearly every step (working state is updated after
+	// each tool call). In front of the history they broke the common prefix at
+	// message #2, so no provider prompt cache could match anything beyond the
+	// system block and every step re-paid for the whole transcript. Appended
+	// last they leave a stable, append-only prefix — and land in the freshest
+	// part of the attention window, which is where a reminder belongs anyway.
+	var volatileParts []string
+	if block := renderTodosBlock(a.todos); block != "" {
+		volatileParts = append(volatileParts, block)
 	}
+	if block := a.injectWorkingPromptBlocks(); block != "" {
+		volatileParts = append(volatileParts, block)
+	}
+	if reminder := a.modeReminder(); reminder != "" {
+		volatileParts = append(volatileParts, reminder)
+	}
+	volatileBlock := strings.Join(volatileParts, "\n\n")
 
 	// Build messages: system + user (initial) + history (assistant tool calls + tool results)
 	messages := make([]llm.Message, 0, len(history)+2)
@@ -62,13 +73,21 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		a.logf("agent.nextStep history_len=%d messages_before_truncate=%d", len(history), len(messages))
 	}
 
-	// Truncate messages if needed to stay within budget (best-effort)
+	// Truncate messages if needed to stay within budget (best-effort).
+	// The volatile tail is appended after truncation, so reserve its size here.
 	if a.opts.MaxPromptBytes > 0 {
-		beforeTruncate := len(messages)
-		messages = truncateMessages(messages, a.opts.MaxPromptBytes)
-		if a.opts.Debug && len(messages) != beforeTruncate {
-			a.logf("agent.nextStep messages truncated: %d -> %d (budget=%d)", beforeTruncate, len(messages), a.opts.MaxPromptBytes)
+		budget := a.opts.MaxPromptBytes - len(volatileBlock)
+		if budget < a.opts.MaxPromptBytes/2 {
+			budget = a.opts.MaxPromptBytes / 2
 		}
+		beforeTruncate := len(messages)
+		messages = truncateMessages(messages, budget)
+		if a.opts.Debug && len(messages) != beforeTruncate {
+			a.logf("agent.nextStep messages truncated: %d -> %d (budget=%d)", beforeTruncate, len(messages), budget)
+		}
+	}
+	if volatileBlock != "" {
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: volatileBlock})
 	}
 
 	// Track the request size so real Usage.PromptTokens can calibrate our
@@ -317,10 +336,15 @@ func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
 	}
 	u := resp.Usage
 	payload, _ := json.Marshal(map[string]any{
-		"prompt_tokens":     u.PromptTokens,
-		"completion_tokens": u.CompletionTokens,
-		"total_tokens":      u.TotalTokens,
-		"cost_usd":          u.CostUSD,
+		// cached_prompt_tokens is the prompt-cache hit. On a long run it should
+		// grow with the history; a run that keeps it at 0 is re-billing the whole
+		// transcript every step (see markPrefixCacheBreakpoint in llm/anthropic.go).
+		"cached_prompt_tokens": u.CachedPromptTokens,
+		"cache_write_tokens":   u.CacheWriteTokens,
+		"prompt_tokens":        u.PromptTokens,
+		"completion_tokens":    u.CompletionTokens,
+		"total_tokens":         u.TotalTokens,
+		"cost_usd":             u.CostUSD,
 	})
 	a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 		Kind:    llm.StreamEventStepUsage,
