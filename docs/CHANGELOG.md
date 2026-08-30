@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — first-step token estimate follows the script of the prompt (2026-08)
+
+- **`detectBytesPerToken`** (`internal/agent/context_estimate.go`) — before the provider reports any usage, bytes-per-token is estimated from the prompt itself: a predominantly non-ASCII prompt (≥30% non-ASCII bytes — Cyrillic, CJK) uses 3 instead of the Latin-shaped default of 4. Applies to step 1 only; `calibrateFromRealPrompt` supersedes it from the first response on, and an explicit `agent.bytes_per_context_token` still wins when it is more pessimistic.
+
 ### Changed — the cheap model does the compacting everywhere (2026-08)
 
 - **Child agents, pipeline stages and workflow stages now inherit the compaction client** (`tasks.ChildAgentConfig`, `pipeline.Options`, `stageinvoke.Config`) — only the top-level agent got `llm.router.fast_provider` / `providers.fast`, so every worker, stage and skill run paid the main model to summarise its own transcript. CLI paths share one resolver, `compactionClientFor`, mirroring `Core.compactionClientWithContext`.

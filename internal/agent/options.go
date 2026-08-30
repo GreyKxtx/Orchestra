@@ -491,6 +491,11 @@ type Agent struct {
 	// calibratedBytesPerToken is learned from real usage (0 = not yet known).
 	calibratedBytesPerToken int
 
+	// detectedBytesPerToken is the pre-calibration guess derived from the
+	// script of the text actually being sent (0 = not yet measured). It only
+	// covers step 1; from step 2 on, calibratedBytesPerToken supersedes it.
+	detectedBytesPerToken int
+
 	// overflowRecoveries counts compact→retry cycles triggered by provider
 	// context-window rejections during this Run.
 	overflowRecoveries int

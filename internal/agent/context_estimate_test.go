@@ -76,3 +76,45 @@ func TestShouldCompactHistoryEx_hugeMaxTokensDoesNotFalseTrigger(t *testing.T) {
 		t.Fatalf("expected compact when lastPrompt=%d > 70%% of budget=%d", over, budget)
 	}
 }
+
+func TestDetectBytesPerToken(t *testing.T) {
+	cases := []struct {
+		name   string
+		sample string
+		want   int
+	}{
+		{"latin code", "func main() { fmt.Println(\"hello\") }", DefaultBytesPerContextToken},
+		{"cyrillic prose", "Агент теряет контекст на длинных ходах и перечитывает файлы", nonLatinBytesPerContextToken},
+		// A codebase with the odd Russian comment is still Latin-shaped overall.
+		{"mostly code, one comment", "// счётчик\n" + strings.Repeat("for i := 0; i < 10; i++ { step(i) }\n", 4), DefaultBytesPerContextToken},
+		{"empty", "", DefaultBytesPerContextToken},
+	}
+	for _, tc := range cases {
+		if got := detectBytesPerToken(tc.sample); got != tc.want {
+			t.Errorf("%s: got %d want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestAgentBytesPerToken_PrefersMorePessimistic(t *testing.T) {
+	a := &Agent{}
+	if got := a.bytesPerToken(); got != DefaultBytesPerContextToken {
+		t.Fatalf("default=%d", got)
+	}
+	a.detectedBytesPerToken = 3
+	if got := a.bytesPerToken(); got != 3 {
+		t.Fatalf("detected=%d want 3", got)
+	}
+	// Real usage always wins over the guess.
+	a.calibratedBytesPerToken = 2
+	if got := a.bytesPerToken(); got != 2 {
+		t.Fatalf("calibrated=%d want 2", got)
+	}
+	// A configured value below the detection is respected too.
+	b := &Agent{}
+	b.opts.BytesPerContextToken = 2
+	b.detectedBytesPerToken = 3
+	if got := b.bytesPerToken(); got != 2 {
+		t.Fatalf("configured=%d want 2", got)
+	}
+}

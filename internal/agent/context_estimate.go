@@ -1,6 +1,10 @@
 package agent
 
-import "github.com/orchestra/orchestra/llm"
+import (
+	"strings"
+
+	"github.com/orchestra/orchestra/llm"
+)
 
 // estimatePromptTokens approximates the next LLM prompt size from history bytes
 // plus fixed overhead (system prompt, tool defs, user shell). Emitted every
@@ -103,4 +107,58 @@ func shouldCompactHistoryEx(history []llm.Message, maxPromptBytes, compactPct, l
 	}
 	tokThreshold := budgetTok * compactPct / 100
 	return promptEst > tokThreshold
+}
+
+// nonASCIIHeavyPct is the share of non-ASCII bytes above which a prompt is
+// treated as predominantly non-Latin script.
+const nonASCIIHeavyPct = 30
+
+// nonLatinBytesPerContextToken is the pre-calibration estimate for such text.
+//
+// Latin text runs at roughly 4 bytes per token, which is what
+// DefaultBytesPerContextToken assumes. Cyrillic and CJK cost 2-3 UTF-8 bytes
+// per character and tokenize into shorter pieces, and how much shorter depends
+// on the tokenizer — modern cloud tokenizers stay near 4 bytes/token, while the
+// local models this project targets (Qwen, Llama derivatives) can drop to 2-3.
+// Assuming 4 there under-counts tokens, i.e. over-fills the window, which is
+// the failure direction that ends in a provider 400.
+//
+// This is a guess for step 1 only: from the first response on,
+// calibrateFromRealPrompt replaces it with the provider's own numbers.
+const nonLatinBytesPerContextToken = 3
+
+// detectBytesPerToken estimates bytes-per-token from the script of a sample of
+// the prompt. Returns DefaultBytesPerContextToken for ordinary Latin text.
+func detectBytesPerToken(sample string) int {
+	if sample == "" {
+		return DefaultBytesPerContextToken
+	}
+	nonASCII := 0
+	for i := 0; i < len(sample); i++ {
+		if sample[i] >= 0x80 {
+			nonASCII++
+		}
+	}
+	if nonASCII*100/len(sample) >= nonASCIIHeavyPct {
+		return nonLatinBytesPerContextToken
+	}
+	return DefaultBytesPerContextToken
+}
+
+// detectSampleMaxBytes caps how much of the prompt the script check reads.
+const detectSampleMaxBytes = 64 * 1024
+
+// sampleMessagesText concatenates message text up to detectSampleMaxBytes.
+func sampleMessagesText(msgs []llm.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		if m.Content == "" {
+			continue
+		}
+		b.WriteString(m.Content)
+		if b.Len() >= detectSampleMaxBytes {
+			break
+		}
+	}
+	return b.String()
 }

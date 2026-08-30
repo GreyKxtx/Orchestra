@@ -94,6 +94,14 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	// bytes-per-token heuristic (see calibrateFromRealPrompt).
 	a.lastPromptBytes = messagesBytes(messages) + toolDefsBytes(toolDefs)
 
+	// Until the provider reports real usage, estimate bytes-per-token from the
+	// script of the prompt itself: a Cyrillic/CJK prompt costs fewer bytes per
+	// token than the Latin-shaped default assumes, and under-counting tokens is
+	// the direction that ends in a context-length 400.
+	if a.detectedBytesPerToken == 0 {
+		a.detectedBytesPerToken = detectBytesPerToken(sampleMessagesText(messages))
+	}
+
 	if a.opts.Debug {
 		totalBytes := 0
 		for _, m := range messages {
@@ -362,6 +370,11 @@ func (a *Agent) bytesPerToken() int {
 	base := a.opts.BytesPerContextToken
 	if base <= 0 {
 		base = DefaultBytesPerContextToken
+	}
+	// Before the provider reports anything, fall back to the script-based
+	// guess when it is more pessimistic than the configured default.
+	if d := a.detectedBytesPerToken; d > 0 && d < base {
+		base = d
 	}
 	if c := a.calibratedBytesPerToken; c > 0 && c < base {
 		return c
