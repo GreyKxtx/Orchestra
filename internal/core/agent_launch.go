@@ -9,17 +9,17 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/autorouter"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
-	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // agentLaunchSpec is the shared input for building agent.Options from Core config.
@@ -528,6 +528,11 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 		return out
 	}
 	out.CompactThresholdPct = c.cfg.EffectiveCompactThresholdPct()
+	// Children compact their own history too — give them the cheap model.
+	if cc, ctxTok := c.compactionClientWithContext(logger); cc != nil {
+		out.CompactionClient = cc
+		out.CompactionContextTokens = ctxTok
+	}
 	out.ModelContextTokens = int(c.cfg.EffectiveNumCtx())
 	out.CompletionMaxTokens = c.cfg.LLM.MaxTokens
 	out.ToolDigestBytes = c.cfg.Agent.ResolvedToolDigestBytes()

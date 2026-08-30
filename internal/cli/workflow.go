@@ -231,6 +231,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 		hooksRunner = hr
 	}
 
+	workflowCompactionClient, workflowCompactionCtxTokens := compactionClientFor(cfg, agentLogger)
 	inv := stageinvoke.New(stageinvoke.Config{
 		Cfg:           cfg,
 		Skills:        discoveredSkills,
@@ -246,6 +247,9 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 		UsageTracker:  usageTracker,
 		ProviderLabel: providerLabelFor(cfg, ""),
 		ModelLabel:    cfg.LLM.Model,
+
+		CompactionClient:        workflowCompactionClient,
+		CompactionContextTokens: workflowCompactionCtxTokens,
 	})
 
 	markersFor := func(skillName string) []string {

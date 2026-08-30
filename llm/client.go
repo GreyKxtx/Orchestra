@@ -182,7 +182,13 @@ const defaultMaxTokens = 4096
 // (e.g. providers.fast for compaction) can learn its window without
 // constructing a full OpenAIClient first — see agent.Options.CompactionContextTokens.
 func ContextTokensFromConfig(cfg LLMConfig) int {
-	return contextLenFromExtra(cfg.ExtraBody)
+	if n := userConfiguredNumCtx(&cfg); n > 0 {
+		return n
+	}
+	// Cloud providers rarely carry an explicit num_ctx. Falling through to 0
+	// made compaction size its corpus against the MAIN model's window, which
+	// overflows a smaller/cheaper compaction model.
+	return ModelContextWindow(cfg.Model)
 }
 
 func contextLenFromExtra(extra map[string]any) int {

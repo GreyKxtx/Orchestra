@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/stageinvoke"
 	"github.com/orchestra/orchestra/internal/workflow"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // --- workflow.list ---
@@ -138,6 +138,7 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 		allowExec = true
 	}
 
+	wfCompactionClient, wfCompactionCtxTokens := c.compactionClientWithContext(nil)
 	inv := stageinvoke.New(stageinvoke.Config{
 		Cfg:                 c.cfg,
 		Skills:              discoveredSkills,
@@ -149,6 +150,9 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 		AllowWeb:            params.AllowWeb,
 		AllowBrowser:        params.AllowBrowser,
 		PermissionRequester: convertPermissionRequester(params.PermissionRequester),
+
+		CompactionClient:        wfCompactionClient,
+		CompactionContextTokens: wfCompactionCtxTokens,
 	})
 
 	// Serialise against any concurrent agent.run / skill.invoke / ops.apply

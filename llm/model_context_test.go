@@ -46,3 +46,19 @@ func TestResolveModelLimits_FallsBackToCatalog(t *testing.T) {
 		t.Fatalf("resolved=%+v ok=%v", lim, ok)
 	}
 }
+
+func TestContextTokensFromConfig_FallsBackToCatalog(t *testing.T) {
+	// A cloud fast-provider entry usually carries no num_ctx. Returning 0 made
+	// compaction size its corpus against the main model's window.
+	if got := ContextTokensFromConfig(LLMConfig{Provider: "anthropic", Model: "claude-haiku-4-5"}); got != 200000 {
+		t.Fatalf("catalog fallback=%d want 200000", got)
+	}
+	// An explicit num_ctx still wins (a local runtime's real limit).
+	cfg := LLMConfig{Provider: "lmstudio", Model: "claude-haiku-4-5", ExtraBody: map[string]any{"num_ctx": 8192}}
+	if got := ContextTokensFromConfig(cfg); got != 8192 {
+		t.Fatalf("explicit num_ctx=%d want 8192", got)
+	}
+	if got := ContextTokensFromConfig(LLMConfig{Model: "some-unknown-model"}); got != 0 {
+		t.Fatalf("unknown model=%d want 0", got)
+	}
+}

@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — the cheap model does the compacting everywhere (2026-08)
+
+- **Child agents, pipeline stages and workflow stages now inherit the compaction client** (`tasks.ChildAgentConfig`, `pipeline.Options`, `stageinvoke.Config`) — only the top-level agent got `llm.router.fast_provider` / `providers.fast`, so every worker, stage and skill run paid the main model to summarise its own transcript. CLI paths share one resolver, `compactionClientFor`, mirroring `Core.compactionClientWithContext`.
+- **`llm.ContextTokensFromConfig`** now resolves a model preset and falls back to the static model catalog instead of only reading `extra_body.num_ctx` — a cloud fast-provider reported 0, so the compaction corpus was sized against the *main* model's window and could overflow the smaller model answering it.
+
 ### Changed — failed edits explain themselves (2026-08)
 
 - **`nearest` region on StaleContent** (`patch/resolver/nearest.go`) — a search block that matches nothing now comes back with a numbered excerpt of the file text it most resembles (Levenshtein line similarity, ±6/10 lines, ≤1.2 KB), so the model can fix the block instead of re-reading the whole file. Silent when nothing in the file resembles the search.

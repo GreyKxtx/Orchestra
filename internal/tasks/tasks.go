@@ -93,12 +93,18 @@ type ChildAgentConfig struct {
 	UsageTracker           agent.UsageRecorder
 	ProviderLabel          string
 	ModelLabel             string
-	Caps                   tools.Capabilities
-	ResolveClient          ChildClientResolver
-	ResolveTier            TierResolver
-	RouteTaskType          TaskTypeRouter
-	GuardSpawn             SpawnGuard
-	GuardContractRefs      ContractRefsGuard
+	// CompactionClient is the cheap model used for a child's own history
+	// compaction (llm.router.fast_provider / providers.fast). Nil = the child
+	// compacts with whatever model it is running on, which on a long worker
+	// run means paying the main model to summarise its own transcript.
+	CompactionClient        llm.Client
+	CompactionContextTokens int
+	Caps                    tools.Capabilities
+	ResolveClient           ChildClientResolver
+	ResolveTier             TierResolver
+	RouteTaskType           TaskTypeRouter
+	GuardSpawn              SpawnGuard
+	GuardContractRefs       ContractRefsGuard
 	// QuestionAsker enables the runtime Question Barrier (spec §4.3):
 	// open_questions[] from task_result are relayed to the user without an
 	// orchestrator turn. Nil = barrier off (e.g. core stdio mode).
@@ -571,12 +577,15 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		ToolDigestBytes:        r.child.ToolDigestBytes,
 		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
 		LLMStepTimeout:         r.child.LLMStepTimeout,
-		CustomTools:            childTools,
-		Mode:                   mode,
-		IsChild:                true,
-		UsageTracker:           r.child.UsageTracker,
-		ProviderLabel:          providerLabel,
-		ModelLabel:             modelLabel,
+
+		CompactionClient:        r.child.CompactionClient,
+		CompactionContextTokens: r.child.CompactionContextTokens,
+		CustomTools:             childTools,
+		Mode:                    mode,
+		IsChild:                 true,
+		UsageTracker:            r.child.UsageTracker,
+		ProviderLabel:           providerLabel,
+		ModelLabel:              modelLabel,
 		// Workers: no parent dialog, no project memory inject, no session notes.
 		AutoSessionMemory: false,
 		SkipMemoryInject:  mode == agent.ModeWorker,

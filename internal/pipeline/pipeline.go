@@ -32,12 +32,12 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	configpkg "github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/patch/fsutil"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // TraceContext carries runtime trace information used for evidence pre-fetching.
@@ -78,6 +78,12 @@ type Options struct {
 	ModelContextTokens   int
 	CompletionMaxTokens  int
 	PermissionRules      []configpkg.PermissionRule
+
+	// CompactionClient is the cheap model used for stage history compaction
+	// (llm.router.fast_provider / providers.fast). Nil = compact with the
+	// stage's own model.
+	CompactionClient        llm.Client
+	CompactionContextTokens int
 
 	// OnEvent, if non-nil, receives streaming events tagged with the stage name.
 	OnEvent func(stage string, ev agent.AgentEvent)
@@ -244,11 +250,14 @@ func runInvestigator(
 		ModelContextTokens:   opts.ModelContextTokens,
 		CompletionMaxTokens:  opts.CompletionMaxTokens,
 		LLMStepTimeout:       opts.LLMStepTimeout,
-		PromptFamily:         opts.PromptFamily,
-		ResponseFormat:       opts.ResponseFormat,
-		Debug:                opts.Debug,
-		AgentLogger:          opts.AgentLogger,
-		PermissionRules:      opts.PermissionRules,
+
+		CompactionClient:        opts.CompactionClient,
+		CompactionContextTokens: opts.CompactionContextTokens,
+		PromptFamily:            opts.PromptFamily,
+		ResponseFormat:          opts.ResponseFormat,
+		Debug:                   opts.Debug,
+		AgentLogger:             opts.AgentLogger,
+		PermissionRules:         opts.PermissionRules,
 		// Read-only + task_result + runtime for trace correlation.
 		CustomTools:   tools.ListToolsForInvestigator(),
 		OnEvent:       wrapOnEvent("investigator", opts.OnEvent),
@@ -285,11 +294,14 @@ func runCoder(
 		ModelContextTokens:   opts.ModelContextTokens,
 		CompletionMaxTokens:  opts.CompletionMaxTokens,
 		LLMStepTimeout:       opts.LLMStepTimeout,
-		PromptFamily:         opts.PromptFamily,
-		ResponseFormat:       opts.ResponseFormat,
-		Debug:                opts.Debug,
-		AgentLogger:          opts.AgentLogger,
-		PermissionRules:      opts.PermissionRules,
+
+		CompactionClient:        opts.CompactionClient,
+		CompactionContextTokens: opts.CompactionContextTokens,
+		PromptFamily:            opts.PromptFamily,
+		ResponseFormat:          opts.ResponseFormat,
+		Debug:                   opts.Debug,
+		AgentLogger:             opts.AgentLogger,
+		PermissionRules:         opts.PermissionRules,
 		// Full build mode, always dry-run — pipeline applies at the end.
 		Apply:         false,
 		Backup:        false,
@@ -327,11 +339,14 @@ func runCritic(
 		ModelContextTokens:   opts.ModelContextTokens,
 		CompletionMaxTokens:  opts.CompletionMaxTokens,
 		LLMStepTimeout:       opts.LLMStepTimeout,
-		PromptFamily:         opts.PromptFamily,
-		ResponseFormat:       opts.ResponseFormat,
-		Debug:                opts.Debug,
-		AgentLogger:          opts.AgentLogger,
-		PermissionRules:      opts.PermissionRules,
+
+		CompactionClient:        opts.CompactionClient,
+		CompactionContextTokens: opts.CompactionContextTokens,
+		PromptFamily:            opts.PromptFamily,
+		ResponseFormat:          opts.ResponseFormat,
+		Debug:                   opts.Debug,
+		AgentLogger:             opts.AgentLogger,
+		PermissionRules:         opts.PermissionRules,
 		// Read-only + task_result; no write tools.
 		CustomTools:   tools.ListToolsForChild(),
 		OnEvent:       wrapOnEvent("critic", opts.OnEvent),

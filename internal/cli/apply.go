@@ -416,30 +416,33 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			traceCtx = &pipeline.TraceContext{TraceID: pipelineTraceID}
 		}
 
+		pipelineCompactionClient, pipelineCompactionCtxTokens := compactionClientFor(cfg, agentLogger)
 		pipeRes, err := pipeline.Run(cmd.Context(), llmClient, validator, runner, query, pipeline.Options{
-			UsageTracker:         usageTracker,
-			ProviderLabel:        providerLabelFor(cfg, applyProvider),
-			ModelLabel:           cfg.LLM.Model,
-			MaxCoderAttempts:     pipelineMaxAttempts,
-			Apply:                !dryRun,
-			Backup:               backup,
-			TraceCtx:             traceCtx,
-			MaxStepsCoder:        cfg.Agent.MaxSteps,
-			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
-			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,
-			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
-			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
-			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:  cfg.EffectiveCompactThresholdPct(),
-			ModelContextTokens:   int(cfg.EffectiveNumCtx()),
-			CompletionMaxTokens:  cfg.LLM.MaxTokens,
-			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			PromptFamily:         promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
-			ResponseFormat:       respFmt,
-			Debug:                debugMode,
-			AgentLogger:          agentLogger,
-			OnEvent:              onPipelineEvent,
-			PermissionRules:      cfg.Permissions.Rules,
+			UsageTracker:            usageTracker,
+			ProviderLabel:           providerLabelFor(cfg, applyProvider),
+			ModelLabel:              cfg.LLM.Model,
+			MaxCoderAttempts:        pipelineMaxAttempts,
+			Apply:                   !dryRun,
+			Backup:                  backup,
+			TraceCtx:                traceCtx,
+			MaxStepsCoder:           cfg.Agent.MaxSteps,
+			MaxInvalidRetries:       cfg.Agent.MaxInvalidRetries,
+			MaxDeniedToolRepeats:    cfg.Agent.MaxDeniedRepeats,
+			MaxToolErrorRepeats:     cfg.Agent.MaxToolErrors,
+			MaxFinalFailures:        cfg.Agent.MaxFinalFailures,
+			MaxPromptBytes:          cfg.EffectiveMaxPromptBytes(),
+			CompactThresholdPct:     cfg.EffectiveCompactThresholdPct(),
+			ModelContextTokens:      int(cfg.EffectiveNumCtx()),
+			CompletionMaxTokens:     cfg.LLM.MaxTokens,
+			LLMStepTimeout:          time.Duration(cfg.LLM.TimeoutS) * time.Second,
+			PromptFamily:            promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
+			CompactionClient:        pipelineCompactionClient,
+			CompactionContextTokens: pipelineCompactionCtxTokens,
+			ResponseFormat:          respFmt,
+			Debug:                   debugMode,
+			AgentLogger:             agentLogger,
+			OnEvent:                 onPipelineEvent,
+			PermissionRules:         cfg.Permissions.Rules,
 		})
 		if err != nil {
 			retErr = err
@@ -647,6 +650,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return retErr
 		}
 
+		// Children compact their own history; hand them the cheap model too.
+		taskCompactionClient, taskCompactionCtxTokens := compactionClientFor(cfg, agentLogger)
+
 		workerVerifyEnabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
 		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
@@ -658,6 +664,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			HistoryPruneKeepRecent:        cfg.Agent.ResolvedHistoryPruneKeepRecent(),
 			LLMStepTimeout:                time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			MaxStepsCap:                   cfg.Agent.ResolvedChildMaxSteps(),
+			CompactionClient:              taskCompactionClient,
+			CompactionContextTokens:       taskCompactionCtxTokens,
 			UsageTracker:                  usageTracker,
 			ProviderLabel:                 providerLabelFor(cfg, applyProvider),
 			ModelLabel:                    cfg.LLM.Model,
@@ -785,21 +793,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MultimodalLLM:        cfg.LLM.Multimodal,
 		}
 		agent.ApplyHistoryConfig(&agOpts, cfg)
-		if getTestLLMClient() == nil {
-			fp := strings.TrimSpace(cfg.LLM.Router.FastProvider)
-			if fp == "" {
-				if _, ok := cfg.FindProvider("fast"); ok {
-					fp = "fast"
-				}
-			}
-			if fp != "" {
-				if c, err := namedLLMClient(cfg, fp, "", agentLogger); err == nil {
-					agOpts.CompactionClient = c
-					if pcfg, ok := cfg.FindProvider(fp); ok {
-						agOpts.CompactionContextTokens = llm.ContextTokensFromConfig(pcfg)
-					}
-				}
-			}
+		if c, ctxTok := compactionClientFor(cfg, agentLogger); c != nil {
+			agOpts.CompactionClient = c
+			agOpts.CompactionContextTokens = ctxTok
 		}
 		// Profile overlays defaults; named agents: (CustomTools / SystemPromptOverride /
 		// provider) already applied above and take precedence for those fields.
@@ -1264,4 +1260,34 @@ func isCharDevice(f *os.File) bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// compactionClientFor resolves the cheap model used for history compaction and
+// auto-summaries: llm.router.fast_provider, else providers.fast. Returns nil
+// when neither is configured (the caller then compacts with the main model),
+// and never resolves a client when a test LLM is injected.
+//
+// Mirrors Core.compactionClientWithContext for the CLI paths.
+func compactionClientFor(cfg *config.ProjectConfig, logger *llm.Logger) (llm.Client, int) {
+	if cfg == nil || getTestLLMClient() != nil {
+		return nil, 0
+	}
+	provider := strings.TrimSpace(cfg.LLM.Router.FastProvider)
+	if provider == "" {
+		if _, ok := cfg.FindProvider("fast"); ok {
+			provider = "fast"
+		}
+	}
+	if provider == "" {
+		return nil, 0
+	}
+	client, err := namedLLMClient(cfg, provider, "", logger)
+	if err != nil || client == nil {
+		return nil, 0
+	}
+	ctxTok := 0
+	if pcfg, ok := cfg.FindProvider(provider); ok {
+		ctxTok = llm.ContextTokensFromConfig(pcfg)
+	}
+	return client, ctxTok
 }

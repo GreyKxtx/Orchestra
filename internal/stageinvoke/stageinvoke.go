@@ -26,10 +26,10 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // Config is the construction parameters for Invoker.
@@ -55,6 +55,12 @@ type Config struct {
 	ProviderLabel       string
 	ModelLabel          string
 	PermissionRequester agent.PermissionRequester
+
+	// CompactionClient is the cheap model used for stage history compaction
+	// (llm.router.fast_provider / providers.fast). Nil = the stage compacts
+	// with its own model.
+	CompactionClient        llm.Client
+	CompactionContextTokens int
 }
 
 // Invoker implements workflow.StageInvoker.
@@ -222,21 +228,24 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		MaxFinalFailures:     maxFinalFails,
 		MaxPromptBytes:       maxPromptBytes,
 		CompactThresholdPct:  compactPct,
-		ModelContextTokens:   modelCtx,
-		CompletionMaxTokens:  completionMax,
-		LLMStepTimeout:       stepTimeout,
-		AllowExec:            c.AllowExec,
-		AllowWeb:             c.AllowWeb,
-		AllowBrowser:         c.AllowBrowser,
-		CustomTools:          childTools,
-		SystemPromptOverride: systemPrompt,
-		PermissionRules:      permRules,
-		AgentLogger:          c.AgentLogger,
-		HooksRunner:          c.HooksRunner,
-		UsageTracker:         c.UsageTracker,
-		ProviderLabel:        c.ProviderLabel,
-		ModelLabel:           c.ModelLabel,
-		PermissionRequester:  c.PermissionRequester,
+
+		CompactionClient:        c.CompactionClient,
+		CompactionContextTokens: c.CompactionContextTokens,
+		ModelContextTokens:      modelCtx,
+		CompletionMaxTokens:     completionMax,
+		LLMStepTimeout:          stepTimeout,
+		AllowExec:               c.AllowExec,
+		AllowWeb:                c.AllowWeb,
+		AllowBrowser:            c.AllowBrowser,
+		CustomTools:             childTools,
+		SystemPromptOverride:    systemPrompt,
+		PermissionRules:         permRules,
+		AgentLogger:             c.AgentLogger,
+		HooksRunner:             c.HooksRunner,
+		UsageTracker:            c.UsageTracker,
+		ProviderLabel:           c.ProviderLabel,
+		ModelLabel:              c.ModelLabel,
+		PermissionRequester:     c.PermissionRequester,
 		// SubtaskRunner / SkillRunner intentionally nil — the workflow runner is
 		// the single source of orchestration; stages can't spawn their own.
 	}
