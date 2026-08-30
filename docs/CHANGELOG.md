@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — agent working memory: real context window, later & partial compaction (2026-08)
+
+- **Static model-window catalog** (`llm/model_context.go`, `llm.ResolveModelLimits`) — cloud providers do not report a window through `/v1/models`, so the history budget silently fell back to the flat `limits.context_kb` (128 KB ≈ 30k tokens) even on a 200k-token model. Discovery now falls back to a per-family catalog (Claude, GPT, Gemini, DeepSeek, Grok, Kimi, Mistral, Qwen, Llama…).
+- **`apply` resolves the window too** — the direct CLI path never called discovery; only `core` did. Both now go through `llm.ResolveModelLimits`.
+- **`compact_threshold_pct: 0` = auto** — the trigger scales with the window (60% under 32k, 75% under 100k, 85% above) instead of a fixed 60%. A positive value still pins it; `-1` disables compaction.
+- **Compaction keeps the recent tail verbatim** (`splitHistoryForCompaction`) — it summarises only the older history and carries over the tail (30% of the prompt budget, min `history_prune_keep_recent` tool atoms, capped at half the history). Previously the whole transcript was replaced by a summary plus 2 tool atoms.
+- **`history_prune_keep_recent` default 2 → 6**, **`child_max_steps` default 12 → 24** — a worker that reads, edits and then validates its own change ran out of steps mid-task.
+
 ### Added — Orchestra Lead token budget, CKG v5, LLM fail-fast (2026-08)
 
 - **Lead tool isolation** — `listToolsOrchestra()` allowlist of **14** tools (orchestration + read-only research + plan write + memory/promote). Worker extras (`edit`, `lsp_*`, `bash`, `task_result`, MCP) are stripped from the Lead schema.

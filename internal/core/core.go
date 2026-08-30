@@ -118,9 +118,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		// Discover max_model_len from the server so max_tokens / num_ctx stay valid
 		// even when .orchestra.yml is stale or missing num_ctx.
 		discCtx, discCancel := context.WithTimeout(context.Background(), 8*time.Second)
-		if lim, err := llm.DiscoverModelLimits(discCtx, cfg.LLM); err == nil && lim.ContextTokens > 0 {
-			_ = llm.ApplyDiscoveredLimits(&cfg.LLM, lim)
-		}
+		llm.ResolveModelLimits(discCtx, &cfg.LLM)
 		discCancel()
 		llmClient = llm.NewClient(cfg.LLM)
 		if oc, ok := llmClient.(*llm.OpenAIClient); ok {
@@ -412,7 +410,7 @@ func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent
 	if cfg == nil {
 		return out
 	}
-	out.CompactThresholdPct = cfg.Agent.CompactThresholdPct
+	out.CompactThresholdPct = cfg.EffectiveCompactThresholdPct()
 	out.ModelContextTokens = int(cfg.EffectiveNumCtx())
 	out.CompletionMaxTokens = cfg.LLM.MaxTokens
 	out.ToolDigestBytes = cfg.Agent.ResolvedToolDigestBytes()

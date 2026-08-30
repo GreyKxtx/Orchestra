@@ -149,3 +149,27 @@ func userConfiguredNumCtx(cfg *LLMConfig) int {
 func ClampMaxTokensAgainstContext(maxTokens, contextLen int) int {
 	return effectiveMaxTokens(maxTokens, contextLen)
 }
+
+// ResolveModelLimits determines the model's context window and applies it to
+// cfg. It prefers what the server reports (/v1/models max_model_len), and
+// falls back to the static model catalog when the server is silent — which is
+// the normal case for cloud providers. Returns the limits it applied and
+// whether anything was found.
+//
+// Every entry point that builds an LLM client from a ProjectConfig should call
+// this: without it, history budgeting falls back to the flat limits.context_kb
+// default and the agent runs in a fraction of the model's real window.
+func ResolveModelLimits(ctx context.Context, cfg *LLMConfig) (ModelLimits, bool) {
+	if cfg == nil {
+		return ModelLimits{}, false
+	}
+	if lim, err := DiscoverModelLimits(ctx, *cfg); err == nil && lim.ContextTokens > 0 {
+		ApplyDiscoveredLimits(cfg, lim)
+		return lim, true
+	}
+	if lim, ok := CatalogModelLimits(*cfg); ok {
+		ApplyDiscoveredLimits(cfg, lim)
+		return lim, true
+	}
+	return ModelLimits{}, false
+}

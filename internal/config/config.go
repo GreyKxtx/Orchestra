@@ -31,7 +31,8 @@ type AgentConfig struct {
 	// MaxDeniedRepeats is the max repeated calls to a denied tool before giving up.
 	MaxDeniedRepeats int `yaml:"max_denied_repeats"`
 	// CompactThresholdPct triggers history compaction when history exceeds this % of MaxPromptBytes.
-	// 0 = use default (60). Negative (-1) = disabled.
+	// 0 = auto (derived from the model context window, see AutoCompactThresholdPct).
+	// Negative (-1) = disabled.
 	CompactThresholdPct int `yaml:"compact_threshold_pct"`
 	// BytesPerContextToken calibrates prompt token estimates (default 4).
 	BytesPerContextToken int `yaml:"bytes_per_context_token,omitempty"`
@@ -593,6 +594,10 @@ func (c *ProjectConfig) EffectiveMaxPromptBytes() int {
 		kb = 128
 	}
 	bytes := kb * 1024
+	bpt := c.Agent.ResolvedBytesPerContextToken()
+	if bpt <= 0 {
+		bpt = bytesPerContextToken
+	}
 	if n := c.EffectiveNumCtx(); n > 0 {
 		// Same reserve as llm.PromptBudgetTokens: leave room for max_tokens + safety.
 		want := c.LLM.MaxTokens
@@ -604,12 +609,28 @@ func (c *ProjectConfig) EffectiveMaxPromptBytes() int {
 		if promptTok < floor {
 			promptTok = floor
 		}
-		fromCtx := promptTok * bytesPerContextToken
+		fromCtx := promptTok * bpt
 		if fromCtx > bytes {
 			bytes = fromCtx
 		}
 	}
 	return bytes
+}
+
+// EffectiveCompactThresholdPct resolves the compaction trigger percent,
+// scaling the auto (0) setting to the real model context window. Returns 0
+// when compaction is disabled.
+func (c *ProjectConfig) EffectiveCompactThresholdPct() int {
+	if c == nil {
+		return 0
+	}
+	if c.Agent.CompactThresholdPct < 0 {
+		return 0
+	}
+	if c.Agent.CompactThresholdPct > 0 {
+		return c.Agent.CompactThresholdPct
+	}
+	return AutoCompactThresholdPct(int(c.EffectiveNumCtx()))
 }
 
 func (c *ProjectConfig) extraBodyNumCtx() int64 {
@@ -665,7 +686,7 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			MaxFinalFailures:    0,
 			MaxToolErrors:       0,
 			MaxDeniedRepeats:    0,
-			CompactThresholdPct: 60,
+			CompactThresholdPct: 0, // auto: derived from the model context window
 			ToolDigestKB:        48,
 			AutoSessionMemory:   boolPtr(true),
 			AutoSummaryMemory:   boolPtr(true),
@@ -860,11 +881,10 @@ func (c *ProjectConfig) applyDefaults() {
 		c.Agent.MaxSteps = 128
 	}
 	// Retry limits: 0 leaves provider-aware FillRetryLimits at launch/RPC.
-	// Compact: 0 → default 60; negative → disabled (stored as 0).
+	// Compact: 0 → auto (window-derived); negative → disabled (stored as -1).
 	if c.Agent.CompactThresholdPct < 0 {
-		c.Agent.CompactThresholdPct = 0
-	} else if c.Agent.CompactThresholdPct == 0 {
-		c.Agent.CompactThresholdPct = 60
+		// Keep the "disabled" intent distinguishable from 0 = auto.
+		c.Agent.CompactThresholdPct = -1
 	}
 
 	// Apply output defaults.

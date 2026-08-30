@@ -527,7 +527,7 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 	if c == nil || c.cfg == nil {
 		return out
 	}
-	out.CompactThresholdPct = c.cfg.Agent.CompactThresholdPct
+	out.CompactThresholdPct = c.cfg.EffectiveCompactThresholdPct()
 	out.ModelContextTokens = int(c.cfg.EffectiveNumCtx())
 	out.CompletionMaxTokens = c.cfg.LLM.MaxTokens
 	out.ToolDigestBytes = c.cfg.Agent.ResolvedToolDigestBytes()

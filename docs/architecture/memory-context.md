@@ -46,7 +46,10 @@ flowchart TB
 ## Compaction as-is
 
 **Trigger** (`shouldCompactHistory`): history bytes **or** estimated/real prompt
-tokens exceed `compact_threshold_pct` of the prompt budget.
+tokens exceed `compact_threshold_pct` of the prompt budget. With the default
+`compact_threshold_pct: 0` that percentage is derived from the model window
+(`config.AutoCompactThresholdPct`): 60% below 32k tokens, 75% below 100k, 85%
+above — a fixed 60% on a 200k model throws away working memory the run still had.
 
 Budget is aligned with vLLM's wire check `prompt + max_tokens ≤ max_model_len`:
 `PromptBudgetTokens(num_ctx, llm.max_tokens)` / `EffectiveMaxPromptBytes` (same reserve
@@ -57,6 +60,9 @@ in bytes). When the previous step's real `PromptTokens` already cannot leave roo
 1. Retroactive prune (keep last N tool atoms full)
 2. Soft path: digests already applied write-time
 3. Hard path: `ModeCompaction` → `[Session checkpoint — structured summary]`
+   over the **older** history only; the recent tail (`splitHistoryForCompaction`:
+   30% of the prompt budget, min `history_prune_keep_recent` tool atoms, capped
+   at half the history) is carried over verbatim
 4. Guard: &lt;20% shrink or LLM fail → `truncateMessages`
 5. Persist: session `ReplaceHistory(outHistory)` after turn (Phase 0)
 6. Event `CONTEXT_COMPACTED` → TUI notice

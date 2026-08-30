@@ -68,15 +68,33 @@ Configured under `agent:` and `embed:` in `.orchestra.yml`:
 ```yaml
 agent:
   tool_digest_kb: 16
-  history_prune_keep_recent: 2
+  history_prune_keep_recent: 6
   auto_session_memory: true
   auto_summary_memory: false   # ModeSummary → project agent.md after long turns
   working_state: true          # rule-based <working_state> (no LLM)
   turn_digest_keep: 3          # last N digests; 0 = off
   turn_digest_every_n: 6       # mid-run micro-summary every N steps; 0 = end only
-  compact_threshold_pct: 70
+  compact_threshold_pct: 0     # 0 = auto (window-derived); -1 = off
   bytes_per_context_token: 4
+  child_max_steps: 24
 ```
+
+### Context window and the compaction trigger
+
+`compact_threshold_pct: 0` (the default) scales the trigger to the model's real
+context window — 60% under 32k tokens, 75% under 100k, 85% above. Set a
+positive value to pin it.
+
+The window itself comes from `llm.ResolveModelLimits`: the server's
+`/v1/models` (`max_model_len` / `max_context_length`) when it reports one, else
+the static family catalog in `llm/model_context.go`. Cloud providers report
+nothing, so without the catalog the budget fell back to the flat
+`limits.context_kb` (128 KB ≈ 30k tokens) on a 200k-token model. Every entry
+point that builds a client from config resolves this — `core` and `apply` alike.
+
+Compaction summarises only the **older** part of the history: the recent tail
+(30% of the prompt budget, at least `history_prune_keep_recent` tool atoms)
+stays in the transcript verbatim.
 
 Rule-based digests: [`architecture/turn-digest-working-state.md`](./architecture/turn-digest-working-state.md).
 Architecture + phases: [`architecture/memory-context.md`](./architecture/memory-context.md).

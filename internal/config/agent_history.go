@@ -20,21 +20,31 @@ func (a AgentConfig) ResolvedAutoSessionMemory() bool {
 	return *a.AutoSessionMemory
 }
 
-// ResolvedHistoryPruneKeepRecent returns how many recent tool atoms stay full during retroactive prune.
+// ResolvedHistoryPruneKeepRecent returns how many recent tool atoms stay full
+// during retroactive prune (and survive a compaction verbatim).
 func (a AgentConfig) ResolvedHistoryPruneKeepRecent() int {
 	if a.HistoryPruneKeepRecent <= 0 {
-		return 2
+		return DefaultHistoryPruneKeepRecent
 	}
 	return a.HistoryPruneKeepRecent
 }
 
-// ResolvedChildMaxSteps returns the clamp for task/task_spawn child MaxSteps (default 12).
+// DefaultHistoryPruneKeepRecent mirrors agent/history.DefaultHistoryPruneKeepRecent.
+const DefaultHistoryPruneKeepRecent = 6
+
+// ResolvedChildMaxSteps returns the clamp for task/task_spawn child MaxSteps
+// (default DefaultChildMaxSteps).
 func (a AgentConfig) ResolvedChildMaxSteps() int {
 	if a.ChildMaxSteps <= 0 {
-		return 12
+		return DefaultChildMaxSteps
 	}
 	return a.ChildMaxSteps
 }
+
+// DefaultChildMaxSteps caps a child agent's loop. 12 was too tight for a
+// worker that has to read, edit and then validate its own change: it ran out
+// of steps mid-task and returned a partial result the lead had to redo.
+const DefaultChildMaxSteps = 24
 
 // ResolvedBytesPerContextToken returns the estimate calibration (default 4).
 func (a AgentConfig) ResolvedBytesPerContextToken() int {
@@ -52,13 +62,48 @@ func (a AgentConfig) ResolvedAutoSummaryMemory() bool {
 	return *a.AutoSummaryMemory
 }
 
-// ResolvedCompactThresholdPct returns the compact trigger percent.
-// 0 means disabled (after Normalize converted -1 → 0). Positive values as-is.
+// ResolvedCompactThresholdPct returns the compact trigger percent for callers
+// that do not know the model context window: negative → 0 (disabled),
+// 0 → LegacyCompactThresholdPct, positive → as-is.
+//
+// Prefer ProjectConfig.EffectiveCompactThresholdPct, which resolves the 0 =
+// auto case against the real window instead of the conservative legacy value.
 func (a AgentConfig) ResolvedCompactThresholdPct() int {
 	if a.CompactThresholdPct < 0 {
 		return 0
 	}
+	if a.CompactThresholdPct == 0 {
+		return LegacyCompactThresholdPct
+	}
 	return a.CompactThresholdPct
+}
+
+// LegacyCompactThresholdPct is the pre-auto fixed trigger. It is right for a
+// small local window and far too early for a 100k+ one: on a 200k model it
+// compacts away most of the history the agent could still be holding.
+const LegacyCompactThresholdPct = 60
+
+// AutoCompactThresholdPct returns the compaction trigger as a percentage of
+// the prompt byte budget, scaled to the model window.
+//
+// Compaction is lossy — it replaces transcript with a summary — so it should
+// fire as late as the window safely allows. On a small window the reserve has
+// to be generous because a single tool result can be a large fraction of it;
+// on a 100k+ window the same absolute reserve is a rounding error, and firing
+// at 60% throws away tens of thousands of tokens of usable working memory.
+func AutoCompactThresholdPct(ctxTokens int) int {
+	switch {
+	case ctxTokens <= 0:
+		// Unknown window: MaxPromptBytes is probably the flat limits.context_kb
+		// default, so stay conservative.
+		return LegacyCompactThresholdPct
+	case ctxTokens < 32000:
+		return LegacyCompactThresholdPct
+	case ctxTokens < 100000:
+		return 75
+	default:
+		return 85
+	}
 }
 
 // ResolvedWorkingState reports whether <working_state> inject is enabled (default true).

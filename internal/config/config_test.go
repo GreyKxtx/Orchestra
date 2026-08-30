@@ -557,13 +557,46 @@ func TestEffectiveMaxPromptBytes(t *testing.T) {
 func TestApplyDefaults_CompactThreshold(t *testing.T) {
 	cfg := &ProjectConfig{}
 	cfg.applyDefaults()
-	if cfg.Agent.CompactThresholdPct != 60 {
-		t.Fatalf("default compact=%d want 60", cfg.Agent.CompactThresholdPct)
-	}
-	cfg.Agent.CompactThresholdPct = -1
-	cfg.applyDefaults()
+	// 0 is preserved: it means "auto", resolved against the model window.
 	if cfg.Agent.CompactThresholdPct != 0 {
-		t.Fatalf("disabled compact=%d want 0", cfg.Agent.CompactThresholdPct)
+		t.Fatalf("default compact=%d want 0 (auto)", cfg.Agent.CompactThresholdPct)
+	}
+	if got := cfg.EffectiveCompactThresholdPct(); got != LegacyCompactThresholdPct {
+		t.Fatalf("auto compact without window=%d want %d", got, LegacyCompactThresholdPct)
+	}
+	cfg.Agent.CompactThresholdPct = -5
+	cfg.applyDefaults()
+	if cfg.Agent.CompactThresholdPct != -1 {
+		t.Fatalf("disabled compact=%d want -1", cfg.Agent.CompactThresholdPct)
+	}
+	if got := cfg.EffectiveCompactThresholdPct(); got != 0 {
+		t.Fatalf("disabled effective compact=%d want 0", got)
+	}
+}
+
+func TestEffectiveCompactThresholdPct_ScalesWithWindow(t *testing.T) {
+	cfg := &ProjectConfig{}
+	cfg.applyDefaults()
+	cfg.LLM.Model = "m"
+	cases := []struct {
+		numCtx int64
+		want   int
+	}{
+		{8192, LegacyCompactThresholdPct},
+		{32768, 75},
+		{131072, 85},
+		{200000, 85},
+	}
+	for _, tc := range cases {
+		cfg.LLM.ExtraBody = map[string]any{"num_ctx": tc.numCtx}
+		if got := cfg.EffectiveCompactThresholdPct(); got != tc.want {
+			t.Fatalf("num_ctx=%d: compact=%d want %d", tc.numCtx, got, tc.want)
+		}
+	}
+	// An explicit setting always wins over the auto curve.
+	cfg.Agent.CompactThresholdPct = 50
+	if got := cfg.EffectiveCompactThresholdPct(); got != 50 {
+		t.Fatalf("explicit compact=%d want 50", got)
 	}
 }
 

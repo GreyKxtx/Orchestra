@@ -17,7 +17,7 @@ func ApplyHistoryConfig(opts *Options, cfg *configpkg.ProjectConfig) {
 	opts.HistoryPruneKeepRecent = cfg.Agent.ResolvedHistoryPruneKeepRecent()
 	opts.BytesPerContextToken = cfg.Agent.ResolvedBytesPerContextToken()
 	if opts.CompactThresholdPct == 0 {
-		opts.CompactThresholdPct = cfg.Agent.ResolvedCompactThresholdPct()
+		opts.CompactThresholdPct = cfg.EffectiveCompactThresholdPct()
 	}
 	if opts.TurnDigestKeep == 0 {
 		opts.TurnDigestKeep = cfg.Agent.ResolvedTurnDigestKeep()

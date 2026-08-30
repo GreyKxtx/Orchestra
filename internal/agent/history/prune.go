@@ -9,7 +9,11 @@ import (
 	"github.com/orchestra/orchestra/llm"
 )
 
-const DefaultHistoryPruneKeepRecent = 2
+// DefaultHistoryPruneKeepRecent is how many recent tool-bearing atoms keep
+// their full output. 2 was too aggressive: after a compaction the agent was
+// left with a summary plus two tool calls, so it re-read files it had already
+// read a few steps earlier.
+const DefaultHistoryPruneKeepRecent = 6
 
 // PruneRetroactiveToolHistory re-digests large tool outputs in older history
 // atoms while keeping the last keepRecent tool-bearing atoms intact.

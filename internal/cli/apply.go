@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -125,6 +126,23 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			return fmt.Errorf("--worktree %q: %w", wt, wtErr)
 		}
 		cfg.ProjectRoot = wtPath
+	}
+
+	// Resolve the real model context window before anything derives a byte
+	// budget from it (EffectiveMaxPromptBytes / EffectiveCompactThresholdPct).
+	// Without this the direct apply path never learns the window and falls back
+	// to the flat limits.context_kb default — on a 200k model that is ~15% of
+	// the usable context, so the agent starts compacting a dozen steps in.
+	if getTestLLMClient() == nil {
+		limParent := cmd.Context()
+		if limParent == nil {
+			limParent = context.Background()
+		}
+		limCtx, limCancel := context.WithTimeout(limParent, 8*time.Second)
+		if lim, ok := llm.ResolveModelLimits(limCtx, &cfg.LLM); ok && debugMode {
+			fmt.Fprintf(os.Stderr, "[apply] model window: %d tokens (%s)\n", lim.ContextTokens, lim.Source)
+		}
+		limCancel()
 	}
 
 	applyOutput := strings.ToLower(strings.TrimSpace(cfg.Apply.Output))
@@ -412,7 +430,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
 			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
+			CompactThresholdPct:  cfg.EffectiveCompactThresholdPct(),
 			ModelContextTokens:   int(cfg.EffectiveNumCtx()),
 			CompletionMaxTokens:  cfg.LLM.MaxTokens,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
@@ -633,7 +651,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
 			MaxPromptBytes:                cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:           cfg.Agent.CompactThresholdPct,
+			CompactThresholdPct:           cfg.EffectiveCompactThresholdPct(),
 			ModelContextTokens:            int(cfg.EffectiveNumCtx()),
 			CompletionMaxTokens:           cfg.LLM.MaxTokens,
 			ToolDigestBytes:               cfg.Agent.ResolvedToolDigestBytes(),
@@ -737,7 +755,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
 			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
 			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:  cfg.Agent.CompactThresholdPct,
+			CompactThresholdPct:  cfg.EffectiveCompactThresholdPct(),
 			ModelContextTokens:   int(cfg.EffectiveNumCtx()),
 			CompletionMaxTokens:  cfg.LLM.MaxTokens,
 			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,

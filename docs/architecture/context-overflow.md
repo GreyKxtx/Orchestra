@@ -19,7 +19,7 @@ llm:
   extra_body:
     num_ctx: 51200          # = vLLM --max-model-len
 agent:
-  compact_threshold_pct: 60
+  compact_threshold_pct: 0    # auto: 60/75/85% by window size
 ```
 
 ---

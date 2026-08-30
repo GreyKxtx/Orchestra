@@ -24,7 +24,8 @@ func historyBytes(hist []llm.Message) int {
 const checkpointHeader = "[Session checkpoint — structured summary]"
 
 // compactHistory calls the LLM in compaction mode and returns a sticky
-// checkpoint: summary message + last keepRecent tool-bearing atoms intact.
+// checkpoint: a summary of the older history followed by the recent tail
+// (kept verbatim, see splitHistoryForCompaction).
 func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm.Message) ([]llm.Message, error) {
 	if a.llmInfraErr != nil {
 		return nil, fmt.Errorf("compaction skipped: %w", a.llmInfraErr)
@@ -32,11 +33,26 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	family := a.opts.PromptFamily
 	sysprompt := promptpkg.BuildSystemPromptForMode(string(ModeCompaction), family)
 
+	// Compact the older half only: the recent tail stays in history verbatim.
+	// Summarising *everything* and keeping two tool atoms left the agent with
+	// less working memory right after compaction than it had on step one —
+	// which is what makes a long run start re-reading files it already read.
+	keep := a.opts.HistoryPruneKeepRecent
+	if keep <= 0 {
+		keep = defaultHistoryPruneKeepRecent
+	}
+	older, tail := splitHistoryForCompaction(hist, a.compactionTailBudget(), keep)
+	if len(older) == 0 {
+		// Nothing old enough to summarise (the tail alone is over budget);
+		// let the caller fall back to truncation.
+		return nil, fmt.Errorf("compaction skipped: no history older than the retained tail")
+	}
+
 	var sb strings.Builder
 	sb.WriteString("Original user request: ")
 	sb.WriteString(userQuery)
 	sb.WriteString("\n\nConversation history to compress:\n\n")
-	sb.WriteString(a.buildCompactionCorpus(hist))
+	sb.WriteString(a.buildCompactionCorpus(older))
 	if len(a.todos) > 0 {
 		sb.WriteString("\nPinned todos:\n")
 		for _, t := range a.todos {
@@ -77,12 +93,6 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 		return nil, fmt.Errorf("compaction returned empty summary")
 	}
 
-	keep := a.opts.HistoryPruneKeepRecent
-	if keep <= 0 {
-		keep = defaultHistoryPruneKeepRecent
-	}
-	sticky := stickyTailAtoms(hist, keep)
-
 	var body strings.Builder
 	body.WriteString(checkpointHeader)
 	body.WriteString("\n\n")
@@ -91,16 +101,16 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	body.WriteString("\n\n")
 	body.WriteString(summary)
 
-	compacted := make([]llm.Message, 0, 1+len(sticky))
+	compacted := make([]llm.Message, 0, 1+len(tail))
 	compacted = append(compacted, llm.Message{
 		Role:    llm.RoleUser,
 		Content: body.String(),
 	})
-	compacted = append(compacted, sticky...)
+	compacted = append(compacted, tail...)
 	return compacted, nil
 }
 
-// CompactNow runs ModeCompaction on hist (sticky checkpoint + recent tool atoms).
+// CompactNow runs ModeCompaction on hist (summary of older history + verbatim tail).
 func (a *Agent) CompactNow(ctx context.Context, userQuery string, hist []llm.Message) ([]llm.Message, error) {
 	return a.compactHistory(ctx, userQuery, hist)
 }
@@ -260,28 +270,88 @@ func clipChars(s string, max int) string {
 	return string(r[:max]) + "…[clipped]"
 }
 
-// stickyTailAtoms returns the last keepRecent tool-bearing atoms' messages.
-func stickyTailAtoms(msgs []llm.Message, keepRecent int) []llm.Message {
-	if keepRecent <= 0 || len(msgs) == 0 {
-		return nil
+// compactionTailRetainPct is the share of the prompt byte budget that survives
+// compaction verbatim. The summary covers everything older.
+const compactionTailRetainPct = 30
+
+// compactionTailMaxSharePct caps the verbatim tail as a share of the history
+// being compacted, so compaction always shrinks enough to clear the threshold
+// (the run loop rejects a "compaction" that retained ≥80% and truncates instead).
+const compactionTailMaxSharePct = 50
+
+// compactionTailBudget is the byte ceiling for the verbatim tail kept after a
+// compaction.
+func (a *Agent) compactionTailBudget() int {
+	budget := a.opts.MaxPromptBytes
+	if budget <= 0 {
+		budget = 64 * 1024
+	}
+	tail := budget * compactionTailRetainPct / 100
+	if tail < 8*1024 {
+		tail = 8 * 1024
+	}
+	return tail
+}
+
+// splitHistoryForCompaction cuts history at an atom boundary into the part to
+// summarise (older) and the part to keep verbatim (tail).
+//
+// The tail gets whichever is smaller: tailBudget bytes, or half the history —
+// but always at least minToolAtoms tool-bearing atoms, so the immediately
+// preceding tool calls survive even under a tight budget. When the tail would
+// swallow the whole history, older comes back empty and the caller falls back
+// to truncation.
+func splitHistoryForCompaction(msgs []llm.Message, tailBudget, minToolAtoms int) (older, tail []llm.Message) {
+	if len(msgs) == 0 {
+		return nil, nil
 	}
 	atoms := history.BuildHistoryAtoms(msgs)
-	var toolIdx []int
-	for i, a := range atoms {
-		if history.AtomHasToolRole(a) {
-			toolIdx = append(toolIdx, i)
+	if len(atoms) <= 1 {
+		return msgs, nil
+	}
+
+	sizes := make([]int, len(atoms))
+	total := 0
+	for i, at := range atoms {
+		for _, m := range history.AtomMessages(at) {
+			sizes[i] += estimateMessageSize(m)
+		}
+		total += sizes[i]
+	}
+	shareCap := total * compactionTailMaxSharePct / 100
+	if tailBudget > shareCap {
+		tailBudget = shareCap
+	}
+
+	used := 0
+	toolAtoms := 0
+	start := len(atoms) // first atom index belonging to the tail
+	for i := len(atoms) - 1; i >= 1; i-- {
+		fitsBudget := used+sizes[i] <= tailBudget
+		needForMinAtoms := toolAtoms < minToolAtoms
+		if !fitsBudget && !needForMinAtoms {
+			break
+		}
+		start = i
+		used += sizes[i]
+		if history.AtomHasToolRole(atoms[i]) {
+			toolAtoms++
 		}
 	}
-	if len(toolIdx) == 0 {
-		return nil
+	if start >= len(atoms) {
+		// Not even one atom fits: keep the last one so the model still sees
+		// what it was just doing.
+		start = len(atoms) - 1
 	}
-	start := 0
-	if len(toolIdx) > keepRecent {
-		start = len(toolIdx) - keepRecent
+	if start == 0 {
+		return nil, msgs
 	}
-	var out []llm.Message
-	for _, ti := range toolIdx[start:] {
-		out = append(out, history.AtomMessages(atoms[ti])...)
+
+	for i := 0; i < start; i++ {
+		older = append(older, history.AtomMessages(atoms[i])...)
 	}
-	return out
+	for i := start; i < len(atoms); i++ {
+		tail = append(tail, history.AtomMessages(atoms[i])...)
+	}
+	return older, tail
 }

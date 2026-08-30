@@ -203,7 +203,7 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		maxToolErrors = c.Cfg.Agent.MaxToolErrors
 		maxFinalFails = c.Cfg.Agent.MaxFinalFailures
 		maxPromptBytes = c.Cfg.EffectiveMaxPromptBytes()
-		compactPct = c.Cfg.Agent.CompactThresholdPct
+		compactPct = c.Cfg.EffectiveCompactThresholdPct()
 		modelCtx = int(c.Cfg.EffectiveNumCtx())
 		completionMax = c.Cfg.LLM.MaxTokens
 		stepTimeout = time.Duration(c.Cfg.LLM.TimeoutS) * time.Second
