@@ -102,6 +102,10 @@ type UsageTurnPayload struct {
 	TotalTokens      int     `json:"total_tokens"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
 	Source           string  `json:"source,omitempty"` // "estimate" when agent-side heuristic
+	// CachedPromptTokens is the part of PromptTokens the provider served from
+	// its prompt cache; CacheWriteTokens is what it charged to populate it.
+	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
 }
 
 // TodoItem mirrors tools.TodoItem from session.message / todowrite.

@@ -180,9 +180,12 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			}
 			return nil, "", nil, err
 		}
-		if !canStream {
-			a.emitStepUsage(stepNum, resp)
-		}
+		// Emit on both paths. The streaming path used to rely on core
+		// translating StreamEventDone into a step_usage notification, which
+		// rebuilt the payload by hand and dropped everything it did not know
+		// about — the prompt-cache counters among them, on the path every
+		// interactive run takes.
+		a.emitStepUsage(stepNum, resp)
 		a.mergeResponsePrefill(resp)
 		if a.opts.UsageTracker != nil && resp != nil {
 			if resp.Usage != nil {

@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Fixed — cache counters reach the UI on the streaming path (2026-08)
+
+- **`Agent.emitStepUsage` now fires on the streaming path too** — it was gated on `!canStream`, and core synthesised a `step_usage` notification from `StreamEventDone` instead, rebuilding the payload field by field. That hand-built copy never learned about `cached_prompt_tokens` / `cache_write_tokens`, so the prompt-cache observability added with the cache work was invisible on the path every interactive run takes. The synthesis in `core/agent_events.go` is gone (it would now only duplicate the agent's own event) and `rpcclient.UsageTurnPayload` carries the two counters.
+- **Wire-level tests** — `llm/anthropic_wire_test.go` inspects the JSON that actually leaves the Anthropic client (system/tools/rolling cache breakpoints, alternating roles, cache counters through the SSE parser); `tests/e2e_agent/e2e_prompt_cache_wire_test.go` drives a real `OpenAIClient` over httptest for four steps and compares the serialized request prefixes. The second one is what caught the defect above.
+- **`TestCompactThresholdRoundTrip`** covers the `0 = auto` / `-1 = disabled` sentinel across Save→Load→Save.
+
 ### Changed — family tuning reaches every mode, and children resolve their own (2026-08)
 
 - **Shared family addendum** (`prompt/files/addendum-local.txt`) — family-specific prompts existed only for build (`build-anthropic/gpt/gemini/kimi/local`) and plan, so a worker, verifier or debug run on a local model got the family-neutral text; `build-local.txt`, the most detailed prompt in the set, was lost the moment the agent left build mode. A mode without its own `{mode}-{family}.txt` now gets a short shared addendum appended. Internal single-shot contracts (compaction/title/summary) are excluded — tool discipline does not apply to them.

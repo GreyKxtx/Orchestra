@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -626,5 +627,58 @@ func TestValidate_OrchestraAndAutoRouter(t *testing.T) {
 	cfg.AutoRouter.Provider = "fast"
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestCompactThresholdRoundTrip guards the sentinel change: 0 now means "auto"
+// and disabled is stored as -1. A config written by `orchestra init`, or saved
+// back after a TUI edit, must keep its meaning across a Save/Load cycle.
+func TestCompactThresholdRoundTrip(t *testing.T) {
+	cases := []struct {
+		name        string
+		set         int
+		wantStored  int
+		wantEffPct  int
+		numCtxToken int64
+	}{
+		{"default is auto", 0, 0, 85, 200000},
+		{"auto on a small window", 0, 0, LegacyCompactThresholdPct, 8192},
+		{"explicit value survives", 70, 70, 70, 200000},
+		{"disabled survives", -1, -1, 0, 200000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".orchestra.yml")
+
+			cfg := DefaultConfig(dir)
+			cfg.Agent.CompactThresholdPct = tc.set
+			cfg.LLM.ExtraBody = map[string]any{"num_ctx": tc.numCtxToken}
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Agent.CompactThresholdPct != tc.wantStored {
+				t.Errorf("stored=%d want %d", loaded.Agent.CompactThresholdPct, tc.wantStored)
+			}
+			if got := loaded.EffectiveCompactThresholdPct(); got != tc.wantEffPct {
+				t.Errorf("effective=%d want %d", got, tc.wantEffPct)
+			}
+
+			// A second round-trip must not drift.
+			if err := Save(path, loaded); err != nil {
+				t.Fatal(err)
+			}
+			again, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again.EffectiveCompactThresholdPct() != tc.wantEffPct {
+				t.Errorf("second round-trip: effective=%d want %d", again.EffectiveCompactThresholdPct(), tc.wantEffPct)
+			}
+		})
 	}
 }

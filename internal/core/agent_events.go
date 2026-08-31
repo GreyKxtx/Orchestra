@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // EventEnvelope tags streaming notifications with session/turn context for
@@ -113,21 +113,11 @@ func emitAgentStreamEvent(notify func(method string, params any), env EventEnvel
 			return
 		}
 	}
-	if ev.Stream.Kind == llm.StreamEventDone {
-		if ev.Stream.Response != nil && ev.Stream.Response.Usage != nil {
-			u := ev.Stream.Response.Usage
-			notify("agent/event", mergeAgentEvent(map[string]any{
-				"step": ev.Step,
-				"type": string(llm.StreamEventStepUsage),
-				"data": map[string]any{
-					"prompt_tokens":     u.PromptTokens,
-					"completion_tokens": u.CompletionTokens,
-					"total_tokens":      u.TotalTokens,
-					"cost_usd":          u.CostUSD,
-				},
-			}, env, child))
-		}
-	}
+	// StreamEventDone used to be translated into a step_usage notification
+	// here, with the payload rebuilt field by field. The agent now emits a
+	// proper StreamEventStepUsage on the streaming path too (see
+	// Agent.emitStepUsage), so this synthesis would only duplicate it — and
+	// duplicate it lossily, since it never learned about the cache counters.
 	notify("agent/event", mergeAgentEvent(map[string]any{
 		"step":            ev.Step,
 		"type":            string(ev.Stream.Kind),
