@@ -82,15 +82,17 @@
 | `git.status` | ✅ | `git status --porcelain` |
 | `git.log` | ✅ | История коммитов |
 | `git.diff` | ✅ | Diff staged/unstaged/против ref |
-| `git.commit` | ✅ | Создать коммит (требует `--allow-exec`) |
-| `git.branch` | ✅ | Список / создание веток |
-| `git.checkout` | ✅ | Переключение / создание ветки |
-| `git.push` | ✅ | Push с гардами |
+| `git.commit` | ✅ | Создать коммит (`--allow-exec`; только режимы build/debug/general) |
+| `git.branch` | ✅ | Список / создание веток (`--allow-exec`; только build/debug/general) |
+| `git.checkout` | ✅ | Переключение / создание ветки (`--allow-exec`; только build/debug/general) |
+| `git.push` | ✅ | Push с гардами (`--allow-exec`; только build/debug/general) |
 | `gh.pr.list` | ✅ | Список PR (через `gh`) |
-| `gh.pr.create` | ✅ | Создать PR (требует `--allow-exec`) |
+| `gh.pr.create` | ✅ | Создать PR (`--allow-exec`; только build/debug/general) |
 | `gh.pr.view` | ✅ | Просмотр PR |
 | `gh.issue.list` | ✅ | Список issues |
 | `gh.issue.view` | ✅ | Просмотр issue |
+
+> Инструменты, меняющие git-состояние (commit/branch/checkout/push, worktree add/remove/prune) и создающие PR, доступны только верхнеуровневым пользовательским режимам. Сабагенты (worker, verifier, product, documentation) их не получают: дети делят рабочее дерево с родителем и сиблингами, поэтому `git.checkout` у одного переключил бы ветку у всех, а работа воркера заканчивается патчем — коммит и публикация остаются за пользователем. `bash` при этом у них есть.
 
 ### Браузер (Playwright MCP)
 

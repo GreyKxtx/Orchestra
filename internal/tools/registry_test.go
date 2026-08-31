@@ -275,3 +275,44 @@ func TestToolRegistry_SchemasAreValidJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestChildModesHaveNoRepoMutatingTools: exec consent is needed to run tests,
+// and it used to advertise git.commit / git.push / gh.pr.create along with it.
+// Subagents share the parent's working tree — a git.checkout in one child
+// switches the branch under its siblings — and verifier's own prompt says
+// read-only.
+func TestChildModesHaveNoRepoMutatingTools(t *testing.T) {
+	forbidden := map[string]bool{
+		"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
+		"git.worktree.add": true, "git.worktree.remove": true, "git.worktree.prune": true,
+		"gh.pr.create": true,
+	}
+	caps := Capabilities{Exec: true, Web: true}
+	for _, mode := range []string{"worker", "verifier", "product", "documentation", "explore", "ask", "plan"} {
+		for _, name := range ToolNames(ListToolsForMode(mode, caps, true, true)) {
+			if forbidden[name] {
+				t.Errorf("mode %s must not advertise %s", mode, name)
+			}
+		}
+	}
+	// Verifier keeps the read-only git and exec it needs to check the work.
+	verifier := map[string]bool{}
+	for _, n := range ToolNames(ListToolsForMode("verifier", caps, false, false)) {
+		verifier[n] = true
+	}
+	for _, want := range []string{"bash", "git.diff", "git.status", "read"} {
+		if !verifier[want] {
+			t.Errorf("verifier lost %s — it cannot verify without it", want)
+		}
+	}
+	// Top-level user-facing modes keep them.
+	build := map[string]bool{}
+	for _, n := range ToolNames(ListToolsForMode("build", caps, true, true)) {
+		build[n] = true
+	}
+	for _, want := range []string{"git.commit", "git.push", "gh.pr.create"} {
+		if !build[want] {
+			t.Errorf("build mode lost %s", want)
+		}
+	}
+}

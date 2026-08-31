@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — exec consent no longer implies commit/push/PR rights (2026-08)
+
+- **`appendExecTools` split** (`internal/tools/registry.go`) — one `caps.Exec` flag used to advertise `bash` *and* `git.commit/branch/checkout/push`, worktree management and `gh.pr.create` together. Command execution and read-only GitHub queries stay under `appendExecTools`; the repo-mutating set moved to `appendRepoMutatingTools`, which only build, debug, general and the maximal `ListTools` surface use.
+- **Subagents lost git-mutating tools** — worker (31 → 22 tools) and verifier (30 → 22). Children share the parent's `tools.Runner` and therefore its working tree, so `git.checkout` in one child switched the branch under its siblings; and verifier's own prompt and reminder say read-only while its schema offered commit and push. Both keep `bash`, `git.diff`/`git.status` and the read-only `gh` queries.
+
 ### Fixed — prompt/mode wiring (2026-08)
 
 - **`{{PLAN_PATH}}` no longer leaks to the model** — `buildSystemPrompt` substituted only for `ModePlan` or an explicit `PlanPath`, so architecture mode shipped the literal placeholder while its own reminder showed the resolved path. Substitution now runs for every mode.

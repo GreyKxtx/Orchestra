@@ -31,18 +31,42 @@ type Capabilities struct {
 	Browser bool
 }
 
-// appendExecTools adds bash + git-mutating + gh-mutating tools to out.
+// appendExecTools adds command execution plus read-only GitHub queries.
 // Extracted in S3 (audit ledger, Sprint 6) so ListTools / listToolsBuild /
 // listToolsGeneral share one definition instead of three copies that
 // could drift independently.
+//
+// History-mutating git and PR creation are NOT here — see
+// appendRepoMutatingTools. One flag used to advertise both, which put
+// git.commit / git.push / gh.pr.create in the schema of modes whose own
+// prompt says read-only.
 func appendExecTools(out []llm.ToolDef) []llm.ToolDef {
 	out = append(out, exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill())
-	out = append(out, git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush())
-	out = append(out, git.ToolGitWorktreeAdd(), git.ToolGitWorktreeRemove(), git.ToolGitWorktreePrune())
 	out = append(out,
-		git.ToolGHPRList(), git.ToolGHPRCreate(), git.ToolGHPRView(),
+		git.ToolGHPRList(), git.ToolGHPRView(),
 		git.ToolGHIssueList(), git.ToolGHIssueView(),
 	)
+	return out
+}
+
+// appendRepoMutatingTools adds the tools that rewrite git state or publish to
+// the remote: commit, branch, checkout, push, worktree management, PR creation.
+//
+// Only user-facing top-level modes get these. A subagent must not have them:
+// children share the parent's Runner and therefore its working tree, so a
+// git.checkout in one child switches the branch under every sibling and the
+// parent — and a worker's job ends at a patch, with committing and publishing
+// left to the user.
+//
+// Gated on the same exec consent, since bash could run these commands anyway;
+// the point is what the model is *told* it may do, which is what it acts on.
+func appendRepoMutatingTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
+	if !caps.Exec {
+		return out
+	}
+	out = append(out, git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush())
+	out = append(out, git.ToolGitWorktreeAdd(), git.ToolGitWorktreeRemove(), git.ToolGitWorktreePrune())
+	out = append(out, git.ToolGHPRCreate())
 	return out
 }
 
@@ -133,6 +157,7 @@ func ListTools(caps Capabilities) []llm.ToolDef {
 		git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
+	out = appendRepoMutatingTools(out, caps)
 	return applyParallelFlags(out)
 }
 
@@ -287,6 +312,7 @@ func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
+	out = appendRepoMutatingTools(out, caps)
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
 	}
@@ -367,6 +393,7 @@ func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
+	out = appendRepoMutatingTools(out, caps)
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
 	}
@@ -388,6 +415,7 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
 	}
 	out = appendCapabilityTools(out, caps)
+	out = appendRepoMutatingTools(out, caps)
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
 	}
