@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — prompts are English throughout (2026-08)
+
+- **20 prompt files translated** — the set was split down the middle: build\*, plan\*, explore, ask, debug, general, architecture, verifier, compaction, summary, title and the reminders were Russian (50-100% Cyrillic) while orchestra, worker, product, documentation, task, todowrite and auto-router were English, so one pipeline (Lead → worker → verifier → compaction) switched language twice. A prompt's language also pulls the model's output with it — Russian comments and commit messages in an English codebase — and Cyrillic costs more tokens on the local tokenizers these prompts target. Markers and placeholders are unchanged (`{{PLAN_PATH}}`, `## VERIFICATION PASSED/FAILED`, `Context Manager`, `{"patches":[]}`). Guarded by `TestPromptFilesAreEnglish`.
+
 ### Changed — tool catalog only where the model needs it (2026-08)
 
 - **`<available_tools>` is now family-conditional** (`agent.needsToolCatalog`) — the block restates `tools[]` in prose for models that under-use the schema, and on build mode it is ~5 KB, 2.5× the base prompt, on top of ~32 KB of schemas already on the wire. Anthropic / GPT / Gemini / Kimi skip it (build-mode system prompt 6.7 KB → ~1.9 KB); local and unknown families keep it, as does anything with an unset family.

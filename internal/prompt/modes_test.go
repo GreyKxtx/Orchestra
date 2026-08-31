@@ -47,3 +47,31 @@ func TestPromptFilesPlanPathPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptFilesAreEnglish keeps the prompt set in one language.
+//
+// The set used to be split: build*/plan/explore/ask/debug/general/architecture/
+// verifier/compaction/summary/title were Russian while orchestra/worker/product/
+// documentation/task/todowrite/auto-router were English, so a single run mixed
+// languages (Lead → worker → verifier). A prompt's language also leaks into the
+// model's output — Russian commit messages and comments in an English codebase —
+// and Cyrillic costs more tokens on the local tokenizers these prompts target.
+func TestPromptFilesAreEnglish(t *testing.T) {
+	entries, err := promptFiles.ReadDir("files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		body := loadPromptFile(e.Name())
+		if body == "" {
+			t.Errorf("%s: empty prompt file", e.Name())
+			continue
+		}
+		for _, r := range body {
+			if (r >= 0x0400 && r <= 0x04FF) || (r >= 0x0500 && r <= 0x052F) {
+				t.Errorf("%s: contains Cyrillic (%q) — prompts are English", e.Name(), string(r))
+				break
+			}
+		}
+	}
+}

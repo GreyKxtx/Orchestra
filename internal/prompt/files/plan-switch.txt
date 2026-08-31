@@ -1,1 +1,1 @@
-Режим изменён: ПЛАН → BUILD. Теперь разрешены все инструменты. Выполни согласованный план из {{PLAN_PATH}} (read при необходимости).
+Mode changed: PLAN → BUILD. All tools are available now. Execute the agreed plan from {{PLAN_PATH}} (read it if needed).

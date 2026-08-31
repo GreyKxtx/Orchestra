@@ -1,1 +1,1 @@
-Осталось мало шагов до лимита. Завершай работу: если нужны изменения — выводи финальный PatchSet JSON сейчас. Если задача выполнена — {"patches":[]}.
+Few steps remain before the limit. Wrap up: if changes are needed, emit the final PatchSet JSON now. If the task is done — {"patches":[]}.

@@ -51,6 +51,6 @@ func TestBuildSystemPromptForMode_AliasUsesLocal(t *testing.T) {
 }
 
 func containsPreferSearchReplace(s string) bool {
-	return strings.Contains(s, "ПРЕДПОЧИТАЙ file.search_replace") ||
-		strings.Contains(s, "предпочтительно")
+	return strings.Contains(s, "PREFER file.search_replace") ||
+		strings.Contains(s, "(preferred")
 }

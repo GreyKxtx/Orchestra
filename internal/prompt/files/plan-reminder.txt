@@ -1,1 +1,1 @@
-РЕЖИМ ПЛАНИРОВАНИЯ. Запрещено: write/edit вне {{PLAN_PATH}}, bash. Фазы: explore (task/explore+read) → design (question) → review → write {{PLAN_PATH}} → plan_exit.
+PLANNING MODE. Forbidden: write/edit outside {{PLAN_PATH}}, bash. Phases: explore (task/explore+read) → design (question) → review → write {{PLAN_PATH}} → plan_exit.

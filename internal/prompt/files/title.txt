@@ -1,2 +1,2 @@
-Выведи короткое название задачи (не более 6 слов) на основе запроса пользователя.
-Только название — без кавычек, без объяснений, без пунктуации в конце.
+Emit a short task title (at most 6 words) based on the user's request.
+The title only — no quotes, no explanation, no trailing punctuation.
