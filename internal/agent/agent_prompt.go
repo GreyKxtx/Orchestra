@@ -199,9 +199,14 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 			}
 		}
 	}
-	// 5: live tool catalog. Orchestra Lead already has a 14-tool schema — skip
-	// the duplicate <available_tools> block (~1–2k tokens).
-	if a.opts.Mode != ModeOrchestra {
+	// 5: live tool catalog — a plain-text restatement of tools[] for models
+	// that under-use the schema. It is not free: for build mode the block is
+	// ~5 KB, 2.5× the base prompt itself, on top of ~32 KB of schemas already
+	// on the wire. Families with reliable tool-calling (Anthropic, GPT, Gemini,
+	// Kimi) get the schemas only; local/unknown models keep the catalog.
+	// Orchestra Lead is excluded regardless — its 14-tool schema is small and
+	// its prompt already enumerates the delegation surface.
+	if a.opts.Mode != ModeOrchestra && needsToolCatalog(a.opts.PromptFamily) {
 		p.catalog = formatToolsCatalog(a.buildToolDefs())
 	}
 	// 6: skills advertisement.
@@ -258,4 +263,21 @@ func clipLeadLearning(s string, maxBytes int) string {
 		cut = cut[:i]
 	}
 	return cut + "\n...(truncated; use memory_read layer=lessons)"
+}
+
+// familiesWithReliableToolCalling do not need the <available_tools> restatement
+// of the tool schemas: they call tools from tools[] dependably.
+var familiesWithReliableToolCalling = map[string]bool{
+	"anthropic": true,
+	"gpt":       true,
+	"gemini":    true,
+	"kimi":      true,
+}
+
+// needsToolCatalog reports whether the model family needs the plain-text tool
+// catalog in the system prompt. Unknown/empty family keeps it: an unrecognised
+// model is more likely to be a local one that ignores tools[] than a frontier
+// model, and a redundant catalog costs tokens while a missing one costs the run.
+func needsToolCatalog(family string) bool {
+	return !familiesWithReliableToolCalling[promptpkg.NormalizePromptFamily(family)]
 }

@@ -10,12 +10,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/lsp"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 type scriptedLLM struct {
@@ -1485,5 +1486,43 @@ func TestSystemOverrideScope(t *testing.T) {
 	}
 	if !strings.Contains(worker.buildSystemPrompt(), "WORKER OVERRIDE") {
 		t.Error("worker mode must honour .orchestra/system.worker.txt")
+	}
+}
+
+// TestToolCatalogOnlyWhereNeeded: the <available_tools> block restates tools[]
+// in prose for models that under-use the schema. On build mode it is ~5 KB —
+// 2.5× the base prompt — so families with reliable tool calling skip it.
+func TestToolCatalogOnlyWhereNeeded(t *testing.T) {
+	dir := t.TempDir()
+	runner, err := tools.NewRunner(dir, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runner.Close()
+
+	withCatalog := map[string]bool{"local": true, "default": true, "": true, "qwen": true}
+	for _, fam := range []string{"anthropic", "gpt", "gemini", "kimi", "local", "default", "", "qwen"} {
+		a := &Agent{opts: Options{Mode: ModeBuild, PromptFamily: fam}, tools: runner}
+		got := strings.Contains(a.buildSystemPrompt(), "<available_tools>")
+		if got != withCatalog[fam] {
+			t.Errorf("family %q: catalog present=%v, want %v", fam, got, withCatalog[fam])
+		}
+	}
+}
+
+// TestPromptsDoNotReferenceAbsentCatalog: a prompt may only point the model at
+// the <available_tools> block for families that actually receive it. Otherwise
+// the prompt names a section of itself that was never injected.
+func TestPromptsDoNotReferenceAbsentCatalog(t *testing.T) {
+	modes := []string{"build", "plan", "explore", "ask", "debug", "architecture", "general",
+		"orchestra", "worker", "verifier", "product", "documentation"}
+	families := []string{"anthropic", "gpt", "gemini", "kimi", "local", "default", ""}
+	for _, mode := range modes {
+		for _, fam := range families {
+			p := promptpkg.BuildSystemPromptForMode(mode, fam)
+			if strings.Contains(p, "<available_tools>") && !needsToolCatalog(fam) {
+				t.Errorf("mode %s + family %q: prompt references <available_tools>, but that family gets no catalog", mode, fam)
+			}
+		}
 	}
 }

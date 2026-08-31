@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — tool catalog only where the model needs it (2026-08)
+
+- **`<available_tools>` is now family-conditional** (`agent.needsToolCatalog`) — the block restates `tools[]` in prose for models that under-use the schema, and on build mode it is ~5 KB, 2.5× the base prompt, on top of ~32 KB of schemas already on the wire. Anthropic / GPT / Gemini / Kimi skip it (build-mode system prompt 6.7 KB → ~1.9 KB); local and unknown families keep it, as does anything with an unset family.
+- **Prompt files no longer point at a block that may be absent** — build-anthropic/gpt/gemini/kimi, build.txt, explore, general and plan referred the model to `<available_tools>`; those that can run with a catalog-free family now say `tools[]`. Guarded by `TestPromptsDoNotReferenceAbsentCatalog` over every mode × family pair.
+
 ### Changed — exec consent no longer implies commit/push/PR rights (2026-08)
 
 - **`appendExecTools` split** (`internal/tools/registry.go`) — one `caps.Exec` flag used to advertise `bash` *and* `git.commit/branch/checkout/push`, worktree management and `gh.pr.create` together. Command execution and read-only GitHub queries stay under `appendExecTools`; the repo-mutating set moved to `appendRepoMutatingTools`, which only build, debug, general and the maximal `ListTools` surface use.
