@@ -26,6 +26,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -198,6 +199,7 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		modelCtx       int
 		completionMax  int
 		stepTimeout    time.Duration
+		promptFamily   string
 	)
 	var permRules []config.PermissionRule
 	if c.Cfg != nil {
@@ -214,6 +216,7 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		completionMax = c.Cfg.LLM.MaxTokens
 		stepTimeout = time.Duration(c.Cfg.LLM.TimeoutS) * time.Second
 		permRules = c.Cfg.Permissions.Rules
+		promptFamily = promptpkg.ResolvePromptFamily(c.Cfg.LLM.PromptFamily, c.Cfg.LLM.Model)
 	}
 
 	// Workflow stages are child agents — they end by calling task_result with
@@ -228,6 +231,7 @@ func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) 
 		MaxFinalFailures:     maxFinalFails,
 		MaxPromptBytes:       maxPromptBytes,
 		CompactThresholdPct:  compactPct,
+		PromptFamily:         promptFamily,
 
 		CompactionClient:        c.CompactionClient,
 		CompactionContextTokens: c.CompactionContextTokens,

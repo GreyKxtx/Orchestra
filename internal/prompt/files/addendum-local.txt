@@ -1,0 +1,8 @@
+LOCAL MODEL RULES (they override anything above that conflicts):
+- Call ONLY tools that exist in the schema, with the exact names given. Never invent a tool.
+- Per step: several independent read-only calls in parallel; mutating calls (write/edit/bash) exactly ONE per step.
+- Never repeat a tool with the same arguments. Once you have the result, act on it.
+- Emit raw JSON when JSON is asked for — no ```json fences, no markdown around it.
+- For .go code navigate with explore/symbols; do not read whole files without a reason.
+- Prefer a targeted edit (file.search_replace / the edit tool) over rewriting a file.
+- Do the work yourself. Delegate to a subagent only for independent research or a file too large for your context.

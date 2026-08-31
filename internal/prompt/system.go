@@ -16,7 +16,14 @@ var promptFiles embed.FS
 // mode: "build" (default), "plan", "explore", "general", "compaction", "title", "summary".
 // family: "anthropic", "gpt", "gemini", "local", "" / "default" (see DetectPromptFamily).
 //
-// Lookup order: {mode}-{family}.txt → {mode}.txt → build.txt
+// Lookup order: {mode}-{family}.txt → {mode}.txt (+ addendum-{family}.txt) → build.txt
+//
+// The addendum exists because family tuning used to reach build mode only:
+// build-local.txt is the most detailed prompt in the set, and every bit of it
+// was lost the moment the agent ran as a worker, a verifier or in debug mode —
+// which is where local models spend most of their time. Rather than fork every
+// prompt per family, a mode without its own family variant gets a short shared
+// addendum appended.
 func BuildSystemPromptForMode(mode, family string) string {
 	if mode == "" {
 		mode = "build"
@@ -27,10 +34,33 @@ func BuildSystemPromptForMode(mode, family string) string {
 			return s
 		}
 	}
-	if s := loadPromptFile(mode + ".txt"); s != "" {
-		return s
+	base := loadPromptFile(mode + ".txt")
+	if base == "" {
+		return mustLoadPromptFile("build.txt")
 	}
-	return mustLoadPromptFile("build.txt")
+	if add := familyAddendum(mode, family); add != "" {
+		base += "\n\n" + add
+	}
+	return base
+}
+
+// modesWithoutFamilyAddendum are runtime-internal single-shot prompts with an
+// exact output contract (a markdown checkpoint, a title, a summary). Tool
+// discipline does not apply to them and the extra text would only contradict
+// the contract.
+var modesWithoutFamilyAddendum = map[string]bool{
+	"compaction": true,
+	"title":      true,
+	"summary":    true,
+}
+
+// familyAddendum returns the shared family-specific block for a mode that has
+// no {mode}-{family}.txt of its own, or "" when there is nothing to add.
+func familyAddendum(mode, family string) string {
+	if family == "" || family == "default" || modesWithoutFamilyAddendum[mode] {
+		return ""
+	}
+	return loadPromptFile("addendum-" + family + ".txt")
 }
 
 // BuildSystemPrompt returns the default build-mode prompt.

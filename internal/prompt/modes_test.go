@@ -75,3 +75,44 @@ func TestPromptFilesAreEnglish(t *testing.T) {
 		}
 	}
 }
+
+// TestFamilyAddendumReachesNonBuildModes: family tuning used to exist only for
+// build (build-local.txt and friends), so a worker or verifier running on a
+// local model got the family-neutral prompt — which is where local models
+// actually spend their time.
+func TestFamilyAddendumReachesNonBuildModes(t *testing.T) {
+	for _, mode := range []string{"worker", "verifier", "debug", "general", "explore", "architecture"} {
+		local := BuildSystemPromptForMode(mode, "local")
+		neutral := BuildSystemPromptForMode(mode, "")
+		if local == neutral {
+			t.Errorf("mode %s: local family gets no extra guidance", mode)
+		}
+		if !strings.Contains(local, "LOCAL MODEL RULES") {
+			t.Errorf("mode %s: addendum missing", mode)
+		}
+		// The aliases resolve to the same family.
+		if BuildSystemPromptForMode(mode, "qwen") != local {
+			t.Errorf("mode %s: qwen alias diverged from local", mode)
+		}
+	}
+
+	// A mode with its own family file keeps it, with no addendum stacked on top.
+	buildLocal := BuildSystemPromptForMode("build", "local")
+	if strings.Contains(buildLocal, "LOCAL MODEL RULES") {
+		t.Error("build-local.txt must not get the shared addendum on top of its own guidance")
+	}
+
+	// Frontier families are untouched.
+	for _, fam := range []string{"anthropic", "gpt", "gemini", "kimi"} {
+		if BuildSystemPromptForMode("worker", fam) != BuildSystemPromptForMode("worker", "") {
+			t.Errorf("family %q: worker prompt should be the neutral one", fam)
+		}
+	}
+
+	// Single-shot internal contracts stay clean.
+	for _, mode := range []string{"compaction", "title", "summary"} {
+		if BuildSystemPromptForMode(mode, "local") != BuildSystemPromptForMode(mode, "") {
+			t.Errorf("mode %s: internal contract must not carry tool-discipline text", mode)
+		}
+	}
+}

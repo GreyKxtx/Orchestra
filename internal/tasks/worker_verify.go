@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/agent/guard"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/llm"
@@ -347,9 +348,9 @@ func wrapWorkerVerifyFailure(workerResult string, report WorkerVerifyReport) str
 
 func appendWorkerVerifyPassed(workerResult string, report WorkerVerifyReport) string {
 	payload := map[string]any{
-		"status":         "verified_success",
-		"worker_result":  parseJSONOrString(workerResult),
-		"verification":   report,
+		"status":        "verified_success",
+		"worker_result": parseJSONOrString(workerResult),
+		"verification":  report,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -414,11 +415,11 @@ func formatLLMVerifierPrompt(childGoal, workerResult string, paths []string, det
 
 func appendWorkerLLMVerifyPassed(workerResult string, detReport WorkerVerifyReport, llmResult string) string {
 	payload := map[string]any{
-		"status":                     "verified_success",
-		"worker_result":              parseJSONOrString(workerResult),
-		"verification":               detReport,
-		"llm_verified":               true,
-		"llm_verifier_result":        parseJSONOrString(llmResult),
+		"status":              "verified_success",
+		"worker_result":       parseJSONOrString(workerResult),
+		"verification":        detReport,
+		"llm_verified":        true,
+		"llm_verifier_result": parseJSONOrString(llmResult),
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -447,11 +448,11 @@ func wrapWorkerNeedsReview(workerResult string, detReport WorkerVerifyReport, ll
 
 func wrapWorkerLLMVerifyFailure(workerResult string, detReport WorkerVerifyReport, llmResult string) string {
 	payload := map[string]any{
-		"status":                     "llm_verification_failed",
-		"worker_result":              parseJSONOrString(workerResult),
-		"verification":               detReport,
-		"llm_verifier_result":        parseJSONOrString(llmResult),
-		"suggestion_for_lead":        "Replan, spawn debug child, or issue a narrower WorkOrder with fix instructions.",
+		"status":              "llm_verification_failed",
+		"worker_result":       parseJSONOrString(workerResult),
+		"verification":        detReport,
+		"llm_verifier_result": parseJSONOrString(llmResult),
+		"suggestion_for_lead": "Replan, spawn debug child, or issue a narrower WorkOrder with fix instructions.",
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -489,6 +490,7 @@ func (r *TaskRunner) runInlineLLMVerifier(
 		UsageTracker:           r.child.UsageTracker,
 		ProviderLabel:          workerOpts.ProviderLabel,
 		ModelLabel:             workerOpts.ModelLabel,
+		PromptFamily:           promptpkg.ResolvePromptFamily("", workerOpts.ModelLabel),
 		AllowExec:              r.child.Caps.Exec,
 		SkipMemoryInject:       true,
 	}

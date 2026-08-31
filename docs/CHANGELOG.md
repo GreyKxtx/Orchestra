@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — family tuning reaches every mode, and children resolve their own (2026-08)
+
+- **Shared family addendum** (`prompt/files/addendum-local.txt`) — family-specific prompts existed only for build (`build-anthropic/gpt/gemini/kimi/local`) and plan, so a worker, verifier or debug run on a local model got the family-neutral text; `build-local.txt`, the most detailed prompt in the set, was lost the moment the agent left build mode. A mode without its own `{mode}-{family}.txt` now gets a short shared addendum appended. Internal single-shot contracts (compaction/title/summary) are excluded — tool discipline does not apply to them.
+- **Child agents resolve their prompt family from their own model** — `internal/tasks` never set `PromptFamily` at all, so every subagent used the neutral prompt regardless of the tier model it was running on. Worker, verifier (`worker_verify.go`) and workflow stages (`stageinvoke`) now resolve it.
+
 ### Changed — prompts are English throughout (2026-08)
 
 - **20 prompt files translated** — the set was split down the middle: build\*, plan\*, explore, ask, debug, general, architecture, verifier, compaction, summary, title and the reminders were Russian (50-100% Cyrillic) while orchestra, worker, product, documentation, task, todowrite and auto-router were English, so one pipeline (Lead → worker → verifier → compaction) switched language twice. A prompt's language also pulls the model's output with it — Russian comments and commit messages in an English codebase — and Cyrillic costs more tokens on the local tokenizers these prompts target. Markers and placeholders are unchanged (`{{PLAN_PATH}}`, `## VERIFICATION PASSED/FAILED`, `Context Manager`, `{"patches":[]}`). Guarded by `TestPromptFilesAreEnglish`.

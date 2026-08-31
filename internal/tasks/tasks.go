@@ -16,6 +16,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
@@ -586,6 +587,10 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		UsageTracker:            r.child.UsageTracker,
 		ProviderLabel:           providerLabel,
 		ModelLabel:              modelLabel,
+		// Children run on their own tier model, which may be a different
+		// family from the parent's. Without this they resolved to the
+		// family-neutral prompt no matter what they were running on.
+		PromptFamily: promptpkg.ResolvePromptFamily("", modelLabel),
 		// Workers: no parent dialog, no project memory inject, no session notes.
 		AutoSessionMemory: false,
 		SkipMemoryInject:  mode == agent.ModeWorker,
