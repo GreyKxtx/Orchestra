@@ -78,6 +78,30 @@ func SystemOverridePath(workspaceRoot string) string {
 	return filepath.Join(workspaceRoot, ".orchestra", "system.txt")
 }
 
+// ModeSystemOverridePath returns the path to a per-mode override,
+// .orchestra/system.<mode>.txt.
+func ModeSystemOverridePath(workspaceRoot, mode string) string {
+	return filepath.Join(workspaceRoot, ".orchestra", "system."+mode+".txt")
+}
+
+// LoadModeSystemOverride reads .orchestra/system.<mode>.txt, or "" when absent.
+//
+// A per-mode file is the only way to override a mode whose prompt carries a
+// protocol (worker's WorkOrder + task_result contract, verifier's verdict
+// format): the blanket .orchestra/system.txt deliberately does not reach them,
+// because an override written for build mode would silently break the contract
+// their parent depends on.
+func LoadModeSystemOverride(workspaceRoot, mode string) string {
+	if workspaceRoot == "" || strings.TrimSpace(mode) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(ModeSystemOverridePath(workspaceRoot, mode))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // LoadSystemOverride reads .orchestra/system.txt from workspaceRoot.
 // If the file exists and is non-empty, its content replaces the built-in system prompt entirely.
 // Returns empty string when no override is present.

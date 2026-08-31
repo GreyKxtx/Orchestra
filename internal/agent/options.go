@@ -120,22 +120,27 @@ const (
 	ModeSummary      Mode = "summary"       // internal: produces a brief summary of completed work.
 )
 
-// knownModes is the closed set of modes registered in this package.
-// Used by IsKnownMode for callers that want a hard fail on a typo
-// instead of the registry's silent fall-through to build behaviour.
-var knownModes = map[Mode]bool{
-	ModeBuild: true, ModePlan: true, ModeExplore: true,
-	ModeAsk: true, ModeDebug: true, ModeArchitecture: true,
-	ModeGeneral: true, ModeAgent: true, ModeOrchestra: true, ModeWorker: true, ModeVerifier: true,
-	ModeProduct: true, ModeDocs: true,
-	ModeCompaction: true, ModeTitle: true, ModeSummary: true,
+// IsKnownMode reports whether m is one of the built-in modes.
+//
+// The registry lives in internal/config (config.BuiltInModeKind) because the
+// tools and CLI layers need it too and cannot import this package. Keeping a
+// second list here is what let `product` and `documentation` exist as real
+// modes while being absent from the reserved-name check, so a custom agent or
+// skill could take their names.
+//
+// A false result does NOT mean "invalid": a custom agent from .orchestra.yml
+// is passed through Options.Mode under its own name and falls through to
+// build-mode tools by design.
+func IsKnownMode(m Mode) bool {
+	return configpkg.IsBuiltInMode(string(m))
 }
 
-// IsKnownMode reports whether m is a mode this package recognises.
-// Callers reading Options.Mode from user-provided config can use this
-// to surface a typo immediately rather than wait for the silent build
-// fallback to misclassify the run.
-func IsKnownMode(m Mode) bool { return knownModes[m] }
+// IsChildOnlyMode reports whether m is a subagent role with its own input
+// contract (WorkOrder, task_result) rather than a mode a user starts.
+func IsChildOnlyMode(m Mode) bool {
+	kind, ok := configpkg.BuiltInModeKind(string(m))
+	return ok && kind == configpkg.ModeKindChildOnly
+}
 
 type Options struct {
 	MaxSteps int

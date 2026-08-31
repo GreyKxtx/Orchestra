@@ -1427,3 +1427,63 @@ func TestAgent_Run_UnifiedTaskTool(t *testing.T) {
 		t.Fatalf("expected child task result in history: %+v", history)
 	}
 }
+
+// TestBuildSystemPrompt_SubstitutesPlanPathInEveryMode is the architecture-mode
+// regression: buildSystemPrompt only substituted for ModePlan / explicit
+// PlanPath, so architecture.txt shipped a literal {{PLAN_PATH}} to the model.
+func TestBuildSystemPrompt_SubstitutesPlanPathInEveryMode(t *testing.T) {
+	dir := t.TempDir()
+	runner, err := tools.NewRunner(dir, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runner.Close()
+
+	for _, mode := range []Mode{ModeArchitecture, ModePlan, ModeBuild} {
+		a := &Agent{opts: Options{Mode: mode}, tools: runner}
+		got := a.buildSystemPrompt()
+		if strings.Contains(got, "{{PLAN_PATH}}") {
+			t.Errorf("mode %s: unsubstituted {{PLAN_PATH}} reached the system prompt", mode)
+		}
+	}
+	// An explicit plan path still wins over the default.
+	a := &Agent{opts: Options{Mode: ModeArchitecture, PlanPath: ".orchestra/plans/x.md"}, tools: runner}
+	if !strings.Contains(a.buildSystemPrompt(), ".orchestra/plans/x.md") {
+		t.Error("explicit PlanPath not substituted in architecture mode")
+	}
+}
+
+// TestSystemOverrideScope: .orchestra/system.txt must not silently replace the
+// prompt of a child-only mode (worker/verifier/…), whose contract with the
+// parent lives in that prompt. A per-mode file may.
+func TestSystemOverrideScope(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orchestra"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".orchestra", "system.txt"), []byte("BLANKET OVERRIDE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := tools.NewRunner(dir, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runner.Close()
+
+	build := &Agent{opts: Options{Mode: ModeBuild}, tools: runner}
+	if !strings.Contains(build.buildSystemPrompt(), "BLANKET OVERRIDE") {
+		t.Error("build mode must honour .orchestra/system.txt")
+	}
+	worker := &Agent{opts: Options{Mode: ModeWorker}, tools: runner}
+	if strings.Contains(worker.buildSystemPrompt(), "BLANKET OVERRIDE") {
+		t.Error("worker mode must ignore the blanket override — its prompt carries the task_result contract")
+	}
+
+	// A per-mode file is the supported way to override a child mode.
+	if err := os.WriteFile(filepath.Join(dir, ".orchestra", "system.worker.txt"), []byte("WORKER OVERRIDE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(worker.buildSystemPrompt(), "WORKER OVERRIDE") {
+		t.Error("worker mode must honour .orchestra/system.worker.txt")
+	}
+}

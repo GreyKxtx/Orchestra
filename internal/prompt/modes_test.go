@@ -35,3 +35,15 @@ func TestWorkerPrompt_MentionsTaskResult(t *testing.T) {
 		t.Fatalf("worker prompt must mention task_result:\n%s", got)
 	}
 }
+
+// TestPromptFilesPlanPathPlaceholder documents which prompts carry the
+// {{PLAN_PATH}} placeholder — every one of them must be run through
+// agent.substitutePlanPath before it reaches a model.
+func TestPromptFilesPlanPathPlaceholder(t *testing.T) {
+	withPlaceholder := []string{"plan", "plan-local", "architecture"}
+	for _, mode := range withPlaceholder {
+		if s := LoadEmbedded(mode + ".txt"); !strings.Contains(s, "{{PLAN_PATH}}") {
+			t.Errorf("%s.txt no longer uses {{PLAN_PATH}} — update the substitution site in agent.buildSystemPrompt", mode)
+		}
+	}
+}

@@ -152,8 +152,18 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	if a.opts.SystemPromptOverride != "" {
 		p.base = a.opts.SystemPromptOverride
 	}
-	if fs := promptpkg.LoadSystemOverride(a.tools.WorkspaceRoot()); fs != "" {
+	// A per-mode file (.orchestra/system.<mode>.txt) overrides any mode.
+	// The blanket .orchestra/system.txt does not reach child-only modes:
+	// worker/verifier/product/documentation prompts carry the contract their
+	// parent depends on (WorkOrder input, task_result output, scoped writes),
+	// and an override written for build mode used to replace it silently.
+	root := a.tools.WorkspaceRoot()
+	if fs := promptpkg.LoadModeSystemOverride(root, string(a.opts.Mode)); fs != "" {
 		p.base = fs
+	} else if !IsChildOnlyMode(a.opts.Mode) {
+		if fs := promptpkg.LoadSystemOverride(root); fs != "" {
+			p.base = fs
+		}
 	}
 	// 4: project memory (tiered, config-driven).
 	// Workers/focused children skip this - they only need the WorkOrder.
@@ -209,9 +219,12 @@ func (a *Agent) buildSystemPrompt() string {
 	}
 	prompt += p.catalog
 	prompt += p.skills
-	if a.opts.Mode == ModePlan || strings.TrimSpace(a.opts.PlanPath) != "" {
-		prompt = a.substitutePlanPath(prompt)
-	}
+	// Always substitute: architecture.txt carries {{PLAN_PATH}} too, and mode
+	// architecture with no explicit PlanPath used to ship the raw placeholder
+	// to the model while its reminder showed the resolved path.
+	// effectivePlanPath falls back to .orchestra/plan.md, so this is safe for
+	// prompts that never mention the placeholder.
+	prompt = a.substitutePlanPath(prompt)
 	return prompt
 }
 

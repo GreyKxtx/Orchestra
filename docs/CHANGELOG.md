@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Fixed — prompt/mode wiring (2026-08)
+
+- **`{{PLAN_PATH}}` no longer leaks to the model** — `buildSystemPrompt` substituted only for `ModePlan` or an explicit `PlanPath`, so architecture mode shipped the literal placeholder while its own reminder showed the resolved path. Substitution now runs for every mode.
+- **One mode registry** (`config.builtInAgentModes` → `map[string]ModeKind`) — `product` and `documentation` existed as real modes with their own tool sets and write scopes but were missing from the reserved-name list, so a custom agent or skill could take those names and shadow them. `agent.IsKnownMode` now derives from the same registry instead of a second hardcoded list.
+- **Child-only modes are refused top-level with the reason** — `--mode worker|verifier|product|documentation` and the equivalent `agent.run` used to report "unknown agent mode"; they now say the mode runs only as a subagent and list the selectable ones (`config.IsUserSelectableMode`).
+- **`.orchestra/system.txt` no longer overrides child-only prompts** — an override written for build mode silently replaced the worker/verifier prompt that carries the WorkOrder + `task_result` contract. Per-mode `.orchestra/system.<mode>.txt` is the supported way to override those.
+
 ### Changed — a failed subagent reports what it got done (2026-08)
 
 - **`FormatSubagentFiles` / `FormatSubagentProgress`** (`internal/agent/history/subagent.go`) — the child's history was discarded on failure, so the Lead saw an error string and redid the task from nothing. A failing child's error now carries the files it touched (with the tools used on each), the findings it had, and what it was doing last. The success summary for explore subagents gains the same "Files touched" section.

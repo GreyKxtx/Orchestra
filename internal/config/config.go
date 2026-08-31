@@ -287,12 +287,47 @@ type AgentDefinition struct {
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 }
 
-// builtInAgentModes are reserved names that cannot be used for custom agents.
-var builtInAgentModes = map[string]bool{
-	"build": true, "plan": true, "explore": true, "general": true,
-	"ask": true, "debug": true, "architecture": true, "verifier": true,
-	"agent": true, "orchestra": true, "worker": true,
-	"compaction": true, "title": true, "summary": true,
+// ModeKind classifies how a built-in agent mode may be started.
+type ModeKind int
+
+const (
+	// ModeKindTopLevel can be requested by the user (CLI --mode, RPC agent.run)
+	// and can also be spawned as a subagent.
+	ModeKindTopLevel ModeKind = iota
+	// ModeKindChildOnly is a subagent role with its own protocol (task_result,
+	// WorkOrder, scoped writes). Starting one top-level skips the contract that
+	// gives it its input, so the CLI and RPC refuse it.
+	ModeKindChildOnly
+	// ModeKindInternal is driven by the runtime itself (history compaction,
+	// title, summary) and never selected by a user.
+	ModeKindInternal
+)
+
+// builtInAgentModes is the single registry of reserved mode names.
+//
+// It backs three questions that used to be answered by separate hardcoded
+// lists: is this name reserved against custom agents / skills, may the user
+// start this mode, and does agent.IsKnownMode recognise it. `product` and
+// `documentation` were missing here while existing as real modes with their
+// own tool sets and write scopes — so a custom agent or skill could take
+// those names and shadow them.
+var builtInAgentModes = map[string]ModeKind{
+	"build":         ModeKindTopLevel,
+	"plan":          ModeKindTopLevel,
+	"explore":       ModeKindTopLevel,
+	"general":       ModeKindTopLevel,
+	"ask":           ModeKindTopLevel,
+	"debug":         ModeKindTopLevel,
+	"architecture":  ModeKindTopLevel,
+	"agent":         ModeKindTopLevel,
+	"orchestra":     ModeKindTopLevel,
+	"worker":        ModeKindChildOnly,
+	"verifier":      ModeKindChildOnly,
+	"product":       ModeKindChildOnly,
+	"documentation": ModeKindChildOnly,
+	"compaction":    ModeKindInternal,
+	"title":         ModeKindInternal,
+	"summary":       ModeKindInternal,
 }
 
 // validAgentToolNames lists all short tool names that are valid in
@@ -1077,13 +1112,43 @@ func (c *ProjectConfig) validateAutoRouter() error {
 }
 
 // IsBuiltInMode reports whether name is a reserved built-in agent mode.
-func IsBuiltInMode(name string) bool { return builtInAgentModes[name] }
+// Reserved means "a custom agent or skill may not take this name" — it covers
+// child-only and internal modes too.
+func IsBuiltInMode(name string) bool {
+	_, ok := builtInAgentModes[name]
+	return ok
+}
+
+// BuiltInModeKind returns the mode's kind and whether it is built in at all.
+func BuiltInModeKind(name string) (ModeKind, bool) {
+	k, ok := builtInAgentModes[name]
+	return k, ok
+}
+
+// IsUserSelectableMode reports whether the user may start this mode directly
+// (CLI --mode, RPC agent.run). Child-only and internal modes are not.
+func IsUserSelectableMode(name string) bool {
+	k, ok := builtInAgentModes[name]
+	return ok && k == ModeKindTopLevel
+}
 
 // BuiltInModeNames returns reserved agent mode names (sorted).
 func BuiltInModeNames() []string {
 	out := make([]string, 0, len(builtInAgentModes))
 	for name := range builtInAgentModes {
 		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// UserSelectableModeNames returns the modes a user may start directly (sorted).
+func UserSelectableModeNames() []string {
+	out := make([]string, 0, len(builtInAgentModes))
+	for name, k := range builtInAgentModes {
+		if k == ModeKindTopLevel {
+			out = append(out, name)
+		}
 	}
 	sort.Strings(out)
 	return out
@@ -1104,7 +1169,7 @@ func (c *ProjectConfig) validateAgents() error {
 		if a.Name == "" {
 			return fmt.Errorf("agents[%d]: name is required", i)
 		}
-		if builtInAgentModes[a.Name] {
+		if IsBuiltInMode(a.Name) {
 			return fmt.Errorf("agents[%d]: name %q collides with a built-in agent mode", i, a.Name)
 		}
 		if seen[a.Name] {

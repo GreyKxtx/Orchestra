@@ -81,7 +81,8 @@ func init() {
 	applyCmd.Flags().BoolVar(&allowWeb, "allow-web", false, "Allow webfetch tool (fetches external URLs; private IPs blocked)")
 	applyCmd.Flags().BoolVar(&allowBrowser, "allow-browser", false, "Allow browser.* tools (requires Node.js and npx)")
 	applyCmd.Flags().BoolVar(&viaCore, "via-core", false, "Run via JSON-RPC core subprocess (stdio)")
-	applyCmd.Flags().StringVar(&agentMode, "mode", "", "Agent mode: build|plan|explore|ask|debug|architecture|agent|orchestra (or custom agents: name)")
+	applyCmd.Flags().StringVar(&agentMode, "mode", "",
+		"Agent mode: "+strings.Join(config.UserSelectableModeNames(), "|")+" (or a custom agents: name)")
 	applyCmd.Flags().BoolVar(&pipelineMode, "pipeline", false, "Run multi-agent pipeline: Investigator → Coder → Critic")
 	applyCmd.Flags().IntVar(&pipelineMaxAttempts, "pipeline-attempts", 2, "Max Coder→Critic cycles in pipeline mode")
 	applyCmd.Flags().StringVar(&pipelineTraceID, "trace-id", "", "Trace ID for runtime evidence pre-fetch in pipeline mode")
@@ -196,8 +197,19 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		agentMode = def.Name
 	}
 
-	if agentMode != "" && !config.IsBuiltInMode(agentMode) && cfg.FindAgent(agentMode) == nil {
-		return fmt.Errorf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", agentMode)
+	if agentMode != "" {
+		if kind, builtIn := config.BuiltInModeKind(agentMode); builtIn {
+			// worker/verifier/product/documentation get their input from a
+			// WorkOrder and answer through task_result; started top-level they
+			// have neither, so refuse with the reason instead of running a
+			// half-wired agent.
+			if kind != config.ModeKindTopLevel {
+				return fmt.Errorf("agent mode %q runs only as a subagent (spawned via task / task_spawn), not from --mode; available modes: %s",
+					agentMode, strings.Join(config.UserSelectableModeNames(), ", "))
+			}
+		} else if cfg.FindAgent(agentMode) == nil {
+			return fmt.Errorf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", agentMode)
+		}
 	}
 
 	startedAt := time.Now()

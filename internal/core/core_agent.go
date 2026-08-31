@@ -122,9 +122,17 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	}
 	agentQuery := resolveTurnQuery(params.Query, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
 	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
-	if params.Mode != "" && !config.IsBuiltInMode(params.Mode) && c.cfg != nil && c.cfg.FindAgent(params.Mode) == nil {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput,
-			fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
+	if params.Mode != "" {
+		if kind, builtIn := config.BuiltInModeKind(params.Mode); builtIn {
+			if kind != config.ModeKindTopLevel {
+				return nil, protocol.NewError(protocol.InvalidLLMOutput,
+					fmt.Sprintf("agent mode %q runs only as a subagent (spawned via task / task_spawn); available modes: %s",
+						params.Mode, strings.Join(config.UserSelectableModeNames(), ", ")), nil)
+			}
+		} else if c.cfg != nil && c.cfg.FindAgent(params.Mode) == nil {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput,
+				fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
+		}
 	}
 
 	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
