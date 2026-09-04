@@ -176,6 +176,21 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 		store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
 		p.memory = store.FormatInject(memCfg.InjectBytes())
 	}
+	// 4a: top-level single-agent modes replay their own episodic lessons.
+	// Without this the loop is half-built: recordTurnLesson writes what went
+	// wrong and nobody ever reads it back, so build mode repeats the same
+	// StaleContent or diagnostic every session. Workers and other child-only
+	// modes are handed dept lessons by their spawner instead, and Orchestra
+	// Lead gets the cross-dept catalog below.
+	if !IsChildOnlyMode(a.opts.Mode) && a.opts.Mode != ModeOrchestra && !a.opts.SkipMemoryInject {
+		if s := lessons.FormatInject(a.tools.WorkspaceRoot(), ""); s != "" {
+			if p.memory != "" {
+				p.memory += "\n\n" + s
+			} else {
+				p.memory = s
+			}
+		}
+	}
 	// 4b: Lead learning stack — capped so lessons+playbooks stay ≤ ~2000 tokens.
 	// Dept Leads / workers get dept-scoped inject at spawn, not the full catalog.
 	if a.opts.Mode == ModeOrchestra {

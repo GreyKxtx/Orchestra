@@ -62,12 +62,14 @@ same pass in the foreground.
 | Level | Mechanism | Path |
 |-------|-----------|------|
 | L0 | working_state, turn_digest | agent history |
-| L1 | Episodic lessons after worker verify | `.orchestra/memory/lessons/<dept>.md` |
+| L1 | Episodic lessons after worker verify, **and after any top-level turn that ended with errors** | `.orchestra/memory/lessons/<dept>.md` |
 | L2 | `memory_write` scope=dept | same lessons files (`agent_note`) |
 | L3 inject | `<dept_playbook>` | L2 playbook + local overlay |
 | L3 write | local overlay gate | `decision_ref` in `decisions.md` (auto-sealed via Question Barrier) |
 
 Signals: repeated anti-patterns (3×) → `lesson_promote_suggestion` in worker `task_result`. After overlay approval → `playbook_promote_suggestion`.
+
+**Single-agent modes learn too.** `build`, `debug`, `plan`, `ask` and `architecture` write an anti-pattern lesson under `engineering` when a turn ends with errors still on its ledger, and replay `<dept_lessons>` in the next session's system prompt. Previously only worker children recorded anything, so the mode most people run learned nothing from itself — over a 52-session field run the lessons directory was never created. Child-only modes are skipped here because their spawner already gives them dept-scoped lessons; one-shot `apply` runs are skipped because they have no session to learn into.
 
 Explore-first gate blocks `write`/`edit` for Worker, Orchestra Lead, and Dept Lead (`architecture`) until `read`/`grep`/`explore` on scope.
 

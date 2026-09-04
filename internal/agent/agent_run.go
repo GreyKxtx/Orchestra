@@ -50,6 +50,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.tools.ResetDeptLessonBudget()
 	a.initWorkingState(userQuery)
 	defer a.persistWorkingTurnDigest()
+	defer a.recordTurnLesson()
 	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).
 	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
 

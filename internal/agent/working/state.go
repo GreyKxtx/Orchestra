@@ -80,6 +80,19 @@ func (s *State) ActiveFiles() []string {
 	return out
 }
 
+// Errors returns the deduped error fingerprints observed this Run.
+func (s *State) Errors() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.errors) == 0 {
+		return nil
+	}
+	return append([]string(nil), s.errors...)
+}
+
 // ObserveTool records a tool call outcome into the ledger.
 func (s *State) ObserveTool(name string, input json.RawMessage, out []byte, callErr error) {
 	if s == nil {
