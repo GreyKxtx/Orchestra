@@ -139,7 +139,7 @@ func (s *Store) Read(layer, path string, maxBytes int) ReadResult {
 		raw := s.readSessionFile(maxBytes)
 		return ReadResult{Layer: layerSession, Path: relPath(s.sessionFilePath(), s.workspaceRoot), Content: raw}
 	case layerRepo:
-		raw := s.sliceRepoMemory(maxBytes)
+		raw := s.sliceRepoMemory(maxBytes, true)
 		return ReadResult{Layer: layerRepo, Path: ".orchestra/memory/", Content: raw, Truncated: len(raw) >= maxBytes}
 	case layerLessons:
 		raw := s.sliceLessonsMemory(maxBytes)
@@ -149,7 +149,8 @@ func (s *Store) Read(layer, path string, maxBytes int) ReadResult {
 		raw := s.sliceLayer(layerGlobal, maxBytes)
 		return ReadResult{Layer: layerGlobal, Path: "~/.orchestra/memory.md", Content: raw}
 	case "all":
-		return ReadResult{Content: s.tieredInject(maxBytes), Truncated: true}
+		// The escape hatch hybrid points the model at: always every layer.
+		return ReadResult{Content: s.tieredInject(maxBytes, fullScope()), Truncated: true}
 	default:
 		return ReadResult{Content: fmt.Sprintf("unknown layer %q (want orchestra|session|repo|lessons|global|all)", layer)}
 	}

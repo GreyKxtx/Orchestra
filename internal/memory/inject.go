@@ -26,17 +26,30 @@ func (s *Store) FormatInject(maxBytes int) string {
 	return block
 }
 
+// injectScope selects which layers an inject pass is allowed to reach. It is
+// what separates hybrid from eager: hybrid keeps the prompt to the layers a
+// small local model needs on every step and leaves the rest to memory_read.
+type injectScope struct {
+	global    bool // ~/.orchestra/memory.md
+	repoFiles bool // .orchestra/memory/*.md beyond agent.md
+}
+
+// fullScope reaches every layer — eager inject and memory_read layer=all.
+func fullScope() injectScope { return injectScope{global: true, repoFiles: true} }
+
 func (s *Store) buildInjectContent(maxBytes int) string {
 	switch s.cfg.Mode {
 	case ModeLazy:
 		return s.sliceLayer(layerOrchestra, maxBytes/2)
+	case ModeHybrid:
+		return s.tieredInject(maxBytes, injectScope{})
 	default:
-		return s.tieredInject(maxBytes)
+		return s.tieredInject(maxBytes, fullScope())
 	}
 }
 
 // tieredInject allocates budget: orchestra 35%, session 25%, repo 30%, global remainder.
-func (s *Store) tieredInject(maxBytes int) string {
+func (s *Store) tieredInject(maxBytes int, scope injectScope) string {
 	if maxBytes <= 0 {
 		return ""
 	}
@@ -48,6 +61,13 @@ func (s *Store) tieredInject(maxBytes int) string {
 		sBudget = maxBytes * 25 / 100
 		gBudget = maxBytes - oBudget - sBudget - rBudget
 	}
+	includeGlobal := scope.global && s.cfg.GlobalEnabled
+	if !includeGlobal {
+		// Spend the unused global slice on recent agent.md entries rather than
+		// shrinking the whole block — those are the facts this project earned.
+		rBudget += gBudget
+		gBudget = 0
+	}
 
 	var parts []string
 	if chunk := s.sliceLayer(layerOrchestra, oBudget); chunk != "" {
@@ -58,10 +78,10 @@ func (s *Store) tieredInject(maxBytes int) string {
 			parts = append(parts, "[session]\n"+chunk)
 		}
 	}
-	if chunk := s.sliceRepoMemory(rBudget); chunk != "" {
+	if chunk := s.sliceRepoMemory(rBudget, scope.repoFiles); chunk != "" {
 		parts = append(parts, chunk)
 	}
-	if s.cfg.GlobalEnabled && gBudget > 0 {
+	if includeGlobal && gBudget > 0 {
 		if chunk := s.sliceLayer(layerGlobal, gBudget); chunk != "" {
 			parts = append(parts, chunk)
 		}
@@ -92,7 +112,9 @@ func (s *Store) sliceLayer(layer string, maxBytes int) string {
 	return truncateToMax(raw, maxBytes)
 }
 
-func (s *Store) sliceRepoMemory(maxBytes int) string {
+// sliceRepoMemory returns recent agent.md entries and, when includeOtherFiles
+// is set, the remaining .orchestra/memory/*.md files.
+func (s *Store) sliceRepoMemory(maxBytes int, includeOtherFiles bool) string {
 	if maxBytes <= 0 {
 		return ""
 	}
@@ -108,12 +130,12 @@ func (s *Store) sliceRepoMemory(maxBytes int) string {
 			if len(recent) > remaining {
 				recent = tailBytes(recent, remaining)
 			}
-			parts = append(parts, "[agent memory вЂ” recent first]\n"+recent)
+			parts = append(parts, "[agent memory — recent first]\n"+recent)
 			remaining -= len(recent)
 		}
 	}
 
-	if remaining <= 0 {
+	if !includeOtherFiles || remaining <= 0 {
 		return strings.Join(parts, "\n\n")
 	}
 

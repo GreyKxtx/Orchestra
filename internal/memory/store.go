@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -70,7 +71,7 @@ func (s *Store) readSessionFile(maxBytes int) string {
 }
 
 func (s *Store) Append(scope, content string) (relPath string, written int, err error) {
-	content = strings.TrimSpace(content)
+	content = sanitizeMemoryText(strings.TrimSpace(content))
 	if content == "" {
 		return "", 0, fmt.Errorf("content must not be empty")
 	}
@@ -86,7 +87,7 @@ func (s *Store) Append(scope, content string) (relPath string, written int, err 
 			return "", 0, fmt.Errorf("session memory is disabled in config")
 		}
 		if s.sessionID == "" {
-			return "", 0, fmt.Errorf("no active session вЂ” use scope project or start a session")
+			return "", 0, fmt.Errorf("no active session — use scope project or start a session")
 		}
 		dir := filepath.Join(s.workspaceRoot, ".orchestra", "memory", "sessions")
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -120,6 +121,18 @@ func (s *Store) Append(scope, content string) (relPath string, written int, err 
 		}
 	}
 	return relPath, n, nil
+}
+
+// sanitizeMemoryText replaces invalid UTF-8 before anything is persisted.
+// Tool output on Windows can arrive in the console codepage (a cp1251 `ls`
+// error is how this got in), and memory is re-injected into every later
+// prompt — so one bad byte is re-sent on every step of every session that
+// follows, not just the one that wrote it.
+func sanitizeMemoryText(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, "�")
 }
 
 func preview(s string, n int) string {
