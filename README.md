@@ -44,10 +44,30 @@
 
 ---
 
+## Установка
+
+Готовые архивы для windows-amd64, linux-amd64, darwin-arm64 и darwin-amd64 публикуются в GitHub Releases (тег `v*`), рядом лежат `.sha256`. Распакуйте и положите `orchestra` в `PATH`.
+
+Из исходников нужен C-компилятор — CKG собирается на tree-sitter через cgo (на Windows это MinGW):
+
+```bash
+go install github.com/orchestra/orchestra/cmd/orchestra@latest
+```
+
+Проверить, что установилось:
+
+```bash
+orchestra version
+# orchestra v0.3.0 (a1b2c3d)
+# protocol 13 · ops 1 · tools 14
+```
+
+Три числа — это контракт `initialize`: если TUI или расширение отказываются подключаться, расхождение будет именно в них.
+
 ## Быстрый старт
 
 ```bash
-# Сборка
+# Сборка из репозитория
 go build -o orchestra ./cmd/orchestra
 
 # Инициализация проекта

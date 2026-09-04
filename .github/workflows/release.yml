@@ -1,0 +1,187 @@
+name: release
+
+# CGO is required (tree-sitter), so every target builds on its own runner —
+# the same matrix vscode-vsix.yml already proves works. Cross-compiling with
+# GOOS/GOARCH alone would silently produce a binary with no CKG.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to stamp when running without a tag (e.g. v0.3.0-rc1)
+        type: string
+        required: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            cc: ""
+          - runner: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ""
+            cc: ""
+          - runner: macos-latest
+            target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ""
+            cc: ""
+          - runner: macos-latest
+            target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ""
+            cc: "clang -arch x86_64 -mmacosx-version-min=11.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Add MinGW to PATH (Windows / CGO)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Building ${version}"
+
+      - name: Download modules
+        run: go work sync
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+          CC: ${{ matrix.cc }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="dist/orchestra${{ matrix.ext }}"
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/orchestra/orchestra/internal/cli.buildVersion=${VERSION}" \
+            -o "$out" ./cmd/orchestra
+          ls -la dist
+
+      - name: Smoke-check the binary reports its version
+        if: matrix.goos != 'darwin' || matrix.goarch == 'arm64'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # darwin-amd64 is cross-built on an arm64 runner and cannot run here.
+          printed="$(./dist/orchestra${{ matrix.ext }} version)"
+          echo "$printed"
+          echo "$printed" | grep -q "$VERSION" || {
+            echo "version not stamped into the binary"; exit 1; }
+
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="orchestra_${VERSION}_${{ matrix.target }}"
+          cp LICENSE README.md dist/
+          cd dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            7z a "../${name}.zip" orchestra.exe LICENSE README.md >/dev/null
+            cd ..
+            sha256sum "${name}.zip" > "${name}.zip.sha256"
+          else
+            tar -czf "../${name}.tar.gz" orchestra LICENSE README.md
+            cd ..
+            shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          fi
+          ls -la orchestra_*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            orchestra_*.zip
+            orchestra_*.tar.gz
+            orchestra_*.sha256
+          retention-days: 14
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: _dist
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -la _dist
+          # Draft on manual runs so a dry run never publishes; a pushed tag is
+          # an explicit decision to release.
+          draft=""
+          if [ "${GITHUB_EVENT_NAME}" != "push" ]; then
+            draft="--draft"
+          fi
+          gh release create "$VERSION" _dist/* \
+            --title "$VERSION" \
+            --generate-notes \
+            $draft
