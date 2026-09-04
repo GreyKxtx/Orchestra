@@ -149,7 +149,11 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 
 **Skills / workflows.** `.orchestra/skills/*.md` с frontmatter (`tools/model/provider/completion_markers`), три источника (project > user > packs), `$ARGUMENTS`, `@refs/`, `skill_invoke`, 24 примера; 12 YAML-workflow (DAG стадий с `{stage.output}`). Нет slash-команд и совместимости с `CLAUDE.md`/`AGENTS.md`. **4/5.**
 
-**Про «открытые долги» из `pipeline-issues-audit.md`.** Тот документ перечисляет четыре незакрытых пункта, но это его собственный текст, а не состояние кода: сверка с `34b5324` показывает, что все четыре уже закрыты. `TaskRunner.removeTask` вызывается из `Wait` (`tasks.go:790,818`) — утечки нет; `AgentRunResult.Todos` объявлен и заполняется (`core_agent.go:79,203`); `NormalizeToolName` существует с таблицей алиасов и тестом (`digest/names.go:21`, `tool_dispatch_test.go:13`); `plan_enter` убран из всех tool-поверхностей (`registry.go:116`) и остался только legacy-обработчик для старых вызовов. Урок общего характера: аудит-документы стареют быстрее кода, и «открыто» в них надо перепроверять.
+**Про «открытые долги» из `pipeline-issues-audit.md`.** Тот документ перечисляет четыре незакрытых пункта, но это его собственный текст, а не состояние кода: сверка с `34b5324` показывает, что все четыре уже закрыты. `TaskRunner.removeTask` вызывается из `Wait` (`tasks.go:790,818`) — утечки нет; `AgentRunResult.Todos` объявлен и заполняется (`core_agent.go:79,203`); `NormalizeToolName` существует с таблицей алиасов и тестом (`digest/names.go:21`, `tool_dispatch_test.go:13`); `plan_enter` убран из всех tool-поверхностей (`registry.go:116`) и остался только legacy-обработчик для старых вызовов.
+
+Туда же — пятый пункт, который эта оценка приписала VS Code: **режим `orchestra` в расширении есть и полностью связан** с `e98c673` (пункт меню в `media/chat-src/01-dom-state.js`, `mode` уходит в `session.message` в `panel.ts:943`, плюс разбивка по тирам в футере и `listOrchestraRoles`).
+
+**Методологический вывод, который дороже самих пунктов.** Пять ложных «открыто» подряд возникли одинаково: отрицательный результат поиска был принят за отсутствие функциональности. Четыре пришли из текста аудит-документа, пятый — из поиска, который смотрел в `ui/vscode/src`, тогда как список режимов лежит в `ui/vscode/media/chat-src`. Отсутствие находки — это утверждение о зоне поиска, а не о коде; «не найдено» надо проверять `git log -S` по конкретной строке, прежде чем писать «нет».
 
 **Что действительно остаётся:** описания ~60 инструментов (`internal/tools/*/registry.go`) и CLI-help на русском, притом что сами промпты с `145753e` полностью английские — один ход смешивает языки между system prompt и tool schema. Плюс мелочь того же рода: текст legacy-заглушки `plan_enter` (`tool_dispatch.go:523`) тоже русский.
 
@@ -160,7 +164,7 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 | Компонент | Состояние | Оценка |
 |---|---|:-:|
 | **TUI** (`ui/tui`, 23K LOC) | Стриминг с сегментами reasoning→tools→text, diff-review, subagent bar, todo-панель, 19 slash-команд, палитра Ctrl+K, @-mention, `/attach`, permission-очередь, сессии/rewind, диалоги провайдеров/MCP/tiers | 4.5 |
-| **VS Code / Cursor** (`ui/vscode`, 8.3K TS) | Webview-чат, drag-drop вложений, dry-run/apply, per-file review, LSP-install modal, 6 вкладок настроек; core бандлится под 4 платформы; VSIX 0.1.2. Нет rich tool-блоков, reasoning-UI, режима orchestra | 3.5 |
+| **VS Code / Cursor** (`ui/vscode`, 8.3K TS) | Webview-чат, drag-drop вложений, dry-run/apply, per-file review, LSP-install modal, 6 вкладок настроек; core бандлится под 4 платформы; VSIX 0.1.2. Режим `orchestra` есть в селекторе с разбивкой по тирам в футере (`media/chat-src/01-dom-state.js`, `panel.ts:919`). Нет rich tool-блоков и reasoning-UI | 3.5 |
 | **Desktop** (`ui/desktop`) | README на 361 байт, кода нет | 0 |
 | **LSP** (`internal/lsp`) | Собственный клиент, реестр ~12 серверов с pinned-версиями, auto-provision `ask|true|false` с consent, кэш `~/.orchestra/lsp/`, async ensure, диагностика прикрепляется к ответам `edit`/`write`, эскалация при повторе одинаковых ошибок | 4.5 |
 | **MCP client** | stdio only (протокол 2024-11-05), tools/list+call, `list_changed`, lazy restart ≤3, `allowed_tools`; нет HTTP/SSE/streamable, OAuth, resources, prompts; Orchestra не является MCP-сервером | 3 |
@@ -250,7 +254,7 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 | 13 | Глобальный `~/.orchestra/config.yml` (провайдеры, ключи, tiers) | Каждый проект настраивается с нуля |
 | 14 | Проброс `cache_control` для `anthropic/*` на OpenAI-compatible пути (OpenRouter) — стабильный префикс и счётчики cached-токенов уже есть (`5371e4c`, `34b5324`), не хватает только breakpoint'ов; плюс предупреждение о стоимости при >N токенов/ход | $2.18 за 5-минутный ход; OpenRouter кэширует Anthropic-модели только с явными маркерами |
 | 15 | Английские описания инструментов (`internal/tools/*/registry.go`) и CLI-help; английский README. Промпты уже переведены (`145753e`) | Один ход сейчас смешивает языки между system prompt и tool schema |
-| 16 | VS Code: селектор orchestra-режима | Единственный незакрытый пункт из списка долгов аудита — остальные три (TaskRunner eviction, todos в `agent.run`, нормализация алиасов) закрыты ещё в августе, см. §4 |
+| 16 | ~~VS Code: селектор orchestra-режима~~ | Закрыт: режим есть в селекторе и полностью связан (`e98c673`). Весь пункт 16 оказался закрыт до начала работ — см. §4 |
 
 ### P2 — квартал
 | # | Действие |
