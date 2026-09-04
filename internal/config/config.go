@@ -209,6 +209,9 @@ type EmbedConfig struct {
 	Dimensions int    `yaml:"dimensions,omitempty"`
 	BatchSize  int    `yaml:"batch_size,omitempty"`
 	TimeoutS   int    `yaml:"timeout_s,omitempty"`
+	// AutoIndex builds the embedding index in the background on core start
+	// (default true when model is set; false disables it for paid endpoints).
+	AutoIndex *bool `yaml:"auto_index,omitempty"`
 	// SemanticAutoExplore runs explore(FQN) for top semantic_search hits (default true when model set).
 	SemanticAutoExplore *bool `yaml:"semantic_auto_explore,omitempty"`
 	// SemanticAutoExploreTopK is how many hits to enrich with explore summaries (default 2).

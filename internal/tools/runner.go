@@ -13,6 +13,7 @@ import (
 	"github.com/orchestra/orchestra/internal/browser"
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/embedindex"
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/lsp/provision"
 	"github.com/orchestra/orchestra/internal/memory"
@@ -382,16 +383,60 @@ func (r *Runner) WarmupLSP(ctx context.Context) {
 // WarmupCKG launches a background incremental scan of the CKG store so that
 // the first explore or FetchCKGContext call doesn't pay the full scan cost.
 // The goroutine is bound to ctx and exits silently on completion or cancellation.
-func (r *Runner) WarmupCKG(ctx context.Context) {
+// The returned channel carries the scan result; nil when there is no store.
+func (r *Runner) WarmupCKG(ctx context.Context) <-chan error {
 	r.ckgMu.RLock()
 	store := r.ckgStore
 	excludeDirs := append([]string(nil), r.excludeDirs...)
 	r.ckgMu.RUnlock()
 	if store == nil {
-		return
+		return nil
 	}
 	orch := ckg.NewOrchestratorWithIgnores(store, r.workspaceRoot, excludeDirs)
-	_ = orch.UpdateGraphAsync(ctx)
+	return orch.UpdateGraphAsync(ctx)
+}
+
+// WarmupEmbeddings fills the semantic_search index in the background, once the
+// graph update in after has finished. Embeddings have to wait for the graph:
+// started earlier there are no nodes yet, so the pass would quietly index
+// nothing and leave semantic_search looking broken rather than unprepared.
+//
+// The returned channel closes when the pass is done, so callers that care can
+// wait on it; core does not.
+func (r *Runner) WarmupEmbeddings(ctx context.Context, after <-chan error) <-chan struct{} {
+	done := make(chan struct{})
+	if r == nil || !r.embedCfg.ResolvedAutoIndex() {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		if after != nil {
+			select {
+			case <-after:
+			case <-ctx.Done():
+				return
+			}
+		}
+		r.ckgMu.RLock()
+		store := r.ckgStore
+		r.ckgMu.RUnlock()
+		if store == nil {
+			return
+		}
+		res, err := embedindex.Run(ctx, embedindex.Options{
+			ProjectRoot: r.workspaceRoot,
+			Store:       store,
+			Embed:       r.embedCfg,
+		})
+		switch {
+		case err != nil && ctx.Err() == nil:
+			fmt.Fprintf(os.Stderr, "orchestra: semantic_search index failed: %v\n", err)
+		case res.Indexed > 0:
+			fmt.Fprintf(os.Stderr, "orchestra: indexed %d node(s) for semantic_search (model %s)\n", res.Indexed, res.Model)
+		}
+	}()
+	return done
 }
 
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).

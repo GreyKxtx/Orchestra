@@ -175,8 +175,14 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 
 // WarmupCKG starts a background CKG scan bound to ctx. Call once after New
 // so the graph is populated before the first agent run or explore call.
+//
+// The semantic_search index is chained onto the same warmup rather than left
+// to a CLI command nobody runs — embeddings are only ever written explicitly,
+// so an index that is not built here is an index that stays empty. The pass is
+// incremental and skipped entirely unless embed.model is set.
 func (c *Core) WarmupCKG(ctx context.Context) {
-	c.tools.WarmupCKG(ctx)
+	graph := c.tools.WarmupCKG(ctx)
+	c.tools.WarmupEmbeddings(ctx, graph)
 }
 
 // WarmupLSP detects workspace languages and auto-ensures missing servers

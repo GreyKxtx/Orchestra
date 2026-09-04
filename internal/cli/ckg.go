@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/embed"
+	"github.com/orchestra/orchestra/internal/embedindex"
 	"github.com/spf13/cobra"
 )
 
@@ -71,99 +70,30 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 	defer store.Close()
 
 	w := cmd.OutOrStdout()
-	client := embed.New(emb)
-	model := client.Model()
-
-	if ckgEmbedRebuild {
-		if _, err := store.DB().ExecContext(cmd.Context(),
-			`DELETE FROM node_embeddings WHERE model = ?`, model); err != nil {
-			return fmt.Errorf("rebuild: clear embeddings: %w", err)
-		}
-		fmt.Fprintf(w, "Cleared existing embeddings for model %q.\n", model)
-	}
-
-	pending, err := store.MissingEmbeddings(cmd.Context(), model, ckgEmbedLimit)
-	if err != nil {
-		return fmt.Errorf("list missing: %w", err)
-	}
-	if len(pending) == 0 {
-		fmt.Fprintf(w, "No nodes need embedding for model %q.\n", model)
-		return nil
-	}
-	fmt.Fprintf(w, "Embedding %d node(s) under model %q...\n", len(pending), model)
 
 	start := time.Now()
-	batch := emb.BatchSize
-	if batch <= 0 {
-		batch = 32
-	}
-
-	for i := 0; i < len(pending); i += batch {
-		end := i + batch
-		if end > len(pending) {
-			end = len(pending)
-		}
-		chunk := pending[i:end]
-		inputs := make([]string, 0, len(chunk))
-		valid := make([]ckg.MissingEmbedding, 0, len(chunk))
-		for _, m := range chunk {
-			text, err := readNodeSource(cfg.ProjectRoot, m)
-			if err != nil {
-				fmt.Fprintf(w, "  skip %s: %v\n", m.FQN, err)
-				continue
-			}
-			if strings.TrimSpace(text) == "" {
-				continue
-			}
-			inputs = append(inputs, text)
-			valid = append(valid, m)
-		}
-		if len(inputs) == 0 {
-			continue
-		}
-		vecs, err := client.Embed(cmd.Context(), inputs)
-		if err != nil {
-			return fmt.Errorf("embed batch [%d:%d]: %w", i, end, err)
-		}
-		items := make([]ckg.EmbeddingItem, len(valid))
-		for j, m := range valid {
-			items[j] = ckg.EmbeddingItem{NodeID: m.NodeID, Vector: vecs[j]}
-		}
-		if err := store.SaveEmbeddings(cmd.Context(), model, items); err != nil {
-			return fmt.Errorf("save batch [%d:%d]: %w", i, end, err)
-		}
-		fmt.Fprintf(w, "  [%d/%d] %s … %s\n", end, len(pending), chunk[len(chunk)-1].FQN, time.Since(start).Round(time.Millisecond))
-	}
-
-	total, _ := store.CountEmbeddings(cmd.Context(), model)
-	fmt.Fprintf(w, "Done. %d embeddings total for model %q (elapsed %s).\n", total, model, time.Since(start).Round(time.Millisecond))
-	return nil
-}
-
-// readNodeSource loads lines [LineStart..LineEnd] from <projectRoot>/<path>.
-// Lines are 1-based and inclusive on both ends.
-func readNodeSource(projectRoot string, m ckg.MissingEmbedding) (string, error) {
-	full := filepath.Join(projectRoot, m.Path)
-	data, err := os.ReadFile(full)
+	res, err := embedindex.Run(cmd.Context(), embedindex.Options{
+		ProjectRoot: cfg.ProjectRoot,
+		Store:       store,
+		Embed:       emb,
+		Limit:       ckgEmbedLimit,
+		Rebuild:     ckgEmbedRebuild,
+		Progress: func(done, total int, fqn string) {
+			fmt.Fprintf(w, "  [%d/%d] %s … %s\n", done, total, fqn, time.Since(start).Round(time.Millisecond))
+		},
+	})
 	if err != nil {
-		return "", err
+		return err
 	}
-	src := string(data)
-	if m.LineStart <= 0 || m.LineEnd < m.LineStart {
-		// Defensive fallback — embed FQN + path only.
-		return fmt.Sprintf("%s (%s)\n", m.FQN, m.Path), nil
+	if res.Total == 0 {
+		fmt.Fprintf(w, "No nodes need embedding for model %q.\n", res.Model)
+		return nil
 	}
-	// Split and slice.
-	lines := strings.Split(src, "\n")
-	start := m.LineStart - 1
-	end := m.LineEnd
-	if start >= len(lines) {
-		return fmt.Sprintf("%s (%s)\n", m.FQN, m.Path), nil
+	if res.Skipped > 0 {
+		fmt.Fprintf(w, "Skipped %d node(s) whose source could not be read.\n", res.Skipped)
 	}
-	if end > len(lines) {
-		end = len(lines)
-	}
-	// Prefix with FQN for embedding context.
-	body := strings.Join(lines[start:end], "\n")
-	return fmt.Sprintf("// %s\n%s\n", m.FQN, body), nil
+
+	total, _ := store.CountEmbeddings(cmd.Context(), res.Model)
+	fmt.Fprintf(w, "Done. %d embeddings total for model %q (elapsed %s).\n", total, res.Model, time.Since(start).Round(time.Millisecond))
+	return nil
 }

@@ -30,11 +30,30 @@ memory:
 
 Budget split: orchestra 35%, session 25%, repo 30%, global remainder — in hybrid the global share is folded into repo rather than wasted, so more recent `agent.md` entries fit. Entries are injected **recent-first**. `memory_read` layer `all` returns the full eager set whatever the mode, so nothing hybrid skips is unreachable.
 
+## Embeddings (`embed:`)
+
+```yaml
+embed:
+  provider: lmstudio        # named provider for api_base / api_key
+  model: nomic-embed-text   # required — without it semantic_search is not offered at all
+  auto_index: true          # default when model is set; false for paid endpoints
+  batch_size: 32
+```
+
+Setting `embed.provider` without `embed.model` configures nothing: `semantic_search`
+is registered only when a model is present. Orchestra warns about that pairing at
+startup instead of leaving the tool silently missing.
+
+`auto_index` builds the index in the background at core start, chained after the
+CKG scan (there is nothing to embed until the graph has nodes). It is incremental,
+so an unchanged repo costs no requests. `orchestra ckg embed [--rebuild]` runs the
+same pass in the foreground.
+
 ## Tools
 
 - **`memory_write`** — `{ content, scope?: "project"|"session"|<dept> }` — prefix `[pin]` for sticky facts. Dept scope (`engineering`, `frontend@web`, …) appends to `.orchestra/memory/lessons/<dept>.md` (max 3/run, 400 chars, deduped).
 - **`memory_read`** — `{ layer?, path?, max_kb? }` — list sources or read a layer (`orchestra|session|repo|lessons|global|all`)
-- **`memory_search`** — `{ query, limit? }` — hybrid search across memory layers (substring always; when `embed.model` is set, semantic re-ranking via shared embed client)
+- **`memory_search`** — `{ query, limit? }` — hybrid search across memory layers (substring always; when `embed.model` is set, semantic re-ranking via shared embed client). When ranking was configured and the endpoint fails, the response carries `degraded` saying so rather than passing substring hits off as semantic ones.
 - **`lesson_promote`** — `{ dept, note?, source? }` — Dept/Orchestra Lead only: draft local playbook overlay from last pattern lesson (`.orchestra/playbooks/local/<dept>.md`, `decision_ref: PENDING:…`)
 - **`playbook_promote`** — `{ dept, promotion_ref? }` — merge approved local overlay into L2 `.orchestra/playbooks/<dept>.md`; `promotion_ref` optional — defaults to overlay `decision_ref` (single User approval in `decisions.md`). Local overlay file removed after merge.
 

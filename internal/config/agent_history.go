@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // ResolvedToolDigestBytes returns max raw tool output kept in history (0 = disabled).
 func (a AgentConfig) ResolvedToolDigestBytes() int {
 	if a.ToolDigestKB < 0 {
@@ -136,6 +138,25 @@ func (a AgentConfig) ResolvedTurnDigestEveryN() int {
 		return 0
 	}
 	return *a.TurnDigestEveryN
+}
+
+// ResolvedAutoIndex reports whether the embedding index is built in the
+// background at core start.
+//
+// Defaults to on once a model is configured: naming an embedding model is
+// already the opt-in, and an index that is only built when someone remembers
+// `orchestra ckg embed` is an index that stays empty — which makes
+// semantic_search look broken rather than unprepared. Indexing is incremental,
+// so an unchanged repo costs nothing; set false for a paid endpoint where even
+// the first pass is unwelcome.
+func (e EmbedConfig) ResolvedAutoIndex() bool {
+	if strings.TrimSpace(e.Model) == "" {
+		return false
+	}
+	if e.AutoIndex == nil {
+		return true
+	}
+	return *e.AutoIndex
 }
 
 // ResolvedSemanticAutoExplore reports whether semantic_search auto-runs explore on top hits.

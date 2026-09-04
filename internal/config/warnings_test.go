@@ -49,6 +49,33 @@ func TestWarnings_SilentWhenEmbedAbsent(t *testing.T) {
 	}
 }
 
+func TestResolvedAutoIndex_OnByDefaultWhenModelConfigured(t *testing.T) {
+	emb := EmbedConfig{Model: "nomic-embed-text"}
+
+	// Naming an embedding model is already the opt-in. An index that only
+	// exists after someone remembers a CLI command is an index that stays
+	// empty, and an empty index makes semantic_search look broken.
+	if !emb.ResolvedAutoIndex() {
+		t.Fatal("a configured embedding model must index itself")
+	}
+}
+
+func TestResolvedAutoIndex_OffWithoutModel(t *testing.T) {
+	if (EmbedConfig{}).ResolvedAutoIndex() {
+		t.Fatal("there is nothing to index with when no model is set")
+	}
+}
+
+func TestResolvedAutoIndex_ExplicitFalseWins(t *testing.T) {
+	off := false
+	emb := EmbedConfig{Model: "nomic-embed-text", AutoIndex: &off}
+
+	// Paid embedding endpoints charge per call, so opting out has to work.
+	if emb.ResolvedAutoIndex() {
+		t.Fatal("embed.auto_index: false must disable background indexing")
+	}
+}
+
 func TestWarnings_NilConfigIsSafe(t *testing.T) {
 	var cfg *ProjectConfig
 	if got := cfg.Warnings(); len(got) != 0 {
