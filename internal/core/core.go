@@ -82,6 +82,8 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
+	// stderr only: stdout carries the JSON-RPC framing.
+	cfg.FprintWarnings(os.Stderr)
 
 	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {

@@ -67,6 +67,9 @@ func runLLMPing(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	// llm-ping is the "is my setup right?" command, so it is the one place a
+	// config warning is most likely to be read.
+	cfg.FprintWarnings(os.Stderr)
 
 	// Create LLM client (use test client if set, otherwise create real client)
 	var llmClient llm.Client

@@ -120,6 +120,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
 	}
+	cfg.FprintWarnings(os.Stderr)
 
 	if wt := strings.TrimSpace(applyWorktree); wt != "" {
 		wtPath, wtErr := git.ResolveManagedWorktree(cfg.ProjectRoot, wt)

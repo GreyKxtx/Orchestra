@@ -43,6 +43,10 @@ type MemorySearchHit struct {
 
 type MemorySearchResponse struct {
 	Hits []MemorySearchHit `json:"hits"`
+	// Degraded explains why these are plain substring matches when semantic
+	// ranking was configured and then failed. Empty when embeddings are not
+	// configured at all (nothing was promised) or when ranking worked.
+	Degraded string `json:"degraded,omitempty"`
 }
 
 func (c *Client) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*MemoryWriteResponse, error) {
@@ -92,8 +96,16 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 	}
 	store := c.memoryStore()
 	embCfg := c.embedConfig()
+	var degraded string
 	if strings.TrimSpace(embCfg.Model) != "" {
-		if hits, err := memory.SemanticSearch(ctx, store, c.Root, q, limit, embed.New(embCfg)); err == nil && len(hits) > 0 {
+		hits, err := memory.SemanticSearch(ctx, store, c.Root, q, limit, embed.New(embCfg))
+		switch {
+		case err != nil:
+			// Configuring embed.model promises semantic ranking. Answering with
+			// substring matches anyway and saying nothing is how a dead
+			// embedding endpoint stays invisible for an entire field run.
+			degraded = fmt.Sprintf("semantic ranking unavailable (%v) — results below are substring matches", err)
+		case len(hits) > 0:
 			out := make([]MemorySearchHit, 0, len(hits))
 			for _, h := range hits {
 				out = append(out, MemorySearchHit{Layer: h.Layer, Snippet: h.Snippet})
@@ -136,7 +148,7 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 			break
 		}
 	}
-	return &MemorySearchResponse{Hits: hits}, nil
+	return &MemorySearchResponse{Hits: hits, Degraded: degraded}, nil
 }
 
 func (c *Client) memoryStore() *memory.Store {

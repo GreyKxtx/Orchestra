@@ -97,6 +97,17 @@ func (c *Client) SemanticSearch(ctx context.Context, req SemanticSearchRequest) 
 		}
 		out.Hits = append(out.Hits, hit)
 	}
+	if len(out.Hits) == 0 {
+		// Zero hits reads as "nothing matches your query". When the index was
+		// simply never built it means the opposite — nothing has been indexed
+		// yet — and embeddings are only ever written by an explicit command,
+		// so without this the tool looks permanently broken.
+		if n, cErr := snap.Store.CountEmbeddings(ctx, client.Model()); cErr == nil && n == 0 {
+			out.NextStep = fmt.Sprintf(
+				"no embeddings indexed for model %q — run `orchestra ckg embed` in this workspace, then retry. Until then use grep / explore / repo_map.",
+				client.Model())
+		}
+	}
 	if c.EmbedCfg.ResolvedSemanticAutoExplore() {
 		c.enrichSemanticSearchWithExplore(ctx, out)
 	}
