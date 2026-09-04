@@ -149,7 +149,9 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 
 **Skills / workflows.** `.orchestra/skills/*.md` с frontmatter (`tools/model/provider/completion_markers`), три источника (project > user > packs), `$ARGUMENTS`, `@refs/`, `skill_invoke`, 24 примера; 12 YAML-workflow (DAG стадий с `{stage.output}`). Нет slash-команд и совместимости с `CLAUDE.md`/`AGENTS.md`. **4/5.**
 
-**Открытые долги из `pipeline-issues-audit.md`:** `TaskRunner.tasks` не вычищает завершённые записи (утечка в долгих сессиях); `agent.run` не возвращает todos; комментарий обещает нормализацию алиасов инструментов, которой нет; `plan_enter` — мёртвый stub; описания ~60 инструментов (`internal/tools/*/registry.go`) и CLI-help — на русском, притом что сами промпты с `145753e` полностью английские: один ход по-прежнему смешивает языки между system prompt и tool schema.
+**Про «открытые долги» из `pipeline-issues-audit.md`.** Тот документ перечисляет четыре незакрытых пункта, но это его собственный текст, а не состояние кода: сверка с `34b5324` показывает, что все четыре уже закрыты. `TaskRunner.removeTask` вызывается из `Wait` (`tasks.go:790,818`) — утечки нет; `AgentRunResult.Todos` объявлен и заполняется (`core_agent.go:79,203`); `NormalizeToolName` существует с таблицей алиасов и тестом (`digest/names.go:21`, `tool_dispatch_test.go:13`); `plan_enter` убран из всех tool-поверхностей (`registry.go:116`) и остался только legacy-обработчик для старых вызовов. Урок общего характера: аудит-документы стареют быстрее кода, и «открыто» в них надо перепроверять.
+
+**Что действительно остаётся:** описания ~60 инструментов (`internal/tools/*/registry.go`) и CLI-help на русском, притом что сами промпты с `145753e` полностью английские — один ход смешивает языки между system prompt и tool schema. Плюс мелочь того же рода: текст legacy-заглушки `plan_enter` (`tool_dispatch.go:523`) тоже русский.
 
 ---
 
@@ -248,7 +250,7 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 | 13 | Глобальный `~/.orchestra/config.yml` (провайдеры, ключи, tiers) | Каждый проект настраивается с нуля |
 | 14 | Проброс `cache_control` для `anthropic/*` на OpenAI-compatible пути (OpenRouter) — стабильный префикс и счётчики cached-токенов уже есть (`5371e4c`, `34b5324`), не хватает только breakpoint'ов; плюс предупреждение о стоимости при >N токенов/ход | $2.18 за 5-минутный ход; OpenRouter кэширует Anthropic-модели только с явными маркерами |
 | 15 | Английские описания инструментов (`internal/tools/*/registry.go`) и CLI-help; английский README. Промпты уже переведены (`145753e`) | Один ход сейчас смешивает языки между system prompt и tool schema |
-| 16 | `TaskRunner` eviction/TTL; todos в `agent.run` результате; VS Code: селектор orchestra-режима | Открытые долги аудита |
+| 16 | VS Code: селектор orchestra-режима | Единственный незакрытый пункт из списка долгов аудита — остальные три (TaskRunner eviction, todos в `agent.run`, нормализация алиасов) закрыты ещё в августе, см. §4 |
 
 ### P2 — квартал
 | # | Действие |
