@@ -86,15 +86,15 @@ func FormatGoFileRedirect(relSlash, hash string, syms []GoSymbol) string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("⚠️  Чтение .go файлов через read неэффективно — файл может быть тысячи строк.\n")
-	sb.WriteString("Используй explore() для чтения кода. file_hash ниже — для патчей.\n\n")
+	sb.WriteString("Reading a .go file with read is wasteful — the file may be thousands of lines.\n")
+	sb.WriteString("Use explore() to read the code. The file_hash below is for patching.\n\n")
 	sb.WriteString("file_hash: " + hash + "\n\n")
-	sb.WriteString("Символы в " + relSlash + ":\n")
+	sb.WriteString("Symbols in " + relSlash + ":\n")
 	for _, s := range syms {
-		sb.WriteString(fmt.Sprintf("  • %s (%s, строки %d-%d) → explore(\"%s\")\n",
+		sb.WriteString(fmt.Sprintf("  • %s (%s, lines %d-%d) → explore(\"%s\")\n",
 			s.ShortName, s.Kind, s.LineStart, s.LineEnd, s.ShortName))
 	}
-	sb.WriteString("\nЕсли нужен конкретный кусок кода для патча — вызови explore(\"ИмяСимвола\").\n")
+	sb.WriteString("\nFor the exact code of one symbol, call explore(\"SymbolName\").\n")
 	return sb.String()
 }
 

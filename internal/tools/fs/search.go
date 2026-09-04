@@ -154,21 +154,16 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 // FormatSearchResults renders grep output as human-readable text.
 func FormatSearchResults(query string, resp *SearchTextResponse) string {
 	if resp == nil || len(resp.Matches) == 0 {
-		return fmt.Sprintf("Совпадений для %q в проекте не найдено (исчерпывающий поиск).", query)
+		return fmt.Sprintf("No matches for %q anywhere in the project (exhaustive search).", query)
 	}
 
 	var sb strings.Builder
 	n := len(resp.Matches)
-	sb.WriteString(fmt.Sprintf("Найдено %d совпадени", n))
-	switch {
-	case n == 1:
-		sb.WriteString("е")
-	case n < 5:
-		sb.WriteString("я")
-	default:
-		sb.WriteString("й")
+	sb.WriteString(fmt.Sprintf("Found %d match", n))
+	if n != 1 {
+		sb.WriteString("es")
 	}
-	sb.WriteString(fmt.Sprintf(" для %q (исчерпывающий поиск по всему проекту):\n", query))
+	sb.WriteString(fmt.Sprintf(" for %q (exhaustive search across the project):\n", query))
 
 	for _, m := range resp.Matches {
 		sb.WriteString("\n")
@@ -181,7 +176,7 @@ func FormatSearchResults(query string, resp *SearchTextResponse) string {
 		}
 
 		if fqn != "" {
-			sb.WriteString(fmt.Sprintf("%s:%d  [в: %s]  %s\n", m.Path, m.Line, fqn, kind))
+			sb.WriteString(fmt.Sprintf("%s:%d  [in: %s]  %s\n", m.Path, m.Line, fqn, kind))
 		} else {
 			sb.WriteString(fmt.Sprintf("%s:%d  %s\n", m.Path, m.Line, kind))
 		}
@@ -200,15 +195,15 @@ func classifyMatch(filePath, lineText, query, symbolFQN string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {
 	case ".md", ".txt", ".rst", ".adoc", ".json", ".yaml", ".yml", ".toml":
-		return "[документация/конфиг]"
+		return "[docs/config]"
 	}
 
 	trimmed := strings.TrimSpace(lineText)
 	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
-		return "[комментарий]"
+		return "[comment]"
 	}
 	if strings.Contains(trimmed, "func ") && strings.Contains(trimmed, query) {
-		return "[определение]"
+		return "[definition]"
 	}
 	if symbolFQN != "" {
 		lastSeg := symbolFQN
@@ -216,10 +211,10 @@ func classifyMatch(filePath, lineText, query, symbolFQN string) string {
 			lastSeg = symbolFQN[idx+1:]
 		}
 		if strings.HasSuffix(lastSeg, "."+query) || lastSeg == query {
-			return "[тело определения]"
+			return "[definition body]"
 		}
 	}
-	return "[вызов]"
+	return "[call site]"
 }
 
 func searchInSingleFile(filePath string, content string, query string, queryLower string, opts search.Options) []search.Match {

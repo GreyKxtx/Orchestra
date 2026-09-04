@@ -10,7 +10,7 @@ func ToolFSList() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "ls",
-			Description: "Список файлов в workspace (с exclude правилами).",
+			Description: "List files in the workspace, honouring exclude rules.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -33,7 +33,7 @@ func ToolFSRead() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "read",
-			Description: "Читает файл в workspace и возвращает content+sha256 (file_hash). Содержимое возвращается с префиксами номеров строк (`1: строка`) — только для ориентации. Префиксы не входят в файл: не включай их в поле `search` при редактировании и не пиши их в content при записи. При усечении (truncated=true) нумеруются только вернувшиеся строки.",
+			Description: "Read a file in the workspace; returns content plus its sha256 (file_hash). Lines come prefixed with numbers (`1: text`) for orientation only. The prefixes are not part of the file: never include them in `search` when editing, or in `content` when writing. When truncated=true, only the returned lines are numbered.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -52,7 +52,7 @@ func ToolFSGlob() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "glob",
-			Description: "Поиск файлов по glob-паттерну (поддерживает ** для рекурсивного поиска).",
+			Description: "Find files by glob pattern (** matches recursively).",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -73,7 +73,7 @@ func ToolFSWrite() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "write",
-			Description: "Атомарная запись файла (создание или перезапись). Для создания нового файла используй must_not_exist=true. Для перезаписи — file_hash текущей версии (из read). Контент пишется как есть — не включай префиксы номеров строк из read.",
+			Description: "Write a file atomically (create or overwrite). To create a new file pass must_not_exist=true; to overwrite, pass the file_hash of the version you read. Content is written verbatim — do not include the line-number prefixes that read adds.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -95,7 +95,7 @@ func ToolFSEdit() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "edit",
-			Description: "Точечная замена в файле (search → replace). Строка поиска должна быть уникальна в файле. При неоднозначности — AmbiguousMatch; если не найдена — StaleContent. file_hash рекомендуется для защиты от гонок. Поле `search` должно содержать точный текст файла без префиксов номеров строк.",
+			Description: "Replace one exact region of a file (search → replace). The search string must be unique in the file: more than one match returns AmbiguousMatch, none returns StaleContent. Pass file_hash to guard against a concurrent change. `search` must be the file's exact text, without the line-number prefixes read adds.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -118,7 +118,7 @@ func ToolSearchText() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "grep",
-			Description: "Текстовый поиск по проекту. Возвращает исчерпывающий список всех совпадений — если показано N результатов, других нет. Каждый матч в .go файле содержит поле [в: Receiver.Method] — это метод/функция где найдена строка. Не повторяй запрос если результат уже получен.",
+			Description: "Text search across the project. The result is exhaustive: if N matches are shown, there are no others. Matches in .go files carry [in: Receiver.Method] naming the enclosing function. Do not repeat a search you already have the result of.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -148,15 +148,15 @@ func ToolDiffPreview() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "diff.preview",
-			Description: "Предварительный просмотр изменений: применяет search→replace в памяти и возвращает unified diff без записи на диск. Используй перед edit чтобы убедиться что замена правильная.",
+			Description: "Preview a change: applies search→replace in memory and returns a unified diff without touching disk. Use it before edit to confirm the replacement is right.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["path", "search", "replace"],
   "properties": {
-    "path":    { "type": "string", "minLength": 1, "description": "Путь к файлу относительно workspace root" },
-    "search":  { "type": "string", "minLength": 1, "description": "Текст для поиска (как в edit)" },
-    "replace": { "type": "string", "description": "Текст замены" }
+    "path":    { "type": "string", "minLength": 1, "description": "File path relative to the workspace root" },
+    "search":  { "type": "string", "minLength": 1, "description": "Text to search for (same rules as edit)" },
+    "replace": { "type": "string", "description": "Replacement text" }
   }
 }`),
 		},
@@ -168,14 +168,14 @@ func ToolFSDelete() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "fs.delete",
-			Description: "Удалить файл или директорию по workspace-relative пути. Для непустых директорий требуется recursive=true.",
+			Description: "Delete a file or directory by workspace-relative path. A non-empty directory requires recursive=true.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["path"],
   "properties": {
-    "path":      { "type": "string", "minLength": 1, "description": "Workspace-relative путь для удаления." },
-    "recursive": { "type": "boolean", "description": "Рекурсивно удалить непустую директорию. По умолчанию false." }
+    "path":      { "type": "string", "minLength": 1, "description": "Workspace-relative path to delete." },
+    "recursive": { "type": "boolean", "description": "Delete a non-empty directory recursively. Defaults to false." }
   }
 }`),
 		},
@@ -187,14 +187,14 @@ func ToolFSRename() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "fs.rename",
-			Description: "Переместить или переименовать файл/директорию внутри workspace. Родительские директории new_path создаются автоматически.",
+			Description: "Move or rename a file or directory inside the workspace. Parent directories of new_path are created automatically.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["path", "new_path"],
   "properties": {
-    "path":     { "type": "string", "minLength": 1, "description": "Workspace-relative путь источника." },
-    "new_path": { "type": "string", "minLength": 1, "description": "Workspace-relative путь назначения." }
+    "path":     { "type": "string", "minLength": 1, "description": "Workspace-relative source path." },
+    "new_path": { "type": "string", "minLength": 1, "description": "Workspace-relative destination path." }
   }
 }`),
 		},
@@ -206,7 +206,7 @@ func ToolASTRename() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "ast_rename",
-			Description: "AST-aware rename идентификатора в одном файле через tree-sitter. Пропускает строки/комментарии/подстроки. Поддерживает все языки, которые есть в CKG (go/ts/py/rs/java/...). Маршрутизируется через ту же staging/file_hash логику, что fs.write. Когда нужно — используй вместо edit для имён, которые встречаются и как подстроки.",
+			Description: "AST-aware rename of an identifier within one file, via tree-sitter. Skips string literals, comments and substring hits. Works for every language the CKG parses (go/ts/py/rs/java/...). Goes through the same staging and file_hash path as write. Prefer it over edit for names that also occur as substrings.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

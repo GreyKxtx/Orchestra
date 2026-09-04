@@ -11,7 +11,7 @@ func ToolExecRun() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "bash",
-			Description: "Запуск команды внутри workspace (sandboxed: timeout/output limit). Установи run_in_background=true для длительных задач (build/test/dev-server) — вернётся bg_id, который можно опрашивать через bash.output и убивать через bash.kill.",
+			Description: "Run a command inside the workspace, sandboxed by a timeout and an output limit. For long-running work (build, test, dev server) pass run_in_background=true: it returns a bg_id you can poll with bash.output and stop with bash.kill.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -35,7 +35,7 @@ func ToolExecBashOutput() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "bash.output",
-			Description: "Возвращает накопленный с прошлого опроса stdout/stderr и статус (running/done/killed/timed_out) фонового процесса. Установи peek=true чтобы прочитать не сдвигая курсор.",
+			Description: "Return the stdout/stderr a background process produced since the last poll, plus its status (running/done/killed/timed_out). Pass peek=true to read without advancing the cursor.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -55,7 +55,7 @@ func ToolExecBashKill() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "bash.kill",
-			Description: "Терминирует фоновый процесс по bg_id. Уже завершённый процесс — no-op с актуальным статусом.",
+			Description: "Terminate a background process by bg_id. A process that already finished is a no-op returning its final status.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

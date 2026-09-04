@@ -89,7 +89,7 @@ func ToolTaskWait() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_wait",
-			Description: "Подождать завершения дочерней задачи и получить её результат.",
+			Description: "Wait for a child task to finish and collect its result.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -108,7 +108,7 @@ func ToolTaskCancel() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_cancel",
-			Description: "Отменить дочернюю задачу.",
+			Description: "Cancel a child task.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -126,7 +126,7 @@ func ToolTaskResult() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_result",
-			Description: "Сообщить результат исследования родительскому агенту. Вызови когда закончил анализ.",
+			Description: "Report your findings to the parent agent. Call it once the investigation is done.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -144,7 +144,7 @@ func ToolPlanEnter() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "plan_enter",
-			Description: "Переключиться в режим ПЛАНИРОВАНИЯ (read-only). Используй для детального анализа задачи перед внесением изменений.",
+			Description: "Switch to PLAN mode (read-only). Use it to analyse a task in depth before changing anything.",
 			Parameters:  toolschema.MustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
 		},
 	}
@@ -155,7 +155,7 @@ func ToolPlanExit() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "plan_exit",
-			Description: "Завершить планирование и запросить переключение в build-режим. Вызывай только когда план в {{PLAN_PATH}} полностью готов.",
+			Description: "Finish planning and request a switch to build mode. Call it only once the plan in {{PLAN_PATH}} is complete.",
 			Parameters:  toolschema.MustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
 		},
 	}

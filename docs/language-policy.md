@@ -7,7 +7,7 @@ H5 in architecture audit asked: which language should the codebase speak?
 - **Code comments, commit messages, internal docs**: English (already the case).
 - **LLM-facing agent prompts and error messages** (system prompts, denial hints, plan/build mode messages, dedup STOP messages, LSP error injections): **English**. Translated in commit `<this commit>`. Rationale: English is the lingua franca of code and chat-tuned LLMs are most reliable in English. Russian-only strings hurt non-Russian operators reading logs.
 - **CLI user-facing strings** (cobra command Short/Long, --help, flag descriptions, "Loading models...", "Saved!"): **kept Russian for now**. These are USER UX, not LLM context. The audience is the operator at the terminal; if the operator base expands beyond Russian-speakers, switch then. Adding i18n machinery would over-engineer the current single-locale case.
-- **Tool descriptions in `internal/tools/registry.go`**: **kept Russian for now**. These are read by the LLM, but the project default model (qwen3.6-27b) is multilingual; translation would touch 60+ description strings with uncertain quality gain. Revisit when default model changes.
+- **Tool descriptions and tool output**: **English** (revised — see below).
 
 ## Going forward
 
@@ -22,5 +22,25 @@ Files touched in the H5 initial pass:
 - `internal/agent/error_format_test.go` — assertions updated to match new strings.
 
 Deferred (separate work item):
-- `internal/tools/registry.go` ~60 tool descriptions.
 - `internal/ckg/provider.go` query/symbol/package response strings.
+
+## Revision: tool descriptions are English after all
+
+The original decision deferred ~60 tool descriptions on the grounds that the
+default model is multilingual and the gain was uncertain. Two things changed:
+
+1. Every prompt file was translated to English, with a test that fails on any
+   Cyrillic. That left a single turn changing language between the system
+   prompt and the tool schema sitting next to it.
+2. The schemas turned out to be the larger half of the wire — roughly 32 KB of
+   tool definitions against a ~2 KB system prompt for a cloud family — so the
+   tokenisation penalty on Cyrillic lands on every request of every run, not
+   just on the prompt.
+
+All 58 tool definitions and the tool output the model reads back (grep results,
+the .go read redirect) are now English, pinned by
+`TestToolDefinitions_AreEnglish` in `internal/tools`.
+
+Still Russian by policy, unchanged: CLI help, and the interactive `question`
+prompts in `internal/tools/session/question.go` — those are read by the
+operator at the terminal, not by the model.

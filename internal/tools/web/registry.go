@@ -10,14 +10,14 @@ func ToolWebFetch() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "webfetch",
-			Description: "Загрузить URL и вернуть текстовое содержимое страницы. Поддерживаются только http/https. Приватные, loopback и link-local адреса заблокированы.",
+			Description: "Fetch a URL and return the page as text. Only http/https are allowed; private, loopback and link-local addresses are blocked.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["url"],
   "properties": {
-    "url": { "type": "string", "minLength": 1, "description": "Полный URL (http:// или https://)" },
-    "max_bytes": { "type": "integer", "minimum": 0, "description": "Максимальный размер ответа в байтах" }
+    "url": { "type": "string", "minLength": 1, "description": "Full URL (http:// or https://)" },
+    "max_bytes": { "type": "integer", "minimum": 0, "description": "Maximum response size in bytes" }
   }
 }`),
 		},
@@ -29,14 +29,14 @@ func ToolWebSearch() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "websearch",
-			Description: "Поиск в интернете. Возвращает список результатов с заголовком, URL и сниппетом. Требует настройки web.search.provider и web.search.api_key в .orchestra.yml.",
+			Description: "Search the web. Returns results with a title, URL and snippet. Requires web.search.provider and web.search.api_key in .orchestra.yml.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["query"],
   "properties": {
-    "query":       { "type": "string", "minLength": 1, "description": "Поисковый запрос." },
-    "max_results": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Максимум результатов. По умолчанию из конфига (5)." }
+    "query":       { "type": "string", "minLength": 1, "description": "The search query." },
+    "max_results": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Maximum results to return. Defaults to the configured value (5)." }
   }
 }`),
 		},
@@ -47,7 +47,7 @@ func ToolBrowserNavigate() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.navigate",
-			Description: "Открыть URL в браузере и дождаться загрузки страницы.",
+			Description: "Open a URL in the browser and wait for the page to load.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -66,7 +66,7 @@ func ToolBrowserSnapshot() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.snapshot",
-			Description: "Вернуть accessibility-дерево текущей страницы (структурированный текст с ref-идентификаторами для кликов).",
+			Description: "Return the current page's accessibility tree: structured text carrying the ref ids you click by.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -81,7 +81,7 @@ func ToolBrowserScreenshot() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.screenshot",
-			Description: "Снять скриншот текущей страницы (base64 PNG).",
+			Description: "Take a screenshot of the current page (base64 PNG).",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -98,7 +98,7 @@ func ToolBrowserClick() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.click",
-			Description: "Нажать на элемент по имени или ref из snapshot.",
+			Description: "Click an element, addressed by name or by a ref from snapshot.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -116,7 +116,7 @@ func ToolBrowserType() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.type",
-			Description: "Ввести текст в поле ввода (по имени или ref из snapshot).",
+			Description: "Type text into an input, addressed by name or by a ref from snapshot.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -137,7 +137,7 @@ func ToolBrowserFill() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.fill",
-			Description: "Заполнить несколько полей формы за один вызов.",
+			Description: "Fill several form fields in one call.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -167,7 +167,7 @@ func ToolBrowserSelect() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.select",
-			Description: "Выбрать опцию в выпадающем списке <select>.",
+			Description: "Choose an option in a <select> dropdown.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -187,7 +187,7 @@ func ToolBrowserEval() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.eval",
-			Description: "Выполнить JavaScript в контексте страницы. Требует allow_eval: true в конфигурации.",
+			Description: "Evaluate JavaScript in the page context. Requires allow_eval: true in the config.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -205,7 +205,7 @@ func ToolBrowserWait() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.wait",
-			Description: "Ждать условие: совпадение URL, появление CSS-селектора или текста на странице.",
+			Description: "Wait for a condition: a URL match, a CSS selector appearing, or text appearing on the page.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -225,7 +225,7 @@ func ToolBrowserClose() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.close",
-			Description: "Закрыть текущую страницу (браузер остаётся запущенным для повторного использования).",
+			Description: "Close the current page. The browser stays running for reuse.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

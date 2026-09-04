@@ -10,7 +10,7 @@ func ToolCodeSymbols() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "symbols",
-			Description: "Outline символов файла. Порядок: LSP document symbols → tree-sitter (Go, при CGO) → regex (Go). Для не-Go без LSP — пустой список.",
+			Description: "Outline of a file's symbols. Resolution order: LSP document symbols → tree-sitter (Go, when built with CGO) → regex (Go). Non-Go files with no LSP return an empty list.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -28,7 +28,7 @@ func ToolExploreCodebase() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "explore",
-			Description: "Три уровня глубины — выбираются автоматически по форме запроса:\n• Пакет: explore(\"internal/agent\") → все типы, методы, функции без кода тел\n• Тип: explore(\"Agent\") → определение struct/interface + полный список методов\n• Символ: explore(\"Agent.Run\") → полный код метода/функции + multi-hop subgraph (callers/callees)\nОпционально: depth (1..4, default 2), direction (downstream|upstream|both).\nДля метода пиши 'Agent.Run', не просто 'Run'. При неоднозначности — используй FQN из ответа.",
+			Description: "Three levels of detail, chosen automatically from the shape of the query:\n• Package: explore(\"internal/agent\") → every type, method and function, without bodies\n• Type: explore(\"Agent\") → the struct/interface definition plus its full method list\n• Symbol: explore(\"Agent.Run\") → the full body plus a multi-hop subgraph of callers and callees\nOptional: depth (1..4, default 2), direction (downstream|upstream|both).\nFor a method write 'Agent.Run', not just 'Run'. If the name is ambiguous, re-query with the FQN from the response.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -36,18 +36,18 @@ func ToolExploreCodebase() llm.ToolDef {
   "properties": {
     "symbol_name": {
       "type": "string",
-      "description": "Пакет: 'internal/agent'. Тип: 'Agent'. Метод: 'Agent.Run'. Функция: 'ResolveExternalPatches'. FQN: 'internal/agent.Agent.Run'."
+      "description": "Package: 'internal/agent'. Type: 'Agent'. Method: 'Agent.Run'. Function: 'ResolveExternalPatches'. FQN: 'internal/agent.Agent.Run'."
     },
     "depth": {
       "type": "integer",
       "minimum": 1,
       "maximum": 4,
-      "description": "depth: 1..4 (глубина поиска, default 2)"
+      "description": "How many hops to traverse, 1..4 (default 2)"
     },
     "direction": {
       "type": "string",
       "enum": ["downstream", "upstream", "both", "callees", "callers"],
-      "description": "direction: downstream (кого вызывает / callees) | upstream (кто вызывает / callers) | both"
+      "description": "downstream (what it calls / callees) | upstream (what calls it / callers) | both"
     }
   }
 }`),
@@ -60,7 +60,7 @@ func ToolSemanticSearch() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "semantic_search",
-			Description: "Поиск по смыслу: эмбеддит query и возвращает top-K CKG-узлов (функции/методы/типы) по cosine similarity. Используй когда text-поиск (grep) не находит — например, ищешь концепт без точного имени. Требует индекса: orchestra ckg embed.",
+			Description: "Search by meaning: embeds the query and returns the top-K CKG nodes (functions, methods, types) by cosine similarity. Use it when grep fails because you are after a concept rather than an exact name. Requires an index — run `orchestra ckg embed`.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -68,7 +68,7 @@ func ToolSemanticSearch() llm.ToolDef {
   "properties": {
     "query":   { "type": "string", "minLength": 1 },
     "top_k":   { "type": "integer", "minimum": 1, "maximum": 50 },
-    "snippet": { "type": "boolean", "description": "Включить фрагмент кода (первые 40 строк) каждого узла" }
+    "snippet": { "type": "boolean", "description": "Include a code snippet (first 40 lines) for each node" }
   }
 }`),
 		},
@@ -81,7 +81,7 @@ func ToolRepoMap() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "repo_map",
-			Description: "Быстрая карта репозитория: per-file outline (функции/типы/методы) по всем поддерживаемым языкам. Не требует индекса. Полезно для первичной ориентации перед ls/glob. budget_bytes ограничивает размер вывода (default 8192).",
+			Description: "Fast repository map: a per-file outline of functions, types and methods across every supported language. Needs no index. Use it to orient yourself before reaching for ls or glob. budget_bytes caps the output size (default 8192).",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
