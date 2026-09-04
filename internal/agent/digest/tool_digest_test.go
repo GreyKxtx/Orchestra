@@ -79,6 +79,20 @@ func TestAutoMemoryNote_Explore(t *testing.T) {
 	}
 }
 
+func TestAutoMemoryNote_GrepMatchCountIsNotAFact(t *testing.T) {
+	in := json.RawMessage(`{"query":"className"}`)
+
+	note := AutoMemoryNote("grep", in, "[digest]\n- a.jsx:1\n- b.jsx:2\n")
+
+	// A match count is a property of one search, not a durable fact about the
+	// project. Writing these filled 5 of 6 session memory files in the field
+	// run with lines like `grep "className=" — 31 match lines in digest`, and
+	// that noise is injected back as [session] memory on every later step.
+	if note != "" {
+		t.Fatalf("grep must not write session memory, got %q", note)
+	}
+}
+
 func TestDigestToolOutput_Grep(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("Найдено 50 совпадений для \"foo\":\n\n")

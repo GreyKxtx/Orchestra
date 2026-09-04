@@ -281,7 +281,14 @@ func digestSubagentTask(raw []byte, budget int) string {
 	return agentformat.Truncate(b.String(), budget)
 }
 
-// AutoMemoryNote builds a one-line session note after explore/grep.
+// AutoMemoryNote builds a one-line session note for a tool result worth
+// remembering. Only facts that stay true after the call belong here: session
+// memory is injected back into later prompts, so anything transient is a tax
+// on every remaining step.
+//
+// grep is deliberately excluded. A match count describes one search, not the
+// project, and it dominated the field run — five of six session memory files
+// held nothing but lines like `grep "className=" — 31 match lines in digest`.
 func AutoMemoryNote(toolName string, input json.RawMessage, digestedOrRaw string) string {
 	switch strings.ToLower(toolName) {
 	case "explore":
@@ -294,19 +301,6 @@ func AutoMemoryNote(toolName string, input json.RawMessage, digestedOrRaw string
 			return fmt.Sprintf("%s @ %s", sym, loc)
 		}
 		return sym + " — " + firstMeaningfulLines(digestedOrRaw, 1, 120)
-	case "grep":
-		q := ParseStringField(input, "query")
-		if q == "" {
-			q = ParseStringField(input, "pattern")
-		}
-		if q == "" {
-			return ""
-		}
-		n := strings.Count(digestedOrRaw, "\n- ")
-		if n == 0 {
-			n = strings.Count(digestedOrRaw, "\n")
-		}
-		return fmt.Sprintf("grep %q — %d match lines in digest", q, n)
 	default:
 		return ""
 	}

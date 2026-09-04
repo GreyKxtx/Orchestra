@@ -24,11 +24,11 @@ memory:
   max_agent_kb: 128     # compact agent.md (keep recent entries)
 ```
 
-- **eager** — full tiered inject every agent step (best when context is tiny and memory is small).
+- **eager** — every layer, every agent step (best when context is tiny and memory is small).
 - **lazy** — minimal ORCHESTRA header + `memory_read` on demand.
-- **hybrid** (default) — ORCHESTRA + session + recent `agent.md` entries; rest via `memory_read`.
+- **hybrid** (default) — ORCHESTRA + session + recent `agent.md` entries. The global layer and any `.orchestra/memory/*.md` beyond `agent.md` stay behind `memory_read`.
 
-Budget split in eager/hybrid: orchestra 35%, session 25%, repo 30%, global remainder. `agent.md` entries are injected **recent-first**.
+Budget split: orchestra 35%, session 25%, repo 30%, global remainder — in hybrid the global share is folded into repo rather than wasted, so more recent `agent.md` entries fit. Entries are injected **recent-first**. `memory_read` layer `all` returns the full eager set whatever the mode, so nothing hybrid skips is unreachable.
 
 ## Tools
 
@@ -69,8 +69,8 @@ Configured under `agent:` and `embed:` in `.orchestra.yml`:
 agent:
   tool_digest_kb: 16
   history_prune_keep_recent: 6
-  auto_session_memory: true
-  auto_summary_memory: false   # ModeSummary → project agent.md after long turns
+  auto_session_memory: true    # explore auto-notes into the session file
+  auto_summary_memory: true    # default; every changing turn → agent.md note
   working_state: true          # rule-based <working_state> (no LLM)
   turn_digest_keep: 3          # last N digests; 0 = off
   turn_digest_every_n: 6       # mid-run micro-summary every N steps; 0 = end only
@@ -78,6 +78,30 @@ agent:
   bytes_per_context_token: 4
   child_max_steps: 24
 ```
+
+### What reaches `agent.md`, and when
+
+After every turn `auto_summary_memory` writes one note to project memory, from
+whichever source is available:
+
+1. **ModeSummary prose** — a short LLM summary, when the endpoint answers and
+   the turn has at least 4 messages of history.
+2. **Turn digest note** — rule-based, no LLM: `goal` / `done` / `files` lifted
+   from the digest the agent already persisted for this turn.
+
+The second path exists because the first is the fragile one. A field run over
+52 sessions left a single durable note: the configured endpoint was down for a
+day (183 `llm_error` events) and every summary call failed quietly to stderr.
+The digest is on disk before the summary is attempted, so an outage no longer
+costs the memory of the run.
+
+A note is written only when the turn **changed** something — `done:` is filled
+from `write` / `edit` / `bash`. Turns that only read, grepped or explored write
+nothing, since `files:` alone would put every look-around turn in `agent.md`.
+
+`explore` still auto-notes into the *session* file. `grep` does not: a match
+count describes one search, not the project, and those lines were most of what
+the session files actually held.
 
 ### Context window and the compaction trigger
 

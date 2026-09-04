@@ -284,14 +284,7 @@ func trimTurnDigestFile(path string, keep int) error {
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(string(data), "\n---\n")
-	var digests []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if strings.Contains(p, "[turn_digest]") {
-			digests = append(digests, p)
-		}
-	}
+	digests := splitPersistedDigests(string(data))
 	if len(digests) <= keep {
 		return nil
 	}
@@ -317,19 +310,7 @@ func FormatRecentTurnDigests(workspaceRoot, sessionID string, keep int) string {
 	if keep > 8 {
 		keep = 8
 	}
-	path := filepath.Join(workspaceRoot, ".orchestra", "memory", "sessions", sessionID+".turns.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	parts := strings.Split(string(data), "\n---\n")
-	var digests []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if strings.Contains(p, "[turn_digest]") {
-			digests = append(digests, p)
-		}
-	}
+	digests := loadTurnDigests(workspaceRoot, sessionID)
 	if len(digests) == 0 {
 		return ""
 	}
