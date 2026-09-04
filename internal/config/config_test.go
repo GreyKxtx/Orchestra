@@ -271,6 +271,22 @@ web:
 	}
 }
 
+func TestConfig_RetiredLanguagesBlockStillParses(t *testing.T) {
+	// languages.enabled was config nothing ever read: it defaulted to ["go"]
+	// while CKG indexed every tree-sitter language regardless, so a JS project
+	// was fully indexed under a config that claimed Go only. The field is gone,
+	// but configs in the wild still carry it and must keep loading.
+	raw := "project_root: .\nlanguages:\n  enabled: [go, python]\nllm:\n  model: m\n"
+
+	var cfg ProjectConfig
+	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("config carrying the retired languages block must still load: %v", err)
+	}
+	if cfg.LLM.Model != "m" {
+		t.Errorf("fields after the retired block must still bind, got model=%q", cfg.LLM.Model)
+	}
+}
+
 func TestFindProvider_InheritsAPIKeyFromLLM(t *testing.T) {
 	cfg := &ProjectConfig{
 		LLM: LLMConfig{

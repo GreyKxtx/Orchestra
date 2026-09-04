@@ -113,11 +113,6 @@ func (e ExecConfig) IsCommandAllowed(cmd string) bool {
 	return false
 }
 
-// LanguagesConfig selects enabled language parsers (vNext).
-type LanguagesConfig struct {
-	Enabled []string `yaml:"enabled"`
-}
-
 // LSPServerConfig configures a single language server process.
 type LSPServerConfig struct {
 	Language    string            `yaml:"language"`
@@ -427,7 +422,6 @@ type ProjectConfig struct {
 	MCP          MCPConfig         `yaml:"mcp"`
 	Web          WebConfig         `yaml:"web"`
 	Browser      BrowserConfig     `yaml:"browser"`
-	Languages    LanguagesConfig   `yaml:"languages"`
 	Permissions  PermissionsConfig `yaml:"permissions,omitempty"`
 	Agents       []AgentDefinition `yaml:"agents,omitempty"`
 	LSP          LSPConfig         `yaml:"lsp,omitempty"`
@@ -744,9 +738,6 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			ViewportHeight: 720,
 			AllowEval:      false,
 		},
-		Languages: LanguagesConfig{
-			Enabled: []string{"go"},
-		},
 	}
 }
 
@@ -899,11 +890,6 @@ func (c *ProjectConfig) applyDefaults() {
 	}
 	if c.Web.MaxContentBytes <= 0 {
 		c.Web.MaxContentBytes = 512 * 1024
-	}
-
-	// Languages defaults
-	if len(c.Languages.Enabled) == 0 {
-		c.Languages.Enabled = []string{"go"}
 	}
 
 	// LLM defaults
