@@ -157,11 +157,21 @@ hooks:
 
 mcp:
   servers:
+    # Локальный сервер — stdio-подпроцесс
     - name: my-server
       command: ["node", "mcp-server.js"]
       env: {API_KEY: "..."}
       disabled: false
+
+    # Удалённый сервер — Streamable HTTP
+    - name: github
+      url: https://api.example.com/mcp
+      bearer_token_env: GITHUB_MCP_TOKEN   # токен читается из окружения, не из конфига
+      headers: {X-Tenant: acme}
+      allowed_tools: ["repo_*"]
 ```
+
+У сервера должно быть задано ровно одно из `command` и `url` — иначе конфиг не загрузится. Plaintext `http://` на не-loopback хост отклоняется (токен ушёл бы по сети открытым); если это внутренняя сеть и вы этого хотите — `allow_insecure_http: true`.
 
 ### Секреты: `.orchestra.local.yml`
 

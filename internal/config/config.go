@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -161,7 +163,20 @@ type MCPServerConfig struct {
 	// Name is the server identifier — tools appear as mcp:<name>:<tool>.
 	Name string `yaml:"name"`
 	// Command is the executable + args to start the MCP server via stdio.
+	// Exactly one of Command and URL must be set.
 	Command []string `yaml:"command"`
+	// URL is the MCP endpoint of a remote server (Streamable HTTP).
+	// Exactly one of Command and URL must be set.
+	URL string `yaml:"url,omitempty"`
+	// BearerTokenEnv names the environment variable holding the bearer token
+	// sent as `Authorization: Bearer …`. Kept out of the config file itself:
+	// .orchestra.yml is committed.
+	BearerTokenEnv string `yaml:"bearer_token_env,omitempty"`
+	// Headers are extra static request headers for a remote server.
+	Headers map[string]string `yaml:"headers,omitempty"`
+	// AllowInsecureHTTP permits a plaintext http:// URL to a non-loopback
+	// host. Off by default — a bearer token over plaintext leaks it.
+	AllowInsecureHTTP bool `yaml:"allow_insecure_http,omitempty"`
 	// Env is additional environment variables (values support ${VAR} expansion).
 	Env map[string]string `yaml:"env,omitempty"`
 	// Disabled skips this server without removing it from the config.
@@ -1035,8 +1050,58 @@ func (c *ProjectConfig) validateMCP() error {
 			return fmt.Errorf("mcp.servers[%d]: duplicate name %q (each MCP server name must be unique within the project)", i, name)
 		}
 		seen[name] = true
+		if err := validateMCPTransport(i, name, srv); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// validateMCPTransport enforces exactly one transport per server and rejects
+// URLs we cannot safely speak to.
+//
+// The "neither" case used to be invisible: the manager skipped every server
+// without a command, so a typo'd key meant the server simply never appeared
+// and nothing reported it.
+func validateMCPTransport(i int, name string, srv MCPServerConfig) error {
+	url := strings.TrimSpace(srv.URL)
+	hasCommand := len(srv.Command) > 0
+
+	switch {
+	case hasCommand && url != "":
+		return fmt.Errorf("mcp.servers[%d] (%q): set either command (stdio) or url (remote), not both", i, name)
+	case !hasCommand && url == "":
+		return fmt.Errorf("mcp.servers[%d] (%q): needs a transport — set command for a local server or url for a remote one", i, name)
+	case url == "":
+		return nil
+	}
+
+	parsed, err := neturl.Parse(url)
+	if err != nil {
+		return fmt.Errorf("mcp.servers[%d] (%q): url is not parseable: %w", i, name, err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if srv.AllowInsecureHTTP || isLoopbackHost(parsed.Hostname()) {
+			return nil
+		}
+		return fmt.Errorf("mcp.servers[%d] (%q): plaintext http to %q would send the bearer token in the clear — use https, or set allow_insecure_http: true if you mean it",
+			i, name, parsed.Host)
+	default:
+		return fmt.Errorf("mcp.servers[%d] (%q): url scheme %q is not supported (http or https)", i, name, parsed.Scheme)
+	}
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // ValidateMCPOnly validates mcp.servers without loading the full config.

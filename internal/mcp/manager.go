@@ -22,9 +22,43 @@ import (
 // from the pre-restart cache, a warning is logged so the operator can
 // notice a server that's silently rotating its surface.
 type Manager struct {
-	mu       sync.Mutex
-	clients  []*Client
-	entries  []*serverSlot
+	mu      sync.Mutex
+	clients []ServerClient
+	entries []*serverSlot
+}
+
+// ServerClient is the surface the Manager drives, satisfied by the stdio
+// Client and by RemoteClient (Streamable HTTP). Keeping the seam here rather
+// than inside Client means the remote transport did not have to touch the
+// working stdio path at all.
+type ServerClient interface {
+	ServerName() string
+	Tools() []MCPTool
+	AllToolNames() []string
+	SetAllowedTools(names []string)
+	Call(ctx context.Context, toolName string, arguments json.RawMessage) (string, error)
+	IsDead() bool
+	StderrTail() string
+	Close() error
+}
+
+var (
+	_ ServerClient = (*Client)(nil)
+	_ ServerClient = (*RemoteClient)(nil)
+)
+
+// startServer connects to one configured server over whichever transport it
+// declares. config.validateMCP has already guaranteed exactly one of them.
+func startServer(ctx context.Context, cfg config.MCPServerConfig, opts StartOptions) (ServerClient, error) {
+	if url := strings.TrimSpace(cfg.URL); url != "" {
+		return StartRemote(ctx, RemoteConfig{
+			Name:           cfg.Name,
+			URL:            url,
+			BearerTokenEnv: cfg.BearerTokenEnv,
+			Headers:        cfg.Headers,
+		}, opts)
+	}
+	return Start(ctx, cfg.Name, cfg.Command, cfg.Env, opts)
 }
 
 type serverSlot struct {
@@ -47,18 +81,25 @@ func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 	m := &Manager{}
 	type startRes struct {
 		idx int
-		c   *Client
+		c   ServerClient
 		err error
 	}
 	var enabled []config.MCPServerConfig
+	var errs []error
 	for _, srv := range cfg.Servers {
-		if srv.Disabled || len(srv.Command) == 0 {
+		if srv.Disabled {
+			continue
+		}
+		// A server declaring neither transport used to be dropped in silence,
+		// so a typo'd key meant the server simply never appeared. Report it.
+		if len(srv.Command) == 0 && strings.TrimSpace(srv.URL) == "" {
+			errs = append(errs, fmt.Errorf("mcp server %q: no transport configured — set command for a local server or url for a remote one", srv.Name))
 			continue
 		}
 		enabled = append(enabled, srv)
 	}
 	if len(enabled) == 0 {
-		return m, nil
+		return m, errs
 	}
 
 	results := make([]startRes, len(enabled))
@@ -73,8 +114,8 @@ func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 			if srv.CallTimeoutS > 0 {
 				opts.CallTimeout = time.Duration(srv.CallTimeoutS) * time.Second
 			}
-			c, err := Start(startCtx, srv.Name, srv.Command, srv.Env, opts)
-			if c != nil && len(srv.AllowedTools) > 0 {
+			c, err := startServer(startCtx, srv, opts)
+			if err == nil && c != nil && len(srv.AllowedTools) > 0 {
 				c.SetAllowedTools(srv.AllowedTools)
 			}
 			results[idx] = startRes{idx: idx, c: c, err: err}
@@ -82,7 +123,6 @@ func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 	}
 	wg.Wait()
 
-	var errs []error
 	for i, r := range results {
 		if r.err != nil {
 			errs = append(errs, fmt.Errorf("mcp server %q: %w", enabled[i].Name, r.err))
@@ -174,7 +214,7 @@ func (m *Manager) Call(ctx context.Context, prefixedName string, input json.RawM
 // server per Manager lifetime so a permanently-broken server doesn't
 // loop forever. On restart, the new tool list is compared with the
 // cached one and a warning is logged on schema drift.
-func (m *Manager) maybeRestart(ctx context.Context, serverName string) (*Client, error) {
+func (m *Manager) maybeRestart(ctx context.Context, serverName string) (ServerClient, error) {
 	m.mu.Lock()
 	var slot *serverSlot
 	var idx int
@@ -206,7 +246,7 @@ func (m *Manager) maybeRestart(ctx context.Context, serverName string) (*Client,
 	if cfg.CallTimeoutS > 0 {
 		opts.CallTimeout = time.Duration(cfg.CallTimeoutS) * time.Second
 	}
-	fresh, err := Start(startCtx, cfg.Name, cfg.Command, cfg.Env, opts)
+	fresh, err := startServer(startCtx, cfg, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +255,7 @@ func (m *Manager) maybeRestart(ctx context.Context, serverName string) (*Client,
 	}
 
 	// Schema drift warning: compare bare tool names of old vs new.
-	if oldClient != nil && !sameToolNames(oldClient.tools, fresh.tools) {
+	if oldClient != nil && !sameToolNames(oldClient.AllToolNames(), fresh.AllToolNames()) {
 		fmt.Fprintf(os.Stderr, "mcp: server %q restarted with different tool list; agents may receive stale cached schemas until next ListToolDefs\n", serverName)
 	}
 
@@ -225,16 +265,16 @@ func (m *Manager) maybeRestart(ctx context.Context, serverName string) (*Client,
 	return fresh, nil
 }
 
-func sameToolNames(a, b []MCPTool) bool {
+func sameToolNames(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	seen := make(map[string]bool, len(a))
-	for _, t := range a {
-		seen[t.Name] = true
+	for _, name := range a {
+		seen[name] = true
 	}
-	for _, t := range b {
-		if !seen[t.Name] {
+	for _, name := range b {
+		if !seen[name] {
 			return false
 		}
 	}
@@ -246,7 +286,7 @@ func IsMCPTool(name string) bool {
 	return strings.HasPrefix(name, "mcp:")
 }
 
-func (m *Manager) findClient(serverName string) *Client {
+func (m *Manager) findClient(serverName string) ServerClient {
 	for _, c := range m.clients {
 		if c.ServerName() == serverName {
 			return c
@@ -281,7 +321,7 @@ func (m *Manager) RuntimeStatuses() []ServerStatus {
 }
 
 // FindClient returns the client for serverName, or nil.
-func (m *Manager) FindClient(serverName string) *Client {
+func (m *Manager) FindClient(serverName string) ServerClient {
 	return m.findClient(serverName)
 }
 

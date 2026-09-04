@@ -1,5 +1,8 @@
 // Package mcp implements a client for the Model Context Protocol (MCP).
-// MCP servers expose tools over JSON-RPC 2.0 via stdio subprocess.
+//
+// Two transports: a local server started as a stdio subprocess (this file),
+// and a remote one over Streamable HTTP (remote.go). Both present the same
+// surface to the Manager.
 package mcp
 
 import (
@@ -10,7 +13,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -187,18 +189,7 @@ func (c *Client) SetAllowedTools(names []string) {
 // toolAllowed reports whether a tool name passes the allowlist (or no
 // allowlist is configured).
 func (c *Client) toolAllowed(name string) bool {
-	if len(c.allowedTools) == 0 {
-		return true
-	}
-	for _, pat := range c.allowedTools {
-		if pat == name {
-			return true
-		}
-		if ok, _ := path.Match(pat, name); ok {
-			return true
-		}
-	}
-	return false
+	return toolNameAllowed(c.allowedTools, name)
 }
 
 // Tools returns the tools advertised by this server, filtered by the
