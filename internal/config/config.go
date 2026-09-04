@@ -744,13 +744,23 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 	}
 }
 
-// Load loads configuration from file. When a .orchestra.local.yml overlay
-// exists next to it, overlay values are deep-merged on top (secrets and
-// personal overrides live there — see local_overlay.go).
+// Load loads configuration from file, layering three sources — lowest first:
+//
+//	~/.orchestra/config.yml         user-wide defaults (see global.go)
+//	<path>                          the shared, committed project config
+//	.orchestra.local.yml next to it machine overrides and secrets
+//
+// Each layer deep-merges over the previous one, so a project states only what
+// differs from the user's defaults.
 func Load(path string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	data, err = mergeGlobalConfig(data)
+	if err != nil {
+		return nil, err
 	}
 
 	data, err = mergeLocalOverlay(path, data)
@@ -812,6 +822,12 @@ func Save(path string, cfg *ProjectConfig) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 	data, err = maskLocalOverlay(path, data)
+	if err != nil {
+		return err
+	}
+	// Same reasoning one layer down: values inherited from ~/.orchestra/config.yml
+	// are owned by that file and must not be written into the committed config.
+	data, err = maskGlobalConfig(path, data)
 	if err != nil {
 		return err
 	}
