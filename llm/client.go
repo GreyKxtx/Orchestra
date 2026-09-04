@@ -59,7 +59,11 @@ type OpenAIClient struct {
 	// supportsJSONSchema: nil = unknown (send when requested; auto-disable on reject);
 	// non-nil bool = explicit config. Mutated under supportsMu when auto-detect trips.
 	supportsJSONSchema *bool
-	supportsMu         sync.Mutex
+	// promptCacheDisabled latches on once an endpoint rejects cache_control,
+	// so the remaining steps of a run stop paying for a retry each. Guarded by
+	// supportsMu alongside supportsJSONSchema — same auto-detect lifecycle.
+	promptCacheDisabled bool
+	supportsMu          sync.Mutex
 }
 
 // newLLMTransport returns an HTTP transport tuned for remote/tunnelled LLM
@@ -729,9 +733,13 @@ type chatCompletionResponse struct {
 // matching mapper (newToolNameMapper) restores them in the response path.
 func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream bool) ([]byte, error) {
 	mapper := newToolNameMapper(req.Tools)
+	msgs := req.Messages
+	if c.promptCacheMarkersEnabled() {
+		msgs = markGatewayPromptCache(msgs)
+	}
 	reqBody := chatCompletionRequest{
 		Model:     c.model,
-		Messages:  mapper.WireMessages(req.Messages),
+		Messages:  mapper.WireMessages(msgs),
 		MaxTokens: maxTok,
 		Tools:     sanitizeWireToolSchemas(mapper.WireTools(req.Tools)),
 		Stream:    stream,
@@ -1000,6 +1008,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 	var lastErr error
 	ctxFixed := false
 	schemaRetried := false
+	cacheRetried := false
 	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
 		out, err := c.streamOnce(ctx, url, req, maxTok)
 		if err == nil {
@@ -1015,6 +1024,11 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 		if !schemaRetried && c.requestUsedJSONSchema(req) && isUnsupportedJSONSchemaError(err) {
 			schemaRetried = true
 			c.disableJSONSchema(err.Error())
+			continue
+		}
+		if !cacheRetried && c.promptCacheMarkersEnabled() && isPromptCacheRejection(err) {
+			cacheRetried = true
+			c.disablePromptCacheMarkers(err.Error())
 			continue
 		}
 		if !ctxFixed {

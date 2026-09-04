@@ -63,6 +63,11 @@ type ContentPart struct {
 	// should be inlined as a data: URI by the client.
 	ImageData []byte
 	ImageMIME string
+
+	// CacheControl marks this block as a prompt-cache breakpoint on
+	// OpenAI-compatible gateways that forward it to Anthropic. Everything up
+	// to and including the marked block is cached.
+	CacheControl bool
 }
 
 // TextLen returns the number of text bytes carried by Parts (image
@@ -102,16 +107,24 @@ func (m Message) MarshalJSON() ([]byte, error) {
 	type imageURL struct {
 		URL string `json:"url"`
 	}
+	type cacheControlWire struct {
+		Type string `json:"type"`
+	}
 	type wirePart struct {
-		Type     string    `json:"type"`
-		Text     string    `json:"text,omitempty"`
-		ImageURL *imageURL `json:"image_url,omitempty"`
+		Type         string            `json:"type"`
+		Text         string            `json:"text,omitempty"`
+		ImageURL     *imageURL         `json:"image_url,omitempty"`
+		CacheControl *cacheControlWire `json:"cache_control,omitempty"`
 	}
 	wire := make([]wirePart, 0, len(m.Parts))
 	for _, p := range m.Parts {
 		switch p.Kind {
 		case PartText:
-			wire = append(wire, wirePart{Type: "text", Text: p.Text})
+			part := wirePart{Type: "text", Text: p.Text}
+			if p.CacheControl {
+				part.CacheControl = &cacheControlWire{Type: "ephemeral"}
+			}
+			wire = append(wire, part)
 		case PartImage:
 			url := p.ImageURL
 			if url == "" && len(p.ImageData) > 0 {

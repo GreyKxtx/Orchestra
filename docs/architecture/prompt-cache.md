@@ -49,8 +49,26 @@ sets three breakpoints, well inside the limit of four:
 Anthropic requires alternating roles, so `convertToAnthropic` folds the trailing
 volatile user message into the preceding user message as an extra text block.
 
-OpenAI-compatible providers need no markers — they match the prefix
+Most OpenAI-compatible providers need no markers — they match the prefix
 automatically, so the ordering rule above is what matters there.
+
+## Cache breakpoints through a gateway (`llm/prompt_cache_gateway.go`)
+
+Anthropic models reached through OpenRouter do **not** take the native path:
+they go out as OpenAI-compatible requests, where the only way to ask for
+caching is an Anthropic-shaped `cache_control` block inside array-form content.
+OpenRouter forwards it to the underlying API verbatim.
+
+Two breakpoints are set, mirroring the native path: the system block, and the
+last message before the volatile tail. Messages carrying only `tool_calls` are
+left alone — rewriting their content into an array would drop the calls.
+
+The marker is only sent for models named `anthropic/…`. Other providers cache
+by prefix and gain nothing, and a self-hosted OpenAI-compatible server may
+reject an unknown field. If an endpoint rejects it anyway, the client retries
+once without markers and latches them off for the rest of its life
+(`promptCacheDisabled`), so a gateway that does not understand the field costs
+one retry rather than failing every remaining step.
 
 ## Checking that it works
 
