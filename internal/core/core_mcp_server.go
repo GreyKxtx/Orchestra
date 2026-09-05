@@ -7,6 +7,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/orchestra/orchestra/internal/tools/nav"
+	"github.com/orchestra/orchestra/internal/tools/session"
 )
 
 // MCPToolServer builds an MCP server exposing Orchestra's read-only
@@ -67,6 +68,20 @@ func (c *Core) MCPToolServer() *mcpsdk.Server {
 		InputSchema: repoMapDef.Parameters,
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in nav.RepoMapRequest) (*mcpsdk.CallToolResult, any, error) {
 		resp, err := c.tools.RepoMap(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := mcpTextResult(resp)
+		return res, nil, err
+	})
+
+	runtimeQueryDef := session.ToolRuntimeQuery().Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        runtimeQueryDef.Name,
+		Description: runtimeQueryDef.Description,
+		InputSchema: runtimeQueryDef.Parameters,
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in session.RuntimeQueryRequest) (*mcpsdk.CallToolResult, any, error) {
+		resp, err := c.tools.RuntimeQuery(ctx, in)
 		if err != nil {
 			return nil, nil, err
 		}

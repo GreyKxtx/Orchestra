@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 )
 
@@ -150,5 +152,67 @@ func TestMCPToolServer_SemanticSearch_NoEmbedModelConfigured(t *testing.T) {
 	text := res.Content[0].(*mcpsdk.TextContent).Text
 	if !strings.Contains(text, "embed.model not configured") {
 		t.Errorf("error text = %q, want it to mention embed.model not configured", text)
+	}
+}
+
+func TestMCPToolServer_RuntimeQuery(t *testing.T) {
+	root := t.TempDir()
+	if err := config.Save(filepath.Join(root, ".orchestra.yml"), config.DefaultConfig(root)); err != nil {
+		t.Fatal(err)
+	}
+
+	// First pass: let core.New create .orchestra/ckg.db, then close it so
+	// the file isn't held open while we seed it directly below.
+	c0, err := New(root, Options{ToolsOnly: true})
+	if err != nil {
+		t.Fatalf("New (seed pass): %v", err)
+	}
+	if err := c0.Close(); err != nil {
+		t.Fatalf("Close (seed pass): %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".orchestra", "ckg.db")
+	store, err := ckg.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("ckg.NewStore: %v", err)
+	}
+	ctx := context.Background()
+	nodes := []ckg.Node{{FQN: "pkg.Handler", ShortName: "Handler", Kind: "func", LineStart: 5, LineEnd: 15}}
+	if err := store.SaveFileNodes(ctx, "handler.go", "h1", "go", "ex", "pkg", nodes, nil); err != nil {
+		t.Fatalf("SaveFileNodes: %v", err)
+	}
+	const traceID = "aabb00112233445566778899aabb0011"
+	if err := store.IngestTrace(ctx, ckg.TraceData{
+		TraceID:   traceID,
+		Service:   "mysvc",
+		StartedAt: time.Now(),
+		Spans:     []ckg.SpanData{{SpanID: "s001", Name: "handle", CodeFile: "handler.go", CodeLineno: 10}},
+	}); err != nil {
+		t.Fatalf("IngestTrace: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close: %v", err)
+	}
+
+	c, err := New(root, Options{ToolsOnly: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	session := connectMCP(t, c.MCPToolServer())
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "runtime_query",
+		Arguments: map[string]any{"trace_id": traceID},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned an error result: %+v", res.Content)
+	}
+	text := res.Content[0].(*mcpsdk.TextContent).Text
+	if !strings.Contains(text, "mysvc") || !strings.Contains(text, "pkg.Handler") {
+		t.Errorf("runtime_query result = %q, want it to mention mysvc and pkg.Handler", text)
 	}
 }
