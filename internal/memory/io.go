@@ -49,7 +49,7 @@ func readOrchestraFile(dir string) (content, name string) {
 		if raw == "" {
 			continue
 		}
-		return appendLocalOrchestra(dir, raw), n
+		return appendLocalOrchestra(dir, expandImports(raw, dir)), n
 	}
 	// No team file at all — a personal ORCHESTRA.local.md still counts as
 	// project instructions instead of being silently dropped on a repo that
@@ -60,13 +60,18 @@ func readOrchestraFile(dir string) (content, name string) {
 	return "", ""
 }
 
-// readLocalOrchestra returns ORCHESTRA.local.md's trimmed content, or "".
+// readLocalOrchestra returns ORCHESTRA.local.md's trimmed content (with its
+// own @import lines expanded), or "".
 func readLocalOrchestra(dir string) string {
 	data, err := os.ReadFile(filepath.Join(dir, localOrchestraFile))
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	raw := strings.TrimSpace(string(data))
+	if raw == "" {
+		return ""
+	}
+	return expandImports(raw, dir)
 }
 
 // appendLocalOrchestra layers ORCHESTRA.local.md onto raw, when present.

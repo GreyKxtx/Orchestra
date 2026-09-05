@@ -158,6 +158,31 @@ func TestList_ReportsOrchestraMDNameEvenWithLocalOverlay(t *testing.T) {
 	t.Fatal("orchestra layer missing from List()")
 }
 
+func TestReadLayerRaw_ExpandsImportInOrchestraMD(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "docs", "arch.md"), "ARCHITECTURE NOTES")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "Root rules.\n@import docs/arch.md")
+
+	got := NewStore(dir, "", DefaultConfig()).sliceLayer(layerOrchestra, 4096)
+
+	if !strings.Contains(got, "ARCHITECTURE NOTES") {
+		t.Fatalf("import not expanded in project instructions: %q", got)
+	}
+}
+
+func TestReadLayerRaw_ExpandsImportInLocalOverlay(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "Root rules.")
+	writeFile(t, filepath.Join(dir, "my-notes.md"), "MY IMPORTED NOTES")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.local.md"), "@import my-notes.md")
+
+	got := NewStore(dir, "", DefaultConfig()).sliceLayer(layerOrchestra, 4096)
+
+	if !strings.Contains(got, "MY IMPORTED NOTES") {
+		t.Fatalf("import not expanded in local overlay: %q", got)
+	}
+}
+
 func TestReadByPath_OrchestraLocalMDIsAnAliasForTheOrchestraLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "TEAM RULES")
