@@ -54,6 +54,9 @@ test_analysis_report.md
 _opencode/
 opencode/
 
+# Local git worktrees (subagent-driven-development scratch workspaces)
+.worktrees/
+
 # Screenshots, debug logs, transient assets (not part of source)
 *.png
 !ui/vscode/images/icon.png
