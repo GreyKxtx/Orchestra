@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,67 @@ func TestFormatInject_EagerIncludesGlobalAndRepoFiles(t *testing.T) {
 		if !strings.Contains(block, want) {
 			t.Errorf("eager must inject every layer, missing %q in: %s", want, block)
 		}
+	}
+}
+
+// FormatInjectReport is what /memory refresh and llm_log.jsonl's
+// memory.inject event answer "what actually got injected" from — a byte
+// breakdown per layer, otherwise only re-derivable by guessing file sizes.
+func TestFormatInjectReport_BreaksDownBytesPerLayer(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	setHome(t, home)
+	writeFile(t, filepath.Join(home, ".orchestra", "memory.md"), "GLOBAL-PREF")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "PROJECT-RULES")
+	writeFile(t, filepath.Join(dir, ".orchestra", "memory", "agent.md"),
+		"\n---\n*2026-01-01T00:00:00Z*\n\nAGENT-FACT\n")
+
+	cfg := DefaultConfig()
+	cfg.Mode = ModeEager
+	block, detail, total := NewStore(dir, "", cfg).FormatInjectReport(8192)
+
+	if !strings.Contains(block, "PROJECT-RULES") {
+		t.Fatalf("report must still return the same block FormatInject would: %s", block)
+	}
+	for _, want := range []string{"orchestra=", "repo=", "global=", "total="} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail missing %q: %q", want, detail)
+		}
+	}
+	if total <= 0 {
+		t.Errorf("total = %d, want > 0", total)
+	}
+	if !strings.Contains(detail, fmt.Sprintf("total=%dB/8192B", total)) {
+		t.Errorf("detail total/budget mismatch: %q (total=%d)", detail, total)
+	}
+}
+
+func TestFormatInjectReport_EmptyProjectStillReportsZeroes(t *testing.T) {
+	dir := t.TempDir()
+	setHome(t, t.TempDir())
+
+	_, detail, total := NewStore(dir, "", DefaultConfig()).FormatInjectReport(4096)
+
+	if total != 0 {
+		t.Errorf("total = %d, want 0 for an empty project", total)
+	}
+	if !strings.Contains(detail, "total=0B/4096B") {
+		t.Errorf("detail = %q, want it to report zero bytes against the budget", detail)
+	}
+}
+
+// FormatInject (the plain form every existing caller uses) must return
+// exactly the block half of the report — no behavior change from adding
+// the report.
+func TestFormatInject_MatchesReportBlock(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "PROJECT-RULES")
+
+	plain := NewStore(dir, "", DefaultConfig()).FormatInject(4096)
+	block, _, _ := NewStore(dir, "", DefaultConfig()).FormatInjectReport(4096)
+
+	if plain != block {
+		t.Errorf("FormatInject = %q, want it to equal FormatInjectReport's block %q", plain, block)
 	}
 }
 

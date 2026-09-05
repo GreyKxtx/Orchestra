@@ -92,6 +92,27 @@ func TestLogger_LogMemoryNote(t *testing.T) {
 	}
 }
 
+func TestLogger_LogMemoryInject(t *testing.T) {
+	dir := t.TempDir()
+	l := NewLogger(dir)
+	l.LogMemoryInject("orchestra=512B repo=0B global=0B total=512B/2048B")
+
+	data, err := os.ReadFile(filepath.Join(dir, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e LLMLogEntry
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Event != "memory.inject" {
+		t.Errorf("event = %q, want memory.inject", e.Event)
+	}
+	if e.Detail != "orchestra=512B repo=0B global=0B total=512B/2048B" {
+		t.Errorf("detail = %q", e.Detail)
+	}
+}
+
 // TestSanitizeSecrets: key material in previews, error bodies and URLs must
 // never survive into llm_log.jsonl (users attach these logs to bug reports).
 func TestSanitizeSecrets(t *testing.T) {

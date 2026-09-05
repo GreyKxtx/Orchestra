@@ -11,7 +11,7 @@ import (
 
 // LLMLogEntry represents a single log entry in llm_log.jsonl.
 // Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result",
-// "step.classified", "memory.note".
+// "step.classified", "memory.note", "memory.inject".
 type LLMLogEntry struct {
 	TSUnix          int64    `json:"ts_unix"`
 	Event           string   `json:"event"`
@@ -180,6 +180,23 @@ func (l *Logger) LogMemoryNote(outcome, source, detail string) {
 		Event:  "memory.note",
 		Kind:   outcome,
 		Source: source,
+		Detail: truncateAndSanitize(detail, 512),
+	})
+}
+
+// LogMemoryInject records what a turn's project-memory inject actually
+// included — a compact per-layer byte breakdown against the budget, e.g.
+// "orchestra=512B repo=0B global=0B total=512B/2048B"
+// (memory.Store.FormatInjectReport). /memory refresh in the TUI reads this
+// back; without it, "what got injected" is answerable only by re-deriving
+// budgets from config and guessing at file sizes.
+func (l *Logger) LogMemoryInject(detail string) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix: time.Now().Unix(),
+		Event:  "memory.inject",
 		Detail: truncateAndSanitize(detail, 512),
 	})
 }

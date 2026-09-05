@@ -34,6 +34,46 @@ type noteLogEntry struct {
 	Source string `json:"source"`
 }
 
+type injectLogEntry struct {
+	Event  string `json:"event"`
+	Detail string `json:"detail"`
+}
+
+// LastInjectDetail returns the Detail field of the most recent memory.inject
+// event in path (llm_log.jsonl), or "" when the file is missing or no turn
+// has logged one yet. /memory refresh in the TUI reads this back — without
+// it, "what got injected" is answerable only by re-deriving budgets from
+// config and guessing at file sizes.
+func LastInjectDetail(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("memory: open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	var last string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var e injectLogEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil || e.Event != "memory.inject" {
+			continue
+		}
+		last = e.Detail
+	}
+	if err := sc.Err(); err != nil {
+		return "", fmt.Errorf("memory: read %s: %w", path, err)
+	}
+	return last, nil
+}
+
 // ParseNoteStats reads memory.note events from path. A missing file counts
 // as zero events, not an error — a project that has not run a turn yet (or
 // predates cc41475) is a legitimate state. Malformed lines are skipped, not

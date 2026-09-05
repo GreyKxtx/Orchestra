@@ -174,7 +174,9 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 			memCfg.InjectKB = 2 // Lead: ORCHESTRA.md header only; rest via memory_read
 		}
 		store := memory.NewStore(a.tools.WorkspaceRoot(), a.opts.SessionID, memCfg)
-		p.memory = store.FormatInject(memCfg.InjectBytes())
+		var detail string
+		p.memory, detail, _ = store.FormatInjectReport(memCfg.InjectBytes())
+		a.opts.AgentLogger.LogMemoryInject(detail)
 	}
 	// 4a: top-level single-agent modes replay their own episodic lessons.
 	// Without this the loop is half-built: recordTurnLesson writes what went

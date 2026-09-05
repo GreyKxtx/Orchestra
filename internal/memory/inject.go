@@ -9,21 +9,49 @@ import (
 )
 
 func (s *Store) FormatInject(maxBytes int) string {
+	block, _, _ := s.FormatInjectReport(maxBytes)
+	return block
+}
+
+// FormatInjectReport is FormatInject plus a compact per-layer byte
+// breakdown, e.g. "orchestra=512B repo=204B global=0B total=716B/2048B" —
+// what /memory refresh in the TUI and llm_log.jsonl's memory.inject event
+// answer "what actually got injected on this turn" from. Without it that
+// question is answerable only by re-deriving budgets from config and
+// guessing at file sizes.
+func (s *Store) FormatInjectReport(maxBytes int) (block, detail string, totalBytes int) {
 	if maxBytes <= 0 {
 		maxBytes = s.cfg.InjectBytes()
 	}
-	content := s.buildInjectContent(maxBytes)
+	content, stats := s.buildInjectContentReport(maxBytes)
+	totalBytes = len(content)
+	detail = formatInjectDetail(stats, totalBytes, maxBytes)
 	if content == "" {
-		return ""
+		return "", detail, 0
 	}
-	if len(content) > maxBytes {
+	if totalBytes > maxBytes {
 		content = truncateToMax(content, maxBytes)
 	}
-	block := "<project_memory>\n" + content + "\n</project_memory>"
+	block = "<project_memory>\n" + content + "\n</project_memory>"
 	if s.cfg.Mode == ModeLazy || s.cfg.Mode == ModeHybrid {
 		block += "\n\n<memory_hint>\nUse memory_read to load additional project/session memory when needed.\n</memory_hint>"
 	}
-	return block
+	return block, detail, totalBytes
+}
+
+// layerStat is one layer's contribution to an inject pass, for reporting.
+type layerStat struct {
+	name  string
+	bytes int
+}
+
+func formatInjectDetail(stats []layerStat, totalBytes, budget int) string {
+	var b strings.Builder
+	for _, st := range stats {
+		fmt.Fprintf(&b, "%s=%dB ", st.name, st.bytes)
+	}
+	fmt.Fprintf(&b, "total=%dB/%dB", totalBytes, budget)
+	return b.String()
 }
 
 // injectScope selects which layers an inject pass is allowed to reach. It is
@@ -38,20 +66,34 @@ type injectScope struct {
 func fullScope() injectScope { return injectScope{global: true, repoFiles: true} }
 
 func (s *Store) buildInjectContent(maxBytes int) string {
+	content, _ := s.buildInjectContentReport(maxBytes)
+	return content
+}
+
+func (s *Store) buildInjectContentReport(maxBytes int) (string, []layerStat) {
 	switch s.cfg.Mode {
 	case ModeLazy:
-		return s.sliceLayer(layerOrchestra, maxBytes/2)
+		chunk := s.sliceLayer(layerOrchestra, maxBytes/2)
+		if chunk == "" {
+			return "", nil
+		}
+		return chunk, []layerStat{{layerOrchestra, len(chunk)}}
 	case ModeHybrid:
-		return s.tieredInject(maxBytes, injectScope{})
+		return s.tieredInjectReport(maxBytes, injectScope{})
 	default:
-		return s.tieredInject(maxBytes, fullScope())
+		return s.tieredInjectReport(maxBytes, fullScope())
 	}
 }
 
 // tieredInject allocates budget: orchestra 35%, session 25%, repo 30%, global remainder.
 func (s *Store) tieredInject(maxBytes int, scope injectScope) string {
+	content, _ := s.tieredInjectReport(maxBytes, scope)
+	return content
+}
+
+func (s *Store) tieredInjectReport(maxBytes int, scope injectScope) (string, []layerStat) {
 	if maxBytes <= 0 {
-		return ""
+		return "", nil
 	}
 	oBudget := maxBytes * 35 / 100
 	sBudget := 0
@@ -70,23 +112,28 @@ func (s *Store) tieredInject(maxBytes int, scope injectScope) string {
 	}
 
 	var parts []string
+	var stats []layerStat
 	if chunk := s.sliceLayer(layerOrchestra, oBudget); chunk != "" {
 		parts = append(parts, chunk)
+		stats = append(stats, layerStat{layerOrchestra, len(chunk)})
 	}
 	if sBudget > 0 {
 		if chunk := s.readSessionFile(sBudget); chunk != "" {
 			parts = append(parts, "[session]\n"+chunk)
+			stats = append(stats, layerStat{layerSession, len(chunk)})
 		}
 	}
 	if chunk := s.sliceRepoMemory(rBudget, scope.repoFiles); chunk != "" {
 		parts = append(parts, chunk)
+		stats = append(stats, layerStat{layerRepo, len(chunk)})
 	}
 	if includeGlobal && gBudget > 0 {
 		if chunk := s.sliceLayer(layerGlobal, gBudget); chunk != "" {
 			parts = append(parts, chunk)
+			stats = append(stats, layerStat{layerGlobal, len(chunk)})
 		}
 	}
-	return strings.Join(parts, "\n\n---\n\n")
+	return strings.Join(parts, "\n\n---\n\n"), stats
 }
 
 func truncateToMax(s string, maxBytes int) string {
