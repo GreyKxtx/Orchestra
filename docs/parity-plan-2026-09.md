@@ -63,7 +63,7 @@
 | 5 | **Индекс + topic-файлы.** Один `agent.md` под всё; у CC — `MEMORY.md` (индекс, всегда в контексте) + файлы по темам (по требованию через `memory_read`) | `.orchestra/memory/index.md` (одна строка на факт) инжектируется всегда; полный текст — `memory_read layer=repo file=…`; `hybrid` становится «индекс всегда, тела лениво» | Бюджет `inject_kb` уходит на *список* фактов, а не на первые N по хронологии | M |
 | 6 | **Заметки из дайджеста не ревьюятся.** Rule-based записи («goal / done / files») полезны как след, но это не факты; сейчас они навсегда в `agent.md` | Дайджестовые заметки — в `sessions/<id>.md`, а в `agent.md` — по `/memory review` (TUI показывает кандидаты, `y/n/e`) или по правилу «файл трогался в ≥3 сессиях» | Разделение «журнал» и «знание»; человек в цикле там, где это дёшево | M |
 | ~~7~~ | ~~**VS Code не показывает статус памяти**~~ — закрыто | `memoryNotice.ts` (портирован из `ui/tui/app_rpc.go noticeTurnMemory`, то же текст на русском — 1 в 1 с TUI) → `panel.ts` постит `systemNote`. Кэш заодно: `TurnUsagePayload.cached_prompt_tokens` + строка `cache NN%` в usage-пилюле (`07-events.js appendTurnCostNote`) | Паритет TUI ↔ VS Code по наблюдаемости | S |
-| 8 | **Метрика качества памяти.** Есть событие `memory.note`, нет отчёта | `orchestra usage` (или новый `orchestra memory stats`): ходов с изменениями / заметок written / failed / доля digest vs model | Прогон становится измеримым числом, а не впечатлением | S |
+| ~~8~~ | ~~**Метрика качества памяти.**~~ — закрыто | `orchestra memory stats`: written (model/digest split) / skipped / failed из `.orchestra/llm_log.jsonl` (`memory.ParseNoteStats`) | Прогон становится измеримым числом, а не впечатлением | S |
 
 **Итог для ●●:** пункт 1 — самый дешёвый и самый важный; 2–5 — структура, которая делает память полезной на длинной дистанции; 6–8 — контроль.
 
@@ -203,7 +203,7 @@
 | ~~A3~~ | ~~Блок `MEMORY:` в build/general промптах~~ — сделано (без `plan`: нет инструмента) | 1.2 #1 | Проверяется прогоном: `memory_write` был 0 из 91 |
 | ~~A4~~ | ~~`memory_write scope=global`~~ — сделано | 1.2 #2 | Закрыт; заодно исправлена порча данных (см. п.2 выше) |
 | ~~A5~~ | ~~VS Code: строка статуса памяти + кэш в usage-пилюле~~ — сделано | 1.2 #7, 1.9 #2 | `chat-src/07-events.js` — обычный JS без тестовой обвязки, как и остальной файл; изменение проверено вручную + typecheck/бандл |
-| A6 | `orchestra memory stats` (или в `usage`): written / skipped / failed, digest vs model | 1.2 #8 | Метрика для прогона |
+| ~~A6~~ | ~~`orchestra memory stats`: written / skipped / failed, digest vs model~~ — сделано | 1.2 #8 | Метрика для прогона |
 | A7 | Лицензия: имя держателя, `THIRD_PARTY_NOTICES.md` через `go-licenses` в `release.yml`; `install.sh` / `install.ps1`; checksums | 1.10 #1–3 | Закрывает «дистрибуция» до ● честно, не формально |
 | A8 | `.mcp.json` чтение + `orchestra mcp add/remove/get` | 1.5 #1–2 | Повседневный MCP-разрыв; чистая конфигурация |
 | A9 | Desktop: убрать из README (или завести issue с решением) | 1.9 #3 | Честность документации; 10 минут |
