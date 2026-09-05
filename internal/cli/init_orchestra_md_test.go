@@ -9,7 +9,7 @@ import (
 
 func TestEnsureOrchestraMD_CreatesWithDetectedLanguages(t *testing.T) {
 	dir := t.TempDir()
-	action, err := ensureOrchestraMD(dir, false, []string{"go", "typescript"})
+	action, _, err := ensureOrchestraMD(dir, false, []string{"go", "typescript"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestEnsureOrchestraMD_CreatesWithDetectedLanguages(t *testing.T) {
 
 func TestEnsureOrchestraMD_NoLanguagesLeavesLineBlank(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := ensureOrchestraMD(dir, false, nil); err != nil {
+	if _, _, err := ensureOrchestraMD(dir, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "ORCHESTRA.md"))
@@ -58,12 +58,12 @@ func TestEnsureOrchestraMD_DoesNotOverwriteExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := ensureOrchestraMD(dir, false, []string{"go"})
+	action, foundFallback, err := ensureOrchestraMD(dir, false, []string{"go"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action != "exists" {
-		t.Fatalf("action = %q, want exists", action)
+	if action != "exists" || foundFallback != "" {
+		t.Fatalf("action = %q/%q, want exists/\"\"", action, foundFallback)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "ORCHESTRA.md"))
 	if err != nil {
@@ -74,9 +74,29 @@ func TestEnsureOrchestraMD_DoesNotOverwriteExisting(t *testing.T) {
 	}
 }
 
+func TestEnsureOrchestraMD_SkipsWhenAgentsMDAlreadyHasContent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# real instructions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	action, foundFallback, err := ensureOrchestraMD(dir, false, []string{"go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ORCHESTRA.md wins the runtime fallback over AGENTS.md — writing an
+	// empty stub here would shadow real instructions, not add to them.
+	if action != "exists" || foundFallback != "AGENTS.md" {
+		t.Fatalf("action = %q/%q, want exists/AGENTS.md", action, foundFallback)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ORCHESTRA.md")); !os.IsNotExist(err) {
+		t.Fatal("must not create ORCHESTRA.md when AGENTS.md already has content")
+	}
+}
+
 func TestEnsureOrchestraMD_DryRunDoesNotWrite(t *testing.T) {
 	dir := t.TempDir()
-	action, err := ensureOrchestraMD(dir, true, []string{"go"})
+	action, _, err := ensureOrchestraMD(dir, true, []string{"go"})
 	if err != nil {
 		t.Fatal(err)
 	}

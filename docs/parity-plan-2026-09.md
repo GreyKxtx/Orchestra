@@ -20,9 +20,11 @@
 | Prompt caching через шлюз | ◐ | ● | `cache_control` для `anthropic/*` через OpenRouter с самоотключением (`1cd9554`); **счётчики кэша теперь в `usage.jsonl` и в `orchestra usage`** (`3d4a68c`) |
 | Язык LLM-поверхности | ◐ | ● | Все 58 схем инструментов на английском, тест на кириллицу (`b550e18`) |
 
-Что сдвинулось с публикации плана: **A1 закрыт** — `orchestra init` создаёт `ORCHESTRA.md` из шаблона (`docs/examples/embed.go` + `internal/cli/init_orchestra_md.go`), заполняя «Language / runtime» реальным детектом (`provision.Detect`, не LSP-фолбэк), не трогая существующий файл, и добивая старые проекты при повторном `init`.
+Что сдвинулось с публикации плана:
+- **A1 закрыт** — `orchestra init` создаёт `ORCHESTRA.md` из шаблона (`docs/examples/embed.go` + `internal/cli/init_orchestra_md.go`), заполняя «Language / runtime» реальным детектом (`provision.Detect`, не LSP-фолбэк), не трогая существующий файл, и добивая старые проекты при повторном `init`.
+- **A2 закрыт** — слой `orchestra` в памяти (`memory/io.go`) и ленивая инъекция по вложенным директориям (`memory/inject.go` `LazyOrchestraFile`) читают `AGENTS.md`/`CLAUDE.md`/`.cursorrules`, если `ORCHESTRA.md` нет; порядок приоритета в самом имени списка. `List()`/`memory_read` теперь называют реальный файл, а не всегда «ORCHESTRA.md». `ensureOrchestraMD` (A1) заодно не создаёт пустой `ORCHESTRA.md` поверх уже существующего `AGENTS.md` — иначе пустой файл затенял бы рабочие инструкции по этому же приоритету.
 
-Что *не* сдвинулось и осталось в списке ниже: MCP без OAuth/resources/prompts; провайдеры — по-прежнему два протокола; README и CLI на русском; хуки — только pre/post tool.
+Что *не* сдвинулось и осталось в списке ниже: MCP без OAuth/resources/prompts; провайдеры — по-прежнему два протокола; README и CLI на русском; хуки — только pre/post tool; промпты пока не просят модель писать в память (A3).
 
 ---
 
@@ -37,7 +39,7 @@
 | # | Чего не хватает | Где в коде | Эффект | Трудоёмкость |
 |---|---|---|---|:-:|
 | ~~1~~ | ~~**`orchestra init` не создаёт `ORCHESTRA.md`**~~ — закрыто | `cli/init.go` вызывает `ensureOrchestraMD` в обеих ветках (новый проект / повторный init); языки — `provision.Detect`, не `InitServerSpecs` (тот на пустом репо возвращает go+ts+py fallback, что соврало бы про стек) | Первый запуск на новом репо сразу даёт агенту контекст | S |
-| 2 | **Fallback на `AGENTS.md` / `CLAUDE.md` / `.cursorrules`**, когда `ORCHESTRA.md` нет — в `internal/` ни одного упоминания | `memory/io.go` `readOrchestra`: цепочка кандидатов `ORCHESTRA.md → AGENTS.md → CLAUDE.md`, тот же лимит; в TUI `/memory` показать, *какой* файл взят | Большинство живых репо уже имеют инструкции для другого агента; Orchestra их игнорирует и стартует слепым | S |
+| ~~2~~ | ~~**Fallback на `AGENTS.md` / `CLAUDE.md` / `.cursorrules`**~~ — закрыто | `memory/io.go` `orchestraFallbackNames` + `readOrchestraFile`; `List()`/`Read()`/`LazyOrchestraFile` называют реальный файл, `discoverInstructions` в `internal/tools/runner.go` метит текст правильным путём (была бы метка «ORCHESTRA.md» для файла, который не существует — поймано тестом) | Большинство живых репо уже имеют инструкции для другого агента; Orchestra их больше не игнорирует | S |
 | 3 | **`ORCHESTRA.local.md`** — личный, gitignored слой (аналог `CLAUDE.local.md`) | `io.go` + `ensureGitignore` в `cli/init.go` | «Мои» правила отдельно от командных | S |
 | 4 | **`@import path`** внутри `ORCHESTRA.md` (относительно файла, глубина ≤3, защита от цикла) | `memory/io.go` перед `truncateToMax` | Один корневой файл + подключаемые `docs/*.md` вместо копипаста | M |
 | 5 | **Пользовательские инструкции ≠ пользовательская память.** Сейчас `~/.orchestra/memory.md` — единственный глобальный слой, туда пишет и человек, и (потенциально) агент | Добавить `~/.orchestra/ORCHESTRA.md` как слой `orchestra-user` с тем же приоритетом, что глобальный конфиг | Разделение «как я хочу работать» и «что агент запомнил» | S |
@@ -197,7 +199,7 @@
 | # | Задача | Строка | Почему первой |
 |---|---|---|---|
 | ~~A1~~ | ~~`orchestra init` создаёт `ORCHESTRA.md` из шаблона (+ `--dry-run`)~~ — сделано | 1.1 #1 | Закрыт |
-| A2 | Fallback `AGENTS.md` / `CLAUDE.md` / `.cursorrules` | 1.1 #2 | Самый дешёвый выигрыш по инструкциям |
+| ~~A2~~ | ~~Fallback `AGENTS.md` / `CLAUDE.md` / `.cursorrules`~~ — сделано | 1.1 #2 | Закрыт |
 | A3 | Блок `MEMORY:` в build/general/plan промптах (+ `*-local`) | 1.2 #1 | Разница между ● и ●● в памяти — это промпт, не инструмент. **Проверяется тем же прогоном**: `memory_write` был 0 из 91 |
 | A4 | `memory_write scope=global` | 1.2 #2 | Симметрия с `memory_read`; нужен для A3 («предпочтения — global») |
 | A5 | VS Code: строка статуса памяти + кэш в usage-пилюле | 1.2 #7, 1.9 #2 | Данные уже в RPC |

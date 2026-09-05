@@ -47,10 +47,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := ensureLearningDirs(cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not create learning dirs: %v\n", err)
 		}
-		if action, err := ensureOrchestraMD(cwd, initDryRun, detectedLanguages(cwd)); err != nil {
+		if action, foundFallback, err := ensureOrchestraMD(cwd, initDryRun, detectedLanguages(cwd)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not create ORCHESTRA.md: %v\n", err)
 		} else {
-			reportOrchestraMD(action)
+			reportOrchestraMD(action, foundFallback)
 		}
 		suggestLocalOverlay(cwd, configPath)
 		return nil
@@ -141,10 +141,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := ensureLearningDirs(cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not create learning dirs: %v\n", err)
 	}
-	if action, err := ensureOrchestraMD(cwd, initDryRun, detectedLanguages(cwd)); err != nil {
+	if action, foundFallback, err := ensureOrchestraMD(cwd, initDryRun, detectedLanguages(cwd)); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not create ORCHESTRA.md: %v\n", err)
 	} else {
-		reportOrchestraMD(action)
+		reportOrchestraMD(action, foundFallback)
 	}
 
 	if initInstrument {

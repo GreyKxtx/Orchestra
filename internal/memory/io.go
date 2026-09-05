@@ -10,17 +10,66 @@ import (
 	"github.com/orchestra/orchestra/internal/lessons"
 )
 
+// FallbackNames lists the project-instruction filenames Orchestra reads, in
+// priority order (ORCHESTRA.md first). Exported so `orchestra init` can
+// check whether one already exists before writing a stub — ORCHESTRA.md
+// wins this fallback at runtime, so an empty stub over a real AGENTS.md
+// would shadow it instead of adding to it.
+var FallbackNames = append([]string(nil), orchestraFallbackNames...)
+
+// FindProjectInstructions returns the content and filename of the first
+// existing, non-empty candidate among FallbackNames in dir, or ("", "")
+// when none exist.
+func FindProjectInstructions(dir string) (content, name string) {
+	return readOrchestraFile(dir)
+}
+
+// orchestraFallbackNames is the candidate chain for project instructions,
+// checked in order. Most repos already carry one of these for another
+// agent by the time Orchestra shows up; ignoring it means starting blind
+// on a repo that already has guidance — the field-run demo project had
+// none of ORCHESTRA.md and got no project memory at all as a result.
+var orchestraFallbackNames = []string{"ORCHESTRA.md", "AGENTS.md", "CLAUDE.md", ".cursorrules"}
+
+// readOrchestraFile returns the content and filename of the first existing,
+// non-empty candidate in dir, or ("", "") when none exist.
+func readOrchestraFile(dir string) (content, name string) {
+	for _, n := range orchestraFallbackNames {
+		data, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			continue
+		}
+		raw := strings.TrimSpace(string(data))
+		if raw == "" {
+			continue
+		}
+		return raw, n
+	}
+	return "", ""
+}
+
+// orchestraFileName reports which file backs the orchestra layer in the
+// workspace root — "ORCHESTRA.md" unless a fallback is what's actually
+// there, so List()/Read() can tell the operator which file is really
+// feeding the agent instead of always naming the one that may not exist.
+func (s *Store) orchestraFileName() string {
+	if s.workspaceRoot == "" {
+		return "ORCHESTRA.md"
+	}
+	if _, name := readOrchestraFile(s.workspaceRoot); name != "" {
+		return name
+	}
+	return "ORCHESTRA.md"
+}
+
 func (s *Store) readLayerRaw(layer string) string {
 	switch layer {
 	case layerOrchestra:
 		if s.workspaceRoot == "" {
 			return ""
 		}
-		data, err := os.ReadFile(filepath.Join(s.workspaceRoot, "ORCHESTRA.md"))
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(data))
+		content, _ := readOrchestraFile(s.workspaceRoot)
+		return content
 	case layerGlobal:
 		if !s.cfg.GlobalEnabled {
 			return ""
@@ -43,7 +92,7 @@ func (s *Store) List() []LayerSummary {
 	var out []LayerSummary
 	if raw := s.readLayerRaw(layerOrchestra); raw != "" {
 		out = append(out, LayerSummary{
-			Layer: layerOrchestra, Path: "ORCHESTRA.md", Bytes: len(raw),
+			Layer: layerOrchestra, Path: s.orchestraFileName(), Bytes: len(raw),
 			Preview: preview(raw, 120),
 		})
 	}
@@ -131,7 +180,7 @@ func (s *Store) Read(layer, path string, maxBytes int) ReadResult {
 	switch layer {
 	case layerOrchestra, "project":
 		raw := s.sliceLayer(layerOrchestra, maxBytes)
-		return ReadResult{Layer: layerOrchestra, Path: "ORCHESTRA.md", Content: raw, Truncated: len(raw) >= maxBytes}
+		return ReadResult{Layer: layerOrchestra, Path: s.orchestraFileName(), Content: raw, Truncated: len(raw) >= maxBytes}
 	case layerSession:
 		if s.sessionID == "" {
 			return ReadResult{Content: "no active session_id"}
@@ -193,7 +242,7 @@ func (s *Store) sliceLessonsMemory(maxBytes int) string {
 func (s *Store) readByPath(path string, maxBytes int) (content, layer string, err error) {
 	path = filepath.ToSlash(path)
 	switch {
-	case path == "ORCHESTRA.md":
+	case path == "ORCHESTRA.md" || path == "AGENTS.md" || path == "CLAUDE.md" || path == ".cursorrules":
 		layer = layerOrchestra
 		content = s.sliceLayer(layerOrchestra, maxBytes)
 	case strings.HasPrefix(path, ".orchestra/memory/"):

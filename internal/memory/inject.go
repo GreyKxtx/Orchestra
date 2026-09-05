@@ -180,22 +180,28 @@ func (s *Store) sliceRepoMemory(maxBytes int, includeOtherFiles bool) string {
 }
 
 func (s *Store) LazyOrchestra(dir string) string {
+	content, _ := s.LazyOrchestraFile(dir)
+	return content
+}
+
+// LazyOrchestraFile is LazyOrchestra plus the filename that actually
+// supplied the content — "ORCHESTRA.md" unless a fallback (AGENTS.md,
+// CLAUDE.md, .cursorrules) is what was found. Callers that label the text
+// for the model (discoverInstructions) need the real name: claiming
+// ORCHESTRA.md when the file is actually AGENTS.md points the model at a
+// path that doesn't exist.
+func (s *Store) LazyOrchestraFile(dir string) (content, name string) {
 	if s.workspaceRoot == "" {
-		return ""
+		return "", ""
 	}
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	for {
-		candidate := filepath.Join(absDir, "ORCHESTRA.md")
-		if data, err := os.ReadFile(candidate); err == nil {
-			raw := strings.TrimSpace(string(data))
-			if raw == "" {
-				return ""
-			}
+		if raw, found := readOrchestraFile(absDir); raw != "" {
 			cap := s.cfg.LazyBytes()
-			return truncateToMax(raw, cap)
+			return truncateToMax(raw, cap), found
 		}
 		if absDir == s.workspaceRoot {
 			break
@@ -206,5 +212,5 @@ func (s *Store) LazyOrchestra(dir string) string {
 		}
 		absDir = parent
 	}
-	return ""
+	return "", ""
 }

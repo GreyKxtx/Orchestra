@@ -477,7 +477,6 @@ func (r *Runner) memoryStore() *memory.Store {
 // discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
 // in directories not yet seen. Returns the combined text, or empty string if nothing new.
 func (r *Runner) discoverInstructions(dir string) string {
-	const instructionFile = "ORCHESTRA.md"
 	root := filepath.Clean(r.workspaceRoot)
 	dir = filepath.Clean(dir)
 
@@ -488,9 +487,9 @@ func (r *Runner) discoverInstructions(dir string) string {
 		}
 
 		if _, loaded := r.seenInstructionDirs.LoadOrStore(dir, struct{}{}); !loaded {
-			text := r.memoryStore().LazyOrchestra(dir)
+			text, foundFile := r.memoryStore().LazyOrchestraFile(dir)
 			if text != "" {
-				candidate := filepath.Join(dir, instructionFile)
+				candidate := filepath.Join(dir, foundFile)
 				rel, _ := filepath.Rel(root, candidate)
 				parts = append(parts, "Instructions from "+filepath.ToSlash(rel)+":\n"+text)
 			}
