@@ -49,9 +49,8 @@ func TestNew_EnabledWithCommand(t *testing.T) {
 
 func TestRunPreTool_NilRunner(t *testing.T) {
 	var r *Runner
-	err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`))
-	if err != nil {
-		t.Fatalf("nil runner should be no-op, got: %v", err)
+	if dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); dec.Denied {
+		t.Fatalf("nil runner should be no-op, got denial: %s", dec.Reason)
 	}
 }
 
@@ -62,9 +61,8 @@ func TestRunPreTool_Success(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{"path":"foo.go"}`))
-	if err != nil {
-		t.Fatalf("expected nil error on exit 0, got: %v", err)
+	if dec := r.RunPreTool(context.Background(), "write", json.RawMessage(`{"path":"foo.go"}`)); dec.Denied {
+		t.Fatalf("expected allow on exit 0, got: %s", dec.Reason)
 	}
 }
 
@@ -75,9 +73,8 @@ func TestRunPreTool_Failure(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`))
-	if err == nil {
-		t.Fatal("expected error on exit 1")
+	if dec := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`)); !dec.Denied {
+		t.Fatal("expected denial on exit 1")
 	}
 }
 
@@ -114,9 +111,8 @@ exit 0
 		TimeoutMS: 5000,
 	}, dir)
 
-	err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`))
-	if err != nil {
-		t.Fatalf("env vars not set: %v", err)
+	if dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); dec.Denied {
+		t.Fatalf("env vars not set: %s", dec.Reason)
 	}
 }
 
@@ -130,18 +126,19 @@ func TestRunPreTool_Timeout(t *testing.T) {
 		TimeoutMS: 50,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`))
-	if err == nil {
-		t.Fatal("expected timeout error")
+	if dec := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`)); !dec.Denied {
+		t.Fatal("expected timeout to deny")
 	}
 }
 
 func TestBuildEnv(t *testing.T) {
-	env := buildEnv("read", json.RawMessage(`{"path":"x"}`), "/workspace")
+	env := buildEnv("read", json.RawMessage(`{"path":"x"}`), "/workspace", "sess-1", "pre_tool")
 	want := map[string]bool{
-		"ORCH_TOOL_NAME=read":              true,
-		`ORCH_TOOL_INPUT={"path":"x"}`:    true,
-		"ORCH_WORKSPACE_ROOT=/workspace":  true,
+		"ORCH_TOOL_NAME=read":            true,
+		`ORCH_TOOL_INPUT={"path":"x"}`:   true,
+		"ORCH_WORKSPACE_ROOT=/workspace": true,
+		"ORCH_SESSION_ID=sess-1":         true,
+		"ORCH_HOOK_EVENT=pre_tool":       true,
 	}
 	for _, e := range env {
 		delete(want, e)

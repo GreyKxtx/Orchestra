@@ -175,9 +175,11 @@ exit 1
 // pre/post call. Used by the cross-platform wiring test that doesn't rely on
 // invoking real subprocess scripts.
 type recordingHookRunner struct {
-	pre  []hookCall
-	post []hookCall
-	denyTool string // when non-empty, RunPreTool returns an error for this tool
+	pre        []hookCall
+	post       []hookCall
+	denyTool   string          // when non-empty, RunPreTool denies this tool
+	denyReason string          // the hook's own words for that denial
+	rewriteTo  json.RawMessage // when non-empty, replaces the tool input
 }
 
 type hookCall struct {
@@ -185,21 +187,152 @@ type hookCall struct {
 	Payload string
 }
 
-func (r *recordingHookRunner) RunPreTool(_ context.Context, name string, in json.RawMessage) error {
+func (r *recordingHookRunner) RunPreTool(_ context.Context, name string, in json.RawMessage) agent.HookDecision {
 	r.pre = append(r.pre, hookCall{Tool: name, Payload: string(in)})
 	if r.denyTool != "" && name == r.denyTool {
-		return &mockHookErr{msg: "denied by recording hook"}
+		reason := r.denyReason
+		if reason == "" {
+			reason = "denied by recording hook"
+		}
+		return agent.HookDecision{Denied: true, Reason: reason}
 	}
-	return nil
+	if len(r.rewriteTo) > 0 {
+		return agent.HookDecision{Input: r.rewriteTo}
+	}
+	return agent.HookDecision{}
 }
 
 func (r *recordingHookRunner) RunPostTool(_ context.Context, name string, out json.RawMessage) {
 	r.post = append(r.post, hookCall{Tool: name, Payload: string(out)})
 }
 
-type mockHookErr struct{ msg string }
+// capturingLLM is a fakeLLM that keeps the messages of the last request, so a
+// test can assert on what the model was actually told.
+type capturingLLM struct {
+	responses []*llm.CompleteResponse
+	i         int
+	last      []llm.Message
+}
 
-func (e *mockHookErr) Error() string { return e.msg }
+func (f *capturingLLM) Plan(context.Context, string) (string, error) { return "{}", nil }
+
+func (f *capturingLLM) Complete(_ context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	f.last = append([]llm.Message(nil), req.Messages...)
+	if f.i >= len(f.responses) {
+		return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: `{"patches":[]}`}}, nil
+	}
+	out := f.responses[f.i]
+	f.i++
+	return out, nil
+}
+
+func (f *capturingLLM) toolMessages() string {
+	var b strings.Builder
+	for _, m := range f.last {
+		if m.Role == llm.RoleTool {
+			b.WriteString(m.Content)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// A hook that denies without saying why leaves the model to guess the rule, so
+// it retries the same call. The hook's own sentence has to travel.
+func TestAgent_E2E_HookDenialReasonReachesTheModel(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingHookRunner{denyTool: "read", denyReason: "reads are frozen during the release"}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	llmClient := &capturingLLM{responses: []*llm.CompleteResponse{
+		{Message: llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				Type:     "function",
+				Function: llm.ToolCallFunc{Name: "read", Arguments: llm.ToolArguments([]byte(`{"path":"a.txt"}`))},
+			}},
+		}},
+		{Message: llm.Message{Role: llm.RoleAssistant, Content: `{"type":"final","final":{"patches":[]}}`}},
+	}}
+
+	ag, err := agent.New(llmClient, v, tr, agent.Options{MaxSteps: 5, HooksRunner: rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ag.Run(context.Background(), nil, "read the file"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := llmClient.toolMessages()
+	if !strings.Contains(got, "reads are frozen during the release") {
+		t.Fatalf("the hook's reason never reached the model, tool messages were:\n%s", got)
+	}
+}
+
+// A hook that can only refuse forces the model to guess the acceptable call. A
+// rewritten input runs instead, and the history has to show what actually ran
+// rather than what the model asked for.
+func TestAgent_E2E_HookRewritesToolInput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("classified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "public.txt"), []byte("published\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingHookRunner{rewriteTo: json.RawMessage(`{"path":"public.txt"}`)}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	llmClient := &capturingLLM{responses: []*llm.CompleteResponse{
+		{Message: llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				Type:     "function",
+				Function: llm.ToolCallFunc{Name: "read", Arguments: llm.ToolArguments([]byte(`{"path":"secret.txt"}`))},
+			}},
+		}},
+		{Message: llm.Message{Role: llm.RoleAssistant, Content: `{"type":"final","final":{"patches":[]}}`}},
+	}}
+
+	ag, err := agent.New(llmClient, v, tr, agent.Options{MaxSteps: 5, HooksRunner: rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ag.Run(context.Background(), nil, "read the file"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := llmClient.toolMessages()
+	if !strings.Contains(got, "published") {
+		t.Fatalf("the rewritten path was not the one read:\n%s", got)
+	}
+	if strings.Contains(got, "classified") {
+		t.Fatalf("the original path was read despite the rewrite:\n%s", got)
+	}
+}
 
 // TestAgent_E2E_HooksWiring_AllPlatforms verifies that the agent loop calls
 // RunPreTool / RunPostTool for every tool invocation, regardless of platform.

@@ -32,10 +32,10 @@ func TestPreTool_MatcherSkipsOtherTools(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	if err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("hook matched on bash|write must not run for read, got: %v", err)
+	if dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); dec.Denied {
+		t.Fatalf("hook matched on bash|write must not run for read, got: %s", dec.Reason)
 	}
-	if err := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`)); err == nil {
+	if dec := r.RunPreTool(context.Background(), "write", json.RawMessage(`{}`)); !dec.Denied {
 		t.Fatal("hook matched on bash|write must run for write")
 	}
 }
@@ -47,7 +47,7 @@ func TestPreTool_EmptyMatchRunsForEveryTool(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	if err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); err == nil {
+	if dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); !dec.Denied {
 		t.Fatal("a hook without a matcher must run for every tool")
 	}
 }
@@ -61,7 +61,7 @@ func TestPreTool_InvalidMatcherRunsEverywhere(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	if err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); err == nil {
+	if dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); !dec.Denied {
 		t.Fatal("a hook with an unparsable matcher must still run")
 	}
 }
@@ -76,14 +76,14 @@ func TestPreTool_FirstDenyWinsAndLaterHooksDoNotRun(t *testing.T) {
 		TimeoutMS: 5000,
 	}, t.TempDir())
 
-	err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`))
-	if err == nil {
+	dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`))
+	if !dec.Denied {
 		t.Fatal("expected the first hook to deny")
 	}
 	// The second hook would fail with a spawn error; the message must come
 	// from the hook that actually decided.
-	if got := err.Error(); got == "" {
-		t.Fatalf("empty denial reason: %q", got)
+	if dec.Reason == "" {
+		t.Fatal("empty denial reason")
 	}
 }
 
@@ -98,8 +98,8 @@ func TestPreTool_AllMatchingHooksRunWhenAllowed(t *testing.T) {
 		TimeoutMS: 5000,
 	}, dir)
 
-	if err := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("all-allow chain must allow, got: %v", err)
+	if dec := r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)); dec.Denied {
+		t.Fatalf("all-allow chain must allow, got: %s", dec.Reason)
 	}
 }
 
@@ -112,12 +112,12 @@ func TestPreTool_PerHookTimeoutOverridesGlobal(t *testing.T) {
 		TimeoutMS: 600000,
 	}, t.TempDir())
 
-	done := make(chan error, 1)
+	done := make(chan Decision, 1)
 	go func() { done <- r.RunPreTool(context.Background(), "read", json.RawMessage(`{}`)) }()
 
 	select {
-	case err := <-done:
-		if err == nil {
+	case dec := <-done:
+		if !dec.Denied {
 			t.Fatal("expected the per-hook timeout to deny")
 		}
 	case <-time.After(20 * time.Second):

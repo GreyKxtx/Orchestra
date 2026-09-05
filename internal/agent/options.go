@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol/schema"
 
+	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/permission"
 	"github.com/orchestra/orchestra/llm"
@@ -33,10 +34,18 @@ type (
 )
 
 // HooksRunner executes pre/post tool call hooks.
+//
+// RunPreTool answers with a decision rather than an error because a hook has
+// more than one thing to say: it can deny with a reason the model can act on,
+// or hand back a corrected input instead of only refusing.
 type HooksRunner interface {
-	RunPreTool(ctx context.Context, toolName string, input json.RawMessage) error
+	RunPreTool(ctx context.Context, toolName string, input json.RawMessage) HookDecision
 	RunPostTool(ctx context.Context, toolName string, output json.RawMessage)
 }
+
+// HookDecision is hooks.Decision, aliased the way PermissionRequester is, so
+// implementations and the tests that fake them do not each need the import.
+type HookDecision = hooks.Decision
 
 // SubtaskRunner manages child agent tasks spawned via task.spawn.
 type SubtaskRunner interface {

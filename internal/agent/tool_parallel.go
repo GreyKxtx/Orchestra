@@ -170,14 +170,22 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	//    a subprocess that writes to a shared log file). Spawning 16 of them
 	//    concurrently turns each call into a 5-second timeout because of
 	//    file-lock contention and OS process-startup pressure.
+	// rewrote[i] is the note prefixed to call i's result when a hook replaced
+	// its input, so the model does not read the result as an answer to the
+	// arguments it actually sent.
+	rewrote := make([]string, len(calls))
 	if a.opts.HooksRunner != nil {
 		for i, call := range calls {
-			hookErr := safeRunErr("PreTool hook "+call.Name, func() error {
-				return a.opts.HooksRunner.RunPreTool(ctx, call.Name, call.Input)
-			})
-			if hookErr != nil {
+			dec := a.runPreToolHooks(ctx, call.Name, call.Input)
+			if !dec.Denied && len(dec.Input) > 0 {
+				// The fan-out below re-ranges over calls, so the rewritten
+				// input is what actually runs.
+				calls[i].Input = dec.Input
+				rewrote[i] = hookRewriteNote(dec)
+			}
+			if dec.Denied {
 				denied[i] = true
-				results[i] = formatToolDeniedJSON(call.Name, call.Input, "pre-tool hook denied: "+hookErr.Error())
+				results[i] = formatToolDeniedJSON(call.Name, call.Input, hookDenialReason(dec))
 				if a.opts.OnEvent != nil {
 					_ = safeRun("OnEvent ToolCallCompleted (pre-deny)", func() {
 						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
@@ -225,7 +233,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 					a.observeWorkingTool(call.Name, call.Input, out, callErr)
 					return callErr
 				}
-				results[idx] = a.prepareToolHistoryContent(call.Name, call.Input, out)
+				results[idx] = rewrote[idx] + a.prepareToolHistoryContent(call.Name, call.Input, out)
 				if a.opts.OnEvent != nil {
 					_ = safeRun("OnEvent ToolCallCompleted", func() {
 						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: toolCallCompletedStreamEvent(call.Name, call.ID, out, nil)})

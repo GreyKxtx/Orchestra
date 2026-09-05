@@ -167,7 +167,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	}
 
 	var hooksRunner agent.HooksRunner
-	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot); hr != nil {
+	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot).WithSession(spec.SessionID); hr != nil {
 		hooksRunner = hr
 	}
 

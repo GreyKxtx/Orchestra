@@ -642,12 +642,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		})
 	}
 
+	hookRewrite := ""
 	if a.opts.HooksRunner != nil {
-		hookErr := safeRunErr("PreTool hook "+name, func() error {
-			return a.opts.HooksRunner.RunPreTool(callCtx, name, tc.Input)
-		})
-		if hookErr != nil {
-			toolResult := formatToolDeniedJSON(name, tc.Input, "pre-tool hook denied: "+hookErr.Error())
+		dec := a.runPreToolHooks(callCtx, name, tc.Input)
+		if dec.Denied {
+			toolResult := formatToolDeniedJSON(name, tc.Input, hookDenialReason(dec))
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
@@ -657,6 +656,14 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 				return serialToolOutcome{}, cbErr
 			}
 			return serialToolOutcome{}, nil
+		}
+		if len(dec.Input) > 0 {
+			// The model asked for one thing and another ran. Everything after
+			// this point — the tool call, the history entry, the write path —
+			// uses what actually ran, and the model is told about the swap so
+			// it does not read the result as an answer to its own arguments.
+			tc.Input = dec.Input
+			hookRewrite = hookRewriteNote(dec)
 		}
 	}
 
@@ -736,7 +743,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	*history = append(*history, llm.Message{
 		Role:       llm.RoleTool,
 		ToolCallID: toolCallID,
-		Content:    a.prepareToolHistoryContent(name, tc.Input, out),
+		Content:    hookRewrite + a.prepareToolHistoryContent(name, tc.Input, out),
 	})
 
 	if name == "write" || name == "edit" {
