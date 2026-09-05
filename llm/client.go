@@ -37,6 +37,8 @@ type OpenAIClient struct {
 	// azure is non-nil for an Azure OpenAI endpoint, which needs a
 	// deployment-scoped URL and the api-key header instead of a bearer.
 	azure *AzureConfig
+	// reasoning is the configured thinking dial, nil when unset.
+	reasoning *ReasoningConfig
 	model         string
 	provider      string
 	wantMaxTokens int // user-configured; may exceed safe cap until context is known
@@ -121,6 +123,7 @@ func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 		baseURL:            cfg.APIBase,
 		apiKey:             cfg.APIKey,
 		azure:              azureFromConfig(cfg),
+		reasoning:          cfg.Reasoning,
 		model:              cfg.Model,
 		provider:           cfg.Provider,
 		wantMaxTokens:      want,
@@ -681,6 +684,11 @@ type chatCompletionRequest struct {
 	// Usage is OpenRouter's usage accounting toggle: {"include": true} makes
 	// the response usage object carry the real cost in credits (USD).
 	Usage *usageInclude `json:"usage,omitempty"`
+	// ReasoningEffort is OpenAI's flat thinking dial; Reasoning is
+	// OpenRouter's nested object. Exactly one is ever set — the two dialects
+	// reject each other's field.
+	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
+	Reasoning       *openRouterReasoning `json:"reasoning,omitempty"`
 }
 
 // usageInclude is OpenRouter's request-level usage accounting switch.
@@ -758,6 +766,7 @@ func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream boo
 		temp := c.temperature
 		reqBody.Temperature = &temp
 	}
+	c.applyReasoning(&reqBody)
 	// If tools are provided, set tool_choice (or omit for vLLM compatibility).
 	applyToolChoice(&reqBody, c.toolChoice)
 	if rf := c.effectiveWireResponseFormat(req); rf != nil {

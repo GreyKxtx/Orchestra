@@ -15,6 +15,7 @@ type anthropicStreamRequest struct {
 	System    any                `json:"system,omitempty"`
 	Messages  []anthropicMessage `json:"messages"`
 	Tools     []anthropicTool    `json:"tools,omitempty"`
+	Thinking  *anthropicThinking `json:"thinking,omitempty"`
 	Stream    bool               `json:"stream"`
 }
 
@@ -30,6 +31,7 @@ type anthropicStreamEvent struct {
 	Delta struct {
 		Type         string `json:"type"`
 		Text         string `json:"text,omitempty"`
+		Thinking     string `json:"thinking,omitempty"`
 		PartialJSON  string `json:"partial_json,omitempty"`
 		StopReason   string `json:"stop_reason,omitempty"`
 		StopSequence string `json:"stop_sequence,omitempty"`
@@ -114,6 +116,14 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 					if ev.Delta.Text != "" {
 						acc.AppendContent(ev.Delta.Text)
 						ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: ev.Delta.Text}
+					}
+				case "thinking_delta":
+					// Extended thinking arrives in its own blocks. It goes to
+					// the reasoning channel, never into the message content:
+					// the accumulated content is what gets stored in history
+					// and re-sent, and Anthropic rejects replayed thinking.
+					if ev.Delta.Thinking != "" {
+						ch <- StreamEvent{Kind: StreamEventReasoningDelta, Content: ev.Delta.Thinking}
 					}
 				case "input_json_delta":
 					idx, ok := toolIndices[ev.Index]

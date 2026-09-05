@@ -149,6 +149,14 @@ llm:
   timeout_s: 120
   multimodal: true          # images in chat (TUI /attach, VS Code); needs vision-capable model
 
+# Extended thinking. Задаётся на провайдере, поэтому providers.lead и
+# providers.worker могут думать по-разному. Моделям без reasoning в каталоге
+# не отправляется вовсе (иначе 400).
+# llm:
+#   reasoning:
+#     effort: high         # minimal | low | medium | high | max
+#     budget_tokens: 16384 # необязательно; перебивает effort там, где провайдер берёт число
+
 # Azure OpenAI: api_base — эндпоинт ресурса, ключ уходит заголовком api-key.
 # llm:
 #   provider: azure

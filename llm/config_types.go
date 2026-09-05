@@ -20,6 +20,11 @@ type LLMConfig struct {
 
 	ExtraBody map[string]any `yaml:"extra_body,omitempty"`
 
+	// Reasoning asks a thinking-capable model to spend budget on reasoning
+	// before answering. It lives on the provider config, not the request, so
+	// that providers.lead and providers.worker can differ.
+	Reasoning *ReasoningConfig `yaml:"reasoning,omitempty"`
+
 	// Azure switches the OpenAI-compatible client to Azure OpenAI's dialect:
 	// the deployment-scoped URL and the api-key header. Provider "azure"
 	// enables it on its own; set this to name a deployment or pin a version.
@@ -32,6 +37,14 @@ type LLMConfig struct {
 // AzureConfig holds the two things Azure OpenAI needs beyond api_base and
 // api_key. Both are optional: Deployment falls back to the model name (what
 // the portal names a deployment by default) and APIVersion to a GA release.
+// ReasoningConfig controls extended thinking. Effort is the portable dial
+// ("minimal" | "low" | "medium" | "high" | "max"); BudgetTokens pins an exact
+// thinking budget for the providers that take one and overrides Effort.
+type ReasoningConfig struct {
+	Effort       string `yaml:"effort,omitempty"`
+	BudgetTokens int    `yaml:"budget_tokens,omitempty"`
+}
+
 type AzureConfig struct {
 	Deployment string `yaml:"deployment,omitempty"`
 	APIVersion string `yaml:"api_version,omitempty"`

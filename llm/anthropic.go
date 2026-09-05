@@ -22,6 +22,8 @@ type AnthropicClient struct {
 	baseURL      string
 	client       *http.Client
 	streamClient *http.Client
+	// thinking is the resolved extended-thinking block, nil when off.
+	thinking *anthropicThinking
 }
 
 // NewAnthropicClient creates an Anthropic client from config.
@@ -38,10 +40,25 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
+	var thinking *anthropicThinking
+	if r := resolveReasoning(cfg.Reasoning, cfg.Model); r != nil {
+		budget := r.budget()
+		thinking = &anthropicThinking{Type: "enabled", BudgetTokens: budget}
+		// max_tokens must leave room for the answer on top of the thinking
+		// budget; Anthropic rejects the request otherwise. Grow it rather
+		// than shrink the budget the user asked for.
+		if maxTokens <= budget {
+			maxTokens = budget + cfg.MaxTokens
+			if cfg.MaxTokens <= 0 {
+				maxTokens = budget + 4096
+			}
+		}
+	}
 	return &AnthropicClient{
 		apiKey:       cfg.APIKey,
 		model:        cfg.Model,
 		maxTokens:    maxTokens,
+		thinking:     thinking,
 		baseURL:      base,
 		client:       &http.Client{Timeout: timeout},
 		streamClient: &http.Client{Timeout: 0}, // per-request ctx controls stream lifetime
@@ -143,6 +160,7 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 		System:    systemField,
 		Messages:  msgs,
 		Tools:     tools,
+		Thinking:  c.thinking,
 		Stream:    true,
 	}
 
