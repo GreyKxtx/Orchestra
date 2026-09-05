@@ -128,10 +128,10 @@ func (s *Store) sliceRepoMemory(maxBytes int, includeOtherFiles bool) string {
 		if len(entries) > 0 {
 			// Ordered by type, then recency, so the budget is spent on the
 			// entries most expensive to lose rather than simply the newest.
-			recent := joinEntriesByPriority(entries)
-			if len(recent) > remaining {
-				recent = headBytes(recent, remaining)
-			}
+			// What does not fit becomes a one-line index rather than being
+			// cut off: memory the model cannot see is memory it cannot ask
+			// for either.
+			recent := sliceEntriesWithIndex(entries, remaining)
 			parts = append(parts, "[agent memory — feedback, user, project, reference; recent first within each]\n"+recent)
 			remaining -= len(recent)
 		}

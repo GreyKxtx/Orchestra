@@ -73,31 +73,17 @@ func formatEntry(timestamp, entryType, content string) string {
 	return fmt.Sprintf("%s*%s* [%s]\n\n%s\n", entrySep, timestamp, NormalizeEntryType(entryType), content)
 }
 
-// joinEntriesByPriority orders entries for injection: pinned first, then by
-// type in injectionOrder, and within each type most recent first.
+// joinEntriesByPriority renders entries in injection order: pinned first,
+// then by type, and within each type most recent first. Ordering itself lives
+// in orderEntriesByPriority, which the budget-aware slicer needs as a slice.
 //
 // entries arrive oldest-first, as the file holds them.
 func joinEntriesByPriority(entries []string) string {
-	if len(entries) == 0 {
+	ordered := orderEntriesByPriority(entries)
+	if len(ordered) == 0 {
 		return ""
 	}
-	var pins []string
-	byType := map[string][]string{}
-	for _, e := range entries {
-		if IsPinnedEntry(e) {
-			pins = append(pins, e)
-			continue
-		}
-		t := EntryTypeOf(e)
-		byType[t] = append(byType[t], e)
-	}
-
-	out := make([]string, 0, len(entries))
-	out = append(out, reverseEntries(pins)...)
-	for _, t := range injectionOrder {
-		out = append(out, reverseEntries(byType[t])...)
-	}
-	return strings.Join(out, entrySep+"\n")
+	return strings.Join(ordered, entrySep+"\n")
 }
 
 // reverseEntries returns entries most-recent-first.
