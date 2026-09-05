@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -66,8 +68,16 @@ func runMCPServe(cmd *cobra.Command, _ []string) error {
 
 	srv := c.MCPToolServer()
 
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
+	// Wire the OS interrupt/terminate signals into ctx ourselves, rather than
+	// relying on cmd.Context(): Execute() (internal/cli/root.go) calls plain
+	// rootCmd.Execute() with no ExecuteContext/signal wiring at the root, so
+	// cmd.Context() is never cancelled by Ctrl+C/SIGTERM. Without this, the
+	// graceful-shutdown paths below (both stdio's srv.Run and serveMCPHTTP's
+	// httpSrv.Shutdown) would be dead code and an interrupt would hard-kill
+	// the process instead of draining in-flight requests. Same pattern as
+	// runtimeServeCmd in internal/cli/runtime.go.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	if !mcpServeHTTP {
 		return srv.Run(ctx, &mcpsdk.StdioTransport{})
