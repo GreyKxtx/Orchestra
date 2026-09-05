@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestRunMCPServe_HTTPWithoutTokenFailsFastBeforeCoreNew(t *testing.T) {
+	t.Setenv("ORCH_MCP_TOKEN", "")
+
+	origHTTP, origToken := mcpServeHTTP, mcpServeToken
+	mcpServeHTTP = true
+	mcpServeToken = ""
+	defer func() { mcpServeHTTP, mcpServeToken = origHTTP, origToken }()
+
+	// No --workspace-root, no real workspace: if this ever got as far as
+	// core.New, it would need a real filesystem/CKG setup. Token resolution
+	// must happen first, so this should fail fast on the missing token
+	// without touching core.New at all.
+	err := runMCPServe(mcpServeCmd, nil)
+	if err == nil {
+		t.Fatal("expected an error when --http is set with no token available")
+	}
+	if !strings.Contains(err.Error(), "token") {
+		t.Errorf("error = %q, want it to mention the token requirement", err.Error())
+	}
+}
+
 func TestMCPServeCmd_RegisteredUnderMCPCommand(t *testing.T) {
 	found := false
 	for _, sub := range mcpCmd.Commands() {
@@ -89,5 +110,14 @@ func TestRequireBearerToken_RejectsWrongOrMissingToken(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("correct token: status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	// RFC 7235: the auth-scheme token is case-insensitive, so a conformant
+	// client sending a lowercase scheme must still be accepted.
+	req.Header.Set("Authorization", "bearer secret")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("lowercase scheme with correct token: status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }

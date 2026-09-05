@@ -295,7 +295,7 @@ In the TUI: `/memory` shows the memory layers and pinned facts; `/memory open` o
 
 ### MCP server mode
 
-`orchestra mcp serve` exposes Orchestra's own code-intelligence tools (`explore`, `semantic_search`, `symbols`, `repo_map`, `runtime_query`, `lsp.*`) as an MCP server, so any MCP-capable client (Claude Code, Claude Desktop, Cursor, …) can use them directly. stdio is the default transport; `--http` serves Streamable HTTP instead and always requires a token (`--mcp-token` or `$ORCH_MCP_TOKEN`).
+`orchestra mcp serve` exposes Orchestra's own code-intelligence tools (`explore`, `semantic_search`, `symbols`, `repo_map`, `runtime_query`, `lsp.*`) as an MCP server, so any MCP-capable client (Claude Code, Claude Desktop, Cursor, …) can use them directly. stdio is the default transport; `--http` serves Streamable HTTP instead and always requires a token (`--mcp-token` or `$ORCH_MCP_TOKEN`). `--http-addr` defaults to an ephemeral `127.0.0.1:0` port (one workspace per process, so a fixed port would collide across concurrent `mcp serve` instances for different projects) — set it explicitly to a fixed `127.0.0.1:PORT` if you need a stable address an MCP client can be configured to reconnect to, since the default port changes on every restart.
 
 ```bash
 orchestra mcp serve --workspace-root /path/to/project

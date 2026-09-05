@@ -143,9 +143,13 @@ identical to the JSON shape these tools already produce for the agent loop
 today, so nothing new to document for a caller who already knows Orchestra's
 tool outputs from its own docs.
 
-Failure: MCP's own tool-error convention (`IsError: true` on the tool result
-for a runtime failure such as "no LSP servers configured"; a JSON-RPC-level
-error for malformed input that fails schema validation). Orchestra's internal
+Failure: MCP's own tool-error convention (`IsError: true` on the tool result)
+covers both a runtime failure such as "no LSP servers configured" and
+malformed input that fails schema validation — per the MCP Go SDK (v1.7.0)
+actually in use, schema-validation failures for a tool call also come back
+as `IsError: true` on the `CallToolResult`, not as a JSON-RPC-level error;
+only a handler explicitly returning a `*jsonrpc.Error` takes that different
+path, which none of these ten tools do. Orchestra's internal
 recoverable-error hints (`StaleContent`, `AmbiguousMatch`) are not surfaced —
 those exist so Orchestra's *own* agent can self-correct mid-turn; an external
 MCP client has no such retry contract and should just see a plain error.

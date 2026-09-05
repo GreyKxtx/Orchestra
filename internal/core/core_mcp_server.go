@@ -9,6 +9,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools/nav"
 	"github.com/orchestra/orchestra/internal/tools/session"
 	"github.com/orchestra/orchestra/internal/tools/toolslsp"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // MCPToolServer builds an MCP server exposing Orchestra's read-only
@@ -20,147 +21,38 @@ import (
 func (c *Core) MCPToolServer() *mcpsdk.Server {
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "orchestra", Version: "1"}, nil)
 
-	exploreDef := nav.ToolExploreCodebase().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        exploreDef.Name,
-		Description: exploreDef.Description,
-		InputSchema: exploreDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in nav.ExploreCodebaseRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.ExploreCodebase(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	semanticDef := nav.ToolSemanticSearch().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        semanticDef.Name,
-		Description: semanticDef.Description,
-		InputSchema: semanticDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in nav.SemanticSearchRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.SemanticSearch(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	symbolsDef := nav.ToolCodeSymbols().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        symbolsDef.Name,
-		Description: symbolsDef.Description,
-		InputSchema: symbolsDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in nav.CodeSymbolsRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.CodeSymbols(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	repoMapDef := nav.ToolRepoMap().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        repoMapDef.Name,
-		Description: repoMapDef.Description,
-		InputSchema: repoMapDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in nav.RepoMapRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.RepoMap(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	runtimeQueryDef := session.ToolRuntimeQuery().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        runtimeQueryDef.Name,
-		Description: runtimeQueryDef.Description,
-		InputSchema: runtimeQueryDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in session.RuntimeQueryRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.RuntimeQuery(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	lspDefDef := toolslsp.ToolLSPDefinition().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        lspDefDef.Name,
-		Description: lspDefDef.Description,
-		InputSchema: lspDefDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPDefinitionRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.LSPDefinition(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	lspRefDef := toolslsp.ToolLSPReferences().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        lspRefDef.Name,
-		Description: lspRefDef.Description,
-		InputSchema: lspRefDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPReferencesRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.LSPReferences(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	lspHoverDef := toolslsp.ToolLSPHover().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        lspHoverDef.Name,
-		Description: lspHoverDef.Description,
-		InputSchema: lspHoverDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPHoverRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.LSPHover(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	lspDiagDef := toolslsp.ToolLSPDiagnostics().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        lspDiagDef.Name,
-		Description: lspDiagDef.Description,
-		InputSchema: lspDiagDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPDiagnosticsRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.LSPDiagnostics(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
-
-	lspRenameDef := toolslsp.ToolLSPRename().Function
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name:        lspRenameDef.Name,
-		Description: lspRenameDef.Description,
-		InputSchema: lspRenameDef.Parameters,
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPRenameRequest) (*mcpsdk.CallToolResult, any, error) {
-		resp, err := c.tools.LSPRename(ctx, in)
-		if err != nil {
-			return nil, nil, err
-		}
-		res, err := mcpTextResult(resp)
-		return res, nil, err
-	})
+	addRunnerTool(srv, nav.ToolExploreCodebase(), c.tools.ExploreCodebase)
+	addRunnerTool(srv, nav.ToolSemanticSearch(), c.tools.SemanticSearch)
+	addRunnerTool(srv, nav.ToolCodeSymbols(), c.tools.CodeSymbols)
+	addRunnerTool(srv, nav.ToolRepoMap(), c.tools.RepoMap)
+	addRunnerTool(srv, session.ToolRuntimeQuery(), c.tools.RuntimeQuery)
+	addRunnerTool(srv, toolslsp.ToolLSPDefinition(), c.tools.LSPDefinition)
+	addRunnerTool(srv, toolslsp.ToolLSPReferences(), c.tools.LSPReferences)
+	addRunnerTool(srv, toolslsp.ToolLSPHover(), c.tools.LSPHover)
+	addRunnerTool(srv, toolslsp.ToolLSPDiagnostics(), c.tools.LSPDiagnostics)
+	addRunnerTool(srv, toolslsp.ToolLSPRename(), c.tools.LSPRename)
 
 	return srv
+}
+
+// addRunnerTool registers one MCP tool on srv whose name/description/input
+// schema come from def (the same llm.ToolDef Orchestra's own agent loop
+// uses) and whose handler delegates to run, marshaling the response via
+// mcpTextResult. All ten of Core's MCP tool registrations share this exact
+// shape - pull .Function from a llm.ToolDef, call one Runner method, marshal
+// the result - so this generic helper replaces ten near-identical blocks
+// with one line each.
+func addRunnerTool[In, Out any](srv *mcpsdk.Server, def llm.ToolDef, run func(context.Context, In) (Out, error)) {
+	fn := def.Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: fn.Name, Description: fn.Description, InputSchema: fn.Parameters},
+		func(ctx context.Context, _ *mcpsdk.CallToolRequest, in In) (*mcpsdk.CallToolResult, any, error) {
+			resp, err := run(ctx, in)
+			if err != nil {
+				return nil, nil, err
+			}
+			res, err := mcpTextResult(resp)
+			return res, nil, err
+		})
 }
 
 // mcpTextResult marshals a tool's response struct to JSON and wraps it as

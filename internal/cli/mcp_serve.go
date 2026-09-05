@@ -3,12 +3,14 @@ package cli
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -50,6 +52,20 @@ func init() {
 }
 
 func runMCPServe(cmd *cobra.Command, _ []string) error {
+	// Resolve the HTTP token before doing anything expensive: if --http is set
+	// with no token available, fail fast here rather than after core.New has
+	// already paid the cost of opening the CKG SQLite store and starting
+	// background goroutines (or, worse, surfacing core.New's own error instead
+	// of this more actionable one when both would have failed).
+	var token string
+	if mcpServeHTTP {
+		var err error
+		token, err = resolveMCPToken(mcpServeToken)
+		if err != nil {
+			return err
+		}
+	}
+
 	workspace := mcpServeWorkspaceRoot
 	if workspace == "" {
 		cwd, err := os.Getwd()
@@ -79,14 +95,24 @@ func runMCPServe(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Same pattern as `orchestra core`: pre-populate the CKG in the background
+	// so the first explore/semantic_search call doesn't pay the full initial
+	// scan cost, and detect languages / auto-install missing language servers.
+	// Without these, semantic_search against a workspace Orchestra's own agent
+	// has never opened returns an empty index instead of real results - and
+	// that tool is exactly what this feature is meant to showcase to external
+	// MCP callers. Both calls are non-blocking (WarmupCKG triggers
+	// UpdateGraphAsync; WarmupLSP spawns a goroutine).
+	c.WarmupCKG(ctx)
+	c.WarmupLSP(ctx)
+
 	if !mcpServeHTTP {
-		return srv.Run(ctx, &mcpsdk.StdioTransport{})
+		if err := srv.Run(ctx, &mcpsdk.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
+			return err
+		}
+		return nil
 	}
 
-	token, err := resolveMCPToken(mcpServeToken)
-	if err != nil {
-		return err
-	}
 	return serveMCPHTTP(ctx, srv, mcpServeHTTPAddr, token)
 }
 
@@ -95,11 +121,14 @@ func runMCPServe(cmd *cobra.Command, _ []string) error {
 // mode never starts without one - unlike `orchestra core --http` (debug-only,
 // auto-generates a token if omitted), this server's whole point is real
 // remote/multi-client use, so silently generating a token nobody was told
-// about is the wrong default here.
+// about is the wrong default here. Both sources are trimmed of surrounding
+// whitespace before the empty check, so a whitespace-only value (e.g.
+// ORCH_MCP_TOKEN=" ") is correctly treated as no token rather than becoming
+// a "working" one-space bearer token.
 func resolveMCPToken(flagToken string) (string, error) {
-	token := flagToken
+	token := strings.TrimSpace(flagToken)
 	if token == "" {
-		token = os.Getenv("ORCH_MCP_TOKEN")
+		token = strings.TrimSpace(os.Getenv("ORCH_MCP_TOKEN"))
 	}
 	if token == "" {
 		return "", fmt.Errorf("mcp serve --http requires a token: pass --mcp-token or set ORCH_MCP_TOKEN")
@@ -107,11 +136,14 @@ func resolveMCPToken(flagToken string) (string, error) {
 	return token, nil
 }
 
-// requireBearerToken wraps next with a constant-time bearer-token check.
+// requireBearerToken wraps next with a bearer-token check. The auth-scheme
+// token ("Bearer") is compared case-insensitively per RFC 7235; only the
+// credential portion needs a constant-time comparison since it's the secret.
 func requireBearerToken(token string, next http.Handler) http.Handler {
-	want := "Bearer " + token
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(want)) != 1 {
+		scheme, credential, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") ||
+			subtle.ConstantTimeCompare([]byte(credential), []byte(token)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -130,15 +162,36 @@ func serveMCPHTTP(ctx context.Context, srv *mcpsdk.Server, addr, token string) e
 	}
 	fmt.Fprintf(os.Stderr, "[orchestra] mcp serve: listening on http://%s\n", ln.Addr())
 
-	httpSrv := &http.Server{Handler: requireBearerToken(token, handler)}
+	httpSrv := &http.Server{
+		Handler: requireBearerToken(token, handler),
+		// Slowloris-class DoS mitigation (gosec G112): bound header reads and
+		// idle keep-alive connections. Deliberately no ReadTimeout/WriteTimeout
+		// on the whole request - Streamable HTTP legitimately holds long-lived
+		// SSE response streams open, and a short whole-request timeout would
+		// break that.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- httpSrv.Serve(ln) }()
+	go func() {
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
 
 	select {
 	case <-ctx.Done():
+		// Streamable HTTP can hold long-lived SSE responses open, so Shutdown
+		// may legitimately hit its timeout during a normal stop - that's a
+		// clean exit, not a failure.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return httpSrv.Shutdown(shutdownCtx)
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return nil
 	case err := <-errCh:
 		return err
 	}

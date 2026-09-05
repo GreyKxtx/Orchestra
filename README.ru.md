@@ -295,7 +295,7 @@ stdout:  {"decision":"deny","reason":"на этой ветке правки за
 
 ### Режим MCP-сервера
 
-`orchestra mcp serve` отдаёт собственные инструменты понимания кода Orchestra (`explore`, `semantic_search`, `symbols`, `repo_map`, `runtime_query`, `lsp.*`) как MCP-сервер — любой MCP-совместимый клиент (Claude Code, Claude Desktop, Cursor и т.д.) может пользоваться ими напрямую. По умолчанию — stdio; `--http` включает Streamable HTTP и всегда требует токен (`--mcp-token` или `$ORCH_MCP_TOKEN`).
+`orchestra mcp serve` отдаёт собственные инструменты понимания кода Orchestra (`explore`, `semantic_search`, `symbols`, `repo_map`, `runtime_query`, `lsp.*`) как MCP-сервер — любой MCP-совместимый клиент (Claude Code, Claude Desktop, Cursor и т.д.) может пользоваться ими напрямую. По умолчанию — stdio; `--http` включает Streamable HTTP и всегда требует токен (`--mcp-token` или `$ORCH_MCP_TOKEN`). `--http-addr` по умолчанию использует эфемерный порт `127.0.0.1:0` (один процесс — один workspace, поэтому фиксированный порт по умолчанию вызывал бы конфликты между параллельными процессами `mcp serve` для разных проектов) — задайте его явно как фиксированный `127.0.0.1:PORT`, если нужен стабильный адрес, на который MCP-клиент сможет переподключаться, так как порт по умолчанию меняется при каждом перезапуске.
 
 ```bash
 orchestra mcp serve --workspace-root /path/to/project
