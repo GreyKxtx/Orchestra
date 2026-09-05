@@ -35,7 +35,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 	return a.run(ctx, history, userQuery)
 }
 
-func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string) ([]llm.Message, *Result, error) {
+func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string) (outHistory []llm.Message, result *Result, err error) {
 	userQuery = strings.TrimSpace(userQuery)
 	if userQuery == "" {
 		return nil, nil, fmt.Errorf("user query is empty")
@@ -50,7 +50,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.tools.ResetDeptLessonBudget()
 	a.initWorkingState(userQuery)
 	defer a.persistWorkingTurnDigest()
-	defer a.recordTurnLesson()
+	// Named returns: recordTurnLesson runs after result is fully built by
+	// whichever return statement fired, so it can still attach a
+	// RuleSuggestion to it — this is the one place that turn's *Result
+	// pointer is reachable before it goes back to the caller.
+	defer func() { a.recordTurnLesson(result) }()
 	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).
 	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
 

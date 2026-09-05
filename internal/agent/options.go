@@ -464,6 +464,29 @@ type Result struct {
 	// StopReason is a stable machine token for the TUI:
 	//   "completed" | "partial" | "max_steps"
 	StopReason string
+
+	// RuleSuggestion is set when this turn's anti-pattern repeated on the
+	// same file often enough (lessons.RuleSuggestThreshold) to offer the
+	// human a rule for ORCHESTRA.md, instead of the count being silently
+	// discarded. nil on every other turn.
+	RuleSuggestion *RuleSuggestion
+}
+
+// RuleSuggestion is a human-facing offer to turn a repeated anti-pattern
+// into a project instruction. Unlike lesson_promote/playbook_promote (an
+// LLM tool call gated by a free-text Question Barrier answer, targeting a
+// dept playbook), this is a direct suggestion surfaced to the person at the
+// keyboard, targeting ORCHESTRA.md.
+type RuleSuggestion struct {
+	Dept   string
+	File   string
+	Count  int
+	Verify string
+	// RuleLine is the exact line to append to the project's instructions
+	// file if the human accepts.
+	RuleLine string
+	// Text is the human-readable prompt shown in chat.
+	Text string
 }
 
 // ActiveProviderReporter is implemented by clients that can move between

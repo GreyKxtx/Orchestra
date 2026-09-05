@@ -42,7 +42,7 @@ func TestRecordTurnLesson_WritesAntiPatternInBuildMode(t *testing.T) {
 	a.working.ObserveTool("edit", json.RawMessage(`{"path":"src/App.jsx"}`), nil,
 		errors.New("StaleContent: search block not found"))
 
-	a.recordTurnLesson()
+	a.recordTurnLesson(nil)
 
 	// Episodic learning only ever fired for worker children, so the single
 	// agent mode almost everyone actually uses learned nothing from its own
@@ -63,7 +63,7 @@ func TestRecordTurnLesson_QuietWhenNothingWentWrong(t *testing.T) {
 	a, root := newLessonAgent(t, ModeBuild)
 	a.working.ObserveTool("edit", json.RawMessage(`{"path":"src/App.jsx"}`), []byte(`{}`), nil)
 
-	a.recordTurnLesson()
+	a.recordTurnLesson(nil)
 
 	// Lessons are injected into later prompts, so a clean turn writing one
 	// would cost tokens forever to say nothing happened.
@@ -77,12 +77,80 @@ func TestRecordTurnLesson_LeavesWorkerChildrenToTheirOwnRecorder(t *testing.T) {
 	a.working.ObserveTool("edit", json.RawMessage(`{"path":"src/App.jsx"}`), nil,
 		errors.New("StaleContent: search block not found"))
 
-	a.recordTurnLesson()
+	a.recordTurnLesson(nil)
 
 	// tasks.recordWorkerLesson already records worker outcomes under the
 	// WorkOrder's own dept, with verify state this layer cannot see.
 	if got := readEngineeringLessons(t, root); got != "" {
 		t.Fatalf("worker children are recorded by the task runner, got: %s", got)
+	}
+}
+
+// Discarding BumpAntiPatternSignal's return meant a single agent hitting the
+// same error 3x in a row across turns never told anyone — the plan's own
+// example ("3× StaleContent on src/App.jsx — add to ORCHESTRA.md?") is
+// exactly this case.
+func TestRecordTurnLesson_SuggestsARuleAfterThreeRepeatsOnTheSameFile(t *testing.T) {
+	a, _ := newLessonAgent(t, ModeBuild)
+	observeSameFailure := func() {
+		a.working = working.New("wire the weather panel into the sidebar")
+		a.working.ObserveTool("edit", json.RawMessage(`{"path":"src/App.jsx"}`), nil,
+			errors.New("StaleContent: search block not found"))
+	}
+
+	observeSameFailure()
+	res := &Result{}
+	a.recordTurnLesson(res)
+	if res.RuleSuggestion != nil {
+		t.Fatalf("must not suggest before the threshold, got %+v", res.RuleSuggestion)
+	}
+
+	observeSameFailure()
+	res = &Result{}
+	a.recordTurnLesson(res)
+	if res.RuleSuggestion != nil {
+		t.Fatalf("must not suggest on the second repeat, got %+v", res.RuleSuggestion)
+	}
+
+	observeSameFailure()
+	res = &Result{}
+	a.recordTurnLesson(res)
+	if res.RuleSuggestion == nil {
+		t.Fatal("third repeat on the same file must suggest a rule")
+	}
+	if res.RuleSuggestion.File != "src/App.jsx" {
+		t.Errorf("File = %q, want src/App.jsx", res.RuleSuggestion.File)
+	}
+	if res.RuleSuggestion.Count != lessons.RuleSuggestThreshold {
+		t.Errorf("Count = %d, want %d", res.RuleSuggestion.Count, lessons.RuleSuggestThreshold)
+	}
+	if !strings.Contains(res.RuleSuggestion.RuleLine, "src/App.jsx") {
+		t.Errorf("RuleLine must name the file: %q", res.RuleSuggestion.RuleLine)
+	}
+	if !strings.Contains(res.RuleSuggestion.Text, "src/App.jsx") {
+		t.Errorf("Text must name the file: %q", res.RuleSuggestion.Text)
+	}
+}
+
+// A different file hitting the same error must not combine into one count —
+// each file earns the suggestion on its own repeat history.
+func TestRecordTurnLesson_DifferentFilesDoNotShareTheCount(t *testing.T) {
+	a, _ := newLessonAgent(t, ModeBuild)
+	observe := func(path string) {
+		a.working = working.New("wire the weather panel into the sidebar")
+		a.working.ObserveTool("edit", json.RawMessage(`{"path":"`+path+`"}`), nil,
+			errors.New("StaleContent: search block not found"))
+	}
+
+	for i := 0; i < lessons.RuleSuggestThreshold-1; i++ {
+		observe("src/App.jsx")
+		a.recordTurnLesson(&Result{})
+	}
+	observe("src/Other.jsx")
+	res := &Result{}
+	a.recordTurnLesson(res)
+	if res.RuleSuggestion != nil {
+		t.Fatalf("a different file must not inherit src/App.jsx's count, got %+v", res.RuleSuggestion)
 	}
 }
 
@@ -130,7 +198,7 @@ func TestRecordTurnLesson_NeedsASession(t *testing.T) {
 	a.opts.SessionID = ""
 	a.working.ObserveTool("edit", json.RawMessage(`{"path":"a.go"}`), nil, errors.New("boom"))
 
-	a.recordTurnLesson()
+	a.recordTurnLesson(nil)
 
 	// One-shot `apply` runs have no session and no continuity to learn into.
 	if got := readEngineeringLessons(t, root); got != "" {
