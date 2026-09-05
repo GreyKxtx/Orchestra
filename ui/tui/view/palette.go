@@ -90,17 +90,27 @@ type SlashPalette struct {
 	Cursor int
 	width  int
 	scroll int // index of the first visible item
-	// extra holds commands discovered at runtime — today, the prompts MCP
-	// servers offer. They are kept apart from AllSlashCmds so a server can
-	// never bury a built-in: built-ins always list first.
-	extra []SlashCmd
+	// extraMCP and extraSkills hold commands discovered at runtime — prompts
+	// MCP servers offer, and loaded skills, respectively. They are kept apart
+	// from AllSlashCmds so neither source can ever bury a built-in: built-ins
+	// always list first. They are also kept apart from EACH OTHER: the two
+	// sources refresh independently, and one's refresh must not erase the
+	// other's commands the way a single shared slot would.
+	extraMCP    []SlashCmd
+	extraSkills []SlashCmd
 }
 
-// SetExtra replaces the runtime command list. Replacing rather than appending
-// matters because the list is refreshed when servers come and go, and a stale
-// entry would name a command nothing can run.
-func (p *SlashPalette) SetExtra(cmds []SlashCmd) {
-	p.extra = append([]SlashCmd(nil), cmds...)
+// SetExtraMCP replaces the MCP-prompt runtime command list. Replacing rather
+// than appending matters because the list is refreshed when servers come and
+// go, and a stale entry would name a command nothing can run.
+func (p *SlashPalette) SetExtraMCP(cmds []SlashCmd) {
+	p.extraMCP = append([]SlashCmd(nil), cmds...)
+}
+
+// SetExtraSkills replaces the skill-derived runtime command list, on the
+// same replace-not-append reasoning as SetExtraMCP.
+func (p *SlashPalette) SetExtraSkills(cmds []SlashCmd) {
+	p.extraSkills = append([]SlashCmd(nil), cmds...)
 }
 
 // NewSlashPalette creates a palette sized to the given width.
@@ -114,8 +124,12 @@ func (p *SlashPalette) SetSize(width int) { p.width = width }
 // Filter updates Items to commands containing the query (after the leading /).
 func (p *SlashPalette) Filter(query string) {
 	q := strings.ToLower(query)
-	filtered := make([]SlashCmd, 0, len(AllSlashCmds)+len(p.extra))
-	for _, c := range append(append([]SlashCmd(nil), AllSlashCmds...), p.extra...) {
+	all := make([]SlashCmd, 0, len(AllSlashCmds)+len(p.extraMCP)+len(p.extraSkills))
+	all = append(all, AllSlashCmds...)
+	all = append(all, p.extraMCP...)
+	all = append(all, p.extraSkills...)
+	filtered := make([]SlashCmd, 0, len(all))
+	for _, c := range all {
 		if q == "" || strings.Contains(strings.ToLower(c.Cmd[1:]), q) {
 			filtered = append(filtered, c)
 		}

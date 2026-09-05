@@ -23,6 +23,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, handled := a.handleMCPPromptMsg(msg); handled {
 		return a, cmd
 	}
+	if m, ok := msg.(skillsLoadedMsg); ok {
+		a.handleSkillsLoadedMsg(m)
+		return a, nil
+	}
 
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:

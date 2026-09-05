@@ -51,6 +51,11 @@ func (a *App) maybeRunSkillOrWorkflow(text string) tea.Cmd {
 		}
 		return a.cmdInvokeSkill(name, args)
 	}
+	// A loaded skill is also its own command: "/<name> <args>" runs the same
+	// way "/skill <name> <args>" does, without the "/skill " prefix.
+	if name, args, ok := parseSkillSlashCommand(trimmed, a.skillNames); ok {
+		return a.cmdInvokeSkill(name, args)
+	}
 	return nil
 }
 

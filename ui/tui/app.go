@@ -92,6 +92,7 @@ type App struct {
 
 	slashPalette  *view.SlashPalette
 	paletteActive bool
+	skillNames    []string // loaded skill names, for "/<name> args" matching
 
 	mentionPalette *view.MentionPalette
 	mentionActive  bool
@@ -323,7 +324,7 @@ func NewApp(cfg Config) (*App, error) {
 func (a *App) Init() tea.Cmd {
 	cmds := []tea.Cmd{textarea.Blink, tea.EnableBracketedPaste, a.listenForEvents(), a.nextTickCmd()}
 	if a.rpc != nil {
-		cmds = append(cmds, a.startCoreSession(), a.syncMCPPromptCommands())
+		cmds = append(cmds, a.startCoreSession(), a.syncMCPPromptCommands(), a.syncSkillCommands())
 	}
 	return tea.Batch(cmds...)
 }

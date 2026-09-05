@@ -30,6 +30,14 @@ type fakeCore struct {
 	mcpPromptText string
 	mcpPromptErr  error
 	mcpPromptGot  string
+
+	// Skills.
+	skills            []rpcclient.SkillSummary
+	skillInvokeName   string
+	skillInvokeArgs   string
+	skillInvokeResult *rpcclient.SkillInvokeResult
+	skillInvokeErr    error
+
 	permAnswers     []fakePermAnswer
 	questionAnswers []fakeQuestionAnswer
 
@@ -141,9 +149,21 @@ func (f *fakeCore) WorkflowRun(_ context.Context, _, _ string, _ rpcclient.Workf
 	return &rpcclient.WorkflowRunResult{}, nil
 }
 
-func (f *fakeCore) SkillList(_ context.Context) ([]rpcclient.SkillSummary, error) { return nil, nil }
+func (f *fakeCore) SkillList(_ context.Context) ([]rpcclient.SkillSummary, error) {
+	return f.skills, nil
+}
 
-func (f *fakeCore) SkillInvoke(_ context.Context, _, _ string, _ rpcclient.SkillInvokeOptions) (*rpcclient.SkillInvokeResult, error) {
+func (f *fakeCore) SkillInvoke(_ context.Context, name, args string, _ rpcclient.SkillInvokeOptions) (*rpcclient.SkillInvokeResult, error) {
+	f.mu.Lock()
+	f.skillInvokeName = name
+	f.skillInvokeArgs = args
+	f.mu.Unlock()
+	if f.skillInvokeErr != nil {
+		return nil, f.skillInvokeErr
+	}
+	if f.skillInvokeResult != nil {
+		return f.skillInvokeResult, nil
+	}
 	return &rpcclient.SkillInvokeResult{}, nil
 }
 

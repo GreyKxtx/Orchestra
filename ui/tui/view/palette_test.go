@@ -108,7 +108,7 @@ func TestMentionPalette_Render_Empty(t *testing.T) {
 
 func TestSlashPalette_ExtraCommandsAreOfferedAndFiltered(t *testing.T) {
 	p := view.NewSlashPalette(80)
-	p.SetExtra([]view.SlashCmd{
+	p.SetExtraMCP([]view.SlashCmd{
 		{Cmd: "/mcp:linear:triage", Desc: "Triage an issue"},
 		{Cmd: "/mcp:linear:standup", Desc: "Draft a standup note"},
 	})
@@ -139,11 +139,36 @@ func TestSlashPalette_SetExtraReplacesRatherThanAccumulates(t *testing.T) {
 	// The list is refreshed when servers restart; appending would show
 	// commands from servers that are gone.
 	p := view.NewSlashPalette(80)
-	p.SetExtra([]view.SlashCmd{{Cmd: "/mcp:a:one"}})
-	p.SetExtra([]view.SlashCmd{{Cmd: "/mcp:b:two"}})
+	p.SetExtraMCP([]view.SlashCmd{{Cmd: "/mcp:a:one"}})
+	p.SetExtraMCP([]view.SlashCmd{{Cmd: "/mcp:b:two"}})
 	// "/mcp" is also a built-in, so filter on the part only a prompt has.
 	p.Filter("mcp:")
 	if len(p.Items) != 1 || p.Items[0].Cmd != "/mcp:b:two" {
-		t.Fatalf("items = %+v, want only the second SetExtra call's command", p.Items)
+		t.Fatalf("items = %+v, want only the second SetExtraMCP call's command", p.Items)
+	}
+}
+
+// MCP prompts and skills are two independent runtime sources that refresh on
+// their own schedules. One's refresh must not erase the other's commands —
+// SetExtraMCP and SetExtraSkills each own their own slot in the palette.
+func TestSlashPalette_MCPAndSkillExtrasCoexist(t *testing.T) {
+	p := view.NewSlashPalette(80)
+	p.SetExtraMCP([]view.SlashCmd{{Cmd: "/mcp:linear:triage", Desc: "Triage"}})
+	p.SetExtraSkills([]view.SlashCmd{{Cmd: "/refactor-go", Desc: "Refactor Go code"}})
+
+	p.Filter("")
+	if len(p.Items) != len(view.AllSlashCmds)+2 {
+		t.Fatalf("unfiltered list = %d items, want built-ins + 2 extras: %+v", len(p.Items), p.Items)
+	}
+
+	// Refreshing one source leaves the other untouched.
+	p.SetExtraMCP([]view.SlashCmd{{Cmd: "/mcp:linear:standup", Desc: "Standup"}})
+	p.Filter("")
+	if len(p.Items) != len(view.AllSlashCmds)+2 {
+		t.Fatalf("after refreshing MCP extras, list = %d items, want built-ins + 2 extras: %+v", len(p.Items), p.Items)
+	}
+	p.Filter("refactor")
+	if len(p.Items) != 1 || p.Items[0].Cmd != "/refactor-go" {
+		t.Fatalf("skill extra survived MCP refresh? items = %+v", p.Items)
 	}
 }

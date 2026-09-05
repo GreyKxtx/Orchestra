@@ -112,7 +112,7 @@ type mcpPromptFailedMsg struct {
 func (a *App) handleMCPPromptMsg(msg tea.Msg) (tea.Cmd, bool) {
 	switch m := msg.(type) {
 	case mcpPromptsLoadedMsg:
-		a.slashPalette.SetExtra(m.prompts)
+		a.slashPalette.SetExtraMCP(m.prompts)
 		return nil, true
 	case mcpPromptReadyMsg:
 		if strings.TrimSpace(m.text) == "" {
