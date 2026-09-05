@@ -270,7 +270,11 @@ func newAgentUsageTracker(cfg *config.ProjectConfig, label string) *usage.Tracke
 		}
 	}
 	runID := time.Now().UTC().Format("20060102T150405.000Z")
-	return usage.NewTracker(runID, label, pricing)
+	t := usage.NewTracker(runID, label, pricing)
+	if cfg != nil {
+		t.UseCatalogPrices(cfg.LLM.APIBase)
+	}
+	return t
 }
 
 // finalizeAgentUsage best-effort persists usage. Errors are swallowed; the RPC

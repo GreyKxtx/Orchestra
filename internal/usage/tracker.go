@@ -20,12 +20,16 @@ import (
 
 // Tracker accumulates token totals per (provider, model) for one run.
 type Tracker struct {
-	mu       sync.Mutex
-	entries  map[string]*Entry // key = provider+"|"+model
-	pricing  Pricing
-	runID    string
-	command  string
-	startAt  time.Time
+	mu      sync.Mutex
+	entries map[string]*Entry // key = provider+"|"+model
+	pricing Pricing
+	// listPrice is the vendor list price for a model, when the caller
+	// installed one (UseListPrices). It is a function rather than another
+	// Pricing map so this package keeps no dependency on the model catalog.
+	listPrice func(model string) (ModelPricing, bool)
+	runID     string
+	command   string
+	startAt   time.Time
 }
 
 // Entry is a per-(provider,model) accumulator.
@@ -104,9 +108,33 @@ func (t *Tracker) RecordCost(provider, model string, prompt, completion int, pro
 	e.TotalTokens += prompt + completion
 	if providerCostUSD > 0 {
 		e.CostUSD += providerCostUSD
-	} else if mp, ok := lookupPrice(t.pricing, provider, model); ok {
+	} else if mp, ok := t.priceFor(provider, model); ok {
 		e.CostUSD += float64(prompt)/1_000_000*mp.InputPer1M + float64(completion)/1_000_000*mp.OutputPer1M
 	}
+}
+
+// UseListPrices installs a fallback price source (the built-in model
+// catalogue) consulted only for pairs the user's own pricing table does not
+// name. Precedence, most specific first: the provider's reported cost, the
+// configured table, then this.
+func (t *Tracker) UseListPrices(fn func(model string) (ModelPricing, bool)) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.listPrice = fn
+}
+
+// priceFor resolves one (provider, model) pair. Callers hold t.mu.
+func (t *Tracker) priceFor(provider, model string) (ModelPricing, bool) {
+	if mp, ok := lookupPrice(t.pricing, provider, model); ok {
+		return mp, true
+	}
+	if t.listPrice != nil {
+		return t.listPrice(model)
+	}
+	return ModelPricing{}, false
 }
 
 // RecordPromptCache adds the provider's prompt-cache split for one completion

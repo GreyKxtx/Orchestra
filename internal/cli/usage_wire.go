@@ -15,7 +15,11 @@ import (
 func newUsageTracker(cmdLabel string, cfg *config.ProjectConfig) *usage.Tracker {
 	pricing := toUsagePricing(cfg.Pricing)
 	runID := time.Now().UTC().Format("20060102T150405.000Z")
-	return usage.NewTracker(runID, cmdLabel, pricing)
+	t := usage.NewTracker(runID, cmdLabel, pricing)
+	// Behind the configured table (and behind any cost the provider reports
+	// itself), fall back to the built-in models.dev snapshot.
+	t.UseCatalogPrices(cfg.LLM.APIBase)
+	return t
 }
 
 // toUsagePricing copies config.PricingConfig into the usage.Pricing shape.

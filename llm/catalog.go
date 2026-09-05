@@ -44,6 +44,55 @@ func FindCatalogProvider(key string) (CatalogEntry, bool) {
 	return CatalogEntry{}, false
 }
 
+// IsKnownCloudEndpoint reports whether apiBase is the endpoint of a hosted
+// provider Orchestra ships in ProviderCatalog.
+//
+// It is an allowlist, not a "not localhost" check, and deliberately so: it
+// gates the built-in price table, and the cost of a false positive is an
+// invented dollar figure in usage.jsonl. A self-hosted vLLM served through a
+// public tunnel has a public host but no bill; a local model named
+// "qwen3-coder" would otherwise inherit the hosted model's price.
+func IsKnownCloudEndpoint(apiBase string) bool {
+	host := endpointHost(apiBase)
+	if host == "" {
+		return false
+	}
+	for _, p := range ProviderCatalog {
+		if p.Local || p.DefaultAPIBase == "" {
+			continue
+		}
+		if h := endpointHost(p.DefaultAPIBase); h != "" && h == host {
+			return true
+		}
+	}
+	return false
+}
+
+// endpointHost extracts the lowercase host from a URL, tolerating a missing
+// scheme, a trailing path and a port.
+func endpointHost(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.LastIndex(s, "@"); i >= 0 {
+		s = s[i+1:] // strip userinfo
+	}
+	if i := strings.LastIndex(s, ":"); i >= 0 {
+		s = s[:i] // strip port
+	}
+	if strings.ContainsAny(s, " \t") || !strings.Contains(s, ".") {
+		return ""
+	}
+	return s
+}
+
 // CatalogKeys returns all catalog provider keys (excluding custom).
 func CatalogKeys() map[string]struct{} {
 	out := make(map[string]struct{}, len(ProviderCatalog))

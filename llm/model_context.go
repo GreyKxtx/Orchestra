@@ -97,6 +97,13 @@ var modelWindows = []struct {
 // name, or 0 when the model is unknown. The lookup is case-insensitive and
 // tolerates gateway prefixes ("openrouter/anthropic/claude-...") and
 // suffixes (":free", "-latest", a trailing date, a quantization tag).
+//
+// The curated table above wins over the models.dev snapshot, which is only
+// consulted for families the table does not name. models.dev reports the
+// vendor's *advertised* maximum, including tiers that need a request header
+// Orchestra does not send (Anthropic's 1M beta is the live example): trusting
+// it for budgeting would size history past what the API will accept. The
+// snapshot's job here is coverage of the long tail, not correction.
 func ModelContextWindow(model string) int {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if m == "" {
@@ -106,6 +113,9 @@ func ModelContextWindow(model string) int {
 		if strings.Contains(m, w.match) {
 			return w.tokens
 		}
+	}
+	if mi, ok := LookupModelInfo(m); ok {
+		return mi.ContextWindow
 	}
 	return 0
 }
