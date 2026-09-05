@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,10 @@ func TestCompactAgentFile_KeepsFeedbackOverNewerProjectFacts(t *testing.T) {
 	if _, _, err := s.AppendTyped("project", TypeFeedback, "FEEDBACK-MARKER never reformat untouched files"); err != nil {
 		t.Fatal(err)
 	}
-	filler := strings.Repeat("x", 200)
+	// Distinct on purpose: identical notes are now merged on write, so
+	// repeating one would never fill the file.
 	for i := 0; i < 12; i++ {
-		if _, _, err := s.AppendTyped("project", TypeProject, "PROJECT-MARKER "+filler); err != nil {
+		if _, _, err := s.AppendTyped("project", TypeProject, distinctNote("PROJECT-MARKER", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -49,12 +51,11 @@ func TestCompactAgentFile_StillDropsReferenceFirst(t *testing.T) {
 	cfg.Normalize()
 	s := NewStore(dir, "sess-1", cfg)
 
-	filler := strings.Repeat("y", 200)
-	if _, _, err := s.AppendTyped("project", TypeReference, "REFERENCE-MARKER "+filler); err != nil {
+	if _, _, err := s.AppendTyped("project", TypeReference, distinctNote("REFERENCE-MARKER", 0)); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 12; i++ {
-		if _, _, err := s.AppendTyped("project", TypeFeedback, "FEEDBACK-MARKER "+filler); err != nil {
+		if _, _, err := s.AppendTyped("project", TypeFeedback, distinctNote("FEEDBACK-MARKER", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -63,4 +64,15 @@ func TestCompactAgentFile_StillDropsReferenceFirst(t *testing.T) {
 	if strings.Contains(body, "REFERENCE-MARKER") {
 		t.Errorf("a reference outlived feedback under pressure:\n%s", body)
 	}
+}
+
+// distinctNote builds a note of a realistic size whose wording shares little
+// with the others, so write-time merging leaves it alone.
+func distinctNote(marker string, i int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s note%d", marker, i)
+	for w := 0; w < 30; w++ {
+		fmt.Fprintf(&b, " word%d_%d", i, w)
+	}
+	return b.String()
 }

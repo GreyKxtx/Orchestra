@@ -76,73 +76,107 @@ func (s *Store) Append(scope, content string) (relPath string, written int, err 
 	return s.AppendTyped(scope, TypeProject, content)
 }
 
-// AppendTyped stores one entry with an explicit type, which decides where it
-// sits when memory is sliced into a prompt (see entrytype.go).
+// AppendTyped stores one entry with an explicit type. It is AppendEntry for
+// callers that do not care whether the write updated an existing fact.
 func (s *Store) AppendTyped(scope, entryType, content string) (relPath string, written int, err error) {
+	res, err := s.AppendEntry(scope, entryType, content)
+	return res.Path, res.Written, err
+}
+
+// AppendResult describes what one write did.
+type AppendResult struct {
+	Path    string
+	Written int
+	Type    string
+	// Replaced is true when the note restated a fact already in memory and
+	// updated it in place instead of adding a second copy.
+	Replaced bool
+}
+
+// AppendEntry stores one entry with an explicit type, which decides where it
+// sits when memory is sliced into a prompt (see entrytype.go), and reports
+// whether it updated an existing fact rather than adding one.
+func (s *Store) AppendEntry(scope, entryType, content string) (AppendResult, error) {
 	content = sanitizeMemoryText(strings.TrimSpace(content))
 	if content == "" {
-		return "", 0, fmt.Errorf("content must not be empty")
+		return AppendResult{}, fmt.Errorf("content must not be empty")
 	}
 	scope = strings.ToLower(strings.TrimSpace(scope))
 	if scope == "" || scope == "project" {
 		scope = "project"
 	}
 
-	var target string
+	var target, rel string
 	switch scope {
 	case "session":
 		if !s.cfg.SessionEnabled {
-			return "", 0, fmt.Errorf("session memory is disabled in config")
+			return AppendResult{}, fmt.Errorf("session memory is disabled in config")
 		}
 		if s.sessionID == "" {
-			return "", 0, fmt.Errorf("no active session — use scope project or start a session")
+			return AppendResult{}, fmt.Errorf("no active session — use scope project or start a session")
 		}
 		dir := filepath.Join(s.workspaceRoot, ".orchestra", "memory", "sessions")
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", 0, err
+			return AppendResult{}, err
 		}
 		target = s.sessionFilePath()
-		relPath = filepath.ToSlash(filepath.Join(".orchestra", "memory", "sessions", s.sessionID+".md"))
+		rel = filepath.ToSlash(filepath.Join(".orchestra", "memory", "sessions", s.sessionID+".md"))
 	case "global":
 		if !s.cfg.GlobalEnabled {
-			return "", 0, fmt.Errorf("global memory is disabled in config")
+			return AppendResult{}, fmt.Errorf("global memory is disabled in config")
 		}
 		home, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			return "", 0, fmt.Errorf("resolve home directory: %w", homeErr)
+			return AppendResult{}, fmt.Errorf("resolve home directory: %w", homeErr)
 		}
 		dir := filepath.Join(home, ".orchestra")
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", 0, err
+			return AppendResult{}, err
 		}
 		target = filepath.Join(dir, "memory.md")
-		relPath = "~/.orchestra/memory.md"
+		rel = "~/.orchestra/memory.md"
 	default:
 		dir := filepath.Join(s.workspaceRoot, ".orchestra", "memory")
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", 0, err
+			return AppendResult{}, err
 		}
 		target = filepath.Join(dir, "agent.md")
-		relPath = ".orchestra/memory/agent.md"
+		rel = ".orchestra/memory/agent.md"
 	}
 
 	entry := formatEntry(timestampUTC(), entryType, content)
+
+	// A fact restated is an update, not a second fact. Only project memory
+	// deduplicates: session memory is the running log of one conversation,
+	// where collapsing repetition would erase that something recurred, and
+	// global memory is small and hand-curated.
+	if scope == "project" {
+		replaced, n, err := s.replaceNearDuplicate(target, content, entry)
+		if err != nil {
+			return AppendResult{}, err
+		}
+		if replaced {
+			return AppendResult{Path: rel, Written: n, Type: NormalizeEntryType(entryType), Replaced: true}, nil
+		}
+	}
+
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return "", 0, err
+		return AppendResult{}, err
 	}
 	defer f.Close()
 	n, err := f.WriteString(entry)
 	if err != nil {
-		return "", 0, err
+		return AppendResult{}, err
 	}
 
+	res := AppendResult{Path: rel, Written: n, Type: NormalizeEntryType(entryType)}
 	if scope == "project" {
 		if compactErr := s.compactAgentFile(target); compactErr != nil {
-			return relPath, n, compactErr
+			return res, compactErr
 		}
 	}
-	return relPath, n, nil
+	return res, nil
 }
 
 // sanitizeMemoryText replaces invalid UTF-8 before anything is persisted.

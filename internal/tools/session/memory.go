@@ -24,6 +24,9 @@ type MemoryWriteResponse struct {
 	Written int    `json:"written"`
 	Scope   string `json:"scope,omitempty"`
 	Type    string `json:"type,omitempty"`
+	// Replaced is true when the note restated a fact already in memory and
+	// updated it in place instead of adding a second copy.
+	Replaced bool `json:"replaced,omitempty"`
 }
 
 type MemoryReadRequest struct {
@@ -64,12 +67,14 @@ func (c *Client) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*Memo
 	if scope == "" {
 		scope = "project"
 	}
-	entryType := memory.NormalizeEntryType(req.Type)
-	rel, n, err := store.AppendTyped(scope, entryType, req.Content)
+	res, err := store.AppendEntry(scope, memory.NormalizeEntryType(req.Type), req.Content)
 	if err != nil {
 		return nil, err
 	}
-	return &MemoryWriteResponse{Path: rel, Written: n, Scope: scope, Type: entryType}, nil
+	return &MemoryWriteResponse{
+		Path: res.Path, Written: res.Written, Scope: scope,
+		Type: res.Type, Replaced: res.Replaced,
+	}, nil
 }
 
 func (c *Client) MemoryRead(ctx context.Context, req MemoryReadRequest) (*MemoryReadResponse, error) {
