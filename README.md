@@ -1,70 +1,72 @@
 # Orchestra
 
-**Local AI coding assistant** — LLM читает проект, планирует правки и безопасно применяет их.
+English | [Русский](README.ru.md)
 
-Основной транспорт: **JSON-RPC 2.0 over stdio** (LSP-стиль); поверх — CLI.
+**Local AI coding assistant** — an LLM reads your project, plans edits, and applies them safely.
+
+Primary transport: **JSON-RPC 2.0 over stdio** (LSP-style); the CLI sits on top of it.
 
 ---
 
-## Возможности
+## Capabilities
 
-| Фаза | Фича | Статус |
+| Phase | Feature | Status |
 |------|------|--------|
 | Core | JSON-RPC 2.0 stdio, agent loop, external/internal patches | ✅ |
-| Streaming | SSE-стриминг, накопитель tool-call чанков | ✅ |
+| Streaming | SSE streaming, tool-call chunk accumulator | ✅ |
 | Grammar | Structured output, retry/circuit-breaker, prompt families | ✅ |
-| Session | История диалога, todo-лист, `agent.run` по JSON-RPC | ✅ |
-| Subagents | `task.spawn/wait/cancel`, дочерние агенты с read-only инструментами | ✅ |
-| Hooks | Pre/post-tool shell-хуки, `TOOL_DENIED` при ненулевом коде | ✅ |
+| Session | Conversation history, todo list, `agent.run` over JSON-RPC | ✅ |
+| Subagents | `task.spawn/wait/cancel`, child agents with read-only tools | ✅ |
+| Hooks | Pre/post-tool shell hooks, `TOOL_DENIED` on nonzero exit | ✅ |
 | Memory | `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
-| MCP | JSON-RPC 2.0 stdio MCP-клиент, мульти-сервер менеджер | ✅ |
-| Providers | Anthropic API + OpenAI-совместимые провайдеры (LM Studio, vLLM…) | ✅ |
-| Eval | YAML-задачи, изолированные воркспейсы, `orchestra eval` | ✅ |
-| Prompt Pipeline | go:embed .txt промпты, маршрутизация по семейству модели (anthropic/gpt/gemini/kimi/local) | ✅ |
+| MCP | JSON-RPC 2.0 stdio MCP client, multi-server manager | ✅ |
+| Providers | Anthropic API + OpenAI-compatible providers (LM Studio, vLLM…) | ✅ |
+| Eval | YAML task suites, isolated workspaces, `orchestra eval` | ✅ |
+| Prompt Pipeline | go:embed .txt prompts, routing by model family (anthropic/gpt/gemini/kimi/local) | ✅ |
 | Agent Modes | build, plan, explore, ask, debug, architecture, agent, orchestra, worker, … | ✅ |
-| Prompt Caching | Anthropic `cache_control: ephemeral` — экономия ~90% токенов с шага 2 | ✅ |
-| Lazy Instructions | Автоматическое обнаружение `ORCHESTRA.md` при чтении файлов | ✅ |
-| Line Numbers | `fs.read` возвращает контент с номерами строк для точных edit-ссылок | ✅ |
-| Forgiving Edit | Resolver: Pass 2 line-trimmed + Pass 3 indent-flexible (tab↔space) перед StaleContent | ✅ |
-| WebFetch | `webfetch` — HTTP GET с SSRF-защитой (private/loopback/link-local заблокированы), HTML→text | ✅ |
-| Compaction | Авто-сжатие истории при достижении `compact_threshold_pct` от `MaxPromptBytes`; LLM-summary, non-fatal fallback | ✅ |
-| Memory tool | `memory_write` — агент записывает факты в `.orchestra/memory/agent.md`; `LoadProjectMemory` аддитивен (все 3 источника) | ✅ |
-| Permission Rules | `permissions.rules` — per-tool allow/deny с glob-паттернами; first-match-wins; `allow` — bypass `--allow-exec/web` для одного вызова | ✅ |
-| Parallel Tool Calls | `ParallelSafe`/`Mutating` флаги в `llm.ToolDef`; read-only тулы (`ls`/`read`/`glob`/`grep`/`symbols`/`explore`/`lsp.*`/`webfetch`) выполняются конкурентно в одной пачке через worker-pool (16); mutating (`write`/`edit`/`bash`) — серийно. Pre-tool hooks серийны до fan-out'а чтобы не race'ить по shared-state | ✅ |
-| Reasoning Stream | Парсинг `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 через LM Studio); автоматическое заворачивание в `<think>…</think>` для `ReasoningSplitter`; SSE-tap по env-флагу `ORCH_STREAM_DEBUG` | ✅ |
-| TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy-indicator в статус-баре, mouse wheel scroll, "Thinking:" блок с `┃` бордером, render-cache invalidation на Ctrl+T, mode-aware accent colors | ✅ |
+| Prompt Caching | Anthropic `cache_control: ephemeral` — ~90% token savings from turn 2 onward | ✅ |
+| Lazy Instructions | Automatic `ORCHESTRA.md` discovery on file reads | ✅ |
+| Line Numbers | `fs.read` returns line-numbered content for precise edit anchors | ✅ |
+| Forgiving Edit | Resolver: line-trimmed Pass 2 + indent-flexible Pass 3 (tab↔space) before `StaleContent` | ✅ |
+| WebFetch | `webfetch` — HTTP GET with SSRF protection (private/loopback/link-local blocked), HTML→text | ✅ |
+| Compaction | Auto history compaction at `compact_threshold_pct` of `MaxPromptBytes`; LLM summary, non-fatal fallback | ✅ |
+| Memory tool | `memory_write` — the agent records facts to `.orchestra/memory/agent.md`; `LoadProjectMemory` is additive across all 3 sources | ✅ |
+| Permission Rules | `permissions.rules` — per-tool allow/deny with glob patterns; first-match-wins; `allow` bypasses `--allow-exec/web` for a single call | ✅ |
+| Parallel Tool Calls | `ParallelSafe`/`Mutating` flags on `llm.ToolDef`; read-only tools (`ls`/`read`/`glob`/`grep`/`symbols`/`explore`/`lsp.*`/`webfetch`) run concurrently in one batch through a 16-worker pool; mutating tools (`write`/`edit`/`bash`) run serially. Pre-tool hooks stay serial ahead of fan-out to avoid racing on shared state | ✅ |
+| Reasoning Stream | Parses `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 via LM Studio); auto-wraps into `<think>…</think>` for `ReasoningSplitter`; SSE tap behind the `ORCH_STREAM_DEBUG` env flag | ✅ |
+| TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy indicator in the status bar, mouse wheel scroll, "Thinking:" block with a `┃` border, render-cache invalidation on Ctrl+T, mode-aware accent colors | ✅ |
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
-| Orchestra Lead surface | Strict allowlist **14 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
+| Orchestra Lead surface | Strict allowlist of **14 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
 | CKG v5 | Multi-hop explore (`depth`/`direction`), subgraph cap 1500 tokens, protocol **ToolsVersion 14** | ✅ |
-| Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote`; single-agent turns that repeat the same anti-pattern 3× on one file offer a human `[y/n]` rule suggestion for `ORCHESTRA.md` | ✅ |
-| LLM fail-fast | Unreachable endpoint (dial / refused / i/o timeout) aborts the turn — no false `prompt too large` compaction loop | ✅ |
+| Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote`; a single-agent turn that repeats the same anti-pattern 3× on one file offers a human `[y/n]` rule suggestion for `ORCHESTRA.md` | ✅ |
+| LLM fail-fast | An unreachable endpoint (dial / refused / i/o timeout) aborts the turn — no false `prompt too large` compaction loop | ✅ |
 | TUI Subagent Bar | Live child tasks (`child_started` / `child_queued` / `child_done`) | ✅ |
-| Attachments / Vision | Protocol **v13**: images/SVG/PDF, staging `.orchestra/attachments/`, TUI `/attach`, VS Code drag-drop | ✅ |
+| Attachments / Vision | Protocol **v13**: images/SVG/PDF, staging in `.orchestra/attachments/`, TUI `/attach`, VS Code drag-drop | ✅ |
 | VS Code extension | Webview chat + settings, LSP install modal, per-file diff review, workspace editor for previews | ✅ |
 
 ---
 
-## Установка
+## Install
 
-Готовые архивы для windows-amd64, linux-amd64, darwin-arm64 и darwin-amd64 публикуются в GitHub Releases (тег `v*`), рядом лежат `.sha256` и `THIRD_PARTY_NOTICES.md`. Вручную: распакуйте и положите `orchestra` в `PATH`. Или скриптом, который сам определит платформу, скачает нужный архив и проверит его контрольную сумму:
+Prebuilt archives for windows-amd64, linux-amd64, darwin-arm64, and darwin-amd64 are published on GitHub Releases (tag `v*`), alongside a `.sha256` and `THIRD_PARTY_NOTICES.md`. Manual install: unpack and put `orchestra` on your `PATH`. Or use the install script, which detects your platform, downloads the right archive, and verifies its checksum:
 
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/orchestra/orchestra/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GreyKxtx/Orchestra/master/scripts/install.sh | bash
 ```
 
 ```powershell
 # Windows
-irm https://raw.githubusercontent.com/orchestra/orchestra/master/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/GreyKxtx/Orchestra/master/scripts/install.ps1 | iex
 ```
 
-Из исходников нужен C-компилятор — CKG собирается на tree-sitter через cgo (на Windows это MinGW):
+Building from source needs a C compiler — CKG is built on tree-sitter via cgo (MinGW on Windows):
 
 ```bash
 go install github.com/orchestra/orchestra/cmd/orchestra@latest
 ```
 
-Проверить, что установилось:
+Check the install:
 
 ```bash
 orchestra version
@@ -72,69 +74,83 @@ orchestra version
 # protocol 13 · ops 1 · tools 14
 ```
 
-Три числа — это контракт `initialize`: если TUI или расширение отказываются подключаться, расхождение будет именно в них.
+Those three numbers are the `initialize` contract: if the TUI or the extension refuse to connect, the mismatch will be in one of them.
 
-## Быстрый старт
+Each release also carries a Homebrew formula, a Scoop manifest, and a winget manifest set (`orchestra.rb`, `orchestra.json`, `orchestra-winget.zip` — generated by `scripts/gen-packaging.sh`). No tap/bucket repo exists yet, so install straight from the release asset:
 
 ```bash
-# Сборка из репозитория
+# Homebrew (macOS / Linux)
+brew install --formula https://github.com/GreyKxtx/Orchestra/releases/latest/download/orchestra.rb
+```
+
+```powershell
+# Scoop (Windows)
+scoop install https://github.com/GreyKxtx/Orchestra/releases/latest/download/orchestra.json
+```
+
+winget needs an unpacked manifest directory (`orchestra-winget.zip` → `winget install --manifest <folder>`); a public `winget install orchestra` needs a PR against `microsoft/winget-pkgs`, not done automatically by this repo.
+
+## Quick start
+
+```bash
+# Build from the repo
 go build -o orchestra ./cmd/orchestra
 
-# Инициализация проекта
+# Initialize a project
 orchestra init
 
-# Просмотр плана (без изменений файлов)
-orchestra apply --plan-only "добавь логирование в main.go"
+# Preview the plan (no files touched)
+orchestra apply --plan-only "add logging to main.go"
 
-# Dry-run apply (по умолчанию — только показывает diff)
-orchestra apply "добавь логирование в main.go"
+# Dry-run apply (default — only shows the diff)
+orchestra apply "add logging to main.go"
 
-# Реальное применение изменений (создаёт .orchestra.bak)
-orchestra apply --apply "добавь логирование в main.go"
+# Actually apply the changes (creates .orchestra.bak)
+orchestra apply --apply "add logging to main.go"
 
-# Экспорт unified .patch для ревью (диск не трогается)
-orchestra apply --output-patch "добавь логирование в main.go"
+# Export a unified .patch for review (disk untouched)
+orchestra apply --output-patch "add logging to main.go"
 orchestra apply --output-patch ./review.patch "…"
 
-# Adaptive profiles: fast или precision
-orchestra apply --profile fast "поправь typo в README"
-orchestra apply --profile precision "спроектируй пакет X"
+# Adaptive profiles: fast or precision
+orchestra apply --profile fast "fix a typo in the README"
+orchestra apply --profile precision "design package X"
 
-# Разрешить выполнение команд через exec.run
-orchestra apply --apply --allow-exec "запусти go test и исправь ошибки"
+# Allow command execution via exec.run
+orchestra apply --apply --allow-exec "run go test and fix the failures"
 
-# Разрешить загрузку внешних URL через webfetch
-orchestra apply --allow-web "изучи документацию на https://pkg.go.dev/... и добавь пример"
+# Allow fetching external URLs via webfetch
+orchestra apply --allow-web "read the docs at https://pkg.go.dev/... and add an example"
 
-# Через subprocess core (JSON-RPC stdio, изолированный)
-orchestra apply --via-core "добавь функцию Sum"
+# Via the subprocess core (JSON-RPC stdio, isolated)
+orchestra apply --via-core "add a Sum function"
 
-# Smoke-test подключения к LLM
+# Smoke-test the LLM connection
 orchestra llm-ping
 
-# Поиск по коду
+# Search the codebase
 orchestra search "function main"
 
-# Запуск eval-задач (нужен работающий LLM)
-orchestra eval                          # tests/eval/tasks/ по умолчанию
-orchestra eval path/to/tasks/           # своя директория
+# Run eval tasks (needs a working LLM)
+orchestra eval                          # tests/eval/tasks/ by default
+orchestra eval path/to/tasks/           # a custom directory
 ```
 
 ### VS Code / Cursor extension
 
-Клиент в `ui/vscode/` — webview chat, settings, attachments/vision (protocol **v13**). Нужен собранный `orchestra` в PATH или рядом с репо.
+The client lives in `ui/vscode/` — webview chat, settings, attachments/vision (protocol **v13**). It needs a built `orchestra` binary on `PATH` or next to the repo.
 
 ```bash
 go build -o orchestra ./cmd/orchestra
 cd ui/vscode && npm ci && npm run compile
-# F5 в VS Code, или упаковка: npm run package
+# F5 in VS Code, or package it: npm run package
 ```
 
-Подробнее: `ui/vscode/README.md`.
+Details: `ui/vscode/README.md`.
 
 ---
 
-## Конфигурация (`.orchestra.yml`)
+## Configuration (`.orchestra.yml`)
 
 ```yaml
 project_root: .
@@ -147,33 +163,33 @@ llm:
   model: qwen2.5-coder-7b-instruct
   max_tokens: 4096
   timeout_s: 120
-  multimodal: true          # images in chat (TUI /attach, VS Code); needs vision-capable model
+  multimodal: true          # images in chat (TUI /attach, VS Code); needs a vision-capable model
 
-# Резервный провайдер: при недоступности эндпоинта ход уходит на providers.backup
-# и там остаётся до конца прогона (переключение пишется в llm_log.jsonl как
-# provider.switch и в usage.jsonl отдельной строкой). Ошибки модели (400/401)
-# резервом не считаются.
+# Fallback provider: when the endpoint is unreachable, the turn moves to
+# providers.backup and stays there for the rest of the run (the switch is
+# logged to llm_log.jsonl as provider.switch, and to usage.jsonl as its own
+# line). Model errors (400/401) do not count as unreachable.
 # llm:
 #   fallback_provider: backup
 # providers:
 #   backup: {provider: openrouter, api_base: https://openrouter.ai/api/v1, model: ...}
 
-# Extended thinking. Задаётся на провайдере, поэтому providers.lead и
-# providers.worker могут думать по-разному. Моделям без reasoning в каталоге
-# не отправляется вовсе (иначе 400).
+# Extended thinking. Set per provider, so providers.lead and providers.worker
+# can reason differently. Never sent to models the catalog marks as having no
+# reasoning support (a 400 would follow otherwise).
 # llm:
 #   reasoning:
 #     effort: high         # minimal | low | medium | high | max
-#     budget_tokens: 16384 # необязательно; перебивает effort там, где провайдер берёт число
+#     budget_tokens: 16384 # optional; overrides effort where the provider takes a number
 
-# Azure OpenAI: api_base — эндпоинт ресурса, ключ уходит заголовком api-key.
+# Azure OpenAI: api_base is the resource endpoint; the key goes in the api-key header.
 # llm:
 #   provider: azure
 #   api_base: https://my-resource.openai.azure.com
 #   model: gpt-4o
 #   azure:
-#     deployment: prod-gpt4o   # по умолчанию = model
-#     api_version: 2024-10-21  # по умолчанию GA-версия
+#     deployment: prod-gpt4o   # defaults to model
+#     api_version: 2024-10-21  # defaults to the current GA version
 
 agent:
   profile: ""               # optional: fast | precision
@@ -183,158 +199,158 @@ apply:
   patch_dir: .orchestra/patches
 
 exec:
-  confirm: true             # false = разрешить exec.run без --allow-exec
+  confirm: true             # false = allow exec.run without --allow-exec
 
 hooks:
   enabled: false
-  pre_tool: ["sh", "-c", "echo pre"]  # ненулевой код = TOOL_DENIED
+  pre_tool: ["sh", "-c", "echo pre"]  # nonzero exit = TOOL_DENIED
   post_tool: ["sh", "-c", "echo post"]
   timeout_ms: 5000
 
-  # Форма с matcher'ом: match — regexp по имени инструмента (пусто = все).
-  # Обе формы можно смешивать; списки хуков из ~/.orchestra/config.yml не
-  # заменяются проектными, а склеиваются (глобальный идёт первым).
+  # Matcher form: match is a regexp against the tool name (empty = all).
+  # Both forms can be mixed; hook lists from ~/.orchestra/config.yml are not
+  # replaced by the project's, they're merged (global list comes first).
   # pre_tool:
   #   - match: "write|edit"
   #     command: ["./scripts/gate.sh"]
   #     timeout_ms: 2000
 
-  # События жизненного цикла (те же две формы):
+  # Lifecycle events (same two forms):
   # session_start: ["./scripts/on-session.sh"]
-  # user_prompt_submit: ["./scripts/check-freeze.sh"]   # может запретить ход или добавить контекст
+  # user_prompt_submit: ["./scripts/check-freeze.sh"]   # can deny the turn or append context
   # pre_compact: ["./scripts/archive-history.sh"]
   # turn_end: ["./scripts/notify.sh"]
 
 mcp:
   servers:
-    # Локальный сервер — stdio-подпроцесс
+    # Local server — stdio subprocess
     - name: my-server
       command: ["node", "mcp-server.js"]
       env: {API_KEY: "..."}
       disabled: false
 
-    # Удалённый сервер — Streamable HTTP
+    # Remote server — Streamable HTTP
     - name: github
       url: https://api.example.com/mcp
-      bearer_token_env: GITHUB_MCP_TOKEN   # токен читается из окружения, не из конфига
+      bearer_token_env: GITHUB_MCP_TOKEN   # token is read from the environment, not the config
       headers: {X-Tenant: acme}
       allowed_tools: ["repo_*"]
 ```
 
-У сервера должно быть задано ровно одно из `command` и `url` — иначе конфиг не загрузится. Plaintext `http://` на не-loopback хост отклоняется (токен ушёл бы по сети открытым); если это внутренняя сеть и вы этого хотите — `allow_insecure_http: true`.
+A server must set exactly one of `command` or `url` — otherwise the config fails to load. Plaintext `http://` to a non-loopback host is rejected (the token would go over the network in the clear); if that's an internal network and you want it anyway, set `allow_insecure_http: true`.
 
-### Секреты: `.orchestra.local.yml`
+### Secrets: `.orchestra.local.yml`
 
-API-ключи и личные оверрайды кладите в `.orchestra.local.yml` рядом с `.orchestra.yml` (файл в `.gitignore`, `orchestra init` добавляет его туда автоматически). Оверлей deep-merge'ится поверх основного конфига при загрузке; при сохранении настроек (TUI / VS Code) значения из оверлея **не** записываются в общий `.orchestra.yml`:
+Put API keys and personal overrides in `.orchestra.local.yml` next to `.orchestra.yml` (it's in `.gitignore`; `orchestra init` adds it there automatically). The overlay is deep-merged on top of the main config at load time; when settings are saved (TUI / VS Code), values that came from the overlay are **not** written back into the shared `.orchestra.yml`:
 
 ```yaml
-# .orchestra.local.yml — не коммитится
+# .orchestra.local.yml — not committed
 llm:
   api_key: sk-or-...
 providers:
   openrouter:
-    api_key: sk-or-...   # маскируется только этот лист, остальные поля провайдера — из .orchestra.yml
+    api_key: sk-or-...   # only this leaf is masked; the rest of the provider's fields come from .orchestra.yml
 ```
 
-### Глобальный конфиг: `~/.orchestra/config.yml`
+### Global config: `~/.orchestra/config.yml`
 
-Настройки, одинаковые во всех проектах — провайдеры, ключи, тиры, предпочтения — живут в `~/.orchestra/config.yml`. Проектный `.orchestra.yml` указывает только то, что отличается.
+Settings that are the same across every project — providers, keys, tiers, preferences — live in `~/.orchestra/config.yml`. The project's `.orchestra.yml` only needs to state what differs.
 
-Порядок наложения (позже — сильнее):
+Layering order (later wins):
 
 ```
-~/.orchestra/config.yml          пользовательские значения по умолчанию
-<проект>/.orchestra.yml          общий, коммитится
-<проект>/.orchestra.local.yml    машинные оверрайды и секреты
+~/.orchestra/config.yml          user defaults
+<project>/.orchestra.yml         shared, committed
+<project>/.orchestra.local.yml   machine overrides and secrets
 ```
 
-`project_root` из глобального файла игнорируется — иначе все проекты смотрели бы в одну директорию. Ключи, заданные глобально, при сохранении настроек из TUI / VS Code **не** записываются в проектный файл: `.orchestra.yml` коммитится, и утащить туда ключ из домашней директории нельзя.
+`project_root` from the global file is ignored — otherwise every project would point at the same directory. Keys set globally are **not** written back into the project file when settings are saved from the TUI / VS Code: `.orchestra.yml` is committed, and a key from your home directory can't leak into it that way.
 
-### Хуки
+### Hooks
 
-Хук — обычный процесс. Он получает событие JSON на stdin и может ответить решением на stdout:
+A hook is just a process. It receives a JSON event on stdin and can answer with a decision on stdout:
 
 ```
 stdin :  {"event":"pre_tool","tool":"write","input":{...},"session_id":"...","workspace_root":"..."}
-stdout:  {"decision":"deny","reason":"на этой ветке правки запрещены до релиза"}
+stdout:  {"decision":"deny","reason":"edits are frozen on this branch until release"}
          {"decision":"modify","input":{"path":"safe.txt"}}
-         {"decision":"allow","context":"репозиторий в релиз-фризе"}   # только user_prompt_submit
+         {"decision":"allow","context":"repo is in a release freeze"}   # user_prompt_submit only
 ```
 
-Всё опционально: хук, который не читает stdin и ничего не печатает, работает ровно как раньше — **ненулевой код выхода по-прежнему запрещает вызов**, а вывод, который не является JSON, решением не считается (иначе любой хук с логами стал бы случайным фильтром). `reason` уходит модели вместо «pre-tool hook denied»: механизм без правила модель исправить не может и зовёт тот же инструмент снова.
+Everything is optional: a hook that reads no stdin and prints nothing behaves exactly as before — **a nonzero exit code still denies the call**, and output that isn't JSON is never treated as a decision (otherwise any hook with logging would become an accidental filter). `reason` is sent to the model instead of "pre-tool hook denied": a mechanism with no explanation gives the model nothing to fix, so it just calls the same tool again.
 
-Те же данные приходят и в переменных окружения — `ORCH_TOOL_NAME`, `ORCH_TOOL_INPUT`, `ORCH_WORKSPACE_ROOT`, `ORCH_SESSION_ID`, `ORCH_HOOK_EVENT` — поверх окружения родителя (`PATH` на месте).
+The same data also arrives as environment variables — `ORCH_TOOL_NAME`, `ORCH_TOOL_INPUT`, `ORCH_WORKSPACE_ROOT`, `ORCH_SESSION_ID`, `ORCH_HOOK_EVENT` — layered on top of the parent's environment (`PATH` included).
 
-События: `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit` (может запретить ход или дописать в него контекст), `pre_compact` (последний момент перед тем, как история будет сжата), `turn_end` (в том числе для упавших ходов). Для lifecycle-хуков `match` проверяется по имени события.
+Events: `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit` (can deny the turn or append context to it), `pre_compact` (the last moment before history gets compacted), `turn_end` (including for failed turns). For lifecycle hooks, `match` is checked against the event name.
 
-### Память проекта
+### Project memory
 
-Создайте `ORCHESTRA.md` в корне проекта — он будет автоматически инжектироваться в системный промпт агента (макс. 2 КБ). Альтернативно: `.orchestra/memory/*.md` или `~/.orchestra/memory.md`. Если репозиторий уже содержит `AGENTS.md`, `CLAUDE.md` или `.cursorrules`, Orchestra читает их как fallback в этом порядке, если `ORCHESTRA.md` нет.
+Create `ORCHESTRA.md` at the project root — it's automatically injected into the agent's system prompt (max 2 KB). Alternatively: `.orchestra/memory/*.md` or `~/.orchestra/memory.md`. If the repo already has `AGENTS.md`, `CLAUDE.md`, or `.cursorrules`, Orchestra reads them as a fallback in that order when `ORCHESTRA.md` is absent.
 
-Личные заметки, не для коммита — `ORCHESTRA.local.md` рядом с основным файлом (`orchestra init` сам добавляет его в `.gitignore`). Содержимое дописывается к командному файлу, а не заменяет его.
+Personal notes you don't want committed go in `ORCHESTRA.local.md` next to the main file (`orchestra init` adds it to `.gitignore` for you). Its content is appended to the team file, not swapped in for it.
 
-Внутри `ORCHESTRA.md` (или `ORCHESTRA.local.md`) работает `@import path/to/file.md` — путь относительно файла, где стоит `@import`, глубина вложенности ≤3, циклы обнаруживаются. Так один корневой файл может подключать `docs/*.md`, а не копировать их содержимое. Битый импорт (не тот файл, цикл, превышена глубина) не рушит остальной файл — строка `@import ...` остаётся на месте с пометкой ошибки.
+Inside `ORCHESTRA.md` (or `ORCHESTRA.local.md`), `@import path/to/file.md` works — the path is resolved relative to the file that contains the `@import`, nesting depth ≤3, cycles are detected. That lets one root file pull in `docs/*.md` instead of duplicating their content. A broken import (wrong path, cycle, depth exceeded) doesn't take down the rest of the file — the `@import ...` line stays in place with an inline error marker.
 
-В TUI: `/memory` — слои памяти и pinned facts; `/memory open` открывает реальный файл проектных инструкций в `$EDITOR`; `/memory refresh` показывает, что фактически ушло в промпт на последнем ходу (байты по слоям против бюджета) — это читается из `memory.inject`-события в `.orchestra/llm_log.jsonl`, том же логе, куда уже пишутся события `memory.note`.
-
----
-
-## Архитектура (ключевые абстракции)
-
-**Два уровня патчей — строго разделены:**
-
-- **External Patches** (`internal/patches`) — гибкий LLM-формат: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Содержат `file_hash` версии, которую читал LLM.
-- **Internal Ops** (`internal/ops`) — детерминированный формат записи на диск: `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Координаты 0-based, end-exclusive. Каждая операция содержит `conditions.file_hash`.
-- `internal/resolver` — мост: `ResolveExternalPatches` конвертирует External → Internal, перечитывая файлы и вычисляя точные диапазоны.
-- `internal/applier` — запись ops; при `apply.output=patch` / `--output-patch` — unified diff без записи workspace.
-
-**Agent loop** (`internal/agent/agent.go`): системный промпт + история → `llm.Complete` → `tool_call` (выполнить, добавить в историю, продолжить) или `final` (резолвить патчи → применить). Recoverable ошибки (`StaleContent`, `AmbiguousMatch`) возвращаются в историю компактными хинтами. Профили `fast`/`precision` — см. `docs/architecture/`.
-
-**Три режима `apply`:**
-1. `direct` — агент in-process.
-2. `--via-core` — спавнит `orchestra core` как subprocess, управляет через JSON-RPC.
-3. `--from-plan` — воспроизводит сохранённый `plan.json` без LLM.
-
-Аудит TUI-пайплайна: [docs/architecture/tui-pipeline.md](docs/architecture/tui-pipeline.md). Planner–Worker: [docs/architecture/planner-worker.md](docs/architecture/planner-worker.md).
+In the TUI: `/memory` shows the memory layers and pinned facts; `/memory open` opens the real project-instructions file in `$EDITOR`; `/memory refresh` shows what actually went into the prompt on the last turn (bytes per layer against the budget) — read from the `memory.inject` event in `.orchestra/llm_log.jsonl`, the same log that already carries `memory.note` events.
 
 ---
 
-## Тесты
+## Architecture (key abstractions)
+
+**Two patch layers, strictly separated:**
+
+- **External Patches** (`internal/patches`) — the flexible LLM-facing format: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Each carries the `file_hash` of the version the LLM read.
+- **Internal Ops** (`internal/ops`) — the deterministic on-disk write format: `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every op carries `conditions.file_hash`.
+- `internal/resolver` — the bridge: `ResolveExternalPatches` converts External → Internal by re-reading files and computing exact ranges.
+- `internal/applier` — writes ops; with `apply.output=patch` / `--output-patch`, emits a unified diff without touching the workspace.
+
+**Agent loop** (`internal/agent/agent.go`): system prompt + history → `llm.Complete` → `tool_call` (run it, append to history, continue) or `final` (resolve patches → apply). Recoverable errors (`StaleContent`, `AmbiguousMatch`) go back into history as compact hints. `fast`/`precision` profiles — see `docs/architecture/`.
+
+**Three `apply` modes:**
+1. `direct` — the agent runs in-process.
+2. `--via-core` — spawns `orchestra core` as a subprocess, driven over JSON-RPC.
+3. `--from-plan` — replays a saved `plan.json` with no LLM involved.
+
+TUI pipeline audit: [docs/architecture/tui-pipeline.md](docs/architecture/tui-pipeline.md). Planner–Worker: [docs/architecture/planner-worker.md](docs/architecture/planner-worker.md).
+
+---
+
+## Tests
 
 ```bash
 go vet ./...
 go test ./...
 go test -race ./...
 
-# Один пакет / один тест
+# One package / one test
 go test ./internal/agent -run TestAgent_Run -v
 go test ./protocol/jsonrpc -race -count=10
 
-# E2E с реальным LLM (не входит в CI)
+# E2E against a real LLM (not part of CI)
 $env:ORCH_E2E_LLM = "1"
 go test ./tests/e2e_real_llm -v -count=1
 
-# Planner–Worker E2E (mock, в CI)
+# Planner–Worker E2E (mock, runs in CI)
 go test ./tests/e2e_agent/... -run 'Orchestra|Worker|Ambiguous|Staging' -count=1
 ```
 
-## TUI (консольный агент)
+## TUI (console agent)
 
 ```bash
-orchestra                  # интерактивный TUI (по умолчанию)
-orchestra --apply          # LIVE: сразу пишет на диск
+orchestra                  # interactive TUI (default)
+orchestra --apply          # LIVE: writes to disk immediately
 orchestra --apply --allow-exec
 orchestra tui              # alias
 ```
  
 ---
 
-## Документация
+## Documentation
 
 - [Changelog](docs/CHANGELOG.md)
 - [Protocol contract](docs/PROTOCOL.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Agent modes](docs/modes.md) — authoritative для режимов
+- [Agent modes](docs/modes.md) — authoritative for modes
 - [Planner–Worker architecture](docs/architecture/planner-worker.md)
 - [TUI pipeline](docs/architecture/tui-pipeline.md)
 - [LSP auto-provision](docs/architecture/lsp-auto-provision.md)
@@ -345,11 +361,11 @@ orchestra tui              # alias
 
 ---
 
-## Требования
+## Requirements
 
 - Go 1.22+
-- LLM API: OpenAI-совместимый провайдер (LM Studio, vLLM, OpenAI, Anthropic…)
+- LLM API: an OpenAI-compatible provider (LM Studio, vLLM, OpenAI, Anthropic…)
 
-## Лицензия
+## License
 
-MIT — см. [LICENSE](LICENSE). Лицензии зависимостей: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT — see [LICENSE](LICENSE). Dependency licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

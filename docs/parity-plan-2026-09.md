@@ -169,10 +169,10 @@
 | ~~1~~ | ~~**Лицензия — дописать**~~ — закрыто | Держатель — Andrey Korsun (`LICENSE`, `ui/vscode/LICENSE`); `THIRD_PARTY_NOTICES.md` (60 модулей через `go-licenses csv ./cmd/orchestra`, все permissive — MIT/BSD-3/Apache-2). **Уточнение по коду:** checksums (`.sha256`) в `release.yml` уже были *до* этого прохода — в плане A7 это записано как «сделать», по факту было «проверить и не трогать» | S |
 | 2 | Install-скрипты: `install.sh` (curl \| sh, выбор платформы, checksum) и `install.ps1`; ссылки в README | S |
 | 3 | Подпись релизов (`cosign` keyless) в `release.yml` — checksums там уже есть (`sha256sum`/`shasum` в шаге Package) | S |
-| 4 | Homebrew tap / Scoop bucket / winget-манифест — генерировать из релиза | M |
-| 5 | Публикация VSIX в Marketplace и Open VSX (сейчас только артефакт) | S |
+| ~~4~~ | ~~Homebrew tap / Scoop bucket / winget-манифест — генерировать из релиза~~ — закрыто | `scripts/gen-packaging.sh` (bash, без внешних зависимостей) генерирует `orchestra.rb`/`orchestra.json`/winget 3-файловый набор из `.sha256`, уже опубликованных `release.yml`'s build job; `publish`-job (`.github/workflows/release.yml`) прикладывает их к релизу (`orchestra.rb`, `orchestra.json`, `orchestra-winget.zip`). Отдельного tap/bucket-репозитория **нет** — `brew install --formula <url>` и `scoop install <url>` работают прямо с ассета релиза без него; публичный `winget install orchestra` требует PR в `microsoft/winget-pkgs` (сторонний репозиторий) — сознательно не автоматизировано в этом проходе | M |
+| ~~5~~ | ~~Публикация VSIX в Marketplace и Open VSX (сейчас только артефакт)~~ — уже было закрыто до этого прохода | **Найдено при проверке (правило «grep + git log -S перед «не хватает»»):** `.github/workflows/vscode-vsix.yml:145-176`, коммит `eea6867` от 2026-08-11 — `vsce publish`/`ovsx publish` шаги уже есть, gated на секреты `VSCE_PAT`/`OVSX_PAT` (пропускаются, если секрет не задан), триггер — тег `vscode-v*` или ручной dispatch с `publish: true`. Не готово: сами аккаунты публикатора (Marketplace publisher `Screamgxne`, Open VSX namespace) и секреты в GitHub — вне репозитория, решение пользователя | S |
 | 6 | `orchestra version --check` (сравнить с latest release) | S |
-| 7 | **English README** (русский — отрезает аудиторию независимо от качества кода; политика `docs/language-policy.md` про CLI-help остаётся вашим решением) | M |
+| ~~7~~ | ~~**English README**~~ — закрыто | `README.md` — основной, английский; `README.ru.md` — прежний русский текст, оставлен как есть; взаимные ссылки на языки сверху обоих файлов. `ui/vscode/README.md` (то, что реально показывает Marketplace/Open VSX) уже был английским — не трогали. Заодно исправлен битый URL: `README.md`/`install.sh`/`install.ps1` ссылались на `github.com/orchestra/orchestra`, а реальный remote — `github.com/GreyKxtx/Orchestra` (`git remote -v`); поправлены curl/irm-ссылки и `REPO=`/`$repo=` в обоих install-скриптах. Go-модуль (`github.com/orchestra/orchestra` в `go.mod`) не трогали — отдельный, больший рефактор | M |
 
 ### 1.11 Learning stack — ◐ → ●●
 
@@ -220,7 +220,7 @@
 | ~~B6~~ | ~~Skills как slash-команды; `.claude/commands`/`.claude/skills` как источник~~ — закрыто | 1.8 #1–2 |
 | ~~B7~~ | ~~`@import` в `ORCHESTRA.md`; `ORCHESTRA.local.md`; `/memory open/refresh` с отчётом инъекции~~ — закрыто | 1.1 #3–4, #7 |
 | ~~B8~~ | ~~Уроки → предложение правила; дефолтные playbooks~~ — закрыто | 1.11 #1–2 |
-| B9 | English README; Marketplace/Open VSX; brew/scoop/winget | 1.10 #4–5, #7 |
+| ~~B9~~ | ~~English README; Marketplace/Open VSX; brew/scoop/winget~~ — закрыто | 1.10 #4–5, #7 |
 
 ### Волна C — квартал (L)
 
