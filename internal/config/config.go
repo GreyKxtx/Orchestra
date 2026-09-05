@@ -790,6 +790,12 @@ func Load(path string) (*ProjectConfig, error) {
 
 	cfg.applyDefaults()
 
+	fromMCPJSON, err := LoadMCPJSON(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	cfg.MCP.Servers = MergeMCPServers(cfg.MCP.Servers, fromMCPJSON)
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -843,6 +849,12 @@ func Save(path string, cfg *ProjectConfig) error {
 	// Same reasoning one layer down: values inherited from ~/.orchestra/config.yml
 	// are owned by that file and must not be written into the committed config.
 	data, err = maskGlobalConfig(path, data)
+	if err != nil {
+		return err
+	}
+	// Same reasoning again: mcp.servers entries Load() merged in from
+	// .mcp.json are owned by that file, not this one.
+	data, err = maskMCPJSONServers(path, data)
 	if err != nil {
 		return err
 	}
