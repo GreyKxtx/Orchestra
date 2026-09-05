@@ -216,3 +216,64 @@ func TestMCPToolServer_RuntimeQuery(t *testing.T) {
 		t.Errorf("runtime_query result = %q, want it to mention mysvc and pkg.Handler", text)
 	}
 }
+
+// TestMCPToolServer_LSPToolsReportNoServersConfigured proves all five
+// dotted-name LSP tools (lsp.definition, lsp.references, lsp.hover,
+// lsp.diagnostics, lsp.rename) register and round-trip correctly through
+// mcpsdk's AddTool/CallTool machinery. It disables LSP explicitly
+// (LSP.Enabled = false) rather than relying on newToolsOnlyCore's plain
+// config.DefaultConfig: this workspace has a go.mod (writeMinimalGoModule),
+// and internal/tools.mergeLSPConfig auto-detects Go and provisions a gopls
+// entry by default even when config.LSP.Servers is empty, so leaving LSP at
+// its default would make these calls try to actually talk to gopls —
+// non-deterministic across machines. With Enabled=false,
+// internal/tools.mergeLSPConfig forces Servers to nil regardless of
+// auto-detection, so *lsp.Manager.IsEmpty() is always true and every call
+// deterministically hits the "no servers configured" guard in
+// internal/tools/toolslsp/lsp_tools.go, surfaced as a tool-level error — no
+// gopls binary needed for this test to pass.
+func TestMCPToolServer_LSPToolsReportNoServersConfigured(t *testing.T) {
+	root := t.TempDir()
+	writeMinimalGoModule(t, root)
+
+	cfg := config.DefaultConfig(root)
+	lspDisabled := false
+	cfg.LSP.Enabled = &lspDisabled
+	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(root, Options{ToolsOnly: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	session := connectMCP(t, c.MCPToolServer())
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{"lsp.definition", map[string]any{"path": "fixture.go", "line": 4, "col": 6}},
+		{"lsp.references", map[string]any{"path": "fixture.go", "line": 4, "col": 6}},
+		{"lsp.hover", map[string]any{"path": "fixture.go", "line": 4, "col": 6}},
+		{"lsp.diagnostics", map[string]any{"path": "fixture.go"}},
+		{"lsp.rename", map[string]any{"path": "fixture.go", "line": 4, "col": 6, "new_name": "Greet"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: tc.name, Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("CallTool(%s): %v", tc.name, err)
+			}
+			if !res.IsError {
+				t.Fatalf("%s: expected a tool-level error result with no LSP servers configured", tc.name)
+			}
+			text := res.Content[0].(*mcpsdk.TextContent).Text
+			if !strings.Contains(text, "no servers configured") {
+				t.Errorf("%s: error text = %q, want it to mention 'no servers configured'", tc.name, text)
+			}
+		})
+	}
+}

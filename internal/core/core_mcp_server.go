@@ -8,6 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/tools/nav"
 	"github.com/orchestra/orchestra/internal/tools/session"
+	"github.com/orchestra/orchestra/internal/tools/toolslsp"
 )
 
 // MCPToolServer builds an MCP server exposing Orchestra's read-only
@@ -82,6 +83,76 @@ func (c *Core) MCPToolServer() *mcpsdk.Server {
 		InputSchema: runtimeQueryDef.Parameters,
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in session.RuntimeQueryRequest) (*mcpsdk.CallToolResult, any, error) {
 		resp, err := c.tools.RuntimeQuery(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := mcpTextResult(resp)
+		return res, nil, err
+	})
+
+	lspDefDef := toolslsp.ToolLSPDefinition().Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        lspDefDef.Name,
+		Description: lspDefDef.Description,
+		InputSchema: lspDefDef.Parameters,
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPDefinitionRequest) (*mcpsdk.CallToolResult, any, error) {
+		resp, err := c.tools.LSPDefinition(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := mcpTextResult(resp)
+		return res, nil, err
+	})
+
+	lspRefDef := toolslsp.ToolLSPReferences().Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        lspRefDef.Name,
+		Description: lspRefDef.Description,
+		InputSchema: lspRefDef.Parameters,
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPReferencesRequest) (*mcpsdk.CallToolResult, any, error) {
+		resp, err := c.tools.LSPReferences(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := mcpTextResult(resp)
+		return res, nil, err
+	})
+
+	lspHoverDef := toolslsp.ToolLSPHover().Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        lspHoverDef.Name,
+		Description: lspHoverDef.Description,
+		InputSchema: lspHoverDef.Parameters,
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPHoverRequest) (*mcpsdk.CallToolResult, any, error) {
+		resp, err := c.tools.LSPHover(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := mcpTextResult(resp)
+		return res, nil, err
+	})
+
+	lspDiagDef := toolslsp.ToolLSPDiagnostics().Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        lspDiagDef.Name,
+		Description: lspDiagDef.Description,
+		InputSchema: lspDiagDef.Parameters,
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPDiagnosticsRequest) (*mcpsdk.CallToolResult, any, error) {
+		resp, err := c.tools.LSPDiagnostics(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := mcpTextResult(resp)
+		return res, nil, err
+	})
+
+	lspRenameDef := toolslsp.ToolLSPRename().Function
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        lspRenameDef.Name,
+		Description: lspRenameDef.Description,
+		InputSchema: lspRenameDef.Parameters,
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in toolslsp.LSPRenameRequest) (*mcpsdk.CallToolResult, any, error) {
+		resp, err := c.tools.LSPRename(ctx, in)
 		if err != nil {
 			return nil, nil, err
 		}
