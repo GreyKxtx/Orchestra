@@ -56,7 +56,7 @@
 
 | # | Чего не хватает | Где в коде | Эффект | Трудоёмкость |
 |---|---|---|---|:-:|
-| 1 | **Промпты молчат о памяти.** Ни `build.txt`, ни `general.txt`, ни `plan.txt` не говорят *когда* вызывать `memory_write`; единственное упоминание — `todowrite.txt:24` («не используй todo для заметок»). В демо `memory_write` — 0 вызовов за 91 ход — это следствие, не случайность | Блок `MEMORY:` в `build.txt`/`general.txt`/`plan.txt` (и `*-local`): три триггера — пользователь поправил → `feedback`; назвал предпочтение → `user`; факт о проекте, не выводимый из кода → `project`; не писать то, что уже в `ORCHESTRA.md` или в коде | Это ровно разница между ● и ●●: у лидеров модель пишет **потому что её просят**, а не потому что есть инструмент | S |
+| ~~1~~ | ~~**Промпты молчат о памяти.**~~ — закрыто, со скорректированным охватом | Блок `MEMORY:` добавлен в `build.txt` + все 5 family-вариантов (`build-{anthropic,gpt,gemini,kimi,local}.txt`) и в `general.txt`. **`plan.txt` не тронут**: `listToolsPlan` (`registry.go:325`) не выдаёт `memory_write` этому режиму вовсе — учить модель звать несуществующий инструмент было бы хуже, чем ничего. Триггеры пока без типов `feedback`/`user` (тех типов ещё нет — это п.3): «поправка/предпочтение/решение → `scope=project`», «факт на сессию → `scope=session`», «не писать то, что уже в коде/ORCHESTRA.md» | Тест `TestMemoryGuidanceReachesModesThatHaveTheTool` + негативный тест на `plan` | S |
 | 2 | **Нет scope `global` у `memory_write`** — `memory_read` слой `global` читает (`registry.go:84`), а писать в `~/.orchestra/memory.md` модель не может | `tools/session/memory.go` + `memory/store.go` `Append`: `scope: global` → `~/.orchestra/memory.md`; в промпте — «предпочтения человека — global» | Память о *пользователе* переезжает между проектами | S |
 | 3 | **Заметки нетипизированы** — `agent.md` это append-лог с датой. При инъекции нельзя отдать приоритет `feedback` над `project`, нельзя показать «что агент думает о тебе» | Префикс `[type]` в записи (`user` / `feedback` / `project` / `reference`), парсер в `sliceRepoMemory`, порядок инъекции: feedback → user → project → reference, потом по свежести | Дороже всего терять именно feedback; сегодня он тонет среди файловых фактов | M |
 | 4 | **Append вместо update.** Повтор одного факта — вторая запись; `compactAgentFile` режет по размеру, а не по смыслу | Перед `Append` scope=project: поиск ближайшей записи (`memory/semantic.go` уже умеет ранжировать чанки; без embed — Jaccard по токенам ≥0.8) → замена вместо дописывания | Память не растёт мусором; `agent.md` читаемый | M |
@@ -200,7 +200,7 @@
 |---|---|---|---|
 | ~~A1~~ | ~~`orchestra init` создаёт `ORCHESTRA.md` из шаблона (+ `--dry-run`)~~ — сделано | 1.1 #1 | Закрыт |
 | ~~A2~~ | ~~Fallback `AGENTS.md` / `CLAUDE.md` / `.cursorrules`~~ — сделано | 1.1 #2 | Закрыт |
-| A3 | Блок `MEMORY:` в build/general/plan промптах (+ `*-local`) | 1.2 #1 | Разница между ● и ●● в памяти — это промпт, не инструмент. **Проверяется тем же прогоном**: `memory_write` был 0 из 91 |
+| ~~A3~~ | ~~Блок `MEMORY:` в build/general промптах~~ — сделано (без `plan`: нет инструмента) | 1.2 #1 | Проверяется прогоном: `memory_write` был 0 из 91 |
 | A4 | `memory_write scope=global` | 1.2 #2 | Симметрия с `memory_read`; нужен для A3 («предпочтения — global») |
 | A5 | VS Code: строка статуса памяти + кэш в usage-пилюле | 1.2 #7, 1.9 #2 | Данные уже в RPC |
 | A6 | `orchestra memory stats` (или в `usage`): written / skipped / failed, digest vs model | 1.2 #8 | Метрика для прогона |

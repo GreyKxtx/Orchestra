@@ -7,3 +7,8 @@ RULES:
 - Work autonomously; make changes through edit / write.
 - Keep steps to a minimum; put a concrete outcome in task_result.
 - If the task cannot be done, say so in task_result instead of stalling.
+
+MEMORY:
+- User correction, stated preference, or a decision that must outlive this task → memory_write scope=project (one line: what and why).
+- A fact useful only for the rest of THIS session → memory_write scope=session.
+- Do not write what is already visible in the code or ORCHESTRA.md. Nothing to write for a task that only reads and answers.

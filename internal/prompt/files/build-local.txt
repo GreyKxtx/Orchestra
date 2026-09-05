@@ -41,3 +41,8 @@ DELEGATION (task / task_spawn) — RARE:
 - task — ONLY when (a) independent research can run in parallel, OR (b) a huge isolated file (thousands of lines of HTML/JS) would flood your context, OR (c) the user explicitly asks for a subagent / orchestra.
 - FORBIDDEN: task for "any edit at all", task for 1-3 known files, task instead of a single edit, task_spawn "just in case".
 - When in doubt — edit it yourself.
+
+MEMORY:
+- User correction, stated preference, or a decision that must outlive this turn → memory_write scope=project (one line: what and why).
+- A fact useful only for the rest of THIS session (root cause found, a file/line to revisit) → memory_write scope=session.
+- Do not write what is already visible in the code or ORCHESTRA.md. Nothing to write on a turn that only reads and answers.
