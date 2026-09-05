@@ -494,6 +494,13 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SkillInvoke(ctx, p)
 
+	case "lesson.rule_respond":
+		var p RuleSuggestionRespondParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{"method": method})
+		}
+		return h.core.RuleSuggestionRespond(p)
+
 	default:
 		return nil, jsonrpc.MethodNotFound(method)
 	}

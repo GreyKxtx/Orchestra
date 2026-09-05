@@ -300,6 +300,11 @@ type SessionMessageResult struct {
 	// show it instead of the operator having to open .orchestra/memory by hand.
 	// Nil when auto_summary_memory is off.
 	Memory *MemoryNoteStatus `json:"memory,omitempty"`
+
+	// RuleSuggestion is set when this turn's anti-pattern repeated on the
+	// same file often enough to offer a rule for ORCHESTRA.md. The client
+	// answers via lesson.rule_respond. Nil on every other turn.
+	RuleSuggestion *RuleSuggestionPayload `json:"rule_suggestion,omitempty"`
 }
 
 // SessionMessage runs one agent turn in the named session, streaming events via OnEvent.
@@ -523,6 +528,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		StopReason:       res.StopReason,
 		MaxStepsExceeded: res.MaxStepsExceeded,
 		OpenTodos:        countOpenTodoItems(res.Todos),
+		RuleSuggestion:   ruleSuggestionPayload(res.RuleSuggestion),
 	}
 	if out.StopReason == "" {
 		if res.MaxStepsExceeded {
