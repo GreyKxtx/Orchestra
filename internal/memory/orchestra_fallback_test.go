@@ -102,6 +102,74 @@ func TestRead_LayerOrchestra_ReportsActualFilename(t *testing.T) {
 	}
 }
 
+// ORCHESTRA.local.md is a personal, gitignored overlay — "my" rules layered
+// onto (not instead of) whatever the team's project-instructions file is.
+
+func TestReadLayerRaw_AppendsOrchestraLocalMD(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "TEAM RULES")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.local.md"), "MY PERSONAL RULES")
+
+	got := NewStore(dir, "", DefaultConfig()).sliceLayer(layerOrchestra, 4096)
+
+	if !strings.Contains(got, "TEAM RULES") || !strings.Contains(got, "MY PERSONAL RULES") {
+		t.Fatalf("must include both team and personal rules, got: %q", got)
+	}
+}
+
+func TestReadLayerRaw_LocalMDAloneCountsAsProjectInstructions(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.local.md"), "ONLY PERSONAL RULES")
+
+	got := NewStore(dir, "", DefaultConfig()).sliceLayer(layerOrchestra, 4096)
+
+	if !strings.Contains(got, "ONLY PERSONAL RULES") {
+		t.Fatalf("a personal file with no team file must still be picked up, got: %q", got)
+	}
+}
+
+func TestReadLayerRaw_LocalMDAppliesOnFallbackToo(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "AGENTS.md"), "AGENTS RULES")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.local.md"), "MY PERSONAL RULES")
+
+	got := NewStore(dir, "", DefaultConfig()).sliceLayer(layerOrchestra, 4096)
+
+	if !strings.Contains(got, "AGENTS RULES") || !strings.Contains(got, "MY PERSONAL RULES") {
+		t.Fatalf("personal notes must layer onto a fallback file too, got: %q", got)
+	}
+}
+
+func TestList_ReportsOrchestraMDNameEvenWithLocalOverlay(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "TEAM RULES")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.local.md"), "MY PERSONAL RULES")
+
+	entries := NewStore(dir, "", DefaultConfig()).List()
+
+	for _, e := range entries {
+		if e.Layer == layerOrchestra {
+			if e.Path != "ORCHESTRA.md" {
+				t.Errorf("Path = %q, want ORCHESTRA.md — the local overlay is not a file the operator switches to", e.Path)
+			}
+			return
+		}
+	}
+	t.Fatal("orchestra layer missing from List()")
+}
+
+func TestReadByPath_OrchestraLocalMDIsAnAliasForTheOrchestraLayer(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.md"), "TEAM RULES")
+	writeFile(t, filepath.Join(dir, "ORCHESTRA.local.md"), "MY PERSONAL RULES")
+
+	res := NewStore(dir, "", DefaultConfig()).Read("", "ORCHESTRA.local.md", 4096)
+
+	if !strings.Contains(res.Content, "MY PERSONAL RULES") {
+		t.Errorf("content = %q", res.Content)
+	}
+}
+
 func TestLazyOrchestra_FallsBackInNestedDir(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "pkg", "auth")
@@ -111,6 +179,19 @@ func TestLazyOrchestra_FallsBackInNestedDir(t *testing.T) {
 
 	if !strings.Contains(got, "AUTH PACKAGE RULES") {
 		t.Fatalf("nested lazy discovery must fall back too, got: %q", got)
+	}
+}
+
+func TestLazyOrchestra_AppliesLocalOverlayInNestedDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "pkg")
+	writeFile(t, filepath.Join(sub, "ORCHESTRA.md"), "PKG RULES")
+	writeFile(t, filepath.Join(sub, "ORCHESTRA.local.md"), "PKG PERSONAL RULES")
+
+	got := NewStore(dir, "", DefaultConfig()).LazyOrchestra(sub)
+
+	if !strings.Contains(got, "PKG RULES") || !strings.Contains(got, "PKG PERSONAL RULES") {
+		t.Fatalf("nested local overlay must apply too, got: %q", got)
 	}
 }
 

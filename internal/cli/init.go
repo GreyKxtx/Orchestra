@@ -166,6 +166,7 @@ const gitignoreMarker = "# Orchestra: local secrets & runtime artifacts"
 // files (state, decisions, plans, specs, playbooks, product docs) tracked.
 const gitignoreBlock = gitignoreMarker + ` (added by orchestra init)
 .orchestra.local.yml
+ORCHESTRA.local.md
 *.orchestra.bak
 *.bak
 *.tmp
@@ -210,7 +211,7 @@ func ensureGitignore(projectRoot string) error {
 		extra.WriteString(block)
 		body += block
 	}
-	for _, line := range []string{gitignoreLocalPlaybooks, gitignoreLocalPlans, gitignoreSQLite, "*.bak", "*.tmp"} {
+	for _, line := range []string{gitignoreLocalPlaybooks, gitignoreLocalPlans, gitignoreSQLite, "*.bak", "*.tmp", "ORCHESTRA.local.md"} {
 		if strings.Contains(body, line) {
 			continue
 		}

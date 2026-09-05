@@ -88,6 +88,40 @@ func TestEnsureGitignore_MigratesLocalPlaybooksIgnore(t *testing.T) {
 	}
 }
 
+func TestEnsureGitignore_IncludesOrchestraLocalMD(t *testing.T) {
+	dir := t.TempDir()
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatalf("ensureGitignore: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if !strings.Contains(string(got), "ORCHESTRA.local.md") {
+		t.Errorf("gitignore missing ORCHESTRA.local.md:\n%s", got)
+	}
+}
+
+func TestEnsureGitignore_MigratesOrchestraLocalMD(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitignore")
+	old := gitignoreMarker + " (added by orchestra init)\n.orchestra.local.yml\n.orchestra/*\n!.orchestra/playbooks/\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatalf("ensureGitignore: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), "ORCHESTRA.local.md") {
+		t.Errorf("missing ORCHESTRA.local.md backfill:\n%s", got)
+	}
+	if err := ensureGitignore(dir); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := os.ReadFile(path)
+	if string(again) != string(got) {
+		t.Errorf("migration not idempotent:\n%s", again)
+	}
+}
+
 func TestEnsureLearningDirs(t *testing.T) {
 	dir := t.TempDir()
 	if err := ensureLearningDirs(dir); err != nil {

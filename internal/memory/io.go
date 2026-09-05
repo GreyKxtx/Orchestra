@@ -31,8 +31,14 @@ func FindProjectInstructions(dir string) (content, name string) {
 // none of ORCHESTRA.md and got no project memory at all as a result.
 var orchestraFallbackNames = []string{"ORCHESTRA.md", "AGENTS.md", "CLAUDE.md", ".cursorrules"}
 
+// localOrchestraFile is a personal, gitignored overlay (`orchestra init`
+// adds it to .gitignore) — "my" rules layered onto the team's project
+// instructions, the same relationship CLAUDE.local.md has to CLAUDE.md.
+const localOrchestraFile = "ORCHESTRA.local.md"
+
 // readOrchestraFile returns the content and filename of the first existing,
-// non-empty candidate in dir, or ("", "") when none exist.
+// non-empty candidate in dir, with ORCHESTRA.local.md (if present) appended,
+// or ("", "") when nothing at all exists.
 func readOrchestraFile(dir string) (content, name string) {
 	for _, n := range orchestraFallbackNames {
 		data, err := os.ReadFile(filepath.Join(dir, n))
@@ -43,9 +49,33 @@ func readOrchestraFile(dir string) (content, name string) {
 		if raw == "" {
 			continue
 		}
-		return raw, n
+		return appendLocalOrchestra(dir, raw), n
+	}
+	// No team file at all — a personal ORCHESTRA.local.md still counts as
+	// project instructions instead of being silently dropped on a repo that
+	// doesn't (yet) have a shared one.
+	if local := readLocalOrchestra(dir); local != "" {
+		return local, localOrchestraFile
 	}
 	return "", ""
+}
+
+// readLocalOrchestra returns ORCHESTRA.local.md's trimmed content, or "".
+func readLocalOrchestra(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, localOrchestraFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// appendLocalOrchestra layers ORCHESTRA.local.md onto raw, when present.
+func appendLocalOrchestra(dir, raw string) string {
+	local := readLocalOrchestra(dir)
+	if local == "" {
+		return raw
+	}
+	return raw + "\n\n" + local
 }
 
 // orchestraFileName reports which file backs the orchestra layer in the
@@ -242,7 +272,7 @@ func (s *Store) sliceLessonsMemory(maxBytes int) string {
 func (s *Store) readByPath(path string, maxBytes int) (content, layer string, err error) {
 	path = filepath.ToSlash(path)
 	switch {
-	case path == "ORCHESTRA.md" || path == "AGENTS.md" || path == "CLAUDE.md" || path == ".cursorrules":
+	case path == "ORCHESTRA.md" || path == "AGENTS.md" || path == "CLAUDE.md" || path == ".cursorrules" || path == localOrchestraFile:
 		layer = layerOrchestra
 		content = s.sliceLayer(layerOrchestra, maxBytes)
 	case strings.HasPrefix(path, ".orchestra/memory/"):
