@@ -496,6 +496,16 @@
     }
     const entries = Array.isArray(usage.entries) ? usage.entries : [];
     const parts = ["turn " + formatUsd(cost)];
+    // Prompt-cache hit, when the provider reports one (Anthropic via a
+    // gateway or native). Local models never set this. Without it, a long
+    // Anthropic-through-OpenRouter turn that re-billed its whole transcript
+    // every step looked the same as one that cached it — this is what would
+    // have shown the field run's $2.18 turn was paying full price.
+    const cached = typeof usage.cached_prompt_tokens === "number" ? usage.cached_prompt_tokens : 0;
+    const promptTotal = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0;
+    if (cached > 0 && promptTotal > 0) {
+      parts.push("cache " + Math.round((cached / promptTotal) * 100) + "%");
+    }
     if (entries.length > 1 || (modeId === "orchestra" && entries.length > 0)) {
       entries.forEach((en) => {
         const calls = typeof en.calls === "number" && en.calls > 1 ? " ×" + en.calls : "";

@@ -10,6 +10,7 @@ import type {
   ChatFileRef,
   ConnectionStatus,
   HostToWebview,
+  MemoryNotePayload,
   PendingOpsPayload,
   PermissionRequestPayload,
   QuestionItemPayload,
@@ -20,6 +21,7 @@ import type {
   WorkflowStagePayload,
 } from "../protocol/events";
 import { SettingsView } from "./settings";
+import { memoryNoticeText } from "./memoryNotice";
 import { stripFinalEnvelope, sanitizeAssistantStream, shouldSuppressStreamChunk, looksLikeCorruptedStream, isBenignTurnError, compactionNoticeText } from "./streamSanitize";
 import {
   buildAssistantProjection,
@@ -1290,6 +1292,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       })) as {
         usage?: TurnUsagePayload;
         session_cost_usd?: number;
+        memory?: MemoryNotePayload;
       } | null;
       // Deliver the tail of the coalesced stream before finalizing the turn.
       this.flushDeltaSync();
@@ -1302,6 +1305,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               ? turnResult.session_cost_usd
               : undefined,
         });
+      }
+      const memoryNote = turnResult ? memoryNoticeText(turnResult.memory) : null;
+      if (memoryNote) {
+        this.post({ type: "systemNote", text: memoryNote });
       }
       void this.refreshCredits();
       const id = this.session.getSessionId();

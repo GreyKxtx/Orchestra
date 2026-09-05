@@ -86,7 +86,18 @@ export interface TurnUsagePayload {
   completion_tokens?: number;
   total_tokens?: number;
   cost_usd?: number;
+  // Prompt-cache split the provider reported (Anthropic native or via a
+  // gateway); 0/absent for providers without a cache — every local model.
+  cached_prompt_tokens?: number;
+  cache_write_tokens?: number;
   entries?: UsageModelEntry[];
+}
+
+/** What the end-of-turn memory writer did, from session.message (core.MemoryNoteStatus). */
+export interface MemoryNotePayload {
+  outcome: string;
+  source?: string;
+  detail?: string;
 }
 
 export interface ContextInfoPayload {
