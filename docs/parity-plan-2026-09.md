@@ -141,15 +141,15 @@
 | ~~3~~ | ~~Lifecycle-события~~ — закрыто, кроме `permission_request` | `session_start`, `user_prompt_submit` (запрещает ход или дописывает контекст), `pre_compact`, `turn_end`. Что значит отказ — решает вызывающий, а не runner: `pre_compact` отменить нельзя (альтернатива сжатию — промпт, который не влезает), у `turn_end` останавливать уже нечего. `turn_end` срабатывает и на упавших ходах: хук-нотификатор, который слышит только про успехи, в день падения отрапортует тишину. `permission_request` (внешний approver — CI, Slack) не делался: это не событие, а синхронный ответ вместо пользователя, он идёт через `permission.Requester` и это отдельная работа | M |
 | ~~4~~ | ~~Уровни: merge списков~~ — закрыто, merge оказался нужен | Списки хуков из `~/.orchestra/config.yml` **склеиваются** с проектными, а не заменяются ими (глобальный идёт первым — он внешнее правило). Все остальные списки конфига заменяются, и для `providers`/`agents` это верно; хуки — исключение: пользовательский аудит-хук существует ровно затем, чтобы его не приходилось помнить в каждом репозитории. Сохранение настроек по-прежнему не пишет унаследованный хук в коммитящийся `.orchestra.yml` — иначе личный путь к скрипту уезжает всем | S |
 
-### 1.8 Skills / команды — ●● с оговорками
+### 1.8 Skills / команды — ●●
 
 **Есть.** Skill packs, `$ARGUMENTS`, `@refs/`, `skill_invoke`, 12 YAML-workflow, палитра `Ctrl+K`, 17 slash-команд в TUI (`app_palette.go`).
 
-| # | Чего не хватает | Трудоёмкость |
-|---|---|:-:|
-| 1 | **Skill → slash-команда**: `/skillname args` в TUI и VS Code (у CC skills = `/commands`) | S |
-| 2 | Читать `.claude/commands/*.md` и `.claude/skills/*` как источник skills (та же frontmatter-модель) | S |
-| 3 | Marketplace / plugin-реестр — **не сейчас**; закрыть как P2 без срока | — |
+| # | Чего не хватает | Где в коде | Трудоёмкость |
+|---|---|---|:-:|
+| ~~1~~ | ~~Skill → slash-команда~~ — закрыто, TUI и VS Code | Loaded skill = `/<name> args`, тот же `skill.invoke`, что и у `/skill <name> <args>`. TUI: `app_skill_commands.go` (`parseSkillSlashCommand`, `syncSkillCommands`), палитра получила отдельный слот на источник — `SetExtra` был один общий слот на MCP-prompts и skills, и один источник стирал другой при обновлении; теперь `SetExtraMCP`/`SetExtraSkills` (`view/palette.go`). VS Code: `skillCommands.ts` (чистая логика, юнит-тестируется отдельно от `panel.ts`/`coreSession.ts` — там `skill.invoke` не был проведён вообще, только `skill.list` для read-only списка в settings) | S |
+| ~~2~~ | ~~Читать `.claude/commands/*.md` и `.claude/skills/*` как источник skills~~ — закрыто | `internal/skills/loader.go` (`scanClaudeCommands`, `scanClaudeSkills`). Ни один Claude-формат не требует `name:` так, как это требует Orchestra-skill — имя команды это имя файла, имя skill это имя директории — оба откатываются на это вместо жёсткой ошибки. Своя конфигурация Orchestra (project/user/pack) побеждает при коллизии имени на любом уровне — её настроили осознанно; между двумя claude-источниками полноценный skill побеждает голую команду | S |
+| 3 | Marketplace / plugin-реестр — **не сейчас**; закрыть как P2 без срока | — | — |
 
 ### 1.9 Поверхности — ● → ●●
 
@@ -217,7 +217,7 @@
 | ~~B3~~ | ~~MCP: картинки в результатах; resources; prompts → slash; handshake `2025-06-18`~~ — сделано | 1.5 #3–5, #7 |
 | B4 | Память: ~~типы записей + порядок инъекции~~; ~~update-вместо-append~~; ~~индекс~~; `/memory review` — сделано 3 из 4, #6 отложен до прогона (см. 1.2 #6) | 1.2 #3–6 |
 | ~~B5~~ | ~~Hooks: matcher'ы, JSON-протокол, lifecycle-события~~ — закрыто (#1–4; `permission_request` из #3 отложен — это не событие, а синхронный approver через `permission.Requester`) | 1.7 #1–3 |
-| B6 | Skills как slash-команды; `.claude/commands` как источник | 1.8 #1–2 |
+| ~~B6~~ | ~~Skills как slash-команды; `.claude/commands`/`.claude/skills` как источник~~ — закрыто | 1.8 #1–2 |
 | B7 | `@import` в `ORCHESTRA.md`; `ORCHESTRA.local.md`; `/memory open/refresh` с отчётом инъекции | 1.1 #3–4, #7 |
 | B8 | Уроки → предложение правила; дефолтные playbooks | 1.11 #1–2 |
 | B9 | English README; Marketplace/Open VSX; brew/scoop/winget | 1.10 #4–5, #7 |
