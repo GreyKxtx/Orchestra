@@ -2,7 +2,7 @@
 # Installs the latest (or a pinned) orchestra release for Linux/macOS.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/orchestra/orchestra/master/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/GreyKxtx/Orchestra/master/scripts/install.sh | bash
 #   VERSION=v0.3.0 INSTALL_DIR=/usr/local/bin bash install.sh
 #
 # Downloads the matching orchestra_<version>_<target>.tar.gz from GitHub
@@ -11,7 +11,7 @@
 # uses sha256sum (Linux) or shasum (macOS), whichever is present.
 set -euo pipefail
 
-REPO="orchestra/orchestra"
+REPO="GreyKxtx/Orchestra"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 os="$(uname -s)"

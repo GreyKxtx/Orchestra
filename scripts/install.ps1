@@ -1,7 +1,7 @@
 # Installs the latest (or a pinned) orchestra release for Windows.
 #
 # Usage:
-#   irm https://raw.githubusercontent.com/orchestra/orchestra/master/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/GreyKxtx/Orchestra/master/scripts/install.ps1 | iex
 #   $env:VERSION = "v0.3.0"; .\install.ps1
 #
 # Downloads orchestra_<version>_windows-amd64.zip from GitHub Releases,
@@ -14,7 +14,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = "orchestra/orchestra"
+$repo = "GreyKxtx/Orchestra"
 $target = "windows-amd64"
 
 if (-not $Version) {
