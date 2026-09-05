@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/orchestra/orchestra/docs/examples"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/instrument"
 	"github.com/orchestra/orchestra/internal/lsp/provision"
@@ -244,6 +245,26 @@ func ensureLearningDirs(projectRoot string) error {
 		filepath.Join(".orchestra", "playbooks", "local"),
 	} {
 		if err := os.MkdirAll(filepath.Join(projectRoot, rel), 0o755); err != nil {
+			return err
+		}
+	}
+	return ensureL0Playbooks(projectRoot)
+}
+
+// ensureL0Playbooks materializes Orchestra's shipped L0 default playbooks
+// into .orchestra/playbooks/l0/ so the Docs Lead can read them with
+// fs.read — docs/examples/playbooks/ exists only in Orchestra's own repo
+// checkout, not in the project init runs against. Always overwritten:
+// these are Orchestra's own reference material refreshed to the installed
+// version, not something a project edits — narrowing happens one layer up,
+// in conventions.md (L1).
+func ensureL0Playbooks(projectRoot string) error {
+	dir := filepath.Join(projectRoot, ".orchestra", "playbooks", "l0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for name, content := range examples.L0Playbooks() {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			return err
 		}
 	}

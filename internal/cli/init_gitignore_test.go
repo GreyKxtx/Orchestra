@@ -137,3 +137,52 @@ func TestEnsureLearningDirs(t *testing.T) {
 		}
 	}
 }
+
+// docs/examples/playbooks/ only exists in Orchestra's own repo checkout — a
+// target project has no way to fs.read it. ensureLearningDirs must
+// materialize the embedded L0 defaults somewhere the Docs Lead's own
+// fs.read tool can actually reach.
+func TestEnsureLearningDirs_MaterializesL0Playbooks(t *testing.T) {
+	dir := t.TempDir()
+	if err := ensureLearningDirs(dir); err != nil {
+		t.Fatal(err)
+	}
+	l0Dir := filepath.Join(dir, ".orchestra", "playbooks", "l0")
+	for _, name := range []string{"go_engineering.md", "typescript_engineering.md", "python_engineering.md"} {
+		data, err := os.ReadFile(filepath.Join(l0Dir, name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			t.Errorf("%s materialized empty", name)
+		}
+	}
+}
+
+// L0 is Orchestra's own shipped reference material, refreshed on every
+// init to match the installed version — not something a project edits (L1
+// conventions.md is where narrowing happens), so a stale local edit must
+// not survive a re-init.
+func TestEnsureLearningDirs_RefreshesStaleL0Playbook(t *testing.T) {
+	dir := t.TempDir()
+	l0Dir := filepath.Join(dir, ".orchestra", "playbooks", "l0")
+	if err := os.MkdirAll(l0Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(l0Dir, "go_engineering.md")
+	if err := os.WriteFile(stale, []byte("stale content from an old orchestra version"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureLearningDirs(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "stale content") {
+		t.Error("L0 playbook was not refreshed to the current shipped version")
+	}
+}
