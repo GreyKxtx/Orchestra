@@ -293,6 +293,14 @@ Inside `ORCHESTRA.md` (or `ORCHESTRA.local.md`), `@import path/to/file.md` works
 
 In the TUI: `/memory` shows the memory layers and pinned facts; `/memory open` opens the real project-instructions file in `$EDITOR`; `/memory refresh` shows what actually went into the prompt on the last turn (bytes per layer against the budget) — read from the `memory.inject` event in `.orchestra/llm_log.jsonl`, the same log that already carries `memory.note` events.
 
+### MCP server mode
+
+`orchestra mcp serve` exposes Orchestra's own code-intelligence tools (`explore`, `semantic_search`, `symbols`, `repo_map`, `runtime_query`, `lsp.*`) as an MCP server, so any MCP-capable client (Claude Code, Claude Desktop, Cursor, …) can use them directly. stdio is the default transport; `--http` serves Streamable HTTP instead and always requires a token (`--mcp-token` or `$ORCH_MCP_TOKEN`).
+
+```bash
+orchestra mcp serve --workspace-root /path/to/project
+```
+
 ---
 
 ## Architecture (key abstractions)

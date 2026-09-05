@@ -293,6 +293,14 @@ stdout:  {"decision":"deny","reason":"на этой ветке правки за
 
 В TUI: `/memory` — слои памяти и pinned facts; `/memory open` открывает реальный файл проектных инструкций в `$EDITOR`; `/memory refresh` показывает, что фактически ушло в промпт на последнем ходу (байты по слоям против бюджета) — это читается из `memory.inject`-события в `.orchestra/llm_log.jsonl`, том же логе, куда уже пишутся события `memory.note`.
 
+### Режим MCP-сервера
+
+`orchestra mcp serve` отдаёт собственные инструменты понимания кода Orchestra (`explore`, `semantic_search`, `symbols`, `repo_map`, `runtime_query`, `lsp.*`) как MCP-сервер — любой MCP-совместимый клиент (Claude Code, Claude Desktop, Cursor и т.д.) может пользоваться ими напрямую. По умолчанию — stdio; `--http` включает Streamable HTTP и всегда требует токен (`--mcp-token` или `$ORCH_MCP_TOKEN`).
+
+```bash
+orchestra mcp serve --workspace-root /path/to/project
+```
+
 ---
 
 ## Архитектура (ключевые абстракции)
