@@ -17,9 +17,13 @@ import (
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Inspect MCP (Model Context Protocol) servers",
-	Long: `Commands for inspecting MCP server configurations.
+	Long: `Commands for configuring and inspecting MCP servers.
 
-MCP servers are configured in .orchestra.yml:
+Servers come from two places: .orchestra.yml's own mcp.servers, and a
+.mcp.json in the project root (the manifest Claude Code, Cursor, and other
+MCP clients already read) — a server configured there works here too,
+without retyping it. A name defined in both places uses .orchestra.yml's
+version.
 
   mcp:
     servers:
@@ -30,6 +34,9 @@ MCP servers are configured in .orchestra.yml:
       - name: other-server
         command: ["./bin/my-mcp-server"]
         disabled: true
+
+Use 'orchestra mcp add/remove/get' to manage .orchestra.yml's servers from
+the command line instead of hand-editing the file.
 `,
 }
 

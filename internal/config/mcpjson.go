@@ -117,13 +117,8 @@ func maskMCPJSONServers(configPath string, data []byte) ([]byte, error) {
 	}
 
 	explicit := map[string]bool{}
-	if raw, readErr := os.ReadFile(configPath); readErr == nil {
-		var prior ProjectConfig
-		if yaml.Unmarshal(raw, &prior) == nil {
-			for _, s := range prior.MCP.Servers {
-				explicit[s.Name] = true
-			}
-		}
+	for _, s := range ownMCPServers(configPath) {
+		explicit[s.Name] = true
 	}
 
 	var doc map[string]any

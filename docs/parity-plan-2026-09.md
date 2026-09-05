@@ -96,8 +96,8 @@
 
 | # | Чего не хватает | Где в коде | Эффект | Трудоёмкость |
 |---|---|---|---|:-:|
-| 1 | **`.mcp.json` совместимость** — читать `mcpServers` из корня проекта как дополнительный источник (`command/args/env/url/headers`), с `disabled` и пометкой источника в `/mcp` | `config.go` `validateMCP` + новый `mcpjson.go`; конфликты имён — `.orchestra.yml` побеждает | Сервер, настроенный для Claude Code или Cursor, работает в Orchestra без переписывания | S |
-| 2 | **`orchestra mcp add <name> --command … / --url … --bearer-env …`, `remove`, `get`** — сейчас только `list-tools` (`cli/mcp.go:37`) | Пишет в `.orchestra.yml` (или `.mcp.json` по флагу), проверяет подключение | Установка сервера — одна команда, как у всех | S |
+| ~~1~~ | ~~**`.mcp.json` совместимость**~~ — закрыто | `config/mcpjson.go`: `LoadMCPJSON` + `MergeMCPServers` (own побеждает при конфликте имён); `Save()` получил зеркальную `maskMCPJSONServers`, чтобы слитые в память сервера не утекли в `.orchestra.yml` при следующей записи (поймано собственным тестом до того, как это стало багом) | Сервер, настроенный для Claude Code или Cursor, работает в Orchestra без переписывания | S |
+| ~~2~~ | ~~**`orchestra mcp add/remove/get`**~~ — закрыто | `orchestra mcp add <name> -- <command> [args…]` / `add <name> --url … --bearer-env …` / `remove <name>` / `get <name>`, пишет в `.orchestra.yml` через `config.SetMCPServer/RemoveMCPServer/GetMCPServer`; `remove` честно отказывает на сервере из `.mcp.json` (не может его удалить — файл не его) вместо ложного «удалено» | Установка сервера — одна команда, как у всех | S |
 | 3 | **Картинки из результатов** → `ContentPart image` в tool-message при `multimodal` (сейчас `dropped N non-text`) | `Call` возвращает `string` → `[]llm.ContentPart`; интерфейс `ServerClient` расширить методом `CallRich`, старый `Call` — обёртка | Скриншоты от Playwright-MCP и любых visual-серверов доходят до модели | M |
 | 4 | **Resources**: `resources/list` при старте, `memory_read layer=mcp:<server>`/`@server:uri` в TUI → содержимое как attachment | SDK уже даёт `ListResources/ReadResource`; stdio-клиент — дописать два метода | Данные сервера как контекст, не только как инструмент | M |
 | 5 | **Prompts → slash-команды**: `prompts/list` → `/mcp:<server>:<prompt>` в палитре с аргументами | палитра TUI + `skill_invoke`-подобный путь | Серверные «рецепты» доступны человеку | M |
@@ -205,7 +205,7 @@
 | ~~A5~~ | ~~VS Code: строка статуса памяти + кэш в usage-пилюле~~ — сделано | 1.2 #7, 1.9 #2 | `chat-src/07-events.js` — обычный JS без тестовой обвязки, как и остальной файл; изменение проверено вручную + typecheck/бандл |
 | ~~A6~~ | ~~`orchestra memory stats`: written / skipped / failed, digest vs model~~ — сделано | 1.2 #8 | Метрика для прогона |
 | ~~A7~~ | ~~Лицензия: имя держателя, `THIRD_PARTY_NOTICES.md`; `install.sh` / `install.ps1`~~ — сделано | 1.10 #1–3 | Checksums были в `release.yml` уже; подпись (cosign) — не делали, это Wave B |
-| A8 | `.mcp.json` чтение + `orchestra mcp add/remove/get` | 1.5 #1–2 | Повседневный MCP-разрыв; чистая конфигурация |
+| ~~A8~~ | ~~`.mcp.json` чтение + `orchestra mcp add/remove/get`~~ — сделано | 1.5 #1–2 | Повседневный MCP-разрыв; чистая конфигурация |
 | A9 | Desktop: убрать из README (или завести issue с решением) | 1.9 #3 | Честность документации; 10 минут |
 
 ### Волна B — недели (M)
