@@ -4,7 +4,7 @@ Edit this file for your repo. Orchestra injects it into every agent turn (`<proj
 
 ## Stack
 
-- Language / runtime:
+- Language / runtime:{{LANGUAGES}}
 - Build / test:
 - LLM notes (num_ctx, prefer edit vs patches):
 

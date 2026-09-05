@@ -38,7 +38,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Already initialized: never touch the existing config, but refresh the
 	// supplementary artifacts (idempotent re-run migrates older projects to
-	// the current .gitignore layout and secrets guidance).
+	// the current .gitignore layout, secrets guidance, and ORCHESTRA.md).
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Printf(".orchestra.yml already exists — leaving it untouched.\n")
 		if err := ensureGitignore(cwd); err != nil {
@@ -46,6 +46,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		if err := ensureLearningDirs(cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not create learning dirs: %v\n", err)
+		}
+		if action, err := ensureOrchestraMD(cwd, initDryRun, detectedLanguages(cwd)); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not create ORCHESTRA.md: %v\n", err)
+		} else {
+			reportOrchestraMD(action)
 		}
 		suggestLocalOverlay(cwd, configPath)
 		return nil
@@ -135,6 +140,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	if err := ensureLearningDirs(cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not create learning dirs: %v\n", err)
+	}
+	if action, err := ensureOrchestraMD(cwd, initDryRun, detectedLanguages(cwd)); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not create ORCHESTRA.md: %v\n", err)
+	} else {
+		reportOrchestraMD(action)
 	}
 
 	if initInstrument {
@@ -263,6 +273,20 @@ func suggestLocalOverlay(projectRoot, configPath string) {
 			return
 		}
 	}
+}
+
+// detectedLanguages returns the languages workspace-detect actually found in
+// projectRoot, for the ORCHESTRA.md "Language / runtime" line. Deliberately
+// NOT provision.InitServerSpecs, which folds in the go+typescript+python LSP
+// fallback on an empty repo — that fallback is right for "give the user
+// something to try", wrong for "state what this project is written in".
+func detectedLanguages(projectRoot string) []string {
+	entries := provision.Detect(projectRoot)
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Language)
+	}
+	return out
 }
 
 func lspServersFromInit(projectRoot string) []config.LSPServerConfig {
