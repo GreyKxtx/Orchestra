@@ -30,6 +30,12 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	if a.llmInfraErr != nil {
 		return nil, fmt.Errorf("compaction skipped: %w", a.llmInfraErr)
 	}
+	// Compaction is the one moment the agent throws history away. A hook that
+	// archives the transcript has to hear about it before that happens; it
+	// cannot stop it, because the alternative to compacting is a prompt that
+	// no longer fits.
+	a.firePreCompactHook(ctx, hist)
+
 	family := a.opts.PromptFamily
 	sysprompt := promptpkg.BuildSystemPromptForMode(string(ModeCompaction), family)
 

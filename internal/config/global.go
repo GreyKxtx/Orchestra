@@ -78,7 +78,9 @@ func mergeGlobalConfig(projectData []byte) ([]byte, error) {
 	if err := yaml.Unmarshal(projectData, &over); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	inheritedHooks := captureHookLists(base)
 	merged := deepMergeMaps(base, over)
+	mergeHookLists(merged, inheritedHooks)
 	out, err := yaml.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("merge %s: %w", GlobalConfigName, err)

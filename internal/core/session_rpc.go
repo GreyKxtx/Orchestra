@@ -14,6 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
+	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/cache"
@@ -56,6 +57,10 @@ func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, err
 	} else {
 		s = c.sessions.Create()
 	}
+	c.fireLifecycleHook(context.Background(), hooks.EventSessionStart, s.ID, map[string]any{
+		"restored":       restored,
+		"workspace_root": c.workspaceRoot,
+	})
 	return &SessionStartResult{SessionID: s.ID, Restored: restored}, nil
 }
 
@@ -319,6 +324,13 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	agentQuery := resolveTurnQuery(params.Content, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
 	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
 
+	// Before anything is spent: a user_prompt_submit hook may refuse the turn
+	// or add context the model cannot know.
+	agentQuery, err = c.applyUserPromptHooks(ctx, params.SessionID, agentQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
 	if err != nil {
 		return nil, err
@@ -481,6 +493,10 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// Previously err != nil skipped ReplaceHistory, so TUI reopen showed the
 	// chat (ui_sync) while agent history was empty and the model re-explored.
 	c.persistSessionTurn(sess, outHistory, res, launch.Opts.PlanPath, profileName, applyOutput, params.Apply)
+
+	// turn_end fires for failed turns too: an audit or notification hook that
+	// only ever hears about successes reports a quiet day when the turn died.
+	c.fireLifecycleHook(ctx, hooks.EventTurnEnd, params.SessionID, turnEndPayload(res, err))
 
 	if err != nil {
 		return nil, err

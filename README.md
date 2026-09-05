@@ -191,6 +191,20 @@ hooks:
   post_tool: ["sh", "-c", "echo post"]
   timeout_ms: 5000
 
+  # Форма с matcher'ом: match — regexp по имени инструмента (пусто = все).
+  # Обе формы можно смешивать; списки хуков из ~/.orchestra/config.yml не
+  # заменяются проектными, а склеиваются (глобальный идёт первым).
+  # pre_tool:
+  #   - match: "write|edit"
+  #     command: ["./scripts/gate.sh"]
+  #     timeout_ms: 2000
+
+  # События жизненного цикла (те же две формы):
+  # session_start: ["./scripts/on-session.sh"]
+  # user_prompt_submit: ["./scripts/check-freeze.sh"]   # может запретить ход или добавить контекст
+  # pre_compact: ["./scripts/archive-history.sh"]
+  # turn_end: ["./scripts/notify.sh"]
+
 mcp:
   servers:
     # Локальный сервер — stdio-подпроцесс
@@ -235,6 +249,23 @@ providers:
 ```
 
 `project_root` из глобального файла игнорируется — иначе все проекты смотрели бы в одну директорию. Ключи, заданные глобально, при сохранении настроек из TUI / VS Code **не** записываются в проектный файл: `.orchestra.yml` коммитится, и утащить туда ключ из домашней директории нельзя.
+
+### Хуки
+
+Хук — обычный процесс. Он получает событие JSON на stdin и может ответить решением на stdout:
+
+```
+stdin :  {"event":"pre_tool","tool":"write","input":{...},"session_id":"...","workspace_root":"..."}
+stdout:  {"decision":"deny","reason":"на этой ветке правки запрещены до релиза"}
+         {"decision":"modify","input":{"path":"safe.txt"}}
+         {"decision":"allow","context":"репозиторий в релиз-фризе"}   # только user_prompt_submit
+```
+
+Всё опционально: хук, который не читает stdin и ничего не печатает, работает ровно как раньше — **ненулевой код выхода по-прежнему запрещает вызов**, а вывод, который не является JSON, решением не считается (иначе любой хук с логами стал бы случайным фильтром). `reason` уходит модели вместо «pre-tool hook denied»: механизм без правила модель исправить не может и зовёт тот же инструмент снова.
+
+Те же данные приходят и в переменных окружения — `ORCH_TOOL_NAME`, `ORCH_TOOL_INPUT`, `ORCH_WORKSPACE_ROOT`, `ORCH_SESSION_ID`, `ORCH_HOOK_EVENT` — поверх окружения родителя (`PATH` на месте).
+
+События: `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit` (может запретить ход или дописать в него контекст), `pre_compact` (последний момент перед тем, как история будет сжата), `turn_end` (в том числе для упавших ходов). Для lifecycle-хуков `match` проверяется по имени события.
 
 ### Память проекта
 

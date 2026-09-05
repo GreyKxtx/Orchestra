@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+
+	"github.com/orchestra/orchestra/llm"
 )
 
 // runPreToolHooks runs the pre-tool hook chain with panic protection. A panic
@@ -18,6 +20,28 @@ func (a *Agent) runPreToolHooks(ctx context.Context, name string, input json.Raw
 		return HookDecision{Denied: true, Reason: err.Error()}
 	}
 	return dec
+}
+
+// firePreCompactHook tells hooks how much history is about to be summarised.
+// Fire-and-forget: a hook that fails here must not cost the agent the
+// compaction it needs to keep running.
+func (a *Agent) firePreCompactHook(ctx context.Context, hist []llm.Message) {
+	if a.opts.HooksRunner == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"messages": len(hist),
+		"bytes":    historyBytes(hist),
+	})
+	if err != nil {
+		return
+	}
+	_ = safeRunErr("PreCompact hook", func() error {
+		if dec := a.opts.HooksRunner.RunLifecycle(ctx, "pre_compact", payload); dec.Denied {
+			a.logf("hook event=pre_compact denied_ignored reason=%s", dec.Reason)
+		}
+		return nil
+	})
 }
 
 // hookDenialReason is what the model is told when a hook blocks a call.

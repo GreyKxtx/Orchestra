@@ -95,6 +95,68 @@ func (l HookList) MarshalYAML() (any, error) {
 	return []HookSpec(l), nil
 }
 
+// hookListKeys are the keys under "hooks" that hold hook lists.
+var hookListKeys = []string{
+	"pre_tool", "post_tool",
+	"session_start", "user_prompt_submit", "pre_compact", "turn_end",
+}
+
+// captureHookLists snapshots the hook lists of a config map before a merge
+// overwrites them. deepMergeMaps writes into the lower-precedence map, so the
+// inherited lists have to be taken first or they are gone by the time we look.
+func captureHookLists(m map[string]any) map[string][]any {
+	hooks, ok := m["hooks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := map[string][]any{}
+	for _, k := range hookListKeys {
+		if list := normalizeHookNode(hooks[k]); len(list) > 0 {
+			out[k] = list
+		}
+	}
+	return out
+}
+
+// mergeHookLists appends the project's hooks to the inherited ones instead of
+// replacing them.
+//
+// Every other list in the config replaces its inherited value, and for
+// providers or agents that is right. Hooks are the exception: a user-wide
+// audit or gate hook exists so that no project has to remember it, and a
+// project that adds a formatter hook has not asked for that gate to stop
+// running. The inherited hook goes first — it is the outer rule.
+func mergeHookLists(merged map[string]any, inherited map[string][]any) {
+	if len(inherited) == 0 {
+		return
+	}
+	hooks, ok := merged["hooks"].(map[string]any)
+	if !ok {
+		return
+	}
+	for k, base := range inherited {
+		over := normalizeHookNode(hooks[k])
+		if len(over) == 0 {
+			// Nothing to append to: the inherited list survives as it is.
+			continue
+		}
+		hooks[k] = append(append([]any{}, base...), over...)
+	}
+}
+
+// normalizeHookNode renders either configured form as a list of spec maps, so
+// two levels can be concatenated without the result being ambiguous.
+func normalizeHookNode(v any) []any {
+	list, ok := v.([]any)
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	if _, isSpec := list[0].(map[string]any); isSpec {
+		return list
+	}
+	return []any{map[string]any{"command": list}}
+}
+
 func nodeKindName(k yaml.Kind) string {
 	switch k {
 	case yaml.MappingNode:

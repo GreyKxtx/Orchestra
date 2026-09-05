@@ -41,6 +41,10 @@ type (
 type HooksRunner interface {
 	RunPreTool(ctx context.Context, toolName string, input json.RawMessage) HookDecision
 	RunPostTool(ctx context.Context, toolName string, output json.RawMessage)
+	// RunLifecycle reports an event that is not about a tool call. The agent
+	// raises pre_compact; the rest are the caller's, because only it knows
+	// where a session or a turn begins.
+	RunLifecycle(ctx context.Context, event string, payload json.RawMessage) HookDecision
 }
 
 // HookDecision is hooks.Decision, aliased the way PermissionRequester is, so

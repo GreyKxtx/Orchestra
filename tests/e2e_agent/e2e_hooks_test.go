@@ -177,6 +177,7 @@ exit 1
 type recordingHookRunner struct {
 	pre        []hookCall
 	post       []hookCall
+	lifecycle  []hookCall
 	denyTool   string          // when non-empty, RunPreTool denies this tool
 	denyReason string          // the hook's own words for that denial
 	rewriteTo  json.RawMessage // when non-empty, replaces the tool input
@@ -204,6 +205,11 @@ func (r *recordingHookRunner) RunPreTool(_ context.Context, name string, in json
 
 func (r *recordingHookRunner) RunPostTool(_ context.Context, name string, out json.RawMessage) {
 	r.post = append(r.post, hookCall{Tool: name, Payload: string(out)})
+}
+
+func (r *recordingHookRunner) RunLifecycle(_ context.Context, event string, payload json.RawMessage) agent.HookDecision {
+	r.lifecycle = append(r.lifecycle, hookCall{Tool: event, Payload: string(payload)})
+	return agent.HookDecision{}
 }
 
 // capturingLLM is a fakeLLM that keeps the messages of the last request, so a
