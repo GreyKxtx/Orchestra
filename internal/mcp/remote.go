@@ -359,3 +359,59 @@ func (c *RemoteClient) ReadResource(ctx context.Context, uri string) (string, er
 	}
 	return b.String(), nil
 }
+
+// ListPrompts implements promptServer over Streamable HTTP.
+func (c *RemoteClient) ListPrompts(ctx context.Context) ([]MCPPrompt, error) {
+	res, err := c.session.ListPrompts(ctx, &mcpsdk.ListPromptsParams{})
+	if err != nil {
+		if isMethodNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]MCPPrompt, 0, len(res.Prompts))
+	for _, p := range res.Prompts {
+		if p == nil {
+			continue
+		}
+		item := MCPPrompt{Name: p.Name, Description: p.Description}
+		for _, a := range p.Arguments {
+			if a == nil {
+				continue
+			}
+			item.Arguments = append(item.Arguments, MCPPromptArg{
+				Name: a.Name, Description: a.Description, Required: a.Required,
+			})
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// GetPrompt implements promptServer over Streamable HTTP.
+func (c *RemoteClient) GetPrompt(ctx context.Context, name string, args map[string]string) (string, error) {
+	res, err := c.session.GetPrompt(ctx, &mcpsdk.GetPromptParams{Name: name, Arguments: args})
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	omitted := 0
+	for _, msg := range res.Messages {
+		if msg == nil {
+			continue
+		}
+		text, ok := msg.Content.(*mcpsdk.TextContent)
+		if !ok || text.Text == "" {
+			omitted++
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(text.Text)
+	}
+	if omitted > 0 {
+		fmt.Fprintf(&b, "\n\n[orchestra: %d non-text prompt part(s) omitted]", omitted)
+	}
+	return b.String(), nil
+}

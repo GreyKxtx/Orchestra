@@ -507,6 +507,14 @@ func (a *App) handleEnter() (tea.Model, tea.Cmd, bool) {
 	if text == "" {
 		return a, nil, true
 	}
+	// "/mcp:server:prompt ARGS" never reaches the palette — the space closes
+	// it — so it would otherwise be sent to the model as literal text.
+	if server, name, args, ok := parseMCPPromptCommand(text); ok {
+		a.input.Reset()
+		a.showWelcome = false
+		a.chat.SetForceWelcome(false)
+		return a, a.runMCPPrompt(server, name, args), true
+	}
 	a.input.Reset()
 	cmd := a.submitUserMessage(text)
 	return a, cmd, true

@@ -90,6 +90,17 @@ type SlashPalette struct {
 	Cursor int
 	width  int
 	scroll int // index of the first visible item
+	// extra holds commands discovered at runtime — today, the prompts MCP
+	// servers offer. They are kept apart from AllSlashCmds so a server can
+	// never bury a built-in: built-ins always list first.
+	extra []SlashCmd
+}
+
+// SetExtra replaces the runtime command list. Replacing rather than appending
+// matters because the list is refreshed when servers come and go, and a stale
+// entry would name a command nothing can run.
+func (p *SlashPalette) SetExtra(cmds []SlashCmd) {
+	p.extra = append([]SlashCmd(nil), cmds...)
 }
 
 // NewSlashPalette creates a palette sized to the given width.
@@ -103,9 +114,9 @@ func (p *SlashPalette) SetSize(width int) { p.width = width }
 // Filter updates Items to commands containing the query (after the leading /).
 func (p *SlashPalette) Filter(query string) {
 	q := strings.ToLower(query)
-	filtered := make([]SlashCmd, 0, len(AllSlashCmds))
-	for _, c := range AllSlashCmds {
-		if q == "" || strings.Contains(c.Cmd[1:], q) {
+	filtered := make([]SlashCmd, 0, len(AllSlashCmds)+len(p.extra))
+	for _, c := range append(append([]SlashCmd(nil), AllSlashCmds...), p.extra...) {
+		if q == "" || strings.Contains(strings.ToLower(c.Cmd[1:]), q) {
 			filtered = append(filtered, c)
 		}
 	}

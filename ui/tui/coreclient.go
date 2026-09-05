@@ -42,6 +42,10 @@ type coreClient interface {
 	SkillList(ctx context.Context) ([]rpcclient.SkillSummary, error)
 	SkillInvoke(ctx context.Context, name, arguments string, opts rpcclient.SkillInvokeOptions) (*rpcclient.SkillInvokeResult, error)
 
+	// MCP server prompts, offered in the slash palette.
+	MCPPromptList(ctx context.Context) ([]rpcclient.MCPPromptCommand, error)
+	MCPPromptGet(ctx context.Context, server, name, args string) (string, error)
+
 	// Status polling.
 	QueryLSPStatusDetail(ctx context.Context) (status string, percent int, id string, err error)
 

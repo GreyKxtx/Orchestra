@@ -29,6 +29,8 @@ type Manager struct {
 	// resCache holds each server's resource list, discovered once. A nil
 	// entry that is present means "asked, and there are none".
 	resCache map[string][]MCPResource
+	// promptCache is the same, for prompts/list.
+	promptCache map[string][]MCPPrompt
 }
 
 // ServerClient is the surface the Manager drives, satisfied by the stdio
@@ -306,6 +308,7 @@ func (m *Manager) maybeRestart(ctx context.Context, serverName string) (ServerCl
 	m.mu.Lock()
 	m.clients[idx] = fresh
 	delete(m.resCache, serverName) // a restarted server may offer a different set
+	delete(m.promptCache, serverName)
 	m.mu.Unlock()
 	return fresh, nil
 }

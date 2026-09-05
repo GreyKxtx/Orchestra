@@ -290,6 +290,24 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.MCPList(p)
 
+	case "mcp.prompts":
+		var p MCPPromptListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPPromptList(ctx, p)
+
+	case "mcp.prompt.get":
+		var p MCPPromptGetParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.MCPPromptGet(ctx, p)
+
 	case "mcp.upsert":
 		var p MCPUpsertParams
 		if err := decodeParams(params, &p); err != nil {

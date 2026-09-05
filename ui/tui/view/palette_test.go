@@ -105,3 +105,45 @@ func TestMentionPalette_Render_Empty(t *testing.T) {
 		t.Errorf("empty mention palette should render empty string, got:\n%s", out)
 	}
 }
+
+func TestSlashPalette_ExtraCommandsAreOfferedAndFiltered(t *testing.T) {
+	p := view.NewSlashPalette(80)
+	p.SetExtra([]view.SlashCmd{
+		{Cmd: "/mcp:linear:triage", Desc: "Triage an issue"},
+		{Cmd: "/mcp:linear:standup", Desc: "Draft a standup note"},
+	})
+
+	p.Filter("triage")
+	if len(p.Items) != 1 || p.Items[0].Cmd != "/mcp:linear:triage" {
+		t.Fatalf("filter by prompt name gave %+v", p.Items)
+	}
+
+	// The server name is part of the command, so it is searchable too.
+	p.Filter("linear")
+	if len(p.Items) != 2 {
+		t.Fatalf("filter by server gave %+v", p.Items)
+	}
+
+	// Built-ins still work and come first: they are the ones a user reaches
+	// for constantly, and a server must not be able to bury /quit.
+	p.Filter("")
+	if len(p.Items) != len(view.AllSlashCmds)+2 {
+		t.Fatalf("unfiltered list = %d items", len(p.Items))
+	}
+	if p.Items[0].Cmd != view.AllSlashCmds[0].Cmd {
+		t.Errorf("first item = %q, want a built-in", p.Items[0].Cmd)
+	}
+}
+
+func TestSlashPalette_SetExtraReplacesRatherThanAccumulates(t *testing.T) {
+	// The list is refreshed when servers restart; appending would show
+	// commands from servers that are gone.
+	p := view.NewSlashPalette(80)
+	p.SetExtra([]view.SlashCmd{{Cmd: "/mcp:a:one"}})
+	p.SetExtra([]view.SlashCmd{{Cmd: "/mcp:b:two"}})
+	// "/mcp" is also a built-in, so filter on the part only a prompt has.
+	p.Filter("mcp:")
+	if len(p.Items) != 1 || p.Items[0].Cmd != "/mcp:b:two" {
+		t.Fatalf("items = %+v, want only the second SetExtra call's command", p.Items)
+	}
+}

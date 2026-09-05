@@ -939,3 +939,45 @@ func (c *Client) SessionCompact(ctx context.Context, sessionID, query string) (*
 	}
 	return &res, nil
 }
+
+// MCPPromptCommand is one MCP server prompt offered as a slash command.
+type MCPPromptCommand struct {
+	Server      string `json:"server"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Arguments   []struct {
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		Required    bool   `json:"required,omitempty"`
+	} `json:"arguments,omitempty"`
+
+	// Slash and Hint are rendered by the core so every surface shows the
+	// same row.
+	Slash string `json:"slash,omitempty"`
+	Hint  string `json:"hint,omitempty"`
+}
+
+// MCPPromptList asks the core which prompts the running MCP servers offer.
+func (c *Client) MCPPromptList(ctx context.Context) ([]MCPPromptCommand, error) {
+	var res struct {
+		Prompts []MCPPromptCommand `json:"prompts"`
+	}
+	if err := c.rpc.Call(ctx, "mcp.prompts", map[string]any{}, &res); err != nil {
+		return nil, err
+	}
+	return res.Prompts, nil
+}
+
+// MCPPromptGet renders one prompt into the text to send as the user's turn.
+// args is the raw text typed after the command; the core maps it onto the
+// prompt's declared arguments.
+func (c *Client) MCPPromptGet(ctx context.Context, server, name, args string) (string, error) {
+	params := map[string]any{"server": server, "name": name, "args": args}
+	var res struct {
+		Text string `json:"text"`
+	}
+	if err := c.rpc.Call(ctx, "mcp.prompt.get", params, &res); err != nil {
+		return "", err
+	}
+	return res.Text, nil
+}

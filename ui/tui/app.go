@@ -323,7 +323,7 @@ func NewApp(cfg Config) (*App, error) {
 func (a *App) Init() tea.Cmd {
 	cmds := []tea.Cmd{textarea.Blink, tea.EnableBracketedPaste, a.listenForEvents(), a.nextTickCmd()}
 	if a.rpc != nil {
-		cmds = append(cmds, a.startCoreSession())
+		cmds = append(cmds, a.startCoreSession(), a.syncMCPPromptCommands())
 	}
 	return tea.Batch(cmds...)
 }

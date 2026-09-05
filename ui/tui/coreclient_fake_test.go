@@ -24,6 +24,12 @@ type fakeCore struct {
 	uiSyncs         []string // session ids
 	appliedOps      [][]map[string]any
 	toolCalls       []string // tool names
+
+	// MCP prompts.
+	mcpPrompts    []rpcclient.MCPPromptCommand
+	mcpPromptText string
+	mcpPromptErr  error
+	mcpPromptGot  string
 	permAnswers     []fakePermAnswer
 	questionAnswers []fakeQuestionAnswer
 
@@ -139,6 +145,18 @@ func (f *fakeCore) SkillList(_ context.Context) ([]rpcclient.SkillSummary, error
 
 func (f *fakeCore) SkillInvoke(_ context.Context, _, _ string, _ rpcclient.SkillInvokeOptions) (*rpcclient.SkillInvokeResult, error) {
 	return &rpcclient.SkillInvokeResult{}, nil
+}
+
+func (f *fakeCore) MCPPromptList(_ context.Context) ([]rpcclient.MCPPromptCommand, error) {
+	return f.mcpPrompts, nil
+}
+
+func (f *fakeCore) MCPPromptGet(_ context.Context, server, name, args string) (string, error) {
+	if f.mcpPromptErr != nil {
+		return "", f.mcpPromptErr
+	}
+	f.mcpPromptGot = server + ":" + name + " " + args
+	return f.mcpPromptText, nil
 }
 
 func (f *fakeCore) QueryLSPStatusDetail(_ context.Context) (string, int, string, error) {

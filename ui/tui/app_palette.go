@@ -280,6 +280,12 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		a.showWelcome = false
 		a.chat.SetForceWelcome(false)
 	}
+	// An MCP server prompt is not a built-in: it is discovered at runtime and
+	// carries the server in its name, so it cannot be a case below.
+	if server, name, args, ok := parseMCPPromptCommand(cmd); ok {
+		dismissWelcome()
+		return a.runMCPPrompt(server, name, args)
+	}
 	switch cmd {
 	case "/help":
 		dismissWelcome()
