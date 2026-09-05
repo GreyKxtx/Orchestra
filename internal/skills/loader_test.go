@@ -274,6 +274,151 @@ func TestDiscoverFromAll_DuplicateInSamePack(t *testing.T) {
 	}
 }
 
+// A .claude/commands/*.md file is Claude Code's slash-command format: unlike
+// an Orchestra skill it carries no `name:` frontmatter field at all — the
+// command name is the filename. Reading it as a skill must fall back to that
+// filename instead of failing with "name is required".
+func TestDiscover_ReadsClaudeCommandsDirUsingFilenameAsName(t *testing.T) {
+	isolateUserHome(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "commands")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "review.md"), []byte("---\ndescription: Review the diff.\n---\nReview: $ARGUMENTS\n"), 0o644)
+
+	all, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	s := Find(all, "review")
+	if s == nil {
+		t.Fatalf("expected a skill named %q from filename, got %v", "review", names(all))
+	}
+	if s.Origin != OriginClaudeCommand {
+		t.Errorf("origin: got %q want %q", s.Origin, OriginClaudeCommand)
+	}
+	if !strings.Contains(s.Body, "$ARGUMENTS") {
+		t.Errorf("body missing args marker: %q", s.Body)
+	}
+}
+
+// An explicit `name:` in a command's frontmatter still wins over the
+// filename-derived default.
+func TestDiscover_ClaudeCommandExplicitNameWinsOverFilename(t *testing.T) {
+	isolateUserHome(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "commands")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "review.md"), []byte("---\nname: code-review\ndescription: D\n---\nbody\n"), 0o644)
+
+	all, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if Find(all, "review") != nil {
+		t.Error("filename should not be used as a name when frontmatter sets one")
+	}
+	if Find(all, "code-review") == nil {
+		t.Fatalf("expected frontmatter name to win, got %v", names(all))
+	}
+}
+
+// .claude/skills/<name>/SKILL.md is Claude Code's directory-per-skill shape:
+// the skill file sits alongside other supporting files in its own directory,
+// unlike Orchestra's flat *.md skills.
+func TestDiscover_ReadsClaudeSkillsDir(t *testing.T) {
+	isolateUserHome(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "skills", "pdf-forms")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: pdf-forms\ndescription: Fill PDF forms.\n---\nbody\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "helper.py"), []byte("# not a skill file"), 0o644)
+
+	all, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	s := Find(all, "pdf-forms")
+	if s == nil {
+		t.Fatalf("expected pdf-forms, got %v", names(all))
+	}
+	if s.Origin != OriginClaudeSkill {
+		t.Errorf("origin: got %q want %q", s.Origin, OriginClaudeSkill)
+	}
+}
+
+// SKILL.md itself may omit `name:` the same way a command file does; the
+// directory name is the fallback.
+func TestDiscover_ClaudeSkillWithoutNameUsesDirName(t *testing.T) {
+	isolateUserHome(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "skills", "pdf-forms")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\ndescription: Fill PDF forms.\n---\nbody\n"), 0o644)
+
+	all, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if Find(all, "pdf-forms") == nil {
+		t.Fatalf("expected dir name fallback, got %v", names(all))
+	}
+}
+
+// A name Orchestra's own config already defines must not be shadowed by a
+// same-named file the other agent happens to keep around — the explicit,
+// Orchestra-native definition is the one the user meant to run.
+func TestDiscover_NativeSkillOutranksClaudeSources(t *testing.T) {
+	isolateUserHome(t)
+	root := t.TempDir()
+	nativeDir := filepath.Join(root, ".orchestra", "skills")
+	os.MkdirAll(nativeDir, 0o755)
+	os.WriteFile(filepath.Join(nativeDir, "review.md"), []byte("---\nname: review\ndescription: native\n---\nbody\n"), 0o644)
+
+	cmdDir := filepath.Join(root, ".claude", "commands")
+	os.MkdirAll(cmdDir, 0o755)
+	os.WriteFile(filepath.Join(cmdDir, "review.md"), []byte("---\ndescription: claude\n---\nbody\n"), 0o644)
+
+	all, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	s := Find(all, "review")
+	if s == nil || s.Origin != OriginProject || s.Description != "native" {
+		t.Fatalf("native should win, got %+v", s)
+	}
+}
+
+// Between the two Claude sources, a full skill definition beats a bare
+// command snippet of the same name.
+func TestDiscover_ClaudeSkillOutranksClaudeCommand(t *testing.T) {
+	isolateUserHome(t)
+	root := t.TempDir()
+	cmdDir := filepath.Join(root, ".claude", "commands")
+	os.MkdirAll(cmdDir, 0o755)
+	os.WriteFile(filepath.Join(cmdDir, "review.md"), []byte("---\ndescription: command\n---\nbody\n"), 0o644)
+
+	skillDir := filepath.Join(root, ".claude", "skills", "review")
+	os.MkdirAll(skillDir, 0o755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\ndescription: skill\n---\nbody\n"), 0o644)
+
+	all, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	s := Find(all, "review")
+	if s == nil || s.Origin != OriginClaudeSkill || s.Description != "skill" {
+		t.Fatalf("claude skill should outrank claude command, got %+v", s)
+	}
+}
+
 func TestFind(t *testing.T) {
 	a := &Skill{Name: "a"}
 	b := &Skill{Name: "b"}

@@ -19,12 +19,20 @@ const (
 	// are materialised. Each pack lives in its own subdirectory; *.md
 	// files anywhere under that subdir are loaded as skills.
 	PacksDir = ".orchestra/packs"
+	// ClaudeCommandsDir and ClaudeSkillsDir are Claude Code's project-level
+	// command/skill directories. Reading them means a repo that already has
+	// one does not have to duplicate it under .orchestra/skills to use it
+	// from Orchestra.
+	ClaudeCommandsDir = ".claude/commands"
+	ClaudeSkillsDir   = ".claude/skills"
 )
 
 // Origin tags for Skill.Origin.
 const (
-	OriginProject = "project"
-	OriginUser    = "user"
+	OriginProject       = "project"
+	OriginUser          = "user"
+	OriginClaudeSkill   = "claude-skill"
+	OriginClaudeCommand = "claude-command"
 )
 
 // Parse reads a single skill from r. The source argument is recorded on
@@ -111,7 +119,124 @@ func Discover(projectRoot string) ([]*Skill, error) {
 		userDir = filepath.Join(home, SkillsDir)
 		packsRoot = filepath.Join(home, PacksDir)
 	}
-	return DiscoverFromAll(packsRoot, userDir, filepath.Join(projectRoot, SkillsDir))
+	native, err := DiscoverFromAll(packsRoot, userDir, filepath.Join(projectRoot, SkillsDir))
+	if err != nil {
+		return nil, err
+	}
+	return mergeClaudeSources(native, projectRoot)
+}
+
+// mergeClaudeSources overlays .claude/commands and .claude/skills onto the
+// already-merged native (project/user/pack) result. A name Orchestra's own
+// config already defines always wins, regardless of level — the user wrote
+// that skill on purpose, and a same-named file the other agent happens to
+// keep around should not silently take over. Between the two Claude
+// sources, a full skill definition beats a bare command snippet.
+func mergeClaudeSources(native []*Skill, projectRoot string) ([]*Skill, error) {
+	claudeCommands, err := scanClaudeCommands(filepath.Join(projectRoot, ClaudeCommandsDir))
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range claudeCommands {
+		s.Origin = OriginClaudeCommand
+	}
+	claudeSkills, err := scanClaudeSkills(filepath.Join(projectRoot, ClaudeSkillsDir))
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range claudeSkills {
+		s.Origin = OriginClaudeSkill
+	}
+
+	merged := make(map[string]*Skill, len(native)+len(claudeCommands)+len(claudeSkills))
+	for _, s := range claudeCommands {
+		merged[s.Name] = s
+	}
+	for _, s := range claudeSkills {
+		merged[s.Name] = s
+	}
+	for _, s := range native {
+		merged[s.Name] = s
+	}
+	out := make([]*Skill, 0, len(merged))
+	for _, s := range merged {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// scanClaudeCommands reads .claude/commands/*.md as skills. Unlike an
+// Orchestra skill, a Claude Code command file carries no `name:`
+// frontmatter field at all — the command name is the filename. An explicit
+// frontmatter name, if present, still wins.
+func scanClaudeCommands(dir string) ([]*Skill, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read claude commands dir %s: %w", dir, err)
+	}
+	var out []*Skill
+	seen := make(map[string]string)
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		s, err := Load(p)
+		if err != nil {
+			return nil, err
+		}
+		if s.Name == "" {
+			s.Name = strings.TrimSuffix(e.Name(), ".md")
+		}
+		if prev, ok := seen[s.Name]; ok {
+			return nil, fmt.Errorf("duplicate skill name %q in %s and %s", s.Name, prev, p)
+		}
+		seen[s.Name] = p
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// scanClaudeSkills reads .claude/skills/<name>/SKILL.md as skills — Claude
+// Code's directory-per-skill shape, where a skill's directory may hold other
+// supporting files alongside SKILL.md, unlike Orchestra's flat *.md skills.
+// A directory without a SKILL.md is not a skill and is silently skipped.
+func scanClaudeSkills(dir string) ([]*Skill, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read claude skills dir %s: %w", dir, err)
+	}
+	var out []*Skill
+	seen := make(map[string]string)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(dir, e.Name(), "SKILL.md")
+		s, err := Load(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if s.Name == "" {
+			s.Name = e.Name()
+		}
+		if prev, ok := seen[s.Name]; ok {
+			return nil, fmt.Errorf("duplicate skill name %q in %s and %s", s.Name, prev, p)
+		}
+		seen[s.Name] = p
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // DiscoverFrom is the legacy two-tier entry point (user + project).
