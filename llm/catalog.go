@@ -25,6 +25,9 @@ var ProviderCatalog = []CatalogEntry{
 	{Key: "deepseek", Name: "DeepSeek", Category: "Cloud", DefaultAPIBase: "https://api.deepseek.com/v1", NeedsKey: true},
 	{Key: "xai", Name: "xAI (Grok)", Category: "Cloud", DefaultAPIBase: "https://api.x.ai/v1", NeedsKey: true},
 	{Key: "moonshot", Name: "Moonshot (Kimi)", Category: "Cloud", DefaultAPIBase: "https://api.moonshot.cn/v1", NeedsKey: true},
+	// Azure's host is per-resource (https://<name>.openai.azure.com), so there
+	// is no default to offer — the user pastes their endpoint.
+	{Key: "azure", Name: "Azure OpenAI", Category: "Cloud", NeedsKey: true, EndpointEditable: true},
 	{Key: "openrouter", Name: "OpenRouter", Category: "Gateway", DefaultAPIBase: "https://openrouter.ai/api/v1", NeedsKey: true},
 	{Key: "groq", Name: "Groq", Category: "Gateway", DefaultAPIBase: "https://api.groq.com/openai/v1", NeedsKey: true},
 	{Key: "together", Name: "Together AI", Category: "Gateway", DefaultAPIBase: "https://api.together.xyz/v1", NeedsKey: true},
@@ -56,6 +59,9 @@ func IsKnownCloudEndpoint(apiBase string) bool {
 	host := endpointHost(apiBase)
 	if host == "" {
 		return false
+	}
+	if isAzureEndpoint(apiBase) {
+		return true // per-customer host, so the catalogue cannot list it
 	}
 	for _, p := range ProviderCatalog {
 		if p.Local || p.DefaultAPIBase == "" {

@@ -141,13 +141,22 @@ project_root: .
 exclude_dirs: [.git, node_modules, dist]
 
 llm:
-  provider: openai          # "openai" | "anthropic"
+  provider: openai          # "openai" | "anthropic" | "azure"
   api_base: http://localhost:1234/v1   # LM Studio (Ollama: :11434/v1, vLLM: :8000/v1)
   api_key: ""
   model: qwen2.5-coder-7b-instruct
   max_tokens: 4096
   timeout_s: 120
   multimodal: true          # images in chat (TUI /attach, VS Code); needs vision-capable model
+
+# Azure OpenAI: api_base — эндпоинт ресурса, ключ уходит заголовком api-key.
+# llm:
+#   provider: azure
+#   api_base: https://my-resource.openai.azure.com
+#   model: gpt-4o
+#   azure:
+#     deployment: prod-gpt4o   # по умолчанию = model
+#     api_version: 2024-10-21  # по умолчанию GA-версия
 
 agent:
   profile: ""               # optional: fast | precision

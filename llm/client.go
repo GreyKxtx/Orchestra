@@ -32,8 +32,11 @@ type Client interface {
 
 // OpenAIClient is an OpenAI-compatible LLM client
 type OpenAIClient struct {
-	baseURL       string
-	apiKey        string
+	baseURL string
+	apiKey  string
+	// azure is non-nil for an Azure OpenAI endpoint, which needs a
+	// deployment-scoped URL and the api-key header instead of a bearer.
+	azure *AzureConfig
 	model         string
 	provider      string
 	wantMaxTokens int // user-configured; may exceed safe cap until context is known
@@ -117,6 +120,7 @@ func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 	return &OpenAIClient{
 		baseURL:            cfg.APIBase,
 		apiKey:             cfg.APIKey,
+		azure:              azureFromConfig(cfg),
 		model:              cfg.Model,
 		provider:           cfg.Provider,
 		wantMaxTokens:      want,
@@ -844,6 +848,9 @@ func (c *OpenAIClient) requestUsedJSONSchema(req CompleteRequest) bool {
 
 // chatCompletionsURL normalizes api_base into the full endpoint URL.
 func (c *OpenAIClient) chatCompletionsURL() (string, error) {
+	if c.azure != nil {
+		return c.azureChatCompletionsURL()
+	}
 	baseURL := strings.TrimSuffix(c.baseURL, "/")
 	if baseURL == "" {
 		return "", fmt.Errorf("api_base is empty")
@@ -899,9 +906,7 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 	}
 
 	reqHTTP.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		reqHTTP.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
+	c.setAuthHeader(reqHTTP.Header)
 	setNgrokBypass(reqHTTP, c.baseURL)
 
 	resp, err := c.client.Do(reqHTTP)
@@ -1071,9 +1076,7 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
+	c.setAuthHeader(httpReq.Header)
 	setNgrokBypass(httpReq, c.baseURL)
 
 	resp, err := c.streamClient.Do(httpReq)
