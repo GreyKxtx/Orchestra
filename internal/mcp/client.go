@@ -20,19 +20,13 @@ import (
 	"github.com/orchestra/orchestra/internal/subproc"
 )
 
-const mcpProtocolVersion = "2024-11-05"
+const mcpProtocolVersion = "2025-06-18"
 
 // MCPTool is a tool definition returned by an MCP server.
 type MCPTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema"`
-}
-
-// MCPContentItem is one piece of content in a tool response.
-type MCPContentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
 }
 
 type rpcRequest struct {
@@ -71,6 +65,9 @@ type Client struct {
 	stdout      *bufio.Scanner
 	tools       []MCPTool
 	callTimeout time.Duration // 0 = no per-call timeout; M27 in audit ledger
+	// protocolVersion is what the server answered with at initialize, which
+	// may be older than the revision this client offers.
+	protocolVersion string
 	idSeq       atomic.Int64
 	mu          sync.Mutex
 	writeMu     sync.Mutex
@@ -243,8 +240,15 @@ func (c *Client) IsDead() bool {
 // are refused — defence in depth, since the allowlist also filters Tools()
 // so the agent shouldn't even be aware of disallowed tools.
 func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMessage) (string, error) {
+	text, _, err := c.CallRich(ctx, toolName, arguments)
+	return text, err
+}
+
+// CallRich is Call plus any images the server returned. Callers that can show
+// the model a picture use this; Call stays for the ones that cannot.
+func (c *Client) CallRich(ctx context.Context, toolName string, arguments json.RawMessage) (string, []MCPImage, error) {
 	if !c.toolAllowed(toolName) {
-		return "", fmt.Errorf("mcp tool %q is not in this server's allowed_tools list", toolName)
+		return "", nil, fmt.Errorf("mcp tool %q is not in this server's allowed_tools list", toolName)
 	}
 	if c.callTimeout > 0 {
 		var cancel context.CancelFunc
@@ -257,37 +261,16 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments json.RawMe
 	}
 	raw, err := c.call(ctx, "tools/call", params)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-
-	var result struct {
-		Content []MCPContentItem `json:"content"`
-		IsError bool             `json:"isError"`
+	text, images, isError, err := parseCallResult(raw)
+	if err != nil {
+		return "", nil, err
 	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return string(raw), nil // return raw if parse fails
+	if isError {
+		return "", nil, fmt.Errorf("mcp tool error: %s", text)
 	}
-
-	var out string
-	nonTextDropped := 0
-	for _, item := range result.Content {
-		if item.Type == "text" {
-			out += item.Text
-		} else {
-			nonTextDropped++
-		}
-	}
-	// M28 in audit ledger: MCP defines image / resource / audio content
-	// items in addition to text. We only forward text today; surface the
-	// silent drop count so the model at least knows partial content was
-	// omitted instead of blindly trusting the text was complete.
-	if nonTextDropped > 0 {
-		out += fmt.Sprintf("\n[orchestra: dropped %d non-text content item(s); only text is currently forwarded by mcp client]", nonTextDropped)
-	}
-	if result.IsError {
-		return "", fmt.Errorf("mcp tool error: %s", out)
-	}
-	return out, nil
+	return text, images, nil
 }
 
 // Close stops the MCP server subprocess. After a 5s wait for graceful exit
@@ -311,12 +294,28 @@ func (c *Client) initialize(ctx context.Context) error {
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "orchestra", "version": "vnext"},
 	}
-	if _, err := c.call(ctx, "initialize", params); err != nil {
+	raw, err := c.call(ctx, "initialize", params)
+	if err != nil {
 		return err
+	}
+	// The server picks the revision. Offering 2025-06-18 must not break a
+	// server that only speaks 2024-11-05, so take what it answers with.
+	var res struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	_ = json.Unmarshal(raw, &res)
+	version, known := negotiateProtocolVersion(res.ProtocolVersion)
+	c.protocolVersion = version
+	if !known {
+		fmt.Fprintf(os.Stderr, "mcp: server %q negotiated protocol %q, which this client does not know; continuing\n",
+			c.name, version)
 	}
 	// Send initialized notification (no ID = notification, no response expected).
 	return c.notify("notifications/initialized", nil)
 }
+
+// ProtocolVersion reports the revision negotiated with this server.
+func (c *Client) ProtocolVersion() string { return c.protocolVersion }
 
 func (c *Client) listTools(ctx context.Context) ([]MCPTool, error) {
 	raw, err := c.call(ctx, "tools/list", nil)

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -201,12 +202,48 @@ func (m *Manager) Call(ctx context.Context, prefixedName string, input json.RawM
 		}
 		c = newClient
 	}
-	result, err := c.Call(ctx, toolName, input)
+	result, images, err := callServer(ctx, c, toolName, input)
 	if err != nil {
 		return nil, err
 	}
-	out, _ := json.Marshal(map[string]string{"result": result})
+	payload := mcpCallPayload{Result: result}
+	for _, img := range images {
+		payload.Images = append(payload.Images, mcpImagePayload{
+			Data: base64.StdEncoding.EncodeToString(img.Data),
+			MIME: img.MIME,
+		})
+	}
+	out, _ := json.Marshal(payload)
 	return out, nil
+}
+
+// mcpCallPayload is the tool result the agent receives. Images do not belong
+// in the text the model reads, but they have to travel through this result to
+// reach the conversation — the tool interface returns JSON and nothing else —
+// so the agent lifts them out into a real image message.
+type mcpCallPayload struct {
+	Result string            `json:"result"`
+	Images []mcpImagePayload `json:"images,omitempty"`
+}
+
+type mcpImagePayload struct {
+	Data string `json:"data"` // base64
+	MIME string `json:"mime"`
+}
+
+// richCaller is the optional half of ServerClient: a client that can also
+// return images. Both shipped clients implement it; keeping it optional means
+// something that only implements Call is still a valid ServerClient.
+type richCaller interface {
+	CallRich(ctx context.Context, toolName string, arguments json.RawMessage) (string, []MCPImage, error)
+}
+
+func callServer(ctx context.Context, c ServerClient, toolName string, input json.RawMessage) (string, []MCPImage, error) {
+	if rc, ok := c.(richCaller); ok {
+		return rc.CallRich(ctx, toolName, input)
+	}
+	text, err := c.Call(ctx, toolName, input)
+	return text, nil, err
 }
 
 // maybeRestart re-spawns a dead MCP client using its original config.

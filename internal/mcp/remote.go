@@ -215,11 +215,18 @@ func (c *RemoteClient) StderrTail() string {
 
 // Call invokes a tool and returns the combined text output.
 func (c *RemoteClient) Call(ctx context.Context, toolName string, arguments json.RawMessage) (string, error) {
+	text, _, err := c.CallRich(ctx, toolName, arguments)
+	return text, err
+}
+
+// CallRich is Call plus any images the server returned. Callers that can show
+// the model a picture use this; Call stays for the ones that cannot.
+func (c *RemoteClient) CallRich(ctx context.Context, toolName string, arguments json.RawMessage) (string, []MCPImage, error) {
 	c.mu.Lock()
 	allowed := c.allowedTools
 	c.mu.Unlock()
 	if !toolNameAllowed(allowed, toolName) {
-		return "", fmt.Errorf("mcp tool %q is not in this server's allowed_tools list", toolName)
+		return "", nil, fmt.Errorf("mcp tool %q is not in this server's allowed_tools list", toolName)
 	}
 	if c.callTimeout > 0 {
 		var cancel context.CancelFunc
@@ -230,7 +237,7 @@ func (c *RemoteClient) Call(ctx context.Context, toolName string, arguments json
 	var args any
 	if len(arguments) > 0 {
 		if err := json.Unmarshal(arguments, &args); err != nil {
-			return "", fmt.Errorf("mcp tool %q: arguments are not valid JSON: %w", toolName, err)
+			return "", nil, fmt.Errorf("mcp tool %q: arguments are not valid JSON: %w", toolName, err)
 		}
 	}
 
@@ -239,27 +246,41 @@ func (c *RemoteClient) Call(ctx context.Context, toolName string, arguments json
 		c.mu.Lock()
 		c.lastErr = err.Error()
 		c.mu.Unlock()
-		return "", err
+		return "", nil, err
 	}
 
 	var out strings.Builder
-	nonTextDropped := 0
+	var images []MCPImage
+	dropped := 0
 	for _, item := range res.Content {
-		if text, ok := item.(*mcpsdk.TextContent); ok {
-			out.WriteString(text.Text)
-			continue
+		switch v := item.(type) {
+		case *mcpsdk.TextContent:
+			out.WriteString(v.Text)
+		case *mcpsdk.ImageContent:
+			// The SDK hands this one over already decoded, unlike the stdio
+			// path where it arrives as a base64 string.
+			if len(v.Data) == 0 {
+				dropped++
+				continue
+			}
+			mime := strings.TrimSpace(v.MIMEType)
+			if mime == "" {
+				mime = "image/png"
+			}
+			images = append(images, MCPImage{Data: v.Data, MIME: mime})
+		default:
+			dropped++
 		}
-		nonTextDropped++
 	}
-	// Same contract as the stdio client: only text is forwarded today, so say
-	// how much was omitted rather than let the model assume it saw everything.
-	if nonTextDropped > 0 {
-		fmt.Fprintf(&out, "\n[orchestra: dropped %d non-text content item(s); only text is currently forwarded by mcp client]", nonTextDropped)
+	// Same contract as the stdio client: say what could not be carried rather
+	// than let the model assume the text was the whole answer.
+	if dropped > 0 {
+		fmt.Fprintf(&out, "\n[orchestra: dropped %d non-text content item(s); text and images are forwarded, other kinds are not]", dropped)
 	}
 	if res.IsError {
-		return "", fmt.Errorf("mcp tool error: %s", out.String())
+		return "", nil, fmt.Errorf("mcp tool error: %s", out.String())
 	}
-	return out.String(), nil
+	return out.String(), images, nil
 }
 
 // Close ends the session.

@@ -759,6 +759,19 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 	}
 
+	// Same path for MCP servers that answer with pictures (Playwright-MCP and
+	// any other visual server). The image goes in as its own user message
+	// rather than inside the tool result: no provider accepts image content in
+	// a tool-role message, and this is already how browser.screenshot works.
+	if a.opts.MultimodalLLM && strings.HasPrefix(name, "mcp:") {
+		if imgs := extractMCPImageParts(out); len(imgs) > 0 {
+			parts := append([]llm.ContentPart{
+				{Kind: llm.PartText, Text: "Image(s) returned by " + name + ":"},
+			}, imgs...)
+			*history = append(*history, llm.Message{Role: llm.RoleUser, Parts: parts})
+		}
+	}
+
 	if name == "write" || name == "edit" {
 		if hint := extractLSPErrors(out); hint != "" {
 			path := extractWriteOrEditPath(tc.Input)

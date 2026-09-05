@@ -59,3 +59,7 @@ func safeRunErr(label string, fn func() error) error {
 func extractScreenshotImagePart(out json.RawMessage) (llm.ContentPart, bool) {
 	return agentformat.ExtractScreenshotImagePart(out)
 }
+
+func extractMCPImageParts(out json.RawMessage) []llm.ContentPart {
+	return agentformat.ExtractMCPImageParts(out)
+}
