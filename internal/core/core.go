@@ -64,6 +64,12 @@ type Options struct {
 	Debug bool
 	// LLMClient overrides the default OpenAI client (used in tests).
 	LLMClient llm.Client
+	// ToolsOnly skips LLM client construction, the network call to resolve
+	// model context-window limits, and starting Orchestra's own configured
+	// MCP client servers. Set by `orchestra mcp serve`: an MCP tool server
+	// needs none of these, and requiring them would mean it can't start at
+	// all without a working, reachable LLM endpoint configured.
+	ToolsOnly bool
 }
 
 func New(workspaceRoot string, opts Options) (*Core, error) {
@@ -116,7 +122,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 
 	injected := opts.LLMClient != nil
 	llmClient := opts.LLMClient
-	if llmClient == nil {
+	if llmClient == nil && !opts.ToolsOnly {
 		// Discover max_model_len from the server so max_tokens / num_ctx stay valid
 		// even when .orchestra.yml is stale or missing num_ctx.
 		discCtx, discCancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -133,7 +139,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
 	var mcpMgr *mcp.Manager
 	mcpErrs := map[string]string{}
-	if len(cfg.MCP.Servers) > 0 {
+	if !opts.ToolsOnly && len(cfg.MCP.Servers) > 0 {
 		var startErrs []error
 		mcpMgr, startErrs = mcp.NewManager(context.Background(), cfg.MCP)
 		for _, err := range startErrs {
