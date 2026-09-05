@@ -126,11 +126,13 @@ func (s *Store) sliceRepoMemory(maxBytes int, includeOtherFiles bool) string {
 	if data, err := os.ReadFile(agentPath); err == nil {
 		entries := splitEntries(string(data))
 		if len(entries) > 0 {
-			recent := joinEntriesRecentFirst(entries)
+			// Ordered by type, then recency, so the budget is spent on the
+			// entries most expensive to lose rather than simply the newest.
+			recent := joinEntriesByPriority(entries)
 			if len(recent) > remaining {
-				recent = tailBytes(recent, remaining)
+				recent = headBytes(recent, remaining)
 			}
-			parts = append(parts, "[agent memory — recent first]\n"+recent)
+			parts = append(parts, "[agent memory — feedback, user, project, reference; recent first within each]\n"+recent)
 			remaining -= len(recent)
 		}
 	}

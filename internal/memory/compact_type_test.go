@@ -1,0 +1,66 @@
+package memory
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestCompactAgentFile_KeepsFeedbackOverNewerProjectFacts(t *testing.T) {
+	// Typing injection is not enough on its own: if compaction still trims by
+	// recency, the correction is gone from the file before the ordering ever
+	// gets to protect it.
+	dir := t.TempDir()
+	cfg := Config{MaxAgentKB: 1}
+	cfg.Normalize()
+	s := NewStore(dir, "sess-1", cfg)
+
+	if _, _, err := s.AppendTyped("project", TypeFeedback, "FEEDBACK-MARKER never reformat untouched files"); err != nil {
+		t.Fatal(err)
+	}
+	filler := strings.Repeat("x", 200)
+	for i := 0; i < 12; i++ {
+		if _, _, err := s.AppendTyped("project", TypeProject, "PROJECT-MARKER "+filler); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".orchestra", "memory", "agent.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if len(body) > 4096 {
+		t.Fatalf("compaction did not run: %d bytes", len(body))
+	}
+	if !strings.Contains(body, "FEEDBACK-MARKER") {
+		t.Fatalf("the feedback entry was compacted away:\n%s", body)
+	}
+	// It should have cost some project facts to keep it.
+	if strings.Count(body, "PROJECT-MARKER") >= 12 {
+		t.Errorf("nothing was trimmed at all:\n%s", body)
+	}
+}
+
+func TestCompactAgentFile_StillDropsReferenceFirst(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{MaxAgentKB: 1}
+	cfg.Normalize()
+	s := NewStore(dir, "sess-1", cfg)
+
+	filler := strings.Repeat("y", 200)
+	if _, _, err := s.AppendTyped("project", TypeReference, "REFERENCE-MARKER "+filler); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		if _, _, err := s.AppendTyped("project", TypeFeedback, "FEEDBACK-MARKER "+filler); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".orchestra", "memory", "agent.md"))
+	body := string(data)
+	if strings.Contains(body, "REFERENCE-MARKER") {
+		t.Errorf("a reference outlived feedback under pressure:\n%s", body)
+	}
+}

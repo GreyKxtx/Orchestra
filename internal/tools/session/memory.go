@@ -13,12 +13,17 @@ import (
 type MemoryWriteRequest struct {
 	Content string `json:"content"`
 	Scope   string `json:"scope,omitempty"`
+	// Type decides how the entry is ranked when memory is sliced into a
+	// prompt: feedback | user | project | reference. Anything else, empty
+	// included, is a project fact.
+	Type string `json:"type,omitempty"`
 }
 
 type MemoryWriteResponse struct {
 	Path    string `json:"path"`
 	Written int    `json:"written"`
 	Scope   string `json:"scope,omitempty"`
+	Type    string `json:"type,omitempty"`
 }
 
 type MemoryReadRequest struct {
@@ -59,11 +64,12 @@ func (c *Client) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*Memo
 	if scope == "" {
 		scope = "project"
 	}
-	rel, n, err := store.Append(scope, req.Content)
+	entryType := memory.NormalizeEntryType(req.Type)
+	rel, n, err := store.AppendTyped(scope, entryType, req.Content)
 	if err != nil {
 		return nil, err
 	}
-	return &MemoryWriteResponse{Path: rel, Written: n, Scope: scope}, nil
+	return &MemoryWriteResponse{Path: rel, Written: n, Scope: scope, Type: entryType}, nil
 }
 
 func (c *Client) MemoryRead(ctx context.Context, req MemoryReadRequest) (*MemoryReadResponse, error) {

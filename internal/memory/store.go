@@ -70,7 +70,15 @@ func (s *Store) readSessionFile(maxBytes int) string {
 	return raw
 }
 
+// Append stores a project fact. It is AppendTyped with the default type,
+// kept so the many existing callers do not all have to say "project".
 func (s *Store) Append(scope, content string) (relPath string, written int, err error) {
+	return s.AppendTyped(scope, TypeProject, content)
+}
+
+// AppendTyped stores one entry with an explicit type, which decides where it
+// sits when memory is sliced into a prompt (see entrytype.go).
+func (s *Store) AppendTyped(scope, entryType, content string) (relPath string, written int, err error) {
 	content = sanitizeMemoryText(strings.TrimSpace(content))
 	if content == "" {
 		return "", 0, fmt.Errorf("content must not be empty")
@@ -118,7 +126,7 @@ func (s *Store) Append(scope, content string) (relPath string, written int, err 
 		relPath = ".orchestra/memory/agent.md"
 	}
 
-	entry := fmt.Sprintf("\n---\n*%s*\n\n%s\n", timestampUTC(), content)
+	entry := formatEntry(timestampUTC(), entryType, content)
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return "", 0, err

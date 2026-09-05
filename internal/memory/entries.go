@@ -13,6 +13,12 @@ func splitEntries(content string) []string {
 	if content == "" {
 		return nil
 	}
+	// Entries are written as "\n---\n<body>", so a file starts with a
+	// separator. TrimSpace above has already turned that leading "\n---\n"
+	// into "---\n", which Split can no longer cut — without this the first
+	// stored fact carries a stray "---" into every search hit, memory_read
+	// response and injected prompt.
+	content = strings.TrimPrefix(content, "---\n")
 	parts := strings.Split(content, entrySep)
 	var out []string
 	for _, p := range parts {
@@ -97,4 +103,22 @@ func tailBytes(s string, maxBytes int) string {
 		tail = tail[idx+len(entrySep):]
 	}
 	return strings.TrimSpace(tail)
+}
+
+// headBytes keeps the first maxBytes of s, cutting at an entry boundary when
+// one is available.
+//
+// The counterpart tailBytes exists because a plain chronological log has its
+// most useful end last. Once entries are ordered by priority the most useful
+// end is first, and keeping the tail would drop exactly the feedback the
+// ordering was introduced to protect.
+func headBytes(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	head := s[:maxBytes]
+	if idx := strings.LastIndex(head, entrySep); idx > 0 {
+		head = head[:idx]
+	}
+	return strings.TrimSpace(head)
 }

@@ -9,7 +9,8 @@ RULES:
 - If the task cannot be done, say so in task_result instead of stalling.
 
 MEMORY:
-- User correction, or a decision that must outlive this task → memory_write scope=project (one line: what and why).
+- User correction, or guidance on how to work → memory_write scope=project type=feedback (one line: what and why). This is the most valuable kind: it is kept when other notes are dropped.
+- A fact about the user themself — role, preference, working style → type=user. A pointer to a doc, dashboard or ticket → type=reference. Anything else about this codebase → type=project (the default).
 - A fact useful only for the rest of THIS session → memory_write scope=session.
 - A preference about how the user likes to work (not this project) → memory_write scope=global — it follows the user to every project.
 - Do not write what is already visible in the code or ORCHESTRA.md. Nothing to write for a task that only reads and answers.

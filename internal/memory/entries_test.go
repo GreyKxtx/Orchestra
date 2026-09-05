@@ -26,3 +26,21 @@ func TestPinnedEntriesAndSearch(t *testing.T) {
 		t.Fatalf("pin should come before other entries: %q", joined)
 	}
 }
+
+func TestSplitEntries_FirstEntryDoesNotKeepTheLeadingSeparator(t *testing.T) {
+	// Every entry is written as "\n---\n<body>", so the file begins with a
+	// separator. TrimSpace turns that leading "\n---\n" into "---\n", which
+	// Split can no longer cut — the first stored fact has always carried a
+	// stray "---" into search hits, memory_read output and injected text.
+	raw := "\n---\n*t1*\n\nfirst\n\n---\n*t2*\n\nsecond\n"
+	got := splitEntries(raw)
+	if len(got) != 2 {
+		t.Fatalf("entries = %d (%q), want 2", len(got), got)
+	}
+	if strings.HasPrefix(got[0], "---") {
+		t.Errorf("first entry = %q, want no leading separator", got[0])
+	}
+	if !strings.HasPrefix(got[0], "*t1*") {
+		t.Errorf("first entry = %q", got[0])
+	}
+}
