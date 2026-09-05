@@ -166,9 +166,9 @@
 
 | # | Чего не хватает | Трудоёмкость |
 |---|---|:-:|
-| 1 | **Лицензия — дописать:** в `LICENSE` держатель «Orchestra contributors» — поставить реальное имя/год; добавить `THIRD_PARTY_NOTICES.md` (генерация `go-licenses report` в `release.yml`) — бинарник статически линкует tree-sitter грамматики (MIT) и go-sdk (MIT), для релиза это обязательный файл; в матрице оценки строка «Лицензия: ○ файла нет» → ● | S |
+| ~~1~~ | ~~**Лицензия — дописать**~~ — закрыто | Держатель — Andrey Korsun (`LICENSE`, `ui/vscode/LICENSE`); `THIRD_PARTY_NOTICES.md` (60 модулей через `go-licenses csv ./cmd/orchestra`, все permissive — MIT/BSD-3/Apache-2). **Уточнение по коду:** checksums (`.sha256`) в `release.yml` уже были *до* этого прохода — в плане A7 это записано как «сделать», по факту было «проверить и не трогать» | S |
 | 2 | Install-скрипты: `install.sh` (curl \| sh, выбор платформы, checksum) и `install.ps1`; ссылки в README | S |
-| 3 | Checksums + подпись релизов (`cosign` keyless) в `release.yml` | S |
+| 3 | Подпись релизов (`cosign` keyless) в `release.yml` — checksums там уже есть (`sha256sum`/`shasum` в шаге Package) | S |
 | 4 | Homebrew tap / Scoop bucket / winget-манифест — генерировать из релиза | M |
 | 5 | Публикация VSIX в Marketplace и Open VSX (сейчас только артефакт) | S |
 | 6 | `orchestra version --check` (сравнить с latest release) | S |
@@ -204,7 +204,7 @@
 | ~~A4~~ | ~~`memory_write scope=global`~~ — сделано | 1.2 #2 | Закрыт; заодно исправлена порча данных (см. п.2 выше) |
 | ~~A5~~ | ~~VS Code: строка статуса памяти + кэш в usage-пилюле~~ — сделано | 1.2 #7, 1.9 #2 | `chat-src/07-events.js` — обычный JS без тестовой обвязки, как и остальной файл; изменение проверено вручную + typecheck/бандл |
 | ~~A6~~ | ~~`orchestra memory stats`: written / skipped / failed, digest vs model~~ — сделано | 1.2 #8 | Метрика для прогона |
-| A7 | Лицензия: имя держателя, `THIRD_PARTY_NOTICES.md` через `go-licenses` в `release.yml`; `install.sh` / `install.ps1`; checksums | 1.10 #1–3 | Закрывает «дистрибуция» до ● честно, не формально |
+| ~~A7~~ | ~~Лицензия: имя держателя, `THIRD_PARTY_NOTICES.md`; `install.sh` / `install.ps1`~~ — сделано | 1.10 #1–3 | Checksums были в `release.yml` уже; подпись (cosign) — не делали, это Wave B |
 | A8 | `.mcp.json` чтение + `orchestra mcp add/remove/get` | 1.5 #1–2 | Повседневный MCP-разрыв; чистая конфигурация |
 | A9 | Desktop: убрать из README (или завести issue с решением) | 1.9 #3 | Честность документации; 10 минут |
 

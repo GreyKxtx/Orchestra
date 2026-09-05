@@ -118,18 +118,35 @@ jobs:
         run: |
           set -euo pipefail
           name="orchestra_${VERSION}_${{ matrix.target }}"
-          cp LICENSE README.md dist/
+          cp LICENSE README.md THIRD_PARTY_NOTICES.md dist/
           cd dist
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            7z a "../${name}.zip" orchestra.exe LICENSE README.md >/dev/null
+            7z a "../${name}.zip" orchestra.exe LICENSE README.md THIRD_PARTY_NOTICES.md >/dev/null
             cd ..
             sha256sum "${name}.zip" > "${name}.zip.sha256"
           else
-            tar -czf "../${name}.tar.gz" orchestra LICENSE README.md
+            tar -czf "../${name}.tar.gz" orchestra LICENSE README.md THIRD_PARTY_NOTICES.md
             cd ..
             shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
           fi
           ls -la orchestra_*
+
+      - name: Check THIRD_PARTY_NOTICES.md is current
+        if: matrix.target == 'linux-amd64'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          # Non-fatal: a dependency bump can add/drop a row without anyone
+          # having regenerated the checked-in notices file yet. This is a
+          # nudge in the Actions log, not a release blocker.
+          go run github.com/google/go-licenses@latest csv ./cmd/orchestra 2>/dev/null \
+            | grep -v '^github.com/orchestra/orchestra' | sort > /tmp/current-licenses.csv
+          missing=0
+          while IFS=, read -r module license _; do
+            grep -qF "| $module | " THIRD_PARTY_NOTICES.md || { echo "::warning::THIRD_PARTY_NOTICES.md is missing $module ($license) - regenerate with: go run github.com/google/go-licenses@latest csv ./cmd/orchestra"; missing=1; }
+          done < /tmp/current-licenses.csv
+          [ "$missing" = "0" ] && echo "THIRD_PARTY_NOTICES.md covers every current dependency."
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

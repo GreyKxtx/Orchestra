@@ -46,7 +46,17 @@
 
 ## Установка
 
-Готовые архивы для windows-amd64, linux-amd64, darwin-arm64 и darwin-amd64 публикуются в GitHub Releases (тег `v*`), рядом лежат `.sha256`. Распакуйте и положите `orchestra` в `PATH`.
+Готовые архивы для windows-amd64, linux-amd64, darwin-arm64 и darwin-amd64 публикуются в GitHub Releases (тег `v*`), рядом лежат `.sha256` и `THIRD_PARTY_NOTICES.md`. Вручную: распакуйте и положите `orchestra` в `PATH`. Или скриптом, который сам определит платформу, скачает нужный архив и проверит его контрольную сумму:
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/orchestra/orchestra/master/scripts/install.sh | bash
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/orchestra/orchestra/master/scripts/install.ps1 | iex
+```
 
 Из исходников нужен C-компилятор — CKG собирается на tree-sitter через cgo (на Windows это MinGW):
 
@@ -279,4 +289,4 @@ orchestra tui              # alias
 
 ## Лицензия
 
-MIT
+MIT — см. [LICENSE](LICENSE). Лицензии зависимостей: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
