@@ -388,16 +388,28 @@ func ValidAgentToolNames() []string {
 	return out
 }
 
-// HooksConfig configures pre/post tool call hooks (Phase 6).
+// HooksConfig configures tool-call and lifecycle hooks. Every list accepts
+// either one command line or a list of {match, command, timeout_ms} specs —
+// see HookList.
 type HooksConfig struct {
 	// Enabled gates all hook execution. Hooks are disabled by default.
 	Enabled bool `yaml:"enabled"`
-	// PreTool is the command + args to run before each tool call.
-	// Non-zero exit denies the tool call. Env: ORCH_TOOL_NAME, ORCH_TOOL_INPUT, ORCH_WORKSPACE_ROOT.
-	PreTool []string `yaml:"pre_tool,omitempty"`
-	// PostTool is the command + args to run after each successful tool call.
-	// Non-zero exit is logged but does not fail the tool.
-	PostTool []string `yaml:"post_tool,omitempty"`
+	// PreTool runs before each tool call. A non-zero exit — or a JSON
+	// {"decision":"deny"} on stdout — denies the call.
+	// Env: ORCH_TOOL_NAME, ORCH_TOOL_INPUT, ORCH_WORKSPACE_ROOT.
+	PreTool HookList `yaml:"pre_tool,omitempty"`
+	// PostTool runs after each successful tool call.
+	// A non-zero exit is logged but does not fail the tool.
+	PostTool HookList `yaml:"post_tool,omitempty"`
+	// SessionStart runs once when an agent session begins.
+	SessionStart HookList `yaml:"session_start,omitempty"`
+	// UserPromptSubmit runs before the user's message reaches the model and
+	// may deny the turn or append context to it.
+	UserPromptSubmit HookList `yaml:"user_prompt_submit,omitempty"`
+	// PreCompact runs before history compaction discards anything.
+	PreCompact HookList `yaml:"pre_compact,omitempty"`
+	// TurnEnd runs after each completed turn.
+	TurnEnd HookList `yaml:"turn_end,omitempty"`
 	// TimeoutMS is the per-hook subprocess timeout (default: 5000ms).
 	TimeoutMS int `yaml:"timeout_ms"`
 }

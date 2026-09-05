@@ -49,7 +49,7 @@ exit 0
 
 	hookRunner := hooks.New(config.HooksConfig{
 		Enabled:   true,
-		PreTool:   []string{scriptPath},
+		PreTool:   config.HookList{{Command: []string{scriptPath}}},
 		TimeoutMS: 5000,
 	}, root)
 	if hookRunner == nil {
@@ -128,7 +128,7 @@ exit 1
 
 	hookRunner := hooks.New(config.HooksConfig{
 		Enabled:   true,
-		PreTool:   []string{scriptPath},
+		PreTool:   config.HookList{{Command: []string{scriptPath}}},
 		TimeoutMS: 5000,
 	}, root)
 

@@ -11,15 +11,23 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 )
 
-func exitCmd(code int) []string {
+func exitCmd(code int) config.HookList {
+	return config.HookList{{Command: exitArgv(code)}}
+}
+
+func exitArgv(code int) []string {
 	if runtime.GOOS == "windows" {
 		return []string{"cmd", "/c", fmt.Sprintf("exit %d", code)}
 	}
 	return []string{"sh", "-c", fmt.Sprintf("exit %d", code)}
 }
 
+func cmdHook(argv ...string) config.HookList {
+	return config.HookList{{Command: argv}}
+}
+
 func TestNew_DisabledReturnsNil(t *testing.T) {
-	r := New(config.HooksConfig{Enabled: false, PreTool: []string{"echo"}}, ".")
+	r := New(config.HooksConfig{Enabled: false, PreTool: cmdHook("echo")}, ".")
 	if r != nil {
 		t.Fatal("expected nil when disabled")
 	}
@@ -102,7 +110,7 @@ exit 0
 
 	r := New(config.HooksConfig{
 		Enabled:   true,
-		PreTool:   []string{script},
+		PreTool:   cmdHook(script),
 		TimeoutMS: 5000,
 	}, dir)
 
@@ -118,7 +126,7 @@ func TestRunPreTool_Timeout(t *testing.T) {
 	}
 	r := New(config.HooksConfig{
 		Enabled:   true,
-		PreTool:   []string{"sh", "-c", "sleep 10"},
+		PreTool:   cmdHook("sh", "-c", "sleep 10"),
 		TimeoutMS: 50,
 	}, t.TempDir())
 
