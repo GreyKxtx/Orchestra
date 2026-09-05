@@ -2,6 +2,8 @@
 
 **Дата:** 2026-09-04 · **Срез кода:** `master` @ `34b5324` (2026-08-31). Аудит кода выполнен на `a48c547` (2026-08-17) и затем сверен с 13 новыми коммитами — см. §0 · **Полевые данные:** 9 дней прогонов на проекте `smoke-demo` (2026-08-05 → 08-13)
 
+> **Обновление 2026-09-05.** Поверх `34b5324` легли 18 коммитов, закрывшие P0 #1–7, #9 и P1 #9–16 целиком (см. `parity-plan-2026-09.md`, §0). Строки матриц ниже помечены сноской `†`, где состояние изменилось; исходные оценки оставлены как зафиксированная точка отсчёта. **Открытым из P0 остался только #8** (`orchestra init` → `ORCHESTRA.md`). Наблюдаемость памяти (§3.2 п. 9) закрыта в `cc41475`: событие `memory.note` в `llm_log.jsonl` и статус в чате; счётчики кэша — в `usage.jsonl` (`3d4a68c`). План выхода на ●● по каждой строке — в `parity-plan-2026-09.md`.
+
 ---
 
 ## Резюме
@@ -173,7 +175,7 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 | **Провайдеры** (`llm/`) | Каталог 16 (Local/Cloud/Gateway), фактически 2 протокола: OpenAI-compat + Anthropic native (prompt caching `cache_control`). Gemini — через OpenAI-shim. Streaming SSE, reasoning-стрим Qwen3/DeepSeek, retry 429/408/5xx, budget-инвариант vLLM, probe/ping, credits только OpenRouter. Нет OAuth/подписок, Bedrock/Vertex/Azure, встроенной таблицы цен | 3.5 |
 | **Runtime evidence** (OTel → CKG) | `orchestra instrument` (14 языков, entry-patch только Go/Py/TS/JS), OTLP-receiver `:4318`, спаны привязываются к узлам CKG, `runtime_query`. Уникально для класса, но не доказано в бою (0 трейсов в демо) | 3.5 |
 | **Git / GitHub** | Полный git incl. managed worktrees + `gh` PR/issue; human-gates на commit/push | 3.5 |
-| **Конфиг** | `.orchestra.yml` + deep-merge `.orchestra.local.yml` (секреты маскируются при сохранении из UI, файловый лок). **Нет глобального `~/.orchestra/config.yml`** | 3 |
+| **Конфиг** | `.orchestra.yml` + deep-merge `.orchestra.local.yml` (секреты маскируются при сохранении из UI, файловый лок). ~~Нет глобального `~/.orchestra/config.yml`~~ † есть с `a194576` | 3 → 4 † |
 
 ---
 
@@ -204,13 +206,13 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 | LSP-обратная связь после правок | ●● + auto-install | ◐ | ● | ● | ● (IDE) | ◐ | ◐ |
 | Безопасность правок (hash/staging/atomic) | ●● | ● permissions/sandbox | ● | ● | ● checkpoints | ● git | ● checkpoints |
 | Субагенты / оркестрация | ●● Lead–Worker, tiers, verify | ● subagents, worktrees | ● | ◐ | ● background agents | ◐ architect/editor | ◐ |
-| MCP | ◐ stdio | ●● stdio/HTTP/OAuth | ●● | ●● | ●● | ○ | ●● + marketplace |
+| MCP | ◐ stdio → ● stdio + Streamable HTTP † | ●● stdio/HTTP/OAuth | ●● | ●● | ●● | ○ | ●● + marketplace |
 | Hooks | ● pre/post tool | ●● lifecycle + matchers | ● plugins | ◐ | ● | ◐ | ● |
 | Skills / команды | ●● skills+packs+workflows | ●● skills+slash+plugins | ● | ◐ | ◐ | ○ | ● |
 | Vision / вложения | ● | ● | ● | ● | ● | ◐ | ● |
 | Поверхности | ● TUI + VS Code | ●● CLI+IDE+desktop+web | ●● TUI+desktop+IDE | ● TUI | ●● IDE | ● CLI+web | ● VS Code |
-| Дистрибуция / установка | ○ `go build` | ●● | ●● | ●● | ●● | ●● | ●● |
-| Лицензия | ○ файла нет | закрытая | MIT | FSL | закрытая | Apache-2 | Apache-2 |
+| Дистрибуция / установка | ○ `go build` → ● release workflow, `go install`, `orchestra version` † | ●● | ●● | ●● | ●● | ●● | ●● |
+| Лицензия | ○ файла нет → ● MIT (`LICENSE`) † | закрытая | MIT | FSL | закрытая | Apache-2 | Apache-2 |
 
 ### Где Orchestra объективно впереди
 1. **LSP auto-provision с consent + диагностика в ответе инструмента** — ни один CLI-агент этого не делает.
@@ -220,10 +222,10 @@ Orchestra — локальный AI-агент для кодинга на Go (~1
 5. **Learning stack с human-gate** — идея сильнее, чем у всех перечисленных; проблема в охвате, не в дизайне.
 
 ### Где отстаёт
-1. Память **не пишется по умолчанию** (Claude Code, Gemini CLI, Cursor — пишут).
-2. **Дистрибуция и лицензия** — фактически нулевые.
-3. **MCP только stdio**, нет MCP-сервера.
-4. Нет глобального конфига, OAuth-логинов, native Gemini/Bedrock.
+1. Память **не пишется по умолчанию** (Claude Code, Gemini CLI, Cursor — пишут). † С `360708b` пишется после каждого изменившего хода; остаётся разрыв в *качестве* — типизация, дедуп, промпт-триггеры (`parity-plan` §1.2).
+2. **Дистрибуция и лицензия** — фактически нулевые. † Закрыто до ●: LICENSE, релизный workflow, `go install`; до ●● — install-скрипты, подпись, нотисы, English README.
+3. **MCP только stdio**, нет MCP-сервера. † Streamable HTTP есть (`99c8168`); OAuth, resources, prompts, `.mcp.json` и серверный режим — открыты.
+4. Нет глобального конфига, OAuth-логинов, native Gemini/Bedrock. † Глобальный конфиг есть (`a194576`); остальное открыто.
 5. Русскоязычный интерфейс и описания инструментов.
 6. Desktop-поверхность — только обещание в README.
 
