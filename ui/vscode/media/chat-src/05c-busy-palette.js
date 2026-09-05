@@ -219,7 +219,7 @@
 
   function filterSlash(query) {
     const q = (query || "").toLowerCase();
-    return SLASH_CMDS.filter((c) => c.cmd.slice(1).startsWith(q));
+    return SLASH_CMDS.concat(SKILL_CMDS).filter((c) => c.cmd.slice(1).startsWith(q));
   }
 
   function renderPalette(mode, items) {

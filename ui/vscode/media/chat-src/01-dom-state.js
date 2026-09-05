@@ -145,6 +145,12 @@
     { cmd: "/settings", desc: "Open settings" },
   ];
 
+  /** Loaded skills, each usable as its own "/<name>" command. Replaced
+   * wholesale on every "skillsList" message — it is its own array (not
+   * appended to SLASH_CMDS) so a refresh can't accumulate stale entries.
+   * @type {{ cmd: string; desc: string }[]} */
+  let SKILL_CMDS = [];
+
   /** @type {Map<string, HTMLElement>} */
   const toolBlocks = new Map();
   /** @type {Map<string, string>} */

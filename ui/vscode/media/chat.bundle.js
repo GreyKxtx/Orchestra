@@ -149,6 +149,12 @@
     { cmd: "/settings", desc: "Open settings" },
   ];
 
+  /** Loaded skills, each usable as its own "/<name>" command. Replaced
+   * wholesale on every "skillsList" message — it is its own array (not
+   * appended to SLASH_CMDS) so a refresh can't accumulate stale entries.
+   * @type {{ cmd: string; desc: string }[]} */
+  let SKILL_CMDS = [];
+
   /** @type {Map<string, HTMLElement>} */
   const toolBlocks = new Map();
   /** @type {Map<string, string>} */
@@ -2085,7 +2091,7 @@
 
   function filterSlash(query) {
     const q = (query || "").toLowerCase();
-    return SLASH_CMDS.filter((c) => c.cmd.slice(1).startsWith(q));
+    return SLASH_CMDS.concat(SKILL_CMDS).filter((c) => c.cmd.slice(1).startsWith(q));
   }
 
   function renderPalette(mode, items) {
@@ -4535,6 +4541,12 @@
         break;
       case "systemNote":
         appendMsg("system", msg.text || "");
+        break;
+      case "skillsList":
+        SKILL_CMDS = (Array.isArray(msg.skills) ? msg.skills : []).map((s) => ({
+          cmd: "/" + (s.name || ""),
+          desc: s.description || "",
+        }));
         break;
       case "mentionResults": {
         const hit = inputEl ? detectPaletteQuery(inputEl.value) : null;

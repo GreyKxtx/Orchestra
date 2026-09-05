@@ -433,6 +433,12 @@
       case "systemNote":
         appendMsg("system", msg.text || "");
         break;
+      case "skillsList":
+        SKILL_CMDS = (Array.isArray(msg.skills) ? msg.skills : []).map((s) => ({
+          cmd: "/" + (s.name || ""),
+          desc: s.description || "",
+        }));
+        break;
       case "mentionResults": {
         const hit = inputEl ? detectPaletteQuery(inputEl.value) : null;
         if (!hit || hit.mode !== "mention" || hit.query !== (msg.query ?? "")) {

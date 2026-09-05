@@ -21,6 +21,7 @@ import type {
   WorkflowStagePayload,
 } from "../protocol/events";
 import { SettingsView } from "./settings";
+import { matchSkillCommand, skillSlashNames } from "./skillCommands";
 import { memoryNoticeText } from "./memoryNotice";
 import { stripFinalEnvelope, sanitizeAssistantStream, shouldSuppressStreamChunk, looksLikeCorruptedStream, isBenignTurnError, compactionNoticeText } from "./streamSanitize";
 import {
@@ -94,6 +95,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   private pendingPermission: PermissionRequestPayload | undefined;
   private pendingQuestions: QuestionItemPayload[] | undefined;
   private lastPendingOps: PendingOpsPayload | undefined;
+  /** Loaded skill names, refreshed by syncSkillCommands — matched against a
+   * typed "/<name> args" command in handleSlashCommand's default branch. */
+  private lastSkillNames: string[] = [];
   /**
    * Sessions hidden from the tab strip. Closing a tab must NOT delete the
    * chat from disk (that is session.close semantics in the core) — deletion
@@ -455,11 +459,30 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     await this.onWebviewMessage(raw as WebviewToHost);
   }
 
+  /** Loads the project's skills into the webview's "/" autocomplete and
+   * caches their names for handleSlashCommand. Best effort: a project with
+   * no skills, or a core that errors, just leaves things as they were. */
+  private syncSkillCommands(): void {
+    void this.session
+      .listSkills()
+      .then((skills) => {
+        this.lastSkillNames = skillSlashNames(skills);
+        this.post({
+          type: "skillsList",
+          skills: skills
+            .filter((s) => this.lastSkillNames.includes(s.name))
+            .map((s) => ({ name: s.name, description: s.description })),
+        });
+      })
+      .catch(() => undefined);
+  }
+
   private async refreshHeaderAndHistory(): Promise<void> {
     const id = this.session.getSessionId();
     if (!id) {
       return;
     }
+    this.syncSkillCommands();
     const [view, health, llm] = await Promise.all([
       this.session.getSession(id),
       this.session.healthInfo(),
@@ -1735,6 +1758,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             "/sessions — switch session (title menu)",
             "/model — change model (composer pill)",
             "/settings — Orchestra settings",
+            "/<skill-name> args — run a loaded skill",
             "Rewind: hover a user message → ↩ Rewind",
             "@file — mention files in composer",
           ].join("\n"),
@@ -1746,9 +1770,31 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           text: "Hover a user message and click ↩ Rewind to truncate history to that checkpoint.",
         });
         break;
-      default:
+      default: {
+        const skillName = matchSkillCommand(name, arg, this.lastSkillNames);
+        if (skillName) {
+          await this.runSkillCommand(skillName, arg ?? "");
+          break;
+        }
         this.post({ type: "systemNote", text: `Unknown command: ${name}. Try /help` });
         break;
+      }
+    }
+  }
+
+  /** Runs one skill via skill.invoke and reports the result the same way
+   * the TUI's /skill command does — as a system note in the chat. */
+  private async runSkillCommand(name: string, args: string): Promise<void> {
+    try {
+      const result = await this.session.invokeSkill(name, args);
+      const marker = result.marker || "(no marker)";
+      this.post({
+        type: "systemNote",
+        text: `[skill:${result.skill}] ${result.steps} step(s) · marker=${marker}\n---\n${result.output}`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.post({ type: "systemNote", text: `[error] skill.invoke: ${msg}` });
     }
   }
 

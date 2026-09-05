@@ -326,6 +326,7 @@ export type HostToWebview =
   | { type: "healthStatus"; lspStatus?: string; model?: string; provider?: string }
   | { type: "contextInfo"; info: ContextInfoPayload }
   | { type: "systemNote"; text: string }
+  | { type: "skillsList"; skills: Array<{ name: string; description: string }> }
   | { type: "mentionResults"; query: string; files: ChatFileRef[] }
   | { type: "pendingOps"; payload: PendingOpsPayload }
   | { type: "pendingCleared" }

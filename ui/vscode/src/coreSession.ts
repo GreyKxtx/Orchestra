@@ -1189,6 +1189,29 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     }));
   }
 
+  /** Runs one skill via skill.invoke. A generous timeout: a skill runs its
+   * own multi-step agent loop, unlike the other RPCs in this file. */
+  async invokeSkill(
+    name: string,
+    args: string
+  ): Promise<{ skill: string; output: string; marker?: string; steps: number }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const r = (await this.client.request(
+      "skill.invoke",
+      { name, arguments: args },
+      5 * 60_000
+    )) as { skill?: string; output?: string; marker?: string; steps?: number };
+    return {
+      skill: r.skill || name,
+      output: r.output || "",
+      marker: r.marker,
+      steps: r.steps || 0,
+    };
+  }
+
   /**
    * One agent turn. Streams agent/event via "agentEvent" while in flight.
    */
