@@ -26,6 +26,9 @@ type Manager struct {
 	mu      sync.Mutex
 	clients []ServerClient
 	entries []*serverSlot
+	// resCache holds each server's resource list, discovered once. A nil
+	// entry that is present means "asked, and there are none".
+	resCache map[string][]MCPResource
 }
 
 // ServerClient is the surface the Manager drives, satisfied by the stdio
@@ -163,6 +166,7 @@ func (m *Manager) ListToolDefs() []llm.ToolDef {
 	}
 	var out []llm.ToolDef
 	for _, c := range m.clients {
+		out = append(out, m.resourceToolDefs(c)...)
 		for _, t := range c.Tools() {
 			prefixedName := "mcp:" + c.ServerName() + ":" + t.Name
 			schema := t.InputSchema
@@ -201,6 +205,9 @@ func (m *Manager) Call(ctx context.Context, prefixedName string, input json.RawM
 			return nil, fmt.Errorf("mcp server %q died and restart failed: %w", serverName, restartErr)
 		}
 		c = newClient
+	}
+	if out, handled, err := m.callResourceTool(ctx, c, toolName, input); handled {
+		return out, err
 	}
 	result, images, err := callServer(ctx, c, toolName, input)
 	if err != nil {
@@ -298,6 +305,7 @@ func (m *Manager) maybeRestart(ctx context.Context, serverName string) (ServerCl
 
 	m.mu.Lock()
 	m.clients[idx] = fresh
+	delete(m.resCache, serverName) // a restarted server may offer a different set
 	m.mu.Unlock()
 	return fresh, nil
 }

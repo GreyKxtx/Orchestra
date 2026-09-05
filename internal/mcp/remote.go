@@ -307,3 +307,55 @@ func toolNameAllowed(allowed []string, name string) bool {
 	}
 	return false
 }
+
+// ListResources implements resourceServer over Streamable HTTP. A server that
+// declines the optional resources capability yields no resources rather than
+// an error.
+func (c *RemoteClient) ListResources(ctx context.Context) ([]MCPResource, error) {
+	res, err := c.session.ListResources(ctx, &mcpsdk.ListResourcesParams{})
+	if err != nil {
+		if isMethodNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]MCPResource, 0, len(res.Resources))
+	for _, r := range res.Resources {
+		if r == nil {
+			continue
+		}
+		out = append(out, MCPResource{
+			URI:         r.URI,
+			Name:        r.Name,
+			Description: r.Description,
+			MIMEType:    r.MIMEType,
+		})
+	}
+	return out, nil
+}
+
+// ReadResource implements resourceServer over Streamable HTTP.
+func (c *RemoteClient) ReadResource(ctx context.Context, uri string) (string, error) {
+	res, err := c.session.ReadResource(ctx, &mcpsdk.ReadResourceParams{URI: uri})
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	binary := 0
+	for _, ct := range res.Contents {
+		if ct == nil {
+			continue
+		}
+		if ct.Text != "" {
+			b.WriteString(ct.Text)
+			continue
+		}
+		if len(ct.Blob) > 0 {
+			binary++
+		}
+	}
+	if binary > 0 {
+		fmt.Fprintf(&b, "\n[orchestra: %d binary resource part(s) omitted]", binary)
+	}
+	return b.String(), nil
+}
