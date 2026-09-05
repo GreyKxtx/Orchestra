@@ -202,3 +202,29 @@ jobs:
             --title "$VERSION" \
             --generate-notes \
             $draft
+
+      - name: Generate brew/scoop/winget manifests
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p _packaging
+          bash scripts/gen-packaging.sh "$VERSION" _dist _packaging
+          # winget's own layout is a directory tree (version/installer/locale
+          # manifests) - zip it into one uploadable asset.
+          (cd _packaging/winget && zip -r ../orchestra-winget.zip manifests)
+          ls -la _packaging
+
+      - name: Attach manifests to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release upload "$VERSION" \
+            _packaging/orchestra.rb \
+            _packaging/orchestra.json \
+            _packaging/orchestra-winget.zip \
+            --clobber
