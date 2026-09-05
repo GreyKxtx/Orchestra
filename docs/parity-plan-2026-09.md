@@ -178,11 +178,11 @@
 
 **Есть.** Lessons из worker-детей и (с `a8511eb`) из single-agent ходов с ошибками; L0–L3 с human-gate; `<dept_lessons>` в промптах.
 
-| # | Чего не хватает | Трудоёмкость |
-|---|---|:-:|
-| 1 | Уроки → **предложение правила человеку** («3× StaleContent на `src/App.jsx` — добавить в ORCHESTRA.md: читать перед edit?») в чате, `y` дописывает файл; у CC/Gemini Auto Memory это и есть «предлагает skills» | M |
-| 2 | Поставляемые L2-playbooks по умолчанию (`docs/examples/playbooks/` → реальные для go/ts/py) | S |
-| 3 | Dept авто-детект из путей файлов для single-agent (сейчас `NormalizeDept("")` → общий) | S |
+| # | Чего не хватает | Где в коде | Трудоёмкость |
+|---|---|---|:-:|
+| ~~1~~ | ~~Уроки → предложение правила человеку~~ — закрыто, TUI (VS Code не делали — в плане не было явно указано, в отличие от B6) | `lessons.BumpRuleSignal`/`FileAntiPatternKey` (`internal/lessons/rule_signal.go`) — счётчик по (файл, verify), отдельный от dept-уровневого `signals.go`: пример из плана («3× StaleContent на `src/App.jsx`») требует файл в ключе, а общий с `lesson_promote` лог позволил бы одному фиче-clear'у стереть счётчик другого. Это человеко-фейсинг предложение в `ORCHESTRA.md`, а не LLM-инструмент `lesson_promote`/`playbook_promote` (тот идёт через Question Barrier в dept-playbook) — разная аудитория, разный целевой файл. `agent.Result.RuleSuggestion` (single-agent путь, `turn_lesson.go`; `Agent.run` пришлось перевести на named returns, чтобы defer мог дописать в `*Result`), `session.message` → `rule_suggestion`, `lesson.rule_respond` (`internal/core/lesson_rule.go`, аппендит в тот же файл, что и A2-fallback — `memory.FindProjectInstructions`), `[y/n]`-модалка в TUI (`view.Modal` kind=`lesson_rule`, не через `perms`-FIFO). Попутно найдено: single-agent путь уже считал сигнал (`a8511eb`) и выбрасывал результат — solo-агент, зайдя в ту же ошибку 3× подряд, не говорил об этом никому | M |
+| ~~2~~ | ~~Поставляемые L2-playbooks по умолчанию~~ — закрыто | `docs/examples/playbooks/{go,typescript,python}_engineering.md` — error handling, тесты, точные команды линта/сборки, анти-паттерны. Попутно найдено: `docs/examples/playbooks/` существует только в чекауте Orchestra — Docs Lead просили читать его «in the Orchestra repo», мёртвый путь при работе над чужим проектом. `orchestra init` теперь встраивает всё оттуда (`docs/examples/embed.go`) в `.orchestra/playbooks/l0/` целевого проекта, обновляется на каждом `init` | S |
+| 3 | Dept авто-детект из путей файлов для single-agent (сейчас `NormalizeDept("")` → общий) | — | S |
 
 ### 1.12 Оркестрация — ●● по дизайну, не доказано
 
@@ -219,7 +219,7 @@
 | ~~B5~~ | ~~Hooks: matcher'ы, JSON-протокол, lifecycle-события~~ — закрыто (#1–4; `permission_request` из #3 отложен — это не событие, а синхронный approver через `permission.Requester`) | 1.7 #1–3 |
 | ~~B6~~ | ~~Skills как slash-команды; `.claude/commands`/`.claude/skills` как источник~~ — закрыто | 1.8 #1–2 |
 | ~~B7~~ | ~~`@import` в `ORCHESTRA.md`; `ORCHESTRA.local.md`; `/memory open/refresh` с отчётом инъекции~~ — закрыто | 1.1 #3–4, #7 |
-| B8 | Уроки → предложение правила; дефолтные playbooks | 1.11 #1–2 |
+| ~~B8~~ | ~~Уроки → предложение правила; дефолтные playbooks~~ — закрыто | 1.11 #1–2 |
 | B9 | English README; Marketplace/Open VSX; brew/scoop/winget | 1.10 #4–5, #7 |
 
 ### Волна C — квартал (L)
