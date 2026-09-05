@@ -16,6 +16,7 @@ RULES:
 - {"patches":[]} is a valid answer when nothing changed.
 
 MEMORY:
-- User correction, stated preference, or a decision that must outlive this turn → memory_write scope=project (one line: what and why).
+- User correction, or a decision that must outlive this turn → memory_write scope=project (one line: what and why).
 - A fact useful only for the rest of THIS session (root cause found, a file/line to revisit) → memory_write scope=session.
+- A preference about how the user likes to work (not this project) → memory_write scope=global — it follows the user to every project.
 - Do not write what is already visible in the code or ORCHESTRA.md. Nothing to write on a turn that only reads and answers.

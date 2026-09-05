@@ -57,14 +57,14 @@ func ToolMemoryWrite() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_write",
-			Description: "Store a fact in durable memory. scope=project → .orchestra/memory/agent.md; scope=session → this session's memory; scope=<dept> (engineering, frontend@web, …) → episodic lessons (.orchestra/memory/lessons/<dept>.md, max 3 per run, 400 chars). Prefix with [pin] for facts that must survive compaction.",
+			Description: "Store a fact in durable memory. scope=project → .orchestra/memory/agent.md; scope=session → this session's memory; scope=global → ~/.orchestra/memory.md, follows the user across every project (preferences and working style, not project facts); scope=<dept> (engineering, frontend@web, …) → episodic lessons (.orchestra/memory/lessons/<dept>.md, max 3 per run, 400 chars). Prefix with [pin] for facts that must survive compaction.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["content"],
   "properties": {
     "content": { "type": "string", "minLength": 1, "description": "The fact or context to store" },
-    "scope":   { "type": "string", "description": "project (default), session, or dept key (engineering, qa@prod, …)" }
+    "scope":   { "type": "string", "description": "project (default), session, global (follows the user across projects), or dept key (engineering, qa@prod, …)" }
   }
 }`),
 		},

@@ -95,6 +95,20 @@ func (s *Store) Append(scope, content string) (relPath string, written int, err 
 		}
 		target = s.sessionFilePath()
 		relPath = filepath.ToSlash(filepath.Join(".orchestra", "memory", "sessions", s.sessionID+".md"))
+	case "global":
+		if !s.cfg.GlobalEnabled {
+			return "", 0, fmt.Errorf("global memory is disabled in config")
+		}
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return "", 0, fmt.Errorf("resolve home directory: %w", homeErr)
+		}
+		dir := filepath.Join(home, ".orchestra")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", 0, err
+		}
+		target = filepath.Join(dir, "memory.md")
+		relPath = "~/.orchestra/memory.md"
 	default:
 		dir := filepath.Join(s.workspaceRoot, ".orchestra", "memory")
 		if err := os.MkdirAll(dir, 0755); err != nil {

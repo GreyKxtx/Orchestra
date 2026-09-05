@@ -32,6 +32,9 @@ func TestMemoryGuidanceReachesModesThatHaveTheTool(t *testing.T) {
 		if !strings.Contains(got, "scope=project") || !strings.Contains(got, "scope=session") {
 			t.Errorf("mode=%s family=%s: guidance must cover both project and session scope", c.mode, c.family)
 		}
+		if !strings.Contains(got, "scope=global") {
+			t.Errorf("mode=%s family=%s: guidance must mention scope=global for cross-project preferences", c.mode, c.family)
+		}
 	}
 }
 
