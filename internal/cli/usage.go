@@ -74,18 +74,32 @@ func runUsage(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Aggregated across %d run(s):\n\n", len(records))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tMODEL\tCALLS\tIN\tOUT\tTOTAL\tCOST")
+	fmt.Fprintln(w, "PROVIDER\tMODEL\tCALLS\tIN\tCACHED\tOUT\tTOTAL\tCOST")
 	for _, e := range perModel {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%d\t%d\t%s\n",
 			e.Provider, e.Model, e.Calls,
-			e.PromptTokens, e.CompletionTokens, e.TotalTokens,
+			e.PromptTokens, formatCached(e.CachedPromptTokens, e.PromptTokens),
+			e.CompletionTokens, e.TotalTokens,
 			formatCost(e.CostUSD))
 	}
-	fmt.Fprintln(w, strings.Repeat("-", 8)+"\t"+strings.Repeat("-", 8)+"\t-----\t------\t------\t------\t------")
-	fmt.Fprintf(w, "TOTAL\t\t%d\t%d\t%d\t%d\t%s\n",
-		totals.Calls, totals.PromptTokens, totals.CompletionTokens,
-		totals.TotalTokens, formatCost(totals.CostUSD))
+	fmt.Fprintln(w, strings.Repeat("-", 8)+"\t"+strings.Repeat("-", 8)+"\t-----\t------\t------\t------\t------\t------")
+	fmt.Fprintf(w, "TOTAL\t\t%d\t%d\t%s\t%d\t%d\t%s\n",
+		totals.Calls, totals.PromptTokens, formatCached(totals.CachedPromptTokens, totals.PromptTokens),
+		totals.CompletionTokens, totals.TotalTokens, formatCost(totals.CostUSD))
 	return w.Flush()
+}
+
+// formatCached renders the prompt-cache hit as "tokens (pct%)" so a run that
+// paid full price for its whole history is visible at a glance; local models
+// never report a cache and get a dash.
+func formatCached(cached, prompt int) string {
+	if cached == 0 {
+		return "—"
+	}
+	if prompt <= 0 {
+		return fmt.Sprintf("%d", cached)
+	}
+	return fmt.Sprintf("%d (%d%%)", cached, cached*100/prompt)
 }
 
 func formatCost(c float64) string {

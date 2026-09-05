@@ -83,9 +83,8 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 		}
 		return nil, err
 	}
-	if a.opts.UsageTracker != nil && resp != nil && resp.Usage != nil {
-		a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,
-			resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CostUSD)
+	if resp != nil {
+		a.recordUsage(resp.Usage)
 	}
 
 	summary := strings.TrimSpace(resp.Message.Content)

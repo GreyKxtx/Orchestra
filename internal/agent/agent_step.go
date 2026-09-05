@@ -189,8 +189,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		a.mergeResponsePrefill(resp)
 		if a.opts.UsageTracker != nil && resp != nil {
 			if resp.Usage != nil {
-				a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,
-					resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CostUSD)
+				a.recordUsage(resp.Usage)
 			} else {
 				// M4 in audit ledger: log when the provider returned no
 				// usage payload so usage.jsonl silently understating tokens
@@ -335,6 +334,22 @@ func (a *Agent) streamStepOnce(ctx context.Context, req llm.CompleteRequest, s l
 		return nil, contentStarted, fmt.Errorf("stream ended without Done event")
 	}
 	return final, contentStarted, nil
+}
+
+// recordUsage hands one completion's accounting to the usage recorder: the
+// gross tokens and cost always, the prompt-cache split when the recorder can
+// take it. Without the split, usage.jsonl could not tell a run that re-billed
+// its whole transcript every step from one that cached it — the field run's
+// most expensive turn was exactly that question, unanswerable after the fact.
+func (a *Agent) recordUsage(u *llm.TokenUsage) {
+	if a.opts.UsageTracker == nil || u == nil {
+		return
+	}
+	a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,
+		u.PromptTokens, u.CompletionTokens, u.CostUSD)
+	if pc, ok := a.opts.UsageTracker.(PromptCacheRecorder); ok {
+		pc.RecordPromptCache(a.opts.ProviderLabel, a.opts.ModelLabel, u.CachedPromptTokens, u.CacheWriteTokens)
+	}
 }
 
 func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {

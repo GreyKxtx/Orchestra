@@ -37,6 +37,26 @@ type Entry struct {
 	CompletionTokens int     `json:"completion_tokens"`
 	TotalTokens      int     `json:"total_tokens"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
+	// CachedPromptTokens is the part of PromptTokens the provider served from
+	// its prompt cache; CacheWriteTokens is what it charged to populate it.
+	// Both stay zero (and out of the record) for providers without a cache,
+	// which is every local model.
+	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
+}
+
+// add folds another accumulator into e, field by field. Every place that sums
+// entries goes through here so a new counter cannot be summed in one path and
+// dropped in another — which is how the cache split went missing from
+// `orchestra usage` while present in the raw records.
+func (e *Entry) add(o Entry) {
+	e.Calls += o.Calls
+	e.PromptTokens += o.PromptTokens
+	e.CompletionTokens += o.CompletionTokens
+	e.TotalTokens += o.TotalTokens
+	e.CostUSD += o.CostUSD
+	e.CachedPromptTokens += o.CachedPromptTokens
+	e.CacheWriteTokens += o.CacheWriteTokens
 }
 
 // Pricing maps provider → model → per-1M-token rates in USD.
@@ -76,20 +96,8 @@ func (t *Tracker) RecordCost(provider, model string, prompt, completion int, pro
 	if t == nil {
 		return
 	}
-	if provider == "" {
-		provider = "openai"
-	}
-	if model == "" {
-		model = "unknown"
-	}
-	key := provider + "|" + model
-	t.mu.Lock()
+	e := t.entry(provider, model)
 	defer t.mu.Unlock()
-	e, ok := t.entries[key]
-	if !ok {
-		e = &Entry{Provider: provider, Model: model}
-		t.entries[key] = e
-	}
 	e.Calls++
 	e.PromptTokens += prompt
 	e.CompletionTokens += completion
@@ -99,6 +107,39 @@ func (t *Tracker) RecordCost(provider, model string, prompt, completion int, pro
 	} else if mp, ok := lookupPrice(t.pricing, provider, model); ok {
 		e.CostUSD += float64(prompt)/1_000_000*mp.InputPer1M + float64(completion)/1_000_000*mp.OutputPer1M
 	}
+}
+
+// RecordPromptCache adds the provider's prompt-cache split for one completion
+// whose gross tokens were already passed to Record/RecordCost. It is a
+// separate call, not an extra parameter, so recorders that predate the cache
+// counters keep compiling; it does not count as a call of its own.
+func (t *Tracker) RecordPromptCache(provider, model string, cachedPrompt, cacheWrite int) {
+	if t == nil || (cachedPrompt == 0 && cacheWrite == 0) {
+		return
+	}
+	e := t.entry(provider, model)
+	defer t.mu.Unlock()
+	e.CachedPromptTokens += cachedPrompt
+	e.CacheWriteTokens += cacheWrite
+}
+
+// entry returns the accumulator for (provider, model), creating it on first
+// use. It returns with t.mu held; the caller must unlock.
+func (t *Tracker) entry(provider, model string) *Entry {
+	if provider == "" {
+		provider = "openai"
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	key := provider + "|" + model
+	t.mu.Lock()
+	e, ok := t.entries[key]
+	if !ok {
+		e = &Entry{Provider: provider, Model: model}
+		t.entries[key] = e
+	}
+	return e
 }
 
 // Snapshot returns a sorted copy of current entries. Safe under contention.
@@ -123,14 +164,18 @@ func (t *Tracker) Snapshot() []Entry {
 
 // Total aggregates calls, tokens and cost across all entries.
 func (t *Tracker) Total() (calls, prompt, completion, total int, costUSD float64) {
+	sum := t.Totals()
+	return sum.Calls, sum.PromptTokens, sum.CompletionTokens, sum.TotalTokens, sum.CostUSD
+}
+
+// Totals is Total as one Entry (Provider/Model "*"), including the
+// prompt-cache counters that the positional form predates.
+func (t *Tracker) Totals() Entry {
+	sum := Entry{Provider: "*", Model: "*"}
 	for _, e := range t.Snapshot() {
-		calls += e.Calls
-		prompt += e.PromptTokens
-		completion += e.CompletionTokens
-		total += e.TotalTokens
-		costUSD += e.CostUSD
+		sum.add(e)
 	}
-	return
+	return sum
 }
 
 // Empty reports whether no Record calls have arrived yet.
@@ -185,7 +230,6 @@ func (t *Tracker) Finalize(projectRoot string) (*persistedRecord, string, error)
 		return nil, "", nil
 	}
 	entries := t.Snapshot()
-	calls, prompt, completion, total, cost := t.Total()
 	now := time.Now()
 	rec := &persistedRecord{
 		RunID:      t.runID,
@@ -194,15 +238,7 @@ func (t *Tracker) Finalize(projectRoot string) (*persistedRecord, string, error)
 		FinishedAt: now.UTC().Format(time.RFC3339Nano),
 		DurationMS: now.Sub(t.startAt).Milliseconds(),
 		Entries:    entries,
-		Totals: Entry{
-			Provider:         "*",
-			Model:            "*",
-			Calls:            calls,
-			PromptTokens:     prompt,
-			CompletionTokens: completion,
-			TotalTokens:      total,
-			CostUSD:          cost,
-		},
+		Totals:     t.Totals(),
 	}
 
 	dir := filepath.Join(projectRoot, ".orchestra")

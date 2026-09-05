@@ -409,6 +409,15 @@ type UsageRecorder interface {
 	RecordCost(provider, model string, prompt, completion int, providerCostUSD float64)
 }
 
+// PromptCacheRecorder is the optional extension of UsageRecorder for the
+// prompt-cache split (cached reads / cache writes) that Anthropic and
+// OpenAI-compatible gateways report. It is a separate interface so the
+// recorders that predate it keep compiling; the agent forwards the counters
+// only when the recorder can take them. usage.Tracker implements it.
+type PromptCacheRecorder interface {
+	RecordPromptCache(provider, model string, cachedPrompt, cacheWrite int)
+}
+
 // AgentEvent wraps a streaming event with agent-level context.
 type AgentEvent struct {
 	Step   int

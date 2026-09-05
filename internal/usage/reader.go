@@ -68,19 +68,11 @@ func Aggregate(records []Record) (perModel []Entry, totals Entry) {
 				cur = &Entry{Provider: e.Provider, Model: e.Model}
 				bucket[key] = cur
 			}
-			cur.Calls += e.Calls
-			cur.PromptTokens += e.PromptTokens
-			cur.CompletionTokens += e.CompletionTokens
-			cur.TotalTokens += e.TotalTokens
-			cur.CostUSD += e.CostUSD
+			cur.add(e)
 		}
 	}
 	for _, e := range bucket {
-		totals.Calls += e.Calls
-		totals.PromptTokens += e.PromptTokens
-		totals.CompletionTokens += e.CompletionTokens
-		totals.TotalTokens += e.TotalTokens
-		totals.CostUSD += e.CostUSD
+		totals.add(*e)
 		perModel = append(perModel, *e)
 	}
 	totals.Provider = "*"

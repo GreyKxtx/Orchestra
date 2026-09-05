@@ -100,6 +100,10 @@ type UsageSnapshot struct {
 	CompletionTokens int     `json:"completion_tokens"`
 	TotalTokens      int     `json:"total_tokens"`
 	CostUSD          float64 `json:"cost_usd,omitempty"`
+	// CachedPromptTokens / CacheWriteTokens are the prompt-cache split the
+	// provider reported, summed over the turn. Zero for local models.
+	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
+	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
 	// Entries is the per-(provider, model) breakdown — in orchestra mode each
 	// tier model gets its own row, so the caller can show what each cost.
 	Entries []usage.Entry `json:"entries,omitempty"`
@@ -284,14 +288,16 @@ func usageSnapshotFrom(t *usage.Tracker) *UsageSnapshot {
 	if t == nil || t.Empty() {
 		return nil
 	}
-	calls, prompt, completion, total, cost := t.Total()
+	sum := t.Totals()
 	return &UsageSnapshot{
-		Calls:            calls,
-		PromptTokens:     prompt,
-		CompletionTokens: completion,
-		TotalTokens:      total,
-		CostUSD:          cost,
-		Entries:          t.Snapshot(),
+		Calls:              sum.Calls,
+		PromptTokens:       sum.PromptTokens,
+		CompletionTokens:   sum.CompletionTokens,
+		TotalTokens:        sum.TotalTokens,
+		CostUSD:            sum.CostUSD,
+		CachedPromptTokens: sum.CachedPromptTokens,
+		CacheWriteTokens:   sum.CacheWriteTokens,
+		Entries:            t.Snapshot(),
 	}
 }
 
