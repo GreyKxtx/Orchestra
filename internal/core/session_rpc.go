@@ -290,6 +290,11 @@ type SessionMessageResult struct {
 	StopReason       string `json:"stop_reason,omitempty"`
 	MaxStepsExceeded bool   `json:"max_steps_exceeded,omitempty"`
 	OpenTodos        int    `json:"open_todos,omitempty"`
+
+	// Memory reports what the end-of-turn memory writer did, so a client can
+	// show it instead of the operator having to open .orchestra/memory by hand.
+	// Nil when auto_summary_memory is off.
+	Memory *MemoryNoteStatus `json:"memory,omitempty"`
 }
 
 // SessionMessage runs one agent turn in the named session, streaming events via OnEvent.
@@ -484,9 +489,10 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, protocol.NewError(protocol.ExecFailed, "agent returned nil result", nil)
 	}
 
-	c.maybeAutoSummaryMemory(ctx, sess.ID, outHistory, res)
+	memoryStatus := c.maybeAutoSummaryMemory(ctx, sess.ID, outHistory, res)
 
 	out := &SessionMessageResult{
+		Memory:           memoryStatus,
 		Steps:            res.Steps,
 		Applied:          res.Applied,
 		Patches:          res.Patches,

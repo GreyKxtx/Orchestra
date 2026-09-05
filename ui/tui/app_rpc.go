@@ -76,6 +76,43 @@ func (a *App) noticeTurnStop(stopReason string, openTodos int, todos []rpcclient
 	}
 }
 
+// noticeTurnMemory tells the operator what the memory writer did with the
+// turn. Failures are loud — in the field run they went to stderr and were
+// missed for nine days. A written note gets one short line naming its source,
+// so a run on a dead endpoint still shows memory working through the digest.
+// Skips stay silent: most turns change nothing, and saying so every time
+// would be the grep-noise problem again, in the chat this time.
+func (a *App) noticeTurnMemory(m *rpcclient.MemoryNotePayload) {
+	if m == nil {
+		return
+	}
+	var msg string
+	var kind state.SystemKind
+	switch m.Outcome {
+	case "written":
+		msg = "Память: заметка записана в agent.md (" + memorySourceLabel(m.Source) + ")"
+		kind = state.SystemKindInfo
+	case "failed":
+		msg = "Память: запись не удалась — " + strings.TrimSpace(m.Detail)
+		kind = state.SystemKindError
+	default:
+		return
+	}
+	a.session.AppendAssistantNotice(kind, msg)
+	a.chatDirty = true
+}
+
+func memorySourceLabel(source string) string {
+	switch source {
+	case "model":
+		return "сводка модели"
+	case "digest":
+		return "из дайджеста хода"
+	default:
+		return source
+	}
+}
+
 func stepDoneUserHint(reason string) string {
 	switch reason {
 	case "invalid":
@@ -156,7 +193,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 		saveCmd = a.handleRPCTurnTerminal(ev)
 
 	case rpcclient.EventPendingOps, rpcclient.EventTurnUsage,
-		rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated,
+		rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated, rpcclient.EventTurnMemory,
 		rpcclient.EventInitialized, rpcclient.EventPermissionRequest,
 		rpcclient.EventQuestionAsked, rpcclient.EventWorkflowStageStart,
 		rpcclient.EventWorkflowStageDone, rpcclient.EventModeRoute,
@@ -402,6 +439,8 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 		if ev.Kind == rpcclient.EventTurnTodos {
 			a.noticeTurnStop(ev.StopReason, ev.OpenTodos, ev.Todos)
 		}
+	case rpcclient.EventTurnMemory:
+		a.noticeTurnMemory(ev.Memory)
 	case rpcclient.EventInitialized:
 		if ev.LSPStatus != "" {
 			a.chrome.lspStatus = ev.LSPStatus

@@ -10,7 +10,8 @@ import (
 )
 
 // LLMLogEntry represents a single log entry in llm_log.jsonl.
-// Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result", "step.classified".
+// Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result",
+// "step.classified", "memory.note".
 type LLMLogEntry struct {
 	TSUnix          int64    `json:"ts_unix"`
 	Event           string   `json:"event"`
@@ -34,10 +35,13 @@ type LLMLogEntry struct {
 	OutputBytes int    `json:"output_bytes,omitempty"`
 	ErrorStr    string `json:"error,omitempty"`
 
-	// step.classified fields
+	// step.classified fields; memory.note reuses Kind (outcome) and Detail
 	Step   int    `json:"step,omitempty"`
 	Kind   string `json:"kind,omitempty"`
 	Detail string `json:"detail,omitempty"`
+
+	// memory.note: where the note came from — "model" or "digest"
+	Source string `json:"source,omitempty"`
 }
 
 // Logger handles LLM request/response logging
@@ -159,6 +163,24 @@ func (l *Logger) LogStepClassified(step int, kind, toolName, detail string) {
 		Kind:     kind,
 		ToolName: toolName,
 		Detail:   truncateAndSanitize(detail, 512),
+	})
+}
+
+// LogMemoryNote records what the end-of-turn memory writer did: outcome is
+// written | skipped | failed, source is model | digest (empty for a skip).
+// Memory used to report only to stderr, and the field run showed what that
+// buys: one note in fifty-two sessions and no way to tell from the logs
+// whether it had tried. This is the same file the run analysis reads.
+func (l *Logger) LogMemoryNote(outcome, source, detail string) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix: time.Now().Unix(),
+		Event:  "memory.note",
+		Kind:   outcome,
+		Source: source,
+		Detail: truncateAndSanitize(detail, 512),
 	})
 }
 

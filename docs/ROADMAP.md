@@ -461,4 +461,6 @@ llm:
 ```
 
 События в `.orchestra/llm_log.jsonl`: `tool_call`, `tool_result`, `step.classified`
-(`kind`: `validation_error` | `tool_denied` | `tool_failed` | `resolve_failed` | `apply_recoverable`).
+(`kind`: `validation_error` | `tool_denied` | `tool_failed` | `resolve_failed` | `apply_recoverable`),
+`memory.note` (`kind`: `written` | `skipped` | `failed`; `source`: `model` | `digest`) — что сделал
+авто-писатель памяти в конце хода. То же самое уходит клиенту полем `memory` в результате `session.message`.

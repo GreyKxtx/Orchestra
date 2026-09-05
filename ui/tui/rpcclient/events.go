@@ -27,6 +27,7 @@ const (
 	EventAgentRunCompleted EventKind = "agent_run_completed" // synthesized when AgentRun returns
 	EventTurnUsage         EventKind = "turn_usage"          // usage totals from session.message result
 	EventTurnTodos         EventKind = "turn_todos"          // todo list from session.message result
+	EventTurnMemory        EventKind = "turn_memory"         // what the memory writer did, from session.message result
 	EventTodosUpdated      EventKind = "todos_updated"       // live todo list after todowrite
 	EventStepUsage         EventKind = "step_usage"          // per-LLM-step token totals during a turn
 	EventModeRoute         EventKind = "mode_route"          // agent auto-router: agent→build|plan|explore
@@ -72,6 +73,7 @@ type Event struct {
 	Diagnostics               []ToolDiagnosticPayload   // LSP diagnostics on write/edit tool_call_completed
 	Usage                     *UsageTurnPayload         // token/cost totals for completed turn
 	Todos                     []TodoItem                // model checklist after turn / todowrite
+	Memory                    *MemoryNotePayload        // only set when Kind == EventTurnMemory
 	StopReason                string                    // completed | partial | max_steps (turn end)
 	OpenTodos                 int                       // open pending/in_progress todos at turn end
 	ModeRoute                 *ModeRoutePayload         // agent→effective mode
@@ -106,6 +108,15 @@ type UsageTurnPayload struct {
 	// its prompt cache; CacheWriteTokens is what it charged to populate it.
 	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
 	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
+}
+
+// MemoryNotePayload mirrors core.MemoryNoteStatus: what the end-of-turn
+// memory writer did. Outcome is written | skipped | failed; Source is
+// model | digest; Detail is the note when written, the reason otherwise.
+type MemoryNotePayload struct {
+	Outcome string `json:"outcome"`
+	Source  string `json:"source,omitempty"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 // TodoItem mirrors tools.TodoItem from session.message / todowrite.

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -123,14 +124,78 @@ func TestAutoSummaryMemory_ReadOnlyTurnWritesNothing(t *testing.T) {
 	}
 }
 
+// readMemoryLogEvents returns the memory.note entries from llm_log.jsonl as
+// (kind, source) pairs, in order.
+func readMemoryLogEvents(t *testing.T, root string) [][2]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		return nil
+	}
+	var out [][2]string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e llm.LLMLogEntry
+		if json.Unmarshal([]byte(line), &e) == nil && e.Event == "memory.note" {
+			out = append(out, [2]string{e.Kind, e.Source})
+		}
+	}
+	return out
+}
+
+func TestAutoSummaryMemory_ReportsWhatItDid(t *testing.T) {
+	c, root := newSummaryCore(t, deadLLM{})
+	persistEditDigest(t, root, "s-edit", "fix the typo", "README.md")
+
+	written := c.maybeAutoSummaryMemory(context.Background(), "s-edit", longHistory(12), &agent.Result{Steps: 2})
+	if written == nil || written.Outcome != "written" || written.Source != "digest" {
+		t.Fatalf("edit turn on a dead endpoint: %+v, want written/digest", written)
+	}
+
+	st := working.New("what is this?")
+	st.ObserveTool("read", []byte(`{"path":"main.go"}`), nil, nil)
+	if err := working.PersistTurnDigest(root, "s-read", st.BuildTurnDigest(0)); err != nil {
+		t.Fatal(err)
+	}
+	skipped := c.maybeAutoSummaryMemory(context.Background(), "s-read", longHistory(12), &agent.Result{Steps: 2})
+	if skipped == nil || skipped.Outcome != "skipped" {
+		t.Fatalf("read-only turn: %+v, want skipped", skipped)
+	}
+
+	// The field run left one note in fifty-two sessions and nobody could tell
+	// from the logs whether memory had tried and failed or never tried. Every
+	// outcome — including the skips — has to be in llm_log.jsonl.
+	got := readMemoryLogEvents(t, root)
+	want := [][2]string{{"written", "digest"}, {"skipped", ""}}
+	if len(got) != len(want) {
+		t.Fatalf("memory.note events = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i][0] != want[i][0] || got[i][1] != want[i][1] {
+			t.Errorf("event[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAutoSummaryMemory_DisabledReportsNothing(t *testing.T) {
+	c, _ := newSummaryCore(t, deadLLM{})
+	c.cfg.Agent.AutoSummaryMemory = new(bool) // explicit false
+
+	if st := c.maybeAutoSummaryMemory(context.Background(), "s", longHistory(12), &agent.Result{Steps: 2}); st != nil {
+		t.Fatalf("disabled memory must stay silent, got %+v", st)
+	}
+}
+
 func TestAutoSummaryMemory_PrefersModelProseWhenAvailable(t *testing.T) {
 	c, root := newSummaryCore(t, proseLLM{text: "Wired the weather panel into the city sidebar."})
 	const sid = "sess-2"
 	persistEditDigest(t, root, sid, "add the weather panel", "src/App.jsx")
 
-	c.maybeAutoSummaryMemory(context.Background(), sid, longHistory(12), &agent.Result{Steps: 5})
+	st := c.maybeAutoSummaryMemory(context.Background(), sid, longHistory(12), &agent.Result{Steps: 5})
 
 	if got := readAgentMemory(t, root); !strings.Contains(got, "Wired the weather panel") {
 		t.Errorf("model summary must win when the endpoint answers, got: %s", got)
+	}
+	if st == nil || st.Source != "model" {
+		t.Errorf("status must say the note came from the model, got %+v", st)
 	}
 }

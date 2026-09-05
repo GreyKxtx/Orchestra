@@ -405,6 +405,53 @@ func TestNoticeTurnStop_CompletedIsSilent(t *testing.T) {
 	}
 }
 
+func TestTurnMemory_FailureIsLoud(t *testing.T) {
+	a, _ := startedTurnApp(t)
+
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:   rpcclient.EventTurnMemory,
+		Memory: &rpcclient.MemoryNotePayload{Outcome: "failed", Source: "digest", Detail: "write agent.md: permission denied"},
+	})
+
+	// The field run's memory failures went to stderr, where nobody saw them
+	// for nine days. A failed write has to appear in the chat itself.
+	if !hasSystemNotice(a, "Память") || !hasSystemNotice(a, "permission denied") {
+		t.Fatal("a failed memory write must be reported in chat with its reason")
+	}
+}
+
+func TestTurnMemory_WrittenIsBriefAndNamesSource(t *testing.T) {
+	a, _ := startedTurnApp(t)
+
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:   rpcclient.EventTurnMemory,
+		Memory: &rpcclient.MemoryNotePayload{Outcome: "written", Source: "digest", Detail: "[session:s1] goal: fix; done: edit README.md"},
+	})
+
+	if !hasSystemNotice(a, "Память") {
+		t.Fatal("a written note must be acknowledged so the operator can see memory working")
+	}
+	if !hasSystemNotice(a, "дайджест") {
+		t.Fatal("the notice must say the note came from the digest, not the model")
+	}
+}
+
+func TestTurnMemory_SkippedIsSilent(t *testing.T) {
+	a, _ := startedTurnApp(t)
+	before := len(a.session.Messages)
+
+	a.handleRPCEvent(rpcclient.Event{
+		Kind:   rpcclient.EventTurnMemory,
+		Memory: &rpcclient.MemoryNotePayload{Outcome: "skipped", Detail: "turn changed no files"},
+	})
+
+	// Most turns read and answer; telling the user "nothing to remember" every
+	// time would be the grep-noise problem again, in the chat this time.
+	if len(a.session.Messages) != before || hasSystemNotice(a, "Память") {
+		t.Fatal("a skipped note must not add chat noise")
+	}
+}
+
 func TestChildEvents_DoNotPolluteLeadChat(t *testing.T) {
 	a, _ := startedTurnApp(t)
 

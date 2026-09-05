@@ -289,6 +289,7 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 		StopReason       string            `json:"stop_reason"`
 		MaxStepsExceeded bool              `json:"max_steps_exceeded"`
 		OpenTodos        int               `json:"open_todos"`
+		Memory           *MemoryNotePayload `json:"memory"`
 	}
 	err := c.rpc.Call(ctx, "session.message", params, &result)
 	if err != nil {
@@ -296,6 +297,9 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 	} else {
 		if result.Usage != nil {
 			c.send(Event{Kind: EventTurnUsage, Usage: result.Usage})
+		}
+		if result.Memory != nil {
+			c.send(Event{Kind: EventTurnMemory, Memory: result.Memory})
 		}
 		c.send(Event{
 			Kind:       EventTurnTodos,

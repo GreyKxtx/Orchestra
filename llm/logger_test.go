@@ -55,6 +55,41 @@ func TestLogger_NilSafe(t *testing.T) {
 	l.LogStepClassified(1, "tool_failed", "read", "boom")
 	l.LogToolCall("x", 1)
 	l.LogToolResult("x", 0, 0, "err")
+	l.LogMemoryNote("failed", "digest", "boom")
+}
+
+func TestLogger_LogMemoryNote(t *testing.T) {
+	dir := t.TempDir()
+	l := NewLogger(dir)
+	l.LogMemoryNote("written", "digest", "[session:s1] goal: fix; done: edit README.md")
+	l.LogMemoryNote("failed", "model", "write agent.md: disk full; key sk-or-v1-abcdefghij1234")
+
+	data, err := os.ReadFile(filepath.Join(dir, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []LLMLogEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e LLMLogEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, e)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(entries))
+	}
+	// Memory used to report only to stderr, which nobody reads back. The log
+	// is what the field-run analysis was built on; memory must show up there.
+	if entries[0].Event != "memory.note" || entries[0].Kind != "written" || entries[0].Source != "digest" {
+		t.Errorf("written entry: %+v", entries[0])
+	}
+	if entries[1].Kind != "failed" || !strings.Contains(entries[1].Detail, "disk full") {
+		t.Errorf("failed entry: %+v", entries[1])
+	}
+	if strings.Contains(entries[1].Detail, "sk-or-v1-abcdefghij1234") {
+		t.Error("memory.note detail must go through the secret sanitizer like every other entry")
+	}
 }
 
 // TestSanitizeSecrets: key material in previews, error bodies and URLs must
