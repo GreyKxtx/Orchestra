@@ -24,6 +24,26 @@ func TestModal_LSPInstallRender(t *testing.T) {
 	}
 }
 
+func TestModal_LessonRuleRender(t *testing.T) {
+	m := NewPermissionModal("", `3× повторилась одна и та же ошибка на src/App.jsx: "StaleContent" — добавить правило в ORCHESTRA.md?`, "lesson_rule")
+	m.SetSize(80)
+	out := m.Render()
+
+	for _, want := range []string{
+		"src/App.jsx",
+		"ORCHESTRA.md",
+		"добавить",
+		"пропустить",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("lesson_rule modal missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Language server") || strings.Contains(out, "Разрешение shell") {
+		t.Fatal("lesson_rule modal must not fall through to the shell/LSP titles")
+	}
+}
+
 func TestModal_ShellRender(t *testing.T) {
 	m := NewModal("bash", "go test ./...")
 	m.SetSize(80)

@@ -114,6 +114,15 @@ func (m *Modal) Render() string {
 		tool = "shell"
 	}
 
+	if strings.EqualFold(m.Kind, "lesson_rule") {
+		title := lipgloss.NewStyle().
+			Foreground(t.Primary()).
+			Bold(true).
+			Render("💡 Правило из повторяющейся ошибки")
+		body := fmt.Sprintf("%s\n\n%s\n\n[y] добавить в ORCHESTRA.md   [n] пропустить", title, desc)
+		return border.Render(body)
+	}
+
 	if strings.EqualFold(m.Kind, "lsp.install") || tool == "lsp.install" {
 		title := lipgloss.NewStyle().
 			Foreground(t.Warning()).

@@ -53,6 +53,10 @@ type coreClient interface {
 	RespondPermission(reqID int64, approved bool)
 	RespondPermissionDecision(reqID int64, d rpcclient.PermissionDecision)
 	RespondQuestion(reqID int64, answers []string)
+
+	// RespondRuleSuggestion answers a rule_suggestion event (repeated
+	// anti-pattern on one file, offered as an ORCHESTRA.md rule).
+	RespondRuleSuggestion(ctx context.Context, accept bool, s rpcclient.RuleSuggestion) error
 }
 
 // Compile-time proof that the production client satisfies the seam.

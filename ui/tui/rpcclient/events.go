@@ -28,6 +28,7 @@ const (
 	EventTurnUsage         EventKind = "turn_usage"          // usage totals from session.message result
 	EventTurnTodos         EventKind = "turn_todos"          // todo list from session.message result
 	EventTurnMemory        EventKind = "turn_memory"         // what the memory writer did, from session.message result
+	EventRuleSuggestion    EventKind = "rule_suggestion"     // repeated anti-pattern on one file — offer an ORCHESTRA.md rule
 	EventTodosUpdated      EventKind = "todos_updated"       // live todo list after todowrite
 	EventStepUsage         EventKind = "step_usage"          // per-LLM-step token totals during a turn
 	EventModeRoute         EventKind = "mode_route"          // agent auto-router: agent→build|plan|explore
@@ -74,6 +75,7 @@ type Event struct {
 	Usage                     *UsageTurnPayload         // token/cost totals for completed turn
 	Todos                     []TodoItem                // model checklist after turn / todowrite
 	Memory                    *MemoryNotePayload        // only set when Kind == EventTurnMemory
+	RuleSuggestion            *RuleSuggestion           // only set when Kind == EventRuleSuggestion
 	StopReason                string                    // completed | partial | max_steps (turn end)
 	OpenTodos                 int                       // open pending/in_progress todos at turn end
 	ModeRoute                 *ModeRoutePayload         // agent→effective mode
@@ -117,6 +119,19 @@ type MemoryNotePayload struct {
 	Outcome string `json:"outcome"`
 	Source  string `json:"source,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+}
+
+// RuleSuggestion mirrors core.RuleSuggestionPayload: a human-facing offer to
+// turn a repeated anti-pattern into a project instruction. Text is the
+// chat-facing prompt; RuleLine is the exact line lesson.rule_respond appends
+// to ORCHESTRA.md on accept.
+type RuleSuggestion struct {
+	Dept     string `json:"dept"`
+	File     string `json:"file"`
+	Count    int    `json:"count"`
+	Verify   string `json:"verify,omitempty"`
+	RuleLine string `json:"rule_line"`
+	Text     string `json:"text"`
 }
 
 // TodoItem mirrors tools.TodoItem from session.message / todowrite.

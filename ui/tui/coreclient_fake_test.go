@@ -38,8 +38,9 @@ type fakeCore struct {
 	skillInvokeResult *rpcclient.SkillInvokeResult
 	skillInvokeErr    error
 
-	permAnswers     []fakePermAnswer
-	questionAnswers []fakeQuestionAnswer
+	permAnswers           []fakePermAnswer
+	questionAnswers       []fakeQuestionAnswer
+	ruleSuggestionAnswers []fakeRuleSuggestionAnswer
 
 	// Scripted responses.
 	sessionGetResult *rpcclient.SessionGetResult
@@ -61,6 +62,11 @@ type fakePermAnswer struct {
 type fakeQuestionAnswer struct {
 	ReqID   int64
 	Answers []string
+}
+
+type fakeRuleSuggestionAnswer struct {
+	Accept bool
+	Sug    rpcclient.RuleSuggestion
 }
 
 var _ coreClient = (*fakeCore)(nil)
@@ -197,6 +203,13 @@ func (f *fakeCore) RespondQuestion(reqID int64, answers []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.questionAnswers = append(f.questionAnswers, fakeQuestionAnswer{ReqID: reqID, Answers: answers})
+}
+
+func (f *fakeCore) RespondRuleSuggestion(_ context.Context, accept bool, s rpcclient.RuleSuggestion) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ruleSuggestionAnswers = append(f.ruleSuggestionAnswers, fakeRuleSuggestionAnswer{Accept: accept, Sug: s})
+	return nil
 }
 
 // snapshot helpers (lock once, copy out).

@@ -275,17 +275,24 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 	case "y":
 		if a.permModal != nil {
+			if a.permModal.Kind == "lesson_rule" {
+				return a, a.respondRuleSuggestion(true), true
+			}
 			a.respondShellPermission(true, false, false)
 			return a, nil, true
 		}
 	case "a":
 		if a.permModal != nil {
-			a.respondShellPermission(true, true, false)
+			if a.permModal.Kind != "lesson_rule" {
+				a.respondShellPermission(true, true, false)
+			}
 			return a, nil, true
 		}
 	case "t":
 		if a.permModal != nil {
-			a.respondShellPermission(true, false, true)
+			if a.permModal.Kind != "lesson_rule" {
+				a.respondShellPermission(true, false, true)
+			}
 			return a, nil, true
 		}
 		if a.tryChromeHotkey("t") {
@@ -293,6 +300,9 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 	case "n":
 		if a.permModal != nil {
+			if a.permModal.Kind == "lesson_rule" {
+				return a, a.respondRuleSuggestion(false), true
+			}
 			a.respondShellPermission(false, false, false)
 			return a, nil, true
 		}

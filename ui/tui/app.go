@@ -90,6 +90,12 @@ type App struct {
 	questionModal *view.QuestionModal // non-nil while question/ask RPC is pending
 	questionReqID int64               // correlation id of the request shown in questionModal
 
+	// ruleSuggestion backs permModal when permModal.Kind == "lesson_rule" —
+	// not routed through perms (that FIFO's session-allow/tool-always
+	// semantics don't apply here), so it needs its own slot for the typed
+	// payload lesson.rule_respond needs to answer with.
+	ruleSuggestion *rpcclient.RuleSuggestion
+
 	slashPalette  *view.SlashPalette
 	paletteActive bool
 	skillNames    []string // loaded skill names, for "/<name> args" matching

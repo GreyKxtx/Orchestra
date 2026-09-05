@@ -36,7 +36,7 @@
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
 | Orchestra Lead surface | Strict allowlist **14 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
 | CKG v5 | Multi-hop explore (`depth`/`direction`), subgraph cap 1500 tokens, protocol **ToolsVersion 14** | ✅ |
-| Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote` | ✅ |
+| Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote`; single-agent turns that repeat the same anti-pattern 3× on one file offer a human `[y/n]` rule suggestion for `ORCHESTRA.md` | ✅ |
 | LLM fail-fast | Unreachable endpoint (dial / refused / i/o timeout) aborts the turn — no false `prompt too large` compaction loop | ✅ |
 | TUI Subagent Bar | Live child tasks (`child_started` / `child_queued` / `child_done`) | ✅ |
 | Attachments / Vision | Protocol **v13**: images/SVG/PDF, staging `.orchestra/attachments/`, TUI `/attach`, VS Code drag-drop | ✅ |

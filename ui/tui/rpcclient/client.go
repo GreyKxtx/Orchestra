@@ -284,12 +284,13 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 		params["attachments"] = opts.Attachments
 	}
 	var result struct {
-		Usage            *UsageTurnPayload `json:"usage"`
-		Todos            []TodoItem        `json:"todos"`
-		StopReason       string            `json:"stop_reason"`
-		MaxStepsExceeded bool              `json:"max_steps_exceeded"`
-		OpenTodos        int               `json:"open_todos"`
+		Usage            *UsageTurnPayload  `json:"usage"`
+		Todos            []TodoItem         `json:"todos"`
+		StopReason       string             `json:"stop_reason"`
+		MaxStepsExceeded bool               `json:"max_steps_exceeded"`
+		OpenTodos        int                `json:"open_todos"`
 		Memory           *MemoryNotePayload `json:"memory"`
+		RuleSuggestion   *RuleSuggestion    `json:"rule_suggestion"`
 	}
 	err := c.rpc.Call(ctx, "session.message", params, &result)
 	if err != nil {
@@ -300,6 +301,9 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 		}
 		if result.Memory != nil {
 			c.send(Event{Kind: EventTurnMemory, Memory: result.Memory})
+		}
+		if result.RuleSuggestion != nil {
+			c.send(Event{Kind: EventRuleSuggestion, RuleSuggestion: result.RuleSuggestion})
 		}
 		c.send(Event{
 			Kind:       EventTurnTodos,
@@ -314,6 +318,21 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 	}
 	c.send(Event{Kind: EventAgentRunCompleted})
 	return err
+}
+
+// RespondRuleSuggestion answers a RuleSuggestion via lesson.rule_respond:
+// accept appends s.RuleLine to the project's instructions file, decline
+// touches no file. Either way the (dept, file, verify) repeat signal is
+// cleared server-side.
+func (c *Client) RespondRuleSuggestion(ctx context.Context, accept bool, s RuleSuggestion) error {
+	params := map[string]any{
+		"accept":    accept,
+		"dept":      s.Dept,
+		"file":      s.File,
+		"verify":    s.Verify,
+		"rule_line": s.RuleLine,
+	}
+	return c.rpc.Call(ctx, "lesson.rule_respond", params, nil)
 }
 
 // AgentRun calls agent.run on the core (one-shot, no session history).

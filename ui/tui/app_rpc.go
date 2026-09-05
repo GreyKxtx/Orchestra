@@ -194,6 +194,7 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 
 	case rpcclient.EventPendingOps, rpcclient.EventTurnUsage,
 		rpcclient.EventTurnTodos, rpcclient.EventTodosUpdated, rpcclient.EventTurnMemory,
+		rpcclient.EventRuleSuggestion,
 		rpcclient.EventInitialized, rpcclient.EventPermissionRequest,
 		rpcclient.EventQuestionAsked, rpcclient.EventWorkflowStageStart,
 		rpcclient.EventWorkflowStageDone, rpcclient.EventModeRoute,
@@ -441,6 +442,8 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 		}
 	case rpcclient.EventTurnMemory:
 		a.noticeTurnMemory(ev.Memory)
+	case rpcclient.EventRuleSuggestion:
+		a.showRuleSuggestion(ev.RuleSuggestion)
 	case rpcclient.EventInitialized:
 		if ev.LSPStatus != "" {
 			a.chrome.lspStatus = ev.LSPStatus
