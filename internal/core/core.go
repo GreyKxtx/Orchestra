@@ -122,10 +122,12 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		discCtx, discCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		llm.ResolveModelLimits(discCtx, &cfg.LLM)
 		discCancel()
+		logger := llm.NewLogger(rootAbs)
 		llmClient = llm.NewClient(cfg.LLM)
-		if oc, ok := llmClient.(*llm.OpenAIClient); ok {
-			oc.SetLogger(llm.NewLogger(rootAbs))
+		if oc, ok := llm.AsOpenAIClient(llmClient); ok {
+			oc.SetLogger(logger)
 		}
+		llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
 	}
 
 	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).

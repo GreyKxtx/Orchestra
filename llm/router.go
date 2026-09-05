@@ -133,3 +133,6 @@ func MaybeWrapRouter(main Client, reg ProviderRegistry, router RouterConfig) Cli
 	}
 	return NewRouterClient(main, fast, threshold)
 }
+
+// Unwrap exposes the main client (the one callers attached a logger to).
+func (r *RouterClient) Unwrap() Client { return r.Main }

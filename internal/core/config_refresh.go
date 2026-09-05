@@ -76,7 +76,7 @@ func (c *Core) RefreshConfigIfChanged() {
 	// Rebuild the LLM client when the active model/provider changed on disk.
 	if !c.llmClientInjected && !reflect.DeepEqual(oldLLM, fresh.LLM) {
 		client := llm.NewClient(fresh.LLM)
-		if oc, ok := client.(*llm.OpenAIClient); ok {
+		if oc, ok := llm.AsOpenAIClient(client); ok {
 			oc.SetLogger(llm.NewLogger(c.workspaceRoot))
 		}
 		c.llmClient = client

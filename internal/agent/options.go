@@ -453,11 +453,20 @@ type Result struct {
 	StopReason string
 }
 
+// ActiveProviderReporter is implemented by clients that can move between
+// providers mid-run (llm.FallbackClient). Usage records follow the report so
+// the ledger names the provider that actually answered.
+type ActiveProviderReporter interface {
+	ActiveProvider() string
+}
+
 type Agent struct {
-	llm        llm.Client
-	validator  *schema.Validator
-	tools      *tools.Runner
-	opts       Options
+	llm llm.Client
+	// activeProvider is set when llm can move between providers; nil otherwise.
+	activeProvider ActiveProviderReporter
+	validator      *schema.Validator
+	tools          *tools.Runner
+	opts           Options
 	todos      []tools.TodoItem // current turn's working todo list
 	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
 
@@ -540,8 +549,10 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		return nil, fmt.Errorf("tools runner is nil")
 	}
 	ApplyDefaults(&opts)
+	ap, _ := llmClient.(ActiveProviderReporter)
 	return &Agent{
 		llm:                  llmClient,
+		activeProvider:       ap,
 		validator:            v,
 		tools:                toolRunner,
 		opts:                 opts,

@@ -20,6 +20,10 @@ type LLMConfig struct {
 
 	ExtraBody map[string]any `yaml:"extra_body,omitempty"`
 
+	// FallbackProvider names a providers: entry to move to when this endpoint
+	// becomes unreachable. Empty means no failover.
+	FallbackProvider string `yaml:"fallback_provider,omitempty"`
+
 	// Reasoning asks a thinking-capable model to spend budget on reasoning
 	// before answering. It lives on the provider config, not the request, so
 	// that providers.lead and providers.worker can differ.

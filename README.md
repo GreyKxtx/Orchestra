@@ -149,6 +149,15 @@ llm:
   timeout_s: 120
   multimodal: true          # images in chat (TUI /attach, VS Code); needs vision-capable model
 
+# Резервный провайдер: при недоступности эндпоинта ход уходит на providers.backup
+# и там остаётся до конца прогона (переключение пишется в llm_log.jsonl как
+# provider.switch и в usage.jsonl отдельной строкой). Ошибки модели (400/401)
+# резервом не считаются.
+# llm:
+#   fallback_provider: backup
+# providers:
+#   backup: {provider: openrouter, api_base: https://openrouter.ai/api/v1, model: ...}
+
 # Extended thinking. Задаётся на провайдере, поэтому providers.lead и
 # providers.worker могут думать по-разному. Моделям без reasoning в каталоге
 # не отправляется вовсе (иначе 400).

@@ -194,10 +194,12 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	allowBrowserEffective := workflowAllowBrowserFlag
 	usageTracker := newUsageTracker("workflow:"+w.Name, cfg)
 
+	logger := llm.NewLogger(cfg.ProjectRoot)
 	llmClient := llm.NewClient(cfg.LLM)
-	if oc, ok := llmClient.(*llm.OpenAIClient); ok {
-		oc.SetLogger(llm.NewLogger(cfg.ProjectRoot))
+	if oc, ok := llm.AsOpenAIClient(llmClient); ok {
+		oc.SetLogger(logger)
 	}
+	llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
 	llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
 
 	validator, err := schema.NewValidator()
@@ -223,7 +225,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	defer runner.Close()
 
 	var agentLogger *llm.Logger
-	if oc, ok := llmClient.(*llm.OpenAIClient); ok {
+	if oc, ok := llm.AsOpenAIClient(llmClient); ok {
 		agentLogger = oc.GetLogger()
 	}
 	var hooksRunner agent.HooksRunner

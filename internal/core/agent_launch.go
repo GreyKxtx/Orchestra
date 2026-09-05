@@ -161,7 +161,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 
 	var agentLogger *llm.Logger
 	if c.llmClient != nil {
-		if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
+		if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
 			agentLogger = oc.GetLogger()
 		}
 	}
@@ -489,7 +489,7 @@ func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (l
 			provCfg.Model = model
 		}
 		client := llm.NewClient(provCfg)
-		if oc, ok2 := client.(*llm.OpenAIClient); ok2 && logger != nil {
+		if oc, ok2 := llm.AsOpenAIClient(client); ok2 && logger != nil {
 			oc.SetLogger(logger)
 		}
 		return client, provider, provCfg.Model, nil
@@ -498,7 +498,7 @@ func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (l
 		overrideCfg := c.cfg.LLM
 		overrideCfg.Model = model
 		client := llm.NewClient(overrideCfg)
-		if oc, ok := client.(*llm.OpenAIClient); ok && logger != nil {
+		if oc, ok := llm.AsOpenAIClient(client); ok && logger != nil {
 			oc.SetLogger(logger)
 		}
 		return client, providerLabelOf(c.cfg), model, nil

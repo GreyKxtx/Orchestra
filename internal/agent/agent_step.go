@@ -345,11 +345,25 @@ func (a *Agent) recordUsage(u *llm.TokenUsage) {
 	if a.opts.UsageTracker == nil || u == nil {
 		return
 	}
-	a.opts.UsageTracker.RecordCost(a.opts.ProviderLabel, a.opts.ModelLabel,
+	provider := a.providerLabel()
+	a.opts.UsageTracker.RecordCost(provider, a.opts.ModelLabel,
 		u.PromptTokens, u.CompletionTokens, u.CostUSD)
 	if pc, ok := a.opts.UsageTracker.(PromptCacheRecorder); ok {
-		pc.RecordPromptCache(a.opts.ProviderLabel, a.opts.ModelLabel, u.CachedPromptTokens, u.CacheWriteTokens)
+		pc.RecordPromptCache(provider, a.opts.ModelLabel, u.CachedPromptTokens, u.CacheWriteTokens)
 	}
+}
+
+// providerLabel names the provider that answered. It is the configured label
+// unless the client failed over, in which case the standby's name is what
+// belongs in the ledger — attributing a fallback's spend to a provider that
+// was down makes usage.jsonl lie in both directions at once.
+func (a *Agent) providerLabel() string {
+	if a.activeProvider != nil {
+		if name := strings.TrimSpace(a.activeProvider.ActiveProvider()); name != "" {
+			return name
+		}
+	}
+	return a.opts.ProviderLabel
 }
 
 func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {

@@ -147,9 +147,10 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 		overridden = true
 	}
 	if overridden {
-		if oc, ok := childClient.(*llm.OpenAIClient); ok && c.AgentLogger != nil {
+		if oc, ok := llm.AsOpenAIClient(childClient); ok && c.AgentLogger != nil {
 			oc.SetLogger(c.AgentLogger)
 		}
+		childClient = llm.MaybeWrapFallback(childClient, c.Cfg.LLMRegistry(), c.Cfg.LLM, c.AgentLogger)
 		// Preserve router-fallback semantics: the base shared Client passed in
 		// was already wrapped via MaybeWrapRouter by the caller (cli/workflow
 		// run-up). A fresh per-skill client built from provider/model overrides

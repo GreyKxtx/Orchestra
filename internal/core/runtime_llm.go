@@ -86,7 +86,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 
 	if !c.llmClientInjected {
 		client := llm.NewClient(llmCfg)
-		if oc, ok := client.(*llm.OpenAIClient); ok {
+		if oc, ok := llm.AsOpenAIClient(client); ok {
 			_, _ = oc.DiscoverAndApplyLimits(ctx)
 		}
 		c.llmClient = client
@@ -144,7 +144,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 	}
 
 	ctxTokens := 0
-	if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
+	if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
 		ctxTokens = oc.ContextTokens()
 	}
 
@@ -304,7 +304,7 @@ func (c *Core) RuntimeGetLLM(_ RuntimeGetLLMParams) (*RuntimeGetLLMResult, error
 	key := strings.TrimSpace(c.cfg.LLM.APIKey)
 	ctxTok := int(c.cfg.EffectiveNumCtx())
 	discCtx := 0
-	if oc, ok := c.llmClient.(*llm.OpenAIClient); ok {
+	if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
 		discCtx = oc.ContextTokens()
 	}
 	return &RuntimeGetLLMResult{
@@ -436,7 +436,7 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 
 		if !c.llmClientInjected {
 			client := llm.NewClient(c.cfg.LLM)
-			if oc, ok := client.(*llm.OpenAIClient); ok {
+			if oc, ok := llm.AsOpenAIClient(client); ok {
 				_, _ = oc.DiscoverAndApplyLimits(ctx)
 			}
 			c.llmClient = client

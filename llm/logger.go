@@ -184,6 +184,23 @@ func (l *Logger) LogMemoryNote(outcome, source, detail string) {
 	})
 }
 
+// LogProviderSwitch records a failover from one provider to another. A
+// failover that leaves no trace is indistinguishable from a slow day — and
+// the usage ledger from that point on names a provider the config's llm:
+// block never mentions, with nothing to explain why.
+func (l *Logger) LogProviderSwitch(from, to, reason string) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix: time.Now().Unix(),
+		Event:  "provider.switch",
+		Kind:   from,
+		Source: to,
+		Detail: truncateAndSanitize(reason, 512),
+	})
+}
+
 // maxLogBytes caps llm_log.jsonl growth: past the limit the file rotates to
 // llm_log.jsonl.1 (one old generation kept), so the log never grows unbounded.
 const maxLogBytes = 5 << 20 // 5 MB

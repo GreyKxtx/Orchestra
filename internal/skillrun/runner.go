@@ -118,7 +118,7 @@ func (r *Runner) InvokeSkill(ctx context.Context, name, task string) (string, er
 		overridden = true
 	}
 	if overridden {
-		if oc, ok := childClient.(*llm.OpenAIClient); ok && r.agentLogger != nil {
+		if oc, ok := llm.AsOpenAIClient(childClient); ok && r.agentLogger != nil {
 			oc.SetLogger(r.agentLogger)
 		}
 	}

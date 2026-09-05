@@ -418,7 +418,7 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (cus
 					provCfg.Model = def.Model
 				}
 				newClient := llm.NewClient(provCfg)
-				if oc, ok2 := newClient.(*llm.OpenAIClient); ok2 && agentLogger != nil {
+				if oc, ok2 := llm.AsOpenAIClient(newClient); ok2 && agentLogger != nil {
 					oc.SetLogger(agentLogger)
 				}
 				result.llmClient = newClient
@@ -429,7 +429,7 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (cus
 			overrideCfg := c.cfg.LLM
 			overrideCfg.Model = def.Model
 			newClient := llm.NewClient(overrideCfg)
-			if oc, ok := newClient.(*llm.OpenAIClient); ok && agentLogger != nil {
+			if oc, ok := llm.AsOpenAIClient(newClient); ok && agentLogger != nil {
 				oc.SetLogger(agentLogger)
 			}
 			result.llmClient = newClient
