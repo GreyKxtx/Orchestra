@@ -267,6 +267,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case skillResultMsg:
 		return a, a.handleSkillResult(m)
 
+	case memoryOpenDoneMsg:
+		a.handleMemoryOpenDone(m)
+		return a, nil
+
 	case diffRevertResultMsg:
 		return a, a.handleDiffRevertResult(m)
 

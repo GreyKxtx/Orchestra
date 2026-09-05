@@ -257,6 +257,8 @@ const helpText = `Orchestra TUI — клавиши:
   /compact      сжать LLM-контекст сессии
   /rewind       checkpoint rewind (скелет)
   /memory       слои памяти + pinned facts
+  /memory open  открыть ORCHESTRA.md (или fallback) в $EDITOR
+  /memory refresh  что реально инжектировано в последний ход
   /mcp          MCP servers (добавить / edit / test)
   ↑ / ↓         история ввода
   @             mention файла

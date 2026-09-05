@@ -67,6 +67,10 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 		a.chat.SetMessages(a.session.Messages)
 		return cmd
 	}
+	if cmd := a.maybeRunMemoryCommand(text); cmd != nil {
+		a.chat.SetMessages(a.session.Messages)
+		return cmd
+	}
 
 	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
 	a.reasoning.Reset()
