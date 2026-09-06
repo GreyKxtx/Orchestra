@@ -92,3 +92,40 @@ func TestValidateMCP_RejectsUnknownURLScheme(t *testing.T) {
 		t.Fatal("only http and https are transports we can speak")
 	}
 }
+
+func TestValidateMCP_RejectsOAuthAndBearerTokenTogether(t *testing.T) {
+	err := mcpCfg(MCPServerConfig{
+		Name:           "linear",
+		URL:            "https://mcp.linear.app",
+		BearerTokenEnv: "TOKEN_ENV",
+		OAuth:          &MCPServerOAuthConfig{},
+	}).ValidateMCPOnly()
+	if err == nil {
+		t.Fatal("oauth and bearer_token_env together must be rejected")
+	}
+	if !strings.Contains(err.Error(), "linear") {
+		t.Errorf("error must name the server, got: %v", err)
+	}
+}
+
+func TestValidateMCP_RejectsOAuthOnAStdioServer(t *testing.T) {
+	err := mcpCfg(MCPServerConfig{
+		Name:    "local",
+		Command: []string{"npx", "server"},
+		OAuth:   &MCPServerOAuthConfig{},
+	}).ValidateMCPOnly()
+	if err == nil {
+		t.Fatal("oauth on a stdio server must be rejected")
+	}
+}
+
+func TestValidateMCP_AcceptsOAuthOnARemoteServer(t *testing.T) {
+	err := mcpCfg(MCPServerConfig{
+		Name:  "linear",
+		URL:   "https://mcp.linear.app",
+		OAuth: &MCPServerOAuthConfig{ClientID: "abc"},
+	}).ValidateMCPOnly()
+	if err != nil {
+		t.Fatalf("oauth on a remote server must be valid: %v", err)
+	}
+}

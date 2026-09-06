@@ -194,6 +194,35 @@ type MCPServerConfig struct {
 	// (not the prefixed `mcp:server:tool` form). Globs supported via
 	// `path.Match`. Nil/empty = expose every tool. M31 in audit ledger.
 	AllowedTools []string `yaml:"allowed_tools,omitempty"`
+
+	// OAuth configures OAuth 2.1 authorization for this server, selecting
+	// that path instead of BearerTokenEnv (see MCPServerOAuthConfig).
+	// Presence, even `oauth: {}`, selects OAuth; the two are mutually
+	// exclusive — validateMCPTransport rejects both being set. Only valid
+	// on a remote (url:) server: stdio servers have no HTTP requests to
+	// authorize.
+	OAuth *MCPServerOAuthConfig `yaml:"oauth,omitempty"`
+}
+
+// MCPServerOAuthConfig configures OAuth 2.1 (authorization code + PKCE)
+// for a remote MCP server. The token itself never lives here or in the
+// config file — see internal/mcpauth and `orchestra mcp login`.
+type MCPServerOAuthConfig struct {
+	// ClientID, if set, is a preregistered OAuth client id. Empty attempts
+	// Dynamic Client Registration first, matching the order
+	// auth.AuthorizationCodeHandler itself falls back through: Client-ID
+	// Metadata Document, preregistered, DCR.
+	ClientID string `yaml:"client_id,omitempty"`
+	// ClientSecretEnv names the environment variable holding the
+	// preregistered client's secret, if it has one. Only meaningful
+	// together with ClientID; empty means a public client.
+	ClientSecretEnv string `yaml:"client_secret_env,omitempty"`
+	// Scopes are requested explicitly during login. Only takes effect for
+	// Dynamic Client Registration (ClientID empty): the underlying SDK's
+	// AuthorizationCodeHandlerConfig has no field to request scopes when
+	// using a preregistered client — it always derives them from the
+	// server's own WWW-Authenticate challenge or advertised defaults.
+	Scopes []string `yaml:"scopes,omitempty"`
 }
 
 // MCPConfig holds the list of MCP servers to connect to.
@@ -1090,6 +1119,15 @@ func (c *ProjectConfig) validateMCP() error {
 func validateMCPTransport(i int, name string, srv MCPServerConfig) error {
 	url := strings.TrimSpace(srv.URL)
 	hasCommand := len(srv.Command) > 0
+
+	if srv.OAuth != nil {
+		if strings.TrimSpace(srv.BearerTokenEnv) != "" {
+			return fmt.Errorf("mcp.servers[%d] (%q): set either oauth or bearer_token_env, not both", i, name)
+		}
+		if hasCommand || url == "" {
+			return fmt.Errorf("mcp.servers[%d] (%q): oauth requires url (a remote server) — stdio servers have no HTTP requests to authorize", i, name)
+		}
+	}
 
 	switch {
 	case hasCommand && url != "":
