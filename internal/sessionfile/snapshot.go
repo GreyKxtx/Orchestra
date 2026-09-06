@@ -33,6 +33,14 @@ type Snapshot struct {
 	CostUSD     float64       `json:"cost_usd,omitempty"` // session spend (paid providers)
 	// MsgCount supports legacy list UIs; equals len(UIMessages) when unset.
 	MsgCount int `json:"msg_count,omitempty"`
+	// ParentID and ForkedFromIndex record where a forked session branched from.
+	// Additive with omitempty on purpose: LoadFromDisk rejects any snapshot
+	// whose Version differs from the binary's own
+	// (internal/core/session/persist.go:101-103), so bumping the schema would
+	// make files written here unreadable by an older binary, while a field an
+	// older binary does not know is simply ignored by json.Unmarshal.
+	ParentID        string `json:"parent_id,omitempty"`
+	ForkedFromIndex int    `json:"forked_from_index,omitempty"`
 }
 
 // Meta is list-picker metadata without loading full history/ui_messages.
