@@ -250,19 +250,27 @@ func (a *App) sessionsMatchingQuery(query string) ([]sessionstore.SessionMeta, e
 	if err != nil {
 		return nil, err
 	}
-	matched := make(map[string]bool, len(hits))
+	// Build the metas straight from the hits. Search already parsed every
+	// session file to produce them, groups its hits by session, and orders the
+	// groups by UpdatedAt descending — the same order sessionstore.List uses.
+	// Calling List afterwards parsed all of them a second time to learn what
+	// the hits already carry.
+	//
+	// A Hit carries the id, title and update time the picker renders. The
+	// message count and model it would otherwise show stay zero, and the
+	// dialog omits both when they are unset.
+	out := make([]sessionstore.SessionMeta, 0, len(hits))
+	seen := make(map[string]bool, len(hits))
 	for _, h := range hits {
-		matched[h.SessionID] = true
-	}
-	all, err := sessionstore.List(a.cfg.WorkspaceRoot)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]sessionstore.SessionMeta, 0, len(matched))
-	for _, m := range all {
-		if matched[m.ID] {
-			out = append(out, m)
+		if seen[h.SessionID] {
+			continue
 		}
+		seen[h.SessionID] = true
+		out = append(out, sessionstore.SessionMeta{
+			ID:        h.SessionID,
+			Title:     h.Title,
+			UpdatedAt: h.UpdatedAt,
+		})
 	}
 	return out, nil
 }

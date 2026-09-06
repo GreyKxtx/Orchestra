@@ -133,6 +133,10 @@ func TestSessionSearchAndForkCLI(t *testing.T) {
 	if searchErr != nil {
 		t.Fatalf("session search: %v", searchErr)
 	}
+	// The blank line between sessions must not fire for the first one.
+	if strings.HasPrefix(out, "\n") {
+		t.Errorf("search output must not open on a blank line; got:\n%q", out)
+	}
 	idxRe := regexp.MustCompile(`#(\d+)\s+user\s+now do it differently`)
 	m := idxRe.FindStringSubmatch(out)
 	if m == nil {

@@ -193,9 +193,14 @@ func runSessionSearch(cmd *cobra.Command, args []string) error {
 	currentSession := ""
 	for _, h := range hits {
 		if h.SessionID != currentSession {
+			// The blank line separates sessions, so it belongs before every
+			// header except the first — otherwise the output opens on it.
+			if currentSession != "" {
+				fmt.Println()
+			}
 			currentSession = h.SessionID
 			title := strings.ReplaceAll(h.Title, "\n", " ")
-			fmt.Printf("\n%s  %s  (%s)\n", h.SessionID, title, h.UpdatedAt.UTC().Format(time.RFC3339))
+			fmt.Printf("%s  %s  (%s)\n", h.SessionID, title, h.UpdatedAt.UTC().Format(time.RFC3339))
 		}
 		fmt.Printf("  #%-4d %-9s %s\n", h.Index, h.Role, h.Snippet)
 	}
