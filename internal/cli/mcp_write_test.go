@@ -116,6 +116,17 @@ func newMCPCLIFixture(t *testing.T) string {
 	return dir
 }
 
+// appendToOrchestraYML overwrites the fixture's .orchestra.yml with its
+// required base fields plus extra, so a test can add an mcp: block without
+// hand-repeating newMCPCLIFixture's llm: requirements.
+func appendToOrchestraYML(t *testing.T, dir, extra string) {
+	t.Helper()
+	base := "project_root: .\nllm:\n  api_base: http://localhost:1234/v1\n  model: m\n"
+	if err := os.WriteFile(filepath.Join(dir, ".orchestra.yml"), []byte(base+extra), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func execMCP(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	buf := &bytes.Buffer{}
