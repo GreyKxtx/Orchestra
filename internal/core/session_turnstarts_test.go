@@ -118,16 +118,16 @@ func TestMidTurnHistorySnapshot_LeavesTurnBoundariesAlone(t *testing.T) {
 	sess.AppendTurnStart(1)
 	sess.Unlock()
 
-	// Two mid-turn ticks inside the second turn.
+	// Two mid-turn ticks inside the second turn, neither of which rewrote it.
 	persistMidTurnHistory(root, sess, []llm.Message{
 		{Role: llm.RoleAssistant, Content: "a1"},
 		{Role: llm.RoleAssistant, Content: "partial"},
-	})
+	}, false)
 	persistMidTurnHistory(root, sess, []llm.Message{
 		{Role: llm.RoleAssistant, Content: "a1"},
 		{Role: llm.RoleAssistant, Content: "partial"},
 		{Role: llm.RoleTool, Content: "tool"},
-	})
+	}, false)
 
 	sess.Lock()
 	got := sess.TurnStarts()
@@ -139,6 +139,66 @@ func TestMidTurnHistorySnapshot_LeavesTurnBoundariesAlone(t *testing.T) {
 	}
 	if histLen != 3 {
 		t.Fatalf("history = %d, want 3 — the mid-turn snapshot must still persist history", histLen)
+	}
+}
+
+// Invariant 2b: a mid-turn snapshot of a history the turn REWROTE must mark the
+// boundaries, and must persist that marking to disk.
+//
+// Result.HistoryRewritten closes this at turn end, but a turn that compacts at
+// step 1 and is then killed never returns a Result. Between the rewrite and the
+// kill, this path has already written the new array to disk under boundaries
+// recorded for the old one — and those boundaries are typically still IN RANGE
+// against the shortened array, so on the next load fork cuts at them silently
+// and wrongly. That is precisely the failure the boundary array exists to
+// prevent, so the flag has to reach disk here, not only at turn end.
+func TestMidTurnHistorySnapshot_MarksBoundariesUnknown_WhenTheTurnRewroteHistory(t *testing.T) {
+	root := t.TempDir()
+	sess := coresession.NewWithID("mid-turn-rewrite")
+	sess.Lock()
+	sess.AppendTurnStart(0)
+	sess.ReplaceHistory([]llm.Message{
+		{Role: llm.RoleAssistant, Content: "a1"},
+		{Role: llm.RoleTool, Content: "t1"},
+		{Role: llm.RoleAssistant, Content: "a2"},
+	})
+	sess.AppendTurnStart(3)
+	if err := sess.Snapshot(root); err != nil {
+		t.Fatal(err)
+	}
+	sess.Unlock()
+
+	// The turn compacted: the array is now a summary plus a tail, and the
+	// recorded 0 and 3 point into an array that no longer exists.
+	persistMidTurnHistory(root, sess, []llm.Message{
+		{Role: llm.RoleAssistant, Content: "summary of the above"},
+		{Role: llm.RoleAssistant, Content: "partial"},
+	}, true)
+
+	sess.Lock()
+	got := sess.TurnStarts()
+	sess.Unlock()
+
+	if len(got) != 2 {
+		t.Fatalf("TurnStarts = %v, want 2 slots — the array is positional and must keep its length", got)
+	}
+	for i, v := range got {
+		if v != sessionfile.TurnStartUnknown {
+			t.Fatalf("TurnStarts[%d] = %d, want %d — a boundary into a rewritten array still cuts, "+
+				"and cuts wrong", i, v, sessionfile.TurnStartUnknown)
+		}
+	}
+
+	// The whole point is crash recovery, so the marking has to be on disk.
+	loaded, err := sessionfile.Load(root, "mid-turn-rewrite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range loaded.TurnStarts {
+		if v != sessionfile.TurnStartUnknown {
+			t.Fatalf("on-disk turn_starts[%d] = %d, want %d — the snapshot that survives the kill "+
+				"is the one that matters", i, v, sessionfile.TurnStartUnknown)
+		}
 	}
 }
 

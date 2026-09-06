@@ -467,12 +467,15 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// goroutine, so lastStepPersist needs no lock.
 	const stepPersistInterval = 5 * time.Second
 	var lastStepPersist time.Time
-	launch.Opts.OnStepHistory = func(_ int, hist []llm.Message) {
+	// The throttle is safe against the rewrite flag: it can only skip a write,
+	// and the flag is cumulative for the turn, so the next tick that does write
+	// still carries it.
+	launch.Opts.OnStepHistory = func(_ int, hist []llm.Message, rewritten bool) {
 		if time.Since(lastStepPersist) < stepPersistInterval {
 			return
 		}
 		lastStepPersist = time.Now()
-		persistMidTurnHistory(c.workspaceRoot, sess, hist)
+		persistMidTurnHistory(c.workspaceRoot, sess, hist, rewritten)
 	}
 
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
@@ -585,17 +588,32 @@ func persistSessionPendingFromEvent(workspaceRoot string, sess *coresession.Sess
 // persistMidTurnHistory writes partial-turn history to disk so a crash mid-turn
 // loses at most a few seconds of LLM work.
 //
-// It deliberately does NOT touch the session's turn boundaries. The history it
-// writes is a turn in progress, whose boundary SessionMessage already recorded
-// when the turn started; appending here would invent a turn per tick, and
-// recomputing here would place the current turn's boundary at the partial
-// content's end.
-func persistMidTurnHistory(workspaceRoot string, sess *coresession.Session, hist []llm.Message) {
+// On an APPENDING turn it deliberately does not touch the session's turn
+// boundaries. The history it writes is a turn in progress, whose boundary
+// SessionMessage already recorded when the turn started; appending here would
+// invent a turn per tick, and recomputing here would place the current turn's
+// boundary at the partial content's end.
+//
+// When rewritten is true the turn has replaced the history array wholesale —
+// compaction, or the truncation fallback — and every recorded index now points
+// into an array that no longer exists, so every entry is marked unknown, the
+// same invalidation persistSessionTurn applies at turn end.
+//
+// Doing it here and not only at turn end is the whole point: a turn that
+// rewrites at step 1 and is then killed never returns a *agent.Result, and by
+// then this function has already written the new array to disk beside the old
+// boundaries. Those boundaries usually survive the bounds check against the
+// shortened array, so on the next load fork cuts at them silently and wrongly —
+// the exact defect TurnStarts exists to prevent.
+func persistMidTurnHistory(workspaceRoot string, sess *coresession.Session, hist []llm.Message, rewritten bool) {
 	if sess == nil {
 		return
 	}
 	sess.Lock()
 	sess.ReplaceHistory(hist)
+	if rewritten {
+		sess.SetTurnStarts(sessionfile.MarkTurnStartsUnknown(sess.TurnStarts()))
+	}
 	snapErr := sess.Snapshot(workspaceRoot)
 	sess.Unlock()
 	if snapErr != nil {

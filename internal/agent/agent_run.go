@@ -101,13 +101,19 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// tool step, hand the caller a copy of the accumulated history so a
 	// crash/kill mid-turn loses at most one step of LLM work, not the whole
 	// turn. Hook panics must not kill the loop.
+	//
+	// The rewrite flag is read here, inside the one closure both call sites go
+	// through, rather than passed in by them: a call site that had to remember
+	// to forward it is a call site that can forget, and forgetting means the
+	// caller persists a rewritten array under indices recorded for the old one.
 	notifyStepHistory := func(h []llm.Message) {
 		if a.opts.OnStepHistory == nil {
 			return
 		}
 		snap := append([]llm.Message(nil), h...)
 		step := steps
-		safeRun("OnStepHistory", func() { a.opts.OnStepHistory(step, snap) })
+		rewritten := historyRewritten
+		safeRun("OnStepHistory", func() { a.opts.OnStepHistory(step, snap, rewritten) })
 	}
 
 	for steps < a.opts.MaxSteps {

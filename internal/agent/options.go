@@ -266,7 +266,16 @@ type Options struct {
 	// (crash recovery, resilience audit P2). Called synchronously from the
 	// agent loop — implementations must be fast and/or throttled. The slice
 	// is a fresh copy; the callback may retain it.
-	OnStepHistory func(step int, history []llm.Message)
+	//
+	// historyRewritten carries the same meaning as Result.HistoryRewritten,
+	// for the same run, up to this point: true once this turn has replaced the
+	// history array wholesale rather than appending to it. It is on the
+	// callback and not only on the Result because a turn that rewrites at step
+	// 1 and is then killed never returns a Result — and by then this hook has
+	// already written the new array to disk beside indices recorded for the
+	// old one. A caller that persists history and holds indices into it must
+	// invalidate them here too.
+	OnStepHistory func(step int, history []llm.Message, historyRewritten bool)
 
 	// AgentLogger, if non-nil, writes tool_call / tool_result events to llm_log.jsonl.
 	AgentLogger *llm.Logger

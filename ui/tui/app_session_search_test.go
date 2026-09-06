@@ -145,3 +145,62 @@ func TestParseSessionsQuery(t *testing.T) {
 		}
 	}
 }
+
+// The filtered picker must render the same columns as the unfiltered one.
+// dialog_sessions.go:155-160 draws "· N msgs" and "· model" only when they are
+// non-zero, so metas built from search hits that dropped them lose two columns
+// silently — the rows just look different from the ones /sessions shows.
+func TestSessionsMatchingQuery_KeepsTheColumnsThePickerRenders(t *testing.T) {
+	a := testChromeApp(t)
+	root := t.TempDir()
+	a.cfg.WorkspaceRoot = root
+
+	saveSessionFixtureWithModel(t, root, "20260901T100000-aaaa", "wiring auth", "claude-opus-5",
+		time.Now().Add(-time.Hour), []sessionfile.UIMessage{
+			{Role: "user", Text: "wire the bearer token"},
+			{Role: "assistant", Text: "authTransport sets the header"},
+			{Role: "user", Text: "thanks"},
+		})
+
+	metas, err := a.sessionsMatchingQuery("bearer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("metas = %d, want 1", len(metas))
+	}
+	if metas[0].MsgCount != 3 {
+		t.Errorf("MsgCount = %d, want 3 — the filtered row drops \"· N msgs\"", metas[0].MsgCount)
+	}
+	if metas[0].Model != "claude-opus-5" {
+		t.Errorf("Model = %q, want %q — the filtered row drops the model",
+			metas[0].Model, "claude-opus-5")
+	}
+}
+
+// saveSessionFixtureWithModel is saveSessionFixture plus the model field, which
+// the picker renders and Save does not invent.
+func saveSessionFixtureWithModel(t *testing.T, root, id, title, model string, updated time.Time, msgs []sessionfile.UIMessage) {
+	t.Helper()
+	snap := &sessionfile.Snapshot{
+		Version:    sessionfile.Version,
+		ID:         id,
+		Title:      title,
+		Model:      model,
+		UIMessages: msgs,
+		CreatedAt:  updated,
+		UpdatedAt:  updated,
+		MsgCount:   len(msgs),
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".orchestra", "sessions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

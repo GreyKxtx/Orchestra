@@ -180,13 +180,14 @@ Semantics, chosen so that "try step 7 differently" reads naturally:
 - `uiIndex == 0` → error. The branch would contain nothing.
 - `uiIndex` out of range, or not a user message → error naming the actual role.
 - No recorded turn boundary for the requested turn → error saying the session has
-  none: it predates the feature, or `/compact` rewrote its history. Rewind's
-  fallback in this situation is to keep the entire history; for a fork that same
-  fallback would produce a "branch" that still contains everything it was supposed
-  to branch away from. A refusal the user can act on beats a branch that looks
-  right and is not.
-  > **Amended.** The original wording named compaction as *the* cause, which was
-  > exactly backwards — see the amendment.
+  none. The cause is that the session **predates the feature**: its turns were
+  taken by a binary that recorded nothing. Rewind's fallback in this situation is
+  to keep the entire history; for a fork that same fallback would produce a
+  "branch" that still contains everything it was supposed to branch away from. A
+  refusal the user can act on beats a branch that looks right and is not.
+  > **Amended.** This bullet used to name `/compact` as a cause too. It is not:
+  > a rewrite marks the slot, it never removes it — see the next bullet and
+  > "Amendment: mark, do not clear".
 - The requested turn's boundary is **unknown** (`TurnStartUnknown`) → error naming
   that turn and saying its history was rewritten underneath it. Distinct from
   the case above: the session still has boundaries, and its other turns are
@@ -359,8 +360,12 @@ place it can go stale, and each has a test:
    `len(history)` when a user turn begins. Not at turn end: the `OnStepHistory`
    mid-turn snapshot replaces history with **partial-turn** content, so a
    turn-end computation would be wrong for every turn during which one fired.
-2. **Mid-turn snapshots do not append.** `persistMidTurnHistory` writes history
-   and nothing else. Appending there would invent a turn per five-second tick.
+2. **Mid-turn snapshots do not append — but they do invalidate.**
+   `persistMidTurnHistory` never appends a boundary: that would invent a turn
+   per five-second tick. It does mark every entry unknown when the turn has
+   already replaced the history array.
+   > **Amended.** It used to write history and nothing else. See "Amendment:
+   > the mid-turn snapshot carries the rewrite signal too" below.
 3. **Compaction marks them unknown.** `SessionCompact` rewrites history
    wholesale, so every recorded index points into an array that no longer
    exists. `applyCompactedHistory` sets every existing entry to
@@ -447,6 +452,38 @@ already recorded, and nothing after them.
 stays **v4**. Sessions written by the previous build carry shorter,
 sentinel-free arrays; they keep working and simply refuse for the turns they
 have no entry for.
+
+### Amendment: the mid-turn snapshot carries the rewrite signal too
+
+`Result.HistoryRewritten` closes the rewrite hole only for turns that **return
+a Result**. A turn that compacts at step 1 and is then killed — `Ctrl+C`,
+crash, OOM — returns nothing, and by then the five-second mid-turn snapshot has
+already written the rewritten array to disk beside boundaries recorded for the
+old one.
+
+Those boundaries do not fail loudly. Compaction shortens history, so the
+earlier entries typically stay **in range** against the new array — and an
+in-range stale index cuts. On the next load the session opens with a history it
+cannot be forked from correctly, and nothing says so.
+
+So the signal travels on the hook as well as on the Result:
+
+```go
+OnStepHistory func(step int, history []llm.Message, historyRewritten bool)
+```
+
+The flag is read inside `notifyStepHistory`, the single closure both call sites
+go through, rather than passed in by each of them: a call site that has to
+remember to forward it is a call site that can forget. It is cumulative for the
+turn, exactly like `Result.HistoryRewritten` — once the array has been
+replaced, every later snapshot is a snapshot of the new one. The core's
+five-second throttle is safe against it for the same reason: skipping a write
+cannot lose the flag, only delay it to the next write.
+
+`persistMidTurnHistory` then applies the same invalidation `persistSessionTurn`
+applies at turn end — `MarkTurnStartsUnknown` over every entry, length
+preserved — and the marking reaches disk in the same snapshot as the history it
+describes, which is the only version a kill leaves behind.
 
 ### Testing
 

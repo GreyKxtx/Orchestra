@@ -223,3 +223,106 @@ type compactBoom struct{}
 func (compactBoom) Error() string { return "compaction exploded" }
 
 var errCompactBoom = compactBoom{}
+
+// The Result is not enough. A turn that rewrites history at step 1 and is then
+// KILLED — Ctrl+C, crash, OOM — never produces a Result at all, yet the
+// five-second mid-turn snapshot has already written the rewritten array to
+// disk beside the boundaries recorded for the OLD one. Those boundaries are
+// still in range, so they cut silently and wrongly on the next load. The
+// OnStepHistory hook is the only place that failure can be closed, so it
+// carries the same invalidation signal the Result does.
+//
+// The flag is cumulative for the turn, exactly like Result.HistoryRewritten:
+// once an array has been replaced, every later snapshot of it is a snapshot of
+// the new array.
+type rewriteThenToolLLM struct {
+	rewriteLLM
+	stepCalls int
+}
+
+func (l *rewriteThenToolLLM) Complete(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	for _, m := range req.Messages {
+		if m.Role == llm.RoleSystem && strings.Contains(m.Content, "Context Manager") {
+			return l.rewriteLLM.Complete(ctx, req)
+		}
+	}
+	l.stepCalls++
+	if l.stepCalls == 1 {
+		// One tool step, so the mid-turn hook actually fires.
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: `{"type":"tool_call","tool":{"name":"bash","input":{"command":"echo","args":["hello"]}}}`,
+		}}, nil
+	}
+	return &llm.CompleteResponse{Message: llm.Message{
+		Role:    llm.RoleAssistant,
+		Content: `{"type":"final","final":{"patches":[]}}`,
+	}}, nil
+}
+
+func runWithStepHistorySink(t *testing.T, client llm.Client, opts Options) []bool {
+	t.Helper()
+	dir := t.TempDir()
+	runner, err := tools.NewRunner(dir, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen []bool
+	opts.OnStepHistory = func(_ int, _ []llm.Message, rewritten bool) {
+		seen = append(seen, rewritten)
+	}
+	ag, err := New(client, v, runner, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ag.Run(context.Background(), bulkyHistory(), "keep going"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(seen) == 0 {
+		t.Fatal("OnStepHistory never fired; the run took no tool step and proves nothing")
+	}
+	return seen
+}
+
+func TestOnStepHistory_ReportsHistoryRewritten_AfterAMidTurnCompaction(t *testing.T) {
+	client := &rewriteThenToolLLM{rewriteLLM: rewriteLLM{compactSummary: "short summary"}}
+	seen := runWithStepHistorySink(t, client, Options{
+		MaxSteps:            4,
+		MaxPromptBytes:      4000,
+		CompactThresholdPct: 60,
+		ForceCompactOnce:    true,
+	})
+	if client.compactionCalls == 0 {
+		t.Fatal("compaction never ran; the test would pass for the wrong reason")
+	}
+	for i, rewritten := range seen {
+		if !rewritten {
+			t.Fatalf("OnStepHistory call %d reported rewritten=false after compaction replaced "+
+				"history — the mid-turn snapshot persists the new array under the old turn "+
+				"boundaries, and a kill at that moment leaves fork cutting at a stale index", i)
+		}
+	}
+}
+
+func TestOnStepHistory_DoesNotReportHistoryRewritten_ForAPlainTurn(t *testing.T) {
+	client := &rewriteThenToolLLM{rewriteLLM: rewriteLLM{compactSummary: "short summary"}}
+	seen := runWithStepHistorySink(t, client, Options{
+		MaxSteps:            4,
+		CompactThresholdPct: -1, // compaction disabled entirely
+	})
+	if client.compactionCalls != 0 {
+		t.Fatalf("compaction fired %d time(s) with compaction disabled", client.compactionCalls)
+	}
+	for i, rewritten := range seen {
+		if rewritten {
+			t.Fatalf("OnStepHistory call %d reported rewritten=true on an append-only turn — "+
+				"the core would blank turn boundaries that are still valid, disabling fork", i)
+		}
+	}
+}
