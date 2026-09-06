@@ -30,7 +30,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/orchestra", "planner + worker tiers"},
 	{"/quit", "выйти из Orchestra TUI"},
 	{"/rewind", "checkpoint rewind (скелет)"},
-	{"/sessions", "сохранённые сессии"},
+	{"/sessions", "сохранённые сессии · /sessions <текст> — поиск по сообщениям"},
 	{"/shell", "права на shell: ask ↔ allow"},
 	{"/skill", "запустить skill"},
 	{"/skills", "список skills"},

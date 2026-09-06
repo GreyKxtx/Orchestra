@@ -288,6 +288,12 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		dismissWelcome()
 		return a.runMCPPrompt(server, name, args)
 	}
+	// `/sessions <query>` filters the picker by message text. The bare form
+	// keeps its existing case below, so today's behaviour is untouched.
+	if query, ok := parseSessionsQuery(cmd); ok {
+		a.openSessionsDialogFiltered(query)
+		return nil
+	}
 	switch cmd {
 	case "/help":
 		dismissWelcome()
@@ -364,4 +370,18 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		return tea.Quit
 	}
 	return nil
+}
+
+// parseSessionsQuery splits "/sessions <query>" into its query. The bare
+// "/sessions" returns ok=false so it falls through to the plain picker.
+func parseSessionsQuery(cmd string) (string, bool) {
+	rest, ok := strings.CutPrefix(cmd, "/sessions ")
+	if !ok {
+		return "", false
+	}
+	query := strings.TrimSpace(rest)
+	if query == "" {
+		return "", false
+	}
+	return query, true
 }

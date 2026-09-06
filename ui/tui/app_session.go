@@ -239,3 +239,47 @@ func (a *App) openSessionsDialog() {
 	}
 	a.dialogStack = append(a.dialogStack, view.NewSessionsDialog(metas))
 }
+
+// sessionsMatchingQuery returns the metadata of sessions whose message text
+// contains query, preserving ListMeta's most-recently-updated-first order.
+func (a *App) sessionsMatchingQuery(query string) ([]sessionstore.SessionMeta, error) {
+	hits, err := sessionfile.Search(a.cfg.WorkspaceRoot, sessionfile.SearchOptions{
+		Query:       query,
+		Insensitive: true, // typing a filter in a picker is not a case-sensitive act
+	})
+	if err != nil {
+		return nil, err
+	}
+	matched := make(map[string]bool, len(hits))
+	for _, h := range hits {
+		matched[h.SessionID] = true
+	}
+	all, err := sessionstore.List(a.cfg.WorkspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sessionstore.SessionMeta, 0, len(matched))
+	for _, m := range all {
+		if matched[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// openSessionsDialogFiltered opens the session picker seeded with only the
+// sessions whose text matches query. The dialog itself is unchanged — it
+// already accepts a prepared list, and its own fuzzy filter over titles keeps
+// working on top of the narrowed set.
+func (a *App) openSessionsDialogFiltered(query string) {
+	metas, err := a.sessionsMatchingQuery(query)
+	if err != nil {
+		a.showToast("поиск по сессиям: " + err.Error())
+		return
+	}
+	if len(metas) == 0 {
+		a.showToast("ничего не найдено: " + query)
+		return
+	}
+	a.dialogStack = append(a.dialogStack, view.NewSessionsDialog(metas))
+}
