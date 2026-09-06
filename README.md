@@ -235,9 +235,16 @@ mcp:
       bearer_token_env: GITHUB_MCP_TOKEN   # token is read from the environment, not the config
       headers: {X-Tenant: acme}
       allowed_tools: ["repo_*"]
+
+    # Remote server — OAuth 2.1 (PKCE + Dynamic Client Registration)
+    - name: linear
+      url: https://mcp.linear.app
+      oauth: {}   # empty block: attempt Dynamic Client Registration
 ```
 
 A server must set exactly one of `command` or `url` — otherwise the config fails to load. Plaintext `http://` to a non-loopback host is rejected (the token would go over the network in the clear); if that's an internal network and you want it anyway, set `allow_insecure_http: true`.
+
+A server with an `oauth:` block authenticates via OAuth 2.1 instead of `bearer_token_env` — the two are mutually exclusive. Run `orchestra mcp login <name>` once to authorize (opens a browser); the token is stored under `~/.orchestra/mcp-oauth/<name>.json` and silently refreshed on every later run. `orchestra mcp logout <name>` removes it. `oauth:` only works with `url:` (OAuth authorizes HTTP requests; stdio servers have none to authorize).
 
 ### Secrets: `.orchestra.local.yml`
 
