@@ -51,11 +51,21 @@ type Snapshot struct {
 	// messages in History therefore maps onto nothing the UI can see.
 	//
 	// For a session recorded from its first turn, TurnStarts[0] == 0. The
-	// field is absent on sessions written before it existed and is cleared by
-	// /compact, which rewrites History wholesale; both cases mean "no
-	// boundaries", and fork refuses rather than guess. Additive with
-	// omitempty for the same reason as ParentID above — the schema stays at
-	// version 4.
+	// field is absent on sessions written before it existed, and fork refuses
+	// rather than guess wherever it has no entry.
+	//
+	// The array is POSITIONAL and every writer must keep it that way: exactly
+	// one slot per user turn, because that is how fork and rewind reach into
+	// it (they count user messages in UIMessages). A turn whose History was
+	// rewritten underneath it — /compact, or a turn interrupted after the
+	// agent compacted mid-run — keeps its slot and carries TurnStartUnknown
+	// rather than being removed; removing it would shift every later turn and
+	// silently break the mapping for the rest of the session.
+	//
+	// Additive with omitempty for the same reason as ParentID above — the
+	// schema stays at version 4. Sessions written by earlier builds carry
+	// shorter, sentinel-free arrays and keep working: they refuse for the
+	// turns they have no entry for.
 	TurnStarts []int `json:"turn_starts,omitempty"`
 }
 

@@ -187,6 +187,10 @@ Semantics, chosen so that "try step 7 differently" reads naturally:
   right and is not.
   > **Amended.** The original wording named compaction as *the* cause, which was
   > exactly backwards — see the amendment.
+- The requested turn's boundary is **unknown** (`TurnStartUnknown`) → error naming
+  that turn and saying its history was rewritten underneath it. Distinct from
+  the case above: the session still has boundaries, and its other turns are
+  still forkable. See "Amendment: mark, do not clear".
 
 ### Lineage
 
@@ -357,17 +361,21 @@ place it can go stale, and each has a test:
    turn-end computation would be wrong for every turn during which one fired.
 2. **Mid-turn snapshots do not append.** `persistMidTurnHistory` writes history
    and nothing else. Appending there would invent a turn per five-second tick.
-3. **Compaction clears them.** `SessionCompact` rewrites history wholesale, so
-   every recorded index points into an array that no longer exists.
-   `applyCompactedHistory` clears the field, and fork then refuses honestly.
+3. **Compaction marks them unknown.** `SessionCompact` rewrites history
+   wholesale, so every recorded index points into an array that no longer
+   exists. `applyCompactedHistory` sets every existing entry to
+   `TurnStartUnknown`, and fork then refuses honestly *for those turns*.
+   > **Amended.** It used to *clear* the field. See "Amendment: mark, do not
+   > clear" below.
 4. **Rewind truncates them**, alongside ui and history.
-5. **A turn that ends without a `*agent.Result` clears them.** The core
+5. **A turn that ends without a `*agent.Result` marks them unknown.** The core
    persists a failed turn's history on purpose (`session_rpc.go`), and every
    error return in the agent loop yields `(history, nil, err)` — so a turn
    that compacted at step N and was cancelled at step N+1 would install a
    rewritten array under the old boundaries. `res == nil` means we cannot
-   know, and clearing is the honest answer; the cost is that a cancelled turn
-   ends fork for that session, exactly as `/compact` does.
+   know, so `persistSessionTurn` marks every entry unknown.
+   > **Amended.** It used to *clear* the field, which ended forking for the
+   > whole session. See below.
 6. **`RefreshFromDiskIfNewer` copies them.** It copies field by field, and
    `SessionMessage` refreshes immediately before a turn — a field it forgets
    goes stale exactly when the history beside it changes.
@@ -396,6 +404,49 @@ precisely because the prompt itself never lives in history.
 Rewind keeps its conservative fallback because it is destructive. Fork refuses
 instead, because for a fork the same fallback would produce a branch containing
 everything it was meant to branch away from.
+
+### Amendment: mark, do not clear
+
+Clearing the array was safe and unusable. `TurnStarts` is **positional** —
+entry `k` describes user turn `k+1`, and fork and rewind reach it by counting
+user messages in `UIMessages`, which keeps growing. Emptying the array while
+the UI keeps growing means `k` permanently outruns `len(turnStarts)`, so
+`TurnStartAt` refuses for the *rest of the session*. One `Ctrl+C` on a turn
+that had compacted mid-run therefore killed fork for that session for good, and
+so did one `/compact`.
+
+The array now keeps **one slot per user turn**, always. The invalidated slots
+carry `sessionfile.TurnStartUnknown` (`-1`); `TurnStartAt` refuses on that value
+with a message naming *that turn*, and keeps answering for every other turn.
+The next turn appends a real boundary into the slot fork looks in, so a session
+is forkable again from the first turn recorded after the rewrite.
+
+**Which entries each site invalidates — all of them, in both.** This is not
+symmetry for its own sake:
+
+- `/compact` runs between turns and rewrites everything before it, so every
+  existing entry is meaningless.
+- A **mid-turn** rewrite is *not* local to the running turn either.
+  `compactHistory` replaces the array with a summary plus a verbatim tail, and
+  the truncation fallback drops atoms off the **front**
+  (`agent_run.go`: the compaction branch, both convergence-failure branches,
+  and `recoverFromOverflow`). Marking only the current turn would leave the
+  earlier entries small enough to stay **in range** against the shortened
+  array — and an in-range stale index still cuts. Concretely: turns at
+  `0/10/100` in a 100-message history, compacted to ~51; entry `100` falls out
+  of range and refuses on its own, but entry `10` "resolves" into the middle of
+  the summary and hands back a silently wrong branch. That is the exact defect
+  the boundary array exists to prevent, so a partial mark would have reopened
+  it. `TestSessionMessage_ARewritingTurnInvalidatesTheEARLIERBoundariesToo`
+  pins this down.
+
+The cost is bounded and no longer permanent: a rewrite invalidates the turns
+already recorded, and nothing after them.
+
+**Compatibility.** The field stays additive with `omitempty` and the schema
+stays **v4**. Sessions written by the previous build carry shorter,
+sentinel-free arrays; they keep working and simply refuse for the turns they
+have no entry for.
 
 ### Testing
 

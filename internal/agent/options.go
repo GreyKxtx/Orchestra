@@ -479,7 +479,11 @@ type Result struct {
 	// branch, and rewind, which is destructive and persists, permanently
 	// discards history a correct cut would have kept. Any consumer holding
 	// history indices MUST treat them as invalid when this is true;
-	// internal/core.persistSessionTurn clears TurnStarts on it.
+	// internal/core.persistSessionTurn marks every TurnStarts entry
+	// sessionfile.TurnStartUnknown on it — every entry, because the rewrite is
+	// not local to the running turn: compaction replaces the array with a
+	// summary plus a tail, and the truncation fallback drops entries off the
+	// front, so the turns BEFORE this one lose their meaning too.
 	//
 	// Deliberately NOT named "Compacted": the truncation fallback is not
 	// compaction, yet it invalidates indices just the same. A name mentioning

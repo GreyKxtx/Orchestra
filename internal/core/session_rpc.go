@@ -603,20 +603,29 @@ func persistMidTurnHistory(workspaceRoot string, sess *coresession.Session, hist
 	}
 }
 
-// applyCompactedHistory installs a compacted history and drops every recorded
-// turn boundary with it.
+// applyCompactedHistory installs a compacted history and marks every recorded
+// turn boundary unknown.
 //
 // Compaction rewrites history wholesale — internal/agent/compact.go replaces
-// the whole array with a summary — so every recorded index points into an
-// array that no longer exists. Keeping them would make fork and rewind cut at
-// a position that means nothing; clearing them makes fork refuse honestly and
-// rewind fall back to its pre-boundary behaviour.
+// the array with a summary plus a verbatim tail — so every index recorded
+// before it points into an array that no longer exists. Keeping them would
+// make fork and rewind cut at a position that means nothing; marking them
+// makes fork refuse honestly and rewind fall back to its pre-boundary
+// behaviour.
+//
+// Marked rather than cleared, because TurnStarts is positional: entry k
+// describes user turn k+1 and is reached by counting user messages in the UI
+// projection, which /compact does not touch. Clearing left the array
+// permanently shorter than that count, so every turn AFTER the compaction
+// failed to resolve too and the session lost forking for good. The slots stay,
+// the turns the compaction ran under refuse by name, and the next turn appends
+// a real boundary that resolves. See sessionfile.TurnStartUnknown.
 func applyCompactedHistory(sess *coresession.Session, compacted []llm.Message) {
 	if sess == nil {
 		return
 	}
 	sess.ReplaceHistory(compacted)
-	sess.SetTurnStarts(nil)
+	sess.SetTurnStarts(sessionfile.MarkTurnStartsUnknown(sess.TurnStarts()))
 }
 
 func countOpenTodoItems(todos []tools.TodoItem) int {
@@ -650,12 +659,24 @@ func (c *Core) persistSessionTurn(
 		// bounds-checked downstream, so a stale index still cuts — which is
 		// worse than not cutting at all: fork hands back a silently wrong
 		// branch, and rewind (destructive and persisted) discards history a
-		// correct cut would have kept. Dropping them in the same locked
+		// correct cut would have kept. Marking them in the same locked
 		// section that installs the rewritten history makes fork refuse
 		// honestly and rewind fall back to its pre-boundary behaviour.
-		// SessionCompact clears them the same way for the compaction it
+		// SessionCompact marks them the same way for the compaction it
 		// drives itself (applyCompactedHistory); this covers the compaction
 		// and truncation the agent performs mid-turn, which never reach it.
+		//
+		// EVERY existing entry is marked, not just this turn's. The agent's
+		// mid-turn rewrite is not local to the current turn: compactHistory
+		// replaces the array with a summary plus a tail, and the truncation
+		// fallback drops entries off the FRONT (agent_run.go: the compaction
+		// branch, both convergence-failure branches, and recoverFromOverflow).
+		// Marking only the current turn would leave the earlier entries
+		// in-range against the shortened array and therefore still cutting —
+		// e.g. turns at 0/3/6 in a 9-message history, compacted to 4 messages:
+		// entry 6 falls out of range and refuses, but entry 3 still "resolves"
+		// into the summary, which is exactly the silently wrong branch this
+		// rule exists to prevent.
 		//
 		// res == nil means we have NO information: every error return in the
 		// agent loop yields (history, nil, err) — cancellation, an unreachable
@@ -664,18 +685,13 @@ func (c *Core) persistSessionTurn(
 		// failed turn's history deliberately (see the comment at the call
 		// site), so a turn that compacted at step N and then died at step N+1
 		// hands us a rewritten array with no way to learn that it was
-		// rewritten. Clearing is the conservative answer, and it is not free:
-		// later turns do record boundaries again, but an array short by the
-		// turns that were dropped no longer lines up with the user-message
-		// count fork maps through, so TurnStartAt refuses for the rest of the
-		// session — the same cost /compact already carries. A cancelled turn
-		// therefore ends fork for that session. That is the trade this design
-		// takes everywhere: an honest refusal over a silently wrong cut, and
-		// over permanent history loss for rewind. Cancellation is also the
-		// likeliest way for a turn to end right after a mid-turn compaction,
-		// so it is the case that needs the rule most, not collateral damage.
+		// rewritten. Marking is the conservative answer, and unlike the
+		// clearing it replaces it costs only the turns already recorded: the
+		// array keeps one slot per user turn, so the next turn's boundary
+		// lands in the slot fork looks in and the session is forkable again
+		// from there. An interrupted turn no longer ends forking for good.
 		if res == nil || res.HistoryRewritten {
-			sess.SetTurnStarts(nil)
+			sess.SetTurnStarts(sessionfile.MarkTurnStartsUnknown(sess.TurnStarts()))
 		}
 	}
 	if res != nil {

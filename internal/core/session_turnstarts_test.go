@@ -47,11 +47,11 @@ func (l *turnStartObserverLLM) Complete(context.Context, llm.CompleteRequest) (*
 // leave the session with history it could never map.
 //
 // It is observed from inside the turn rather than after it, because a turn that
-// ends without an *agent.Result now clears the boundaries on the way out
+// ends without an *agent.Result now marks the boundaries unknown on the way out
 // (persistSessionTurn: res == nil means we cannot know whether the run rewrote
-// history, and a stale boundary is worse than none — see
-// TestSessionMessage_ClearsTurnBoundaries_WhenARewritingTurnThenFails). The
-// recording itself is unchanged; only what survives a resultless turn is.
+// history, and a stale boundary is worse than an admitted-unknown one — see
+// TestSessionMessage_MarksTurnBoundariesUnknown_WhenARewritingTurnThenFails).
+// The recording itself is unchanged; only what survives a resultless turn is.
 func TestSessionMessage_RecordsTheTurnBoundaryBeforeTheTurnRuns(t *testing.T) {
 	root := t.TempDir()
 	client := &turnStartObserverLLM{}
@@ -143,9 +143,10 @@ func TestMidTurnHistorySnapshot_LeavesTurnBoundariesAlone(t *testing.T) {
 }
 
 // Invariant 3: compaction rewrites history wholesale, so every recorded index
-// points into an array that no longer exists. Clearing is the only honest
-// answer — after a compaction fork refuses instead of guessing.
-func TestCompactedHistory_ClearsTurnBoundaries(t *testing.T) {
+// points into an array that no longer exists. Every EXISTING entry is marked
+// unknown — fork refuses at those turns instead of guessing — but the slots
+// stay, so the turns that follow the compaction line up again.
+func TestCompactedHistory_MarksEveryTurnBoundaryUnknown(t *testing.T) {
 	sess := coresession.NewWithID("compacted")
 	sess.Lock()
 	sess.AppendTurnStart(0)
@@ -165,11 +166,32 @@ func TestCompactedHistory_ClearsTurnBoundaries(t *testing.T) {
 	histLen := len(sess.CopyHistory())
 	sess.Unlock()
 
-	if got != nil {
-		t.Fatalf("TurnStarts = %v, want nil — compaction invalidates every boundary", got)
+	if len(got) != 2 {
+		t.Fatalf("TurnStarts = %v, want 2 entries — compaction invalidates every boundary but must not "+
+			"shorten the array; the length is its alignment with the UI's user turns", got)
+	}
+	for i, v := range got {
+		if v != sessionfile.TurnStartUnknown {
+			t.Fatalf("TurnStarts = %v: entry %d = %d, want the unknown sentinel", got, i, v)
+		}
 	}
 	if histLen != 1 {
 		t.Fatalf("history = %d, want 1 (the compacted summary)", histLen)
+	}
+
+	// The next turn records a real boundary in the next slot, and it resolves:
+	// /compact no longer ends forking for the session.
+	sess.Lock()
+	sess.AppendTurnStart(1)
+	after := sess.TurnStarts()
+	sess.Unlock()
+	cut, err := sessionfile.TurnStartAt(after, 2, 1)
+	if err != nil || cut != 1 {
+		t.Fatalf("turn 3 after a compaction = (%d, %v), want (1, nil) — a turn recorded after the "+
+			"compaction must be forkable", cut, err)
+	}
+	if _, err := sessionfile.TurnStartAt(after, 1, 1); err == nil {
+		t.Fatal("a turn the compaction ran under must still refuse")
 	}
 }
 
@@ -268,8 +290,10 @@ func TestSessionFork_CutsARealisticHistoryAtTheRecordedBoundary(t *testing.T) {
 		t.Errorf("branch TurnStarts = %v, want [0] so the branch is itself forkable", branch.TurnStarts)
 	}
 
-	// A compacted parent has no boundaries, and the refusal must say so
-	// rather than produce a branch containing what it was meant to leave.
+	// A parent recorded before boundaries existed has none at all, and the
+	// refusal must say so rather than produce a branch containing what it was
+	// meant to leave. (A compacted parent keeps its slots and refuses through
+	// the unknown marker instead — TestCompactedHistory_MarksEveryTurnBoundaryUnknown.)
 	sess, err := c.sessions.GetOrLoad(root, sid)
 	if err != nil {
 		t.Fatal(err)

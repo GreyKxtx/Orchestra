@@ -37,7 +37,8 @@ type Session struct {
 	// turn's agent output begins — the only link between the UI projection
 	// and the LLM history, since the user's prompt is never appended to
 	// History. Appended by SessionMessage when a turn *starts*, truncated by
-	// rewind, cleared by compaction. See sessionfile.Snapshot.TurnStarts.
+	// rewind, and marked sessionfile.TurnStartUnknown — never removed — when
+	// a rewrite invalidates it. See sessionfile.Snapshot.TurnStarts.
 	turnStarts []int
 
 	// Fork lineage, carried so a branch's own saves do not drop it.
@@ -233,9 +234,14 @@ func (s *Session) AppendTurnStart(i int) {
 	s.turnStarts = append(s.turnStarts, i)
 }
 
-// SetTurnStarts replaces the recorded boundaries. Pass nil to clear them —
-// which is what compaction must do, since it rewrites History wholesale and
-// every recorded index points into the array that no longer exists.
+// SetTurnStarts replaces the recorded boundaries.
+//
+// A history rewrite must pass an array of the SAME length with the invalidated
+// entries set to sessionfile.TurnStartUnknown (see
+// sessionfile.MarkTurnStartsUnknown), not a shorter one and not nil: the array
+// is positional against the UI's user turns, and shortening it disables the
+// lookup for every turn that follows, forever. Passing nil is for the callers
+// that genuinely have no turns left — rewinding to before the first one.
 // Must be called with lock held.
 func (s *Session) SetTurnStarts(starts []int) {
 	if len(starts) == 0 {

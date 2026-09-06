@@ -276,11 +276,13 @@ func TestForkSnapshot_RefusesNonUserAndOutOfRangeIndexes(t *testing.T) {
 }
 
 func TestForkSnapshot_RefusesWhenThereIsNoRecordedBoundary(t *testing.T) {
-	// Two ways to get here, and the error must not misdiagnose either: the
-	// session predates turn-boundary recording, or /compact rewrote history
-	// wholesale and SessionCompact cleared the boundaries. Rewind's fallback
-	// is to keep the whole history; for a fork that would produce a "branch"
-	// still containing everything it was meant to branch away from.
+	// This is the "no entry at all" case: the session predates turn-boundary
+	// recording, or was recorded from partway through its life, so the array
+	// is shorter than the UI's user-turn count. (A rewritten turn no longer
+	// lands here — it keeps its slot and carries TurnStartUnknown, see
+	// TestForkSnapshot_RefusesTheUnknownTurnButForksTheOnesAroundIt.) Rewind's
+	// fallback is to keep the whole history; for a fork that would produce a
+	// "branch" still containing everything it was meant to branch away from.
 	src := forkFixture()
 	src.TurnStarts = nil
 
@@ -298,6 +300,38 @@ func TestForkSnapshot_RefusesWhenThereIsNoRecordedBoundary(t *testing.T) {
 	short.TurnStarts = []int{0}
 	if _, err := ForkSnapshot(short, 2, "20260906T120000-bbbb"); err == nil {
 		t.Fatal("a turn with no recorded boundary must be refused")
+	}
+}
+
+// A turn whose boundary was marked unknown must refuse — naming THAT turn —
+// while the turns around it keep working. This is the whole point of marking
+// instead of clearing: before, one rewritten turn dropped the array, so every
+// later turn's lookup landed past its end forever.
+func TestForkSnapshot_RefusesTheUnknownTurnButForksTheOnesAroundIt(t *testing.T) {
+	src := realisticFixture()
+	// Turn 2 was interrupted after it rewrote history; turn 3 was recorded
+	// afterwards and has a real boundary again.
+	src.TurnStarts = []int{0, TurnStartUnknown, 5}
+
+	_, err := ForkSnapshot(src, 2, "20260906T120000-bbbb")
+	if err == nil {
+		t.Fatal("forking AT the turn whose boundary is unknown must be refused, not silently mis-cut")
+	}
+	if !strings.Contains(err.Error(), "turn 2") || !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("the refusal must name turn 2's boundary as unknown, got: %v", err)
+	}
+
+	// The later turn is still forkable — the array stayed aligned.
+	got, err := ForkSnapshot(src, 4, "20260906T120000-cccc")
+	if err != nil {
+		t.Fatalf("forking at a turn recorded after the rewrite must still work: %v", err)
+	}
+	if len(got.History) != 5 {
+		t.Fatalf("History = %d, want 5 — turns 1 and 2 whole", len(got.History))
+	}
+	if len(got.TurnStarts) != 2 || got.TurnStarts[0] != 0 || got.TurnStarts[1] != TurnStartUnknown {
+		t.Fatalf("branch TurnStarts = %v, want [0 %d] — the branch inherits the unknown mark, aligned",
+			got.TurnStarts, TurnStartUnknown)
 	}
 }
 
