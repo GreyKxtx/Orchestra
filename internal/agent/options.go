@@ -465,6 +465,28 @@ type Result struct {
 	//   "completed" | "partial" | "max_steps"
 	StopReason string
 
+	// HistoryRewritten is true when this run replaced the history array
+	// wholesale instead of only appending to it — either because compaction
+	// swapped the prefix for a summary, or because compaction failed / declined
+	// to converge and the loop fell back to truncateMessages.
+	//
+	// It exists so that consumers holding INDICES into the history array know
+	// those indices are now meaningless. The session's turn boundaries
+	// (sessionfile.Snapshot.TurnStarts, used by session.fork and
+	// session.rewind) are exactly such indices: after a rewrite they point
+	// into an array that no longer exists, and a bounds-checked cut at a stale
+	// index is worse than no cut at all — fork silently produces a WRONG
+	// branch, and rewind, which is destructive and persists, permanently
+	// discards history a correct cut would have kept. Any consumer holding
+	// history indices MUST treat them as invalid when this is true;
+	// internal/core.persistSessionTurn clears TurnStarts on it.
+	//
+	// Deliberately NOT named "Compacted": the truncation fallback is not
+	// compaction, yet it invalidates indices just the same. A name mentioning
+	// only compaction would invite a future reader to set it on the compaction
+	// path alone and silently re-open this hole.
+	HistoryRewritten bool
+
 	// RuleSuggestion is set when this turn's anti-pattern repeated on the
 	// same file often enough (lessons.RuleSuggestThreshold) to offer the
 	// human a rule for ORCHESTRA.md, instead of the count being silently

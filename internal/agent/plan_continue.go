@@ -68,6 +68,10 @@ func mergeAgentResults(first, second *Result) *Result {
 		merged.ApplyResponse = second.ApplyResponse
 	}
 	merged.Applied = second.Applied || first.Applied
+	// Either run may have rewritten the shared history array; the caller
+	// persists whatever the LAST one returned, so the flag has to survive a
+	// rewrite in either half. OR, never "second wins".
+	merged.HistoryRewritten = first.HistoryRewritten || second.HistoryRewritten
 	if len(second.Todos) > 0 {
 		merged.Todos = second.Todos
 	} else {

@@ -55,6 +55,17 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// RuleSuggestion to it — this is the one place that turn's *Result
 	// pointer is reachable before it goes back to the caller.
 	defer func() { a.recordTurnLesson(result) }()
+	// Set the moment the loop below replaces the history array wholesale
+	// instead of appending to it. Stamped onto the Result from a defer rather
+	// than at each return, because this loop returns from a dozen places and a
+	// path that forgot to copy it would silently hand the core stale history
+	// indices — see Result.HistoryRewritten for what that costs.
+	historyRewritten := false
+	defer func() {
+		if result != nil {
+			result.HistoryRewritten = historyRewritten
+		}
+	}()
 	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).
 	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
 
@@ -187,16 +198,22 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 					}
 					a.logf("compaction failed (non-fatal), continuing with truncation: %v", compactErr)
 					history = truncateMessages(history, a.opts.MaxPromptBytes)
+					historyRewritten = true
 					a.recordCompactMetrics(before, historyBytes(history), false)
 				} else {
 					after := historyBytes(compacted)
 					if after*5 >= before*4 { // < 20% shrink
 						a.logf("compaction did not converge: %d > %d bytes (>=80%% retained); falling back to truncation", before, after)
 						history = truncateMessages(history, a.opts.MaxPromptBytes)
+						// Truncation is not compaction, but it drops entries
+						// from the front just the same: every index into the
+						// old array is now wrong.
+						historyRewritten = true
 						a.recordCompactMetrics(before, historyBytes(history), false)
 					} else {
 						a.logf("history compacted: %d bytes > %d bytes", before, after)
 						history = compacted
+						historyRewritten = true
 						a.recordCompactMetrics(before, after, true)
 						cb.ResetReadOnlyCalls()
 						if a.opts.OnEvent != nil {
@@ -243,7 +260,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 						err)
 				}
 				if shrunk, ok := a.recoverFromOverflow(ctx, userQuery, history, err, steps); ok {
+					// ok == true only when recovery actually reclaimed bytes,
+					// which it does by compacting and/or truncating the array
+					// — another wholesale rewrite, not an append.
 					history = shrunk
+					historyRewritten = true
 					steps--
 					continue
 				}

@@ -645,6 +645,20 @@ func (c *Core) persistSessionTurn(
 	if outHistory != nil {
 		// Full ReplaceHistory (not append-only): compaction may rewrite the prefix.
 		sess.ReplaceHistory(outHistory)
+		// ...and when the run says it did, the turn boundaries recorded
+		// against the OLD array no longer describe this one. They are
+		// bounds-checked downstream, so a stale index still cuts — which is
+		// worse than not cutting at all: fork hands back a silently wrong
+		// branch, and rewind (destructive and persisted) discards history a
+		// correct cut would have kept. Dropping them in the same locked
+		// section that installs the rewritten history makes fork refuse
+		// honestly and rewind fall back to its pre-boundary behaviour.
+		// SessionCompact clears them the same way for the compaction it
+		// drives itself (applyCompactedHistory); this covers the compaction
+		// and truncation the agent performs mid-turn, which never reach it.
+		if res != nil && res.HistoryRewritten {
+			sess.SetTurnStarts(nil)
+		}
 	}
 	if res != nil {
 		sess.SetTodos(res.Todos)
