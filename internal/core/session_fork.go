@@ -58,6 +58,7 @@ func (c *Core) SessionFork(params SessionForkParams) (*SessionForkResult, error)
 		PlanPath:   sess.PlanPath(),
 		UIMessages: sess.UIMessages(),
 		History:    sess.CopyHistory(),
+		TurnStarts: sess.TurnStarts(),
 	}
 
 	branch, err := sessionfile.ForkSnapshot(src, params.UIMessageIndex, sessionfile.NewID())

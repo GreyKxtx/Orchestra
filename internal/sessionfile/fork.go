@@ -3,6 +3,8 @@ package sessionfile
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/orchestra/orchestra/llm"
 )
@@ -37,22 +39,33 @@ func ForkSnapshot(snap *Snapshot, uiIndex int, newID string) (*Snapshot, error) 
 
 	prefix := append([]UIMessage(nil), snap.UIMessages[:uiIndex]...)
 
-	// uiIndex is a user message, so it is the (k+1)-th where k is the number of
-	// user messages before it. The branch keeps history up to but not including
-	// that turn.
-	cut := IndexOfNthUserMessage(snap.History, CountUserMessages(prefix)+1)
-	if cut < 0 {
-		return nil, fmt.Errorf("fork: cannot map message %d onto the LLM history — this session was compacted, so the branch point no longer exists in history", uiIndex)
+	// uiIndex is a user message, so it opens the (k+1)-th turn where k is the
+	// number of user messages before it. The branch keeps every completed turn
+	// before that one, which is exactly History[:TurnStarts[k]].
+	//
+	// This cannot be derived by counting role=user entries in History: the
+	// agent never appends the user's prompt there (agent_step.go builds a
+	// fresh system+user+history slice per request) and it does inject
+	// synthetic role=user messages mid-run. Only a recorded boundary maps the
+	// two arrays onto each other.
+	k := CountUserMessages(prefix)
+	cut, err := TurnStartAt(snap.TurnStarts, k, len(snap.History))
+	if err != nil {
+		return nil, fmt.Errorf("fork: cannot branch at message %d: %w", uiIndex, err)
 	}
 
 	out := *snap
 	out.ID = newID
 	out.UIMessages = prefix
 	out.History = append([]llm.Message(nil), snap.History[:cut]...)
+	out.TurnStarts = append([]int(nil), snap.TurnStarts[:k]...)
 	out.MsgCount = len(prefix)
 	out.ParentID = snap.ID
 	out.ForkedFromIndex = uiIndex
 	out.Title = forkTitle(snap.Title)
+	// Save only stamps CreatedAt when it is zero, so inheriting the parent's
+	// would make every branch report its parent's creation time.
+	out.CreatedAt = time.Time{}
 
 	// Everything below describes the path the branch is abandoning: pending ops
 	// and todos are what rewind clears too, spend belongs to the parent's
@@ -68,10 +81,16 @@ func ForkSnapshot(snap *Snapshot, uiIndex int, newID string) (*Snapshot, error) 
 
 // forkTitle marks a branch so the session picker does not show two identical
 // rows: titles are derived from the first user message, which a branch shares
-// with its parent verbatim.
+// with its parent verbatim. Forking a fork does not stack the suffix — one
+// marker already says "this is not the original".
 func forkTitle(parent string) string {
 	if parent == "" {
-		return "(fork)"
+		return forkSuffix
 	}
-	return parent + " (fork)"
+	if strings.HasSuffix(parent, " "+forkSuffix) || parent == forkSuffix {
+		return parent
+	}
+	return parent + " " + forkSuffix
 }
+
+const forkSuffix = "(fork)"

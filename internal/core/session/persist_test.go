@@ -44,6 +44,81 @@ func TestSnapshotAndLoad_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestSnapshotAndLoad_RoundTripsTurnStarts: turn boundaries are the only link
+// between UIMessages and History, so dropping them on a save/load would make
+// fork and rewind refuse on every session that has ever been reopened.
+func TestSnapshotAndLoad_RoundTripsTurnStarts(t *testing.T) {
+	dir := t.TempDir()
+	s := New()
+	s.AppendTurnStart(0)
+	s.AppendHistory([]llm.Message{
+		{Role: llm.RoleAssistant, Content: "a1"},
+		{Role: llm.RoleTool, Content: "tool"},
+	})
+	s.AppendTurnStart(2)
+	s.AppendHistory([]llm.Message{{Role: llm.RoleAssistant, Content: "a2"}})
+
+	if err := s.Snapshot(dir); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	// Present in the file itself, under the documented key.
+	raw, err := os.ReadFile(filepath.Join(dir, ".orchestra", "sessions", s.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk struct {
+		TurnStarts []int `json:"turn_starts"`
+	}
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if len(onDisk.TurnStarts) != 2 || onDisk.TurnStarts[0] != 0 || onDisk.TurnStarts[1] != 2 {
+		t.Fatalf("turn_starts on disk = %v, want [0 2]", onDisk.TurnStarts)
+	}
+
+	loaded, err := LoadFromDisk(dir, s.ID)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := loaded.TurnStarts()
+	if len(got) != 2 || got[0] != 0 || got[1] != 2 {
+		t.Fatalf("TurnStarts after load = %v, want [0 2]", got)
+	}
+}
+
+// TestSnapshotAndLoad_RoundTripsLineage: a branch's parent_id and
+// forked_from_index are written by fork, but the branch's first save after
+// session.start goes through toSnapshot — which must not drop them.
+func TestSnapshotAndLoad_RoundTripsLineage(t *testing.T) {
+	dir := t.TempDir()
+	snap := &sessionfile.Snapshot{
+		Version:         sessionfile.Version,
+		ID:              sessionfile.NewID(),
+		History:         []llm.Message{},
+		UIMessages:      []sessionfile.UIMessage{},
+		ParentID:        "20260101T000000-aaaa",
+		ForkedFromIndex: 4,
+	}
+	if err := sessionfile.Save(dir, snap); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadFromDisk(dir, snap.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Snapshot(dir); err != nil {
+		t.Fatal(err)
+	}
+	again, err := sessionfile.Load(dir, snap.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ParentID != "20260101T000000-aaaa" || again.ForkedFromIndex != 4 {
+		t.Fatalf("lineage lost on re-save: parent=%q index=%d", again.ParentID, again.ForkedFromIndex)
+	}
+}
+
 func TestLoadFromDisk_NotExist(t *testing.T) {
 	dir := t.TempDir()
 	_, err := LoadFromDisk(dir, "does-not-exist")

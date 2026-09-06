@@ -20,7 +20,9 @@ func TestTruncateHistoryForUIPrefix_keepsThroughNthUser(t *testing.T) {
 		{Role: llm.RoleUser, Content: "second"},
 		{Role: llm.RoleAssistant, Content: "a2"},
 	}
-	got := truncateHistoryForUIPrefix(hist, ui[:3]) // through second user msg header only — ui[2] is user "second"
+	// nil boundaries: the pre-turn-boundary fallback, kept as the regression
+	// proof that sessions written before this feature rewind exactly as before.
+	got := truncateHistoryForUIPrefix(hist, ui[:3], nil) // through second user msg header only — ui[2] is user "second"
 	if len(got) != 3 {
 		t.Fatalf("want 3 history msgs (through 2nd user), got %d", len(got))
 	}
@@ -35,7 +37,7 @@ func TestTruncateHistoryForUIPrefix_firstUserOnly(t *testing.T) {
 		{Role: llm.RoleUser, Content: "hi"},
 		{Role: llm.RoleAssistant, Content: "hey"},
 	}
-	got := truncateHistoryForUIPrefix(hist, ui)
+	got := truncateHistoryForUIPrefix(hist, ui, nil)
 	if len(got) != 1 || got[0].Content != "hi" {
 		t.Fatalf("want only user prefix, got %#v", got)
 	}

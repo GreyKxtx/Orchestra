@@ -33,6 +33,17 @@ type Session struct {
 	applyOutput string
 	costUSD     float64
 
+	// turnStarts[k] is the index into History at which the (k+1)-th user
+	// turn's agent output begins — the only link between the UI projection
+	// and the LLM history, since the user's prompt is never appended to
+	// History. Appended by SessionMessage when a turn *starts*, truncated by
+	// rewind, cleared by compaction. See sessionfile.Snapshot.TurnStarts.
+	turnStarts []int
+
+	// Fork lineage, carried so a branch's own saves do not drop it.
+	parentID        string
+	forkedFromIndex int
+
 	// lastSnapshotAt is the UpdatedAt of the snapshot this in-memory state
 	// was last synced with (own Snapshot() write or LoadFromDisk). Used by
 	// RefreshFromDiskIfNewer to detect writes from *other* core processes
@@ -200,6 +211,38 @@ func (s *Session) SetUIMessages(msgs []sessionfile.UIMessage) {
 		return
 	}
 	s.uiMessages = append([]sessionfile.UIMessage(nil), msgs...)
+}
+
+// TurnStarts returns a copy of the recorded turn boundaries: entry k is the
+// History index at which the (k+1)-th user turn's agent output begins.
+// Must be called with lock held when read alongside History.
+func (s *Session) TurnStarts() []int {
+	if len(s.turnStarts) == 0 {
+		return nil
+	}
+	out := make([]int, len(s.turnStarts))
+	copy(out, s.turnStarts)
+	return out
+}
+
+// AppendTurnStart records that a new user turn's output begins at index i.
+// Called when a turn *starts*, not when it ends: mid-turn snapshots replace
+// History with partial-turn content, so a turn-end computation would be wrong
+// whenever one of those fired. Must be called with lock held.
+func (s *Session) AppendTurnStart(i int) {
+	s.turnStarts = append(s.turnStarts, i)
+}
+
+// SetTurnStarts replaces the recorded boundaries. Pass nil to clear them —
+// which is what compaction must do, since it rewrites History wholesale and
+// every recorded index points into the array that no longer exists.
+// Must be called with lock held.
+func (s *Session) SetTurnStarts(starts []int) {
+	if len(starts) == 0 {
+		s.turnStarts = nil
+		return
+	}
+	s.turnStarts = append([]int(nil), starts...)
 }
 
 // Profile returns the last profile used in this session.

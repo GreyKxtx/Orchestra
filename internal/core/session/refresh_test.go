@@ -68,6 +68,57 @@ func TestRefreshFromDiskIfNewer_PicksUpExternalWrite(t *testing.T) {
 	}
 }
 
+// TestRefreshFromDiskIfNewer_PicksUpTurnBoundaries: RefreshFromDiskIfNewer
+// copies field by field, so a field it forgets goes stale exactly when the
+// history beside it changes. Turn boundaries index into that history, and
+// SessionMessage refreshes immediately before a turn — stale boundaries here
+// would make fork cut a branch in the wrong place.
+func TestRefreshFromDiskIfNewer_PicksUpTurnBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	seed := NewWithID("refresh-turns")
+	seed.AppendTurnStart(0)
+	seed.AppendHistory([]llm.Message{{Role: llm.RoleAssistant, Content: "a1"}})
+	seed.Lock()
+	if err := seed.Snapshot(dir); err != nil {
+		t.Fatal(err)
+	}
+	seed.Unlock()
+
+	m := NewManager()
+	cached, err := m.GetOrLoad(dir, "refresh-turns")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A background core finishes a second turn.
+	time.Sleep(20 * time.Millisecond)
+	other, err := LoadFromDisk(dir, "refresh-turns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.AppendTurnStart(len(other.History))
+	other.AppendHistory([]llm.Message{{Role: llm.RoleAssistant, Content: "a2"}})
+	other.Lock()
+	if err := other.Snapshot(dir); err != nil {
+		t.Fatal(err)
+	}
+	other.Unlock()
+
+	if !m.RefreshFromDiskIfNewer(dir, "refresh-turns") {
+		t.Fatal("expected refresh after external write")
+	}
+	cached.Lock()
+	got := cached.TurnStarts()
+	histLen := len(cached.History)
+	cached.Unlock()
+	if len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Fatalf("TurnStarts = %v, want [0 1] — boundaries must refresh with the history they index", got)
+	}
+	if histLen != 2 {
+		t.Fatalf("History = %d, want 2", histLen)
+	}
+}
+
 // TestRefreshFromDiskIfNewer_SkipsBusySession: a running local turn must
 // never be clobbered by a disk reload.
 func TestRefreshFromDiskIfNewer_SkipsBusySession(t *testing.T) {

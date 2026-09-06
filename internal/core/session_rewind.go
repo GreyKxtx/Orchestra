@@ -58,10 +58,12 @@ func (c *Core) SessionRewind(params SessionRewindParams) (*SessionRewindResult, 
 	}
 
 	truncUI := append([]sessionfile.UIMessage(nil), ui[:idx+1]...)
-	truncHist := truncateHistoryForUIPrefix(sess.CopyHistory(), truncUI)
+	turnStarts := sess.TurnStarts()
+	truncHist := truncateHistoryForUIPrefix(sess.CopyHistory(), truncUI, turnStarts)
 
 	sess.SetUIMessages(truncUI)
 	sess.ReplaceHistory(truncHist)
+	sess.SetTurnStarts(truncateTurnStartsForUIPrefix(turnStarts, truncUI))
 	sess.SetPending(nil)
 	sess.SetTodos(nil)
 
@@ -76,12 +78,32 @@ func (c *Core) SessionRewind(params SessionRewindParams) (*SessionRewindResult, 
 	}, nil
 }
 
-// truncateHistoryForUIPrefix keeps LLM history through the last user message that
-// corresponds to the user-message count in the UI prefix.
-func truncateHistoryForUIPrefix(hist []llm.Message, ui []sessionfile.UIMessage) []llm.Message {
+// truncateHistoryForUIPrefix cuts LLM history to match a UI prefix ending at a
+// user message.
+//
+// With recorded turn boundaries it makes exactly the cut fork makes: history
+// keeps every completed turn before the one the retained prompt opens. Rewind
+// and fork differ only in the UI prefix — rewind keeps the prompt so the user
+// can edit and resend it, fork drops it — and the prompt itself never lives in
+// history anyway (agent_step.go passes it separately), so the same history cut
+// serves both.
+//
+// Without boundaries — a session written before they were recorded, or one
+// whose history /compact rewrote — it falls back to the exact behaviour it had
+// before: count user messages, and keep the FULL history when that count does
+// not resolve, rather than truncate too far. That fallback is conservative for
+// rewind, which is destructive; fork refuses instead, because for a fork the
+// same fallback would produce a branch still containing everything it was
+// meant to branch away from.
+func truncateHistoryForUIPrefix(hist []llm.Message, ui []sessionfile.UIMessage, turnStarts []int) []llm.Message {
 	userTarget := sessionfile.CountUserMessages(ui)
 	if userTarget == 0 {
 		return nil
+	}
+	if cut, err := sessionfile.TurnStartAt(turnStarts, userTarget-1, len(hist)); err == nil {
+		out := make([]llm.Message, cut)
+		copy(out, hist[:cut])
+		return out
 	}
 	if i := sessionfile.IndexOfNthUserMessage(hist, userTarget); i >= 0 {
 		out := make([]llm.Message, i+1)
@@ -92,4 +114,19 @@ func truncateHistoryForUIPrefix(hist []llm.Message, ui []sessionfile.UIMessage) 
 	out := make([]llm.Message, len(hist))
 	copy(out, hist)
 	return out
+}
+
+// truncateTurnStartsForUIPrefix drops boundaries for turns the rewind threw
+// away. The retained prefix ends with the user prompt opening turn N, whose
+// own boundary is kept and now equals the new history length: that turn is
+// present but has produced nothing yet, which is exactly true after a rewind.
+func truncateTurnStartsForUIPrefix(turnStarts []int, ui []sessionfile.UIMessage) []int {
+	userTarget := sessionfile.CountUserMessages(ui)
+	if userTarget == 0 || len(turnStarts) == 0 {
+		return nil
+	}
+	if len(turnStarts) <= userTarget {
+		return turnStarts
+	}
+	return turnStarts[:userTarget]
 }

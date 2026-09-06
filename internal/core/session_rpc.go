@@ -383,6 +383,15 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	inTodos := sess.CopyTodos()
 	planPath := sessionPlanPathLocked(sess, params.Mode)
 	sess.AppendUIMessage(buildUserUIMessage(params.Content, params.Attachments))
+	// Record where this user turn's agent output will begin. This is the only
+	// link between the UI projection and the LLM history: the agent builds a
+	// fresh system+user+history slice per request (agent_step.go), so the
+	// prompt just appended to the UI is never appended to History, and the
+	// agent does inject synthetic role=user messages mid-run. Recorded at
+	// turn *start* rather than turn end because OnStepHistory below replaces
+	// History with partial-turn content — a turn-end computation would be
+	// wrong for every turn during which a mid-turn snapshot fired.
+	sess.AppendTurnStart(len(inHistory))
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
@@ -463,13 +472,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 			return
 		}
 		lastStepPersist = time.Now()
-		sess.Lock()
-		sess.ReplaceHistory(hist)
-		snapErr := sess.Snapshot(c.workspaceRoot)
-		sess.Unlock()
-		if snapErr != nil {
-			fmt.Fprintf(os.Stderr, "core: session %s mid-turn history snapshot failed: %v\n", sess.ID, snapErr)
-		}
+		persistMidTurnHistory(c.workspaceRoot, sess, hist)
 	}
 
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
@@ -577,6 +580,43 @@ func persistSessionPendingFromEvent(workspaceRoot string, sess *coresession.Sess
 	if snapErr := sess.Snapshot(workspaceRoot); snapErr != nil {
 		fmt.Fprintf(os.Stderr, "core: session %s pending snapshot failed: %v\n", sess.ID, snapErr)
 	}
+}
+
+// persistMidTurnHistory writes partial-turn history to disk so a crash mid-turn
+// loses at most a few seconds of LLM work.
+//
+// It deliberately does NOT touch the session's turn boundaries. The history it
+// writes is a turn in progress, whose boundary SessionMessage already recorded
+// when the turn started; appending here would invent a turn per tick, and
+// recomputing here would place the current turn's boundary at the partial
+// content's end.
+func persistMidTurnHistory(workspaceRoot string, sess *coresession.Session, hist []llm.Message) {
+	if sess == nil {
+		return
+	}
+	sess.Lock()
+	sess.ReplaceHistory(hist)
+	snapErr := sess.Snapshot(workspaceRoot)
+	sess.Unlock()
+	if snapErr != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s mid-turn history snapshot failed: %v\n", sess.ID, snapErr)
+	}
+}
+
+// applyCompactedHistory installs a compacted history and drops every recorded
+// turn boundary with it.
+//
+// Compaction rewrites history wholesale — internal/agent/compact.go replaces
+// the whole array with a summary — so every recorded index points into an
+// array that no longer exists. Keeping them would make fork and rewind cut at
+// a position that means nothing; clearing them makes fork refuse honestly and
+// rewind fall back to its pre-boundary behaviour.
+func applyCompactedHistory(sess *coresession.Session, compacted []llm.Message) {
+	if sess == nil {
+		return
+	}
+	sess.ReplaceHistory(compacted)
+	sess.SetTurnStarts(nil)
 }
 
 func countOpenTodoItems(todos []tools.TodoItem) int {
@@ -986,7 +1026,7 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 		return nil, protocol.NewError(protocol.ExecFailed, cerr.Error(), nil)
 	}
 	sess.Lock()
-	sess.ReplaceHistory(compacted)
+	applyCompactedHistory(sess, compacted)
 	_ = sess.Snapshot(c.workspaceRoot)
 	sess.Unlock()
 	return &SessionCompactResult{

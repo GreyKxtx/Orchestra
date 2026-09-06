@@ -42,6 +42,13 @@ func (s *Session) toSnapshot() *sessionfile.Snapshot {
 		Profile:     s.profile,
 		ApplyOutput: s.applyOutput,
 		CostUSD:     s.costUSD,
+		// Turn boundaries and fork lineage are pure carry-through: dropping
+		// either here would silently erase it on the session's next save,
+		// which for turn boundaries means fork and rewind lose their only
+		// mapping between the UI projection and the LLM history.
+		TurnStarts:      s.turnStarts,
+		ParentID:        s.parentID,
+		ForkedFromIndex: s.forkedFromIndex,
 	}
 	if snap.UIMessages == nil {
 		snap.UIMessages = []sessionfile.UIMessage{}
@@ -57,19 +64,22 @@ func sessionFromSnapshot(snap *sessionfile.Snapshot) *Session {
 		return nil
 	}
 	s := &Session{
-		ID:           snap.ID,
-		History:      snap.History,
-		CreatedAt:    snap.CreatedAt,
-		LastActivity: snap.UpdatedAt,
-		pendingOps:   snap.PendingOps,
-		todos:        todosFromFile(snap.Todos),
-		planPath:     snap.PlanPath,
-		title:        snap.Title,
-		model:        snap.Model,
-		uiMessages:   snap.UIMessages,
-		profile:      snap.Profile,
-		applyOutput:  snap.ApplyOutput,
-		costUSD:      snap.CostUSD,
+		ID:              snap.ID,
+		History:         snap.History,
+		CreatedAt:       snap.CreatedAt,
+		LastActivity:    snap.UpdatedAt,
+		pendingOps:      snap.PendingOps,
+		todos:           todosFromFile(snap.Todos),
+		planPath:        snap.PlanPath,
+		title:           snap.Title,
+		model:           snap.Model,
+		uiMessages:      snap.UIMessages,
+		profile:         snap.Profile,
+		applyOutput:     snap.ApplyOutput,
+		costUSD:         snap.CostUSD,
+		turnStarts:      snap.TurnStarts,
+		parentID:        snap.ParentID,
+		forkedFromIndex: snap.ForkedFromIndex,
 	}
 	if s.LastActivity.IsZero() {
 		s.LastActivity = s.CreatedAt
@@ -211,6 +221,11 @@ func (m *Manager) RefreshFromDiskIfNewer(workspaceRoot, id string) bool {
 	s.profile = fresh.profile
 	s.applyOutput = fresh.applyOutput
 	s.costUSD = fresh.costUSD
+	// Turn boundaries index into the history replaced just above, so they
+	// must travel with it or the next fork/rewind cuts in the wrong place.
+	s.turnStarts = fresh.turnStarts
+	s.parentID = fresh.parentID
+	s.forkedFromIndex = fresh.forkedFromIndex
 	s.lastSnapshotAt = fresh.lastSnapshotAt
 	return true
 }

@@ -41,6 +41,22 @@ type Snapshot struct {
 	// older binary does not know is simply ignored by json.Unmarshal.
 	ParentID        string `json:"parent_id,omitempty"`
 	ForkedFromIndex int    `json:"forked_from_index,omitempty"`
+	// TurnStarts[k] is the index into History at which the (k+1)-th user
+	// turn's agent output begins. It exists because History and UIMessages
+	// cannot be mapped onto each other any other way: the agent builds a
+	// fresh `system + user + history` slice per request
+	// (internal/agent/agent_step.go:52-68), so the user's prompt is never
+	// appended to History, while the agent does inject synthetic role=user
+	// messages mid-run (LSP hints, retries, image carriers). Counting user
+	// messages in History therefore maps onto nothing the UI can see.
+	//
+	// For a session recorded from its first turn, TurnStarts[0] == 0. The
+	// field is absent on sessions written before it existed and is cleared by
+	// /compact, which rewrites History wholesale; both cases mean "no
+	// boundaries", and fork refuses rather than guess. Additive with
+	// omitempty for the same reason as ParentID above — the schema stays at
+	// version 4.
+	TurnStarts []int `json:"turn_starts,omitempty"`
 }
 
 // Meta is list-picker metadata without loading full history/ui_messages.

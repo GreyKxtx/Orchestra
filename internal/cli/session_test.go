@@ -91,12 +91,14 @@ func TestSessionSearchAndForkCLI(t *testing.T) {
 			{Role: "user", Text: "now do it differently"},
 			{Role: "assistant", Text: "ok"},
 		},
+		// History as the product writes it: assistant and tool messages only,
+		// no user turns. The two turns are located by recorded boundaries.
 		History: []llm.Message{
-			{Role: llm.RoleUser, Content: "wire the bearer token"},
-			{Role: llm.RoleAssistant, Content: "authTransport sets the header"},
-			{Role: llm.RoleUser, Content: "now do it differently"},
+			{Role: llm.RoleAssistant, Content: "calling grep"},
+			{Role: llm.RoleTool, Content: "authTransport sets the header"},
 			{Role: llm.RoleAssistant, Content: "ok"},
 		},
+		TurnStarts: []int{0, 2},
 	}
 	if err := sessionfile.Save(dir, snap); err != nil {
 		t.Fatal(err)

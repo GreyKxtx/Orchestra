@@ -34,13 +34,21 @@ func seedForkableSession(t *testing.T, c *Core) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// History as the product writes it: assistant and tool messages only. The
+	// user's prompts are NOT here — agent_step.go builds a fresh
+	// system+user+history slice per request — so the two turns are located by
+	// their recorded boundaries, not by counting role=user entries.
+	sess.Lock()
 	sess.ReplaceHistory([]llm.Message{
-		{Role: llm.RoleUser, Content: "u1"},
-		{Role: llm.RoleAssistant, Content: "a1"},
-		{Role: llm.RoleUser, Content: "u2"},
-		{Role: llm.RoleAssistant, Content: "a2"},
+		{Role: llm.RoleAssistant, Content: "calling read_file"},
+		{Role: llm.RoleTool, Content: "a1"},
+		{Role: llm.RoleAssistant, Content: "calling grep"},
+		{Role: llm.RoleTool, Content: "a2"},
 	})
-	if err := sess.Snapshot(c.workspaceRoot); err != nil {
+	sess.SetTurnStarts([]int{0, 2})
+	err = sess.Snapshot(c.workspaceRoot)
+	sess.Unlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 	return sid
@@ -102,7 +110,14 @@ func TestSessionFork_BranchIsLoadableAsASession(t *testing.T) {
 	}
 
 	// The branch is deliberately not registered in the Manager; the client's
-	// next session.start must pick it up from disk.
+	// next session.start must pick it up from disk. Assert the "one owner per
+	// id" property directly rather than leaving it to inspection: if fork had
+	// registered the branch, session.start would hand back that instance and
+	// the on-disk snapshot would have a second owner.
+	if _, err := c.sessions.Get(res.SessionID); err == nil {
+		t.Fatal("fork must not register the branch with the Manager — session.start would then be the second owner of one id")
+	}
+
 	started, err := c.SessionStart(SessionStartParams{SessionID: res.SessionID})
 	if err != nil {
 		t.Fatalf("session.start on the branch: %v", err)
