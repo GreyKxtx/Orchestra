@@ -9,8 +9,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/mcpauth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -57,6 +59,48 @@ func startTestMCPServer(t *testing.T) (endpoint string, authHeader func() string
 		mu.Lock()
 		defer mu.Unlock()
 		return seenAuth
+	}
+}
+
+// isolateHome mirrors internal/mcpauth's test helper of the same name —
+// points os.UserHomeDir at a temp dir so mcpauth.SaveToken/TokenSourceFor
+// never touch a developer's real ~/.orchestra.
+func isolateHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
+func TestStartRemote_OAuthWithNoStoredTokenFailsFastBeforeConnecting(t *testing.T) {
+	isolateHome(t)
+	_, err := StartRemote(context.Background(), RemoteConfig{
+		Name: "test", URL: "https://unreachable.invalid.example/mcp", OAuth: true,
+	}, StartOptions{})
+	if err == nil || !strings.Contains(err.Error(), "orchestra mcp login test") {
+		t.Fatalf("err = %v, want the actionable login message with no network attempt", err)
+	}
+}
+
+func TestStartRemote_SendsOAuthBearerFromStoredToken(t *testing.T) {
+	isolateHome(t)
+	endpoint, authHeader := startTestMCPServer(t)
+	if err := mcpauth.SaveToken("test", mcpauth.Token{
+		TokenURL:    "https://auth.example.com/token", // unused: this token is not expired
+		AccessToken: "oauth-token-xyz",
+		Expiry:      time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := StartRemote(context.Background(), RemoteConfig{Name: "test", URL: endpoint, OAuth: true}, StartOptions{})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if got := authHeader(); got != "Bearer oauth-token-xyz" {
+		t.Fatalf("Authorization = %q, want %q", got, "Bearer oauth-token-xyz")
 	}
 }
 

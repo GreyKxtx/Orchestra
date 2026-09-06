@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/mcpauth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -26,9 +27,15 @@ type RemoteConfig struct {
 	URL  string
 	// BearerTokenEnv names the environment variable holding the token sent as
 	// `Authorization: Bearer …`. The token itself never lives in the config
-	// file, which is committed.
+	// file, which is committed. Mutually exclusive with OAuth (enforced by
+	// config.validateMCP at load time).
 	BearerTokenEnv string
 	Headers        map[string]string
+	// OAuth selects OAuth 2.1 authorization (via internal/mcpauth) instead
+	// of BearerTokenEnv. The client id, secret, and scopes used to obtain
+	// the token were already resolved by `orchestra mcp login`; at connect
+	// time all this needs is the server name to look up the stored token.
+	OAuth bool
 }
 
 // RemoteClient is an MCP server reached over Streamable HTTP.
@@ -79,33 +86,39 @@ func StartRemote(ctx context.Context, cfg RemoteConfig, opts StartOptions) (*Rem
 		return nil, fmt.Errorf("mcp remote %q: url is required", name)
 	}
 
-	var token string
-	if env := strings.TrimSpace(cfg.BearerTokenEnv); env != "" {
-		token = strings.TrimSpace(os.Getenv(env))
-		if token == "" {
-			return nil, fmt.Errorf("mcp remote %q: bearer_token_env %q is empty or unset", name, env)
+	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint}
+
+	if cfg.OAuth {
+		handler, err := mcpauth.NewOAuthHandler(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("mcp remote %q: %w", name, err)
+		}
+		transport.OAuthHandler = handler
+	} else {
+		var token string
+		if env := strings.TrimSpace(cfg.BearerTokenEnv); env != "" {
+			token = strings.TrimSpace(os.Getenv(env))
+			if token == "" {
+				return nil, fmt.Errorf("mcp remote %q: bearer_token_env %q is empty or unset", name, env)
+			}
+		}
+		transport.HTTPClient = &http.Client{
+			Transport: &authTransport{token: token, headers: cfg.Headers},
+			// Never carry the token to a different host across a redirect.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+					req.Header.Del("Authorization")
+				}
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
 		}
 	}
 
-	httpClient := &http.Client{
-		Transport: &authTransport{token: token, headers: cfg.Headers},
-		// Never carry the token to a different host across a redirect.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > 0 && req.URL.Host != via[0].URL.Host {
-				req.Header.Del("Authorization")
-			}
-			if len(via) >= 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			return nil
-		},
-	}
-
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "orchestra", Version: "vnext"}, nil)
-	session, err := client.Connect(ctx, &mcpsdk.StreamableClientTransport{
-		Endpoint:   endpoint,
-		HTTPClient: httpClient,
-	}, nil)
+	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcp remote %q: connect %s: %w", name, endpoint, err)
 	}

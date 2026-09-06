@@ -62,6 +62,7 @@ func startServer(ctx context.Context, cfg config.MCPServerConfig, opts StartOpti
 			URL:            url,
 			BearerTokenEnv: cfg.BearerTokenEnv,
 			Headers:        cfg.Headers,
+			OAuth:          cfg.OAuth != nil,
 		}, opts)
 	}
 	return Start(ctx, cfg.Name, cfg.Command, cfg.Env, opts)
