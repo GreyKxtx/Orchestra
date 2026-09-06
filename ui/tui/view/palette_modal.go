@@ -29,6 +29,7 @@ var DefaultModalCommands = []ModalCommand{
 	{"/mcp", "MCP servers: add / edit / test", "Agent"},
 	// Session
 	{"/sessions", "прошлые сессии · /sessions <текст> — поиск по сообщениям", "Session"},
+	{"/fork", "ветка от сообщения (оригинал остаётся)", "Session"},
 	{"/clear", "очистить историю чата", "Session"},
 	{"/compact", "сжать LLM-контекст", "Session"},
 	{"/memory", "слои памяти", "Session"},

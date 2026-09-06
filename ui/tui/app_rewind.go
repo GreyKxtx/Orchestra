@@ -113,3 +113,76 @@ func (a *App) handleSessionRewindResult(m sessionRewindResultMsg) tea.Cmd {
 	a.showToast("rewind · " + m.label)
 	return a.persistSessionCmd()
 }
+
+type sessionForkResultMsg struct {
+	label string
+	id    string
+	err   error
+}
+
+func (a *App) openForkDialog() {
+	if a.turn.ShowBusySpinner() {
+		a.showToast("дождитесь конца хода")
+		return
+	}
+	if a.rpc == nil || a.coreSessionID == "" {
+		a.showToast("fork требует активную сессию ядра")
+		return
+	}
+	a.showWelcome = false
+	a.chat.SetForceWelcome(false)
+	items := a.rewindCheckpoints()
+	// The first user message cannot be a fork point: the branch would be empty.
+	if len(items) > 0 && items[0].MsgIndex == 0 {
+		items = items[1:]
+	}
+	if len(items) == 0 {
+		a.showToast("нет точек для ветки")
+		return
+	}
+	a.pushDialog(view.NewForkDialog(items))
+}
+
+// forkAtCheckpointCmd branches the session at cp without touching the current
+// one — the difference from rewind, which truncates in place.
+func (a *App) forkAtCheckpointCmd(cp view.RewindCheckpoint) tea.Cmd {
+	if a.turn.ShowBusySpinner() {
+		a.showToast("дождитесь конца хода")
+		return nil
+	}
+	if a.rpc == nil || a.coreSessionID == "" {
+		a.showToast("fork требует активную сессию ядра")
+		return nil
+	}
+	idx := cp.MsgIndex
+	msgs := a.session.Messages
+	if idx <= 0 || idx >= len(msgs) || msgs[idx].Role != state.RoleUser {
+		a.showToast("некорректная точка ветки")
+		return nil
+	}
+
+	label := strings.TrimSpace(cp.Label)
+	sid := a.coreSessionID
+	rpc := a.rpc
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		res, err := rpc.SessionFork(ctx, sid, idx)
+		if err != nil {
+			return sessionForkResultMsg{label: label, err: err}
+		}
+		return sessionForkResultMsg{label: label, id: res.SessionID}
+	}
+}
+
+func (a *App) handleSessionForkResult(m sessionForkResultMsg) tea.Cmd {
+	if m.err != nil {
+		a.session.AppendSystemNotice(state.SystemKindError, "fork: "+m.err.Error())
+		a.chat.SetMessages(a.session.Messages)
+		return nil
+	}
+	a.showToast("ветка · " + m.label)
+	// Switching in is the point of "try step N differently": the parent stays
+	// on disk and is reachable from /sessions.
+	return a.loadSession(m.id)
+}

@@ -74,9 +74,12 @@ type SessionsDialogMsg struct {
 	ID     string
 }
 
-// RewindDialogMsg — checkpoint picker: cancel or rewind to a checkpoint.
+// RewindDialogMsg — checkpoint picker: cancel, or act on a checkpoint. Fork
+// distinguishes the two actions the same picker serves: rewind truncates this
+// session, fork branches into a new one.
 type RewindDialogMsg struct {
 	Cancel     bool
+	Fork       bool
 	Checkpoint RewindCheckpoint
 }
 

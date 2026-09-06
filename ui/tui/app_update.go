@@ -282,6 +282,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionRewindResultMsg:
 		return a, a.handleSessionRewindResult(m)
+
+	case sessionForkResultMsg:
+		return a, a.handleSessionForkResult(m)
 	}
 
 	if km, ok := msg.(tea.KeyMsg); ok && a.input.HasSelection() && isPrintableKey(km) {

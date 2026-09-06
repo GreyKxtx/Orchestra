@@ -326,6 +326,10 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		dismissWelcome()
 		a.openRewindDialog()
 		return nil
+	case "/fork":
+		dismissWelcome()
+		a.openForkDialog()
+		return nil
 	case "/mcp":
 		a.openMCPDialog()
 		return nil

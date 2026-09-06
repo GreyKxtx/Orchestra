@@ -14,16 +14,23 @@ type RewindCheckpoint struct {
 	At       time.Time
 }
 
-// RewindDialog lists user-message checkpoints for future history rewind.
+// RewindDialog lists user-message checkpoints for history rewind, and — with
+// fork set — for branching into a new session instead.
 type RewindDialog struct {
 	items   []RewindCheckpoint
 	cursor  int
 	scroll  int
 	screenH int
+	fork    bool
 }
 
 func NewRewindDialog(items []RewindCheckpoint) *RewindDialog {
 	return &RewindDialog{items: items, screenH: 24}
+}
+
+// NewForkDialog is the same checkpoint picker, labelled and tagged for fork.
+func NewForkDialog(items []RewindCheckpoint) *RewindDialog {
+	return &RewindDialog{items: items, screenH: 24, fork: true}
 }
 
 func (d *RewindDialog) maxVisible() int {
@@ -39,7 +46,7 @@ func (d *RewindDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	case tea.KeyMsg:
 		switch m.String() {
 		case "esc":
-			return d, resultCmd(RewindDialogMsg{Cancel: true})
+			return d, resultCmd(RewindDialogMsg{Cancel: true, Fork: d.fork})
 		case "up", "shift+up":
 			if d.cursor > 0 {
 				d.cursor--
@@ -52,10 +59,10 @@ func (d *RewindDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 			}
 		case "enter":
 			if len(d.items) == 0 {
-				return d, resultCmd(RewindDialogMsg{Cancel: true})
+				return d, resultCmd(RewindDialogMsg{Cancel: true, Fork: d.fork})
 			}
 			cp := d.items[d.cursor]
-			return d, resultCmd(RewindDialogMsg{Checkpoint: cp})
+			return d, resultCmd(RewindDialogMsg{Checkpoint: cp, Fork: d.fork})
 		}
 	}
 	return d, nil
@@ -95,13 +102,18 @@ func (d *RewindDialog) Render(screenW, screenH int) string {
 		})
 	}
 
-	title := "Rewind checkpoint"
-		hint := "Enter — rewind · Esc — отмена"
+	verb := "Rewind"
+	hint := "Enter — rewind · Esc — отмена"
+	if d.fork {
+		verb = "Fork"
+		hint = "Enter — ветка · Esc — отмена"
+	}
+	title := verb + " checkpoint"
 	if len(d.items) == 0 {
-		title = "Rewind — нет сообщений"
+		title = verb + " — нет сообщений"
 		hint = "Esc — закрыть"
 	} else if len(d.items) > mv {
-		title = fmt.Sprintf("Rewind  %d/%d", d.cursor+1, len(d.items))
+		title = fmt.Sprintf("%s  %d/%d", verb, d.cursor+1, len(d.items))
 	}
 
 	return renderListDialog(

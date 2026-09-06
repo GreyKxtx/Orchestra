@@ -222,13 +222,18 @@ func (a *App) handleSessionsDialog(m view.SessionsDialogMsg) (tea.Model, tea.Cmd
 	return a, nil
 }
 
-// handleRewindDialog — checkpoint picked in the rewind dialog.
+// handleRewindDialog — checkpoint picked in the rewind or fork dialog.
 func (a *App) handleRewindDialog(m view.RewindDialogMsg) (tea.Model, tea.Cmd) {
 	a.popDialog()
-	if !m.Cancel {
-		a.handleRewindSelect(m.Checkpoint)
+	if m.Cancel {
+		return a, nil
 	}
-	return a, nil
+	// The returned command is what actually reaches core and persists; dropping
+	// it silently truncated the view and told nobody.
+	if m.Fork {
+		return a, a.forkAtCheckpointCmd(m.Checkpoint)
+	}
+	return a, a.handleRewindSelect(m.Checkpoint)
 }
 
 // handleMessageActionDialog — chat message context menu (copy / edit).
