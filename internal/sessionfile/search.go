@@ -16,6 +16,13 @@ type Hit struct {
 	SessionID string    `json:"session_id"`
 	Title     string    `json:"title"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// MsgCount and Model are what the session picker renders beside the title.
+	// They ride along because Search has already parsed the whole file to find
+	// this hit: without them a caller seeding the picker from search results
+	// has to parse every session a second time, or show rows that silently
+	// lack the columns the unfiltered list has.
+	MsgCount int    `json:"msg_count,omitempty"`
+	Model    string `json:"model,omitempty"`
 	// Index is the position in ui_messages — the same index session.fork and
 	// session.rewind take, so a search result can be acted on directly.
 	Index   int    `json:"index"`
@@ -82,6 +89,8 @@ func Search(workspaceRoot string, opts SearchOptions) ([]Hit, error) {
 				SessionID: snap.ID,
 				Title:     snap.Title,
 				UpdatedAt: snap.UpdatedAt,
+				MsgCount:  snap.MsgCount,
+				Model:     snap.Model,
 				Index:     i,
 				Role:      m.Role,
 				Snippet:   snippetAround(field, needle, opts.Insensitive),

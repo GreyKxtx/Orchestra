@@ -180,13 +180,14 @@ Semantics, chosen so that "try step 7 differently" reads naturally:
 - `uiIndex == 0` → error. The branch would contain nothing.
 - `uiIndex` out of range, or not a user message → error naming the actual role.
 - No recorded turn boundary for the requested turn → error saying the session has
-  none: it predates the feature, or `/compact` rewrote its history. Rewind's
-  fallback in this situation is to keep the entire history; for a fork that same
-  fallback would produce a "branch" that still contains everything it was supposed
-  to branch away from. A refusal the user can act on beats a branch that looks
-  right and is not.
-  > **Amended.** The original wording named compaction as *the* cause, which was
-  > exactly backwards — see the amendment.
+  none. The cause is that the session **predates the feature**: its turns were
+  taken by a binary that recorded nothing. Rewind's fallback in this situation is
+  to keep the entire history; for a fork that same fallback would produce a
+  "branch" that still contains everything it was supposed to branch away from. A
+  refusal the user can act on beats a branch that looks right and is not.
+  > **Amended.** This bullet used to name `/compact` as a cause too. It is not:
+  > a rewrite marks the slot, it never removes it — see the next bullet and
+  > "Amendment: mark, do not clear".
 - The requested turn's boundary is **unknown** (`TurnStartUnknown`) → error naming
   that turn and saying its history was rewritten underneath it. Distinct from
   the case above: the session still has boundaries, and its other turns are

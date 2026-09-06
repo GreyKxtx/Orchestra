@@ -589,7 +589,7 @@ Response `result`:
 
 Response `result`:
 
-- `hits` (array of `{session_id, title, updated_at, index, role, snippet}`) — `index` — позиция в `ui_messages`, тот же индекс, что принимают `session.fork` и `session.rewind`
+- `hits` (array of `{session_id, title, updated_at, msg_count, model, index, role, snippet}`) — `index` — позиция в `ui_messages`, тот же индекс, что принимают `session.fork` и `session.rewind`. `msg_count`/`model` (оба `omitempty`) — то же, что рисует пикер сессий рядом с заголовком; они едут вместе с хитом, потому что поиск и так распарсил весь файл, иначе клиент читает все сессии второй раз ради двух полей
 
 Пример:
 

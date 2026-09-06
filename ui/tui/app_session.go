@@ -256,9 +256,11 @@ func (a *App) sessionsMatchingQuery(query string) ([]sessionstore.SessionMeta, e
 	// Calling List afterwards parsed all of them a second time to learn what
 	// the hits already carry.
 	//
-	// A Hit carries the id, title and update time the picker renders. The
-	// message count and model it would otherwise show stay zero, and the
-	// dialog omits both when they are unset.
+	// A Hit carries every field the picker draws — id, title, update time,
+	// message count and model — so a filtered row is indistinguishable from an
+	// unfiltered one. The dialog omits the last two when they are unset
+	// (view/dialog_sessions.go:155-160), which is how their absence used to go
+	// unnoticed: the rows simply lost two columns.
 	out := make([]sessionstore.SessionMeta, 0, len(hits))
 	seen := make(map[string]bool, len(hits))
 	for _, h := range hits {
@@ -270,6 +272,8 @@ func (a *App) sessionsMatchingQuery(query string) ([]sessionstore.SessionMeta, e
 			ID:        h.SessionID,
 			Title:     h.Title,
 			UpdatedAt: h.UpdatedAt,
+			MsgCount:  h.MsgCount,
+			Model:     h.Model,
 		})
 	}
 	return out, nil

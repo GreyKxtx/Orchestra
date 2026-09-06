@@ -213,3 +213,53 @@ func TestSnippetAround_TrimsAndMarksElision(t *testing.T) {
 		t.Fatalf("both ends were cut, so both should be marked: %q", got)
 	}
 }
+
+// A Hit is what the TUI picker renders when /sessions is given a query: Search
+// has already parsed every session file, so calling ListMeta afterwards to
+// learn the message count and model would parse all of them a second time.
+// Carrying the two fields here is what lets the filtered rows look like the
+// unfiltered ones instead of silently losing "· N msgs · model".
+func TestSearch_CarriesTheFieldsThePickerRenders(t *testing.T) {
+	root := t.TempDir()
+	snap := &Snapshot{
+		Version: Version,
+		ID:      "20260901T100000-aaaa",
+		Title:   "wiring auth",
+		Model:   "claude-opus-5",
+		UIMessages: []UIMessage{
+			{Role: "user", Text: "how do I wire the bearer token"},
+			{Role: "assistant", Text: "authTransport sets the header"},
+			{Role: "user", Text: "thanks"},
+		},
+		CreatedAt: time.Now().Add(-time.Hour),
+		UpdatedAt: time.Now().Add(-time.Hour),
+		MsgCount:  3,
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".orchestra", "sessions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, snap.ID+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := Search(root, SearchOptions{Query: "bearer token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	if hits[0].MsgCount != 3 {
+		t.Errorf("Hit.MsgCount = %d, want 3 — the picker row drops \"· N msgs\" without it",
+			hits[0].MsgCount)
+	}
+	if hits[0].Model != "claude-opus-5" {
+		t.Errorf("Hit.Model = %q, want %q — the picker row drops the model without it",
+			hits[0].Model, "claude-opus-5")
+	}
+}
