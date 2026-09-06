@@ -44,7 +44,7 @@ General · **Providers** (provider catalog + API models, vision toggle) · Index
 - **Orchestra: Settings**
 - **Orchestra: Ping Core**
 
-**Protocol v13** — see `docs/PROTOCOL.md`. Handshake: `protocol_version=13`, `ops_version=1`, `tools_version=14`. `orchestra version` prints all three.
+**Protocol v14** — see `docs/PROTOCOL.md`. Handshake: `protocol_version=14`, `ops_version=1`, `tools_version=14`. `orchestra version` prints all three.
 
 ## Run (Cursor / VS Code)
 
