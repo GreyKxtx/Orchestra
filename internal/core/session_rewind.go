@@ -79,26 +79,14 @@ func (c *Core) SessionRewind(params SessionRewindParams) (*SessionRewindResult, 
 // truncateHistoryForUIPrefix keeps LLM history through the last user message that
 // corresponds to the user-message count in the UI prefix.
 func truncateHistoryForUIPrefix(hist []llm.Message, ui []sessionfile.UIMessage) []llm.Message {
-	userTarget := 0
-	for _, m := range ui {
-		if m.Role == "user" {
-			userTarget++
-		}
-	}
+	userTarget := sessionfile.CountUserMessages(ui)
 	if userTarget == 0 {
 		return nil
 	}
-	seen := 0
-	for i, m := range hist {
-		if m.Role != llm.RoleUser {
-			continue
-		}
-		seen++
-		if seen == userTarget {
-			out := make([]llm.Message, i+1)
-			copy(out, hist[:i+1])
-			return out
-		}
+	if i := sessionfile.IndexOfNthUserMessage(hist, userTarget); i >= 0 {
+		out := make([]llm.Message, i+1)
+		copy(out, hist[:i+1])
+		return out
 	}
 	// Compaction or partial sync — keep full history rather than truncate too far.
 	out := make([]llm.Message, len(hist))
