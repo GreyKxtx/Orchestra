@@ -20,7 +20,9 @@ const (
 	// v12: agent/event child scope fields (scope, task_id, parent_tool_call_id,
 	//      subagent_type) and child_started / child_done lifecycle events.
 	// v13: attachments[] on agent.run and session.message; UIMessage.attachments.
-	ProtocolVersion = 13
+	// v14: session.fork — branch from a user checkpoint without destroying the
+	//      original; session.search — full-text search across saved sessions.
+	ProtocolVersion = 14
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

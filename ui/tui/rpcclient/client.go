@@ -261,6 +261,27 @@ func (c *Client) SessionRewind(ctx context.Context, sessionID string, uiMessageI
 	return &res, nil
 }
 
+// SessionForkResult mirrors core.SessionForkResult.
+type SessionForkResult struct {
+	SessionID       string `json:"session_id"`
+	ParentID        string `json:"parent_id"`
+	UIMessages      int    `json:"ui_messages"`
+	HistoryMessages int    `json:"history_messages"`
+}
+
+// SessionFork branches a session at a user checkpoint, leaving the original intact.
+func (c *Client) SessionFork(ctx context.Context, sessionID string, uiMessageIndex int) (*SessionForkResult, error) {
+	var res SessionForkResult
+	err := c.rpc.Call(ctx, "session.fork", map[string]any{
+		"session_id":       sessionID,
+		"ui_message_index": uiMessageIndex,
+	}, &res)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
 // SessionMessage runs one agent turn in an existing session. Streaming events
 // arrive via Events(). Replaces one-shot agent.run for multi-turn chat.
 func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode string, opts AgentRunOptions) error {

@@ -26,6 +26,7 @@ type coreClient interface {
 	SessionGet(ctx context.Context, sessionID string) (*rpcclient.SessionGetResult, error)
 	SessionUISync(ctx context.Context, sessionID, title, model string, ui []sessionfile.UIMessage, costUSD float64) error
 	SessionRewind(ctx context.Context, sessionID string, uiMessageIndex int) (*rpcclient.SessionRewindResult, error)
+	SessionFork(ctx context.Context, sessionID string, uiMessageIndex int) (*rpcclient.SessionForkResult, error)
 	SessionCompact(ctx context.Context, sessionID, query string) (*rpcclient.SessionCompactResult, error)
 
 	// Agent turns.

@@ -45,6 +45,11 @@ type fakeCore struct {
 	// Scripted responses.
 	sessionGetResult *rpcclient.SessionGetResult
 	sessionStartID   string
+
+	// SessionFork.
+	forkedSessionID string
+	forkedIndex     int
+	forkErr         error
 }
 
 type fakeTurnCall struct {
@@ -113,6 +118,19 @@ func (f *fakeCore) SessionUISync(_ context.Context, sessionID, _, _ string, _ []
 
 func (f *fakeCore) SessionRewind(_ context.Context, _ string, _ int) (*rpcclient.SessionRewindResult, error) {
 	return &rpcclient.SessionRewindResult{}, nil
+}
+
+func (f *fakeCore) SessionFork(ctx context.Context, sessionID string, uiMessageIndex int) (*rpcclient.SessionForkResult, error) {
+	f.forkedSessionID = sessionID
+	f.forkedIndex = uiMessageIndex
+	if f.forkErr != nil {
+		return nil, f.forkErr
+	}
+	return &rpcclient.SessionForkResult{
+		SessionID:  "forked-session-id",
+		ParentID:   sessionID,
+		UIMessages: uiMessageIndex,
+	}, nil
 }
 
 func (f *fakeCore) SessionCompact(_ context.Context, _, _ string) (*rpcclient.SessionCompactResult, error) {

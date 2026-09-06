@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `13`
+- **`protocol.ProtocolVersion`**: `14`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `14`
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v14** (2026-09-06): `session.fork` — ветка от user-чекпоинта без разрушения оригинала; `session.search` — поиск по тексту сообщений во всех сохранённых сессиях.
 - **v13** (2026-08-09): `attachments[]` on `agent.run` and `session.message`; `UIMessage.attachments` in session schema v4.
 - **v12** (2026-08-09): `agent/event` child scope fields (`scope`, `task_id`, `parent_tool_call_id`, `subagent_type`); `child_started` / `child_done`.
 - **v11** (2026-08-08): `runtime.list_providers` — provider catalog + named entries, optional `/models` probe per provider.
@@ -546,6 +547,59 @@ Response `result`:
 - `session_id` (string)
 - `ui_messages` (int)
 - `history_messages` (int)
+
+### `session.fork`
+
+Копирует историю сессии до (но не включая) user-checkpoint в новую сессию, не трогая оригинал. Ненавязчивый аналог `session.rewind` — читает исходную сессию из памяти (Manager), а не с диска, потому что снапшот на диске отстаёт от живой сессии на величину интервала mid-turn snapshot (до 5с).
+
+Возвращённая ветка **не регистрируется** в Manager — клиент подхватывает её следующим `session.start`.
+
+`params`:
+
+- `session_id` (string)
+- `ui_message_index` (int) — exclusive; должен указывать на `role=user` в `ui_messages`
+
+Response `result`:
+
+- `session_id` (string) — id новой ветки
+- `parent_id` (string)
+- `ui_messages` (int)
+- `history_messages` (int)
+
+Пример:
+
+```json
+{"method": "session.fork", "params": {"session_id": "abc123", "ui_message_index": 2}}
+```
+
+```json
+{"result": {"session_id": "def456", "parent_id": "abc123", "ui_messages": 2, "history_messages": 2}}
+```
+
+### `session.search`
+
+Ищет сообщения, содержащие запрос, во всех сохранённых сессиях воркспейса.
+
+`params`:
+
+- `query` (string) — обязателен, непустой после `TrimSpace`
+- `insensitive` (bool, optional) — регистронезависимый поиск (по умолчанию false)
+- `include_all` (bool, optional) — искать также в reasoning/tool-блоках, а не только в тексте сообщений
+- `limit` (int, optional) — максимум хитов; 0 — без ограничения
+
+Response `result`:
+
+- `hits` (array of `{session_id, title, updated_at, index, role, snippet}`) — `index` — позиция в `ui_messages`, тот же индекс, что принимают `session.fork` и `session.rewind`
+
+Пример:
+
+```json
+{"method": "session.search", "params": {"query": "u2"}}
+```
+
+```json
+{"result": {"hits": [{"session_id": "abc123", "title": "original task", "updated_at": "2026-09-06T12:00:00Z", "index": 2, "role": "user", "snippet": "u2"}]}}
+```
 
 ### `session.close`
 

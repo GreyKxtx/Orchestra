@@ -191,6 +191,24 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionRewind(p)
 
+	case "session.fork":
+		var p SessionForkParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionFork(p)
+
+	case "session.search":
+		var p SessionSearchParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionSearch(p)
+
 	case "runtime.set_model":
 		var p RuntimeSetModelParams
 		if err := decodeParams(params, &p); err != nil {
