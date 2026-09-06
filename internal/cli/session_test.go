@@ -3,6 +3,9 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -17,6 +20,11 @@ func writeTestConfig(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 }
+
+// captureStdout is defined in memory_stats_test.go and reused here: it
+// redirects os.Stdout for the duration of fn and returns everything written
+// to it. The CLI handlers print with fmt.Println/Printf, so swapping
+// os.Stdout is the only interception point available.
 
 func TestSessionExportImportCLI(t *testing.T) {
 	root := t.TempDir()
@@ -106,7 +114,37 @@ func TestSessionSearchAndForkCLI(t *testing.T) {
 		t.Fatalf("a query with no matches must exit cleanly: %v", err)
 	}
 
-	sessionForkAt = 2
+	// Forking without --at must be refused, not silently default to some index.
+	sessionForkAt = -1
+	if err := runSessionFork(nil, []string{"20260901T100000-aaaa"}); err == nil {
+		t.Fatal("fork without --at must be rejected")
+	} else if !strings.Contains(err.Error(), "--at") {
+		t.Errorf("error should mention --at, got: %v", err)
+	}
+
+	// Composition: the #<index> that 'session search' prints must be exactly
+	// the index 'session fork --at' needs to branch at that same message.
+	var searchErr error
+	out := captureStdout(t, func() {
+		searchErr = runSessionSearch(nil, []string{"differently"})
+	})
+	if searchErr != nil {
+		t.Fatalf("session search: %v", searchErr)
+	}
+	idxRe := regexp.MustCompile(`#(\d+)\s+user\s+now do it differently`)
+	m := idxRe.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("search output missing expected '#<index> user now do it differently' line; got:\n%s", out)
+	}
+	idx, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("parse index from search output: %v", err)
+	}
+	if idx != 2 {
+		t.Fatalf("search printed index %d for %q, want 2 (the fixture's third message); output:\n%s", idx, "now do it differently", out)
+	}
+
+	sessionForkAt = idx
 	if err := runSessionFork(nil, []string{"20260901T100000-aaaa"}); err != nil {
 		t.Fatalf("session fork: %v", err)
 	}
@@ -128,8 +166,8 @@ func TestSessionSearchAndForkCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(branch.UIMessages) != 2 {
-		t.Fatalf("branch UIMessages = %d, want 2", len(branch.UIMessages))
+	if len(branch.UIMessages) != idx {
+		t.Fatalf("branch UIMessages = %d, want %d (fork at the index 'session search' printed)", len(branch.UIMessages), idx)
 	}
 	if branch.ParentID != "20260901T100000-aaaa" {
 		t.Errorf("ParentID = %q", branch.ParentID)
