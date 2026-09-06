@@ -308,6 +308,16 @@ In the TUI: `/memory` shows the memory layers and pinned facts; `/memory open` o
 orchestra mcp serve --workspace-root /path/to/project
 ```
 
+### Session search and fork
+
+`orchestra session search <query>` searches the text of every message in every
+saved session and prints one line per match with its message index; `-i` makes
+it case-insensitive and `--all` also searches reasoning and tool output.
+`orchestra session fork <id> --at <index>` copies a session's history up to
+that index into a new session, leaving the original untouched — unlike rewind,
+which truncates in place. In the TUI, `/sessions <query>` filters the picker by
+message text and `/fork` branches from a checkpoint.
+
 ---
 
 ## Architecture (key abstractions)
