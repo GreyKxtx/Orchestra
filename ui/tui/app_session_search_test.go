@@ -1,12 +1,42 @@
 package tui
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
 )
+
+// saveSessionFixture writes a session file directly, bypassing
+// sessionfile.Save, because Save stamps UpdatedAt with time.Now() and tests
+// that assert on ordering by update time need to control it. Mirrors
+// internal/sessionfile/search_test.go's saveSearchFixture.
+func saveSessionFixture(t *testing.T, root, id, title string, updated time.Time, msgs []sessionfile.UIMessage) {
+	t.Helper()
+	snap := &sessionfile.Snapshot{
+		Version:    sessionfile.Version,
+		ID:         id,
+		Title:      title,
+		UIMessages: msgs,
+		CreatedAt:  updated,
+		UpdatedAt:  updated,
+		MsgCount:   len(msgs),
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".orchestra", "sessions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestSessionsMatchingQuery_FiltersByMessageText(t *testing.T) {
 	a := testChromeApp(t)
@@ -46,15 +76,53 @@ func TestSessionsMatchingQuery_FiltersByMessageText(t *testing.T) {
 func TestSessionsMatchingQuery_NoMatchesIsNotAnError(t *testing.T) {
 	a := testChromeApp(t)
 	a.cfg.WorkspaceRoot = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(a.cfg.WorkspaceRoot, ".orchestra", "sessions"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// No .orchestra/sessions directory is created here on purpose:
+	// sessionfile.Search already treats a missing sessions directory as "no
+	// hits, no error", so creating one first would just be dead weight.
 	metas, err := a.sessionsMatchingQuery("nothing-matches-this")
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
 	if len(metas) != 0 {
 		t.Fatalf("metas = %+v, want none", metas)
+	}
+}
+
+// TestSessionsMatchingQuery_DedupesMultiHitSessionsAndOrdersByRecency covers
+// two guarantees a single-match test cannot: a session with several matching
+// messages must appear exactly once (not once per hit), and the result order
+// must follow sessionstore.List's most-recently-updated-first order, not
+// incidental directory-scan (alphabetical filename) order. "aaaa" sorts
+// before "bbbb" so os.ReadDir visits it first, but it is the *older* of the
+// two sessions here — a regression that leaked directory-scan order instead
+// of recency order would put it first and this test would catch it.
+func TestSessionsMatchingQuery_DedupesMultiHitSessionsAndOrdersByRecency(t *testing.T) {
+	a := testChromeApp(t)
+	root := t.TempDir()
+	a.cfg.WorkspaceRoot = root
+
+	older := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+
+	saveSessionFixture(t, root, "20260901T100000-aaaa", "multi", older, []sessionfile.UIMessage{
+		{Role: "user", Text: "token one"},
+		{Role: "user", Text: "token two"},
+		{Role: "user", Text: "token three"},
+	})
+	saveSessionFixture(t, root, "20260902T100000-bbbb", "single", newer, []sessionfile.UIMessage{
+		{Role: "user", Text: "token four"},
+	})
+
+	metas, err := a.sessionsMatchingQuery("token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 2 {
+		t.Fatalf("metas = %d, want 2 (one per session, not one per hit): %+v", len(metas), metas)
+	}
+	if metas[0].ID != "20260902T100000-bbbb" || metas[1].ID != "20260901T100000-aaaa" {
+		t.Fatalf("order = [%s, %s], want most-recently-updated first: [bbbb, aaaa]",
+			metas[0].ID, metas[1].ID)
 	}
 }
 
@@ -66,7 +134,8 @@ func TestParseSessionsQuery(t *testing.T) {
 	}{
 		{"/sessions bearer token", "bearer token", true},
 		{"/sessions   spaced  ", "spaced", true},
-		{"/sessions", "", false}, // the bare form keeps its existing path
+		{"/sessions", "", false},    // the bare form keeps its existing path
+		{"/sessions   ", "", false}, // whitespace-only argument is still "no query"
 		{"/sessionsfoo", "", false},
 		{"/rewind", "", false},
 	} {
