@@ -1,6 +1,10 @@
 # Session search and fork (§1.4 #1–2)
 
-Status: approved design, ready for implementation planning.
+Status: implemented. **Amended 2026-09-06** after a whole-branch review — see
+"Amendment: the UI↔history mapping" below. The original design rested on a
+premise about `History` that was simply false, and fork did not work on a
+single real session because of it. The amendment is the binding design; where
+the sections above it still describe the counting approach, they are marked.
 Plan reference: `docs/parity-plan-2026-09.md` §1.4 #1 (поиск по сессиям) and #2 (fork/branch от сообщения).
 
 ## Problem
@@ -27,6 +31,8 @@ things are missing once there are more than a handful:
   carries a stable id**; the only identity is array position. `session.rewind` copes
   by counting user messages rather than indexing, and anything built here inherits
   that constraint.
+  > **WRONG — superseded.** The two arrays are not parallel at all, and counting
+  > user messages does not map one onto the other. See the amendment.
 - `Snapshot` has **no lineage field** — no `parent_id`, no `forked_from`.
 - `sessionfile.Import` (`internal/sessionfile/export.go:99-125`) already writes "the
   same snapshot under a different id", which is half of a fork.
@@ -161,6 +167,7 @@ Semantics, chosen so that "try step 7 differently" reads naturally:
   leave two user messages in a row once a new one is sent.
 - History is cut with `IndexOfNthUserMessage(hist, k+1)` where `k` is the number of
   user messages in `UIMessages[:uiIndex]`, keeping `hist[:i]`.
+  > **WRONG — superseded.** History is cut at `TurnStarts[k]`. See the amendment.
 - `PendingOps` and `Todos` are cleared, matching what rewind does
   (`session_rewind.go:65-66`) — they describe work from the abandoned path.
 - `ID` is a fresh `NewID()`; `CreatedAt`/`UpdatedAt` are stamped by `Save`.
@@ -172,11 +179,14 @@ Semantics, chosen so that "try step 7 differently" reads naturally:
 
 - `uiIndex == 0` → error. The branch would contain nothing.
 - `uiIndex` out of range, or not a user message → error naming the actual role.
-- `IndexOfNthUserMessage` returns -1 → error that names compaction as the cause.
-  Rewind's fallback in this situation is to keep the entire history; for a fork that
-  same fallback would produce a "branch" that still contains everything it was
-  supposed to branch away from. A refusal the user can act on beats a branch that
-  looks right and is not.
+- No recorded turn boundary for the requested turn → error saying the session has
+  none: it predates the feature, or `/compact` rewrote its history. Rewind's
+  fallback in this situation is to keep the entire history; for a fork that same
+  fallback would produce a "branch" that still contains everything it was supposed
+  to branch away from. A refusal the user can act on beats a branch that looks
+  right and is not.
+  > **Amended.** The original wording named compaction as *the* cause, which was
+  > exactly backwards — see the amendment.
 
 ### Lineage
 
@@ -279,6 +289,115 @@ in this subsystem uses.
   (temp dir, `.orchestra.yml`, package-level flag vars, `runX(nil, args)`).
 - `ui/tui`: `/sessions <query>` seeds the dialog with the filtered set; `/fork`
   switches the active session id.
+
+## Amendment: the UI↔history mapping (2026-09-06)
+
+### The premise was false
+
+Everything above assumed `Snapshot.UIMessages` and `Snapshot.History` could be
+mapped onto each other by counting user messages: the Nth user message in the
+UI corresponds to the Nth `role=user` entry in history. **That is not true, and
+it was never true.**
+
+`internal/agent/agent_step.go:52-68` builds a **fresh per-request** slice —
+`system + user + history` — for every LLM call. The user's prompt is a
+parameter of the request, not a member of the persisted array. It is never
+appended to `History`, which holds assistant steps and tool results only. The
+comment at `agent_step.go:52` says exactly this; the design read the two arrays
+as parallel and did not check.
+
+The consequences, all of them shipped:
+
+- `IndexOfNthUserMessage(history, k+1)` returned `-1` on every ordinary
+  session, so `ForkSnapshot` **refused all real data**. Fork did not work at
+  all.
+- The refusal blamed compaction, which is precisely inverted. A compacted
+  session is the *only* kind that has a `role=user` entry in history at the
+  front — `internal/agent/compact.go:111` prepends the summary as one.
+- The agent also injects **synthetic** `role=user` messages mid-run: LSP
+  diagnostic hints, retry nudges, image carriers. Where the count did resolve,
+  it resolved against one of those, cut history mid-turn, and produced a
+  **silently corrupt branch**.
+
+This survived ten commits because every fixture — in `internal/sessionfile`,
+`internal/core` and `internal/cli` alike — hand-built an alternating
+user/assistant history, a shape the product never writes. The fixtures agreed
+with the spec; neither agreed with the code.
+
+### The fix: record the boundary instead of inferring it
+
+`Snapshot` gains one additive field:
+
+```go
+TurnStarts []int `json:"turn_starts,omitempty"`
+```
+
+`TurnStarts[k]` is the index into `History` at which the **(k+1)-th user
+turn's agent output begins**. For a session recorded from its first turn,
+`TurnStarts[0] == 0`.
+
+**The schema version stays at 4**, for the same reason `ParentID` did:
+`LoadFromDisk` (`internal/core/session/persist.go:101-103`) hard-rejects any
+version but the binary's own, and an `omitempty` field an older binary does
+not know is simply ignored by `json.Unmarshal`.
+
+Fork cuts at `TurnStarts[k]` where `k = CountUserMessages(prefix)`. The
+locator is `sessionfile.TurnStartAt`, the one place fork and rewind agree on
+where a turn starts. The branch keeps `TurnStarts[:k]`, so a branch is itself
+forkable.
+
+### Invariants
+
+The field is only as good as the places that maintain it. Each of these is a
+place it can go stale, and each has a test:
+
+1. **Recorded at turn start.** `SessionMessage` appends the current
+   `len(history)` when a user turn begins. Not at turn end: the `OnStepHistory`
+   mid-turn snapshot replaces history with **partial-turn** content, so a
+   turn-end computation would be wrong for every turn during which one fired.
+2. **Mid-turn snapshots do not append.** `persistMidTurnHistory` writes history
+   and nothing else. Appending there would invent a turn per five-second tick.
+3. **Compaction clears them.** `SessionCompact` rewrites history wholesale, so
+   every recorded index points into an array that no longer exists.
+   `applyCompactedHistory` clears the field, and fork then refuses honestly.
+4. **Rewind truncates them**, alongside ui and history.
+5. **`RefreshFromDiskIfNewer` copies them.** It copies field by field, and
+   `SessionMessage` refreshes immediately before a turn — a field it forgets
+   goes stale exactly when the history beside it changes.
+
+The same round-trip gap was silently erasing `ParentID` and `ForkedFromIndex`:
+`toSnapshot` never wrote them, so a branch lost its lineage on its first save
+after `session.start`. Both are now carried too.
+
+### Amendment to the non-goals: rewind uses the boundary
+
+The original non-goals said rewind's behaviour would not change. It does now,
+and deliberately.
+
+`truncateHistoryForUIPrefix` cuts at the recorded boundary when the session has
+one, and falls back to today's exact behaviour — including its
+keep-the-full-history fallback — when it does not.
+
+The reason it changed: a task on this branch fixed a bug where the rewind
+dialog discarded the command that reaches core, so rewind's persistence path is
+newly live. With history left uncut, `/rewind` would visibly discard messages
+the model still remembers. With real boundaries, rewind and fork make the
+**identical** history cut and differ only in the UI prefix — rewind keeps the
+prompt so the user can edit and resend it, fork drops it — which is coherent
+precisely because the prompt itself never lives in history.
+
+Rewind keeps its conservative fallback because it is destructive. Fork refuses
+instead, because for a fork the same fallback would produce a branch containing
+everything it was meant to branch away from.
+
+### Testing
+
+The lesson of this defect is that fixtures agreeing with the spec prove
+nothing. Fork and rewind are now tested against a history shaped the way the
+product actually writes it — assistant and tool messages only, no ordinary user
+turns, plus one synthetic `role=user` hint sitting mid-turn — at both the
+`sessionfile` and `core` levels. The pre-existing alternating fixtures were
+reshaped to match reality rather than left as decoration.
 
 ## Known inaccuracy in the parity plan
 
