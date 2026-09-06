@@ -656,7 +656,25 @@ func (c *Core) persistSessionTurn(
 		// SessionCompact clears them the same way for the compaction it
 		// drives itself (applyCompactedHistory); this covers the compaction
 		// and truncation the agent performs mid-turn, which never reach it.
-		if res != nil && res.HistoryRewritten {
+		//
+		// res == nil means we have NO information: every error return in the
+		// agent loop yields (history, nil, err) — cancellation, an unreachable
+		// LLM, a circuit breaker, a panic — and HistoryRewritten is stamped by
+		// a defer that only fires on a non-nil result. The core persists a
+		// failed turn's history deliberately (see the comment at the call
+		// site), so a turn that compacted at step N and then died at step N+1
+		// hands us a rewritten array with no way to learn that it was
+		// rewritten. Clearing is the conservative answer, and it is not free:
+		// later turns do record boundaries again, but an array short by the
+		// turns that were dropped no longer lines up with the user-message
+		// count fork maps through, so TurnStartAt refuses for the rest of the
+		// session — the same cost /compact already carries. A cancelled turn
+		// therefore ends fork for that session. That is the trade this design
+		// takes everywhere: an honest refusal over a silently wrong cut, and
+		// over permanent history loss for rewind. Cancellation is also the
+		// likeliest way for a turn to end right after a mid-turn compaction,
+		// so it is the case that needs the rule most, not collateral damage.
+		if res == nil || res.HistoryRewritten {
 			sess.SetTurnStarts(nil)
 		}
 	}

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
@@ -13,43 +14,78 @@ import (
 // stale, and a stale boundary is worse than a missing one: fork and rewind
 // would cut a branch in the wrong place and say nothing.
 
+// turnStartObserverLLM reads the session's recorded boundaries at the moment
+// the turn's first LLM call is made — after SessionMessage recorded one and
+// before the run could have changed anything — so Invariant 1 is observed
+// where it actually speaks: at turn start.
+//
+// The first call answers with a final step (that turn succeeds and keeps its
+// boundary); every later call fails the turn.
+type turnStartObserverLLM struct {
+	read  func() []int
+	seen  [][]int
+	calls int
+}
+
+func (l *turnStartObserverLLM) Plan(context.Context, string) (string, error) { return "{}", nil }
+
+func (l *turnStartObserverLLM) Complete(context.Context, llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	l.calls++
+	l.seen = append(l.seen, l.read())
+	if l.calls == 1 {
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: `{"type":"final","final":{"patches":[]}}`,
+		}}, nil
+	}
+	return nil, errors.New("this turn fails after its boundary was recorded")
+}
+
 // Invariant 1: the boundary is recorded when a turn STARTS, not when it ends.
-// The turn here is cancelled before the agent produces anything, so a turn-end
-// computation would record nothing at all — and a mid-turn snapshot firing
-// before a crash would leave the session with history it could never map.
+// A turn-end computation would record nothing for a turn that dies before the
+// agent produces anything, and a mid-turn snapshot firing before a crash would
+// leave the session with history it could never map.
+//
+// It is observed from inside the turn rather than after it, because a turn that
+// ends without an *agent.Result now clears the boundaries on the way out
+// (persistSessionTurn: res == nil means we cannot know whether the run rewrote
+// history, and a stale boundary is worse than none — see
+// TestSessionMessage_ClearsTurnBoundaries_WhenARewritingTurnThenFails). The
+// recording itself is unchanged; only what survives a resultless turn is.
 func TestSessionMessage_RecordsTheTurnBoundaryBeforeTheTurnRuns(t *testing.T) {
 	root := t.TempDir()
-	c := setupSessionV2Core(t, root)
+	client := &turnStartObserverLLM{}
+	c := setupRewriteCore(t, root, client, -1) // compaction disabled
 	started, err := c.SessionStart(SessionStartParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sid := started.SessionID
 
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := c.SessionMessage(cancelled, SessionMessageParams{SessionID: sid, Content: "first"}); err == nil {
-		t.Fatal("a cancelled turn should not succeed")
-	}
-
 	sess, err := c.sessions.GetOrLoad(root, sid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess.Lock()
-	got := sess.TurnStarts()
-	histLen := len(sess.CopyHistory())
-	sess.Unlock()
-
-	if histLen != 0 {
-		t.Fatalf("history = %d, want 0 — this turn produced nothing", histLen)
+	client.read = func() []int {
+		sess.Lock()
+		defer sess.Unlock()
+		return append([]int(nil), sess.TurnStarts()...)
 	}
-	if len(got) != 1 || got[0] != 0 {
-		t.Fatalf("TurnStarts = %v, want [0] — the boundary must be recorded at turn start even when the turn produces nothing", got)
+
+	// Turn 1 on an empty session: the boundary is 0, recorded before the run.
+	if _, err := c.SessionMessage(context.Background(), SessionMessageParams{SessionID: sid, Content: "first"}); err != nil {
+		t.Fatalf("session.message: %v", err)
+	}
+	if len(client.seen) == 0 {
+		t.Fatal("the turn never reached the LLM; nothing was observed")
+	}
+	if got := client.seen[0]; len(got) != 1 || got[0] != 0 {
+		t.Fatalf("TurnStarts at turn start = %v, want [0] — the boundary must be recorded before the turn runs", got)
 	}
 
 	// A second turn on top of an existing history records where that history
-	// currently ends, so the first turn's output stays inside turn 1.
+	// currently ends, so the first turn's output stays inside turn 1. This one
+	// fails, which is the case a turn-end computation could never record.
 	sess.Lock()
 	sess.ReplaceHistory([]llm.Message{
 		{Role: llm.RoleAssistant, Content: "a1"},
@@ -57,15 +93,16 @@ func TestSessionMessage_RecordsTheTurnBoundaryBeforeTheTurnRuns(t *testing.T) {
 		{Role: llm.RoleAssistant, Content: "done"},
 	})
 	sess.Unlock()
+	client.seen = nil
 
-	if _, err := c.SessionMessage(cancelled, SessionMessageParams{SessionID: sid, Content: "second"}); err == nil {
-		t.Fatal("a cancelled turn should not succeed")
+	if _, err := c.SessionMessage(context.Background(), SessionMessageParams{SessionID: sid, Content: "second"}); err == nil {
+		t.Fatal("the second turn was supposed to fail")
 	}
-	sess.Lock()
-	got = sess.TurnStarts()
-	sess.Unlock()
-	if len(got) != 2 || got[0] != 0 || got[1] != 3 {
-		t.Fatalf("TurnStarts = %v, want [0 3]", got)
+	if len(client.seen) == 0 {
+		t.Fatal("the second turn never reached the LLM; nothing was observed")
+	}
+	if got := client.seen[0]; len(got) != 2 || got[0] != 0 || got[1] != 3 {
+		t.Fatalf("TurnStarts at turn start = %v, want [0 3]", got)
 	}
 }
 

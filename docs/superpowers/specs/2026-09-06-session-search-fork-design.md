@@ -361,7 +361,14 @@ place it can go stale, and each has a test:
    every recorded index points into an array that no longer exists.
    `applyCompactedHistory` clears the field, and fork then refuses honestly.
 4. **Rewind truncates them**, alongside ui and history.
-5. **`RefreshFromDiskIfNewer` copies them.** It copies field by field, and
+5. **A turn that ends without a `*agent.Result` clears them.** The core
+   persists a failed turn's history on purpose (`session_rpc.go`), and every
+   error return in the agent loop yields `(history, nil, err)` — so a turn
+   that compacted at step N and was cancelled at step N+1 would install a
+   rewritten array under the old boundaries. `res == nil` means we cannot
+   know, and clearing is the honest answer; the cost is that a cancelled turn
+   ends fork for that session, exactly as `/compact` does.
+6. **`RefreshFromDiskIfNewer` copies them.** It copies field by field, and
    `SessionMessage` refreshes immediately before a turn — a field it forgets
    goes stale exactly when the history beside it changes.
 
