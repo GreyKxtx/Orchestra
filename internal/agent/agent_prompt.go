@@ -185,7 +185,8 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	// modes are handed dept lessons by their spawner instead, and Orchestra
 	// Lead gets the cross-dept catalog below.
 	if !IsChildOnlyMode(a.opts.Mode) && a.opts.Mode != ModeOrchestra && !a.opts.SkipMemoryInject {
-		if s := lessons.FormatInject(a.tools.WorkspaceRoot(), ""); s != "" {
+		dept := lessons.InferDeptFromFiles(a.working.ActiveFiles())
+		if s := lessons.FormatInject(a.tools.WorkspaceRoot(), dept); s != "" {
 			if p.memory != "" {
 				p.memory += "\n\n" + s
 			} else {

@@ -30,7 +30,12 @@ func newLessonAgent(t *testing.T, mode Mode) (*Agent, string) {
 
 func readEngineeringLessons(t *testing.T, root string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, ".orchestra", "memory", "lessons", "engineering.md"))
+	return readLessonsFile(t, root, "engineering")
+}
+
+func readLessonsFile(t *testing.T, root, dept string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".orchestra", "memory", "lessons", dept+".md"))
 	if err != nil {
 		return ""
 	}
@@ -47,7 +52,8 @@ func TestRecordTurnLesson_WritesAntiPatternInBuildMode(t *testing.T) {
 	// Episodic learning only ever fired for worker children, so the single
 	// agent mode almost everyone actually uses learned nothing from its own
 	// mistakes — across a whole field run the lessons directory never existed.
-	got := readEngineeringLessons(t, root)
+	// .jsx infers the javascript_engineering dept (see dept-inference test below).
+	got := readLessonsFile(t, root, "javascript_engineering")
 	if got == "" {
 		t.Fatal("a turn that ended in errors must leave a lesson")
 	}
@@ -56,6 +62,25 @@ func TestRecordTurnLesson_WritesAntiPatternInBuildMode(t *testing.T) {
 	}
 	if !strings.Contains(got, "src/App.jsx") {
 		t.Errorf("lesson must carry the file it happened in, got: %s", got)
+	}
+}
+
+// §1.11 #3: single-agent mode used to hardcode dept="engineering" for every
+// lesson regardless of what the turn actually touched, so a repo working in
+// several languages piled every anti-pattern into one undifferentiated file.
+func TestRecordTurnLesson_InfersDeptFromTouchedFiles(t *testing.T) {
+	a, root := newLessonAgent(t, ModeBuild)
+	a.working.ObserveTool("edit", json.RawMessage(`{"path":"internal/agent/agent.go"}`), nil,
+		errors.New("StaleContent: search block not found"))
+
+	a.recordTurnLesson(nil)
+
+	got := readLessonsFile(t, root, "go_engineering")
+	if got == "" {
+		t.Fatal("a .go-file turn must land its lesson under go_engineering, not engineering")
+	}
+	if strings.Contains(readEngineeringLessons(t, root), "StaleContent") {
+		t.Fatal("the lesson must not also land in the generic engineering dept")
 	}
 }
 
@@ -177,6 +202,31 @@ func TestBuildSystemPrompt_ReplaysLessonsInBuildMode(t *testing.T) {
 	// the next session starts already knowing what went wrong in the last one.
 	if !strings.Contains(got, "StaleContent") {
 		t.Fatalf("build mode must see its own past mistakes, prompt: %s", got)
+	}
+}
+
+// §1.11 #3: the per-step <dept_lessons> injection used to always read the
+// generic "engineering" dept too, so once a turn had touched, say, a .go
+// file, its own earlier-recorded go_engineering lessons were invisible to it.
+func TestBuildSystemPrompt_ReplaysLessonsForTheInferredDept(t *testing.T) {
+	a, root := newLessonAgent(t, ModeBuild)
+	if err := lessons.Append(root, lessons.Entry{
+		Dept:   "go_engineering",
+		Kind:   lessons.KindAntiPattern,
+		Task:   "wire the weather panel into the sidebar",
+		Files:  []string{"internal/agent/agent.go"},
+		Verify: "StaleContent: search block not found",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A prior tool call in this same turn already touched a .go file, so the
+	// dept lessons this step should replay are go_engineering's, not engineering's.
+	a.working.ObserveTool("read", json.RawMessage(`{"path":"internal/agent/agent.go"}`), []byte(`{}`), nil)
+
+	got := a.buildSystemPrompt()
+
+	if !strings.Contains(got, "StaleContent") {
+		t.Fatalf("build mode must see its own go_engineering lessons once it has touched a .go file: %s", got)
 	}
 }
 

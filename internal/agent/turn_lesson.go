@@ -52,10 +52,10 @@ func (a *Agent) recordTurnLesson(result *Result) {
 		return
 	}
 
-	dept := lessons.NormalizeDept("")
+	files := a.working.ActiveFiles()
+	dept := lessons.NormalizeDept(lessons.InferDeptFromFiles(files))
 	verify := clipLessonText(strings.Join(errs, "; "), maxLessonVerifyBytes)
 	task := a.working.Goal
-	files := a.working.ActiveFiles()
 
 	if err := lessons.Append(root, lessons.Entry{
 		Dept:   dept,
