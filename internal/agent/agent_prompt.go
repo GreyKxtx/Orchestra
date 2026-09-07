@@ -178,6 +178,15 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 		p.memory, detail, _ = store.FormatInjectReport(memCfg.InjectBytes())
 		a.opts.AgentLogger.LogMemoryInject(detail)
 	}
+	// 4a-pre: rules of the directories this turn's query points at. In the
+	// system prompt rather than the step-1 user prompt (where ckgContext goes)
+	// because these are rules for the whole turn, not context for one step.
+	if !a.opts.SkipMemoryInject && a.queryInstructions != "" {
+		if p.memory != "" {
+			p.memory += "\n\n"
+		}
+		p.memory += a.queryInstructions
+	}
 	// 4a: top-level single-agent modes replay their own episodic lessons.
 	// Without this the loop is half-built: recordTurnLesson writes what went
 	// wrong and nobody ever reads it back, so build mode repeats the same
