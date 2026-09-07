@@ -116,7 +116,7 @@ func (c *Core) ReplaceMCP(ctx context.Context, mcpCfg config.MCPConfig) []string
 		c.cfg.MCP = mcpCfg
 		return nil
 	}
-	mgr, startErrs := mcp.NewManager(ctx, mcpCfg)
+	mgr, startErrs := mcp.NewManager(ctx, mcpCfg, c.mcpHooks())
 	for _, err := range startErrs {
 		warnings = append(warnings, err.Error())
 		name := extractMCPErrName(err.Error())

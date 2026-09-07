@@ -35,9 +35,14 @@ func (h *RPCHandler) SetNotifier(n Notifier) {
 }
 
 // SetRequester attaches a request function so that agent.run can issue
-// server-initiated requests (e.g. permission/request) to the client.
+// server-initiated requests (e.g. permission/request) to the client. The same
+// channel is what MCP servers reach the user through, so it is bound to the
+// core's MCP host here — once per connection, matching the servers' lifetime.
 func (h *RPCHandler) SetRequester(fn func(ctx context.Context, method string, params any, result any) error) {
 	h.requester = fn
+	if h.core != nil && h.core.mcpHost != nil {
+		h.core.mcpHost.bind(&rpcPermissionRequester{requestFn: fn}, &rpcQuestionAsker{requestFn: fn})
+	}
 }
 
 func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {

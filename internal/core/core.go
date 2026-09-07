@@ -58,6 +58,10 @@ type Core struct {
 	sessions     *coresession.Manager
 	mcpManager   *mcp.Manager
 	mcpStartErrs map[string]string // last ReplaceMCP/New failures by server name
+	// mcpHost answers the requests MCP servers make of us (sampling,
+	// elicitation). Built before the servers start so they get real hooks;
+	// bound to the client when the RPC handler attaches its requester.
+	mcpHost *mcpHost
 }
 
 type Options struct {
@@ -136,28 +140,6 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
 	}
 
-	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
-	var mcpMgr *mcp.Manager
-	mcpErrs := map[string]string{}
-	if !opts.ToolsOnly && len(cfg.MCP.Servers) > 0 {
-		var startErrs []error
-		mcpMgr, startErrs = mcp.NewManager(context.Background(), cfg.MCP)
-		for _, err := range startErrs {
-			// Log to stderr — not a fatal error.
-			fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", err)
-			msg := err.Error()
-			const prefix = `mcp server "`
-			if strings.HasPrefix(msg, prefix) {
-				rest := msg[len(prefix):]
-				if i := strings.Index(rest, `"`); i > 0 {
-					mcpErrs[rest[:i]] = msg
-				}
-			}
-		}
-		if !mcpMgr.IsEmpty() {
-			tr.SetMCPCaller(mcpMgr)
-		}
-	}
 	tr.SetMemoryContext("", cfg.Memory.Resolve())
 
 	c := &Core{
@@ -171,8 +153,34 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		validator:         v,
 		tools:             tr,
 		sessions:          coresession.NewManager(),
-		mcpManager:        mcpMgr,
-		mcpStartErrs:      mcpErrs,
+		mcpStartErrs:      map[string]string{},
+	}
+	// The host resolves the model at call time: runtime.set_model swaps
+	// c.llmClient under running servers, and a server that samples an hour
+	// from now should get the model configured then, not the one at startup.
+	c.mcpHost = newMCPHost(func() (llm.Client, string) {
+		return c.llmClient, c.cfg.LLM.Model
+	})
+
+	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
+	if !opts.ToolsOnly && len(cfg.MCP.Servers) > 0 {
+		mcpMgr, startErrs := mcp.NewManager(context.Background(), cfg.MCP, c.mcpHost.hooks())
+		for _, err := range startErrs {
+			// Log to stderr — not a fatal error.
+			fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", err)
+			msg := err.Error()
+			const prefix = `mcp server "`
+			if strings.HasPrefix(msg, prefix) {
+				rest := msg[len(prefix):]
+				if i := strings.Index(rest, `"`); i > 0 {
+					c.mcpStartErrs[rest[:i]] = msg
+				}
+			}
+		}
+		c.mcpManager = mcpMgr
+		if !mcpMgr.IsEmpty() {
+			tr.SetMCPCaller(mcpMgr)
+		}
 	}
 	c.noteConfigMTime()
 	// Startup GC for staged runtime artifacts (attachments, diff-preview).
