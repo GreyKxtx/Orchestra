@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -176,5 +177,50 @@ func TestReadLoop_StillIgnoresNotifications(t *testing.T) {
 	case <-w.gotLine:
 		t.Fatal("the client replied to a notification; notifications take no reply")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// The per-request token cap bounds one sampling call. Nothing bounded how many
+// a server could have in flight at once — so a server could sidestep the cap
+// by sending a thousand requests, each its own goroutine, each its own LLM
+// call, each its own consent prompt. A cap that is trivially multiplied is not
+// a cap.
+func TestReadLoop_BoundsConcurrentInboundRequests(t *testing.T) {
+	entered := make(chan struct{}, 64)
+	release := make(chan struct{})
+	w := newWiredClient(t, func(context.Context, string, json.RawMessage) (any, *rpcError) {
+		entered <- struct{}{}
+		<-release
+		return map[string]any{"ok": true}, nil
+	})
+	defer close(release)
+
+	const flood = 32
+	for i := 1; i <= flood; i++ {
+		w.serverSends(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"sampling/createMessage"}`, i))
+	}
+
+	// Everything over the limit must be refused promptly rather than queued:
+	// a queue lets the server pile up work and starve later requests.
+	deadline := time.After(3 * time.Second)
+	refused := 0
+	for refused == 0 {
+		select {
+		case <-w.gotLine:
+			w.mu.Lock()
+			last := w.sent[len(w.sent)-1]
+			w.mu.Unlock()
+			if strings.Contains(last, "error") {
+				refused++
+			}
+		case <-deadline:
+			t.Fatalf("no request was refused after flooding %d of them; "+
+				"in-flight handlers are unbounded", flood)
+		}
+	}
+
+	inFlight := len(entered)
+	if inFlight > maxInFlightInbound {
+		t.Errorf("%d handlers ran concurrently, limit is %d", inFlight, maxInFlightInbound)
 	}
 }

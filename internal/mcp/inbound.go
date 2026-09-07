@@ -20,6 +20,19 @@ const (
 // and leave the server hanging anyway.
 const inboundRequestTimeout = 5 * time.Minute
 
+// maxInFlightInbound bounds how many server→client requests one server may
+// have running at once.
+//
+// The per-request token cap limits one sampling call; without this, a server
+// sidesteps that cap by sending a thousand requests — a thousand goroutines, a
+// thousand LLM calls, a thousand consent prompts. A cap that is trivially
+// multiplied is not a cap.
+//
+// Over the limit the request is refused rather than queued: queuing lets a
+// server pile up work and starve the requests behind it, and the refusal is
+// something the server can act on immediately.
+const maxInFlightInbound = 4
+
 // inboundHandler answers a request the SERVER sent to us — sampling/createMessage
 // and elicitation/create are the two the MCP spec defines.
 //
@@ -43,6 +56,42 @@ func (c *Client) handleInboundRequest(id int64, method string, params json.RawMe
 
 	var result any
 	var rerr *rpcError
+	switch {
+	case !c.acquireInboundSlot():
+		rerr = &rpcError{
+			Code:    rpcInternalError,
+			Message: fmt.Sprintf("too many concurrent requests from mcp server %q; retry", c.name),
+		}
+	default:
+		defer c.releaseInboundSlot()
+		result, rerr = c.serveInbound(ctx, method, params)
+	}
+
+	c.writeInboundReply(id, method, result, rerr)
+}
+
+// acquireInboundSlot takes one of the maxInFlightInbound slots, or reports
+// false immediately. Never blocks: the caller's alternative to a slot is a
+// prompt refusal, not a wait.
+func (c *Client) acquireInboundSlot() bool {
+	c.inboundMu.Lock()
+	defer c.inboundMu.Unlock()
+	if c.inboundActive >= maxInFlightInbound {
+		return false
+	}
+	c.inboundActive++
+	return true
+}
+
+func (c *Client) releaseInboundSlot() {
+	c.inboundMu.Lock()
+	c.inboundActive--
+	c.inboundMu.Unlock()
+}
+
+func (c *Client) serveInbound(ctx context.Context, method string, params json.RawMessage) (any, *rpcError) {
+	var result any
+	var rerr *rpcError
 	if c.onRequest == nil {
 		rerr = &rpcError{Code: rpcMethodNotFound, Message: "method not supported by this client: " + method}
 	} else {
@@ -51,7 +100,10 @@ func (c *Client) handleInboundRequest(id int64, method string, params json.RawMe
 			rerr = &rpcError{Code: rpcMethodNotFound, Message: "method not supported by this client: " + method}
 		}
 	}
+	return result, rerr
+}
 
+func (c *Client) writeInboundReply(id int64, method string, result any, rerr *rpcError) {
 	reply := map[string]any{"jsonrpc": "2.0", "id": id}
 	if rerr != nil {
 		reply["error"] = rerr

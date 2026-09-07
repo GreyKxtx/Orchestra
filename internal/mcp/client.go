@@ -90,6 +90,13 @@ type Client struct {
 	// advertise capabilities from it before any request arrives.
 	inbound InboundOptions
 
+	// inboundMu guards inboundActive, the count of server→client requests
+	// currently being served. Separate from mu and writeMu: an inbound
+	// handler runs for minutes and must not hold a mutex the read loop or
+	// the writer needs.
+	inboundMu     sync.Mutex
+	inboundActive int
+
 	// onRequest answers server→client requests (sampling/createMessage,
 	// elicitation/create). nil means this client serves none of them, and
 	// every such request is refused with method-not-found — which is the
