@@ -195,6 +195,15 @@ func searchMemoryLayers(root, sessionID, query string, limit int) []memoryHit {
 		if len(hits) >= limit {
 			break
 		}
+		// Store.Read reports its failure modes as CONTENT, not as errors: the
+		// session layer with no active session answers with the literal string
+		// "no active session_id". Searching that finds a hit indistinguishable
+		// from a remembered fact, attributed to a layer that does not exist
+		// yet. Skipping the layer beats matching the sentinel by name, which
+		// would break the moment the wording changed.
+		if layer == "session" && sessionID == "" {
+			continue
+		}
 		res := store.Read(layer, "", 256*1024)
 		if res.Content == "" {
 			continue

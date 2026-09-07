@@ -117,3 +117,19 @@ func TestParseMemorySlashCommand_KeepsOpenAndRefresh(t *testing.T) {
 		t.Fatal("an unknown verb was accepted")
 	}
 }
+
+// Store.Read returns its failure modes as CONTENT, not as errors: the session
+// layer with no active session answers with the literal string
+// "no active session_id". Searching that string finds a hit that looks exactly
+// like a remembered fact, attributed to a layer that does not exist yet.
+func TestSearchMemoryLayers_DoesNotMatchTheEmptySessionSentinel(t *testing.T) {
+	root := t.TempDir()
+	writeMemoryFile(t, filepath.Join(root, ".orchestra", "memory", "agent.md"),
+		"goal: something unrelated\n")
+
+	for _, q := range []string{"no active session_id", "active session", "session_id"} {
+		if hits := searchMemoryLayers(root, "", q, 8); len(hits) != 0 {
+			t.Errorf("query %q matched the store's own placeholder text: %+v", q, hits)
+		}
+	}
+}
