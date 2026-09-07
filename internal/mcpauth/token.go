@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/orchestra/orchestra/patch/fsutil"
@@ -38,6 +39,17 @@ type Token struct {
 // a hand-editable .orchestra.yml, so this is defense in depth independent
 // of internal/config's own validation (which only forbids ':').
 func tokenPath(serverName string) (string, error) {
+	// Both separators are rejected explicitly, not left to filepath.Base.
+	// Base only knows the HOST's separator, so a name containing a backslash
+	// is one ordinary filename on Linux and passes there, while the same name
+	// is rejected on Windows. A path guard that means different things
+	// depending on where Orchestra runs is not much of a guard. A server name
+	// is an identifier from a config file; neither slash belongs in one on
+	// any platform. CI is what caught this: the test runs on Linux, where the
+	// original check did not hold.
+	if strings.ContainsAny(serverName, `/\`) {
+		return "", fmt.Errorf("mcpauth: invalid server name %q", serverName)
+	}
 	if serverName == "" || serverName != filepath.Base(serverName) || serverName == "." || serverName == ".." {
 		return "", fmt.Errorf("mcpauth: invalid server name %q", serverName)
 	}
