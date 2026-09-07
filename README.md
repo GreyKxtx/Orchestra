@@ -18,7 +18,7 @@ Primary transport: **JSON-RPC 2.0 over stdio** (LSP-style); the CLI sits on top 
 | Session | Conversation history, todo list, `agent.run` over JSON-RPC | ✅ |
 | Subagents | `task.spawn/wait/cancel`, child agents with read-only tools | ✅ |
 | Hooks | Pre/post-tool shell hooks, `TOOL_DENIED` on nonzero exit | ✅ |
-| Memory | `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
+| Memory | `~/.orchestra/ORCHESTRA.md` → `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
 | MCP | JSON-RPC 2.0 stdio MCP client, multi-server manager | ✅ |
 | Providers | Anthropic API + OpenAI-compatible providers (LM Studio, vLLM…) | ✅ |
 | Eval | YAML task suites, isolated workspaces, `orchestra eval` | ✅ |
@@ -307,7 +307,7 @@ Events: `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit` (can deny
 
 ### Project memory
 
-Create `ORCHESTRA.md` at the project root — it's automatically injected into the agent's system prompt (max 2 KB). Alternatively: `.orchestra/memory/*.md` or `~/.orchestra/memory.md`. If the repo already has `AGENTS.md`, `CLAUDE.md`, or `.cursorrules`, Orchestra reads them as a fallback in that order when `ORCHESTRA.md` is absent.
+Create `ORCHESTRA.md` at the project root — it's automatically injected into the agent's system prompt (max 2 KB). Alternatively: `.orchestra/memory/*.md` or `~/.orchestra/memory.md`. Your own standing instructions — "how I want you to work", independent of any project — go in `~/.orchestra/ORCHESTRA.md`; they are injected before the project's, which stay the ones that override. That file is yours: unlike `~/.orchestra/memory.md`, the agent never writes to it. If the repo already has `AGENTS.md`, `CLAUDE.md`, or `.cursorrules`, Orchestra reads them as a fallback in that order when `ORCHESTRA.md` is absent.
 
 Personal notes you don't want committed go in `ORCHESTRA.local.md` next to the main file (`orchestra init` adds it to `.gitignore` for you). Its content is appended to the team file, not swapped in for it.
 

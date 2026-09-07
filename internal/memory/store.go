@@ -15,6 +15,12 @@ const (
 	layerRepo      = "repo"
 	layerLessons   = "lessons"
 	layerGlobal    = "global"
+	// layerUserOrchestra is the user's own standing instructions,
+	// ~/.orchestra/ORCHESTRA.md — "how I want you to work", as opposed to
+	// layerGlobal's ~/.orchestra/memory.md, which is "what you remembered".
+	// Both used to be the same file, so the agent's own compaction could
+	// rewrite a human's standing instructions.
+	layerUserOrchestra = "orchestra-user"
 )
 
 // LayerSummary describes one memory source for memory_read listing.

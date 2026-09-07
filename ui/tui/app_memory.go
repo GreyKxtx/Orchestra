@@ -63,12 +63,17 @@ func (a *App) cmdShowMemory() tea.Cmd {
 	paths := []struct {
 		label, path string
 	}{
+		// orchestra-user is the user's own standing instructions; global is
+		// the agent's own notes. Different authors, different lifetimes —
+		// listing them apart is the whole point of the split.
+		{"orchestra-user", ""},
 		{"orchestra", filepath.Join(root, "ORCHESTRA.md")},
 		{"agent", filepath.Join(root, ".orchestra", "memory", "agent.md")},
 		{"global", ""},
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		paths[2].path = filepath.Join(home, ".orchestra", "memory.md")
+		paths[0].path = filepath.Join(home, ".orchestra", "ORCHESTRA.md")
+		paths[3].path = filepath.Join(home, ".orchestra", "memory.md")
 	}
 	if a.coreSessionID != "" {
 		paths = append(paths, struct{ label, path string }{
@@ -191,7 +196,7 @@ func searchMemoryLayers(root, sessionID, query string, limit int) []memoryHit {
 	store := memory.NewStore(root, sessionID, memory.Config{GlobalEnabled: true})
 
 	var hits []memoryHit
-	for _, layer := range []string{"repo", "session", "global", "orchestra"} {
+	for _, layer := range []string{"repo", "session", "global", "orchestra", "orchestra-user"} {
 		if len(hits) >= limit {
 			break
 		}

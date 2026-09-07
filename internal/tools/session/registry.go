@@ -77,12 +77,12 @@ func ToolMemoryRead() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "memory_read",
-			Description: "Read the project's layered memory (ORCHESTRA.md, .orchestra/memory/, dept lessons, session, global). With no arguments it lists the available sources. Cheaper than injecting everything.",
+			Description: "Read the layered memory (the user's own ~/.orchestra/ORCHESTRA.md, the project's ORCHESTRA.md, .orchestra/memory/, dept lessons, session, global). With no arguments it lists the available sources. Cheaper than injecting everything.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "layer":  { "type": "string", "enum": ["orchestra", "session", "repo", "lessons", "global", "all"], "description": "Which memory layer to read" },
+    "layer":  { "type": "string", "enum": ["orchestra-user", "orchestra", "session", "repo", "lessons", "global", "all"], "description": "Which memory layer to read. orchestra-user is the user's standing instructions (~/.orchestra/ORCHESTRA.md); orchestra is this project's." },
     "path":   { "type": "string", "description": "ORCHESTRA.md, .orchestra/memory/agent.md or .orchestra/memory/lessons/<dept>.md" },
     "max_kb": { "type": "integer", "minimum": 1, "maximum": 64, "description": "Response cap in KiB" }
   }

@@ -105,6 +105,26 @@ func (s *Store) readLayerRaw(layer string) string {
 		}
 		content, _ := readOrchestraFile(s.workspaceRoot)
 		return content
+	case layerUserOrchestra:
+		// Deliberately NOT gated on cfg.GlobalEnabled. That switch governs the
+		// agent's global *memory*; these are the user's instructions, and
+		// someone who turned off the agent's global notes still means their own
+		// standing rules to apply.
+		dir, ok := userOrchestraDir()
+		if !ok {
+			return ""
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "ORCHESTRA.md"))
+		if err != nil {
+			return ""
+		}
+		raw := strings.TrimSpace(string(data))
+		if raw == "" {
+			return ""
+		}
+		// @import lines resolve against the file's own directory, the same way
+		// they do for a project's ORCHESTRA.md.
+		return expandImports(raw, dir)
 	case layerGlobal:
 		if !s.cfg.GlobalEnabled {
 			return ""
@@ -123,8 +143,25 @@ func (s *Store) readLayerRaw(layer string) string {
 	}
 }
 
+// userOrchestraDir returns ~/.orchestra, or ok=false when there is no
+// resolvable home directory (a service account, a stripped container).
+func userOrchestraDir() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "", false
+	}
+	return filepath.Join(home, ".orchestra"), true
+}
+
 func (s *Store) List() []LayerSummary {
 	var out []LayerSummary
+	if raw := s.readLayerRaw(layerUserOrchestra); raw != "" {
+		path := "~/.orchestra/ORCHESTRA.md"
+		out = append(out, LayerSummary{
+			Layer: layerUserOrchestra, Path: path, Bytes: len(raw),
+			Preview: preview(raw, 120),
+		})
+	}
 	if raw := s.readLayerRaw(layerOrchestra); raw != "" {
 		out = append(out, LayerSummary{
 			Layer: layerOrchestra, Path: s.orchestraFileName(), Bytes: len(raw),
@@ -213,6 +250,10 @@ func (s *Store) Read(layer, path string, maxBytes int) ReadResult {
 	}
 
 	switch layer {
+	case layerUserOrchestra, "user":
+		raw := s.sliceLayer(layerUserOrchestra, maxBytes)
+		return ReadResult{Layer: layerUserOrchestra, Path: "~/.orchestra/ORCHESTRA.md",
+			Content: raw, Truncated: len(raw) >= maxBytes}
 	case layerOrchestra, "project":
 		raw := s.sliceLayer(layerOrchestra, maxBytes)
 		return ReadResult{Layer: layerOrchestra, Path: s.orchestraFileName(), Content: raw, Truncated: len(raw) >= maxBytes}
@@ -236,7 +277,7 @@ func (s *Store) Read(layer, path string, maxBytes int) ReadResult {
 		// The escape hatch hybrid points the model at: always every layer.
 		return ReadResult{Content: s.tieredInject(maxBytes, fullScope()), Truncated: true}
 	default:
-		return ReadResult{Content: fmt.Sprintf("unknown layer %q (want orchestra|session|repo|lessons|global|all)", layer)}
+		return ReadResult{Content: fmt.Sprintf("unknown layer %q (want orchestra-user|orchestra|session|repo|lessons|global|all)", layer)}
 	}
 }
 

@@ -153,6 +153,9 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 	if res := store.Read("global", "", 64*1024); res.Content != "" && len(hits) < limit {
 		add("global", res.Content)
 	}
+	if res := store.Read("orchestra-user", "", 64*1024); res.Content != "" && len(hits) < limit {
+		add("orchestra-user", res.Content)
+	}
 	if res := store.Read("orchestra", "", 64*1024); res.Content != "" && len(hits) < limit {
 		add("orchestra", res.Content)
 	}
