@@ -130,3 +130,26 @@ func TestInstructionsForQuery_IgnoresRefsOutsideTheWorkspace(t *testing.T) {
 		t.Fatalf("a ref outside the workspace was followed: %q", got)
 	}
 }
+
+// Users mention directories, not only files: "look at @pkg/auth". The ref
+// resolver took the parent of whatever was named, so mentioning a package
+// loaded its PARENT's rules and skipped its own — the one file the mention was
+// actually about.
+func TestInstructionsForQuery_DirectoryMentionLoadsThatDirectory(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "pkg", "auth")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "ORCHESTRA.md"),
+		[]byte("AUTH PACKAGE RULES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, q := range []string{"look at @pkg/auth", "look at @pkg/auth/"} {
+		r := testMemoryRunner(t, root)
+		if got := r.InstructionsForQuery(q); !strings.Contains(got, "AUTH PACKAGE RULES") {
+			t.Errorf("%q did not load the mentioned directory's own rules: %q", q, got)
+		}
+	}
+}

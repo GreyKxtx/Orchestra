@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -58,6 +59,23 @@ func atRefPaths(query string) []string {
 	return out
 }
 
+// refDir resolves an @-reference to the directory whose instructions it is
+// asking for.
+//
+// People mention directories as often as files — "look at @pkg/auth" — and
+// taking the parent of whatever was named loaded the mentioned package's
+// PARENT and skipped the package itself, which is the one thing the mention
+// was about. A path that exists and is a directory is the answer; anything
+// else — a file, or a path that does not exist yet because the user is asking
+// for it to be created — resolves to its parent.
+func refDir(workspaceRoot, ref string) string {
+	full := filepath.Join(workspaceRoot, filepath.FromSlash(ref))
+	if st, err := os.Stat(full); err == nil && st.IsDir() {
+		return full
+	}
+	return filepath.Dir(full)
+}
+
 // InstructionsForQuery returns the nested ORCHESTRA.md text for the directories
 // of every file the query references, ready to append to the system prompt.
 //
@@ -80,8 +98,7 @@ func (r *Runner) InstructionsForQuery(query string) string {
 	}
 	var parts []string
 	for _, ref := range refs {
-		dir := filepath.Dir(filepath.Join(r.workspaceRoot, filepath.FromSlash(ref)))
-		if text := r.discoverInstructions(dir); text != "" {
+		if text := r.discoverInstructions(refDir(r.workspaceRoot, ref)); text != "" {
 			parts = append(parts, text)
 		}
 	}
