@@ -154,6 +154,22 @@
     reasoningBody = null;
     reasoningStarted = 0;
     turnToolCount = { read: 0, search: 0, write: 0, other: 0 };
+    turnToolFirstStart = 0;
+    turnToolLastEnd = 0;
+  }
+
+  // noteTurnToolStart/End track the group's wall clock. The TUI's tool group
+  // shows this in its footer (ui/tui/view/tool_group.go); without it the
+  // webview could say a turn ran nine tools but never how long that cost.
+  function noteTurnToolStart() {
+    if (!turnToolFirstStart) {
+      turnToolFirstStart = Date.now();
+    }
+  }
+
+  function noteTurnToolEnd() {
+    turnToolLastEnd = Date.now();
+    updateToolTraceSummary();
   }
 
   /** @returns {HTMLElement | null} */
@@ -249,7 +265,13 @@
       const n = turnToolCount.other;
       parts.push(`${n} tool${n === 1 ? "" : "s"}`);
     }
-    toolTraceSummary.textContent = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
+    let text = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
+    // Only when a live tool both started and finished: a group still running,
+    // or one replayed from history, has no honest number to show.
+    if (turnToolFirstStart && turnToolLastEnd > turnToolFirstStart) {
+      text += ` · ${formatToolDuration(turnToolLastEnd - turnToolFirstStart)}`;
+    }
+    toolTraceSummary.textContent = text;
   }
 
   /** @returns {HTMLElement | null} */

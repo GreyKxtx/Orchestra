@@ -3364,6 +3364,21 @@ body {
   text-align: right;
 }
 
+.tool-dur {
+  flex: 0 0 auto;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* No duration for a running tool or a restored one — the span stays empty and
+   must not reserve space or draw a separator. */
+.tool-dur:empty {
+  display: none;
+}
+
 .tool-stats {
   flex: 0 0 auto;
   font-family: ui-monospace, monospace;

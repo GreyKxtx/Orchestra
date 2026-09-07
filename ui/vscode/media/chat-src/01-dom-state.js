@@ -214,6 +214,11 @@
   let reasoningStarted = 0;
   /** @type {{ read: number; search: number; write: number; other: number }} */
   let turnToolCount = { read: 0, search: 0, write: 0, other: 0 };
+  // Wall time of the turn's tool work: first tool start to last tool finish.
+  // Zero means no live tool ran in this turn — restored history included,
+  // which is timed by nobody and must not report a duration.
+  let turnToolFirstStart = 0;
+  let turnToolLastEnd = 0;
   let busy = false;
   let busyStatusText = "Working…";
   /** @type {Array<{ id: string; preview: string; fileCount?: number }>} */

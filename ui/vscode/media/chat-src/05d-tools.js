@@ -132,9 +132,33 @@
     return disp;
   }
 
+  // formatToolDuration renders a tool's wall time the way the TUI does
+  // (ui/tui/view/tool_group.go): sub-second work in ms because "0.4s" hides
+  // the difference between 350ms and 450ms, seconds with one decimal, and
+  // anything past a minute in m/s because "91.4s" stops being readable.
+  function formatToolDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    if (ms < 1000) return Math.round(ms) + "ms";
+    // 59950+ rounds to "60.0s", which reads like a bug next to "1m 00s".
+    if (ms < 59950) return (ms / 1000).toFixed(1) + "s";
+    // Round to whole seconds BEFORE splitting: rounding the remainder
+    // separately turns 59999ms into "0m 60s".
+    const totalSec = Math.round(ms / 1000);
+    return Math.floor(totalSec / 60) + "m " + String(totalSec % 60).padStart(2, "0") + "s";
+  }
+
   function updateToolHead(block, name, argsRaw, content, running) {
     const head = block.querySelector(".tool-head");
     if (!head) return;
+    // Durations exist only for tools this session actually watched run.
+    // Restored history has none — the session snapshot does not persist
+    // them — and replaying a start/complete pair would time the replay, not
+    // the tool, printing "0ms" beside every historical call.
+    const durEl = head.querySelector(".tool-dur");
+    if (durEl) {
+      const ms = Number(block.dataset.durationMs);
+      durEl.textContent = block.dataset.durationMs ? formatToolDuration(ms) : "";
+    }
     const icon = head.querySelector(".tool-icon");
     const label = head.querySelector(".tool-label");
     const sub = head.querySelector(".tool-sub");
