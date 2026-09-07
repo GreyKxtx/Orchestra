@@ -73,6 +73,11 @@ var versionCheck bool
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the build and protocol versions",
+	// --check can fail for reasons that have nothing to do with how the command
+	// was typed (offline, rate-limited, proxied). Cobra's default is to print
+	// the flag help after any RunE error, which tells the user they got the
+	// invocation wrong when they did not.
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		out := cmd.OutOrStdout()
 		fmt.Fprintln(out, versionString())

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,12 @@ import (
 	"strings"
 	"time"
 )
+
+// errNoRelease separates "this repository has published no release" from every
+// other way the check can fail. Both are "cannot tell", but only one of them is
+// something the user can reason about — and reporting a rate limit or an outage
+// as "no releases yet" would be a lie.
+var errNoRelease = errors.New("no published release")
 
 // latestReleaseURL is the GitHub API endpoint for the newest published
 // release. The repository is the one README's install one-liners point at.
@@ -92,6 +99,9 @@ func fetchLatestReleaseTag(ctx context.Context, url string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errNoRelease
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub answered %s", resp.Status)
 	}
@@ -143,6 +153,12 @@ func runVersionCheck(ctx context.Context, w io.Writer) error {
 	defer cancel()
 
 	latest, err := fetchLatestReleaseTag(ctx, latestReleaseURL)
+	if errors.Is(err, errNoRelease) {
+		// Not a failure of the check — the check worked and the answer is that
+		// there is nothing to compare against yet.
+		fmt.Fprintln(w, "Опубликованных релизов пока нет — сравнивать не с чем.")
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("не удалось узнать последний релиз: %w", err)
 	}

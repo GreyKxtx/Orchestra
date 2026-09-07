@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,5 +119,41 @@ func TestVersionCheckMessage_AheadOfLatest(t *testing.T) {
 	msg := versionCheckMessage("v0.5.0", "v0.4.0")
 	if strings.Contains(strings.ToLower(msg), "доступна") {
 		t.Errorf("msg = %q, offers a downgrade as an update", msg)
+	}
+}
+
+// 404 from the releases API means the repository has published no release at
+// all — the state this repository is in today. "GitHub answered 404 Not Found"
+// is technically true and tells the user nothing they can act on, so the
+// no-release case is distinguished at the source and phrased for a human.
+func TestFetchLatestReleaseTag_404IsErrNoRelease(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := fetchLatestReleaseTag(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("no error for a 404")
+	}
+	if !errors.Is(err, errNoRelease) {
+		t.Fatalf("err = %v, want it to wrap errNoRelease so the caller can phrase it", err)
+	}
+}
+
+// Any other HTTP failure is a different problem (rate limit, outage, proxy) and
+// must not be reported as "no releases yet".
+func TestFetchLatestReleaseTag_OtherStatusIsNotErrNoRelease(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	_, err := fetchLatestReleaseTag(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("no error for a 403")
+	}
+	if errors.Is(err, errNoRelease) {
+		t.Fatal("a 403 was reported as 'no releases published'")
 	}
 }
