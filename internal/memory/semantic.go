@@ -5,7 +5,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/lessons"
@@ -27,63 +26,6 @@ type searchChunk struct {
 type Embedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
 	Model() string
-}
-
-// SemanticSearch ranks memory chunks by embedding similarity when an embed client is configured.
-// Returns nil when embedding is unavailable or fails (caller should fall back to substring search).
-func SemanticSearch(ctx context.Context, store *Store, root, query string, limit int, emb Embedder) ([]SearchHit, error) {
-	if store == nil || strings.TrimSpace(query) == "" || emb == nil || strings.TrimSpace(emb.Model()) == "" {
-		return nil, nil
-	}
-	if limit <= 0 {
-		limit = 8
-	}
-	chunks := collectSearchChunks(store, root)
-	if len(chunks) == 0 {
-		return nil, nil
-	}
-	if len(chunks) > 48 {
-		chunks = chunks[len(chunks)-48:]
-	}
-	texts := make([]string, len(chunks))
-	for i, c := range chunks {
-		texts[i] = c.text
-	}
-	client := emb
-	allInputs := append([]string{query}, texts...)
-	vecs, err := client.Embed(ctx, allInputs)
-	if err != nil || len(vecs) != len(allInputs) {
-		return nil, err
-	}
-	q := vecs[0]
-	qMag := vectorMag32(q)
-	type scored struct {
-		idx   int
-		score float32
-	}
-	scores := make([]scored, 0, len(chunks))
-	for i, doc := range vecs[1:] {
-		if len(doc) == 0 {
-			continue
-		}
-		scores = append(scores, scored{idx: i, score: cosine32(q, doc, qMag)})
-	}
-	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
-	var out []SearchHit
-	for _, s := range scores {
-		if len(out) >= limit {
-			break
-		}
-		if s.score < 0.15 {
-			continue
-		}
-		snip := chunks[s.idx].text
-		if len(snip) > 400 {
-			snip = snip[:400] + "…"
-		}
-		out = append(out, SearchHit{Layer: chunks[s.idx].layer, Snippet: snip, Score: s.score})
-	}
-	return out, nil
 }
 
 func collectSearchChunks(store *Store, root string) []searchChunk {

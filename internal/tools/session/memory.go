@@ -109,7 +109,7 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 	embCfg := c.embedConfig()
 	var degraded string
 	if strings.TrimSpace(embCfg.Model) != "" {
-		hits, err := memory.SemanticSearch(ctx, store, c.Root, q, limit, embed.New(embCfg))
+		hits, err := memory.SemanticSearchIndexed(ctx, store, c.Root, q, limit, embed.New(embCfg), c.memoryVectorStore())
 		switch {
 		case err != nil:
 			// Configuring embed.model promises semantic ranking. Answering with
