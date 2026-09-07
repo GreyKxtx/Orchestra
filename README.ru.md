@@ -71,7 +71,9 @@ go install github.com/orchestra/orchestra/cmd/orchestra@latest
 ```bash
 orchestra version
 # orchestra v0.3.0 (a1b2c3d)
-# protocol 13 · ops 1 · tools 14
+# protocol 14 · ops 1 · tools 14
+
+orchestra version --check   # сравнить с последним релизом на GitHub
 ```
 
 Три числа — это контракт `initialize`: если TUI или расширение отказываются подключаться, расхождение будет именно в них.

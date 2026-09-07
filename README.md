@@ -71,7 +71,9 @@ Check the install:
 ```bash
 orchestra version
 # orchestra v0.3.0 (a1b2c3d)
-# protocol 13 · ops 1 · tools 14
+# protocol 14 · ops 1 · tools 14
+
+orchestra version --check   # compare against the latest GitHub release
 ```
 
 Those three numbers are the `initialize` contract: if the TUI or the extension refuse to connect, the mismatch will be in one of them.
