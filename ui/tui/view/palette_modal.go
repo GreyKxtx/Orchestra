@@ -32,7 +32,7 @@ var DefaultModalCommands = []ModalCommand{
 	{"/fork", "ветка от сообщения (оригинал остаётся)", "Session"},
 	{"/clear", "очистить историю чата", "Session"},
 	{"/compact", "сжать LLM-контекст", "Session"},
-	{"/memory", "слои памяти", "Session"},
+	{"/memory", "слои памяти · /memory search <текст> — поиск", "Session"},
 	{"/diff", "diff последнего commit", "Session"},
 	{"/shell", "права на shell: ask ↔ allow", "Session"},
 	{"/theme", "тема: orchestra ↔ neutral", "System"},
