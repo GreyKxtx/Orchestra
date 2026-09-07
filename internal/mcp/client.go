@@ -68,11 +68,11 @@ type Client struct {
 	// protocolVersion is what the server answered with at initialize, which
 	// may be older than the revision this client offers.
 	protocolVersion string
-	idSeq       atomic.Int64
-	mu          sync.Mutex
-	writeMu     sync.Mutex
-	pending     map[int64]chan rpcResponse
-	done        chan struct{}
+	idSeq           atomic.Int64
+	mu              sync.Mutex
+	writeMu         sync.Mutex
+	pending         map[int64]chan rpcResponse
+	done            chan struct{}
 
 	// stderr is a bounded ring buffer carrying the server's recent stderr
 	// output. L9 + S1 in audit ledger: shared with LSP via subproc package
@@ -84,6 +84,12 @@ type Client struct {
 	// path.Match globs (`fs.*`). nil/empty = expose every tool.
 	// M31 in audit ledger.
 	allowedTools []string
+
+	// onRequest answers server→client requests (sampling/createMessage,
+	// elicitation/create). nil means this client serves none of them, and
+	// every such request is refused with method-not-found — which is the
+	// honest answer, and the only one that does not hang the server.
+	onRequest inboundHandler
 }
 
 // StderrTail returns the last <=64 KiB of the MCP server's stderr — useful
@@ -396,6 +402,25 @@ func (c *Client) readLoop() {
 		var resp rpcResponse
 		if err := json.Unmarshal(line, &resp); err != nil {
 			continue // skip malformed lines (e.g. server startup logs)
+		}
+		// A message carrying a method came FROM the server: a notification
+		// when it has no id, a request when it does. Only the id-less case
+		// existed before, so a server request (sampling, elicitation) fell
+		// into the response path below, matched nothing in `pending`, and was
+		// dropped — leaving the server waiting for a reply forever.
+		var inbound struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(line, &inbound); err == nil && inbound.Method != "" && resp.ID != nil {
+			// Own goroutine: sampling calls an LLM and elicitation waits on a
+			// person, while this loop is also how replies to our own calls
+			// arrive. Handling it inline would deadlock the client against a
+			// server that is waiting for us.
+			id, params := *resp.ID, append(json.RawMessage(nil), inbound.Params...)
+			method := inbound.Method
+			go c.handleInboundRequest(id, method, params)
+			continue
 		}
 		if resp.ID == nil {
 			// M29 in audit ledger: notifications/tools/list_changed is
