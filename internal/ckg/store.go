@@ -80,6 +80,15 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("ckg store: database schema version %d is newer than supported %d; upgrade the binary", version, targetVersion)
 	}
 
+	// memory_embeddings is created outside the versioned block, and never
+	// dropped by it, because it is not part of the code graph. The graph is a
+	// local cache whose rebuild costs only CPU; memory vectors cost real calls
+	// to the embedding endpoint, and their key is the chunk's content hash, so
+	// nothing about a graph rebuild invalidates them. See memory_embed_store.go.
+	if err := s.ensureMemoryEmbeddings(); err != nil {
+		return err
+	}
+
 	if version >= targetVersion {
 		return nil
 	}
@@ -200,6 +209,27 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", targetVersion)); err != nil {
 		return fmt.Errorf("migrate v%d: set user_version: %w", targetVersion, err)
+	}
+	return nil
+}
+
+// ensureMemoryEmbeddings creates the memory vector table if it is absent.
+// Idempotent and additive: it runs on every open, whatever the graph's schema
+// version, so an old database gains the table without losing its vectors and a
+// current one is untouched.
+func (s *Store) ensureMemoryEmbeddings() error {
+	const ddl = `
+    CREATE TABLE IF NOT EXISTS memory_embeddings (
+        chunk_hash TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        dim        INTEGER NOT NULL,
+        vector     BLOB NOT NULL,
+        PRIMARY KEY (chunk_hash, model)
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model ON memory_embeddings(model);
+    `
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate: memory_embeddings: %w", err)
 	}
 	return nil
 }
