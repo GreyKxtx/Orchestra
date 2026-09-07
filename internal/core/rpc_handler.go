@@ -22,6 +22,11 @@ type RPCHandler struct {
 	core      *Core
 	notifier  Notifier // optional; nil = no streaming notifications
 	requester func(ctx context.Context, method string, params any, result any) error
+	// questionAsker is shared by every source of question/ask — each agent
+	// run, each session turn, and MCP elicitation. Its lock only serializes
+	// callers holding the same instance, and the collision that matters is
+	// between two different sources, so there is exactly one.
+	questionAsker *rpcQuestionAsker
 }
 
 func NewRPCHandler(c *Core) *RPCHandler {
@@ -40,9 +45,25 @@ func (h *RPCHandler) SetNotifier(n Notifier) {
 // core's MCP host here — once per connection, matching the servers' lifetime.
 func (h *RPCHandler) SetRequester(fn func(ctx context.Context, method string, params any, result any) error) {
 	h.requester = fn
+	h.questionAsker = &rpcQuestionAsker{requestFn: fn}
 	if h.core != nil && h.core.mcpHost != nil {
-		h.core.mcpHost.bind(&rpcPermissionRequester{requestFn: fn}, &rpcQuestionAsker{requestFn: fn})
+		h.core.mcpHost.bind(&rpcPermissionRequester{requestFn: fn}, h.questionAsker)
 	}
+}
+
+// questionAskerForRun is the asker handed to an agent run or a session turn.
+// Nil when no client is attached, which disables the question tool — the same
+// meaning a nil asker has always had.
+//
+// Permission requests deliberately keep a per-call requester: the TUI holds a
+// real FIFO queue for them (ui/tui/state/permqueue.go), so concurrent consent
+// prompts are already handled at the client. Questions have one modal slot and
+// no queue, which is why they funnel through a single asker instead.
+func (h *RPCHandler) questionAskerForRun() *rpcQuestionAsker {
+	if h == nil || h.requester == nil {
+		return nil
+	}
+	return h.questionAsker
 }
 
 func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -93,7 +114,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		if h.requester != nil {
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
-			p.QuestionAsker = &rpcQuestionAsker{requestFn: h.requester}
+			p.QuestionAsker = h.questionAskerForRun()
 		}
 		return h.core.AgentRun(ctx, p)
 
@@ -165,7 +186,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		if h.requester != nil {
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
-			p.QuestionAsker = &rpcQuestionAsker{requestFn: h.requester}
+			p.QuestionAsker = h.questionAskerForRun()
 		}
 		return h.core.SessionMessage(ctx, p)
 
