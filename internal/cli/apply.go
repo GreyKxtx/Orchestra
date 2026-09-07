@@ -532,7 +532,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		// Wire MCP servers if configured.
 		var mcpExtraTools []llm.ToolDef
 		if len(cfg.MCP.Servers) > 0 {
-			mcpMgr, mcpErrs := mcp.NewManager(cmd.Context(), cfg.MCP)
+			mcpMgr, mcpErrs := mcp.NewManager(cmd.Context(), cfg.MCP, applyMCPHooks(llmClient, cfg.LLM.Model))
 			for _, e := range mcpErrs {
 				fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", e)
 			}
