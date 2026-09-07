@@ -81,6 +81,7 @@ func (c *Core) RefreshConfigIfChanged() {
 		}
 		c.llmClient = client
 	}
+	c.publishSamplingTarget()
 	// Push refreshed exclude dirs + embed credentials into the tools runner.
 	c.applyEmbedRuntime()
 }

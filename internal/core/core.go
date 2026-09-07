@@ -62,6 +62,11 @@ type Core struct {
 	// elicitation). Built before the servers start so they get real hooks;
 	// bound to the client when the RPC handler attaches its requester.
 	mcpHost *mcpHost
+	// sampling is the (client, model) an MCP server samples with. It is a
+	// published snapshot, not a read of c.llmClient / c.cfg.LLM: the reader is
+	// an MCP goroutine outside runMu, while every model writer mutates those
+	// fields in place under runMu alone. Writers call publishSamplingTarget.
+	sampling samplingTarget
 }
 
 type Options struct {
@@ -158,9 +163,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	// The host resolves the model at call time: runtime.set_model swaps
 	// c.llmClient under running servers, and a server that samples an hour
 	// from now should get the model configured then, not the one at startup.
-	c.mcpHost = newMCPHost(func() (llm.Client, string) {
-		return c.llmClient, c.cfg.LLM.Model
-	})
+	// It reads the published snapshot, not the fields — see Core.sampling.
+	c.publishSamplingTarget()
+	c.mcpHost = newMCPHost(c.samplingModel)
 
 	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
 	if !opts.ToolsOnly && len(cfg.MCP.Servers) > 0 {

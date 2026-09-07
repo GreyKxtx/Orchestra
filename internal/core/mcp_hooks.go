@@ -45,6 +45,39 @@ func newMCPHost(model func() (llm.Client, string)) *mcpHost {
 	return &mcpHost{always: map[string]bool{}, model: model}
 }
 
+// samplingTarget is the model an MCP server samples with, published by the
+// writers of c.llmClient / c.cfg.LLM so the MCP goroutine never reads those
+// fields directly. A writer that forgets to publish leaves sampling on the
+// previous model — stale, but never a data race.
+type samplingTarget struct {
+	mu     sync.RWMutex
+	client llm.Client
+	model  string
+}
+
+// publishSamplingTarget snapshots the current model. Call after every change
+// to c.llmClient or c.cfg.LLM.Model, while still holding runMu.
+func (c *Core) publishSamplingTarget() {
+	if c == nil {
+		return
+	}
+	var model string
+	if c.cfg != nil {
+		model = c.cfg.LLM.Model
+	}
+	c.sampling.mu.Lock()
+	c.sampling.client = c.llmClient
+	c.sampling.model = model
+	c.sampling.mu.Unlock()
+}
+
+// samplingModel is the mcpHost's model resolver.
+func (c *Core) samplingModel() (llm.Client, string) {
+	c.sampling.mu.RLock()
+	defer c.sampling.mu.RUnlock()
+	return c.sampling.client, c.sampling.model
+}
+
 // bind attaches the interactive channel. Called once per client connection.
 func (h *mcpHost) bind(consent permission.Requester, ask tools.QuestionAsker) {
 	h.mu.Lock()

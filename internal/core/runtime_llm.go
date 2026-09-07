@@ -132,6 +132,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 		}
 		c.cfg.Providers[pkey] = pc
 	}
+	c.publishSamplingTarget()
 
 	persisted := false
 	cfgPath := c.configFilePath()
@@ -461,6 +462,7 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 			c.cfg.Providers[targetProv] = pc
 		}
 	}
+	c.publishSamplingTarget()
 
 	persisted := false
 	cfgPath := c.configFilePath()
