@@ -44,20 +44,26 @@ func (a *App) cycleShellPerms() {
 
 // respondShellPermission closes the permission modal and answers the core.
 // sessionAllow flips shell · allow for the rest of the session (+ prefs),
-// or for lsp.install sets lsp.auto_install=true.
+// for lsp.install sets lsp.auto_install=true, and for an MCP consent
+// (kind mcp.*) tells the core to stop asking for that server — the core
+// remembers it; the TUI keeps no state of its own for it.
 // toolAlways remembers this tool so ask-mode skips the modal next time.
 func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 	req, _ := a.perms.Answer()
 	tool := req.Tool
 	kind := req.Kind
 	isLSP := strings.EqualFold(kind, "lsp.install") || tool == "lsp.install"
+	isMCP := strings.HasPrefix(kind, "mcp.")
 	reqID := req.ReqID
 	a.permModal = nil
 	if approved && sessionAllow {
-		if isLSP {
+		switch {
+		case isLSP:
 			_ = a.persistLSPAutoInstall(true)
 			a.showToast("lsp · auto_install — всегда")
-		} else {
+		case isMCP:
+			a.showToast("mcp · " + strings.TrimPrefix(tool, "mcp:") + " — не спрашивать больше")
+		default:
 			a.toggleAllowExec(true)
 			_ = a.persistUIPrefs()
 			a.showToast("shell · allow — на сессию")
@@ -80,7 +86,7 @@ func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 	if a.rpc != nil {
 		a.rpc.RespondPermissionDecision(reqID, rpcclient.PermissionDecision{
 			Approved: approved,
-			Always:   approved && sessionAllow && isLSP,
+			Always:   approved && sessionAllow && (isLSP || isMCP),
 		})
 	}
 	// Show next queued permission modal (FIFO: shell ↔ lsp.install).

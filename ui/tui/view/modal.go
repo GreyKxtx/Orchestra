@@ -133,6 +133,25 @@ func (m *Modal) Render() string {
 		return border.Render(body)
 	}
 
+	// An MCP server asking for the model or the user's attention. The server
+	// is named first: "something wants your model" is not a question anyone
+	// can answer. [a] here means "stop asking for this server" and is carried
+	// to the core as always=true — it never touches shell · allow.
+	if strings.HasPrefix(m.Kind, "mcp.") {
+		server := strings.TrimPrefix(tool, "mcp:")
+		what := "просит задать вам вопрос"
+		if m.Kind == "mcp.sampling" {
+			what = "просит запустить вашу модель"
+		}
+		title := lipgloss.NewStyle().
+			Foreground(t.Warning()).
+			Bold(true).
+			Render("⚠ MCP-сервер " + server)
+		body := fmt.Sprintf("%s\n\nСервер %s %s:\n%s\n\n[y] один раз   [a] всегда для этого сервера   [n] запретить",
+			title, server, what, desc)
+		return border.Render(body)
+	}
+
 	title := lipgloss.NewStyle().
 		Foreground(t.Warning()).
 		Bold(true).
