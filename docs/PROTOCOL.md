@@ -826,13 +826,24 @@ Params:
 {"tool": "bash", "description": "go test ./...", "reason": "to verify the fix"}
 ```
 
+Optional `kind` names the consent flow so a client can render it differently: absent/`"exec"` (shell), `"lsp.install"`, `"lesson_rule"`, and the two MCP kinds below.
+
 Expected response (`result`):
 
 ```json
 {"approved": true, "reason": "ok"}
 ```
 
+`always: true` in the response means "approve, and stop asking": for `lsp.install` the client persists `lsp.auto_install`; for the MCP kinds the core remembers the (server, kind) pair for the rest of the process.
+
 If no client request handler is registered (`Client.SetRequestHandler` not called), the client returns method-not-found and the server falls back to the static permission gate (config `exec.confirm` / `--allow-exec`).
+
+**MCP servers asking back.** A configured MCP server with `allow_sampling: true` / `allow_elicitation: true` may send `sampling/createMessage` / `elicitation/create` to Orchestra. Each such request reaches the user through this same method first, with `tool` set to `mcp:<server>` and `kind` one of:
+
+- `mcp.sampling` — the server wants a completion on the user's configured model. `description` summarises the request (message count, token cap, last line of the prompt).
+- `mcp.elicitation` — the server wants to ask the user a question. `description` is the first line of the server's message.
+
+A refusal (or no client handler) is reported to the server as declined; nothing runs. This is deliberately not a new protocol method: every client that implements `permission/request` and `question/ask` already supports it.
 
 ### `question/ask`
 
@@ -855,6 +866,8 @@ Expected response (`result`):
 ```
 
 TUI shows a blocking modal; CLI `apply --mode plan` uses stdin when TTY.
+
+Also used for MCP elicitation (after the `mcp.elicitation` consent above): the server's `requestedSchema` becomes one question per property in schema order — enums and booleans arrive with `options` (`yes`/`no` for booleans), strings and numbers as free text; the server's message is prepended to the first question. A schema with no properties is a single confirmation with options `ok`/`decline`. Answers are sent back verbatim; the core coerces them (a typed `2` against options means the second option, `да`/`yes` is `true`) before replying to the server. Empty `answers` is reported to the server as `cancel`; a required field left blank as `decline`.
 
 ---
 

@@ -255,11 +255,15 @@ mcp:
     - name: linear
       url: https://mcp.linear.app
       oauth: {}   # empty block: attempt Dynamic Client Registration
+      allow_sampling: true      # may ask Orchestra to run your model (you confirm each time)
+      allow_elicitation: true   # may ask you a question through the TUI / IDE
 ```
 
 A server must set exactly one of `command` or `url` — otherwise the config fails to load. Plaintext `http://` to a non-loopback host is rejected (the token would go over the network in the clear); if that's an internal network and you want it anyway, set `allow_insecure_http: true`.
 
 A server with an `oauth:` block authenticates via OAuth 2.1 instead of `bearer_token_env` — the two are mutually exclusive. Run `orchestra mcp login <name>` once to authorize (opens a browser); the token is stored under `~/.orchestra/mcp-oauth/<name>.json` and silently refreshed on every later run. `orchestra mcp logout <name>` removes it. `oauth:` only works with `url:` (OAuth authorizes HTTP requests; stdio servers have none to authorize).
+
+**Servers asking back (sampling / elicitation).** Both are off by default: an MCP server is third-party code, and these two requests are how it reaches your model bill and your attention. `allow_sampling: true` lets the server request a completion on your configured model; `allow_elicitation: true` lets it ask you a structured question. Either way you are asked to confirm each request in the TUI or IDE (the prompt names the server; "always" stops asking for that server until Orchestra restarts), and a sampling prompt never sees Orchestra's tools. In a non-interactive `orchestra apply` there is nobody to ask, so sampling is refused and elicitation declined — the config flag is permission to ask, not permission to proceed.
 
 ### Secrets: `.orchestra.local.yml`
 
