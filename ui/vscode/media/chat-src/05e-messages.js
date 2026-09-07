@@ -45,6 +45,7 @@
         toolName: tb.name || "tool",
         content: tb.result || "",
         diagnostics: tb.diagnostics,
+        durationMs: tb.durationMs,
         restored: true,
       });
       if (toolKind(tb.name) === "write" && (tb.diffBefore !== undefined || tb.diffAfter !== undefined)) {
@@ -128,7 +129,7 @@
     return el;
   }
 
-  /** @param {{ phase: string; toolCallId?: string; toolName: string; content?: string; argsDelta?: string; step?: number; diagnostics?: any[]; restored?: boolean }} msg */
+  /** @param {{ phase: string; toolCallId?: string; toolName: string; content?: string; argsDelta?: string; step?: number; diagnostics?: any[]; restored?: boolean; durationMs?: number }} msg */
   function handleToolBlock(msg) {
     if (!messagesEl) return;
     const id = toolBlockKey(msg);
@@ -257,6 +258,10 @@
       if (block.dataset.startedAt) {
         block.dataset.durationMs = String(Date.now() - Number(block.dataset.startedAt));
         noteTurnToolEnd();
+      } else if (typeof msg.durationMs === "number" && msg.durationMs > 0) {
+        // Restored from the session snapshot: the tool was timed when it ran,
+        // by whichever surface ran it (sessionfile.UIToolBlock.duration_ms).
+        block.dataset.durationMs = String(msg.durationMs);
       }
       updateToolHead(block, msg.toolName, argsRaw, msg.content || "", false);
       if (head && kind !== "write") head.classList.remove("open");

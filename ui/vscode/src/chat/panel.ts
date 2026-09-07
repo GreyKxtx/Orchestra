@@ -572,6 +572,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           status: t.status,
           result: t.result,
           diagnostics: t.diagnostics,
+          durationMs: t.duration_ms,
           diffBefore: diff?.before,
           diffAfter: diff?.after,
         };
@@ -1614,6 +1615,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             argsRaw: "",
             status: "running",
             result: "",
+            startedAt: Date.now(),
           });
         }
         post({
@@ -1655,6 +1657,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             status: toolStatusFromResult(content),
             result: content,
             diagnostics: event.diagnostics,
+            // Only when this panel saw the start. A tool whose start arrived
+            // before the panel attached has no honest duration to persist.
+            durationMs: existing?.startedAt ? Date.now() - existing.startedAt : undefined,
           });
         }
         post({
