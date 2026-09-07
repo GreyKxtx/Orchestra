@@ -30,9 +30,31 @@ type VectorStore interface {
 	// Load returns the vectors known for these hashes under model. Hashes with
 	// no vector are absent — that absence is the work list.
 	Load(ctx context.Context, model string, hashes []string) (map[string][]float32, error)
-	Save(ctx context.Context, model string, vecs map[string][]float32) error
-	// Prune drops this model's vectors for hashes not in keep.
-	Prune(ctx context.Context, model string, keep []string) error
+	Save(ctx context.Context, model string, vecs []ScopedVector) error
+	// Prune drops this model's vectors inside scopes whose hash is not in keep.
+	// Scoping matters: a search sees the workspace's durable layers and its own
+	// session's, never another session's, so an unscoped sweep would evict the
+	// other sessions' vectors and both would thrash re-embedding.
+	Prune(ctx context.Context, model string, scopes []string, keep []string) error
+}
+
+// ScopedVector is one chunk's vector together with the scope that owns it.
+type ScopedVector struct {
+	Hash   string
+	Scope  string
+	Vector []float32
+}
+
+// scopeWorkspace covers every layer shared by the whole workspace. The session
+// layer is the only per-caller one, so it is the only thing that needs its own
+// scope.
+const scopeWorkspace = "ws"
+
+func chunkScope(layer, sessionID string) string {
+	if layer == layerSession {
+		return "session:" + sessionID
+	}
+	return scopeWorkspace
 }
 
 // embedBatch caps how many chunks go into one Embed call. Only ever paid on
@@ -69,9 +91,18 @@ func SemanticSearchIndexed(ctx context.Context, store *Store, root, query string
 
 	model := emb.Model()
 	hashes := make([]string, len(chunks))
+	scopes := make([]string, len(chunks))
+	scopeSet := map[string]bool{scopeWorkspace: true}
 	for i, c := range chunks {
 		hashes[i] = chunkHash(c.layer, c.text)
+		scopes[i] = chunkScope(c.layer, store.sessionID)
+		scopeSet[scopes[i]] = true
 	}
+	prunable := make([]string, 0, len(scopeSet))
+	for sc := range scopeSet {
+		prunable = append(prunable, sc)
+	}
+	sort.Strings(prunable)
 
 	cached := map[string][]float32{}
 	if vecStore != nil {
@@ -102,7 +133,16 @@ func SemanticSearchIndexed(ctx context.Context, store *Store, root, query string
 		return nil, nil
 	}
 	if vecStore != nil && len(fresh) > 0 {
-		if err := vecStore.Save(ctx, model, fresh); err != nil {
+		scopeOf := make(map[string]string, len(hashes))
+		for i, h := range hashes {
+			scopeOf[h] = scopes[i]
+		}
+		items := make([]ScopedVector, 0, len(fresh))
+		for h, v := range fresh {
+			items = append(items, ScopedVector{Hash: h, Scope: scopeOf[h], Vector: v})
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Hash < items[j].Hash })
+		if err := vecStore.Save(ctx, model, items); err != nil {
 			return nil, err
 		}
 	}
@@ -112,7 +152,7 @@ func SemanticSearchIndexed(ctx context.Context, store *Store, root, query string
 	if vecStore != nil {
 		// Entries get edited and deleted; their vectors would otherwise pile up
 		// forever under hashes no chunk claims any more.
-		if err := vecStore.Prune(ctx, model, hashes); err != nil {
+		if err := vecStore.Prune(ctx, model, prunable, hashes); err != nil {
 			return nil, err
 		}
 	}

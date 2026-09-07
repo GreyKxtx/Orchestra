@@ -66,12 +66,16 @@ func toyVector(s string) []float32 {
 
 // memVectorStore is an in-process VectorStore, standing in for the CKG table.
 type memVectorStore struct {
-	mu   sync.Mutex
-	rows map[string]map[string][]float32 // model -> hash -> vector
+	mu    sync.Mutex
+	rows  map[string]map[string][]float32 // model -> hash -> vector
+	scope map[string]map[string]string    // model -> hash -> scope
 }
 
 func newMemVectorStore() *memVectorStore {
-	return &memVectorStore{rows: map[string]map[string][]float32{}}
+	return &memVectorStore{
+		rows:  map[string]map[string][]float32{},
+		scope: map[string]map[string]string{},
+	}
 }
 
 func (m *memVectorStore) Load(_ context.Context, model string, hashes []string) (map[string][]float32, error) {
@@ -86,28 +90,35 @@ func (m *memVectorStore) Load(_ context.Context, model string, hashes []string) 
 	return out, nil
 }
 
-func (m *memVectorStore) Save(_ context.Context, model string, vecs map[string][]float32) error {
+func (m *memVectorStore) Save(_ context.Context, model string, vecs []ScopedVector) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rows[model] == nil {
 		m.rows[model] = map[string][]float32{}
+		m.scope[model] = map[string]string{}
 	}
-	for h, v := range vecs {
-		m.rows[model][h] = v
+	for _, v := range vecs {
+		m.rows[model][v.Hash] = v.Vector
+		m.scope[model][v.Hash] = v.Scope
 	}
 	return nil
 }
 
-func (m *memVectorStore) Prune(_ context.Context, model string, keep []string) error {
+func (m *memVectorStore) Prune(_ context.Context, model string, scopes []string, keep []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	inScope := map[string]bool{}
+	for _, sc := range scopes {
+		inScope[sc] = true
+	}
 	live := map[string]bool{}
 	for _, h := range keep {
 		live[h] = true
 	}
 	for h := range m.rows[model] {
-		if !live[h] {
+		if inScope[m.scope[model][h]] && !live[h] {
 			delete(m.rows[model], h)
+			delete(m.scope[model], h)
 		}
 	}
 	return nil

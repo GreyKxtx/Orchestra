@@ -16,12 +16,16 @@ func (c ckgVectorStore) Load(ctx context.Context, model string, hashes []string)
 	return c.store.LoadMemoryEmbeddings(ctx, model, hashes)
 }
 
-func (c ckgVectorStore) Save(ctx context.Context, model string, vecs map[string][]float32) error {
-	return c.store.SaveMemoryEmbeddings(ctx, model, vecs)
+func (c ckgVectorStore) Save(ctx context.Context, model string, vecs []memory.ScopedVector) error {
+	items := make([]ckg.MemoryVector, len(vecs))
+	for i, v := range vecs {
+		items[i] = ckg.MemoryVector{Hash: v.Hash, Scope: v.Scope, Vector: v.Vector}
+	}
+	return c.store.SaveMemoryEmbeddings(ctx, model, items)
 }
 
-func (c ckgVectorStore) Prune(ctx context.Context, model string, keep []string) error {
-	return c.store.PruneMemoryEmbeddings(ctx, model, keep)
+func (c ckgVectorStore) Prune(ctx context.Context, model string, scopes []string, keep []string) error {
+	return c.store.PruneMemoryEmbeddings(ctx, model, scopes, keep)
 }
 
 // memoryVectorStore returns the vector cache for semantic memory search, or

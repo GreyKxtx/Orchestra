@@ -218,15 +218,46 @@ func (s *Store) migrate() error {
 // version, so an old database gains the table without losing its vectors and a
 // current one is untouched.
 func (s *Store) ensureMemoryEmbeddings() error {
+	// A table from a build before scopes existed cannot be pruned correctly,
+	// and it is a pure cache, so it is dropped rather than migrated in place:
+	// rebuilding costs one pass of embedding calls, keeping it costs silently
+	// wrong eviction between sessions.
+	var hasScope bool
+	rows, err := s.db.Query(`PRAGMA table_info(memory_embeddings)`)
+	if err == nil {
+		existed := false
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notNull, pk int
+			var dflt any
+			if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+				break
+			}
+			existed = true
+			if name == "scope" {
+				hasScope = true
+			}
+		}
+		rows.Close()
+		if existed && !hasScope {
+			if _, err := s.db.Exec(`DROP TABLE memory_embeddings`); err != nil {
+				return fmt.Errorf("migrate: drop pre-scope memory_embeddings: %w", err)
+			}
+		}
+	}
+
 	const ddl = `
     CREATE TABLE IF NOT EXISTS memory_embeddings (
         chunk_hash TEXT NOT NULL,
         model      TEXT NOT NULL,
+        scope      TEXT NOT NULL DEFAULT '',
         dim        INTEGER NOT NULL,
         vector     BLOB NOT NULL,
         PRIMARY KEY (chunk_hash, model)
     );
     CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model ON memory_embeddings(model);
+    CREATE INDEX IF NOT EXISTS idx_memory_embeddings_scope ON memory_embeddings(model, scope);
     `
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("migrate: memory_embeddings: %w", err)

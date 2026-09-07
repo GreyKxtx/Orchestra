@@ -17,10 +17,20 @@ import (
 // content hash owes the graph nothing: no synthetic file rows, no filters, and
 // no vectors lost when a file is deleted and its nodes cascade away.
 
+// MemoryVector is one chunk's vector plus the scope that owns it.
+type MemoryVector struct {
+	Hash string
+	// Scope names who the chunk belongs to: the workspace's durable layers
+	// share one scope, and each session has its own. Prune works per scope so
+	// one session's search cannot evict another session's vectors.
+	Scope  string
+	Vector []float32
+}
+
 // SaveMemoryEmbeddings upserts vectors for the given model, keyed by chunk
 // hash. Vectors must share a dim; mismatched ones are skipped rather than
 // failing the batch, so a noisy embedding server cannot lose the good rows.
-func (s *Store) SaveMemoryEmbeddings(ctx context.Context, model string, vecs map[string][]float32) error {
+func (s *Store) SaveMemoryEmbeddings(ctx context.Context, model string, vecs []MemoryVector) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("save memory embeddings: no store")
 	}
@@ -30,32 +40,29 @@ func (s *Store) SaveMemoryEmbeddings(ctx context.Context, model string, vecs map
 	if len(vecs) == 0 {
 		return nil
 	}
-	dim := 0
-	for _, v := range vecs {
-		dim = len(v)
-		break
-	}
+	dim := len(vecs[0].Vector)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("save memory embeddings: begin tx: %w", err)
 	}
 	stmt, err := tx.PrepareContext(ctx, `
-        INSERT INTO memory_embeddings (chunk_hash, model, dim, vector)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(chunk_hash, model) DO UPDATE SET dim = excluded.dim, vector = excluded.vector
+        INSERT INTO memory_embeddings (chunk_hash, model, scope, dim, vector)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(chunk_hash, model) DO UPDATE SET
+            scope = excluded.scope, dim = excluded.dim, vector = excluded.vector
     `)
 	if err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("save memory embeddings: prepare: %w", err)
 	}
 	defer stmt.Close()
-	for hash, v := range vecs {
-		if len(v) != dim || dim == 0 {
+	for _, v := range vecs {
+		if len(v.Vector) != dim || dim == 0 {
 			continue
 		}
-		if _, err := stmt.ExecContext(ctx, hash, model, dim, PackVector(v)); err != nil {
+		if _, err := stmt.ExecContext(ctx, v.Hash, model, v.Scope, dim, PackVector(v.Vector)); err != nil {
 			_ = tx.Rollback()
-			return fmt.Errorf("save memory embeddings: insert %s: %w", hash, err)
+			return fmt.Errorf("save memory embeddings: insert %s: %w", v.Hash, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -115,17 +122,35 @@ func (s *Store) LoadMemoryEmbeddings(ctx context.Context, model string, hashes [
 	return out, nil
 }
 
-// PruneMemoryEmbeddings deletes this model's vectors whose hash is not in
-// keep. An empty keep set clears the model: memory really can be emptied, and
-// reading that as "keep everything" would strand vectors for text that no
-// longer exists.
-func (s *Store) PruneMemoryEmbeddings(ctx context.Context, model string, keep []string) error {
-	if s == nil || s.db == nil || strings.TrimSpace(model) == "" {
+// PruneMemoryEmbeddings deletes this model's vectors that belong to one of
+// scopes and whose hash is not in keep.
+//
+// Scoping is the whole point. A search sees the workspace's durable layers
+// plus its own session's — never another session's — so "delete everything
+// this search did not see" would evict the other sessions' vectors, and with
+// two sessions open each would keep re-embedding what the other just threw
+// away. Pruning only the scopes the caller actually enumerated makes the
+// sweep exact.
+//
+// An empty keep set still clears those scopes: memory really can be emptied,
+// and reading that as "keep everything" would strand vectors for text that no
+// longer exists. An empty scope list prunes nothing.
+func (s *Store) PruneMemoryEmbeddings(ctx context.Context, model string, scopes []string, keep []string) error {
+	if s == nil || s.db == nil || strings.TrimSpace(model) == "" || len(scopes) == 0 {
 		return nil
 	}
+	scopeArgs := make([]any, 0, len(scopes)+1)
+	scopeArgs = append(scopeArgs, model)
+	marks := make([]string, len(scopes))
+	for i, sc := range scopes {
+		marks[i] = "?"
+		scopeArgs = append(scopeArgs, sc)
+	}
+	scopeFilter := ` AND scope IN (` + strings.Join(marks, ",") + `)`
+
 	if len(keep) == 0 {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM memory_embeddings WHERE model = ?`, model)
-		if err != nil {
+		if _, err := s.db.ExecContext(ctx,
+			`DELETE FROM memory_embeddings WHERE model = ?`+scopeFilter, scopeArgs...); err != nil {
 			return fmt.Errorf("prune memory embeddings: %w", err)
 		}
 		return nil
@@ -154,10 +179,10 @@ func (s *Store) PruneMemoryEmbeddings(ctx context.Context, model string, keep []
 		}
 	}
 	stmt.Close()
-	if _, err := tx.ExecContext(ctx, `
-        DELETE FROM memory_embeddings
-        WHERE model = ? AND chunk_hash NOT IN (SELECT chunk_hash FROM memory_keep)
-    `, model); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM memory_embeddings
+         WHERE model = ?`+scopeFilter+`
+           AND chunk_hash NOT IN (SELECT chunk_hash FROM memory_keep)`, scopeArgs...); err != nil {
 		return fmt.Errorf("prune memory embeddings: delete: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

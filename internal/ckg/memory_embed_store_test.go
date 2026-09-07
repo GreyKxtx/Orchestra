@@ -26,7 +26,10 @@ func TestMemoryEmbeddings_SaveLoadRoundTrip(t *testing.T) {
 		"h1": {0.5, -0.25, 1},
 		"h2": {0, 1, 0},
 	}
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", want); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{
+		{Hash: "h1", Scope: "ws", Vector: want["h1"]},
+		{Hash: "h2", Scope: "ws", Vector: want["h2"]},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,7 +49,7 @@ func TestMemoryEmbeddings_LoadIsScopedToTheModel(t *testing.T) {
 	s, _ := memStore(t)
 	ctx := context.Background()
 
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", map[string][]float32{"h1": {1, 0}}); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{1, 0}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.LoadMemoryEmbeddings(ctx, "other-model", []string{"h1"})
@@ -64,10 +67,10 @@ func TestMemoryEmbeddings_SaveReplaces(t *testing.T) {
 	s, _ := memStore(t)
 	ctx := context.Background()
 
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", map[string][]float32{"h1": {1, 0}}); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{1, 0}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", map[string][]float32{"h1": {0, 1}}); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{0, 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.LoadMemoryEmbeddings(ctx, "e5", []string{"h1"})
@@ -85,16 +88,17 @@ func TestMemoryEmbeddings_PruneDropsVectorsForVanishedChunks(t *testing.T) {
 	s, _ := memStore(t)
 	ctx := context.Background()
 
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", map[string][]float32{
-		"keep": {1, 0}, "gone": {0, 1},
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{
+		{Hash: "keep", Scope: "ws", Vector: []float32{1, 0}},
+		{Hash: "gone", Scope: "ws", Vector: []float32{0, 1}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveMemoryEmbeddings(ctx, "other", map[string][]float32{"gone": {1, 1}}); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "other", []MemoryVector{{Hash: "gone", Scope: "ws", Vector: []float32{1, 1}}}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.PruneMemoryEmbeddings(ctx, "e5", []string{"keep"}); err != nil {
+	if err := s.PruneMemoryEmbeddings(ctx, "e5", []string{"ws"}, []string{"keep"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,10 +129,10 @@ func TestMemoryEmbeddings_PruneWithEmptyKeepClearsTheModel(t *testing.T) {
 	s, _ := memStore(t)
 	ctx := context.Background()
 
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", map[string][]float32{"h1": {1, 0}}); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{1, 0}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PruneMemoryEmbeddings(ctx, "e5", nil); err != nil {
+	if err := s.PruneMemoryEmbeddings(ctx, "e5", []string{"ws"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.LoadMemoryEmbeddings(ctx, "e5", []string{"h1"})
@@ -149,7 +153,7 @@ func TestMemoryEmbeddings_SurviveACodeGraphMigration(t *testing.T) {
 	s, path := memStore(t)
 	ctx := context.Background()
 
-	if err := s.SaveMemoryEmbeddings(ctx, "e5", map[string][]float32{"h1": {1, 0}}); err != nil {
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{1, 0}}}); err != nil {
 		t.Fatal(err)
 	}
 	// Pretend this database was written by an older binary.
@@ -172,5 +176,127 @@ func TestMemoryEmbeddings_SurviveACodeGraphMigration(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatal("a code-graph migration wiped the memory vectors; re-embedding costs real API calls")
+	}
+}
+
+// Prune is scoped: sweeping the workspace scope must not touch a session's
+// vectors, and sweeping one session must not touch another's.
+func TestMemoryEmbeddings_PruneIsScoped(t *testing.T) {
+	s, _ := memStore(t)
+	ctx := context.Background()
+
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{
+		{Hash: "ws-live", Scope: "ws", Vector: []float32{1, 0}},
+		{Hash: "ws-dead", Scope: "ws", Vector: []float32{1, 0}},
+		{Hash: "a1", Scope: "session:a", Vector: []float32{0, 1}},
+		{Hash: "b1", Scope: "session:b", Vector: []float32{0, 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session A searches: it enumerated the workspace layers and its own
+	// session, so those are the only scopes it may sweep.
+	if err := s.PruneMemoryEmbeddings(ctx, "e5", []string{"ws", "session:a"}, []string{"ws-live", "a1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.LoadMemoryEmbeddings(ctx, "e5", []string{"ws-live", "ws-dead", "a1", "b1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["b1"]; !ok {
+		t.Error("session A's prune evicted session B's vector; both sessions would thrash re-embedding")
+	}
+	if _, ok := got["a1"]; !ok {
+		t.Error("session A's own live vector was evicted")
+	}
+	if _, ok := got["ws-live"]; !ok {
+		t.Error("a live workspace vector was evicted")
+	}
+	if _, ok := got["ws-dead"]; ok {
+		t.Error("a dead workspace vector survived; the prune did nothing")
+	}
+}
+
+// An empty keep set clears only the named scopes, not the whole model.
+func TestMemoryEmbeddings_PruneWithEmptyKeepStaysInScope(t *testing.T) {
+	s, _ := memStore(t)
+	ctx := context.Background()
+
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{
+		{Hash: "a1", Scope: "session:a", Vector: []float32{0, 1}},
+		{Hash: "b1", Scope: "session:b", Vector: []float32{0, 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PruneMemoryEmbeddings(ctx, "e5", []string{"session:a"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadMemoryEmbeddings(ctx, "e5", []string{"a1", "b1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["a1"]; ok {
+		t.Error("session A's scope was not cleared")
+	}
+	if _, ok := got["b1"]; !ok {
+		t.Error("clearing one scope wiped another")
+	}
+}
+
+// No scopes means nothing to sweep — never "sweep everything".
+func TestMemoryEmbeddings_PruneWithNoScopesIsANoop(t *testing.T) {
+	s, _ := memStore(t)
+	ctx := context.Background()
+
+	if err := s.SaveMemoryEmbeddings(ctx, "e5", []MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{1, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PruneMemoryEmbeddings(ctx, "e5", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadMemoryEmbeddings(ctx, "e5", []string{"h1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatal("an empty scope list deleted rows")
+	}
+}
+
+// A table written before scopes existed cannot be pruned correctly. It is a
+// cache, so it is dropped and rebuilt rather than migrated into a shape whose
+// rows all claim the same empty scope.
+func TestMemoryEmbeddings_PreScopeTableIsRebuilt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckg.db")
+	s, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Recreate the pre-scope shape.
+	if _, err := s.DB().Exec(`DROP TABLE memory_embeddings`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`CREATE TABLE memory_embeddings (
+        chunk_hash TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL,
+        vector BLOB NOT NULL, PRIMARY KEY (chunk_hash, model))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO memory_embeddings VALUES ('old','e5',2,x'0000')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("opening a database with a pre-scope table failed: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+
+	if err := s2.SaveMemoryEmbeddings(context.Background(), "e5",
+		[]MemoryVector{{Hash: "h1", Scope: "ws", Vector: []float32{1, 0}}}); err != nil {
+		t.Fatalf("the rebuilt table does not accept scoped rows: %v", err)
 	}
 }
