@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,15 +25,31 @@ func TestAtRefPaths(t *testing.T) {
 		// Trailing punctuation belongs to the sentence, not the path.
 		{"see @pkg/auth/token.go.", []string{"pkg/auth/token.go"}},
 		{"(@pkg/auth/token.go)", []string{"pkg/auth/token.go"}},
-		// Windows separators normalise, because the TUI hands over what the
-		// user typed.
-		{`open @pkg\auth\token.go`, []string{"pkg/auth/token.go"}},
 		// Absolute paths and traversal are not refs into this workspace.
 		{"@/etc/passwd", nil},
 		{"@../../secrets.txt", nil},
 		// The same file twice is one directory to load.
 		{"@a/b.go and @a/c.go", []string{"a/b.go", "a/c.go"}},
 	}
+	// Backslash handling follows the HOST, deliberately, and so does this
+	// case. filepath.ToSlash rewrites separators on Windows and does nothing
+	// on Linux — which is correct both times: the agent and the files it
+	// resolves are on the same machine, a Windows user types backslashes and
+	// means separators, and on Linux a backslash is a legal character in a
+	// filename and means itself. Asserting one answer on both platforms is
+	// what made CI red on Linux while passing here.
+	if runtime.GOOS == "windows" {
+		cases = append(cases, struct {
+			in   string
+			want []string
+		}{`open @pkg\auth\token.go`, []string{"pkg/auth/token.go"}})
+	} else {
+		cases = append(cases, struct {
+			in   string
+			want []string
+		}{`open @pkg\auth\token.go`, []string{`pkg\auth\token.go`}})
+	}
+
 	for _, c := range cases {
 		got := atRefPaths(c.in)
 		if len(got) != len(c.want) {
