@@ -20,8 +20,9 @@ var sessionCmd = &cobra.Command{
 }
 
 var (
-	sessionExportOut string
-	sessionImportID  string
+	sessionExportOut   string
+	sessionExportHTML  bool
+	sessionImportID    string
 	sessionImportForce bool
 
 	sessionSearchInsensitive bool
@@ -39,7 +40,7 @@ var sessionListCmd = &cobra.Command{
 
 var sessionExportCmd = &cobra.Command{
 	Use:   "export <session-id>",
-	Short: "Export a session to a portable JSON file",
+	Short: "Export a session to a portable JSON file (or --html to read it)",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runSessionExport,
 }
@@ -79,7 +80,8 @@ most recent few seconds.`,
 }
 
 func init() {
-	sessionExportCmd.Flags().StringVarP(&sessionExportOut, "out", "o", "", "Output file (default: <id>.session.json or stdout when -)")
+	sessionExportCmd.Flags().StringVarP(&sessionExportOut, "out", "o", "", "Output file (default: <id>.session.json, or <id>.html with --html; - for stdout)")
+	sessionExportCmd.Flags().BoolVar(&sessionExportHTML, "html", false, "Export a self-contained HTML transcript instead of the JSON bundle (not importable)")
 	sessionImportCmd.Flags().StringVar(&sessionImportID, "id", "", "Override session id on import")
 	sessionImportCmd.Flags().BoolVar(&sessionImportForce, "force", false, "Overwrite existing session with same id")
 	sessionSearchCmd.Flags().BoolVarP(&sessionSearchInsensitive, "insensitive", "i", false, "Case-insensitive search")
@@ -127,14 +129,26 @@ func runSessionExport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	id := strings.TrimSpace(args[0])
-	data, err := sessionfile.Export(cfg.ProjectRoot, id)
+
+	// --html produces a transcript to read or send; the default JSON bundle is
+	// the machine format session import reads back. They are not
+	// interchangeable, which is why this is a separate flag and not a
+	// different serialisation of the same thing.
+	var data []byte
+	defaultExt := ".session.json"
+	if sessionExportHTML {
+		data, err = sessionfile.ExportHTML(cfg.ProjectRoot, id)
+		defaultExt = ".html"
+	} else {
+		data, err = sessionfile.Export(cfg.ProjectRoot, id)
+	}
 	if err != nil {
 		return err
 	}
 
 	outPath := strings.TrimSpace(sessionExportOut)
 	if outPath == "" {
-		outPath = id + ".session.json"
+		outPath = id + defaultExt
 	}
 	if outPath == "-" {
 		_, err = os.Stdout.Write(data)

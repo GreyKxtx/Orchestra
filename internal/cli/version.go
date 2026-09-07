@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"runtime/debug"
@@ -20,11 +21,18 @@ var buildVersion = ""
 // versionString reports the build alongside the three numbers `initialize`
 // compares on connect. A client that refuses to attach fails on one of them,
 // so they belong in the first thing a user is asked to paste into a report.
-func versionString() string {
-	v := strings.TrimSpace(buildVersion)
-	if v == "" {
-		v = protocol.CoreVersion
+// currentVersion is the build's own version token, without the commit hash and
+// protocol numbers versionString wraps around it — the one piece that can be
+// compared against a release tag.
+func currentVersion() string {
+	if v := strings.TrimSpace(buildVersion); v != "" {
+		return v
 	}
+	return protocol.CoreVersion
+}
+
+func versionString() string {
+	v := currentVersion()
 	if rev := vcsRevision(); rev != "" {
 		v += " (" + rev + ")"
 	}
@@ -60,15 +68,33 @@ func vcsRevision() string {
 	return rev + dirty
 }
 
+var versionCheck bool
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the build and protocol versions",
-	Run: func(cmd *cobra.Command, _ []string) {
-		fmt.Fprintln(cmd.OutOrStdout(), versionString())
+	// --check can fail for reasons that have nothing to do with how the command
+	// was typed (offline, rate-limited, proxied). Cobra's default is to print
+	// the flag help after any RunE error, which tells the user they got the
+	// invocation wrong when they did not.
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		out := cmd.OutOrStdout()
+		fmt.Fprintln(out, versionString())
+		if !versionCheck {
+			return nil
+		}
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return runVersionCheck(ctx, out)
 	},
 }
 
 func init() {
+	versionCmd.Flags().BoolVar(&versionCheck, "check", false,
+		"сравнить с последним релизом на GitHub (требует сети)")
 	rootCmd.Version = versionString()
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.AddCommand(versionCmd)

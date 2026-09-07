@@ -24,7 +24,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/diff", "diff последнего commit"},
 	{"/help", "показать команды и клавиши"},
 	{"/mcp", "MCP servers: add / edit / test"},
-	{"/memory", "показать слои памяти проекта"},
+	{"/memory", "слои памяти проекта · /memory search <текст> — поиск по памяти"},
 	{"/mode", "текущий режим агента"},
 	{"/model", "текущая модель"},
 	{"/orchestra", "planner + worker tiers"},

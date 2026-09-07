@@ -29,13 +29,14 @@
     const tools = Array.isArray(opts?.toolBlocks) ? opts.toolBlocks : [];
     for (const tb of tools) {
       const id = tb.id || `${tb.name}-${toolBlocks.size}`;
-      handleToolBlock({ phase: "start", toolCallId: id, toolName: tb.name || "tool" });
+      handleToolBlock({ phase: "start", toolCallId: id, toolName: tb.name || "tool", restored: true });
       if (tb.argsRaw) {
         handleToolBlock({
           phase: "update",
           toolCallId: id,
           toolName: tb.name || "tool",
           argsDelta: tb.argsRaw,
+          restored: true,
         });
       }
       handleToolBlock({
@@ -44,6 +45,8 @@
         toolName: tb.name || "tool",
         content: tb.result || "",
         diagnostics: tb.diagnostics,
+        durationMs: tb.durationMs,
+        restored: true,
       });
       if (toolKind(tb.name) === "write" && (tb.diffBefore !== undefined || tb.diffAfter !== undefined)) {
         const block = toolBlocks.get(id);
@@ -126,7 +129,7 @@
     return el;
   }
 
-  /** @param {{ phase: string; toolCallId?: string; toolName: string; content?: string; argsDelta?: string; step?: number; diagnostics?: any[] }} msg */
+  /** @param {{ phase: string; toolCallId?: string; toolName: string; content?: string; argsDelta?: string; step?: number; diagnostics?: any[]; restored?: boolean; durationMs?: number }} msg */
   function handleToolBlock(msg) {
     if (!messagesEl) return;
     const id = toolBlockKey(msg);
@@ -144,6 +147,12 @@
       const block = document.createElement("div");
       block.className = `tool-block running kind-${kind}` + (msg.scope === "child" ? " child-tool" : "");
       block.dataset.toolId = id;
+      // Restored history replays start/complete back to back, so timing it
+      // would measure the replay. Only live tools carry a start stamp.
+      if (!msg.restored) {
+        block.dataset.startedAt = String(Date.now());
+        noteTurnToolStart();
+      }
       if (msg.taskId) block.dataset.taskId = msg.taskId;
       if (typeof msg.step === "number") {
         block.dataset.step = String(msg.step);
@@ -176,6 +185,7 @@
         `<span class="tool-icon">${toolIcon(msg.toolName)}</span>` +
         `<span class="tool-label">${escapeAttr(toolDisplayName(msg.toolName))}</span>` +
         `<span class="tool-sub"></span>` +
+        `<span class="tool-dur"></span>` +
         `<span class="tool-stats"></span>` +
         `<span class="tool-spinner"></span>` +
         (kind === "write" ? "" : `<span class="tool-chev">▾</span>`);
@@ -245,6 +255,14 @@
       block.classList.add("done", `kind-${kind}`);
       const spinner = block.querySelector(".tool-spinner");
       if (spinner) spinner.remove();
+      if (block.dataset.startedAt) {
+        block.dataset.durationMs = String(Date.now() - Number(block.dataset.startedAt));
+        noteTurnToolEnd();
+      } else if (typeof msg.durationMs === "number" && msg.durationMs > 0) {
+        // Restored from the session snapshot: the tool was timed when it ran,
+        // by whichever surface ran it (sessionfile.UIToolBlock.duration_ms).
+        block.dataset.durationMs = String(msg.durationMs);
+      }
       updateToolHead(block, msg.toolName, argsRaw, msg.content || "", false);
       if (head && kind !== "write") head.classList.remove("open");
 

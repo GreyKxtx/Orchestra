@@ -259,6 +259,7 @@ const helpText = `Orchestra TUI — клавиши:
   /memory       слои памяти + pinned facts
   /memory open  открыть ORCHESTRA.md (или fallback) в $EDITOR
   /memory refresh  что реально инжектировано в последний ход
+  /memory search <текст>  поиск по слоям памяти (repo/session/global/orchestra)
   /mcp          MCP servers (добавить / edit / test)
   ↑ / ↓         история ввода
   @             mention файла

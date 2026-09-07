@@ -218,6 +218,11 @@
   let reasoningStarted = 0;
   /** @type {{ read: number; search: number; write: number; other: number }} */
   let turnToolCount = { read: 0, search: 0, write: 0, other: 0 };
+  // Wall time of the turn's tool work: first tool start to last tool finish.
+  // Zero means no live tool ran in this turn — restored history included,
+  // which is timed by nobody and must not report a duration.
+  let turnToolFirstStart = 0;
+  let turnToolLastEnd = 0;
   let busy = false;
   let busyStatusText = "Working…";
   /** @type {Array<{ id: string; preview: string; fileCount?: number }>} */
@@ -1336,6 +1341,22 @@
     reasoningBody = null;
     reasoningStarted = 0;
     turnToolCount = { read: 0, search: 0, write: 0, other: 0 };
+    turnToolFirstStart = 0;
+    turnToolLastEnd = 0;
+  }
+
+  // noteTurnToolStart/End track the group's wall clock. The TUI's tool group
+  // shows this in its footer (ui/tui/view/tool_group.go); without it the
+  // webview could say a turn ran nine tools but never how long that cost.
+  function noteTurnToolStart() {
+    if (!turnToolFirstStart) {
+      turnToolFirstStart = Date.now();
+    }
+  }
+
+  function noteTurnToolEnd() {
+    turnToolLastEnd = Date.now();
+    updateToolTraceSummary();
   }
 
   /** @returns {HTMLElement | null} */
@@ -1431,7 +1452,13 @@
       const n = turnToolCount.other;
       parts.push(`${n} tool${n === 1 ? "" : "s"}`);
     }
-    toolTraceSummary.textContent = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
+    let text = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
+    // Only when a live tool both started and finished: a group still running,
+    // or one replayed from history, has no honest number to show.
+    if (turnToolFirstStart && turnToolLastEnd > turnToolFirstStart) {
+      text += ` · ${formatToolDuration(turnToolLastEnd - turnToolFirstStart)}`;
+    }
+    toolTraceSummary.textContent = text;
   }
 
   /** @returns {HTMLElement | null} */
@@ -2447,9 +2474,33 @@
     return disp;
   }
 
+  // formatToolDuration renders a tool's wall time the way the TUI does
+  // (ui/tui/view/tool_group.go): sub-second work in ms because "0.4s" hides
+  // the difference between 350ms and 450ms, seconds with one decimal, and
+  // anything past a minute in m/s because "91.4s" stops being readable.
+  function formatToolDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    if (ms < 1000) return Math.round(ms) + "ms";
+    // 59950+ rounds to "60.0s", which reads like a bug next to "1m 00s".
+    if (ms < 59950) return (ms / 1000).toFixed(1) + "s";
+    // Round to whole seconds BEFORE splitting: rounding the remainder
+    // separately turns 59999ms into "0m 60s".
+    const totalSec = Math.round(ms / 1000);
+    return Math.floor(totalSec / 60) + "m " + String(totalSec % 60).padStart(2, "0") + "s";
+  }
+
   function updateToolHead(block, name, argsRaw, content, running) {
     const head = block.querySelector(".tool-head");
     if (!head) return;
+    // Durations exist only for tools this session actually watched run.
+    // Restored history has none — the session snapshot does not persist
+    // them — and replaying a start/complete pair would time the replay, not
+    // the tool, printing "0ms" beside every historical call.
+    const durEl = head.querySelector(".tool-dur");
+    if (durEl) {
+      const ms = Number(block.dataset.durationMs);
+      durEl.textContent = block.dataset.durationMs ? formatToolDuration(ms) : "";
+    }
     const icon = head.querySelector(".tool-icon");
     const label = head.querySelector(".tool-label");
     const sub = head.querySelector(".tool-sub");
@@ -2937,13 +2988,14 @@
     const tools = Array.isArray(opts?.toolBlocks) ? opts.toolBlocks : [];
     for (const tb of tools) {
       const id = tb.id || `${tb.name}-${toolBlocks.size}`;
-      handleToolBlock({ phase: "start", toolCallId: id, toolName: tb.name || "tool" });
+      handleToolBlock({ phase: "start", toolCallId: id, toolName: tb.name || "tool", restored: true });
       if (tb.argsRaw) {
         handleToolBlock({
           phase: "update",
           toolCallId: id,
           toolName: tb.name || "tool",
           argsDelta: tb.argsRaw,
+          restored: true,
         });
       }
       handleToolBlock({
@@ -2952,6 +3004,8 @@
         toolName: tb.name || "tool",
         content: tb.result || "",
         diagnostics: tb.diagnostics,
+        durationMs: tb.durationMs,
+        restored: true,
       });
       if (toolKind(tb.name) === "write" && (tb.diffBefore !== undefined || tb.diffAfter !== undefined)) {
         const block = toolBlocks.get(id);
@@ -3034,7 +3088,7 @@
     return el;
   }
 
-  /** @param {{ phase: string; toolCallId?: string; toolName: string; content?: string; argsDelta?: string; step?: number; diagnostics?: any[] }} msg */
+  /** @param {{ phase: string; toolCallId?: string; toolName: string; content?: string; argsDelta?: string; step?: number; diagnostics?: any[]; restored?: boolean; durationMs?: number }} msg */
   function handleToolBlock(msg) {
     if (!messagesEl) return;
     const id = toolBlockKey(msg);
@@ -3052,6 +3106,12 @@
       const block = document.createElement("div");
       block.className = `tool-block running kind-${kind}` + (msg.scope === "child" ? " child-tool" : "");
       block.dataset.toolId = id;
+      // Restored history replays start/complete back to back, so timing it
+      // would measure the replay. Only live tools carry a start stamp.
+      if (!msg.restored) {
+        block.dataset.startedAt = String(Date.now());
+        noteTurnToolStart();
+      }
       if (msg.taskId) block.dataset.taskId = msg.taskId;
       if (typeof msg.step === "number") {
         block.dataset.step = String(msg.step);
@@ -3084,6 +3144,7 @@
         `<span class="tool-icon">${toolIcon(msg.toolName)}</span>` +
         `<span class="tool-label">${escapeAttr(toolDisplayName(msg.toolName))}</span>` +
         `<span class="tool-sub"></span>` +
+        `<span class="tool-dur"></span>` +
         `<span class="tool-stats"></span>` +
         `<span class="tool-spinner"></span>` +
         (kind === "write" ? "" : `<span class="tool-chev">▾</span>`);
@@ -3153,6 +3214,14 @@
       block.classList.add("done", `kind-${kind}`);
       const spinner = block.querySelector(".tool-spinner");
       if (spinner) spinner.remove();
+      if (block.dataset.startedAt) {
+        block.dataset.durationMs = String(Date.now() - Number(block.dataset.startedAt));
+        noteTurnToolEnd();
+      } else if (typeof msg.durationMs === "number" && msg.durationMs > 0) {
+        // Restored from the session snapshot: the tool was timed when it ran,
+        // by whichever surface ran it (sessionfile.UIToolBlock.duration_ms).
+        block.dataset.durationMs = String(msg.durationMs);
+      }
       updateToolHead(block, msg.toolName, argsRaw, msg.content || "", false);
       if (head && kind !== "write") head.classList.remove("open");
 

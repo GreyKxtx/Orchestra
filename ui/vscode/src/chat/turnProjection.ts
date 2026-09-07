@@ -29,6 +29,10 @@ export interface TurnToolTracker {
   status: "running" | "completed" | "failed" | "skipped";
   result: string;
   diagnostics?: ToolDiagnosticPayload[];
+  /** Epoch ms when the tool started; set while it is still running. */
+  startedAt?: number;
+  /** Wall time in ms, set once the tool completes. Absent when untimed. */
+  durationMs?: number;
 }
 
 /** Best-effort before/after for write/edit tool blocks (history diff restore). */
@@ -103,6 +107,9 @@ export function buildAssistantProjection(input: {
       status: t.status,
       result: t.result || undefined,
       diagnostics: t.diagnostics?.length ? t.diagnostics : undefined,
+      // Absent rather than 0 for an untimed tool: a persisted zero renders as
+      // "0ms" beside tools that really did take no measurable time.
+      duration_ms: t.durationMs && t.durationMs > 0 ? t.durationMs : undefined,
     }));
   if (!text && !reasoning && tool_blocks.length === 0) {
     return undefined;
@@ -131,6 +138,7 @@ export interface RawUIMessage {
     status?: string;
     result?: string;
     diagnostics?: ToolDiagnosticPayload[];
+    duration_ms?: number;
   }>;
   segments?: Array<{
     kind?: string;
@@ -170,6 +178,7 @@ export function toolBlocksFromUIMessage(m: RawUIMessage): PersistedToolBlock[] {
         status: t.status || "completed",
         result: t.result,
         diagnostics: t.diagnostics,
+        duration_ms: t.duration_ms,
       }));
   }
   const out: PersistedToolBlock[] = [];
@@ -189,6 +198,7 @@ export function toolBlocksFromUIMessage(m: RawUIMessage): PersistedToolBlock[] {
         status: t.status || "completed",
         result: t.result,
         diagnostics: t.diagnostics,
+        duration_ms: t.duration_ms,
       });
     }
   }

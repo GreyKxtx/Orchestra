@@ -111,26 +111,43 @@ func (a *App) cmdShowMemory() tea.Cmd {
 	return nil
 }
 
-// parseMemorySlashCommand matches "/memory open" or "/memory refresh". Bare
-// "/memory" is the existing view-only command (executePaletteCmd's exact-
-// match switch) and is deliberately not handled here.
-func parseMemorySlashCommand(text string) (verb string, ok bool) {
+// parseMemorySlashCommand matches "/memory open", "/memory refresh" and
+// "/memory search <query>". Bare "/memory" is the existing view-only command
+// (executePaletteCmd's exact-match switch) and is deliberately not handled
+// here.
+//
+// arg is empty for the argument-less verbs and carries the whole remainder for
+// search — everything after "search", not just the next field, because a
+// memory query is normally a phrase.
+func parseMemorySlashCommand(text string) (verb, arg string, ok bool) {
 	fields := strings.Fields(text)
-	if len(fields) != 2 || fields[0] != "/memory" {
-		return "", false
+	if len(fields) < 2 || fields[0] != "/memory" {
+		return "", "", false
 	}
 	switch fields[1] {
 	case "open", "refresh":
-		return fields[1], true
+		if len(fields) != 2 {
+			return "", "", false
+		}
+		return fields[1], "", true
+	case "search":
+		// Rejoined from the fields rather than sliced out of the raw text: the
+		// user may have typed runs of spaces, and the query is matched as a
+		// substring, so the spacing has to be normalised.
+		q := strings.Join(fields[2:], " ")
+		if q == "" {
+			return "", "", false
+		}
+		return "search", q, true
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
 // maybeRunMemoryCommand runs the /memory subcommand text matches, or nil for
 // anything else (including a bare /memory, and plain chat text).
 func (a *App) maybeRunMemoryCommand(text string) tea.Cmd {
-	verb, ok := parseMemorySlashCommand(text)
+	verb, arg, ok := parseMemorySlashCommand(text)
 	if !ok {
 		return nil
 	}
@@ -139,7 +156,86 @@ func (a *App) maybeRunMemoryCommand(text string) tea.Cmd {
 		return a.cmdMemoryOpen()
 	case "refresh":
 		return a.cmdMemoryRefresh()
+	case "search":
+		return a.cmdMemorySearch(arg)
 	}
+	return nil
+}
+
+// memorySearchHitLimit caps what one /memory search prints. Memory files grow
+// for the life of a project, and a broad query would otherwise push the
+// conversation out of the pane.
+const memorySearchHitLimit = 8
+
+// memoryHit is one matching memory entry.
+type memoryHit struct {
+	Layer   string
+	Snippet string
+}
+
+// searchMemoryLayers runs the substring search the model's memory_search tool
+// runs — same layers, same order — for the user.
+//
+// Deliberately the substring path only. memory_search additionally ranks
+// semantically when embed.model is set, but that needs an embedding endpoint
+// and the project config the TUI does not carry. A palette command that
+// answers instantly and offline is worth more here, and it cannot degrade
+// silently because it never promised ranking.
+func searchMemoryLayers(root, sessionID, query string, limit int) []memoryHit {
+	query = strings.TrimSpace(query)
+	if query == "" || limit <= 0 {
+		return nil
+	}
+	// GlobalEnabled mirrors memory_read, whose layer set includes global — a
+	// fact recorded in ~/.orchestra/memory.md is still a remembered fact.
+	store := memory.NewStore(root, sessionID, memory.Config{GlobalEnabled: true})
+
+	var hits []memoryHit
+	for _, layer := range []string{"repo", "session", "global", "orchestra"} {
+		if len(hits) >= limit {
+			break
+		}
+		// Store.Read reports its failure modes as CONTENT, not as errors: the
+		// session layer with no active session answers with the literal string
+		// "no active session_id". Searching that finds a hit indistinguishable
+		// from a remembered fact, attributed to a layer that does not exist
+		// yet. Skipping the layer beats matching the sentinel by name, which
+		// would break the moment the wording changed.
+		if layer == "session" && sessionID == "" {
+			continue
+		}
+		res := store.Read(layer, "", 256*1024)
+		if res.Content == "" {
+			continue
+		}
+		for _, e := range memory.SearchEntries(res.Content, query, limit-len(hits)) {
+			hits = append(hits, memoryHit{Layer: layer, Snippet: strings.TrimSpace(e)})
+		}
+	}
+	return hits
+}
+
+func (a *App) cmdMemorySearch(query string) tea.Cmd {
+	hits := searchMemoryLayers(a.cfg.WorkspaceRoot, a.coreSessionID, query, memorySearchHitLimit)
+	if len(hits) == 0 {
+		a.session.AppendSystemNotice(state.SystemKindInfo,
+			fmt.Sprintf("Память: по запросу %q ничего не найдено", query))
+		a.chat.SetMessages(a.session.Messages)
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Память — %d совпадений по %q:\n", len(hits), query)
+	for _, h := range hits {
+		snippet := h.Snippet
+		if len(snippet) > 300 {
+			snippet = snippet[:300] + "…"
+		}
+		// Indent continuation lines so a multi-line entry reads as one hit.
+		snippet = strings.ReplaceAll(snippet, "\n", "\n    ")
+		fmt.Fprintf(&b, "\n  [%s] %s\n", h.Layer, snippet)
+	}
+	a.session.AppendSystemNotice(state.SystemKindInfo, strings.TrimRight(b.String(), "\n"))
+	a.chat.SetMessages(a.session.Messages)
 	return nil
 }
 

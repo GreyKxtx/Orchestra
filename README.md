@@ -71,7 +71,9 @@ Check the install:
 ```bash
 orchestra version
 # orchestra v0.3.0 (a1b2c3d)
-# protocol 13 · ops 1 · tools 14
+# protocol 14 · ops 1 · tools 14
+
+orchestra version --check   # compare against the latest GitHub release
 ```
 
 Those three numbers are the `initialize` contract: if the TUI or the extension refuse to connect, the mismatch will be in one of them.
@@ -89,6 +91,19 @@ scoop install https://github.com/GreyKxtx/Orchestra/releases/latest/download/orc
 ```
 
 winget needs an unpacked manifest directory (`orchestra-winget.zip` → `winget install --manifest <folder>`); a public `winget install orchestra` needs a PR against `microsoft/winget-pkgs`, not done automatically by this repo.
+
+### Verifying a download
+
+Every release archive is signed with [cosign](https://docs.sigstore.dev/) keyless — no signing key exists to leak, and every signature is recorded in the Rekor transparency log. A `.cosign.bundle` sits beside each archive:
+
+```bash
+cosign verify-blob orchestra_v0.3.0_linux-amd64.tar.gz \
+  --bundle orchestra_v0.3.0_linux-amd64.tar.gz.cosign.bundle \
+  --certificate-identity-regexp '^https://github.com/GreyKxtx/Orchestra/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The `.sha256` files are still there and still worth checking, but they answer a different question: a checksum proves the download is not corrupted, not who built it — anyone who can replace an archive can replace the checksum next to it. The signature is what ties the archive to this workflow in this repository.
 
 ## Quick start
 

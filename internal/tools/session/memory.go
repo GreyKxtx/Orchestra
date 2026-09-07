@@ -140,8 +140,15 @@ func (c *Client) MemorySearch(ctx context.Context, req MemorySearchRequest) (*Me
 	if res := store.Read("repo", "", 256*1024); res.Content != "" {
 		add("repo", res.Content)
 	}
-	if res := store.Read("session", "", 128*1024); res.Content != "" && len(hits) < limit {
-		add("session", res.Content)
+	// Store.Read reports its failure modes as CONTENT, not as errors: the
+	// session layer with no active session answers "no active session_id".
+	// Searching that returns a hit indistinguishable from a remembered fact,
+	// attributed to a layer that does not exist yet. Skipping the layer beats
+	// matching the sentinel by name, which breaks when the wording changes.
+	if c.sid() != "" && len(hits) < limit {
+		if res := store.Read("session", "", 128*1024); res.Content != "" {
+			add("session", res.Content)
+		}
 	}
 	if res := store.Read("global", "", 64*1024); res.Content != "" && len(hits) < limit {
 		add("global", res.Content)

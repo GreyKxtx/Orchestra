@@ -185,3 +185,51 @@ func TestSessionSearchAndForkCLI(t *testing.T) {
 		t.Error("forking at an assistant message must be refused")
 	}
 }
+
+// --html is a different artefact, not a different serialisation: the JSON
+// bundle is what session import reads back, the HTML is what a person reads.
+// The flag wiring is the part that can silently regress — a default extension
+// left at .session.json would write HTML under a name that invites an import
+// that then fails.
+func TestSessionExportHTMLCLI(t *testing.T) {
+	root := t.TempDir()
+	writeTestConfig(t, root)
+	origWD, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	id := sessionfile.NewID()
+	if err := sessionfile.Save(root, &sessionfile.Snapshot{
+		ID:    id,
+		Title: "html export",
+		UIMessages: []sessionfile.UIMessage{
+			{Role: "user", Text: "how do I wire the bearer token"},
+			{Role: "assistant", Text: "authTransport sets the header"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionExportOut = ""
+	sessionExportHTML = true
+	t.Cleanup(func() { sessionExportHTML = false })
+	if err := runSessionExport(nil, []string{id}); err != nil {
+		t.Fatalf("export --html: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, id+".html"))
+	if err != nil {
+		t.Fatalf("expected %s.html next to the default JSON name: %v", id, err)
+	}
+	out := string(data)
+	if !strings.HasPrefix(out, "<!doctype html>") {
+		t.Errorf("export does not start with a doctype: %.40q", out)
+	}
+	for _, want := range []string{"html export", "how do I wire the bearer token", "authTransport sets the header"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("HTML export is missing %q", want)
+		}
+	}
+}

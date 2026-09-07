@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/instrument"
 	"github.com/orchestra/orchestra/internal/lsp/provision"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/spf13/cobra"
 )
 
@@ -63,6 +65,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 	cfg.LLM.Model = "qwen2.5-coder-7b"
 	cfg.ContextLimit = 50
 	cfg.Limits.ContextKB = 50
+
+	// Replace those two guesses with the local server that is actually running,
+	// when there is one. Bounded by llm.localProbeTimeout and probed in
+	// parallel, so a machine with nothing listening pays three refused
+	// connections and moves on.
+	detectCtx := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		detectCtx = cmd.Context()
+	}
+	srv, found := llm.DetectLocalServer(detectCtx)
+	if line := applyDetectedLocalServer(cfg, srv, found); line != "" {
+		fmt.Println(line)
+	}
 
 	lspEnabled := true
 	cfg.LSP = config.LSPConfig{

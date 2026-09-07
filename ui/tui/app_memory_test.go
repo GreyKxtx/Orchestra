@@ -21,7 +21,7 @@ func TestParseMemorySlashCommand(t *testing.T) {
 		{"not a command", "", false},
 	}
 	for _, c := range cases {
-		verb, ok := parseMemorySlashCommand(c.in)
+		verb, _, ok := parseMemorySlashCommand(c.in)
 		if ok != c.ok || verb != c.verb {
 			t.Errorf("parseMemorySlashCommand(%q) = %q/%v, want %q/%v", c.in, verb, ok, c.verb, c.ok)
 		}
