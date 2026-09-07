@@ -92,6 +92,19 @@ scoop install https://github.com/GreyKxtx/Orchestra/releases/latest/download/orc
 
 Для winget нужна распакованная папка манифеста (`orchestra-winget.zip` → `winget install --manifest <папка>`); публичный `winget install orchestra` требует PR в `microsoft/winget-pkgs` — этот репозиторий его не отправляет автоматически.
 
+### Проверка скачанного
+
+Каждый архив релиза подписан [cosign](https://docs.sigstore.dev/) в keyless-режиме: ключа подписи не существует, красть нечего, а каждая подпись попадает в прозрачный лог Rekor. Рядом с архивом лежит `.cosign.bundle`:
+
+```bash
+cosign verify-blob orchestra_v0.3.0_linux-amd64.tar.gz \
+  --bundle orchestra_v0.3.0_linux-amd64.tar.gz.cosign.bundle \
+  --certificate-identity-regexp '^https://github.com/GreyKxtx/Orchestra/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Файлы `.sha256` никуда не делись и их по-прежнему стоит проверять, но они отвечают на другой вопрос: контрольная сумма доказывает, что архив не побился при скачивании, а не то, кто его собрал — кто может подменить архив, подменит и сумму рядом. Именно подпись связывает архив с этим workflow в этом репозитории.
+
 ## Быстрый старт
 
 ```bash

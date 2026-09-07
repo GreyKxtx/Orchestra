@@ -162,6 +162,12 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Keyless signing: cosign exchanges this job's OIDC token for a
+      # short-lived Fulcio certificate. No key material is stored anywhere,
+      # which is the point — there is no signing key to leak or rotate.
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -183,6 +189,33 @@ jobs:
           else
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the archives (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # One bundle per archive, written next to it so the release upload
+          # below picks them up with everything else in _dist.
+          #
+          # The checksums already here prove a download was not corrupted; they
+          # prove nothing about who produced it, because whoever replaces an
+          # archive replaces the .sha256 beside it. The signature ties an
+          # artifact to this workflow in this repository, and its Rekor
+          # transparency-log entry is what makes a signature nobody published
+          # detectable after the fact.
+          shopt -s nullglob
+          archives=(_dist/orchestra_*.zip _dist/orchestra_*.tar.gz)
+          if [ ${#archives[@]} -eq 0 ]; then
+            echo "no archives to sign"; exit 1
+          fi
+          for f in "${archives[@]}"; do
+            echo "signing $f"
+            cosign sign-blob --yes "$f" --bundle "$f.cosign.bundle"
+          done
+          ls -la _dist
 
       - name: Create GitHub release
         shell: bash
