@@ -85,11 +85,24 @@ type Client struct {
 	// M31 in audit ledger.
 	allowedTools []string
 
+	// inbound is this server's opt-in and the seams used to serve its
+	// requests. It is kept alongside onRequest because initialize has to
+	// advertise capabilities from it before any request arrives.
+	inbound InboundOptions
+
 	// onRequest answers server→client requests (sampling/createMessage,
 	// elicitation/create). nil means this client serves none of them, and
 	// every such request is refused with method-not-found — which is the
 	// honest answer, and the only one that does not hang the server.
 	onRequest inboundHandler
+}
+
+// SetInbound installs this server's inbound-request options. Must be called
+// before the handshake: initialize advertises capabilities derived from them,
+// and a capability that appears later is a capability the server never saw.
+func (c *Client) SetInbound(opts InboundOptions) {
+	c.inbound = opts
+	c.onRequest = newInboundHandler(c.name, opts)
 }
 
 // StderrTail returns the last <=64 KiB of the MCP server's stderr — useful
@@ -111,6 +124,10 @@ func (c *Client) StderrTail() string {
 type StartOptions struct {
 	// CallTimeout caps a single tools/call. 0 = no per-call timeout.
 	CallTimeout time.Duration
+	// Inbound configures server→client requests (sampling, elicitation).
+	// The zero value serves none of them, which is the safe default for
+	// every caller that has not thought about it.
+	Inbound InboundOptions
 }
 
 // Start launches the MCP subprocess and runs the initialize + tools/list
@@ -158,6 +175,11 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 		done:        make(chan struct{}),
 		stderr:      subproc.NewStderrRing(0),
 	}
+	// Before the handshake: initialize advertises capabilities derived from
+	// these, and a capability that appears afterwards is one the server never
+	// saw.
+	c.SetInbound(so.Inbound)
+
 	// Set a generous scan buffer for large tool descriptions.
 	c.stdout.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
@@ -297,7 +319,7 @@ func (c *Client) Close() error {
 func (c *Client) initialize(ctx context.Context) error {
 	params := map[string]any{
 		"protocolVersion": mcpProtocolVersion,
-		"capabilities":    map[string]any{},
+		"capabilities":    c.clientCapabilities(),
 		"clientInfo":      map[string]any{"name": "orchestra", "version": "vnext"},
 	}
 	raw, err := c.call(ctx, "initialize", params)

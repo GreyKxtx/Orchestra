@@ -56,6 +56,12 @@ var (
 // startServer connects to one configured server over whichever transport it
 // declares. config.validateMCP has already guaranteed exactly one of them.
 func startServer(ctx context.Context, cfg config.MCPServerConfig, opts StartOptions) (ServerClient, error) {
+	// The per-server opt-in is config; the seams that serve the requests come
+	// from the caller via Hooks. Both halves have to be present for anything
+	// to be advertised, which is why they meet here and not earlier.
+	opts.Inbound.AllowSampling = cfg.AllowSampling
+	opts.Inbound.AllowElicitation = cfg.AllowElicitation
+
 	if url := strings.TrimSpace(cfg.URL); url != "" {
 		return StartRemote(ctx, RemoteConfig{
 			Name:           cfg.Name,
@@ -66,6 +72,19 @@ func startServer(ctx context.Context, cfg config.MCPServerConfig, opts StartOpti
 		}, opts)
 	}
 	return Start(ctx, cfg.Name, cfg.Command, cfg.Env, opts)
+}
+
+// Hooks are the host-side seams an MCP server can reach through: the model it
+// may ask to sample, the person it may ask a question, and the consent gate in
+// front of both. Supplied by whoever builds the Manager (core, apply, the CLI)
+// because internal/mcp has no business knowing about llm clients or terminals.
+//
+// A zero Hooks serves nothing, so a caller that has not thought about this
+// cannot accidentally hand a server the user's model.
+type Hooks struct {
+	Consent ConsentFunc
+	Sample  SampleFunc
+	Elicit  ElicitFunc
 }
 
 type serverSlot struct {
@@ -84,7 +103,13 @@ const mcpStartTimeout = 30 * time.Second
 // blocks the rest (was: serial start, no timeout = N stuck servers = hang
 // for N×infinity). Non-fatal errors (individual server startup failures)
 // are returned for the caller to log; they don't abort Core construction.
-func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
+func NewManager(ctx context.Context, cfg config.MCPConfig, hooks ...Hooks) (*Manager, []error) {
+	// Variadic so the callers that serve no inbound requests — the CLI's
+	// list-tools, apply — need no change and cannot opt in by accident.
+	var hk Hooks
+	if len(hooks) > 0 {
+		hk = hooks[0]
+	}
 	m := &Manager{}
 	type startRes struct {
 		idx int
@@ -121,6 +146,9 @@ func NewManager(ctx context.Context, cfg config.MCPConfig) (*Manager, []error) {
 			if srv.CallTimeoutS > 0 {
 				opts.CallTimeout = time.Duration(srv.CallTimeoutS) * time.Second
 			}
+			opts.Inbound.Consent = hk.Consent
+			opts.Inbound.Sample = hk.Sample
+			opts.Inbound.Elicit = hk.Elicit
 			c, err := startServer(startCtx, srv, opts)
 			if err == nil && c != nil && len(srv.AllowedTools) > 0 {
 				c.SetAllowedTools(srv.AllowedTools)

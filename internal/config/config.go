@@ -195,6 +195,18 @@ type MCPServerConfig struct {
 	// `path.Match`. Nil/empty = expose every tool. M31 in audit ledger.
 	AllowedTools []string `yaml:"allowed_tools,omitempty"`
 
+	// AllowSampling lets this server ask Orchestra to run an LLM call on its
+	// behalf (sampling/createMessage). Off by default: the server writes the
+	// prompt and the user pays for the tokens, so this is opt-in per server,
+	// and even then every individual request is put to the user for consent.
+	AllowSampling bool `yaml:"allow_sampling,omitempty"`
+
+	// AllowElicitation lets this server ask the user for structured input
+	// (elicitation/create). Off by default for the same reason in the other
+	// direction: the server writes the prompt the user sees, and an
+	// unreviewed prompt is a good place to ask for an API key.
+	AllowElicitation bool `yaml:"allow_elicitation,omitempty"`
+
 	// OAuth configures OAuth 2.1 authorization for this server, selecting
 	// that path instead of BearerTokenEnv (see MCPServerOAuthConfig).
 	// Presence, even `oauth: {}`, selects OAuth; the two are mutually

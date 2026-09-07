@@ -232,3 +232,41 @@ func TestInboundHandler_NoConsentFuncRefuses(t *testing.T) {
 		t.Error("the model was called with no way to obtain consent")
 	}
 }
+
+// A capability is a promise. Advertising sampling to a server the user never
+// opted in for invites requests we are certain to refuse; not advertising one
+// we do serve means the server never asks.
+func TestClientCapabilities(t *testing.T) {
+	sample := func(context.Context, SamplingRequest) (SamplingResult, error) {
+		return SamplingResult{}, nil
+	}
+	cases := []struct {
+		name string
+		in   InboundOptions
+		want []string
+	}{
+		{"nothing enabled", InboundOptions{}, nil},
+		{"sampling on", InboundOptions{AllowSampling: true, Sample: sample}, []string{"sampling"}},
+		// Enabled in config but with no model to call: promising sampling we
+		// cannot perform is worse than staying quiet.
+		{"sampling on, no sampler", InboundOptions{AllowSampling: true}, nil},
+		{"elicitation on", InboundOptions{AllowElicitation: true}, []string{"elicitation"}},
+		{"both", InboundOptions{AllowSampling: true, Sample: sample, AllowElicitation: true},
+			[]string{"sampling", "elicitation"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cl := &Client{name: "test"}
+			cl.SetInbound(c.in)
+			caps := cl.clientCapabilities()
+			if len(caps) != len(c.want) {
+				t.Fatalf("capabilities = %v, want %v", caps, c.want)
+			}
+			for _, w := range c.want {
+				if _, ok := caps[w]; !ok {
+					t.Errorf("capabilities = %v, missing %q", caps, w)
+				}
+			}
+		})
+	}
+}

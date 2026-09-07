@@ -75,3 +75,21 @@ func (c *Client) handleInboundRequest(id int64, method string, params json.RawMe
 		fmt.Fprintf(os.Stderr, "mcp: server %q: replying to %s failed: %v\n", c.name, method, werr)
 	}
 }
+
+// clientCapabilities is what this client advertises at initialize.
+//
+// A capability is a promise: a server that sees `sampling` will send
+// sampling/createMessage, and one that does not will never try. Advertising
+// what the config did not enable would invite requests we are certain to
+// refuse — and the spec's own guidance is that a client declares only what it
+// actually serves.
+func (c *Client) clientCapabilities() map[string]any {
+	caps := map[string]any{}
+	if c.inbound.AllowSampling && c.inbound.Sample != nil {
+		caps["sampling"] = map[string]any{}
+	}
+	if c.inbound.AllowElicitation {
+		caps["elicitation"] = map[string]any{}
+	}
+	return caps
+}

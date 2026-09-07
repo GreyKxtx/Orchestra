@@ -117,7 +117,13 @@ func StartRemote(ctx context.Context, cfg RemoteConfig, opts StartOptions) (*Rem
 		}
 	}
 
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "orchestra", Version: "vnext"}, nil)
+	// The SDK advertises sampling/elicitation capabilities from the presence of
+	// these handlers, so leaving them nil when the server is not opted in is
+	// both the refusal and the (absent) promise. The handlers themselves go
+	// through the same newInboundHandler as stdio: one gate, one set of rules,
+	// whatever the transport.
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "orchestra", Version: "vnext"},
+		remoteClientOptions(name, opts.Inbound))
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcp remote %q: connect %s: %w", name, endpoint, err)
