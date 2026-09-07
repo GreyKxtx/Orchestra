@@ -133,3 +133,23 @@ func TestSearchMemoryLayers_DoesNotMatchTheEmptySessionSentinel(t *testing.T) {
 		}
 	}
 }
+
+// The user's own standing instructions (~/.orchestra/ORCHESTRA.md) are a
+// searchable layer like any other — "did I tell it to always answer in
+// Russian?" is exactly the question /memory search exists to answer.
+func TestSearchMemoryLayers_CoversUserInstructions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeMemoryFile(t, filepath.Join(home, ".orchestra", "ORCHESTRA.md"),
+		"always answer in Russian\n")
+
+	hits := searchMemoryLayers(t.TempDir(), "", "answer in Russian", 8)
+	if len(hits) == 0 {
+		t.Fatal("the user's own instructions are not searchable")
+	}
+	if hits[0].Layer != "orchestra-user" {
+		t.Errorf("Layer = %q, want orchestra-user so the user can tell it from project rules",
+			hits[0].Layer)
+	}
+}

@@ -68,6 +68,16 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	}()
 	// Pre-fetch relevant CKG nodes once per Run (injected only on step 1).
 	a.ckgContext = a.tools.FetchCKGContext(ctx, userQuery)
+	// Rules of the packages this turn is about, before the model opens a single
+	// file. An @-mention or an attachment is a statement about which code the
+	// turn concerns; until now those rules loaded only once a tool had read the
+	// file, so they arrived a step late — or never, when the model answered
+	// from the mention alone.
+	//
+	// Once per Run, not per step: discoverInstructions dedupes by directory for
+	// the life of the runner, so recomputing it on step 2 returns nothing and
+	// the rules would drop out of the prompt mid-turn.
+	a.queryInstructions = a.tools.InstructionsForQuery(userQuery)
 
 	if history == nil {
 		history = make([]llm.Message, 0, 32)

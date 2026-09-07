@@ -73,11 +73,15 @@ func (s *Store) buildInjectContent(maxBytes int) string {
 func (s *Store) buildInjectContentReport(maxBytes int) (string, []layerStat) {
 	switch s.cfg.Mode {
 	case ModeLazy:
-		chunk := s.sliceLayer(layerOrchestra, maxBytes/2)
-		if chunk == "" {
+		// Lazy injects instructions only and leaves memory to memory_read. The
+		// user's standing instructions are instructions, and a user on a small
+		// local model — the reason lazy mode exists — is exactly who cannot
+		// afford them to be skipped.
+		parts, stats := s.instructionParts(maxBytes / 2)
+		if len(parts) == 0 {
 			return "", nil
 		}
-		return chunk, []layerStat{{layerOrchestra, len(chunk)}}
+		return strings.Join(parts, layerSeparator), stats
 	case ModeHybrid:
 		return s.tieredInjectReport(maxBytes, injectScope{})
 	default:
@@ -111,12 +115,7 @@ func (s *Store) tieredInjectReport(maxBytes int, scope injectScope) (string, []l
 		gBudget = 0
 	}
 
-	var parts []string
-	var stats []layerStat
-	if chunk := s.sliceLayer(layerOrchestra, oBudget); chunk != "" {
-		parts = append(parts, chunk)
-		stats = append(stats, layerStat{layerOrchestra, len(chunk)})
-	}
+	parts, stats := s.instructionParts(oBudget)
 	if sBudget > 0 {
 		if chunk := s.readSessionFile(sBudget); chunk != "" {
 			parts = append(parts, "[session]\n"+chunk)
@@ -146,6 +145,41 @@ func truncateToMax(s string, maxBytes int) string {
 		return marker[1:]
 	}
 	return tailBytes(s, keep) + marker
+}
+
+// layerSeparator is the horizontal rule between injected layers.
+const layerSeparator = "\n\n---\n\n"
+
+// userInstructionShare caps how much of the instruction budget the user's own
+// file may take, so a long personal preamble cannot crowd out the project's
+// instructions. Whatever it does not use flows back to the project layer, so a
+// user with no file sees byte-for-byte the same block as before.
+const userInstructionShare = 3
+
+// instructionParts renders the two instruction layers within one shared budget:
+// the user's standing rules first, the project's after.
+//
+// General before specific — the project layer is the more specific one and sits
+// closest to the task. It also matches how the two files relate: the project's
+// instructions are the ones that get to override.
+func (s *Store) instructionParts(budget int) ([]string, []layerStat) {
+	if budget <= 0 {
+		return nil, nil
+	}
+	var parts []string
+	var stats []layerStat
+
+	userBudget := budget / userInstructionShare
+	if chunk := s.sliceLayer(layerUserOrchestra, userBudget); chunk != "" {
+		parts = append(parts, "[user instructions]\n"+chunk)
+		stats = append(stats, layerStat{layerUserOrchestra, len(chunk)})
+		budget -= len(chunk)
+	}
+	if chunk := s.sliceLayer(layerOrchestra, budget); chunk != "" {
+		parts = append(parts, chunk)
+		stats = append(stats, layerStat{layerOrchestra, len(chunk)})
+	}
+	return parts, stats
 }
 
 func (s *Store) sliceLayer(layer string, maxBytes int) string {

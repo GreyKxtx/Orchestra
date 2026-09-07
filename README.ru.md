@@ -18,7 +18,7 @@
 | Session | История диалога, todo-лист, `agent.run` по JSON-RPC | ✅ |
 | Subagents | `task.spawn/wait/cancel`, дочерние агенты с read-only инструментами | ✅ |
 | Hooks | Pre/post-tool shell-хуки, `TOOL_DENIED` при ненулевом коде | ✅ |
-| Memory | `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
+| Memory | `~/.orchestra/ORCHESTRA.md` → `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
 | MCP | JSON-RPC 2.0 stdio MCP-клиент, мульти-сервер менеджер | ✅ |
 | Providers | Anthropic API + OpenAI-совместимые провайдеры (LM Studio, vLLM…) | ✅ |
 | Eval | YAML-задачи, изолированные воркспейсы, `orchestra eval` | ✅ |
@@ -307,7 +307,7 @@ stdout:  {"decision":"deny","reason":"на этой ветке правки за
 
 ### Память проекта
 
-Создайте `ORCHESTRA.md` в корне проекта — он будет автоматически инжектироваться в системный промпт агента (макс. 2 КБ). Альтернативно: `.orchestra/memory/*.md` или `~/.orchestra/memory.md`. Если репозиторий уже содержит `AGENTS.md`, `CLAUDE.md` или `.cursorrules`, Orchestra читает их как fallback в этом порядке, если `ORCHESTRA.md` нет.
+Создайте `ORCHESTRA.md` в корне проекта — он будет автоматически инжектироваться в системный промпт агента (макс. 2 КБ). Альтернативно: `.orchestra/memory/*.md` или `~/.orchestra/memory.md`. Ваши собственные постоянные инструкции — «как я хочу, чтобы ты работал», вне привязки к проекту — ложатся в `~/.orchestra/ORCHESTRA.md`; они инжектируются перед проектными, а перекрывают всё равно проектные. Этот файл — ваш: в отличие от `~/.orchestra/memory.md`, агент в него никогда не пишет. Если репозиторий уже содержит `AGENTS.md`, `CLAUDE.md` или `.cursorrules`, Orchestra читает их как fallback в этом порядке, если `ORCHESTRA.md` нет.
 
 Личные заметки, не для коммита — `ORCHESTRA.local.md` рядом с основным файлом (`orchestra init` сам добавляет его в `.gitignore`). Содержимое дописывается к командному файлу, а не заменяет его.
 

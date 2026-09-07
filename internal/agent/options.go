@@ -538,8 +538,14 @@ type Agent struct {
 	validator      *schema.Validator
 	tools          *tools.Runner
 	opts           Options
-	todos      []tools.TodoItem // current turn's working todo list
-	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
+	todos          []tools.TodoItem // current turn's working todo list
+	ckgContext     string           // pre-fetched CKG nodes block, empty if unavailable
+	// queryInstructions is the nested ORCHESTRA.md text for the directories the
+	// turn's query references (@-mentions and attachments). Computed once per
+	// Run, not per step: discoverInstructions dedupes by directory for the life
+	// of the runner, so recomputing it on step 2 would return nothing and the
+	// rules would silently drop out of the prompt mid-turn.
+	queryInstructions string
 
 	// justSwitchedFromPlan is true for the first nextStep call after planв†’build switch.
 	// Cleared after the reminder is injected so it fires at most once.
