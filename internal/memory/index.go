@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"sort"
 	"strings"
+	"time"
 )
 
 // indexLineMax caps one index row. Long enough to recognise a fact, short
@@ -88,19 +90,38 @@ func sliceEntriesWithIndex(entries []string, maxBytes int) string {
 // orderEntriesByPriority is joinEntriesByPriority's ordering, kept as a slice
 // so the caller can measure each entry rather than one joined string.
 func orderEntriesByPriority(entries []string) []string {
+	now := time.Now().UTC()
+
 	var pins []string
-	byType := map[string][]string{}
+	var rest []string
 	for _, e := range entries {
 		if IsPinnedEntry(e) {
 			pins = append(pins, e)
 			continue
 		}
-		byType[EntryTypeOf(e)] = append(byType[EntryTypeOf(e)], e)
+		rest = append(rest, e)
 	}
+
+	// Pins are unconditional and keep their own recency order: "never lose
+	// this" is not a claim that ages.
 	out := make([]string, 0, len(entries))
 	out = append(out, reverseEntries(pins)...)
-	for _, t := range injectionOrder {
-		out = append(out, reverseEntries(byType[t])...)
+
+	// Everything else is ranked by entryScore — type weighted by freshness.
+	// entries arrive oldest-first, so reversing before the stable sort makes
+	// recency the tie-breaker for entries of equal score.
+	rest = reverseEntries(rest)
+	scores := make(map[int]float64, len(rest))
+	for i, e := range rest {
+		scores[i] = entryScore(e, now)
+	}
+	idx := make([]int, len(rest))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return scores[idx[a]] > scores[idx[b]] })
+	for _, i := range idx {
+		out = append(out, rest[i])
 	}
 	return out
 }
