@@ -205,13 +205,20 @@ func TestMCPClient_RealSubprocess(t *testing.T) {
 	}
 	defer c.Close()
 
-	tools := c.Tools()
-	if len(tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(tools))
+	// Assert on the tool this test is about, not on how many the fake server
+	// happens to expose: the count was incidental, and adding a second tool
+	// for another test should not break this one.
+	var echo *MCPTool
+	for i := range c.Tools() {
+		if c.Tools()[i].Name == "echo" {
+			echo = &c.Tools()[i]
+			break
+		}
 	}
-	if tools[0].Name != "echo" {
-		t.Fatalf("expected tool name 'echo', got %q", tools[0].Name)
+	if echo == nil {
+		t.Fatalf("the echo tool was not discovered; got %+v", c.Tools())
 	}
+	tools := []MCPTool{*echo}
 	if tools[0].Description != "Echo back the input message" {
 		t.Fatalf("unexpected description: %q", tools[0].Description)
 	}
@@ -247,12 +254,16 @@ func TestMCPManager_RealSubprocess(t *testing.T) {
 
 	// Verify tool discovery.
 	defs := mgr.ListToolDefs()
-	if len(defs) != 1 {
-		t.Fatalf("expected 1 tool def, got %d", len(defs))
-	}
 	wantName := "mcp:testserver:echo"
-	if defs[0].Function.Name != wantName {
-		t.Fatalf("expected tool name %q, got %q", wantName, defs[0].Function.Name)
+	found := false
+	for _, d := range defs {
+		if d.Function.Name == wantName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a tool def named %q; got %d defs", wantName, len(defs))
 	}
 
 	// Verify tool call routing through manager.
