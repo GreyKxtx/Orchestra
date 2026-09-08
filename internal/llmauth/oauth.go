@@ -225,7 +225,36 @@ func openBrowser(url string) error {
 	return cmd.Start()
 }
 
-// loginDevice is replaced with the real RFC 8628 flow in the next task.
+// loginDevice runs RFC 8628 device authorization: ask for a code, print it,
+// then poll. It never opens a browser -- the whole point of this flow is that
+// the machine running Orchestra has none, and the user approves on a second
+// device.
+//
+// Polling cadence is delegated to x/oauth2's DeviceAccessToken, which honours
+// the server's `interval` and backs off on `slow_down`. Inventing our own
+// cadence here produces rate-limit errors that look like auth failures.
 func loginDevice(ctx context.Context, cfg LoginConfig) error {
-	return errors.New("llmauth: device flow is not implemented yet")
+	oc := oauth2Config(cfg.OAuth, "")
+
+	opts := make([]oauth2.AuthCodeOption, 0, len(cfg.OAuth.ExtraParams))
+	for k, v := range cfg.OAuth.ExtraParams {
+		opts = append(opts, oauth2.SetAuthURLParam(k, v))
+	}
+
+	da, err := oc.DeviceAuth(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("provider %q: request a device code: %w", cfg.Name, err)
+	}
+
+	target := da.VerificationURI
+	if da.VerificationURIComplete != "" {
+		target = da.VerificationURIComplete
+	}
+	fmt.Fprintf(cfg.Out, "Open %s and enter the code: %s\n", target, da.UserCode)
+
+	tok, err := oc.DeviceAccessToken(ctx, da)
+	if err != nil {
+		return fmt.Errorf("provider %q: device authorization: %w", cfg.Name, err)
+	}
+	return store(cfg.Name, cfg.OAuth, tok)
 }

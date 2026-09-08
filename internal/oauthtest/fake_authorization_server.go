@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -53,6 +54,12 @@ type Config struct {
 	// IssueRefreshToken, if true, includes a refresh_token in token
 	// responses and enables grant_type=refresh_token at /token.
 	IssueRefreshToken bool
+	// DeviceFlowEnabled serves the RFC 8628 device authorization endpoint
+	// and accepts the device_code grant at /token. The first token poll
+	// always answers authorization_pending, so a client that gives up on
+	// the first non-success answer is caught by the fixture rather than in
+	// production.
+	DeviceFlowEnabled bool
 }
 
 // testRefreshToken is the refresh token issued and accepted by the fake
@@ -75,6 +82,9 @@ type FakeAuthorizationServer struct {
 	config  Config
 	clients map[string]ClientInfo
 	codes   map[string]codeInfo
+
+	deviceMu    sync.Mutex
+	devicePolls int
 }
 
 type codeInfo struct {
@@ -99,6 +109,9 @@ func NewFakeAuthorizationServer(config Config) *FakeAuthorizationServer {
 	s.Mux.HandleFunc("/authorize", s.handleAuthorize)
 	s.Mux.HandleFunc("/token", s.handleToken)
 	s.Mux.HandleFunc("/.well-known/oauth-authorization-server", s.handleMetadata)
+	if config.DeviceFlowEnabled {
+		s.Mux.HandleFunc("/device_authorization", s.handleDeviceAuthorization)
+	}
 	if config.RegistrationConfig != nil && config.RegistrationConfig.DynamicClientRegistrationEnabled {
 		s.Mux.HandleFunc("/register", s.handleRegister)
 	}
@@ -222,6 +235,8 @@ func (s *FakeAuthorizationServer) handleToken(w http.ResponseWriter, r *http.Req
 		s.handleAuthorizationCodeGrant(w, r)
 	case "refresh_token":
 		s.handleRefreshTokenGrant(w, r)
+	case "urn:ietf:params:oauth:grant-type:device_code":
+		s.handleDeviceCodeGrant(w, r)
 	default:
 		http.Error(w, fmt.Sprintf("unsupported grant_type: %s", r.Form.Get("grant_type")), http.StatusBadRequest)
 	}
@@ -322,4 +337,69 @@ func redirectURIAllowed(registered []string, redirectURI string) bool {
 		return false
 	}
 	return slices.ContainsFunc(registered, isLoopbackRedirect)
+}
+
+const (
+	testDeviceCode = "test_device_code"
+	testUserCode   = "TEST-CODE"
+)
+
+func (s *FakeAuthorizationServer) handleDeviceAuthorization(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "failed to parse form", http.StatusBadRequest)
+		return
+	}
+	if err := s.authenticateClient(r); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"device_code":      testDeviceCode,
+		"user_code":        testUserCode,
+		"verification_uri": s.URL() + "/device",
+		"expires_in":       600,
+		"interval":         1,
+	})
+}
+
+// handleDeviceCodeGrant answers authorization_pending on the first poll and
+// issues a token from the second onward, so a client that treats the first
+// non-success answer as fatal fails here instead of in production.
+func (s *FakeAuthorizationServer) handleDeviceCodeGrant(w http.ResponseWriter, r *http.Request) {
+	if !s.config.DeviceFlowEnabled {
+		http.Error(w, "device_code grant not supported", http.StatusBadRequest)
+		return
+	}
+	if r.Form.Get("device_code") != testDeviceCode {
+		http.Error(w, "invalid device_code", http.StatusBadRequest)
+		return
+	}
+	s.deviceMu.Lock()
+	s.devicePolls++
+	n := s.devicePolls
+	s.deviceMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if n == 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
+		return
+	}
+	resp := map[string]any{
+		"access_token": "test_access_token",
+		"token_type":   "Bearer",
+		"expires_in":   s.accessTokenExpiresIn(),
+	}
+	if s.config.IssueRefreshToken {
+		resp["refresh_token"] = testRefreshToken
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// DeviceTokenPolls reports how many times the device_code grant was polled.
+func (s *FakeAuthorizationServer) DeviceTokenPolls() int {
+	s.deviceMu.Lock()
+	defer s.deviceMu.Unlock()
+	return s.devicePolls
 }
