@@ -83,3 +83,18 @@ jobs:
       - name: Compile TypeScript
         working-directory: ui/vscode
         run: npm run compile
+
+      # media/chat-src sits outside tsconfig's include, so nothing above covers
+      # it. These checks are what make edits there verifiable: the bundles parse
+      # and are current, the pure helpers return what they claim, and no
+      # fragment reaches past the `host` seam back to the VS Code API.
+      - name: Webview checks
+        working-directory: ui/vscode
+        run: npm run check:webview
+
+      # No npm dependencies — plain node, run from the repo root.
+      - name: Web UI checks
+        run: node ui/web/scripts/check-web.mjs
+
+      - name: Web UI adapter tests
+        run: node ui/web/scripts/adapter-test.mjs

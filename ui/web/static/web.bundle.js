@@ -1,8 +1,168 @@
-/* AUTO-GENERATED — do not edit. Sources: media/chat-src/*.js  →  npm run bundle:webview */
+/* AUTO-GENERATED — do not edit. Sources: ui/vscode/media/chat-src/* + ui/web/src/*  →  node ui/web/scripts/bundle-web.mjs */
 //@ts-check
 /* Generated from media/chat-src — edit fragments there, then: npm run bundle:webview */
 (function () {
-  const host = acquireVsCodeApi();
+  // The web host. Supplies the three methods the shared renderer fragments
+  // reach for (see 01-dom-state.js's `host`), backed by a WebSocket instead of
+  // the VS Code API. Everything the renderer knows about its host is here and
+  // in the adapter fragments that follow.
+
+  const STATE_KEY = "orchestra.web.state";
+
+  const host = {
+    /** @param {any} msg */
+    postMessage(msg) {
+      // dispatchToCore is defined in 10-adapter-session.js. Calls that arrive
+      // before it exists are a bug, not a race: the renderer only posts in
+      // response to user input or an inbound message, both of which come after
+      // the whole bundle has evaluated.
+      dispatchToCore(msg);
+    },
+    getState() {
+      try {
+        return JSON.parse(sessionStorage.getItem(STATE_KEY) || "{}");
+      } catch (e) {
+        return {};
+      }
+    },
+    /** @param {any} state */
+    setState(state) {
+      try {
+        sessionStorage.setItem(STATE_KEY, JSON.stringify(state));
+      } catch (e) {
+        // Private mode, or storage disabled. State is a convenience.
+      }
+    },
+  };
+
+  /**
+   * Deliver an inbound message to the renderer. 07-events.js listens on
+   * window's "message" event, so this is the same door VS Code posts through.
+   * @param {any} msg
+   */
+  function toRenderer(msg) {
+    window.postMessage(msg, "*");
+  }
+
+  // ---- JSON-RPC over the socket ------------------------------------------
+
+  let ws = null;
+  let nextRpcId = 1;
+  /** @type {Map<number, {resolve: Function, reject: Function}>} */
+  const pendingCalls = new Map();
+  /** @type {((msg: any) => void) | null} */
+  let onServerRequest = null; // set by 30-adapter-asks.js
+  /** @type {((msg: any) => void) | null} */
+  let onNotification = null; // set by 20-adapter-events.js
+
+  function socketURL() {
+    const token = new URLSearchParams(location.search).get("token") || "";
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    return `${scheme}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+  }
+
+  /** @param {string} method @param {any} params @returns {Promise<any>} */
+  function wsSend(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        reject(new Error("not connected"));
+        return;
+      }
+      const id = nextRpcId++;
+      pendingCalls.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} }));
+    });
+  }
+
+  /**
+   * Like wsSend, but hands back the request id so the caller can cancel it
+   * later with $/cancelRequest. Reading nextRpcId here is safe: wsSend
+   * allocates it synchronously, with no await in between.
+   * @param {string} method @param {any} params
+   * @returns {{id: number, done: Promise<any>}}
+   */
+  function wsSendCancellable(method, params) {
+    const id = nextRpcId;
+    return { id, done: wsSend(method, params) };
+  }
+
+  /** @param {string} method @param {any} params */
+  function wsNotify(method, params) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }));
+    }
+  }
+
+  /** Reply to a server-initiated request. @param {any} id @param {any} result */
+  function wsReply(id, result) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+    }
+  }
+
+  function connect() {
+    ws = new WebSocket(socketURL());
+    ws.addEventListener("open", () => {
+      toRenderer({ type: "status", status: "ok" });
+      onConnected();
+    });
+    ws.addEventListener("close", () => {
+      // A dropped socket ends the session on the core side, so say so plainly
+      // rather than reconnecting into what looks like the same conversation.
+      toRenderer({
+        type: "status",
+        status: "error",
+        detail: "disconnected — reload to start a new session",
+      });
+      for (const { reject } of pendingCalls.values()) {
+        reject(new Error("disconnected"));
+      }
+      pendingCalls.clear();
+    });
+    ws.addEventListener("error", () => {
+      toRenderer({ type: "status", status: "error", detail: "connection error" });
+    });
+    ws.addEventListener("message", (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      if (msg.id !== undefined && msg.method === undefined) {
+        const p = pendingCalls.get(msg.id);
+        if (!p) {
+          return;
+        }
+        pendingCalls.delete(msg.id);
+        if (msg.error) {
+          p.reject(new Error(msg.error.message || "rpc error"));
+        } else {
+          p.resolve(msg.result);
+        }
+        return;
+      }
+      if (msg.id !== undefined && msg.method) {
+        if (onServerRequest) {
+          onServerRequest(msg);
+        }
+        return;
+      }
+      if (msg.method && onNotification) {
+        onNotification(msg);
+      }
+    });
+
+    // Test seam: adapter-test.mjs drives the outbound path by posting a window
+    // message, because `host` lives inside this IIFE and nothing outside can
+    // reach it. Harmless in a real page — no renderer fragment posts this type.
+    window.addEventListener("message", (ev) => {
+      if (ev.data && ev.data.type === "__host_dispatch__") {
+        host.postMessage(ev.data.payload);
+      }
+    });
+  }
+  /* host is supplied by ui/web/src/00-web-prelude.js */
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
@@ -4734,4 +4894,336 @@
   renderContextUi();
   autoGrow();
   host.postMessage({ type: "ready" });
+  // Outbound: the renderer's message protocol -> JSON-RPC.
+  //
+  // This is the browser's half of what ui/vscode/src/chat/panel.ts does for the
+  // extension. Only v1 scope is wired: chat, cancellation, sessions. Message
+  // types outside that scope are acknowledged and ignored rather than dropped
+  // silently — a no-op the user can see beats a control that does nothing.
+
+  let currentSessionId = "";
+  /** id of the in-flight session.message request, so Stop can cancel it. */
+  let inFlightTurnId = null;
+
+  /** The workspace the core was started in; filled by the health check. */
+  let workspaceRoot = "";
+
+  async function onConnected() {
+    try {
+      // core.health is answerable before initialize — it and initialize are the
+      // only two methods exempt from the gate (internal/core/rpc_handler.go:76)
+      // — and it is where project_root and project_id come from.
+      const health = await wsSend("core.health", {});
+      workspaceRoot = health.workspace_root || "";
+      await wsSend("initialize", {
+        project_root: workspaceRoot,
+        project_id: health.project_id || "",
+        protocol_version: health.protocol_version,
+        ops_version: health.ops_version,
+        tools_version: health.tools_version,
+      });
+      const started = await wsSend("session.start", {});
+      currentSessionId = started.session_id || "";
+      toRenderer({
+        type: "header",
+        model: health.model || "",
+        provider: health.provider || "",
+        sessionId: currentSessionId,
+      });
+      toRenderer({ type: "ready" });
+      await refreshSessionList();
+    } catch (err) {
+      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+    }
+  }
+
+  async function refreshSessionList() {
+    try {
+      const res = await wsSend("session.list", {});
+      toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+    } catch (err) {
+      // A missing session list is not fatal; the chat still works.
+    }
+  }
+
+  /** @param {any} msg */
+  function dispatchToCore(msg) {
+    switch (msg.type) {
+      case "ready":
+        // The renderer announces itself; the socket's open handler already ran
+        // the handshake, so there is nothing further to do.
+        return;
+
+      case "send":
+        void sendTurn(msg);
+        return;
+
+      case "cancelTurn":
+        if (inFlightTurnId !== null) {
+          wsNotify("$/cancelRequest", { id: inFlightTurnId });
+        }
+        return;
+
+      case "newSession":
+        void startSession(undefined);
+        return;
+
+      case "openSession":
+        void startSession(msg.sessionId);
+        return;
+
+      case "listSessions":
+        void refreshSessionList();
+        return;
+
+      case "permissionReply":
+      case "questionReply":
+        // Answered in 30-adapter-asks.js, which owns the JSON-RPC ids.
+        return;
+
+      default:
+        // Everything else belongs to a VS Code affordance this host does not
+        // have (opening editors, applying pending diffs, the settings webview).
+        // Say so once rather than swallowing the click.
+        toRenderer({
+          type: "systemNote",
+          text: `"${msg.type}" is not available in the web UI yet.`,
+        });
+    }
+  }
+
+  /** @param {any} msg */
+  async function sendTurn(msg) {
+    if (!currentSessionId) {
+      toRenderer({ type: "error", message: "no session — reload the page" });
+      return;
+    }
+    toRenderer({ type: "userEcho", text: msg.text || "" });
+    toRenderer({ type: "turnStart" });
+    toRenderer({ type: "turnInFlight", inFlight: true });
+
+    const turn = wsSendCancellable("session.message", {
+      session_id: currentSessionId,
+      content: msg.text || "",
+      // The web host has no editor to stage changes in, so a turn writes to
+      // disk. Access mode still gates the shell (allow_exec below).
+      apply: true,
+      allow_exec: Boolean(msg.allowExec),
+      profile: msg.profile || "",
+    });
+    inFlightTurnId = turn.id;
+    try {
+      await turn.done;
+    } catch (err) {
+      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+    } finally {
+      inFlightTurnId = null;
+      toRenderer({ type: "turnInFlight", inFlight: false });
+      toRenderer({ type: "turnComplete" });
+    }
+  }
+
+  /** @param {string | undefined} sessionId */
+  async function startSession(sessionId) {
+    try {
+      const params = sessionId ? { session_id: sessionId } : {};
+      const started = await wsSend("session.start", params);
+      currentSessionId = started.session_id || "";
+      toRenderer({ type: "clearMessages" });
+      if (started.restored) {
+        const view = await wsSend("session.get", { session_id: currentSessionId });
+        toRenderer({ type: "history", messages: view.ui_messages || [] });
+      }
+      toRenderer({ type: "header", sessionId: currentSessionId });
+      await refreshSessionList();
+    } catch (err) {
+      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+    }
+  }
+
+  connect();
+  // Inbound: agent/event and exec/output_chunk -> renderer messages.
+  //
+  // The parent transcript is accumulated here rather than appended by the
+  // renderer, because the core streams tokens and the renderer redraws the
+  // whole assistant bubble (deltaSync). Child-scoped events belong to a
+  // subagent's own trace; they must not be folded into the parent's text —
+  // see ui/vscode/src/chat/panel.ts:1589-1604 for the same rule.
+
+  let turnText = "";
+  /** @type {Map<string, any>} */
+  const liveToolBlocks = new Map();
+
+  /** @param {any} msg */
+  function handleNotification(msg) {
+    if (msg.method === "exec/output_chunk") {
+      toRenderer({ type: "execChunk", chunk: (msg.params && msg.params.chunk) || "" });
+      return;
+    }
+    if (msg.method !== "agent/event") {
+      return;
+    }
+    const ev = msg.params || {};
+    const isChild = ev.scope === "child";
+
+    switch (ev.type) {
+      case "message_delta":
+        if (ev.content && !isChild) {
+          turnText += ev.content;
+          toRenderer({ type: "deltaSync", content: turnText });
+        }
+        break;
+
+      case "reasoning_delta":
+        if (ev.content && !isChild) {
+          toRenderer({ type: "reasoningDelta", content: ev.content });
+        }
+        break;
+
+      case "tool_call_start": {
+        if (isChild || !ev.tool_call_id) {
+          break;
+        }
+        const block = {
+          id: ev.tool_call_id,
+          name: ev.tool_call_name || "tool",
+          argsRaw: "",
+          status: "running",
+          result: "",
+          startedAt: Date.now(),
+        };
+        liveToolBlocks.set(ev.tool_call_id, block);
+        toRenderer({ type: "toolBlock", block: { ...block } });
+        break;
+      }
+
+      case "tool_call_delta": {
+        if (isChild || !ev.tool_call_id) {
+          break;
+        }
+        const block = liveToolBlocks.get(ev.tool_call_id);
+        if (block) {
+          block.argsRaw += ev.args_delta || "";
+          toRenderer({ type: "toolBlock", block: { ...block } });
+        }
+        break;
+      }
+
+      case "tool_call_completed": {
+        if (isChild || !ev.tool_call_id) {
+          break;
+        }
+        const block = liveToolBlocks.get(ev.tool_call_id) || {
+          id: ev.tool_call_id,
+          name: ev.tool_call_name || "tool",
+          argsRaw: "",
+          startedAt: Date.now(),
+        };
+        block.status = "done";
+        block.result = ev.content || "";
+        block.durationMs = Date.now() - (block.startedAt || Date.now());
+        liveToolBlocks.delete(ev.tool_call_id);
+        toRenderer({ type: "toolBlock", block: { ...block } });
+        break;
+      }
+
+      case "child_started":
+        toRenderer({
+          type: "childLifecycle",
+          phase: "started",
+          taskId: ev.task_id || "",
+          parentToolCallId: ev.parent_tool_call_id,
+          subagentType: ev.subagent_type,
+          content: ev.content,
+        });
+        break;
+
+      case "child_done":
+        toRenderer({
+          type: "childLifecycle",
+          phase: "done",
+          taskId: ev.task_id || "",
+          parentToolCallId: ev.parent_tool_call_id,
+          subagentType: ev.subagent_type,
+          status: ev.status,
+          error: ev.error,
+        });
+        break;
+
+      case "recoverable_error":
+      case "error":
+        toRenderer({ type: "error", message: ev.content || "error" });
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  onNotification = handleNotification;
+
+  // A new turn starts with an empty transcript.
+  window.addEventListener("message", (ev) => {
+    if (ev.data && ev.data.type === "turnStart") {
+      turnText = "";
+      liveToolBlocks.clear();
+    }
+  });
+  // Server-initiated requests: permission/request and question/ask.
+  //
+  // These are why the transport is a WebSocket. The renderer already has the
+  // overlays (05b-overlays.js); this fragment is the wiring between them and
+  // the JSON-RPC ids that must be answered — an unanswered id is a tool that
+  // waits forever.
+
+  /** @type {any} */ let pendingPermissionId = null;
+  /** @type {any} */ let pendingQuestionId = null;
+
+  /** @param {any} msg */
+  function handleServerRequest(msg) {
+    switch (msg.method) {
+      case "permission/request":
+        pendingPermissionId = msg.id;
+        toRenderer({ type: "permissionRequest", request: msg.params || {} });
+        return;
+      case "question/ask":
+        pendingQuestionId = msg.id;
+        toRenderer({ type: "questionAsk", questions: (msg.params && msg.params.questions) || [] });
+        return;
+      default:
+        // An unknown server request must still be answered, or the core waits.
+        wsReply(msg.id, { error: "unsupported" });
+    }
+  }
+
+  onServerRequest = handleServerRequest;
+
+  // The overlays answer through the renderer's existing messages. Intercept
+  // them here rather than in dispatchToCore, because they carry an id that
+  // belongs to this fragment.
+  window.addEventListener("message", (ev) => {
+    const msg = ev.data;
+    if (!msg || typeof msg !== "object") {
+      return;
+    }
+    if (msg.type === "__host_dispatch__" && msg.payload) {
+      const p = msg.payload;
+      if (p.type === "permissionReply") {
+        if (pendingPermissionId === null) {
+          return; // stale click; answering some other id would be worse
+        }
+        wsReply(pendingPermissionId, {
+          approved: Boolean(p.approved),
+          always: Boolean(p.always),
+        });
+        pendingPermissionId = null;
+      } else if (p.type === "questionReply") {
+        if (pendingQuestionId === null) {
+          return;
+        }
+        wsReply(pendingQuestionId, { answers: Array.isArray(p.answers) ? p.answers : [] });
+        pendingQuestionId = null;
+      }
+    }
+  });
 })();

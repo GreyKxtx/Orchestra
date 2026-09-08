@@ -35,7 +35,7 @@
       el.textContent = btn.label;
       el.addEventListener("click", () => {
         hideOverlay();
-        vscode.postMessage({
+        host.postMessage({
           type: "permissionReply",
           approved: btn.approved,
           always: Boolean(btn.always),
@@ -49,7 +49,7 @@
   /** @param {any[]} questions */
   function showQuestionOverlay(questions) {
     if (!questions.length) {
-      vscode.postMessage({ type: "questionReply", answers: [] });
+      host.postMessage({ type: "questionReply", answers: [] });
       return;
     }
     questionState = { questions, index: 0, answers: [], mode: "question" };
@@ -59,7 +59,7 @@
   function renderQuestionStep() {
     const q = questionState.questions[questionState.index];
     if (!q || !overlay || !overlayTitle || !overlayBody || !overlayOptions || !overlayActions) {
-      vscode.postMessage({ type: "questionReply", answers: questionState.answers });
+      host.postMessage({ type: "questionReply", answers: questionState.answers });
       hideOverlay();
       return;
     }

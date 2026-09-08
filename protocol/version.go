@@ -22,7 +22,10 @@ const (
 	// v13: attachments[] on agent.run and session.message; UIMessage.attachments.
 	// v14: session.fork — branch from a user checkpoint without destroying the
 	//      original; session.search — full-text search across saved sessions.
-	ProtocolVersion = 14
+	// v15: `/ws` — WebSocket transport (bidirectional JSON-RPC, one JSON message
+	//      per frame, no LSP framing on the wire). Served by `orchestra web`.
+	//      No method changes.
+	ProtocolVersion = 15
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

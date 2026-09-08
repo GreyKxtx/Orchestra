@@ -1,4 +1,4 @@
-  const vscode = acquireVsCodeApi();
+  const host = acquireVsCodeApi();
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
@@ -193,7 +193,7 @@
   /** @type {{ questions: any[]; index: number; answers: string[]; mode: string }} */
   let questionState = { questions: [], index: 0, answers: [], mode: "" };
 
-  const saved = vscode.getState() || {};
+  const saved = host.getState() || {};
   let accessId =
     typeof saved.accessId === "string" && ACCESS_MODES.some((m) => m.id === saved.accessId)
       ? saved.accessId

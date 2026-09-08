@@ -54,7 +54,7 @@
     // about which model actually runs. Swap it for the tier breakdown.
     if (modeId === "orchestra") {
       renderOrchestraPill();
-      vscode.postMessage({ type: "listOrchestraRoles" });
+      host.postMessage({ type: "listOrchestraRoles" });
     } else if (modelLabelEl) {
       setModelLabel(currentModel);
       if (modelPill) modelPill.title = "Model";
@@ -283,7 +283,7 @@
 
   function send() {
     if (busy) {
-      vscode.postMessage({ type: "cancelTurn" });
+      host.postMessage({ type: "cancelTurn" });
       return;
     }
     if (!inputEl) {
@@ -299,7 +299,7 @@
       inputEl.value = "";
       hidePalette();
       autoGrow();
-      vscode.postMessage({ type: "slashCommand", cmd, arg });
+      host.postMessage({ type: "slashCommand", cmd, arg });
       return;
     }
     const payload = {
@@ -322,7 +322,7 @@
     files = [];
     renderFiles();
     closeMenus();
-    vscode.postMessage(payload);
+    host.postMessage(payload);
   }
 
   function autoGrow() {
@@ -654,7 +654,7 @@
     }
     modeId = id;
     syncModeUi();
-    vscode.setState({ ...(vscode.getState() || {}), modeId });
+    host.setState({ ...(host.getState() || {}), modeId });
     closeMenus();
   });
 
@@ -677,13 +677,13 @@
   });
 
   attachBtn?.addEventListener("click", () => {
-    vscode.postMessage({ type: "attach" });
+    host.postMessage({ type: "attach" });
   });
 
   sessionNewBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     closeMenus();
-    vscode.postMessage({ type: "newSession" });
+    host.postMessage({ type: "newSession" });
   });
 
   sessionHistoryBtn?.addEventListener("click", (e) => {
@@ -693,7 +693,7 @@
     if (open) {
       sessionMenu?.classList.add("open");
       sessionHistoryBtn.classList.add("open");
-      vscode.postMessage({ type: "listSessions" });
+      host.postMessage({ type: "listSessions" });
     }
   });
 
@@ -704,7 +704,7 @@
       e.stopPropagation();
       const sid = closeEl.getAttribute("data-close-session");
       if (sid) {
-        vscode.postMessage({ type: "closeSession", sessionId: sid });
+        host.postMessage({ type: "closeSession", sessionId: sid });
       }
       return;
     }
@@ -714,7 +714,7 @@
     }
     const sid = tab.getAttribute("data-session-id");
     if (sid && sid !== activeSessionId) {
-      vscode.postMessage({ type: "openSession", sessionId: sid });
+      host.postMessage({ type: "openSession", sessionId: sid });
     }
   });
 
@@ -774,7 +774,7 @@
         void (async () => {
           try {
             const dataBase64 = await readFileAsBase64(file);
-            vscode.postMessage({
+            host.postMessage({
               type: "attachBytes",
               name: file.name || "paste.png",
               mime: item.type,
@@ -800,7 +800,7 @@
       positionModelMenu();
       modelMenu?.classList.add("open");
       modelPill.classList.add("open");
-      vscode.postMessage({ type: "listOrchestraRoles" });
+      host.postMessage({ type: "listOrchestraRoles" });
       return;
     }
     if (open) {
@@ -813,7 +813,7 @@
       positionModelMenu();
       modelMenu?.classList.add("open");
       modelPill.classList.add("open");
-      vscode.postMessage({ type: "listProviderModels" });
+      host.postMessage({ type: "listProviderModels" });
       setTimeout(() => modelMenuSearch?.focus(), 30);
     }
   });
@@ -830,11 +830,11 @@
   orchConfigBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     closeMenus();
-    vscode.postMessage({ type: "openOrchestraSettings" });
+    host.postMessage({ type: "openOrchestraSettings" });
   });
 
   settingsBtn?.addEventListener("click", () => {
-    vscode.postMessage({ type: "openSettings" });
+    host.postMessage({ type: "openSettings" });
   });
 
   todosChip?.addEventListener("click", (e) => {
@@ -852,7 +852,7 @@
     if (delEl) {
       const delId = delEl.getAttribute("data-delete-session");
       if (delId) {
-        vscode.postMessage({ type: "deleteSession", sessionId: delId });
+        host.postMessage({ type: "deleteSession", sessionId: delId });
       }
       return;
     }
@@ -863,13 +863,13 @@
     const action = item.getAttribute("data-session-action");
     if (action === "new") {
       closeMenus();
-      vscode.postMessage({ type: "newSession" });
+      host.postMessage({ type: "newSession" });
       return;
     }
     const sid = item.getAttribute("data-session-id");
     if (sid) {
       closeMenus();
-      vscode.postMessage({ type: "openSession", sessionId: sid });
+      host.postMessage({ type: "openSession", sessionId: sid });
     }
   });
 
@@ -881,19 +881,19 @@
       return;
     }
     if (item.getAttribute("data-model-action") === "refresh") {
-      vscode.postMessage({ type: "listProviderModels" });
+      host.postMessage({ type: "listProviderModels" });
       return;
     }
     if (item.getAttribute("data-model-action") === "configure-orchestra") {
       closeMenus();
-      vscode.postMessage({ type: "openOrchestraSettings" });
+      host.postMessage({ type: "openOrchestraSettings" });
       return;
     }
     const model = item.getAttribute("data-model");
     const provider = item.getAttribute("data-provider") || undefined;
     if (model) {
       closeMenus();
-      vscode.postMessage({ type: "setModel", model, provider });
+      host.postMessage({ type: "setModel", model, provider });
     }
   });
 

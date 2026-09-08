@@ -45,9 +45,13 @@ for (const rel of ["media/chat.bundle.js", "media/settings.bundle.js"]) {
 // 2. Bundles match their sources.
 const chatBundle = path.join(root, "media", "chat.bundle.js");
 if (fs.existsSync(chatBundle)) {
-  const before = fs.readFileSync(chatBundle, "utf8");
+  // Compare with line endings normalised: on Windows the file is checked out
+  // CRLF and the bundler writes LF, which is not staleness — it made this
+  // check fail on every clean tree.
+  const eol = (s) => s.replace(/\r\n/g, "\n");
+  const before = eol(fs.readFileSync(chatBundle, "utf8"));
   execFileSync(process.execPath, [path.join(__dirname, "bundle-chat.mjs")], { stdio: "pipe" });
-  const after = fs.readFileSync(chatBundle, "utf8");
+  const after = eol(fs.readFileSync(chatBundle, "utf8"));
   if (before !== after) {
     fail("media/chat.bundle.js was stale — it has now been regenerated, commit it");
   } else {
@@ -110,6 +114,36 @@ if (typeof formatToolDuration !== "function") {
   }
   if (bad === 0) {
     console.log(`ok   formatToolDuration (${cases.length} cases)`);
+  }
+}
+
+// 4. The host seam is intact.
+//
+// The renderer must reach its host through the `host` object only. A stray
+// `vscode.` call is invisible in VS Code (where the shim wraps the real API)
+// and a blank screen in the browser, so it is caught here instead.
+{
+  const fragDir = path.join(root, "media", "chat-src");
+  const strays = [];
+  for (const name of fs.readdirSync(fragDir).filter((n) => n.endsWith(".js"))) {
+    const src = fs.readFileSync(path.join(fragDir, name), "utf8");
+    src.split(/\r?\n/).forEach((line, i) => {
+      if (/\bvscode\s*\.\s*(postMessage|getState|setState)\s*\(/.test(line)) {
+        strays.push(`${name}:${i + 1}`);
+      }
+    });
+  }
+  if (strays.length > 0) {
+    fail(`fragments still call the VS Code API directly (use host.*): ${strays.join(", ")}`);
+  } else {
+    console.log("ok   host seam: no direct vscode.* calls in fragments");
+  }
+
+  const domState = fs.readFileSync(path.join(fragDir, "01-dom-state.js"), "utf8");
+  if (!/const\s+host\s*=\s*acquireVsCodeApi\(\)/.test(domState)) {
+    fail("01-dom-state.js must bind `const host = acquireVsCodeApi()`");
+  } else {
+    console.log("ok   host seam: bound in 01-dom-state.js");
   }
 }
 

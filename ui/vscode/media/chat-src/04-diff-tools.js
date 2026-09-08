@@ -203,11 +203,11 @@
   }
 
   function applyPendingChanges() {
-    vscode.postMessage({ type: "applyPending" });
+    host.postMessage({ type: "applyPending" });
   }
 
   function discardPendingChanges() {
-    vscode.postMessage({ type: "discardPending" });
+    host.postMessage({ type: "discardPending" });
   }
 
   function countDiffStats(before, after) {
@@ -251,7 +251,7 @@
     const requestId = `hl-${++highlightSeq}`;
     return new Promise((resolve) => {
       highlightWaiters.set(requestId, resolve);
-      vscode.postMessage({
+      host.postMessage({
         type: "highlightCode",
         requestId,
         language: lang || "plaintext",
@@ -341,11 +341,11 @@
 
   function openExternalFile(filePath, focus) {
     if (!filePath) return;
-    vscode.postMessage({ type: "openFile", path: filePath, focus: Boolean(focus) });
+    host.postMessage({ type: "openFile", path: filePath, focus: Boolean(focus) });
   }
 
   function openDiffMessage(path, before, after, sideBySide) {
-    vscode.postMessage({
+    host.postMessage({
       type: "openDiff",
       path,
       before: before || "",

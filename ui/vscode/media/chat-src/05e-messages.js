@@ -106,7 +106,7 @@
             return;
           }
           rewind.disabled = true;
-          vscode.postMessage({ type: "rewindToMessage", uiIndex: idx });
+          host.postMessage({ type: "rewindToMessage", uiIndex: idx });
         });
         wrap.appendChild(rewind);
       }

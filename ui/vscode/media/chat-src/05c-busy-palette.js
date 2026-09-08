@@ -45,7 +45,7 @@
       rm.setAttribute("aria-label", "Remove from queue");
       rm.textContent = "×";
       rm.addEventListener("click", () => {
-        vscode.postMessage({ type: "cancelQueuedSend", id: item.id });
+        host.postMessage({ type: "cancelQueuedSend", id: item.id });
       });
       row.appendChild(pos);
       row.appendChild(text);
@@ -286,12 +286,12 @@
       if (item.cmd === "/compact") {
         inputEl.value = trimmed;
         hidePalette();
-        vscode.postMessage({ type: "slashCommand", cmd: "/compact" });
+        host.postMessage({ type: "slashCommand", cmd: "/compact" });
         return;
       }
       inputEl.value = trimmed;
       hidePalette();
-      vscode.postMessage({ type: "slashCommand", cmd: item.cmd });
+      host.postMessage({ type: "slashCommand", cmd: item.cmd });
       return;
     }
     if (paletteMode === "mention") {
@@ -332,7 +332,7 @@
     showMentionLoading();
     clearTimeout(mentionTimer);
     mentionTimer = window.setTimeout(() => {
-      vscode.postMessage({ type: "mentionSearch", query: hit.query });
+      host.postMessage({ type: "mentionSearch", query: hit.query });
     }, hit.query ? 120 : 180);
   }
 

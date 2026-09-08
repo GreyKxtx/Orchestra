@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v15** (2026-09-08): транспорт `/ws` — двунаправленный JSON-RPC поверх WebSocket (`orchestra web`); один message на фрейм, без `Content-Length`. Методы не менялись.
 - **v14** (2026-09-06): `session.fork` — ветка от user-чекпоинта без разрушения оригинала; `session.search` — поиск по тексту сообщений во всех сохранённых сессиях.
 - **v13** (2026-08-09): `attachments[]` on `agent.run` and `session.message`; `UIMessage.attachments` in session schema v4.
 - **v12** (2026-08-09): `agent/event` child scope fields (`scope`, `task_id`, `parent_tool_call_id`, `subagent_type`); `child_started` / `child_done`.
@@ -99,6 +100,44 @@ Endpoints:
 - `written_at_unix` — Unix timestamp (seconds) когда discovery файл был записан (для диагностики)
 
 При старте core автоматически очищает stale discovery файлы (процесс мёртв или PID невалидный + файл старше 1 часа).
+
+### WebSocket (`orchestra web`) — v15+
+
+Включается командой `orchestra web`. В отличие от `POST /rpc`, это
+**поддерживаемый** транспорт: двунаправленный, то есть по нему работают
+`agent/event`, `permission/request` и `question/ask` — всё, чего HTTP-режим дать
+не может.
+
+- Bind: **только** `127.0.0.1`.
+- Endpoint: `GET /ws` (WebSocket upgrade).
+- Token обязателен. Принимаются три формы:
+  - `Authorization: Bearer <token>`
+  - `X-Orchestra-Token: <token>`
+  - `?token=<token>` в query — единственная форма, доступная браузерному
+    `WebSocket` API, который не умеет задавать заголовки запроса. Трафик
+    loopback-only, страницу отдаёт тот же сервер.
+
+**Фрейминг: один JSON-RPC message на один текстовый фрейм.** `Content-Length` на
+проводе нет — WebSocket уже фреймирован, повторять LSP-обрамление незачем.
+Лимит размера сообщения тот же, что у stdio: `DefaultMaxContentBytes = 4MiB`.
+
+**Сессия — это соединение.** Один WebSocket = один `jsonrpc.Server` = одна
+клиентская сессия. Разрыв завершает её, и все висящие server-initiated запросы
+падают с ошибкой (fail closed): закрытая вкладка не оставляет инструмент ждать
+разрешения навсегда. Одного EOF для этого мало — `Serve` дожидается своих
+in-flight хендлеров, а хендлер, заблокированный в `Server.Request`, ждёт контекст,
+производный от того самого, который отменяют после возврата `Serve`; поэтому
+транспорт отменяет контекст соединения по смерти сокета, не дожидаясь `Serve`
+(`internal/webtransport/conn.go`, `Pipe.Done`).
+
+**Одно активное соединение за раз.** Второе получает `409 Conflict` до
+upgrade'а. Причина не в транспорте: MCP-хост ядра привязывается к requester'у
+одного соединения (`internal/core/rpc_handler.go:46-52`), и второй клиент молча
+перехватывал бы MCP-промпты первого.
+
+Discovery: `.orchestra/web.json` (0600, удаляется при выходе) — `url`, `port`,
+`token`, `pid`, `protocol_version`, метки времени. Формат и очистка stale-файлов
+по живости PID — как у `.orchestra/core.http.json`.
 
 ## JSON-RPC правила
 
