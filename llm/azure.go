@@ -56,18 +56,42 @@ func (c *OpenAIClient) azureChatCompletionsURL() (string, error) {
 		base, url.PathEscape(deployment), url.QueryEscape(version)), nil
 }
 
+// resolveBearer returns the credential to send: a token source wins over a
+// static key, and its failure is never masked by falling back to that key --
+// the user replaced it on purpose, and sending it anyway would put a
+// credential they believe is retired back on the wire.
+func resolveBearer(tokenSource func() (string, error), apiKey string) (string, error) {
+	if tokenSource != nil {
+		tok, err := tokenSource()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(tok), nil
+	}
+	return apiKey, nil
+}
+
 // setAuthHeader applies the endpoint's authentication scheme. Azure OpenAI
 // authenticates with an api-key header and rejects an Authorization bearer;
 // every other OpenAI-compatible endpoint is the reverse.
-func (c *OpenAIClient) setAuthHeader(h http.Header) {
-	if c.apiKey == "" {
-		return
+//
+// It returns an error when a configured token source cannot produce a
+// credential, so a failed refresh surfaces as a request error rather than an
+// unauthenticated call the server answers with a confusing 401.
+func (c *OpenAIClient) setAuthHeader(h http.Header) error {
+	cred, err := resolveBearer(c.tokenSource, c.apiKey)
+	if err != nil {
+		return fmt.Errorf("resolve credential for %s: %w", c.baseURL, err)
+	}
+	if cred == "" {
+		return nil
 	}
 	if c.azure != nil {
-		h.Set("api-key", c.apiKey)
-		return
+		h.Set("api-key", cred)
+		return nil
 	}
-	h.Set("Authorization", "Bearer "+c.apiKey)
+	h.Set("Authorization", "Bearer "+cred)
+	return nil
 }
 
 // isAzureEndpoint reports whether a host is an Azure OpenAI resource. Those

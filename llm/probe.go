@@ -52,7 +52,13 @@ func Probe(ctx context.Context, cfg LLMConfig, kind ProbeKind) ProbeResult {
 
 	switch kind {
 	case ProbeModels:
-		code, err := probeModelsHTTP(ctx, base, cfg.APIKey)
+		cred, credErr := resolveBearer(cfg.TokenSource, cfg.APIKey)
+		if credErr != nil {
+			out.Err = credErr.Error()
+			out.Hint = "Проверь авторизацию провайдера: orchestra auth login <provider>"
+			return out
+		}
+		code, err := probeModelsHTTP(ctx, base, cred)
 		out.HTTPCode = code
 		if err != nil {
 			out.Err = err.Error()

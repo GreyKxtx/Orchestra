@@ -39,9 +39,13 @@ func FetchCredits(ctx context.Context, cfg LLMConfig) (*Credits, error) {
 	if !SupportsCredits(cfg) {
 		return nil, fmt.Errorf("provider does not expose a credits API")
 	}
-	key := strings.TrimSpace(cfg.APIKey)
+	key, err := resolveBearer(cfg.TokenSource, cfg.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	key = strings.TrimSpace(key)
 	if key == "" {
-		return nil, fmt.Errorf("api_key is not configured")
+		return nil, fmt.Errorf("no credential configured (api_key or auth:)")
 	}
 	url := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/") + "/credits"
 
