@@ -555,4 +555,4 @@
   syncAccessUi();
   renderContextUi();
   autoGrow();
-  vscode.postMessage({ type: "ready" });
+  host.postMessage({ type: "ready" });

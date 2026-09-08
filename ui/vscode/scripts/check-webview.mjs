@@ -113,6 +113,36 @@ if (typeof formatToolDuration !== "function") {
   }
 }
 
+// 4. The host seam is intact.
+//
+// The renderer must reach its host through the `host` object only. A stray
+// `vscode.` call is invisible in VS Code (where the shim wraps the real API)
+// and a blank screen in the browser, so it is caught here instead.
+{
+  const fragDir = path.join(root, "media", "chat-src");
+  const strays = [];
+  for (const name of fs.readdirSync(fragDir).filter((n) => n.endsWith(".js"))) {
+    const src = fs.readFileSync(path.join(fragDir, name), "utf8");
+    src.split(/\r?\n/).forEach((line, i) => {
+      if (/\bvscode\s*\.\s*(postMessage|getState|setState)\s*\(/.test(line)) {
+        strays.push(`${name}:${i + 1}`);
+      }
+    });
+  }
+  if (strays.length > 0) {
+    fail(`fragments still call the VS Code API directly (use host.*): ${strays.join(", ")}`);
+  } else {
+    console.log("ok   host seam: no direct vscode.* calls in fragments");
+  }
+
+  const domState = fs.readFileSync(path.join(fragDir, "01-dom-state.js"), "utf8");
+  if (!/const\s+host\s*=\s*acquireVsCodeApi\(\)/.test(domState)) {
+    fail("01-dom-state.js must bind `const host = acquireVsCodeApi()`");
+  } else {
+    console.log("ok   host seam: bound in 01-dom-state.js");
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

@@ -548,7 +548,7 @@
       }
       try {
         const dataBase64 = await readFileAsBase64(file);
-        vscode.postMessage({
+        host.postMessage({
           type: "attachBytes",
           name: file.name || "attachment",
           mime: file.type || undefined,

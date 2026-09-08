@@ -204,7 +204,7 @@
       const id = el.getAttribute("data-access");
       el.classList.toggle("selected", id === accessId);
     });
-    vscode.setState({ ...(vscode.getState() || {}), accessId });
+    host.setState({ ...(host.getState() || {}), accessId });
   }
 
   function statsHtml(stats) {

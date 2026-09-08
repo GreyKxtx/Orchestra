@@ -2,7 +2,7 @@
 //@ts-check
 /* Generated from media/chat-src — edit fragments there, then: npm run bundle:webview */
 (function () {
-  const vscode = acquireVsCodeApi();
+  const host = acquireVsCodeApi();
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
@@ -197,7 +197,7 @@
   /** @type {{ questions: any[]; index: number; answers: string[]; mode: string }} */
   let questionState = { questions: [], index: 0, answers: [], mode: "" };
 
-  const saved = vscode.getState() || {};
+  const saved = host.getState() || {};
   let accessId =
     typeof saved.accessId === "string" && ACCESS_MODES.some((m) => m.id === saved.accessId)
       ? saved.accessId
@@ -460,7 +460,7 @@
       const id = el.getAttribute("data-access");
       el.classList.toggle("selected", id === accessId);
     });
-    vscode.setState({ ...(vscode.getState() || {}), accessId });
+    host.setState({ ...(host.getState() || {}), accessId });
   }
 
   function statsHtml(stats) {
@@ -1034,11 +1034,11 @@
   }
 
   function applyPendingChanges() {
-    vscode.postMessage({ type: "applyPending" });
+    host.postMessage({ type: "applyPending" });
   }
 
   function discardPendingChanges() {
-    vscode.postMessage({ type: "discardPending" });
+    host.postMessage({ type: "discardPending" });
   }
 
   function countDiffStats(before, after) {
@@ -1082,7 +1082,7 @@
     const requestId = `hl-${++highlightSeq}`;
     return new Promise((resolve) => {
       highlightWaiters.set(requestId, resolve);
-      vscode.postMessage({
+      host.postMessage({
         type: "highlightCode",
         requestId,
         language: lang || "plaintext",
@@ -1172,11 +1172,11 @@
 
   function openExternalFile(filePath, focus) {
     if (!filePath) return;
-    vscode.postMessage({ type: "openFile", path: filePath, focus: Boolean(focus) });
+    host.postMessage({ type: "openFile", path: filePath, focus: Boolean(focus) });
   }
 
   function openDiffMessage(path, before, after, sideBySide) {
-    vscode.postMessage({
+    host.postMessage({
       type: "openDiff",
       path,
       before: before || "",
@@ -1740,7 +1740,7 @@
       el.textContent = btn.label;
       el.addEventListener("click", () => {
         hideOverlay();
-        vscode.postMessage({
+        host.postMessage({
           type: "permissionReply",
           approved: btn.approved,
           always: Boolean(btn.always),
@@ -1754,7 +1754,7 @@
   /** @param {any[]} questions */
   function showQuestionOverlay(questions) {
     if (!questions.length) {
-      vscode.postMessage({ type: "questionReply", answers: [] });
+      host.postMessage({ type: "questionReply", answers: [] });
       return;
     }
     questionState = { questions, index: 0, answers: [], mode: "question" };
@@ -1764,7 +1764,7 @@
   function renderQuestionStep() {
     const q = questionState.questions[questionState.index];
     if (!q || !overlay || !overlayTitle || !overlayBody || !overlayOptions || !overlayActions) {
-      vscode.postMessage({ type: "questionReply", answers: questionState.answers });
+      host.postMessage({ type: "questionReply", answers: questionState.answers });
       hideOverlay();
       return;
     }
@@ -1944,7 +1944,7 @@
       rm.setAttribute("aria-label", "Remove from queue");
       rm.textContent = "×";
       rm.addEventListener("click", () => {
-        vscode.postMessage({ type: "cancelQueuedSend", id: item.id });
+        host.postMessage({ type: "cancelQueuedSend", id: item.id });
       });
       row.appendChild(pos);
       row.appendChild(text);
@@ -2185,12 +2185,12 @@
       if (item.cmd === "/compact") {
         inputEl.value = trimmed;
         hidePalette();
-        vscode.postMessage({ type: "slashCommand", cmd: "/compact" });
+        host.postMessage({ type: "slashCommand", cmd: "/compact" });
         return;
       }
       inputEl.value = trimmed;
       hidePalette();
-      vscode.postMessage({ type: "slashCommand", cmd: item.cmd });
+      host.postMessage({ type: "slashCommand", cmd: item.cmd });
       return;
     }
     if (paletteMode === "mention") {
@@ -2231,7 +2231,7 @@
     showMentionLoading();
     clearTimeout(mentionTimer);
     mentionTimer = window.setTimeout(() => {
-      vscode.postMessage({ type: "mentionSearch", query: hit.query });
+      host.postMessage({ type: "mentionSearch", query: hit.query });
     }, hit.query ? 120 : 180);
   }
 
@@ -2890,7 +2890,7 @@
       }
       try {
         const dataBase64 = await readFileAsBase64(file);
-        vscode.postMessage({
+        host.postMessage({
           type: "attachBytes",
           name: file.name || "attachment",
           mime: file.type || undefined,
@@ -3065,7 +3065,7 @@
             return;
           }
           rewind.disabled = true;
-          vscode.postMessage({ type: "rewindToMessage", uiIndex: idx });
+          host.postMessage({ type: "rewindToMessage", uiIndex: idx });
         });
         wrap.appendChild(rewind);
       }
@@ -3327,7 +3327,7 @@
     // about which model actually runs. Swap it for the tier breakdown.
     if (modeId === "orchestra") {
       renderOrchestraPill();
-      vscode.postMessage({ type: "listOrchestraRoles" });
+      host.postMessage({ type: "listOrchestraRoles" });
     } else if (modelLabelEl) {
       setModelLabel(currentModel);
       if (modelPill) modelPill.title = "Model";
@@ -3556,7 +3556,7 @@
 
   function send() {
     if (busy) {
-      vscode.postMessage({ type: "cancelTurn" });
+      host.postMessage({ type: "cancelTurn" });
       return;
     }
     if (!inputEl) {
@@ -3572,7 +3572,7 @@
       inputEl.value = "";
       hidePalette();
       autoGrow();
-      vscode.postMessage({ type: "slashCommand", cmd, arg });
+      host.postMessage({ type: "slashCommand", cmd, arg });
       return;
     }
     const payload = {
@@ -3595,7 +3595,7 @@
     files = [];
     renderFiles();
     closeMenus();
-    vscode.postMessage(payload);
+    host.postMessage(payload);
   }
 
   function autoGrow() {
@@ -3927,7 +3927,7 @@
     }
     modeId = id;
     syncModeUi();
-    vscode.setState({ ...(vscode.getState() || {}), modeId });
+    host.setState({ ...(host.getState() || {}), modeId });
     closeMenus();
   });
 
@@ -3950,13 +3950,13 @@
   });
 
   attachBtn?.addEventListener("click", () => {
-    vscode.postMessage({ type: "attach" });
+    host.postMessage({ type: "attach" });
   });
 
   sessionNewBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     closeMenus();
-    vscode.postMessage({ type: "newSession" });
+    host.postMessage({ type: "newSession" });
   });
 
   sessionHistoryBtn?.addEventListener("click", (e) => {
@@ -3966,7 +3966,7 @@
     if (open) {
       sessionMenu?.classList.add("open");
       sessionHistoryBtn.classList.add("open");
-      vscode.postMessage({ type: "listSessions" });
+      host.postMessage({ type: "listSessions" });
     }
   });
 
@@ -3977,7 +3977,7 @@
       e.stopPropagation();
       const sid = closeEl.getAttribute("data-close-session");
       if (sid) {
-        vscode.postMessage({ type: "closeSession", sessionId: sid });
+        host.postMessage({ type: "closeSession", sessionId: sid });
       }
       return;
     }
@@ -3987,7 +3987,7 @@
     }
     const sid = tab.getAttribute("data-session-id");
     if (sid && sid !== activeSessionId) {
-      vscode.postMessage({ type: "openSession", sessionId: sid });
+      host.postMessage({ type: "openSession", sessionId: sid });
     }
   });
 
@@ -4047,7 +4047,7 @@
         void (async () => {
           try {
             const dataBase64 = await readFileAsBase64(file);
-            vscode.postMessage({
+            host.postMessage({
               type: "attachBytes",
               name: file.name || "paste.png",
               mime: item.type,
@@ -4073,7 +4073,7 @@
       positionModelMenu();
       modelMenu?.classList.add("open");
       modelPill.classList.add("open");
-      vscode.postMessage({ type: "listOrchestraRoles" });
+      host.postMessage({ type: "listOrchestraRoles" });
       return;
     }
     if (open) {
@@ -4086,7 +4086,7 @@
       positionModelMenu();
       modelMenu?.classList.add("open");
       modelPill.classList.add("open");
-      vscode.postMessage({ type: "listProviderModels" });
+      host.postMessage({ type: "listProviderModels" });
       setTimeout(() => modelMenuSearch?.focus(), 30);
     }
   });
@@ -4103,11 +4103,11 @@
   orchConfigBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     closeMenus();
-    vscode.postMessage({ type: "openOrchestraSettings" });
+    host.postMessage({ type: "openOrchestraSettings" });
   });
 
   settingsBtn?.addEventListener("click", () => {
-    vscode.postMessage({ type: "openSettings" });
+    host.postMessage({ type: "openSettings" });
   });
 
   todosChip?.addEventListener("click", (e) => {
@@ -4125,7 +4125,7 @@
     if (delEl) {
       const delId = delEl.getAttribute("data-delete-session");
       if (delId) {
-        vscode.postMessage({ type: "deleteSession", sessionId: delId });
+        host.postMessage({ type: "deleteSession", sessionId: delId });
       }
       return;
     }
@@ -4136,13 +4136,13 @@
     const action = item.getAttribute("data-session-action");
     if (action === "new") {
       closeMenus();
-      vscode.postMessage({ type: "newSession" });
+      host.postMessage({ type: "newSession" });
       return;
     }
     const sid = item.getAttribute("data-session-id");
     if (sid) {
       closeMenus();
-      vscode.postMessage({ type: "openSession", sessionId: sid });
+      host.postMessage({ type: "openSession", sessionId: sid });
     }
   });
 
@@ -4154,19 +4154,19 @@
       return;
     }
     if (item.getAttribute("data-model-action") === "refresh") {
-      vscode.postMessage({ type: "listProviderModels" });
+      host.postMessage({ type: "listProviderModels" });
       return;
     }
     if (item.getAttribute("data-model-action") === "configure-orchestra") {
       closeMenus();
-      vscode.postMessage({ type: "openOrchestraSettings" });
+      host.postMessage({ type: "openOrchestraSettings" });
       return;
     }
     const model = item.getAttribute("data-model");
     const provider = item.getAttribute("data-provider") || undefined;
     if (model) {
       closeMenus();
-      vscode.postMessage({ type: "setModel", model, provider });
+      host.postMessage({ type: "setModel", model, provider });
     }
   });
 
@@ -4733,5 +4733,5 @@
   syncAccessUi();
   renderContextUi();
   autoGrow();
-  vscode.postMessage({ type: "ready" });
+  host.postMessage({ type: "ready" });
 })();
