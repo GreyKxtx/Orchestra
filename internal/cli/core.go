@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/core"
@@ -82,7 +81,7 @@ func runCore(cmd *cobra.Command, args []string) error {
 	if coreHTTP {
 		fmt.Fprintln(os.Stderr, "[orchestra] NOTE: core --http is debug-only; use stdio JSON-RPC for production clients.")
 		// Clean up stale discovery file before starting.
-		_ = cleanupStaleHTTPDiscovery(workspace)
+		_ = cleanupStaleDiscovery(filepath.Join(workspace, ".orchestra", "core.http.json"))
 
 		token := coreHTTPToken
 		if token == "" {
@@ -157,27 +156,16 @@ func mustToken() string {
 	return hex.EncodeToString(b)
 }
 
-// isProcessAlive checks if a process with the given PID is still running.
-// Returns false if the process doesn't exist or if we can't determine its state.
-func isProcessAlive(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// On Unix, Signal(0) checks if process exists without sending a signal.
-	// On Windows, it may return an error if process doesn't exist.
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil
-}
 
-// cleanupStaleHTTPDiscovery removes core.http.json if it exists and the process is dead.
+// cleanupStaleDiscovery removes the discovery file at discPath if the process
+// that wrote it is dead. Shared by `core --http` (.orchestra/core.http.json)
+// and `orchestra web` (.orchestra/web.json).
 //
 // Cleanup logic:
 // - If PID is valid and process is alive → keep file (age doesn't matter).
 // - If PID is dead → remove file.
 // - If PID check fails (invalid/not found) → fallback to age-based cleanup (1 hour).
-func cleanupStaleHTTPDiscovery(workspace string) error {
-	discPath := filepath.Join(workspace, ".orchestra", "core.http.json")
+func cleanupStaleDiscovery(discPath string) error {
 	data, err := os.ReadFile(discPath)
 	if err != nil {
 		if os.IsNotExist(err) {
