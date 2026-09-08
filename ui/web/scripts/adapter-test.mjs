@@ -257,3 +257,66 @@ test("cancelTurn sends $/cancelRequest for the in-flight turn", async () => {
   assert.ok(cancel, "cancelTurn must cancel the in-flight request, or Stop does nothing");
   assert.equal(cancel.params.id, turn.id);
 });
+
+/** Bring a bundle to a started session with the message logs cleared. */
+async function ready(b) {
+  await handshake(b);
+  b.inbound.length = 0;
+  b.sent.length = 0;
+  return b;
+}
+
+test("message_delta accumulates and reaches the renderer as text", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", content: "Hel" } });
+  b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", content: "lo" } });
+
+  const texts = b.inbound
+    .filter((m) => m.type === "delta" || m.type === "deltaSync")
+    .map((m) => m.content);
+  assert.ok(texts.length > 0, "no delta reached the renderer");
+  assert.equal(texts[texts.length - 1], "Hello", "deltas must accumulate, not replace");
+});
+
+test("child-scoped deltas do not leak into the main transcript", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", content: "subagent chatter", scope: "child" },
+  });
+  const leaked = b.inbound.filter((m) => m.type === "delta" || m.type === "deltaSync");
+  assert.equal(leaked.length, 0, "a child's tokens must not appear in the parent transcript");
+});
+
+test("a tool call becomes a running block, then a completed one", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_start", tool_call_id: "t1", tool_call_name: "bash" },
+  });
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_completed", tool_call_id: "t1", tool_call_name: "bash", content: "ok" },
+  });
+
+  const blocks = b.inbound.filter((m) => m.type === "toolBlock");
+  assert.equal(blocks.length, 2, `expected start+complete, got ${blocks.length}`);
+  assert.equal(blocks[0].block.status, "running");
+  assert.equal(blocks[1].block.status, "done");
+  assert.equal(blocks[1].block.result, "ok");
+});
+
+test("exec output is streamed into the tool block", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "exec/output_chunk",
+    params: { chunk: "line one\n" },
+  });
+  const chunks = b.inbound.filter((m) => m.type === "execChunk");
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].chunk, "line one\n");
+});
