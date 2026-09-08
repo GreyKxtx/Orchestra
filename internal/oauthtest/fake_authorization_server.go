@@ -187,7 +187,7 @@ func (s *FakeAuthorizationServer) handleAuthorize(w http.ResponseWriter, r *http
 		http.Error(w, "missing redirect_uri", http.StatusBadRequest)
 		return
 	}
-	if !slices.Contains(clientInfo.RedirectURIs, redirectURI) {
+	if !redirectURIAllowed(clientInfo.RedirectURIs, redirectURI) {
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
@@ -291,4 +291,35 @@ func (s *FakeAuthorizationServer) authenticateClient(r *http.Request) error {
 		return errors.New("client not found")
 	}
 	return nil
+}
+
+// isLoopbackRedirect reports whether uri is an http loopback redirect of the
+// kind a native/CLI client uses.
+func isLoopbackRedirect(uri string) bool {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	switch u.Hostname() {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
+}
+
+// redirectURIAllowed matches a redirect_uri against a client's registered
+// list. Exact match is the rule, with one exception RFC 8252 section 7.3
+// requires: a native client listens on an ephemeral loopback port it cannot
+// know at registration time, so the authorization server must ignore the
+// port of a loopback redirect. Without this, every CLI PKCE login would be
+// rejected here and the fixture would only be able to test flows no real
+// native client uses.
+func redirectURIAllowed(registered []string, redirectURI string) bool {
+	if slices.Contains(registered, redirectURI) {
+		return true
+	}
+	if !isLoopbackRedirect(redirectURI) {
+		return false
+	}
+	return slices.ContainsFunc(registered, isLoopbackRedirect)
 }
