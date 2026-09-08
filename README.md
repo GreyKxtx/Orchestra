@@ -278,6 +278,56 @@ providers:
     api_key: sk-or-...   # only this leaf is masked; the rest of the provider's fields come from .orchestra.yml
 ```
 
+### Credentials that are not a static key: `auth:`
+
+Some endpoints authenticate with a short-lived bearer rather than a permanent
+key — an SSO gateway in front of a model service, your own registered OAuth
+application, a cloud endpoint whose token comes from a helper command. A
+provider block can carry an `auth:` block with **exactly one** of two
+mechanisms:
+
+```yaml
+providers:
+  corp-gateway:
+    api_base: https://llm.corp.example/v1
+    model: gpt-4o
+    auth:
+      oauth:
+        auth_url:        https://sso.corp.example/authorize
+        token_url:       https://sso.corp.example/token
+        device_auth_url: https://sso.corp.example/device   # flow: device only
+        client_id:       orchestra-cli
+        scopes:          [llm.invoke, offline_access]
+        flow:            browser        # browser (default) | device
+
+  vertex:
+    api_base: https://europe-west4-aiplatform.googleapis.com/v1
+    model: gemini-2.5-pro
+    auth:
+      token_command: ["gcloud", "auth", "print-access-token"]
+      token_command_ttl: 45m            # default 5m
+```
+
+- `orchestra auth login <provider>` authorizes an `oauth:` provider once.
+  `flow: browser` opens a browser and catches the redirect on a loopback port;
+  `flow: device` prints a code to enter on another device, for machines with no
+  browser. The token is stored in `~/.orchestra/llm-oauth/<provider>.json`
+  (mode 0600) and refreshed silently from then on.
+- `orchestra auth logout <provider>` forgets it.
+- `orchestra auth list` shows each provider's mechanism and, for OAuth, how
+  long the current token has left.
+- `token_command` needs no login: Orchestra runs it and caches its stdout for
+  `token_command_ttl`.
+
+`client_secret` belongs in `.orchestra.local.yml`, not here — a confidential
+client's secret is a secret like any other.
+
+**Orchestra ships no provider presets.** The endpoints and `client_id` above
+are yours: your own registered OAuth application, or your organization's
+gateway. Orchestra deliberately does not bundle client IDs taken from vendors'
+own applications in order to ride a consumer subscription — sending another
+application's identity is not the same thing as authorizing with OAuth.
+
 ### Global config: `~/.orchestra/config.yml`
 
 Settings that are the same across every project — providers, keys, tiers, preferences — live in `~/.orchestra/config.yml`. The project's `.orchestra.yml` only needs to state what differs.

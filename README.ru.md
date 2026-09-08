@@ -278,6 +278,56 @@ providers:
     api_key: sk-or-...   # маскируется только этот лист, остальные поля провайдера — из .orchestra.yml
 ```
 
+### Учётные данные без статичного ключа: `auth:`
+
+Некоторые эндпоинты авторизуются коротким токеном, а не постоянным ключом —
+SSO-шлюз перед моделью, ваше собственное зарегистрированное OAuth-приложение,
+облачный эндпоинт, токен для которого печатает вспомогательная команда. Блок
+провайдера может нести `auth:` **ровно с одним** из двух механизмов:
+
+```yaml
+providers:
+  corp-gateway:
+    api_base: https://llm.corp.example/v1
+    model: gpt-4o
+    auth:
+      oauth:
+        auth_url:        https://sso.corp.example/authorize
+        token_url:       https://sso.corp.example/token
+        device_auth_url: https://sso.corp.example/device   # только для flow: device
+        client_id:       orchestra-cli
+        scopes:          [llm.invoke, offline_access]
+        flow:            browser        # browser (по умолчанию) | device
+
+  vertex:
+    api_base: https://europe-west4-aiplatform.googleapis.com/v1
+    model: gemini-2.5-pro
+    auth:
+      token_command: ["gcloud", "auth", "print-access-token"]
+      token_command_ttl: 45m            # по умолчанию 5m
+```
+
+- `orchestra auth login <provider>` авторизует провайдера с `oauth:` один раз.
+  `flow: browser` открывает браузер и ловит редирект на локальном порту;
+  `flow: device` печатает код, который вводят на другом устройстве — для машин
+  без браузера. Токен лежит в `~/.orchestra/llm-oauth/<provider>.json`
+  (права 0600) и дальше обновляется молча.
+- `orchestra auth logout <provider>` забывает его.
+- `orchestra auth list` показывает механизм каждого провайдера и, для OAuth,
+  сколько осталось текущему токену.
+- `token_command` логина не требует: Orchestra запускает команду и кэширует её
+  stdout на `token_command_ttl`.
+
+`client_secret` — место в `.orchestra.local.yml`, а не здесь: секрет
+конфиденциального клиента такой же секрет, как остальные.
+
+**Пресетов провайдеров Orchestra не поставляет.** Endpoints и `client_id`
+выше — ваши: ваше собственное зарегистрированное OAuth-приложение или шлюз
+вашей организации. Orchestra сознательно не везёт с собой `client_id`, взятые
+из приложений вендоров, чтобы работать под потребительской подпиской:
+отправлять личность чужого приложения — это не то же самое, что авторизоваться
+по OAuth.
+
 ### Глобальный конфиг: `~/.orchestra/config.yml`
 
 Настройки, одинаковые во всех проектах — провайдеры, ключи, тиры, предпочтения — живут в `~/.orchestra/config.yml`. Проектный `.orchestra.yml` указывает только то, что отличается.
