@@ -10,8 +10,17 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
+
+// The /ws transport is part of the stable contract, so it carries a version.
+func TestProtocolVersionIsAtLeast15(t *testing.T) {
+	if protocol.ProtocolVersion < 15 {
+		t.Fatalf("ProtocolVersion = %d, want >= 15 — /ws is a supported transport",
+			protocol.ProtocolVersion)
+	}
+}
 
 // askHandler is a handler whose only job is to exercise the transport: "echo"
 // answers immediately, "ask" issues a server-initiated request and reports what
