@@ -13,7 +13,7 @@ import (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Manage provider API keys in .orchestra.yml",
+	Short: "Manage provider credentials: api_key, OAuth logins, token commands",
 }
 
 var authListCmd = &cobra.Command{
@@ -46,8 +46,8 @@ func runAuthList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Main LLM: model=%s api_base=%s key=%s\n",
-		cfg.LLM.Model, cfg.LLM.APIBase, redactKey(cfg.LLM.APIKey))
+	fmt.Printf("Main LLM: model=%s api_base=%s %s\n",
+		cfg.LLM.Model, cfg.LLM.APIBase, authStatusLine("llm", cfg.LLM))
 	if len(cfg.Providers) == 0 {
 		fmt.Println("providers: (none)")
 		return nil
@@ -60,7 +60,7 @@ func runAuthList(cmd *cobra.Command, args []string) error {
 	fmt.Println("providers:")
 	for _, n := range names {
 		p := cfg.Providers[n]
-		fmt.Printf("  %s: model=%s api_base=%s key=%s\n", n, p.Model, p.APIBase, redactKey(p.APIKey))
+		fmt.Printf("  %s: model=%s api_base=%s %s\n", n, p.Model, p.APIBase, authStatusLine(n, p))
 	}
 	return nil
 }
