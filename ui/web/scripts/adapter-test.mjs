@@ -1,0 +1,259 @@
+// Tests the browser adapter without a browser.
+//
+// The bundle is one IIFE over a handful of globals (window, document,
+// WebSocket, sessionStorage, location). Providing those is enough to evaluate
+// it and drive the translation, which is the part worth testing: what JSON-RPC
+// does the renderer's message produce, and what renderer message does a
+// JSON-RPC frame produce.
+//
+// Run: node ui/web/scripts/adapter-test.mjs
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import vm from "node:vm";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.join(__dirname, "..");
+
+/**
+ * Evaluate the bundle in a sandbox with a scriptable socket. Returns handles
+ * for driving it: `sent` are the frames the page wrote, `deliver` pushes a
+ * frame in, `post` posts a renderer message, `inbound` are the messages the
+ * renderer received.
+ */
+export function loadBundle() {
+  const src = fs.readFileSync(path.join(root, "static", "web.bundle.js"), "utf8");
+
+  const sent = [];
+  const inbound = [];
+  let socket = null;
+
+  class FakeWebSocket {
+    static OPEN = 1;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 1;
+      this.listeners = {};
+      socket = this;
+    }
+    addEventListener(type, fn) {
+      (this.listeners[type] ||= []).push(fn);
+    }
+    send(data) {
+      sent.push(JSON.parse(data));
+    }
+    emit(type, ev) {
+      for (const fn of this.listeners[type] || []) fn(ev);
+    }
+  }
+
+  const handlers = [];
+  const store = new Map();
+  const el = () => ({
+    addEventListener() {},
+    removeEventListener() {},
+    classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    appendChild() {},
+    removeChild() {},
+    insertBefore() {},
+    setAttribute() {},
+    removeAttribute() {},
+    getAttribute: () => null,
+    closest: () => null,
+    focus() {},
+    blur() {},
+    click() {},
+    remove() {},
+    style: { setProperty() {}, removeProperty() {}, getPropertyValue: () => "" },
+    dataset: {},
+    children: [],
+    childNodes: [],
+    textContent: "",
+    innerHTML: "",
+    innerText: "",
+    value: "",
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
+    offsetHeight: 0,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }),
+  });
+
+  const sandbox = {
+    console,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    queueMicrotask,
+    requestAnimationFrame: (fn) => setTimeout(fn, 0),
+    cancelAnimationFrame: (h) => clearTimeout(h),
+    WebSocket: FakeWebSocket,
+    location: { protocol: "http:", host: "127.0.0.1:9", search: "?token=t" },
+    sessionStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+    },
+    document: {
+      getElementById: () => el(),
+      createElement: () => el(),
+      createTextNode: () => el(),
+      createDocumentFragment: () => el(),
+      addEventListener() {},
+      removeEventListener() {},
+      body: el(),
+      documentElement: el(),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    },
+    navigator: { clipboard: { writeText: async () => {} }, userAgent: "node" },
+    URLSearchParams,
+    crypto: { randomUUID: () => "test-uuid" },
+    Date,
+    Math,
+    JSON,
+    Promise,
+    Map,
+    Set,
+    Error,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    RegExp,
+  };
+  sandbox.window = sandbox;
+  sandbox.self = sandbox;
+  sandbox.window.addEventListener = (type, fn) => {
+    if (type === "message") handlers.push(fn);
+  };
+  sandbox.window.removeEventListener = () => {};
+  sandbox.window.postMessage = (msg) => {
+    inbound.push(msg);
+    for (const fn of handlers.slice()) {
+      try {
+        fn({ data: msg });
+      } catch (e) {
+        // A renderer fragment tripping over the stub DOM must not mask what the
+        // adapter did; the adapter's own listeners are registered first.
+      }
+    }
+  };
+  sandbox.globalThis = sandbox;
+
+  vm.createContext(sandbox);
+  vm.runInContext(src, sandbox, { filename: "web.bundle.js" });
+
+  return {
+    sent,
+    inbound,
+    open: () => socket.emit("open", {}),
+    deliver: (obj) => socket.emit("message", { data: JSON.stringify(obj) }),
+    post: (msg) => sandbox.window.postMessage(msg),
+    close: () => socket.emit("close", {}),
+  };
+}
+
+/** Answer the next request for `method` with `result`, so a chain can proceed. */
+function answer(b, method, result) {
+  const req = b.sent.find((m) => m.method === method && m.id !== undefined);
+  assert.ok(req, `no ${method} was sent; sent: ${b.sent.map((m) => m.method).join(", ")}`);
+  b.deliver({ jsonrpc: "2.0", id: req.id, result });
+  return req;
+}
+
+/** The renderer posts through `host`, which lives inside the IIFE; this is the
+ * test seam 00-web-prelude.js installs for reaching it. */
+function dispatch(b, msg) {
+  b.post({ type: "__host_dispatch__", payload: msg });
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/**
+ * Drive the handshake to a started session. core.health comes first because it
+ * is one of the only two methods the core answers before initialize
+ * (internal/core/rpc_handler.go:76), and it is where project_root comes from.
+ */
+async function handshake(b) {
+  b.open();
+  answer(b, "core.health", {
+    workspace_root: "/w",
+    project_id: "p",
+    protocol_version: 15,
+    ops_version: 1,
+    tools_version: 14,
+  });
+  await tick();
+  answer(b, "initialize", {});
+  await tick();
+  answer(b, "session.start", { session_id: "s-1", restored: false });
+  await tick();
+  return b;
+}
+
+test("connecting handshakes and starts a session", async () => {
+  const b = loadBundle();
+  b.open();
+
+  answer(b, "core.health", {
+    workspace_root: "/w",
+    project_id: "p",
+    protocol_version: 15,
+    ops_version: 1,
+    tools_version: 14,
+  });
+  await tick();
+
+  const init = answer(b, "initialize", {});
+  assert.equal(init.params.project_root, "/w", "project_root must come from core.health");
+  assert.equal(init.params.project_id, "p");
+
+  await tick();
+  assert.ok(answer(b, "session.start", { session_id: "s-1", restored: false }));
+});
+
+test("a composer send becomes session.message", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+
+  // What 06-composer.js:305-325 posts.
+  dispatch(b, {
+    type: "send",
+    text: "hello",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: true,
+    files: [],
+  });
+
+  const msg = b.sent.find((m) => m.method === "session.message");
+  assert.ok(msg, `no session.message; sent: ${b.sent.map((m) => m.method).join(", ")}`);
+  assert.equal(msg.params.session_id, "s-1");
+  assert.equal(msg.params.content, "hello");
+  assert.equal(msg.params.allow_exec, true);
+  assert.equal(msg.params.apply, true, "the web host applies to disk: it has no Accept/Reject editor UI");
+});
+
+test("cancelTurn sends $/cancelRequest for the in-flight turn", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", allowExec: false, files: [] });
+  const turn = b.sent.find((m) => m.method === "session.message");
+  assert.ok(turn, "no session.message went out");
+  b.sent.length = 0;
+
+  dispatch(b, { type: "cancelTurn" });
+  const cancel = b.sent.find((m) => m.method === "$/cancelRequest");
+  assert.ok(cancel, "cancelTurn must cancel the in-flight request, or Stop does nothing");
+  assert.equal(cancel.params.id, turn.id);
+});

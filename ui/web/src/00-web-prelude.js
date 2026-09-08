@@ -158,7 +158,3 @@
       }
     });
   }
-
-  // Replaced in 10-adapter-session.js (Task 8).
-  function onConnected() {}
-  function dispatchToCore(msg) {}
