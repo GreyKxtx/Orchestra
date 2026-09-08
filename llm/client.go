@@ -33,7 +33,8 @@ type Client interface {
 // OpenAIClient is an OpenAI-compatible LLM client
 type OpenAIClient struct {
 	baseURL string
-	apiKey  string
+	apiKey      string
+	tokenSource func() (string, error)
 	// azure is non-nil for an Azure OpenAI endpoint, which needs a
 	// deployment-scoped URL and the api-key header instead of a bearer.
 	azure *AzureConfig
@@ -122,6 +123,7 @@ func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 	return &OpenAIClient{
 		baseURL:            cfg.APIBase,
 		apiKey:             cfg.APIKey,
+		tokenSource:        cfg.TokenSource,
 		azure:              azureFromConfig(cfg),
 		reasoning:          cfg.Reasoning,
 		model:              cfg.Model,
@@ -170,9 +172,10 @@ func (c *OpenAIClient) DiscoverAndApplyLimits(ctx context.Context) (ModelLimits,
 		return ModelLimits{}, fmt.Errorf("nil client")
 	}
 	lim, err := DiscoverModelLimits(ctx, LLMConfig{
-		APIBase: c.baseURL,
-		APIKey:  c.apiKey,
-		Model:   c.model,
+		APIBase:     c.baseURL,
+		APIKey:      c.apiKey,
+		TokenSource: c.tokenSource,
+		Model:       c.model,
 	})
 	if err != nil {
 		return lim, err
@@ -915,7 +918,9 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 	}
 
 	reqHTTP.Header.Set("Content-Type", "application/json")
-	c.setAuthHeader(reqHTTP.Header)
+	if err := c.setAuthHeader(reqHTTP.Header); err != nil {
+		return nil, err
+	}
 	setNgrokBypass(reqHTTP, c.baseURL)
 
 	resp, err := c.client.Do(reqHTTP)
@@ -1085,7 +1090,10 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	c.setAuthHeader(httpReq.Header)
+	if err := c.setAuthHeader(httpReq.Header); err != nil {
+		cancelStream()
+		return nil, err
+	}
 	setNgrokBypass(httpReq, c.baseURL)
 
 	resp, err := c.streamClient.Do(httpReq)

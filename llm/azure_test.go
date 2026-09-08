@@ -60,7 +60,9 @@ func TestAzure_UsesApiKeyHeaderNotBearer(t *testing.T) {
 		Provider: "azure", APIBase: "https://r.openai.azure.com", Model: "gpt-4o", APIKey: "secret",
 	})
 	h := http.Header{}
-	c.setAuthHeader(h)
+	if err := c.setAuthHeader(h); err != nil {
+		t.Fatalf("setAuthHeader: %v", err)
+	}
 	if got := h.Get("api-key"); got != "secret" {
 		t.Errorf("api-key header = %q, want the key", got)
 	}
@@ -72,7 +74,9 @@ func TestAzure_UsesApiKeyHeaderNotBearer(t *testing.T) {
 func TestNonAzure_KeepsBearerAuth(t *testing.T) {
 	c := NewOpenAIClient(LLMConfig{APIBase: "https://api.openai.com/v1", Model: "gpt-4o", APIKey: "secret"})
 	h := http.Header{}
-	c.setAuthHeader(h)
+	if err := c.setAuthHeader(h); err != nil {
+		t.Fatalf("setAuthHeader: %v", err)
+	}
 	if got := h.Get("Authorization"); got != "Bearer secret" {
 		t.Errorf("Authorization = %q, want Bearer", got)
 	}

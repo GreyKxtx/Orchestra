@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/mcpauth/oauthtest"
+	"github.com/orchestra/orchestra/internal/oauthtest"
 	"golang.org/x/oauth2"
 )
 

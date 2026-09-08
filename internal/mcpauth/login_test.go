@@ -11,7 +11,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
-	"github.com/orchestra/orchestra/internal/mcpauth/oauthtest"
+	"github.com/orchestra/orchestra/internal/oauthtest"
 )
 
 // newFakeOAuthProtectedMCPServer starts a real (in-process) MCP Streamable

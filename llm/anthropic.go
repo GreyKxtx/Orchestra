@@ -17,6 +17,7 @@ const anthropicVersion = "2023-06-01"
 // AnthropicClient implements llm.Client for the Anthropic Messages API.
 type AnthropicClient struct {
 	apiKey       string
+	tokenSource  func() (string, error)
 	model        string
 	maxTokens    int
 	baseURL      string
@@ -56,6 +57,7 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 	}
 	return &AnthropicClient{
 		apiKey:       cfg.APIKey,
+		tokenSource:  cfg.TokenSource,
 		model:        cfg.Model,
 		maxTokens:    maxTokens,
 		thinking:     thinking,
@@ -175,7 +177,11 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("x-api-key", c.apiKey)
+	cred, err := resolveBearer(c.tokenSource, c.apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: resolve credential for %s: %w", c.baseURL, err)
+	}
+	httpReq.Header.Set("x-api-key", cred)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 

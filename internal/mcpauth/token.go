@@ -1,113 +1,44 @@
 // Package mcpauth implements OAuth 2.1 client support for Orchestra's MCP
-// client (internal/mcp): on-disk token storage, silent refresh, a
-// non-interactive auth.OAuthHandler for normal runs, and the interactive
-// login flow that only `orchestra mcp login` runs. See
+// client (internal/mcp): the interactive login flow that only
+// `orchestra mcp login` runs, a non-interactive auth.OAuthHandler for normal
+// runs, and thin adapters over internal/authstore for token persistence. See
 // docs/superpowers/specs/2026-09-06-mcp-oauth-design.md.
 package mcpauth
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
-	"github.com/orchestra/orchestra/patch/fsutil"
+	"github.com/orchestra/orchestra/internal/authstore"
 )
 
+// namespace is the ~/.orchestra subdirectory holding MCP server tokens.
+const namespace = "mcp-oauth"
+
+// Token is the on-disk shape of one server's OAuth grant.
+type Token = authstore.Token
+
 // ErrNoToken indicates no OAuth token is stored for a server.
-var ErrNoToken = errors.New("mcpauth: no token stored for this server")
+var ErrNoToken = authstore.ErrNoToken
 
-// Token is the on-disk shape of one server's OAuth grant. It carries enough
-// to rebuild an oauth2.Config for a silent refresh (TokenURL, ClientID,
-// ClientSecret) without re-running RFC 8414/9728 discovery on every process
-// start — see TokenSourceFor in tokensource.go.
-type Token struct {
-	TokenURL     string    `json:"token_url"`
-	ClientID     string    `json:"client_id"`
-	ClientSecret string    `json:"client_secret,omitempty"`
-	AccessToken  string    `json:"access_token"`
-	TokenType    string    `json:"token_type,omitempty"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
-	Expiry       time.Time `json:"expiry"`
-}
-
-// tokenPath returns the on-disk path for a server's stored token, rejecting
-// any name that isn't a single plain path component. serverName comes from
-// a hand-editable .orchestra.yml, so this is defense in depth independent
-// of internal/config's own validation (which only forbids ':').
+// tokenPath returns the on-disk path for a server's stored token. The name
+// guard lives in authstore: a server name comes from a hand-editable
+// .orchestra.yml, so it is validated there for every caller rather than
+// here for one.
 func tokenPath(serverName string) (string, error) {
-	// Both separators are rejected explicitly, not left to filepath.Base.
-	// Base only knows the HOST's separator, so a name containing a backslash
-	// is one ordinary filename on Linux and passes there, while the same name
-	// is rejected on Windows. A path guard that means different things
-	// depending on where Orchestra runs is not much of a guard. A server name
-	// is an identifier from a config file; neither slash belongs in one on
-	// any platform. CI is what caught this: the test runs on Linux, where the
-	// original check did not hold.
-	if strings.ContainsAny(serverName, `/\`) {
-		return "", fmt.Errorf("mcpauth: invalid server name %q", serverName)
-	}
-	if serverName == "" || serverName != filepath.Base(serverName) || serverName == "." || serverName == ".." {
-		return "", fmt.Errorf("mcpauth: invalid server name %q", serverName)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("mcpauth: resolve home directory: %w", err)
-	}
-	return filepath.Join(home, ".orchestra", "mcp-oauth", serverName+".json"), nil
+	return authstore.Path(namespace, serverName)
 }
 
-// SaveToken persists tok for serverName, creating ~/.orchestra/mcp-oauth/ if
-// needed. The write is atomic (temp file + rename) so a crash mid-write
-// never leaves a half-written token file for the next run to choke on.
+// SaveToken persists tok for serverName.
 func SaveToken(serverName string, tok Token) error {
-	path, err := tokenPath(serverName)
-	if err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(tok, "", "  ")
-	if err != nil {
-		return fmt.Errorf("mcpauth: encode token for %q: %w", serverName, err)
-	}
-	if err := fsutil.AtomicWriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("mcpauth: write token for %q: %w", serverName, err)
-	}
-	return nil
+	return authstore.Save(namespace, serverName, tok)
 }
 
 // LoadToken reads the stored token for serverName. Returns ErrNoToken
 // (wrapped, checkable via errors.Is) when nothing is stored.
 func LoadToken(serverName string) (Token, error) {
-	path, err := tokenPath(serverName)
-	if err != nil {
-		return Token{}, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return Token{}, ErrNoToken
-		}
-		return Token{}, fmt.Errorf("mcpauth: read token for %q: %w", serverName, err)
-	}
-	var tok Token
-	if err := json.Unmarshal(data, &tok); err != nil {
-		return Token{}, fmt.Errorf("mcpauth: decode token for %q: %w", serverName, err)
-	}
-	return tok, nil
+	return authstore.Load(namespace, serverName)
 }
 
 // DeleteToken removes the stored token for serverName. Idempotent: deleting
 // a server that was never logged in is not an error.
 func DeleteToken(serverName string) error {
-	path, err := tokenPath(serverName)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("mcpauth: delete token for %q: %w", serverName, err)
-	}
-	return nil
+	return authstore.Delete(namespace, serverName)
 }

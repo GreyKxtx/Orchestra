@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/llmauth"
 	llmpkg "github.com/orchestra/orchestra/llm"
 	"gopkg.in/yaml.v3"
 )
@@ -552,6 +554,12 @@ func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
 	if strings.TrimSpace(cfg.APIKey) == "" && sameAsMain {
 		cfg.APIKey = c.LLM.APIKey
 	}
+	// A token source inherits on the same terms as the key, but never over a
+	// provider that declared its own auth block -- that would authenticate
+	// against the wrong identity while looking like it worked.
+	if cfg.TokenSource == nil && cfg.Auth == nil {
+		cfg.TokenSource = c.LLM.TokenSource
+	}
 	if strings.TrimSpace(cfg.APIBase) == "" {
 		if sameAsMain && strings.TrimSpace(c.LLM.APIBase) != "" {
 			cfg.APIBase = c.LLM.APIBase
@@ -851,6 +859,21 @@ func Load(path string) (*ProjectConfig, error) {
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	// Provider resolution happens in five different places (here, plus four
+	// in internal/core); attaching the token source once, at load, is what
+	// keeps the sixth from being forgotten. LLMConfig travels by value and
+	// the function field copies with it, so every downstream resolution and
+	// every llm.NewClient call inherits it untouched.
+	if err := llmauth.Attach(context.Background(), "llm", &cfg.LLM); err != nil {
+		return nil, err
+	}
+	for name, p := range cfg.Providers {
+		if err := llmauth.Attach(context.Background(), name, &p); err != nil {
+			return nil, err
+		}
+		cfg.Providers[name] = p // ranging over a map yields copies
 	}
 
 	routing, err := LoadOrchestraRouting(filepath.Dir(path))

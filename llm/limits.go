@@ -31,7 +31,11 @@ func DiscoverModelLimits(ctx context.Context, cfg LLMConfig) (ModelLimits, error
 		defer cancel()
 	}
 
-	client := lmstudio.NewClient(base, cfg.APIKey)
+	cred, err := resolveBearer(cfg.TokenSource, cfg.APIKey)
+	if err != nil {
+		return ModelLimits{}, fmt.Errorf("resolve credential for %s: %w", base, err)
+	}
+	client := lmstudio.NewClient(base, cred)
 	type result struct {
 		n   int64
 		err error
