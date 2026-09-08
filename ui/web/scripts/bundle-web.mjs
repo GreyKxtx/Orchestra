@@ -1,0 +1,81 @@
+// Builds ui/web/static from the shared VS Code renderer fragments plus the web's
+// own host and adapter fragments.
+//
+// The shared fragments are read from ui/vscode/media/chat-src — not copied.
+// `vsce package` packages only ui/vscode/, so a fragment moved out of that
+// directory would be missing from the .vsix; reading in place keeps one copy,
+// which makes drift impossible rather than merely detectable.
+
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.join(__dirname, "..");
+const repo = path.join(root, "..", "..");
+const sharedDir = path.join(repo, "ui", "vscode", "media", "chat-src");
+const webDir = path.join(root, "src");
+const outDir = path.join(root, "static");
+
+// Order mirrors ui/vscode/scripts/bundle-chat.mjs, with the web's host and
+// adapter fragments wrapped around the shared renderer.
+const order = [
+  [sharedDir, "00-header.txt"],
+  [webDir, "00-web-prelude.js"],
+  [sharedDir, "01-dom-state.js"],
+  [sharedDir, "02-util.js"],
+  [sharedDir, "03-markdown.js"],
+  [sharedDir, "04-diff-tools.js"],
+  [sharedDir, "05a-subagents-turn.js"],
+  [sharedDir, "05b-overlays.js"],
+  [sharedDir, "05c-busy-palette.js"],
+  [sharedDir, "05d-tools.js"],
+  [sharedDir, "05e-messages.js"],
+  [sharedDir, "06-composer.js"],
+  [sharedDir, "07-events.js"],
+  [webDir, "10-adapter-session.js"],
+  [webDir, "20-adapter-events.js"],
+  [webDir, "30-adapter-asks.js"],
+  [sharedDir, "99-footer.txt"],
+];
+
+for (const [dir, name] of order) {
+  const p = path.join(dir, name);
+  if (!fs.existsSync(p)) {
+    console.error("missing fragment:", path.relative(repo, p));
+    process.exit(1);
+  }
+}
+
+fs.mkdirSync(outDir, { recursive: true });
+
+const banner =
+  "/* AUTO-GENERATED — do not edit. Sources: ui/vscode/media/chat-src/* + ui/web/src/*  →  node ui/web/scripts/bundle-web.mjs */\n";
+const parts = order.map(([dir, name]) =>
+  fs.readFileSync(path.join(dir, name), "utf8").replace(/\s+$/, "")
+);
+let out = banner + parts.join("\n") + "\n";
+
+// 01-dom-state.js binds `host` to acquireVsCodeApi(); the web prelude has
+// already defined its own `host` above it, so strip that one line.
+{
+  const stripped = out.replace(
+    /^\s*const host = acquireVsCodeApi\(\);[ \t]*$/m,
+    "  /* host is supplied by ui/web/src/00-web-prelude.js */"
+  );
+  if (stripped === out) {
+    console.error("could not strip acquireVsCodeApi() binding — 01-dom-state.js changed shape");
+    process.exit(1);
+  }
+  out = stripped;
+}
+
+fs.writeFileSync(path.join(outDir, "web.bundle.js"), out);
+
+// Static assets: the page, the stylesheet (portable as-is — chat.css has zero
+// --vscode-* references) and the logo.
+fs.copyFileSync(path.join(root, "index.src.html"), path.join(outDir, "index.html"));
+fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "chat.css"), path.join(outDir, "chat.css"));
+fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "logo.png"), path.join(outDir, "logo.png"));
+
+console.log("bundled ui/web/static (" + out.split(/\r?\n/).length + " lines of JS)");
