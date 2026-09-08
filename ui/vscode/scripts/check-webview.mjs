@@ -45,9 +45,13 @@ for (const rel of ["media/chat.bundle.js", "media/settings.bundle.js"]) {
 // 2. Bundles match their sources.
 const chatBundle = path.join(root, "media", "chat.bundle.js");
 if (fs.existsSync(chatBundle)) {
-  const before = fs.readFileSync(chatBundle, "utf8");
+  // Compare with line endings normalised: on Windows the file is checked out
+  // CRLF and the bundler writes LF, which is not staleness — it made this
+  // check fail on every clean tree.
+  const eol = (s) => s.replace(/\r\n/g, "\n");
+  const before = eol(fs.readFileSync(chatBundle, "utf8"));
   execFileSync(process.execPath, [path.join(__dirname, "bundle-chat.mjs")], { stdio: "pipe" });
-  const after = fs.readFileSync(chatBundle, "utf8");
+  const after = eol(fs.readFileSync(chatBundle, "utf8"));
   if (before !== after) {
     fail("media/chat.bundle.js was stale — it has now been regenerated, commit it");
   } else {

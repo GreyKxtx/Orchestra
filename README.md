@@ -439,6 +439,32 @@ orchestra tui              # alias
  
 ---
 
+## Web UI
+
+```bash
+orchestra web
+```
+
+Starts a core, serves the chat UI on `127.0.0.1`, and opens a browser. The page
+talks to the core over a WebSocket at `/ws` — a supported transport
+([docs/PROTOCOL.md](docs/PROTOCOL.md)), which is what makes streaming,
+permission prompts and questions work in the browser at all. The debug
+`core --http` endpoint cannot: it has no push channel, so an agent would hang
+on the first tool needing approval.
+
+- `--port` — port (0 = auto)
+- `--token` — bearer token (auto-generated if empty; the page receives it from
+  the server, so there is nothing to copy)
+- `--no-open` — do not launch a browser
+- `--workspace-root` — workspace root (default: current directory)
+
+v1 is chat with streaming, permissions, questions and sessions. One tab at a
+time: a second connection is refused with `409` while the first is live,
+because the core's MCP host binds to one client. Closing the tab ends the
+session and fails any pending permission prompt closed.
+
+---
+
 ## Documentation
 
 - [Changelog](docs/CHANGELOG.md)

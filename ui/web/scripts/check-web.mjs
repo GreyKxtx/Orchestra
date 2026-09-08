@@ -39,9 +39,12 @@ if (!fs.existsSync(bundle)) {
   }
 
   // 2. Bundle matches its sources.
-  const before = fs.readFileSync(bundle, "utf8");
+  // Compare with line endings normalised: on Windows the file is checked out
+  // CRLF and the bundler writes LF, which is not staleness.
+  const eol = (s) => s.replace(/\r\n/g, "\n");
+  const before = eol(fs.readFileSync(bundle, "utf8"));
   execFileSync(process.execPath, [path.join(__dirname, "bundle-web.mjs")], { stdio: "pipe" });
-  const after = fs.readFileSync(bundle, "utf8");
+  const after = eol(fs.readFileSync(bundle, "utf8"));
   if (before !== after) {
     fail("static/web.bundle.js was stale — it has now been regenerated, commit it");
   } else {
