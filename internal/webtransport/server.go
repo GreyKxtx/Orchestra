@@ -1,0 +1,160 @@
+package webtransport
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"net"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
+)
+
+type Options struct {
+	// Addr to bind. Empty means "127.0.0.1:0". Loopback only.
+	Addr string
+	// Token is required; every endpoint checks it.
+	Token string
+	// Health is returned by GET /health.
+	Health any
+	// Assets, when non-nil, is served at /.
+	Assets fs.FS
+	// NewHandler builds a fresh handler for one connection and returns a
+	// callback that attaches that connection's server to it. Called once per
+	// accepted WebSocket.
+	NewHandler func() (jsonrpc.Handler, func(*jsonrpc.Server))
+}
+
+func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error, err error) {
+	if opts.NewHandler == nil {
+		return "", nil, fmt.Errorf("NewHandler is nil")
+	}
+	addr := strings.TrimSpace(opts.Addr)
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		return "", nil, fmt.Errorf("web server must bind to 127.0.0.1")
+	}
+	token := strings.TrimSpace(opts.Token)
+	if token == "" {
+		return "", nil, fmt.Errorf("token is required")
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Exactly one live WebSocket at a time. The core's MCP host binds to one
+	// requester (internal/core/rpc_handler.go:46-52), so a second concurrent
+	// client would silently take over the first client's MCP prompts. Rejecting
+	// is the honest behaviour until accounts exist.
+	var busy atomic.Bool
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(opts.Health)
+	}))
+	mux.HandleFunc("/ws", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		if !busy.CompareAndSwap(false, true) {
+			http.Error(w, "a client is already connected", http.StatusConflict)
+			return
+		}
+		defer busy.Store(false)
+
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			// Same-origin only: the page is served by this very server.
+			OriginPatterns: nil,
+		})
+		if err != nil {
+			return
+		}
+		c.SetReadLimit(jsonrpc.DefaultMaxContentBytes)
+
+		connCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		p := NewPipe(connCtx, c)
+		defer func() { _ = p.Close() }()
+
+		// Cancel the connection's context the moment the socket dies, rather
+		// than after Serve returns: Serve waits for its in-flight handlers, and
+		// a handler blocked in Server.Request waits on a context derived from
+		// connCtx — cancelling only after Serve returns deadlocks the two. See
+		// Pipe.Done.
+		go func() {
+			select {
+			case <-p.Done():
+				cancel()
+			case <-connCtx.Done():
+			}
+		}()
+
+		h, attach := opts.NewHandler()
+		srv := jsonrpc.NewServer(h, p.Reader(), p.Writer())
+		if attach != nil {
+			attach(srv)
+		}
+		// Serve returns when the socket closes (io.EOF) or ctx is done. Every
+		// pending server-initiated request unblocks with the cancelled ctx —
+		// which is what makes a closed tab fail permission requests closed.
+		_ = srv.Serve(connCtx)
+	}))
+
+	if opts.Assets != nil {
+		mux.Handle("/", http.FileServer(http.FS(opts.Assets)))
+	}
+
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+
+	stop = func() error {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := srv.Shutdown(shutdownCtx)
+		_ = ln.Close()
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = stop()
+	}()
+
+	return "http://" + ln.Addr().String(), stop, nil
+}
+
+// requireToken accepts the same two forms core --http accepts
+// (protocol/jsonrpc/http.go:142-153), plus ?token= for the WebSocket handshake:
+// the browser WebSocket API cannot set request headers.
+func requireToken(token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func authorized(r *http.Request, token string) bool {
+	h := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(h), "bearer ") &&
+		strings.TrimSpace(h[len("bearer "):]) == token {
+		return true
+	}
+	if strings.TrimSpace(r.Header.Get("X-Orchestra-Token")) == token {
+		return true
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token")) == token
+}
