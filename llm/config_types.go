@@ -36,6 +36,16 @@ type LLMConfig struct {
 
 	ModelPresets map[string]ModelPreset `yaml:"model_presets,omitempty"`
 	Router       RouterConfig           `yaml:"router,omitempty"`
+
+	// Auth configures a bearer obtained at run time (OAuth or an external
+	// command) instead of the static APIKey above.
+	Auth *AuthConfig `yaml:"auth,omitempty"`
+
+	// TokenSource, when set, supplies a fresh bearer per request and wins over
+	// APIKey. internal/config attaches it once at load time from Auth; it is
+	// never read from or written to YAML. Kept as a bare function so the llm
+	// module acquires no OAuth dependency -- llm/go.mod has none, by design.
+	TokenSource func() (string, error) `yaml:"-"`
 }
 
 // AzureConfig holds the two things Azure OpenAI needs beyond api_base and
