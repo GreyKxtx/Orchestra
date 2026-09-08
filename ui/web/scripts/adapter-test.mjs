@@ -320,3 +320,58 @@ test("exec output is streamed into the tool block", async () => {
   assert.equal(chunks.length, 1);
   assert.equal(chunks[0].chunk, "line one\n");
 });
+
+test("permission/request opens the overlay and the reply goes back with the same id", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    id: "srv-1",
+    method: "permission/request",
+    params: { tool: "bash", description: "go test ./...", reason: "to verify the fix" },
+  });
+
+  const shown = b.inbound.find((m) => m.type === "permissionRequest");
+  assert.ok(shown, "the permission overlay was never shown");
+  assert.equal(shown.request.tool, "bash");
+
+  // The overlay replies through the renderer's existing message
+  // (05b-overlays.js:37-42).
+  dispatch(b, { type: "permissionReply", approved: true, always: false });
+
+  const reply = b.sent.find((m) => m.id === "srv-1");
+  assert.ok(reply, "no reply was sent for srv-1 — the tool would hang");
+  assert.equal(reply.result.approved, true);
+});
+
+test("question/ask round trips answers", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    id: "srv-2",
+    method: "question/ask",
+    params: { questions: [{ question: "Which approach?", options: ["A", "B"], allow_multiple: false }] },
+  });
+
+  const shown = b.inbound.find((m) => m.type === "questionAsk");
+  assert.ok(shown, "the question overlay was never shown");
+
+  dispatch(b, { type: "questionReply", answers: ["A"] });
+
+  const reply = b.sent.find((m) => m.id === "srv-2");
+  assert.ok(reply, "no reply was sent for srv-2 — the question tool would hang");
+  assert.deepEqual(reply.result.answers, ["A"]);
+});
+
+test("a permission reply with no outstanding request is dropped, not misrouted", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "permissionReply", approved: true, always: false });
+  const strays = b.sent.filter((m) => m.result !== undefined);
+  assert.equal(strays.length, 0, "a stale reply must not be sent against some other id");
+});
+
+test("an unknown server request is still answered, or the core waits forever", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({ jsonrpc: "2.0", id: "srv-9", method: "some/futureRequest", params: {} });
+  const reply = b.sent.find((m) => m.id === "srv-9");
+  assert.ok(reply, "an unhandled server request left the core hanging");
+});

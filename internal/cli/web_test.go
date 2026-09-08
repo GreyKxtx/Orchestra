@@ -6,7 +6,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	webui "github.com/orchestra/orchestra/ui/web"
 )
+
+func TestWebAssetsContainThePage(t *testing.T) {
+	for _, name := range []string{"index.html", "web.bundle.js", "chat.css", "logo.png"} {
+		f, err := webui.Assets().Open(name)
+		if err != nil {
+			t.Fatalf("%s is not embedded (run node ui/web/scripts/bundle-web.mjs and commit ui/web/static/): %v", name, err)
+		}
+		_ = f.Close()
+	}
+}
 
 func TestWriteWebDiscovery_ContentsAndPermissions(t *testing.T) {
 	root := t.TempDir()

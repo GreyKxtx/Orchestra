@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
+	webui "github.com/orchestra/orchestra/ui/web"
 	"github.com/spf13/cobra"
 )
 
@@ -118,7 +119,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		Addr:   fmt.Sprintf("127.0.0.1:%d", webPort),
 		Token:  token,
 		Health: c.Health(),
-		Assets: nil, // Task 10 replaces this with webui.Assets().
+		Assets: webui.Assets(),
 		NewHandler: func() (jsonrpc.Handler, func(*jsonrpc.Server)) {
 			h := core.NewRPCHandler(c)
 			return h, func(srv *jsonrpc.Server) {
