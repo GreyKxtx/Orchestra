@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/config"
@@ -16,11 +18,16 @@ import (
 func initWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	writeConfig(t, root)
+	return root
+}
+
+func writeConfig(t *testing.T, root string) {
+	t.Helper()
 	cfg := config.DefaultConfig(root)
 	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
 		t.Fatalf("Save config: %v", err)
 	}
-	return root
 }
 
 func TestRegistry_TwoProjectsHaveIndependentCores(t *testing.T) {
@@ -168,5 +175,71 @@ func TestRegistry_NameIsTheDirectoryName(t *testing.T) {
 	}
 	if p.OpenedAt == 0 {
 		t.Fatal("OpenedAt was never set")
+	}
+}
+
+// The id lowercases the path on Windows (cache.ComputeProjectID) while the
+// filesystem is case-insensitive, so two spellings of one directory must be one
+// project — otherwise the second Open overwrites the first entry and its core
+// is never closed.
+func TestRegistry_PathSpellingsOfOneDirectoryAreOneProject(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive path identity is a Windows property")
+	}
+	reg := NewRegistry(core.Options{})
+	defer reg.Shutdown()
+	root := initWorkspace(t)
+	if _, err := reg.Open(context.Background(), root); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// t.TempDir ends in a numeric segment, so flip the case of the parent
+	// (the test-name segment) — that one has letters.
+	parent := filepath.Dir(root)
+	other := filepath.Join(filepath.Dir(parent), strings.ToUpper(filepath.Base(parent)), filepath.Base(root))
+	if other == root {
+		t.Fatalf("test setup: %q has no letters to flip", root)
+	}
+	if _, err := reg.Open(context.Background(), other); !errors.Is(err, ErrAlreadyOpen) {
+		t.Fatalf("second spelling → %v, want ErrAlreadyOpen", err)
+	}
+	if n := len(reg.List()); n != 1 {
+		t.Fatalf("List() = %d, want 1", n)
+	}
+	// The 409 payload must still point at the open project for that spelling.
+	if id, ok := reg.OpenedIDFor(other); !ok || id == "" {
+		t.Fatalf("OpenedIDFor(%q) = %q,%v — the 409 would carry no id", other, id, ok)
+	}
+}
+
+// An errored placeholder (a remembered path that failed to open) must not block
+// opening the directory once it is fixed, and must not displace a ready entry.
+func TestRegistry_ErroredEntryIsReplacedByASuccessfulOpen(t *testing.T) {
+	reg := NewRegistry(core.Options{})
+	defer reg.Shutdown()
+	root := t.TempDir()
+
+	reg.AddErrored(root, "not_initialized")
+	if _, err := reg.Open(context.Background(), root); !errors.Is(err, ErrNotInitialized) {
+		t.Fatalf("open of a bare dir → %v, want ErrNotInitialized", err)
+	}
+
+	writeConfig(t, root)
+	p, err := reg.Open(context.Background(), root)
+	if err != nil {
+		t.Fatalf("open after fixing the dir: %v — the errored placeholder blocked it", err)
+	}
+	list := reg.List()
+	if len(list) != 1 || list[0].State != StateReady || list[0].ID != p.ID {
+		t.Fatalf("List() = %+v, want exactly the ready project", list)
+	}
+
+	// A late AddErrored for a path that is ready must not demote it.
+	reg.AddErrored(root, "stale failure")
+	if got := reg.List(); len(got) != 1 || got[0].State != StateReady {
+		t.Fatalf("AddErrored displaced a ready entry: %+v", got)
+	}
+
+	if err := reg.Close(p.ID); err != nil {
+		t.Fatalf("close: %v", err)
 	}
 }

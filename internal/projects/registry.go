@@ -83,16 +83,16 @@ func (r *Registry) Open(ctx context.Context, path string) (Project, error) {
 		return Project{}, fmt.Errorf("%w: %s", ErrNotInitialized, abs)
 	}
 
-	r.mu.RLock()
-	_, dup := r.byPath[abs]
-	r.mu.RUnlock()
-	if dup {
-		return Project{}, fmt.Errorf("%w: %s", ErrAlreadyOpen, abs)
-	}
-
 	id, err := cache.ComputeProjectID(abs)
 	if err != nil {
 		return Project{}, fmt.Errorf("project id: %w", err)
+	}
+
+	r.mu.RLock()
+	dup := r.isOpen(abs, id)
+	r.mu.RUnlock()
+	if dup {
+		return Project{}, fmt.Errorf("%w: %s", ErrAlreadyOpen, abs)
 	}
 
 	c, err := core.New(abs, r.opts)
@@ -114,13 +114,34 @@ func (r *Registry) Open(ctx context.Context, path string) (Project, error) {
 	defer r.mu.Unlock()
 	// Re-check under the write lock: two concurrent Opens of the same path must
 	// not both build a core.
-	if _, dup := r.byPath[abs]; dup {
+	if r.isOpen(abs, id) {
 		_ = c.Close()
 		return Project{}, fmt.Errorf("%w: %s", ErrAlreadyOpen, abs)
+	}
+	// An errored placeholder for this project (a remembered path that failed to
+	// open earlier) gives way to the real thing.
+	if old, ok := r.byID[id]; ok && old.core == nil {
+		delete(r.byPath, old.meta.Path)
 	}
 	r.byID[id] = &entry{meta: meta, core: c}
 	r.byPath[abs] = id
 	return meta, nil
+}
+
+// isOpen reports whether a *ready* project exists for this path or id. Callers
+// hold r.mu. The id is the authoritative identity — cache.ComputeProjectID
+// case-folds on Windows while byPath keeps the spelling it was given — so both
+// keys are consulted; an errored placeholder (nil core) does not count as open.
+func (r *Registry) isOpen(abs, id string) bool {
+	if e, ok := r.byID[id]; ok && e.core != nil {
+		return true
+	}
+	if pid, ok := r.byPath[abs]; ok {
+		if e, ok := r.byID[pid]; ok && e.core != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // OpenedIDFor returns the id of an already-open path, for the 409 payload.
@@ -129,10 +150,18 @@ func (r *Registry) OpenedIDFor(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	id, _ := cache.ComputeProjectID(abs)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	id, ok := r.byPath[abs]
-	return id, ok
+	if e, ok := r.byID[id]; ok && e.core != nil {
+		return id, true
+	}
+	if pid, ok := r.byPath[abs]; ok {
+		if e, ok := r.byID[pid]; ok && e.core != nil {
+			return pid, true
+		}
+	}
+	return "", false
 }
 
 // Close releases the project's core, and with it its CKG database and its
@@ -212,6 +241,9 @@ func (r *Registry) AddErrored(path, reason string) Project {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if e, ok := r.byID[id]; ok && e.core != nil {
+		return e.meta // a ready project outranks a stale failure report
+	}
 	r.byID[id] = &entry{meta: meta}
 	r.byPath[abs] = id
 	return meta
