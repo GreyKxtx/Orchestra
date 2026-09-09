@@ -252,6 +252,104 @@ func TestServeWeb_AnnounceLineEqualsTheDiscoveryFile(t *testing.T) {
 	}
 }
 
+// Under --announce, the shell echoes every child stderr line and can surface
+// one in an error dialog; the parent already has the token from the announce
+// line, so the stderr "web UI:" line must not carry it too.
+func TestServeWeb_AnnounceModeOmitsTokenFromStderr(t *testing.T) {
+	root := initialisedDir(t)
+	annR, annW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	restored := false
+	restoreStderr := func() {
+		if !restored {
+			os.Stderr = origStderr
+			restored = true
+		}
+	}
+	t.Cleanup(restoreStderr)
+
+	_, done := startServeWeb(t, webRunConfig{Workspace: root, NoOpen: true},
+		webIO{Announce: annW, Stdin: stdinR})
+	d := readAnnounce(t, annR)
+
+	_ = stdinW.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveWeb: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("stdin EOF did not shut the server down")
+	}
+
+	restoreStderr()
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	_ = r.Close()
+
+	if strings.Contains(string(out), "token=") || strings.Contains(string(out), d.Token) {
+		t.Fatalf("stderr leaked the token under --announce: %s", out)
+	}
+	if !strings.Contains(string(out), d.URL) {
+		t.Fatalf("stderr did not contain the announced URL: %s", out)
+	}
+}
+
+// Without --announce (a human running `orchestra web` in a terminal), the
+// stderr line keeps the clickable URL with its token — unchanged behaviour.
+func TestServeWeb_WithoutAnnounceStderrKeepsTheToken(t *testing.T) {
+	root := initialisedDir(t)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	restored := false
+	restoreStderr := func() {
+		if !restored {
+			os.Stderr = origStderr
+			restored = true
+		}
+	}
+	t.Cleanup(restoreStderr)
+
+	cancel, done := startServeWeb(t, webRunConfig{Workspace: root, NoOpen: true}, webIO{})
+	waitFor(t, "discovery file", func() bool {
+		_, err := os.Stat(webDiscoveryPath(root))
+		return err == nil
+	})
+	b, err := os.ReadFile(webDiscoveryPath(root))
+	if err != nil {
+		t.Fatalf("discovery file: %v", err)
+	}
+	var disc webDiscovery
+	if err := json.Unmarshal(b, &disc); err != nil {
+		t.Fatalf("discovery file: %v", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serveWeb: %v", err)
+	}
+
+	restoreStderr()
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	_ = r.Close()
+
+	if !strings.Contains(string(out), "token="+disc.Token) {
+		t.Fatalf("stderr should keep the token outside --announce: %s", out)
+	}
+}
+
 // Without announce, stdin is nobody's business: a never-closed stdin must not
 // keep the server from stopping on ctx cancel, and nothing is read from it.
 func TestServeWeb_WithoutAnnounceStdinIsIgnored(t *testing.T) {

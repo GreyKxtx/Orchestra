@@ -285,7 +285,15 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 	}
 
 	pageURL := baseURL + "/?token=" + token
-	fmt.Fprintf(os.Stderr, "[orchestra] web UI: %s\n", pageURL)
+	if streams.Announce != nil {
+		// Under --announce the parent already has the token from the
+		// announce line; this stderr line is only ever surfaced back to the
+		// user via the shell's error dialog (it echoes every child stderr
+		// line), so the token must not ride along in it.
+		fmt.Fprintf(os.Stderr, "[orchestra] web UI: %s\n", baseURL)
+	} else {
+		fmt.Fprintf(os.Stderr, "[orchestra] web UI: %s\n", pageURL)
+	}
 	if !cfg.NoOpen {
 		if err := openBrowser(pageURL); err != nil {
 			fmt.Fprintf(os.Stderr, "[orchestra] could not open a browser (%v); open the URL above\n", err)
