@@ -10,10 +10,11 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/projects"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
@@ -38,6 +39,9 @@ type Options struct {
 	// Injected rather than imported so this package does not depend on
 	// internal/cli.
 	InitProject func(ctx context.Context, root string) error
+	// NewProjectHandler builds a handler for one project's core. Required when
+	// Registry is set; NewHandler still serves the project-less /ws.
+	NewProjectHandler func(c *core.Core) (jsonrpc.Handler, func(*jsonrpc.Server))
 }
 
 func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error, err error) {
@@ -61,11 +65,26 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		return "", nil, err
 	}
 
-	// Exactly one live WebSocket at a time. The core's MCP host binds to one
-	// requester (internal/core/rpc_handler.go:46-52), so a second concurrent
-	// client would silently take over the first client's MCP prompts. Rejecting
-	// is the honest behaviour until accounts exist.
-	var busy atomic.Bool
+	// One live connection per project. The core's MCP host binds to a single
+	// requester (internal/core/rpc_handler.go:46-52), so a second client on the
+	// SAME project would silently take over its prompts. Different projects have
+	// different cores, so they do not contend — the guard is keyed, not global.
+	var busyMu sync.Mutex
+	busy := map[string]bool{}
+	acquire := func(key string) bool {
+		busyMu.Lock()
+		defer busyMu.Unlock()
+		if busy[key] {
+			return false
+		}
+		busy[key] = true
+		return true
+	}
+	release := func(key string) {
+		busyMu.Lock()
+		delete(busy, key)
+		busyMu.Unlock()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
@@ -77,11 +96,40 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		_ = json.NewEncoder(w).Encode(opts.Health)
 	}))
 	mux.HandleFunc("/ws", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
-		if !busy.CompareAndSwap(false, true) {
+		projectID := strings.TrimSpace(r.URL.Query().Get("project"))
+
+		// Resolve the handler factory before touching the guard, so a bad
+		// project id never occupies a slot.
+		newHandler := opts.NewHandler
+		if projectID != "" {
+			if opts.Registry == nil {
+				http.Error(w, "project routing is not enabled", http.StatusNotFound)
+				return
+			}
+			c, ok := opts.Registry.Get(projectID)
+			if !ok {
+				http.Error(w, "project_not_open", http.StatusNotFound)
+				return
+			}
+			if opts.NewProjectHandler == nil {
+				http.Error(w, "project routing is not configured", http.StatusNotFound)
+				return
+			}
+			newHandler = func() (jsonrpc.Handler, func(*jsonrpc.Server)) {
+				return opts.NewProjectHandler(c)
+			}
+		}
+		if newHandler == nil {
+			http.Error(w, "no handler", http.StatusNotFound)
+			return
+		}
+
+		guardKey := projectID // "" is the project-less default connection
+		if !acquire(guardKey) {
 			http.Error(w, "a client is already connected", http.StatusConflict)
 			return
 		}
-		defer busy.Store(false)
+		defer release(guardKey)
 
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			// Same-origin only: the page is served by this very server.
@@ -111,7 +159,7 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 			}
 		}()
 
-		h, attach := opts.NewHandler()
+		h, attach := newHandler()
 		srv := jsonrpc.NewServer(h, p.Reader(), p.Writer())
 		if attach != nil {
 			attach(srv)
