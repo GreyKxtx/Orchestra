@@ -19,6 +19,11 @@ import (
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
 
+// cookieName carries the bearer token for browser requests. The page is served
+// with it as HttpOnly, so fetch() and WebSocket authenticate themselves and no
+// credential is reachable from page scripts.
+const cookieName = "orchestra"
+
 type Options struct {
 	// Addr to bind. Empty means "127.0.0.1:0". Loopback only.
 	Addr string
@@ -196,7 +201,30 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 	}
 
 	if opts.Assets != nil {
-		mux.Handle("/", http.FileServer(http.FS(opts.Assets)))
+		files := http.FileServer(http.FS(opts.Assets))
+		mux.Handle("/", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+			// A valid token in the query means "this is the first load": hand
+			// over the cookie and bounce to the same path without it, so the
+			// credential leaves the address bar and the history.
+			if strings.TrimSpace(r.URL.Query().Get("token")) == token {
+				http.SetCookie(w, &http.Cookie{
+					Name:     cookieName,
+					Value:    token,
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteStrictMode,
+				})
+				q := r.URL.Query()
+				q.Del("token")
+				target := r.URL.Path
+				if enc := q.Encode(); enc != "" {
+					target += "?" + enc
+				}
+				http.Redirect(w, r, target, http.StatusFound)
+				return
+			}
+			files.ServeHTTP(w, r)
+		}))
 	}
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -237,6 +265,9 @@ func authorized(r *http.Request, token string) bool {
 		return true
 	}
 	if strings.TrimSpace(r.Header.Get("X-Orchestra-Token")) == token {
+		return true
+	}
+	if c, err := r.Cookie(cookieName); err == nil && strings.TrimSpace(c.Value) == token {
 		return true
 	}
 	return strings.TrimSpace(r.URL.Query().Get("token")) == token
