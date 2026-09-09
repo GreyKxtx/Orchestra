@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/core"
+	"github.com/orchestra/orchestra/internal/projects"
 	"github.com/orchestra/orchestra/internal/webtransport"
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
@@ -34,8 +36,9 @@ var webCmd = &cobra.Command{
 
 The UI talks to the core over a WebSocket at /ws — a supported transport, see
 docs/PROTOCOL.md. Binds to 127.0.0.1 only and requires a bearer token, which the
-page receives from the server that serves it. One browser tab at a time: a second
-connection is refused while the first is live.`,
+page receives from the server that serves it. Several projects can be open at
+once (one core each, see /api/projects); one browser tab per project: a second
+connection to the same project is refused while the first is live.`,
 	Args: cobra.NoArgs,
 	RunE: runWeb,
 }
@@ -96,17 +99,38 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 	workspace, _ = filepath.Abs(workspace)
 
-	c, err := core.New(workspace, core.Options{Debug: webDebug})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = c.Close() }()
-
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
-	c.WarmupCKG(ctx)
-	c.WarmupLSP(ctx)
+	reg := projects.NewRegistry(core.Options{Debug: webDebug})
+	defer reg.Shutdown()
+
+	// The workspace the command was started in is the first project, and its
+	// failure is still fatal: `orchestra web` in a directory that cannot be
+	// opened has nothing to show.
+	startup, err := reg.Open(ctx, workspace)
+	if err != nil {
+		return err
+	}
+
+	// Remembered projects reopen alongside it; the list is saved once now and
+	// again on shutdown, which captures anything opened or closed through the
+	// API. A convenience, not a transaction log.
+	storePath, serr := projects.StorePath()
+	if serr == nil {
+		if remembered, lerr := projects.LoadPaths(storePath); lerr == nil {
+			restoreProjects(ctx, reg, remembered)
+		}
+	}
+	saveOpen := func() {
+		if serr == nil {
+			_ = projects.SavePaths(storePath, reg.Paths())
+		}
+	}
+	saveOpen()
+	defer saveOpen()
+
+	startupCore, _ := reg.Get(startup.ID)
 
 	_ = cleanupStaleDiscovery(webDiscoveryPath(workspace))
 
@@ -116,12 +140,23 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 
 	baseURL, stop, err := webtransport.Serve(ctx, webtransport.Options{
-		Addr:   fmt.Sprintf("127.0.0.1:%d", webPort),
-		Token:  token,
-		Health: c.Health(),
-		Assets: webui.Assets(),
-		NewHandler: func() (jsonrpc.Handler, func(*jsonrpc.Server)) {
+		Addr:     fmt.Sprintf("127.0.0.1:%d", webPort),
+		Token:    token,
+		Health:   startupCore.Health(),
+		Assets:   webui.Assets(),
+		Registry: reg,
+		InitProject: func(ctx context.Context, root string) error {
+			return initProject(ctx, root, InitOptions{})
+		},
+		NewProjectHandler: func(c *core.Core) (jsonrpc.Handler, func(*jsonrpc.Server)) {
 			h := core.NewRPCHandler(c)
+			return h, func(srv *jsonrpc.Server) {
+				h.SetNotifier(srv)
+				h.SetRequester(srv.Request)
+			}
+		},
+		NewHandler: func() (jsonrpc.Handler, func(*jsonrpc.Server)) {
+			h := core.NewRPCHandler(startupCore)
 			return h, func(srv *jsonrpc.Server) {
 				h.SetNotifier(srv)
 				h.SetRequester(srv.Request)
@@ -159,6 +194,20 @@ func runWeb(cmd *cobra.Command, args []string) error {
 
 	<-ctx.Done()
 	return nil
+}
+
+// restoreProjects reopens the paths the user had open. A path that no longer
+// opens is recorded as an errored project rather than dropped, so the user can
+// see what happened to a project they had open instead of finding it gone.
+func restoreProjects(ctx context.Context, reg *projects.Registry, paths []string) {
+	for _, p := range paths {
+		if _, err := reg.Open(ctx, p); err != nil {
+			if errors.Is(err, projects.ErrAlreadyOpen) {
+				continue
+			}
+			reg.AddErrored(p, err.Error())
+		}
+	}
 }
 
 // openBrowser is best-effort: a failure prints the URL rather than aborting.
