@@ -218,6 +218,40 @@ func TestServeWeb_StdinEOFIsACleanShutdown(t *testing.T) {
 	}
 }
 
+// The announce line IS the discovery object that was written to disk: the two
+// must agree byte-for-byte after unmarshalling, not merely by coincidence of
+// timing (in particular written_at_unix, which writeWebDiscovery used to
+// overwrite unconditionally).
+func TestServeWeb_AnnounceLineEqualsTheDiscoveryFile(t *testing.T) {
+	root := initialisedDir(t)
+	store := filepath.Join(t.TempDir(), "projects.json")
+	annR, annW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+
+	_, done := startServeWeb(t, webRunConfig{Workspace: root, NoOpen: true, StorePath: store},
+		webIO{Announce: annW, Stdin: stdinR})
+	announced := readAnnounce(t, annR)
+
+	b, err := os.ReadFile(webDiscoveryPath(root))
+	if err != nil {
+		t.Fatalf("discovery file: %v", err)
+	}
+	var onDisk webDiscovery
+	if err := json.Unmarshal(b, &onDisk); err != nil {
+		t.Fatalf("discovery file is not valid JSON: %v\n%s", err, b)
+	}
+	if announced != onDisk {
+		t.Fatalf("announce line != discovery file:\nannounce = %+v\nfile     = %+v", announced, onDisk)
+	}
+
+	_ = stdinW.Close()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("no shutdown on stdin EOF")
+	}
+}
+
 // Without announce, stdin is nobody's business: a never-closed stdin must not
 // keep the server from stopping on ctx cancel, and nothing is read from it.
 func TestServeWeb_WithoutAnnounceStdinIsIgnored(t *testing.T) {

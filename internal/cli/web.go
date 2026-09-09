@@ -83,7 +83,9 @@ func writeWebDiscovery(workspace string, d webDiscovery) (string, error) {
 	if d.StartedAtUnix == 0 {
 		d.StartedAtUnix = now
 	}
-	d.WrittenAtUnix = now
+	if d.WrittenAtUnix == 0 {
+		d.WrittenAtUnix = now
+	}
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return "", err
@@ -139,13 +141,12 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		realStdout := os.Stdout
 		os.Stdout = os.Stderr
 		streams = webIO{Announce: realStdout, Stdin: os.Stdin}
-		webNoOpen = true // a sidecar never opens a browser
 	}
 	return serveWeb(ctx, webRunConfig{
 		Workspace: workspace,
 		Port:      webPort,
 		Token:     webToken,
-		NoOpen:    webNoOpen,
+		NoOpen:    webNoOpen || webAnnounce, // a sidecar never opens a browser
 		Debug:     webDebug,
 		Init:      webInit,
 	}, streams)
@@ -276,7 +277,9 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 	}
 	if streams.Announce != nil {
 		b, err := json.Marshal(disc)
-		if err == nil {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] could not encode the announce line: %v\n", err)
+		} else {
 			_, _ = streams.Announce.Write(append(b, '\n'))
 		}
 	}
