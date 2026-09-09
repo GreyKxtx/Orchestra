@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 // initWorkspace makes a directory the registry will accept: core.New loads
@@ -291,5 +292,46 @@ func TestRegistry_AddErroredTwiceKeepsOnePath(t *testing.T) {
 	reg.AddErrored(other, "gone")
 	if got := reg.Paths(); len(got) != 1 {
 		t.Fatalf("Paths() = %v, want exactly one spelling", got)
+	}
+}
+
+func TestClosedProject_CarriesTheIDAnOpenOneWouldHave(t *testing.T) {
+	dir := t.TempDir()
+
+	p, ok := ClosedProject(dir)
+	if !ok {
+		t.Fatal("ClosedProject refused a real directory")
+	}
+	if p.State != StateClosed {
+		t.Fatalf("state is %q, want %q", p.State, StateClosed)
+	}
+	if p.OpenedAt != 0 {
+		t.Fatalf("OpenedAt is %d; a closed project is not open and must not sort among those that are", p.OpenedAt)
+	}
+	if p.Name != filepath.Base(filepath.Clean(dir)) {
+		t.Fatalf("name is %q, want %q", p.Name, filepath.Base(filepath.Clean(dir)))
+	}
+
+	abs, _ := filepath.Abs(dir)
+	want, err := cache.ComputeProjectID(abs)
+	if err != nil {
+		t.Fatalf("ComputeProjectID: %v", err)
+	}
+	if p.ID != want {
+		t.Fatalf("id is %q, want %q — the client acts on a closed project by this id", p.ID, want)
+	}
+}
+
+func TestClosedProject_DoesNotStatTheDirectory(t *testing.T) {
+	// A remembered path on an unreachable network share must not block a list
+	// request. ClosedProject therefore never touches the filesystem: a path
+	// that does not exist still yields an entry.
+	missing := filepath.Join(t.TempDir(), "gone", "deeper")
+	p, ok := ClosedProject(missing)
+	if !ok {
+		t.Fatal("ClosedProject refused a path that does not exist; it must not check")
+	}
+	if p.State != StateClosed {
+		t.Fatalf("state is %q, want %q", p.State, StateClosed)
 	}
 }

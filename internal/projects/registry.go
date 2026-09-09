@@ -25,8 +25,9 @@ import (
 type State string
 
 const (
-	StateReady State = "ready"
-	StateError State = "error"
+	StateReady  State = "ready"
+	StateError  State = "error"
+	StateClosed State = "closed"
 )
 
 // Project is the wire shape the HTTP API returns. Field names and JSON tags are
@@ -38,6 +39,30 @@ type Project struct {
 	State    State  `json:"state"`
 	Error    string `json:"error"`
 	OpenedAt int64  `json:"opened_at"`
+}
+
+// ClosedProject is the wire shape for a remembered project the core does not
+// hold. It deliberately does not touch the filesystem: a remembered path on an
+// unreachable share would otherwise make GET /api/projects hang, which is the
+// same fragility this design set out to remove from startup. Whether the
+// directory is still there is discovered when the user clicks it, and the
+// error travels back on that request.
+func ClosedProject(path string) (Project, bool) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return Project{}, false
+	}
+	abs = filepath.Clean(abs)
+	id, err := cache.ComputeProjectID(abs)
+	if err != nil {
+		return Project{}, false
+	}
+	return Project{
+		ID:    id,
+		Path:  abs,
+		Name:  filepath.Base(abs),
+		State: StateClosed,
+	}, true
 }
 
 var (
