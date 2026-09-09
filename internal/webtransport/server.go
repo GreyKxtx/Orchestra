@@ -74,21 +74,50 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 	// requester (internal/core/rpc_handler.go:46-52), so a second client on the
 	// SAME project would silently take over its prompts. Different projects have
 	// different cores, so they do not contend — the guard is keyed, not global.
+	//
+	// Each slot remembers how to end its connection, because closing a project
+	// through the API must drop that project's socket *before* the core is
+	// closed: the handler goroutines dereference the core's tools and
+	// jsonrpc.Server does not recover panics, so a request arriving on a closed
+	// core would take the whole server down.
 	var busyMu sync.Mutex
-	busy := map[string]bool{}
-	acquire := func(key string) bool {
+	live := map[string]*liveConn{}
+	acquire := func(key string, cancel context.CancelFunc) (*liveConn, bool) {
 		busyMu.Lock()
 		defer busyMu.Unlock()
-		if busy[key] {
+		if _, taken := live[key]; taken {
+			return nil, false
+		}
+		lc := &liveConn{cancel: cancel, done: make(chan struct{})}
+		live[key] = lc
+		return lc, true
+	}
+	release := func(key string, lc *liveConn) {
+		busyMu.Lock()
+		if live[key] == lc {
+			delete(live, key)
+		}
+		busyMu.Unlock()
+		close(lc.done)
+	}
+	// evict ends the live connection for key, if any, and waits for its handler
+	// to return — which happens only after jsonrpc.Server has waited for every
+	// in-flight request. After evict returns true nothing is running on that
+	// project's core.
+	evict := func(key string, wait time.Duration) bool {
+		busyMu.Lock()
+		lc := live[key]
+		busyMu.Unlock()
+		if lc == nil {
+			return true
+		}
+		lc.cancel()
+		select {
+		case <-lc.done:
+			return true
+		case <-time.After(wait):
 			return false
 		}
-		busy[key] = true
-		return true
-	}
-	release := func(key string) {
-		busyMu.Lock()
-		delete(busy, key)
-		busyMu.Unlock()
 	}
 
 	mux := http.NewServeMux()
@@ -129,12 +158,18 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 			return
 		}
 
+		connCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
 		guardKey := projectID // "" is the project-less default connection
-		if !acquire(guardKey) {
+		lc, ok := acquire(guardKey, cancel)
+		if !ok {
 			http.Error(w, "a client is already connected", http.StatusConflict)
 			return
 		}
-		defer release(guardKey)
+		// Registered before p.Close and cancel run (defers are LIFO), so done
+		// closes only once the socket is shut and Serve has returned.
+		defer release(guardKey, lc)
 
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			// Same-origin only: the page is served by this very server.
@@ -144,9 +179,6 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 			return
 		}
 		c.SetReadLimit(jsonrpc.DefaultMaxContentBytes)
-
-		connCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
 
 		p := NewPipe(connCtx, c)
 		defer func() { _ = p.Close() }()
@@ -176,7 +208,14 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 	}))
 
 	if opts.Registry != nil {
-		mux.HandleFunc("/api/projects", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		// requireToken then requireSameOrigin: the cookie is SameSite=Strict,
+		// but on loopback "site" ignores the port, so a page on 127.0.0.1:<other>
+		// could still post here with the cookie attached. The Origin header,
+		// when a browser sends one, must name this server.
+		api := func(next http.HandlerFunc) http.HandlerFunc {
+			return requireToken(token, requireSameOrigin(next))
+		}
+		mux.HandleFunc("/api/projects", api(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case http.MethodGet:
 				writeJSONStatus(w, http.StatusOK, map[string]any{"projects": opts.Registry.List()})
@@ -186,12 +225,30 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		}))
-		mux.HandleFunc("/api/projects/", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/api/projects/", api(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodDelete {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
 			id := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+			if _, ok := opts.Registry.Get(id); !ok {
+				// Errored placeholders have no core and no socket; Close below
+				// still removes them. Only a live core needs its socket dropped.
+				if err := opts.Registry.Close(id); err != nil {
+					writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			// Drop the tab first; the client sees a normal disconnect. Only when
+			// no handler can still be running on the core is it closed.
+			if !evict(id, 5*time.Second) {
+				writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+					"error": "close_failed", "detail": "the project's connection did not shut down in time",
+				})
+				return
+			}
 			if err := opts.Registry.Close(id); err != nil {
 				writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
 				return
@@ -243,6 +300,30 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 	}()
 
 	return "http://" + ln.Addr().String(), stop, nil
+}
+
+// liveConn is one occupied guard slot: how to end that connection and when
+// its handler has actually returned.
+type liveConn struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// requireSameOrigin rejects a request whose Origin header names another
+// origin. Browsers send Origin on cross-origin fetches and on every POST;
+// curl and scripts send none and pass. This is the CSRF guard the cookie's
+// SameSite=Strict cannot be on loopback, where every 127.0.0.1:<port> is one
+// "site".
+func requireSameOrigin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+			if !strings.EqualFold(origin, "http://"+r.Host) && !strings.EqualFold(origin, "https://"+r.Host) {
+				http.Error(w, "cross-origin request refused", http.StatusForbidden)
+				return
+			}
+		}
+		next(w, r)
+	}
 }
 
 // requireToken accepts the same two forms core --http accepts

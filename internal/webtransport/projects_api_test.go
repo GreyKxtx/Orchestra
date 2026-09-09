@@ -184,3 +184,35 @@ func TestAPI_RequiresAuth(t *testing.T) {
 		t.Fatalf("unauthenticated GET = %d, want 401 — this API opens projects and runs shell", resp.StatusCode)
 	}
 }
+
+// On loopback "site" ignores the port, so SameSite=Strict alone lets any page on
+// 127.0.0.1:<other> post to /api/* with the cookie attached. The Origin header
+// is what separates the served page from a stranger on another port.
+func TestAPI_CrossOriginRequestIsRejected(t *testing.T) {
+	base, _ := startRegistryServer(t)
+	host := base[len("http://"):]
+
+	get := func(origin string) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, base+"/api/projects", nil)
+		req.AddCookie(&http.Cookie{Name: "orchestra", Value: "secret"})
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+	if code := get("http://127.0.0.1:1"); code != http.StatusForbidden {
+		t.Fatalf("cross-origin GET = %d, want 403", code)
+	}
+	if code := get("http://" + host); code != http.StatusOK {
+		t.Fatalf("same-origin GET = %d, want 200", code)
+	}
+	if code := get(""); code != http.StatusOK {
+		t.Fatalf("GET without Origin (curl, scripts) = %d, want 200", code)
+	}
+}

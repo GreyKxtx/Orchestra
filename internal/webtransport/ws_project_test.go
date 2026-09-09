@@ -152,3 +152,48 @@ func TestWS_UnknownProjectIs404(t *testing.T) {
 		t.Fatalf("unknown project → %v, want 404", resp)
 	}
 }
+
+// Closing a project through the API while a tab is connected must drop that
+// socket first and only then close the core: the handler goroutines dereference
+// the core's tools, and jsonrpc.Server does not recover panics. It must also
+// free the guard slot, or re-opening the same path gets 409 on the next dial.
+func TestWS_CloseProjectDropsItsLiveSocketAndFreesTheSlot(t *testing.T) {
+	base, reg := startProjectServer(t)
+	root := initWS(t)
+	pa, err := reg.Open(context.Background(), root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	c, _, err := dialProject(t, base, pa.ID)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.CloseNow() })
+
+	if status, body := doJSON(t, http.MethodDelete, base+"/api/projects/"+pa.ID, nil); status != http.StatusNoContent {
+		t.Fatalf("DELETE → %d %v, want 204", status, body)
+	}
+
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := c.Read(rctx); err == nil {
+		t.Fatal("the socket of a closed project stayed open")
+	} else if rctx.Err() != nil {
+		t.Fatal("the socket of a closed project was not dropped within 5s")
+	}
+
+	status, body := doJSON(t, http.MethodPost, base+"/api/projects", map[string]any{"path": root})
+	if status != http.StatusCreated {
+		t.Fatalf("re-open → %d %v, want 201", status, body)
+	}
+	id, _ := body["id"].(string)
+	c2, resp, err := dialProject(t, base, id)
+	if err != nil {
+		code := 0
+		if resp != nil {
+			code = resp.StatusCode
+		}
+		t.Fatalf("dial after re-open: %v (status %d) — the guard slot was not released", err, code)
+	}
+	_ = c2.CloseNow()
+}
