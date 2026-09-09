@@ -243,3 +243,53 @@ func TestRegistry_ErroredEntryIsReplacedByASuccessfulOpen(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 }
+
+// Detach removes the entry without closing the core, so a caller can first end
+// whatever is still using the core (a live socket) and only then close it —
+// while no new user can obtain the core in between.
+func TestRegistry_DetachRemovesTheEntryButLeavesTheCoreOpen(t *testing.T) {
+	reg := NewRegistry(core.Options{})
+	defer reg.Shutdown()
+	p, err := reg.Open(context.Background(), initWorkspace(t))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	c, err := reg.Detach(p.ID)
+	if err != nil || c == nil {
+		t.Fatalf("Detach = %v, %v", c, err)
+	}
+	if _, ok := reg.Get(p.ID); ok {
+		t.Fatal("detached project is still reachable through Get")
+	}
+	if n := len(reg.List()); n != 0 {
+		t.Fatalf("List() = %d after Detach, want 0", n)
+	}
+	if _, err := reg.Detach(p.ID); err == nil {
+		t.Fatal("second Detach of the same id must fail")
+	}
+	// The core is the caller's now; it must still be usable and closable.
+	if c.Health().Status == "" {
+		t.Fatal("detached core does not answer Health — it was closed")
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("close detached core: %v", err)
+	}
+}
+
+// Two AddErrored calls for spellings of one directory must not leave a stale
+// byPath entry behind, or Paths() persists a ghost that comes back next start.
+func TestRegistry_AddErroredTwiceKeepsOnePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("depends on case-folded project ids")
+	}
+	reg := NewRegistry(core.Options{})
+	defer reg.Shutdown()
+	root := t.TempDir()
+	parent := filepath.Dir(root)
+	other := filepath.Join(filepath.Dir(parent), strings.ToUpper(filepath.Base(parent)), filepath.Base(root))
+	reg.AddErrored(root, "gone")
+	reg.AddErrored(other, "gone")
+	if got := reg.Paths(); len(got) != 1 {
+		t.Fatalf("Paths() = %v, want exactly one spelling", got)
+	}
+}

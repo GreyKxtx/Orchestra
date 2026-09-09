@@ -167,6 +167,21 @@ func (r *Registry) OpenedIDFor(path string) (string, bool) {
 // Close releases the project's core, and with it its CKG database and its
 // language servers.
 func (r *Registry) Close(id string) error {
+	c, err := r.Detach(id)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return nil
+	}
+	return c.Close()
+}
+
+// Detach removes the project from the registry and hands its core (nil for an
+// errored placeholder) to the caller WITHOUT closing it. From this point no
+// Get can obtain the core, so the caller may first end whatever still uses it
+// — a live connection — and only then close it. Close is Detach plus close.
+func (r *Registry) Detach(id string) (*core.Core, error) {
 	r.mu.Lock()
 	e, ok := r.byID[id]
 	if ok {
@@ -175,12 +190,9 @@ func (r *Registry) Close(id string) error {
 	}
 	r.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("project_not_open: %s", id)
+		return nil, fmt.Errorf("project_not_open: %s", id)
 	}
-	if e.core == nil {
-		return nil
-	}
-	return e.core.Close()
+	return e.core, nil
 }
 
 func (r *Registry) Get(id string) (*core.Core, bool) {
@@ -241,8 +253,11 @@ func (r *Registry) AddErrored(path, reason string) Project {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if e, ok := r.byID[id]; ok && e.core != nil {
-		return e.meta // a ready project outranks a stale failure report
+	if old, ok := r.byID[id]; ok {
+		if old.core != nil {
+			return old.meta // a ready project outranks a stale failure report
+		}
+		delete(r.byPath, old.meta.Path) // another spelling of the same placeholder
 	}
 	r.byID[id] = &entry{meta: meta}
 	r.byPath[abs] = id

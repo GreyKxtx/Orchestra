@@ -100,23 +100,24 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		busyMu.Unlock()
 		close(lc.done)
 	}
-	// evict ends the live connection for key, if any, and waits for its handler
-	// to return — which happens only after jsonrpc.Server has waited for every
-	// in-flight request. After evict returns true nothing is running on that
-	// project's core.
-	evict := func(key string, wait time.Duration) bool {
+	// evict ends the live connection for key, if any, and waits up to wait for
+	// its handler to return — which happens only after jsonrpc.Server has waited
+	// for every in-flight request. It returns the connection's done channel
+	// (already closed when settled is true, nil when there was no connection)
+	// so a caller that gave up waiting can still act once it closes.
+	evict := func(key string, wait time.Duration) (settled bool, done <-chan struct{}) {
 		busyMu.Lock()
 		lc := live[key]
 		busyMu.Unlock()
 		if lc == nil {
-			return true
+			return true, nil
 		}
 		lc.cancel()
 		select {
 		case <-lc.done:
-			return true
+			return true, lc.done
 		case <-time.After(wait):
-			return false
+			return false, lc.done
 		}
 	}
 
@@ -135,6 +136,7 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		// Resolve the handler factory before touching the guard, so a bad
 		// project id never occupies a slot.
 		newHandler := opts.NewHandler
+		var projectCore *core.Core
 		if projectID != "" {
 			if opts.Registry == nil {
 				http.Error(w, "project routing is not enabled", http.StatusNotFound)
@@ -149,6 +151,7 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 				http.Error(w, "project routing is not configured", http.StatusNotFound)
 				return
 			}
+			projectCore = c
 			newHandler = func() (jsonrpc.Handler, func(*jsonrpc.Server)) {
 				return opts.NewProjectHandler(c)
 			}
@@ -170,6 +173,16 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		// Registered before p.Close and cancel run (defers are LIFO), so done
 		// closes only once the socket is shut and Serve has returned.
 		defer release(guardKey, lc)
+
+		// Re-validate now that the slot is ours: a DELETE that ran between the
+		// Get above and acquire has detached the project (Detach precedes
+		// evict), so the core we hold must not be served.
+		if projectID != "" {
+			if cur, ok := opts.Registry.Get(projectID); !ok || cur != projectCore {
+				http.Error(w, "project_not_open", http.StatusNotFound)
+				return
+			}
+		}
 
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			// Same-origin only: the page is served by this very server.
@@ -231,27 +244,28 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 				return
 			}
 			id := strings.TrimPrefix(r.URL.Path, "/api/projects/")
-			if _, ok := opts.Registry.Get(id); !ok {
-				// Errored placeholders have no core and no socket; Close below
-				// still removes them. Only a live core needs its socket dropped.
-				if err := opts.Registry.Close(id); err != nil {
-					writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
-					return
-				}
+			// Detach first, so no dial that starts from here on can obtain the
+			// core; then drop the tab (the client sees a normal disconnect); and
+			// only when its handler has returned — nothing can be running on the
+			// core any more — close the core. Order matters: closing while a
+			// handler is live would nil the core's tools under it.
+			c, err := opts.Registry.Detach(id)
+			if err != nil {
+				writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
+				return
+			}
+			if c == nil { // an errored placeholder: no core, no socket
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			// Drop the tab first; the client sees a normal disconnect. Only when
-			// no handler can still be running on the core is it closed.
-			if !evict(id, 5*time.Second) {
-				writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
-					"error": "close_failed", "detail": "the project's connection did not shut down in time",
-				})
-				return
-			}
-			if err := opts.Registry.Close(id); err != nil {
-				writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
-				return
+			settled, done := evict(id, 5*time.Second)
+			if settled {
+				_ = c.Close()
+			} else {
+				// The connection did not wind down in time. The project is
+				// already gone from the registry; its core closes the moment
+				// the connection finally ends, not before.
+				go func() { <-done; _ = c.Close() }()
 			}
 			w.WriteHeader(http.StatusNoContent)
 		}))

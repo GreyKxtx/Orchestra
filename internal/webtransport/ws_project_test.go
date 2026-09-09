@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,4 +197,42 @@ func TestWS_CloseProjectDropsItsLiveSocketAndFreesTheSlot(t *testing.T) {
 		t.Fatalf("dial after re-open: %v (status %d) — the guard slot was not released", err, code)
 	}
 	_ = c2.CloseNow()
+}
+
+// A dial racing a DELETE of the same project must never end with a request
+// served on a closed core (which would panic the process): either the dial is
+// refused, or the connection is dropped before the core closes. There is no
+// deterministic interleaving to assert, so this is a regression loop — a
+// process crash or a -race report is the failure.
+func TestWS_DialRacingDeleteNeverServesAClosedCore(t *testing.T) {
+	base, reg := startProjectServer(t)
+	root := initWS(t)
+	for i := 0; i < 12; i++ {
+		p, err := reg.Open(context.Background(), root)
+		if err != nil {
+			t.Fatalf("iteration %d open: %v", i, err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			c, _, err := dialProject(t, base, p.ID)
+			if err != nil {
+				return // refused: fine
+			}
+			defer func() { _ = c.CloseNow() }()
+			b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "core.health"})
+			_ = c.Write(context.Background(), websocket.MessageText, b)
+			rctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, _, _ = c.Read(rctx) // either an answer or a disconnect: both fine
+		}()
+		go func() {
+			defer wg.Done()
+			doJSON(t, http.MethodDelete, base+"/api/projects/"+p.ID, nil)
+		}()
+		wg.Wait()
+		// Whatever the interleaving, the project must be closable and re-openable.
+		_, _ = doJSON(t, http.MethodDelete, base+"/api/projects/"+p.ID, nil)
+	}
 }
