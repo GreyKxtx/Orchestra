@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // startServeWeb runs serveWeb in the background against a temp store and
@@ -124,5 +129,119 @@ func TestServeWeb_SavesTheOpenListToTheGivenStore(t *testing.T) {
 	}
 	if _, err := os.Stat(webDiscoveryPath(root)); err == nil {
 		t.Fatal("discovery file survived shutdown")
+	}
+}
+
+// readAnnounce blocks until one line arrives on the announce pipe.
+func readAnnounce(t *testing.T, r *io.PipeReader) webDiscovery {
+	t.Helper()
+	sc := bufio.NewScanner(r)
+	lineCh := make(chan string, 1)
+	go func() {
+		if sc.Scan() {
+			lineCh <- sc.Text()
+		}
+		close(lineCh)
+	}()
+	select {
+	case line, ok := <-lineCh:
+		if !ok {
+			t.Fatal("announce pipe closed without a line")
+		}
+		var d webDiscovery
+		if err := json.Unmarshal([]byte(line), &d); err != nil {
+			t.Fatalf("announce line is not the discovery object: %v\n%s", err, line)
+		}
+		return d
+	case <-time.After(20 * time.Second):
+		t.Fatal("no announce line within 20s")
+	}
+	return webDiscovery{}
+}
+
+// The announce line is the discovery object, and the token in it works.
+func TestServeWeb_AnnounceLineIsTheDiscoveryObject(t *testing.T) {
+	root := initialisedDir(t)
+	annR, annW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+
+	_, done := startServeWeb(t, webRunConfig{Workspace: root, NoOpen: true},
+		webIO{Announce: annW, Stdin: stdinR})
+	d := readAnnounce(t, annR)
+
+	if d.URL == "" || d.Token == "" || d.PID != os.Getpid() || d.ProtocolVersion != protocol.ProtocolVersion {
+		t.Fatalf("announce = %+v, want url, token, our pid and protocol version", d)
+	}
+	req, _ := http.NewRequest(http.MethodGet, d.URL+"/health", nil)
+	req.Header.Set("Authorization", "Bearer "+d.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health with the announced token = %d, want 200", resp.StatusCode)
+	}
+
+	_ = stdinW.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveWeb after stdin EOF: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("stdin EOF did not shut the server down")
+	}
+}
+
+// EOF on stdin is a *clean* shutdown: the list is saved, the discovery file gone.
+func TestServeWeb_StdinEOFIsACleanShutdown(t *testing.T) {
+	root := initialisedDir(t)
+	store := filepath.Join(t.TempDir(), "projects.json")
+	annR, annW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+
+	_, done := startServeWeb(t, webRunConfig{Workspace: root, NoOpen: true, StorePath: store},
+		webIO{Announce: annW, Stdin: stdinR})
+	_ = readAnnounce(t, annR)
+	_ = stdinW.Close()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("no shutdown on stdin EOF")
+	}
+	if _, err := os.Stat(store); err != nil {
+		t.Fatalf("open list not saved on EOF shutdown: %v", err)
+	}
+	if _, err := os.Stat(webDiscoveryPath(root)); err == nil {
+		t.Fatal("discovery file survived EOF shutdown")
+	}
+}
+
+// Without announce, stdin is nobody's business: a never-closed stdin must not
+// keep the server from stopping on ctx cancel, and nothing is read from it.
+func TestServeWeb_WithoutAnnounceStdinIsIgnored(t *testing.T) {
+	root := initialisedDir(t)
+	stdinR, stdinW := io.Pipe()
+	defer func() { _ = stdinW.Close() }()
+
+	cancel, done := startServeWeb(t, webRunConfig{Workspace: root, NoOpen: true},
+		webIO{Announce: nil, Stdin: stdinR})
+	waitFor(t, "discovery file", func() bool {
+		_, err := os.Stat(webDiscoveryPath(root))
+		return err == nil
+	})
+	// Writing must not block: nobody is reading stdin in this mode. A reader
+	// would make this Write return; we assert it does NOT complete.
+	wrote := make(chan struct{})
+	go func() { _, _ = stdinW.Write([]byte("x")); close(wrote) }()
+	select {
+	case <-wrote:
+		t.Fatal("stdin was read without --announce")
+	case <-time.After(300 * time.Millisecond):
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serveWeb: %v", err)
 	}
 }

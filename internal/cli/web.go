@@ -29,6 +29,7 @@ var (
 	webNoOpen        bool
 	webDebug         bool
 	webInit          bool
+	webAnnounce      bool
 )
 
 var webCmd = &cobra.Command{
@@ -55,6 +56,7 @@ func init() {
 	webCmd.Flags().BoolVar(&webNoOpen, "no-open", false, "Do not open a browser")
 	webCmd.Flags().BoolVar(&webDebug, "debug", false, "Enable debug logs to stderr")
 	webCmd.Flags().BoolVar(&webInit, "init", false, "Initialise the workspace when it has no .orchestra.yml (same as orchestra init)")
+	webCmd.Flags().BoolVar(&webAnnounce, "announce", false, "Sidecar mode: print one JSON line (the discovery object) to stdout when listening; exit when stdin closes")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -128,6 +130,17 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	if cmd != nil && cmd.Context() != nil {
 		ctx = cmd.Context()
 	}
+
+	streams := webIO{}
+	if webAnnounce {
+		// stdout is the announce channel and nothing else. Everything that
+		// wrote to stdout before — init's messages, mostly — goes to stderr
+		// for the rest of the process. The parent reads one line and no more.
+		realStdout := os.Stdout
+		os.Stdout = os.Stderr
+		streams = webIO{Announce: realStdout, Stdin: os.Stdin}
+		webNoOpen = true // a sidecar never opens a browser
+	}
 	return serveWeb(ctx, webRunConfig{
 		Workspace: workspace,
 		Port:      webPort,
@@ -135,7 +148,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		NoOpen:    webNoOpen,
 		Debug:     webDebug,
 		Init:      webInit,
-	}, webIO{})
+	}, streams)
 }
 
 // serveWeb is the body of `orchestra web`. It returns when ctx is cancelled.
@@ -147,6 +160,16 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// Sidecar mode: the parent owns our stdin. EOF means it has gone or wants
+	// us gone; either way we shut down through the normal path so the deferred
+	// cleanup (list saved, discovery removed) runs. Windows has no SIGTERM.
+	if streams.Announce != nil && streams.Stdin != nil {
+		go func() {
+			_, _ = io.Copy(io.Discard, streams.Stdin)
+			cancel()
+		}()
+	}
 
 	// A folder the user picked in a dialog has no config yet; --init runs the
 	// same initialisation the API runs for POST /api/projects {"init":true}.
@@ -245,9 +268,17 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 		Token:           token,
 		PID:             os.Getpid(),
 	}
+	now := time.Now().Unix()
+	disc.StartedAtUnix, disc.WrittenAtUnix = now, now
 	discPath, err := writeWebDiscovery(workspace, disc)
 	if err == nil {
 		defer func() { _ = os.Remove(discPath) }()
+	}
+	if streams.Announce != nil {
+		b, err := json.Marshal(disc)
+		if err == nil {
+			_, _ = streams.Announce.Write(append(b, '\n'))
+		}
 	}
 
 	pageURL := baseURL + "/?token=" + token
