@@ -107,7 +107,8 @@ func TestServeWeb_InitLeavesAnExistingConfigUntouched(t *testing.T) {
 	}
 }
 
-// The store path is honoured: the started workspace lands in it on shutdown.
+// The store path is honoured: the started workspace lands in it at startup
+// and is still there once the server has shut down.
 func TestServeWeb_SavesTheOpenListToTheGivenStore(t *testing.T) {
 	root := initialisedDir(t)
 	store := filepath.Join(t.TempDir(), "projects.json")

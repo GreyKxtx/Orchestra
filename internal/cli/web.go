@@ -163,7 +163,7 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 
 	// Sidecar mode: the parent owns our stdin. EOF means it has gone or wants
 	// us gone; either way we shut down through the normal path so the deferred
-	// cleanup (list saved, discovery removed) runs. Windows has no SIGTERM.
+	// discovery-file cleanup runs. Windows has no SIGTERM.
 	if streams.Announce != nil && streams.Stdin != nil {
 		go func() {
 			_, _ = io.Copy(io.Discard, streams.Stdin)
