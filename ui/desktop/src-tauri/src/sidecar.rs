@@ -86,13 +86,19 @@ pub fn spawn_and_announce(
     let stdout = child.stdout.take().expect("stdout is piped");
     let (tx, rx) = mpsc::channel::<Option<String>>();
     thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        let got = BufReader::new(stdout)
+        let got = reader
             .read_line(&mut line)
             .ok()
             .filter(|n| *n > 0)
             .map(|_| line);
         let _ = tx.send(got);
+        // Keep the read end open and draining after the announce line: no one
+        // writes to the child's stdout (fd 1) again today, but if that ever
+        // changed, closing our end here would turn it into EPIPE on Windows /
+        // SIGPIPE on Linux — and Go kills the process on SIGPIPE for fd 1/2.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
     });
 
     let stdin = child.stdin.take();
@@ -191,13 +197,36 @@ impl Sidecar {
     }
 }
 
+impl Drop for Sidecar {
+    /// `Child` does not kill its process on drop. `stop()` consumes `self`
+    /// and always leaves the child already exited (waited on, or killed and
+    /// waited on) before returning, so this only fires for a `Sidecar`
+    /// dropped without going through `stop()` — insurance against a future
+    /// path doing that; no live path does today. Best-effort and
+    /// non-blocking: no grace period, no wait, so it can never slow down or
+    /// deadlock `stop()`'s own graceful sequence. `try_wait` first so an
+    /// already-exited child (the normal case, reaped by `stop()`) is not
+    /// killed again — that would just be a silently-ignored error, but there
+    /// is no reason to make the call.
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+        }
+    }
+}
+
 /// Entry point of the fake sidecar. main() calls this first; it returns false
 /// when FAKE_SIDECAR is not set (the normal case).
 pub fn maybe_run_fake_sidecar() -> bool {
     let Ok(mode) = std::env::var("FAKE_SIDECAR") else {
         return false;
     };
-    if !std::env::args().any(|a| a == "--fake-sidecar") {
+    // `--fake-sidecar` is how spawn_and_announce's own tests trigger this
+    // directly; `--announce` is the flag `sidecar_args` always includes, so
+    // that `start()`'s real candidate-list path (used by the PATH-fallback
+    // process test) can also drive a copy of this binary as the fake core.
+    // Both still require the env var too, so a normal run is unaffected.
+    if !std::env::args().any(|a| a == "--fake-sidecar" || a == "--announce") {
         return false;
     }
     let out = std::io::stdout();

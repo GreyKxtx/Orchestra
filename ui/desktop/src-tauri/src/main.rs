@@ -15,6 +15,10 @@ struct CoreSlot(Mutex<Option<Sidecar>>);
 
 const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_GRACE: Duration = Duration::from_secs(3);
+// Window creation is normally near-instant; 10s is generous headroom for a
+// slow machine while still bounding the wait so a main thread that never
+// runs the dispatched closure cannot hang the boot thread forever.
+const WINDOW_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn main() {
     if sidecar::maybe_run_fake_sidecar() {
@@ -132,39 +136,84 @@ fn boot(app: AppHandle) {
         );
         return;
     };
+    // `build()` and dispatch failures both must end in `fatal()` — a native
+    // dialog — same as every other startup failure. `fatal()` blocks on the
+    // dialog and must only be called from this (boot) thread, but the
+    // closure below runs ON the main thread, so it cannot call `fatal()`
+    // itself (that would deadlock the dialog against the very thread that
+    // needs to pump it). Instead it sends the outcome back over a channel
+    // and this thread calls `fatal()` after receiving it.
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
     let handle = app.clone();
     let dispatched = app.run_on_main_thread(move || {
         let built = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
             .title("Orchestra")
             .inner_size(1200.0, 800.0)
             .build();
-        match built {
-            Ok(window) => {
-                // The window is the only thing a user can close. Tauri does
-                // not exit on its own once it closes — the dialog plugin
-                // keeps its own (untitled) windows alive — so drive the exit
-                // explicitly here. This still funnels through
-                // `AppHandle::exit` -> `RunEvent::Exit` -> `Sidecar::stop`,
-                // the one place that stops the core; nothing stops it from
-                // here directly.
-                let handle = handle.clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { .. } = event {
-                        handle.exit(0);
-                    }
-                });
-            }
-            Err(e) => {
-                eprintln!("[orchestra-desktop] cannot create the window: {e}");
-                handle.exit(1);
-            }
+        if let Ok(window) = &built {
+            // The window is the only thing a user can close. Tauri does
+            // not exit on its own once it closes — the dialog plugin
+            // keeps its own (untitled) windows alive — so drive the exit
+            // explicitly here. This still funnels through
+            // `AppHandle::exit` -> `RunEvent::Exit` -> `Sidecar::stop`,
+            // the one place that stops the core; nothing stops it from
+            // here directly.
+            let handle = handle.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { .. } = event {
+                    handle.exit(0);
+                }
+            });
         }
+        let _ = tx.send(built.err().map(|e| e.to_string()));
     });
     if let Err(e) = dispatched {
-        // Dispatch to the main thread itself failed: no window, no dialog —
-        // without this the process would sit headless with a live core.
-        eprintln!("[orchestra-desktop] cannot dispatch to the main thread: {e}");
-        app.exit(1);
+        // Dispatch to the main thread itself failed: no window is coming and
+        // the closure above will never run — without a dialog here the
+        // process would sit headless with a live core and no explanation.
+        fatal(
+            &app,
+            &sidecar::StartError {
+                message: format!(
+                    "Orchestra could not reach its own main thread to open a window: {e}"
+                ),
+                stderr_tail: String::new(),
+            },
+        );
+        return;
+    }
+    match rx.recv_timeout(WINDOW_DISPATCH_TIMEOUT) {
+        Ok(None) => {} // window created; the success path above already wired it up
+        Ok(Some(msg)) => {
+            // In a release build there is no console (windows_subsystem =
+            // "windows"), so this is the only place the user learns why the
+            // app just vanished. The most likely real cause by far is a
+            // missing/broken WebView2 runtime, so name it.
+            fatal(
+                &app,
+                &sidecar::StartError {
+                    message: format!(
+                        "Orchestra could not open its window: {msg}\n\nThis usually means the Microsoft Edge WebView2 Runtime is missing or broken. Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and try again."
+                    ),
+                    stderr_tail: String::new(),
+                },
+            );
+        }
+        Err(_) => {
+            // The closure was dispatched but never ran (or never sent) within
+            // the timeout: bounded wait, not recv() forever, so the user
+            // still gets told something rather than the app hanging.
+            fatal(
+                &app,
+                &sidecar::StartError {
+                    message: format!(
+                        "Orchestra's main thread did not respond within {}s while opening a window.",
+                        WINDOW_DISPATCH_TIMEOUT.as_secs()
+                    ),
+                    stderr_tail: String::new(),
+                },
+            );
+        }
     }
 }
 

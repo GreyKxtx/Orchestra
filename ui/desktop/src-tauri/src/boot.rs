@@ -385,5 +385,12 @@ mod tests {
         // for this rare case.
         let p = PathBuf::from(r"\\?\C:\Users\a\trailing. \proj");
         assert_eq!(simplify_canonical_path(p.clone()), p);
+
+        // Same rule, but the component ends in `.` alone with no trailing
+        // space — exercises the `ends_with('.')` half of the check on its
+        // own, so a regression that drops it (leaving only the
+        // `ends_with(' ')` half) would be caught here.
+        let p2 = PathBuf::from(r"\\?\C:\x\trailing.\proj");
+        assert_eq!(simplify_canonical_path(p2.clone()), p2);
     }
 }

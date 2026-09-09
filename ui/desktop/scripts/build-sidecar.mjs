@@ -31,9 +31,15 @@ if (!["debug", "release"].includes(profile)) {
 }
 
 const ext = process.platform === "win32" ? ".exe" : "";
-const triple = execFileSync("rustc", ["--print", "host-tuple"], { encoding: "utf8" }).trim();
+// `rustc --print host-tuple` needs Rust >= 1.84; src-tauri/Cargo.toml
+// declares rust-version = "1.77", so use the `host:` line of `rustc -vV`
+// instead — it has existed since long before the crate's declared MSRV and
+// keeps this script usable on the oldest Rust that MSRV promises to support.
+const verbose = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
+const hostLine = verbose.split(/\r?\n/).find((line) => line.startsWith("host:"));
+const triple = hostLine ? hostLine.slice("host:".length).trim() : "";
 if (!triple) {
-  console.error("rustc --print host-tuple returned nothing; is Rust on PATH?");
+  console.error("could not find a `host:` line in `rustc -vV` output; is Rust on PATH?");
   process.exit(1);
 }
 
