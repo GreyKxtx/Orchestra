@@ -34,13 +34,17 @@ by the Go server exactly as in a browser, so the cookie flow, the `Origin` check
 and the per-project WebSocket from part A work unchanged. Everything the user
 sees is `ui/web`; everything the shell does fits in one Rust file.
 
-**The core is a sidecar, with `PATH` as the development fallback.** The bundle
-carries `orchestra` as a Tauri `externalBin`
-(`src-tauri/binaries/orchestra-<target-triple>`), built by a dependency-free
-Node script from the same Go tree. When the sidecar is absent — a `cargo tauri
-dev` run without the build step — the shell spawns `orchestra` from `PATH` with
-the same arguments and says so on stderr. A user's installation is
-self-contained; a developer's loop needs only `go install`.
+**The core is a sidecar, with `PATH` as the development fallback.** The shell
+looks for `orchestra` (`orchestra.exe` on Windows) next to its own executable
+— which is where every Tauri bundler places an `externalBin` — and, when it is
+not there, spawns `orchestra` from `PATH` with the same arguments and says so
+on stderr. A dependency-free Node script builds the Go binary into
+`src-tauri/binaries/orchestra-<target-triple>` (the name the bundler expects)
+and copies it next to the debug executable for local runs. The `externalBin`
+declaration itself belongs to part C: `tauri-build` validates and copies it on
+every `cargo build`, so declaring it in B would make `cargo test` fail on a
+tree without the Go binary. A user's installation is self-contained; a
+developer's loop needs only `go install`.
 
 **The startup project is: argument, else the last one, else a dialog.** A path
 given on the command line wins. Otherwise the shell reopens the project it
@@ -54,6 +58,14 @@ there is nothing to show without a project. A remembered directory that no
 longer exists is skipped, and the next source is tried. `orchestra web` restores
 every other remembered project itself, so the shell passes exactly one
 `--workspace-root`.
+
+**`orchestra web --init` initialises the startup workspace when it has none.**
+Today `orchestra web` exits when its startup workspace has no `.orchestra.yml`
+— right for a CLI run in a repository, wrong for a folder the user just picked
+in a dialog. With `--init` the server runs the same `initProject` the API uses
+for `POST /api/projects {"init":true}` before opening the workspace; a
+workspace that already has a config is left untouched. The shell always passes
+`--init`. Without the flag nothing changes.
 
 **`orchestra web --announce` prints one JSON line to stdout when it listens.**
 The shell needs the URL and the token; today they live in a human log line on
@@ -110,7 +122,7 @@ target platform already has one.
 ### `orchestra web --announce`
 
 ```
-orchestra web --workspace-root <dir> --no-open --port 0 --announce
+orchestra web --workspace-root <dir> --no-open --port 0 --init --announce
 ```
 
 - stdout: exactly one line, then nothing. The line is the JSON of
@@ -123,6 +135,9 @@ orchestra web --workspace-root <dir> --no-open --port 0 --announce
   removed).
 - Without `--announce` nothing changes: same stderr line, same discovery file,
   stdin untouched.
+- `--init`: when `<dir>/.orchestra.yml` is absent, run project initialisation
+  (the same code as `orchestra init` and `POST /api/projects {"init":true}`)
+  before opening the workspace. Its output goes to stderr under `--announce`.
 
 ### Shell behaviour
 
@@ -153,12 +168,14 @@ ui/desktop/
   README.md                     the decision record (exists), updated
   scripts/build-sidecar.mjs     go build → src-tauri/binaries/orchestra-<triple>[.exe]
   src-tauri/
-    Cargo.toml                  tauri 2, tauri-plugin-shell, tauri-plugin-dialog, serde, serde_json
-    tauri.conf.json             bundle.externalBin = ["binaries/orchestra"], no default window
-    capabilities/default.json   shell:allow-execute for the sidecar, dialog:allow-open
+    Cargo.toml                  tauri 2, tauri-plugin-dialog, serde, serde_json (no shell plugin: std::process)
+    tauri.conf.json             no default window; frontendDist = a placeholder dir; externalBin comes in part C
+    capabilities/default.json   core:default for the main window (no JS API is used)
     build.rs
-    src/main.rs                 the shell: project resolution, spawn, announce, window, exit
-internal/cli/web.go             --announce flag; stdout JSON line; stdin EOF → cancel
+    src/main.rs                 glue: Tauri builder, boot thread, exit handling
+    src/boot.rs                 pure logic: project resolution, announce parsing, arguments, memory file
+    src/sidecar.rs              process: candidates (next to exe, then PATH), spawn, announce with timeout, stderr tail, graceful stop
+internal/cli/web.go             --init and --announce flags; stdout JSON line; stdin EOF → cancel
 .github/workflows/ci.yml        job `desktop`: cargo fmt --check, clippy, build (windows, ubuntu)
 ```
 
@@ -167,7 +184,11 @@ No changes to `ui/web`, `internal/webtransport`, `internal/projects` or
 
 ## Lifecycle and failure
 
-- **Start**: the shell blocks on the announce line, not on a fixed sleep. A core
+- **Start**: dialogs and the sidecar wait happen on a worker thread, never on
+  the main thread — the dialog plugin's blocking calls dispatch to the main
+  thread and would deadlock it. The window is created via
+  `run_on_main_thread`. The shell blocks on the announce line, not on a fixed
+  sleep. A core
   that takes long to open (large CKG scan) delays the window, not its
   correctness; warmup continues after the window is up, as in part A.
 - **Second instance**: two shells on the same project both start a server; the
@@ -186,8 +207,12 @@ No changes to `ui/web`, `internal/webtransport`, `internal/projects` or
 
 Go (`internal/cli`):
 - `--announce` writes exactly one line to stdout and it round-trips through
-  `webDiscovery`; nothing else reaches stdout in that mode. Mutation: a second
-  `fmt.Println` to stdout fails the test.
+  `webDiscovery`; nothing else reaches stdout in that mode — checked on the real
+  process (the test re-executes its own binary as `orchestra web`) with a fresh
+  `--init` workspace, so the init messages that go to stdout today would show
+  up as extra lines. Mutation: removing the stdout redirection fails the test.
+- `--init` creates `.orchestra.yml` in a bare directory and leaves an existing
+  one untouched. Mutation: dropping the init call fails the test.
 - Closing stdin returns `runWeb` within the shutdown budget with the project
   list saved. Mutation: dropping the EOF watcher makes the test time out.
 - Without `--announce`, stdin is not read (a test that never closes stdin still
