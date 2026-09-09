@@ -1,12 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use orchestra_desktop::{boot, sidecar};
 use sidecar::Sidecar;
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 /// The running core, if any. Taken (and stopped) on exit.
@@ -34,35 +35,20 @@ fn main() {
         .expect("error while building Orchestra desktop")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(core) = app
+                // Recover a poisoned mutex rather than skip the stop: nothing
+                // else that locks this ever panics, but if it somehow did,
+                // the core still deserves to be told to shut down.
+                let core = app
                     .state::<CoreSlot>()
                     .0
                     .lock()
-                    .ok()
-                    .and_then(|mut s| s.take())
-                {
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(core) = core {
                     core.stop(STOP_GRACE);
                 }
             }
         });
-}
-
-/// `std::fs::canonicalize` returns a `\\?\`-prefixed "verbatim" path on
-/// Windows. That is a valid Windows path, but it confuses the core's sqlite
-/// `file:` URI opener (SQLITE_CANTOPEN) — so strip the prefix back to an
-/// ordinary path, the same simplification `tauri-plugin-fs` applies to picked
-/// paths internally. A no-op on every other platform.
-fn simplify_canonical_path(p: PathBuf) -> PathBuf {
-    if cfg!(windows) {
-        let s = p.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-            return PathBuf::from(format!(r"\\{rest}"));
-        }
-        if let Some(rest) = s.strip_prefix(r"\\?\") {
-            return PathBuf::from(rest);
-        }
-    }
-    p
 }
 
 fn orchestra_home() -> Option<PathBuf> {
@@ -103,7 +89,7 @@ fn boot(app: AppHandle) {
         return;
     };
     let workspace = std::fs::canonicalize(&workspace).unwrap_or(workspace);
-    let workspace = simplify_canonical_path(workspace);
+    let workspace = boot::simplify_canonical_path(workspace);
 
     let exe_dir = std::env::current_exe()
         .ok()
@@ -115,9 +101,13 @@ fn boot(app: AppHandle) {
             return;
         }
     };
-    if let Ok(mut slot) = app.state::<CoreSlot>().0.lock() {
-        *slot = Some(core);
-    }
+    // Recover a poisoned mutex rather than drop `core` unstopped: nothing
+    // else that locks this ever panics, but if it somehow did, the sidecar
+    // must still land in the slot so `RunEvent::Exit` can stop it.
+    *app.state::<CoreSlot>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(core);
 
     if let Some(h) = &home {
         let _ = std::fs::create_dir_all(h);
@@ -143,16 +133,39 @@ fn boot(app: AppHandle) {
         return;
     };
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
+    let dispatched = app.run_on_main_thread(move || {
         let built = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
             .title("Orchestra")
             .inner_size(1200.0, 800.0)
             .build();
-        if let Err(e) = built {
-            eprintln!("[orchestra-desktop] cannot create the window: {e}");
-            handle.exit(1);
+        match built {
+            Ok(window) => {
+                // The window is the only thing a user can close. Tauri does
+                // not exit on its own once it closes — the dialog plugin
+                // keeps its own (untitled) windows alive — so drive the exit
+                // explicitly here. This still funnels through
+                // `AppHandle::exit` -> `RunEvent::Exit` -> `Sidecar::stop`,
+                // the one place that stops the core; nothing stops it from
+                // here directly.
+                let handle = handle.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { .. } = event {
+                        handle.exit(0);
+                    }
+                });
+            }
+            Err(e) => {
+                eprintln!("[orchestra-desktop] cannot create the window: {e}");
+                handle.exit(1);
+            }
         }
     });
+    if let Err(e) = dispatched {
+        // Dispatch to the main thread itself failed: no window, no dialog —
+        // without this the process would sit headless with a live core.
+        eprintln!("[orchestra-desktop] cannot dispatch to the main thread: {e}");
+        app.exit(1);
+    }
 }
 
 /// Show what went wrong (with the core's last stderr lines) and exit 1.
@@ -171,9 +184,14 @@ fn fatal(app: &AppHandle, e: &sidecar::StartError) {
     app.exit(1);
 }
 
-/// Temp file then rename, so a crash never leaves a half-written memory file.
+/// Temp file → fsync → rename, so a crash never leaves a half-written or
+/// not-yet-durable memory file (the atomic-write invariant in CLAUDE.md).
 fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, data)?;
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
     std::fs::rename(&tmp, path)
 }

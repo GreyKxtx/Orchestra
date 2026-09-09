@@ -112,6 +112,42 @@ pub fn sidecar_candidates(exe_dir: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
+/// `std::fs::canonicalize` returns a `\\?\`-prefixed "verbatim" path on
+/// Windows. That is always a valid Windows path, but it confuses the core's
+/// sqlite `file:` URI opener (SQLITE_CANTOPEN) — so simplify it back to an
+/// ordinary path when that is safe to do, the same judgment
+/// `dunce::simplified` makes: skip simplification when a legacy
+/// (non-verbatim) path cannot represent the same file — a component ending
+/// in `.` or ` ` (Windows silently drops those without the verbatim prefix,
+/// which would change which file the path names) or a result long enough
+/// that it may genuinely need verbatim addressing (over the legacy
+/// MAX_PATH, 260 chars). In those rare cases the sqlite-URI incompatibility
+/// this exists to fix is left unresolved rather than risk handing
+/// `sidecar::start` a path that resolves differently, or not at all. A
+/// no-op on every non-Windows target.
+pub fn simplify_canonical_path(p: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return p;
+    }
+    let s = p.to_string_lossy();
+    let rest = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        return p; // not a verbatim path; nothing to simplify
+    };
+    let safe = rest.len() <= 260
+        && rest
+            .split('\\')
+            .all(|part| !part.ends_with('.') && !part.ends_with(' '));
+    if safe {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +338,52 @@ mod tests {
             vec![PathBuf::from("C:\\app").join(exe), PathBuf::from(exe)]
         );
         assert_eq!(sidecar_candidates(None), vec![PathBuf::from(exe)]);
+    }
+
+    #[test]
+    fn a_verbatim_drive_path_is_simplified_on_windows() {
+        let got = simplify_canonical_path(PathBuf::from(r"\\?\C:\Users\a\proj"));
+        if cfg!(windows) {
+            assert_eq!(got, PathBuf::from(r"C:\Users\a\proj"));
+        } else {
+            // `\\?\` is Windows-only syntax; elsewhere this is a no-op.
+            assert_eq!(got, PathBuf::from(r"\\?\C:\Users\a\proj"));
+        }
+    }
+
+    #[test]
+    fn a_verbatim_unc_path_is_simplified_on_windows() {
+        let got = simplify_canonical_path(PathBuf::from(r"\\?\UNC\server\share\dir"));
+        if cfg!(windows) {
+            assert_eq!(got, PathBuf::from(r"\\server\share\dir"));
+        } else {
+            assert_eq!(got, PathBuf::from(r"\\?\UNC\server\share\dir"));
+        }
+    }
+
+    #[test]
+    fn an_already_simple_path_is_unchanged() {
+        let p = PathBuf::from(r"C:\Users\a\proj");
+        assert_eq!(simplify_canonical_path(p.clone()), p);
+    }
+
+    #[test]
+    fn an_empty_path_is_unchanged() {
+        let p = PathBuf::new();
+        assert_eq!(simplify_canonical_path(p.clone()), p);
+    }
+
+    #[test]
+    fn a_trailing_dot_or_space_component_blocks_simplification() {
+        // Windows silently drops a trailing `.` or ` ` from a path component
+        // when the path is opened NOT in verbatim mode, which would change
+        // which file the path names. Stripping the `\\?\` prefix here would
+        // therefore be unsafe, so this is deliberately left untouched (still
+        // verbatim, still exactly the file `canonicalize` resolved) —
+        // matching `dunce::simplified`'s own rule, at the cost of leaving the
+        // sqlite-URI incompatibility this function exists to fix unresolved
+        // for this rare case.
+        let p = PathBuf::from(r"\\?\C:\Users\a\trailing. \proj");
+        assert_eq!(simplify_canonical_path(p.clone()), p);
     }
 }
