@@ -183,6 +183,19 @@ Discovery: `.orchestra/web.json` (0600, удаляется при выходе) 
 `token`, `pid`, `protocol_version`, метки времени. Формат и очистка stale-файлов
 по живости PID — как у `.orchestra/core.http.json`.
 
+**Sidecar-режим (`--announce`, `--init`).** `orchestra web --announce` печатает
+в stdout ровно одну строку — JSON того же объекта, что пишется в
+`.orchestra/web.json` (`protocol_version`, `workspace_root`, `url`, `port`,
+`token`, `pid`, `started_at_unix`, `written_at_unix`) — сразу после того, как
+сервер начал слушать; больше в stdout ничего не пишется (всё остальное уходит
+в stderr). EOF на stdin в этом режиме — сигнал завершения: сервер закрывается
+штатно, список открытых проектов сохраняется, discovery-файл удаляется. Так
+desktop-оболочка (`ui/desktop`) узнаёт адрес и токен и гасит ядро без
+`SIGTERM`, которого на Windows нет. `--init` инициализирует стартовый
+воркспейс без `.orchestra.yml` (тем же кодом, что `orchestra init` и
+`POST /api/projects {"init":true}`); существующий конфиг не трогается. Без
+этих флагов поведение прежнее.
+
 ## JSON-RPC правила
 
 ### Batch
