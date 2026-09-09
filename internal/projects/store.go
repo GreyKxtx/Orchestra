@@ -2,6 +2,7 @@ package projects
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,14 +26,19 @@ func StorePath() (string, error) {
 	return filepath.Join(home, ".orchestra", "projects.json"), nil
 }
 
-// LoadPaths reads the remembered project paths. An absent or unreadable list is
-// an empty list, never an error: a corrupt file must not stop the server from
-// starting, because then the user cannot reach the UI to fix it. The next
-// SavePaths overwrites it atomically.
+// LoadPaths reads the remembered project paths. An absent or corrupt list is an
+// empty list, never an error: a corrupt file must not stop the server from
+// starting, because then the user cannot reach the UI to fix it, and the next
+// SavePaths overwrites it atomically. Any other read failure (permissions, a
+// directory in the way) IS an error, so the caller knows not to overwrite a
+// list it never saw.
 func LoadPaths(path string) ([]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read project list: %w", err)
 	}
 	var f storeFile
 	if err := json.Unmarshal(b, &f); err != nil {

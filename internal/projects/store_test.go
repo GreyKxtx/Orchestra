@@ -70,3 +70,13 @@ func TestStorePath_IsUnderTheOrchestraHome(t *testing.T) {
 		t.Fatalf("StorePath = %q, want it under ~/.orchestra", p)
 	}
 }
+
+// A read failure that is not "no such file" must surface: otherwise a transient
+// permission error reads as an empty list, and the very next SavePaths
+// overwrites the user's real list with nothing.
+func TestStore_UnreadableFileIsAnError(t *testing.T) {
+	dir := t.TempDir() // a directory where a file is expected → ReadFile fails, not ENOENT
+	if _, err := LoadPaths(dir); err == nil {
+		t.Fatal("LoadPaths on an unreadable path returned nil error; the caller would overwrite the list")
+	}
+}

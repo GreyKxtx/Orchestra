@@ -117,13 +117,19 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	// again on shutdown, which captures anything opened or closed through the
 	// API. A convenience, not a transaction log.
 	storePath, serr := projects.StorePath()
-	if serr == nil {
-		if remembered, lerr := projects.LoadPaths(storePath); lerr == nil {
+	persist := serr == nil
+	if persist {
+		remembered, lerr := projects.LoadPaths(storePath)
+		if lerr != nil {
+			// A list we could not read is a list we must not overwrite.
+			fmt.Fprintln(os.Stderr, "[orchestra] "+lerr.Error()+"; open projects will not be remembered this run")
+			persist = false
+		} else {
 			restoreProjects(ctx, reg, remembered)
 		}
 	}
 	saveOpen := func() {
-		if serr == nil {
+		if persist {
 			_ = projects.SavePaths(storePath, reg.Paths())
 		}
 	}
