@@ -58,7 +58,7 @@ struct ProjectsJson {
     projects: Vec<String>,
 }
 
-/// argument → desktop.json last_project → first projects.json entry → pick().
+/// argument → desktop.json last_project → each projects.json entry in order → pick().
 /// Candidates that are not directories (per `is_dir`) are skipped.
 pub fn resolve_project(
     src: Sources,
