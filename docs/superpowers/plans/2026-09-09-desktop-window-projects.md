@@ -476,35 +476,45 @@ func (s *Store) insert(abs string) bool {
 	return true
 }
 
-// Paths returns the remembered paths in a stable order.
-func (s *Store) Paths() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// snapshotLocked copies the list; the caller holds s.mu.
+func (s *Store) snapshotLocked() []string {
 	out := make([]string, len(s.paths))
 	copy(out, s.paths)
 	return out
 }
 
+// Paths returns the remembered paths in a stable order.
+func (s *Store) Paths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
 // Add remembers a path and writes the list. Adding one that is already
 // remembered writes nothing and is not an error.
+//
+// The write happens while the lock is held, on purpose. Snapshotting under the
+// lock and writing outside it lets two concurrent Adds persist in either
+// order, leaving the file disagreeing with memory until the next write. This
+// path runs when a user opens a project — holding a mutex across one small
+// atomic write costs nothing worth measuring, and the alternative is a bug
+// that only shows up as a project missing after a restart.
 func (s *Store) Add(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve project path %q: %w", path, err)
 	}
 	s.mu.Lock()
-	added := s.insert(filepath.Clean(abs))
-	snapshot := make([]string, len(s.paths))
-	copy(snapshot, s.paths)
-	s.mu.Unlock()
-	if !added {
+	defer s.mu.Unlock()
+	if !s.insert(filepath.Clean(abs)) {
 		return nil
 	}
-	return SavePaths(s.path, snapshot)
+	return SavePaths(s.path, s.snapshotLocked())
 }
 
 // Forget drops a path and writes the list. The bool says whether it was
-// remembered, so a caller can answer 404 for an id nobody knows.
+// remembered, so a caller can answer 404 for an id nobody knows. The write is
+// under the lock for the same reason as Add.
 func (s *Store) Forget(path string) (bool, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -513,6 +523,7 @@ func (s *Store) Forget(path string) (bool, error) {
 	key := identity(filepath.Clean(abs))
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	kept := make([]string, 0, len(s.paths))
 	found := false
 	for _, p := range s.paths {
@@ -522,17 +533,11 @@ func (s *Store) Forget(path string) (bool, error) {
 		}
 		kept = append(kept, p)
 	}
-	if found {
-		s.paths = kept
-	}
-	snapshot := make([]string, len(s.paths))
-	copy(snapshot, s.paths)
-	s.mu.Unlock()
-
 	if !found {
 		return false, nil
 	}
-	return true, SavePaths(s.path, snapshot)
+	s.paths = kept
+	return true, SavePaths(s.path, s.snapshotLocked())
 }
 
 // PathForID resolves a remembered path by project id, so the API can act on a
@@ -732,10 +737,12 @@ these tests need:
   authenticated request; the body decodes into a map, so numbers arrive as
   `float64`.
 
-Change the helper's signature to accept the store, and pass `nil` at its six
-existing call sites (`TestAPI_OpenListClose`, `TestAPI_TypedErrors`,
-`TestAPI_InitFlagCreatesTheConfig`, `TestAPI_RequiresAuth`,
-`TestAPI_CrossOriginRequestIsRejected`, and any other in the file):
+Change the helper's signature to accept the store, and pass `nil` at its five
+existing call sites — all in this one file, verified with
+`grep -rn "startRegistryServer(t)" internal/webtransport/`:
+`TestAPI_OpenListClose`, `TestAPI_TypedErrors`,
+`TestAPI_InitFlagCreatesTheConfig`, `TestAPI_RequiresAuth` and
+`TestAPI_CrossOriginRequestIsRejected`:
 
 ```go
 // startRegistryServer stands up the real server with a real registry. `known`
