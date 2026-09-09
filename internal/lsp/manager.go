@@ -132,6 +132,11 @@ type Manager struct {
 	idleTTL       time.Duration
 	stopCh        chan struct{}
 	closeOnce     sync.Once
+	// closed makes the Manager terminal: no server is spawned after Close, so a
+	// warmup still in flight when the owner shuts down cannot leak a process.
+	// servers itself is immutable after construction and is never nil-ed, so
+	// concurrent readers need no lock.
+	closed atomic.Bool
 	autoInstall   string // ask | true | false (mutable when user picks Always)
 	consent       permission.Requester
 	installing    atomic.Bool
@@ -527,6 +532,7 @@ func (m *Manager) Close() {
 	if m == nil {
 		return
 	}
+	m.closed.Store(true)
 	m.closeOnce.Do(func() {
 		if m.stopCh != nil {
 			close(m.stopCh)
@@ -540,7 +546,6 @@ func (m *Manager) Close() {
 		s.client = nil
 		s.mu.Unlock()
 	}
-	m.servers = nil
 }
 
 // IsEmpty reports whether any LSP servers are configured (not whether they are running).
@@ -549,11 +554,11 @@ func (m *Manager) IsEmpty() bool { return m == nil || len(m.servers) == 0 }
 // WarmupStart spawns every registered language server when lazy_start is false.
 // With lazy_start (default), servers spawn on first tool touch per extension.
 func (m *Manager) WarmupStart(ctx context.Context) {
-	if m == nil || m.IsEmpty() || m.lazyStart {
+	if m == nil || m.IsEmpty() || m.lazyStart || m.closed.Load() {
 		return
 	}
 	for _, s := range m.servers {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || m.closed.Load() {
 			return
 		}
 		if s == nil || s.cfg.Disabled {
@@ -631,6 +636,9 @@ func (m *Manager) ensureClient(s *serverEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if m.closed.Load() {
+		return fmt.Errorf("lsp server %q: manager closed", s.cfg.Language)
+	}
 	if s.client != nil && !s.client.IsDead() {
 		s.lastActivity = time.Now()
 		return nil
