@@ -465,7 +465,8 @@ lists them, `POST /api/projects {"path":…}` opens one (add `"init":true` to
 initialise a repository that has no `.orchestra.yml`), `DELETE /api/projects/{id}`
 closes one and frees its language servers and index. The open list is remembered
 in `~/.orchestra/projects.json`. The page authenticates with an `HttpOnly` cookie
-the server sets on first load, so no token lives in page scripts or the URL.
+the server sets on first load, so no token lives in page scripts or the URL; the
+cookie is per browser profile, so run one `orchestra web` per profile.
 
 One tab per project: a second connection to the *same* project is refused with
 `409` while the first is live, because that core's MCP host binds to one client.

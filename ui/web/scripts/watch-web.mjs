@@ -40,6 +40,8 @@ const schedule = () => {
   pending = setTimeout(bundle, 120);
 };
 
+// fs.watch here is non-recursive on purpose: every watched directory is flat
+// today. A fragment moved into a subdirectory would need its directory added.
 for (const dir of watched) {
   if (!fs.existsSync(dir)) continue;
   fs.watch(dir, { persistent: true }, (_event, name) => {

@@ -122,9 +122,21 @@ Endpoints:
 `orchestra=<token>; HttpOnly; SameSite=Strict; Path=/` и редиректит на тот же
 путь без токена — чтобы тот не оседал в адресной строке и истории. Дальше
 браузер сам прикладывает cookie и к `fetch`, и к WebSocket-хендшейку; странице
-не нужно хранить учётные данные в JavaScript. `SameSite=Strict` закрывает CSRF
-на `/api/*`, WebSocket дополнительно ограничен same-origin
-(`internal/webtransport/server.go`, `cookieName` и `authorized`).
+не нужно хранить учётные данные в JavaScript.
+
+CSRF на `/api/*` закрывает проверка заголовка `Origin`: если браузер его прислал,
+он должен называть этот же сервер (`requireSameOrigin`), иначе `403`. Одного
+`SameSite=Strict` для этого недостаточно — на loopback «сайт» не различает
+порты, и страница с `127.0.0.1:<другой порт>` считается same-site. Запросы без
+`Origin` (curl, скрипты) проходят по токену как раньше. WebSocket ограничен
+same-origin на уровне `Accept` (`internal/webtransport/server.go`, `cookieName`,
+`authorized`, `requireSameOrigin`).
+
+Имя cookie фиксировано (`orchestra`), а cookie привязана к хосту без порта:
+два одновременно запущенных `orchestra web` в одном браузерном профиле
+перезаписывают cookie друг друга, и первая вкладка получает `401` при следующем
+`fetch`. Ограничение известно и принято для v1: один `orchestra web` на профиль
+браузера.
 
 **Выбор проекта.** `GET /ws?project=<id>` подключает к конкретному проекту;
 `id` — это `project_id` из `core.health` (`sha256:…`). Без параметра — проект,
@@ -134,7 +146,14 @@ MCP-промпты им нечем. Проекты открывают, пере�
 `GET|POST /api/projects` и `DELETE /api/projects/{id}` — контракт в
 `docs/superpowers/specs/2026-09-09-project-registry-design.md`, раздел
 «The contract»; реализация — `internal/projects` (реестр) и
-`internal/webtransport/server.go` (`handleOpenProject`).
+`internal/webtransport/server.go` (`handleOpenProject`). Сверх контракта:
+`POST` с пустым или нечитаемым телом отвечает `400 {"error":"bad_request"}`.
+
+`DELETE` проекта с живой вкладкой сначала обрывает её сокет (клиент видит
+обычный disconnect, висящие `permission/request` падают закрытыми) и только
+после возврата хендлера закрывает ядро — иначе запрос, пришедший на закрытое
+ядро, уронил бы весь процесс. Если соединение не завершилось за 5 секунд —
+`500 {"error":"close_failed"}`, ядро не трогается.
 
 Версия протокола при этом **не меняется** (остаётся 15): `/ws` получил
 query-параметр, а не новый метод или новую форму сообщения.
