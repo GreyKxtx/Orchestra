@@ -29,6 +29,7 @@ export function loadBundle(opts = {}) {
 
   const sent = [];
   const inbound = [];
+  const sockets = [];
   let socket = null;
 
   class FakeWebSocket {
@@ -38,12 +39,13 @@ export function loadBundle(opts = {}) {
       this.readyState = 1;
       this.listeners = {};
       socket = this;
+      sockets.push(this);
     }
     addEventListener(type, fn) {
       (this.listeners[type] ||= []).push(fn);
     }
     send(data) {
-      sent.push(JSON.parse(data));
+      sent.push({ url: this.url, ...JSON.parse(data) });
     }
     emit(type, ev) {
       for (const fn of this.listeners[type] || []) fn(ev);
@@ -148,14 +150,43 @@ export function loadBundle(opts = {}) {
   };
   sandbox.globalThis = sandbox;
 
+  const fetchCalls = [];
+  let fetchResponder = () => ({ projects: [] });
+  sandbox.fetch = async (url, init) => {
+    fetchCalls.push({ url: String(url), init: init || {} });
+    const body = fetchResponder(String(url), init || {});
+    return {
+      ok: true,
+      status: 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    };
+  };
+
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox, { filename: "web.bundle.js" });
 
   return {
     sent,
     inbound,
+    fetchCalls,
+    setFetchResponder: (fn) => {
+      fetchResponder = fn;
+    },
+    socketFor: (projectId) =>
+      sockets.find((s) => s.url.includes(`project=${encodeURIComponent(projectId)}`)) || null,
     open: () => socket.emit("open", {}),
+    openFor: (projectId) => {
+      const s = sockets.find((x) => x.url.includes(`project=${encodeURIComponent(projectId)}`));
+      assert.ok(s, `no socket for project ${projectId}; urls: ${sockets.map((x) => x.url).join(", ")}`);
+      s.emit("open", {});
+    },
     deliver: (obj) => socket.emit("message", { data: JSON.stringify(obj) }),
+    deliverTo: (projectId, obj) => {
+      const s = sockets.find((x) => x.url.includes(`project=${encodeURIComponent(projectId)}`));
+      assert.ok(s, `no socket for project ${projectId}; urls: ${sockets.map((x) => x.url).join(", ")}`);
+      s.emit("message", { data: JSON.stringify(obj) });
+    },
     post: (msg) => sandbox.window.postMessage(msg),
     close: () => socket.emit("close", {}),
     get socketURL() {

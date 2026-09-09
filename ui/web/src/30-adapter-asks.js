@@ -25,8 +25,6 @@
     }
   }
 
-  onServerRequest = handleServerRequest;
-
   // The overlays answer through the renderer's existing messages. Intercept
   // them here rather than in dispatchToCore, because they carry an id that
   // belongs to this fragment.

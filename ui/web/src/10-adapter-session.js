@@ -145,4 +145,27 @@
     }
   }
 
-  connect();
+  // Superseded in 40-projects.js, which owns connections once it exists. Until
+  // then this preserves the single-project behaviour the tests describe.
+  setActiveConn(
+    createConn(new URLSearchParams(location.search).get("project") || "", {
+      onOpen: () => {
+        toRenderer({ type: "status", status: "ok" });
+        void onConnected();
+      },
+      onClose: () => {
+        // A dropped socket ends the session on the core side, so say so plainly
+        // rather than reconnecting into what looks like the same conversation.
+        toRenderer({
+          type: "status",
+          status: "error",
+          detail: "disconnected — reload to start a new session",
+        });
+      },
+      onError: () => {
+        toRenderer({ type: "status", status: "error", detail: "connection error" });
+      },
+      onNotification: (_projectId, msg) => handleNotification(msg),
+      onServerRequest: (_projectId, msg) => handleServerRequest(msg),
+    })
+  );

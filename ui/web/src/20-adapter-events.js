@@ -116,8 +116,6 @@
     }
   }
 
-  onNotification = handleNotification;
-
   // A new turn starts with an empty transcript.
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {

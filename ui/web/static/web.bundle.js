@@ -44,16 +44,13 @@
     window.postMessage(msg, "*");
   }
 
-  // ---- JSON-RPC over the socket ------------------------------------------
-
-  let ws = null;
-  let nextRpcId = 1;
-  /** @type {Map<number, {resolve: Function, reject: Function}>} */
-  const pendingCalls = new Map();
-  /** @type {((msg: any) => void) | null} */
-  let onServerRequest = null; // set by 30-adapter-asks.js
-  /** @type {((msg: any) => void) | null} */
-  let onNotification = null; // set by 20-adapter-events.js
+  // ---- JSON-RPC over one socket per project -------------------------------
+  //
+  // A project's core is reached through its own socket (part A's guard is per
+  // project, so several are allowed). The four helpers below keep the
+  // signatures the adapter fragments already use and route to whichever
+  // project is active, so "which socket" is a question only this file and
+  // 40-projects.js answer.
 
   /**
    * The socket for a project. No token: the page was served with an HttpOnly
@@ -66,68 +63,79 @@
     return projectId ? `${base}?project=${encodeURIComponent(projectId)}` : base;
   }
 
-  /** @param {string} method @param {any} params @returns {Promise<any>} */
-  function wsSend(method, params) {
-    return new Promise((resolve, reject) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        reject(new Error("not connected"));
-        return;
-      }
-      const id = nextRpcId++;
-      pendingCalls.set(id, { resolve, reject });
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} }));
-    });
-  }
+  /** @type {any} */
+  let active = null;
 
   /**
-   * Like wsSend, but hands back the request id so the caller can cancel it
-   * later with $/cancelRequest. Reading nextRpcId here is safe: wsSend
-   * allocates it synchronously, with no await in between.
-   * @param {string} method @param {any} params
-   * @returns {{id: number, done: Promise<any>}}
+   * @param {string} projectId "" for the project-less socket
+   * @param {{onOpen?: Function, onClose?: Function, onError?: Function, onNotification?: Function, onServerRequest?: Function}} handlers
    */
-  function wsSendCancellable(method, params) {
-    const id = nextRpcId;
-    return { id, done: wsSend(method, params) };
-  }
+  function createConn(projectId, handlers) {
+    const h = handlers || {};
+    let nextRpcId = 1;
+    /** @type {Map<number, {resolve: Function, reject: Function}>} */
+    const pendingCalls = new Map();
+    const ws = new WebSocket(socketURL(projectId));
 
-  /** @param {string} method @param {any} params */
-  function wsNotify(method, params) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }));
-    }
-  }
+    const conn = {
+      projectId,
+      isOpen: () => ws.readyState === WebSocket.OPEN,
+      /** @param {string} method @param {any} params @returns {Promise<any>} */
+      send(method, params) {
+        return new Promise((resolve, reject) => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            reject(new Error("not connected"));
+            return;
+          }
+          const id = nextRpcId++;
+          pendingCalls.set(id, { resolve, reject });
+          ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} }));
+        });
+      },
+      /**
+       * Like send, but hands back the request id so the caller can cancel it
+       * later with $/cancelRequest. Reading nextRpcId here is safe: send
+       * allocates it synchronously, with no await in between.
+       * @param {string} method @param {any} params
+       * @returns {{id: number, done: Promise<any>}}
+       */
+      sendCancellable(method, params) {
+        const id = nextRpcId;
+        return { id, done: conn.send(method, params) };
+      },
+      /** @param {string} method @param {any} params */
+      notify(method, params) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }));
+        }
+      },
+      /** Reply to a server-initiated request. @param {any} id @param {any} result */
+      reply(id, result) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+        }
+      },
+      close() {
+        try {
+          ws.close();
+        } catch (e) {
+          // Already closing. Nothing to do.
+        }
+      },
+    };
 
-  /** Reply to a server-initiated request. @param {any} id @param {any} result */
-  function wsReply(id, result) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
-    }
-  }
-
-  /** @param {string} [projectId] */
-  function connect(projectId) {
-    const id = projectId || new URLSearchParams(location.search).get("project") || "";
-    ws = new WebSocket(socketURL(id));
     ws.addEventListener("open", () => {
-      toRenderer({ type: "status", status: "ok" });
-      onConnected();
+      if (h.onOpen) h.onOpen(projectId);
     });
     ws.addEventListener("close", () => {
-      // A dropped socket ends the session on the core side, so say so plainly
-      // rather than reconnecting into what looks like the same conversation.
-      toRenderer({
-        type: "status",
-        status: "error",
-        detail: "disconnected — reload to start a new session",
-      });
       for (const { reject } of pendingCalls.values()) {
         reject(new Error("disconnected"));
       }
       pendingCalls.clear();
+      if (h.onClose) h.onClose(projectId);
     });
     ws.addEventListener("error", () => {
-      toRenderer({ type: "status", status: "error", detail: "connection error" });
+      if (h.onError) h.onError(projectId);
     });
     ws.addEventListener("message", (ev) => {
       let msg;
@@ -150,25 +158,63 @@
         return;
       }
       if (msg.id !== undefined && msg.method) {
-        if (onServerRequest) {
-          onServerRequest(msg);
-        }
+        if (h.onServerRequest) h.onServerRequest(projectId, msg);
         return;
       }
-      if (msg.method && onNotification) {
-        onNotification(msg);
+      if (msg.method && h.onNotification) {
+        h.onNotification(projectId, msg);
       }
     });
 
-    // Test seam: adapter-test.mjs drives the outbound path by posting a window
-    // message, because `host` lives inside this IIFE and nothing outside can
-    // reach it. Harmless in a real page — no renderer fragment posts this type.
-    window.addEventListener("message", (ev) => {
-      if (ev.data && ev.data.type === "__host_dispatch__") {
-        host.postMessage(ev.data.payload);
-      }
-    });
+    return conn;
   }
+
+  /** @param {any} conn */
+  function setActiveConn(conn) {
+    active = conn;
+  }
+
+  function activeConn() {
+    return active;
+  }
+
+  // The four helpers the adapter fragments call. Same signatures as before;
+  // the destination is now "whichever project is active".
+
+  /** @param {string} method @param {any} params @returns {Promise<any>} */
+  function wsSend(method, params) {
+    if (!active) {
+      return Promise.reject(new Error("not connected"));
+    }
+    return active.send(method, params);
+  }
+
+  /** @param {string} method @param {any} params @returns {{id: number, done: Promise<any>}} */
+  function wsSendCancellable(method, params) {
+    if (!active) {
+      return { id: -1, done: Promise.reject(new Error("not connected")) };
+    }
+    return active.sendCancellable(method, params);
+  }
+
+  /** @param {string} method @param {any} params */
+  function wsNotify(method, params) {
+    if (active) active.notify(method, params);
+  }
+
+  /** @param {any} id @param {any} result */
+  function wsReply(id, result) {
+    if (active) active.reply(id, result);
+  }
+
+  // Test seam: adapter-test.mjs drives the outbound path by posting a window
+  // message, because `host` lives inside this IIFE and nothing outside can
+  // reach it. Harmless in a real page — no renderer fragment posts this type.
+  window.addEventListener("message", (ev) => {
+    if (ev.data && ev.data.type === "__host_dispatch__") {
+      host.postMessage(ev.data.payload);
+    }
+  });
   /* host is supplied by ui/web/src/00-web-prelude.js */
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
@@ -5048,7 +5094,30 @@
     }
   }
 
-  connect();
+  // Superseded in 40-projects.js, which owns connections once it exists. Until
+  // then this preserves the single-project behaviour the tests describe.
+  setActiveConn(
+    createConn(new URLSearchParams(location.search).get("project") || "", {
+      onOpen: () => {
+        toRenderer({ type: "status", status: "ok" });
+        void onConnected();
+      },
+      onClose: () => {
+        // A dropped socket ends the session on the core side, so say so plainly
+        // rather than reconnecting into what looks like the same conversation.
+        toRenderer({
+          type: "status",
+          status: "error",
+          detail: "disconnected — reload to start a new session",
+        });
+      },
+      onError: () => {
+        toRenderer({ type: "status", status: "error", detail: "connection error" });
+      },
+      onNotification: (_projectId, msg) => handleNotification(msg),
+      onServerRequest: (_projectId, msg) => handleServerRequest(msg),
+    })
+  );
   // Inbound: agent/event and exec/output_chunk -> renderer messages.
   //
   // The parent transcript is accumulated here rather than appended by the
@@ -5167,8 +5236,6 @@
     }
   }
 
-  onNotification = handleNotification;
-
   // A new turn starts with an empty transcript.
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {
@@ -5202,8 +5269,6 @@
         wsReply(msg.id, { error: "unsupported" });
     }
   }
-
-  onServerRequest = handleServerRequest;
 
   // The overlays answer through the renderer's existing messages. Intercept
   // them here rather than in dispatchToCore, because they carry an id that
