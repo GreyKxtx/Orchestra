@@ -112,7 +112,7 @@ into `serveWeb(ctx, cfg, io)` and adds `--init`; `--announce` comes in Task 2.
   ```
   `runWeb` becomes a thin wrapper building `webRunConfig` from the flags.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `internal/cli/web_serve_test.go`:
 
@@ -243,7 +243,7 @@ func TestServeWeb_SavesTheOpenListToTheGivenStore(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go test ./internal/cli/ -run TestServeWeb -v 2>&1 | head
@@ -251,7 +251,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 Expected: FAIL to build — `undefined: serveWeb`, `undefined: webRunConfig`, `undefined: webIO`.
 
-- [ ] **Step 3: Extract `serveWeb` and add `--init`**
+- [x] **Step 3: Extract `serveWeb` and add `--init`**
 
 In `internal/cli/web.go`:
 
@@ -468,7 +468,7 @@ connection to the same project is refused while the first is live.
 freshly picked folder works without a separate orchestra init.`,
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go build ./... && go vet ./internal/cli/ && go test -count=1 ./internal/cli/ -run "TestServeWeb|TestRestoreProjects|TestWriteWebDiscovery|TestCleanupStaleDiscovery|TestWebAssets" -v 2>&1 | grep -E "^(--- |ok|FAIL)"
@@ -476,7 +476,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 Expected: PASS, all of them.
 
-- [ ] **Step 5: Mutation-verify `--init`**
+- [x] **Step 5: Mutation-verify `--init`**
 
 In `serveWeb`, change `if cfg.Init {` to `if false {`. Run
 `-run TestServeWeb_InitCreatesTheConfigOnlyWhenAsked`; expected FAIL with
@@ -488,7 +488,7 @@ because `initProject` itself leaves an existing config alone (its first branch).
 That is fine and worth knowing: the guard in `serveWeb` is a fast path, the
 safety lives in `initProject`. Restore.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go build ./... && go vet ./... && go test -count=1 -timeout 300s ./internal/cli/... && echo GREEN || echo RED
@@ -508,7 +508,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 - Produces: the `--announce` behaviour of Global Constraint 2. Nothing else
   depends on new Go symbols.
 
-- [ ] **Step 1: Write the failing in-process tests**
+- [x] **Step 1: Write the failing in-process tests**
 
 Append to `internal/cli/web_serve_test.go`:
 
@@ -631,7 +631,7 @@ func TestServeWeb_WithoutAnnounceStdinIsIgnored(t *testing.T) {
 Add `"bufio"`, `"encoding/json"`, `"io"`, `"net/http"` and
 `"github.com/orchestra/orchestra/protocol"` to the test file's imports.
 
-- [ ] **Step 2: Write the failing real-process test**
+- [x] **Step 2: Write the failing real-process test**
 
 Create `internal/cli/web_announce_test.go`. It re-executes the test binary as
 the helper (the standard `os/exec` idiom), so the assertion is on the real
@@ -749,7 +749,7 @@ func TestWebAnnounce_StdoutIsExactlyOneLine(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run to verify they fail**
+- [x] **Step 3: Run to verify they fail**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go test -count=1 ./internal/cli/ -run "TestServeWeb_Announce|TestServeWeb_StdinEOF|TestServeWeb_WithoutAnnounce|TestWebAnnounce" -v 2>&1 | grep -E "^(--- |ok|FAIL)|_test.go:[0-9]+:"
@@ -761,7 +761,7 @@ Expected: `TestServeWeb_AnnounceLineIsTheDiscoveryObject` and
 stdin today — keep it, it guards the mode boundary); `TestWebAnnounce_...`
 FAILS: `unknown flag: --announce` on stderr, then "no announce line".
 
-- [ ] **Step 4: Implement `--announce`**
+- [x] **Step 4: Implement `--announce`**
 
 In `internal/cli/web.go`, add the flag:
 
@@ -833,7 +833,7 @@ announce equals the file:
 placed before `writeWebDiscovery(workspace, disc)` (it keeps a non-zero
 `StartedAtUnix` as given).
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go build ./... && go vet ./internal/cli/ && go test -count=1 ./internal/cli/ -run "TestServeWeb|TestWebAnnounce" -v 2>&1 | grep -E "^(--- |ok|FAIL)|_test.go:[0-9]+:"
@@ -841,7 +841,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 Expected: all PASS.
 
-- [ ] **Step 6: Mutation-verify**
+- [x] **Step 6: Mutation-verify**
 
 (a) Remove `os.Stdout = os.Stderr` in `runWeb`. Run `-run TestWebAnnounce`;
 expected FAIL with "stdout carried N extra line(s)" — the init messages. Restore.
@@ -854,7 +854,7 @@ stdin EOF". Restore.
 `if streams.Stdin != nil`. Run `-run TestServeWeb_WithoutAnnounceStdinIsIgnored`;
 expected FAIL "stdin was read without --announce". Restore.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go build ./... && go vet ./... && go test -count=1 -timeout 300s ./internal/cli/... && echo GREEN || echo RED
@@ -891,7 +891,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
   pub fn sidecar_candidates(exe_dir: Option<&Path>) -> Vec<PathBuf>; // [<exe_dir>/orchestra[.exe], PathBuf::from("orchestra[.exe]")]
   ```
 
-- [ ] **Step 1: Scaffold**
+- [x] **Step 1: Scaffold**
 
 `ui/desktop/src-tauri/Cargo.toml`:
 
@@ -1027,7 +1027,7 @@ fn main() {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests in `boot.rs`**
+- [x] **Step 2: Write the failing tests in `boot.rs`**
 
 Create `ui/desktop/src-tauri/src/boot.rs` with ONLY the tests and stubs that do
 not compile yet — the point is to see the red first. Write the whole file as it
@@ -1232,7 +1232,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run to verify they fail**
+- [x] **Step 3: Run to verify they fail**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell/ui/desktop/src-tauri" && export PATH="$HOME/.cargo/bin:$PATH" && cargo test 2>&1 | grep -E "^test |panicked|not yet implemented|test result" | head -20
@@ -1242,7 +1242,7 @@ Expected: the first `cargo test` compiles the Tauri dependency tree (several
 minutes); then every test panics with `not yet implemented`, `test result:
 FAILED`.
 
-- [ ] **Step 4: Implement `boot.rs`**
+- [x] **Step 4: Implement `boot.rs`**
 
 Replace the `todo!()` bodies:
 
@@ -1324,7 +1324,7 @@ pub fn sidecar_candidates(exe_dir: Option<&Path>) -> Vec<PathBuf> {
 }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell/ui/desktop/src-tauri" && export PATH="$HOME/.cargo/bin:$PATH" && cargo test 2>&1 | grep -E "^test |test result"
@@ -1332,7 +1332,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 Expected: 10 tests, `test result: ok`.
 
-- [ ] **Step 6: Mutation-verify the resolution order**
+- [x] **Step 6: Mutation-verify the resolution order**
 
 Swap the two `candidates.push` blocks for `desktop_json` and `projects_json`.
 Run `cargo test last_project_beats_the_registry_list`; expected FAIL
@@ -1341,7 +1341,7 @@ Run `cargo test last_project_beats_the_registry_list`; expected FAIL
 Remove the `.filter(|p| is_dir(p))` on the pick result. Run
 `cargo test a_picked_non_directory_is_none_too`; expected FAIL. Restore.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell/ui/desktop/src-tauri" && export PATH="$HOME/.cargo/bin:$PATH" && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo build && echo GREEN || echo RED
@@ -1380,7 +1380,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
   impl Tail { pub fn new(max_lines: usize) -> Self; pub fn push(&mut self, line: String); pub fn text(&self) -> String; }
   ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `ui/desktop/src-tauri/src/sidecar.rs` with every body `todo!()` and the
 `Tail` unit tests inside it. Process behaviour is exercised from
@@ -1607,7 +1607,7 @@ harness's `main` is not ours. The real `orchestra-desktop` checks for the fake
 mode first thing in `main()`. The child inherits `FAKE_SIDECAR` from the test
 process's environment, which is why every test that sets it holds `FAKE_LOCK`.
 
-- [ ] **Step 2: Wire the fake into `main.rs` and run to verify failure**
+- [x] **Step 2: Wire the fake into `main.rs` and run to verify failure**
 
 In `src/lib.rs` add `pub mod sidecar;`. In `main.rs`:
 
@@ -1634,7 +1634,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 Expected: the `Tail` unit tests and the four process tests panic with `not yet
 implemented`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```rust
 impl Tail {
@@ -1759,7 +1759,7 @@ impl Sidecar {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell/ui/desktop/src-tauri" && export PATH="$HOME/.cargo/bin:$PATH" && cargo test 2>&1 | grep -E "^test |test result"
@@ -1769,7 +1769,7 @@ Expected: all boot, `Tail` and process tests pass (`cargo test` builds the bin
 target before the integration tests, so `CARGO_BIN_EXE_orchestra-desktop`
 resolves).
 
-- [ ] **Step 5: Mutation-verify the graceful stop**
+- [x] **Step 5: Mutation-verify the graceful stop**
 
 In `stop`, remove `drop(self.stdin.take());`. Run
 `cargo test announce_is_read_and_stop_closes_cleanly`; expected FAIL: "stop
@@ -1780,7 +1780,7 @@ In `spawn_and_announce`, replace the stderr thread body with `for _ in … {}`
 (drop the `tail.push`). Run `cargo test a_child_that_never_announces…`;
 expected FAIL "stderr tail was not captured". Restore.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell/ui/desktop/src-tauri" && export PATH="$HOME/.cargo/bin:$PATH" && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo build && echo GREEN || echo RED
@@ -1801,7 +1801,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
   `DialogExt`, `MessageDialogKind`.
 - Produces: the running application. No new symbols for later tasks.
 
-- [ ] **Step 1: Write `main.rs`**
+- [x] **Step 1: Write `main.rs`**
 
 There is no unit test for the glue (it needs a display); Step 3 is the hand
 smoke the spec requires, recorded in the task report.
@@ -1949,7 +1949,7 @@ If the compiler reports that `FilePath::into_path` does not exist in the
 installed `tauri-plugin-dialog`, use `f.as_path().map(Path::to_path_buf)`
 (the other accessor the type offers) — one or the other exists in every 2.x.
 
-- [ ] **Step 2: Build, lint, test**
+- [x] **Step 2: Build, lint, test**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell/ui/desktop/src-tauri" && export PATH="$HOME/.cargo/bin:$PATH" && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test 2>&1 | grep -E "test result|error" && cargo build && echo GREEN || echo RED
@@ -1957,7 +1957,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 Expected: GREEN.
 
-- [ ] **Step 3: Hand smoke on Windows**
+- [x] **Step 3: Hand smoke on Windows**
 
 Build the Go binary from the worktree (it has `--init`/`--announce`) and put it
 on `PATH` for the run — this exercises the development fallback:
@@ -1982,7 +1982,7 @@ no dialog (memory works). Then with `rm "$S/home/.orchestra/desktop.json"
 "$S/home/.orchestra/projects.json"` a third run must show the folder picker;
 cancel it; the app must exit 0 without a window.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && git add ui/desktop/src-tauri && git commit -m "feat(desktop): the shell — pick or remember a project, start the core, open the window, stop cleanly"
@@ -2002,7 +2002,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
   `ui/desktop/src-tauri/target/<profile>/orchestra[.exe]` when that directory
   exists, so `cargo run` finds the bundled path first.
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 ```javascript
 // Builds the Go core for the host and places it where the desktop shell looks.
@@ -2061,7 +2061,7 @@ if (fs.existsSync(targetDir)) {
 }
 ```
 
-- [ ] **Step 2: Run it and prove the shell prefers the bundled core**
+- [x] **Step 2: Run it and prove the shell prefers the bundled core**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && export PATH="$HOME/.cargo/bin:$PATH" && node ui/desktop/scripts/build-sidecar.mjs && ls ui/desktop/src-tauri/binaries ui/desktop/src-tauri/target/debug | grep -i orchestra
@@ -2077,7 +2077,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 Close the window by hand. Expected: the window opened, `0 fallback notes`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && git add ui/desktop/scripts/build-sidecar.mjs && git commit -m "build(desktop): build-sidecar.mjs — the Go core next to the shell, named for the bundler"
@@ -2090,7 +2090,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 **Files:**
 - Modify: `.github/workflows/ci.yml` (append a job)
 
-- [ ] **Step 1: Add the job**
+- [x] **Step 1: Add the job**
 
 Append after the `vscode-extension` job:
 
@@ -2135,7 +2135,7 @@ Append after the `vscode-extension` job:
         run: cargo build
 ```
 
-- [ ] **Step 2: Validate the YAML locally**
+- [x] **Step 2: Validate the YAML locally**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && python -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/ci.yml')); print(sorted(d['jobs'].keys()))" 2>/dev/null || node -e "console.log('no pyyaml; eyeball indentation')"; grep -nE "^  desktop:|working-directory: ui/desktop|cargo (fmt|clippy|test|build)" .github/workflows/ci.yml
@@ -2144,7 +2144,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 Expected: `desktop` listed among the jobs (or, without pyyaml, the four cargo
 steps present under the job). The job itself runs on the first push.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && git add .github/workflows/ci.yml && git commit -m "ci: desktop job — fmt, clippy, test, build on windows and ubuntu"
@@ -2159,7 +2159,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 - Modify: `docs/PROTOCOL.md` (WebSocket subsection: `--announce`, `--init`)
 - Modify: `README.md`, `README.ru.md` (Web UI section: the two flags; a Desktop paragraph)
 
-- [ ] **Step 1: `ui/desktop/README.md`**
+- [x] **Step 1: `ui/desktop/README.md`**
 
 ```markdown
 # Orchestra Desktop
@@ -2208,7 +2208,7 @@ cargo test                         # boot.rs и sidecar.rs
 и делаются там.
 ```
 
-- [ ] **Step 2: `docs/PROTOCOL.md`**
+- [x] **Step 2: `docs/PROTOCOL.md`**
 
 In the WebSocket subsection, after the Discovery paragraph, add:
 
@@ -2227,7 +2227,7 @@ desktop-оболочка (`ui/desktop`) узнаёт адрес и токен и
 этих флагов поведение прежнее.
 ```
 
-- [ ] **Step 3: READMEs**
+- [x] **Step 3: READMEs**
 
 `README.md`, Web UI section flag list — add:
 
@@ -2266,7 +2266,7 @@ file's tone:
 Инсталляторов и автообновления пока нет.
 ```
 
-- [ ] **Step 4: Verify references and commit**
+- [x] **Step 4: Verify references and commit**
 
 Every path named in the new prose must exist:
 
@@ -2279,7 +2279,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 
 ### Task 9: Final verification
 
-- [ ] **Step 1: Everything, once**
+- [x] **Step 1: Everything, once**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && go build ./... && go vet ./... && go test -count=1 -timeout 300s ./... > /tmp/t-final.log 2>&1 && (cd ui/desktop/src-tauri && export PATH="$HOME/.cargo/bin:$PATH" && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test > /tmp/t-rust.log 2>&1) && node ui/web/scripts/check-web.mjs && node ui/web/scripts/adapter-test.mjs > /tmp/t-web.log 2>&1 && echo GREEN || echo RED
@@ -2288,7 +2288,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shel
 Expected: GREEN. `internal/core` has a known flake under full-suite load — if
 it is the only failure, re-run that test alone and confirm it passes.
 
-- [ ] **Step 2: Tick every checkbox in this plan and commit it**
+- [x] **Step 2: Tick every checkbox in this plan and commit it**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-desktop-shell" && sed -i 's/^- \[ \] \*\*Step/- [x] **Step/' docs/superpowers/plans/2026-09-09-desktop-shell.md && git add docs/superpowers/plans/2026-09-09-desktop-shell.md && git commit -m "docs: desktop shell plan — all tasks done"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,8 @@ var (
 	webToken         string
 	webNoOpen        bool
 	webDebug         bool
+	webInit          bool
+	webAnnounce      bool
 )
 
 var webCmd = &cobra.Command{
@@ -38,7 +41,10 @@ The UI talks to the core over a WebSocket at /ws — a supported transport, see
 docs/PROTOCOL.md. Binds to 127.0.0.1 only and requires a bearer token, which the
 page receives from the server that serves it. Several projects can be open at
 once (one core each, see /api/projects); one browser tab per project: a second
-connection to the same project is refused while the first is live.`,
+connection to the same project is refused while the first is live.
+
+--init initialises the workspace first when it has no .orchestra.yml, so a
+freshly picked folder works without a separate orchestra init.`,
 	Args: cobra.NoArgs,
 	RunE: runWeb,
 }
@@ -49,6 +55,8 @@ func init() {
 	webCmd.Flags().StringVar(&webToken, "token", "", "Bearer token (auto-generated if empty)")
 	webCmd.Flags().BoolVar(&webNoOpen, "no-open", false, "Do not open a browser")
 	webCmd.Flags().BoolVar(&webDebug, "debug", false, "Enable debug logs to stderr")
+	webCmd.Flags().BoolVar(&webInit, "init", false, "Initialise the workspace when it has no .orchestra.yml (same as orchestra init)")
+	webCmd.Flags().BoolVar(&webAnnounce, "announce", false, "Sidecar mode: print one JSON line (the discovery object) to stdout when listening; exit when stdin closes")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -75,7 +83,9 @@ func writeWebDiscovery(workspace string, d webDiscovery) (string, error) {
 	if d.StartedAtUnix == 0 {
 		d.StartedAtUnix = now
 	}
-	d.WrittenAtUnix = now
+	if d.WrittenAtUnix == 0 {
+		d.WrittenAtUnix = now
+	}
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return "", err
@@ -86,6 +96,25 @@ func writeWebDiscovery(workspace string, d webDiscovery) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// webRunConfig is everything runWeb used to read from flags, so the server can
+// be started from a test (and, in Task 2, from a parent process) without cobra.
+type webRunConfig struct {
+	Workspace string // absolute path; required
+	Port      int    // 0 = auto
+	Token     string // "" = generated
+	NoOpen    bool
+	Debug     bool
+	Init      bool   // initialise Workspace when it has no .orchestra.yml
+	StorePath string // "" = projects.StorePath(); tests pass a temp file
+}
+
+// webIO carries the parent-process streams. Announce == nil means "not a
+// sidecar": nothing is written to it and Stdin is not watched.
+type webIO struct {
+	Announce io.Writer
+	Stdin    io.Reader
 }
 
 func runWeb(cmd *cobra.Command, args []string) error {
@@ -99,10 +128,61 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 	workspace, _ = filepath.Abs(workspace)
 
-	ctx, cancel := context.WithCancel(cmd.Context())
+	ctx := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		ctx = cmd.Context()
+	}
+
+	streams := webIO{}
+	if webAnnounce {
+		// stdout is the announce channel and nothing else. Everything that
+		// wrote to stdout before — init's messages, mostly — goes to stderr
+		// for the rest of the process. The parent reads one line and no more.
+		realStdout := os.Stdout
+		os.Stdout = os.Stderr
+		streams = webIO{Announce: realStdout, Stdin: os.Stdin}
+	}
+	return serveWeb(ctx, webRunConfig{
+		Workspace: workspace,
+		Port:      webPort,
+		Token:     webToken,
+		NoOpen:    webNoOpen || webAnnounce, // a sidecar never opens a browser
+		Debug:     webDebug,
+		Init:      webInit,
+	}, streams)
+}
+
+// serveWeb is the body of `orchestra web`. It returns when ctx is cancelled.
+func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
+	workspace, err := filepath.Abs(cfg.Workspace)
+	if err != nil {
+		return fmt.Errorf("workspace root: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reg := projects.NewRegistry(core.Options{Debug: webDebug})
+	// Sidecar mode: the parent owns our stdin. EOF means it has gone or wants
+	// us gone; either way we shut down through the normal path so the deferred
+	// cleanup (list saved, discovery removed) runs. Windows has no SIGTERM.
+	if streams.Announce != nil && streams.Stdin != nil {
+		go func() {
+			_, _ = io.Copy(io.Discard, streams.Stdin)
+			cancel()
+		}()
+	}
+
+	// A folder the user picked in a dialog has no config yet; --init runs the
+	// same initialisation the API runs for POST /api/projects {"init":true}.
+	if cfg.Init {
+		if _, err := os.Stat(filepath.Join(workspace, ".orchestra.yml")); err != nil {
+			if err := initProject(ctx, workspace, InitOptions{}); err != nil {
+				return fmt.Errorf("init workspace: %w", err)
+			}
+		}
+	}
+
+	reg := projects.NewRegistry(core.Options{Debug: cfg.Debug})
 	defer reg.Shutdown()
 
 	// The workspace the command was started in is the first project, and its
@@ -116,7 +196,10 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	// Remembered projects reopen alongside it; the list is saved once now and
 	// again on shutdown, which captures anything opened or closed through the
 	// API. A convenience, not a transaction log.
-	storePath, serr := projects.StorePath()
+	storePath, serr := cfg.StorePath, error(nil)
+	if storePath == "" {
+		storePath, serr = projects.StorePath()
+	}
 	persist := serr == nil
 	if persist {
 		remembered, lerr := projects.LoadPaths(storePath)
@@ -140,13 +223,13 @@ func runWeb(cmd *cobra.Command, args []string) error {
 
 	_ = cleanupStaleDiscovery(webDiscoveryPath(workspace))
 
-	token := webToken
+	token := cfg.Token
 	if token == "" {
 		token = mustToken()
 	}
 
 	baseURL, stop, err := webtransport.Serve(ctx, webtransport.Options{
-		Addr:     fmt.Sprintf("127.0.0.1:%d", webPort),
+		Addr:     fmt.Sprintf("127.0.0.1:%d", cfg.Port),
 		Token:    token,
 		Health:   startupCore.Health(),
 		Assets:   webui.Assets(),
@@ -174,25 +257,44 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = stop() }()
 
-	port := webPort
+	port := cfg.Port
 	if port == 0 {
 		_, _ = fmt.Sscanf(baseURL, "http://127.0.0.1:%d", &port)
 	}
-	discPath, err := writeWebDiscovery(workspace, webDiscovery{
+	disc := webDiscovery{
 		ProtocolVersion: protocol.ProtocolVersion,
 		WorkspaceRoot:   workspace,
 		URL:             baseURL,
 		Port:            port,
 		Token:           token,
 		PID:             os.Getpid(),
-	})
+	}
+	now := time.Now().Unix()
+	disc.StartedAtUnix, disc.WrittenAtUnix = now, now
+	discPath, err := writeWebDiscovery(workspace, disc)
 	if err == nil {
 		defer func() { _ = os.Remove(discPath) }()
 	}
+	if streams.Announce != nil {
+		b, err := json.Marshal(disc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] could not encode the announce line: %v\n", err)
+		} else {
+			_, _ = streams.Announce.Write(append(b, '\n'))
+		}
+	}
 
 	pageURL := baseURL + "/?token=" + token
-	fmt.Fprintf(os.Stderr, "[orchestra] web UI: %s\n", pageURL)
-	if !webNoOpen {
+	if streams.Announce != nil {
+		// Under --announce the parent already has the token from the
+		// announce line; this stderr line is only ever surfaced back to the
+		// user via the shell's error dialog (it echoes every child stderr
+		// line), so the token must not ride along in it.
+		fmt.Fprintf(os.Stderr, "[orchestra] web UI: %s\n", baseURL)
+	} else {
+		fmt.Fprintf(os.Stderr, "[orchestra] web UI: %s\n", pageURL)
+	}
+	if !cfg.NoOpen {
 		if err := openBrowser(pageURL); err != nil {
 			fmt.Fprintf(os.Stderr, "[orchestra] could not open a browser (%v); open the URL above\n", err)
 		}

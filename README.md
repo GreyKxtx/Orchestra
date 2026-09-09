@@ -457,6 +457,9 @@ on the first tool needing approval.
   the server, so there is nothing to copy)
 - `--no-open` — do not launch a browser
 - `--workspace-root` — workspace root (default: current directory)
+- `--init` — initialise the workspace first when it has no `.orchestra.yml`
+- `--announce` — sidecar mode: print the discovery JSON as one stdout line when
+  listening, and shut down when stdin closes (what the desktop app uses)
 
 v1 is chat with streaming, permissions, questions and sessions.
 
@@ -472,6 +475,15 @@ One tab per project: a second connection to the *same* project is refused with
 `409` while the first is live, because that core's MCP host binds to one client.
 Different projects never contend. Closing the tab ends the session and fails any
 pending permission prompt closed.
+
+---
+
+## Desktop
+
+`ui/desktop/` is a Tauri shell over `orchestra web`: it starts the core as a
+child process, opens a window on it and stops it when the window closes. Build
+and run from `ui/desktop/src-tauri` with `cargo run`; see `ui/desktop/README.md`.
+Installers and auto-update are not built yet.
 
 ---
 
