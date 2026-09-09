@@ -65,3 +65,6 @@ opencode/
 !logo.png
 sse.log
 .playwright-mcp/
+
+# Superpowers SDD scratch (ledger, briefs, review packages)
+.superpowers/
