@@ -146,7 +146,7 @@ already calls `.plugin(tauri_plugin_dialog::init())` and add one line after it:
         .plugin(tauri_plugin_notification::init())
 ```
 
-- [ ] **Step 3: Turn on the global API and write the capability**
+- [ ] **Step 3: Turn on the global API and write the probe capability**
 
 In `ui/desktop/src-tauri/tauri.conf.json`, add `withGlobalTauri` to the `app`
 object (the page is plain JS with no bundler, so it needs `window.__TAURI__`):
@@ -161,20 +161,22 @@ object (the page is plain JS with no bundler, so it needs `window.__TAURI__`):
   },
 ```
 
-Create `ui/desktop/src-tauri/capabilities/core-page.json`:
+Create `ui/desktop/src-tauri/capabilities/core-page.json` with **one probe-only
+permission**. `core:window:allow-set-title` is here because the window title is
+the only channel out of the page that can be read without looking at a screen —
+it is removed again in Step 8.
 
 ```json
 {
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "core-page",
-  "description": "The page is served by orchestra web on loopback. It may raise a notification when a background project needs an answer, and open a folder picker when adding a project. Nothing else.",
+  "description": "PROBE STAGE. Replaced in Step 8.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
-    "notification:default",
-    "dialog:allow-open"
+    "core:window:allow-set-title"
   ]
 }
 ```
@@ -198,61 +200,206 @@ Expected: success. A malformed capability fails the build in `tauri-build`
 with a schema error naming the offending field — if that happens, the field
 names above are wrong for the installed Tauri version, and the fix is to read
 `ui/desktop/src-tauri/gen/schemas/desktop-schema.json` for the accepted shape
-rather than guessing.
+rather than guessing. Do the same if `core:window:allow-set-title` is not a
+known permission id: the schema file lists the real ones.
 
-- [ ] **Step 5: Prove it on a live window**
+- [ ] **Step 5: Write the title reader**
 
-Build the core and run the shell:
+Nobody involved in this task can see a screen, so the probe must report through
+something readable from a shell. The window title is that channel. Write this
+to `$env:TEMP\window-titles.ps1` (use the Write tool; do not paste it into a
+shell):
 
-```bash
-node ui/desktop/scripts/build-sidecar.mjs
-cargo run --manifest-path ui/desktop/src-tauri/Cargo.toml -- .
+```powershell
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class WinTitles {
+  private delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder s, int n);
+  [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+  public static List<string> Visible() {
+    var found = new List<string>();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      if (IsWindowVisible(h)) {
+        var sb = new StringBuilder(512);
+        GetWindowTextW(h, sb, 512);
+        var t = sb.ToString();
+        if (t.Length > 0) found.Add(t);
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+}
+'@
+[WinTitles]::Visible() | Where-Object { $_ -like "*PROBE*" -or $_ -eq "Orchestra" }
 ```
 
-The window opens on the served page. There is no devtools console in a release
-build, so probe it from the page itself: temporarily append this to
-`ui/web/index.src.html`, just before `</body>`, then re-bundle
-(`node ui/web/scripts/bundle-web.mjs`) and rebuild the core:
+Why this and not `Get-Process | Select MainWindowTitle`: that picks whichever
+window Windows considers the process's main one, which for this shell is an
+untitled helper, so it reports an empty string even when the real window is up.
+`EnumWindows` enumerates them all.
+
+- [ ] **Step 6: Probe stage A — does the IPC reach a remote page at all?**
+
+Append this to `ui/web/index.src.html`, just before `</body>`:
 
 ```html
   <script>
-    // TEMPORARY probe — removed in Step 7.
+    // TEMPORARY probe — removed in Step 8.
     (async () => {
-      const el = document.createElement("div");
-      el.style.cssText = "position:fixed;bottom:4px;left:4px;z-index:9999;font:11px monospace;background:#000;color:#0f0;padding:4px";
-      document.body.appendChild(el);
       const t = window.__TAURI__;
-      if (!t) { el.textContent = "PROBE: window.__TAURI__ absent"; return; }
+      if (!t || !t.window || !t.window.getCurrentWindow) {
+        return; // No channel out. The title stays "Orchestra", which is the answer.
+      }
       try {
-        await t.notification.sendNotification({ title: "Orchestra", body: "probe" });
-        el.textContent = "PROBE: notification sent";
+        await t.window.getCurrentWindow().setTitle("PROBE-IPC-OK");
       } catch (e) {
-        el.textContent = "PROBE: call rejected — " + String(e);
+        // The API is injected but the call was refused. Nothing to report
+        // through, so the title stays "Orchestra" — stage A cannot separate
+        // this from "absent", which is why stage B exists.
       }
     })();
   </script>
 ```
 
-Expected, if the mechanism works: the green line reads `notification sent` and
-a Windows toast appears. If it reads `window.__TAURI__ absent`, the API is not
-injected into a remote URL. If it reads `call rejected`, the injection works
-but the ACL refused — read the message, which in a debug build names the
-capability and command it wanted.
-
-- [ ] **Step 6: Record the answer**
-
-Write into the task report, verbatim, which of the three outcomes occurred and
-the exact text of the green line. This decides Task 9. Do not soften an
-`absent` or `rejected` result into "mostly working" — Task 9's implementer
-reads only this.
-
-- [ ] **Step 7: Remove the probe and commit**
-
-Delete the temporary `<script>` block from `ui/web/index.src.html`, re-bundle,
-and confirm `git diff --stat ui/web/static` is empty (the probe left nothing).
+Build in this order — the probe lives in the page that `ui/web/embed.go`
+compiles into the Go binary, so the core must be rebuilt **after** re-bundling
+or the window shows the old page:
 
 ```bash
 node ui/web/scripts/bundle-web.mjs
+node ui/desktop/scripts/build-sidecar.mjs
+cargo run --manifest-path ui/desktop/src-tauri/Cargo.toml -- .
+```
+
+Run `cargo run` in the background, give it time to open, then read the titles:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File $env:TEMP\window-titles.ps1
+```
+
+- If a title reads `PROBE-IPC-OK`: the IPC does reach a remote page on a
+  wildcard-port origin. Go to Step 7.
+- If the only title is `Orchestra`: the mechanism is unavailable. **Skip Step 7**
+  and record that in Step 8; Task 9 takes its fallback branch.
+- If no matching title appears at all, the window did not open — that is a
+  different failure. Report BLOCKED with the `cargo run` output rather than
+  guessing.
+
+Stop the shell by sending `WM_CLOSE` to the window (a `taskkill /IM` posts
+`WM_CLOSE` to every top-level window including untitled helpers, which is not
+the same thing):
+
+```powershell
+Add-Type -Name W -Namespace P -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr FindWindowW(string c, string n); [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);'
+$h = [P.W]::FindWindowW($null, "PROBE-IPC-OK"); if ($h -eq [IntPtr]::Zero) { $h = [P.W]::FindWindowW($null, "Orchestra") }
+[void][P.W]::PostMessageW($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+```
+
+Then confirm nothing is left running:
+
+```powershell
+Get-Process orchestra-desktop,orchestra -ErrorAction SilentlyContinue | Select-Object Name,Id
+```
+
+- [ ] **Step 7: Probe stage B — is the notification permission usable?**
+
+Only run this if stage A printed `PROBE-IPC-OK`. Now that the title channel is
+known to work, the notification result can be reported through it.
+
+Change `core-page.json`'s permissions to:
+
+```json
+  "permissions": [
+    "core:window:allow-set-title",
+    "notification:default",
+    "dialog:allow-open"
+  ]
+```
+
+Replace the probe's body with:
+
+```html
+  <script>
+    // TEMPORARY probe — removed in Step 8.
+    (async () => {
+      const t = window.__TAURI__;
+      const w = t && t.window && t.window.getCurrentWindow ? t.window.getCurrentWindow() : null;
+      if (!w) {
+        return;
+      }
+      try {
+        await t.notification.sendNotification({ title: "Orchestra", body: "probe" });
+        await w.setTitle("PROBE-NOTIFY-OK");
+      } catch (e) {
+        await w.setTitle("PROBE-NOTIFY-FAIL " + String(e).slice(0, 120));
+      }
+    })();
+  </script>
+```
+
+Re-bundle, rebuild the core, run, and read the titles the same way. Expected:
+`PROBE-NOTIFY-OK`, and a Windows toast. A `PROBE-NOTIFY-FAIL …` title carries
+the refusal message, which in a debug build names the capability and command
+it wanted — copy it verbatim. Close the shell the same way (the title to
+`FindWindowW` is now whichever one you read).
+
+- [ ] **Step 8: Record the answer, restore the real capability, remove the probe**
+
+Write into the task report, verbatim, the exact window titles observed at each
+stage and which of these three outcomes holds. Do not soften a negative result;
+Task 9's implementer reads only this.
+
+1. `PROBE-NOTIFY-OK` — notifications work from the served page. Task 9 uses
+   `window.__TAURI__.notification.sendNotification`.
+2. `PROBE-NOTIFY-FAIL …` — the IPC reaches the page but the notification
+   permission was refused. Quote the message.
+3. Stage A never produced `PROBE-IPC-OK` — the IPC does not reach a remote
+   page on this origin. Task 9 takes its fallback branch.
+
+Then set `core-page.json` to the capability the app actually ships — the probe
+permission is gone, and the description is the real one:
+
+```json
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "core-page",
+  "description": "The page is served by orchestra web on loopback. It may raise a notification when a background project needs an answer, and open a folder picker when adding a project. Nothing else.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "notification:default",
+    "dialog:allow-open"
+  ]
+}
+```
+
+If outcome 3 held, ship this file anyway with the same two permissions: it
+grants nothing that works, costs nothing, and leaves the decision recorded in
+one place rather than in a commit message.
+
+Delete the temporary `<script>` block from `ui/web/index.src.html`, re-bundle,
+and confirm the page and bundle are back to their committed state:
+
+```bash
+node ui/web/scripts/bundle-web.mjs
+git status --short ui/web
+```
+
+Expected: no modifications under `ui/web` at all. Anything left there is probe
+residue, and Task 8 edits the same file.
+
+- [ ] **Step 9: Build clean and commit**
+
+```bash
+cd ui/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cd ../../..
 git add ui/desktop/src-tauri/Cargo.toml ui/desktop/src-tauri/Cargo.lock ui/desktop/src-tauri/tauri.conf.json ui/desktop/src-tauri/capabilities ui/desktop/src-tauri/src/main.rs
 git commit -m "feat(desktop): grant the served page exactly two shell calls"
 ```
