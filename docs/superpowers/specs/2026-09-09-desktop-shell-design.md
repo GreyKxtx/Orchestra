@@ -1,7 +1,7 @@
 # Desktop Shell (Tauri) — Design
 
-**Status:** approved design, part B of three (A — multi-project registry, done;
-C — packaging, updater, signing).
+**Status:** approved design, part B of four (A — multi-project registry, done;
+C — the multi-project window; D — packaging, updater, signing).
 **Depends on:** `docs/superpowers/specs/2026-09-09-project-registry-design.md`
 (the registry, `/api/projects`, cookie auth, `orchestra web`).
 
@@ -17,7 +17,7 @@ user a folder picker instead of a `--workspace-root` flag.
 This spec covers the shell only: starting the core, opening the window, and
 shutting both down cleanly. The project switcher, the cross-project session
 list and the settings screens stay in the web UI and are not part of this
-piece. Installers, code signing and auto-update are part C.
+piece. Installers, code signing and auto-update are part D.
 
 ## Decisions
 
@@ -25,7 +25,7 @@ piece. Installers, code signing and auto-update are part C.
 nothing but a system webview (WebView2 on Windows, WebKit on macOS and Linux).
 Its cost is a Rust toolchain on developer machines and in CI. Wails (Go) was
 weighed as the no-new-language alternative and declined by the owner in favour
-of Tauri's packaging and updater ecosystem, which part C will lean on.
+of Tauri's packaging and updater ecosystem, which part D will lean on.
 
 **A thin shell: process manager plus window, nothing else.** The shell spawns
 `orchestra web` and points a window at the URL it announces. There are no Tauri
@@ -41,7 +41,7 @@ not there, spawns `orchestra` from `PATH` with the same arguments and says so
 on stderr. A dependency-free Node script builds the Go binary into
 `src-tauri/binaries/orchestra-<target-triple>` (the name the bundler expects)
 and copies it next to the debug executable for local runs. The `externalBin`
-declaration itself belongs to part C: `tauri-build` validates and copies it on
+declaration itself belongs to part D: `tauri-build` validates and copies it on
 every `cargo build`, so declaring it in B would make `cargo test` fail on a
 tree without the Go binary. A user's installation is self-contained; a
 developer's loop needs only `go install`.
@@ -169,7 +169,7 @@ ui/desktop/
   scripts/build-sidecar.mjs     go build → src-tauri/binaries/orchestra-<triple>[.exe]
   src-tauri/
     Cargo.toml                  tauri 2, tauri-plugin-dialog, serde, serde_json (no shell plugin: std::process)
-    tauri.conf.json             no default window; frontendDist = a placeholder dir; externalBin comes in part C
+    tauri.conf.json             no default window; frontendDist = a placeholder dir; externalBin comes in part D
     capabilities/default.json   core:default for the main window (no JS API is used)
     build.rs
     src/main.rs                 glue: Tauri builder, boot thread, exit handling
@@ -234,18 +234,18 @@ on Windows opens the window, the chat works, closing the window leaves no
 
 CI: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo build` on
 `windows-latest` and `ubuntu-latest` (with the WebKitGTK dev packages Tauri
-documents). No bundle in CI until part C.
+documents). No bundle in CI until part D.
 
 ## Risks
 
 - **Rust in a Go repository.** One file, three plugins, no business logic; but a
   toolchain nobody on the project uses daily. Mitigated by keeping the shell
-  thin enough that part C is packaging, not more Rust.
+  thin enough that part D is packaging, not more Rust.
 - **`--announce` becomes a public flag.** It is part of the CLI contract from
   the moment the shell depends on it; documented in `docs/PROTOCOL.md` next to
   the discovery file, whose shape it reuses.
 - **WebView2 absence on older Windows.** Windows 10/11 ship it; the Tauri
-  installer in part C can bootstrap it. Not addressed in B.
+  installer in part D can bootstrap it. Not addressed in B.
 - **Sidecar build per platform.** `externalBin` wants one binary per target
   triple. The build script produces the host's; cross-building is a release
-  (part C) concern and `release.yml` already builds four platforms natively.
+  (part D) concern and `release.yml` already builds four platforms natively.

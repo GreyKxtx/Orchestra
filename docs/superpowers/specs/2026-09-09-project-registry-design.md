@@ -1,7 +1,7 @@
 # Multi-project registry (desktop app, part A)
 
 Status: approved design, ready for implementation planning.
-Plan reference: `docs/parity-plan-2026-09.md` §1.9 #3 (Desktop), part A of three.
+Plan reference: `docs/parity-plan-2026-09.md` §1.9 #3 (Desktop), part A of four.
 
 ## Problem
 
