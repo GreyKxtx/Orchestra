@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "core-page",
+  "description": "The page is served by orchestra web on loopback. It may raise a notification when a background project needs an answer, and open a folder picker when adding a project. Nothing else.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "notification:default",
+    "dialog:allow-open"
+  ]
+}
