@@ -1,16 +1,12 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
-	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/projects"
 	webui "github.com/orchestra/orchestra/ui/web"
 )
 
@@ -106,42 +102,5 @@ func TestCleanupStaleDiscovery_KeepsLivePIDFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("a live process's discovery file was removed: %v", err)
-	}
-}
-
-func TestRestoreProjects_OpensRememberedPathsAndRecordsFailures(t *testing.T) {
-	good := t.TempDir()
-	cfg := config.DefaultConfig(good)
-	if err := config.Save(filepath.Join(good, ".orchestra.yml"), cfg); err != nil {
-		t.Fatalf("Save config: %v", err)
-	}
-	bad := filepath.Join(t.TempDir(), "was-deleted")
-
-	reg := projects.NewRegistry(core.Options{})
-	t.Cleanup(reg.Shutdown)
-
-	restoreProjects(context.Background(), reg, []string{good, bad})
-
-	list := reg.List()
-	if len(list) != 2 {
-		t.Fatalf("List() = %d, want 2 — a path that fails to open must still be listed, not dropped silently", len(list))
-	}
-	var sawReady, sawError bool
-	for _, p := range list {
-		switch p.State {
-		case projects.StateReady:
-			sawReady = true
-			if p.Path != good {
-				t.Fatalf("ready project path = %q, want %q", p.Path, good)
-			}
-		case projects.StateError:
-			sawError = true
-			if p.Error == "" {
-				t.Fatal("an errored project must carry the reason it failed")
-			}
-		}
-	}
-	if !sawReady || !sawError {
-		t.Fatalf("want one ready and one error, got %+v", list)
 	}
 }

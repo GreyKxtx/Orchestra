@@ -212,39 +212,6 @@ func TestRegistry_PathSpellingsOfOneDirectoryAreOneProject(t *testing.T) {
 	}
 }
 
-// An errored placeholder (a remembered path that failed to open) must not block
-// opening the directory once it is fixed, and must not displace a ready entry.
-func TestRegistry_ErroredEntryIsReplacedByASuccessfulOpen(t *testing.T) {
-	reg := NewRegistry(core.Options{})
-	defer reg.Shutdown()
-	root := t.TempDir()
-
-	reg.AddErrored(root, "not_initialized")
-	if _, err := reg.Open(context.Background(), root); !errors.Is(err, ErrNotInitialized) {
-		t.Fatalf("open of a bare dir → %v, want ErrNotInitialized", err)
-	}
-
-	writeConfig(t, root)
-	p, err := reg.Open(context.Background(), root)
-	if err != nil {
-		t.Fatalf("open after fixing the dir: %v — the errored placeholder blocked it", err)
-	}
-	list := reg.List()
-	if len(list) != 1 || list[0].State != StateReady || list[0].ID != p.ID {
-		t.Fatalf("List() = %+v, want exactly the ready project", list)
-	}
-
-	// A late AddErrored for a path that is ready must not demote it.
-	reg.AddErrored(root, "stale failure")
-	if got := reg.List(); len(got) != 1 || got[0].State != StateReady {
-		t.Fatalf("AddErrored displaced a ready entry: %+v", got)
-	}
-
-	if err := reg.Close(p.ID); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-}
-
 // Detach removes the entry without closing the core, so a caller can first end
 // whatever is still using the core (a live socket) and only then close it —
 // while no new user can obtain the core in between.
@@ -274,24 +241,6 @@ func TestRegistry_DetachRemovesTheEntryButLeavesTheCoreOpen(t *testing.T) {
 	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("close detached core: %v", err)
-	}
-}
-
-// Two AddErrored calls for spellings of one directory must not leave a stale
-// byPath entry behind, or Paths() persists a ghost that comes back next start.
-func TestRegistry_AddErroredTwiceKeepsOnePath(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("depends on case-folded project ids")
-	}
-	reg := NewRegistry(core.Options{})
-	defer reg.Shutdown()
-	root := t.TempDir()
-	parent := filepath.Dir(root)
-	other := filepath.Join(filepath.Dir(parent), strings.ToUpper(filepath.Base(parent)), filepath.Base(root))
-	reg.AddErrored(root, "gone")
-	reg.AddErrored(other, "gone")
-	if got := reg.Paths(); len(got) != 1 {
-		t.Fatalf("Paths() = %v, want exactly one spelling", got)
 	}
 }
 

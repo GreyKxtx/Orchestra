@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/projects"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -347,6 +348,91 @@ func TestServeWeb_WithoutAnnounceStderrKeepsTheToken(t *testing.T) {
 
 	if !strings.Contains(string(out), "token="+disc.Token) {
 		t.Fatalf("stderr should keep the token outside --announce: %s", out)
+	}
+}
+
+// A remembered project is a list entry, not a startup workload. Today
+// restoreProjects opens every remembered path during startup and records a
+// failure as an errored registry entry; after this change startup opens only
+// the workspace it was given and the rest are closed entries.
+func TestServeWeb_RememberedProjectsAreClosedNotOpenedAtStartup(t *testing.T) {
+	workspace := initialisedDir(t)
+	unreachable := filepath.Join(t.TempDir(), "not-there")
+
+	store := filepath.Join(t.TempDir(), "projects.json")
+	if err := projects.SavePaths(store, []string{unreachable}); err != nil {
+		t.Fatalf("SavePaths: %v", err)
+	}
+
+	annR, annW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+	_, done := startServeWeb(t, webRunConfig{
+		Workspace: workspace, NoOpen: true, StorePath: store,
+	}, webIO{Announce: annW, Stdin: stdinR})
+	d := readAnnounce(t, annR)
+
+	req, _ := http.NewRequest(http.MethodGet, d.URL+"/api/projects", nil)
+	req.Header.Set("Authorization", "Bearer "+d.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/projects: %v", err)
+	}
+	var body struct {
+		Projects []struct {
+			Path  string `json:"path"`
+			State string `json:"state"`
+		} `json:"projects"`
+	}
+	derr := json.NewDecoder(resp.Body).Decode(&body)
+	_ = resp.Body.Close()
+	if derr != nil {
+		t.Fatalf("decode /api/projects: %v", derr)
+	}
+
+	var got string
+	for _, p := range body.Projects {
+		if filepath.Clean(p.Path) == filepath.Clean(unreachable) {
+			got = p.State
+		}
+	}
+	if got == "" {
+		t.Fatalf("the remembered path is missing from the list: %+v", body.Projects)
+	}
+	if got != string(projects.StateClosed) {
+		t.Fatalf("remembered path state is %q, want %q — startup must not try to open it",
+			got, projects.StateClosed)
+	}
+
+	_ = stdinW.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveWeb after stdin EOF: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("stdin EOF did not shut the server down")
+	}
+
+	// And the list still holds both: startup neither dropped the unreachable
+	// path nor forgot the workspace it opened.
+	remembered, lerr := projects.LoadPaths(store)
+	if lerr != nil {
+		t.Fatalf("LoadPaths: %v", lerr)
+	}
+	foundUnreachable, foundWorkspace := false, false
+	for _, p := range remembered {
+		switch filepath.Clean(p) {
+		case filepath.Clean(unreachable):
+			foundUnreachable = true
+		case filepath.Clean(workspace):
+			foundWorkspace = true
+		}
+	}
+	if !foundUnreachable {
+		t.Fatalf("the unreachable path was dropped from %v; only Forget may remove an entry", remembered)
+	}
+	if !foundWorkspace {
+		t.Fatalf("the startup workspace is not remembered: %v", remembered)
 	}
 }
 

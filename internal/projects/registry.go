@@ -260,35 +260,6 @@ func (r *Registry) Paths() []string {
 	return out
 }
 
-// AddErrored records a project that could not be opened, so a path the user had
-// open comes back visible with its reason rather than vanishing.
-func (r *Registry) AddErrored(path, reason string) Project {
-	abs, _ := filepath.Abs(path)
-	id, err := cache.ComputeProjectID(abs)
-	if err != nil {
-		id = "path:" + abs
-	}
-	meta := Project{
-		ID:       id,
-		Path:     abs,
-		Name:     filepath.Base(abs),
-		State:    StateError,
-		Error:    reason,
-		OpenedAt: time.Now().Unix(),
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if old, ok := r.byID[id]; ok {
-		if old.core != nil {
-			return old.meta // a ready project outranks a stale failure report
-		}
-		delete(r.byPath, old.meta.Path) // another spelling of the same placeholder
-	}
-	r.byID[id] = &entry{meta: meta}
-	r.byPath[abs] = id
-	return meta
-}
-
 func (r *Registry) Shutdown() {
 	r.mu.Lock()
 	entries := make([]*entry, 0, len(r.byID))
