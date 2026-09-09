@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +49,11 @@ type Options struct {
 	// NewProjectHandler builds a handler for one project's core. Required when
 	// Registry is set; NewHandler still serves the project-less /ws.
 	NewProjectHandler func(c *core.Core) (jsonrpc.Handler, func(*jsonrpc.Server))
+	// Known, when non-nil, is the remembered project list. GET /api/projects
+	// returns its entries as closed projects beside the open ones, POST records
+	// what it opened, and DELETE ?forget=1 removes an entry. Nil keeps the
+	// open-only behaviour, which is what a caller with no persistence wants.
+	Known *projects.Store
 }
 
 func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error, err error) {
@@ -231,7 +238,7 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		mux.HandleFunc("/api/projects", api(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case http.MethodGet:
-				writeJSONStatus(w, http.StatusOK, map[string]any{"projects": opts.Registry.List()})
+				writeJSONStatus(w, http.StatusOK, map[string]any{"projects": listProjects(opts)})
 			case http.MethodPost:
 				handleOpenProject(ctx, w, r, opts)
 			default:
@@ -244,31 +251,50 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 				return
 			}
 			id := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+			forget := r.URL.Query().Get("forget") == "1"
+
 			// Detach first, so no dial that starts from here on can obtain the
 			// core; then drop the tab (the client sees a normal disconnect); and
 			// only when its handler has returned — nothing can be running on the
 			// core any more — close the core. Order matters: closing while a
 			// handler is live would nil the core's tools under it.
-			c, err := opts.Registry.Detach(id)
-			if err != nil {
+			c, derr := opts.Registry.Detach(id)
+			if derr == nil && c != nil {
+				settled, done := evict(id, 5*time.Second)
+				if settled {
+					_ = c.Close()
+				} else {
+					// The connection did not wind down in time. The project is
+					// already gone from the registry; its core closes the moment
+					// the connection finally ends, not before. Accepted: such a
+					// core is no longer reachable by Registry.Shutdown, so at
+					// process exit it closes when the server ctx ends the
+					// connection — possibly after runWeb has returned.
+					go func() { <-done; _ = c.Close() }()
+				}
+			}
+
+			// Closing leaves the project remembered; only forget removes it.
+			// A project that was already closed is not in the registry, so
+			// Detach failed above — forgetting it must still succeed.
+			forgot := false
+			if forget && opts.Known != nil {
+				path, ok := opts.Known.PathForID(id)
+				if ok {
+					var ferr error
+					forgot, ferr = opts.Known.Forget(path)
+					if ferr != nil {
+						writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+							"error": "forget_failed", "detail": ferr.Error(),
+						})
+						return
+					}
+				}
+			}
+
+			if derr != nil && !forgot {
 				writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
 				return
-			}
-			if c == nil { // an errored placeholder: no core, no socket
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			settled, done := evict(id, 5*time.Second)
-			if settled {
-				_ = c.Close()
-			} else {
-				// The connection did not wind down in time. The project is
-				// already gone from the registry; its core closes the moment
-				// the connection finally ends, not before. Accepted: such a
-				// core is no longer reachable by Registry.Shutdown, so at
-				// process exit it closes when the server ctx ends the
-				// connection — possibly after runWeb has returned.
-				go func() { <-done; _ = c.Close() }()
 			}
 			w.WriteHeader(http.StatusNoContent)
 		}))
@@ -371,10 +397,48 @@ func authorized(r *http.Request, token string) bool {
 	return strings.TrimSpace(r.URL.Query().Get("token")) == token
 }
 
+// listProjects returns the open projects followed by the remembered ones the
+// core does not hold. Open outranks remembered: a project that is both appears
+// once, as open, because that entry carries its real state and opened_at.
+func listProjects(opts Options) []projects.Project {
+	open := opts.Registry.List()
+	if opts.Known == nil {
+		return open
+	}
+	seen := make(map[string]bool, len(open))
+	for _, p := range open {
+		seen[p.ID] = true
+	}
+	closed := make([]projects.Project, 0, len(opts.Known.Paths()))
+	for _, path := range opts.Known.Paths() {
+		p, ok := projects.ClosedProject(path)
+		if !ok || seen[p.ID] {
+			continue
+		}
+		seen[p.ID] = true
+		closed = append(closed, p)
+	}
+	sort.Slice(closed, func(i, j int) bool { return closed[i].Path < closed[j].Path })
+	return append(open, closed...)
+}
+
 func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// remember records a freshly opened project so the rail still shows it after a
+// restart. A write failure is reported on stderr rather than failing the open:
+// the project is open, and the user's next action should not be blocked by a
+// list that could not be saved.
+func remember(opts Options, path string) {
+	if opts.Known == nil {
+		return
+	}
+	if err := opts.Known.Add(path); err != nil {
+		fmt.Fprintf(os.Stderr, "[orchestra] could not remember %s: %v\n", path, err)
+	}
 }
 
 // handleOpenProject implements POST /api/projects. The status codes and error
@@ -395,6 +459,7 @@ func handleOpenProject(ctx context.Context, w http.ResponseWriter, r *http.Reque
 
 	p, err := opts.Registry.Open(ctx, req.Path)
 	if err == nil {
+		remember(opts, p.Path)
 		writeJSONStatus(w, http.StatusCreated, p)
 		return
 	}
@@ -409,6 +474,7 @@ func handleOpenProject(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		}
 		p, err = opts.Registry.Open(ctx, req.Path)
 		if err == nil {
+			remember(opts, p.Path)
 			writeJSONStatus(w, http.StatusCreated, p)
 			return
 		}
