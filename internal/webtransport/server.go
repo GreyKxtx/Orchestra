@@ -3,7 +3,9 @@ package webtransport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/orchestra/orchestra/internal/projects"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
 
@@ -28,6 +31,13 @@ type Options struct {
 	// callback that attaches that connection's server to it. Called once per
 	// accepted WebSocket.
 	NewHandler func() (jsonrpc.Handler, func(*jsonrpc.Server))
+	// Registry, when non-nil, enables /api/projects and the ?project= form of
+	// /ws. Nil keeps the original single-core behaviour.
+	Registry *projects.Registry
+	// InitProject initialises a directory for POST /api/projects {"init":true}.
+	// Injected rather than imported so this package does not depend on
+	// internal/cli.
+	InitProject func(ctx context.Context, root string) error
 }
 
 func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error, err error) {
@@ -112,6 +122,31 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 		_ = srv.Serve(connCtx)
 	}))
 
+	if opts.Registry != nil {
+		mux.HandleFunc("/api/projects", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				writeJSONStatus(w, http.StatusOK, map[string]any{"projects": opts.Registry.List()})
+			case http.MethodPost:
+				handleOpenProject(ctx, w, r, opts)
+			default:
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		}))
+		mux.HandleFunc("/api/projects/", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			id := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+			if err := opts.Registry.Close(id); err != nil {
+				writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "project_not_open"})
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}))
+	}
+
 	if opts.Assets != nil {
 		mux.Handle("/", http.FileServer(http.FS(opts.Assets)))
 	}
@@ -157,4 +192,62 @@ func authorized(r *http.Request, token string) bool {
 		return true
 	}
 	return strings.TrimSpace(r.URL.Query().Get("token")) == token
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleOpenProject implements POST /api/projects. The status codes and error
+// strings are the published contract — see the spec's "The contract".
+func handleOpenProject(ctx context.Context, w http.ResponseWriter, r *http.Request, opts Options) {
+	var req struct {
+		Path string `json:"path"`
+		Init bool   `json:"init"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+		return
+	}
+
+	p, err := opts.Registry.Open(ctx, req.Path)
+	if err == nil {
+		writeJSONStatus(w, http.StatusCreated, p)
+		return
+	}
+
+	// An uninitialised directory is initialised only when asked, then reopened.
+	if errors.Is(err, projects.ErrNotInitialized) && req.Init && opts.InitProject != nil {
+		if ierr := opts.InitProject(ctx, req.Path); ierr != nil {
+			writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+				"error": "open_failed", "path": req.Path, "detail": ierr.Error(),
+			})
+			return
+		}
+		p, err = opts.Registry.Open(ctx, req.Path)
+		if err == nil {
+			writeJSONStatus(w, http.StatusCreated, p)
+			return
+		}
+	}
+
+	switch {
+	case errors.Is(err, projects.ErrAlreadyOpen):
+		id, _ := opts.Registry.OpenedIDFor(req.Path)
+		writeJSONStatus(w, http.StatusConflict, map[string]any{"error": "already_open", "id": id})
+	case errors.Is(err, projects.ErrNoSuchDir):
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "no_such_dir", "path": req.Path})
+	case errors.Is(err, projects.ErrNotInitialized):
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]any{"error": "not_initialized", "path": req.Path})
+	default:
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+			"error": "open_failed", "path": req.Path, "detail": err.Error(),
+		})
+	}
 }
