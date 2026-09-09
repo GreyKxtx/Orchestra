@@ -2006,14 +2006,26 @@ async function openBackground(b, projectId) {
   await handshakeFor(b, projectId);
 }
 
-/** Answer a pending request on one project's socket. */
+/**
+ * Answer a pending request on one project's socket.
+ *
+ * The answered-ids set hangs off the bundle handle, not off the module. A
+ * module-level set would be shared by every test in the file, and the keys
+ * collide across tests: the socket url is fixed (`127.0.0.1:9`), project ids
+ * repeat (`A`, `B`), and each bundle's rpc ids restart at 1 — so the second
+ * test's first request would look already answered and this helper would fail
+ * with "no unanswered core.health".
+ */
 function answerOn(b, projectId, method, result) {
+  if (!b.__answered) {
+    b.__answered = new Set();
+  }
   const req = b.sent.find(
     (m) =>
       m.method === method &&
       m.id !== undefined &&
       String(m.url).includes(`project=${encodeURIComponent(projectId)}`) &&
-      !answered.has(m.url + ":" + m.id)
+      !b.__answered.has(m.url + ":" + m.id)
   );
   assert.ok(
     req,
@@ -2021,12 +2033,10 @@ function answerOn(b, projectId, method, result) {
       .map((m) => m.method + "@" + m.url)
       .join(", ")}`
   );
-  answered.add(req.url + ":" + req.id);
+  b.__answered.add(req.url + ":" + req.id);
   b.deliverTo(projectId, { jsonrpc: "2.0", id: req.id, result });
   return req;
 }
-
-const answered = new Set();
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
