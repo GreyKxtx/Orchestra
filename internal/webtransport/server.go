@@ -264,7 +264,10 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 			} else {
 				// The connection did not wind down in time. The project is
 				// already gone from the registry; its core closes the moment
-				// the connection finally ends, not before.
+				// the connection finally ends, not before. Accepted: such a
+				// core is no longer reachable by Registry.Shutdown, so at
+				// process exit it closes when the server ctx ends the
+				// connection — possibly after runWeb has returned.
 				go func() { <-done; _ = c.Close() }()
 			}
 			w.WriteHeader(http.StatusNoContent)

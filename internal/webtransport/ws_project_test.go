@@ -212,7 +212,10 @@ func TestWS_DialRacingDeleteNeverServesAClosedCore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iteration %d open: %v", i, err)
 		}
+		// No t.Fatal from these goroutines (testing forbids FailNow off the test
+		// goroutine): they report through delErr and the check runs after Wait.
 		var wg sync.WaitGroup
+		var delErr error
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
@@ -229,9 +232,23 @@ func TestWS_DialRacingDeleteNeverServesAClosedCore(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			doJSON(t, http.MethodDelete, base+"/api/projects/"+p.ID, nil)
+			req, err := http.NewRequest(http.MethodDelete, base+"/api/projects/"+p.ID, nil)
+			if err != nil {
+				delErr = err
+				return
+			}
+			req.Header.Set("Authorization", "Bearer secret")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				delErr = err
+				return
+			}
+			_ = resp.Body.Close()
 		}()
 		wg.Wait()
+		if delErr != nil {
+			t.Fatalf("iteration %d DELETE: %v", i, delErr)
+		}
 		// Whatever the interleaving, the project must be closable and re-openable.
 		_, _ = doJSON(t, http.MethodDelete, base+"/api/projects/"+p.ID, nil)
 	}
