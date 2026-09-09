@@ -7,7 +7,7 @@
     "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
-    "notification:default",
+    "notification:allow-notify",
     "dialog:allow-open"
   ]
 }
