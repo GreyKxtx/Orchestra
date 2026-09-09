@@ -24,7 +24,7 @@ const root = path.join(__dirname, "..");
  * frame in, `post` posts a renderer message, `inbound` are the messages the
  * renderer received.
  */
-export function loadBundle() {
+export function loadBundle(opts = {}) {
   const src = fs.readFileSync(path.join(root, "static", "web.bundle.js"), "utf8");
 
   const sent = [];
@@ -94,7 +94,7 @@ export function loadBundle() {
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     cancelAnimationFrame: (h) => clearTimeout(h),
     WebSocket: FakeWebSocket,
-    location: { protocol: "http:", host: "127.0.0.1:9", search: "?token=t" },
+    location: { protocol: "http:", host: "127.0.0.1:9", search: opts.search ?? "" },
     sessionStorage: {
       getItem: (k) => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => store.set(k, String(v)),
@@ -158,6 +158,9 @@ export function loadBundle() {
     deliver: (obj) => socket.emit("message", { data: JSON.stringify(obj) }),
     post: (msg) => sandbox.window.postMessage(msg),
     close: () => socket.emit("close", {}),
+    get socketURL() {
+      return socket ? socket.url : "";
+    },
   };
 }
 
@@ -374,4 +377,22 @@ test("an unknown server request is still answered, or the core waits forever", a
   b.deliver({ jsonrpc: "2.0", id: "srv-9", method: "some/futureRequest", params: {} });
   const reply = b.sent.find((m) => m.id === "srv-9");
   assert.ok(reply, "an unhandled server request left the core hanging");
+});
+
+test("the socket URL carries no token — the cookie authenticates", async () => {
+  const b = loadBundle();
+  assert.ok(b.socketURL, "the bundle did not expose the socket URL it dialled");
+  assert.ok(
+    !/token=/.test(b.socketURL),
+    `socket URL still threads a token (${b.socketURL}); the cookie is the credential now`
+  );
+});
+
+test("a project id reaches the socket URL", async () => {
+  const b = loadBundle({ search: "?project=sha256%3Aabc" });
+  assert.match(
+    b.socketURL,
+    /[?&]project=sha256%3Aabc/,
+    `socket URL did not carry the project (${b.socketURL})`
+  );
 });

@@ -447,10 +447,10 @@ func (r *Runner) Close() error {
 		_ = r.browserClient.Close()
 		r.browserClient = nil
 	}
-	if r.lspManager != nil {
-		r.lspManager.Close()
-		r.lspManager = nil
-	}
+	// lspManager is immutable after construction: background warmups and
+	// delegates read it without a lock, so Close makes the manager inert
+	// rather than nil-ing the field (lsp.Manager.Close is idempotent).
+	r.lspManager.Close()
 	r.ckgMu.Lock()
 	store := r.ckgStore
 	r.ckgStore = nil

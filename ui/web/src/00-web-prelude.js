@@ -51,10 +51,15 @@
   /** @type {((msg: any) => void) | null} */
   let onNotification = null; // set by 20-adapter-events.js
 
-  function socketURL() {
-    const token = new URLSearchParams(location.search).get("token") || "";
+  /**
+   * The socket for a project. No token: the page was served with an HttpOnly
+   * cookie, which the browser attaches to the handshake by itself.
+   * @param {string} projectId
+   */
+  function socketURL(projectId) {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    return `${scheme}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+    const base = `${scheme}//${location.host}/ws`;
+    return projectId ? `${base}?project=${encodeURIComponent(projectId)}` : base;
   }
 
   /** @param {string} method @param {any} params @returns {Promise<any>} */
@@ -96,8 +101,10 @@
     }
   }
 
-  function connect() {
-    ws = new WebSocket(socketURL());
+  /** @param {string} [projectId] */
+  function connect(projectId) {
+    const id = projectId || new URLSearchParams(location.search).get("project") || "";
+    ws = new WebSocket(socketURL(id));
     ws.addEventListener("open", () => {
       toRenderer({ type: "status", status: "ok" });
       onConnected();

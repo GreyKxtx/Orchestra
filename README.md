@@ -458,10 +458,20 @@ on the first tool needing approval.
 - `--no-open` — do not launch a browser
 - `--workspace-root` — workspace root (default: current directory)
 
-v1 is chat with streaming, permissions, questions and sessions. One tab at a
-time: a second connection is refused with `409` while the first is live,
-because the core's MCP host binds to one client. Closing the tab ends the
-session and fails any pending permission prompt closed.
+v1 is chat with streaming, permissions, questions and sessions.
+
+`orchestra web` holds several projects at once — one core each. `GET /api/projects`
+lists them, `POST /api/projects {"path":…}` opens one (add `"init":true` to
+initialise a repository that has no `.orchestra.yml`), `DELETE /api/projects/{id}`
+closes one and frees its language servers and index. The open list is remembered
+in `~/.orchestra/projects.json`. The page authenticates with an `HttpOnly` cookie
+the server sets on first load, so no token lives in page scripts or the URL; the
+cookie is per browser profile, so run one `orchestra web` per profile.
+
+One tab per project: a second connection to the *same* project is refused with
+`409` while the first is live, because that core's MCP host binds to one client.
+Different projects never contend. Closing the tab ends the session and fails any
+pending permission prompt closed.
 
 ---
 

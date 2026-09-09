@@ -165,7 +165,7 @@ can be tested with two real cores and no server.
   `Open` returns `ErrAlreadyOpen` wrapped so `errors.Is` matches, and the existing
   project's ID reachable via `OpenedIDFor(path)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/projects/registry_test.go`:
 
@@ -329,7 +329,7 @@ func TestRegistry_NameIsTheDirectoryName(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/projects/ -run TestRegistry -v
@@ -337,7 +337,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: FAIL to build — `undefined: NewRegistry`, `undefined: ErrAlreadyOpen`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `internal/projects/registry.go`:
 
@@ -585,7 +585,7 @@ add that guard:
 	}
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/projects/ -run TestRegistry -v
@@ -593,7 +593,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: PASS, all five.
 
-- [ ] **Step 5: Mutation-verify the independent-cores test**
+- [x] **Step 5: Mutation-verify the independent-cores test**
 
 This is the test that proves the whole design. In `Open`, replace the per-path
 core with a shared one by returning the first core for every path: change
@@ -610,13 +610,13 @@ core with a shared one by returning the first core for every path: change
 Run `-run TestRegistry_TwoProjectsHaveIndependentCores`; expected FAIL with "both
 projects resolved to the SAME core". **Restore** and re-run to confirm PASS.
 
-- [ ] **Step 6: Race check and full verification**
+- [x] **Step 6: Race check and full verification**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -race -count=1 ./internal/projects/... && go test -count=1 -timeout 300s ./... > /tmp/t1.log 2>&1 && echo GREEN || echo RED
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && git add internal/projects/ && git commit -m "feat(projects): registry of open projects, one core each"
@@ -641,7 +641,7 @@ A registry that forgets on restart is not a registry. Paths only — never token
   func SavePaths(path string, paths []string) error // 0600
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/projects/store_test.go`:
 
@@ -720,7 +720,7 @@ func TestStorePath_IsUnderTheOrchestraHome(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/projects/ -run TestStore -v
@@ -728,7 +728,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: FAIL to build — `undefined: SavePaths`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `internal/projects/store.go`:
 
@@ -786,7 +786,7 @@ func SavePaths(path string, paths []string) error {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/projects/ -run TestStore -v
@@ -794,13 +794,13 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: PASS, all four.
 
-- [ ] **Step 5: Mutation-verify the corrupt-file test**
+- [x] **Step 5: Mutation-verify the corrupt-file test**
 
 In `LoadPaths`, change the `json.Unmarshal` failure branch from `return nil, nil`
 to `return nil, err`. Run `-run TestStore_CorruptFileIsNotFatal`; expected FAIL
 with "a corrupt list must not stop the server from starting". Restore, re-run.
 
-- [ ] **Step 6: Full verification and commit**
+- [x] **Step 6: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -count=1 ./internal/projects/... && go test -count=1 -timeout 300s ./... > /tmp/t2.log 2>&1 && echo GREEN || echo RED
@@ -832,7 +832,7 @@ parameter.
   func initProject(ctx context.Context, root string, opts InitOptions) error
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create the test in `internal/cli/init_project_test.go`:
 
@@ -892,7 +892,7 @@ func TestInitProject_IsIdempotent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/cli/ -run TestInitProject -v
@@ -900,7 +900,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: FAIL to build — `undefined: initProject`, `undefined: InitOptions`.
 
-- [ ] **Step 3: Move the body**
+- [x] **Step 3: Move the body**
 
 Create `internal/cli/init_project.go` containing `InitOptions` and
 `initProject(ctx, root, opts)`. Its body is the **current body of `runInit`
@@ -949,7 +949,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 Remove imports from `init.go` that are now unused, and add the ones
 `init_project.go` needs.
 
-- [ ] **Step 4: Run the new tests AND the three existing callers**
+- [x] **Step 4: Run the new tests AND the three existing callers**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/cli/ -run "TestInitProject|OrchestraMD|MemoryStats" -v
@@ -960,7 +960,7 @@ Expected: PASS. **The three pre-existing tests that call `runInit(initCmd, nil)`
 without being edited.** If any needs a change, the extraction altered behaviour:
 stop, re-read the diff, and fix the extraction rather than the test.
 
-- [ ] **Step 5: Mutation-verify that the root parameter is actually honoured**
+- [x] **Step 5: Mutation-verify that the root parameter is actually honoured**
 
 In `initProject`, replace the first use of `root` in
 `configPath := filepath.Join(root, ".orchestra.yml")` with `os.Getwd()`'s result:
@@ -973,7 +973,7 @@ In `initProject`, replace the first use of `root` in
 Run `-run TestInitProject_InitialisesAnArbitraryDirectory`; expected FAIL with
 ".orchestra.yml missing after init". Restore and re-run.
 
-- [ ] **Step 6: Full verification and commit**
+- [x] **Step 6: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -count=1 ./internal/cli/... && go test -count=1 -timeout 300s ./... > /tmp/t3.log 2>&1 && echo GREEN || echo RED
@@ -1000,7 +1000,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
   InitProject func(ctx context.Context, root string) error
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/webtransport/projects_api_test.go`:
 
@@ -1189,7 +1189,7 @@ func TestAPI_RequiresAuth(t *testing.T) {
 
 Add `"os"` to the imports.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/webtransport/ -run TestAPI -v
@@ -1197,7 +1197,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: FAIL to build — `unknown field Registry in struct literal`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `internal/webtransport/server.go`, add to `Options`:
 
@@ -1305,7 +1305,7 @@ func handleOpenProject(ctx context.Context, w http.ResponseWriter, r *http.Reque
 Add `"errors"`, `"io"` and `"github.com/orchestra/orchestra/internal/projects"` to
 the imports.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/webtransport/ -run TestAPI -v
@@ -1313,13 +1313,13 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: PASS, all five.
 
-- [ ] **Step 5: Mutation-verify the auth requirement**
+- [x] **Step 5: Mutation-verify the auth requirement**
 
 Remove `requireToken(token, …)` from the `/api/projects` registration, leaving the
 bare handler. Run `-run TestAPI_RequiresAuth`; expected FAIL with "unauthenticated
 GET = 200, want 401". Restore and re-run.
 
-- [ ] **Step 6: Full verification and commit**
+- [x] **Step 6: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -race -count=1 ./internal/webtransport/... && go test -count=1 -timeout 300s ./... > /tmp/t4.log 2>&1 && echo GREEN || echo RED
@@ -1344,7 +1344,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
   ```
   The `busy atomic.Bool` becomes a per-project set.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/webtransport/ws_project_test.go`:
 
@@ -1504,7 +1504,7 @@ func TestWS_UnknownProjectIs404(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/webtransport/ -run TestWS_ -v
@@ -1512,7 +1512,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: FAIL to build — `unknown field NewProjectHandler`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Replace the `var busy atomic.Bool` declaration with a per-project guard:
 
@@ -1585,7 +1585,7 @@ and rewrite the `/ws` handler's opening:
 
 Add `"sync"` and `"strings"` (already imported) and `"github.com/orchestra/orchestra/internal/core"` to the imports; drop `"sync/atomic"` if nothing else uses it.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/webtransport/ -v
@@ -1597,13 +1597,13 @@ Expected: PASS — the three new tests **and** every test from the v15 transport
 `project` parameter the guard key is `""`, so the project-less behaviour is
 unchanged.
 
-- [ ] **Step 5: Mutation-verify the per-project guard**
+- [x] **Step 5: Mutation-verify the per-project guard**
 
 Change `guardKey := projectID` to `guardKey := ""`, making the guard global
 again. Run `-run TestWS_ConnectionGuardIsPerProject`; expected FAIL with "the
 guard is global, not per project". Restore and re-run.
 
-- [ ] **Step 6: Mutation-verify the project routing**
+- [x] **Step 6: Mutation-verify the project routing**
 
 Change `return opts.NewProjectHandler(c)` to ignore `c` and use the first
 project's core:
@@ -1622,7 +1622,7 @@ project's core:
 Run `-run TestWS_TwoProjectsServeTheirOwnCores`; expected FAIL with "both sockets
 served the same workspace". Restore and re-run.
 
-- [ ] **Step 7: Full verification and commit**
+- [x] **Step 7: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -race -count=1 ./internal/webtransport/... && go test -count=1 -timeout 300s ./... > /tmp/t5.log 2>&1 && echo GREEN || echo RED
@@ -1643,7 +1643,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
   handler is wrapped so that a request carrying a valid token in the query sets
   the cookie and redirects to the same path without it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/webtransport/cookie_test.go`:
 
@@ -1766,7 +1766,7 @@ func TestCookie_NoCredentialIsRejected(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/webtransport/ -run TestCookie -v
@@ -1775,7 +1775,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 Expected: FAIL — `TestCookie_PageLoadSetsCookieAndRedirects` gets 200 with no
 cookie; `TestCookie_AloneAuthenticates` gets 401.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `authorized`, add the cookie before the query-parameter check:
 
@@ -1825,7 +1825,7 @@ Replace the asset registration with a wrapper:
 	}
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/webtransport/ -v
@@ -1833,7 +1833,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: PASS — the four cookie tests and everything already there.
 
-- [ ] **Step 5: Mutation-verify the cookie check (the spec names this one)**
+- [x] **Step 5: Mutation-verify the cookie check (the spec names this one)**
 
 Remove the cookie branch from `authorized`. Run `-run TestCookie_AloneAuthenticates`;
 expected FAIL with "cookie-only request = 401, want 200". Restore.
@@ -1850,7 +1850,7 @@ Run `-run TestCookie_WrongCookieIsRejected`; expected FAIL with "wrong cookie =
 200, want 401". **Restore and re-run both.** This second mutation is the one that
 matters: it is the difference between a credential and a decoration.
 
-- [ ] **Step 6: Full verification and commit**
+- [x] **Step 6: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -race -count=1 ./internal/webtransport/... && go test -count=1 -timeout 300s ./... > /tmp/t6.log 2>&1 && echo GREEN || echo RED
@@ -1872,7 +1872,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
   `InitProject` to `webtransport.Serve`. The persisted list is saved whenever it
   changes.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `internal/cli/web_test.go`:
 
@@ -1919,7 +1919,7 @@ Add the imports `"context"`, `"github.com/orchestra/orchestra/internal/config"`,
 `"github.com/orchestra/orchestra/internal/core"`,
 `"github.com/orchestra/orchestra/internal/projects"`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/cli/ -run TestRestoreProjects -v
@@ -1927,7 +1927,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: FAIL to build — `undefined: restoreProjects`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `internal/cli/web.go`, add:
 
@@ -2013,7 +2013,7 @@ imports.
 or closed through the API is captured by the shutdown save. That is deliberate
 and enough for v1 — the list is a convenience, not a transaction log.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go test ./internal/cli/ -run "TestRestoreProjects|TestWriteWebDiscovery|TestCleanupStaleDiscovery|TestWebAssets" -v
@@ -2021,13 +2021,13 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: PASS.
 
-- [ ] **Step 5: Mutation-verify the errored-project behaviour**
+- [x] **Step 5: Mutation-verify the errored-project behaviour**
 
 In `restoreProjects`, replace `reg.AddErrored(p, err.Error())` with `continue`.
 Run `-run TestRestoreProjects`; expected FAIL with "a path that fails to open
 must still be listed, not dropped silently". Restore and re-run.
 
-- [ ] **Step 6: Smoke-test by hand**
+- [x] **Step 6: Smoke-test by hand**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build -o /tmp/ow.exe ./cmd/orchestra
@@ -2049,7 +2049,7 @@ Expected: one project, then a second created with `.orchestra.yml` written, then
 two listed. Record what you saw in the task report. Kill the process and clean up
 `/tmp/p1 /tmp/p2 /tmp/ow.exe`.
 
-- [ ] **Step 7: Full verification and commit**
+- [x] **Step 7: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -race -count=1 ./internal/cli/... ./internal/webtransport/... ./internal/projects/... && go test -count=1 -timeout 300s ./... > /tmp/t7.log 2>&1 && echo GREEN || echo RED
@@ -2072,7 +2072,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
   `?project=<id>` when a project id is known, and **no token**. `connect()`
   accepts an optional project id.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `ui/web/scripts/adapter-test.mjs`:
 
@@ -2109,7 +2109,7 @@ export function loadBundle(opts = {}) {
 Change the existing `location` line from `search: "?token=t"` to
 `search: opts.search ?? ""`, and add `socketURL` to the returned handle.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && node ui/web/scripts/adapter-test.mjs 2>&1 | grep -E "^✖|^✔" | head -15
@@ -2117,7 +2117,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: the two new tests fail — the URL still contains `token=`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `ui/web/src/00-web-prelude.js`, replace `socketURL` and the `connect` signature:
 
@@ -2144,7 +2144,7 @@ In `ui/web/src/00-web-prelude.js`, replace `socketURL` and the `connect` signatu
 picks the project from the URL when there is one and otherwise uses the
 project-less default — the behaviour the server preserves for exactly this case.
 
-- [ ] **Step 4: Write the watcher**
+- [x] **Step 4: Write the watcher**
 
 Create `ui/web/scripts/watch-web.mjs`:
 
@@ -2202,7 +2202,7 @@ for (const dir of watched) {
 console.log("watching for changes — Ctrl+C to stop");
 ```
 
-- [ ] **Step 5: Rebundle and run everything**
+- [x] **Step 5: Rebundle and run everything**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/adapter-test.mjs 2>&1 | grep -cE "^✔" && node ui/web/scripts/check-web.mjs 2>&1 | tail -2
@@ -2210,7 +2210,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 
 Expected: 13 passing tests, `web checks passed`.
 
-- [ ] **Step 6: Mutation-verify the token removal**
+- [x] **Step 6: Mutation-verify the token removal**
 
 Put the token back into `socketURL`:
 
@@ -2221,7 +2221,7 @@ Put the token back into `socketURL`:
 Rebundle, run `adapter-test.mjs`; expected FAIL with "socket URL still threads a
 token". Restore, rebundle, re-run.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && git add ui/web/ && git commit -m "feat(web): dial /ws by project, with the cookie as the credential"
@@ -2241,7 +2241,7 @@ cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-regi
 - Consumes: everything above.
 - Produces: no code.
 
-- [ ] **Step 1: PROTOCOL.md**
+- [x] **Step 1: PROTOCOL.md**
 
 In the WebSocket subsection, after the token forms, add:
 
@@ -2263,7 +2263,7 @@ MCP-промпты им нечем.
 query-параметр, а не новый метод или новую форму сообщения.
 ```
 
-- [ ] **Step 2: READMEs**
+- [x] **Step 2: READMEs**
 
 Replace the "One tab at a time" sentence in `README.md` with:
 
@@ -2282,26 +2282,26 @@ pending permission prompt closed.
 
 Write the equivalent in `README.ru.md`, matching that file's tone.
 
-- [ ] **Step 3: `ui/desktop/README.md`**
+- [x] **Step 3: `ui/desktop/README.md`**
 
 Replace "Стек: TBD — рассматриваются Tauri и Electron" with the decision that was
 actually made: Tauri, over the same `ui/web` frontend, which is why that frontend
 uses no Chromium-only APIs. Note that the multi-project registry this plan builds
 is part A of three, and the desktop shell and packaging are parts B and C.
 
-- [ ] **Step 4: CI**
+- [x] **Step 4: CI**
 
 The `vscode-extension` job already runs `node ui/web/scripts/check-web.mjs` and
 `node ui/web/scripts/adapter-test.mjs`; no change is needed there. Confirm by
 reading `.github/workflows/ci.yml` and say so explicitly in the task report
 rather than leaving it unverified.
 
-- [ ] **Step 5: Verify every file:line reference in the new prose**
+- [x] **Step 5: Verify every file:line reference in the new prose**
 
 Line numbers moved during this work. Re-check each reference written in Steps 1-3
 against the tree as it now stands, and fix any that drifted.
 
-- [ ] **Step 6: Full verification and commit**
+- [x] **Step 6: Full verification and commit**
 
 ```bash
 cd "C:/Users/KorsunAndrii/Desktop/Project/Orchestra/.worktrees/feat-project-registry" && go build ./... && go vet ./... && go test -count=1 -timeout 300s ./... > /tmp/t9-root.log 2>&1; echo "root=$?"
