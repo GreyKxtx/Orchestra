@@ -59,13 +59,23 @@ func Load(workspaceRoot, id string) (*Snapshot, error) {
 	return ParseSnapshot(data, id)
 }
 
-// Delete removes a session file. Missing file is not an error.
+// Delete removes a session file and its trajectory sidecar. Missing files are
+// not an error.
+//
+// The sidecar's name is spelled out here rather than imported from
+// internal/trajectory: that package is a consumer of session storage, and
+// importing it back would invert the dependency. trajectory.Path is the same
+// string, and internal/trajectory has a test that fails if the two drift.
 func Delete(workspaceRoot, id string) error {
 	if workspaceRoot == "" || id == "" {
 		return nil
 	}
 	if err := os.Remove(snapshotPath(workspaceRoot, id)); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	sidecar := filepath.Join(sessionsDir(workspaceRoot), id+".events.jsonl")
+	if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("sessionfile: remove trajectory sidecar: %w", err)
 	}
 	return nil
 }
