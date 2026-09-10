@@ -36,6 +36,7 @@ const order = [
   [webDir, "10-adapter-session.js"],
   [webDir, "20-adapter-events.js"],
   [webDir, "30-adapter-asks.js"],
+  [webDir, "40-projects.js"],
   [sharedDir, "99-footer.txt"],
 ];
 
@@ -77,5 +78,6 @@ fs.writeFileSync(path.join(outDir, "web.bundle.js"), out);
 fs.copyFileSync(path.join(root, "index.src.html"), path.join(outDir, "index.html"));
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "chat.css"), path.join(outDir, "chat.css"));
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "logo.png"), path.join(outDir, "logo.png"));
+fs.copyFileSync(path.join(root, "rail.css"), path.join(outDir, "rail.css"));
 
 console.log("bundled ui/web/static (" + out.split(/\r?\n/).length + " lines of JS)");

@@ -1,0 +1,143 @@
+/* The project rail. Web-only: chat.css is shared with the VS Code webview and
+   must not learn about projects. */
+
+#app {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  grid-template-rows: 100%;
+}
+
+/* Everything chat.css lays out sits in the second column. */
+#app > *:not(.project-rail) {
+  grid-column: 2;
+}
+
+.project-rail {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-right: 1px solid rgba(127, 127, 127, 0.25);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.project-rail-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.project-chip {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: 600 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Active: a left marker, not only a tint, so the current project reads at a
+   glance and without relying on hue. */
+.project-chip[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+/* State is carried by a corner badge whose SHAPE differs per state, so the
+   rail is readable in either theme and without colour vision. */
+.project-chip::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.project-chip[data-status="working"]::after {
+  content: "";
+  background: #d18616;
+  animation: project-pulse 1.2s ease-in-out infinite;
+}
+
+.project-chip[data-status="asking"]::after {
+  content: "!";
+  background: #c8372d;
+  color: #fff;
+  font: 700 8px/10px system-ui, sans-serif;
+  text-align: center;
+  border-radius: 3px;
+}
+
+.project-chip[data-state="closed"] {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+@keyframes project-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-chip[data-status="working"]::after { animation: none; }
+}
+
+.project-rail-add {
+  margin-top: auto;
+  width: 36px;
+  height: 36px;
+  border: 1px dashed rgba(127, 127, 127, 0.5);
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: 400 18px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.project-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.project-menu[hidden] { display: none; }
+
+.project-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}

@@ -5,40 +5,100 @@
   // types outside that scope are acknowledged and ignored rather than dropped
   // silently — a no-op the user can see beats a control that does nothing.
 
-  let currentSessionId = "";
-  /** id of the in-flight session.message request, so Stop can cancel it. */
-  let inFlightTurnId = null;
+  /**
+   * Per-project session state. The renderer shows one project at a time, so
+   * exactly one of these is "current"; the others are what a switch restores.
+   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any}>}
+   */
+  const perProject = new Map();
+  let currentProjectId = "";
 
-  /** The workspace the core was started in; filled by the health check. */
-  let workspaceRoot = "";
+  /** @param {string} projectId */
+  function projectState(projectId) {
+    let st = perProject.get(projectId);
+    if (!st) {
+      st = { sessionId: "", inFlightTurnId: null, workspaceRoot: "", status: "idle", pendingAsk: null };
+      perProject.set(projectId, st);
+    }
+    return st;
+  }
 
-  async function onConnected() {
+  /** @param {string} projectId */
+  function forgetProjectState(projectId) {
+    perProject.delete(projectId);
+  }
+
+  /** The state the renderer is currently showing. */
+  function current() {
+    return projectState(currentProjectId);
+  }
+
+  /** @param {string} projectId */
+  async function onConnected(projectId) {
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
     try {
       // core.health is answerable before initialize — it and initialize are the
       // only two methods exempt from the gate (internal/core/rpc_handler.go:76)
       // — and it is where project_root and project_id come from.
-      const health = await wsSend("core.health", {});
-      workspaceRoot = health.workspace_root || "";
-      await wsSend("initialize", {
-        project_root: workspaceRoot,
+      const health = await conn.send("core.health", {});
+      st.workspaceRoot = health.workspace_root || "";
+      await conn.send("initialize", {
+        project_root: st.workspaceRoot,
         project_id: health.project_id || "",
         protocol_version: health.protocol_version,
         ops_version: health.ops_version,
         tools_version: health.tools_version,
       });
-      const started = await wsSend("session.start", {});
-      currentSessionId = started.session_id || "";
-      toRenderer({
-        type: "header",
-        model: health.model || "",
-        provider: health.provider || "",
-        sessionId: currentSessionId,
-      });
-      toRenderer({ type: "ready" });
-      await refreshSessionList();
+      const started = await conn.send("session.start", {});
+      st.sessionId = started.session_id || "";
+      if (projectId === currentProjectId) {
+        toRenderer({
+          type: "header",
+          model: health.model || "",
+          provider: health.provider || "",
+          sessionId: st.sessionId,
+        });
+        toRenderer({ type: "ready" });
+        await refreshSessionList();
+      }
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      const message = String(err && err.message ? err.message : err);
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message });
+      }
+      st.status = "idle";
     }
+    renderProjects();
+  }
+
+  /**
+   * Make projectId the one the renderer shows. Repaints from the core rather
+   * than from a buffer — session.get is what makes holding no background
+   * scrollback affordable — and re-raises a prompt the project was waiting on.
+   * @param {string} projectId
+   */
+  async function activateProject(projectId) {
+    currentProjectId = projectId;
+    const st = projectState(projectId);
+    setActiveConn(connFor(projectId));
+
+    toRenderer({ type: "clearMessages" });
+    if (st.sessionId) {
+      try {
+        const view = await wsSend("session.get", { session_id: st.sessionId });
+        toRenderer({ type: "history", messages: view.ui_messages || [] });
+      } catch (err) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
+    }
+    toRenderer({ type: "header", sessionId: st.sessionId });
+    toRenderer({ type: "turnInFlight", inFlight: st.inFlightTurnId !== null });
+    if (st.pendingAsk) {
+      toRenderer(st.pendingAsk.rendererMessage);
+    }
+    await refreshSessionList();
+    renderProjects();
   }
 
   async function refreshSessionList() {
@@ -63,8 +123,8 @@
         return;
 
       case "cancelTurn":
-        if (inFlightTurnId !== null) {
-          wsNotify("$/cancelRequest", { id: inFlightTurnId });
+        if (current().inFlightTurnId !== null) {
+          wsNotify("$/cancelRequest", { id: current().inFlightTurnId });
         }
         return;
 
@@ -85,6 +145,14 @@
         // Answered in 30-adapter-asks.js, which owns the JSON-RPC ids.
         return;
 
+      case "switchProject":
+        void switchProject(msg.projectId || "");
+        return;
+
+      case "openProjectConnection":
+        void ensureConn(msg.projectId || "");
+        return;
+
       default:
         // Everything else belongs to a VS Code affordance this host does not
         // have (opening editors, applying pending diffs, the settings webview).
@@ -98,16 +166,19 @@
 
   /** @param {any} msg */
   async function sendTurn(msg) {
-    if (!currentSessionId) {
+    const st = current();
+    if (!st.sessionId) {
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
     toRenderer({ type: "userEcho", text: msg.text || "" });
     toRenderer({ type: "turnStart" });
     toRenderer({ type: "turnInFlight", inFlight: true });
+    st.status = "working";
+    renderProjects();
 
     const turn = wsSendCancellable("session.message", {
-      session_id: currentSessionId,
+      session_id: st.sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
       // disk. Access mode still gates the shell (allow_exec below).
@@ -115,13 +186,15 @@
       allow_exec: Boolean(msg.allowExec),
       profile: msg.profile || "",
     });
-    inFlightTurnId = turn.id;
+    st.inFlightTurnId = turn.id;
     try {
       await turn.done;
     } catch (err) {
       toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
     } finally {
-      inFlightTurnId = null;
+      st.inFlightTurnId = null;
+      st.status = "idle";
+      renderProjects();
       toRenderer({ type: "turnInFlight", inFlight: false });
       toRenderer({ type: "turnComplete" });
     }
@@ -129,43 +202,19 @@
 
   /** @param {string | undefined} sessionId */
   async function startSession(sessionId) {
+    const st = current();
     try {
       const params = sessionId ? { session_id: sessionId } : {};
       const started = await wsSend("session.start", params);
-      currentSessionId = started.session_id || "";
+      st.sessionId = started.session_id || "";
       toRenderer({ type: "clearMessages" });
       if (started.restored) {
-        const view = await wsSend("session.get", { session_id: currentSessionId });
+        const view = await wsSend("session.get", { session_id: st.sessionId });
         toRenderer({ type: "history", messages: view.ui_messages || [] });
       }
-      toRenderer({ type: "header", sessionId: currentSessionId });
+      toRenderer({ type: "header", sessionId: st.sessionId });
       await refreshSessionList();
     } catch (err) {
       toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
     }
   }
-
-  // Superseded in 40-projects.js, which owns connections once it exists. Until
-  // then this preserves the single-project behaviour the tests describe.
-  setActiveConn(
-    createConn(new URLSearchParams(location.search).get("project") || "", {
-      onOpen: () => {
-        toRenderer({ type: "status", status: "ok" });
-        void onConnected();
-      },
-      onClose: () => {
-        // A dropped socket ends the session on the core side, so say so plainly
-        // rather than reconnecting into what looks like the same conversation.
-        toRenderer({
-          type: "status",
-          status: "error",
-          detail: "disconnected — reload to start a new session",
-        });
-      },
-      onError: () => {
-        toRenderer({ type: "status", status: "error", detail: "connection error" });
-      },
-      onNotification: (_projectId, msg) => handleNotification(msg),
-      onServerRequest: (_projectId, msg) => handleServerRequest(msg),
-    })
-  );

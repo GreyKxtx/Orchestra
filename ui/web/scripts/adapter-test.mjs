@@ -154,6 +154,12 @@ export function loadBundle(opts = {}) {
   let fetchResponder = () => ({ projects: [] });
   sandbox.fetch = async (url, init) => {
     fetchCalls.push({ url: String(url), init: init || {} });
+    // A real fetch never resolves synchronously; this one must not either. A
+    // caller loads the bundle — which fires 40-projects.js's startup fetch
+    // immediately — and only then calls setFetchResponder(), still on the same
+    // synchronous turn. Reading fetchResponder before yielding would freeze in
+    // the default responder set above, no matter what the test configures.
+    await Promise.resolve();
     const body = fetchResponder(String(url), init || {});
     return {
       ok: true,
@@ -426,4 +432,184 @@ test("a project id reaches the socket URL", async () => {
     /[?&]project=sha256%3Aabc/,
     `socket URL did not carry the project (${b.socketURL})`
   );
+});
+
+/** Drive one project's socket through the handshake to a started session. */
+async function handshakeFor(b, projectId) {
+  b.openFor(projectId);
+  answerOn(b, projectId, "core.health", {
+    workspace_root: "/" + projectId,
+    project_id: projectId,
+    protocol_version: 15,
+    ops_version: 1,
+    tools_version: 14,
+  });
+  await tick();
+  answerOn(b, projectId, "initialize", {});
+  await tick();
+  answerOn(b, projectId, "session.start", { session_id: "s-" + projectId, restored: false });
+  await tick();
+}
+
+/** Open a project's socket without making it active. */
+async function openBackground(b, projectId) {
+  dispatch(b, { type: "openProjectConnection", projectId });
+  await tick();
+  await handshakeFor(b, projectId);
+}
+
+/**
+ * Answer a pending request on one project's socket.
+ *
+ * The answered-ids set hangs off the bundle handle, not off the module. A
+ * module-level set would be shared by every test in the file, and the keys
+ * collide across tests: the socket url is fixed (`127.0.0.1:9`), project ids
+ * repeat (`A`, `B`), and each bundle's rpc ids restart at 1 — so the second
+ * test's first request would look already answered and this helper would fail
+ * with "no unanswered core.health".
+ */
+function answerOn(b, projectId, method, result) {
+  if (!b.__answered) {
+    b.__answered = new Set();
+  }
+  const req = b.sent.find(
+    (m) =>
+      m.method === method &&
+      m.id !== undefined &&
+      String(m.url).includes(`project=${encodeURIComponent(projectId)}`) &&
+      !b.__answered.has(m.url + ":" + m.id)
+  );
+  assert.ok(
+    req,
+    `no unanswered ${method} on project ${projectId}; sent: ${b.sent
+      .map((m) => m.method + "@" + m.url)
+      .join(", ")}`
+  );
+  b.__answered.add(req.url + ":" + req.id);
+  b.deliverTo(projectId, { jsonrpc: "2.0", id: req.id, result });
+  return req;
+}
+
+test("a background project's tool call does not enter the active transcript", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  // B streams assistant text. A is active, so nothing may reach the renderer's
+  // transcript.
+  const before = b.inbound.filter((m) => m.type === "deltaSync").length;
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", content: "hello from B", step: 1 },
+  });
+  await tick();
+  const after = b.inbound.filter((m) => m.type === "deltaSync").length;
+  assert.equal(after, before, "a background project's text was folded into the active transcript");
+});
+
+test("a background project that starts a tool call reports itself as working", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_start", tool_call_id: "t1", tool_call_name: "read", step: 1 },
+  });
+  await tick();
+
+  const railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  assert.ok(railed, "no projectList message was posted after a background event");
+  const bEntry = railed.projects.find((p) => p.id === "B");
+  assert.equal(bEntry.status, "working");
+});
+
+test("a permission request in a background project marks it asking and survives a switch", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    id: 77,
+    method: "permission/request",
+    params: { tool: "bash", command: "ls" },
+  });
+  await tick();
+
+  let railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  assert.equal(railed.projects.find((p) => p.id === "B").status, "asking");
+
+  // No overlay while B is in the background.
+  assert.equal(
+    b.inbound.filter((m) => m.type === "permissionRequest").length,
+    0,
+    "a background project raised an overlay over the active project"
+  );
+
+  // Switching to B raises it, and answering replies on B's socket with B's id.
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+  assert.equal(
+    b.inbound.filter((m) => m.type === "permissionRequest").length,
+    1,
+    "switching to a project that is asking did not raise its prompt"
+  );
+
+  dispatch(b, { type: "permissionReply", approved: true, always: false });
+  await tick();
+  const reply = b.sent.filter((m) => m.id === 77 && m.result !== undefined).pop();
+  assert.ok(reply, "the permission reply never went out");
+  assert.match(reply.url, /project=B/, "the reply went to the wrong project's socket");
+});
+
+test("switching repaints from the core rather than a buffer", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+
+  const get = b.sent.filter((m) => m.method === "session.get").pop();
+  assert.ok(get, "switching did not ask the core for the session");
+  assert.match(get.url, /project=B/);
+  answerOn(b, "B", "session.get", { ui_messages: [{ role: "user", text: "earlier" }] });
+  await tick();
+
+  const history = b.inbound.filter((m) => m.type === "history").pop();
+  assert.deepEqual(history.messages, [{ role: "user", text: "earlier" }]);
 });

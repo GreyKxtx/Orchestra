@@ -5,24 +5,42 @@
   // the JSON-RPC ids that must be answered — an unanswered id is a tool that
   // waits forever.
 
-  /** @type {any} */ let pendingPermissionId = null;
-  /** @type {any} */ let pendingQuestionId = null;
-
-  /** @param {any} msg */
-  function handleServerRequest(msg) {
+  /**
+   * @param {string} projectId @param {any} msg
+   */
+  function handleServerRequest(projectId, msg) {
+    const st = projectState(projectId);
     switch (msg.method) {
       case "permission/request":
-        pendingPermissionId = msg.id;
-        toRenderer({ type: "permissionRequest", request: msg.params || {} });
-        return;
+        st.pendingAsk = {
+          kind: "permission",
+          id: msg.id,
+          rendererMessage: { type: "permissionRequest", request: msg.params || {} },
+        };
+        st.status = "asking";
+        break;
       case "question/ask":
-        pendingQuestionId = msg.id;
-        toRenderer({ type: "questionAsk", questions: (msg.params && msg.params.questions) || [] });
-        return;
+        st.pendingAsk = {
+          kind: "question",
+          id: msg.id,
+          rendererMessage: {
+            type: "questionAsk",
+            questions: (msg.params && msg.params.questions) || [],
+          },
+        };
+        st.status = "asking";
+        break;
       default:
         // An unknown server request must still be answered, or the core waits.
-        wsReply(msg.id, { error: "unsupported" });
+        connFor(projectId).reply(msg.id, { error: "unsupported" });
+        return;
     }
+    // Only the project on screen may raise an overlay. A background project's
+    // prompt waits in its record and is raised by activateProject.
+    if (projectId === currentProjectId) {
+      toRenderer(st.pendingAsk.rendererMessage);
+    }
+    renderProjects();
   }
 
   // The overlays answer through the renderer's existing messages. Intercept
@@ -35,21 +53,28 @@
     }
     if (msg.type === "__host_dispatch__" && msg.payload) {
       const p = msg.payload;
+      const st = projectState(currentProjectId);
       if (p.type === "permissionReply") {
-        if (pendingPermissionId === null) {
+        if (!st.pendingAsk || st.pendingAsk.kind !== "permission") {
           return; // stale click; answering some other id would be worse
         }
-        wsReply(pendingPermissionId, {
+        connFor(currentProjectId).reply(st.pendingAsk.id, {
           approved: Boolean(p.approved),
           always: Boolean(p.always),
         });
-        pendingPermissionId = null;
+        st.pendingAsk = null;
+        st.status = st.inFlightTurnId !== null ? "working" : "idle";
+        renderProjects();
       } else if (p.type === "questionReply") {
-        if (pendingQuestionId === null) {
+        if (!st.pendingAsk || st.pendingAsk.kind !== "question") {
           return;
         }
-        wsReply(pendingQuestionId, { answers: Array.isArray(p.answers) ? p.answers : [] });
-        pendingQuestionId = null;
+        connFor(currentProjectId).reply(st.pendingAsk.id, {
+          answers: Array.isArray(p.answers) ? p.answers : [],
+        });
+        st.pendingAsk = null;
+        st.status = st.inFlightTurnId !== null ? "working" : "idle";
+        renderProjects();
       }
     }
   });

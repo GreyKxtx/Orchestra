@@ -6,12 +6,62 @@
   // subagent's own trace; they must not be folded into the parent's text —
   // see ui/vscode/src/chat/panel.ts:1589-1604 for the same rule.
 
-  let turnText = "";
-  /** @type {Map<string, any>} */
-  const liveToolBlocks = new Map();
+  /** @type {Map<string, string>} */
+  const turnTextByProject = new Map();
+  /** @type {Map<string, Map<string, any>>} */
+  const liveToolBlocksByProject = new Map();
 
-  /** @param {any} msg */
-  function handleNotification(msg) {
+  // Named blocksForProject, not toolBlocks: ui/vscode/media/chat-src/01-dom-state.js
+  // already declares a top-level `const toolBlocks = new Map()`, and the whole
+  // bundle is one IIFE — a same-named top-level function here would be a
+  // duplicate declaration and fail to parse. That file may not change, so this
+  // one avoids the name instead.
+  /** @param {string} projectId */
+  function blocksForProject(projectId) {
+    let m = liveToolBlocksByProject.get(projectId);
+    if (!m) {
+      m = new Map();
+      liveToolBlocksByProject.set(projectId, m);
+    }
+    return m;
+  }
+
+  /**
+   * Every notification from every connection lands here first. A project the
+   * renderer is not showing contributes its state to the rail and nothing to
+   * the transcript: folding a background project's text into the visible
+   * bubble is the bug this routing exists to prevent.
+   * @param {string} projectId @param {any} msg
+   */
+  function noteProjectEvent(projectId, msg) {
+    const st = projectState(projectId);
+    const before = st.status;
+
+    if (msg.method === "agent/event") {
+      const ev = msg.params || {};
+      switch (ev.type) {
+        case "tool_call_start":
+        case "message_delta":
+        case "reasoning_delta":
+          if (st.status === "idle") st.status = "working";
+          break;
+        case "done":
+        case "error":
+          if (st.status === "working") st.status = "idle";
+          break;
+        default:
+          break;
+      }
+    }
+
+    if (projectId === currentProjectId) {
+      handleNotification(projectId, msg);
+    }
+    return st.status !== before;
+  }
+
+  /** @param {string} projectId @param {any} msg */
+  function handleNotification(projectId, msg) {
     if (msg.method === "exec/output_chunk") {
       toRenderer({ type: "execChunk", chunk: (msg.params && msg.params.chunk) || "" });
       return;
@@ -21,12 +71,14 @@
     }
     const ev = msg.params || {};
     const isChild = ev.scope === "child";
+    const blocks = blocksForProject(projectId);
 
     switch (ev.type) {
       case "message_delta":
         if (ev.content && !isChild) {
-          turnText += ev.content;
-          toRenderer({ type: "deltaSync", content: turnText });
+          const acc = (turnTextByProject.get(projectId) || "") + ev.content;
+          turnTextByProject.set(projectId, acc);
+          toRenderer({ type: "deltaSync", content: acc });
         }
         break;
 
@@ -48,7 +100,7 @@
           result: "",
           startedAt: Date.now(),
         };
-        liveToolBlocks.set(ev.tool_call_id, block);
+        blocks.set(ev.tool_call_id, block);
         toRenderer({ type: "toolBlock", block: { ...block } });
         break;
       }
@@ -57,7 +109,7 @@
         if (isChild || !ev.tool_call_id) {
           break;
         }
-        const block = liveToolBlocks.get(ev.tool_call_id);
+        const block = blocks.get(ev.tool_call_id);
         if (block) {
           block.argsRaw += ev.args_delta || "";
           toRenderer({ type: "toolBlock", block: { ...block } });
@@ -69,7 +121,7 @@
         if (isChild || !ev.tool_call_id) {
           break;
         }
-        const block = liveToolBlocks.get(ev.tool_call_id) || {
+        const block = blocks.get(ev.tool_call_id) || {
           id: ev.tool_call_id,
           name: ev.tool_call_name || "tool",
           argsRaw: "",
@@ -78,7 +130,7 @@
         block.status = "done";
         block.result = ev.content || "";
         block.durationMs = Date.now() - (block.startedAt || Date.now());
-        liveToolBlocks.delete(ev.tool_call_id);
+        blocks.delete(ev.tool_call_id);
         toRenderer({ type: "toolBlock", block: { ...block } });
         break;
       }
@@ -116,10 +168,11 @@
     }
   }
 
-  // A new turn starts with an empty transcript.
+  // A new turn starts with an empty transcript — for the project whose turn it
+  // is, which is always the one the renderer is showing.
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {
-      turnText = "";
-      liveToolBlocks.clear();
+      turnTextByProject.set(currentProjectId, "");
+      blocksForProject(currentProjectId).clear();
     }
   });
