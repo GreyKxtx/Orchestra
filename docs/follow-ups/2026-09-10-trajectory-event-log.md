@@ -99,3 +99,44 @@ needed migrating. C2b builds the view that reads it.
    companion to `TestVSCodeExtensionPinsCurrentProtocolVersion`. If it should
    not, the field should go, so nobody wires it up later believing it was
    already meaningful.
+
+---
+
+## Raised by the whole-branch review, parked after its fix round
+
+9. **`SessionClose` does not wait for a cancelled turn to release the log.**
+   The fix round made `SessionClose` delete from disk before dropping in-memory
+   state and return the error truthfully, so a failure destroys nothing and the
+   caller can retry. It did **not** make the delete succeed while a turn is live.
+
+   `SessionMessage` holds `c.runMu` for the whole turn, so acquiring `c.runMu` in
+   `SessionClose` after `sess.Cancel()` would block until the turn unwinds and
+   `defer launch.Close()` has released the sidecar, after which the delete would
+   usually succeed. **Deliberately not done**, for two reasons: it puts new
+   blocking semantics into an RPC method, and a deadlock against a caller already
+   holding `runMu` cannot be ruled out without an analysis the fix round should
+   not have carried.
+
+   Consequence to accept meanwhile: on Windows, deleting a session during a live
+   turn fails with an error the user can retry once the turn ends. That is a
+   truthful failure in place of the false success it replaced. Anyone picking
+   this up should establish the deadlock question first, and add a test that
+   deletes during a live turn rather than against a held handle.
+
+10. **The context estimate is emitted twice in one step after compaction.**
+    `internal/agent/agent_run.go:261` fires `emitPromptContextEstimate` every
+    step, and `:244` fires it again after a compaction, so a compacting step
+    records two `context_estimate` events. Harmless now that the estimate has its
+    own event kind and cannot be mistaken for a measurement — it is duplicate
+    noise in the log rather than a wrong number. Left alone because deduplicating
+    it means deciding which of the two is authoritative, which is a question for
+    whoever builds the view.
+
+11. **No explicit turn boundary event, and no duration field.** The recorded
+    vocabulary has no `turn/start` or `turn/end`, and no step carries a literal
+    duration — a reader derives elapsed time from consecutive core-stamped
+    timestamps. Judged adequate for C2a by the whole-branch review, and recorded
+    because C2b builds the view that will need both. If a boundary event is
+    wanted, it costs nothing to add now and cannot be added retroactively to
+    sessions already recorded — which is the argument for deciding it before C2b
+    rather than during it.
