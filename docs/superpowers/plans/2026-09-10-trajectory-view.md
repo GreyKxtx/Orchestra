@@ -1908,6 +1908,153 @@ changes on purpose, and the trajectory works in its webview."
 
 ---
 
+### Task 5: The core says "nothing yet" for a session that has had no turn
+
+Found by driving the built page against a real core: a session created seconds earlier rendered "No trajectory was recorded for this session — it predates the log." The sidecar is created by the first agent launch, so `trajectory.Read` reports `recorded:false` for every session that has not had a turn yet, and the view says the one thing that is untrue. A C2a semantics gap; this task closes it in the core, where the two cases can be told apart.
+
+**Files:**
+- Modify: `internal/core/trajectory_rpc.go` (`SessionTrajectory`, the `!recorded` branch and the doc comment)
+- Modify: `internal/core/trajectory_rpc_test.go` (two tests)
+- Modify: `docs/PROTOCOL.md` (the `recorded` bullet under `session.trajectory`)
+
+**Interfaces:**
+- Consumes: `trajectory.Read(root, id) (events, recorded, err)`; `c.sessions.GetOrLoad(root, id) (*coresession.Session, error)` — returns `"session not found"` for an id that is neither in memory nor on disk; `sess.History` (field) and `sess.UIMessages()` under `sess.Lock()`.
+- Produces: unchanged wire shape `{recorded, events[]}`. `ProtocolVersion` stays 16 — only the answer for one state changes, and no client parsed it differently.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `internal/core/trajectory_rpc_test.go`:
+
+```go
+func TestSessionTrajectory_FreshSessionWithNoTurnIsRecordedAndEmpty(t *testing.T) {
+	root := t.TempDir()
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	started, err := c.SessionStart(SessionStartParams{})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: started.SessionID})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if !res.Recorded {
+		t.Error("Recorded = false, want true — a session with no turn yet has had nothing to record; it does not predate the log")
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("len(Events) = %d, want 0", len(res.Events))
+	}
+}
+
+func TestSessionTrajectory_SessionWithHistoryAndNoLogPredatesTheLog(t *testing.T) {
+	root := t.TempDir()
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	sess := c.sessions.CreateWithID("old-chat")
+	sess.Lock()
+	sess.History = append(sess.History, llm.Message{Role: llm.RoleUser, Content: "hello from before the log"})
+	sess.Unlock()
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: "old-chat"})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if res.Recorded {
+		t.Error("Recorded = true, want false — this session has history but no log, so it predates the log")
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("len(Events) = %d, want 0", len(res.Events))
+	}
+}
+```
+
+Add `"github.com/orchestra/orchestra/llm"` to the file's imports.
+
+- [ ] **Step 2: Run them and watch the first fail**
+
+Run: `go test ./internal/core -run 'TestSessionTrajectory' -v`
+
+Expected: `TestSessionTrajectory_FreshSessionWithNoTurnIsRecordedAndEmpty` FAILS with "Recorded = false, want true". The other four (three existing, one new) pass — the "predates" test passes already because today every missing sidecar is `false`; it exists to pin that answer once the fresh-session case flips.
+
+- [ ] **Step 3: Tell the two cases apart**
+
+In `internal/core/trajectory_rpc.go`, replace the doc comment on `SessionTrajectory` and the body after `trajectory.Read`:
+
+```go
+// SessionTrajectory returns the append-only event log for a session.
+//
+// A missing sidecar is not one answer but two. A session this core knows — in
+// memory or on disk — whose history and UI messages are both empty has had no
+// turn, and the first turn is what creates the sidecar: nothing has happened, and
+// nothing was missed, so that is Recorded true with no events. A session with
+// history and no sidecar was recorded by a core that predates the log, and a
+// session id that names nothing is treated the same way: Recorded false. Only a
+// blank id is rejected, because that is a malformed request rather than a
+// question about a session.
+func (c *Core) SessionTrajectory(p SessionTrajectoryParams) (*SessionTrajectoryResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	id := strings.TrimSpace(p.SessionID)
+	if id == "" {
+		return nil, protocol.NewError(protocol.InvalidParams, "session_id is empty", nil)
+	}
+	events, recorded, err := trajectory.Read(c.workspaceRoot, id)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": id})
+	}
+	if !recorded {
+		// No sidecar yet. If the session exists and is empty, the log is
+		// simply not born: the first agent launch creates it. Saying
+		// "predates the log" here would be untrue of every new chat.
+		if sess, lookErr := c.sessions.GetOrLoad(c.workspaceRoot, id); lookErr == nil && sess != nil {
+			sess.Lock()
+			empty := len(sess.History) == 0 && len(sess.UIMessages()) == 0
+			sess.Unlock()
+			if empty {
+				recorded = true
+			}
+		}
+	}
+	// Never nil: `events` marshals to `null` when nil, and a client that reads
+	// `events.length` would fault on it. An empty log is `[]`.
+	if events == nil {
+		events = []trajectory.Event{}
+	}
+	return &SessionTrajectoryResult{Recorded: recorded, Events: events}, nil
+}
+```
+
+`GetOrLoad` is the right lookup, not `LoadOrCreate`: it must never create a session as a side effect of asking about one. Its "session not found" error is the unknown-id case and keeps `recorded` false.
+
+- [ ] **Step 4: Run the package**
+
+Run: `go test ./internal/core -run 'TestSessionTrajectory' -v` then `go vet ./internal/core && go test ./internal/core`
+
+Expected: all five `TestSessionTrajectory_*` pass; the package is green.
+
+- [ ] **Step 5: Say it in the protocol doc**
+
+In `docs/PROTOCOL.md`, under `session.trajectory` → Response `result`, replace the `recorded` bullet with:
+
+```markdown
+- `recorded` (bool) — `false` означает, что для этой сессии лога нет и не будет: сессия либо создана до появления этой фичи (у неё есть история, но нет sidecar-файла), либо не существует. Сессия, у которой ещё не было ни одного хода, — это `recorded: true, events: []`: лог заводится первым запуском агента, и до этого «ничего не произошло» — правда, а «сессия старше лога» — нет. Клиент должен показать разные сообщения для `false` и для пустого `true`, а не одну пустую таблицу.
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add internal/core/trajectory_rpc.go internal/core/trajectory_rpc_test.go docs/PROTOCOL.md
+git commit -m "fix(core): a session with no turn yet is recorded and empty, not older than the log
+
+The sidecar is created by the first agent launch, so trajectory.Read said
+recorded:false for every new chat and the view told the user the session
+predated the log. When the sidecar is missing, session.trajectory now looks
+the session up: known and empty means nothing has happened; known with
+history means it predates the log; unknown stays false. Wire shape unchanged."
+```
+
+**Known limits.** A session whose only content is todos or a plan path (no history, no UI messages) also reads as "nothing yet" — correct, since no turn ran. A session started by a detached core and not yet snapshotted is unknown here and reads `false` until its snapshot lands; the pane says "predates" for the seconds between. Acceptable; noted for the follow-ups.
+
+---
+
 ## Self-Review
 
 **1. Spec coverage.**
