@@ -68,6 +68,18 @@ export interface StepUsagePayload {
   breakdown?: ContextBreakdownItem[];
 }
 
+/** One recorded (or live) notification, as session.trajectory returns it.
+ * `type` is the JSON-RPC method ("agent/event", "exec/output_chunk", …) and
+ * `data` its params. seq and time_ms are absent on a live event forwarded
+ * mid-turn; the view renders blank times for those rather than a client clock. */
+export interface TrajectoryEvent {
+  seq?: number;
+  time_ms?: number;
+  type: string;
+  source?: string;
+  data?: unknown;
+}
+
 /** Per-(provider, model) usage row — orchestra tiers each get their own row. */
 export interface UsageModelEntry {
   provider?: string;
@@ -244,6 +256,13 @@ export type HostToWebview =
   | { type: "sessionList"; sessions: SessionListItem[] }
   | { type: "sessionTabs"; activeId: string; tabs: SessionListItem[] }
   | { type: "history"; messages: ChatHistoryMessage[] }
+  /** Replace the Trajectory view from the session's log. recorded:false means the
+   * session predates the log — a different answer from an empty log. error set
+   * means the fetch failed; the view says so instead of claiming either. */
+  | { type: "trajectory"; recorded: boolean; events: TrajectoryEvent[]; error?: string }
+  /** Append one live notification to the Trajectory view. Reconciled by the
+   * next "trajectory" message, which the host sends when the turn ends. */
+  | { type: "trajectoryEvent"; event: { type: string; data: unknown } }
   | { type: "clearMessages" }
   | { type: "models"; models: Array<{ id: string }>; current: string }
   | {

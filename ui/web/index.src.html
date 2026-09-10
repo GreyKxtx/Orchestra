@@ -12,7 +12,7 @@
     <div id="project-rail-list" class="project-rail-list" role="tablist"></div>
     <button type="button" id="project-add-btn" class="project-rail-add" title="Add a project folder" aria-label="Add a project folder">+</button>
   </nav>
-  <div id="app" data-mode="agent">
+  <div id="app" data-mode="agent" data-view="chat">
     <header id="chrome-strip">
       <div id="top-accent" aria-hidden="true"></div>
       <div id="chrome-inner">
@@ -20,6 +20,10 @@
           <img src="logo.png" alt="" width="22" height="22" class="chrome-logo" />
         </div>
         <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Chat sessions"></div>
+        <div id="view-switch" class="view-switch" role="tablist" aria-label="View">
+          <button type="button" id="view-chat-btn" class="view-segment" role="tab" aria-selected="true" aria-controls="messages">Chat</button>
+          <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">Trajectory</button>
+        </div>
         <div class="chrome-actions">
           <button type="button" id="session-new-btn" class="chrome-action" title="New chat" aria-label="New chat">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -58,6 +62,10 @@
       <div id="workflow-stages" class="workflow-stages"></div>
     </div>
     <div id="messages"></div>
+    <div id="trajectory" class="trajectory" role="tabpanel" aria-labelledby="view-trajectory-btn">
+      <div id="trajectory-summary" class="traj-summary" aria-live="polite"></div>
+      <div id="trajectory-rows" class="traj-rows"></div>
+    </div>
     <div id="pending-bar" class="pending-bar hidden">
       <div class="pending-card">
         <div class="pending-head">

@@ -177,6 +177,7 @@
         showQuestionOverlay(Array.isArray(msg.questions) ? msg.questions : []);
         break;
       case "clearMessages":
+        resetTrajectory();
         sendQueue = [];
         renderSendQueue();
         resetContextUsage();
@@ -196,6 +197,12 @@
         renderSubagents();
         renderTodos();
         setWorkflow("", false);
+        break;
+      case "trajectory":
+        replaceTrajectory(msg.recorded, msg.events, msg.error);
+        break;
+      case "trajectoryEvent":
+        appendTrajectoryEvent(msg.event);
         break;
       case "history": {
         const list = Array.isArray(msg.messages) ? msg.messages : [];

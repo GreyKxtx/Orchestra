@@ -18,5 +18,6 @@ npm run compile          # bundle + tsc
 | `05c-busy-palette.js` | 420 | busy UI, slash/mention palette, todos |
 | `05d-tools.js` | 480 | tool cards / workflow / context |
 | `05e-messages.js` | 280 | append messages / tool blocks |
+| `05f-trajectory.js` | 330 | Trajectory view: pure event→row builder, renderer, Chat/Trajectory switch |
 | `06-composer.js` | 650 | mode / model / send |
 | `07-events.js` | 360 | host message handlers + boot |

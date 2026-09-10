@@ -73,7 +73,17 @@ export function loadBundle(opts = {}) {
     };
   };
   const el = () => ({
-    addEventListener() {},
+    _listeners: {},
+    addEventListener(type, fn) {
+      (this._listeners[type] ||= []).push(fn);
+    },
+    click() {
+      for (const fn of this._listeners.click || []) fn({ preventDefault() {} });
+    },
+    append() {},
+    keydown(key) {
+      for (const fn of this._listeners.keydown || []) fn({ key, preventDefault() {} });
+    },
     removeEventListener() {},
     classList: makeClassList(),
     appendChild() {},
@@ -85,7 +95,6 @@ export function loadBundle(opts = {}) {
     closest: () => null,
     focus() {},
     blur() {},
-    click() {},
     remove() {},
     style: { setProperty() {}, removeProperty() {}, getPropertyValue: () => "" },
     dataset: {},
@@ -1280,4 +1289,75 @@ test("an outstanding ask does not stick forever when its turn ends", async () =>
     undefined,
     "a reply after the asking turn ended must be dropped, not answered against a dead request"
   );
+});
+
+// ---- C2b: the Trajectory view (renderer state, through the shared fragment) --
+
+test("trajectory recorded:false says the session predates the log, in words, in place", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  b.post({ type: "trajectory", recorded: false, events: [] });
+  await tick();
+  const summary = b.elementById("trajectory-summary");
+  assert.ok(summary, "the fragment never looked up #trajectory-summary");
+  assert.match(summary.textContent, /predates the log/);
+});
+
+test("trajectory replaces, trajectoryEvent appends, and the summary counts real rows", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  b.post({
+    type: "trajectory",
+    recorded: true,
+    events: [
+      { seq: 1, time_ms: 1000, type: "agent/event", data: { type: "tool_call_start", step: 1, turn_id: "t1", tool_call_id: "c1", tool_call_name: "read" } },
+      { seq: 2, time_ms: 1200, type: "agent/event", data: { type: "tool_call_completed", step: 1, turn_id: "t1", tool_call_id: "c1", content: "ok" } },
+    ],
+  });
+  await tick();
+  const summary = b.elementById("trajectory-summary");
+  assert.match(summary.textContent, /1 turn · 3 rows/);
+
+  b.post({ type: "trajectoryEvent", event: { type: "agent/event", data: { type: "tool_call_start", step: 2, turn_id: "t1", tool_call_id: "c2", tool_call_name: "edit" } } });
+  await tick();
+  // A second step and its tool: two more rows. Three rows are live — the new
+  // step, the new tool, and the turn they landed in, which is ongoing again.
+  assert.match(summary.textContent, /1 turn · 5 rows · 3 live/);
+
+  b.post({ type: "trajectory", recorded: true, events: [] });
+  await tick();
+  assert.match(summary.textContent, /Nothing has happened/);
+
+  b.post({ type: "trajectory", recorded: true, events: [], error: "boom" });
+  await tick();
+  assert.match(summary.textContent, /unavailable.*boom/);
+});
+
+test("the segmented control switches #app[data-view], by click and by arrow key", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const app = b.elementById("app");
+  const chatBtn = b.elementById("view-chat-btn");
+  const trajBtn = b.elementById("view-trajectory-btn");
+  assert.ok(app && chatBtn && trajBtn, "the fragment must look up #app and both segment buttons");
+  assert.equal(app.dataset.view, "chat");
+  trajBtn.click();
+  assert.equal(app.dataset.view, "trajectory");
+  chatBtn.click();
+  assert.equal(app.dataset.view, "chat");
+  chatBtn.keydown("ArrowRight");
+  assert.equal(app.dataset.view, "trajectory");
+  trajBtn.keydown("ArrowLeft");
+  assert.equal(app.dataset.view, "chat");
+});
+
+test("clearMessages also clears the trajectory", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  b.post({ type: "trajectory", recorded: true, events: [{ seq: 1, time_ms: 1, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t1", content: "final" } }] });
+  await tick();
+  assert.match(b.elementById("trajectory-summary").textContent, /1 turn/);
+  b.post({ type: "clearMessages" });
+  await tick();
+  assert.match(b.elementById("trajectory-summary").textContent, /Loading trajectory/);
 });
