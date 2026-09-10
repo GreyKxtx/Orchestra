@@ -31,6 +31,7 @@ const order = [
   [sharedDir, "05c-busy-palette.js"],
   [sharedDir, "05d-tools.js"],
   [sharedDir, "05e-messages.js"],
+  [sharedDir, "05f-trajectory.js"],
   [sharedDir, "06-composer.js"],
   [sharedDir, "07-events.js"],
   [webDir, "10-adapter-session.js"],

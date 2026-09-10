@@ -126,7 +126,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "bundle:webview": "node scripts/bundle-chat.mjs && node scripts/bundle-settings.mjs",
-    "check:webview": "node scripts/check-webview.mjs",
+    "check:webview": "node scripts/check-webview.mjs && node --test scripts/trajectory-test.mjs",
     "compile": "npm run bundle:webview && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test out/**/*.test.js",

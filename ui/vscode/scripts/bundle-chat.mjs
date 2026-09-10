@@ -18,6 +18,7 @@ const order = [
   "05c-busy-palette.js",
   "05d-tools.js",
   "05e-messages.js",
+  "05f-trajectory.js",
   "06-composer.js",
   "07-events.js",
   "99-footer.txt",
