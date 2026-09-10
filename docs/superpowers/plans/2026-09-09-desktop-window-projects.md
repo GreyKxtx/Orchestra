@@ -2150,16 +2150,48 @@ Add the switch entry point:
     setActiveConn(connFor(projectId));
 
     toRenderer({ type: "clearMessages" });
+    // Take down the project we are leaving. Nothing in the renderer hides the
+    // overlay from the outside — hideOverlay is private to 05b-overlays.js and
+    // clearMessages does not touch it — so an overlay raised for the previous
+    // project would stay on screen over this project's transcript, and the
+    // button's reply would then be read against this project's record, find no
+    // pendingAsk, and be dropped. The asking project keeps its record, so
+    // switching back re-raises the prompt intact.
+    if (!st.pendingAsk) {
+      const overlay = document.getElementById("overlay");
+      if (overlay) {
+        overlay.classList.add("hidden");
+      }
+    }
     if (st.sessionId) {
       try {
         const view = await wsSend("session.get", { session_id: st.sessionId });
+        // The user can switch again while this is in flight. Without this
+        // guard, an A -> B -> A switch paints B's history into A's view.
+        if (projectId !== currentProjectId) {
+          return;
+        }
         toRenderer({ type: "history", messages: view.ui_messages || [] });
       } catch (err) {
-        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        }
       }
     }
+    if (projectId !== currentProjectId) {
+      return;
+    }
     toRenderer({ type: "header", sessionId: st.sessionId });
-    toRenderer({ type: "turnInFlight", inFlight: st.inFlightTurnId !== null });
+    // The renderer's "turnInFlight" arm ignores the payload and always calls
+    // setBusy(true) (ui/vscode/media/chat-src/07-events.js). Sending it with
+    // inFlight:false would lock the composer into "Stop" on every switch to an
+    // idle project. "turnComplete" is the only message that reaches
+    // setBusy(false), so send whichever one is true.
+    if (st.inFlightTurnId !== null) {
+      toRenderer({ type: "turnInFlight", inFlight: true });
+    } else {
+      toRenderer({ type: "turnComplete" });
+    }
     if (st.pendingAsk) {
       toRenderer(st.pendingAsk.rendererMessage);
     }
@@ -2169,13 +2201,29 @@ Add the switch entry point:
 ```
 
 Everywhere else in the file, replace `currentSessionId` with
-`current().sessionId` and `inFlightTurnId` with `current().inFlightTurnId`. In
-`sendTurn`, also mark and clear the project's status so the rail shows it:
+`current().sessionId` and `inFlightTurnId` with `current().inFlightTurnId`.
+
+**One rule governs every one of those sites, including `startSession`.** A
+function that awaits and then paints must capture the project id on entry —
+`const projectId = currentProjectId; const st = projectState(projectId);` —
+and guard every `toRenderer` call that follows an `await` with
+`if (projectId === currentProjectId)`. `current()` is only safe before the
+first await. Writes to the project's own record and to the rail stay ungated:
+the record and the rail must always describe reality, whichever project is on
+screen. It is only the renderer that shows one project at a time, and painting
+into it from a project the user has since left is how a background project
+leaks into the visible transcript.
+
+In `sendTurn`, also mark and clear the project's status so the rail shows it:
 
 ```js
   /** @param {any} msg */
   async function sendTurn(msg) {
-    const st = current();
+    // Capture the id, not just the record: the user can switch projects while
+    // this turn is awaiting, and everything after the await must know which
+    // project it belongs to.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
     if (!st.sessionId) {
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
@@ -2199,13 +2247,21 @@ Everywhere else in the file, replace `currentSessionId` with
     try {
       await turn.done;
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     } finally {
+      // The record and the rail always tell the truth, whichever project is on
+      // screen. Only the renderer is gated: a turn that ends in a background
+      // project must not put its error bubble, or its turnComplete, into the
+      // transcript the user is looking at.
       st.inFlightTurnId = null;
       st.status = "idle";
       renderProjects();
-      toRenderer({ type: "turnInFlight", inFlight: false });
-      toRenderer({ type: "turnComplete" });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "turnInFlight", inFlight: false });
+        toRenderer({ type: "turnComplete" });
+      }
     }
   }
 ```
@@ -2464,8 +2520,13 @@ In `ui/web/index.src.html`, add the stylesheet beside the existing one:
   <link rel="stylesheet" href="rail.css" />
 ```
 
-and make the rail the first child of `#app`, immediately before
-`<header id="chrome-strip">`:
+and make the rail the immediate previous **sibling** of `#app`, inside
+`<body>` — not a child of `#app`. `chat.css` owns `#app` as a flex column
+whose children depend on it (`#chrome-strip` is `flex: 0 0 auto`, `#messages`
+is `flex: 1 1 auto` with `overflow-y: auto`, `#composer-wrap` is
+`flex: 0 0 auto`). A rail placed inside `#app` forces this stylesheet to
+override `#app`'s `display`, which makes every one of those declarations
+inert. As a sibling it does not have to:
 
 ```html
     <nav id="project-rail" class="project-rail" aria-label="Projects">
@@ -2483,20 +2544,21 @@ this page is not a webview — and it must not restyle anything `chat.css` owns.
 /* The project rail. Web-only: chat.css is shared with the VS Code webview and
    must not learn about projects. */
 
-#app {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  grid-template-rows: 100%;
+/* The rail sits beside #app, so this stylesheet never touches #app's own
+   layout: chat.css keeps its flex column and every flex child inside it keeps
+   working. html and body are already height:100% from chat.css. */
+body {
+  display: flex;
+  flex-direction: row;
 }
 
-/* Everything chat.css lays out sits in the second column. */
-#app > *:not(.project-rail) {
-  grid-column: 2;
+#app {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .project-rail {
-  grid-column: 1;
-  grid-row: 1;
+  flex: 0 0 52px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2989,18 +3051,27 @@ Create `ui/web/src/40-projects.js`:
 
   (async () => {
     const startupId = new URLSearchParams(location.search).get("project") || "";
-    currentProjectId = startupId;
-    setActiveConn(ensureConn(startupId));
-    await refreshProjects();
-    if (!startupId) {
-      // No id in the URL: adopt whichever project the API reports as open, so
-      // the rail's active marker matches the socket that is actually serving.
-      const first = known.find((p) => p.state === "ready");
-      if (first) {
-        currentProjectId = first.id;
-        renderProjects();
-      }
+    if (startupId) {
+      currentProjectId = startupId;
+      setActiveConn(ensureConn(startupId));
+      await refreshProjects();
+      return;
     }
+    // No id in the URL — a plain `orchestra web`. Ask the API which project the
+    // core is already serving BEFORE opening a socket, so that the connection,
+    // the per-project record and the rail's active chip all share one key.
+    //
+    // Adopting the id afterwards does not work: `conns` would stay keyed ""
+    // while `currentProjectId` named the project, and since the two are
+    // separate socket slots on the server, every notification would fail the
+    // `projectId === currentProjectId` gate, `sendTurn` would read an empty
+    // session forever, and clicking the chip could not repair it because
+    // `switchProject` returns early on the id it already holds.
+    await refreshProjects();
+    const first = known.find((p) => p.state === "ready");
+    currentProjectId = first ? first.id : "";
+    setActiveConn(ensureConn(currentProjectId));
+    renderProjects();
   })();
 ```
 
