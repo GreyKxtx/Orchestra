@@ -442,6 +442,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err != nil {
 		return nil, err
 	}
+	defer launch.Close()
 	c.tools.SetMemoryContext(params.SessionID, c.cfg.Memory.Resolve())
 
 	// Persist todos as soon as todowrite succeeds so a crash / cancel mid-turn
@@ -1078,6 +1079,7 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 	if err != nil {
 		return nil, err
 	}
+	defer launch.Close()
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)

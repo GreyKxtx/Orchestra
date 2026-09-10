@@ -168,6 +168,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if err != nil {
 		return nil, err
 	}
+	defer launch.Close()
 
 	// Semantic dry-run pipeline: edit/write always go through staging + LSP
 	// during the turn. params.Apply controls commit-to-disk at end of turn,
