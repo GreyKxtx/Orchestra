@@ -1350,13 +1350,13 @@ lacked for its rail keyboard path."
 The mid-turn switch is the symptom that motivated C2. It gets its own test here.
 
 **Files:**
-- Modify: `ui/web/src/10-adapter-session.js` (`activateProject` ~line 91; `sendTurn`'s `finally` ~line 262; `startSession` ~line 277)
+- Modify: `ui/web/src/10-adapter-session.js` (`onConnected` ~line 46; `activateProject` ~line 91; `sendTurn`'s `finally` ~line 262; `startSession` ~line 277)
 - Modify: `ui/web/src/20-adapter-events.js` (`handleNotification` ~line 83)
-- Modify: `ui/web/scripts/adapter-test.mjs` (six tests)
+- Modify: `ui/web/scripts/adapter-test.mjs` (seven tests)
 
 **Interfaces:**
 - Consumes: renderer messages `trajectory` / `trajectoryEvent` (Task 2); JSON-RPC `session.trajectory {session_id} → {recorded, events[]}` (C2a); the adapter's `conn.send(method, params)`, `toRenderer(msg)`, `currentProjectId`, `projectState(id)`, `connFor(id)`.
-- Produces: `async function refreshTrajectory(projectId, conn, sessionId)` in `10-adapter-session.js`, used by `activateProject`, `sendTurn` and `startSession`.
+- Produces: `async function refreshTrajectory(projectId, conn, sessionId)` in `10-adapter-session.js`, used by `onConnected`, `activateProject`, `sendTurn` and `startSession` — every path that gives the renderer a session.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1364,6 +1364,27 @@ Append to `ui/web/scripts/adapter-test.mjs`:
 
 ```js
 // ---- C2b: the web host feeds the Trajectory view ----------------------------
+
+test("the first session of a freshly connected project fetches its trajectory, so the pane is not left loading", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+
+  const req = b.sent.filter((m) => m.method === "session.trajectory").pop();
+  assert.ok(req, "connecting did not ask the core for the first session's trajectory");
+  assert.equal(req.params.session_id, "s-A", "the fetch must name the session onConnected just started");
+  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  await tick();
+
+  const msg = b.inbound.filter((m) => m.type === "trajectory").pop();
+  assert.ok(msg, "no trajectory message reached the renderer");
+  assert.equal(msg.recorded, true);
+  assert.deepEqual(msg.events, []);
+  assert.equal(msg.error, undefined);
+});
 
 test("switching to a project fetches its trajectory on its own connection and posts the fields intact", async () => {
   const b = loadBundle({ search: "?project=A" });
@@ -1552,7 +1573,7 @@ test("starting a new session in the on-screen project fetches that session's tra
 
 From the repo root: `node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/adapter-test.mjs`
 
-Expected: the six new tests fail on "switching did not ask the core for the trajectory" / "exactly the two on-screen notifications" (0 found) / "the turn ended and nobody re-read the log" / "a new session did not ask the core for its trajectory". The others still pass.
+Expected: the seven new tests fail on "connecting did not ask the core for the first session's trajectory" / "switching did not ask the core for the trajectory" / "exactly the two on-screen notifications" (0 found) / "the turn ended and nobody re-read the log" / "a new session did not ask the core for its trajectory". The others still pass.
 
 - [ ] **Step 3: The fetch, with the stale guard**
 
@@ -1590,6 +1611,17 @@ In `ui/web/src/10-adapter-session.js`, add before `activateProject`:
     }
   }
 ```
+
+In `onConnected` — the path that starts the *first* session of a freshly connected project — inside its `if (projectId === currentProjectId) { … }` block, after `toRenderer({ type: "ready" });` and before `await refreshSessionList(projectId);`, add:
+
+```js
+        // The first session of this connection: give the Trajectory pane its
+        // (usually empty) log now, or it sits on "Loading trajectory…" until
+        // the user switches, starts a session, or finishes a turn.
+        void refreshTrajectory(projectId, conn, st.sessionId);
+```
+
+Without this the pane is never populated on first load: `onConnected` posts `header` and `ready` and never passes through `clearMessages`, `startSession` or `activateProject`. The first build of this task shipped without it and a driven headless page showed "Loading trajectory…" indefinitely.
 
 In `activateProject`, inside the `if (st.sessionId) { … }` block, after the `try { … session.get … } catch { … }` and still inside the `if`, add:
 
@@ -1652,7 +1684,7 @@ In `ui/web/src/20-adapter-events.js`, at the top of `handleNotification(projectI
 
 From the repo root: `node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/check-web.mjs && node ui/web/scripts/adapter-test.mjs`
 
-Expected: all green; 39 tests.
+Expected: all green; 40 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1672,7 +1704,9 @@ Switching into a project mid-turn now replays what streamed while it was in
 the background — the symptom that motivated C2 — and that has its own test.
 
 startSession refreshes too: a new or reopened session cleared the view, and
-the pane would otherwise sit on its loading line until the next turn ended."
+the pane would otherwise sit on its loading line until the next turn ended.
+So does onConnected, for the first session of a connection: without it the
+pane was never populated on first load."
 ```
 
 ---
