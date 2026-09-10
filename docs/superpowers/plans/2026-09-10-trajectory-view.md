@@ -1350,13 +1350,13 @@ lacked for its rail keyboard path."
 The mid-turn switch is the symptom that motivated C2. It gets its own test here.
 
 **Files:**
-- Modify: `ui/web/src/10-adapter-session.js` (`activateProject` ~line 91; `sendTurn`'s `finally` ~line 262)
+- Modify: `ui/web/src/10-adapter-session.js` (`activateProject` ~line 91; `sendTurn`'s `finally` ~line 262; `startSession` ~line 277)
 - Modify: `ui/web/src/20-adapter-events.js` (`handleNotification` ~line 83)
-- Modify: `ui/web/scripts/adapter-test.mjs` (five tests)
+- Modify: `ui/web/scripts/adapter-test.mjs` (six tests)
 
 **Interfaces:**
 - Consumes: renderer messages `trajectory` / `trajectoryEvent` (Task 2); JSON-RPC `session.trajectory {session_id} → {recorded, events[]}` (C2a); the adapter's `conn.send(method, params)`, `toRenderer(msg)`, `currentProjectId`, `projectState(id)`, `connFor(id)`.
-- Produces: `async function refreshTrajectory(projectId, conn, sessionId)` in `10-adapter-session.js`, used by `activateProject` and `sendTurn`.
+- Produces: `async function refreshTrajectory(projectId, conn, sessionId)` in `10-adapter-session.js`, used by `activateProject`, `sendTurn` and `startSession`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1514,6 +1514,36 @@ test("a session.trajectory that resolves after switching away does not paint the
 
   assert.equal(b.inbound.filter((m) => m.type === "trajectory").length, 0, "B's late trajectory must not be painted over A");
 });
+
+test("starting a new session in the on-screen project fetches that session's trajectory, after the view was cleared", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  const before = b.sent.filter((m) => m.method === "session.trajectory").length;
+
+  dispatch(b, { type: "newSession" });
+  await tick();
+  answerOn(b, "A", "session.start", { session_id: "s-A2", restored: false });
+  await tick();
+
+  const reqs = b.sent.filter((m) => m.method === "session.trajectory");
+  assert.equal(reqs.length, before + 1, "a new session did not ask the core for its trajectory");
+  assert.equal(reqs[reqs.length - 1].params.session_id, "s-A2", "the fetch must name the new session, not the old one");
+  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  await tick();
+
+  const types = b.inbound.map((m) => m.type);
+  const cleared = types.lastIndexOf("clearMessages");
+  const painted = types.lastIndexOf("trajectory");
+  assert.ok(cleared >= 0 && painted > cleared, "the empty log must be painted after the clear, not before it");
+  const msg = b.inbound[painted];
+  assert.equal(msg.recorded, true);
+  assert.deepEqual(msg.events, []);
+  assert.equal(msg.error, undefined);
+});
 ```
 
 `handshakeFor`, `openBackground`, `answerOn`, `dispatch`, `tick` already exist in the file (used by the "switching repaints from the core" test at line ~636). `handshakeFor(b, id)` answers `session.start` with `session_id: "s-" + id` (line ~494), which is why the third test asserts `"s-A"`.
@@ -1522,7 +1552,7 @@ test("a session.trajectory that resolves after switching away does not paint the
 
 From the repo root: `node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/adapter-test.mjs`
 
-Expected: the five new tests fail on "switching did not ask the core for the trajectory" / "exactly the two on-screen notifications" (0 found) / "the turn ended and nobody re-read the log". The others still pass.
+Expected: the six new tests fail on "switching did not ask the core for the trajectory" / "exactly the two on-screen notifications" (0 found) / "the turn ended and nobody re-read the log" / "a new session did not ask the core for its trajectory". The others still pass.
 
 - [ ] **Step 3: The fetch, with the stale guard**
 
@@ -1580,6 +1610,17 @@ In `sendTurn`'s `finally`, inside the existing `if (projectId === currentProject
 
 `conn` here is the connection `sendTurn` used for `session.message`; if the function names it differently, use that name.
 
+In `startSession` — the path behind the renderer's `newSession` and `openSession` messages — after the `header` post (`toRenderer({ type: "header", sessionId: st.sessionId });` inside its `if (projectId === currentProjectId)`) and before `await refreshSessionList(projectId);`, add:
+
+```js
+      // A new or reopened session cleared the view above; give it the new
+      // session's log, or the "nothing yet" answer, rather than leaving it
+      // on "Loading trajectory…" until the next turn ends.
+      await refreshTrajectory(projectId, conn, st.sessionId);
+```
+
+`refreshTrajectory` carries its own stale guard, so no extra `currentProjectId` check is needed around the call. Without this hook the pane would stay on "Loading trajectory…" after every session switch within a project: `clearMessages` resets the view and nothing repopulates it.
+
 - [ ] **Step 4: Forward live notifications for the on-screen project**
 
 In `ui/web/src/20-adapter-events.js`, at the top of `handleNotification(projectId, msg)` — which `noteProjectEvent` already calls only for `currentProjectId` — before the existing `if (msg.method === "exec/output_chunk")`:
@@ -1603,7 +1644,7 @@ In `ui/web/src/20-adapter-events.js`, at the top of `handleNotification(projectI
 
 From the repo root: `node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/check-web.mjs && node ui/web/scripts/adapter-test.mjs`
 
-Expected: all green; 38 tests.
+Expected: all green; 39 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1620,7 +1661,10 @@ ends the log is re-read, so the live rows give way to recorded ones with the
 core's own timings.
 
 Switching into a project mid-turn now replays what streamed while it was in
-the background — the symptom that motivated C2 — and that has its own test."
+the background — the symptom that motivated C2 — and that has its own test.
+
+startSession refreshes too: a new or reopened session cleared the view, and
+the pane would otherwise sit on its loading line until the next turn ended."
 ```
 
 ---
