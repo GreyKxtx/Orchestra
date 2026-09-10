@@ -248,3 +248,29 @@ test("garbage in does not throw: non-array, null events, events without data", (
   const rows = buildTrajectoryTree([null, {}, { type: "agent/event" }, ev("agent/event", null, 1, 1)]);
   assert.ok(Array.isArray(rows));
 });
+
+test("depth-1 rows keep the order they happened: a stage after a step is not hoisted above it", () => {
+  const rows = buildTrajectoryTree([
+    ae("tool_call_start", { step: 1, tool_call_id: "c1", tool_call_name: "read" }, 0, 1),
+    ae("tool_call_completed", { step: 1, tool_call_id: "c1", content: "" }, 10, 2),
+    ev("workflow/stage_start", { name: "w", stage_id: "verify", attempt: 1, turn_id: "t1" }, 1000, 3),
+    ev("workflow/stage_done", { name: "w", stage_id: "verify", attempt: 1, marker: "ok", turn_id: "t1" }, 1400, 4),
+    ae("tool_call_start", { step: 2, tool_call_id: "c2", tool_call_name: "edit" }, 2000, 5),
+  ]);
+  assert.deepEqual(kinds(rows), ["turn", "step", "tool", "stage", "step", "tool"]);
+  // Offsets are monotone down the list, so nothing reads as going back in time.
+  const offsets = rows.slice(1).map((r) => r.offsetMs);
+  assert.deepEqual(offsets, [0, 0, 1000, 2000, 2000]);
+});
+
+test("a child tool completed without a recorded start still nests under its parent", () => {
+  const rows = buildTrajectoryTree([
+    ae("tool_call_start", { step: 1, tool_call_id: "c1", tool_call_name: "task" }, 0, 1),
+    ae("tool_call_completed", { step: 1, tool_call_id: "c9", tool_call_name: "grep", content: "", scope: "child", parent_tool_call_id: "c1", task_id: "k1" }, 80, 2),
+    ae("tool_call_completed", { step: 1, tool_call_id: "c1", content: "" }, 100, 3),
+  ]);
+  assert.deepEqual(kinds(rows), ["turn", "step", "tool", "tool"]);
+  assert.equal(rows[3].label, "grep");
+  assert.equal(rows[3].depth, 3);
+  assert.equal(rows[3].durationMs, undefined, "no start was recorded, so no duration is claimed");
+});

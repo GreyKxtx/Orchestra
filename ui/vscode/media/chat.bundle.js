@@ -3309,8 +3309,8 @@
    * Grouping: turn (by data.turn_id, in order of first appearance) > step (by
    * data.step) > items. Tool calls are keyed by tool_call_id; a child-scoped
    * tool call nests under its parent_tool_call_id. Consecutive text deltas of
-   * one kind coalesce into one row. Workflow stages and mode routes sit
-   * directly under the turn. Token columns come from step_usage only.
+   * one kind coalesce into one row. Workflow stages, mode routes and steps sit
+   * directly under the turn, in the order they first appeared — which for a recorded log is time order, and needs no timestamp so it holds for live rows too. Token columns come from step_usage only.
    *
    * Self-contained on purpose: trajectory-test.mjs evaluates it standalone.
    *
@@ -3342,9 +3342,8 @@
           endMs: undefined,
           live: false,
           outcome: "open",
-          steps: new Map(),
-          stepOrder: [],
-          children: [], // stages and routes: rows directly under the turn
+          steps: new Map(), // step number -> step node, for lookup
+          depth1: [], // steps, stages and routes in the order they first appeared — which is time order
         };
         turns.set(id, t);
       }
@@ -3355,6 +3354,7 @@
       let s = t.steps.get(key);
       if (!s) {
         s = {
+          kind: "step",
           key: t.key + "/step:" + key,
           n,
           startMs: undefined,
@@ -3369,7 +3369,7 @@
           lastText: null, // for coalescing message_delta / reasoning_delta
         };
         t.steps.set(key, s);
-        t.stepOrder.push(key);
+        t.depth1.push(s);
       }
       return s;
     };
@@ -3393,7 +3393,7 @@
 
       if (method === "workflow/stage_start" || method === "workflow/stage_done") {
         const stageKey = t.key + "/stage:" + str(d.stage_id) + "#" + (num(d.attempt) ?? 0);
-        let st = t.children.find((c) => c.key === stageKey);
+        let st = t.depth1.find((c) => c.kind === "stage" && c.key === stageKey);
         if (!st) {
           st = {
             kind: "stage",
@@ -3405,7 +3405,7 @@
             outcome: undefined,
             seq,
           };
-          t.children.push(st);
+          t.depth1.push(st);
         }
         touch(st, ms, live);
         if (method === "workflow/stage_done") st.outcome = str(d.marker) || str(d.action) || "done";
@@ -3476,16 +3476,19 @@
         case "tool_call_completed": {
           const id = str(d.tool_call_id);
           let row = s.tools.get(id);
+          const wasFound = !!row;
           if (!row) {
             // Completed without a recorded start: still a row, with no
             // duration to claim.
             row = { kind: "tool", key: s.key + "/tool:" + (id || String(s.items.length)), id, label: str(d.tool_call_name) || "tool", startMs: undefined, endMs: undefined, live, input: "", output: "", outcome: undefined, seq, subrows: [] };
-            s.items.push(row);
+            const parent = isChild && parentToolId ? s.tools.get(parentToolId) : null;
+            if (parent) parent.subrows.push(row);
+            else s.items.push(row);
             if (id) s.tools.set(id, row);
           }
           row.output += str(d.content);
           row.outcome = "done";
-          touch(row, ms, live);
+          if (wasFound) touch(row, ms, live);
           if (s.openTool === row) s.openTool = null;
           s.lastText = null;
           break;
@@ -3529,7 +3532,7 @@
         }
         case "mode_route": {
           const r = obj(d.data);
-          t.children.push({ kind: "route", key: t.key + "/route:" + t.children.length, label: "mode " + str(r.from) + " → " + str(r.to), startMs: ms, endMs: ms, live, seq, output: str(r.reason) });
+          t.depth1.push({ kind: "route", key: t.key + "/route:" + t.depth1.length, label: "mode " + str(r.from) + " → " + str(r.to), startMs: ms, endMs: ms, live, seq, output: str(r.reason) });
           break;
         }
         default:
@@ -3556,13 +3559,15 @@
 
     for (const t of turns.values()) {
       push(t, { key: t.key, label: "turn " + t.ordinal, startMs: t.startMs, endMs: t.endMs, live: t.live }, 0, "turn", { outcome: t.outcome });
-      for (const c of t.children) push(t, c, 1, c.kind, { outcome: c.outcome, output: c.output || undefined });
-      for (const k of t.stepOrder) {
-        const s = t.steps.get(k);
-        push(t, { key: s.key, label: "step " + s.n, startMs: s.startMs, endMs: s.endMs, live: s.live }, 1, "step", { step: s.n, tokensIn: s.tokensIn, tokensOut: s.tokensOut, outcome: s.outcome });
-        for (const it of s.items) {
-          if (it.kind === "tool") pushTool(t, s, it, 2);
-          else push(t, it, 2, it.kind, { step: s.n, output: it.output || undefined, outcome: it.outcome });
+      for (const n of t.depth1) {
+        if (n.kind !== "step") {
+          push(t, n, 1, n.kind, { outcome: n.outcome, output: n.output || undefined });
+          continue;
+        }
+        push(t, { key: n.key, label: "step " + n.n, startMs: n.startMs, endMs: n.endMs, live: n.live }, 1, "step", { step: n.n, tokensIn: n.tokensIn, tokensOut: n.tokensOut, outcome: n.outcome });
+        for (const it of n.items) {
+          if (it.kind === "tool") pushTool(t, n, it, 2);
+          else push(t, it, 2, it.kind, { step: n.n, output: it.output || undefined, outcome: it.outcome });
         }
       }
     }
