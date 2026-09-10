@@ -15,6 +15,7 @@ import type {
   PermissionRequestPayload,
   QuestionItemPayload,
   ToolDiagnosticPayload,
+  TrajectoryEvent,
   WorkflowStagePayload,
 } from "./protocol/events";
 import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjection";
@@ -404,6 +405,29 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       costUSD: typeof result.cost_usd === "number" ? result.cost_usd : 0,
       externalTurn: result.external_turn === true,
       interrupted: result.interrupted === true,
+    };
+  }
+
+  /**
+   * The session's append-only event log, as the core recorded it.
+   * recorded:false means the session predates the log, which is not the same
+   * as a log with no events — the view says which.
+   */
+  async sessionTrajectory(sessionId?: string): Promise<{ recorded: boolean; events: TrajectoryEvent[] }> {
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const id = (sessionId || this.sessionId || "").trim();
+    if (!id) {
+      throw new Error("session_id required");
+    }
+    const result = (await this.client.request("session.trajectory", { session_id: id }, 30_000)) as {
+      recorded?: boolean;
+      events?: TrajectoryEvent[];
+    };
+    return {
+      recorded: Boolean(result.recorded),
+      events: Array.isArray(result.events) ? result.events : [],
     };
   }
 

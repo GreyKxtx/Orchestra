@@ -125,9 +125,14 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.forwardAgentEvent(event, true);
     };
     const onExecChunk = (payload: { step: number; chunk: string }): void => {
+      this.post({ type: "trajectoryEvent", event: { type: "exec/output_chunk", data: payload } });
       this.post({ type: "execChunk", step: payload.step, chunk: payload.chunk });
     };
     const onWorkflow = (phase: "start" | "done", stage: WorkflowStagePayload): void => {
+      this.post({
+        type: "trajectoryEvent",
+        event: { type: phase === "start" ? "workflow/stage_start" : "workflow/stage_done", data: stage },
+      });
       this.post({ type: "workflowStage", phase, stage });
     };
     const onStatus = (status: ConnectionStatus, detail?: string): void => {
@@ -606,6 +611,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     if (history.length > 0) {
       this.post({ type: "history", messages: history });
     }
+    await this.refreshTrajectory(view.sessionId);
     if (restoredPrompt <= 0 && view.uiMessages.length > 0) {
       restoredPrompt = estimatePromptTokensFromUI(view.uiMessages);
       restoredEstimated = restoredPrompt > 0;
@@ -1381,6 +1387,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.flushDeltaSync();
       const queuedNext = this.sendQueue.length > 0;
       this.post({ type: "turnComplete", ok, queuedNext });
+      // session.message has returned, so the core has closed the writer and
+      // the log is complete: replace the live rows with the recorded ones.
+      void this.refreshTrajectory(this.session.getSessionId() ?? "");
     }
     return ok;
   }
@@ -1542,6 +1551,35 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   }
 
   /**
+   * Replace the Trajectory view from the core's log. A failed fetch is
+   * reported as unavailable, never as "not recorded" — those are different
+   * answers, and the spec forbids the view from guessing.
+   */
+  private async refreshTrajectory(sessionId: string): Promise<void> {
+    if (!sessionId) {
+      return;
+    }
+    try {
+      const res = await this.session.sessionTrajectory(sessionId);
+      if (this.session.getSessionId() !== sessionId) {
+        // The user switched sessions while the fetch was in flight.
+        return;
+      }
+      this.post({ type: "trajectory", recorded: res.recorded, events: res.events });
+    } catch (err) {
+      if (this.session.getSessionId() !== sessionId) {
+        return;
+      }
+      this.post({
+        type: "trajectory",
+        recorded: true,
+        events: [],
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Handle one agent/event. State (turn projection) is always accumulated;
    * `render` gates webview posts (false while the Settings view is open).
    */
@@ -1554,6 +1592,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         this.lastPendingOps = msg.type === "pendingOps" ? msg.payload : undefined;
       }
     };
+    // The trajectory sees every event raw, including child scope, before the
+    // chat's translation below. Reconciled from the log when the turn ends.
+    post({ type: "trajectoryEvent", event: { type: "agent/event", data: event } });
     const childCtx = {
       scope: event.scope,
       taskId: event.task_id,
