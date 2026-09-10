@@ -187,8 +187,33 @@ carrying a monotonic contiguous sequence number, an epoch-millisecond
 timestamp, a type, a typed payload, and a `source` field. Step boundaries are
 recorded where the work happens. Durations are measured at the source rather
 than at the observer. Per-step token usage comes from the provider's response.
-This is a session schema bump **and** a `ProtocolVersion` bump, because both
-the on-disk format and the wire contract change.
+
+**The log is a sidecar file, and the session schema does not move.** This
+replaces an earlier draft, which called for a session schema bump to v5.
+Reading the code showed that bump to be both unnecessary and dangerous, and
+the reasoning is recorded because it is the kind of thing that gets
+re-proposed:
+
+- The log wants append-only writes. The snapshot is one JSON document
+  rewritten whole on every save, so a log inside it would rewrite the entire
+  history on every event.
+- Crash safety falls out of a line-oriented sidecar for free: a torn trailing
+  line is discarded and every complete event before it survives. Inside a
+  single JSON document a torn write loses the whole session.
+- "A session recorded before this feature existed has no log" needs no
+  migration and no version check at all — the sidecar simply is not there.
+- `session.fork`, `session.rewind` and `session.search` read the snapshot and
+  are untouched by a file they never open.
+
+So: `.orchestra/sessions/<id>.events.jsonl`, one JSON object per line, beside
+the snapshot it belongs to. The `.jsonl` extension is load-bearing rather than
+cosmetic — `sessionfile.ListMeta` treats every `.json` file in that directory
+as a session, so a sidecar named `<id>.events.json` would show up in the
+session list as a phantom session called `<id>.events`. `sessionfile.Delete`
+must learn to remove the sidecar; today it removes only the snapshot.
+
+`ProtocolVersion` still moves to 16: there is a new method to read a log and a
+new event shape on the wire. Only the on-disk session schema stays put.
 
 **Step two: the view reads it.** The tab is a pure function from a list of
 events to a tree of rows. Because the log is authoritative and durable, the tab
@@ -296,17 +321,32 @@ and no polling.
 
 **C2.**
 
-- An append-only event log per session, persisted alongside the existing
-  projections. Session schema **v4 → v5**.
+- An append-only event log per session at
+  `.orchestra/sessions/<id>.events.jsonl`, one JSON object per line. The
+  session snapshot schema **stays at v4** — the trajectory section says why a
+  sidecar beats a schema bump here.
+- `sessionfile.Delete` removes the sidecar alongside the snapshot. It removes
+  only the snapshot today, so deleting a session would otherwise orphan its
+  log.
 - `ProtocolVersion` **15 → 16**: a method to read a session's log, and the
   event shape on the wire. `initialize` hard-fails on a version mismatch, so
-  every client in this repository — the VS Code extension included — moves in
-  lockstep with this bump. That is affordable because they all ship from here,
-  and it is stated so that nobody discovers it during implementation.
-- Sessions written under v4 have no log and must keep opening. Their trajectory
+  every client in this repository — the VS Code extension included — moves
+  in lockstep with this bump. That is affordable because they all ship from
+  here, and it is stated so that nobody discovers it during implementation.
+- A session with no sidecar has no log and must keep opening. Its trajectory
   says the log was not recorded, in words, in place. **Nothing synthesises a
   log from `ui_messages`** — a fabricated timeline is the same error as an
   estimated token count, and this spec refuses both.
+- **A pre-existing data-loss bug blocks nothing here but must be fixed while
+  we are in this code.** `sessionfile.ParseSnapshot` routes any snapshot whose
+  version is below the binary's own into the v1 migration, which builds its
+  result with `UIMessages: nil`. A session file written at schema v2 or v3
+  therefore loses its entire chat transcript on load, silently:
+  `normalizeSnapshot` then stamps the current version onto the result, so the
+  "unsupported snapshot version" guard in
+  `internal/core/session/persist.go` never fires. Verified by experiment, not
+  by reading. This is also the trap that would have made the abandoned
+  v4 → v5 bump destroy every existing session's transcript.
 
 ## Shell privileges
 
@@ -397,8 +437,8 @@ projections** — `history` and `ui_messages` keep being stored as they are
 today, and the log is authoritative for the trajectory only. Both are named in
 the trajectory section, with the reasoning.
 
-Also out: no synthesised log for sessions written before v5, and no estimated
-token counts anywhere.
+Also out: no synthesised log for sessions recorded before the log existed,
+and no estimated token counts anywhere.
 
 ## Risks
 
@@ -410,7 +450,7 @@ token counts anywhere.
 - **The renderer boundary can erode.** The pressure to "just add one field" to
   a shared fragment will be constant during C1. The bundle comparison is what
   makes that pressure visible instead of silent.
-- **A session written before v5 has no log,** and an empty timeline reads as
+- **A session recorded before the log existed has no sidecar,** and an empty timeline reads as
   data loss rather than as a session recorded before the feature existed. The
   view says which it is, in words, in place, rather than showing an empty
   frame. This is the same risk the earlier client-only draft carried, and it
@@ -425,6 +465,12 @@ token counts anywhere.
   the log can be rewritten; sessions already written under a bad shape cannot.
   This is why the event vocabulary is designed for derived projections now,
   while it costs nothing, rather than when someone needs them.
+- **The session-loading path is less safe than its own comments claim.** The
+  `Snapshot` doc comment says a version bump would make files unreadable and
+  cites a guard that provably cannot fire, and that comment is why the schema
+  has been frozen at v4 with fields bolted on additively. Anyone working here
+  should establish the loader's behaviour by test rather than by reading its
+  comments — this spec's own earlier draft was misled by them.
 
 ## Sources
 
