@@ -1,20 +1,21 @@
 /* The project rail. Web-only: chat.css is shared with the VS Code webview and
    must not learn about projects. */
 
-#app {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  grid-template-rows: 100%;
+/* The rail sits beside #app, so this stylesheet never touches #app's own
+   layout: chat.css keeps its flex column and every flex child inside it keeps
+   working. html and body are already height:100% from chat.css. */
+body {
+  display: flex;
+  flex-direction: row;
 }
 
-/* Everything chat.css lays out sits in the second column. */
-#app > *:not(.project-rail) {
-  grid-column: 2;
+#app {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .project-rail {
-  grid-column: 1;
-  grid-row: 1;
+  flex: 0 0 52px;
   display: flex;
   flex-direction: column;
   align-items: center;

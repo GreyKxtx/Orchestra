@@ -28,6 +28,16 @@
     perProject.delete(projectId);
   }
 
+  /**
+   * Read a project's state without creating a record for it. The render path
+   * walks every known project, and must not resurrect the records
+   * forgetProjectState() deletes.
+   * @param {string} projectId
+   */
+  function peekProjectState(projectId) {
+    return perProject.get(projectId) || null;
+  }
+
   /** The state the renderer is currently showing. */
   function current() {
     return projectState(currentProjectId);
@@ -84,16 +94,47 @@
     setActiveConn(connFor(projectId));
 
     toRenderer({ type: "clearMessages" });
+    // Take down the project we are leaving. Nothing in the renderer hides the
+    // overlay from the outside — hideOverlay is private to 05b-overlays.js and
+    // clearMessages does not touch it — so an overlay raised for the previous
+    // project would stay on screen over this project's transcript, and the
+    // button's reply would then be read against this project's record, find no
+    // pendingAsk, and be dropped. The asking project keeps its record, so
+    // switching back re-raises the prompt intact.
+    if (!st.pendingAsk) {
+      const overlay = document.getElementById("overlay");
+      if (overlay) {
+        overlay.classList.add("hidden");
+      }
+    }
+
     if (st.sessionId) {
       try {
         const view = await wsSend("session.get", { session_id: st.sessionId });
+        if (projectId !== currentProjectId) {
+          return;
+        }
         toRenderer({ type: "history", messages: view.ui_messages || [] });
       } catch (err) {
-        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        }
       }
     }
+    if (projectId !== currentProjectId) {
+      return;
+    }
     toRenderer({ type: "header", sessionId: st.sessionId });
-    toRenderer({ type: "turnInFlight", inFlight: st.inFlightTurnId !== null });
+    // The renderer's "turnInFlight" arm ignores the payload and always calls
+    // setBusy(true) (ui/vscode/media/chat-src/07-events.js). Sending it with
+    // inFlight:false would lock the composer into "Stop" on every switch to an
+    // idle project. "turnComplete" is the only message that reaches
+    // setBusy(false), so send whichever one is true.
+    if (st.inFlightTurnId !== null) {
+      toRenderer({ type: "turnInFlight", inFlight: true });
+    } else {
+      toRenderer({ type: "turnComplete" });
+    }
     if (st.pendingAsk) {
       toRenderer(st.pendingAsk.rendererMessage);
     }
@@ -166,7 +207,11 @@
 
   /** @param {any} msg */
   async function sendTurn(msg) {
-    const st = current();
+    // Capture the id, not just the record: the user can switch projects while
+    // this turn is awaiting, and everything after the await must know which
+    // project it belongs to.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
     if (!st.sessionId) {
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
@@ -190,31 +235,51 @@
     try {
       await turn.done;
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     } finally {
+      // The record and the rail always tell the truth, whichever project is on
+      // screen. Only the renderer is gated: a turn that ends in a background
+      // project must not put its error bubble, or its turnComplete, into the
+      // transcript the user is looking at.
       st.inFlightTurnId = null;
       st.status = "idle";
       renderProjects();
-      toRenderer({ type: "turnInFlight", inFlight: false });
-      toRenderer({ type: "turnComplete" });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "turnInFlight", inFlight: false });
+        toRenderer({ type: "turnComplete" });
+      }
     }
   }
 
   /** @param {string | undefined} sessionId */
   async function startSession(sessionId) {
-    const st = current();
+    // Same rule as sendTurn: current() is only safe before the first await.
+    // The user can switch projects while this is in flight, and everything
+    // after an await must be checked against currentProjectId before it paints.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
     try {
       const params = sessionId ? { session_id: sessionId } : {};
       const started = await wsSend("session.start", params);
       st.sessionId = started.session_id || "";
-      toRenderer({ type: "clearMessages" });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "clearMessages" });
+      }
       if (started.restored) {
         const view = await wsSend("session.get", { session_id: st.sessionId });
-        toRenderer({ type: "history", messages: view.ui_messages || [] });
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "history", messages: view.ui_messages || [] });
+        }
       }
-      toRenderer({ type: "header", sessionId: st.sessionId });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "header", sessionId: st.sessionId });
+      }
       await refreshSessionList();
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     }
   }

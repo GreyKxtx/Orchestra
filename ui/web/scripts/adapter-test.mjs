@@ -54,10 +54,28 @@ export function loadBundle(opts = {}) {
 
   const handlers = [];
   const store = new Map();
+  const elementsById = new Map();
+  // A real classList, not a no-op stub: I1's fix reads back whether "hidden" is
+  // present, and a stub that silently drops add()/remove() would make that
+  // undetectable no matter what the production code does.
+  const makeClassList = () => {
+    const classes = new Set();
+    return {
+      add: (...names) => names.forEach((n) => classes.add(n)),
+      remove: (...names) => names.forEach((n) => classes.delete(n)),
+      toggle: (name, force) => {
+        const next = force === undefined ? !classes.has(name) : Boolean(force);
+        if (next) classes.add(name);
+        else classes.delete(name);
+        return next;
+      },
+      contains: (name) => classes.has(name),
+    };
+  };
   const el = () => ({
     addEventListener() {},
     removeEventListener() {},
-    classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    classList: makeClassList(),
     appendChild() {},
     removeChild() {},
     insertBefore() {},
@@ -103,7 +121,18 @@ export function loadBundle(opts = {}) {
       removeItem: (k) => store.delete(k),
     },
     document: {
-      getElementById: () => el(),
+      // A real browser returns the same node for the same id every time —
+      // e.g. 01-dom-state.js and activateProject both look up "#overlay" and
+      // must land on one shared element, not two independent stubs. Cache by
+      // id instead of minting a fresh stub per call.
+      getElementById: (id) => {
+        let e = elementsById.get(id);
+        if (!e) {
+          e = el();
+          elementsById.set(id, e);
+        }
+        return e;
+      },
       createElement: () => el(),
       createTextNode: () => el(),
       createDocumentFragment: () => el(),
@@ -198,6 +227,8 @@ export function loadBundle(opts = {}) {
     get socketURL() {
       return socket ? socket.url : "";
     },
+    /** The stub element for an id, if the bundle has looked it up. */
+    elementById: (id) => elementsById.get(id) || null,
   };
 }
 
@@ -223,6 +254,10 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
  * (internal/core/rpc_handler.go:76), and it is where project_root comes from.
  */
 async function handshake(b) {
+  // The id-less startup socket only opens after 40-projects.js's startup IIFE
+  // resolves the project id via GET /api/projects (the C1 fix) — a real
+  // microtask hop now, not a synchronous side effect of loadBundle().
+  await tick();
   b.open();
   answer(b, "core.health", {
     workspace_root: "/w",
@@ -241,6 +276,9 @@ async function handshake(b) {
 
 test("connecting handshakes and starts a session", async () => {
   const b = loadBundle();
+  // Same reason as handshake()'s: the id-less startup socket only opens after
+  // the API round trip the C1 fix added.
+  await tick();
   b.open();
 
   answer(b, "core.health", {
@@ -418,6 +456,9 @@ test("an unknown server request is still answered, or the core waits forever", a
 
 test("the socket URL carries no token — the cookie authenticates", async () => {
   const b = loadBundle();
+  // The id-less startup socket only opens once the API round trip the C1 fix
+  // added resolves.
+  await tick();
   assert.ok(b.socketURL, "the bundle did not expose the socket URL it dialled");
   assert.ok(
     !/token=/.test(b.socketURL),
@@ -490,7 +531,7 @@ function answerOn(b, projectId, method, result) {
   return req;
 }
 
-test("a background project's tool call does not enter the active transcript", async () => {
+test("a background project's streamed text does not enter the active transcript", async () => {
   const b = loadBundle({ search: "?project=A" });
   b.setFetchResponder(() => ({
     projects: [
@@ -612,4 +653,288 @@ test("switching repaints from the core rather than a buffer", async () => {
 
   const history = b.inbound.filter((m) => m.type === "history").pop();
   assert.deepEqual(history.messages, [{ role: "user", text: "earlier" }]);
+});
+
+// ---- fix round 1 regression tests --------------------------------------
+
+test("orchestra web with no ?project= resolves the id from the API before opening the socket", async () => {
+  const b = loadBundle({ search: "" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+
+  // C1: adopting the id after opening a "" socket leaves the connection, the
+  // per-project record and the rail keyed differently — the id must be
+  // resolved before the socket opens, so the very first socket already
+  // carries it.
+  assert.match(
+    b.socketURL,
+    /[?&]project=A\b/,
+    `the startup socket must be keyed by the resolved project id, not opened blind (${b.socketURL})`
+  );
+
+  await handshakeFor(b, "A");
+  b.inbound.length = 0;
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", content: "hello", step: 1 },
+  });
+  await tick();
+  assert.ok(
+    b.inbound.some((m) => m.type === "deltaSync"),
+    "a notification for the resolved project never reached the renderer — currentProjectId and the socket's key must match"
+  );
+
+  const railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  const entry = railed && railed.projects.find((p) => p.id === "A");
+  assert.ok(entry, "the resolved project never appeared in the rail");
+  assert.equal(entry.active, true, "the rail did not mark the resolved project active");
+});
+
+test("switching to an idle project posts turnComplete, never turnInFlight", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  // B has a session and nothing in flight.
+  b.inbound.length = 0;
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  // C2: the renderer's turnInFlight arm always calls setBusy(true) regardless
+  // of the payload, so sending it with inFlight:false locks the composer into
+  // "Stop" forever. turnComplete is the only message that reaches setBusy(false).
+  assert.equal(
+    b.inbound.filter((m) => m.type === "turnInFlight").length,
+    0,
+    "switching to an idle project must not post turnInFlight, or the composer locks into Stop"
+  );
+  assert.ok(
+    b.inbound.some((m) => m.type === "turnComplete"),
+    "switching to an idle project never told the composer the turn was done"
+  );
+});
+
+test("a turn that ends in a background project never repaints the transcript on screen", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  // A starts a turn, then the user switches to B before it settles.
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", allowExec: false, files: [] });
+  await tick();
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  // Scenario 1: A's turn fails after the switch.
+  b.inbound.length = 0;
+  const failReq = b.sent
+    .filter((m) => m.method === "session.message" && String(m.url).includes("project=A"))
+    .pop();
+  assert.ok(failReq, "no session.message was ever sent for A");
+  b.deliverTo("A", { jsonrpc: "2.0", id: failReq.id, error: { message: "boom" } });
+  await tick();
+
+  assert.equal(
+    b.inbound.filter((m) => m.type === "error").length,
+    0,
+    "a background turn's failure leaked an error bubble into the visible transcript"
+  );
+  assert.equal(
+    b.inbound.filter((m) => m.type === "turnComplete").length,
+    0,
+    "a background turn's failure leaked turnComplete into the visible transcript"
+  );
+  assert.equal(
+    b.inbound.filter((m) => m.type === "turnInFlight").length,
+    0,
+    "a background turn's failure leaked turnInFlight into the visible transcript"
+  );
+
+  let railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  assert.ok(railed, "no projectList was posted after the background turn settled");
+  assert.equal(
+    railed.projects.find((p) => p.id === "A").status,
+    "idle",
+    "A's rail status must return to idle even though nothing painted"
+  );
+
+  // Scenario 2: back to A briefly to start a second turn, then away again —
+  // this one succeeds after the switch.
+  dispatch(b, { type: "switchProject", projectId: "A" });
+  await tick();
+  answerOn(b, "A", "session.get", { ui_messages: [] });
+  await tick();
+
+  dispatch(b, { type: "send", text: "again", mode: "build", profile: "", allowExec: false, files: [] });
+  await tick();
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  b.inbound.length = 0;
+  const okReq = b.sent
+    .filter((m) => m.method === "session.message" && String(m.url).includes("project=A"))
+    .pop();
+  assert.ok(okReq, "no second session.message was ever sent for A");
+  b.deliverTo("A", { jsonrpc: "2.0", id: okReq.id, result: {} });
+  await tick();
+
+  assert.equal(
+    b.inbound.filter((m) => m.type === "error").length,
+    0,
+    "a background turn's success leaked an error bubble into the visible transcript"
+  );
+  assert.equal(
+    b.inbound.filter((m) => m.type === "turnComplete").length,
+    0,
+    "a background turn's success leaked turnComplete into the visible transcript"
+  );
+  assert.equal(
+    b.inbound.filter((m) => m.type === "turnInFlight").length,
+    0,
+    "a background turn's success leaked turnInFlight into the visible transcript"
+  );
+
+  railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  assert.ok(railed, "no projectList was posted after the second background turn settled");
+  assert.equal(railed.projects.find((p) => p.id === "A").status, "idle");
+});
+
+test("switching away from a raised overlay hides it, and switching back re-raises it", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  const overlay = b.elementById("overlay");
+  assert.ok(overlay, "the bundle never looked up #overlay");
+  // The real page starts with class="overlay hidden"; the stub DOM does not
+  // parse that markup, so prime the same starting state by hand.
+  overlay.classList.add("hidden");
+
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    id: 55,
+    method: "permission/request",
+    params: { tool: "bash", command: "ls" },
+  });
+  await tick();
+
+  // Switch to B: its permission prompt raises the overlay.
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+  assert.equal(
+    overlay.classList.contains("hidden"),
+    false,
+    "switching to a project that is asking must raise its overlay"
+  );
+
+  // I1: switch back to A. Nothing outside 05b-overlays.js can hide the
+  // overlay from here, so without the fix B's prompt stays on screen over A.
+  dispatch(b, { type: "switchProject", projectId: "A" });
+  await tick();
+  answerOn(b, "A", "session.get", { ui_messages: [] });
+  await tick();
+  assert.equal(
+    overlay.classList.contains("hidden"),
+    true,
+    "switching away from an asking project left its overlay stranded on screen"
+  );
+
+  // Switch back to B: the same prompt re-raises, proving the record survived.
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+  assert.equal(
+    overlay.classList.contains("hidden"),
+    false,
+    "switching back to an asking project did not re-raise its prompt"
+  );
+});
+
+test("per-project text accumulators do not cross-contaminate on switch", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", content: "Alpha", step: 1 },
+  });
+  await tick();
+
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  b.inbound.length = 0;
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", content: "Beta", step: 1 },
+  });
+  await tick();
+  const bDelta = b.inbound.filter((m) => m.type === "deltaSync").pop();
+  assert.ok(bDelta, "B's own text never reached the renderer while B was active");
+  assert.equal(bDelta.content, "Beta", "B's accumulator must start clean, not carry A's text");
+
+  dispatch(b, { type: "switchProject", projectId: "A" });
+  await tick();
+  answerOn(b, "A", "session.get", { ui_messages: [] });
+  await tick();
+
+  b.inbound.length = 0;
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", content: " Gamma", step: 1 },
+  });
+  await tick();
+  const aDelta = b.inbound.filter((m) => m.type === "deltaSync").pop();
+  assert.ok(aDelta, "A's own text never reached the renderer after switching back");
+  assert.equal(
+    aDelta.content,
+    "Alpha Gamma",
+    "A's accumulator must still hold only A's text, not B's — a single shared accumulator would fail this"
+  );
 });

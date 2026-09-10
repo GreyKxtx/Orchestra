@@ -211,13 +211,13 @@
    */
   function renderProjects() {
     const rows = known.map((p) => {
-      const st = projectState(p.id);
+      const st = peekProjectState(p.id);
       return {
         id: p.id,
         name: p.name || p.path,
         path: p.path,
         state: p.state,
-        status: p.state === "closed" ? "closed" : st.status,
+        status: p.state === "closed" || !st ? "closed" : st.status,
         active: p.id === currentProjectId,
       };
     });
@@ -351,22 +351,31 @@
 
   // ---- startup -----------------------------------------------------------
   //
-  // The shell passes exactly one ?project=; a plain `orchestra web` passes
-  // none and the project-less socket serves the startup core. Either way the
-  // list arrives from the API and the rail draws it.
+  // The shell passes exactly one ?project=, and that id is used directly. A
+  // plain `orchestra web` passes none, so the id must be resolved from the API
+  // before any socket opens — see the id-before-socket note inside the IIFE.
 
   (async () => {
     const startupId = new URLSearchParams(location.search).get("project") || "";
-    currentProjectId = startupId;
-    setActiveConn(ensureConn(startupId));
-    await refreshProjects();
-    if (!startupId) {
-      // No id in the URL: adopt whichever project the API reports as open, so
-      // the rail's active marker matches the socket that is actually serving.
-      const first = known.find((p) => p.state === "ready");
-      if (first) {
-        currentProjectId = first.id;
-        renderProjects();
-      }
+    if (startupId) {
+      currentProjectId = startupId;
+      setActiveConn(ensureConn(startupId));
+      await refreshProjects();
+      return;
     }
+    // No id in the URL — a plain `orchestra web`. Ask the API which project the
+    // core is already serving BEFORE opening a socket, so that the connection,
+    // the per-project record and the rail's active chip all share one key.
+    //
+    // Adopting the id afterwards does not work: `conns` would stay keyed ""
+    // while `currentProjectId` named the project, and since the two are
+    // separate socket slots on the server, every notification would fail the
+    // `projectId === currentProjectId` gate, `sendTurn` would read an empty
+    // session forever, and clicking the chip could not repair it because
+    // `switchProject` returns early on the id it already holds.
+    await refreshProjects();
+    const first = known.find((p) => p.state === "ready");
+    currentProjectId = first ? first.id : "";
+    setActiveConn(ensureConn(currentProjectId));
+    renderProjects();
   })();
