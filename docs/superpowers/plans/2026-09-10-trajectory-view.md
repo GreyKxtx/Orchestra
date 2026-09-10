@@ -1594,10 +1594,15 @@ In `ui/web/src/10-adapter-session.js`, add before `activateProject`:
 In `activateProject`, inside the `if (st.sessionId) { … }` block, after the `try { … session.get … } catch { … }` and still inside the `if`, add:
 
 ```js
-      await refreshTrajectory(projectId, conn, st.sessionId);
+      // Not awaited: the fetch must not hold up the header/turnComplete/
+      // session.list below, which is what the renderer's own state (composer
+      // busy/idle, session list) depends on. refreshTrajectory carries its
+      // own stale guard, so a late answer still lands correctly (or is
+      // dropped) once it resolves.
+      void refreshTrajectory(projectId, conn, st.sessionId);
 ```
 
-(The stale guard inside `refreshTrajectory` covers the switch-away case, and the existing `if (projectId !== currentProjectId) return;` after the block still guards the `header` post.)
+(Fire-and-forget on purpose: awaiting here would make the `header` post and the session list wait on the log fetch, and would hang any caller whose core never answers `session.trajectory`. The stale guard inside `refreshTrajectory` is what makes that safe.)
 
 In `sendTurn`'s `finally`, inside the existing `if (projectId === currentProjectId) { … }` after `toRenderer({ type: "turnComplete", ok: !failed });`, add:
 
@@ -1608,15 +1613,18 @@ In `sendTurn`'s `finally`, inside the existing `if (projectId === currentProject
         void refreshTrajectory(projectId, conn, st.sessionId);
 ```
 
-`conn` here is the connection `sendTurn` used for `session.message`; if the function names it differently, use that name.
+`sendTurn` has no `conn` local today — it calls `connFor(projectId).sendCancellable(...)` inline. Hoist it: `const conn = connFor(projectId);` immediately before that call, and use `conn.sendCancellable(...)` there, so the `finally` refreshes on the same connection the turn went out on.
 
 In `startSession` — the path behind the renderer's `newSession` and `openSession` messages — after the `header` post (`toRenderer({ type: "header", sessionId: st.sessionId });` inside its `if (projectId === currentProjectId)`) and before `await refreshSessionList(projectId);`, add:
 
 ```js
       // A new or reopened session cleared the view above; give it the new
       // session's log, or the "nothing yet" answer, rather than leaving it
-      // on "Loading trajectory…" until the next turn ends.
-      await refreshTrajectory(projectId, conn, st.sessionId);
+      // on "Loading trajectory…" until the next turn ends. Not awaited, for
+      // the same reason as activateProject: it must not hold up
+      // refreshSessionList below, and refreshTrajectory carries its own
+      // stale guard for whenever it resolves.
+      void refreshTrajectory(projectId, conn, st.sessionId);
 ```
 
 `refreshTrajectory` carries its own stale guard, so no extra `currentProjectId` check is needed around the call. Without this hook the pane would stay on "Loading trajectory…" after every session switch within a project: `clearMessages` resets the view and nothing repopulates it.
