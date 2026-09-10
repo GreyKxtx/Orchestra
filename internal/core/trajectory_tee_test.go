@@ -8,6 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/trajectory"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestTeeToTrajectory_RecordsWhatItForwards(t *testing.T) {
@@ -212,5 +213,159 @@ func TestPrepareAgentLaunch_DoesNotLeakTheWriterWhenItFailsEarly(t *testing.T) {
 	}
 	if rmErr := os.Remove(sidecar); rmErr != nil {
 		t.Fatalf("os.Remove(sidecar) = %v; a leaked writer handle would leave this undeletable on Windows", rmErr)
+	}
+}
+
+// usageLLM is like fixedLLM but attaches provider Usage to each scripted
+// response, so tests can assert exactly what the sidecar records for a step
+// where the provider *did* report token accounting.
+type usageLLM struct {
+	steps []string
+	usage []*llm.TokenUsage // parallel to steps; nil entries report no usage
+	i     int
+}
+
+func (f *usageLLM) Complete(_ context.Context, _ llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	if f.i >= len(f.steps) {
+		return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: `{"type":"final","final":{"patches":[]}}`}}, nil
+	}
+	out := f.steps[f.i]
+	var u *llm.TokenUsage
+	if f.i < len(f.usage) {
+		u = f.usage[f.i]
+	}
+	f.i++
+	return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, Content: out}, Usage: u}, nil
+}
+
+func (f *usageLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
+
+// stepUsageEvents collects the "data" payload of every recorded agent/event
+// whose type is want ("step_usage" or "context_estimate").
+func stepUsageEvents(t *testing.T, events []trajectory.Event, want string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, ev := range events {
+		if ev.Type != "agent/event" {
+			continue
+		}
+		var payload struct {
+			Type string         `json:"type"`
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(ev.Data, &payload); err != nil {
+			continue
+		}
+		if payload.Type != want {
+			continue
+		}
+		out = append(out, payload.Data)
+	}
+	return out
+}
+
+// TestSessionTurn_DoesNotRecordAnEstimateAsProviderUsage drives a real turn
+// against a scripted LLM that reports no usage (fixedLLM never sets
+// CompleteResponse.Usage) and reads the sidecar back.
+//
+// This is the branch's hardest constraint: the spec refuses estimated token
+// counts outright, and for a provider that reports no usage the byte-derived
+// estimate emitted by Agent.emitPromptContextEstimate would otherwise be the
+// *only* step_usage recorded for the step — a fabricated number with nothing
+// on the log to contradict it.
+func TestSessionTurn_DoesNotRecordAnEstimateAsProviderUsage(t *testing.T) {
+	root := t.TempDir()
+
+	finalStep := `{"type":"final","final":{"patches":[]}}`
+	_, h := setupInitializedCore(t, root, &fixedLLM{steps: []string{finalStep}})
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sessionID := res.(*SessionStartResult).SessionID
+
+	msgP, _ := json.Marshal(SessionMessageParams{
+		SessionID: sessionID,
+		Content:   "say hello",
+	})
+	if _, err := h.Handle(context.Background(), "session.message", msgP); err != nil {
+		t.Fatalf("session.message: %v", err)
+	}
+
+	events, recorded, err := trajectory.Read(root, sessionID)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !recorded {
+		t.Fatal("expected recorded=true")
+	}
+
+	for _, data := range stepUsageEvents(t, events, "step_usage") {
+		if data["source"] == "estimate" {
+			t.Fatalf("recorded a step_usage event with source=estimate — the byte-derived estimate must never be recorded under the provider-usage event type: %+v", data)
+		}
+	}
+	if len(stepUsageEvents(t, events, "context_estimate")) == 0 {
+		t.Fatal("expected at least one context_estimate event — a fix that simply stopped emitting the estimate would also pass the step_usage assertion above without this")
+	}
+}
+
+// TestSessionTurn_RecordsRealStepUsageUnmodified pins that when the provider
+// *does* report usage, the recorded step_usage event carries those exact
+// numbers unmodified. The whole-branch review confirmed this holds today;
+// this test exists so Fix A (widening the agent_events.go translation to
+// cover both StreamEventStepUsage and StreamEventContextEstimate) cannot
+// regress it.
+func TestSessionTurn_RecordsRealStepUsageUnmodified(t *testing.T) {
+	root := t.TempDir()
+
+	finalStep := `{"type":"final","final":{"patches":[]}}`
+	llmClient := &usageLLM{
+		steps: []string{finalStep},
+		usage: []*llm.TokenUsage{{PromptTokens: 4096, CompletionTokens: 128, TotalTokens: 4224}},
+	}
+	_, h := setupInitializedCore(t, root, llmClient)
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	res, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatalf("session.start: %v", err)
+	}
+	sessionID := res.(*SessionStartResult).SessionID
+
+	msgP, _ := json.Marshal(SessionMessageParams{
+		SessionID: sessionID,
+		Content:   "say hello",
+	})
+	if _, err := h.Handle(context.Background(), "session.message", msgP); err != nil {
+		t.Fatalf("session.message: %v", err)
+	}
+
+	events, recorded, err := trajectory.Read(root, sessionID)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !recorded {
+		t.Fatal("expected recorded=true")
+	}
+
+	usages := stepUsageEvents(t, events, "step_usage")
+	if len(usages) == 0 {
+		t.Fatal("expected at least one recorded step_usage event")
+	}
+	data := usages[0]
+	if got, want := int(data["prompt_tokens"].(float64)), 4096; got != want {
+		t.Errorf("prompt_tokens = %d, want %d", got, want)
+	}
+	if got, want := int(data["completion_tokens"].(float64)), 128; got != want {
+		t.Errorf("completion_tokens = %d, want %d", got, want)
+	}
+	if got, want := int(data["total_tokens"].(float64)), 4224; got != want {
+		t.Errorf("total_tokens = %d, want %d", got, want)
+	}
+	if data["source"] != nil {
+		t.Errorf("provider-reported step_usage carries a source field %v; only the estimate should", data["source"])
 	}
 }

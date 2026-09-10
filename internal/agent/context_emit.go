@@ -90,7 +90,7 @@ func (a *Agent) emitPromptContextEstimate(step int, history []llm.Message) {
 		"breakdown":     breakdown,
 	})
 	a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
-		Kind:    llm.StreamEventStepUsage,
+		Kind:    llm.StreamEventContextEstimate,
 		Content: string(payload),
 	}})
 }

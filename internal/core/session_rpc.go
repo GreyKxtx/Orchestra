@@ -1130,15 +1130,31 @@ func (c *Core) SessionClose(params SessionCloseParams) error {
 	if c == nil {
 		return protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
-	if sess, err := c.sessions.Get(params.SessionID); err == nil {
+	sess, sessErr := c.sessions.Get(params.SessionID)
+	if sessErr == nil {
+		// Ask the turn to stop and give it a chance to release the sidecar
+		// handle before the disk delete below. Cancel does not wait for the
+		// turn to unwind, so this is best-effort, not a guarantee.
 		sess.Cancel()
-		c.sessions.Delete(params.SessionID)
 	}
-	// Remove any on-disk snapshot too — close is idempotent across
-	// memory and disk, otherwise "closed" sessions would resurrect on
-	// the next core restart.
+
+	// Disk first, and only drop in-memory state if it succeeded. The reverse
+	// order — which this function used — removes the session from memory,
+	// discovers it cannot remove it from disk, and reports success anyway, so
+	// the session the caller was told was deleted resurrects on the next
+	// restart. A live turn makes that reachable rather than theoretical: the
+	// trajectory writer holds the sidecar open, Cancel does not wait for the
+	// turn to unwind, and on Windows an open handle makes the removal fail.
+	//
+	// Failing before anything is destroyed leaves the session whole and the
+	// error truthful, and the caller can retry once the turn ends.
 	if err := coresession.DeleteSnapshot(c.workspaceRoot, params.SessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "core: session %s snapshot delete failed: %v\n", params.SessionID, err)
+		return protocol.NewError(protocol.ExecFailed, err.Error(),
+			map[string]any{"session_id": params.SessionID})
+	}
+
+	if sessErr == nil {
+		c.sessions.Delete(params.SessionID)
 	}
 	// Session memory (turn digests, session notes) is useless without the
 	// session — deleting it here keeps .orchestra/memory/sessions/ from

@@ -102,12 +102,12 @@ func emitAgentStreamEvent(notify func(method string, params any), env EventEnvel
 		}, env, child))
 		return
 	}
-	if ev.Stream.Kind == llm.StreamEventStepUsage {
+	if ev.Stream.Kind == llm.StreamEventStepUsage || ev.Stream.Kind == llm.StreamEventContextEstimate {
 		var data any
 		if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
 			notify("agent/event", mergeAgentEvent(map[string]any{
 				"step": ev.Step,
-				"type": string(llm.StreamEventStepUsage),
+				"type": string(ev.Stream.Kind),
 				"data": data,
 			}, env, child))
 			return

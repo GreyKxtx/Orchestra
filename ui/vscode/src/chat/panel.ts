@@ -1702,6 +1702,17 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         }
         break;
       }
+      case "context_estimate": {
+        // An estimate may move the context gauge; it must never touch the
+        // spend counters. Those are measurements, and this is not one.
+        const usage = parseStepUsage(event.data);
+        if (usage && event.scope !== "child") {
+          if (typeof usage.prompt_tokens === "number" && usage.prompt_tokens > 0) {
+            this.turnPromptCtx = usage.prompt_tokens;
+          }
+        }
+        break;
+      }
       case "recoverable_error":
       case "error": {
         const content = event.content || "";

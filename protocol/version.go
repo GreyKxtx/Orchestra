@@ -28,6 +28,10 @@ const (
 	// v16: session.trajectory — the append-only per-session event log
 	//      (.orchestra/sessions/<id>.events.jsonl) read back as {recorded,
 	//      events[]}. The on-disk session schema is unchanged and stays at v4.
+	//      Also added agent/event type "context_estimate": a byte-derived
+	//      prompt-context estimate, distinct from provider-reported
+	//      "step_usage" — the two must never be summed or substituted for
+	//      one another, and only step_usage may be recorded as measured spend.
 	ProtocolVersion = 16
 
 	// OpsVersion is the version of Internal Ops.
