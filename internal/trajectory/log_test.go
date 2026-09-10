@@ -196,3 +196,159 @@ func TestAppend_AfterCloseFails(t *testing.T) {
 		t.Error("Append after Close returned nil, want an error — the doc comment promises it fails")
 	}
 }
+
+func TestNewWriter_AfterATornTailKeepsWritingWithoutCorruption(t *testing.T) {
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		if err := w.Append("agent/event", map[string]any{"n": i}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Crash mid-write: a partial line with no newline.
+	f, err := os.OpenFile(Path(root, "s1"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open for torn write: %v", err)
+	}
+	if _, err := f.WriteString(`{"seq":3,"type":"agent/ev`); err != nil {
+		t.Fatalf("torn write: %v", err)
+	}
+	_ = f.Close()
+
+	// Restart and keep recording.
+	w2, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter after crash: %v", err)
+	}
+	if err := w2.Append("agent/event", map[string]any{"n": 4}); err != nil {
+		t.Fatalf("Append after crash: %v", err)
+	}
+	if err := w2.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	events, _, err := Read(root, "s1")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	// Both pre-crash events plus the new one. Before the fix this returned 2:
+	// the new event merged into the fragment and both were dropped.
+	if len(events) != 3 {
+		t.Fatalf("len(events) = %d, want 3 — the event written after the crash was swallowed", len(events))
+	}
+	seen := map[int64]bool{}
+	for _, ev := range events {
+		if seen[ev.Seq] {
+			t.Errorf("seq %d appears twice — a number was reissued to different content", ev.Seq)
+		}
+		seen[ev.Seq] = true
+	}
+	if events[len(events)-1].Seq <= events[len(events)-2].Seq {
+		t.Errorf("sequence did not advance: %v then %v", events[len(events)-2].Seq, events[len(events)-1].Seq)
+	}
+}
+
+func TestNewWriter_ATailInterruptedBeforeItsNewlineIsRecovered(t *testing.T) {
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.Append("agent/event", map[string]any{"n": 1}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A write stopped between the last byte of a complete event and its
+	// newline. The event is intact; only its terminator is missing. This is
+	// why the fix terminates the tail instead of truncating it — truncation
+	// would destroy a good event.
+	f, err := os.OpenFile(Path(root, "s1"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	line := `{"seq":2,"time_ms":1,"type":"agent/event","source":"core","data":{"n":2}}`
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatalf("unterminated write: %v", err)
+	}
+	_ = f.Close()
+
+	w2, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w2.Append("agent/event", map[string]any{"n": 3}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := w2.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	events, _, err := Read(root, "s1")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("len(events) = %d, want 3 — the unterminated but complete event must survive", len(events))
+	}
+	if events[2].Seq != 3 {
+		t.Errorf("events[2].Seq = %d, want 3 — the sequence must resume past the recovered line", events[2].Seq)
+	}
+}
+
+func TestAppend_AFailedWriteDoesNotReissueItsSequenceNumber(t *testing.T) {
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.Append("agent/event", map[string]any{"n": 1}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Force a write failure by swapping in a closed descriptor. This test is
+	// inside the package, so it can reach w.f — that is the only way to
+	// exercise a write error without an injectable writer.
+	good := w.f
+	broken, err := os.OpenFile(Path(root, "s1"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open second handle: %v", err)
+	}
+	_ = broken.Close()
+	w.f = broken
+	if err := w.Append("agent/event", map[string]any{"n": 2}); err == nil {
+		t.Fatal("Append on a closed descriptor returned nil, want an error")
+	}
+	w.f = good
+
+	if err := w.Append("agent/event", map[string]any{"n": 3}); err != nil {
+		t.Fatalf("Append after the failure: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	events, _, err := Read(root, "s1")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("len(events) = %d, want 2 — the failed write recorded nothing", len(events))
+	}
+	// A gap is expected and acceptable; a reused number is not.
+	if events[0].Seq == events[1].Seq {
+		t.Errorf("both events carry seq %d — the failed write's number was reissued", events[0].Seq)
+	}
+	if events[1].Seq <= events[0].Seq {
+		t.Errorf("sequence went backwards: %d then %d", events[0].Seq, events[1].Seq)
+	}
+}

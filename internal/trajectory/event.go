@@ -12,7 +12,10 @@ import "encoding/json"
 // Event is one recorded thing. The field names are the ones a derived
 // projection will need later — see the spec's "One event shape, defined once".
 type Event struct {
-	// Seq is monotonic and contiguous from 1 within a session.
+	// Seq is monotonic and strictly increasing from 1 within a session. It is
+	// contiguous in normal operation; a gap means an event failed to be
+	// written, which is left visible on purpose — reusing a number would risk
+	// two different events sharing it.
 	Seq int64 `json:"seq"`
 	// TimeMS is epoch milliseconds, stamped by the core when the event
 	// happened. Never a client's clock: durations are measured where the work

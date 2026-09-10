@@ -149,3 +149,21 @@ func TestSessionstoreDoesNotImportUI(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionfileDoesNotImportTrajectory keeps the session-storage layer below
+// the trajectory layer. internal/trajectory reads and writes files beside the
+// session snapshot, so it depends on sessionfile's layout; the reverse import
+// would invert that and becomes a cycle the moment trajectory needs anything
+// from sessionfile. sessionfile.Delete therefore spells the sidecar's name by
+// hand, and internal/trajectory has a test pinning the two spellings together.
+func TestSessionfileDoesNotImportTrajectory(t *testing.T) {
+	root := repoRoot(t)
+	for _, e := range listPackages(t, root, "./internal/sessionfile/...") {
+		for _, imp := range e.Imports {
+			if imp == "github.com/orchestra/orchestra/internal/trajectory" ||
+				strings.HasPrefix(imp, "github.com/orchestra/orchestra/internal/trajectory/") {
+				t.Errorf("%s must not import %s", e.ImportPath, imp)
+			}
+		}
+	}
+}
