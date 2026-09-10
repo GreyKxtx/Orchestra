@@ -1156,7 +1156,7 @@ recording for that turn rather than failing it."
 - Modify: `protocol/version.go` (the `ProtocolVersion` constant and its history comment)
 - Create: `internal/core/trajectory_rpc.go`
 - Modify: `internal/core/rpc_handler.go` (a case beside the other `session.*` methods)
-- Modify: `ui/vscode/src/coreSession.ts:24` and its built `out/coreSession.js`
+- Modify: `ui/vscode/src/coreSession.ts:24` (the TypeScript source only — `ui/vscode/out/` is untracked build output; Step 7 says why)
 - Modify: `docs/PROTOCOL.md`
 - Test: `internal/core/trajectory_rpc_test.go`
 
@@ -1194,7 +1194,7 @@ func TestSessionTrajectory_ReturnsRecordedEvents(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	c := newTestCore(t, root) // follow the neighbouring tests' constructor
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
 	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: "s1"})
 	if err != nil {
 		t.Fatalf("SessionTrajectory: %v", err)
@@ -1212,7 +1212,7 @@ func TestSessionTrajectory_ReturnsRecordedEvents(t *testing.T) {
 
 func TestSessionTrajectory_SessionWithNoLogSaysSoRatherThanReturningEmpty(t *testing.T) {
 	root := t.TempDir()
-	c := newTestCore(t, root)
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
 	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: "predates-the-log"})
 	if err != nil {
 		t.Fatalf("SessionTrajectory: %v", err)
@@ -1226,14 +1226,14 @@ func TestSessionTrajectory_SessionWithNoLogSaysSoRatherThanReturningEmpty(t *tes
 }
 
 func TestSessionTrajectory_EmptySessionIDIsAnError(t *testing.T) {
-	c := newTestCore(t, t.TempDir())
+	c, _ := setupInitializedCore(t, t.TempDir(), &fixedLLM{})
 	if _, err := c.SessionTrajectory(SessionTrajectoryParams{}); err == nil {
 		t.Error("expected an error for an empty session_id")
 	}
 }
 ```
 
-`newTestCore` is a placeholder: read `internal/core/rpc_handler_test.go` and `internal/core/core_options_test.go` and use whatever those files already do to build a `*Core` with a workspace root. Do not add a new helper if one exists.
+`setupInitializedCore(t, root, &fixedLLM{})` is the real helper, defined at `internal/core/rpc_handler_test.go:150`; it returns `(*Core, *RPCHandler)` and these tests need only the first. It writes an `.orchestra.yml`, disables LSP, builds the core and drives `initialize`, so the core it hands back is ready to serve. Do not add a helper of your own — an earlier draft of this task invented a `newTestCore` that does not exist anywhere in the repository, and transcribing it verbatim would not have compiled.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -1251,10 +1251,10 @@ Create `internal/core/trajectory_rpc.go`:
 package core
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/trajectory"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // SessionTrajectoryParams selects the session whose log to read.
@@ -1274,23 +1274,39 @@ type SessionTrajectoryResult struct {
 }
 
 // SessionTrajectory returns the append-only event log for a session.
-func (c *Core) SessionTrajectory(p SessionTrajectoryParams) (SessionTrajectoryResult, error) {
+//
+// A session id that names nothing yields Recorded false rather than an error:
+// the log is a sidecar, so "no log here" is the same answer for a session that
+// predates the feature and for one that never existed, and this method has no
+// business deciding which. Only a blank id is rejected, because that is a
+// malformed request rather than a question about a session.
+func (c *Core) SessionTrajectory(p SessionTrajectoryParams) (*SessionTrajectoryResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
 	id := strings.TrimSpace(p.SessionID)
 	if id == "" {
-		return SessionTrajectoryResult{}, fmt.Errorf("session.trajectory: session_id required")
+		return nil, protocol.NewError(protocol.InvalidParams, "session_id is empty", nil)
 	}
-	events, recorded, err := trajectory.Read(c.WorkspaceRoot(), id)
+	events, recorded, err := trajectory.Read(c.workspaceRoot, id)
 	if err != nil {
-		return SessionTrajectoryResult{}, fmt.Errorf("session.trajectory: %w", err)
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": id})
 	}
+	// Never nil: `events` marshals to `null` when nil, and a client that reads
+	// `events.length` would fault on it. An empty log is `[]`.
 	if events == nil {
 		events = []trajectory.Event{}
 	}
-	return SessionTrajectoryResult{Recorded: recorded, Events: events}, nil
+	return &SessionTrajectoryResult{Recorded: recorded, Events: events}, nil
 }
 ```
 
-`c.WorkspaceRoot()` is again a placeholder for however this package reaches the workspace root — use the real accessor.
+Three things here are not free choices, and an earlier draft of this task got each of them wrong:
+
+- **The errors are `protocol.NewError`, not `fmt.Errorf`.** A plain error crosses the wire as a generic internal failure; `protocol.InvalidParams` is what tells a client it sent a bad request. `internal/core/message_attachments.go:104` is the established shape for exactly this case, an empty required string.
+- **The result is a pointer, and error paths return `nil`.** Every neighbouring method does this — compare `SessionHistory` at `session_rpc.go:1023`. A value return would put a zero struct on the wire beside an error.
+- **The workspace root is the field `c.workspaceRoot`.** There is no `WorkspaceRoot()` method on `Core`.
+
 
 - [ ] **Step 4: Register the method**
 
@@ -1387,6 +1403,6 @@ untouched and stays at v4; the log is a sidecar file."
 | The pre-existing loader data-loss bug | 1 |
 | The view, the segmented control, VS Code parity, mid-turn replay | **C2b — not this plan** |
 
-**2. Placeholder scan.** Three steps deliberately name a placeholder rather than invent an API: `c.WorkspaceRoot()`/`c.logf` in Task 3 Step 5 and Task 4 Step 3, and `newTestCore` in Task 4 Step 1. Each says to read the neighbouring code and use the real idiom, and to report rather than invent. Task 3 Step 6 leaves a test *body* to be written against the local harness — it names the three assertions required and forbids leaving it as a comment. These are the honest shape of "follow the existing pattern"; they are not TBDs.
+**2. Placeholder scan.** This section previously defended three placeholders as "the honest shape of follow-the-existing-pattern": `c.WorkspaceRoot()`/`c.logf` in Task 3 Step 5, and `newTestCore` in Task 4 Step 1. That defence was wrong, and reading the tree settled it. None of those three identifiers exists: the real names are `c.workspaceRoot`, the `fmt.Fprintf(os.Stderr, "core: session %s ...")` idiom, and `setupInitializedCore(t, root, &fixedLLM{})`. A placeholder inside a code block an implementer is told to use verbatim is not a pattern to follow — it is a compile error with an excuse attached, and it costs a review round to discover. All three now name the real thing. Task 3 Step 6 still leaves a test *body* to be written against the named harness, listing the three assertions required and forbidding a comment-only test; that one is a genuine "follow the worked example", because the example is named and reachable.
 
 **3. Type consistency.** `trajectory.Event` fields (`Seq`, `TimeMS`, `Type`, `Source`, `Data`) are used identically in Tasks 2, 3 and 4. `Read` returns `([]Event, bool, error)` in its definition (Task 2), its consumer (Task 4), and the Interfaces blocks of both. `NewWriter`/`Append`/`Close` signatures match between Task 2's implementation and Task 3's use. `Path` is the only path helper; the Interfaces block explicitly says `SidecarPath` does not exist, because a second name for the same thing is how two spellings drift. The one deliberate duplication — `sessionfile.Delete` spelling the sidecar name by hand — is called out in the code comment and pinned by a test in both packages.
