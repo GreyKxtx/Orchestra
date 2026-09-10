@@ -76,3 +76,32 @@ func TestHandleAgentEvent_ChildScopeAndLifecycle(t *testing.T) {
 		t.Fatalf("queued: %+v", ev3)
 	}
 }
+
+func TestHandleAgentEvent_ContextEstimate(t *testing.T) {
+	c := &Client{events: make(chan Event, 4)}
+
+	estimatePayload, _ := json.Marshal(map[string]any{
+		"type": "context_estimate",
+		"step": 1,
+		"data": map[string]any{
+			"prompt_tokens":     12456,
+			"completion_tokens": 0,
+			"source":            "estimate",
+		},
+	})
+	c.handleAgentEvent(estimatePayload)
+
+	ev := <-c.events
+	if ev.Kind != EventContextEstimate {
+		t.Fatalf("event kind: expected %v, got %v", EventContextEstimate, ev.Kind)
+	}
+	if ev.Usage == nil {
+		t.Fatalf("usage is nil")
+	}
+	if ev.Usage.PromptTokens != 12456 {
+		t.Fatalf("prompt_tokens: expected 12456, got %d", ev.Usage.PromptTokens)
+	}
+	if ev.Usage.Source != "estimate" {
+		t.Fatalf("source: expected 'estimate', got %q", ev.Usage.Source)
+	}
+}

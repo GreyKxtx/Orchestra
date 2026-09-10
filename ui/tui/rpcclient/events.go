@@ -31,6 +31,7 @@ const (
 	EventRuleSuggestion    EventKind = "rule_suggestion"     // repeated anti-pattern on one file — offer an ORCHESTRA.md rule
 	EventTodosUpdated      EventKind = "todos_updated"       // live todo list after todowrite
 	EventStepUsage         EventKind = "step_usage"          // per-LLM-step token totals during a turn
+	EventContextEstimate   EventKind = "context_estimate"   // estimated prompt-context size, never a provider measurement
 	EventModeRoute         EventKind = "mode_route"          // agent auto-router: agent→build|plan|explore
 
 	EventPermissionRequest EventKind = "permission_request" // server asks for exec.run consent

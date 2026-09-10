@@ -238,7 +238,7 @@ func (a *App) handleRPCStream(ev rpcclient.Event) (skipRender bool) {
 		a.chat.SetStreamCursor(true)
 		a.chatDirty = true
 		return true
-	case rpcclient.EventStepUsage:
+	case rpcclient.EventStepUsage, rpcclient.EventContextEstimate:
 		if ev.Usage != nil && ev.Usage.PromptTokens > 0 {
 			tok := ev.Usage.PromptTokens
 			isEst := strings.EqualFold(ev.Usage.Source, "estimate")
