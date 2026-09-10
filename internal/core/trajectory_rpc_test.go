@@ -95,3 +95,39 @@ func TestSessionTrajectory_SessionWithHistoryAndNoLogPredatesTheLog(t *testing.T
 		t.Errorf("len(Events) = %d, want 0", len(res.Events))
 	}
 }
+
+func TestSessionTrajectory_BusyFirstTurnIsRecordedAndEmpty(t *testing.T) {
+	root := t.TempDir()
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	started, err := c.SessionStart(SessionStartParams{})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+	sess, err := c.sessions.Get(started.SessionID)
+	if err != nil {
+		t.Fatalf("sessions.Get: %v", err)
+	}
+	// Reproduce the exact window SessionMessage leaves open: the UI message
+	// is appended and the session is marked busy before prepareAgentLaunch
+	// creates the trajectory sidecar. No sidecar exists at this point.
+	sess.Lock()
+	sess.AppendUIMessage(buildUserUIMessage("hello", nil))
+	sess.SetCancel(func() {})
+	sess.Unlock()
+	defer func() {
+		sess.Lock()
+		sess.ClearCancel()
+		sess.Unlock()
+	}()
+
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: started.SessionID})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if !res.Recorded {
+		t.Error("Recorded = false, want true — a busy first turn has not predated the log, it is about to create it")
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("len(Events) = %d, want 0", len(res.Events))
+	}
+}

@@ -3589,6 +3589,7 @@
   /** Set when the host could not fetch the log; shown instead of a false "not recorded". */
   let trajError = "";
   let trajRenderQueued = false;
+  const trajExpandedKeys = new Set();
 
   const TRAJ_GLYPH = { turn: "◆", step: "▸", tool: "⚙", text: "¶", reasoning: "…", error: "!", stage: "▣", pending: "±", route: "↦", other: "·" };
 
@@ -3637,6 +3638,7 @@
     trajEvents = [];
     trajRecorded = null;
     trajError = "";
+    trajExpandedKeys.clear();
     scheduleTrajectoryRender();
   }
 
@@ -3719,9 +3721,10 @@
       el.classList.add("traj-expandable");
       el.tabIndex = 0;
       el.setAttribute("role", "button");
-      el.setAttribute("aria-expanded", "false");
+      const expanded = trajExpandedKeys.has(r.key);
+      el.setAttribute("aria-expanded", expanded ? "true" : "false");
       const detail = document.createElement("div");
-      detail.className = "traj-detail hidden";
+      detail.className = "traj-detail" + (expanded ? "" : " hidden");
       const section = (head, text) => {
         const h = document.createElement("div");
         h.className = "traj-detail-head";
@@ -3737,6 +3740,8 @@
       const toggle = () => {
         const hidden = detail.classList.toggle("hidden");
         el.setAttribute("aria-expanded", hidden ? "false" : "true");
+        if (hidden) trajExpandedKeys.delete(r.key);
+        else trajExpandedKeys.add(r.key);
       };
       el.addEventListener("click", toggle);
       el.addEventListener("keydown", (e) => {

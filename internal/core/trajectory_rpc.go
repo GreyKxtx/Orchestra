@@ -51,7 +51,13 @@ func (c *Core) SessionTrajectory(p SessionTrajectoryParams) (*SessionTrajectoryR
 		// "predates the log" here would be untrue of every new chat.
 		if sess, lookErr := c.sessions.GetOrLoad(c.workspaceRoot, id); lookErr == nil && sess != nil {
 			sess.Lock()
-			empty := len(sess.History) == 0 && len(sess.UIMessages()) == 0
+			// A session with an in-flight turn and no sidecar is mid-launch of
+			// its first turn — the sidecar is created inside
+			// prepareAgentLaunch, after SessionMessage has already appended
+			// the user's UI message and marked the session busy. That window
+			// must read the same as "nothing recorded yet", not "predates the
+			// log": nothing was missed, the log just has not been born yet.
+			empty := (len(sess.History) == 0 && len(sess.UIMessages()) == 0) || sess.IsBusy()
 			sess.Unlock()
 			if empty {
 				recorded = true

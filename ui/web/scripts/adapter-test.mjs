@@ -1485,6 +1485,34 @@ test("a live notification for the on-screen project is forwarded as trajectoryEv
   assert.equal(fwd[1].event.data.chunk, "x");
 });
 
+test("a live notification for a session the project has since left is not forwarded, even on the same project", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({ projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }] }));
+  await tick();
+  await handshakeFor(b, "A"); // session s-A
+  dispatch(b, { type: "newSession" });
+  await tick();
+  answerOn(b, "A", "session.start", { session_id: "s-A2", restored: false });
+  await tick();
+  b.inbound.length = 0;
+
+  // A live event for the OLD session, still streaming after the switch.
+  b.deliverTo("A", { jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", step: 1, content: "stale", turn_id: "t1", session_id: "s-A" } });
+  await tick();
+  assert.equal(
+    b.inbound.filter((m) => m.type === "trajectoryEvent").length,
+    0,
+    "a live event for the abandoned session must not reach the new session's pane"
+  );
+
+  // The NEW session's own live event still forwards normally.
+  b.deliverTo("A", { jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", step: 1, content: "fresh", turn_id: "t2", session_id: "s-A2" } });
+  await tick();
+  const fwd = b.inbound.filter((m) => m.type === "trajectoryEvent");
+  assert.equal(fwd.length, 1, "the new session's own live event must still be forwarded");
+  assert.equal(fwd[0].event.data.content, "fresh");
+});
+
 test("when a turn ends on the on-screen project the trajectory is re-fetched, after turnComplete", async () => {
   const b = loadBundle({ search: "?project=A" });
   b.setFetchResponder(() => ({ projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }] }));

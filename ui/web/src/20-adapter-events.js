@@ -84,14 +84,24 @@
     // The trajectory sees the raw notification, before the chat's lossy
     // translation below: one live row per event, reconciled against the log
     // when the turn ends. Only these four methods are recorded by the core's
-    // tee, so only these four are forwarded.
+    // tee, so only these four are forwarded — and only for the session
+    // currently on screen. A session switch within this project (new/open
+    // session) can leave an old turn still streaming, and its notifications
+    // must not paint into a pane that now shows a different session. An
+    // event with no session_id (workflow/stage_*, which is not
+    // session-scoped at all) is forwarded unfiltered — there is nothing to
+    // check it against.
     if (
       msg.method === "agent/event" ||
       msg.method === "exec/output_chunk" ||
       msg.method === "workflow/stage_start" ||
       msg.method === "workflow/stage_done"
     ) {
-      toRenderer({ type: "trajectoryEvent", event: { type: msg.method, data: msg.params || {} } });
+      const evSessionId = msg.params && msg.params.session_id;
+      const onScreenSessionId = projectState(projectId).sessionId;
+      if (!evSessionId || evSessionId === onScreenSessionId) {
+        toRenderer({ type: "trajectoryEvent", event: { type: msg.method, data: msg.params || {} } });
+      }
     }
     if (msg.method === "exec/output_chunk") {
       toRenderer({ type: "execChunk", chunk: (msg.params && msg.params.chunk) || "" });

@@ -3789,6 +3789,7 @@
   /** Set when the host could not fetch the log; shown instead of a false "not recorded". */
   let trajError = "";
   let trajRenderQueued = false;
+  const trajExpandedKeys = new Set();
 
   const TRAJ_GLYPH = { turn: "◆", step: "▸", tool: "⚙", text: "¶", reasoning: "…", error: "!", stage: "▣", pending: "±", route: "↦", other: "·" };
 
@@ -3837,6 +3838,7 @@
     trajEvents = [];
     trajRecorded = null;
     trajError = "";
+    trajExpandedKeys.clear();
     scheduleTrajectoryRender();
   }
 
@@ -3919,9 +3921,10 @@
       el.classList.add("traj-expandable");
       el.tabIndex = 0;
       el.setAttribute("role", "button");
-      el.setAttribute("aria-expanded", "false");
+      const expanded = trajExpandedKeys.has(r.key);
+      el.setAttribute("aria-expanded", expanded ? "true" : "false");
       const detail = document.createElement("div");
-      detail.className = "traj-detail hidden";
+      detail.className = "traj-detail" + (expanded ? "" : " hidden");
       const section = (head, text) => {
         const h = document.createElement("div");
         h.className = "traj-detail-head";
@@ -3937,6 +3940,8 @@
       const toggle = () => {
         const hidden = detail.classList.toggle("hidden");
         el.setAttribute("aria-expanded", hidden ? "false" : "true");
+        if (hidden) trajExpandedKeys.delete(r.key);
+        else trajExpandedKeys.add(r.key);
       };
       el.addEventListener("click", toggle);
       el.addEventListener("keydown", (e) => {
@@ -5871,14 +5876,24 @@
     // The trajectory sees the raw notification, before the chat's lossy
     // translation below: one live row per event, reconciled against the log
     // when the turn ends. Only these four methods are recorded by the core's
-    // tee, so only these four are forwarded.
+    // tee, so only these four are forwarded — and only for the session
+    // currently on screen. A session switch within this project (new/open
+    // session) can leave an old turn still streaming, and its notifications
+    // must not paint into a pane that now shows a different session. An
+    // event with no session_id (workflow/stage_*, which is not
+    // session-scoped at all) is forwarded unfiltered — there is nothing to
+    // check it against.
     if (
       msg.method === "agent/event" ||
       msg.method === "exec/output_chunk" ||
       msg.method === "workflow/stage_start" ||
       msg.method === "workflow/stage_done"
     ) {
-      toRenderer({ type: "trajectoryEvent", event: { type: msg.method, data: msg.params || {} } });
+      const evSessionId = msg.params && msg.params.session_id;
+      const onScreenSessionId = projectState(projectId).sessionId;
+      if (!evSessionId || evSessionId === onScreenSessionId) {
+        toRenderer({ type: "trajectoryEvent", event: { type: msg.method, data: msg.params || {} } });
+      }
     }
     if (msg.method === "exec/output_chunk") {
       toRenderer({ type: "execChunk", chunk: (msg.params && msg.params.chunk) || "" });
