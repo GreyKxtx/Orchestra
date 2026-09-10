@@ -1352,7 +1352,7 @@ The mid-turn switch is the symptom that motivated C2. It gets its own test here.
 **Files:**
 - Modify: `ui/web/src/10-adapter-session.js` (`onConnected` ~line 46; `activateProject` ~line 91; `sendTurn`'s `finally` ~line 262; `startSession` ~line 277)
 - Modify: `ui/web/src/20-adapter-events.js` (`handleNotification` ~line 83)
-- Modify: `ui/web/scripts/adapter-test.mjs` (seven tests)
+- Modify: `ui/web/scripts/adapter-test.mjs` (eight tests)
 
 **Interfaces:**
 - Consumes: renderer messages `trajectory` / `trajectoryEvent` (Task 2); JSON-RPC `session.trajectory {session_id} → {recorded, events[]}` (C2a); the adapter's `conn.send(method, params)`, `toRenderer(msg)`, `currentProjectId`, `projectState(id)`, `connFor(id)`.
@@ -1384,6 +1384,41 @@ test("the first session of a freshly connected project fetches its trajectory, s
   assert.equal(msg.recorded, true);
   assert.deepEqual(msg.events, []);
   assert.equal(msg.error, undefined);
+});
+
+test("a trajectory answer for a session the project has since left is dropped, even on the same project", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A"); // leaves s-A's fetch in flight
+
+  dispatch(b, { type: "newSession" });
+  await tick();
+  answerOn(b, "A", "session.start", { session_id: "s-A2", restored: false });
+  await tick();
+
+  const reqs = b.sent.filter((m) => m.method === "session.trajectory");
+  const old = reqs.find((m) => m.params.session_id === "s-A");
+  const fresh = reqs.find((m) => m.params.session_id === "s-A2");
+  assert.ok(old && fresh, "both sessions' fetches must be in flight");
+
+  // The newer answer lands first, the stale one last — an order the core is
+  // free to produce, since it handles each request in its own goroutine.
+  const freshEvents = [{ seq: 1, time_ms: 5, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t2", content: "" } }];
+  b.deliverTo("A", { jsonrpc: "2.0", id: fresh.id, result: { recorded: true, events: freshEvents } });
+  await tick();
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    id: old.id,
+    result: { recorded: true, events: [{ seq: 9, time_ms: 1, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t1", content: "stale" } }] },
+  });
+  await tick();
+
+  const painted = b.inbound.filter((m) => m.type === "trajectory");
+  assert.ok(painted.length >= 1, "the fresh answer must have been painted");
+  assert.deepEqual(painted[painted.length - 1].events, freshEvents, "the stale s-A answer must not repaint over s-A2");
 });
 
 test("switching to a project fetches its trajectory on its own connection and posts the fields intact", async () => {
@@ -1573,7 +1608,7 @@ test("starting a new session in the on-screen project fetches that session's tra
 
 From the repo root: `node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/adapter-test.mjs`
 
-Expected: the seven new tests fail on "connecting did not ask the core for the first session's trajectory" / "switching did not ask the core for the trajectory" / "exactly the two on-screen notifications" (0 found) / "the turn ended and nobody re-read the log" / "a new session did not ask the core for its trajectory". The others still pass.
+Expected: the eight new tests fail on "connecting did not ask the core for the first session's trajectory" / "switching did not ask the core for the trajectory" / "exactly the two on-screen notifications" (0 found) / "the turn ended and nobody re-read the log" / "a new session did not ask the core for its trajectory". The others still pass.
 
 - [ ] **Step 3: The fetch, with the stale guard**
 
@@ -1582,9 +1617,10 @@ In `ui/web/src/10-adapter-session.js`, add before `activateProject`:
 ```js
   /**
    * Read the session's log and hand it to the renderer — unless the user has
-   * switched projects while the request was in flight, in which case the
-   * answer belongs to a project that is no longer on screen. Same rule as the
-   * session.get repaint above and refreshSessionList below.
+   * switched projects, or to another session of the same project, while the
+   * request was in flight, in which case the answer belongs to a view that is
+   * no longer on screen. The core answers each request in its own goroutine,
+   * so two fetches for one project can land in either order.
    *
    * A failed fetch is reported as such, not as "not recorded": those are
    * different answers and the view says which.
@@ -1596,7 +1632,10 @@ In `ui/web/src/10-adapter-session.js`, add before `activateProject`:
     }
     try {
       const res = await conn.send("session.trajectory", { session_id: sessionId });
-      if (projectId !== currentProjectId) {
+      if (projectId !== currentProjectId || projectState(projectId).sessionId !== sessionId) {
+        // The user left this project, or moved to another session of it,
+        // while the request was in flight: the answer is for a view that is
+        // no longer on screen.
         return;
       }
       toRenderer({
@@ -1605,7 +1644,7 @@ In `ui/web/src/10-adapter-session.js`, add before `activateProject`:
         events: res && Array.isArray(res.events) ? res.events : [],
       });
     } catch (err) {
-      if (projectId === currentProjectId) {
+      if (projectId === currentProjectId && projectState(projectId).sessionId === sessionId) {
         toRenderer({ type: "trajectory", recorded: true, events: [], error: String(err && err.message ? err.message : err) });
       }
     }
@@ -1684,7 +1723,7 @@ In `ui/web/src/20-adapter-events.js`, at the top of `handleNotification(projectI
 
 From the repo root: `node ui/web/scripts/bundle-web.mjs && node ui/web/scripts/check-web.mjs && node ui/web/scripts/adapter-test.mjs`
 
-Expected: all green; 40 tests.
+Expected: all green; 41 tests.
 
 - [ ] **Step 6: Commit**
 
