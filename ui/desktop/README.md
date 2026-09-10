@@ -42,3 +42,19 @@ cargo test                         # boot.rs и sidecar.rs
 
 Переключатель проектов, список сессий по проектам и настройки живут в `ui/web`
 и делаются там.
+
+## The project rail
+
+The window lists every remembered project down its left edge. A chip shows
+whether that project is working, waiting for your answer, open and idle, or
+merely remembered and closed. Clicking a closed project opens it; right-click
+offers "Close project" (it stays in the list) and "Remove from list".
+
+`~/.orchestra/projects.json` is that list. Closing a project does not change
+it; only "Remove from list" does.
+
+The page is served by `orchestra web` on loopback, so it is a remote URL as far
+as Tauri is concerned and has no access to the shell by default.
+`src-tauri/capabilities/core-page.json` grants it exactly two things: raise a
+notification when a background project needs an answer, and open a folder
+picker when adding a project. Nothing else.

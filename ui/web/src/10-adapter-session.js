@@ -70,7 +70,7 @@
           sessionId: st.sessionId,
         });
         toRenderer({ type: "ready" });
-        await refreshSessionList();
+        await refreshSessionList(projectId);
       }
     } catch (err) {
       const message = String(err && err.message ? err.message : err);
@@ -138,14 +138,22 @@
     if (st.pendingAsk) {
       toRenderer(st.pendingAsk.rendererMessage);
     }
-    await refreshSessionList();
+    await refreshSessionList(projectId);
     renderProjects();
   }
 
-  async function refreshSessionList() {
+  /**
+   * Same rule as sendTurn and startSession: the caller can switch projects
+   * while session.list is in flight, and the result must not paint over
+   * whatever project is on screen by the time it comes back.
+   * @param {string} projectId
+   */
+  async function refreshSessionList(projectId) {
     try {
       const res = await wsSend("session.list", {});
-      toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+      }
     } catch (err) {
       // A missing session list is not fatal; the chat still works.
     }
@@ -178,7 +186,7 @@
         return;
 
       case "listSessions":
-        void refreshSessionList();
+        void refreshSessionList(currentProjectId);
         return;
 
       case "permissionReply":
@@ -276,7 +284,7 @@
       if (projectId === currentProjectId) {
         toRenderer({ type: "header", sessionId: st.sessionId });
       }
-      await refreshSessionList();
+      await refreshSessionList(projectId);
     } catch (err) {
       if (projectId === currentProjectId) {
         toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });

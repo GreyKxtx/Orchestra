@@ -58,7 +58,12 @@
           renderProjects();
         }
       },
-      onServerRequest: (id, msg) => handleServerRequest(id, msg),
+      onServerRequest: (id, msg) => {
+        handleServerRequest(id, msg);
+        if (projectState(id).status === "asking") {
+          notifyAsking(id);
+        }
+      },
     });
     conns.set(projectId, conn);
     return conn;
@@ -203,6 +208,35 @@
   }
 
   // ---- the rail ----------------------------------------------------------
+
+  /**
+   * Tell the person a project they are not looking at needs an answer.
+   *
+   * Only the desktop shell can raise a Windows notification, and only because
+   * capabilities/core-page.json grants this page exactly that call; in a plain
+   * browser there is nothing to call and the rail's badge is the whole signal.
+   * The active project never notifies — its prompt is already on screen.
+   * @param {string} projectId
+   */
+  function notifyAsking(projectId) {
+    if (projectId === currentProjectId) {
+      return;
+    }
+    const entry = known.find((p) => p.id === projectId);
+    const name = (entry && (entry.name || entry.path)) || projectId;
+    const t = window.__TAURI__;
+    if (!t || !t.notification || !t.notification.sendNotification) {
+      return;
+    }
+    try {
+      t.notification.sendNotification({
+        title: "Orchestra",
+        body: name + " is waiting for your answer",
+      });
+    } catch (e) {
+      // A notification that cannot be raised is not worth an error in the chat.
+    }
+  }
 
   /**
    * Repaint the rail and tell the renderer what the list looks like. The

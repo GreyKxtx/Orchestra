@@ -160,6 +160,24 @@ MCP-промпты им нечем. Проекты открывают, пере�
 Версия протокола при этом **не меняется** (остаётся 15): `/ws` получил
 query-параметр, а не новый метод или новую форму сообщения.
 
+`GET /api/projects` returns open projects first, ordered by `opened_at`, then
+the remembered projects the core does not hold, ordered by path. A remembered
+entry has `state: "closed"`, `opened_at: 0`, and the same `id` it would have
+when open, so a client can act on it by id alone. The list is not checked
+against the filesystem: a remembered path on an unreachable share must not make
+this request hang, so whether the directory still exists is discovered when the
+client opens it.
+
+`DELETE /api/projects/{id}` closes a project and leaves it remembered.
+`DELETE /api/projects/{id}?forget=1` closes it if open and removes it from the
+remembered list; it answers 204 for a project that was already closed, and 404
+only when neither the registry nor the remembered list knows the id.
+
+`POST /api/projects` records what it opened, so the list survives a restart.
+
+`orchestra web` no longer reopens remembered projects at startup. It opens the
+workspace it was given; the rest open when the client asks.
+
 **Фрейминг: один JSON-RPC message на один текстовый фрейм.** `Content-Length` на
 проводе нет — WebSocket уже фреймирован, повторять LSP-обрамление незачем.
 Лимит размера сообщения тот же, что у stdio: `DefaultMaxContentBytes = 4MiB`.

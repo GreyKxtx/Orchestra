@@ -208,6 +208,9 @@ export function loadBundle(opts = {}) {
     setFetchResponder: (fn) => {
       fetchResponder = fn;
     },
+    setTauri: (api) => {
+      sandbox.__TAURI__ = api;
+    },
     socketFor: (projectId) =>
       sockets.find((s) => s.url.includes(`project=${encodeURIComponent(projectId)}`)) || null,
     open: () => socket.emit("open", {}),
@@ -937,4 +940,94 @@ test("per-project text accumulators do not cross-contaminate on switch", async (
     "Alpha Gamma",
     "A's accumulator must still hold only A's text, not B's — a single shared accumulator would fail this"
   );
+});
+
+// ---- Task 9: notifications, and the refreshSessionList guard -----------
+
+test("a background project that starts asking raises one notification", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  const notified = [];
+  b.setTauri({
+    notification: {
+      sendNotification: (opts) => {
+        notified.push(opts);
+      },
+    },
+  });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    id: 5,
+    method: "permission/request",
+    params: { tool: "bash", command: "ls" },
+  });
+  await tick();
+
+  assert.equal(notified.length, 1, "a background project's prompt raised no notification");
+  assert.match(notified[0].body || "", /b/i, "the notification does not name the project");
+
+  // The active project's own prompt must NOT notify — it is already on screen.
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    id: 6,
+    method: "permission/request",
+    params: { tool: "bash", command: "ls" },
+  });
+  await tick();
+  assert.equal(notified.length, 1, "the active project's prompt raised a notification");
+});
+
+test("a session.list that resolves after switching away does not paint the abandoned project", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  // Start switching to B. Its session.get answers, which is what lets
+  // activateProject go on to ask for its session.list — but that request is
+  // left unanswered here, so it is still in flight when the user leaves B.
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  const listReq = b.sent.find(
+    (m) => m.method === "session.list" && String(m.url).includes("project=B")
+  );
+  assert.ok(listReq, "activateProject never asked B for its session list");
+
+  // Back to A before B's session.list comes back.
+  dispatch(b, { type: "switchProject", projectId: "A" });
+  await tick();
+  answerOn(b, "A", "session.get", { ui_messages: [] });
+  await tick();
+
+  b.inbound.length = 0;
+  // B's session.list answers late, once the user is already back on A.
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    id: listReq.id,
+    result: { sessions: [{ session_id: "from-B" }] },
+  });
+  await tick();
+
+  const stray = b.inbound.find(
+    (m) => m.type === "sessionList" && (m.sessions || []).some((s) => s.session_id === "from-B")
+  );
+  assert.equal(stray, undefined, "B's stale session list painted after switching back to A");
 });
