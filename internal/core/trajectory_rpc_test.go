@@ -1,0 +1,58 @@
+package core
+
+import (
+	"testing"
+
+	"github.com/orchestra/orchestra/internal/trajectory"
+)
+
+func TestSessionTrajectory_ReturnsRecordedEvents(t *testing.T) {
+	root := t.TempDir()
+	w, err := trajectory.NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.Append("agent/event", map[string]any{"type": "done"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: "s1"})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if !res.Recorded {
+		t.Error("Recorded = false, want true")
+	}
+	if len(res.Events) != 1 {
+		t.Fatalf("len(Events) = %d, want 1", len(res.Events))
+	}
+	if res.Events[0].Seq != 1 || res.Events[0].Type != "agent/event" {
+		t.Errorf("Events[0] = %+v", res.Events[0])
+	}
+}
+
+func TestSessionTrajectory_SessionWithNoLogSaysSoRatherThanReturningEmpty(t *testing.T) {
+	root := t.TempDir()
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: "predates-the-log"})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if res.Recorded {
+		t.Error("Recorded = true, want false — this session has no log, which is not the same as an empty one")
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("len(Events) = %d, want 0", len(res.Events))
+	}
+}
+
+func TestSessionTrajectory_EmptySessionIDIsAnError(t *testing.T) {
+	c, _ := setupInitializedCore(t, t.TempDir(), &fixedLLM{})
+	if _, err := c.SessionTrajectory(SessionTrajectoryParams{}); err == nil {
+		t.Error("expected an error for an empty session_id")
+	}
+}

@@ -74,6 +74,17 @@ const (
 	StreamEventPendingOps StreamEventKind = "pending_ops"
 	// StreamEventStepUsage carries per-LLM-step token totals (prompt/completion).
 	StreamEventStepUsage StreamEventKind = "step_usage"
+	// StreamEventContextEstimate carries an *estimated* prompt-context size,
+	// derived from history byte size — never a provider measurement. It is a
+	// live UI affordance: a fresh agent after reopen has no real usage yet, so
+	// a context gauge would otherwise sit empty until the first response.
+	//
+	// It is deliberately NOT StreamEventStepUsage. The two used to share that
+	// kind, which put estimates and provider-reported counts under one name on
+	// the wire and, once the trajectory log existed, in the same durable record
+	// under the same type. An estimate may inform a gauge; it must never be
+	// recorded or billed as a measurement.
+	StreamEventContextEstimate StreamEventKind = "context_estimate"
 	// StreamEventTodosUpdated carries the full todo list after a successful todowrite.
 	// Content is a JSON array of todo items.
 	StreamEventTodosUpdated StreamEventKind = "todos_updated"

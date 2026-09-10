@@ -2,6 +2,7 @@ package sessionfile_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -83,6 +84,57 @@ func TestParseSnapshot_MigrateV0(t *testing.T) {
 	}
 	if len(snap.History) != 0 {
 		t.Fatalf("expected empty history, got %d", len(snap.History))
+	}
+}
+
+func TestParseSnapshot_OlderSchemaKeepsUIMessages(t *testing.T) {
+	// v2 introduced ui_messages; v3 and v4 only added fields to it. A file at
+	// any of those versions therefore already has the modern shape and must be
+	// parsed, not migrated. Routing it through the v1 migration returns
+	// UIMessages: nil and loses the whole transcript.
+	for _, ver := range []int{2, 3, 4} {
+		data := []byte(fmt.Sprintf(`{
+			"version": %d,
+			"id": "s1",
+			"created_at": "2026-01-01T00:00:00Z",
+			"updated_at": "2026-01-01T00:00:00Z",
+			"history": [{"role":"user","content":"hello"}],
+			"ui_messages": [
+				{"role":"user","text":"hello"},
+				{"role":"assistant","text":"hi"}
+			]
+		}`, ver))
+		snap, err := sessionfile.ParseSnapshot(data, "s1")
+		if err != nil {
+			t.Fatalf("v%d: ParseSnapshot: %v", ver, err)
+		}
+		if len(snap.UIMessages) != 2 {
+			t.Errorf("v%d: ui_messages = %d, want 2 (transcript was discarded)", ver, len(snap.UIMessages))
+		}
+		if len(snap.History) != 1 {
+			t.Errorf("v%d: history = %d, want 1", ver, len(snap.History))
+		}
+	}
+}
+
+func TestParseSnapshot_V1StillMigrates(t *testing.T) {
+	// The floor must not be lowered so far that a genuine v1 file (history
+	// only, no ui_messages) stops being migrated.
+	data := []byte(`{
+		"version": 1,
+		"id": "s1",
+		"created_at": "2026-01-01T00:00:00Z",
+		"history": [{"role":"user","content":"hello"}]
+	}`)
+	snap, err := sessionfile.ParseSnapshot(data, "s1")
+	if err != nil {
+		t.Fatalf("ParseSnapshot: %v", err)
+	}
+	if len(snap.History) != 1 {
+		t.Errorf("history = %d, want 1", len(snap.History))
+	}
+	if len(snap.UIMessages) != 0 {
+		t.Errorf("ui_messages = %d, want 0 — v1 had none to carry", len(snap.UIMessages))
 	}
 }
 

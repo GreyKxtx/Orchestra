@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/trajectory"
 	"github.com/orchestra/orchestra/internal/usage"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
@@ -68,6 +70,21 @@ type agentLaunch struct {
 	RouteReason     string
 	RouteConfidence float64
 	EventEnvelope   EventEnvelope
+
+	// Trajectory records this turn's notifications. Nil when there is no
+	// session to record against, or when the log could not be opened;
+	// Close is safe either way.
+	Trajectory *trajectory.Writer
+}
+
+// Close releases what the launch holds open. Callers own the turn, so they
+// own this: prepareAgentLaunch returns before the first event exists and
+// cannot defer it itself.
+func (l *agentLaunch) Close() {
+	if l == nil || l.Trajectory == nil {
+		return
+	}
+	_ = l.Trajectory.Close()
 }
 
 // resolveApplyOutput normalises apply_output and forces dry-run for patch mode.
@@ -110,7 +127,7 @@ func resolveProfileName(cfg *config.ProjectConfig, profile string) (string, erro
 	return name, nil
 }
 
-func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
+func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (launch *agentLaunch, retErr error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core config is nil", nil)
 	}
@@ -149,6 +166,35 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 	if env.TurnID == "" {
 		env.TurnID = NewTurnID()
 	}
+
+	// One tee for every consumer of spec.OnEvent below. There are four, and
+	// wrapping them individually would drop whichever one a later change adds.
+	var tw *trajectory.Writer
+	if spec.SessionID != "" {
+		w, err := trajectory.NewWriter(c.workspaceRoot, spec.SessionID)
+		if err != nil {
+			// Observability must never block work: carry on with no recorder
+			// rather than failing the turn.
+			fmt.Fprintf(os.Stderr, "core: session %s trajectory recording disabled: %v\n", spec.SessionID, err)
+		} else {
+			tw = w
+			spec.OnEvent = teeToTrajectory(spec.OnEvent, tw)
+		}
+	}
+	// The launch owns the writer once it exists, and its three callers defer
+	// Close. Between here and that construction sit error returns, and a
+	// writer abandoned there would leak its handle: on Windows an open handle
+	// makes the sidecar undeletable, and sessionfile.Delete removes the
+	// snapshot before the sidecar, so the session would half-vanish and leave
+	// an orphan behind. Closing on the error path only, via a named return,
+	// keeps that true for error paths added later — patching the two that
+	// exist today would not.
+	defer func() {
+		if retErr != nil && tw != nil {
+			_ = tw.Close()
+		}
+	}()
+
 	var onEvent func(agent.AgentEvent)
 	if spec.OnEvent != nil {
 		onEvent = buildAgentOnEvent(spec.OnEvent, env)
@@ -349,6 +395,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 		RouteReason:     routeReason,
 		RouteConfidence: routeConfidence,
 		EventEnvelope:   env,
+		Trajectory:      tw,
 	}, nil
 }
 

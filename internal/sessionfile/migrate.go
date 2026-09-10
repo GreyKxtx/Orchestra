@@ -24,7 +24,15 @@ func ParseSnapshot(data []byte, fileID string) (*Snapshot, error) {
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, fmt.Errorf("sessionfile: parse probe: %w", err)
 	}
-	if probe.Version >= Version {
+	// v2 is the floor for "already the modern shape": it introduced
+	// ui_messages, and v3 (segments) and v4 (attachments) only added fields
+	// inside it, so a v2 or v3 file unmarshals into the current Snapshot with
+	// the newer fields left zero. Comparing against Version instead sent every
+	// older-but-modern file into migrateV1, which returns UIMessages: nil and
+	// silently discarded the entire chat transcript. A file from a *newer*
+	// binary also lands here and keeps working, because json.Unmarshal ignores
+	// fields this build does not know.
+	if probe.Version >= 2 {
 		var snap Snapshot
 		if err := json.Unmarshal(data, &snap); err != nil {
 			return nil, fmt.Errorf("sessionfile: parse v2: %w", err)

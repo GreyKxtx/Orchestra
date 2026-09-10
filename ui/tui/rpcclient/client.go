@@ -729,7 +729,7 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 			ev.PendingOps = &payload
 		}
 	}
-	if EventKind(p.Type) == EventStepUsage && len(p.Data) > 0 {
+	if (EventKind(p.Type) == EventStepUsage || EventKind(p.Type) == EventContextEstimate) && len(p.Data) > 0 {
 		var usage UsageTurnPayload
 		if err := json.Unmarshal(p.Data, &usage); err == nil {
 			ev.Usage = &usage

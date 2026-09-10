@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v16** (2026-09-10): `session.trajectory` — читает append-only per-session event log (`.orchestra/sessions/<id>.events.jsonl`) обратно как `{recorded, events[]}`. Снапшот сессии на диске не меняется и остаётся на v4 — лог это sidecar-файл рядом со снапшотом, а не часть его схемы. Также добавлен тип агентского события `context_estimate` — байтовая оценка размера промпта, отдельная от `step_usage` (реальных цифр, которые сообщил провайдер): их нельзя суммировать или подменять друг другом, и только `step_usage` может записываться как измеренный расход.
 - **v15** (2026-09-08): транспорт `/ws` — двунаправленный JSON-RPC поверх WebSocket (`orchestra web`); один message на фрейм, без `Content-Length`. Методы не менялись.
 - **v14** (2026-09-06): `session.fork` — ветка от user-чекпоинта без разрушения оригинала; `session.search` — поиск по тексту сообщений во всех сохранённых сессиях.
 - **v13** (2026-08-09): `attachments[]` on `agent.run` and `session.message`; `UIMessage.attachments` in session schema v4.
@@ -717,6 +718,29 @@ Response `result`:
 {"result": {"hits": [{"session_id": "abc123", "title": "original task", "updated_at": "2026-09-06T12:00:00Z", "index": 2, "role": "user", "snippet": "u2"}]}}
 ```
 
+### `session.trajectory`
+
+Возвращает append-only событийный лог сессии — sidecar-файл `.orchestra/sessions/<id>.events.jsonl`, который core пишет рядом со снапшотом сессии. Схема снапшота (`session.get`/`session.history`) этим не затрагивается и остаётся на v4 — лог не часть неё, а отдельный файл.
+
+`params`:
+
+- `session_id` (string) — обязателен, непустой после `TrimSpace`
+
+Response `result`:
+
+- `recorded` (bool) — `false` означает, что для этой сессии лога вообще нет: сессия либо создана до появления этой фичи, либо не существует. Это не то же самое, что лог с нулём событий (`recorded: true, events: []`) — там сессия существует и лог заведён, просто пока ничего не записано. Клиент должен показать разные сообщения для этих двух случаев, а не одну пустую таблицу.
+- `events` (array of `{seq, time_ms, type, source, data}`) — никогда не `null`, пустой лог сериализуется как `[]`
+
+Пример:
+
+```json
+{"method": "session.trajectory", "params": {"session_id": "abc123"}}
+```
+
+```json
+{"result": {"recorded": true, "events": [{"seq": 1, "time_ms": 1757500000000, "type": "agent/event", "source": "core", "data": {"type": "done"}}]}}
+```
+
 ### `session.close`
 
 Отменяет текущий ход (если есть) и удаляет сессию. Идемпотентен — если сессия не найдена, возвращает OK.
@@ -875,7 +899,7 @@ Generic envelope:
 | `step` | int | Current agent loop step number |
 | `type` | string | One of the kinds below |
 | `content` | string | Type-specific payload (string), used for most kinds |
-| `data` | object | Type-specific structured payload, only for `pending_ops` |
+| `data` | object | Type-specific structured payload, only for `pending_ops`, `step_usage`, `context_estimate` |
 | `session_id` | string | Present for `session.message` turns; omitted for one-shot `agent.run` |
 | `turn_id` | string | Sortable id for this `agent.run` or `session.message` invocation |
 | `tool_call_id`, `tool_call_name`, `tool_call_index`, `args_delta` | optional | Set for tool-call-related kinds |
@@ -890,6 +914,8 @@ Generic envelope:
 | `tool_call_completed` | Agent loop finished `tools.Call` | `tool_call_name`, `tool_call_id`, `content` (truncated preview, 256 bytes) |
 | `step_done` | End of one agent loop iteration | `content` ∈ {tool_call, final, invalid, final_retry} |
 | `pending_ops` | Agent finalized patches (dry-run or pre-apply) | `data` = `{ops: [...], diff: [{path, before, after}], applied: bool}` |
+| `step_usage` | Provider reported token usage for a completed LLM call | `data` = `{prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens, cache_write_tokens, cost_usd}` — measured, provider-reported numbers only |
+| `context_estimate` | Agent refreshed its byte-derived guess at the current prompt size (every step; not a provider measurement) | `data` = `{prompt_tokens, source: "estimate", breakdown: [...]}` — must never be summed with, or substituted for, `step_usage` |
 | `recoverable_error` | StaleContent / AmbiguousMatch / schema invalid; loop will retry | `content` (short message) |
 | `done` | LLM stream ended | (full assembled response in agent state) |
 | `error` | LLM-stream-level error (different from `recoverable_error`) | `content` |

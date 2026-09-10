@@ -235,6 +235,15 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.SessionSearch(p)
 
+	case "session.trajectory":
+		var p SessionTrajectoryParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.SessionTrajectory(p)
+
 	case "runtime.set_model":
 		var p RuntimeSetModelParams
 		if err := decodeParams(params, &p); err != nil {

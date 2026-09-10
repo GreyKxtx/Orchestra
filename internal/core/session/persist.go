@@ -109,9 +109,6 @@ func LoadFromDisk(workspaceRoot, id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	if snap.Version != sessionfile.Version {
-		return nil, fmt.Errorf("session %s: unsupported snapshot version %d (this binary expects %d)", id, snap.Version, sessionfile.Version)
-	}
 	return sessionFromSnapshot(snap), nil
 }
 
@@ -195,7 +192,7 @@ func (m *Manager) RefreshFromDiskIfNewer(workspaceRoot, id string) bool {
 		return false
 	}
 	snap, err := sessionfile.Load(workspaceRoot, id)
-	if err != nil || snap.Version != sessionfile.Version {
+	if err != nil {
 		return false
 	}
 
