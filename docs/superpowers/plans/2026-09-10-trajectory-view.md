@@ -353,6 +353,32 @@ test("pending_ops is a row that counts the ops", () => {
   assert.equal(rows[2].label, "2 pending changes");
 });
 
+test("depth-1 rows keep the order they happened: a stage after a step is not hoisted above it", () => {
+  const rows = buildTrajectoryTree([
+    ae("tool_call_start", { step: 1, tool_call_id: "c1", tool_call_name: "read" }, 0, 1),
+    ae("tool_call_completed", { step: 1, tool_call_id: "c1", content: "" }, 10, 2),
+    ev("workflow/stage_start", { name: "w", stage_id: "verify", attempt: 1, turn_id: "t1" }, 1000, 3),
+    ev("workflow/stage_done", { name: "w", stage_id: "verify", attempt: 1, marker: "ok", turn_id: "t1" }, 1400, 4),
+    ae("tool_call_start", { step: 2, tool_call_id: "c2", tool_call_name: "edit" }, 2000, 5),
+  ]);
+  assert.deepEqual(kinds(rows), ["turn", "step", "tool", "stage", "step", "tool"]);
+  // Offsets are monotone down the list, so nothing reads as going back in time.
+  const offsets = rows.slice(1).map((r) => r.offsetMs);
+  assert.deepEqual(offsets, [0, 0, 1000, 2000, 2000]);
+});
+
+test("a child tool completed without a recorded start still nests under its parent", () => {
+  const rows = buildTrajectoryTree([
+    ae("tool_call_start", { step: 1, tool_call_id: "c1", tool_call_name: "task" }, 0, 1),
+    ae("tool_call_completed", { step: 1, tool_call_id: "c9", tool_call_name: "grep", content: "", scope: "child", parent_tool_call_id: "c1", task_id: "k1" }, 80, 2),
+    ae("tool_call_completed", { step: 1, tool_call_id: "c1", content: "" }, 100, 3),
+  ]);
+  assert.deepEqual(kinds(rows), ["turn", "step", "tool", "tool"]);
+  assert.equal(rows[3].label, "grep");
+  assert.equal(rows[3].depth, 3);
+  assert.equal(rows[3].durationMs, undefined, "no start was recorded, so no duration is claimed");
+});
+
 test("garbage in does not throw: non-array, null events, events without data", () => {
   assert.deepEqual(buildTrajectoryTree(null), []);
   assert.deepEqual(buildTrajectoryTree(undefined), []);
@@ -414,8 +440,10 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
    * Grouping: turn (by data.turn_id, in order of first appearance) > step (by
    * data.step) > items. Tool calls are keyed by tool_call_id; a child-scoped
    * tool call nests under its parent_tool_call_id. Consecutive text deltas of
-   * one kind coalesce into one row. Workflow stages and mode routes sit
-   * directly under the turn. Token columns come from step_usage only.
+   * one kind coalesce into one row. Workflow stages, mode routes and steps sit
+   * directly under the turn in the order they first appeared — time order for a
+   * recorded log, and a rule that needs no timestamp so it holds for live rows
+   * too. Token columns come from step_usage only.
    *
    * Self-contained on purpose: trajectory-test.mjs evaluates it standalone.
    *
@@ -447,9 +475,8 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
           endMs: undefined,
           live: false,
           outcome: "open",
-          steps: new Map(),
-          stepOrder: [],
-          children: [], // stages and routes: rows directly under the turn
+          steps: new Map(), // step number -> step node, for lookup
+          depth1: [], // steps, stages and routes in the order they first appeared — which is time order
         };
         turns.set(id, t);
       }
@@ -460,6 +487,7 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
       let s = t.steps.get(key);
       if (!s) {
         s = {
+          kind: "step",
           key: t.key + "/step:" + key,
           n,
           startMs: undefined,
@@ -474,7 +502,7 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
           lastText: null, // for coalescing message_delta / reasoning_delta
         };
         t.steps.set(key, s);
-        t.stepOrder.push(key);
+        t.depth1.push(s);
       }
       return s;
     };
@@ -498,7 +526,7 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
 
       if (method === "workflow/stage_start" || method === "workflow/stage_done") {
         const stageKey = t.key + "/stage:" + str(d.stage_id) + "#" + (num(d.attempt) ?? 0);
-        let st = t.children.find((c) => c.key === stageKey);
+        let st = t.depth1.find((c) => c.kind === "stage" && c.key === stageKey);
         if (!st) {
           st = {
             kind: "stage",
@@ -510,7 +538,7 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
             outcome: undefined,
             seq,
           };
-          t.children.push(st);
+          t.depth1.push(st);
         }
         touch(st, ms, live);
         if (method === "workflow/stage_done") st.outcome = str(d.marker) || str(d.action) || "done";
@@ -585,7 +613,9 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
             // Completed without a recorded start: still a row, with no
             // duration to claim.
             row = { kind: "tool", key: s.key + "/tool:" + (id || String(s.items.length)), id, label: str(d.tool_call_name) || "tool", startMs: undefined, endMs: undefined, live, input: "", output: "", outcome: undefined, seq, subrows: [] };
-            s.items.push(row);
+            const parent = isChild && parentToolId ? s.tools.get(parentToolId) : null;
+            if (parent) parent.subrows.push(row);
+            else s.items.push(row);
             if (id) s.tools.set(id, row);
           }
           row.output += str(d.content);
@@ -634,7 +664,7 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
         }
         case "mode_route": {
           const r = obj(d.data);
-          t.children.push({ kind: "route", key: t.key + "/route:" + t.children.length, label: "mode " + str(r.from) + " → " + str(r.to), startMs: ms, endMs: ms, live, seq, output: str(r.reason) });
+          t.depth1.push({ kind: "route", key: t.key + "/route:" + t.depth1.length, label: "mode " + str(r.from) + " → " + str(r.to), startMs: ms, endMs: ms, live, seq, output: str(r.reason) });
           break;
         }
         default:
@@ -661,13 +691,15 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
 
     for (const t of turns.values()) {
       push(t, { key: t.key, label: "turn " + t.ordinal, startMs: t.startMs, endMs: t.endMs, live: t.live }, 0, "turn", { outcome: t.outcome });
-      for (const c of t.children) push(t, c, 1, c.kind, { outcome: c.outcome, output: c.output || undefined });
-      for (const k of t.stepOrder) {
-        const s = t.steps.get(k);
-        push(t, { key: s.key, label: "step " + s.n, startMs: s.startMs, endMs: s.endMs, live: s.live }, 1, "step", { step: s.n, tokensIn: s.tokensIn, tokensOut: s.tokensOut, outcome: s.outcome });
-        for (const it of s.items) {
-          if (it.kind === "tool") pushTool(t, s, it, 2);
-          else push(t, it, 2, it.kind, { step: s.n, output: it.output || undefined, outcome: it.outcome });
+      for (const n of t.depth1) {
+        if (n.kind !== "step") {
+          push(t, n, 1, n.kind, { outcome: n.outcome, output: n.output || undefined });
+          continue;
+        }
+        push(t, { key: n.key, label: "step " + n.n, startMs: n.startMs, endMs: n.endMs, live: n.live }, 1, "step", { step: n.n, tokensIn: n.tokensIn, tokensOut: n.tokensOut, outcome: n.outcome });
+        for (const it of n.items) {
+          if (it.kind === "tool") pushTool(t, n, it, 2);
+          else push(t, it, 2, it.kind, { step: n.n, output: it.output || undefined, outcome: it.outcome });
         }
       }
     }
@@ -681,7 +713,7 @@ Create `ui/vscode/media/chat-src/05f-trajectory.js`. In this task it holds only 
 node --test scripts/trajectory-test.mjs
 ```
 
-Expected: 14 tests pass. If one fails, the fixture and the function disagree — read the failing assertion against the grouping rules in the doc comment and fix **the function** unless the fixture contradicts the spec; if you change a fixture, say why in your report.
+Expected: 16 tests pass. If one fails, the fixture and the function disagree — read the failing assertion against the grouping rules in the doc comment and fix **the function** unless the fixture contradicts the spec; if you change a fixture, say why in your report.
 
 - [ ] **Step 6: Wire the tests into CI, regenerate both bundles, verify they still parse**
 
@@ -1781,5 +1813,5 @@ changes on purpose, and the trajectory works in its webview."
 
 **Known limits, stated rather than hidden:**
 - A turn that was cancelled and a turn that is still running look the same in a recorded log (`outcome: "open"`): C2a chose not to add a boundary event (follow-ups item 11). The view claims nothing it cannot know.
-- Workflow stages and mode routes are listed under the turn before its steps rather than interleaved by time. Adequate for a first view; noted for C2b's follow-ups.
+- Depth-1 rows (steps, stages, routes) come out in first-appearance order. For a recorded log that is time order; for a live tail it is arrival order. An earlier draft listed stages before all steps and the Task 1 review showed offsets going backwards down the page.
 - The renderer rebuilds all rows on every live event (coalesced to one frame by `requestAnimationFrame`). The core already debounces deltas; if a very long session makes this visible, keyed reconciliation is the fix and it lives entirely inside `renderTrajectory`.
