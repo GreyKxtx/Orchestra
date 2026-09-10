@@ -59,8 +59,16 @@ func Load(workspaceRoot, id string) (*Snapshot, error) {
 	return ParseSnapshot(data, id)
 }
 
-// Delete removes a session file and its trajectory sidecar. Missing files are
-// not an error.
+// Delete removes a session's trajectory sidecar and then its snapshot.
+// Missing files are not an error.
+//
+// The sidecar goes first, deliberately. The snapshot is the session's primary
+// record: if removing the sidecar fails — an open handle on Windows, a
+// permission problem, a lock held by a backup tool — nothing has been lost,
+// the session stays complete and listed, and the caller can retry. The
+// reverse order destroys the snapshot and then discovers it cannot finish,
+// leaving an orphaned log behind a session that has already vanished from
+// ListMeta.
 //
 // The sidecar's name is spelled out here rather than imported from
 // internal/trajectory: that package is a consumer of session storage, and
@@ -70,12 +78,12 @@ func Delete(workspaceRoot, id string) error {
 	if workspaceRoot == "" || id == "" {
 		return nil
 	}
-	if err := os.Remove(snapshotPath(workspaceRoot, id)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
 	sidecar := filepath.Join(sessionsDir(workspaceRoot), id+".events.jsonl")
 	if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("sessionfile: remove trajectory sidecar: %w", err)
+	}
+	if err := os.Remove(snapshotPath(workspaceRoot, id)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

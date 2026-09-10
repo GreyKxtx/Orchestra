@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/trajectory"
 )
 
@@ -136,5 +138,73 @@ func TestSessionTurn_LeavesATrajectoryOnDisk(t *testing.T) {
 	}
 	if !foundStepDone {
 		t.Errorf("expected an agent/event with payload type=step_done content=final, got events: %+v", events)
+	}
+}
+
+// TestPrepareAgentLaunch_DoesNotLeakTheWriterWhenItFailsEarly covers the leak
+// this fix round is about: a custom agent naming a provider that does not
+// exist makes resolveCustomAgentOpts fail, which returns from
+// prepareAgentLaunch after the trajectory writer is already open. The handle
+// must be released, or the sidecar becomes undeletable on Windows and
+// sessionfile.Delete half-deletes the session.
+//
+// Assert by consequence, not by inspecting internals: after the failed call,
+// os.Remove on the sidecar must succeed. That is exactly the operation
+// sessionfile.Delete performs, and on Windows it is the one that fails while
+// a handle is open.
+//
+// Deviation from the brief: the brief said to "configure the failure through
+// the config file the harness writes rather than by reaching into private
+// state". That does not work for this specific branch — config.Load (used by
+// New, used by setupInitializedCore) calls ProjectConfig.Validate, which
+// calls validateAgents, which rejects an agents: entry whose provider is not
+// also present in providers: at load time, with the exact same check
+// resolveCustomAgentOpts relies on. The runtime AgentsUpsert RPC path
+// (internal/core/runtime_agents.go) enforces the identical rule via
+// ValidateAgentsOnly. I verified this empirically: a config file built this
+// way makes Core construction itself fail, before prepareAgentLaunch is ever
+// reached (New returns "invalid config: agent ... provider ... not defined in
+// providers"). There is no exposed provider-delete API either, so an agent
+// can never legitimately end up referencing a provider absent from the
+// config it was loaded with.
+//
+// So this test builds the core the same way the harness does (no injected
+// LLM client, so c.llmClientInjected stays false and the provider-lookup
+// branch in resolveCustomAgentOpts is live — see core_agent.go:415), then
+// appends directly to c.cfg.Agents in memory, bypassing the validation that
+// every real entry point enforces. This matches the existing precedent of
+// same-package tests building *Core by hand (e.g. hooks_lifecycle_test.go
+// builds &Core{cfg: &config.ProjectConfig{}} directly). The consequence is
+// that, as far as I can tell, this exact leak is not reachable today through
+// any exposed configuration path — the fix is still correct defense in depth
+// for whichever future error path does reach it, which is exactly why the
+// brief asked for a defer keyed on the named return rather than patching the
+// two current sites.
+func TestPrepareAgentLaunch_DoesNotLeakTheWriterWhenItFailsEarly(t *testing.T) {
+	root := t.TempDir()
+	// No LLMClient override: c.llmClientInjected must be false for
+	// resolveCustomAgentOpts's provider-lookup branch to run at all.
+	c, _ := setupInitializedCore(t, root, nil)
+
+	c.cfg.Agents = append(c.cfg.Agents, config.AgentDefinition{
+		Name:     "leaky",
+		Provider: "provider-not-in-providers-map",
+	})
+
+	const sessionID = "leak-probe"
+	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+		Mode:      "leaky",
+		SessionID: sessionID,
+	})
+	if err == nil {
+		t.Fatalf("expected prepareAgentLaunch to fail (unknown provider), got launch=%+v", launch)
+	}
+
+	sidecar := trajectory.Path(root, sessionID)
+	if _, statErr := os.Stat(sidecar); statErr != nil {
+		t.Fatalf("expected the trajectory writer to have created the sidecar, stat: %v", statErr)
+	}
+	if rmErr := os.Remove(sidecar); rmErr != nil {
+		t.Fatalf("os.Remove(sidecar) = %v; a leaked writer handle would leave this undeletable on Windows", rmErr)
 	}
 }

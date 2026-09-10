@@ -127,7 +127,7 @@ func resolveProfileName(cfg *config.ProjectConfig, profile string) (string, erro
 	return name, nil
 }
 
-func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
+func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (launch *agentLaunch, retErr error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core config is nil", nil)
 	}
@@ -181,6 +181,19 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (*agentLaunch, error) {
 			spec.OnEvent = teeToTrajectory(spec.OnEvent, tw)
 		}
 	}
+	// The launch owns the writer once it exists, and its three callers defer
+	// Close. Between here and that construction sit error returns, and a
+	// writer abandoned there would leak its handle: on Windows an open handle
+	// makes the sidecar undeletable, and sessionfile.Delete removes the
+	// snapshot before the sidecar, so the session would half-vanish and leave
+	// an orphan behind. Closing on the error path only, via a named return,
+	// keeps that true for error paths added later — patching the two that
+	// exist today would not.
+	defer func() {
+		if retErr != nil && tw != nil {
+			_ = tw.Close()
+		}
+	}()
 
 	var onEvent func(agent.AgentEvent)
 	if spec.OnEvent != nil {
