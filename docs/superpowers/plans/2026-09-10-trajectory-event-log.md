@@ -513,7 +513,7 @@ Create `internal/trajectory/event.go`:
 // it belongs to. The snapshot is a single document rewritten whole on every
 // save, so a log kept inside it would rewrite the entire history on every
 // event; and a torn write there loses the session, where a torn line here
-// loses one event.
+// costs at most that one line.
 package trajectory
 
 import "encoding/json"
@@ -521,7 +521,10 @@ import "encoding/json"
 // Event is one recorded thing. The field names are the ones a derived
 // projection will need later — see the spec's "One event shape, defined once".
 type Event struct {
-	// Seq is monotonic and contiguous from 1 within a session.
+	// Seq is monotonic and strictly increasing from 1 within a session. It is
+	// contiguous in normal operation; a gap means an event failed to be
+	// written, which is left visible on purpose — reusing a number would risk
+	// two different events sharing it.
 	Seq int64 `json:"seq"`
 	// TimeMS is epoch milliseconds, stamped by the core when the event
 	// happened. Never a client's clock: durations are measured where the work
@@ -575,9 +578,17 @@ type Writer struct {
 	f    *os.File
 	seq  int64
 	path string
+	// tornWrite is set when a write failed and may have left a partial line.
+	// The next append starts on a fresh line so it cannot merge into it.
+	tornWrite bool
 }
 
 // NewWriter opens a session's log for appending, continuing its sequence.
+//
+// One writer per session at a time. Two concurrent writers would each read the
+// same on-disk maximum and hand out the same next seq; nothing here prevents
+// that, because the core already serialises turns within a session. A caller
+// that ever runs two turns against one session must serialise them itself.
 func NewWriter(workspaceRoot, sessionID string) (*Writer, error) {
 	if workspaceRoot == "" || sessionID == "" {
 		return nil, fmt.Errorf("trajectory: workspace_root and session_id required")
@@ -586,18 +597,61 @@ func NewWriter(workspaceRoot, sessionID string) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return nil, fmt.Errorf("trajectory: mkdir: %w", err)
 	}
-	// The sequence continues across turns, so it starts from what is already
-	// on disk. Restarting at 1 would give two events the same seq and the log
-	// would stop being ordered.
-	last, err := lastSeq(p)
-	if err != nil {
-		return nil, err
-	}
 	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("trajectory: open %s: %w", p, err)
 	}
+	// Repair a torn tail before anything else. A crash can stop a write
+	// anywhere, including between a line's last byte and its newline, so the
+	// file may end mid-line. Appending onto that merges the fragment and the
+	// next event into one unparseable line — losing both — and lastSeq would
+	// then reissue the fragment's number to different content.
+	//
+	// Terminating the fragment rather than truncating it is deliberate: a
+	// write interrupted just before its newline leaves a COMPLETE, parseable
+	// event, and truncation would throw that away. One newline destroys
+	// nothing, and an append-only log has no business rewriting its history.
+	if err := terminateTornTail(f, p); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	// After the repair, so a recovered final line counts toward the sequence.
+	// The sequence continues across turns: restarting at 1 would give two
+	// events the same seq and the log would stop being ordered.
+	last, err := lastSeq(p)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
 	return &Writer{f: f, seq: last, path: p}, nil
+}
+
+// terminateTornTail ends the file with a newline if it does not already, so
+// the next append starts on a line of its own.
+func terminateTornTail(f *os.File, path string) error {
+	st, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("trajectory: stat %s: %w", path, err)
+	}
+	if st.Size() == 0 {
+		return nil
+	}
+	r, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("trajectory: reopen %s: %w", path, err)
+	}
+	defer func() { _ = r.Close() }()
+	var b [1]byte
+	if _, err := r.ReadAt(b[:], st.Size()-1); err != nil {
+		return fmt.Errorf("trajectory: read tail of %s: %w", path, err)
+	}
+	if b[0] == '\n' {
+		return nil
+	}
+	if _, err := f.Write([]byte{'\n'}); err != nil {
+		return fmt.Errorf("trajectory: terminate torn tail of %s: %w", path, err)
+	}
+	return nil
 }
 
 // Append writes one event. data is stored as sent; nil is stored as no payload.
@@ -625,14 +679,27 @@ func (w *Writer) Append(eventType string, data any) error {
 		Data:   raw,
 	})
 	if err != nil {
+		// Safe to roll back: nothing has reached the file yet.
 		w.seq--
 		return fmt.Errorf("trajectory: marshal event: %w", err)
 	}
-	// One write for line+newline: a single short write is what makes a torn
-	// tail a torn *line*, which Read discards cleanly.
-	if _, err := w.f.Write(append(line, '\n')); err != nil {
+	buf := append(line, '\n')
+	if w.tornWrite {
+		// A previous write failed and may have left a partial line. Start on a
+		// line of our own rather than merging into it.
+		buf = append([]byte{'\n'}, buf...)
+	}
+	// One write for the whole line: a single short write is what makes a torn
+	// tail a torn *line*, which NewWriter terminates and Read skips.
+	if _, err := w.f.Write(buf); err != nil {
+		// Deliberately no rollback here, unlike the marshal failure above: a
+		// failed write may have left a partial line, so reusing this number
+		// could give two different events the same seq. A gap is visible and
+		// harmless; a duplicate is silent corruption.
+		w.tornWrite = true
 		return fmt.Errorf("trajectory: append to %s: %w", w.path, err)
 	}
+	w.tornWrite = false
 	return nil
 }
 
@@ -675,9 +742,11 @@ func Read(workspaceRoot, sessionID string) (events []Event, recorded bool, err e
 		}
 		var ev Event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			// A torn trailing line from an interrupted write. Everything
-			// complete before it is still good, which is the whole reason the
-			// log is line-oriented.
+			// Any line that will not parse is skipped, wherever it sits — not
+			// only a torn tail. That is deliberate: one unreadable line must
+			// not deny a reader the rest of the log, and a log outlives the
+			// code that reads it. The cost is that a corrupt line in the
+			// middle of a file is as quiet as an expected one at the end.
 			continue
 		}
 		out = append(out, ev)
