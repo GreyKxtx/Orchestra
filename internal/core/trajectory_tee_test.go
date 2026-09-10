@@ -141,12 +141,18 @@ func TestSessionTurn_LeavesATrajectoryOnDisk(t *testing.T) {
 	}
 }
 
-// TestPrepareAgentLaunch_DoesNotLeakTheWriterWhenItFailsEarly covers the leak
-// this fix round is about: a custom agent naming a provider that does not
-// exist makes resolveCustomAgentOpts fail, which returns from
-// prepareAgentLaunch after the trajectory writer is already open. The handle
-// must be released, or the sidecar becomes undeletable on Windows and
-// sessionfile.Delete half-deletes the session.
+// TestPrepareAgentLaunch_DoesNotLeakTheWriterWhenItFailsEarly pins the
+// error-path close that this fix round added.
+//
+// prepareAgentLaunch opens the trajectory writer, then hands ownership to the
+// *agentLaunch it returns; its callers defer Close. An error return in
+// between abandons the open handle, and on Windows an open handle makes the
+// sidecar undeletable, so sessionfile.Delete would half-delete the session.
+//
+// No configuration reaches such a return today — see the deviation note below,
+// which is why this test has to construct the situation by hand. The close is
+// defense for the error paths this function grows later, so the test asserts
+// the mechanism rather than a live bug.
 //
 // Assert by consequence, not by inspecting internals: after the failed call,
 // os.Remove on the sidecar must succeed. That is exactly the operation
