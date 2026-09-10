@@ -1372,6 +1372,62 @@ test("clearMessages also clears the trajectory", async () => {
 
 // ---- C2b: the web host feeds the Trajectory view ----------------------------
 
+test("the first session of a freshly connected project fetches its trajectory, so the pane is not left loading", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+
+  const req = b.sent.filter((m) => m.method === "session.trajectory").pop();
+  assert.ok(req, "connecting did not ask the core for the first session's trajectory");
+  assert.equal(req.params.session_id, "s-A", "the fetch must name the session onConnected just started");
+  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  await tick();
+
+  const msg = b.inbound.filter((m) => m.type === "trajectory").pop();
+  assert.ok(msg, "no trajectory message reached the renderer");
+  assert.equal(msg.recorded, true);
+  assert.deepEqual(msg.events, []);
+  assert.equal(msg.error, undefined);
+});
+
+test("a trajectory answer for a session the project has since left is dropped, even on the same project", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A"); // leaves s-A's fetch in flight
+
+  dispatch(b, { type: "newSession" });
+  await tick();
+  answerOn(b, "A", "session.start", { session_id: "s-A2", restored: false });
+  await tick();
+
+  const reqs = b.sent.filter((m) => m.method === "session.trajectory");
+  const old = reqs.find((m) => m.params.session_id === "s-A");
+  const fresh = reqs.find((m) => m.params.session_id === "s-A2");
+  assert.ok(old && fresh, "both sessions' fetches must be in flight");
+
+  // The newer answer lands first, the stale one last — an order the core is
+  // free to produce, since it handles each request in its own goroutine.
+  const freshEvents = [{ seq: 1, time_ms: 5, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t2", content: "" } }];
+  b.deliverTo("A", { jsonrpc: "2.0", id: fresh.id, result: { recorded: true, events: freshEvents } });
+  await tick();
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    id: old.id,
+    result: { recorded: true, events: [{ seq: 9, time_ms: 1, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t1", content: "stale" } }] },
+  });
+  await tick();
+
+  const painted = b.inbound.filter((m) => m.type === "trajectory");
+  assert.ok(painted.length >= 1, "the fresh answer must have been painted");
+  assert.deepEqual(painted[painted.length - 1].events, freshEvents, "the stale s-A answer must not repaint over s-A2");
+});
+
 test("switching to a project fetches its trajectory on its own connection and posts the fields intact", async () => {
   const b = loadBundle({ search: "?project=A" });
   b.setFetchResponder(() => ({
@@ -1539,8 +1595,12 @@ test("starting a new session in the on-screen project fetches that session's tra
 
   const reqs = b.sent.filter((m) => m.method === "session.trajectory");
   assert.equal(reqs.length, before + 1, "a new session did not ask the core for its trajectory");
-  assert.equal(reqs[reqs.length - 1].params.session_id, "s-A2", "the fetch must name the new session, not the old one");
-  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  const newReq = reqs[reqs.length - 1];
+  assert.equal(newReq.params.session_id, "s-A2", "the fetch must name the new session, not the old one");
+  // Answered by id, not by answerOn: onConnected's own fetch for the original
+  // s-A session (fix round 1) is still unanswered on this socket, and
+  // answerOn would resolve that older request first.
+  b.deliverTo("A", { jsonrpc: "2.0", id: newReq.id, result: { recorded: true, events: [] } });
   await tick();
 
   const types = b.inbound.map((m) => m.type);

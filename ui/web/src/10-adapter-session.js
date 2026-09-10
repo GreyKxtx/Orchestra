@@ -70,6 +70,10 @@
           sessionId: st.sessionId,
         });
         toRenderer({ type: "ready" });
+        // The first session of this connection: give the Trajectory pane its
+        // (usually empty) log now, or it sits on "Loading trajectory…" until
+        // the user switches, starts a session, or finishes a turn.
+        void refreshTrajectory(projectId, conn, st.sessionId);
         await refreshSessionList(projectId);
       }
     } catch (err) {
@@ -84,9 +88,10 @@
 
   /**
    * Read the session's log and hand it to the renderer — unless the user has
-   * switched projects while the request was in flight, in which case the
-   * answer belongs to a project that is no longer on screen. Same rule as the
-   * session.get repaint above and refreshSessionList below.
+   * switched projects, or to another session of the same project, while the
+   * request was in flight, in which case the answer belongs to a view that is
+   * no longer on screen. Same rule as the session.get repaint above and
+   * refreshSessionList below.
    *
    * A failed fetch is reported as such, not as "not recorded": those are
    * different answers and the view says which.
@@ -98,7 +103,10 @@
     }
     try {
       const res = await conn.send("session.trajectory", { session_id: sessionId });
-      if (projectId !== currentProjectId) {
+      if (projectId !== currentProjectId || projectState(projectId).sessionId !== sessionId) {
+        // The user left this project, or moved to another session of it,
+        // while the request was in flight: the answer is for a view that is
+        // no longer on screen.
         return;
       }
       toRenderer({
@@ -107,7 +115,7 @@
         events: res && Array.isArray(res.events) ? res.events : [],
       });
     } catch (err) {
-      if (projectId === currentProjectId) {
+      if (projectId === currentProjectId && projectState(projectId).sessionId === sessionId) {
         toRenderer({ type: "trajectory", recorded: true, events: [], error: String(err && err.message ? err.message : err) });
       }
     }
