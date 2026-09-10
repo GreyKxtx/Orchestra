@@ -21,7 +21,7 @@ import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjectio
 import { RpcClient } from "./rpc/client";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 14;
+const PROTOCOL_VERSION = 15;
 const OPS_VERSION = 1;
 export const TOOLS_VERSION = 14;
 
@@ -1604,7 +1604,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       ) {
         throw new Error(
           `protocol_version mismatch: extension=${PROTOCOL_VERSION}, core=${preHealth.protocol_version}. ` +
-            `Rebuild orchestra.exe (go build -o orchestra.exe ./cmd/orchestra) and reload the window.`
+            `Whichever is older is the one to update — the extension's constant lives in ` +
+            `src/coreSession.ts, the core's in protocol/version.go. Both must move together.`
         );
       }
       const projectId =

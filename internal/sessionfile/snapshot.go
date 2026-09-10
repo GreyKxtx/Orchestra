@@ -34,11 +34,15 @@ type Snapshot struct {
 	// MsgCount supports legacy list UIs; equals len(UIMessages) when unset.
 	MsgCount int `json:"msg_count,omitempty"`
 	// ParentID and ForkedFromIndex record where a forked session branched from.
-	// Additive with omitempty on purpose: LoadFromDisk rejects any snapshot
-	// whose Version differs from the binary's own
-	// (internal/core/session/persist.go:101-103), so bumping the schema would
-	// make files written here unreadable by an older binary, while a field an
-	// older binary does not know is simply ignored by json.Unmarshal.
+	// Additive with omitempty on purpose: a field an older binary does not
+	// know is simply ignored by json.Unmarshal, so adding one costs nothing.
+	//
+	// Note on the version guards in internal/core/session/persist.go: they are
+	// unreachable. ParseSnapshot always routes through normalizeSnapshot, which
+	// sets Version to this binary's own before returning, so a loaded snapshot
+	// can never disagree with it. An earlier version of this comment described
+	// those guards as a working safety net and discouraged schema changes on
+	// that basis; they were removed rather than left looking load-bearing.
 	ParentID        string `json:"parent_id,omitempty"`
 	ForkedFromIndex int    `json:"forked_from_index,omitempty"`
 	// TurnStarts[k] is the index into History at which the (k+1)-th user
