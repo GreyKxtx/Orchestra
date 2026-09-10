@@ -83,6 +83,37 @@
   }
 
   /**
+   * Read the session's log and hand it to the renderer — unless the user has
+   * switched projects while the request was in flight, in which case the
+   * answer belongs to a project that is no longer on screen. Same rule as the
+   * session.get repaint above and refreshSessionList below.
+   *
+   * A failed fetch is reported as such, not as "not recorded": those are
+   * different answers and the view says which.
+   * @param {string} projectId @param {any} conn @param {string} sessionId
+   */
+  async function refreshTrajectory(projectId, conn, sessionId) {
+    if (!sessionId) {
+      return;
+    }
+    try {
+      const res = await conn.send("session.trajectory", { session_id: sessionId });
+      if (projectId !== currentProjectId) {
+        return;
+      }
+      toRenderer({
+        type: "trajectory",
+        recorded: Boolean(res && res.recorded),
+        events: res && Array.isArray(res.events) ? res.events : [],
+      });
+    } catch (err) {
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "trajectory", recorded: true, events: [], error: String(err && err.message ? err.message : err) });
+      }
+    }
+  }
+
+  /**
    * Make projectId the one the renderer shows. Repaints from the core rather
    * than from a buffer — session.get is what makes holding no background
    * scrollback affordable — and re-raises a prompt the project was waiting on.
@@ -122,6 +153,12 @@
           toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
         }
       }
+      // Not awaited: the fetch must not hold up the header/turnComplete/
+      // session.list below, which is what the renderer's own state (composer
+      // busy/idle, session list) depends on. refreshTrajectory carries its
+      // own stale guard, so a late answer still lands correctly (or is
+      // dropped) once it resolves.
+      void refreshTrajectory(projectId, conn, st.sessionId);
     }
     if (projectId !== currentProjectId) {
       return;
@@ -238,7 +275,8 @@
     // activateProject/startSession) are outstanding. sendCancellable allocates
     // and sends synchronously, so the id handed back and the id in the wire
     // frame are provably the same value.
-    const turn = connFor(projectId).sendCancellable("session.message", {
+    const conn = connFor(projectId);
+    const turn = conn.sendCancellable("session.message", {
       session_id: st.sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
@@ -269,6 +307,10 @@
       if (projectId === currentProjectId) {
         toRenderer({ type: "turnInFlight", inFlight: false });
         toRenderer({ type: "turnComplete", ok: !failed });
+        // The log is complete once session.message has returned — the core
+        // closes the writer before it answers — so this replaces the live
+        // rows with the recorded ones, which carry the core's own timings.
+        void refreshTrajectory(projectId, conn, st.sessionId);
       }
     }
   }
@@ -297,6 +339,13 @@
       if (projectId === currentProjectId) {
         toRenderer({ type: "header", sessionId: st.sessionId });
       }
+      // A new or reopened session cleared the view above; give it the new
+      // session's log, or the "nothing yet" answer, rather than leaving it
+      // on "Loading trajectory…" until the next turn ends. Not awaited, for
+      // the same reason as activateProject: it must not hold up
+      // refreshSessionList below, and refreshTrajectory carries its own
+      // stale guard for whenever it resolves.
+      void refreshTrajectory(projectId, conn, st.sessionId);
       await refreshSessionList(projectId);
     } catch (err) {
       if (projectId === currentProjectId) {

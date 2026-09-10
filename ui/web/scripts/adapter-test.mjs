@@ -176,10 +176,18 @@ export function loadBundle(opts = {}) {
   };
   sandbox.window.removeEventListener = () => {};
   sandbox.window.postMessage = (msg) => {
-    inbound.push(msg);
+    // A real postMessage structurally clones its payload — the listener never
+    // sees the sender's own object. The vm sandbox otherwise hands back the
+    // exact object the bundle (running in its own vm realm) built, which
+    // carries that realm's Object.prototype and fails a strict deepEqual
+    // against a plain object built in this module — a mismatch a real browser
+    // could never produce. Every payload here is plain JSON-safe data, so a
+    // JSON round trip is a faithful enough clone.
+    const cloned = JSON.parse(JSON.stringify(msg));
+    inbound.push(cloned);
     for (const fn of handlers.slice()) {
       try {
-        fn({ data: msg });
+        fn({ data: cloned });
       } catch (e) {
         // A renderer fragment tripping over the stub DOM must not mask what the
         // adapter did; the adapter's own listeners are registered first.
@@ -1360,4 +1368,187 @@ test("clearMessages also clears the trajectory", async () => {
   b.post({ type: "clearMessages" });
   await tick();
   assert.match(b.elementById("trajectory-summary").textContent, /Loading trajectory/);
+});
+
+// ---- C2b: the web host feeds the Trajectory view ----------------------------
+
+test("switching to a project fetches its trajectory on its own connection and posts the fields intact", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  const req = b.sent.filter((m) => m.method === "session.trajectory").pop();
+  assert.ok(req, "switching did not ask the core for the trajectory");
+  assert.match(req.url, /project=B/);
+  const events = [{ seq: 1, time_ms: 5, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t1", content: "final" } }];
+  answerOn(b, "B", "session.trajectory", { recorded: true, events });
+  await tick();
+
+  const msg = b.inbound.filter((m) => m.type === "trajectory").pop();
+  assert.ok(msg, "no trajectory message reached the renderer");
+  assert.equal(msg.recorded, true);
+  assert.deepEqual(msg.events, events);
+  assert.equal(msg.error, undefined);
+});
+
+test("a live notification for the on-screen project is forwarded as trajectoryEvent with the method and params; a background project's is not", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+  b.inbound.length = 0;
+
+  const params = { type: "tool_call_start", step: 1, turn_id: "t1", tool_call_id: "c1", tool_call_name: "read", session_id: "s-A" };
+  b.deliverTo("A", { jsonrpc: "2.0", method: "agent/event", params });
+  b.deliverTo("A", { jsonrpc: "2.0", method: "exec/output_chunk", params: { step: 1, chunk: "x", turn_id: "t1" } });
+  b.deliverTo("B", { jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", step: 1, content: "bg", turn_id: "t9" } });
+  await tick();
+
+  const fwd = b.inbound.filter((m) => m.type === "trajectoryEvent");
+  assert.equal(fwd.length, 2, "exactly the two on-screen notifications, nothing from B");
+  assert.deepEqual(fwd[0].event, { type: "agent/event", data: params });
+  assert.equal(fwd[1].event.type, "exec/output_chunk");
+  assert.equal(fwd[1].event.data.chunk, "x");
+});
+
+test("when a turn ends on the on-screen project the trajectory is re-fetched, after turnComplete", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({ projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }] }));
+  await tick();
+  await handshakeFor(b, "A");
+  b.sent.length = 0;
+
+  // What 06-composer.js posts (see "a composer send becomes session.message").
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", apply: false, allowExec: true, files: [] });
+  await tick();
+  const turn = b.sent.find((m) => m.method === "session.message");
+  assert.ok(turn, "no session.message was sent");
+  b.deliverTo("A", { jsonrpc: "2.0", id: turn.id, result: {} });
+  await tick();
+
+  const done = b.inbound.findIndex((m) => m.type === "turnComplete");
+  assert.ok(done >= 0, "turnComplete never posted");
+  const req = b.sent.filter((m) => m.method === "session.trajectory").pop();
+  assert.ok(req, "the turn ended and nobody re-read the log");
+  assert.equal(req.params.session_id, "s-A", "handshakeFor starts session s-<projectId>");
+  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  await tick();
+  const after = b.inbound.slice(done + 1).find((m) => m.type === "trajectory");
+  assert.ok(after, "the re-fetched trajectory must arrive after turnComplete, replacing the live rows");
+});
+
+test("switching into a project mid-turn replays its log: the reasoning that streamed in the background is fetched, not lost", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  // B works in the background: two reasoning deltas that A's screen never saw.
+  b.deliverTo("B", { jsonrpc: "2.0", method: "agent/event", params: { type: "reasoning_delta", step: 1, content: "thinking ", turn_id: "tb" } });
+  b.deliverTo("B", { jsonrpc: "2.0", method: "agent/event", params: { type: "reasoning_delta", step: 1, content: "hard", turn_id: "tb" } });
+  await tick();
+  assert.equal(b.inbound.filter((m) => m.type === "trajectoryEvent").length, 0, "background events must not be forwarded live");
+
+  b.inbound.length = 0;
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+  // The core's log has what streamed while we were away.
+  const recorded = [
+    { seq: 1, time_ms: 100, type: "agent/event", data: { type: "reasoning_delta", step: 1, content: "thinking ", turn_id: "tb" } },
+    { seq: 2, time_ms: 140, type: "agent/event", data: { type: "reasoning_delta", step: 1, content: "hard", turn_id: "tb" } },
+  ];
+  answerOn(b, "B", "session.trajectory", { recorded: true, events: recorded });
+  await tick();
+  await tick();
+
+  const msg = b.inbound.filter((m) => m.type === "trajectory").pop();
+  assert.ok(msg, "switching mid-turn must replay the log");
+  assert.deepEqual(msg.events, recorded);
+  // And the renderer drew it: one turn, one step, one coalesced reasoning row.
+  assert.match(b.elementById("trajectory-summary").textContent, /1 turn · 3 rows/);
+});
+
+test("a session.trajectory that resolves after switching away does not paint the abandoned project", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+  const pendingB = b.sent.filter((m) => m.method === "session.trajectory").pop();
+  assert.ok(pendingB);
+
+  // Switch back to A before B's trajectory arrives.
+  dispatch(b, { type: "switchProject", projectId: "A" });
+  await tick();
+  b.inbound.length = 0;
+  b.deliverTo("B", { jsonrpc: "2.0", id: pendingB.id, result: { recorded: true, events: [{ seq: 1, time_ms: 1, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "tb", content: "final" } }] } });
+  await tick();
+
+  assert.equal(b.inbound.filter((m) => m.type === "trajectory").length, 0, "B's late trajectory must not be painted over A");
+});
+
+test("starting a new session in the on-screen project fetches that session's trajectory, after the view was cleared", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  const before = b.sent.filter((m) => m.method === "session.trajectory").length;
+
+  dispatch(b, { type: "newSession" });
+  await tick();
+  answerOn(b, "A", "session.start", { session_id: "s-A2", restored: false });
+  await tick();
+
+  const reqs = b.sent.filter((m) => m.method === "session.trajectory");
+  assert.equal(reqs.length, before + 1, "a new session did not ask the core for its trajectory");
+  assert.equal(reqs[reqs.length - 1].params.session_id, "s-A2", "the fetch must name the new session, not the old one");
+  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  await tick();
+
+  const types = b.inbound.map((m) => m.type);
+  const cleared = types.lastIndexOf("clearMessages");
+  const painted = types.lastIndexOf("trajectory");
+  assert.ok(cleared >= 0 && painted > cleared, "the empty log must be painted after the clear, not before it");
+  const msg = b.inbound[painted];
+  assert.equal(msg.recorded, true);
+  assert.deepEqual(msg.events, []);
+  assert.equal(msg.error, undefined);
 });
