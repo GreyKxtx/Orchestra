@@ -5,11 +5,16 @@ real and parked with a stated reason rather than fixed. None is a bug report awa
 triage — each was seen, weighed and left deliberately, and the reasoning is the useful
 part. What was fixed is not listed here; the ledger under `.superpowers/sdd/` has it.
 
-C2b shipped in `feat/trajectory-view` after five task reviews, three fix rounds, a
-headless acceptance run against a real core, and a whole-branch review. Two of the
-defects that run found — the pane never populated on first load, and every fresh
-session read "predates the log" — had passed 41 adapter tests; both are fixed on the
-branch, and the lesson is recorded in memory rather than here.
+C2b shipped in `feat/trajectory-view` after five task reviews, three task-level fix
+rounds, two headless acceptance runs against a real core, a whole-branch review, and one
+final fix round for what that review found. Two defects the first acceptance run found —
+the pane never populated on first load, and every fresh session read "predates the
+log" — had passed 41 adapter tests; both are fixed on the branch, and the lesson is
+recorded in memory rather than here. The whole-branch review found three further,
+narrower gaps that only the composed system could show — a launch-time race in the
+core's answer, a cross-session live-event leak in the web host, and an expanded row
+collapsing on rerender — closed in the final fix round and confirmed by a second
+acceptance run (42 adapter tests, plus a live click-through of the expand fix).
 
 Spec: `docs/superpowers/specs/2026-09-09-multi-project-window-design.md`
 Plan: `docs/superpowers/plans/2026-09-10-trajectory-view.md`
@@ -124,3 +129,36 @@ Until then the extension side is reviewed, not verified.
     the panel and reads the webview's posted messages would give the VS Code host what
     the adapter tests give the web host. Bigger than a follow-up; belongs with Part D's
     packaging work, where the extension is exercised anyway.
+
+## From the final whole-branch review
+
+Three Important findings from this pass went to a fix round (session-launch race in
+`SessionTrajectory`, cross-session live-event leakage in the web host's forward, and
+expanded-row state lost on rerender) — not listed here; the ledger has them. These
+three Minors were parked instead.
+
+17. **`SessionTrajectory`'s "empty" predicate is a narrower, duplicated copy of
+    `sessionLooksRestoredLocked`.** It checks only `len(sess.History) == 0 &&
+    len(sess.UIMessages()) == 0`; the pre-existing helper (`internal/core/session_rpc.go`)
+    also checks todos and the plan path. Unreachable today — in this codebase neither
+    can be non-empty while History and UIMessages both are — but it is a second, subtly
+    incomplete copy of logic that already exists once. Prefer calling
+    `sessionLooksRestoredLocked(sess)` (negated) directly.
+
+18. **A failed turn-end re-fetch wipes the live rows the user already saw, replacing
+    them with "Trajectory unavailable."** Both hosts' `catch` paths post `{recorded:
+    true, events: [], error}`; the renderer's `replaceTrajectory` treats any `trajectory`
+    message as a full replace, so a transient RPC hiccup right at turn end turns a
+    correct, fully-populated live view into an empty error state instead of leaving the
+    last-known-good rows up with a banner. The renderer would need to distinguish "no
+    events because none happened" from "no events because this answer replaces nothing
+    useful" — worth doing alongside item 6 below, which has the same shape.
+
+19. **The web host's turn-end re-fetch has the same limitation already parked for the
+    VS Code host as item 11: it reads the session id at completion time, not the one
+    the turn ran on.** `ui/web/src/10-adapter-session.js`'s `sendTurn` `finally` reads
+    `st.sessionId` (current, mutable); if the user switches sessions mid-turn — now
+    reachable per the fix for the live-event leak above, which the forward guard closes
+    but the fetch's own targeting does not — the old session's completed turn never gets
+    its "replace live with recorded" refresh. Self-heals when the old session is
+    reopened, the same property accepted for item 11.
