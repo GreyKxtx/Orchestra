@@ -174,33 +174,20 @@
     return active;
   }
 
-  // The four helpers the adapter fragments call. Same signatures as before;
-  // the destination is now "whichever project is active".
-
-  /** @param {string} method @param {any} params @returns {Promise<any>} */
-  function wsSend(method, params) {
-    if (!active) {
-      return Promise.reject(new Error("not connected"));
-    }
-    return active.send(method, params);
-  }
-
-  /** @param {string} method @param {any} params @returns {{id: number, done: Promise<any>}} */
-  function wsSendCancellable(method, params) {
-    if (!active) {
-      return { id: -1, done: Promise.reject(new Error("not connected")) };
-    }
-    return active.sendCancellable(method, params);
-  }
+  // Only one of the original four helpers survives: wsNotify, for
+  // dispatchToCore's "cancelTurn" ($/cancelRequest is a fire-and-forget
+  // notification, not a call awaited across a switch, so routing it to
+  // whichever project is active at the synchronous moment cancelTurn runs is
+  // correct — it is always the project on screen). wsSend, wsSendCancellable
+  // and wsReply routed to "whichever project is active by the time the call
+  // happens", which is wrong for anything that awaits: every other caller now
+  // takes connFor(projectId) itself and calls send()/sendCancellable()/reply()
+  // on that project's own connection directly (10-adapter-session.js,
+  // 30-adapter-asks.js).
 
   /** @param {string} method @param {any} params */
   function wsNotify(method, params) {
     if (active) active.notify(method, params);
-  }
-
-  /** @param {any} id @param {any} result */
-  function wsReply(id, result) {
-    if (active) active.reply(id, result);
   }
 
   // Test seam: adapter-test.mjs drives the outbound path by posting a window

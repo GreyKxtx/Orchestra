@@ -62,6 +62,14 @@ body {
   background: currentColor;
 }
 
+/* "Close project" and "Remove from list" are reachable by keyboard via
+   Shift+F10 / the ContextMenu key (40-projects.js); a focused chip needs a
+   visible outline for that path to be usable at all. */
+.project-chip:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 /* State is carried by a corner badge whose SHAPE differs per state, so the
    rail is readable in either theme and without colour vision. */
 .project-chip::after {

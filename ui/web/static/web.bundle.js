@@ -178,33 +178,20 @@
     return active;
   }
 
-  // The four helpers the adapter fragments call. Same signatures as before;
-  // the destination is now "whichever project is active".
-
-  /** @param {string} method @param {any} params @returns {Promise<any>} */
-  function wsSend(method, params) {
-    if (!active) {
-      return Promise.reject(new Error("not connected"));
-    }
-    return active.send(method, params);
-  }
-
-  /** @param {string} method @param {any} params @returns {{id: number, done: Promise<any>}} */
-  function wsSendCancellable(method, params) {
-    if (!active) {
-      return { id: -1, done: Promise.reject(new Error("not connected")) };
-    }
-    return active.sendCancellable(method, params);
-  }
+  // Only one of the original four helpers survives: wsNotify, for
+  // dispatchToCore's "cancelTurn" ($/cancelRequest is a fire-and-forget
+  // notification, not a call awaited across a switch, so routing it to
+  // whichever project is active at the synchronous moment cancelTurn runs is
+  // correct — it is always the project on screen). wsSend, wsSendCancellable
+  // and wsReply routed to "whichever project is active by the time the call
+  // happens", which is wrong for anything that awaits: every other caller now
+  // takes connFor(projectId) itself and calls send()/sendCancellable()/reply()
+  // on that project's own connection directly (10-adapter-session.js,
+  // 30-adapter-asks.js).
 
   /** @param {string} method @param {any} params */
   function wsNotify(method, params) {
     if (active) active.notify(method, params);
-  }
-
-  /** @param {any} id @param {any} result */
-  function wsReply(id, result) {
-    if (active) active.reply(id, result);
   }
 
   // Test seam: adapter-test.mjs drives the outbound path by posting a window
@@ -5040,26 +5027,28 @@
   async function activateProject(projectId) {
     currentProjectId = projectId;
     const st = projectState(projectId);
-    setActiveConn(connFor(projectId));
+    const conn = connFor(projectId);
+    setActiveConn(conn);
 
     toRenderer({ type: "clearMessages" });
-    // Take down the project we are leaving. Nothing in the renderer hides the
-    // overlay from the outside — hideOverlay is private to 05b-overlays.js and
-    // clearMessages does not touch it — so an overlay raised for the previous
-    // project would stay on screen over this project's transcript, and the
-    // button's reply would then be read against this project's record, find no
-    // pendingAsk, and be dropped. The asking project keeps its record, so
-    // switching back re-raises the prompt intact.
-    if (!st.pendingAsk) {
-      const overlay = document.getElementById("overlay");
-      if (overlay) {
-        overlay.classList.add("hidden");
-      }
+    // Take the outgoing project's overlay down unconditionally, then raise this
+    // project's own ask, both before any await. Leaving it up while
+    // currentProjectId already names this project means the buttons on screen
+    // belong to one project and the reply is resolved against another — see
+    // setDisplayedAsk below, which is the second half of that fix.
+    const overlay = document.getElementById("overlay");
+    if (overlay) {
+      overlay.classList.add("hidden");
+    }
+    clearDisplayedAsk();
+    if (st.pendingAsk) {
+      toRenderer(st.pendingAsk.rendererMessage);
+      setDisplayedAsk(projectId, st.pendingAsk);
     }
 
     if (st.sessionId) {
       try {
-        const view = await wsSend("session.get", { session_id: st.sessionId });
+        const view = await conn.send("session.get", { session_id: st.sessionId });
         if (projectId !== currentProjectId) {
           return;
         }
@@ -5078,14 +5067,14 @@
     // setBusy(true) (ui/vscode/media/chat-src/07-events.js). Sending it with
     // inFlight:false would lock the composer into "Stop" on every switch to an
     // idle project. "turnComplete" is the only message that reaches
-    // setBusy(false), so send whichever one is true.
+    // setBusy(false), so send whichever one is true. turnComplete's contract is
+    // `{ ok: boolean }` (ui/vscode/src/protocol/events.ts) and a missing `ok` is
+    // read as failure (ui/vscode/media/chat-src/07-events.js) — arriving at an
+    // idle project is not a failed turn, so say so explicitly.
     if (st.inFlightTurnId !== null) {
       toRenderer({ type: "turnInFlight", inFlight: true });
     } else {
-      toRenderer({ type: "turnComplete" });
-    }
-    if (st.pendingAsk) {
-      toRenderer(st.pendingAsk.rendererMessage);
+      toRenderer({ type: "turnComplete", ok: true });
     }
     await refreshSessionList(projectId);
     renderProjects();
@@ -5099,7 +5088,7 @@
    */
   async function refreshSessionList(projectId) {
     try {
-      const res = await wsSend("session.list", {});
+      const res = await connFor(projectId).send("session.list", {});
       if (projectId === currentProjectId) {
         toRenderer({ type: "sessionList", sessions: res.sessions || [] });
       }
@@ -5179,7 +5168,13 @@
     st.status = "working";
     renderProjects();
 
-    const turn = wsSendCancellable("session.message", {
+    // Route through this project's own connection, not whichever one is
+    // active by the time this line runs — the caller can switch away while
+    // earlier awaits in this function (there are none here, but see
+    // activateProject/startSession) are outstanding. sendCancellable allocates
+    // and sends synchronously, so the id handed back and the id in the wire
+    // frame are provably the same value.
+    const turn = connFor(projectId).sendCancellable("session.message", {
       session_id: st.sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
@@ -5189,9 +5184,13 @@
       profile: msg.profile || "",
     });
     st.inFlightTurnId = turn.id;
+    // turnComplete's contract is `{ ok: boolean }`, and the renderer treats a
+    // missing `ok` as failure — so this must report the truth, not a constant.
+    let failed = false;
     try {
       await turn.done;
     } catch (err) {
+      failed = true;
       if (projectId === currentProjectId) {
         toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
       }
@@ -5205,7 +5204,7 @@
       renderProjects();
       if (projectId === currentProjectId) {
         toRenderer({ type: "turnInFlight", inFlight: false });
-        toRenderer({ type: "turnComplete" });
+        toRenderer({ type: "turnComplete", ok: !failed });
       }
     }
   }
@@ -5217,15 +5216,16 @@
     // after an await must be checked against currentProjectId before it paints.
     const projectId = currentProjectId;
     const st = projectState(projectId);
+    const conn = connFor(projectId);
     try {
       const params = sessionId ? { session_id: sessionId } : {};
-      const started = await wsSend("session.start", params);
+      const started = await conn.send("session.start", params);
       st.sessionId = started.session_id || "";
       if (projectId === currentProjectId) {
         toRenderer({ type: "clearMessages" });
       }
       if (started.restored) {
-        const view = await wsSend("session.get", { session_id: st.sessionId });
+        const view = await conn.send("session.get", { session_id: st.sessionId });
         if (projectId === currentProjectId) {
           toRenderer({ type: "history", messages: view.ui_messages || [] });
         }
@@ -5289,7 +5289,26 @@
           break;
         case "done":
         case "error":
-          if (st.status === "working") st.status = "idle";
+          // A turn can end (or error out) while a permission/question prompt
+          // is still outstanding — e.g. the agent errored before the tool
+          // that raised it ever got an answer. Left alone, pendingAsk keeps a
+          // JSON-RPC id nobody is waiting on, the rail shows a permanent
+          // "asking" badge, and switching in re-raises a prompt whose reply
+          // goes nowhere. Clear it here, and if that ask is the one currently
+          // on screen, take the overlay down with it — the displayed-ask
+          // state and the overlay must always come down together (see
+          // setDisplayedAsk / clearDisplayedAsk in 30-adapter-asks.js).
+          st.status = "idle";
+          if (st.pendingAsk) {
+            st.pendingAsk = null;
+            if (isDisplayedAskFor(projectId)) {
+              clearDisplayedAsk();
+              const overlay = document.getElementById("overlay");
+              if (overlay) {
+                overlay.classList.add("hidden");
+              }
+            }
+          }
           break;
         default:
           break;
@@ -5425,6 +5444,33 @@
   // the JSON-RPC ids that must be answered — an unanswered id is a tool that
   // waits forever.
 
+  // Which project's ask is on screen right now. The renderer's reply carries
+  // no project and no request id, so this is the only thing that can tell us
+  // who a click belongs to. Resolving against currentProjectId instead means a
+  // switch mid-prompt answers the wrong project — see activateProject in
+  // 10-adapter-session.js, which is the other half of that fix.
+  let displayedAsk = null;
+
+  /** @param {string} projectId @param {{kind: string, id: any}} ask */
+  function setDisplayedAsk(projectId, ask) {
+    displayedAsk = { projectId, kind: ask.kind, id: ask.id };
+  }
+
+  function clearDisplayedAsk() {
+    displayedAsk = null;
+  }
+
+  /**
+   * Whether the ask currently on screen belongs to projectId. 20-adapter-
+   * events.js uses this to decide whether a turn ending elsewhere must also
+   * take the overlay down with it, so a stale ask and a stale overlay never
+   * separate.
+   * @param {string} projectId
+   */
+  function isDisplayedAskFor(projectId) {
+    return Boolean(displayedAsk && displayedAsk.projectId === projectId);
+  }
+
   /**
    * @param {string} projectId @param {any} msg
    */
@@ -5459,6 +5505,7 @@
     // prompt waits in its record and is raised by activateProject.
     if (projectId === currentProjectId) {
       toRenderer(st.pendingAsk.rendererMessage);
+      setDisplayedAsk(projectId, st.pendingAsk);
     }
     renderProjects();
   }
@@ -5473,27 +5520,36 @@
     }
     if (msg.type === "__host_dispatch__" && msg.payload) {
       const p = msg.payload;
-      const st = projectState(currentProjectId);
+      // The renderer's reply carries no project id and no request id, so it is
+      // resolved against whichever ask is actually displayed on screen — never
+      // against currentProjectId, which may already name a different project
+      // by the time the click lands.
+      if (!displayedAsk) {
+        return; // stale click; nothing is on screen to answer
+      }
+      const st = projectState(displayedAsk.projectId);
       if (p.type === "permissionReply") {
-        if (!st.pendingAsk || st.pendingAsk.kind !== "permission") {
+        if (!st.pendingAsk || st.pendingAsk.kind !== "permission" || displayedAsk.kind !== "permission") {
           return; // stale click; answering some other id would be worse
         }
-        connFor(currentProjectId).reply(st.pendingAsk.id, {
+        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
           approved: Boolean(p.approved),
           always: Boolean(p.always),
         });
         st.pendingAsk = null;
         st.status = st.inFlightTurnId !== null ? "working" : "idle";
+        clearDisplayedAsk();
         renderProjects();
       } else if (p.type === "questionReply") {
-        if (!st.pendingAsk || st.pendingAsk.kind !== "question") {
+        if (!st.pendingAsk || st.pendingAsk.kind !== "question" || displayedAsk.kind !== "question") {
           return;
         }
-        connFor(currentProjectId).reply(st.pendingAsk.id, {
+        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
           answers: Array.isArray(p.answers) ? p.answers : [],
         });
         st.pendingAsk = null;
         st.status = st.inFlightTurnId !== null ? "working" : "idle";
+        clearDisplayedAsk();
         renderProjects();
       }
     }
@@ -5833,6 +5889,26 @@
       if (ev.preventDefault) ev.preventDefault();
       openRailMenu(chip.dataset.projectId || "", ev.clientX || 0, ev.clientY || 0);
     });
+    // "Close project" and "Remove from list" were reachable only through
+    // contextmenu, which a keyboard user cannot fire at all. Shift+F10 and the
+    // ContextMenu key are the platform's own keyboard equivalent of a
+    // right-click, so give the focused chip that path into the same menu
+    // rather than building a second one.
+    railEl.addEventListener("keydown", (ev) => {
+      const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
+      if (!chip) {
+        return;
+      }
+      const isMenuKey = ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey);
+      if (!isMenuKey) {
+        return;
+      }
+      if (ev.preventDefault) ev.preventDefault();
+      const rect = chip.getBoundingClientRect ? chip.getBoundingClientRect() : null;
+      const x = rect ? rect.left : 0;
+      const y = rect ? rect.bottom : 0;
+      openRailMenu(chip.dataset.projectId || "", x, y);
+    });
   }
   if (document.addEventListener) {
     document.addEventListener("click", (ev) => {
@@ -5885,9 +5961,13 @@
 
   // ---- startup -----------------------------------------------------------
   //
-  // The shell passes exactly one ?project=, and that id is used directly. A
-  // plain `orchestra web` passes none, so the id must be resolved from the API
-  // before any socket opens — see the id-before-socket note inside the IIFE.
+  // The startupId branch below exists for a URL that carries a project id,
+  // but nothing ships one today: the desktop shell's URL is
+  // `{base}/?token={token}` (ui/desktop/src-tauri/src/main.rs), with no
+  // `?project=`, so the desktop app always falls through to the
+  // resolve-from-API branch. A plain `orchestra web` passes none either, so
+  // the id must be resolved from the API before any socket opens — see the
+  // id-before-socket note inside the IIFE.
 
   (async () => {
     const startupId = new URLSearchParams(location.search).get("project") || "";

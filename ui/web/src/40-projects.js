@@ -333,6 +333,26 @@
       if (ev.preventDefault) ev.preventDefault();
       openRailMenu(chip.dataset.projectId || "", ev.clientX || 0, ev.clientY || 0);
     });
+    // "Close project" and "Remove from list" were reachable only through
+    // contextmenu, which a keyboard user cannot fire at all. Shift+F10 and the
+    // ContextMenu key are the platform's own keyboard equivalent of a
+    // right-click, so give the focused chip that path into the same menu
+    // rather than building a second one.
+    railEl.addEventListener("keydown", (ev) => {
+      const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
+      if (!chip) {
+        return;
+      }
+      const isMenuKey = ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey);
+      if (!isMenuKey) {
+        return;
+      }
+      if (ev.preventDefault) ev.preventDefault();
+      const rect = chip.getBoundingClientRect ? chip.getBoundingClientRect() : null;
+      const x = rect ? rect.left : 0;
+      const y = rect ? rect.bottom : 0;
+      openRailMenu(chip.dataset.projectId || "", x, y);
+    });
   }
   if (document.addEventListener) {
     document.addEventListener("click", (ev) => {
@@ -385,9 +405,13 @@
 
   // ---- startup -----------------------------------------------------------
   //
-  // The shell passes exactly one ?project=, and that id is used directly. A
-  // plain `orchestra web` passes none, so the id must be resolved from the API
-  // before any socket opens — see the id-before-socket note inside the IIFE.
+  // The startupId branch below exists for a URL that carries a project id,
+  // but nothing ships one today: the desktop shell's URL is
+  // `{base}/?token={token}` (ui/desktop/src-tauri/src/main.rs), with no
+  // `?project=`, so the desktop app always falls through to the
+  // resolve-from-API branch. A plain `orchestra web` passes none either, so
+  // the id must be resolved from the API before any socket opens — see the
+  // id-before-socket note inside the IIFE.
 
   (async () => {
     const startupId = new URLSearchParams(location.search).get("project") || "";

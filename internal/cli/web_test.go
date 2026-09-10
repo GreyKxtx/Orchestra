@@ -11,7 +11,7 @@ import (
 )
 
 func TestWebAssetsContainThePage(t *testing.T) {
-	for _, name := range []string{"index.html", "web.bundle.js", "chat.css", "logo.png"} {
+	for _, name := range []string{"index.html", "web.bundle.js", "chat.css", "rail.css", "logo.png"} {
 		f, err := webui.Assets().Open(name)
 		if err != nil {
 			t.Fatalf("%s is not embedded (run node ui/web/scripts/bundle-web.mjs and commit ui/web/static/): %v", name, err)

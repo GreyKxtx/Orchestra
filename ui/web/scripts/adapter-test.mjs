@@ -1031,3 +1031,253 @@ test("a session.list that resolves after switching away does not paint the aband
   );
   assert.equal(stray, undefined, "B's stale session list painted after switching back to A");
 });
+
+// ---- final fix round regression tests ----------------------------------
+
+test("switching between two asking projects raises the incoming prompt before the round trip, and a reply resolves against it, not the outgoing one", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  // A is asking (on screen) and B is also asking (in the background).
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    id: 10,
+    method: "permission/request",
+    params: { tool: "bash", command: "rm a" },
+  });
+  await tick();
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    id: 20,
+    method: "permission/request",
+    params: { tool: "bash", command: "rm b" },
+  });
+  await tick();
+  assert.equal(
+    b.inbound.filter((m) => m.type === "permissionRequest").length,
+    1,
+    "only A's prompt should be on screen so far"
+  );
+
+  // Switch to B. Its session.get is left unanswered on purpose, so the switch
+  // is suspended mid-await — exactly the window the critical fix closes.
+  b.inbound.length = 0;
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+
+  // 1a: B's own prompt must already be on screen before session.get answers —
+  // not A's stale one, and not nothing.
+  const shown = b.inbound.filter((m) => m.type === "permissionRequest");
+  assert.equal(
+    shown.length,
+    1,
+    "the incoming project's prompt must be raised before the round trip, not after it"
+  );
+  assert.equal(shown[0].request.command, "rm b", "the overlay must show B's prompt, not A's stale one");
+
+  // 1b: a reply right now — before session.get has resolved — must answer B
+  // (the ask actually on screen), never A.
+  dispatch(b, { type: "permissionReply", approved: true, always: true });
+  await tick();
+
+  const replyToB = b.sent.filter((m) => m.id === 20 && m.result !== undefined).pop();
+  assert.ok(replyToB, "the reply never reached B, whose prompt was the one on screen");
+  assert.match(replyToB.url, /project=B/, "the reply went out on the wrong project's socket");
+
+  const replyToA = b.sent.find((m) => m.id === 10 && m.result !== undefined);
+  assert.equal(
+    replyToA,
+    undefined,
+    "A's request must not have been answered by a click meant for B — that would write an always-allow rule into the wrong project"
+  );
+
+  // Finish the switch so nothing is left dangling.
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+});
+
+test("switching to an idle project sends turnComplete with ok: true, not read as a failed turn", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  b.inbound.length = 0;
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  const complete = b.inbound.filter((m) => m.type === "turnComplete").pop();
+  assert.ok(complete, "switching to an idle project never sent turnComplete");
+  assert.equal(
+    complete.ok,
+    true,
+    "turnComplete without ok:true reads as a failed turn in the renderer's contract (ui/vscode/media/chat-src/07-events.js), which is wrong for an idle switch"
+  );
+});
+
+test("a turn's turnComplete reports ok:false only when the turn actually failed", async () => {
+  const b = await ready(loadBundle());
+
+  // Failure case.
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", allowExec: false, files: [] });
+  const failReq = b.sent.find((m) => m.method === "session.message");
+  assert.ok(failReq, "no session.message went out");
+  b.inbound.length = 0;
+  b.deliver({ jsonrpc: "2.0", id: failReq.id, error: { message: "boom" } });
+  await tick();
+  let complete = b.inbound.filter((m) => m.type === "turnComplete").pop();
+  assert.ok(complete, "no turnComplete after a failed turn");
+  assert.equal(
+    complete.ok,
+    false,
+    "a turn that threw must report ok:false, or the renderer never shows 'turn failed'"
+  );
+
+  // Success case, right after, to prove ok isn't just hardcoded either way.
+  b.inbound.length = 0;
+  dispatch(b, { type: "send", text: "again", mode: "build", profile: "", allowExec: false, files: [] });
+  const okReq = b.sent.filter((m) => m.method === "session.message").pop();
+  assert.ok(okReq, "no second session.message went out");
+  b.deliver({ jsonrpc: "2.0", id: okReq.id, result: {} });
+  await tick();
+  complete = b.inbound.filter((m) => m.type === "turnComplete").pop();
+  assert.ok(complete, "no turnComplete after a successful turn");
+  assert.equal(complete.ok, true, "a turn that succeeded must not be reported as ok:false");
+});
+
+test("startSession's post-await RPCs stay on the project's own connection after an intervening switch", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  b.sent.length = 0;
+  // A opens a different, restored session.
+  dispatch(b, { type: "openSession", sessionId: "s-old" });
+  await tick();
+
+  const startReq = b.sent.find(
+    (m) => m.method === "session.start" && String(m.url).includes("project=A")
+  );
+  assert.ok(startReq, "openSession never asked A to start the given session");
+
+  // Switch to B while A's session.start is still in flight. This changes
+  // which connection is "active" before A's startSession runs its next RPC —
+  // exactly the gap the fix closes.
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  answerOn(b, "B", "session.get", { ui_messages: [] });
+  await tick();
+
+  // Answer A's session.start as restored, which drives startSession into its
+  // second RPC (session.get) and then refreshSessionList's session.list. Both
+  // must still target A, not whichever project became active meanwhile.
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    id: startReq.id,
+    result: { session_id: "s-old", restored: true },
+  });
+  await tick();
+
+  const getReq = b.sent.find(
+    (m) => m.method === "session.get" && String(m.url).includes("project=A")
+  );
+  assert.ok(
+    getReq,
+    "startSession's session.get for the restored session must go out on A's own connection, not whichever project became active meanwhile"
+  );
+
+  b.deliverTo("A", { jsonrpc: "2.0", id: getReq.id, result: { ui_messages: [] } });
+  await tick();
+
+  const listReq = b.sent.find(
+    (m) => m.method === "session.list" && String(m.url).includes("project=A")
+  );
+  assert.ok(
+    listReq,
+    "refreshSessionList after openSession must go out on A's own connection, not B's, even though B is active by then"
+  );
+});
+
+test("an outstanding ask does not stick forever when its turn ends", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  const overlay = b.elementById("overlay");
+  overlay.classList.add("hidden");
+
+  b.inbound.length = 0;
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    id: 42,
+    method: "permission/request",
+    params: { tool: "bash", command: "ls" },
+  });
+  await tick();
+
+  let railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  assert.equal(railed.projects.find((p) => p.id === "A").status, "asking");
+  assert.equal(overlay.classList.contains("hidden"), false, "A's own permission overlay was never raised");
+
+  // The turn ends (e.g. the agent errored) while the prompt is still
+  // unanswered — nobody ever replies to id 42.
+  b.deliverTo("A", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "error", content: "boom" },
+  });
+  await tick();
+
+  railed = b.inbound.filter((m) => m.type === "projectList").pop();
+  assert.equal(
+    railed.projects.find((p) => p.id === "A").status,
+    "idle",
+    "the rail must not show a permanent 'asking' badge once the turn that asked has ended"
+  );
+  assert.equal(
+    overlay.classList.contains("hidden"),
+    true,
+    "the overlay must come down with the stale ask — a cleared pendingAsk with the overlay still up is the leak this guards against"
+  );
+
+  // A late click on the now-stale overlay must be dropped, not answered.
+  b.sent.length = 0;
+  dispatch(b, { type: "permissionReply", approved: true, always: false });
+  await tick();
+  const stray = b.sent.find((m) => m.id === 42 && m.result !== undefined);
+  assert.equal(
+    stray,
+    undefined,
+    "a reply after the asking turn ended must be dropped, not answered against a dead request"
+  );
+});
