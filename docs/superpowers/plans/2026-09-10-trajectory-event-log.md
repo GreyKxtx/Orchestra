@@ -899,12 +899,15 @@ two spellings of the path cannot drift."
 
 ### Task 3: Record events as they are emitted
 
-Every agent notification already funnels through the `notify` callback that `internal/core/agent_launch.go` hands to `buildAgentOnEvent`. Teeing that one callback records exactly what the client sees — including `step_usage`, which already carries per-step token counts from the provider, so nothing new is needed for tokens.
+Every agent notification originates from one field: `spec.OnEvent`, handed to `prepareAgentLaunch`. Teeing that single field records exactly what the client sees — including `step_usage`, which already carries per-step token counts from the provider, so nothing new is needed for tokens.
 
-Recording happens *after* debouncing, deliberately: `wrapStreamDebounce` coalesces text deltas, and the log wants the coalesced stream rather than every keystroke-sized chunk.
+**Tee `spec.OnEvent` once, not at each consumer.** An earlier draft of this task named two call sites, `:154` and `:236`. That was wrong: `spec.OnEvent` is consumed in *four* places — `buildAgentOnEvent` (:154), the `mode_route` notification (:185), `childCfg.NotifyAgentEvent` (:228), and `buildAgentOnEventWithChild` (:236). Wrapping two of them would have silently dropped mode-routing decisions and one of the two child-event paths from every log. Reassigning `spec.OnEvent` before its first use gives all four the tee for free, and there is nothing to keep in sync later.
+
+Recording happens *after* debouncing, deliberately: `wrapStreamDebounce` coalesces text deltas, and the log wants the coalesced stream rather than every keystroke-sized chunk. The debouncer holds a pending delta behind a `time.Timer`, but `handle` flushes it synchronously on any non-delta event and a turn always ends with one, so the tail of a turn is on disk before the writer closes. Do not add a drain step for a race that the flush already closes.
 
 **Files:**
-- Modify: `internal/core/agent_launch.go:154` and `:236`
+- Modify: `internal/core/agent_launch.go` (one tee at the top of `prepareAgentLaunch`, plus a `Trajectory` field and a `Close` method on `agentLaunch`)
+- Modify: `internal/core/core_agent.go:147`, `internal/core/session_rpc.go:418`, `internal/core/session_rpc.go:1072` — the three callers, each closing the launch
 - Create: `internal/core/trajectory_tee.go`
 - Test: `internal/core/trajectory_tee_test.go`
 
@@ -1033,40 +1036,79 @@ Expected: PASS.
 
 - [ ] **Step 5: Wire it into the launch path**
 
-Read `internal/core/agent_launch.go` around lines 140-250 before editing — you need to see how `spec.OnEvent` and `env` are built, and where the workspace root is available on the receiver.
+Read `internal/core/agent_launch.go` from `prepareAgentLaunch` (line 113) to its `return` before editing, and read the three callers listed in **Files**.
 
-At the first site (`:154`), where it reads:
+**`prepareAgentLaunch` does not own the run.** It builds an `*agentLaunch` and returns it; the callers construct the agent and drive the turn. A `defer tw.Close()` inside `prepareAgentLaunch` would therefore close the log *before the first event is ever recorded*. The writer's lifetime belongs to the launch, so it travels on the launch and the callers close it.
+
+Add the field to `agentLaunch` (the struct at line 59):
 
 ```go
-		onEvent = buildAgentOnEvent(spec.OnEvent, env)
+type agentLaunch struct {
+	Opts       agent.Options
+	Custom     customAgentOpts
+	Usage      *usage.Tracker
+	TaskRunner *tasks.TaskRunner
+	Profile    string
+
+	RequestedMode   string
+	EffectiveMode   string
+	RouteReason     string
+	RouteConfidence float64
+	EventEnvelope   EventEnvelope
+
+	// Trajectory records this turn's notifications. Nil when there is no
+	// session to record against, or when the log could not be opened;
+	// Close is safe either way.
+	Trajectory *trajectory.Writer
+}
+
+// Close releases what the launch holds open. Callers own the turn, so they
+// own this: prepareAgentLaunch returns before the first event exists and
+// cannot defer it itself.
+func (l *agentLaunch) Close() {
+	if l == nil || l.Trajectory == nil {
+		return
+	}
+	_ = l.Trajectory.Close()
+}
 ```
 
-open a writer for the session, tee the callback, and close the writer when the run finishes. The writer must be closed on every exit path from the run — use `defer` at the same scope that owns the run, not inside a branch. A session id is required: `env.SessionID` is empty for a one-shot `agent.run`, and in that case there is nothing to record against, so pass a nil writer and let the tee forward untouched:
+Then, in `prepareAgentLaunch`, immediately after `env` is resolved (after the `if env.TurnID == "" { ... }` block at line 148) and **before** the `if spec.OnEvent != nil` at line 153, open the writer and tee:
 
 ```go
-		var tw *trajectory.Writer
-		if env.SessionID != "" {
-			var err error
-			tw, err = trajectory.NewWriter(c.WorkspaceRoot(), env.SessionID)
-			if err != nil {
-				// Observability must not block work: log and carry on with no
-				// recorder rather than failing the turn.
-				c.logf("trajectory: recording disabled for session %s: %v", env.SessionID, err)
-				tw = nil
-			} else {
-				defer func() { _ = tw.Close() }()
-			}
+	// One tee for every consumer of spec.OnEvent below. There are four, and
+	// wrapping them individually would drop whichever one a later change adds.
+	var tw *trajectory.Writer
+	if spec.SessionID != "" {
+		w, err := trajectory.NewWriter(c.workspaceRoot, spec.SessionID)
+		if err != nil {
+			// Observability must never block work: carry on with no recorder
+			// rather than failing the turn.
+			fmt.Fprintf(os.Stderr, "core: session %s trajectory recording disabled: %v\n", spec.SessionID, err)
+		} else {
+			tw = w
+			spec.OnEvent = teeToTrajectory(spec.OnEvent, tw)
 		}
-		onEvent = buildAgentOnEvent(teeToTrajectory(spec.OnEvent, tw), env)
+	}
 ```
 
-`c.WorkspaceRoot()` and `c.logf` are placeholders for whatever this file already uses to reach the workspace root and to log — read the surrounding code and use the real ones. If the receiver is not named `c`, or there is no logging helper, say so in your report and use the closest existing idiom rather than inventing one.
+Note what this deliberately does **not** guard on: `spec.OnEvent` may be nil, and the tee still installs. A core with no notifier attached — which is every test built through `setupInitializedCore`, and any headless embedding — has `spec.OnEvent == nil`, and a turn there deserves a trajectory just as much as one somebody is watching. `teeToTrajectory` substitutes a no-op notify for nil, so the log records and nothing is delivered.
 
-Do the same at the second site (`:236`), the child-subagent path, which returns `buildAgentOnEventWithChild(spec.OnEvent, env, meta)`. A child's events belong in the same session's log — the child scope is already carried in the payload by `mergeChildScope`, so no second file is needed.
+This does flip four `if spec.OnEvent != nil` guards from false to true in that configuration, which is intended: the `mode_route` decision and the child-event sinks are exactly the things a trajectory should contain. The cost is a map allocation per event in a run nobody is watching. Accept it; do not reintroduce a nil guard to avoid it.
+
+Add `"fmt"`, `"os"`, and `"github.com/orchestra/orchestra/internal/trajectory"` to the file's imports if they are not already there.
+
+Finally, in each of the three callers, close the launch on every exit path. Immediately after the existing `if err != nil { return nil, err }` that follows `prepareAgentLaunch`:
+
+```go
+	defer launch.Close()
+```
+
+Add it at all three sites — `core_agent.go:147`, `session_rpc.go:418`, `session_rpc.go:1072`. It is a no-op at the `agent.run` and `session.compact` sites, where no session id reaches the spec and `Trajectory` stays nil; adding it anyway keeps one idiom rather than three special cases, and it is what makes a later `SessionID` on those specs record correctly instead of leaking a handle.
 
 - [ ] **Step 6: Write the end-to-end test**
 
-Add to `internal/core/trajectory_tee_test.go` a test that a real session turn leaves a log. Use whatever harness the existing tests in `internal/core` use to drive a turn with a mock LLM — read `internal/core/agent_events_test.go` and `internal/core/ops_apply_test.go` and follow the closest pattern. The assertion:
+Add to `internal/core/trajectory_tee_test.go` a test that a real session turn leaves a log. The harness already exists and is named: `setupInitializedCore(t, root, &fixedLLM{steps: []string{...}})` in `internal/core/rpc_handler_test.go:150`, driven through `h.Handle(ctx, "session.start", ...)` then `h.Handle(ctx, "session.message", ...)`. Read `internal/core/session_history_persist_test.go` for a complete worked example of exactly this shape and follow it. Note that this harness attaches no notifier, so `p.OnEvent` is nil — which is precisely the configuration Step 5's tee must still record in; if this test finds no log, the bug is a nil guard in Step 5, not a fault in the harness. The assertion:
 
 ```go
 func TestSessionTurn_LeavesATrajectoryOnDisk(t *testing.T) {
