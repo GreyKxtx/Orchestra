@@ -128,11 +128,12 @@ func (w *Writer) Append(eventType string, data any) error {
 		Data:   raw,
 	})
 	if err != nil {
+		// Safe to roll back: nothing has reached the file yet.
 		w.seq--
 		return fmt.Errorf("trajectory: marshal event: %w", err)
 	}
 	// One write for line+newline: a single short write is what makes a torn
-	// tail a torn *line*, which Read discards cleanly.
+	// tail a torn *line*, which NewWriter terminates and Read skips.
 	buf := append(line, '\n')
 	if w.tornWrite {
 		// A previous write failed and may have left a partial line. Start on a
