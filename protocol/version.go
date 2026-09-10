@@ -25,7 +25,10 @@ const (
 	// v15: `/ws` — WebSocket transport (bidirectional JSON-RPC, one JSON message
 	//      per frame, no LSP framing on the wire). Served by `orchestra web`.
 	//      No method changes.
-	ProtocolVersion = 15
+	// v16: session.trajectory — the append-only per-session event log
+	//      (.orchestra/sessions/<id>.events.jsonl) read back as {recorded,
+	//      events[]}. The on-disk session schema is unchanged and stays at v4.
+	ProtocolVersion = 16
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

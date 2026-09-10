@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v16** (2026-09-10): `session.trajectory` — читает append-only per-session event log (`.orchestra/sessions/<id>.events.jsonl`) обратно как `{recorded, events[]}`. Снапшот сессии на диске не меняется и остаётся на v4 — лог это sidecar-файл рядом со снапшотом, а не часть его схемы.
 - **v15** (2026-09-08): транспорт `/ws` — двунаправленный JSON-RPC поверх WebSocket (`orchestra web`); один message на фрейм, без `Content-Length`. Методы не менялись.
 - **v14** (2026-09-06): `session.fork` — ветка от user-чекпоинта без разрушения оригинала; `session.search` — поиск по тексту сообщений во всех сохранённых сессиях.
 - **v13** (2026-08-09): `attachments[]` on `agent.run` and `session.message`; `UIMessage.attachments` in session schema v4.
@@ -715,6 +716,29 @@ Response `result`:
 
 ```json
 {"result": {"hits": [{"session_id": "abc123", "title": "original task", "updated_at": "2026-09-06T12:00:00Z", "index": 2, "role": "user", "snippet": "u2"}]}}
+```
+
+### `session.trajectory`
+
+Возвращает append-only событийный лог сессии — sidecar-файл `.orchestra/sessions/<id>.events.jsonl`, который core пишет рядом со снапшотом сессии. Схема снапшота (`session.get`/`session.history`) этим не затрагивается и остаётся на v4 — лог не часть неё, а отдельный файл.
+
+`params`:
+
+- `session_id` (string) — обязателен, непустой после `TrimSpace`
+
+Response `result`:
+
+- `recorded` (bool) — `false` означает, что для этой сессии лога вообще нет: сессия либо создана до появления этой фичи, либо не существует. Это не то же самое, что лог с нулём событий (`recorded: true, events: []`) — там сессия существует и лог заведён, просто пока ничего не записано. Клиент должен показать разные сообщения для этих двух случаев, а не одну пустую таблицу.
+- `events` (array of `{seq, time_ms, type, source, data}`) — никогда не `null`, пустой лог сериализуется как `[]`
+
+Пример:
+
+```json
+{"method": "session.trajectory", "params": {"session_id": "abc123"}}
+```
+
+```json
+{"result": {"recorded": true, "events": [{"seq": 1, "time_ms": 1757500000000, "type": "agent/event", "source": "core", "data": {"type": "done"}}]}}
 ```
 
 ### `session.close`

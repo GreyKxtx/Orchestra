@@ -21,7 +21,7 @@ import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjectio
 import { RpcClient } from "./rpc/client";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 15;
+const PROTOCOL_VERSION = 16;
 const OPS_VERSION = 1;
 export const TOOLS_VERSION = 14;
 
