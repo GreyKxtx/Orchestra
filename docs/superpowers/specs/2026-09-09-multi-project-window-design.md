@@ -164,36 +164,73 @@ log, so a fork is a copy whose fidelity depends on the copy being right.
 
 ### What we build, and in what order
 
-**Now, with no protocol change.** The tab records the events arriving over the
-socket for the session being watched and renders them as a timeline. Turn and
-step nesting comes from `turn_id`, `step` and `step_done`; tool rows from
-`tool_call_start` and `tool_call_completed`; retries from `recoverable_error`
-and their `step_done` reason. Durations are measured by the client as events
-arrive — the only clock available, and labelled as such. Per-step token usage
-is not obtainable, so those cells stay **empty rather than estimated**; an
-invented number in an observability view is worse than a blank one.
+An earlier draft of this section proposed a client-only first version that
+recorded whatever events the page happened to see, with no protocol change. The
+owner chose the larger scope instead: **the log is persisted by the core, and
+it is built first.** This section records that decision and what follows from
+it.
 
-This version is honest about its limits: it covers the live turn and whatever
-the client saw since the page loaded, and it has nothing to show for a session
-from last week.
+The reason the client-only version was rejected is worth keeping, because it is
+the same reason the log has to come first. A timeline drawn from what one page
+happened to witness cannot show a session from last week, cannot show the part
+of a turn that ran while the page was closed, and — the symptom that actually
+bit — cannot show the reasoning that streamed while the user was looking at a
+different project. C1 already carries a background project's events over its
+own socket and deliberately discards them, because the transcript repaints from
+the core rather than from a client buffer. A client-side timeline would have had
+to reintroduce exactly that buffer, and then be thrown away when the core
+gained a log. So: the core gains the log, and the view is built once against
+the real thing.
 
-**Later, as its own block.** The core persists an append-only event log per
-session — a session schema bump and a `ProtocolVersion` bump, since both the
-on-disk format and the wire contract change. It records step boundaries, timing
-measured where the work happens rather than where it is observed, and per-step
-token usage from the provider's response. Then the tab works for any session at
-any time, and `session.fork` and `session.rewind` become operations over one
-structure instead of two projections that must be kept consistent.
+**Step one: the core records the log.** An append-only, per-session event log,
+carrying a monotonic contiguous sequence number, an epoch-millisecond
+timestamp, a type, a typed payload, and a `source` field. Step boundaries are
+recorded where the work happens. Durations are measured at the source rather
+than at the observer. Per-step token usage comes from the provider's response.
+This is a session schema bump **and** a `ProtocolVersion` bump, because both
+the on-disk format and the wire contract change.
 
-That block is not scheduled here. It is named so that the first version is
-built as its front half and not as something to throw away.
+**Step two: the view reads it.** The tab is a pure function from a list of
+events to a tree of rows. Because the log is authoritative and durable, the tab
+works for any session at any time, and switching projects mid-turn replays the
+log rather than showing a gap.
+
+**What is deliberately NOT in this scope, and why.** In DeepSeek Harness the
+model's message history is *derived* from the log — `deriveMessages()` — and
+nothing is stored beside it. That is the better end state, and this spec still
+points at it. But Orchestra stores two projections today, `history` and
+`ui_messages`, and `session.fork`, `session.rewind` and `session.search` are
+existing, tested features that read them. Making the log authoritative for
+those as well is a rewrite of the session subsystem, and bundling it with the
+trajectory would put a working feature at risk to gain nothing the trajectory
+needs.
+
+So the log is added as a third structure, authoritative for the trajectory and
+for nothing else yet. The projections keep working exactly as they do now.
+Turning them into derivations of the log is named here as the block that
+follows, and the log's shape is designed so that it can be — which is what the
+next section is about.
 
 ### One event shape, defined once
 
-Even the live-only version uses the field names the persisted log will use:
-monotonic sequence, timestamp, type, typed payload, and a `source` field naming
-what produced the event. Nothing in the first version populates `source` with
-anything interesting, and that is the point — see below.
+The log has one shape, defined once, and it is designed for the two things
+that come after it rather than only for the trajectory that reads it first.
+
+For **plugin attribution**: every event carries a `source` field naming what
+produced it. Nothing in this scope populates it with anything interesting, and
+that is the point — see below.
+
+For **derived projections**: surface-producing events carry enough to be
+projected into messages later without a migration. That means recording the
+events that *produce* a message — a user message, an assistant message, a tool
+call, a tool result — as first-class events with their own sequence numbers,
+not merely as side effects of a step. A log that records only timing and step
+boundaries would draw a fine timeline and would have to be redesigned the day
+anyone tried to derive `history` from it.
+
+This is the one place where paying for a later block is worth it now: the field
+names and the event vocabulary are almost free to get right today and expensive
+to change once sessions on disk carry them.
 
 ### Where this meets extensibility
 
@@ -241,9 +278,11 @@ survives both themes and a reader who cannot separate the hues.
 
 ## Changes to the core
 
-Small, and confined to the part A surface, which nothing outside this
-repository consumes. C2's persisted event log is deliberately not included —
-it is named in the trajectory section as a separate block.
+C1's changes are small and confined to the part A surface, which nothing
+outside this repository consumes. C2's are not small: they change the on-disk
+session format and the wire contract. Both are listed here.
+
+**C1.**
 
 - `GET /api/projects` returns remembered-but-closed projects alongside open
   ones, each with a state field. Today it returns only what is open, so the
@@ -254,6 +293,20 @@ it is named in the trajectory section as a separate block.
 Per-project state — working, asking, quiet — is derived by the interface from
 the event stream on each project's socket. The core gains no status endpoint
 and no polling.
+
+**C2.**
+
+- An append-only event log per session, persisted alongside the existing
+  projections. Session schema **v4 → v5**.
+- `ProtocolVersion` **15 → 16**: a method to read a session's log, and the
+  event shape on the wire. `initialize` hard-fails on a version mismatch, so
+  every client in this repository — the VS Code extension included — moves in
+  lockstep with this bump. That is affordable because they all ship from here,
+  and it is stated so that nobody discovers it during implementation.
+- Sessions written under v4 have no log and must keep opening. Their trajectory
+  says the log was not recorded, in words, in place. **Nothing synthesises a
+  log from `ui_messages`** — a fabricated timeline is the same error as an
+  estimated token count, and this spec refuses both.
 
 ## Shell privileges
 
@@ -282,22 +335,50 @@ disappearing.
 
 ## Testing
 
-**C1.**
-- The web adapter's test suite (`ui/web/scripts/adapter-test.mjs`, 13 tests
-  today) covers the multi-project layer: routing events to the right project,
-  switching, repainting a session from the core, and the state each icon
-  derives from an event stream.
+**C1.** *(as built: the adapter suite ended at 29 tests, not 13.)*
+- The web adapter's test suite (`ui/web/scripts/adapter-test.mjs`) covers the
+  multi-project layer: routing events to the right project, switching,
+  repainting a session from the core, and the state each icon derives from an
+  event stream.
+- A lesson from C1 worth carrying into C2's tests: several defects survived
+  nine reviews because tests asserted that a renderer message was *posted*
+  without inspecting its payload. When a new path sends an existing renderer
+  message, the test asserts the fields, and the payload is diffed against
+  `ui/vscode/src/protocol/events.ts`.
 - "The VS Code bundle did not change" is checked by building it before and
   after and comparing.
 - By hand, recorded in the plan's task report: two projects open, an agent
   working in the background one, a notification arriving, and the click landing
   in the right project.
 
-**C2.**
+**C2 — the log.**
+- Round-trip: a recorded turn is written, read back, and yields the same
+  events in the same order with contiguous sequence numbers. A gap or a
+  repeat in the sequence is a failure, not a warning.
+- Append-only is enforced, not merely intended: a test attempts to rewrite an
+  earlier event and asserts it is refused.
+- Crash safety: a log truncated mid-write (a partial trailing record) must
+  still load every complete event before it. The session must open.
+- A session written under schema v4 opens, reports that no log was recorded,
+  and **no test anywhere accepts a synthesised log** — a fixture asserts the
+  trajectory is empty-with-a-reason rather than reconstructed.
+- Timing is recorded at the source. A test asserts a step's duration comes
+  from the core's own clock and not from when a client observed it.
+- Token counts are present when the provider reported them and absent when it
+  did not. Absent means absent: a test asserts no zero is written in place of
+  an unknown.
+- `session.fork`, `session.rewind` and `session.search` keep passing their
+  existing tests unchanged. The log is additive, and that is what proves it.
+
+**C2 — the view.**
 - The timeline is a pure function from a list of events to a tree of rows, so
-  it is tested as one: fixtures of `agent/event` sequences in, an expected row
-  tree out. Interleaved tool calls, a retry after `recoverable_error`, a turn
-  cut short by cancellation, and a workflow's stages are each a fixture.
+  it is tested as one: fixtures of event sequences in, an expected row tree
+  out. Interleaved tool calls, a retry after `recoverable_error`, a turn cut
+  short by cancellation, and a workflow's stages are each a fixture.
+- Switching into a project mid-turn replays its log and shows the reasoning
+  that streamed while it was in the background. This is the symptom that
+  motivated the scope, so it gets an explicit test rather than being implied
+  by the others.
 - An event with an unknown `type` must render as a plain row rather than
   breaking the view — the log is meant to outlive the code that reads it.
 - Rows with no known token count must render blank; a test asserts no number
@@ -310,10 +391,14 @@ disappearing.
 No file browser, no custom window frame, no reordering or grouping or colouring
 projects, no search across all projects at once. Each is its own conversation.
 
-For C2 specifically: no persisted event log, no per-step token accounting, no
-plugin attribution, and no replay of past sessions. Each of those needs the
-core to change, and they are named in the trajectory section as the block that
-follows.
+For C2 specifically: **no plugin attribution** — the `source` field exists and
+stays unpopulated until there is a plugin layer to name; and **no derived
+projections** — `history` and `ui_messages` keep being stored as they are
+today, and the log is authoritative for the trajectory only. Both are named in
+the trajectory section, with the reasoning.
+
+Also out: no synthesised log for sessions written before v5, and no estimated
+token counts anywhere.
 
 ## Risks
 
@@ -325,10 +410,21 @@ follows.
 - **The renderer boundary can erode.** The pressure to "just add one field" to
   a shared fragment will be constant during C1. The bundle comparison is what
   makes that pressure visible instead of silent.
-- **A trajectory that only covers the live turn invites the wrong conclusion.**
-  A user who sees an empty timeline for an old session may read it as data loss
-  rather than as a feature that does not reach back yet. The view says so in
-  words, in place, rather than showing an empty frame.
+- **A session written before v5 has no log,** and an empty timeline reads as
+  data loss rather than as a session recorded before the feature existed. The
+  view says which it is, in words, in place, rather than showing an empty
+  frame. This is the same risk the earlier client-only draft carried, and it
+  does not disappear with a persisted log — it just applies to a smaller set of
+  sessions that shrinks over time.
+- **The protocol bump is lockstep.** `initialize` hard-fails on a mismatched
+  `protocol_version`, so bumping to 16 breaks any client pinned to 15 until it
+  is updated. Every client ships from this repository, so the cost is
+  coordination inside one commit rather than a compatibility window — but it
+  must be one commit, not a sequence.
+- **The on-disk format is the expensive thing to get wrong.** Code that reads
+  the log can be rewritten; sessions already written under a bad shape cannot.
+  This is why the event vocabulary is designed for derived projections now,
+  while it costs nothing, rather than when someone needs them.
 
 ## Sources
 
