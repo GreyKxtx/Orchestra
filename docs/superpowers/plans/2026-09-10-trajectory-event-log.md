@@ -1118,12 +1118,16 @@ func TestSessionTurn_LeavesATrajectoryOnDisk(t *testing.T) {
 	// Build the core the way the neighbouring tests in this package do; do not
 	// invent a new harness. Assert at least:
 	//   - trajectory.Read(root, sessionID) returns recorded == true
-	//   - the events include a "agent/event" whose payload type is "done"
+	//   - the events include an "agent/event" whose payload is
+	//     {"type":"step_done","content":"final"} — the terminal marker for
+	//     this harness. NOT "done": fixedLLM has no Streamer, so the agent
+	//     takes the non-streaming path and StreamEventDone/emitStepUsage
+	//     never fire. See run_final.go:133.
 	//   - every Seq is contiguous from 1
 }
 ```
 
-Write the real test body following the neighbouring pattern. If no existing test in `internal/core` drives a full session turn, say so in your report and assert at the closest reachable seam instead — do not leave this step as a comment.
+Write the real test body following the neighbouring pattern. Then prove it is load-bearing before you believe it: remove the tee, confirm the test fails, and put it back. A test that passes for the wrong reason is worse than a missing one here, because the on-disk format is the expensive thing to get wrong. If no existing test in `internal/core` drives a full session turn, say so in your report and assert at the closest reachable seam instead — do not leave this step as a comment.
 
 - [ ] **Step 7: Run everything and commit**
 
