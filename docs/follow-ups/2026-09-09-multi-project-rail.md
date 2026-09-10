@@ -144,3 +144,35 @@ Spec: `docs/superpowers/specs/2026-09-09-multi-project-window-design.md`
 gate. Adding unreviewed edits after that gate for cosmetic gain is the wrong
 trade, even for a three-line dead-code deletion — the value of the gate is that
 what ships is what was reviewed.
+
+---
+
+## Still unverified by hand
+
+The owner ran C1 with several projects at once and confirmed parallel work
+functions. Three things were never exercised in a real window, because nothing
+in the build environment can see a Windows toast or press a button, and
+inventing the observations would have been worse than leaving them open.
+
+1. **The Windows notification.** Give a background project work that needs a
+   permission answer and do not answer it: a toast should appear naming that
+   project. The underlying call was proven to work from the served page during
+   C1's first task (a real toast, observed via the window title); what is
+   unverified is only this wiring.
+2. **The two-asking-projects case.** Get two projects waiting on a permission
+   prompt at the same time and switch between them. Each must show its own
+   prompt, and answering must affect only that project. This was a Critical
+   found by the whole-branch review — before the fix, the outgoing project's
+   prompt stayed on screen and "Allow always" wrote a persistent rule into the
+   other project. It has a regression test; it has never been clicked.
+3. **The keyboard path to close/forget.** Tab to a chip, press `Shift+F10` or
+   the ContextMenu key, and confirm the menu opens and both actions work. This
+   has **no automated coverage at all** — the test harness's `closest()` stub
+   returns null, so rail key and click handlers cannot be driven there. It was
+   verified by reading the code only.
+
+Worth recording why this matters rather than filing it as routine: two of the
+three defects the whole-branch review found were visible from a single switch
+between two projects. That check was skipped as "curl is close enough" during
+implementation and deferred again afterwards, and both times it cost a full
+review-and-fix cycle.
