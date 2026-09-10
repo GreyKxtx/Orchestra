@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `14`
+- **`protocol.ProtocolVersion`**: `15`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `14`
 
@@ -160,23 +160,25 @@ MCP-промпты им нечем. Проекты открывают, пере�
 Версия протокола при этом **не меняется** (остаётся 15): `/ws` получил
 query-параметр, а не новый метод или новую форму сообщения.
 
-`GET /api/projects` returns open projects first, ordered by `opened_at`, then
-the remembered projects the core does not hold, ordered by path. A remembered
-entry has `state: "closed"`, `opened_at: 0`, and the same `id` it would have
-when open, so a client can act on it by id alone. The list is not checked
-against the filesystem: a remembered path on an unreachable share must not make
-this request hang, so whether the directory still exists is discovered when the
-client opens it.
+`GET /api/projects` возвращает сначала открытые проекты, упорядоченные по
+`opened_at`, затем запомненные, которых ядро не держит, — упорядоченные по
+пути. У запомненной записи `state: "closed"`, `opened_at: 0` и тот же `id`,
+который был бы у неё в открытом виде, поэтому клиенту достаточно одного id.
+Список **не** сверяется с файловой системой: запомненный путь на недоступной
+сетевой шаре не должен подвешивать этот запрос, поэтому существование каталога
+выясняется в момент открытия проекта, а не здесь.
 
-`DELETE /api/projects/{id}` closes a project and leaves it remembered.
-`DELETE /api/projects/{id}?forget=1` closes it if open and removes it from the
-remembered list; it answers 204 for a project that was already closed, and 404
-only when neither the registry nor the remembered list knows the id.
+`DELETE /api/projects/{id}` закрывает проект и оставляет его в списке.
+`DELETE /api/projects/{id}?forget=1` закрывает, если проект открыт, и убирает
+его из списка запомненных; на уже закрытый проект отвечает `204`, а `404` —
+только когда id не знает ни реестр, ни список запомненных.
 
-`POST /api/projects` records what it opened, so the list survives a restart.
+`POST /api/projects` записывает то, что открыл, поэтому список переживает
+перезапуск.
 
-`orchestra web` no longer reopens remembered projects at startup. It opens the
-workspace it was given; the rest open when the client asks.
+`orchestra web` больше не переоткрывает запомненные проекты на старте. Он
+открывает только тот workspace, который ему передали; остальные открываются
+тогда, когда их попросит клиент.
 
 **Фрейминг: один JSON-RPC message на один текстовый фрейм.** `Content-Length` на
 проводе нет — WebSocket уже фреймирован, повторять LSP-обрамление незачем.
