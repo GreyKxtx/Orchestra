@@ -5,46 +5,157 @@
   // types outside that scope are acknowledged and ignored rather than dropped
   // silently — a no-op the user can see beats a control that does nothing.
 
-  let currentSessionId = "";
-  /** id of the in-flight session.message request, so Stop can cancel it. */
-  let inFlightTurnId = null;
+  /**
+   * Per-project session state. The renderer shows one project at a time, so
+   * exactly one of these is "current"; the others are what a switch restores.
+   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any}>}
+   */
+  const perProject = new Map();
+  let currentProjectId = "";
 
-  /** The workspace the core was started in; filled by the health check. */
-  let workspaceRoot = "";
+  /** @param {string} projectId */
+  function projectState(projectId) {
+    let st = perProject.get(projectId);
+    if (!st) {
+      st = { sessionId: "", inFlightTurnId: null, workspaceRoot: "", status: "idle", pendingAsk: null };
+      perProject.set(projectId, st);
+    }
+    return st;
+  }
 
-  async function onConnected() {
+  /** @param {string} projectId */
+  function forgetProjectState(projectId) {
+    perProject.delete(projectId);
+  }
+
+  /**
+   * Read a project's state without creating a record for it. The render path
+   * walks every known project, and must not resurrect the records
+   * forgetProjectState() deletes.
+   * @param {string} projectId
+   */
+  function peekProjectState(projectId) {
+    return perProject.get(projectId) || null;
+  }
+
+  /** The state the renderer is currently showing. */
+  function current() {
+    return projectState(currentProjectId);
+  }
+
+  /** @param {string} projectId */
+  async function onConnected(projectId) {
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
     try {
       // core.health is answerable before initialize — it and initialize are the
       // only two methods exempt from the gate (internal/core/rpc_handler.go:76)
       // — and it is where project_root and project_id come from.
-      const health = await wsSend("core.health", {});
-      workspaceRoot = health.workspace_root || "";
-      await wsSend("initialize", {
-        project_root: workspaceRoot,
+      const health = await conn.send("core.health", {});
+      st.workspaceRoot = health.workspace_root || "";
+      await conn.send("initialize", {
+        project_root: st.workspaceRoot,
         project_id: health.project_id || "",
         protocol_version: health.protocol_version,
         ops_version: health.ops_version,
         tools_version: health.tools_version,
       });
-      const started = await wsSend("session.start", {});
-      currentSessionId = started.session_id || "";
-      toRenderer({
-        type: "header",
-        model: health.model || "",
-        provider: health.provider || "",
-        sessionId: currentSessionId,
-      });
-      toRenderer({ type: "ready" });
-      await refreshSessionList();
+      const started = await conn.send("session.start", {});
+      st.sessionId = started.session_id || "";
+      if (projectId === currentProjectId) {
+        toRenderer({
+          type: "header",
+          model: health.model || "",
+          provider: health.provider || "",
+          sessionId: st.sessionId,
+        });
+        toRenderer({ type: "ready" });
+        await refreshSessionList(projectId);
+      }
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      const message = String(err && err.message ? err.message : err);
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message });
+      }
+      st.status = "idle";
     }
+    renderProjects();
   }
 
-  async function refreshSessionList() {
+  /**
+   * Make projectId the one the renderer shows. Repaints from the core rather
+   * than from a buffer — session.get is what makes holding no background
+   * scrollback affordable — and re-raises a prompt the project was waiting on.
+   * @param {string} projectId
+   */
+  async function activateProject(projectId) {
+    currentProjectId = projectId;
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
+    setActiveConn(conn);
+
+    toRenderer({ type: "clearMessages" });
+    // Take the outgoing project's overlay down unconditionally, then raise this
+    // project's own ask, both before any await. Leaving it up while
+    // currentProjectId already names this project means the buttons on screen
+    // belong to one project and the reply is resolved against another — see
+    // setDisplayedAsk below, which is the second half of that fix.
+    const overlay = document.getElementById("overlay");
+    if (overlay) {
+      overlay.classList.add("hidden");
+    }
+    clearDisplayedAsk();
+    if (st.pendingAsk) {
+      toRenderer(st.pendingAsk.rendererMessage);
+      setDisplayedAsk(projectId, st.pendingAsk);
+    }
+
+    if (st.sessionId) {
+      try {
+        const view = await conn.send("session.get", { session_id: st.sessionId });
+        if (projectId !== currentProjectId) {
+          return;
+        }
+        toRenderer({ type: "history", messages: view.ui_messages || [] });
+      } catch (err) {
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        }
+      }
+    }
+    if (projectId !== currentProjectId) {
+      return;
+    }
+    toRenderer({ type: "header", sessionId: st.sessionId });
+    // The renderer's "turnInFlight" arm ignores the payload and always calls
+    // setBusy(true) (ui/vscode/media/chat-src/07-events.js). Sending it with
+    // inFlight:false would lock the composer into "Stop" on every switch to an
+    // idle project. "turnComplete" is the only message that reaches
+    // setBusy(false), so send whichever one is true. turnComplete's contract is
+    // `{ ok: boolean }` (ui/vscode/src/protocol/events.ts) and a missing `ok` is
+    // read as failure (ui/vscode/media/chat-src/07-events.js) — arriving at an
+    // idle project is not a failed turn, so say so explicitly.
+    if (st.inFlightTurnId !== null) {
+      toRenderer({ type: "turnInFlight", inFlight: true });
+    } else {
+      toRenderer({ type: "turnComplete", ok: true });
+    }
+    await refreshSessionList(projectId);
+    renderProjects();
+  }
+
+  /**
+   * Same rule as sendTurn and startSession: the caller can switch projects
+   * while session.list is in flight, and the result must not paint over
+   * whatever project is on screen by the time it comes back.
+   * @param {string} projectId
+   */
+  async function refreshSessionList(projectId) {
     try {
-      const res = await wsSend("session.list", {});
-      toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+      const res = await connFor(projectId).send("session.list", {});
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+      }
     } catch (err) {
       // A missing session list is not fatal; the chat still works.
     }
@@ -63,8 +174,8 @@
         return;
 
       case "cancelTurn":
-        if (inFlightTurnId !== null) {
-          wsNotify("$/cancelRequest", { id: inFlightTurnId });
+        if (current().inFlightTurnId !== null) {
+          wsNotify("$/cancelRequest", { id: current().inFlightTurnId });
         }
         return;
 
@@ -77,12 +188,20 @@
         return;
 
       case "listSessions":
-        void refreshSessionList();
+        void refreshSessionList(currentProjectId);
         return;
 
       case "permissionReply":
       case "questionReply":
         // Answered in 30-adapter-asks.js, which owns the JSON-RPC ids.
+        return;
+
+      case "switchProject":
+        void switchProject(msg.projectId || "");
+        return;
+
+      case "openProjectConnection":
+        void ensureConn(msg.projectId || "");
         return;
 
       default:
@@ -98,16 +217,29 @@
 
   /** @param {any} msg */
   async function sendTurn(msg) {
-    if (!currentSessionId) {
+    // Capture the id, not just the record: the user can switch projects while
+    // this turn is awaiting, and everything after the await must know which
+    // project it belongs to.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
+    if (!st.sessionId) {
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
     toRenderer({ type: "userEcho", text: msg.text || "" });
     toRenderer({ type: "turnStart" });
     toRenderer({ type: "turnInFlight", inFlight: true });
+    st.status = "working";
+    renderProjects();
 
-    const turn = wsSendCancellable("session.message", {
-      session_id: currentSessionId,
+    // Route through this project's own connection, not whichever one is
+    // active by the time this line runs — the caller can switch away while
+    // earlier awaits in this function (there are none here, but see
+    // activateProject/startSession) are outstanding. sendCancellable allocates
+    // and sends synchronously, so the id handed back and the id in the wire
+    // frame are provably the same value.
+    const turn = connFor(projectId).sendCancellable("session.message", {
+      session_id: st.sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
       // disk. Access mode still gates the shell (allow_exec below).
@@ -115,34 +247,60 @@
       allow_exec: Boolean(msg.allowExec),
       profile: msg.profile || "",
     });
-    inFlightTurnId = turn.id;
+    st.inFlightTurnId = turn.id;
+    // turnComplete's contract is `{ ok: boolean }`, and the renderer treats a
+    // missing `ok` as failure — so this must report the truth, not a constant.
+    let failed = false;
     try {
       await turn.done;
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      failed = true;
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     } finally {
-      inFlightTurnId = null;
-      toRenderer({ type: "turnInFlight", inFlight: false });
-      toRenderer({ type: "turnComplete" });
+      // The record and the rail always tell the truth, whichever project is on
+      // screen. Only the renderer is gated: a turn that ends in a background
+      // project must not put its error bubble, or its turnComplete, into the
+      // transcript the user is looking at.
+      st.inFlightTurnId = null;
+      st.status = "idle";
+      renderProjects();
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "turnInFlight", inFlight: false });
+        toRenderer({ type: "turnComplete", ok: !failed });
+      }
     }
   }
 
   /** @param {string | undefined} sessionId */
   async function startSession(sessionId) {
+    // Same rule as sendTurn: current() is only safe before the first await.
+    // The user can switch projects while this is in flight, and everything
+    // after an await must be checked against currentProjectId before it paints.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
     try {
       const params = sessionId ? { session_id: sessionId } : {};
-      const started = await wsSend("session.start", params);
-      currentSessionId = started.session_id || "";
-      toRenderer({ type: "clearMessages" });
-      if (started.restored) {
-        const view = await wsSend("session.get", { session_id: currentSessionId });
-        toRenderer({ type: "history", messages: view.ui_messages || [] });
+      const started = await conn.send("session.start", params);
+      st.sessionId = started.session_id || "";
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "clearMessages" });
       }
-      toRenderer({ type: "header", sessionId: currentSessionId });
-      await refreshSessionList();
+      if (started.restored) {
+        const view = await conn.send("session.get", { session_id: st.sessionId });
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "history", messages: view.ui_messages || [] });
+        }
+      }
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "header", sessionId: st.sessionId });
+      }
+      await refreshSessionList(projectId);
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     }
   }
-
-  connect();

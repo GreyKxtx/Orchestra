@@ -25,8 +25,9 @@ func initWS(t *testing.T) string {
 	return root
 }
 
-// startRegistryServer stands up the real server with a real registry.
-func startRegistryServer(t *testing.T) (base string, reg *projects.Registry) {
+// startRegistryServer stands up the real server with a real registry. `known`
+// may be nil, which is the open-only behaviour part A shipped.
+func startRegistryServer(t *testing.T, known *projects.Store) (base string, reg *projects.Registry) {
 	t.Helper()
 	// Cleanups run LIFO. The first t.TempDir call registers the RemoveAll for
 	// every temp dir of this test, so it must come before reg.Shutdown is
@@ -43,6 +44,7 @@ func startRegistryServer(t *testing.T) (base string, reg *projects.Registry) {
 		Token:    "secret",
 		Health:   map[string]any{"status": "ok"},
 		Registry: reg,
+		Known:    known,
 		InitProject: func(ctx context.Context, root string) error {
 			cfg := config.DefaultConfig(root)
 			return config.Save(filepath.Join(root, ".orchestra.yml"), cfg)
@@ -84,7 +86,7 @@ func doJSON(t *testing.T, method, url string, body any) (int, map[string]any) {
 }
 
 func TestAPI_OpenListClose(t *testing.T) {
-	base, _ := startRegistryServer(t)
+	base, _ := startRegistryServer(t, nil)
 	root := initWS(t)
 
 	status, body := doJSON(t, http.MethodPost, base+"/api/projects", map[string]any{"path": root})
@@ -123,7 +125,7 @@ func TestAPI_OpenListClose(t *testing.T) {
 }
 
 func TestAPI_TypedErrors(t *testing.T) {
-	base, _ := startRegistryServer(t)
+	base, _ := startRegistryServer(t, nil)
 
 	// Missing directory.
 	status, body := doJSON(t, http.MethodPost, base+"/api/projects",
@@ -160,7 +162,7 @@ func TestAPI_TypedErrors(t *testing.T) {
 }
 
 func TestAPI_InitFlagCreatesTheConfig(t *testing.T) {
-	base, _ := startRegistryServer(t)
+	base, _ := startRegistryServer(t, nil)
 	bare := t.TempDir()
 
 	status, body := doJSON(t, http.MethodPost, base+"/api/projects",
@@ -174,7 +176,7 @@ func TestAPI_InitFlagCreatesTheConfig(t *testing.T) {
 }
 
 func TestAPI_RequiresAuth(t *testing.T) {
-	base, _ := startRegistryServer(t)
+	base, _ := startRegistryServer(t, nil)
 	resp, err := http.Get(base + "/api/projects")
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -189,7 +191,7 @@ func TestAPI_RequiresAuth(t *testing.T) {
 // 127.0.0.1:<other> post to /api/* with the cookie attached. The Origin header
 // is what separates the served page from a stranger on another port.
 func TestAPI_CrossOriginRequestIsRejected(t *testing.T) {
-	base, _ := startRegistryServer(t)
+	base, _ := startRegistryServer(t, nil)
 	host := base[len("http://"):]
 
 	get := func(origin string) int {
@@ -214,5 +216,173 @@ func TestAPI_CrossOriginRequestIsRejected(t *testing.T) {
 	}
 	if code := get(""); code != http.StatusOK {
 		t.Fatalf("GET without Origin (curl, scripts) = %d, want 200", code)
+	}
+}
+
+func TestAPI_ListsRememberedProjectsAsClosed(t *testing.T) {
+	closedDir := initWS(t)
+	openDir := initWS(t)
+
+	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.Add(closedDir); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	base, _ := startRegistryServer(t, store)
+
+	if st, body := doJSON(t, "POST", base+"/api/projects", map[string]any{"path": openDir}); st != http.StatusCreated {
+		t.Fatalf("open %s: status %d, body %v", openDir, st, body)
+	}
+
+	st, body := doJSON(t, "GET", base+"/api/projects", nil)
+	if st != http.StatusOK {
+		t.Fatalf("GET status %d, body %v", st, body)
+	}
+	list, _ := body["projects"].([]any)
+	if len(list) != 2 {
+		t.Fatalf("want 2 projects (one open, one closed), got %d: %v", len(list), body)
+	}
+
+	first, _ := list[0].(map[string]any)
+	second, _ := list[1].(map[string]any)
+	if first["state"] != "ready" {
+		t.Fatalf("first entry state is %v; open projects must come first", first["state"])
+	}
+	if second["state"] != "closed" {
+		t.Fatalf("second entry state is %v, want \"closed\"", second["state"])
+	}
+	if second["path"] != filepath.Clean(closedDir) {
+		t.Fatalf("closed entry path is %v, want %q", second["path"], filepath.Clean(closedDir))
+	}
+	if second["opened_at"] != float64(0) {
+		t.Fatalf("closed entry opened_at is %v, want 0 — it must not sort among open projects", second["opened_at"])
+	}
+}
+
+func TestAPI_AnOpenProjectIsNotListedTwice(t *testing.T) {
+	dir := initWS(t)
+
+	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	// Remembered AND open — the common case, and the one that would duplicate.
+	if err := store.Add(dir); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	base, _ := startRegistryServer(t, store)
+	if st, body := doJSON(t, "POST", base+"/api/projects", map[string]any{"path": dir}); st != http.StatusCreated {
+		t.Fatalf("open: status %d, body %v", st, body)
+	}
+
+	_, body := doJSON(t, "GET", base+"/api/projects", nil)
+	list, _ := body["projects"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want 1 project, got %d: %v", len(list), body)
+	}
+	entry, _ := list[0].(map[string]any)
+	if entry["state"] != "ready" {
+		t.Fatalf("state is %v, want \"ready\" — open outranks remembered", entry["state"])
+	}
+}
+
+func TestAPI_CloseKeepsThePathRemembered(t *testing.T) {
+	dir := initWS(t)
+
+	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	base, _ := startRegistryServer(t, store)
+
+	st, body := doJSON(t, "POST", base+"/api/projects", map[string]any{"path": dir})
+	if st != http.StatusCreated {
+		t.Fatalf("open: status %d, body %v", st, body)
+	}
+	id, _ := body["id"].(string)
+	if id == "" {
+		t.Fatalf("open returned no id: %v", body)
+	}
+
+	if st, body := doJSON(t, "DELETE", base+"/api/projects/"+id, nil); st != http.StatusNoContent {
+		t.Fatalf("close: status %d, body %v", st, body)
+	}
+
+	found := false
+	for _, p := range store.Paths() {
+		if p == filepath.Clean(dir) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("closing dropped %q from the remembered list %v; closing and forgetting are different actions", dir, store.Paths())
+	}
+}
+
+func TestAPI_ForgetRemovesAProjectThatWasNeverOpened(t *testing.T) {
+	gone := initWS(t)
+
+	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.Add(gone); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	base, _ := startRegistryServer(t, store)
+
+	p, ok := projects.ClosedProject(gone)
+	if !ok {
+		t.Fatal("ClosedProject refused a real directory")
+	}
+	// The registry has never held it, so Detach fails — forget must still work.
+	if st, body := doJSON(t, "DELETE", base+"/api/projects/"+p.ID+"?forget=1", nil); st != http.StatusNoContent {
+		t.Fatalf("forget: status %d, body %v", st, body)
+	}
+
+	for _, remembered := range store.Paths() {
+		if remembered == filepath.Clean(gone) {
+			t.Fatalf("forget left %q in the list: %v", gone, store.Paths())
+		}
+	}
+}
+
+func TestAPI_ForgetAnUnknownIDIs404(t *testing.T) {
+	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	base, _ := startRegistryServer(t, store)
+
+	if st, body := doJSON(t, "DELETE", base+"/api/projects/nobody-knows-this?forget=1", nil); st != http.StatusNotFound {
+		t.Fatalf("status %d, body %v; an id neither the registry nor the list knows is a 404", st, body)
+	}
+}
+
+func TestAPI_OpeningRemembers(t *testing.T) {
+	dir := initWS(t)
+
+	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	base, _ := startRegistryServer(t, store)
+
+	if st, body := doJSON(t, "POST", base+"/api/projects", map[string]any{"path": dir}); st != http.StatusCreated {
+		t.Fatalf("open: status %d, body %v", st, body)
+	}
+
+	found := false
+	for _, p := range store.Paths() {
+		if p == filepath.Clean(dir) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("opening %q did not remember it (%v); the rail would lose it on restart", dir, store.Paths())
 	}
 }

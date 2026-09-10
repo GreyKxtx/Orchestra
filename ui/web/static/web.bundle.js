@@ -44,16 +44,13 @@
     window.postMessage(msg, "*");
   }
 
-  // ---- JSON-RPC over the socket ------------------------------------------
-
-  let ws = null;
-  let nextRpcId = 1;
-  /** @type {Map<number, {resolve: Function, reject: Function}>} */
-  const pendingCalls = new Map();
-  /** @type {((msg: any) => void) | null} */
-  let onServerRequest = null; // set by 30-adapter-asks.js
-  /** @type {((msg: any) => void) | null} */
-  let onNotification = null; // set by 20-adapter-events.js
+  // ---- JSON-RPC over one socket per project -------------------------------
+  //
+  // A project's core is reached through its own socket (part A's guard is per
+  // project, so several are allowed). The four helpers below keep the
+  // signatures the adapter fragments already use and route to whichever
+  // project is active, so "which socket" is a question only this file and
+  // 40-projects.js answer.
 
   /**
    * The socket for a project. No token: the page was served with an HttpOnly
@@ -66,68 +63,79 @@
     return projectId ? `${base}?project=${encodeURIComponent(projectId)}` : base;
   }
 
-  /** @param {string} method @param {any} params @returns {Promise<any>} */
-  function wsSend(method, params) {
-    return new Promise((resolve, reject) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        reject(new Error("not connected"));
-        return;
-      }
-      const id = nextRpcId++;
-      pendingCalls.set(id, { resolve, reject });
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} }));
-    });
-  }
+  /** @type {any} */
+  let active = null;
 
   /**
-   * Like wsSend, but hands back the request id so the caller can cancel it
-   * later with $/cancelRequest. Reading nextRpcId here is safe: wsSend
-   * allocates it synchronously, with no await in between.
-   * @param {string} method @param {any} params
-   * @returns {{id: number, done: Promise<any>}}
+   * @param {string} projectId "" for the project-less socket
+   * @param {{onOpen?: Function, onClose?: Function, onError?: Function, onNotification?: Function, onServerRequest?: Function}} handlers
    */
-  function wsSendCancellable(method, params) {
-    const id = nextRpcId;
-    return { id, done: wsSend(method, params) };
-  }
+  function createConn(projectId, handlers) {
+    const h = handlers || {};
+    let nextRpcId = 1;
+    /** @type {Map<number, {resolve: Function, reject: Function}>} */
+    const pendingCalls = new Map();
+    const ws = new WebSocket(socketURL(projectId));
 
-  /** @param {string} method @param {any} params */
-  function wsNotify(method, params) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }));
-    }
-  }
+    const conn = {
+      projectId,
+      isOpen: () => ws.readyState === WebSocket.OPEN,
+      /** @param {string} method @param {any} params @returns {Promise<any>} */
+      send(method, params) {
+        return new Promise((resolve, reject) => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            reject(new Error("not connected"));
+            return;
+          }
+          const id = nextRpcId++;
+          pendingCalls.set(id, { resolve, reject });
+          ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: params || {} }));
+        });
+      },
+      /**
+       * Like send, but hands back the request id so the caller can cancel it
+       * later with $/cancelRequest. Reading nextRpcId here is safe: send
+       * allocates it synchronously, with no await in between.
+       * @param {string} method @param {any} params
+       * @returns {{id: number, done: Promise<any>}}
+       */
+      sendCancellable(method, params) {
+        const id = nextRpcId;
+        return { id, done: conn.send(method, params) };
+      },
+      /** @param {string} method @param {any} params */
+      notify(method, params) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ jsonrpc: "2.0", method, params: params || {} }));
+        }
+      },
+      /** Reply to a server-initiated request. @param {any} id @param {any} result */
+      reply(id, result) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+        }
+      },
+      close() {
+        try {
+          ws.close();
+        } catch (e) {
+          // Already closing. Nothing to do.
+        }
+      },
+    };
 
-  /** Reply to a server-initiated request. @param {any} id @param {any} result */
-  function wsReply(id, result) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
-    }
-  }
-
-  /** @param {string} [projectId] */
-  function connect(projectId) {
-    const id = projectId || new URLSearchParams(location.search).get("project") || "";
-    ws = new WebSocket(socketURL(id));
     ws.addEventListener("open", () => {
-      toRenderer({ type: "status", status: "ok" });
-      onConnected();
+      if (h.onOpen) h.onOpen(projectId);
     });
     ws.addEventListener("close", () => {
-      // A dropped socket ends the session on the core side, so say so plainly
-      // rather than reconnecting into what looks like the same conversation.
-      toRenderer({
-        type: "status",
-        status: "error",
-        detail: "disconnected — reload to start a new session",
-      });
       for (const { reject } of pendingCalls.values()) {
         reject(new Error("disconnected"));
       }
       pendingCalls.clear();
+      if (h.onClose) h.onClose(projectId);
     });
     ws.addEventListener("error", () => {
-      toRenderer({ type: "status", status: "error", detail: "connection error" });
+      if (h.onError) h.onError(projectId);
     });
     ws.addEventListener("message", (ev) => {
       let msg;
@@ -150,25 +158,50 @@
         return;
       }
       if (msg.id !== undefined && msg.method) {
-        if (onServerRequest) {
-          onServerRequest(msg);
-        }
+        if (h.onServerRequest) h.onServerRequest(projectId, msg);
         return;
       }
-      if (msg.method && onNotification) {
-        onNotification(msg);
+      if (msg.method && h.onNotification) {
+        h.onNotification(projectId, msg);
       }
     });
 
-    // Test seam: adapter-test.mjs drives the outbound path by posting a window
-    // message, because `host` lives inside this IIFE and nothing outside can
-    // reach it. Harmless in a real page — no renderer fragment posts this type.
-    window.addEventListener("message", (ev) => {
-      if (ev.data && ev.data.type === "__host_dispatch__") {
-        host.postMessage(ev.data.payload);
-      }
-    });
+    return conn;
   }
+
+  /** @param {any} conn */
+  function setActiveConn(conn) {
+    active = conn;
+  }
+
+  function activeConn() {
+    return active;
+  }
+
+  // Only one of the original four helpers survives: wsNotify, for
+  // dispatchToCore's "cancelTurn" ($/cancelRequest is a fire-and-forget
+  // notification, not a call awaited across a switch, so routing it to
+  // whichever project is active at the synchronous moment cancelTurn runs is
+  // correct — it is always the project on screen). wsSend, wsSendCancellable
+  // and wsReply routed to "whichever project is active by the time the call
+  // happens", which is wrong for anything that awaits: every other caller now
+  // takes connFor(projectId) itself and calls send()/sendCancellable()/reply()
+  // on that project's own connection directly (10-adapter-session.js,
+  // 30-adapter-asks.js).
+
+  /** @param {string} method @param {any} params */
+  function wsNotify(method, params) {
+    if (active) active.notify(method, params);
+  }
+
+  // Test seam: adapter-test.mjs drives the outbound path by posting a window
+  // message, because `host` lives inside this IIFE and nothing outside can
+  // reach it. Harmless in a real page — no renderer fragment posts this type.
+  window.addEventListener("message", (ev) => {
+    if (ev.data && ev.data.type === "__host_dispatch__") {
+      host.postMessage(ev.data.payload);
+    }
+  });
   /* host is supplied by ui/web/src/00-web-prelude.js */
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
@@ -4908,46 +4941,157 @@
   // types outside that scope are acknowledged and ignored rather than dropped
   // silently — a no-op the user can see beats a control that does nothing.
 
-  let currentSessionId = "";
-  /** id of the in-flight session.message request, so Stop can cancel it. */
-  let inFlightTurnId = null;
+  /**
+   * Per-project session state. The renderer shows one project at a time, so
+   * exactly one of these is "current"; the others are what a switch restores.
+   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any}>}
+   */
+  const perProject = new Map();
+  let currentProjectId = "";
 
-  /** The workspace the core was started in; filled by the health check. */
-  let workspaceRoot = "";
+  /** @param {string} projectId */
+  function projectState(projectId) {
+    let st = perProject.get(projectId);
+    if (!st) {
+      st = { sessionId: "", inFlightTurnId: null, workspaceRoot: "", status: "idle", pendingAsk: null };
+      perProject.set(projectId, st);
+    }
+    return st;
+  }
 
-  async function onConnected() {
+  /** @param {string} projectId */
+  function forgetProjectState(projectId) {
+    perProject.delete(projectId);
+  }
+
+  /**
+   * Read a project's state without creating a record for it. The render path
+   * walks every known project, and must not resurrect the records
+   * forgetProjectState() deletes.
+   * @param {string} projectId
+   */
+  function peekProjectState(projectId) {
+    return perProject.get(projectId) || null;
+  }
+
+  /** The state the renderer is currently showing. */
+  function current() {
+    return projectState(currentProjectId);
+  }
+
+  /** @param {string} projectId */
+  async function onConnected(projectId) {
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
     try {
       // core.health is answerable before initialize — it and initialize are the
       // only two methods exempt from the gate (internal/core/rpc_handler.go:76)
       // — and it is where project_root and project_id come from.
-      const health = await wsSend("core.health", {});
-      workspaceRoot = health.workspace_root || "";
-      await wsSend("initialize", {
-        project_root: workspaceRoot,
+      const health = await conn.send("core.health", {});
+      st.workspaceRoot = health.workspace_root || "";
+      await conn.send("initialize", {
+        project_root: st.workspaceRoot,
         project_id: health.project_id || "",
         protocol_version: health.protocol_version,
         ops_version: health.ops_version,
         tools_version: health.tools_version,
       });
-      const started = await wsSend("session.start", {});
-      currentSessionId = started.session_id || "";
-      toRenderer({
-        type: "header",
-        model: health.model || "",
-        provider: health.provider || "",
-        sessionId: currentSessionId,
-      });
-      toRenderer({ type: "ready" });
-      await refreshSessionList();
+      const started = await conn.send("session.start", {});
+      st.sessionId = started.session_id || "";
+      if (projectId === currentProjectId) {
+        toRenderer({
+          type: "header",
+          model: health.model || "",
+          provider: health.provider || "",
+          sessionId: st.sessionId,
+        });
+        toRenderer({ type: "ready" });
+        await refreshSessionList(projectId);
+      }
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      const message = String(err && err.message ? err.message : err);
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message });
+      }
+      st.status = "idle";
     }
+    renderProjects();
   }
 
-  async function refreshSessionList() {
+  /**
+   * Make projectId the one the renderer shows. Repaints from the core rather
+   * than from a buffer — session.get is what makes holding no background
+   * scrollback affordable — and re-raises a prompt the project was waiting on.
+   * @param {string} projectId
+   */
+  async function activateProject(projectId) {
+    currentProjectId = projectId;
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
+    setActiveConn(conn);
+
+    toRenderer({ type: "clearMessages" });
+    // Take the outgoing project's overlay down unconditionally, then raise this
+    // project's own ask, both before any await. Leaving it up while
+    // currentProjectId already names this project means the buttons on screen
+    // belong to one project and the reply is resolved against another — see
+    // setDisplayedAsk below, which is the second half of that fix.
+    const overlay = document.getElementById("overlay");
+    if (overlay) {
+      overlay.classList.add("hidden");
+    }
+    clearDisplayedAsk();
+    if (st.pendingAsk) {
+      toRenderer(st.pendingAsk.rendererMessage);
+      setDisplayedAsk(projectId, st.pendingAsk);
+    }
+
+    if (st.sessionId) {
+      try {
+        const view = await conn.send("session.get", { session_id: st.sessionId });
+        if (projectId !== currentProjectId) {
+          return;
+        }
+        toRenderer({ type: "history", messages: view.ui_messages || [] });
+      } catch (err) {
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        }
+      }
+    }
+    if (projectId !== currentProjectId) {
+      return;
+    }
+    toRenderer({ type: "header", sessionId: st.sessionId });
+    // The renderer's "turnInFlight" arm ignores the payload and always calls
+    // setBusy(true) (ui/vscode/media/chat-src/07-events.js). Sending it with
+    // inFlight:false would lock the composer into "Stop" on every switch to an
+    // idle project. "turnComplete" is the only message that reaches
+    // setBusy(false), so send whichever one is true. turnComplete's contract is
+    // `{ ok: boolean }` (ui/vscode/src/protocol/events.ts) and a missing `ok` is
+    // read as failure (ui/vscode/media/chat-src/07-events.js) — arriving at an
+    // idle project is not a failed turn, so say so explicitly.
+    if (st.inFlightTurnId !== null) {
+      toRenderer({ type: "turnInFlight", inFlight: true });
+    } else {
+      toRenderer({ type: "turnComplete", ok: true });
+    }
+    await refreshSessionList(projectId);
+    renderProjects();
+  }
+
+  /**
+   * Same rule as sendTurn and startSession: the caller can switch projects
+   * while session.list is in flight, and the result must not paint over
+   * whatever project is on screen by the time it comes back.
+   * @param {string} projectId
+   */
+  async function refreshSessionList(projectId) {
     try {
-      const res = await wsSend("session.list", {});
-      toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+      const res = await connFor(projectId).send("session.list", {});
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "sessionList", sessions: res.sessions || [] });
+      }
     } catch (err) {
       // A missing session list is not fatal; the chat still works.
     }
@@ -4966,8 +5110,8 @@
         return;
 
       case "cancelTurn":
-        if (inFlightTurnId !== null) {
-          wsNotify("$/cancelRequest", { id: inFlightTurnId });
+        if (current().inFlightTurnId !== null) {
+          wsNotify("$/cancelRequest", { id: current().inFlightTurnId });
         }
         return;
 
@@ -4980,12 +5124,20 @@
         return;
 
       case "listSessions":
-        void refreshSessionList();
+        void refreshSessionList(currentProjectId);
         return;
 
       case "permissionReply":
       case "questionReply":
         // Answered in 30-adapter-asks.js, which owns the JSON-RPC ids.
+        return;
+
+      case "switchProject":
+        void switchProject(msg.projectId || "");
+        return;
+
+      case "openProjectConnection":
+        void ensureConn(msg.projectId || "");
         return;
 
       default:
@@ -5001,16 +5153,29 @@
 
   /** @param {any} msg */
   async function sendTurn(msg) {
-    if (!currentSessionId) {
+    // Capture the id, not just the record: the user can switch projects while
+    // this turn is awaiting, and everything after the await must know which
+    // project it belongs to.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
+    if (!st.sessionId) {
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
     toRenderer({ type: "userEcho", text: msg.text || "" });
     toRenderer({ type: "turnStart" });
     toRenderer({ type: "turnInFlight", inFlight: true });
+    st.status = "working";
+    renderProjects();
 
-    const turn = wsSendCancellable("session.message", {
-      session_id: currentSessionId,
+    // Route through this project's own connection, not whichever one is
+    // active by the time this line runs — the caller can switch away while
+    // earlier awaits in this function (there are none here, but see
+    // activateProject/startSession) are outstanding. sendCancellable allocates
+    // and sends synchronously, so the id handed back and the id in the wire
+    // frame are provably the same value.
+    const turn = connFor(projectId).sendCancellable("session.message", {
+      session_id: st.sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
       // disk. Access mode still gates the shell (allow_exec below).
@@ -5018,37 +5183,63 @@
       allow_exec: Boolean(msg.allowExec),
       profile: msg.profile || "",
     });
-    inFlightTurnId = turn.id;
+    st.inFlightTurnId = turn.id;
+    // turnComplete's contract is `{ ok: boolean }`, and the renderer treats a
+    // missing `ok` as failure — so this must report the truth, not a constant.
+    let failed = false;
     try {
       await turn.done;
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      failed = true;
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     } finally {
-      inFlightTurnId = null;
-      toRenderer({ type: "turnInFlight", inFlight: false });
-      toRenderer({ type: "turnComplete" });
+      // The record and the rail always tell the truth, whichever project is on
+      // screen. Only the renderer is gated: a turn that ends in a background
+      // project must not put its error bubble, or its turnComplete, into the
+      // transcript the user is looking at.
+      st.inFlightTurnId = null;
+      st.status = "idle";
+      renderProjects();
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "turnInFlight", inFlight: false });
+        toRenderer({ type: "turnComplete", ok: !failed });
+      }
     }
   }
 
   /** @param {string | undefined} sessionId */
   async function startSession(sessionId) {
+    // Same rule as sendTurn: current() is only safe before the first await.
+    // The user can switch projects while this is in flight, and everything
+    // after an await must be checked against currentProjectId before it paints.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
+    const conn = connFor(projectId);
     try {
       const params = sessionId ? { session_id: sessionId } : {};
-      const started = await wsSend("session.start", params);
-      currentSessionId = started.session_id || "";
-      toRenderer({ type: "clearMessages" });
-      if (started.restored) {
-        const view = await wsSend("session.get", { session_id: currentSessionId });
-        toRenderer({ type: "history", messages: view.ui_messages || [] });
+      const started = await conn.send("session.start", params);
+      st.sessionId = started.session_id || "";
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "clearMessages" });
       }
-      toRenderer({ type: "header", sessionId: currentSessionId });
-      await refreshSessionList();
+      if (started.restored) {
+        const view = await conn.send("session.get", { session_id: st.sessionId });
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "history", messages: view.ui_messages || [] });
+        }
+      }
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "header", sessionId: st.sessionId });
+      }
+      await refreshSessionList(projectId);
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     }
   }
-
-  connect();
   // Inbound: agent/event and exec/output_chunk -> renderer messages.
   //
   // The parent transcript is accumulated here rather than appended by the
@@ -5057,12 +5248,81 @@
   // subagent's own trace; they must not be folded into the parent's text —
   // see ui/vscode/src/chat/panel.ts:1589-1604 for the same rule.
 
-  let turnText = "";
-  /** @type {Map<string, any>} */
-  const liveToolBlocks = new Map();
+  /** @type {Map<string, string>} */
+  const turnTextByProject = new Map();
+  /** @type {Map<string, Map<string, any>>} */
+  const liveToolBlocksByProject = new Map();
 
-  /** @param {any} msg */
-  function handleNotification(msg) {
+  // Named blocksForProject, not toolBlocks: ui/vscode/media/chat-src/01-dom-state.js
+  // already declares a top-level `const toolBlocks = new Map()`, and the whole
+  // bundle is one IIFE — a same-named top-level function here would be a
+  // duplicate declaration and fail to parse. That file may not change, so this
+  // one avoids the name instead.
+  /** @param {string} projectId */
+  function blocksForProject(projectId) {
+    let m = liveToolBlocksByProject.get(projectId);
+    if (!m) {
+      m = new Map();
+      liveToolBlocksByProject.set(projectId, m);
+    }
+    return m;
+  }
+
+  /**
+   * Every notification from every connection lands here first. A project the
+   * renderer is not showing contributes its state to the rail and nothing to
+   * the transcript: folding a background project's text into the visible
+   * bubble is the bug this routing exists to prevent.
+   * @param {string} projectId @param {any} msg
+   */
+  function noteProjectEvent(projectId, msg) {
+    const st = projectState(projectId);
+    const before = st.status;
+
+    if (msg.method === "agent/event") {
+      const ev = msg.params || {};
+      switch (ev.type) {
+        case "tool_call_start":
+        case "message_delta":
+        case "reasoning_delta":
+          if (st.status === "idle") st.status = "working";
+          break;
+        case "done":
+        case "error":
+          // A turn can end (or error out) while a permission/question prompt
+          // is still outstanding — e.g. the agent errored before the tool
+          // that raised it ever got an answer. Left alone, pendingAsk keeps a
+          // JSON-RPC id nobody is waiting on, the rail shows a permanent
+          // "asking" badge, and switching in re-raises a prompt whose reply
+          // goes nowhere. Clear it here, and if that ask is the one currently
+          // on screen, take the overlay down with it — the displayed-ask
+          // state and the overlay must always come down together (see
+          // setDisplayedAsk / clearDisplayedAsk in 30-adapter-asks.js).
+          st.status = "idle";
+          if (st.pendingAsk) {
+            st.pendingAsk = null;
+            if (isDisplayedAskFor(projectId)) {
+              clearDisplayedAsk();
+              const overlay = document.getElementById("overlay");
+              if (overlay) {
+                overlay.classList.add("hidden");
+              }
+            }
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    if (projectId === currentProjectId) {
+      handleNotification(projectId, msg);
+    }
+    return st.status !== before;
+  }
+
+  /** @param {string} projectId @param {any} msg */
+  function handleNotification(projectId, msg) {
     if (msg.method === "exec/output_chunk") {
       toRenderer({ type: "execChunk", chunk: (msg.params && msg.params.chunk) || "" });
       return;
@@ -5072,12 +5332,14 @@
     }
     const ev = msg.params || {};
     const isChild = ev.scope === "child";
+    const blocks = blocksForProject(projectId);
 
     switch (ev.type) {
       case "message_delta":
         if (ev.content && !isChild) {
-          turnText += ev.content;
-          toRenderer({ type: "deltaSync", content: turnText });
+          const acc = (turnTextByProject.get(projectId) || "") + ev.content;
+          turnTextByProject.set(projectId, acc);
+          toRenderer({ type: "deltaSync", content: acc });
         }
         break;
 
@@ -5099,7 +5361,7 @@
           result: "",
           startedAt: Date.now(),
         };
-        liveToolBlocks.set(ev.tool_call_id, block);
+        blocks.set(ev.tool_call_id, block);
         toRenderer({ type: "toolBlock", block: { ...block } });
         break;
       }
@@ -5108,7 +5370,7 @@
         if (isChild || !ev.tool_call_id) {
           break;
         }
-        const block = liveToolBlocks.get(ev.tool_call_id);
+        const block = blocks.get(ev.tool_call_id);
         if (block) {
           block.argsRaw += ev.args_delta || "";
           toRenderer({ type: "toolBlock", block: { ...block } });
@@ -5120,7 +5382,7 @@
         if (isChild || !ev.tool_call_id) {
           break;
         }
-        const block = liveToolBlocks.get(ev.tool_call_id) || {
+        const block = blocks.get(ev.tool_call_id) || {
           id: ev.tool_call_id,
           name: ev.tool_call_name || "tool",
           argsRaw: "",
@@ -5129,7 +5391,7 @@
         block.status = "done";
         block.result = ev.content || "";
         block.durationMs = Date.now() - (block.startedAt || Date.now());
-        liveToolBlocks.delete(ev.tool_call_id);
+        blocks.delete(ev.tool_call_id);
         toRenderer({ type: "toolBlock", block: { ...block } });
         break;
       }
@@ -5167,13 +5429,12 @@
     }
   }
 
-  onNotification = handleNotification;
-
-  // A new turn starts with an empty transcript.
+  // A new turn starts with an empty transcript — for the project whose turn it
+  // is, which is always the one the renderer is showing.
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {
-      turnText = "";
-      liveToolBlocks.clear();
+      turnTextByProject.set(currentProjectId, "");
+      blocksForProject(currentProjectId).clear();
     }
   });
   // Server-initiated requests: permission/request and question/ask.
@@ -5183,27 +5444,71 @@
   // the JSON-RPC ids that must be answered — an unanswered id is a tool that
   // waits forever.
 
-  /** @type {any} */ let pendingPermissionId = null;
-  /** @type {any} */ let pendingQuestionId = null;
+  // Which project's ask is on screen right now. The renderer's reply carries
+  // no project and no request id, so this is the only thing that can tell us
+  // who a click belongs to. Resolving against currentProjectId instead means a
+  // switch mid-prompt answers the wrong project — see activateProject in
+  // 10-adapter-session.js, which is the other half of that fix.
+  let displayedAsk = null;
 
-  /** @param {any} msg */
-  function handleServerRequest(msg) {
-    switch (msg.method) {
-      case "permission/request":
-        pendingPermissionId = msg.id;
-        toRenderer({ type: "permissionRequest", request: msg.params || {} });
-        return;
-      case "question/ask":
-        pendingQuestionId = msg.id;
-        toRenderer({ type: "questionAsk", questions: (msg.params && msg.params.questions) || [] });
-        return;
-      default:
-        // An unknown server request must still be answered, or the core waits.
-        wsReply(msg.id, { error: "unsupported" });
-    }
+  /** @param {string} projectId @param {{kind: string, id: any}} ask */
+  function setDisplayedAsk(projectId, ask) {
+    displayedAsk = { projectId, kind: ask.kind, id: ask.id };
   }
 
-  onServerRequest = handleServerRequest;
+  function clearDisplayedAsk() {
+    displayedAsk = null;
+  }
+
+  /**
+   * Whether the ask currently on screen belongs to projectId. 20-adapter-
+   * events.js uses this to decide whether a turn ending elsewhere must also
+   * take the overlay down with it, so a stale ask and a stale overlay never
+   * separate.
+   * @param {string} projectId
+   */
+  function isDisplayedAskFor(projectId) {
+    return Boolean(displayedAsk && displayedAsk.projectId === projectId);
+  }
+
+  /**
+   * @param {string} projectId @param {any} msg
+   */
+  function handleServerRequest(projectId, msg) {
+    const st = projectState(projectId);
+    switch (msg.method) {
+      case "permission/request":
+        st.pendingAsk = {
+          kind: "permission",
+          id: msg.id,
+          rendererMessage: { type: "permissionRequest", request: msg.params || {} },
+        };
+        st.status = "asking";
+        break;
+      case "question/ask":
+        st.pendingAsk = {
+          kind: "question",
+          id: msg.id,
+          rendererMessage: {
+            type: "questionAsk",
+            questions: (msg.params && msg.params.questions) || [],
+          },
+        };
+        st.status = "asking";
+        break;
+      default:
+        // An unknown server request must still be answered, or the core waits.
+        connFor(projectId).reply(msg.id, { error: "unsupported" });
+        return;
+    }
+    // Only the project on screen may raise an overlay. A background project's
+    // prompt waits in its record and is raised by activateProject.
+    if (projectId === currentProjectId) {
+      toRenderer(st.pendingAsk.rendererMessage);
+      setDisplayedAsk(projectId, st.pendingAsk);
+    }
+    renderProjects();
+  }
 
   // The overlays answer through the renderer's existing messages. Intercept
   // them here rather than in dispatchToCore, because they carry an id that
@@ -5215,22 +5520,477 @@
     }
     if (msg.type === "__host_dispatch__" && msg.payload) {
       const p = msg.payload;
+      // The renderer's reply carries no project id and no request id, so it is
+      // resolved against whichever ask is actually displayed on screen — never
+      // against currentProjectId, which may already name a different project
+      // by the time the click lands.
+      if (!displayedAsk) {
+        return; // stale click; nothing is on screen to answer
+      }
+      const st = projectState(displayedAsk.projectId);
       if (p.type === "permissionReply") {
-        if (pendingPermissionId === null) {
+        if (!st.pendingAsk || st.pendingAsk.kind !== "permission" || displayedAsk.kind !== "permission") {
           return; // stale click; answering some other id would be worse
         }
-        wsReply(pendingPermissionId, {
+        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
           approved: Boolean(p.approved),
           always: Boolean(p.always),
         });
-        pendingPermissionId = null;
+        st.pendingAsk = null;
+        st.status = st.inFlightTurnId !== null ? "working" : "idle";
+        clearDisplayedAsk();
+        renderProjects();
       } else if (p.type === "questionReply") {
-        if (pendingQuestionId === null) {
+        if (!st.pendingAsk || st.pendingAsk.kind !== "question" || displayedAsk.kind !== "question") {
           return;
         }
-        wsReply(pendingQuestionId, { answers: Array.isArray(p.answers) ? p.answers : [] });
-        pendingQuestionId = null;
+        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
+          answers: Array.isArray(p.answers) ? p.answers : [],
+        });
+        st.pendingAsk = null;
+        st.status = st.inFlightTurnId !== null ? "working" : "idle";
+        clearDisplayedAsk();
+        renderProjects();
       }
     }
   });
+  // The projects module: the rail, one connection per open project, and the
+  // switch between them.
+  //
+  // Division of labour. This fragment owns "which projects exist and which one
+  // is on screen"; 10/20/30 own "what one project's session is doing". The
+  // renderer is never told about more than one project's content — see
+  // activateProject — which is what keeps ui/vscode/media/chat-src unchanged.
+
+  /** @type {Map<string, any>} */
+  const conns = new Map();
+  /** @type {Array<any>} */
+  let known = [];
+
+  /** The Conn for an open project, or null. @param {string} projectId */
+  function connFor(projectId) {
+    return conns.get(projectId) || null;
+  }
+
+  /**
+   * Create the project's connection if it has none. The handshake runs from
+   * onOpen, so a caller only awaits the socket, not the session.
+   * @param {string} projectId
+   */
+  function ensureConn(projectId) {
+    const existing = conns.get(projectId);
+    if (existing) {
+      return existing;
+    }
+    const conn = createConn(projectId, {
+      onOpen: (id) => {
+        if (id === currentProjectId) {
+          toRenderer({ type: "status", status: "ok" });
+        }
+        void onConnected(id);
+      },
+      onClose: (id) => {
+        conns.delete(id);
+        forgetProjectState(id);
+        if (id === currentProjectId) {
+          // A dropped socket ends the session on the core side, so say so
+          // plainly rather than reconnecting into what looks like the same
+          // conversation.
+          toRenderer({
+            type: "status",
+            status: "error",
+            detail: "disconnected — reload to start a new session",
+          });
+        }
+        renderProjects();
+      },
+      onError: (id) => {
+        if (id === currentProjectId) {
+          toRenderer({ type: "status", status: "error", detail: "connection error" });
+        }
+      },
+      onNotification: (id, msg) => {
+        if (noteProjectEvent(id, msg)) {
+          renderProjects();
+        }
+      },
+      onServerRequest: (id, msg) => {
+        handleServerRequest(id, msg);
+        if (projectState(id).status === "asking") {
+          notifyAsking(id);
+        }
+      },
+    });
+    conns.set(projectId, conn);
+    return conn;
+  }
+
+  /**
+   * Show a project. A closed one is opened first; its entry in the list has
+   * the path, which is what POST /api/projects takes.
+   * @param {string} projectId
+   */
+  async function switchProject(projectId) {
+    if (!projectId || projectId === currentProjectId) {
+      return;
+    }
+    const entry = known.find((p) => p.id === projectId);
+    if (entry && entry.state === "closed") {
+      const opened = await openProject(entry.path, false);
+      if (!opened) {
+        return;
+      }
+    }
+    ensureConn(projectId);
+    await activateProject(projectId);
+  }
+
+  // ---- the HTTP half -----------------------------------------------------
+
+  /** @param {string} path @param {any} init */
+  async function api(path, init) {
+    const res = await fetch(path, {
+      ...(init || {}),
+      headers: { "Content-Type": "application/json", ...((init && init.headers) || {}) },
+    });
+    if (res.status === 204) {
+      return {};
+    }
+    let body = {};
+    try {
+      body = await res.json();
+    } catch (e) {
+      body = {};
+    }
+    if (!res.ok) {
+      const err = new Error(body.error || `request failed (${res.status})`);
+      // @ts-ignore — the caller distinguishes not_initialized from the rest.
+      err.code = body.error || "";
+      // @ts-ignore
+      err.path = body.path || "";
+      throw err;
+    }
+    return body;
+  }
+
+  async function refreshProjects() {
+    try {
+      const body = await api("/api/projects", { method: "GET" });
+      known = Array.isArray(body.projects) ? body.projects : [];
+    } catch (err) {
+      toRenderer({
+        type: "systemNote",
+        text: "could not list projects: " + String(err && err.message ? err.message : err),
+      });
+    }
+    renderProjects();
+  }
+
+  /**
+   * Open a folder. `init` asks the server to write .orchestra.yml first; the
+   * caller only sets it after the user agreed to that.
+   * @param {string} path @param {boolean} init
+   * @returns {Promise<boolean>} whether the project is now open
+   */
+  async function openProject(path, init) {
+    try {
+      await api("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ path, init: Boolean(init) }),
+      });
+      await refreshProjects();
+      return true;
+    } catch (err) {
+      // @ts-ignore
+      if (err && err.code === "not_initialized" && !init) {
+        toRenderer({
+          type: "systemNote",
+          text: `${path} is not an Orchestra project yet. Use "Add project" again and confirm initialising it.`,
+        });
+        return false;
+      }
+      toRenderer({
+        type: "systemNote",
+        text: "could not open " + path + ": " + String(err && err.message ? err.message : err),
+      });
+      return false;
+    }
+  }
+
+  /** Close a project. It stays in the list. @param {string} projectId */
+  async function closeProject(projectId) {
+    const conn = conns.get(projectId);
+    if (conn) {
+      conn.close();
+      conns.delete(projectId);
+    }
+    forgetProjectState(projectId);
+    try {
+      await api("/api/projects/" + encodeURIComponent(projectId), { method: "DELETE" });
+    } catch (err) {
+      toRenderer({
+        type: "systemNote",
+        text: "could not close the project: " + String(err && err.message ? err.message : err),
+      });
+    }
+    await refreshProjects();
+    if (projectId === currentProjectId) {
+      const next = known.find((p) => p.state === "ready" && p.id !== projectId);
+      if (next) {
+        await switchProject(next.id);
+      }
+    }
+  }
+
+  /** Close a project and drop it from the list. @param {string} projectId */
+  async function forgetProject(projectId) {
+    const conn = conns.get(projectId);
+    if (conn) {
+      conn.close();
+      conns.delete(projectId);
+    }
+    forgetProjectState(projectId);
+    try {
+      await api("/api/projects/" + encodeURIComponent(projectId) + "?forget=1", {
+        method: "DELETE",
+      });
+    } catch (err) {
+      toRenderer({
+        type: "systemNote",
+        text: "could not remove the project: " + String(err && err.message ? err.message : err),
+      });
+    }
+    await refreshProjects();
+  }
+
+  // ---- the rail ----------------------------------------------------------
+
+  /**
+   * Tell the person a project they are not looking at needs an answer.
+   *
+   * Only the desktop shell can raise a Windows notification, and only because
+   * capabilities/core-page.json grants this page exactly that call; in a plain
+   * browser there is nothing to call and the rail's badge is the whole signal.
+   * The active project never notifies — its prompt is already on screen.
+   * @param {string} projectId
+   */
+  function notifyAsking(projectId) {
+    if (projectId === currentProjectId) {
+      return;
+    }
+    const entry = known.find((p) => p.id === projectId);
+    const name = (entry && (entry.name || entry.path)) || projectId;
+    const t = window.__TAURI__;
+    if (!t || !t.notification || !t.notification.sendNotification) {
+      return;
+    }
+    try {
+      t.notification.sendNotification({
+        title: "Orchestra",
+        body: name + " is waiting for your answer",
+      });
+    } catch (e) {
+      // A notification that cannot be raised is not worth an error in the chat.
+    }
+  }
+
+  /**
+   * Repaint the rail and tell the renderer what the list looks like. The
+   * renderer message exists for the tests and for any future consumer; the
+   * rail's own DOM is written here because it is web-only.
+   */
+  function renderProjects() {
+    const rows = known.map((p) => {
+      const st = peekProjectState(p.id);
+      return {
+        id: p.id,
+        name: p.name || p.path,
+        path: p.path,
+        state: p.state,
+        status: p.state === "closed" || !st ? "closed" : st.status,
+        active: p.id === currentProjectId,
+      };
+    });
+    toRenderer({ type: "projectList", projects: rows });
+
+    const list = document.getElementById("project-rail-list");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    for (const row of rows) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "project-chip";
+      chip.dataset.projectId = row.id;
+      chip.dataset.state = row.state;
+      chip.dataset.status = row.status;
+      chip.dataset.active = row.active ? "true" : "false";
+      chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
+      chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
+      chip.textContent = (row.name || "?").slice(0, 2);
+      list.appendChild(chip);
+    }
+  }
+
+  // ---- input -------------------------------------------------------------
+
+  const railMenu = (() => {
+    const el = document.createElement("div");
+    el.className = "project-menu";
+    el.hidden = true;
+    if (document.body && document.body.appendChild) {
+      document.body.appendChild(el);
+    }
+    return el;
+  })();
+
+  /** @param {string} projectId @param {number} x @param {number} y */
+  function openRailMenu(projectId, x, y) {
+    railMenu.innerHTML = "";
+    const entry = known.find((p) => p.id === projectId);
+    if (entry && entry.state !== "closed") {
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "Close project";
+      close.addEventListener("click", () => {
+        railMenu.hidden = true;
+        void closeProject(projectId);
+      });
+      railMenu.appendChild(close);
+    }
+    const forget = document.createElement("button");
+    forget.type = "button";
+    forget.textContent = "Remove from list";
+    forget.addEventListener("click", () => {
+      railMenu.hidden = true;
+      void forgetProject(projectId);
+    });
+    railMenu.appendChild(forget);
+    railMenu.style.left = x + "px";
+    railMenu.style.top = y + "px";
+    railMenu.hidden = false;
+  }
+
+  const railEl = document.getElementById("project-rail-list");
+  if (railEl && railEl.addEventListener) {
+    railEl.addEventListener("click", (ev) => {
+      const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
+      if (!chip) {
+        return;
+      }
+      void switchProject(chip.dataset.projectId || "");
+    });
+    railEl.addEventListener("contextmenu", (ev) => {
+      const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
+      if (!chip) {
+        return;
+      }
+      if (ev.preventDefault) ev.preventDefault();
+      openRailMenu(chip.dataset.projectId || "", ev.clientX || 0, ev.clientY || 0);
+    });
+    // "Close project" and "Remove from list" were reachable only through
+    // contextmenu, which a keyboard user cannot fire at all. Shift+F10 and the
+    // ContextMenu key are the platform's own keyboard equivalent of a
+    // right-click, so give the focused chip that path into the same menu
+    // rather than building a second one.
+    railEl.addEventListener("keydown", (ev) => {
+      const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
+      if (!chip) {
+        return;
+      }
+      const isMenuKey = ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey);
+      if (!isMenuKey) {
+        return;
+      }
+      if (ev.preventDefault) ev.preventDefault();
+      const rect = chip.getBoundingClientRect ? chip.getBoundingClientRect() : null;
+      const x = rect ? rect.left : 0;
+      const y = rect ? rect.bottom : 0;
+      openRailMenu(chip.dataset.projectId || "", x, y);
+    });
+  }
+  if (document.addEventListener) {
+    document.addEventListener("click", (ev) => {
+      if (!railMenu.hidden && ev.target !== railMenu) {
+        railMenu.hidden = true;
+      }
+    });
+  }
+
+  const addBtn = document.getElementById("project-add-btn");
+  if (addBtn && addBtn.addEventListener) {
+    addBtn.addEventListener("click", () => {
+      void addProject();
+    });
+  }
+
+  /**
+   * Ask for a folder and open it. The native picker is only available when the
+   * page is inside the desktop shell, which grants exactly this call; a plain
+   * browser gets a path prompt instead.
+   */
+  async function addProject() {
+    let path = "";
+    const t = window.__TAURI__;
+    if (t && t.dialog && t.dialog.open) {
+      try {
+        const picked = await t.dialog.open({ directory: true, multiple: false });
+        path = typeof picked === "string" ? picked : "";
+      } catch (e) {
+        path = "";
+      }
+    } else if (window.prompt) {
+      path = window.prompt("Project folder (absolute path)") || "";
+    }
+    path = String(path || "").trim();
+    if (!path) {
+      return;
+    }
+    if (await openProject(path, false)) {
+      return;
+    }
+    // The one recoverable refusal: the folder is not an Orchestra project yet.
+    const agreed = window.confirm
+      ? window.confirm(path + " is not an Orchestra project yet. Initialise it?")
+      : false;
+    if (agreed) {
+      await openProject(path, true);
+    }
+  }
+
+  // ---- startup -----------------------------------------------------------
+  //
+  // The startupId branch below exists for a URL that carries a project id,
+  // but nothing ships one today: the desktop shell's URL is
+  // `{base}/?token={token}` (ui/desktop/src-tauri/src/main.rs), with no
+  // `?project=`, so the desktop app always falls through to the
+  // resolve-from-API branch. A plain `orchestra web` passes none either, so
+  // the id must be resolved from the API before any socket opens — see the
+  // id-before-socket note inside the IIFE.
+
+  (async () => {
+    const startupId = new URLSearchParams(location.search).get("project") || "";
+    if (startupId) {
+      currentProjectId = startupId;
+      setActiveConn(ensureConn(startupId));
+      await refreshProjects();
+      return;
+    }
+    // No id in the URL — a plain `orchestra web`. Ask the API which project the
+    // core is already serving BEFORE opening a socket, so that the connection,
+    // the per-project record and the rail's active chip all share one key.
+    //
+    // Adopting the id afterwards does not work: `conns` would stay keyed ""
+    // while `currentProjectId` named the project, and since the two are
+    // separate socket slots on the server, every notification would fail the
+    // `projectId === currentProjectId` gate, `sendTurn` would read an empty
+    // session forever, and clicking the chip could not repair it because
+    // `switchProject` returns early on the id it already holds.
+    await refreshProjects();
+    const first = known.find((p) => p.state === "ready");
+    currentProjectId = first ? first.id : "";
+    setActiveConn(ensureConn(currentProjectId));
+    renderProjects();
+  })();
 })();

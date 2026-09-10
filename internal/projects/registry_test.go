@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 // initWorkspace makes a directory the registry will accept: core.New loads
@@ -211,39 +212,6 @@ func TestRegistry_PathSpellingsOfOneDirectoryAreOneProject(t *testing.T) {
 	}
 }
 
-// An errored placeholder (a remembered path that failed to open) must not block
-// opening the directory once it is fixed, and must not displace a ready entry.
-func TestRegistry_ErroredEntryIsReplacedByASuccessfulOpen(t *testing.T) {
-	reg := NewRegistry(core.Options{})
-	defer reg.Shutdown()
-	root := t.TempDir()
-
-	reg.AddErrored(root, "not_initialized")
-	if _, err := reg.Open(context.Background(), root); !errors.Is(err, ErrNotInitialized) {
-		t.Fatalf("open of a bare dir → %v, want ErrNotInitialized", err)
-	}
-
-	writeConfig(t, root)
-	p, err := reg.Open(context.Background(), root)
-	if err != nil {
-		t.Fatalf("open after fixing the dir: %v — the errored placeholder blocked it", err)
-	}
-	list := reg.List()
-	if len(list) != 1 || list[0].State != StateReady || list[0].ID != p.ID {
-		t.Fatalf("List() = %+v, want exactly the ready project", list)
-	}
-
-	// A late AddErrored for a path that is ready must not demote it.
-	reg.AddErrored(root, "stale failure")
-	if got := reg.List(); len(got) != 1 || got[0].State != StateReady {
-		t.Fatalf("AddErrored displaced a ready entry: %+v", got)
-	}
-
-	if err := reg.Close(p.ID); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-}
-
 // Detach removes the entry without closing the core, so a caller can first end
 // whatever is still using the core (a live socket) and only then close it —
 // while no new user can obtain the core in between.
@@ -276,20 +244,43 @@ func TestRegistry_DetachRemovesTheEntryButLeavesTheCoreOpen(t *testing.T) {
 	}
 }
 
-// Two AddErrored calls for spellings of one directory must not leave a stale
-// byPath entry behind, or Paths() persists a ghost that comes back next start.
-func TestRegistry_AddErroredTwiceKeepsOnePath(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("depends on case-folded project ids")
+func TestClosedProject_CarriesTheIDAnOpenOneWouldHave(t *testing.T) {
+	dir := t.TempDir()
+
+	p, ok := ClosedProject(dir)
+	if !ok {
+		t.Fatal("ClosedProject refused a real directory")
 	}
-	reg := NewRegistry(core.Options{})
-	defer reg.Shutdown()
-	root := t.TempDir()
-	parent := filepath.Dir(root)
-	other := filepath.Join(filepath.Dir(parent), strings.ToUpper(filepath.Base(parent)), filepath.Base(root))
-	reg.AddErrored(root, "gone")
-	reg.AddErrored(other, "gone")
-	if got := reg.Paths(); len(got) != 1 {
-		t.Fatalf("Paths() = %v, want exactly one spelling", got)
+	if p.State != StateClosed {
+		t.Fatalf("state is %q, want %q", p.State, StateClosed)
+	}
+	if p.OpenedAt != 0 {
+		t.Fatalf("OpenedAt is %d; a closed project is not open and must not sort among those that are", p.OpenedAt)
+	}
+	if p.Name != filepath.Base(filepath.Clean(dir)) {
+		t.Fatalf("name is %q, want %q", p.Name, filepath.Base(filepath.Clean(dir)))
+	}
+
+	abs, _ := filepath.Abs(dir)
+	want, err := cache.ComputeProjectID(abs)
+	if err != nil {
+		t.Fatalf("ComputeProjectID: %v", err)
+	}
+	if p.ID != want {
+		t.Fatalf("id is %q, want %q — the client acts on a closed project by this id", p.ID, want)
+	}
+}
+
+func TestClosedProject_DoesNotStatTheDirectory(t *testing.T) {
+	// A remembered path on an unreachable network share must not block a list
+	// request. ClosedProject therefore never touches the filesystem: a path
+	// that does not exist still yields an entry.
+	missing := filepath.Join(t.TempDir(), "gone", "deeper")
+	p, ok := ClosedProject(missing)
+	if !ok {
+		t.Fatal("ClosedProject refused a path that does not exist; it must not check")
+	}
+	if p.State != StateClosed {
+		t.Fatalf("state is %q, want %q", p.State, StateClosed)
 	}
 }

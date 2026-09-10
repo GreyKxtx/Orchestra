@@ -25,8 +25,9 @@ import (
 type State string
 
 const (
-	StateReady State = "ready"
-	StateError State = "error"
+	StateReady  State = "ready"
+	StateError  State = "error"
+	StateClosed State = "closed"
 )
 
 // Project is the wire shape the HTTP API returns. Field names and JSON tags are
@@ -38,6 +39,30 @@ type Project struct {
 	State    State  `json:"state"`
 	Error    string `json:"error"`
 	OpenedAt int64  `json:"opened_at"`
+}
+
+// ClosedProject is the wire shape for a remembered project the core does not
+// hold. It deliberately does not touch the filesystem: a remembered path on an
+// unreachable share would otherwise make GET /api/projects hang, which is the
+// same fragility this design set out to remove from startup. Whether the
+// directory is still there is discovered when the user clicks it, and the
+// error travels back on that request.
+func ClosedProject(path string) (Project, bool) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return Project{}, false
+	}
+	abs = filepath.Clean(abs)
+	id, err := cache.ComputeProjectID(abs)
+	if err != nil {
+		return Project{}, false
+	}
+	return Project{
+		ID:    id,
+		Path:  abs,
+		Name:  filepath.Base(abs),
+		State: StateClosed,
+	}, true
 }
 
 var (
@@ -233,35 +258,6 @@ func (r *Registry) Paths() []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// AddErrored records a project that could not be opened, so a path the user had
-// open comes back visible with its reason rather than vanishing.
-func (r *Registry) AddErrored(path, reason string) Project {
-	abs, _ := filepath.Abs(path)
-	id, err := cache.ComputeProjectID(abs)
-	if err != nil {
-		id = "path:" + abs
-	}
-	meta := Project{
-		ID:       id,
-		Path:     abs,
-		Name:     filepath.Base(abs),
-		State:    StateError,
-		Error:    reason,
-		OpenedAt: time.Now().Unix(),
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if old, ok := r.byID[id]; ok {
-		if old.core != nil {
-			return old.meta // a ready project outranks a stale failure report
-		}
-		delete(r.byPath, old.meta.Path) // another spelling of the same placeholder
-	}
-	r.byID[id] = &entry{meta: meta}
-	r.byPath[abs] = id
-	return meta
 }
 
 func (r *Registry) Shutdown() {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -164,7 +163,7 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 
 	// Sidecar mode: the parent owns our stdin. EOF means it has gone or wants
 	// us gone; either way we shut down through the normal path so the deferred
-	// cleanup (list saved, discovery removed) runs. Windows has no SIGTERM.
+	// discovery-file cleanup runs. Windows has no SIGTERM.
 	if streams.Announce != nil && streams.Stdin != nil {
 		go func() {
 			_, _ = io.Copy(io.Discard, streams.Stdin)
@@ -193,31 +192,31 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 		return err
 	}
 
-	// Remembered projects reopen alongside it; the list is saved once now and
-	// again on shutdown, which captures anything opened or closed through the
-	// API. A convenience, not a transaction log.
-	storePath, serr := cfg.StorePath, error(nil)
+	// The remembered list is the user's list of projects, not a startup
+	// workload: the rail shows every entry and opens one when clicked. Startup
+	// opens only the workspace it was given, so an unreachable remembered path
+	// is a closed entry in the list rather than a failure to start.
+	storePath := cfg.StorePath
 	if storePath == "" {
-		storePath, serr = projects.StorePath()
+		p, serr := projects.StorePath()
+		if serr != nil {
+			fmt.Fprintln(os.Stderr, "[orchestra] "+serr.Error()+"; open projects will not be remembered this run")
+		}
+		storePath = p
 	}
-	persist := serr == nil
-	if persist {
-		remembered, lerr := projects.LoadPaths(storePath)
-		if lerr != nil {
+	var known *projects.Store
+	if storePath != "" {
+		s, kerr := projects.NewStore(storePath)
+		if kerr != nil {
 			// A list we could not read is a list we must not overwrite.
-			fmt.Fprintln(os.Stderr, "[orchestra] "+lerr.Error()+"; open projects will not be remembered this run")
-			persist = false
+			fmt.Fprintln(os.Stderr, "[orchestra] "+kerr.Error()+"; open projects will not be remembered this run")
 		} else {
-			restoreProjects(ctx, reg, remembered)
+			known = s
+			if aerr := known.Add(startup.Path); aerr != nil {
+				fmt.Fprintln(os.Stderr, "[orchestra] could not remember the startup project: "+aerr.Error())
+			}
 		}
 	}
-	saveOpen := func() {
-		if persist {
-			_ = projects.SavePaths(storePath, reg.Paths())
-		}
-	}
-	saveOpen()
-	defer saveOpen()
 
 	startupCore, _ := reg.Get(startup.ID)
 
@@ -234,6 +233,7 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 		Health:   startupCore.Health(),
 		Assets:   webui.Assets(),
 		Registry: reg,
+		Known:    known,
 		InitProject: func(ctx context.Context, root string) error {
 			return initProject(ctx, root, InitOptions{})
 		},
@@ -302,20 +302,6 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 
 	<-ctx.Done()
 	return nil
-}
-
-// restoreProjects reopens the paths the user had open. A path that no longer
-// opens is recorded as an errored project rather than dropped, so the user can
-// see what happened to a project they had open instead of finding it gone.
-func restoreProjects(ctx context.Context, reg *projects.Registry, paths []string) {
-	for _, p := range paths {
-		if _, err := reg.Open(ctx, p); err != nil {
-			if errors.Is(err, projects.ErrAlreadyOpen) {
-				continue
-			}
-			reg.AddErrored(p, err.Error())
-		}
-	}
 }
 
 // openBrowser is best-effort: a failure prints the URL rather than aborting.

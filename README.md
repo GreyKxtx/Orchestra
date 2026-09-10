@@ -466,8 +466,10 @@ v1 is chat with streaming, permissions, questions and sessions.
 `orchestra web` holds several projects at once — one core each. `GET /api/projects`
 lists them, `POST /api/projects {"path":…}` opens one (add `"init":true` to
 initialise a repository that has no `.orchestra.yml`), `DELETE /api/projects/{id}`
-closes one and frees its language servers and index. The open list is remembered
-in `~/.orchestra/projects.json`. The page authenticates with an `HttpOnly` cookie
+closes one and frees its language servers and index — the entry stays in the
+list; add `?forget=1` to remove it too. The rail shows that remembered list,
+open or closed, and it lives in `~/.orchestra/projects.json`. The page
+authenticates with an `HttpOnly` cookie
 the server sets on first load, so no token lives in page scripts or the URL; the
 cookie is per browser profile, so run one `orchestra web` per profile.
 

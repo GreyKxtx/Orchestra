@@ -146,7 +146,7 @@ already calls `.plugin(tauri_plugin_dialog::init())` and add one line after it:
         .plugin(tauri_plugin_notification::init())
 ```
 
-- [ ] **Step 3: Turn on the global API and write the capability**
+- [ ] **Step 3: Turn on the global API and write the probe capability**
 
 In `ui/desktop/src-tauri/tauri.conf.json`, add `withGlobalTauri` to the `app`
 object (the page is plain JS with no bundler, so it needs `window.__TAURI__`):
@@ -161,20 +161,22 @@ object (the page is plain JS with no bundler, so it needs `window.__TAURI__`):
   },
 ```
 
-Create `ui/desktop/src-tauri/capabilities/core-page.json`:
+Create `ui/desktop/src-tauri/capabilities/core-page.json` with **one probe-only
+permission**. `core:window:allow-set-title` is here because the window title is
+the only channel out of the page that can be read without looking at a screen —
+it is removed again in Step 8.
 
 ```json
 {
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "core-page",
-  "description": "The page is served by orchestra web on loopback. It may raise a notification when a background project needs an answer, and open a folder picker when adding a project. Nothing else.",
+  "description": "PROBE STAGE. Replaced in Step 8.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
-    "notification:default",
-    "dialog:allow-open"
+    "core:window:allow-set-title"
   ]
 }
 ```
@@ -198,61 +200,206 @@ Expected: success. A malformed capability fails the build in `tauri-build`
 with a schema error naming the offending field — if that happens, the field
 names above are wrong for the installed Tauri version, and the fix is to read
 `ui/desktop/src-tauri/gen/schemas/desktop-schema.json` for the accepted shape
-rather than guessing.
+rather than guessing. Do the same if `core:window:allow-set-title` is not a
+known permission id: the schema file lists the real ones.
 
-- [ ] **Step 5: Prove it on a live window**
+- [ ] **Step 5: Write the title reader**
 
-Build the core and run the shell:
+Nobody involved in this task can see a screen, so the probe must report through
+something readable from a shell. The window title is that channel. Write this
+to `$env:TEMP\window-titles.ps1` (use the Write tool; do not paste it into a
+shell):
 
-```bash
-node ui/desktop/scripts/build-sidecar.mjs
-cargo run --manifest-path ui/desktop/src-tauri/Cargo.toml -- .
+```powershell
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class WinTitles {
+  private delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder s, int n);
+  [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+  public static List<string> Visible() {
+    var found = new List<string>();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      if (IsWindowVisible(h)) {
+        var sb = new StringBuilder(512);
+        GetWindowTextW(h, sb, 512);
+        var t = sb.ToString();
+        if (t.Length > 0) found.Add(t);
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+}
+'@
+[WinTitles]::Visible() | Where-Object { $_ -like "*PROBE*" -or $_ -eq "Orchestra" }
 ```
 
-The window opens on the served page. There is no devtools console in a release
-build, so probe it from the page itself: temporarily append this to
-`ui/web/index.src.html`, just before `</body>`, then re-bundle
-(`node ui/web/scripts/bundle-web.mjs`) and rebuild the core:
+Why this and not `Get-Process | Select MainWindowTitle`: that picks whichever
+window Windows considers the process's main one, which for this shell is an
+untitled helper, so it reports an empty string even when the real window is up.
+`EnumWindows` enumerates them all.
+
+- [ ] **Step 6: Probe stage A — does the IPC reach a remote page at all?**
+
+Append this to `ui/web/index.src.html`, just before `</body>`:
 
 ```html
   <script>
-    // TEMPORARY probe — removed in Step 7.
+    // TEMPORARY probe — removed in Step 8.
     (async () => {
-      const el = document.createElement("div");
-      el.style.cssText = "position:fixed;bottom:4px;left:4px;z-index:9999;font:11px monospace;background:#000;color:#0f0;padding:4px";
-      document.body.appendChild(el);
       const t = window.__TAURI__;
-      if (!t) { el.textContent = "PROBE: window.__TAURI__ absent"; return; }
+      if (!t || !t.window || !t.window.getCurrentWindow) {
+        return; // No channel out. The title stays "Orchestra", which is the answer.
+      }
       try {
-        await t.notification.sendNotification({ title: "Orchestra", body: "probe" });
-        el.textContent = "PROBE: notification sent";
+        await t.window.getCurrentWindow().setTitle("PROBE-IPC-OK");
       } catch (e) {
-        el.textContent = "PROBE: call rejected — " + String(e);
+        // The API is injected but the call was refused. Nothing to report
+        // through, so the title stays "Orchestra" — stage A cannot separate
+        // this from "absent", which is why stage B exists.
       }
     })();
   </script>
 ```
 
-Expected, if the mechanism works: the green line reads `notification sent` and
-a Windows toast appears. If it reads `window.__TAURI__ absent`, the API is not
-injected into a remote URL. If it reads `call rejected`, the injection works
-but the ACL refused — read the message, which in a debug build names the
-capability and command it wanted.
-
-- [ ] **Step 6: Record the answer**
-
-Write into the task report, verbatim, which of the three outcomes occurred and
-the exact text of the green line. This decides Task 9. Do not soften an
-`absent` or `rejected` result into "mostly working" — Task 9's implementer
-reads only this.
-
-- [ ] **Step 7: Remove the probe and commit**
-
-Delete the temporary `<script>` block from `ui/web/index.src.html`, re-bundle,
-and confirm `git diff --stat ui/web/static` is empty (the probe left nothing).
+Build in this order — the probe lives in the page that `ui/web/embed.go`
+compiles into the Go binary, so the core must be rebuilt **after** re-bundling
+or the window shows the old page:
 
 ```bash
 node ui/web/scripts/bundle-web.mjs
+node ui/desktop/scripts/build-sidecar.mjs
+cargo run --manifest-path ui/desktop/src-tauri/Cargo.toml -- .
+```
+
+Run `cargo run` in the background, give it time to open, then read the titles:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File $env:TEMP\window-titles.ps1
+```
+
+- If a title reads `PROBE-IPC-OK`: the IPC does reach a remote page on a
+  wildcard-port origin. Go to Step 7.
+- If the only title is `Orchestra`: the mechanism is unavailable. **Skip Step 7**
+  and record that in Step 8; Task 9 takes its fallback branch.
+- If no matching title appears at all, the window did not open — that is a
+  different failure. Report BLOCKED with the `cargo run` output rather than
+  guessing.
+
+Stop the shell by sending `WM_CLOSE` to the window (a `taskkill /IM` posts
+`WM_CLOSE` to every top-level window including untitled helpers, which is not
+the same thing):
+
+```powershell
+Add-Type -Name W -Namespace P -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr FindWindowW(string c, string n); [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);'
+$h = [P.W]::FindWindowW($null, "PROBE-IPC-OK"); if ($h -eq [IntPtr]::Zero) { $h = [P.W]::FindWindowW($null, "Orchestra") }
+[void][P.W]::PostMessageW($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+```
+
+Then confirm nothing is left running:
+
+```powershell
+Get-Process orchestra-desktop,orchestra -ErrorAction SilentlyContinue | Select-Object Name,Id
+```
+
+- [ ] **Step 7: Probe stage B — is the notification permission usable?**
+
+Only run this if stage A printed `PROBE-IPC-OK`. Now that the title channel is
+known to work, the notification result can be reported through it.
+
+Change `core-page.json`'s permissions to:
+
+```json
+  "permissions": [
+    "core:window:allow-set-title",
+    "notification:default",
+    "dialog:allow-open"
+  ]
+```
+
+Replace the probe's body with:
+
+```html
+  <script>
+    // TEMPORARY probe — removed in Step 8.
+    (async () => {
+      const t = window.__TAURI__;
+      const w = t && t.window && t.window.getCurrentWindow ? t.window.getCurrentWindow() : null;
+      if (!w) {
+        return;
+      }
+      try {
+        await t.notification.sendNotification({ title: "Orchestra", body: "probe" });
+        await w.setTitle("PROBE-NOTIFY-OK");
+      } catch (e) {
+        await w.setTitle("PROBE-NOTIFY-FAIL " + String(e).slice(0, 120));
+      }
+    })();
+  </script>
+```
+
+Re-bundle, rebuild the core, run, and read the titles the same way. Expected:
+`PROBE-NOTIFY-OK`, and a Windows toast. A `PROBE-NOTIFY-FAIL …` title carries
+the refusal message, which in a debug build names the capability and command
+it wanted — copy it verbatim. Close the shell the same way (the title to
+`FindWindowW` is now whichever one you read).
+
+- [ ] **Step 8: Record the answer, restore the real capability, remove the probe**
+
+Write into the task report, verbatim, the exact window titles observed at each
+stage and which of these three outcomes holds. Do not soften a negative result;
+Task 9's implementer reads only this.
+
+1. `PROBE-NOTIFY-OK` — notifications work from the served page. Task 9 uses
+   `window.__TAURI__.notification.sendNotification`.
+2. `PROBE-NOTIFY-FAIL …` — the IPC reaches the page but the notification
+   permission was refused. Quote the message.
+3. Stage A never produced `PROBE-IPC-OK` — the IPC does not reach a remote
+   page on this origin. Task 9 takes its fallback branch.
+
+Then set `core-page.json` to the capability the app actually ships — the probe
+permission is gone, and the description is the real one:
+
+```json
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "core-page",
+  "description": "The page is served by orchestra web on loopback. It may raise a notification when a background project needs an answer, and open a folder picker when adding a project. Nothing else.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "notification:default",
+    "dialog:allow-open"
+  ]
+}
+```
+
+If outcome 3 held, ship this file anyway with the same two permissions: it
+grants nothing that works, costs nothing, and leaves the decision recorded in
+one place rather than in a commit message.
+
+Delete the temporary `<script>` block from `ui/web/index.src.html`, re-bundle,
+and confirm the page and bundle are back to their committed state:
+
+```bash
+node ui/web/scripts/bundle-web.mjs
+git status --short ui/web
+```
+
+Expected: no modifications under `ui/web` at all. Anything left there is probe
+residue, and Task 8 edits the same file.
+
+- [ ] **Step 9: Build clean and commit**
+
+```bash
+cd ui/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cd ../../..
 git add ui/desktop/src-tauri/Cargo.toml ui/desktop/src-tauri/Cargo.lock ui/desktop/src-tauri/tauri.conf.json ui/desktop/src-tauri/capabilities ui/desktop/src-tauri/src/main.rs
 git commit -m "feat(desktop): grant the served page exactly two shell calls"
 ```
@@ -476,35 +623,45 @@ func (s *Store) insert(abs string) bool {
 	return true
 }
 
-// Paths returns the remembered paths in a stable order.
-func (s *Store) Paths() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// snapshotLocked copies the list; the caller holds s.mu.
+func (s *Store) snapshotLocked() []string {
 	out := make([]string, len(s.paths))
 	copy(out, s.paths)
 	return out
 }
 
+// Paths returns the remembered paths in a stable order.
+func (s *Store) Paths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
 // Add remembers a path and writes the list. Adding one that is already
 // remembered writes nothing and is not an error.
+//
+// The write happens while the lock is held, on purpose. Snapshotting under the
+// lock and writing outside it lets two concurrent Adds persist in either
+// order, leaving the file disagreeing with memory until the next write. This
+// path runs when a user opens a project — holding a mutex across one small
+// atomic write costs nothing worth measuring, and the alternative is a bug
+// that only shows up as a project missing after a restart.
 func (s *Store) Add(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve project path %q: %w", path, err)
 	}
 	s.mu.Lock()
-	added := s.insert(filepath.Clean(abs))
-	snapshot := make([]string, len(s.paths))
-	copy(snapshot, s.paths)
-	s.mu.Unlock()
-	if !added {
+	defer s.mu.Unlock()
+	if !s.insert(filepath.Clean(abs)) {
 		return nil
 	}
-	return SavePaths(s.path, snapshot)
+	return SavePaths(s.path, s.snapshotLocked())
 }
 
 // Forget drops a path and writes the list. The bool says whether it was
-// remembered, so a caller can answer 404 for an id nobody knows.
+// remembered, so a caller can answer 404 for an id nobody knows. The write is
+// under the lock for the same reason as Add.
 func (s *Store) Forget(path string) (bool, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -513,6 +670,7 @@ func (s *Store) Forget(path string) (bool, error) {
 	key := identity(filepath.Clean(abs))
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	kept := make([]string, 0, len(s.paths))
 	found := false
 	for _, p := range s.paths {
@@ -522,17 +680,11 @@ func (s *Store) Forget(path string) (bool, error) {
 		}
 		kept = append(kept, p)
 	}
-	if found {
-		s.paths = kept
-	}
-	snapshot := make([]string, len(s.paths))
-	copy(snapshot, s.paths)
-	s.mu.Unlock()
-
 	if !found {
 		return false, nil
 	}
-	return true, SavePaths(s.path, snapshot)
+	s.paths = kept
+	return true, SavePaths(s.path, s.snapshotLocked())
 }
 
 // PathForID resolves a remembered path by project id, so the API can act on a
@@ -732,10 +884,12 @@ these tests need:
   authenticated request; the body decodes into a map, so numbers arrive as
   `float64`.
 
-Change the helper's signature to accept the store, and pass `nil` at its six
-existing call sites (`TestAPI_OpenListClose`, `TestAPI_TypedErrors`,
-`TestAPI_InitFlagCreatesTheConfig`, `TestAPI_RequiresAuth`,
-`TestAPI_CrossOriginRequestIsRejected`, and any other in the file):
+Change the helper's signature to accept the store, and pass `nil` at its five
+existing call sites — all in this one file, verified with
+`grep -rn "startRegistryServer(t)" internal/webtransport/`:
+`TestAPI_OpenListClose`, `TestAPI_TypedErrors`,
+`TestAPI_InitFlagCreatesTheConfig`, `TestAPI_RequiresAuth` and
+`TestAPI_CrossOriginRequestIsRejected`:
 
 ```go
 // startRegistryServer stands up the real server with a real registry. `known`
@@ -922,163 +1076,6 @@ func TestAPI_OpeningRemembers(t *testing.T) {
 	}
 }
 ```
-
-```go
-func TestAPIProjects_ListsRememberedProjectsAsClosed(t *testing.T) {
-	openDir := initializedProjectDir(t)
-	closedDir := initializedProjectDir(t)
-
-	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	if err := store.Add(closedDir); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	srv := startTestServer(t, openDir, store)
-
-	var got struct {
-		Projects []projects.Project `json:"projects"`
-	}
-	srv.getJSON(t, "/api/projects", &got)
-
-	if len(got.Projects) != 2 {
-		t.Fatalf("want 2 projects (one open, one closed), got %d: %+v", len(got.Projects), got.Projects)
-	}
-	if got.Projects[0].State != projects.StateReady {
-		t.Fatalf("first entry is %q; open projects must come first", got.Projects[0].State)
-	}
-	if got.Projects[1].State != projects.StateClosed {
-		t.Fatalf("second entry is %q, want %q", got.Projects[1].State, projects.StateClosed)
-	}
-	if got.Projects[1].Path != filepath.Clean(closedDir) {
-		t.Fatalf("closed entry path is %q, want %q", got.Projects[1].Path, filepath.Clean(closedDir))
-	}
-}
-
-func TestAPIProjects_AnOpenProjectIsNotListedTwice(t *testing.T) {
-	dir := initializedProjectDir(t)
-
-	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	// The startup project is remembered AND open — the common case.
-	if err := store.Add(dir); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	srv := startTestServer(t, dir, store)
-
-	var got struct {
-		Projects []projects.Project `json:"projects"`
-	}
-	srv.getJSON(t, "/api/projects", &got)
-
-	if len(got.Projects) != 1 {
-		t.Fatalf("want 1 project, got %d: %+v", len(got.Projects), got.Projects)
-	}
-	if got.Projects[0].State != projects.StateReady {
-		t.Fatalf("state is %q, want %q — open outranks remembered", got.Projects[0].State, projects.StateReady)
-	}
-}
-
-func TestAPIProjects_CloseKeepsThePathRemembered(t *testing.T) {
-	startup := initializedProjectDir(t)
-	extra := initializedProjectDir(t)
-
-	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	srv := startTestServer(t, startup, store)
-
-	id := srv.openProject(t, extra)
-	srv.delete(t, "/api/projects/"+id, http.StatusNoContent)
-
-	found := false
-	for _, p := range store.Paths() {
-		if p == filepath.Clean(extra) {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("closing dropped %q from the remembered list; closing and forgetting are different actions", extra)
-	}
-}
-
-func TestAPIProjects_ForgetRemovesAClosedProject(t *testing.T) {
-	startup := initializedProjectDir(t)
-	gone := initializedProjectDir(t)
-
-	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	if err := store.Add(gone); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	srv := startTestServer(t, startup, store)
-
-	p, ok := projects.ClosedProject(gone)
-	if !ok {
-		t.Fatal("ClosedProject refused a real directory")
-	}
-	// Never opened, so the registry does not know it — forget must still work.
-	srv.delete(t, "/api/projects/"+p.ID+"?forget=1", http.StatusNoContent)
-
-	for _, remembered := range store.Paths() {
-		if remembered == filepath.Clean(gone) {
-			t.Fatalf("forget left %q in the list: %v", gone, store.Paths())
-		}
-	}
-}
-
-func TestAPIProjects_ForgetAnUnknownIDIs404(t *testing.T) {
-	startup := initializedProjectDir(t)
-	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	srv := startTestServer(t, startup, store)
-
-	srv.delete(t, "/api/projects/nobody-knows-this?forget=1", http.StatusNotFound)
-}
-
-func TestAPIProjects_OpeningRemembers(t *testing.T) {
-	startup := initializedProjectDir(t)
-	extra := initializedProjectDir(t)
-
-	store, err := projects.NewStore(filepath.Join(t.TempDir(), "projects.json"))
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	srv := startTestServer(t, startup, store)
-
-	srv.openProject(t, extra)
-
-	found := false
-	for _, p := range store.Paths() {
-		if p == filepath.Clean(extra) {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("opening %q did not remember it; the rail would lose it on restart", extra)
-	}
-}
-```
-
-If `initializedProjectDir`, `startTestServer`, `getJSON`, `openProject` and
-`delete` do not already exist in that file under those or similar names, write
-them now as small helpers: `initializedProjectDir` creates a `t.TempDir()`
-containing an empty `.orchestra.yml` (that file's presence is what
-`Registry.Open` checks — see `registry.go:82`); `startTestServer` builds a
-`projects.Registry`, opens the startup dir, and calls `webtransport.Serve` with
-`Registry`, `Known` and the `NewProjectHandler`/`NewHandler` pair the existing
-tests already construct; the request helpers attach the token header
-`X-Orchestra-Token` and assert the status code.
 
 - [ ] **Step 3: Run them and watch them fail**
 
@@ -2009,14 +2006,26 @@ async function openBackground(b, projectId) {
   await handshakeFor(b, projectId);
 }
 
-/** Answer a pending request on one project's socket. */
+/**
+ * Answer a pending request on one project's socket.
+ *
+ * The answered-ids set hangs off the bundle handle, not off the module. A
+ * module-level set would be shared by every test in the file, and the keys
+ * collide across tests: the socket url is fixed (`127.0.0.1:9`), project ids
+ * repeat (`A`, `B`), and each bundle's rpc ids restart at 1 — so the second
+ * test's first request would look already answered and this helper would fail
+ * with "no unanswered core.health".
+ */
 function answerOn(b, projectId, method, result) {
+  if (!b.__answered) {
+    b.__answered = new Set();
+  }
   const req = b.sent.find(
     (m) =>
       m.method === method &&
       m.id !== undefined &&
       String(m.url).includes(`project=${encodeURIComponent(projectId)}`) &&
-      !answered.has(m.url + ":" + m.id)
+      !b.__answered.has(m.url + ":" + m.id)
   );
   assert.ok(
     req,
@@ -2024,12 +2033,10 @@ function answerOn(b, projectId, method, result) {
       .map((m) => m.method + "@" + m.url)
       .join(", ")}`
   );
-  answered.add(req.url + ":" + req.id);
+  b.__answered.add(req.url + ":" + req.id);
   b.deliverTo(projectId, { jsonrpc: "2.0", id: req.id, result });
   return req;
 }
-
-const answered = new Set();
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
@@ -2143,16 +2150,48 @@ Add the switch entry point:
     setActiveConn(connFor(projectId));
 
     toRenderer({ type: "clearMessages" });
+    // Take down the project we are leaving. Nothing in the renderer hides the
+    // overlay from the outside — hideOverlay is private to 05b-overlays.js and
+    // clearMessages does not touch it — so an overlay raised for the previous
+    // project would stay on screen over this project's transcript, and the
+    // button's reply would then be read against this project's record, find no
+    // pendingAsk, and be dropped. The asking project keeps its record, so
+    // switching back re-raises the prompt intact.
+    if (!st.pendingAsk) {
+      const overlay = document.getElementById("overlay");
+      if (overlay) {
+        overlay.classList.add("hidden");
+      }
+    }
     if (st.sessionId) {
       try {
         const view = await wsSend("session.get", { session_id: st.sessionId });
+        // The user can switch again while this is in flight. Without this
+        // guard, an A -> B -> A switch paints B's history into A's view.
+        if (projectId !== currentProjectId) {
+          return;
+        }
         toRenderer({ type: "history", messages: view.ui_messages || [] });
       } catch (err) {
-        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        if (projectId === currentProjectId) {
+          toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+        }
       }
     }
+    if (projectId !== currentProjectId) {
+      return;
+    }
     toRenderer({ type: "header", sessionId: st.sessionId });
-    toRenderer({ type: "turnInFlight", inFlight: st.inFlightTurnId !== null });
+    // The renderer's "turnInFlight" arm ignores the payload and always calls
+    // setBusy(true) (ui/vscode/media/chat-src/07-events.js). Sending it with
+    // inFlight:false would lock the composer into "Stop" on every switch to an
+    // idle project. "turnComplete" is the only message that reaches
+    // setBusy(false), so send whichever one is true.
+    if (st.inFlightTurnId !== null) {
+      toRenderer({ type: "turnInFlight", inFlight: true });
+    } else {
+      toRenderer({ type: "turnComplete" });
+    }
     if (st.pendingAsk) {
       toRenderer(st.pendingAsk.rendererMessage);
     }
@@ -2162,13 +2201,29 @@ Add the switch entry point:
 ```
 
 Everywhere else in the file, replace `currentSessionId` with
-`current().sessionId` and `inFlightTurnId` with `current().inFlightTurnId`. In
-`sendTurn`, also mark and clear the project's status so the rail shows it:
+`current().sessionId` and `inFlightTurnId` with `current().inFlightTurnId`.
+
+**One rule governs every one of those sites, including `startSession`.** A
+function that awaits and then paints must capture the project id on entry —
+`const projectId = currentProjectId; const st = projectState(projectId);` —
+and guard every `toRenderer` call that follows an `await` with
+`if (projectId === currentProjectId)`. `current()` is only safe before the
+first await. Writes to the project's own record and to the rail stay ungated:
+the record and the rail must always describe reality, whichever project is on
+screen. It is only the renderer that shows one project at a time, and painting
+into it from a project the user has since left is how a background project
+leaks into the visible transcript.
+
+In `sendTurn`, also mark and clear the project's status so the rail shows it:
 
 ```js
   /** @param {any} msg */
   async function sendTurn(msg) {
-    const st = current();
+    // Capture the id, not just the record: the user can switch projects while
+    // this turn is awaiting, and everything after the await must know which
+    // project it belongs to.
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
     if (!st.sessionId) {
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
@@ -2192,13 +2247,21 @@ Everywhere else in the file, replace `currentSessionId` with
     try {
       await turn.done;
     } catch (err) {
-      toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
+      }
     } finally {
+      // The record and the rail always tell the truth, whichever project is on
+      // screen. Only the renderer is gated: a turn that ends in a background
+      // project must not put its error bubble, or its turnComplete, into the
+      // transcript the user is looking at.
       st.inFlightTurnId = null;
       st.status = "idle";
       renderProjects();
-      toRenderer({ type: "turnInFlight", inFlight: false });
-      toRenderer({ type: "turnComplete" });
+      if (projectId === currentProjectId) {
+        toRenderer({ type: "turnInFlight", inFlight: false });
+        toRenderer({ type: "turnComplete" });
+      }
     }
   }
 ```
@@ -2457,8 +2520,13 @@ In `ui/web/index.src.html`, add the stylesheet beside the existing one:
   <link rel="stylesheet" href="rail.css" />
 ```
 
-and make the rail the first child of `#app`, immediately before
-`<header id="chrome-strip">`:
+and make the rail the immediate previous **sibling** of `#app`, inside
+`<body>` — not a child of `#app`. `chat.css` owns `#app` as a flex column
+whose children depend on it (`#chrome-strip` is `flex: 0 0 auto`, `#messages`
+is `flex: 1 1 auto` with `overflow-y: auto`, `#composer-wrap` is
+`flex: 0 0 auto`). A rail placed inside `#app` forces this stylesheet to
+override `#app`'s `display`, which makes every one of those declarations
+inert. As a sibling it does not have to:
 
 ```html
     <nav id="project-rail" class="project-rail" aria-label="Projects">
@@ -2476,20 +2544,21 @@ this page is not a webview — and it must not restyle anything `chat.css` owns.
 /* The project rail. Web-only: chat.css is shared with the VS Code webview and
    must not learn about projects. */
 
-#app {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  grid-template-rows: 100%;
+/* The rail sits beside #app, so this stylesheet never touches #app's own
+   layout: chat.css keeps its flex column and every flex child inside it keeps
+   working. html and body are already height:100% from chat.css. */
+body {
+  display: flex;
+  flex-direction: row;
 }
 
-/* Everything chat.css lays out sits in the second column. */
-#app > *:not(.project-rail) {
-  grid-column: 2;
+#app {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .project-rail {
-  grid-column: 1;
-  grid-row: 1;
+  flex: 0 0 52px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2982,18 +3051,27 @@ Create `ui/web/src/40-projects.js`:
 
   (async () => {
     const startupId = new URLSearchParams(location.search).get("project") || "";
-    currentProjectId = startupId;
-    setActiveConn(ensureConn(startupId));
-    await refreshProjects();
-    if (!startupId) {
-      // No id in the URL: adopt whichever project the API reports as open, so
-      // the rail's active marker matches the socket that is actually serving.
-      const first = known.find((p) => p.state === "ready");
-      if (first) {
-        currentProjectId = first.id;
-        renderProjects();
-      }
+    if (startupId) {
+      currentProjectId = startupId;
+      setActiveConn(ensureConn(startupId));
+      await refreshProjects();
+      return;
     }
+    // No id in the URL — a plain `orchestra web`. Ask the API which project the
+    // core is already serving BEFORE opening a socket, so that the connection,
+    // the per-project record and the rail's active chip all share one key.
+    //
+    // Adopting the id afterwards does not work: `conns` would stay keyed ""
+    // while `currentProjectId` named the project, and since the two are
+    // separate socket slots on the server, every notification would fail the
+    // `projectId === currentProjectId` gate, `sendTurn` would read an empty
+    // session forever, and clicking the chip could not repair it because
+    // `switchProject` returns early on the id it already holds.
+    await refreshProjects();
+    const first = known.find((p) => p.state === "ready");
+    currentProjectId = first ? first.id : "";
+    setActiveConn(ensureConn(currentProjectId));
+    renderProjects();
   })();
 ```
 
