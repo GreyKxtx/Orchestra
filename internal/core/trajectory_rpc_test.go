@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/trajectory"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestSessionTrajectory_ReturnsRecordedEvents(t *testing.T) {
@@ -54,5 +55,43 @@ func TestSessionTrajectory_EmptySessionIDIsAnError(t *testing.T) {
 	c, _ := setupInitializedCore(t, t.TempDir(), &fixedLLM{})
 	if _, err := c.SessionTrajectory(SessionTrajectoryParams{}); err == nil {
 		t.Error("expected an error for an empty session_id")
+	}
+}
+
+func TestSessionTrajectory_FreshSessionWithNoTurnIsRecordedAndEmpty(t *testing.T) {
+	root := t.TempDir()
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	started, err := c.SessionStart(SessionStartParams{})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: started.SessionID})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if !res.Recorded {
+		t.Error("Recorded = false, want true — a session with no turn yet has had nothing to record; it does not predate the log")
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("len(Events) = %d, want 0", len(res.Events))
+	}
+}
+
+func TestSessionTrajectory_SessionWithHistoryAndNoLogPredatesTheLog(t *testing.T) {
+	root := t.TempDir()
+	c, _ := setupInitializedCore(t, root, &fixedLLM{})
+	sess := c.sessions.CreateWithID("old-chat")
+	sess.Lock()
+	sess.History = append(sess.History, llm.Message{Role: llm.RoleUser, Content: "hello from before the log"})
+	sess.Unlock()
+	res, err := c.SessionTrajectory(SessionTrajectoryParams{SessionID: "old-chat"})
+	if err != nil {
+		t.Fatalf("SessionTrajectory: %v", err)
+	}
+	if res.Recorded {
+		t.Error("Recorded = true, want false — this session has history but no log, so it predates the log")
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("len(Events) = %d, want 0", len(res.Events))
 	}
 }
