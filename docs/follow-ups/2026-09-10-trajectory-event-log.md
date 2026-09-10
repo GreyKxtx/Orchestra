@@ -4,8 +4,8 @@ Findings raised during C2a's reviews that were judged real and parked with a
 stated reason rather than fixed. None is a bug report awaiting triage — each was
 seen, weighed and left deliberately, and the reasoning is the useful part.
 
-C2a shipped in `feat/trajectory-event-log` (13 commits) after four task reviews,
-two fix rounds and a whole-branch review. What was fixed is not listed here.
+C2a shipped in `feat/trajectory-event-log` (17 commits) after four task reviews,
+three fix rounds, a whole-branch review and its own fix round. What was fixed is not listed here.
 
 Spec: `docs/superpowers/specs/2026-09-09-multi-project-window-design.md`
 Plan: `docs/superpowers/plans/2026-09-10-trajectory-event-log.md`
