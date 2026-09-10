@@ -1828,7 +1828,10 @@ In `ui/vscode/src/chat/panel.ts`:
 **b. After the history is posted** — find `this.post({ type: "history", messages: history });` (~line 607, inside the `if (history.length > 0)`), and after the closing brace of that `if`, add:
 
 ```ts
-    await this.refreshTrajectory(view.sessionId);
+    // Not awaited: the tab bar and step-usage posts below must not wait on the
+    // log fetch. refreshTrajectory drops its answer if the session changed
+    // meanwhile, so a late reply lands right or not at all.
+    void this.refreshTrajectory(view.sessionId);
 ```
 
 `view` is the `sessionGet` result already in scope there (it has `sessionId`, `uiMessages`, `costUSD`).
