@@ -140,3 +140,30 @@ needed migrating. C2b builds the view that reads it.
     wanted, it costs nothing to add now and cannot be added retroactively to
     sessions already recorded — which is the argument for deciding it before C2b
     rather than during it.
+
+---
+
+## Found while checking that the extension actually connects after the bump
+
+12. **`pickExistingBinary` chooses the core binary by modification time, not by
+    the priority order its own doc comment describes.** The comment above
+    `coreBinaryCandidates` (`ui/vscode/src/coreBinary.ts:18-22`) says "candidate
+    paths in priority order", and the list puts the bundled binary first. But
+    `pickExistingBinary` (`:41-58`) keeps whichever candidate has the greatest
+    `mtimeMs`, so recency wins and the order is advisory at best.
+
+    Today that works in our favour: the dev tree's stale bundled binary
+    (`ui/vscode/bin/win32-x64/orchestra.exe`, built 2026-08-13, therefore at most
+    protocol 15 since 16 was created after it) loses to a freshly built
+    `orchestra.exe` at the repo root. But it wins the moment the root binary is
+    absent or older — and then a protocol-16 extension spawns a pre-16 core and
+    fails the handshake, which is the same class of confusion Task 1 fixed from
+    the other direction.
+
+    The comment and the code should agree. Either sort by priority and say so, or
+    keep recency and document *that*, with a note that a stale bundled binary is
+    a trap for dev runs. Worth settling as part of **Part D**, where the bundled
+    binary becomes the one users actually get: `package:marketplace` runs
+    `bundle:core:all` first, so a released VSIX is consistent, but nothing checks
+    that the bundled core's protocol matches the extension's pin the way
+    `TestVSCodeExtensionPinsCurrentProtocolVersion` checks the source.
