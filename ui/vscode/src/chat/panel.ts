@@ -611,7 +611,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     if (history.length > 0) {
       this.post({ type: "history", messages: history });
     }
-    await this.refreshTrajectory(view.sessionId);
+    // Not awaited: the tab bar and step-usage posts below must not wait on the
+    // log fetch. refreshTrajectory drops its answer if the session changed
+    // meanwhile, so a late reply lands right or not at all.
+    void this.refreshTrajectory(view.sessionId);
     if (restoredPrompt <= 0 && view.uiMessages.length > 0) {
       restoredPrompt = estimatePromptTokensFromUI(view.uiMessages);
       restoredEstimated = restoredPrompt > 0;
