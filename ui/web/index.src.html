@@ -324,48 +324,18 @@
   <!-- Settings. A sibling of #app, not a child: everything inside #app is
        byte-identical with the VS Code webview's markup, and a modal inside
        the sidebar would be clipped by its overflow anyway. -->
-  <div id="rail-settings-modal" class="rail-modal" hidden role="dialog" aria-modal="true" aria-labelledby="rail-settings-title">
+  <div id="rail-settings-modal" class="rail-modal" hidden role="dialog" aria-modal="true" aria-label="Settings">
     <div class="rail-modal-card">
-      <div class="rail-modal-head">
-        <h2 id="rail-settings-title" class="rail-modal-title">Settings</h2>
-        <button type="button" id="rail-settings-close" class="rail-modal-close" aria-label="Close settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
-      </div>
-      <div class="rail-modal-body">
-        <div class="rail-modal-section">
-          <div class="rail-modal-section-head">Appearance</div>
-          <div class="rail-choices" role="radiogroup" aria-label="Theme">
-            <button type="button" class="rail-choice" data-theme-choice="system" role="radio" aria-checked="true">
-              <span class="rail-choice-name">Follow the system</span>
-              <span class="rail-choice-hint">Whatever your OS is set to</span>
-            </button>
-            <button type="button" class="rail-choice" data-theme-choice="light" role="radio" aria-checked="false">
-              <span class="rail-choice-name">Light</span>
-              <span class="rail-choice-hint">Always the light palette</span>
-            </button>
-            <button type="button" class="rail-choice" data-theme-choice="dark" role="radio" aria-checked="false">
-              <span class="rail-choice-name">Dark</span>
-              <span class="rail-choice-hint">Always the dark palette</span>
-            </button>
-          </div>
-        </div>
-        <div class="rail-modal-section">
-          <div class="rail-modal-section-head">Workspace</div>
-          <dl class="rail-facts">
-            <div class="rail-fact">
-              <dt>Project</dt>
-              <dd id="rail-fact-project">—</dd>
-            </div>
-            <div class="rail-fact">
-              <dt>Folder</dt>
-              <dd id="rail-fact-path">—</dd>
-            </div>
-          </dl>
-        </div>
-      </div>
+      <button type="button" id="rail-settings-close" class="rail-modal-close" aria-label="Close settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <!-- The settings panel the VS Code extension has, as its own document:
+           ui/web/scripts/bundle-settings-web.mjs builds it from the same
+           markup and the same ui/vscode/media/settings-src fragments, and
+           ui/web/src/50-settings.js answers it. src is set on first open. -->
+      <iframe id="settings-frame" class="rail-modal-frame" title="Settings"></iframe>
     </div>
   </div>
   <script src="web.bundle.js"></script>

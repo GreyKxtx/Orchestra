@@ -152,6 +152,56 @@ if (fs.existsSync(bundle)) {
   }
 }
 
+// 5. The settings page, which is its own document and its own bundle.
+{
+  const settingsBundle = path.join(root, "static", "settings.bundle.js");
+  if (!fs.existsSync(settingsBundle)) {
+    fail("static/settings.bundle.js is missing — run node ui/web/scripts/bundle-settings-web.mjs");
+  } else {
+    try {
+      execFileSync(process.execPath, ["--check", settingsBundle], { stdio: "pipe" });
+    } catch (e) {
+      fail(`static/settings.bundle.js does not parse:\n${e.stderr?.toString() || e.message}`);
+    }
+    const eol = (s) => s.replace(/\r\n/g, "\n");
+    const page = path.join(root, "static", "settings.html");
+    const before = [settingsBundle, page].map((f) => eol(fs.readFileSync(f, "utf8")));
+    execFileSync(process.execPath, [path.join(__dirname, "bundle-settings-web.mjs")], {
+      stdio: "pipe",
+    });
+    const after = [settingsBundle, page].map((f) => eol(fs.readFileSync(f, "utf8")));
+    if (before[0] !== after[0] || before[1] !== after[1]) {
+      fail("the settings page was stale — it has now been regenerated, commit it");
+    } else {
+      console.log("ok   static/settings.html and its bundle parse and are current");
+    }
+
+    // Its markup comes from ui/vscode/media/settings-body.html, which the VS
+    // Code panel reads too — so a missing id here means the shared file and the
+    // fragments have drifted, in both hosts at once.
+    const html = fs.readFileSync(page, "utf8");
+    const present = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+    const wanted = new Set();
+    const injected = new Set();
+    const dir = path.join(repo, "ui", "vscode", "media", "settings-src");
+    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".js"))) {
+      const s = fs.readFileSync(path.join(dir, name), "utf8");
+      for (const m of s.matchAll(/getElementById\(\s*"([^"]+)"\s*\)/g)) wanted.add(m[1]);
+      for (const m of s.matchAll(/\bel\(\s*"([^"]+)"\s*\)/g)) wanted.add(m[1]);
+      for (const m of s.matchAll(/\b(?:input|area)\(\s*"([^"]+)"\s*\)/g)) wanted.add(m[1]);
+      for (const m of s.matchAll(/\bid=\\?["']([^"'\\]+)\\?["']/g)) injected.add(m[1]);
+    }
+    const missing = [...wanted].filter((id) => !present.has(id) && !injected.has(id)).sort();
+    if (missing.length > 0) {
+      fail(
+        `settings.html is missing ${missing.length} element id(s) the panel looks up: ${missing.join(", ")}`
+      );
+    } else {
+      console.log(`ok   settings.html carries all ${wanted.size} looked-up ids`);
+    }
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

@@ -38,6 +38,7 @@ const order = [
   [webDir, "20-adapter-events.js"],
   [webDir, "30-adapter-asks.js"],
   [webDir, "40-projects.js"],
+  [webDir, "50-settings.js"],
   [sharedDir, "99-footer.txt"],
 ];
 

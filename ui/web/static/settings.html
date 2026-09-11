@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="settings.css" />
+  <title>Orchestra Settings</title>
+  <script>
+    // Stamped before the first paint, as the chat page does, or the panel
+    // flashes the other theme on every open. The parent keeps the value.
+    (function () {
+      try {
+        var saved = localStorage.getItem("orchestra.theme");
+        if (saved === "light" || saved === "dark") {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      } catch (e) {
+        // Storage can throw outright in a locked-down browser.
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div id="layout">
+    <nav id="nav">
+      <div class="header-accent" aria-hidden="true"></div>
+      <div class="nav-shell">
+        <div class="nav-items">
+          <button type="button" class="nav-item active" data-section="general"><span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M12.4 3.6l-1.2 1.2M4.8 11.2l-1.2 1.2"/></svg></span>General</button>
+          <button type="button" class="nav-item" data-section="models"><span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 1.8v2.2M9.5 1.8v2.2M6.5 12v2.2M9.5 12v2.2M1.8 6.5H4M1.8 9.5H4M12 6.5h2.2M12 9.5h2.2"/></svg></span>Providers</button>
+          <button type="button" class="nav-item" data-section="index"><span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="3.2" cy="12.8" r="1.6"/><circle cx="8" cy="4" r="1.6"/><circle cx="12.8" cy="12.8" r="1.6"/><path d="M4.2 11.4 7 5.6M9 5.6l2.8 5.8M4.8 12.8h6.4"/></svg></span>Index &amp; Graph</button>
+          <button type="button" class="nav-item" data-section="agent"><span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.8"/><path d="M4.6 6.4 6.8 8.3 4.6 10.2M8.4 10.4h3"/></svg></span>Agent</button>
+          <button type="button" class="nav-item" data-section="appearance"><span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11"/><path d="M8 2.5a5.5 5.5 0 010 11" fill="currentColor" stroke="none"/></svg></span>Appearance</button>
+          <button type="button" class="nav-item" data-section="tools"><span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 2.4a3.4 3.4 0 0 0-4.5 4.2L2 9.9a1.6 1.6 0 0 0 2.3 2.3l3.3-3.3a3.4 3.4 0 0 0 4.2-4.5L9.6 6.6 7.6 6.2 7.2 4.2z"/></svg></span>Tools &amp; MCP</button>
+        </div>
+        <div class="nav-top">
+          <button type="button" id="backChat" class="back" aria-label="Back to chat"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8h-11M6.5 4 2.5 8l4 4"/></svg><span>Chat</span></button>
+        </div>
+      </div>
+    </nav>
+    <main id="main">
+      <div id="error" class="error hidden"></div>
+
+      <section id="sec-general" class="panel active">
+        <h1>General</h1>
+        <p class="sub">Workspace and Orchestra core connection</p>
+        <label>Binary path <input id="binaryPath" type="text" placeholder="auto-detect orchestra.exe" /></label>
+        <label>Project root <input id="projectRoot" type="text" placeholder="workspace folder" /></label>
+        <p class="hint">Restart core after changing binary or project root.</p>
+        <div class="section-divider"></div>
+        <h2 class="section-title">Orchestra routing</h2>
+        <p class="sub">Orchestrator (L5), department leads (L4), worker tiers, and the embedding model for semantic search. Pick models from the same provider — hover the <em>i</em> icon for what each role does.</p>
+        <label>Shared provider
+          <div id="orchSharedProviderWrap"></div>
+        </label>
+        <p class="hint">Pick one gateway (OpenRouter) and assign different models per role. Primary model = first selected.</p>
+        <div id="orchRoles" class="orch-roles"></div>
+        <details class="adv">
+          <summary>Verification &amp; retries</summary>
+          <label class="row check"><input id="orchVerifyEnabled" type="checkbox" checked /> Deterministic worker verify (LSP + go build)</label>
+          <label class="row check"><input id="orchLLMVerify" type="checkbox" /> LLM verifier after deterministic pass</label>
+          <label>Max worker retries <input id="orchMaxRetries" type="number" min="1" max="12" value="3" /></label>
+          <label>Max verify retries <input id="orchMaxVerifyRetries" type="number" min="0" max="6" value="1" /></label>
+          <label>Default tier
+            <select id="orchDefaultTier">
+              <option value="complex">complex · L3</option>
+              <option value="focused" selected>focused · L3</option>
+              <option value="micro">micro · L1</option>
+            </select>
+          </label>
+        </details>
+        <footer>
+          <button type="button" id="reload" class="secondary">Reload all</button>
+          <button type="button" id="refreshOrchModels" class="secondary">Refresh models</button>
+          <button type="button" id="saveGeneral" class="primary">Save</button>
+        </footer>
+        <div id="orchModelModal" class="orch-modal hidden" role="dialog" aria-modal="true">
+          <div class="orch-modal-card">
+            <div class="orch-modal-head">
+              <strong id="orchModalTitle">Pick models</strong>
+              <button type="button" id="orchModalClose" class="secondary">✕</button>
+            </div>
+            <div class="orch-filter-row">
+              <input id="orchModelSearch" type="search" class="search-input" placeholder="Search models…" autocomplete="off" />
+              <select id="orchContextFilter" aria-label="Minimum context window">
+                <option value="0">Any context</option>
+                <option value="32768">32k+</option>
+                <option value="65536">64k+</option>
+                <option value="131072">128k+</option>
+                <option value="262144">256k+</option>
+                <option value="524288">512k+</option>
+                <option value="1000000">1M+</option>
+              </select>
+            </div>
+            <div id="orchModalSlots" class="orch-modal-slots"></div>
+            <p id="orchModalHint" class="hint orch-modal-hint"></p>
+            <div id="orchModelPickList" class="orch-pick-list"></div>
+            <footer class="inline-footer">
+              <button type="button" id="orchModalApply" class="secondary">Apply</button>
+            </footer>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-models" class="panel">
+        <h1>Providers</h1>
+        <p class="sub">LLM provider and model — saved to <code>.orchestra.yml</code></p>
+        <h2>Provider</h2>
+        <div id="providerList" class="pick-list"></div>
+        <p id="providerStatus" class="hint"></p>
+        <div id="providerCreds" class="cred-block hidden">
+          <label>API Base <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000/v1" /></label>
+          <label>API Key
+            <span class="api-key-row">
+              <input id="apiKey" type="password" placeholder="paste API key" autocomplete="off" />
+              <button type="button" id="toggleApiKey" class="secondary api-key-toggle">Show</button>
+            </span>
+            <span id="keyHint" class="hint"></span>
+          </label>
+        </div>
+        <h2>Model</h2>
+        <p id="modelsStatus" class="hint"></p>
+        <input id="modelSearch" type="search" class="search-input" placeholder="Search models…" autocomplete="off" />
+        <div id="modelList" class="pick-list model-list"></div>
+        <input id="model" type="hidden" />
+        <input id="provider" type="hidden" />
+        <details class="adv">
+          <summary>Advanced generation</summary>
+          <label>Prompt family <input id="promptFamily" type="text" placeholder="auto / local / gpt / anthropic" /></label>
+          <label>Temperature <input id="temperature" type="number" step="0.1" min="0" max="2" /></label>
+          <label>Max tokens <input id="maxTokens" type="number" min="0" step="1" /></label>
+          <label>Timeout (s) <input id="timeoutS" type="number" min="0" step="1" /></label>
+          <label class="row check"><input id="multimodal" type="checkbox" /> Vision / multimodal (image attachments)</label>
+        </details>
+        <footer class="inline-footer">
+          <button type="button" id="refreshModels" class="secondary">Refresh models</button>
+          <button type="button" id="saveModels" class="primary">Save</button>
+        </footer>
+      </section>
+
+      <section id="sec-index" class="panel">
+        <h1>Index &amp; Graph</h1>
+        <p class="sub">CKG structural graph + semantic embeddings for <code>explore</code> / <code>semantic_search</code></p>
+        <div id="indexStats" class="stat-grid">
+          <div class="stat stat-files"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 2.5h6l4 4v11H5z"/><path d="M11 2.5v4h4M7.5 10h5M7.5 13h5"/></svg></span><span class="stat-val" id="statFiles">—</span><span class="stat-lbl">indexed files</span></div>
+          <div class="stat stat-symbols"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 5-3 5 3 5M13 5l3 5-3 5M11.5 3.5l-3 13"/></svg></span><span class="stat-val" id="statNodes">—</span><span class="stat-lbl">symbols</span></div>
+          <div class="stat stat-links"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.1 12.8 6.7 14.2a3 3 0 0 1-4.2-4.2l2.8-2.8a3 3 0 0 1 4.2 0M11.9 7.2l1.4-1.4a3 3 0 1 1 4.2 4.2l-2.8 2.8a3 3 0 0 1-4.2 0M7.3 12.7l5.4-5.4"/></svg></span><span class="stat-val" id="statEdges">—</span><span class="stat-lbl">links</span></div>
+          <div class="stat stat-embeddings"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="6" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="10" cy="15" r="1.5"/><path d="m6.4 6.6 7.2-1.2M5.9 7.3l3.2 6.4M14.2 6.3l-3.4 7.4"/></svg></span><span class="stat-val" id="statEmb">—</span><span class="stat-lbl">embeddings</span></div>
+          <div class="stat stat-functions"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3H7.2a2 2 0 0 0-2 1.7L3.8 15.3a2 2 0 0 1-2 1.7M2.8 8h5.8M11 8l6 6M17 8l-6 6"/></svg></span><span class="stat-val" id="statFuncs">—</span><span class="stat-lbl">functions</span></div>
+          <div class="stat stat-types"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3H2.5v14H4M16 3h1.5v14H16M7 6h6M10 6v8M7.5 14h5"/></svg></span><span class="stat-val" id="statTypes">—</span><span class="stat-lbl">types</span></div>
+          <div class="stat stat-tests"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 2.5h6M8 2.5v5l-4.7 7.3a1.8 1.8 0 0 0 1.5 2.7h10.4a1.8 1.8 0 0 0 1.5-2.7L12 7.5v-5M6.3 12h7.4"/></svg></span><span class="stat-val" id="statTests">—</span><span class="stat-lbl">tests</span></div>
+          <div class="stat stat-packages"><span class="stat-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 2.5 7 3.7v7.6l-7 3.7-7-3.7V6.2zM3.3 6.4 10 10l6.7-3.6M10 10v7.5M6.5 4.4l7 3.8"/></svg></span><span class="stat-val" id="statPkgs">—</span><span class="stat-lbl">packages</span></div>
+        </div>
+        <div id="indexLangs" class="lang-chips"></div>
+        <p id="indexStatusHint" class="hint"></p>
+        <p id="indexEmbedHint" class="hint"></p>
+        <div class="action-row">
+          <button type="button" id="rebuildGraph" class="secondary">Rebuild graph</button>
+          <button type="button" id="runEmbed" class="secondary">Run embed</button>
+          <button type="button" id="openGraph" class="secondary">Open graph viewer</button>
+        </div>
+        <p id="indexActionOut" class="hint"></p>
+        <details class="adv">
+          <summary>Scope &amp; limits</summary>
+          <label>Exclude dirs (one per line) <textarea id="excludeDirs" rows="4" placeholder=".git&#10;node_modules"></textarea></label>
+          <label>Context limit (KB) <input id="contextLimitKB" type="number" min="0" step="1" /></label>
+          <label>Max files <input id="limitsMaxFiles" type="number" min="0" step="1" placeholder="optional" /></label>
+        </details>
+        <details class="adv">
+          <summary>Semantic search options</summary>
+          <label>Batch size <input id="embedBatchSize" type="number" min="1" step="1" /></label>
+          <label class="row check"><input id="semanticAutoExplore" type="checkbox" /> Auto-explore top semantic hits</label>
+        </details>
+        <footer><button type="button" id="saveIndex">Save index settings</button></footer>
+      </section>
+
+      <section id="sec-agent" class="panel">
+        <h1>Agent</h1>
+        <h2>System prompt</h2>
+        <label>Project override<textarea id="systemPrompt" rows="10" placeholder="Leave empty to use the built-in / shared prompt…"></textarea></label>
+        <footer class="inline-footer">
+          <button type="button" id="clearPrompt" class="secondary">Clear override</button>
+          <button type="button" id="savePrompt">Save prompt</button>
+        </footer>
+        <h2>Custom agents</h2>
+        <div id="agentsList" class="list"></div>
+        <label>Name <input id="agentName" type="text" placeholder="reviewer" /></label>
+        <label>System prompt <textarea id="agentPrompt" rows="5"></textarea></label>
+        <div class="agent-tools-block">
+          <h3 class="agent-tools-title">Tools</h3>
+          <p class="hint">Toggle tools for this agent. All on = inherit full build toolset.</p>
+          <div id="agentToolsList" class="agent-tools-list"></div>
+          <p id="agentToolsHint" class="hint"></p>
+        </div>
+        <footer>
+          <button type="button" id="newAgent" class="secondary">New</button>
+          <button type="button" id="deleteAgent" class="danger">Delete</button>
+          <button type="button" id="saveAgent">Save agent</button>
+        </footer>
+      </section>
+
+      <section id="sec-tools" class="panel">
+        <h1>Tools &amp; MCP</h1>
+        <p class="sub">Browse the official MCP Registry (plus featured locals) — install into <code>.orchestra.yml</code>. Installed servers use on/off toggles; open one to configure tools.</p>
+        <div class="mcp-tabs" role="tablist">
+          <button type="button" class="mcp-tab active" data-mcp-tab="browse" role="tab" aria-selected="true">Browse</button>
+          <button type="button" class="mcp-tab" data-mcp-tab="installed" role="tab" aria-selected="false">Installed</button>
+        </div>
+        <div id="mcpBrowsePane">
+          <input id="mcpCatalogSearch" type="search" class="search-input" placeholder="Search registry (filesystem, github, slack…)" autocomplete="off" />
+          <div id="mcpCatalogCats" class="mcp-cats"></div>
+          <p id="mcpCatalogStatus" class="hint">Loading catalog…</p>
+          <div id="mcpCatalogList" class="mcp-catalog"></div>
+          <div class="mcp-catalog-footer">
+            <button type="button" id="mcpCatalogPrev" class="secondary">Prev</button>
+            <span id="mcpCatalogPageLabel" class="mcp-page-label">1 / 1</span>
+            <button type="button" id="mcpCatalogNext" class="secondary">Next</button>
+          </div>
+        </div>
+        <div id="mcpInstalledPane" class="hidden">
+          <div id="mcpList" class="mcp-installed-list"></div>
+          <button type="button" id="mcpAddCustom" class="secondary mcp-add-custom">+ Custom server</button>
+        </div>
+        <div class="section-divider"></div>
+        <h2 class="section-title">Skills</h2>
+        <p class="sub">File-based agent bundles discovered in <code>~/.orchestra/skills</code> and <code>.orchestra/skills</code>. Read-only here — add one by dropping a folder in either place.</p>
+        <div id="skillsList" class="list"></div>
+        <details class="adv">
+          <summary>Hooks, Git, Browser</summary>
+          <p class="hint">Configure <code>hooks</code>, <code>exec</code>, <code>web</code>, and <code>browser</code> in <code>.orchestra.yml</code>. UI editors coming later.</p>
+        </details>
+      </section>
+
+
+      <section id="sec-appearance" class="panel">
+        <h1>Appearance</h1>
+        <p class="sub">How this page looks. Stored in this browser only.</p>
+        <div class="theme-choices" role="radiogroup" aria-label="Theme">
+          <button type="button" class="theme-choice" data-theme-choice="system" role="radio" aria-checked="true">
+            <span class="theme-choice-name">Follow the system</span>
+            <span class="theme-choice-hint">Whatever your OS is set to</span>
+          </button>
+          <button type="button" class="theme-choice" data-theme-choice="light" role="radio" aria-checked="false">
+            <span class="theme-choice-name">Light</span>
+            <span class="theme-choice-hint">Always the light palette</span>
+          </button>
+          <button type="button" class="theme-choice" data-theme-choice="dark" role="radio" aria-checked="false">
+            <span class="theme-choice-name">Dark</span>
+            <span class="theme-choice-hint">Always the dark palette</span>
+          </button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="mcpConfigure" class="mcp-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mcpCfgTitle">
+    <div class="mcp-modal-card" id="mcpConfigureCard">
+      <header class="mcp-cfg-head">
+        <div class="mcp-cfg-title-wrap">
+          <h2 id="mcpCfgTitle">Configure</h2>
+          <p id="mcpCfgSub" class="mcp-cfg-sub"></p>
+        </div>
+        <button type="button" id="mcpCfgClose" class="mcp-cfg-close" aria-label="Close">×</button>
+      </header>
+      <div class="mcp-modal-body">
+        <section class="mcp-cfg-section">
+          <h3>Source</h3>
+          <p class="hint">Command and environment for this MCP server.</p>
+          <div class="mcp-cfg-card">
+            <div class="mcp-cfg-card-main">
+              <strong id="mcpCfgSourceLabel">Server</strong>
+              <span id="mcpCfgSourceMeta" class="mcp-cfg-meta"></span>
+            </div>
+            <label class="mcp-switch" title="Enable server">
+              <input id="mcpEnabled" type="checkbox" />
+              <span class="mcp-switch-ui" aria-hidden="true"></span>
+            </label>
+          </div>
+          <label>Name <input id="mcpName" type="text" placeholder="filesystem" /></label>
+          <label>Command <input id="mcpCommand" type="text" placeholder='npx -y @modelcontextprotocol/server-filesystem .' /></label>
+          <label>Env (KEY=VAL per line) <textarea id="mcpEnv" rows="3"></textarea></label>
+        </section>
+        <section class="mcp-cfg-section">
+          <h3>Tools</h3>
+          <p class="hint">Enable or disable individual tools.</p>
+          <div id="mcpToolsList" class="mcp-tools-list"></div>
+          <p id="mcpToolsHint" class="hint"></p>
+        </section>
+        <p id="mcpTestOut" class="hint"></p>
+      </div>
+      <footer class="mcp-cfg-footer">
+        <button type="button" id="deleteMCP" class="danger hidden">Remove</button>
+        <div class="mcp-cfg-footer-right">
+          <button type="button" id="reloadMCP" class="secondary">Reload</button>
+          <button type="button" id="saveMCP">Done</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <script src="settings.bundle.js"></script>
+</body>
+</html>

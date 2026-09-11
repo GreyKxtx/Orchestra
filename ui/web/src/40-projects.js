@@ -677,30 +677,11 @@
     } catch (e) {
       // Not persisting is survivable; the page still honours the click.
     }
-    syncThemeMenu(choice);
   }
 
   const railSettingsBtn = document.getElementById("rail-settings-btn");
   const railSettingsModal = document.getElementById("rail-settings-modal");
   const railSettingsCloseBtn = document.getElementById("rail-settings-close");
-
-  /** @param {string} choice */
-  function syncThemeMenu(choice) {
-    if (!railSettingsModal || !railSettingsModal.querySelectorAll) return;
-    railSettingsModal.querySelectorAll("[data-theme-choice]").forEach((el) => {
-      el.setAttribute("aria-checked", el.getAttribute("data-theme-choice") === choice ? "true" : "false");
-    });
-  }
-
-  /** What the dialog can say about where you are, from what the page knows. */
-  function renderSettingsFacts() {
-    const entry = known.find((p) => p.id === currentProjectId);
-    const nameEl = document.getElementById("rail-fact-project");
-    const pathEl = document.getElementById("rail-fact-path");
-    // textContent: both are strings off disk.
-    if (nameEl) nameEl.textContent = (entry && (entry.name || entry.path)) || "—";
-    if (pathEl) pathEl.textContent = (entry && entry.path) || "—";
-  }
 
   /** @param {boolean} open */
   function showRailSettings(open) {
@@ -709,7 +690,9 @@
       railSettingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
     }
     if (open) {
-      renderSettingsFacts();
+      // 50-settings.js owns what is inside: it loads the panel on first open
+      // and answers it from there.
+      openSettingsPanel("general");
     } else if (railSettingsBtn && railSettingsBtn.focus) {
       // Sending focus back to the opener is the whole reason a dialog is
       // navigable by keyboard at all.
@@ -728,17 +711,12 @@
   }
 
   if (railSettingsModal && railSettingsModal.addEventListener) {
+    // A click that lands on the scrim rather than the card dismisses. Clicks
+    // inside the panel never reach here — it is a separate document.
     railSettingsModal.addEventListener("click", (ev) => {
-      // A click that lands on the scrim rather than the card dismisses.
       if (ev.target === railSettingsModal) {
         showRailSettings(false);
-        return;
       }
-      const item = ev.target && ev.target.closest ? ev.target.closest("[data-theme-choice]") : null;
-      if (!item) return;
-      // The dialog stays open on a pick: the page repaints behind it, which
-      // is the point of choosing a theme from one.
-      applyTheme(item.getAttribute("data-theme-choice") || "system");
     });
   }
 
@@ -750,7 +728,9 @@
     });
   }
 
-  syncThemeMenu(savedTheme());
+  // The pre-paint script in the page already stamped the root from storage;
+  // this only makes the in-memory choice and the DOM agree on first load.
+  applyTheme(savedTheme());
 
   const newSessionBtn = document.getElementById("rail-new-session-btn");
   if (newSessionBtn && newSessionBtn.addEventListener) {
