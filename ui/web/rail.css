@@ -4,7 +4,7 @@
    naming it in chat.css would be exactly the leak that comment forbids. */
 :root {
   --rail-bg: #060607;
-  --rail-dot: rgba(255, 255, 255, 0.04);
+  --rail-dot: rgba(255, 255, 255, 0.075);
   /* Text on the one filled control, the new-session button, which is painted
      in the mode accent. */
   --rail-on-accent: #17131f;
@@ -13,14 +13,14 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --rail-bg: #f4f4f5;
-    --rail-dot: rgba(0, 0, 0, 0.06);
+    --rail-dot: rgba(0, 0, 0, 0.10);
     --rail-on-accent: #ffffff;
   }
 }
 
 :root[data-theme="light"] {
   --rail-bg: #f4f4f5;
-  --rail-dot: rgba(0, 0, 0, 0.06);
+  --rail-dot: rgba(0, 0, 0, 0.10);
   --rail-on-accent: #ffffff;
 }
 
@@ -258,6 +258,60 @@ body {
 .project-chip:focus-visible {
   outline: 2px solid var(--fg-dim);
   outline-offset: -2px;
+}
+
+/* ---- row icons --------------------------------------------------------- */
+/* A folder for a workspace, a bubble for a session: two shapes, so the eye
+   sorts the two kinds of row before reading either. Drawn as a mask filled
+   with currentColor — they then follow the row's own colour through hover,
+   the active state and both themes, and renderProjects stays free of
+   createElementNS, which the adapter tests' document stub does not have. */
+
+.project-chip::before,
+.rail-session::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  -webkit-mask: var(--row-icon) center / contain no-repeat;
+  mask: var(--row-icon) center / contain no-repeat;
+  opacity: 0.8;
+}
+
+.project-chip {
+  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
+}
+
+.rail-session {
+  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
+}
+
+/* On the open workspace the row is a small-caps heading, so its folder drops
+   to the label's own size rather than towering over it. */
+.project-group[data-active="true"] .project-chip::before {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+
+/* How many chats are in the workspace. Quiet — it is a fact about the row,
+   not a thing to act on — and lining up on tabular digits so a column of
+   them reads down the list. */
+.project-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+}
+
+.project-chip:hover .project-count {
+  color: var(--muted);
+}
+
+.project-group[data-active="true"] .project-count {
+  font-size: 10.5px;
+  font-weight: 600;
 }
 
 /* State is carried by a dot whose SHAPE differs per state, so the tree stays

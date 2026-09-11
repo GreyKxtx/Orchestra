@@ -394,6 +394,9 @@
         state: p.state,
         status: p.state === "closed" || !st ? "closed" : st.status,
         active: p.id === currentProjectId,
+        // -1 from the server means "could not read in time", which the rail
+        // shows as no number rather than as none.
+        sessions: typeof p.sessions === "number" ? p.sessions : -1,
       };
     });
     toRenderer({ type: "projectList", projects: rows });
@@ -448,6 +451,20 @@
       // textContent, not innerHTML: the name is a folder name off disk.
       name.textContent = row.name || "?";
       chip.appendChild(name);
+
+      // How many chats the workspace holds. The server counts them off disk,
+      // which is the only way a workspace whose core is closed can have a
+      // number at all; the open one prefers its live list, so starting a
+      // session bumps the count straight away instead of at the next poll.
+      const listedNow = sessionsByProject.get(row.id);
+      const count = row.active && listedNow ? listedNow.length : row.sessions;
+      if (typeof count === "number" && count >= 0) {
+        const badge = document.createElement("span");
+        badge.className = "project-count";
+        badge.textContent = String(count);
+        badge.title = count === 1 ? "1 chat" : count + " chats";
+        chip.appendChild(badge);
+      }
 
       const dot = document.createElement("span");
       dot.className = "project-dot";

@@ -147,6 +147,21 @@ if (!body.includes(navAnchor)) {
 }
 let pageBody = body.replace(navAnchor, appearanceNav + navAnchor);
 
+// Web-only: this host has several workspaces open at once, and every screen
+// in this panel writes to the open one's own .orchestra.yml. The VS Code panel
+// belongs to one window and one folder, so it says nothing.
+const workspaceHead =
+  '        <div class="nav-workspace">\n' +
+  '          <span class="nav-workspace-label">Workspace</span>\n' +
+  '          <span id="navWorkspaceName" class="nav-workspace-name">—</span>\n' +
+  "        </div>\n";
+const shellAnchor = '        <div class="nav-items">';
+if (!pageBody.includes(shellAnchor)) {
+  console.error("settings-body.html changed shape — the nav items container was not found");
+  process.exit(1);
+}
+pageBody = pageBody.replace(shellAnchor, workspaceHead + shellAnchor);
+
 const mainClose = "    </main>";
 if (!pageBody.includes(mainClose)) {
   console.error("settings-body.html changed shape — the end of <main> was not found");

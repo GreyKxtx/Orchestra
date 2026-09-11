@@ -516,15 +516,17 @@ body.vscode-high-contrast-light .chrome-logo {
   flex-shrink: 0;
 }
 
+/* The connection's one word to the user. It was 11px inside a 120px box,
+   which truncated "not connected" into something nobody reads. */
 .chrome-hint {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 120px;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0 4px;
-  font-size: 11px;
+  padding: 0 6px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 
@@ -4061,23 +4063,23 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   gap: 3px;
   flex: 0 0 auto;
   align-self: center;
-  margin: 0 6px 0 10px;
-  padding: 3px;
+  margin: 0 8px 0 10px;
+  padding: 4px;
   border: 1px solid var(--border-soft);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--composer-bg);
 }
 .view-segment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 7px;
+  padding: 7px 15px;
   border: none;
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: color 0.12s, background 0.12s;

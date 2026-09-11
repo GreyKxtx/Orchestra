@@ -139,6 +139,15 @@
     if (msg.type === "scale") {
       syncFrameScale(SCALES.indexOf(String(msg.scale)) >= 0 ? String(msg.scale) : "auto");
     }
+    if (msg.type === "workspace") {
+      // Every setting on these screens belongs to one workspace's own
+      // .orchestra.yml, so the panel names the workspace it is editing.
+      const el = document.getElementById("navWorkspaceName");
+      if (el) {
+        el.textContent = String(msg.name || "—");
+        el.title = String(msg.path || "");
+      }
+    }
   });
 
   syncFrameTheme(savedFrameTheme());

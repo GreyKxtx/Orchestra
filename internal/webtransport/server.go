@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -400,26 +401,108 @@ func authorized(r *http.Request, token string) bool {
 // listProjects returns the open projects followed by the remembered ones the
 // core does not hold. Open outranks remembered: a project that is both appears
 // once, as open, because that entry carries its real state and opened_at.
-func listProjects(opts Options) []projects.Project {
-	open := opts.Registry.List()
-	if opts.Known == nil {
-		return open
+// projectView is what GET /api/projects returns: the published Project shape,
+// which this package does not get to change, plus the one thing the rail wants
+// that the registry does not hold. The embedded struct is inlined by
+// encoding/json, so every existing field keeps its place on the wire.
+type projectView struct {
+	projects.Project
+	// Sessions recorded on disk, or -1 when the directory could not be read in
+	// time — which the rail shows as no count rather than as zero.
+	Sessions int `json:"sessions"`
+}
+
+// sessionDirBudget is how long the whole session-counting pass may take. The
+// reads are what ClosedProject refuses to do for good reason: a remembered
+// path on an unreachable share can block for the operating system's own
+// timeout, and GET /api/projects must not inherit that. Each read therefore
+// runs in its own goroutine under this one deadline, and a path that has not
+// answered by then is simply reported without a count.
+const sessionDirBudget = 250 * time.Millisecond
+
+// countSessions returns the number of recorded sessions under each path, or -1
+// for a path that did not answer within the budget. A session is one <id>.json
+// beside its <id>.events.jsonl, so only the .json files are counted.
+func countSessions(paths []string) map[string]int {
+	out := make(map[string]int, len(paths))
+	if len(paths) == 0 {
+		return out
 	}
-	seen := make(map[string]bool, len(open))
-	for _, p := range open {
-		seen[p.ID] = true
+	type result struct {
+		path string
+		n    int
 	}
-	closed := make([]projects.Project, 0, len(opts.Known.Paths()))
-	for _, path := range opts.Known.Paths() {
-		p, ok := projects.ClosedProject(path)
-		if !ok || seen[p.ID] {
-			continue
+	ch := make(chan result, len(paths))
+	for _, p := range paths {
+		go func(p string) {
+			n := 0
+			entries, err := os.ReadDir(filepath.Join(p, ".orchestra", "sessions"))
+			if err != nil {
+				// No directory yet is a real answer: the workspace has no
+				// sessions. Anything else is reported as unknown.
+				if errors.Is(err, fs.ErrNotExist) {
+					ch <- result{p, 0}
+					return
+				}
+				ch <- result{p, -1}
+				return
+			}
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+					n++
+				}
+			}
+			ch <- result{p, n}
+		}(p)
+	}
+	deadline := time.After(sessionDirBudget)
+	for range paths {
+		select {
+		case r := <-ch:
+			out[r.path] = r.n
+		case <-deadline:
+			// The goroutines still running write into a buffered channel and
+			// exit on their own; nothing leaks and nothing blocks.
+			return out
 		}
-		seen[p.ID] = true
-		closed = append(closed, p)
 	}
-	sort.Slice(closed, func(i, j int) bool { return closed[i].Path < closed[j].Path })
-	return append(open, closed...)
+	return out
+}
+
+func listProjects(opts Options) []projectView {
+	open := opts.Registry.List()
+	all := open
+	if opts.Known != nil {
+		seen := make(map[string]bool, len(open))
+		for _, p := range open {
+			seen[p.ID] = true
+		}
+		closed := make([]projects.Project, 0, len(opts.Known.Paths()))
+		for _, path := range opts.Known.Paths() {
+			p, ok := projects.ClosedProject(path)
+			if !ok || seen[p.ID] {
+				continue
+			}
+			seen[p.ID] = true
+			closed = append(closed, p)
+		}
+		sort.Slice(closed, func(i, j int) bool { return closed[i].Path < closed[j].Path })
+		all = append(open, closed...)
+	}
+	paths := make([]string, 0, len(all))
+	for _, p := range all {
+		paths = append(paths, p.Path)
+	}
+	counts := countSessions(paths)
+	views := make([]projectView, 0, len(all))
+	for _, p := range all {
+		n, ok := counts[p.Path]
+		if !ok {
+			n = -1
+		}
+		views = append(views, projectView{Project: p, Sessions: n})
+	}
+	return views
 }
 
 func writeJSONStatus(w http.ResponseWriter, status int, v any) {

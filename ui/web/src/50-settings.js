@@ -283,6 +283,16 @@
       const ws = settingsWorkspaceRoot();
       const navigateSection = settingsPendingSection;
       settingsPendingSection = "";
+      // Which workspace this is. Everything on these screens is written to
+      // that workspace's own .orchestra.yml — provider, models, roles, index,
+      // MCP servers, agents are per workspace, not shared — so the panel has
+      // to say which one it is editing, or the separation is invisible.
+      const openProjectEntry = known.find((p) => p.id === currentProjectId);
+      postToSettings({
+        type: "workspace",
+        name: (openProjectEntry && openProjectEntry.name) || "",
+        path: (openProjectEntry && openProjectEntry.path) || ws,
+      });
       postToSettings({
         type: "state",
         llm,
