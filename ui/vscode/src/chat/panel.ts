@@ -2399,8 +2399,36 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     </div>
     <div id="messages"></div>
     <div id="trajectory" class="trajectory" role="tabpanel" aria-labelledby="view-trajectory-btn">
+      <div id="traj-toolbar" class="traj-toolbar">
+        <div id="traj-metric" class="traj-metric" role="tablist" aria-label="Timeline scale">
+          <button type="button" id="traj-metric-duration" class="traj-metric-seg" role="tab" data-metric="duration" aria-selected="true">Duration</button>
+          <button type="button" id="traj-metric-turns" class="traj-metric-seg" role="tab" data-metric="turns" aria-selected="false">Turns</button>
+          <button type="button" id="traj-metric-calls" class="traj-metric-seg" role="tab" data-metric="calls" aria-selected="false">Calls</button>
+        </div>
+        <input type="search" id="traj-search" class="traj-search" placeholder="Search" aria-label="Filter trajectory rows" />
+      </div>
+      <div id="traj-timeline" class="traj-timeline" aria-hidden="true"></div>
       <div id="trajectory-summary" class="traj-summary" aria-live="polite"></div>
-      <div id="trajectory-rows" class="traj-rows"></div>
+      <div class="traj-body">
+        <div id="trajectory-rows" class="traj-rows"></div>
+        <aside id="traj-panel" class="traj-panel" hidden aria-label="Selected row">
+          <div class="traj-panel-head">
+            <span id="traj-panel-kind" class="traj-panel-kind"></span>
+            <span id="traj-panel-loc" class="traj-panel-loc"></span>
+            <button type="button" id="traj-panel-close" class="traj-panel-close" aria-label="Close details">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div id="traj-panel-tabs" class="traj-panel-tabs" role="tablist" aria-label="Detail view">
+            <button type="button" id="traj-tab-summary" class="traj-panel-tab" role="tab" data-tab="summary" aria-selected="true">Summary</button>
+            <button type="button" id="traj-tab-preview" class="traj-panel-tab" role="tab" data-tab="preview" aria-selected="false">Preview</button>
+            <button type="button" id="traj-tab-raw" class="traj-panel-tab" role="tab" data-tab="raw" aria-selected="false">Raw</button>
+          </div>
+          <div id="traj-panel-body" class="traj-panel-body"></div>
+        </aside>
+      </div>
     </div>
     <div id="pending-bar" class="pending-bar hidden">
       <div class="pending-card">

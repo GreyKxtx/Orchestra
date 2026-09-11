@@ -3778,6 +3778,15 @@
 
   const trajectorySummary = document.getElementById("trajectory-summary");
   const trajectoryRowsEl = document.getElementById("trajectory-rows");
+  const trajTimelineEl = document.getElementById("traj-timeline");
+  const trajMetricEl = document.getElementById("traj-metric");
+  const trajSearchEl = document.getElementById("traj-search");
+  const trajPanelEl = document.getElementById("traj-panel");
+  const trajPanelKindEl = document.getElementById("traj-panel-kind");
+  const trajPanelLocEl = document.getElementById("traj-panel-loc");
+  const trajPanelBodyEl = document.getElementById("traj-panel-body");
+  const trajPanelTabsEl = document.getElementById("traj-panel-tabs");
+  const trajPanelCloseBtn = document.getElementById("traj-panel-close");
   const viewChatBtn = document.getElementById("view-chat-btn");
   const viewTrajectoryBtn = document.getElementById("view-trajectory-btn");
   const appViewEl = document.getElementById("app");
@@ -3789,9 +3798,20 @@
   /** Set when the host could not fetch the log; shown instead of a false "not recorded". */
   let trajError = "";
   let trajRenderQueued = false;
-  const trajExpandedKeys = new Set();
+  /** The row whose details the side panel is showing, by key. */
+  let trajSelectedKey = "";
+  /** Which of the panel's three tabs is open. */
+  let trajTab = "summary";
+  /** What the timeline measures: elapsed time, one block per turn, or per call. */
+  let trajMetric = "duration";
+  /** The row filter typed into the toolbar's search box. */
+  let trajQuery = "";
+  /** @type {TrajRow[]} The rows of the last render, for the panel to look up. */
+  let trajRowsCache = [];
 
-  const TRAJ_GLYPH = { turn: "◆", step: "▸", tool: "⚙", text: "¶", reasoning: "…", error: "!", stage: "▣", pending: "±", route: "↦", other: "·" };
+  const TRAJ_BADGE = { turn: "TURN", step: "STEP", tool: "TOOL", text: "TEXT", reasoning: "THINK", error: "ERROR", stage: "STAGE", pending: "DIFF", route: "ROUTE", other: "EVENT" };
+  /** Inline diffs run an O(n·m) alignment, so a big file gets its stats and the full viewer instead. */
+  const TRAJ_DIFF_LINE_BUDGET = 1200;
 
   function currentView() {
     return appViewEl && appViewEl.dataset.view === "trajectory" ? "trajectory" : "chat";
@@ -3838,7 +3858,8 @@
     trajEvents = [];
     trajRecorded = null;
     trajError = "";
-    trajExpandedKeys.clear();
+    trajSelectedKey = "";
+    trajRowsCache = [];
     scheduleTrajectoryRender();
   }
 
@@ -3859,20 +3880,37 @@
     scheduleTrajectoryRender();
   }
 
+  /** Empty the timeline and fold the panel away: there is nothing to point at. */
+  function clearTrajChrome() {
+    if (trajTimelineEl) trajTimelineEl.innerHTML = "";
+    if (trajPanelEl) trajPanelEl.hidden = true;
+  }
+
+  /** @param {TrajRow} r @param {string} q */
+  function trajRowMatches(r, q) {
+    if (!q) return true;
+    const haystack = r.kind + " " + r.label + " " + (r.outcome || "") + " " + (r.input || "") + " " + (r.output || "");
+    return haystack.toLowerCase().indexOf(q) !== -1;
+  }
+
   function renderTrajectory() {
     if (!trajectoryRowsEl || !trajectorySummary) return;
     const rows = buildTrajectoryTree(trajEvents);
+    trajRowsCache = rows;
     trajectoryRowsEl.innerHTML = "";
     if (trajError && rows.length === 0) {
       trajectorySummary.textContent = "Trajectory unavailable: " + trajError;
+      clearTrajChrome();
       return;
     }
     if (trajRecorded === false && rows.length === 0) {
       trajectorySummary.textContent = "No trajectory was recorded for this session — it predates the log.";
+      clearTrajChrome();
       return;
     }
     if (rows.length === 0) {
       trajectorySummary.textContent = trajRecorded === null ? "Loading trajectory…" : "Nothing has happened in this session yet.";
+      clearTrajChrome();
       return;
     }
     let turns = 0;
@@ -3881,27 +3919,310 @@
       if (r.kind === "turn") turns++;
       if (r.live) liveCount++;
     }
-    trajectorySummary.textContent = turns + " turn" + (turns === 1 ? "" : "s") + " · " + rows.length + " rows" + (liveCount ? " · " + liveCount + " live" : "");
+    const q = trajQuery.trim().toLowerCase();
+    const shown = q ? rows.filter((r) => trajRowMatches(r, q)) : rows;
+    trajectorySummary.textContent =
+      turns + " turn" + (turns === 1 ? "" : "s") + " · " + rows.length + " rows" +
+      (liveCount ? " · " + liveCount + " live" : "") +
+      (q ? " · " + shown.length + " matching" : "");
+    renderTrajTimeline(rows);
     const frag = document.createDocumentFragment();
-    for (const r of rows) frag.appendChild(renderTrajRow(r));
+    for (const r of shown) frag.appendChild(renderTrajRow(r));
     trajectoryRowsEl.appendChild(frag);
+    renderTrajPanel();
   }
 
-  /** @param {TrajRow} r */
+  /**
+   * The timeline. "duration" lays turns, steps and tool calls on three tracks
+   * against one elapsed-time scale, which is the only view where a gap means
+   * idle time; "turns" and "calls" give every turn (or every call) the same
+   * width, for reading a long session by structure rather than by clock.
+   * @param {TrajRow[]} rows
+   */
+  function renderTrajTimeline(rows) {
+    if (!trajTimelineEl) return;
+    trajTimelineEl.innerHTML = "";
+    const track = (label, items, span) => {
+      const line = document.createElement("div");
+      line.className = "traj-tl-track";
+      const name = document.createElement("span");
+      name.className = "traj-tl-name";
+      name.textContent = label;
+      const bar = document.createElement("div");
+      bar.className = "traj-tl-bar";
+      items.forEach((r, i) => {
+        const block = document.createElement("button");
+        block.type = "button";
+        block.className = "traj-tl-block";
+        block.dataset.kind = r.kind;
+        block.dataset.key = r.key;
+        if (r.key === trajSelectedKey) block.dataset.selected = "true";
+        block.title = r.label + (r.durationMs === undefined ? "" : " · " + formatToolDuration(r.durationMs));
+        block.setAttribute("aria-label", r.kind + " " + r.label);
+        const box = span(r, i);
+        block.style.setProperty("left", box.left + "%");
+        block.style.setProperty("width", box.width + "%");
+        bar.appendChild(block);
+      });
+      line.append(name, bar);
+      trajTimelineEl.appendChild(line);
+    };
+
+    if (trajMetric === "turns" || trajMetric === "calls") {
+      const wanted = trajMetric === "turns" ? "turn" : "tool";
+      const items = rows.filter((r) => r.kind === wanted);
+      const each = items.length ? 100 / items.length : 100;
+      track(trajMetric === "turns" ? "Turns" : "Calls", items, (_r, i) => ({
+        left: +(i * each).toFixed(3),
+        width: +Math.max(each - 0.4, 0.6).toFixed(3),
+      }));
+      return;
+    }
+
+    // Elapsed time: offsets are relative to the row's own turn, so shift each
+    // turn by where it starts to put every track on one session-wide scale.
+    const turnStart = new Map();
+    let base = Infinity;
+    for (const r of rows) {
+      if (r.startMs === undefined) continue;
+      if (r.kind === "turn") turnStart.set(r.turnId, r.startMs);
+      if (r.startMs < base) base = r.startMs;
+    }
+    if (!isFinite(base)) base = 0;
+    const at = (r) => {
+      if (r.startMs !== undefined) return r.startMs - base;
+      const s = turnStart.get(r.turnId);
+      return s === undefined ? 0 : s - base + (r.offsetMs || 0);
+    };
+    let total = 0;
+    for (const r of rows) {
+      const end = at(r) + (r.durationMs || 0);
+      if (end > total) total = end;
+    }
+    if (total <= 0) total = 1;
+    const span = (r) => {
+      const left = Math.max(0, Math.min(100, (at(r) / total) * 100));
+      const raw = ((r.durationMs || 0) / total) * 100;
+      return { left: +left.toFixed(3), width: +Math.max(Math.min(raw, 100 - left), 0.6).toFixed(3) };
+    };
+    track("Turns", rows.filter((r) => r.kind === "turn"), span);
+    track("Steps", rows.filter((r) => r.kind === "step"), span);
+    track("Tools", rows.filter((r) => r.kind === "tool"), span);
+  }
+
+  /** @param {string} key */
+  function selectTrajRow(key) {
+    trajSelectedKey = trajSelectedKey === key ? "" : key;
+    scheduleTrajectoryRender();
+  }
+
+  /** The recorded event a row was built from, when it has one. @param {TrajRow} r */
+  function trajSourceEvent(r) {
+    if (!r || r.seq === undefined) return null;
+    for (const e of trajEvents) {
+      if (e && e.seq === r.seq) return e;
+    }
+    return null;
+  }
+
+  function renderTrajPanel() {
+    if (!trajPanelEl || !trajPanelBodyEl) return;
+    const row = trajRowsCache.find((r) => r.key === trajSelectedKey);
+    if (!row) {
+      trajPanelEl.hidden = true;
+      return;
+    }
+    trajPanelEl.hidden = false;
+    if (trajPanelKindEl) {
+      trajPanelKindEl.textContent = TRAJ_BADGE[row.kind] || TRAJ_BADGE.other;
+      trajPanelKindEl.dataset.kind = row.kind;
+    }
+    if (trajPanelLocEl) {
+      const bits = [];
+      if (row.turnId) bits.push("turn " + row.turnId);
+      if (row.step !== undefined) bits.push("step " + row.step);
+      trajPanelLocEl.textContent = bits.join(" · ") || row.label;
+    }
+    if (trajPanelTabsEl && trajPanelTabsEl.querySelectorAll) {
+      trajPanelTabsEl.querySelectorAll(".traj-panel-tab").forEach((el) => {
+        el.setAttribute("aria-selected", el.getAttribute("data-tab") === trajTab ? "true" : "false");
+      });
+    }
+    trajPanelBodyEl.innerHTML = "";
+    const ev = trajSourceEvent(row);
+    if (trajTab === "raw") {
+      renderTrajRaw(row, ev);
+    } else if (trajTab === "preview") {
+      renderTrajPreview(row, ev);
+    } else {
+      renderTrajSummaryTab(row, ev);
+    }
+  }
+
+  /** @param {string} head @param {string} text */
+  function trajPanelPre(head, text) {
+    const h = document.createElement("div");
+    h.className = "traj-panel-section";
+    h.textContent = head;
+    const pre = document.createElement("pre");
+    pre.className = "traj-pre";
+    pre.textContent = text;
+    trajPanelBodyEl.append(h, pre);
+  }
+
+  /** @param {TrajRow} row @param {any} ev */
+  function renderTrajSummaryTab(row, ev) {
+    const dl = document.createElement("div");
+    dl.className = "traj-facts";
+    const fact = (k, v) => {
+      if (v === "" || v === undefined || v === null) return;
+      const key = document.createElement("span");
+      key.className = "traj-fact-key";
+      key.textContent = k;
+      const val = document.createElement("span");
+      val.className = "traj-fact-val";
+      val.textContent = String(v);
+      dl.append(key, val);
+    };
+    fact("kind", row.kind);
+    fact("label", row.label);
+    fact("outcome", row.outcome);
+    fact("offset", row.offsetMs === undefined ? "" : "+" + formatToolDuration(row.offsetMs));
+    fact("duration", row.durationMs === undefined ? "" : formatToolDuration(row.durationMs));
+    fact("tokens in", row.tokensIn);
+    fact("tokens out", row.tokensOut);
+    fact("live", row.live ? "yes" : "");
+    fact("event", ev && ev.type ? ev.type + (ev.data && ev.data.type ? " · " + ev.data.type : "") : "");
+    fact("seq", row.seq);
+    trajPanelBodyEl.appendChild(dl);
+    const hasDiff = ev && ev.data && ev.data.data && Array.isArray(ev.data.data.diff) && ev.data.data.diff.length > 0;
+    if (!row.input && !row.output && !hasDiff) {
+      const note = document.createElement("p");
+      note.className = "traj-panel-note";
+      note.textContent = "This row records that the event happened; it carries no payload.";
+      trajPanelBodyEl.appendChild(note);
+    }
+  }
+
+  /**
+   * Preview shows what the row actually holds: file diffs for a pending-ops
+   * row (the only event that carries before/after content), otherwise the
+   * tool's arguments and its result. Tool results are truncated by the core
+   * at 256 bytes, so the pane says so rather than looking complete.
+   * @param {TrajRow} row @param {any} ev
+   */
+  function renderTrajPreview(row, ev) {
+    // The notification nests its own payload: params are {turn_id, step, type,
+    // data:{...}}, so a pending_ops diff lives at data.data.diff.
+    const payload = ev && ev.data && ev.data.data && typeof ev.data.data === "object" ? ev.data.data : null;
+    const diffs = payload && Array.isArray(payload.diff) ? payload.diff : null;
+    if (diffs && diffs.length) {
+      for (const d of diffs) {
+        renderTrajFileDiff(String(d.path || ""), String(d.before || ""), String(d.after || ""));
+      }
+      return;
+    }
+    if (row.input) {
+      let text = row.input;
+      try {
+        text = JSON.stringify(JSON.parse(row.input), null, 2);
+      } catch (e) {
+        // Arguments stream in as fragments, so a mid-turn row holds partial
+        // JSON. Showing it verbatim beats showing nothing.
+      }
+      trajPanelPre("arguments", text);
+    }
+    if (row.output) {
+      trajPanelPre("result", row.output);
+    }
+    if (!row.input && !row.output) {
+      const note = document.createElement("p");
+      note.className = "traj-panel-note";
+      note.textContent = "Nothing to preview for this row.";
+      trajPanelBodyEl.appendChild(note);
+    }
+  }
+
+  /** @param {string} path @param {string} before @param {string} after */
+  function renderTrajFileDiff(path, before, after) {
+    const stats = countDiffStats(before, after);
+    const head = document.createElement("div");
+    head.className = "traj-diff-head";
+    const name = document.createElement("span");
+    name.className = "traj-diff-path";
+    name.textContent = path || "(unnamed file)";
+    const count = document.createElement("span");
+    count.className = "traj-diff-stats";
+    count.textContent = "+" + stats.add + " −" + stats.del;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "traj-diff-open";
+    open.textContent = "Open full diff";
+    open.addEventListener("click", () => showDiffViewer(path, before, after, ""));
+    head.append(name, count, open);
+    trajPanelBodyEl.appendChild(head);
+
+    const lineCount = before.split("\n").length + after.split("\n").length;
+    if (lineCount > TRAJ_DIFF_LINE_BUDGET) {
+      const note = document.createElement("p");
+      note.className = "traj-panel-note";
+      note.textContent = "The file is too large to align inline (" + lineCount + " lines) — open the full diff.";
+      trajPanelBodyEl.appendChild(note);
+      return;
+    }
+    const block = document.createElement("div");
+    block.className = "traj-diff";
+    for (const line of alignDiffLines(before, after)) {
+      if (line.type === "same") continue;
+      const el = document.createElement("div");
+      el.className = "traj-diff-line traj-diff-" + line.type;
+      el.textContent = (line.type === "add" ? "+ " : "− ") + (line.type === "add" ? line.right : line.left);
+      block.appendChild(el);
+    }
+    if (!block.childNodes || block.childNodes.length === 0) {
+      const note = document.createElement("p");
+      note.className = "traj-panel-note";
+      note.textContent = "No line changed in this file.";
+      trajPanelBodyEl.appendChild(note);
+      return;
+    }
+    trajPanelBodyEl.appendChild(block);
+  }
+
+  /** @param {TrajRow} row @param {any} ev */
+  function renderTrajRaw(row, ev) {
+    if (ev) {
+      trajPanelPre("recorded event", JSON.stringify(ev, null, 2));
+      return;
+    }
+    // A live row has no envelope yet: it arrived as a forwarded notification
+    // with no seq or time_ms, so the row itself is the whole truth.
+    trajPanelPre("row (live — not yet read back from the log)", JSON.stringify(row, null, 2));
+  }
+
+  /**
+   * One row. Every row opens the side panel — the payload is no longer folded
+   * out in place, so a row's height never changes and the list stays scannable.
+   * @param {TrajRow} r
+   */
   function renderTrajRow(r) {
     const el = document.createElement("div");
     el.className = "traj-row traj-" + r.kind + (r.live ? " traj-live" : "");
     el.dataset.depth = String(r.depth);
     el.dataset.key = r.key;
+    el.dataset.kind = r.kind;
+    if (r.key === trajSelectedKey) el.dataset.selected = "true";
     el.style.setProperty("--traj-depth", String(r.depth));
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
 
     const off = document.createElement("span");
     off.className = "traj-off";
     off.textContent = r.offsetMs === undefined ? "" : "+" + formatToolDuration(r.offsetMs);
-    const glyph = document.createElement("span");
-    glyph.className = "traj-glyph";
-    glyph.textContent = TRAJ_GLYPH[r.kind] || TRAJ_GLYPH.other;
-    glyph.setAttribute("aria-hidden", "true");
+    const badge = document.createElement("span");
+    badge.className = "traj-badge";
+    badge.dataset.kind = r.kind;
+    badge.textContent = TRAJ_BADGE[r.kind] || TRAJ_BADGE.other;
     const label = document.createElement("span");
     label.className = "traj-label";
     label.textContent = r.label + (r.outcome && r.kind !== "tool" ? " · " + r.outcome : "");
@@ -3914,46 +4235,62 @@
     tok.textContent =
       (r.tokensIn === undefined ? "" : r.tokensIn + "↑") +
       (r.tokensOut === undefined ? "" : (r.tokensIn === undefined ? "" : " ") + r.tokensOut + "↓");
-    el.append(off, glyph, label, dur, tok);
+    el.append(off, badge, label, dur, tok);
     el.setAttribute("aria-label", r.kind + " " + r.label + (r.live ? " (live)" : ""));
-
-    if (r.input || r.output) {
-      el.classList.add("traj-expandable");
-      el.tabIndex = 0;
-      el.setAttribute("role", "button");
-      const expanded = trajExpandedKeys.has(r.key);
-      el.setAttribute("aria-expanded", expanded ? "true" : "false");
-      const detail = document.createElement("div");
-      detail.className = "traj-detail" + (expanded ? "" : " hidden");
-      const section = (head, text) => {
-        const h = document.createElement("div");
-        h.className = "traj-detail-head";
-        h.textContent = head;
-        const pre = document.createElement("pre");
-        pre.className = "traj-pre";
-        pre.textContent = text;
-        detail.append(h, pre);
-      };
-      if (r.input) section("input", r.input);
-      if (r.output) section("output", r.output);
-      el.appendChild(detail);
-      const toggle = () => {
-        const hidden = detail.classList.toggle("hidden");
-        el.setAttribute("aria-expanded", hidden ? "false" : "true");
-        if (hidden) trajExpandedKeys.delete(r.key);
-        else trajExpandedKeys.add(r.key);
-      };
-      el.addEventListener("click", toggle);
-      el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          toggle();
-        }
-      });
-    }
+    el.addEventListener("click", () => selectTrajRow(r.key));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        selectTrajRow(r.key);
+      }
+    });
     return el;
   }
 
+  function bindTrajectoryChrome() {
+    if (trajMetricEl && trajMetricEl.addEventListener) {
+      trajMetricEl.addEventListener("click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest("[data-metric]") : null;
+        if (!btn) return;
+        trajMetric = btn.getAttribute("data-metric") || "duration";
+        if (trajMetricEl.querySelectorAll) {
+          trajMetricEl.querySelectorAll("[data-metric]").forEach((el) => {
+            el.setAttribute("aria-selected", el.getAttribute("data-metric") === trajMetric ? "true" : "false");
+          });
+        }
+        scheduleTrajectoryRender();
+      });
+    }
+    if (trajSearchEl && trajSearchEl.addEventListener) {
+      trajSearchEl.addEventListener("input", () => {
+        trajQuery = trajSearchEl.value || "";
+        scheduleTrajectoryRender();
+      });
+    }
+    if (trajTimelineEl && trajTimelineEl.addEventListener) {
+      trajTimelineEl.addEventListener("click", (e) => {
+        const block = e.target && e.target.closest ? e.target.closest(".traj-tl-block") : null;
+        if (!block) return;
+        selectTrajRow(block.getAttribute("data-key") || "");
+      });
+    }
+    if (trajPanelTabsEl && trajPanelTabsEl.addEventListener) {
+      trajPanelTabsEl.addEventListener("click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest("[data-tab]") : null;
+        if (!btn) return;
+        trajTab = btn.getAttribute("data-tab") || "summary";
+        renderTrajPanel();
+      });
+    }
+    if (trajPanelCloseBtn && trajPanelCloseBtn.addEventListener) {
+      trajPanelCloseBtn.addEventListener("click", () => {
+        trajSelectedKey = "";
+        scheduleTrajectoryRender();
+      });
+    }
+  }
+
+  bindTrajectoryChrome();
   bindViewSwitch();
   setView("chat");
   scheduleTrajectoryRender();
