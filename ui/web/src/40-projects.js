@@ -857,15 +857,16 @@
   const railSettingsCloseBtn = document.getElementById("rail-settings-close");
 
   /** @param {boolean} open */
-  function showRailSettings(open) {
+  function showRailSettings(open, section) {
     if (railSettingsModal) railSettingsModal.hidden = !open;
     if (railSettingsBtn && railSettingsBtn.setAttribute) {
       railSettingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
     }
     if (open) {
       // 50-settings.js owns what is inside: it loads the panel on first open
-      // and answers it from there.
-      openSettingsPanel("general");
+      // and answers it from there. The section is what the composer's own
+      // "settings" affordances ask to land on.
+      openSettingsPanel(section || "general");
     } else if (railSettingsBtn && railSettingsBtn.focus) {
       // Sending focus back to the opener is the whole reason a dialog is
       // navigable by keyboard at all.

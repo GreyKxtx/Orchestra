@@ -260,12 +260,19 @@
         return;
 
       default:
-        // Everything else belongs to a VS Code affordance this host does not
-        // have (opening editors, applying pending diffs, the settings webview).
-        // Say so once rather than swallowing the click.
+        // The composer's own messages — the model pill, the Orchestra
+        // breakdown, slash commands, @-mentions, rewind, the pending bar — are
+        // answered in 60-composer.js, all of them straight core RPC.
+        if (handleComposerMessage(msg)) {
+          return;
+        }
+        // What is left really does belong to a VS Code affordance this host
+        // does not have: opening an editor on a file or a diff, and asking the
+        // editor to tokenise a code block. Say so rather than swallow the
+        // click.
         toRenderer({
           type: "systemNote",
-          text: `"${msg.type}" is not available in the web UI yet.`,
+          text: `"${msg.type}" needs an editor to open things in, so it does nothing here.`,
         });
     }
   }
