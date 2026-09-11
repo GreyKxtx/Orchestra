@@ -2357,8 +2357,20 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         </div>
         <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Chat sessions"></div>
         <div id="view-switch" class="view-switch" role="tablist" aria-label="View">
-          <button type="button" id="view-chat-btn" class="view-segment" role="tab" aria-selected="true" aria-controls="messages">Chat</button>
-          <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">Trajectory</button>
+          <button type="button" id="view-chat-btn" class="view-segment" role="tab" aria-selected="true" aria-controls="messages">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M20 12a8 8 0 11-3.2-6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M8 11h8M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Chat
+          </button>
+          <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 18V7M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M8 15V11M12 15V8M16 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Trajectory
+          </button>
         </div>
         <div class="chrome-actions">
           <button type="button" id="session-new-btn" class="chrome-action" title="New chat" aria-label="New chat">

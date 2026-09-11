@@ -26,17 +26,30 @@
   }
 
   /**
-   * "4m" / "3h" / "5d" for a session row. Sessions written by an older core
-   * can lack updated_at, so fall back to the timestamp in the id
+   * When a session was last touched, in ms, or NaN. Sessions written by an
+   * older core can lack updated_at, so fall back to the timestamp in the id
    * (YYYYMMDDTHHMMSS-xxxx) exactly as the session menu does.
    * @param {any} s
    */
-  function sessionAge(s) {
-    let ms = Date.parse(s.updated_at || s.created_at || "");
-    if (!isFinite(ms)) {
-      const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(s.id || "");
-      ms = m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : NaN;
+  function sessionStamp(s) {
+    const ms = Date.parse(s.updated_at || s.created_at || "");
+    if (isFinite(ms)) {
+      return ms;
     }
+    const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(s.id || "");
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : NaN;
+  }
+
+  /** Most recently touched first, for both the sidebar and the tab strip. */
+  function byRecent(a, b) {
+    const x = sessionStamp(a);
+    const y = sessionStamp(b);
+    return (isFinite(y) ? y : 0) - (isFinite(x) ? x : 0);
+  }
+
+  /** "4m" / "3h" / "5d" for a session row. @param {any} s */
+  function sessionAge(s) {
+    const ms = sessionStamp(s);
     if (!isFinite(ms)) {
       return "";
     }
@@ -312,7 +325,6 @@
     const ordered = rows.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
     const hasActive = rows.some((r) => r.active);
     let otherLabelDone = false;
-    let headTitle = "";
     for (const row of ordered) {
       if (!row.active && hasActive && !otherLabelDone) {
         const sec = document.createElement("div");
@@ -370,10 +382,6 @@
       // looking at is missing from the list until they say something. Showing
       // it anyway is the difference between "where am I" and an empty sidebar.
       const openIsListed = listed.some((s) => s.id === openSessionId);
-      if (row.active) {
-        const cur = listed.find((s) => s.id === openSessionId);
-        headTitle = openSessionId ? (cur && cur.title ? cur.title : "New session") : "";
-      }
       if (row.active && openSessionId && !openIsListed) {
         const item = document.createElement("button");
         item.type = "button";
@@ -420,121 +428,109 @@
       group.appendChild(sessions);
       list.appendChild(group);
     }
-    renderRailHead(headTitle);
+    pushSessionTabs();
   }
 
-  // ---- the header, on the web ---------------------------------------------
+  // ---- the header's tab strip ---------------------------------------------
   //
-  // rail.css hides everything chat.css puts in #chrome-strip except the hint,
-  // because all of it moved into the sidebar; without this the strip would be
-  // 40px of nothing above the transcript. It states the session instead: its
-  // title and the mode it runs in. Built here, not in the markup, because
-  // everything inside #app is shared with the VS Code webview byte for byte.
+  // The strip itself is chat-src's (renderSessionTabs in 02-util.js), painted
+  // from the "sessionTabs" message and clicked back through "openSession" /
+  // "closeSession" — exactly what the VS Code panel drives. All the web was
+  // ever missing is a sender, so this is it; nothing inside #app changes.
+  //
+  // Hence "push", not "render": every fragment shares one function scope, so
+  // naming this renderSessionTabs redefined the renderer's own and routed
+  // 07-events.js straight back here, posting the message again forever.
+  // check-web.mjs fails on a redeclaration now.
 
-  /** @type {any} */
-  let railHeadTitleEl = null;
-  /** @type {any} */
-  let railHeadModeEl = null;
-  let lastRailHeadTitle = "";
+  /** Sessions closed out of the strip, per project. @type {Map<string, Set<string>>} */
+  const hiddenTabs = new Map();
 
-  function ensureRailHead() {
-    if (railHeadTitleEl) {
-      return true;
+  /** @param {string} projectId */
+  function hiddenTabsFor(projectId) {
+    let set = hiddenTabs.get(projectId);
+    if (!set) {
+      set = new Set();
+      hiddenTabs.set(projectId, set);
     }
-    const inner = document.getElementById("chrome-inner");
-    if (!inner || !document.createElement) {
-      return false;
-    }
-    railHeadTitleEl = document.createElement("span");
-    railHeadTitleEl.className = "rail-head-title";
-    railHeadModeEl = document.createElement("span");
-    railHeadModeEl.className = "rail-head-mode";
-    // Ahead of the hidden brand, so the title leads the strip and the hint
-    // keeps the right edge.
-    if (inner.insertBefore && inner.firstChild) {
-      inner.insertBefore(railHeadModeEl, inner.firstChild);
-      inner.insertBefore(railHeadTitleEl, railHeadModeEl);
-    } else {
-      inner.appendChild(railHeadTitleEl);
-      inner.appendChild(railHeadModeEl);
-    }
-    return true;
+    return set;
   }
 
-  /** @param {string} title The open session's title; "" when no project is on screen. */
-  function renderRailHead(title) {
-    lastRailHeadTitle = title;
-    if (!ensureRailHead()) {
+  /** The tabs for the project on screen, most recent first. */
+  function visibleTabs() {
+    if (!currentProjectId) {
+      return [];
+    }
+    const hidden = hiddenTabsFor(currentProjectId);
+    return (sessionsByProject.get(currentProjectId) || [])
+      .filter((s) => s.id && !hidden.has(s.id))
+      .slice()
+      .sort(byRecent);
+  }
+
+  function pushSessionTabs() {
+    const openSessionId = currentProjectId
+      ? (peekProjectState(currentProjectId) || {}).sessionId || ""
+      : "";
+    const tabs = visibleTabs()
+      .slice(0, 16)
+      .map((s) => ({
+        id: s.id,
+        title: (s.title || "New chat").trim() || "New chat",
+        model: s.model,
+        msg_count: s.msg_count,
+      }));
+    // session.list only returns sessions already written to disk, and a
+    // session is written by its first message — so the one being looked at
+    // has no row until the user says something. Lead with it anyway.
+    const shown = openSessionId && !hiddenTabsFor(currentProjectId || "").has(openSessionId);
+    if (shown && !tabs.some((t) => t.id === openSessionId)) {
+      tabs.unshift({ id: openSessionId, title: "New chat" });
+    }
+    toRenderer({ type: "sessionTabs", activeId: openSessionId, tabs });
+  }
+
+  /**
+   * Closing a tab hides it from the strip: the session stays on disk and in
+   * the sidebar, which is the list of everything. Closing the one on screen
+   * moves to the next tab, or starts a fresh session when none is left —
+   * what a tab strip is expected to do.
+   * @param {string} sessionId
+   */
+  function closeSessionTab(sessionId) {
+    if (!sessionId || !currentProjectId) {
       return;
     }
-    // textContent: the title is the user's own first message.
-    railHeadTitleEl.textContent = title;
-    railHeadTitleEl.title = title;
-    const app = document.getElementById("app");
-    const label = document.getElementById("mode-label");
-    const mode = app && app.dataset ? app.dataset.mode || "" : "";
-    const shown = label && label.textContent ? label.textContent : mode;
-    railHeadModeEl.textContent = title && mode ? shown : "";
-  }
-
-  // ---- the view switch, in the sidebar --------------------------------------
-  //
-  // The real segmented control is #view-switch in the header: chat-src binds
-  // it, the webview shows it, rail.css hides it here. These two buttons press
-  // it and mirror #app[data-view], so the trajectory module stays the one
-  // owner of the view state.
-
-  const railViewSegs = [
-    { view: "chat", el: document.getElementById("rail-view-chat"), target: document.getElementById("view-chat-btn") },
-    { view: "trajectory", el: document.getElementById("rail-view-trajectory"), target: document.getElementById("view-trajectory-btn") },
-  ];
-
-  function syncRailView() {
-    const app = document.getElementById("app");
-    const view = app && app.dataset && app.dataset.view === "trajectory" ? "trajectory" : "chat";
-    for (const seg of railViewSegs) {
-      if (seg.el && seg.el.setAttribute) {
-        seg.el.setAttribute("aria-selected", seg.view === view ? "true" : "false");
-      }
+    const openSessionId = (peekProjectState(currentProjectId) || {}).sessionId || "";
+    hiddenTabsFor(currentProjectId).add(sessionId);
+    if (sessionId !== openSessionId) {
+      pushSessionTabs();
+      return;
     }
-  }
-
-  for (const seg of railViewSegs) {
-    if (!seg.el || !seg.el.addEventListener) {
-      continue;
+    const next = visibleTabs()[0];
+    if (next) {
+      void openSessionRow(currentProjectId, next.id);
+    } else {
+      void startSession(undefined);
     }
-    seg.el.addEventListener("click", () => {
-      if (seg.target && typeof seg.target.click === "function") {
-        seg.target.click();
-      }
-      syncRailView();
-    });
-    // Arrow keys move between the two segments, as a tablist does.
-    seg.el.addEventListener("keydown", (ev) => {
-      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
-        return;
-      }
-      if (ev.preventDefault) ev.preventDefault();
-      const other = railViewSegs.find((s) => s !== seg);
-      if (other && other.el && typeof other.el.click === "function") {
-        other.el.click();
-        if (other.el.focus) other.el.focus();
-      }
-    });
+    pushSessionTabs();
   }
-
-  // Changes that do not come through these buttons — the mode picker, the
-  // header's own switch — still have to show here.
-  const railAppEl = document.getElementById("app");
-  if (railAppEl && typeof MutationObserver === "function") {
-    new MutationObserver(() => {
-      syncRailView();
-      renderRailHead(lastRailHeadTitle);
-    }).observe(railAppEl, { attributes: true, attributeFilter: ["data-view", "data-mode"] });
-  }
-  syncRailView();
 
   // ---- input -------------------------------------------------------------
+
+  /**
+   * The scale chat.css puts on :root above 2600px, or 1. Read back rather
+   * than duplicated here so the breakpoints stay in one file.
+   */
+  function rootZoom() {
+    try {
+      const z = parseFloat(window.getComputedStyle(document.documentElement).zoom);
+      return isFinite(z) && z > 0 ? z : 1;
+    } catch (e) {
+      // No getComputedStyle (the adapter tests' stub) means no zoom either.
+      return 1;
+    }
+  }
 
   const railMenu = (() => {
     const el = document.createElement("div");
@@ -568,8 +564,12 @@
       void forgetProject(projectId);
     });
     railMenu.appendChild(forget);
-    railMenu.style.left = x + "px";
-    railMenu.style.top = y + "px";
+    // clientX/clientY are viewport pixels, but chat.css zooms :root on very
+    // wide displays and this menu is positioned inside that zoom — so the
+    // same number means a different place. Divide it back out.
+    const z = rootZoom();
+    railMenu.style.left = x / z + "px";
+    railMenu.style.top = y / z + "px";
     railMenu.hidden = false;
   }
 
@@ -680,44 +680,74 @@
     syncThemeMenu(choice);
   }
 
+  const railSettingsBtn = document.getElementById("rail-settings-btn");
+  const railSettingsModal = document.getElementById("rail-settings-modal");
+  const railSettingsCloseBtn = document.getElementById("rail-settings-close");
+
   /** @param {string} choice */
   function syncThemeMenu(choice) {
-    if (!railSettingsMenu || !railSettingsMenu.querySelectorAll) return;
-    railSettingsMenu.querySelectorAll("[data-theme-choice]").forEach((el) => {
+    if (!railSettingsModal || !railSettingsModal.querySelectorAll) return;
+    railSettingsModal.querySelectorAll("[data-theme-choice]").forEach((el) => {
       el.setAttribute("aria-checked", el.getAttribute("data-theme-choice") === choice ? "true" : "false");
     });
   }
 
-  const railSettingsBtn = document.getElementById("rail-settings-btn");
-  const railSettingsMenu = document.getElementById("rail-settings-menu");
+  /** What the dialog can say about where you are, from what the page knows. */
+  function renderSettingsFacts() {
+    const entry = known.find((p) => p.id === currentProjectId);
+    const nameEl = document.getElementById("rail-fact-project");
+    const pathEl = document.getElementById("rail-fact-path");
+    // textContent: both are strings off disk.
+    if (nameEl) nameEl.textContent = (entry && (entry.name || entry.path)) || "—";
+    if (pathEl) pathEl.textContent = (entry && entry.path) || "—";
+  }
 
   /** @param {boolean} open */
-  function showRailSettingsMenu(open) {
-    if (railSettingsMenu) railSettingsMenu.hidden = !open;
+  function showRailSettings(open) {
+    if (railSettingsModal) railSettingsModal.hidden = !open;
     if (railSettingsBtn && railSettingsBtn.setAttribute) {
       railSettingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    if (open) {
+      renderSettingsFacts();
+    } else if (railSettingsBtn && railSettingsBtn.focus) {
+      // Sending focus back to the opener is the whole reason a dialog is
+      // navigable by keyboard at all.
+      railSettingsBtn.focus();
     }
   }
 
   if (railSettingsBtn && railSettingsBtn.addEventListener) {
-    railSettingsBtn.addEventListener("click", (ev) => {
-      if (ev.stopPropagation) ev.stopPropagation();
-      showRailSettingsMenu(Boolean(railSettingsMenu && railSettingsMenu.hidden));
+    railSettingsBtn.addEventListener("click", () => {
+      showRailSettings(Boolean(railSettingsModal && railSettingsModal.hidden));
     });
   }
 
-  if (railSettingsMenu && railSettingsMenu.addEventListener) {
-    railSettingsMenu.addEventListener("click", (ev) => {
-      if (ev.stopPropagation) ev.stopPropagation();
+  if (railSettingsCloseBtn && railSettingsCloseBtn.addEventListener) {
+    railSettingsCloseBtn.addEventListener("click", () => showRailSettings(false));
+  }
+
+  if (railSettingsModal && railSettingsModal.addEventListener) {
+    railSettingsModal.addEventListener("click", (ev) => {
+      // A click that lands on the scrim rather than the card dismisses.
+      if (ev.target === railSettingsModal) {
+        showRailSettings(false);
+        return;
+      }
       const item = ev.target && ev.target.closest ? ev.target.closest("[data-theme-choice]") : null;
       if (!item) return;
+      // The dialog stays open on a pick: the page repaints behind it, which
+      // is the point of choosing a theme from one.
       applyTheme(item.getAttribute("data-theme-choice") || "system");
-      showRailSettingsMenu(false);
     });
   }
 
   if (document.addEventListener) {
-    document.addEventListener("click", () => showRailSettingsMenu(false));
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && railSettingsModal && !railSettingsModal.hidden) {
+        showRailSettings(false);
+      }
+    });
   }
 
   syncThemeMenu(savedTheme());

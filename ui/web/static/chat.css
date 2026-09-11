@@ -288,10 +288,14 @@ body {
   color: var(--fg);
 }
 
+/* 100% of body, not 100vh: vh is the unzoomed viewport, so under the scale
+   the very-large-display block applies at the end of this file the column
+   came out 1.6x the screen and pushed the composer off the bottom. html and
+   body are already height:100% above, and percentages do follow the zoom. */
 #app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   min-height: 0;
   position: relative;
 }
@@ -341,7 +345,7 @@ body {
   align-items: stretch;
   gap: 0;
   width: 100%;
-  min-height: 41px;
+  min-height: 46px;
   padding: 0;
 }
 
@@ -391,24 +395,24 @@ body.vscode-high-contrast-light .chrome-logo {
 .session-tabs-empty {
   display: flex;
   align-items: center;
-  padding: 0 14px;
-  font-size: 12px;
+  padding: 0 16px;
+  font-size: 13px;
   color: var(--muted);
 }
 
 .session-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   flex: 0 0 auto;
-  max-width: 200px;
-  padding: 8px 10px;
+  max-width: 220px;
+  padding: 8px 12px;
   border: none;
   border-right: 1px solid var(--border);
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 450;
   letter-spacing: -0.01em;
   cursor: pointer;
@@ -447,11 +451,11 @@ body.vscode-high-contrast-light .chrome-logo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   margin-left: 2px;
   border-radius: 4px;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
   opacity: 0;
   color: var(--muted);
@@ -595,7 +599,9 @@ body.vscode-high-contrast-light .chrome-logo {
   right: 8px;
   min-width: 200px;
   max-width: 280px;
-  max-height: 45vh;
+  /* Capped in pixels as well as vh, like every other menu here: vh does not
+     follow the zoom, so an uncapped one grows with it. */
+  max-height: min(420px, 45vh);
   overflow-y: auto;
 }
 
@@ -4038,39 +4044,52 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: none;
 }
 
+/* The view switch sits at the right end of the strip, past the tabs, because
+   it answers a different question from them: the tabs choose WHICH session,
+   this chooses HOW you are looking at it. A raised group on its own ground
+   rather than a hairline box — at the far edge a wireframe outline reads as
+   an afterthought. */
 .view-switch {
   display: inline-flex;
-  align-items: stretch;
+  align-items: center;
+  gap: 3px;
   flex: 0 0 auto;
-  margin-left: 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
+  align-self: center;
+  margin: 0 6px 0 10px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--composer-bg);
 }
 .view-segment {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
   border: none;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   transition: color 0.12s, background 0.12s;
 }
-.view-segment + .view-segment {
-  border-left: 1px solid var(--border);
+.view-segment svg {
+  flex: 0 0 auto;
 }
 .view-segment:hover {
   color: var(--fg);
-  background: var(--pill-hover);
 }
 .view-segment[aria-selected="true"] {
   color: var(--fg);
-  background: var(--menu-selected);
+  font-weight: 600;
+  background: var(--surface-2);
 }
 .view-segment:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+  outline: 2px solid var(--fg-dim);
+  outline-offset: -2px;
 }
 /* ---- Trajectory view -----------------------------------------------------
    Toolbar, timeline, then a two-pane body: the row list and the detail panel.
@@ -4582,5 +4601,39 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 @media (min-width: 1700px) {
   :root {
     --content-max: 1020px;
+  }
+}
+
+/* ---- very large displays ----------------------------------------------- */
+/* A 4K monitor at 100% scaling hands the page about 3840 CSS pixels, and
+   every size in this file is a literal pixel — so the whole UI lands at
+   roughly half the physical size it has on a 1080p screen. Rather than
+   restate several hundred declarations per step, and inevitably miss some,
+   scale the layout itself: zoom divides the CSS pixel for everything inside,
+   so nothing is left behind and the proportions tuned above are preserved
+   exactly.
+
+   Media queries measure the real viewport, not the zoomed one, so these
+   thresholds cannot feed back into themselves. They start above 2560 because
+   a 1440p desktop at 100% is already comfortable with the 1700px step.
+
+   The one thing zoom moves is the coordinate space of an element placed from
+   clientX/clientY: ui/web/src/40-projects.js reads this factor back and
+   divides by it when it positions the workspace context menu. */
+@media (min-width: 2600px) {
+  :root {
+    zoom: 1.2;
+  }
+}
+
+@media (min-width: 3200px) {
+  :root {
+    zoom: 1.45;
+  }
+}
+
+@media (min-width: 3800px) {
+  :root {
+    zoom: 1.6;
   }
 }

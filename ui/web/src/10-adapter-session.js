@@ -236,6 +236,12 @@
         void startSession(msg.sessionId);
         return;
 
+      case "closeSession":
+        // Web-only: closing a tab hides it from the strip. The session is not
+        // deleted — the sidebar still lists it. See 40-projects.js.
+        closeSessionTab(msg.sessionId || "");
+        return;
+
       case "listSessions":
         void refreshSessionList(currentProjectId);
         return;

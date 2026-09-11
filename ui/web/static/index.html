@@ -43,25 +43,6 @@
         <span class="rail-word-sub">Code</span>
       </span>
     </div>
-    <!-- The real view switch is #view-switch in the header, shared with the
-         webview and bound by chat-src; rail.css hides it here and these two
-         drive it (40-projects.js). -->
-    <div id="rail-view-switch" class="rail-view-switch" role="tablist" aria-label="View">
-      <button type="button" id="rail-view-chat" class="rail-view-seg" role="tab" aria-selected="true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M20 12a8 8 0 11-3.2-6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M8 11h8M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        Chat
-      </button>
-      <button type="button" id="rail-view-trajectory" class="rail-view-seg" role="tab" aria-selected="false">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M4 18V7M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M8 15V11M12 15V8M16 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        Trajectory
-      </button>
-    </div>
     <button type="button" id="rail-new-session-btn" class="rail-new-session" title="New session in this project">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
@@ -82,12 +63,6 @@
           <path d="M19.4 13a7.8 7.8 0 000-2l2-1.2-2-3.5-2.3 1a7.9 7.9 0 00-1.7-1L15 3h-4l-.4 2.3a7.9 7.9 0 00-1.7 1l-2.3-1-2 3.5 2 1.2a7.8 7.8 0 000 2l-2 1.2 2 3.5 2.3-1a7.9 7.9 0 001.7 1L11 21h4l.4-2.3a7.9 7.9 0 001.7-1l2.3 1 2-3.5-2-1.2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
         </svg>
       </button>
-      <div id="rail-settings-menu" class="rail-settings-menu" hidden role="menu" aria-label="Settings">
-        <div class="rail-menu-section">Appearance</div>
-        <button type="button" class="rail-menu-item" data-theme-choice="system" role="menuitemradio">Follow the system</button>
-        <button type="button" class="rail-menu-item" data-theme-choice="light" role="menuitemradio">Light</button>
-        <button type="button" class="rail-menu-item" data-theme-choice="dark" role="menuitemradio">Dark</button>
-      </div>
     </div>
   </nav>
   <div id="app" data-mode="agent" data-view="chat">
@@ -99,8 +74,20 @@
         </div>
         <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Chat sessions"></div>
         <div id="view-switch" class="view-switch" role="tablist" aria-label="View">
-          <button type="button" id="view-chat-btn" class="view-segment" role="tab" aria-selected="true" aria-controls="messages">Chat</button>
-          <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">Trajectory</button>
+          <button type="button" id="view-chat-btn" class="view-segment" role="tab" aria-selected="true" aria-controls="messages">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M20 12a8 8 0 11-3.2-6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M8 11h8M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Chat
+          </button>
+          <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 18V7M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M8 15V11M12 15V8M16 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Trajectory
+          </button>
         </div>
         <div class="chrome-actions">
           <button type="button" id="session-new-btn" class="chrome-action" title="New chat" aria-label="New chat">
@@ -330,6 +317,53 @@
               </svg>
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Settings. A sibling of #app, not a child: everything inside #app is
+       byte-identical with the VS Code webview's markup, and a modal inside
+       the sidebar would be clipped by its overflow anyway. -->
+  <div id="rail-settings-modal" class="rail-modal" hidden role="dialog" aria-modal="true" aria-labelledby="rail-settings-title">
+    <div class="rail-modal-card">
+      <div class="rail-modal-head">
+        <h2 id="rail-settings-title" class="rail-modal-title">Settings</h2>
+        <button type="button" id="rail-settings-close" class="rail-modal-close" aria-label="Close settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="rail-modal-body">
+        <div class="rail-modal-section">
+          <div class="rail-modal-section-head">Appearance</div>
+          <div class="rail-choices" role="radiogroup" aria-label="Theme">
+            <button type="button" class="rail-choice" data-theme-choice="system" role="radio" aria-checked="true">
+              <span class="rail-choice-name">Follow the system</span>
+              <span class="rail-choice-hint">Whatever your OS is set to</span>
+            </button>
+            <button type="button" class="rail-choice" data-theme-choice="light" role="radio" aria-checked="false">
+              <span class="rail-choice-name">Light</span>
+              <span class="rail-choice-hint">Always the light palette</span>
+            </button>
+            <button type="button" class="rail-choice" data-theme-choice="dark" role="radio" aria-checked="false">
+              <span class="rail-choice-name">Dark</span>
+              <span class="rail-choice-hint">Always the dark palette</span>
+            </button>
+          </div>
+        </div>
+        <div class="rail-modal-section">
+          <div class="rail-modal-section-head">Workspace</div>
+          <dl class="rail-facts">
+            <div class="rail-fact">
+              <dt>Project</dt>
+              <dd id="rail-fact-project">—</dd>
+            </div>
+            <div class="rail-fact">
+              <dt>Folder</dt>
+              <dd id="rail-fact-path">—</dd>
+            </div>
+          </dl>
         </div>
       </div>
     </div>

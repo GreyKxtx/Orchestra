@@ -94,6 +94,64 @@ if (!fs.existsSync(bundle)) {
   }
 }
 
+// 4. No fragment redeclares another's top-level name.
+//
+// Every fragment is concatenated into ONE function scope, so two files
+// declaring the same name is not a clash the engine reports — the later one
+// silently replaces the earlier. That has bitten twice: a duplicate const
+// threw at load (caught by check 1), and a duplicate `function
+// renderSessionTabs` replaced the renderer's with the adapter's, which turned
+// one message into an endless loop and painted nothing. Neither parsing nor
+// the id check can see it.
+//
+// Top level inside the IIFE is exactly one indent, which every fragment
+// follows; anything deeper is a real nested scope and is left alone. The
+// bundle is what gets read, not the sources, because the bundler deliberately
+// drops one line on the way in — 01-dom-state.js's `host = acquireVsCodeApi()`,
+// which 00-web-prelude.js replaces — and that is not a clash. Sources are read
+// only to say which file each surviving duplicate came from.
+if (fs.existsSync(bundle)) {
+  const topLevel = / {2}(?:async )?(?:function\*? |const |let |class )([A-Za-z_$][\w$]*)/;
+  const counts = new Map();
+  for (const line of fs.readFileSync(bundle, "utf8").split(/\r?\n/)) {
+    const m = topLevel.exec(line);
+    if (m && line.startsWith("  " + line.trim().slice(0, 1))) {
+      counts.set(m[1], (counts.get(m[1]) || 0) + 1);
+    }
+  }
+  const duplicated = [...counts.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+
+  /** @type {Map<string, string[]>} */
+  const declaredIn = new Map();
+  const dirs = [
+    path.join(repo, "ui", "vscode", "media", "chat-src"),
+    path.join(root, "src"),
+  ];
+  for (const dir of dirs) {
+    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".js"))) {
+      const src = fs.readFileSync(path.join(dir, name), "utf8");
+      for (const id of duplicated) {
+        const re = new RegExp(`^ {2}(?:async )?(?:function\\*? |const |let |class )${id}\\b`, "m");
+        if (re.test(src)) {
+          declaredIn.set(id, (declaredIn.get(id) || []).concat(name));
+        }
+      }
+    }
+  }
+
+  if (duplicated.length > 0) {
+    const where = duplicated
+      .map((id) => `${id} (${(declaredIn.get(id) || ["?"]).join(", ")})`)
+      .sort();
+    fail(
+      `${duplicated.length} name(s) are declared at the top level of more than one ` +
+        `fragment; they share one scope, so the last one silently wins: ${where.join("; ")}`
+    );
+  } else {
+    console.log(`ok   ${counts.size} top-level names, each declared once`);
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

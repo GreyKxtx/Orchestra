@@ -1359,20 +1359,36 @@ test("the segmented control switches #app[data-view], by click and by arrow key"
   assert.equal(app.dataset.view, "chat");
 });
 
-test("the sidebar's view switch presses the header's and follows #app[data-view]", async () => {
+test("the header's tab strip is the open project's session list, and closing a tab hides it", async () => {
   const b = loadBundle({ search: "?project=A" });
   await tick();
-  const app = b.elementById("app");
-  const railChat = b.elementById("rail-view-chat");
-  const railTraj = b.elementById("rail-view-trajectory");
-  assert.ok(railChat && railTraj, "40-projects.js must look up both sidebar segments");
-  assert.equal(app.dataset.view, "chat");
-  railTraj.click();
-  assert.equal(app.dataset.view, "trajectory");
-  railChat.click();
-  assert.equal(app.dataset.view, "chat");
-  railChat.keydown("ArrowRight");
-  assert.equal(app.dataset.view, "trajectory");
+  await handshakeFor(b, "A");
+  answerOn(b, "A", "session.list", {
+    sessions: [
+      { id: "older", title: "Older", updated_at: "2026-01-01T00:00:00Z" },
+      { id: "s-A", title: "On screen", updated_at: "2026-01-02T00:00:00Z" },
+    ],
+  });
+  await tick();
+
+  const tabs = b.inbound.filter((m) => m.type === "sessionTabs").pop();
+  assert.ok(tabs, "the adapter never drove the header's tab strip");
+  assert.equal(tabs.activeId, "s-A", "the open session is not the active tab");
+  assert.deepEqual(
+    tabs.tabs.map((t) => t.id),
+    ["s-A", "older"],
+    "tabs are not the session list, most recent first"
+  );
+
+  // Closing a tab that is not the one on screen only hides it: no session
+  // switch, and the sidebar still knows about it.
+  b.inbound.length = 0;
+  dispatch(b, { type: "closeSession", sessionId: "older" });
+  await tick();
+  const after = b.inbound.filter((m) => m.type === "sessionTabs").pop();
+  assert.ok(after, "closing a tab did not repaint the strip");
+  assert.deepEqual(after.tabs.map((t) => t.id), ["s-A"]);
+  assert.equal(after.activeId, "s-A", "closing another tab moved the session on screen");
 });
 
 test("clearMessages also clears the trajectory", async () => {
