@@ -4,18 +4,25 @@
      In the UI the mark is currentColor at three opacities, which works because
      it sits on the app's own near-black. An icon has no such promise — it lands
      on a dark taskbar, a light dock, a grey installer — so here it gets a
-     rounded square of its own, in the accent this product is built around, with
-     the cubes in white at the same three opacities.
+     rounded square of its own: the app's own ground, with the cubes in white at
+     the same three opacities, which is the mark exactly as the sidebar shows
+     it. The ground is not flat black but a short fall from #1c1c20 to #08080a,
+     so the square keeps an edge on a black taskbar instead of dissolving into
+     it.
 
      Rendered to PNG and ICO by ui/desktop/scripts/build-icons.mjs. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="ground" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#8b5cf6"/>
-      <stop offset="1" stop-color="#6d28d9"/>
+    <linearGradient id="ground" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#1c1c20"/>
+      <stop offset="1" stop-color="#08080a"/>
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="112" ry="112" fill="url(#ground)"/>
+  <!-- A hairline of the app's own border colour, so the icon reads as a tile
+       rather than a hole when the surface behind it is black too. -->
+  <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" ry="110.5"
+        fill="none" stroke="#33333a" stroke-width="3"/>
   <!-- The mark itself, scaled from the 32-unit original: 512/32 = 16, then
        pulled in to 11.5 so it keeps an icon's margin, and centred. -->
   <g transform="translate(256 262) scale(11.5) translate(-16 -16)" fill="#ffffff">

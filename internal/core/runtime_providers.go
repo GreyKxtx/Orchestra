@@ -63,6 +63,15 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 		includeSecrets = *params.IncludeSecrets
 	}
 	active := strings.TrimSpace(c.cfg.LLM.Provider)
+	if active == "" {
+		// A config may name no provider at all and still work: llm.api_base
+		// and llm.model are enough for the agent, and `orchestra init` writes
+		// exactly that. Every provider-shaped surface then had nothing to mark
+		// as current — the settings panel showed no selection and offered
+		// nothing to change, while the chat was talking to a model — so the
+		// endpoint is matched back to the catalogue and names itself.
+		active = providerForAPIBase(c.cfg.LLM.APIBase)
+	}
 
 	seen := make(map[string]struct{})
 	out := make([]RuntimeProviderEntry, 0, len(llm.ProviderCatalog)+len(c.cfg.Providers))
@@ -148,7 +157,11 @@ func (c *Core) RuntimeListProviders(ctx context.Context, params RuntimeListProvi
 			if !out[i].Ready {
 				continue
 			}
-			if probeKey == "" && !out[i].Configured {
+			// The active provider is probed even when nothing in the config
+			// names it: it is the one whose models the user most needs listed,
+			// and a config that sets only llm.api_base has no "configured"
+			// entry to qualify under.
+			if probeKey == "" && !out[i].Configured && !out[i].Active {
 				continue
 			}
 			models, err := c.listModelsForProvider(probeCtx, key)
@@ -198,6 +211,37 @@ func (c *Core) listModelsForProvider(ctx context.Context, key string) ([]Runtime
 		out = append(out, RuntimeModelEntry{ID: id, OwnedBy: m.OwnedBy, ContextTokens: m.ContextTokens()})
 	}
 	return out, nil
+}
+
+// normaliseAPIBase reduces an endpoint to what identifies the service: case
+// and a trailing slash never matter, and neither does the "/v1" suffix, which
+// the same endpoint is written with and without all over the place —
+// LM Studio's catalogue entry says http://localhost:1234 while `orchestra
+// init` writes http://localhost:1234/v1 for it.
+func normaliseAPIBase(s string) string {
+	v := strings.ToLower(strings.TrimSpace(s))
+	v = strings.TrimRight(v, "/")
+	v = strings.TrimSuffix(v, "/v1")
+	return strings.TrimRight(v, "/")
+}
+
+// providerForAPIBase names the catalogue provider serving an endpoint, or "".
+// Only entries with a default endpoint can match: "custom" and "azure" have
+// none, so they never claim someone else's URL.
+func providerForAPIBase(apiBase string) string {
+	want := normaliseAPIBase(apiBase)
+	if want == "" {
+		return ""
+	}
+	for _, cat := range llm.ProviderCatalog {
+		if cat.DefaultAPIBase == "" {
+			continue
+		}
+		if normaliseAPIBase(cat.DefaultAPIBase) == want {
+			return cat.Key
+		}
+	}
+	return ""
 }
 
 func providerSavedInConfig(c *config.ProjectConfig, key string, cat llm.CatalogEntry, llmCfg config.LLMConfig) bool {
