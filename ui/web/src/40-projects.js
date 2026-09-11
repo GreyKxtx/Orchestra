@@ -412,6 +412,12 @@
     const ordered = rows.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
     const hasActive = rows.some((r) => r.active);
     let otherLabelDone = false;
+    // With nothing open there is no "other" to be other than, so the heading
+    // is simply the list's own, at the top where a heading belongs.
+    if (!hasActive) {
+      list.appendChild(railSectionHeading("Workspaces"));
+      otherLabelDone = true;
+    }
     for (const row of ordered) {
       if (!row.active && hasActive && !otherLabelDone) {
         list.appendChild(railSectionHeading("Other workspaces"));
@@ -918,6 +924,219 @@
    * page is inside the desktop shell, which grants exactly this call; a plain
    * browser gets a path prompt instead.
    */
+  // ---- the start screen --------------------------------------------------
+  //
+  // Shown when no workspace is open. The desktop shell starts the core with
+  // --no-project so its window opens here rather than guessing which project
+  // you meant; a plain `orchestra web` opens the folder it was run in and
+  // never sees this, unless every project is closed from the sidebar.
+
+  /** @param {boolean} on */
+  function showStartScreen(on) {
+    const screen = document.getElementById("start-screen");
+    const app = document.getElementById("app");
+    if (!screen || !app) {
+      return;
+    }
+    screen.hidden = !on;
+    app.hidden = on;
+    if (on) {
+      renderStartScreen();
+    }
+  }
+
+  /** @param {string} message "" clears it. */
+  function startError(message) {
+    const el = document.getElementById("start-error");
+    if (!el) {
+      return;
+    }
+    el.textContent = message || "";
+    el.hidden = !message;
+  }
+
+  function renderStartScreen() {
+    const list = document.getElementById("start-recent-list");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    if (known.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "start-recent-empty";
+      empty.textContent = "No workspaces yet — open a folder or clone a repository.";
+      list.appendChild(empty);
+      return;
+    }
+    for (const p of known) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "start-recent-item";
+      item.dataset.projectId = p.id || "";
+      item.dataset.path = p.path || "";
+      item.title = p.path || "";
+
+      const name = document.createElement("span");
+      name.className = "start-recent-name";
+      // textContent: the name is a folder name off disk.
+      name.textContent = p.name || p.path || "?";
+      item.appendChild(name);
+
+      const path = document.createElement("span");
+      path.className = "start-recent-path";
+      path.textContent = p.path || "";
+      item.appendChild(path);
+
+      if (typeof p.sessions === "number" && p.sessions >= 0) {
+        const count = document.createElement("span");
+        count.className = "start-recent-count";
+        count.textContent = p.sessions === 1 ? "1 chat" : p.sessions + " chats";
+        item.appendChild(count);
+      }
+      list.appendChild(item);
+    }
+  }
+
+  /**
+   * Open a workspace from the start screen and leave it. Anything that fails
+   * stays on the screen with the reason, because there is nowhere else to go.
+   * @param {string} path
+   */
+  async function openFromStart(path) {
+    startError("");
+    if (!path) {
+      return;
+    }
+    if (await openProject(path, false)) {
+      showStartScreen(false);
+      return;
+    }
+    const agreed = window.confirm
+      ? window.confirm(path + " is not an Orchestra project yet. Initialise it?")
+      : false;
+    if (agreed && (await openProject(path, true))) {
+      showStartScreen(false);
+      return;
+    }
+    if (!agreed) {
+      startError("Could not open " + path + ".");
+    }
+  }
+
+  /** Clone a repository, then open it. Both halves are one request. */
+  async function cloneFromStart() {
+    const input = /** @type {HTMLInputElement|null} */ (
+      document.getElementById("start-clone-url")
+    );
+    const go = /** @type {HTMLButtonElement|null} */ (
+      document.getElementById("start-clone-go")
+    );
+    const url = input ? String(input.value || "").trim() : "";
+    if (!url) {
+      startError("Enter a repository URL.");
+      return;
+    }
+    startError("");
+    // Where to put it. The shell's folder picker when there is one; typed
+    // otherwise, because a browser cannot open a native chooser.
+    let parent = "";
+    const t = window.__TAURI__;
+    if (t && t.dialog && t.dialog.open) {
+      try {
+        const picked = await t.dialog.open({ directory: true, multiple: false });
+        parent = typeof picked === "string" ? picked : "";
+      } catch (e) {
+        parent = "";
+      }
+    } else if (window.prompt) {
+      parent = window.prompt("Clone into which folder? (absolute path)") || "";
+    }
+    parent = String(parent || "").trim();
+    if (!parent) {
+      return;
+    }
+    if (go) {
+      go.disabled = true;
+      go.textContent = "Cloning…";
+    }
+    try {
+      const created = await api("/api/projects/clone", {
+        method: "POST",
+        body: JSON.stringify({ url, parent }),
+      });
+      await refreshProjects();
+      if (created && created.id) {
+        await switchProject(created.id);
+        showStartScreen(false);
+        return;
+      }
+      renderStartScreen();
+    } catch (e) {
+      startError(String((e && e.message) || e));
+    } finally {
+      if (go) {
+        go.disabled = false;
+        go.textContent = "Clone";
+      }
+    }
+  }
+
+  {
+    const screen = document.getElementById("start-screen");
+    if (screen && screen.addEventListener) {
+      screen.addEventListener("click", (ev) => {
+        const item = ev.target && ev.target.closest ? ev.target.closest(".start-recent-item") : null;
+        if (item) {
+          void openFromStart(item.dataset.path || "");
+        }
+      });
+    }
+    const openBtn = document.getElementById("start-open-btn");
+    if (openBtn && openBtn.addEventListener) {
+      openBtn.addEventListener("click", () => {
+        void (async () => {
+          startError("");
+          await addProject();
+          if (currentProjectId) {
+            showStartScreen(false);
+          }
+        })();
+      });
+    }
+    const cloneBtn = document.getElementById("start-clone-btn");
+    const cloneForm = document.getElementById("start-clone-form");
+    if (cloneBtn && cloneBtn.addEventListener && cloneForm) {
+      cloneBtn.addEventListener("click", () => {
+        cloneForm.hidden = !cloneForm.hidden;
+        startError("");
+        const input = document.getElementById("start-clone-url");
+        if (!cloneForm.hidden && input && input.focus) {
+          input.focus();
+        }
+      });
+    }
+    const cloneGo = document.getElementById("start-clone-go");
+    if (cloneGo && cloneGo.addEventListener) {
+      cloneGo.addEventListener("click", () => void cloneFromStart());
+    }
+    const cloneCancel = document.getElementById("start-clone-cancel");
+    if (cloneCancel && cloneCancel.addEventListener && cloneForm) {
+      cloneCancel.addEventListener("click", () => {
+        cloneForm.hidden = true;
+        startError("");
+      });
+    }
+    const cloneInput = document.getElementById("start-clone-url");
+    if (cloneInput && cloneInput.addEventListener) {
+      cloneInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          void cloneFromStart();
+        }
+      });
+    }
+  }
+
   async function addProject() {
     let path = "";
     const t = window.__TAURI__;
@@ -977,7 +1196,17 @@
     // `switchProject` returns early on the id it already holds.
     await refreshProjects();
     const first = known.find((p) => p.state === "ready");
-    currentProjectId = first ? first.id : "";
+    if (!first) {
+      // Nothing open: --no-project, or every workspace closed from the rail.
+      // The start screen takes the window until one is picked, and no socket
+      // is opened for a project that does not exist.
+      currentProjectId = "";
+      renderProjects();
+      showStartScreen(true);
+      return;
+    }
+    currentProjectId = first.id;
     setActiveConn(ensureConn(currentProjectId));
     renderProjects();
+    showStartScreen(false);
   })();

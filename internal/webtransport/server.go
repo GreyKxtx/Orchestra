@@ -50,6 +50,11 @@ type Options struct {
 	// NewProjectHandler builds a handler for one project's core. Required when
 	// Registry is set; NewHandler still serves the project-less /ws.
 	NewProjectHandler func(c *core.Core) (jsonrpc.Handler, func(*jsonrpc.Server))
+	// CloneProject, when non-nil, enables POST /api/projects/clone: it clones
+	// remote into a new directory under parent and returns that directory.
+	// Injected for the same reason InitProject is — this package does not
+	// depend on internal/cli, and running git is not its job.
+	CloneProject func(ctx context.Context, remote, parent string) (string, error)
 	// Known, when non-nil, is the remembered project list. GET /api/projects
 	// returns its entries as closed projects beside the open ones, POST records
 	// what it opened, and DELETE ?forget=1 removes an entry. Nil keeps the
@@ -245,6 +250,15 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 			default:
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
+		}))
+		// Registered explicitly so it wins over the id catch-all below: the mux
+		// matches the longest pattern, and "clone" is not a project id.
+		mux.HandleFunc("/api/projects/clone", api(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			handleCloneProject(r.Context(), w, r, opts)
 		}))
 		mux.HandleFunc("/api/projects/", api(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodDelete {
@@ -522,6 +536,64 @@ func remember(opts Options, path string) {
 	if err := opts.Known.Add(path); err != nil {
 		fmt.Fprintf(os.Stderr, "[orchestra] could not remember %s: %v\n", path, err)
 	}
+}
+
+// handleCloneProject implements POST /api/projects/clone: clone a remote into
+// a new directory under parent, initialise it if it has no config, open it,
+// and remember it — so the start screen's "Clone" ends where its "Open" does,
+// with a project the rail can switch to.
+//
+// The request context, not the server's, bounds the clone: a clone is the one
+// thing here that can take minutes, and the user closing the page should end
+// it rather than leave git running against a window that is gone.
+func handleCloneProject(ctx context.Context, w http.ResponseWriter, r *http.Request, opts Options) {
+	if opts.CloneProject == nil {
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "clone_not_enabled"})
+		return
+	}
+	var req struct {
+		URL    string `json:"url"`
+		Parent string `json:"parent"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+		return
+	}
+	if strings.TrimSpace(req.URL) == "" || strings.TrimSpace(req.Parent) == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+		return
+	}
+
+	dest, err := opts.CloneProject(ctx, req.URL, req.Parent)
+	if err != nil {
+		// git's own words: the useful half is "repository not found" or
+		// "authentication failed", and inventing a category loses that.
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{
+			"error": "clone_failed", "detail": err.Error(),
+		})
+		return
+	}
+
+	p, err := opts.Registry.Open(ctx, dest)
+	if errors.Is(err, projects.ErrNotInitialized) && opts.InitProject != nil {
+		// A freshly cloned repository is not an Orchestra project yet, and the
+		// user asking for it to be cloned is the consent to set it up.
+		if ierr := opts.InitProject(ctx, dest); ierr != nil {
+			writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+				"error": "open_failed", "path": dest, "detail": ierr.Error(),
+			})
+			return
+		}
+		p, err = opts.Registry.Open(ctx, dest)
+	}
+	if err != nil {
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+			"error": "open_failed", "path": dest, "detail": err.Error(),
+		})
+		return
+	}
+	remember(opts, p.Path)
+	writeJSONStatus(w, http.StatusCreated, p)
 }
 
 // handleOpenProject implements POST /api/projects. The status codes and error

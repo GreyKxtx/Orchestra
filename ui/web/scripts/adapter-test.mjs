@@ -197,7 +197,14 @@ export function loadBundle(opts = {}) {
   sandbox.globalThis = sandbox;
 
   const fetchCalls = [];
-  let fetchResponder = () => ({ projects: [] });
+  // One open project, which is what every `orchestra web` that was given a
+  // folder reports. An EMPTY list is no longer the same thing: it means
+  // --no-project, and the page answers it with the start screen and opens no
+  // socket at all — so a test that wants the adapter connected must say a
+  // project is there. Tests that want the start screen respond with [].
+  let fetchResponder = () => ({
+    projects: [{ id: "p-default", path: "/w", name: "w", state: "ready", sessions: 0 }],
+  });
   sandbox.fetch = async (url, init) => {
     fetchCalls.push({ url: String(url), init: init || {} });
     // A real fetch never resolves synchronously; this one must not either. A
@@ -1671,4 +1678,23 @@ test("starting a new session in the on-screen project fetches that session's tra
   assert.equal(msg.recorded, true);
   assert.deepEqual(msg.events, []);
   assert.equal(msg.error, undefined);
+});
+
+test("no open workspace means the start screen and no socket at all", async () => {
+  // What --no-project looks like to the page: the API answers, and the answer
+  // is empty. Opening a socket here would name a project that does not exist,
+  // and the transcript behind it would be a chat with nothing.
+  const b = loadBundle({ search: "" });
+  b.setFetchResponder(() => ({ projects: [] }));
+  await tick();
+  await tick();
+
+  assert.equal(b.socketURL, "", "no project is open, so no socket may be opened");
+
+  const screen = b.elementById("start-screen");
+  const app = b.elementById("app");
+  assert.ok(screen, "the start screen element was never looked up");
+  assert.equal(screen.hidden, false, "the start screen must be showing");
+  assert.ok(app, "#app was never looked up");
+  assert.equal(app.hidden, true, "the transcript must be hidden behind it");
 });

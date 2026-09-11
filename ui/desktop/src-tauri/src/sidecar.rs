@@ -145,7 +145,7 @@ fn fail(mut sidecar: Sidecar, message: String) -> StartError {
 /// not a missing binary.
 pub fn start(
     exe_dir: Option<&Path>,
-    workspace: &Path,
+    workspace: Option<&Path>,
     announce_timeout: Duration,
 ) -> Result<(Sidecar, Announce), StartError> {
     let args = sidecar_args(workspace);

@@ -26,7 +26,25 @@ pub fn parse_announce(line: &str) -> Result<Announce, String> {
 }
 
 /// Exactly the arguments the spec fixes; a test pins them byte for byte.
-pub fn sidecar_args(workspace: &Path) -> Vec<String> {
+///
+/// `None` starts the core with no project open. The window then opens on the
+/// page's own start screen — recent workspaces, open a folder, clone a
+/// repository — which is what the app does when it was not told which project
+/// to open. Guessing one (the last one, or the first remembered) and otherwise
+/// throwing a folder dialog at the user was the old behaviour; it opened
+/// somebody's last project on every launch and had no way to say "not that
+/// one".
+pub fn sidecar_args(workspace: Option<&Path>) -> Vec<String> {
+    let Some(workspace) = workspace else {
+        return vec![
+            "web".into(),
+            "--no-project".into(),
+            "--no-open".into(),
+            "--port".into(),
+            "0".into(),
+            "--announce".into(),
+        ];
+    };
     vec![
         "web".into(),
         "--workspace-root".into(),
@@ -183,7 +201,7 @@ mod tests {
 
     #[test]
     fn sidecar_args_are_the_contract() {
-        let args = sidecar_args(Path::new("C:\\repo"));
+        let args = sidecar_args(Some(Path::new("C:\\repo")));
         assert_eq!(
             args,
             vec![
@@ -196,6 +214,22 @@ mod tests {
                 "--init",
                 "--announce"
             ]
+        );
+    }
+
+    #[test]
+    fn no_workspace_starts_the_core_with_no_project() {
+        // The launch with no path argument: nothing is opened, nothing is
+        // initialised, and no workspace is named — the window lands on the
+        // page's start screen and the user picks from there.
+        let args = sidecar_args(None);
+        assert_eq!(
+            args,
+            vec!["web", "--no-project", "--no-open", "--port", "0", "--announce"]
+        );
+        assert!(
+            !args.iter().any(|a| a == "--workspace-root" || a == "--init"),
+            "no project means no workspace to name and none to initialise: {args:?}"
         );
     }
 

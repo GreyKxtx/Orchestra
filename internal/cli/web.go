@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/core"
+	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/projects"
 	"github.com/orchestra/orchestra/internal/webtransport"
 	"github.com/orchestra/orchestra/patch/fsutil"
@@ -29,6 +30,7 @@ var (
 	webDebug         bool
 	webInit          bool
 	webAnnounce      bool
+	webNoProject     bool
 )
 
 var webCmd = &cobra.Command{
@@ -56,6 +58,7 @@ func init() {
 	webCmd.Flags().BoolVar(&webDebug, "debug", false, "Enable debug logs to stderr")
 	webCmd.Flags().BoolVar(&webInit, "init", false, "Initialise the workspace when it has no .orchestra.yml (same as orchestra init)")
 	webCmd.Flags().BoolVar(&webAnnounce, "announce", false, "Sidecar mode: print one JSON line (the discovery object) to stdout when listening; exit when stdin closes")
+	webCmd.Flags().BoolVar(&webNoProject, "no-project", false, "Start with no project open: the UI shows its start screen and the user picks one")
 	rootCmd.AddCommand(webCmd)
 }
 
@@ -106,6 +109,10 @@ type webRunConfig struct {
 	NoOpen    bool
 	Debug     bool
 	Init      bool   // initialise Workspace when it has no .orchestra.yml
+	// NoProject starts the server with nothing open. The remembered list is
+	// still served, so the UI can show its start screen and open one on a
+	// click. Workspace is then only used to place the discovery file.
+	NoProject bool
 	StorePath string // "" = projects.StorePath(); tests pass a temp file
 }
 
@@ -148,7 +155,26 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		NoOpen:    webNoOpen || webAnnounce, // a sidecar never opens a browser
 		Debug:     webDebug,
 		Init:      webInit,
+		NoProject: webNoProject,
 	}, streams)
+}
+
+// startupHealth is what GET /health reports. Under --no-project there is no
+// core yet, and null says that honestly rather than inventing a reading.
+func startupHealth(c *core.Core) any {
+	if c == nil {
+		return nil
+	}
+	return c.Health()
+}
+
+// noProjectHandler backs the project-less /ws when --no-project left no core
+// behind it. The UI never opens that socket — every connection it makes names
+// a project — so this exists to refuse clearly instead of dereferencing nil.
+type noProjectHandler struct{}
+
+func (noProjectHandler) Handle(context.Context, string, json.RawMessage) (any, error) {
+	return nil, fmt.Errorf("no project is open")
 }
 
 // serveWeb is the body of `orchestra web`. It returns when ctx is cancelled.
@@ -173,7 +199,8 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 
 	// A folder the user picked in a dialog has no config yet; --init runs the
 	// same initialisation the API runs for POST /api/projects {"init":true}.
-	if cfg.Init {
+	// Under --no-project there is no folder to prepare.
+	if cfg.Init && !cfg.NoProject {
 		if _, err := os.Stat(filepath.Join(workspace, ".orchestra.yml")); err != nil {
 			if err := initProject(ctx, workspace, InitOptions{}); err != nil {
 				return fmt.Errorf("init workspace: %w", err)
@@ -187,9 +214,19 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 	// The workspace the command was started in is the first project, and its
 	// failure is still fatal: `orchestra web` in a directory that cannot be
 	// opened has nothing to show.
-	startup, err := reg.Open(ctx, workspace)
-	if err != nil {
-		return err
+	//
+	// --no-project opens nothing instead. The desktop shell starts this way so
+	// its window can open on the start screen rather than guessing which
+	// project the user meant. The remembered list is still served, and a click
+	// there opens a project through the same POST /api/projects every other
+	// open goes through.
+	var startup projects.Project
+	if !cfg.NoProject {
+		opened, oerr := reg.Open(ctx, workspace)
+		if oerr != nil {
+			return oerr
+		}
+		startup = opened
 	}
 
 	// The remembered list is the user's list of projects, not a startup
@@ -212,15 +249,24 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 			fmt.Fprintln(os.Stderr, "[orchestra] "+kerr.Error()+"; open projects will not be remembered this run")
 		} else {
 			known = s
-			if aerr := known.Add(startup.Path); aerr != nil {
-				fmt.Fprintln(os.Stderr, "[orchestra] could not remember the startup project: "+aerr.Error())
+			if startup.Path != "" {
+				if aerr := known.Add(startup.Path); aerr != nil {
+					fmt.Fprintln(os.Stderr, "[orchestra] could not remember the startup project: "+aerr.Error())
+				}
 			}
 		}
 	}
 
-	startupCore, _ := reg.Get(startup.ID)
+	// Nil under --no-project: there is no core to report on until one is
+	// opened, and /health says so rather than inventing a reading.
+	var startupCore *core.Core
+	if startup.ID != "" {
+		startupCore, _ = reg.Get(startup.ID)
+	}
 
-	_ = cleanupStaleDiscovery(webDiscoveryPath(workspace))
+	if !cfg.NoProject {
+		_ = cleanupStaleDiscovery(webDiscoveryPath(workspace))
+	}
 
 	token := cfg.Token
 	if token == "" {
@@ -230,12 +276,15 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 	baseURL, stop, err := webtransport.Serve(ctx, webtransport.Options{
 		Addr:     fmt.Sprintf("127.0.0.1:%d", cfg.Port),
 		Token:    token,
-		Health:   startupCore.Health(),
+		Health:   startupHealth(startupCore),
 		Assets:   webui.Assets(),
 		Registry: reg,
 		Known:    known,
 		InitProject: func(ctx context.Context, root string) error {
 			return initProject(ctx, root, InitOptions{})
+		},
+		CloneProject: func(ctx context.Context, remote, parent string) (string, error) {
+			return git.Clone(ctx, remote, parent)
 		},
 		NewProjectHandler: func(c *core.Core) (jsonrpc.Handler, func(*jsonrpc.Server)) {
 			h := core.NewRPCHandler(c)
@@ -245,6 +294,9 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 			}
 		},
 		NewHandler: func() (jsonrpc.Handler, func(*jsonrpc.Server)) {
+			if startupCore == nil {
+				return noProjectHandler{}, nil
+			}
 			h := core.NewRPCHandler(startupCore)
 			return h, func(srv *jsonrpc.Server) {
 				h.SetNotifier(srv)
@@ -271,9 +323,15 @@ func serveWeb(ctx context.Context, cfg webRunConfig, streams webIO) error {
 	}
 	now := time.Now().Unix()
 	disc.StartedAtUnix, disc.WrittenAtUnix = now, now
-	discPath, err := writeWebDiscovery(workspace, disc)
-	if err == nil {
-		defer func() { _ = os.Remove(discPath) }()
+	// The discovery file belongs to a workspace, and under --no-project there
+	// is none: writing it would put .orchestra/web.json in whatever directory
+	// the desktop app happened to start in. The announce line below still
+	// carries everything the parent needs.
+	if !cfg.NoProject {
+		discPath, derr := writeWebDiscovery(workspace, disc)
+		if derr == nil {
+			defer func() { _ = os.Remove(discPath) }()
+		}
 	}
 	if streams.Announce != nil {
 		b, err := json.Marshal(disc)

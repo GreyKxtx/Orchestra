@@ -73,39 +73,38 @@ fn boot(app: AppHandle) {
     let desktop_json = read("desktop.json");
     let projects_json = read("projects.json");
 
+    // A path on the command line opens that project. With no argument the app
+    // opens on the page's start screen instead of guessing: the remembered
+    // list, "Open folder…" and "Clone from GitHub…" are all there, and the
+    // user says which. desktop.json and projects.json are still read, because
+    // the start screen is drawn from the same remembered list the core serves.
+    let _ = (&desktop_json, &projects_json);
     let is_dir = |p: &Path| p.is_dir();
-    let mut pick = || {
-        app.dialog()
-            .file()
-            .set_title("Choose a project folder")
-            .blocking_pick_folder()
-            .and_then(|f| f.into_path().ok())
-    };
-    let Some(workspace) = boot::resolve_project(
+    let workspace = boot::resolve_project(
         boot::Sources {
             arg: arg.as_deref(),
-            desktop_json: desktop_json.as_deref(),
-            projects_json: projects_json.as_deref(),
+            desktop_json: None,
+            projects_json: None,
         },
         &is_dir,
-        &mut pick,
-    ) else {
-        app.exit(0); // nothing to show
-        return;
-    };
-    let workspace = std::fs::canonicalize(&workspace).unwrap_or(workspace);
-    let workspace = boot::simplify_canonical_path(workspace);
+        &mut || None,
+    )
+    .map(|w| {
+        let w = std::fs::canonicalize(&w).unwrap_or(w);
+        boot::simplify_canonical_path(w)
+    });
 
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf));
-    let (core, announce) = match sidecar::start(exe_dir.as_deref(), &workspace, ANNOUNCE_TIMEOUT) {
-        Ok(ok) => ok,
-        Err(e) => {
-            fatal(&app, &e);
-            return;
-        }
-    };
+    let (core, announce) =
+        match sidecar::start(exe_dir.as_deref(), workspace.as_deref(), ANNOUNCE_TIMEOUT) {
+            Ok(ok) => ok,
+            Err(e) => {
+                fatal(&app, &e);
+                return;
+            }
+        };
     // Recover a poisoned mutex rather than drop `core` unstopped: nothing
     // else that locks this ever panics, but if it somehow did, the sidecar
     // must still land in the slot so `RunEvent::Exit` can stop it.
@@ -114,11 +113,11 @@ fn boot(app: AppHandle) {
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = Some(core);
 
-    if let Some(h) = &home {
+    if let (Some(h), Some(w)) = (&home, &workspace) {
         let _ = std::fs::create_dir_all(h);
         let _ = write_atomic(
             &h.join("desktop.json"),
-            boot::remember_project_json(&workspace).as_bytes(),
+            boot::remember_project_json(w).as_bytes(),
         );
     }
 

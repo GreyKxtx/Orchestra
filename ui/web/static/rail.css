@@ -557,3 +557,257 @@ body {
     flex-basis: 320px;
   }
 }
+
+/* ---- the start screen -------------------------------------------------- */
+/* Shown when no workspace is open — which is how the desktop app starts, so
+   the window opens on a choice rather than on a guess about which project you
+   meant. It takes #app's place beside the sidebar; #app carries display:flex
+   from chat.css, so hiding it needs a rule, not just the attribute. */
+
+#app[hidden] {
+  display: none;
+}
+
+.start-screen {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.start-screen[hidden] {
+  display: none;
+}
+
+.start-inner {
+  width: min(100%, 620px);
+  margin: 0 auto;
+  padding: 13vh 28px 48px;
+}
+
+.start-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--fg);
+}
+
+.start-mark {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+}
+
+.start-wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.start-word {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.start-word-sub {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--muted);
+}
+
+.start-lead {
+  margin: 12px 0 22px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.start-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid var(--pill-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.start-action:hover {
+  background: var(--hover-wash);
+  color: var(--fg);
+}
+
+/* One filled control, as everywhere else in this UI. */
+.start-action-primary {
+  border-color: transparent;
+  background: var(--mode-accent);
+  color: var(--rail-on-accent);
+  font-weight: 600;
+}
+
+.start-action-primary:hover {
+  background: var(--mode-accent);
+  filter: brightness(1.07);
+}
+
+.start-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
+.start-clone {
+  margin-top: 14px;
+}
+
+.start-clone[hidden] {
+  display: none;
+}
+
+.start-clone-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.start-clone-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.start-clone-input {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--composer-border);
+  border-radius: 8px;
+  background: var(--composer-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.start-clone-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--mode-accent) 45%, var(--composer-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode-accent) 11%, transparent);
+}
+
+.start-clone-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-2);
+}
+
+.start-error {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--error-border);
+  border-radius: 9px;
+  background: var(--error-bg);
+  color: var(--error-fg);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.start-error[hidden] {
+  display: none;
+}
+
+.start-recent {
+  margin-top: 34px;
+}
+
+.start-recent-head {
+  margin-bottom: 6px;
+  padding: 0 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.start-recent-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.start-recent-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.start-recent-item + .start-recent-item {
+  border-top: 1px solid var(--border-soft);
+  border-radius: 0;
+}
+
+.start-recent-item:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.start-recent-item:focus-visible {
+  outline: 2px solid var(--fg-dim);
+  outline-offset: -2px;
+}
+
+.start-recent-name {
+  flex: 0 0 auto;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.start-recent-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.start-recent-count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+}
+
+.start-recent-empty {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--muted-2);
+}

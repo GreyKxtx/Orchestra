@@ -319,6 +319,61 @@
       </div>
     </div>
   </div>
+  <!-- The start screen. A sibling of #app for the same reason the settings
+       dialog is one: everything inside #app is byte-identical with the VS Code
+       webview's markup, and the editor's panel always has its one folder, so
+       it has no use for this. #app is hidden while this is up. -->
+  <main id="start-screen" class="start-screen" hidden>
+    <div class="start-inner">
+      <div class="start-brand">
+        <svg class="start-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+          <polygon points="10,13.5 15.63,16.75 10,20 4.37,16.75"/>
+          <polygon points="4.37,16.75 10,20 10,26.5 4.37,23.25" fill-opacity="0.55"/>
+          <polygon points="10,20 15.63,16.75 15.63,23.25 10,26.5" fill-opacity="0.78"/>
+          <polygon points="22,13.5 27.63,16.75 22,20 16.37,16.75"/>
+          <polygon points="16.37,16.75 22,20 22,26.5 16.37,23.25" fill-opacity="0.55"/>
+          <polygon points="22,20 27.63,16.75 27.63,23.25 22,26.5" fill-opacity="0.78"/>
+          <polygon points="16,4 21.63,7.25 16,10.5 10.37,7.25"/>
+          <polygon points="10.37,7.25 16,10.5 16,17 10.37,13.75" fill-opacity="0.55"/>
+          <polygon points="16,10.5 21.63,7.25 21.63,13.75 16,17" fill-opacity="0.78"/>
+        </svg>
+        <div class="start-wordmark">
+          <span class="start-word">Orchestra</span>
+          <span class="start-word-sub">Code</span>
+        </div>
+      </div>
+      <p class="start-lead">Open a workspace to start working in it.</p>
+      <div class="start-actions">
+        <button type="button" id="start-open-btn" class="start-action start-action-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+          </svg>
+          Open folder…
+        </button>
+        <button type="button" id="start-clone-btn" class="start-action">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/>
+            <path d="M12 8.6v2.9a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v-.1M18 15.4v-.1a2 2 0 0 0-2-2h-2a2 2 0 0 1-2-2V8.6"/>
+          </svg>
+          Clone from GitHub…
+        </button>
+      </div>
+      <div id="start-clone-form" class="start-clone" hidden>
+        <label class="start-clone-label" for="start-clone-url">Repository URL</label>
+        <div class="start-clone-row">
+          <input type="text" id="start-clone-url" class="start-clone-input" placeholder="https://github.com/owner/repo" spellcheck="false" />
+          <button type="button" id="start-clone-go" class="start-action start-action-primary">Clone</button>
+          <button type="button" id="start-clone-cancel" class="start-action">Cancel</button>
+        </div>
+        <p class="start-clone-hint">You will be asked where to put it. Private repositories need git credentials already set up on this machine.</p>
+      </div>
+      <p id="start-error" class="start-error" hidden></p>
+      <div class="start-recent">
+        <div class="start-recent-head">Recent workspaces</div>
+        <div id="start-recent-list" class="start-recent-list"></div>
+      </div>
+    </div>
+  </main>
   <!-- Settings. A sibling of #app, not a child: everything inside #app is
        byte-identical with the VS Code webview's markup, and a modal inside
        the sidebar would be clipped by its overflow anyway. -->
