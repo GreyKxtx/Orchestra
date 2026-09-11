@@ -123,6 +123,20 @@ const appearancePanel = `
             <span class="theme-choice-hint">Always the dark palette</span>
           </button>
         </div>
+        <div class="section-divider"></div>
+        <h2>Interface scale</h2>
+        <p class="sub">How large everything is drawn. The automatic setting reads the window's
+        width, which cannot know your monitor's physical size — set it yourself if the guess
+        is wrong for your screen.</p>
+        <div class="scale-choices" role="radiogroup" aria-label="Interface scale">
+          <button type="button" class="scale-choice" data-scale-choice="auto" role="radio" aria-checked="true">Automatic</button>
+          <button type="button" class="scale-choice" data-scale-choice="100" role="radio" aria-checked="false">100%</button>
+          <button type="button" class="scale-choice" data-scale-choice="110" role="radio" aria-checked="false">110%</button>
+          <button type="button" class="scale-choice" data-scale-choice="125" role="radio" aria-checked="false">125%</button>
+          <button type="button" class="scale-choice" data-scale-choice="150" role="radio" aria-checked="false">150%</button>
+          <button type="button" class="scale-choice" data-scale-choice="175" role="radio" aria-checked="false">175%</button>
+          <button type="button" class="scale-choice" data-scale-choice="200" role="radio" aria-checked="false">200%</button>
+        </div>
       </section>
 `;
 

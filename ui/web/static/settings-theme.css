@@ -795,6 +795,40 @@ footer,
   color: var(--muted);
 }
 
+/* Scale is a row of short labels, so it reads as one control rather than
+   seven — the same segment group the view switch and Browse/Installed use. */
+.scale-choices {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.scale-choice {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.scale-choice:hover {
+  background: var(--hover);
+  color: var(--fg-dim);
+}
+
+.scale-choice[aria-checked="true"] {
+  color: var(--fg);
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
 /* ---- narrow ------------------------------------------------------------ */
 /* Below this the two panes stop paying for themselves: the column goes back
    to a row across the top, scrolling sideways if it must. */

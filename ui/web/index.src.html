@@ -15,6 +15,12 @@
         if (saved === "light" || saved === "dark") {
           document.documentElement.setAttribute("data-theme", saved);
         }
+        // Same reason, and more visible: the scale changes every measurement
+        // on the page, so applying it after the first paint reflows the lot.
+        var scale = localStorage.getItem("orchestra.scale");
+        if (/^(100|110|125|150|175|200)$/.test(scale || "")) {
+          document.documentElement.setAttribute("data-scale", scale);
+        }
       } catch (e) {
         // Storage can throw outright in a locked-down browser; the system
         // preference is a fine answer when it does.
@@ -42,21 +48,9 @@
         <span class="rail-word">Orchestra</span>
         <span class="rail-word-sub">Code</span>
       </span>
-    </div>
-    <button type="button" id="rail-new-session-btn" class="rail-new-session" title="New session in this project">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-      </svg>
-      New session
-    </button>
-    <div id="project-rail-list" class="project-rail-list" role="tablist"></div>
-    <div class="rail-foot">
-      <button type="button" id="project-add-btn" class="project-rail-add" title="Add a project folder" aria-label="Add a project folder">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-        </svg>
-        Add workspace
-      </button>
+      <!-- The gear sits with the brand because the sidebar has no footer any
+           more: both "add" actions moved onto the heading of the group they
+           add to, and a whole bar for one icon is what that freed. -->
       <button type="button" id="rail-settings-btn" class="rail-settings" title="Settings" aria-label="Settings" aria-expanded="false">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="currentColor" stroke-width="2"/>
@@ -64,6 +58,10 @@
         </svg>
       </button>
     </div>
+    <!-- Both "+" buttons are written by renderProjects, onto the heading of
+         the group each one adds to, and reached through the list's existing
+         click delegation. -->
+    <div id="project-rail-list" class="project-rail-list" role="tablist"></div>
   </nav>
   <div id="app" data-mode="agent" data-view="chat">
     <header id="chrome-strip">

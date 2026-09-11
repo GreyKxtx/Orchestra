@@ -87,6 +87,43 @@
     vscode.postMessage({ type: "setTheme", theme: choice });
   });
 
+  // ---- interface scale ---------------------------------------------------
+  //
+  // The parent's zoom already scales this frame with everything else, so there
+  // is nothing to stamp here — only the current choice to show.
+
+  const SCALES = ["100", "110", "125", "150", "175", "200"];
+
+  /** @returns {string} "auto" or a percentage */
+  function savedFrameScale() {
+    try {
+      const v = window.localStorage ? window.localStorage.getItem("orchestra.scale") : "";
+      return SCALES.indexOf(v || "") >= 0 ? String(v) : "auto";
+    } catch (e) {
+      return "auto";
+    }
+  }
+
+  /** @param {string} choice */
+  function syncFrameScale(choice) {
+    document.querySelectorAll("[data-scale-choice]").forEach((el) => {
+      el.setAttribute(
+        "aria-checked",
+        el.getAttribute("data-scale-choice") === choice ? "true" : "false"
+      );
+    });
+  }
+
+  document.addEventListener("click", (ev) => {
+    const item = ev.target && ev.target.closest ? ev.target.closest("[data-scale-choice]") : null;
+    if (!item) {
+      return;
+    }
+    const choice = item.getAttribute("data-scale-choice") || "auto";
+    syncFrameScale(choice);
+    vscode.postMessage({ type: "setScale", scale: choice });
+  });
+
   window.addEventListener("message", (event) => {
     const msg = event && event.data;
     if (!msg || typeof msg !== "object") {
@@ -95,6 +132,10 @@
     if (msg.type === "theme") {
       syncFrameTheme(msg.theme === "light" || msg.theme === "dark" ? msg.theme : "system");
     }
+    if (msg.type === "scale") {
+      syncFrameScale(SCALES.indexOf(String(msg.scale)) >= 0 ? String(msg.scale) : "auto");
+    }
   });
 
   syncFrameTheme(savedFrameTheme());
+  syncFrameScale(savedFrameScale());

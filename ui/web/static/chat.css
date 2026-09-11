@@ -97,6 +97,12 @@
      declaration in the large-screen block at the end of this file rather
      than four that can drift apart. */
   --content-max: 720px;
+  /* How large the whole interface is drawn. Every size in this file is a
+     literal pixel, so one zoom on the root scales all of them together and
+     keeps the proportions tuned below exactly. The ladder at the end of this
+     file sets the default from the viewport; Appearance can override it. */
+  --ui-scale: 1;
+  zoom: var(--ui-scale);
   font-family: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
     system-ui, sans-serif;
   font-size: 13px;
@@ -4614,26 +4620,66 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
    exactly.
 
    Media queries measure the real viewport, not the zoomed one, so these
-   thresholds cannot feed back into themselves. They start above 2560 because
-   a 1440p desktop at 100% is already comfortable with the 1700px step.
+   thresholds cannot feed back into themselves.
+
+   The ladder starts at 1900 and climbs in small steps. An earlier version
+   began at 2600, which left the most common "big screen" of all with nothing:
+   a 1440p desktop, and equally a 4K panel at the 150% scaling Windows sets by
+   default, both hand the page 2560 CSS pixels. Below the first step the page
+   is unchanged.
+
+   Viewport width is a guess about physical size — it cannot know the
+   monitor's inches, and the guess is wrong for an unusually near or far
+   screen. So it only supplies the DEFAULT: --ui-scale is what zoom reads, and
+   a choice made in Appearance stamps data-scale on the root and wins, at any
+   width. (Web-only; the VS Code webview has no such setting and rides the
+   ladder alone.)
 
    The one thing zoom moves is the coordinate space of an element placed from
    clientX/clientY: ui/web/src/40-projects.js reads this factor back and
    divides by it when it positions the workspace context menu. */
-@media (min-width: 2600px) {
+@media (min-width: 1900px) {
   :root {
-    zoom: 1.2;
+    --ui-scale: 1.1;
   }
 }
 
-@media (min-width: 3200px) {
+@media (min-width: 2200px) {
   :root {
-    zoom: 1.45;
+    --ui-scale: 1.2;
+  }
+}
+
+@media (min-width: 2560px) {
+  :root {
+    --ui-scale: 1.3;
+  }
+}
+
+@media (min-width: 3000px) {
+  :root {
+    --ui-scale: 1.45;
+  }
+}
+
+@media (min-width: 3400px) {
+  :root {
+    --ui-scale: 1.55;
   }
 }
 
 @media (min-width: 3800px) {
   :root {
-    zoom: 1.6;
+    --ui-scale: 1.7;
   }
 }
+
+/* The explicit choice. An attribute selector outranks the bare :root above —
+   media queries add no specificity — so this wins at every width, in either
+   direction: someone on a 4K screen who wants more on screen picks 100%. */
+:root[data-scale="100"] { --ui-scale: 1; }
+:root[data-scale="110"] { --ui-scale: 1.1; }
+:root[data-scale="125"] { --ui-scale: 1.25; }
+:root[data-scale="150"] { --ui-scale: 1.5; }
+:root[data-scale="175"] { --ui-scale: 1.75; }
+:root[data-scale="200"] { --ui-scale: 2; }

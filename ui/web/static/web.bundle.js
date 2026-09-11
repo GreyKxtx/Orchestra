@@ -6621,6 +6621,45 @@
     await activateProject(projectId);
   }
 
+  /**
+   * Start a session in a workspace, opening its core first if it has none.
+   * The add button sits on a workspace heading, and a workspace can be listed
+   * with its core closed — after a reload every one of them is. Reaching
+   * session.start through a connection that is not there printed
+   * "Cannot read properties of null (reading 'send')" into the transcript,
+   * which is the whole reason this exists rather than a bare startSession.
+   * @param {string} projectId
+   */
+  async function newSessionIn(projectId) {
+    const id = projectId || currentProjectId;
+    if (!id) {
+      return;
+    }
+    if (id !== currentProjectId) {
+      await switchProject(id);
+      if (id !== currentProjectId) {
+        return;
+      }
+    }
+    if (!connFor(id)) {
+      // switchProject returns early for the project already on screen, so a
+      // closed current workspace is opened here.
+      const entry = known.find((p) => p.id === id);
+      if (entry && entry.state === "closed") {
+        const opened = await openProject(entry.path, false);
+        if (!opened) {
+          return;
+        }
+      }
+      ensureConn(id);
+      await activateProject(id);
+      if (!connFor(id)) {
+        return;
+      }
+    }
+    await startSession(undefined);
+  }
+
   // ---- the HTTP half -----------------------------------------------------
 
   /** @param {string} path @param {any} init */
@@ -6770,6 +6809,51 @@
     }
   }
 
+  /* The plus, drawn once. A literal — no value from the core reaches it. */
+  const PLUS_SVG =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+    '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+
+  /**
+   * The one affordance for adding: it sits on the heading of the group it
+   * adds to — a session under the workspace it belongs to, a workspace under
+   * the list of workspaces — so neither needs a bar of its own.
+   * @param {string} action "new-session" | "add-project"
+   * @param {string} label
+   * @param {string} [projectId]
+   * @returns {HTMLElement}
+   */
+  function railAddButton(action, label, projectId) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rail-add";
+    btn.dataset.railAction = action;
+    if (projectId) {
+      btn.dataset.projectId = projectId;
+    }
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = PLUS_SVG;
+    return btn;
+  }
+
+  /**
+   * The workspaces heading, which always carries the add button — including
+   * when there is nothing under it yet, which is exactly when a new user
+   * needs it.
+   * @param {string} label @returns {HTMLElement}
+   */
+  function railSectionHeading(label) {
+    const sec = document.createElement("div");
+    sec.className = "rail-section";
+    const text = document.createElement("span");
+    text.className = "rail-section-label";
+    text.textContent = label;
+    sec.appendChild(text);
+    sec.appendChild(railAddButton("add-project", "Add a workspace folder"));
+    return sec;
+  }
+
   /**
    * Repaint the rail and tell the renderer what the list looks like. The
    * renderer message exists for the tests and for any future consumer; the
@@ -6802,10 +6886,7 @@
     let otherLabelDone = false;
     for (const row of ordered) {
       if (!row.active && hasActive && !otherLabelDone) {
-        const sec = document.createElement("div");
-        sec.className = "rail-section";
-        sec.textContent = "Other workspaces";
-        list.appendChild(sec);
+        list.appendChild(railSectionHeading("Other workspaces"));
         otherLabelDone = true;
       }
       // Only the project on screen has a session list — the core is asked for
@@ -6846,7 +6927,17 @@
       const dot = document.createElement("span");
       dot.className = "project-dot";
       chip.appendChild(dot);
-      group.appendChild(chip);
+
+      // The header is a row, not just the chip: the open workspace carries
+      // the button that starts a session in it. A <button> cannot nest inside
+      // another, so the two are siblings.
+      const head = document.createElement("div");
+      head.className = "project-head";
+      head.appendChild(chip);
+      if (row.active) {
+        head.appendChild(railAddButton("new-session", "New session in this workspace", row.id));
+      }
+      group.appendChild(head);
 
       const sessions = document.createElement("div");
       sessions.className = "project-sessions";
@@ -6902,6 +6993,12 @@
       }
       group.appendChild(sessions);
       list.appendChild(group);
+    }
+    // The inline heading is only written when other workspaces follow it. When
+    // none do — one workspace open, or none at all on a first run — the
+    // heading still has to appear, because it carries the only way to add one.
+    if (!otherLabelDone) {
+      list.appendChild(railSectionHeading("Workspaces"));
     }
     pushSessionTabs();
   }
@@ -7051,6 +7148,17 @@
   const railEl = document.getElementById("project-rail-list");
   if (railEl && railEl.addEventListener) {
     railEl.addEventListener("click", (ev) => {
+      // The two add buttons, which renderProjects writes onto group headings.
+      // First, because they sit inside a heading that is itself clickable.
+      const add = ev.target && ev.target.closest ? ev.target.closest("[data-rail-action]") : null;
+      if (add) {
+        if (add.dataset.railAction === "add-project") {
+          void addProject();
+        } else if (add.dataset.railAction === "new-session") {
+          void newSessionIn(add.dataset.projectId || "");
+        }
+        return;
+      }
       const row = ev.target && ev.target.closest ? ev.target.closest(".rail-session") : null;
       if (row) {
         void openSessionRow(row.dataset.projectId || "", row.dataset.sessionId || "");
@@ -7112,13 +7220,6 @@
     });
   }
 
-  const addBtn = document.getElementById("project-add-btn");
-  if (addBtn && addBtn.addEventListener) {
-    addBtn.addEventListener("click", () => {
-      void addProject();
-    });
-  }
-
   // ---- appearance --------------------------------------------------------
   //
   // Web-only. The VS Code webview follows the editor's own theme, so nothing
@@ -7148,6 +7249,46 @@
       if (window.localStorage) {
         if (choice === "system") window.localStorage.removeItem("orchestra.theme");
         else window.localStorage.setItem("orchestra.theme", choice);
+      }
+    } catch (e) {
+      // Not persisting is survivable; the page still honours the click.
+    }
+  }
+
+  /** The scales Appearance offers, as percentages. @type {string[]} */
+  const SCALE_CHOICES = ["100", "110", "125", "150", "175", "200"];
+
+  /** @returns {string} "auto" or one of SCALE_CHOICES */
+  function savedScale() {
+    try {
+      const v = window.localStorage ? window.localStorage.getItem("orchestra.scale") : "";
+      return SCALE_CHOICES.indexOf(v || "") >= 0 ? String(v) : "auto";
+    } catch (e) {
+      return "auto";
+    }
+  }
+
+  /**
+   * How large the interface is drawn. chat.css picks a default from the
+   * viewport, which is only ever a guess about a monitor's physical size;
+   * this is the answer for when the guess is wrong.
+   * @param {string} choice
+   */
+  function applyScale(choice) {
+    const root = document.documentElement;
+    if (!root) return;
+    if (SCALE_CHOICES.indexOf(choice) >= 0) {
+      if (root.setAttribute) root.setAttribute("data-scale", choice);
+    } else if (root.removeAttribute) {
+      root.removeAttribute("data-scale");
+    }
+    try {
+      if (window.localStorage) {
+        if (SCALE_CHOICES.indexOf(choice) >= 0) {
+          window.localStorage.setItem("orchestra.scale", choice);
+        } else {
+          window.localStorage.removeItem("orchestra.scale");
+        }
       }
     } catch (e) {
       // Not persisting is survivable; the page still honours the click.
@@ -7206,13 +7347,7 @@
   // The pre-paint script in the page already stamped the root from storage;
   // this only makes the in-memory choice and the DOM agree on first load.
   applyTheme(savedTheme());
-
-  const newSessionBtn = document.getElementById("rail-new-session-btn");
-  if (newSessionBtn && newSessionBtn.addEventListener) {
-    newSessionBtn.addEventListener("click", () => {
-      void startSession(undefined);
-    });
-  }
+  applyScale(savedScale());
 
   /**
    * Open one session from the sidebar. A row of another project is reachable
@@ -7670,6 +7805,7 @@
     "openExternal",
     "backToChat",
     "setTheme",
+    "setScale",
   ]);
 
   /** @param {any} msg */
@@ -7683,6 +7819,12 @@
       case "setTheme":
         // The frame stamped itself already; store it and stamp this document.
         applyTheme(msg.theme === "light" || msg.theme === "dark" ? msg.theme : "system");
+        return;
+
+      case "setScale":
+        // Only this document is stamped: the dialog is inside it, so the
+        // frame is scaled by the same zoom without knowing about it.
+        applyScale(String(msg.scale || "auto"));
         return;
 
       case "ready":

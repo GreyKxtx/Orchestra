@@ -364,6 +364,7 @@
     "openExternal",
     "backToChat",
     "setTheme",
+    "setScale",
   ]);
 
   /** @param {any} msg */
@@ -377,6 +378,12 @@
       case "setTheme":
         // The frame stamped itself already; store it and stamp this document.
         applyTheme(msg.theme === "light" || msg.theme === "dark" ? msg.theme : "system");
+        return;
+
+      case "setScale":
+        // Only this document is stamped: the dialog is inside it, so the
+        // frame is scaled by the same zoom without knowing about it.
+        applyScale(String(msg.scale || "auto"));
         return;
 
       case "ready":
