@@ -1,0 +1,32 @@
+<!-- The app mark: the same three stacked cubes the sidebar and the start screen
+     carry, on the ground they need to survive a taskbar.
+
+     In the UI the mark is currentColor at three opacities, which works because
+     it sits on the app's own near-black. An icon has no such promise — it lands
+     on a dark taskbar, a light dock, a grey installer — so here it gets a
+     rounded square of its own, in the accent this product is built around, with
+     the cubes in white at the same three opacities.
+
+     Rendered to PNG and ICO by ui/desktop/scripts/build-icons.mjs. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#ground)"/>
+  <!-- The mark itself, scaled from the 32-unit original: 512/32 = 16, then
+       pulled in to 11.5 so it keeps an icon's margin, and centred. -->
+  <g transform="translate(256 262) scale(11.5) translate(-16 -16)" fill="#ffffff">
+    <polygon points="10,13.5 15.63,16.75 10,20 4.37,16.75"/>
+    <polygon points="4.37,16.75 10,20 10,26.5 4.37,23.25" fill-opacity="0.55"/>
+    <polygon points="10,20 15.63,16.75 15.63,23.25 10,26.5" fill-opacity="0.78"/>
+    <polygon points="22,13.5 27.63,16.75 22,20 16.37,16.75"/>
+    <polygon points="16.37,16.75 22,20 22,26.5 16.37,23.25" fill-opacity="0.55"/>
+    <polygon points="22,20 27.63,16.75 27.63,23.25 22,26.5" fill-opacity="0.78"/>
+    <polygon points="16,4 21.63,7.25 16,10.5 10.37,7.25"/>
+    <polygon points="10.37,7.25 16,10.5 16,17 10.37,13.75" fill-opacity="0.55"/>
+    <polygon points="16,10.5 21.63,7.25 21.63,13.75 16,17" fill-opacity="0.78"/>
+  </g>
+</svg>

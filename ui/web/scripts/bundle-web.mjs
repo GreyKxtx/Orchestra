@@ -81,6 +81,10 @@ fs.copyFileSync(path.join(root, "index.src.html"), path.join(outDir, "index.html
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "chat.css"), path.join(outDir, "chat.css"));
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "logo.png"), path.join(outDir, "logo.png"));
 fs.copyFileSync(path.join(root, "rail.css"), path.join(outDir, "rail.css"));
+// Built by ui/desktop/scripts/build-icons.mjs from the same mark the app icon
+// uses. Without it the page asks for /favicon.ico and takes a 404 on every
+// load — visible in the desktop window's console, which is where it was found.
+fs.copyFileSync(path.join(root, "favicon.ico"), path.join(outDir, "favicon.ico"));
 
 // chat.css resolves @font-face against its own URL, so the fonts directory has
 // to sit beside the copied stylesheet.

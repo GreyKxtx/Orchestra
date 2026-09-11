@@ -424,6 +424,11 @@ type projectView struct {
 	// Sessions recorded on disk, or -1 when the directory could not be read in
 	// time — which the rail shows as no count rather than as zero.
 	Sessions int `json:"sessions"`
+	// Missing is true when the folder itself is gone: a remembered worktree
+	// that was removed, a drive that is not mounted. The list used to offer
+	// those rows exactly like the rest, and clicking one produced a 404 and
+	// "could not open" with no way to tidy it away.
+	Missing bool `json:"missing"`
 }
 
 // sessionDirBudget is how long the whole session-counting pass may take. The
@@ -434,46 +439,61 @@ type projectView struct {
 // answered by then is simply reported without a count.
 const sessionDirBudget = 250 * time.Millisecond
 
-// countSessions returns the number of recorded sessions under each path, or -1
-// for a path that did not answer within the budget. A session is one <id>.json
-// beside its <id>.events.jsonl, so only the .json files are counted.
-func countSessions(paths []string) map[string]int {
-	out := make(map[string]int, len(paths))
+// pathFacts is what one bounded look at a remembered path can say.
+type pathFacts struct {
+	// sessions recorded there, or -1 when it could not be read in time.
+	sessions int
+	// missing is true only when the folder was positively found not to be
+	// there. A path that timed out is unknown, not missing.
+	missing bool
+}
+
+// inspectPaths reports the session count and whether the folder is still there
+// for each path, or leaves a path out when it did not answer within the
+// budget. Both facts come from the same bounded look, because both need the
+// same read that ClosedProject refuses to do.
+func inspectPaths(paths []string) map[string]pathFacts {
+	out := make(map[string]pathFacts, len(paths))
 	if len(paths) == 0 {
 		return out
 	}
 	type result struct {
 		path string
-		n    int
+		f    pathFacts
 	}
 	ch := make(chan result, len(paths))
 	for _, p := range paths {
 		go func(p string) {
-			n := 0
 			entries, err := os.ReadDir(filepath.Join(p, ".orchestra", "sessions"))
-			if err != nil {
-				// No directory yet is a real answer: the workspace has no
-				// sessions. Anything else is reported as unknown.
-				if errors.Is(err, fs.ErrNotExist) {
-					ch <- result{p, 0}
-					return
+			if err == nil {
+				n := 0
+				for _, e := range entries {
+					if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+						n++
+					}
 				}
-				ch <- result{p, -1}
+				ch <- result{p, pathFacts{sessions: n}}
 				return
 			}
-			for _, e := range entries {
-				if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-					n++
-				}
+			if !errors.Is(err, fs.ErrNotExist) {
+				ch <- result{p, pathFacts{sessions: -1}}
+				return
 			}
-			ch <- result{p, n}
+			// No sessions directory. Either the workspace simply has no
+			// sessions yet, or the workspace itself is gone — and only the
+			// second is worth telling the user about, so ask.
+			if _, serr := os.Stat(p); serr != nil && errors.Is(serr, fs.ErrNotExist) {
+				ch <- result{p, pathFacts{sessions: -1, missing: true}}
+				return
+			}
+			ch <- result{p, pathFacts{sessions: 0}}
 		}(p)
 	}
 	deadline := time.After(sessionDirBudget)
 	for range paths {
 		select {
 		case r := <-ch:
-			out[r.path] = r.n
+			out[r.path] = r.f
 		case <-deadline:
 			// The goroutines still running write into a buffered channel and
 			// exit on their own; nothing leaks and nothing blocks.
@@ -507,14 +527,14 @@ func listProjects(opts Options) []projectView {
 	for _, p := range all {
 		paths = append(paths, p.Path)
 	}
-	counts := countSessions(paths)
+	facts := inspectPaths(paths)
 	views := make([]projectView, 0, len(all))
 	for _, p := range all {
-		n, ok := counts[p.Path]
+		f, ok := facts[p.Path]
 		if !ok {
-			n = -1
+			f = pathFacts{sessions: -1}
 		}
-		views = append(views, projectView{Project: p, Sessions: n})
+		views = append(views, projectView{Project: p, Sessions: f.sessions, Missing: f.missing})
 	}
 	return views
 }

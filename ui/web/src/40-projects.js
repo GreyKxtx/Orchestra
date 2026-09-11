@@ -241,6 +241,15 @@
       await refreshProjects();
       return true;
     } catch (err) {
+      // Already open is not a failure: the caller asked for this project to be
+      // available and it is. Without this the start screen read 409 as a
+      // refusal, fell through to the "initialise it?" path, and asked about a
+      // project that was open the whole time.
+      // @ts-ignore
+      if (err && err.code === "already_open") {
+        await refreshProjects();
+        return true;
+      }
       // @ts-ignore
       if (err && err.code === "not_initialized" && !init) {
         toRenderer({
@@ -975,6 +984,9 @@
       item.dataset.projectId = p.id || "";
       item.dataset.path = p.path || "";
       item.title = p.path || "";
+      if (p.missing) {
+        item.dataset.missing = "true";
+      }
 
       const name = document.createElement("span");
       name.className = "start-recent-name";
@@ -987,10 +999,14 @@
       path.textContent = p.path || "";
       item.appendChild(path);
 
-      if (typeof p.sessions === "number" && p.sessions >= 0) {
-        const count = document.createElement("span");
-        count.className = "start-recent-count";
+      const count = document.createElement("span");
+      count.className = "start-recent-count";
+      if (p.missing) {
+        count.textContent = "folder is gone";
+      } else if (typeof p.sessions === "number" && p.sessions >= 0) {
         count.textContent = p.sessions === 1 ? "1 chat" : p.sessions + " chats";
+      }
+      if (count.textContent) {
         item.appendChild(count);
       }
       list.appendChild(item);
@@ -1007,19 +1023,37 @@
     if (!path) {
       return;
     }
-    if (await openProject(path, false)) {
-      showStartScreen(false);
-      return;
-    }
-    const agreed = window.confirm
-      ? window.confirm(path + " is not an Orchestra project yet. Initialise it?")
-      : false;
-    if (agreed && (await openProject(path, true))) {
-      showStartScreen(false);
-      return;
-    }
-    if (!agreed) {
+    // init: true, and nothing is asked. Picking a folder to work in IS the
+    // consent to set it up — `orchestra web --init` has always treated a
+    // folder chosen in a dialog exactly this way — and the only question
+    // there was to ask cannot be asked here: window.confirm inside the
+    // desktop shell is Tauri's own, it needs a capability this page is
+    // deliberately not granted, and it rejects. Worse, it rejects
+    // ASYNCHRONOUSLY, so the promise it returns reads as true and the code
+    // carried on as if the user had agreed.
+    if (!(await openProject(path, true))) {
       startError("Could not open " + path + ".");
+      return;
+    }
+    await enterProject(path);
+  }
+
+  /**
+   * Leave the start screen for a workspace that is now open. Opening it is
+   * only half the job — without the switch the window left the start screen
+   * for a transcript belonging to no project at all.
+   * @param {string} path
+   */
+  async function enterProject(path) {
+    const entry =
+      known.find((p) => p.path === path) || known.find((p) => p.state === "ready");
+    if (!entry) {
+      startError("Opened " + path + ", but it is not in the workspace list.");
+      return;
+    }
+    await switchProject(entry.id);
+    if (currentProjectId === entry.id) {
+      showStartScreen(false);
     }
   }
 
@@ -1085,10 +1119,39 @@
     const screen = document.getElementById("start-screen");
     if (screen && screen.addEventListener) {
       screen.addEventListener("click", (ev) => {
-        const item = ev.target && ev.target.closest ? ev.target.closest(".start-recent-item") : null;
-        if (item) {
-          void openFromStart(item.dataset.path || "");
+        const drop = ev.target && ev.target.closest ? ev.target.closest("[data-forget-id]") : null;
+        if (drop) {
+          startError("");
+          void (async () => {
+            await forgetProject(drop.dataset.forgetId || "");
+            await refreshProjects();
+            renderStartScreen();
+          })();
+          return;
         }
+        const item = ev.target && ev.target.closest ? ev.target.closest(".start-recent-item") : null;
+        if (!item) {
+          return;
+        }
+        if (item.dataset.missing === "true") {
+          // Opening it would 404 and say "could not open" with nothing to do
+          // about it. Say what is actually wrong and offer the only repair.
+          startError("");
+          const el = document.getElementById("start-error");
+          if (el) {
+            el.textContent =
+              "The folder for " + (item.dataset.path || "this workspace") + " is not there any more. ";
+            const drop = document.createElement("button");
+            drop.type = "button";
+            drop.className = "start-action start-error-action";
+            drop.dataset.forgetId = item.dataset.projectId || "";
+            drop.textContent = "Remove from the list";
+            el.appendChild(drop);
+            el.hidden = false;
+          }
+          return;
+        }
+        void openFromStart(item.dataset.path || "");
       });
     }
     const openBtn = document.getElementById("start-open-btn");
@@ -1096,9 +1159,9 @@
       openBtn.addEventListener("click", () => {
         void (async () => {
           startError("");
-          await addProject();
-          if (currentProjectId) {
-            showStartScreen(false);
+          const opened = await addProject();
+          if (opened) {
+            await enterProject(opened);
           }
         })();
       });
@@ -1152,18 +1215,13 @@
     }
     path = String(path || "").trim();
     if (!path) {
-      return;
+      return "";
     }
-    if (await openProject(path, false)) {
-      return;
-    }
-    // The one recoverable refusal: the folder is not an Orchestra project yet.
-    const agreed = window.confirm
-      ? window.confirm(path + " is not an Orchestra project yet. Initialise it?")
-      : false;
-    if (agreed) {
-      await openProject(path, true);
-    }
+    // Chosen in a dialog, so set it up if it needs it — same judgment
+    // `orchestra web --init` makes about a folder the user picked, and the
+    // confirm that used to stand here cannot run in the desktop shell. See
+    // openFromStart.
+    return (await openProject(path, true)) ? path : "";
   }
 
   // ---- startup -----------------------------------------------------------

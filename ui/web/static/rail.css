@@ -811,3 +811,24 @@ body {
   font-size: 13px;
   color: var(--muted-2);
 }
+
+/* A remembered folder that is not there any more — a worktree that was
+   removed, a drive that is not mounted. Dimmed, and saying so where the chat
+   count would be, because clicking it can only fail. */
+.start-recent-item[data-missing="true"] .start-recent-name,
+.start-recent-item[data-missing="true"] .start-recent-path {
+  color: var(--muted-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
+}
+
+.start-recent-item[data-missing="true"] .start-recent-count {
+  color: var(--warn-fg);
+}
+
+.start-error-action {
+  margin-left: 8px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  vertical-align: baseline;
+}
