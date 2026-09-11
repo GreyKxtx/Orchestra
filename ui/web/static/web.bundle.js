@@ -6983,6 +6983,84 @@
     });
   }
 
+  // ---- appearance --------------------------------------------------------
+  //
+  // Web-only. The VS Code webview follows the editor's own theme, so nothing
+  // here has a counterpart in chat-src.
+
+  /** @returns {string} "system" | "light" | "dark" */
+  function savedTheme() {
+    try {
+      const v = window.localStorage ? window.localStorage.getItem("orchestra.theme") : "";
+      return v === "light" || v === "dark" ? v : "system";
+    } catch (e) {
+      // A browser with site data blocked throws on access, not on read.
+      return "system";
+    }
+  }
+
+  /** @param {string} choice */
+  function applyTheme(choice) {
+    const root = document.documentElement;
+    if (!root) return;
+    if (choice === "light" || choice === "dark") {
+      if (root.setAttribute) root.setAttribute("data-theme", choice);
+    } else if (root.removeAttribute) {
+      root.removeAttribute("data-theme");
+    }
+    try {
+      if (window.localStorage) {
+        if (choice === "system") window.localStorage.removeItem("orchestra.theme");
+        else window.localStorage.setItem("orchestra.theme", choice);
+      }
+    } catch (e) {
+      // Not persisting is survivable; the page still honours the click.
+    }
+    syncThemeMenu(choice);
+  }
+
+  /** @param {string} choice */
+  function syncThemeMenu(choice) {
+    if (!railSettingsMenu || !railSettingsMenu.querySelectorAll) return;
+    railSettingsMenu.querySelectorAll("[data-theme-choice]").forEach((el) => {
+      el.setAttribute("aria-checked", el.getAttribute("data-theme-choice") === choice ? "true" : "false");
+    });
+  }
+
+  const railSettingsBtn = document.getElementById("rail-settings-btn");
+  const railSettingsMenu = document.getElementById("rail-settings-menu");
+
+  /** @param {boolean} open */
+  function showRailSettingsMenu(open) {
+    if (railSettingsMenu) railSettingsMenu.hidden = !open;
+    if (railSettingsBtn && railSettingsBtn.setAttribute) {
+      railSettingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+  }
+
+  if (railSettingsBtn && railSettingsBtn.addEventListener) {
+    railSettingsBtn.addEventListener("click", (ev) => {
+      if (ev.stopPropagation) ev.stopPropagation();
+      showRailSettingsMenu(Boolean(railSettingsMenu && railSettingsMenu.hidden));
+    });
+  }
+
+  if (railSettingsMenu && railSettingsMenu.addEventListener) {
+    railSettingsMenu.addEventListener("click", (ev) => {
+      if (ev.stopPropagation) ev.stopPropagation();
+      const item = ev.target && ev.target.closest ? ev.target.closest("[data-theme-choice]") : null;
+      if (!item) return;
+      applyTheme(item.getAttribute("data-theme-choice") || "system");
+      showRailSettingsMenu(false);
+    });
+  }
+
+  if (document.addEventListener) {
+    document.addEventListener("click", () => showRailSettingsMenu(false));
+  }
+
+  syncThemeMenu(savedTheme());
+
   const newSessionBtn = document.getElementById("rail-new-session-btn");
   if (newSessionBtn && newSessionBtn.addEventListener) {
     newSessionBtn.addEventListener("click", () => {

@@ -1,6 +1,23 @@
 /* The project sidebar. Web-only: chat.css is shared with the VS Code webview
    and must not learn about projects. Colours come from chat.css tokens; only
-   the sidebar's own ground is defined here. */
+   the sidebar's own ground is defined here, in all three theme states, because
+   naming it in chat.css would be exactly the leak that comment forbids. */
+:root {
+  --rail-bg: #060607;
+  --rail-dot: rgba(255, 255, 255, 0.045);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --rail-bg: #f4f4f5;
+    --rail-dot: rgba(0, 0, 0, 0.07);
+  }
+}
+
+:root[data-theme="light"] {
+  --rail-bg: #f4f4f5;
+  --rail-dot: rgba(0, 0, 0, 0.07);
+}
 
 /* The sidebar sits beside #app, so this stylesheet never touches #app's own
    layout: chat.css keeps its flex column and every flex child inside it keeps
@@ -16,11 +33,15 @@ body {
 }
 
 .project-rail {
-  --rail-bg: #08080a;
   flex: 0 0 268px;
   display: flex;
   flex-direction: column;
-  background: var(--rail-bg);
+  /* A dot grid, quiet enough to read as texture rather than content: it
+     separates the navigator from the transcript without another border. */
+  background-color: var(--rail-bg);
+  background-image: radial-gradient(circle, var(--rail-dot) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -1px -1px;
   border-right: 1px solid var(--border);
   overflow: hidden;
 }
@@ -34,6 +55,7 @@ body {
   flex: 0 0 auto;
   padding: 17px 16px 15px;
   border-bottom: 1px solid var(--border-soft);
+  color: var(--fg);
 }
 
 .rail-mark {
@@ -152,15 +174,24 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--muted);
 }
 
+/* The project on screen is the heading of everything under it, so give it the
+   weight of one: full contrast, and its own panel behind the group. */
+.project-group[data-active="true"] {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  padding-bottom: 2px;
+}
+
 .project-group[data-active="true"] .project-name {
-  color: var(--fg-dim);
+  color: var(--fg);
+  font-weight: 700;
 }
 
 /* "Close project" and "Remove from list" are reachable by keyboard via
@@ -274,6 +305,7 @@ body {
 /* ---- footer ------------------------------------------------------------ */
 
 .rail-foot {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -302,15 +334,102 @@ body {
 }
 
 /* ---- chrome the sidebar replaces -------------------------------------- */
-/* The brand, the session tabs and the two session buttons all moved into the
-   sidebar. The markup stays (chat-src looks these ids up) but the web page
-   must not show two of each. */
+/* The brand, the session tabs, the two session buttons and the settings gear
+   all moved into the sidebar. The markup stays (chat-src looks these ids up)
+   but the web page must not show two of each. */
 
 #chrome-brand,
 #session-tabs,
 #session-new-btn,
-#session-history-btn {
+#session-history-btn,
+#settings-btn {
   display: none;
+}
+
+/* ---- settings, in the footer ------------------------------------------ */
+
+.rail-settings {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rail-settings:hover,
+.rail-settings[aria-expanded="true"] {
+  background: var(--surface);
+  color: var(--fg-dim);
+}
+
+.rail-settings-menu {
+  position: absolute;
+  bottom: 46px;
+  left: 12px;
+  right: 12px;
+  z-index: 60;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+}
+
+.rail-settings-menu[hidden] {
+  display: none;
+}
+
+.rail-menu-section {
+  padding: 5px 8px 4px;
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-menu-item:hover {
+  background: var(--menu-hover);
+  color: var(--fg);
+}
+
+/* A check in the gutter, so the current choice reads without colour. */
+.rail-menu-item::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  color: var(--fg);
+}
+
+.rail-menu-item[aria-checked="true"] {
+  color: var(--fg);
+}
+
+.rail-menu-item[aria-checked="true"]::before {
+  content: "✓";
 }
 
 /* ---- the project context menu ----------------------------------------- */
@@ -345,4 +464,36 @@ body {
 
 .project-menu button:hover {
   background: var(--menu-hover);
+}
+
+/* ---- large screens ----------------------------------------------------- */
+/* At 1500px the sidebar was a column of small grey text in a lot of space.
+   Everything here grows together so the ratios hold. */
+@media (min-width: 1500px) {
+  .project-rail {
+    flex-basis: 312px;
+  }
+  .rail-word {
+    font-size: 17px;
+  }
+  .rail-new-session {
+    padding: 11px 14px;
+    font-size: 14px;
+  }
+  .project-name {
+    font-size: 13px;
+  }
+  .rail-session {
+    padding: 8px 10px 8px 26px;
+  }
+  .rail-session-title {
+    font-size: 13.5px;
+  }
+  .rail-session-time {
+    font-size: 11.5px;
+  }
+  .project-rail-add,
+  .rail-menu-item {
+    font-size: 13px;
+  }
 }
