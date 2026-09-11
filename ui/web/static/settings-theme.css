@@ -1,0 +1,852 @@
+/* The settings panel, dressed as part of this app.
+   ==================================================================
+
+   Web-only. media/settings.css is shared with the VS Code panel, which lives
+   inside the editor's chrome and keeps its own look; this sheet is loaded
+   after it, only by static/settings.html, and turns that panel into the same
+   product the chat page is:
+
+     · the shell's palette, not the webview's — every colour below is a value
+       lifted from chat.css/rail.css, so the dialog and the page behind it are
+       painted from one set of greys;
+     · navigation on the LEFT, as a column, because that is where navigation
+       lives in this app now — the header shrank to a title bar for exactly
+       this reason, and a settings screen with a floating pill bar on top
+       would put it back;
+     · one filled control per screen (Save), everything else outlined or
+       plain, which is the rule the sidebar already follows;
+     · flat rows and hairlines instead of glass, blur and radial glow.
+
+   It restyles; it never renames. Every selector here already exists in
+   settings.css or in the markup both hosts share, so no JS and no id changes
+   ride along — the panel is the same panel.
+
+   Edit this file. bundle-settings-web.mjs copies it to static/ verbatim. */
+
+/* ---- the palette ------------------------------------------------------- */
+/* settings.css declares these same names with its own values; redefining them
+   here is the whole retheme, and every rule further down is a shape, not a
+   colour. Three states, as everywhere else in this UI: dark is the default,
+   the system preference decides unless dark is pinned, and a pinned choice
+   wins over the system either way. */
+
+:root {
+  --bg: #0a0a0b;
+  --fg: #e7e7ea;
+  --fg-dim: #b3b3b8;
+  --muted: #83838a;
+  --muted-2: #55555c;
+  --border: #232326;
+  --border-soft: #19191c;
+  --border-strong: #2a2a2e;
+  --input: #121214;
+  --surface: #17171a;
+  --surface-2: #1d1d20;
+  --well: #0d0d0d;
+  --hover: rgba(255, 255, 255, 0.04);
+  --selected: rgba(255, 255, 255, 0.07);
+  --menu: #131316;
+  --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
+  --modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --accent: #bb9af7;
+  --accent-dim: color-mix(in srgb, var(--accent) 13%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 45%, var(--border));
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --focus: #bb9af7;
+  /* Text on the one filled control — the same pairing the sidebar's
+     new-session button uses. */
+  --on-accent: #17131f;
+  --warn: #e6c07b;
+  --err: #e8836b;
+  --ok: #7dcea0;
+  /* The navigation column's ground: the sidebar's, so the two read as the
+     same surface seen twice. */
+  --nav: #060607;
+  /* The reading column inside the content pane. Narrower than the dialog so
+     a line of prose measures like one in the transcript. */
+  --content-max: 780px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #ffffff;
+    --fg: #18181b;
+    --fg-dim: #3f3f46;
+    --muted: #71717a;
+    --muted-2: #a1a1aa;
+    --border: #e3e3e7;
+    --border-soft: #ededf0;
+    --border-strong: #d4d4d8;
+    --input: #ffffff;
+    --surface: #f6f6f7;
+    --surface-2: #ededef;
+    --well: #ececee;
+    --hover: rgba(0, 0, 0, 0.04);
+    --selected: rgba(0, 0, 0, 0.07);
+    --menu: #ffffff;
+    --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
+    --modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
+    --scrim: rgba(0, 0, 0, 0.35);
+    --accent: #7c3aed;
+    --focus: #7c3aed;
+    --on-accent: #ffffff;
+    --warn: #a16207;
+    --err: #c2410c;
+    --ok: #15803d;
+    --nav: #f4f4f5;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --fg: #18181b;
+  --fg-dim: #3f3f46;
+  --muted: #71717a;
+  --muted-2: #a1a1aa;
+  --border: #e3e3e7;
+  --border-soft: #ededf0;
+  --border-strong: #d4d4d8;
+  --input: #ffffff;
+  --surface: #f6f6f7;
+  --surface-2: #ededef;
+  --well: #ececee;
+  --hover: rgba(0, 0, 0, 0.04);
+  --selected: rgba(0, 0, 0, 0.07);
+  --menu: #ffffff;
+  --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
+  --modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
+  --scrim: rgba(0, 0, 0, 0.35);
+  --accent: #7c3aed;
+  --focus: #7c3aed;
+  --on-accent: #ffffff;
+  --warn: #a16207;
+  --err: #c2410c;
+  --ok: #15803d;
+  --nav: #f4f4f5;
+}
+
+/* Scrollbars follow the theme; settings.css only ever declared the dark pair. */
+:root {
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --scrollbar-thumb: rgba(0, 0, 0, 0.16);
+    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+  }
+}
+
+:root[data-theme="light"] {
+  --scrollbar-thumb: rgba(0, 0, 0, 0.16);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+}
+
+* {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* ---- the type ---------------------------------------------------------- */
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("fonts/geist-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+:root {
+  font-family: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
+  /* The chat page's base size, so 13.5px here is the same 13.5px there. */
+  font-size: 13px;
+}
+
+/* ---- the frame --------------------------------------------------------- */
+/* The panel is an iframe inside a dialog that already draws the card, the
+   border and the shadow: this document paints its two panes and nothing
+   else, and scrolls inside itself rather than growing the frame. */
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  scrollbar-gutter: auto;
+}
+
+#layout {
+  flex-direction: row;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* ---- the navigation column --------------------------------------------- */
+
+#nav {
+  position: static;
+  z-index: auto;
+  flex: 0 0 228px;
+  width: 228px;
+  margin: 0;
+  display: flex;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--nav);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+/* The radial glow behind the old floating bar. */
+.header-accent {
+  display: none;
+}
+
+.nav-shell {
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 14px 10px 12px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+}
+
+.nav-items {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* A row in a list, the shape the sidebar's sessions already have — not a
+   tab. The active one is marked the same way too: a wash of the accent and
+   a rule down its leading edge, which reads without colour vision. */
+.nav-item {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 13.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.nav-ico,
+.nav-ico svg {
+  width: 15px;
+  height: 15px;
+}
+
+.nav-item:hover {
+  color: var(--fg-dim);
+  background: var(--surface);
+}
+
+.nav-item.active {
+  color: var(--fg);
+  font-weight: 600;
+  border-color: transparent;
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav-item:focus-visible {
+  outline: 2px solid var(--fg-dim);
+  outline-offset: -2px;
+}
+
+/* Back to the chat: the quiet action at the foot of the column, the same
+   place and the same weight as "Add workspace" in the sidebar. */
+.nav-top {
+  position: static;
+  top: auto;
+  right: auto;
+  transform: none;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.back {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.back:hover {
+  background: var(--surface);
+  color: var(--fg-dim);
+}
+
+/* ---- the content pane -------------------------------------------------- */
+
+#main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.panel {
+  width: min(100%, var(--content-max));
+  margin: 0 auto;
+  padding: 26px 28px 44px;
+}
+
+h1 {
+  margin: 0 0 5px;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Section headings are the small-caps label the sidebar uses over a group of
+   rows — the same device, so a section here reads like a section there. */
+h2,
+.agent-tools-title,
+.mcp-cfg-section h3 {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.sub {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-2);
+}
+
+.section-divider {
+  margin: 26px 0 20px;
+  background: var(--border-soft);
+}
+
+label {
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+code {
+  background: var(--surface-2);
+  border-radius: 4px;
+}
+
+/* ---- controls ---------------------------------------------------------- */
+
+input,
+textarea,
+select {
+  /* settings.css pins this to dark, which gives a light page dark dropdowns
+     and dark spinners. */
+  color-scheme: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--input);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* The composer's focus ring, to the pixel: this is the app's one "you are
+   typing here" signal and it should not differ between its two screens. */
+input:focus,
+textarea:focus,
+select:focus,
+.orch-prov:focus,
+.prov-dropdown-btn:focus-visible,
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+select {
+  background-color: var(--input);
+}
+
+textarea {
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* Buttons, in one hierarchy: Save is filled and there is one of it per
+   screen; everything else is an outline; destructive keeps its colour. */
+button {
+  padding: 7px 13px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+button:hover {
+  background: var(--hover);
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+button.secondary {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+button.secondary:hover {
+  background: var(--hover);
+  color: var(--fg-dim);
+}
+
+button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: var(--accent);
+  border-color: transparent;
+  filter: brightness(1.07);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
+footer,
+.inline-footer {
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* #main carries no padding of its own — each panel does — so the error bar,
+   which sits above them all, brings its own gutters and lines up with the
+   reading column. */
+.error {
+  width: calc(100% - 56px);
+  max-width: var(--content-max);
+  margin: 22px auto 0;
+  border-radius: 9px;
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  font-size: 12.5px;
+}
+
+/* ---- rows, cards and lists --------------------------------------------- */
+/* One shape for everything that is a row of something: a hairline box on the
+   page's own ground, filled only on hover. The old sheet gave each family a
+   slightly different fill, radius and border, which is most of why five
+   sections looked like five products. */
+
+.list-item,
+.mcp-installed-row,
+.orch-row,
+.mcp-cfg-card,
+.list-item.static,
+.stat {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+}
+
+.list-item:hover,
+.mcp-installed-row:hover,
+.mcp-cfg-card:hover {
+  background: var(--hover);
+}
+
+.list-item.selected,
+.mcp-installed-row.active {
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+}
+
+.list {
+  gap: 5px;
+}
+
+/* The registry is a list of sixteen entries, so it is drawn as one list with
+   hairlines between the rows — sixteen separate bordered cards is the shape
+   that made this screen read as a different product. */
+.mcp-catalog {
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mcp-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 13px 14px;
+}
+
+.mcp-card + .mcp-card {
+  border-top: 1px solid var(--border-soft);
+}
+
+.mcp-card:hover {
+  background: var(--hover);
+}
+
+.mcp-card.installed {
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Browse / Installed is a view switch, and this app has one of those in the
+   header: same raised segment group, sized to its labels. */
+.mcp-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.mcp-tab {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mcp-tab:hover {
+  color: var(--fg-dim);
+  background: transparent;
+}
+
+.mcp-tab.active {
+  color: var(--fg);
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
+.mcp-cat {
+  border-radius: 7px;
+  border-color: var(--border);
+  background: transparent;
+  font-size: 12.5px;
+}
+
+.mcp-cat.active {
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+  color: var(--fg);
+}
+
+/* Status words stay pills — they are labels, not controls. */
+.badge {
+  border-radius: 999px;
+}
+
+/* The index tiles: numbers on the page, not eight little cards. */
+.stat {
+  background: var(--surface);
+  border-color: var(--border-soft);
+}
+
+.stat-val {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The per-role tier chips hardcoded a dark swatch each, which left six
+   unreadable blocks on a light page. Same hues, mixed against whatever the
+   ground currently is. */
+.orch-tier-l5 { color: #e05c52; border-color: color-mix(in srgb, #e05c52 40%, transparent); background: color-mix(in srgb, #e05c52 12%, transparent); }
+.orch-tier-l4 { color: #d08236; border-color: color-mix(in srgb, #d08236 40%, transparent); background: color-mix(in srgb, #d08236 12%, transparent); }
+.orch-tier-l3 { color: #b99429; border-color: color-mix(in srgb, #b99429 40%, transparent); background: color-mix(in srgb, #b99429 12%, transparent); }
+.orch-tier-l2 { color: #4fa45c; border-color: color-mix(in srgb, #4fa45c 40%, transparent); background: color-mix(in srgb, #4fa45c 12%, transparent); }
+.orch-tier-l1 { color: #4a8fd6; border-color: color-mix(in srgb, #4a8fd6 40%, transparent); background: color-mix(in srgb, #4a8fd6 12%, transparent); }
+.orch-tier-emb { color: #c26aa0; border-color: color-mix(in srgb, #c26aa0 40%, transparent); background: color-mix(in srgb, #c26aa0 12%, transparent); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .orch-tier-l5 { color: #ff7b72; }
+  :root:not([data-theme="light"]) .orch-tier-l4 { color: #ffa657; }
+  :root:not([data-theme="light"]) .orch-tier-l3 { color: #e3c15c; }
+  :root:not([data-theme="light"]) .orch-tier-l2 { color: #7ee787; }
+  :root:not([data-theme="light"]) .orch-tier-l1 { color: #79c0ff; }
+  :root:not([data-theme="light"]) .orch-tier-emb { color: #e18bbd; }
+}
+
+:root[data-theme="dark"] .orch-tier-l5 { color: #ff7b72; }
+:root[data-theme="dark"] .orch-tier-l4 { color: #ffa657; }
+:root[data-theme="dark"] .orch-tier-l3 { color: #e3c15c; }
+:root[data-theme="dark"] .orch-tier-l2 { color: #7ee787; }
+:root[data-theme="dark"] .orch-tier-l1 { color: #79c0ff; }
+:root[data-theme="dark"] .orch-tier-emb { color: #e18bbd; }
+
+/* ---- menus and the panel's own dialogs --------------------------------- */
+
+.prov-dropdown-menu,
+.agent-tools-list {
+  border-radius: 9px;
+  border-color: var(--border);
+  background: var(--menu);
+  box-shadow: var(--menu-shadow);
+}
+
+.prov-dropdown-item.selected,
+.orch-model-row.selected,
+.pick-item.selected {
+  background: var(--accent-dim);
+}
+
+.orch-modal,
+.mcp-modal {
+  background: var(--scrim);
+}
+
+/* The model picker and the MCP editor are dialogs inside a dialog; giving
+   them the outer one's card keeps one idea of what a dialog is. */
+.orch-modal-card,
+.mcp-modal-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--modal-shadow);
+}
+
+.orch-modal-head,
+.mcp-cfg-head {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* ---- the switch -------------------------------------------------------- */
+
+.mcp-switch input:checked + .mcp-switch-ui {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.mcp-switch input:checked + .mcp-switch-ui::after {
+  background: var(--on-accent);
+}
+
+/* ---- collapsible blocks ------------------------------------------------ */
+
+.adv {
+  border-radius: 9px;
+  border-color: var(--border);
+  background: transparent;
+}
+
+.adv summary {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.adv summary:hover {
+  color: var(--fg-dim);
+}
+
+/* ---- host-specific rows ------------------------------------------------ */
+
+/* Binary path and project root are VS Code settings — where to find the
+   executable, and which folder to open. `orchestra web` answered both before
+   this page loaded, so 50-settings.js sends them empty and the rows are
+   hidden rather than inviting edits that would go nowhere. The line about
+   restarting the core goes with them. */
+#sec-general > label:has(#binaryPath),
+#sec-general > label:has(#projectRoot),
+#sec-general > label:has(#projectRoot) + .hint {
+  display: none;
+}
+
+/* ---- Appearance -------------------------------------------------------- */
+/* Web-only: the theme is this page's to choose. The VS Code panel follows the
+   editor and has no such section. */
+
+.theme-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 440px;
+}
+
+.theme-choice {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A check in the gutter, so the current choice reads without colour. */
+.theme-choice::before {
+  content: "";
+  grid-row: 1;
+  grid-column: 1;
+  color: var(--accent);
+}
+
+.theme-choice:hover {
+  background: var(--hover);
+}
+
+.theme-choice[aria-checked="true"] {
+  border-color: transparent;
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.theme-choice[aria-checked="true"]::before {
+  content: "✓";
+}
+
+.theme-choice:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.theme-choice-name {
+  grid-row: 1;
+  grid-column: 2;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.theme-choice-hint {
+  grid-row: 2;
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- narrow ------------------------------------------------------------ */
+/* Below this the two panes stop paying for themselves: the column goes back
+   to a row across the top, scrolling sideways if it must. */
+
+@media (max-width: 760px) {
+  #layout {
+    flex-direction: column;
+  }
+
+  #nav {
+    flex: 0 0 auto;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .nav-shell {
+    padding: 8px 10px;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .nav-items {
+    flex: 1 1 auto;
+    flex-direction: row;
+    gap: 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .nav-item {
+    width: auto;
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+
+  .nav-item.active {
+    box-shadow: none;
+    background: var(--surface-2);
+  }
+
+  .nav-top {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .back {
+    width: auto;
+  }
+
+  .panel {
+    padding: 20px 18px 36px;
+  }
+}

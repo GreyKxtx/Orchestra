@@ -165,12 +165,14 @@ if (fs.existsSync(bundle)) {
     }
     const eol = (s) => s.replace(/\r\n/g, "\n");
     const page = path.join(root, "static", "settings.html");
-    const before = [settingsBundle, page].map((f) => eol(fs.readFileSync(f, "utf8")));
+    const theme = path.join(root, "static", "settings-theme.css");
+    const generated = [settingsBundle, page, theme];
+    const before = generated.map((f) => (fs.existsSync(f) ? eol(fs.readFileSync(f, "utf8")) : ""));
     execFileSync(process.execPath, [path.join(__dirname, "bundle-settings-web.mjs")], {
       stdio: "pipe",
     });
-    const after = [settingsBundle, page].map((f) => eol(fs.readFileSync(f, "utf8")));
-    if (before[0] !== after[0] || before[1] !== after[1]) {
+    const after = generated.map((f) => eol(fs.readFileSync(f, "utf8")));
+    if (before.some((s, i) => s !== after[i])) {
       fail("the settings page was stale — it has now been regenerated, commit it");
     } else {
       console.log("ok   static/settings.html and its bundle parse and are current");
