@@ -1359,6 +1359,22 @@ test("the segmented control switches #app[data-view], by click and by arrow key"
   assert.equal(app.dataset.view, "chat");
 });
 
+test("the sidebar's view switch presses the header's and follows #app[data-view]", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const app = b.elementById("app");
+  const railChat = b.elementById("rail-view-chat");
+  const railTraj = b.elementById("rail-view-trajectory");
+  assert.ok(railChat && railTraj, "40-projects.js must look up both sidebar segments");
+  assert.equal(app.dataset.view, "chat");
+  railTraj.click();
+  assert.equal(app.dataset.view, "trajectory");
+  railChat.click();
+  assert.equal(app.dataset.view, "chat");
+  railChat.keydown("ArrowRight");
+  assert.equal(app.dataset.view, "trajectory");
+});
+
 test("clearMessages also clears the trajectory", async () => {
   const b = loadBundle({ search: "?project=A" });
   await tick();

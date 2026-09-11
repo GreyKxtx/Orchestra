@@ -4,19 +4,24 @@
    naming it in chat.css would be exactly the leak that comment forbids. */
 :root {
   --rail-bg: #060607;
-  --rail-dot: rgba(255, 255, 255, 0.045);
+  --rail-dot: rgba(255, 255, 255, 0.04);
+  /* Text on the one filled control, the new-session button, which is painted
+     in the mode accent. */
+  --rail-on-accent: #17131f;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --rail-bg: #f4f4f5;
-    --rail-dot: rgba(0, 0, 0, 0.07);
+    --rail-dot: rgba(0, 0, 0, 0.06);
+    --rail-on-accent: #ffffff;
   }
 }
 
 :root[data-theme="light"] {
   --rail-bg: #f4f4f5;
-  --rail-dot: rgba(0, 0, 0, 0.07);
+  --rail-dot: rgba(0, 0, 0, 0.06);
+  --rail-on-accent: #ffffff;
 }
 
 /* The sidebar sits beside #app, so this stylesheet never touches #app's own
@@ -32,15 +37,17 @@ body {
   min-width: 0;
 }
 
+/* All navigation lives here — the view switch included — so the header
+   above the transcript can shrink to a title bar. */
 .project-rail {
-  flex: 0 0 268px;
+  flex: 0 0 296px;
   display: flex;
   flex-direction: column;
   /* A dot grid, quiet enough to read as texture rather than content: it
      separates the navigator from the transcript without another border. */
   background-color: var(--rail-bg);
   background-image: radial-gradient(circle, var(--rail-dot) 1px, transparent 1px);
-  background-size: 16px 16px;
+  background-size: 18px 18px;
   background-position: -1px -1px;
   border-right: 1px solid var(--border);
   overflow: hidden;
@@ -51,66 +58,118 @@ body {
 .rail-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex: 0 0 auto;
-  padding: 17px 16px 15px;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 18px 18px 16px;
   color: var(--fg);
 }
 
 .rail-mark {
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
+}
+
+.rail-wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .rail-word {
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 700;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   color: var(--fg);
 }
 
-.rail-tag {
-  margin-left: auto;
-  padding: 2px 5px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+.rail-word-sub {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   color: var(--muted);
 }
 
-/* ---- new session ------------------------------------------------------- */
+/* ---- view switch --------------------------------------------------------- */
 
-.rail-new-session {
+.rail-view-switch {
   flex: 0 0 auto;
-  margin: 12px 12px 10px;
-  padding: 9px 12px;
+  display: flex;
+  gap: 3px;
+  margin: 0 14px 14px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--composer-bg);
+}
+
+.rail-view-seg {
+  flex: 1 1 0;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--fg-dim);
+  padding: 8px 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.rail-view-seg svg {
+  flex: 0 0 auto;
+}
+
+.rail-view-seg:hover {
+  color: var(--fg);
+}
+
+.rail-view-seg[aria-selected="true"] {
+  background: var(--surface-2);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.rail-view-seg:focus-visible {
+  outline: 2px solid var(--fg-dim);
+  outline-offset: -2px;
+}
+
+/* ---- new session ------------------------------------------------------- */
+
+/* The one filled control in the sidebar, in the mode accent: everything
+   else is text on the ground, so the single action reads at a glance. */
+.rail-new-session {
+  flex: 0 0 auto;
+  margin: 0 14px 12px;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--mode-accent);
+  color: var(--rail-on-accent);
+  font: inherit;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .rail-new-session:hover {
-  background: var(--surface-2);
-  color: var(--fg);
+  filter: brightness(1.07);
 }
 
 .rail-new-session:disabled {
   opacity: 0.45;
   cursor: default;
+  filter: none;
 }
 
 /* ---- the project / session tree ---------------------------------------- */
@@ -119,11 +178,22 @@ body {
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 4px 8px 12px;
+  padding: 2px 10px 12px;
 }
 
 .project-group + .project-group {
-  margin-top: 2px;
+  margin-top: 1px;
+}
+
+/* "Other workspaces", written by renderProjects between the open project's
+   sessions and the rest. */
+.rail-section {
+  padding: 16px 8px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
 }
 
 /* The header keeps the .project-chip class: every existing listener in
@@ -133,9 +203,10 @@ body {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 9px 8px 6px;
+  gap: 9px;
+  padding: 8px 10px;
   border: 0;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -143,25 +214,19 @@ body {
   cursor: pointer;
 }
 
+.project-chip:hover {
+  background: var(--surface);
+}
+
 .project-chip:hover .project-name {
   color: var(--fg-dim);
 }
 
-/* A caret drawn from borders: collapsed points right, expanded points down. */
+/* Flat rows, no carets: a folded project switches to itself rather than
+   expanding, and the open one is a heading. The element stays in the DOM
+   for aria-expanded's sake. */
 .project-chevron {
-  width: 0;
-  height: 0;
-  flex: 0 0 auto;
-  margin: 0 1px;
-  border-left: 4px solid var(--muted-2);
-  border-top: 3.5px solid transparent;
-  border-bottom: 3.5px solid transparent;
-  transform: rotate(90deg);
-  transition: transform 0.12s ease;
-}
-
-.project-group[data-collapsed="true"] .project-chevron {
-  transform: rotate(0deg);
+  display: none;
 }
 
 .project-group[data-collapsed="true"] .project-sessions {
@@ -174,24 +239,32 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--muted);
 }
 
-/* The project on screen is the heading of everything under it, so give it the
-   weight of one: full contrast, and its own panel behind the group. */
-.project-group[data-active="true"] {
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--surface);
-  padding-bottom: 2px;
+/* The project on screen is the heading of the sessions under it, and reads
+   as one: a small caps label, its sessions flush below. */
+.project-group[data-active="true"] .project-chip {
+  padding: 8px 8px 6px;
+  border-radius: 6px;
+}
+
+.project-group[data-active="true"] .project-chip:hover {
+  background: transparent;
 }
 
 .project-group[data-active="true"] .project-name {
-  color: var(--fg);
+  font-size: 10.5px;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.project-group[data-active="true"] .project-chip:hover .project-name {
+  color: var(--muted);
 }
 
 /* "Close project" and "Remove from list" are reachable by keyboard via
@@ -200,7 +273,6 @@ body {
 .project-chip:focus-visible {
   outline: 2px solid var(--fg-dim);
   outline-offset: -2px;
-  border-radius: 6px;
 }
 
 /* State is carried by a dot whose SHAPE differs per state, so the tree stays
@@ -214,12 +286,12 @@ body {
 }
 
 .project-chip[data-status="idle"] .project-dot {
-  background: #4a9d6b;
-  box-shadow: 0 0 0 2px rgba(74, 157, 107, 0.16);
+  background: var(--ok-fg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok-fg) 16%, transparent);
 }
 
 .project-chip[data-status="working"] .project-dot {
-  background: #d18616;
+  background: var(--warn-fg);
   animation: project-pulse 1.2s ease-in-out infinite;
 }
 
@@ -227,11 +299,7 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 3px;
-  background: #c8372d;
-}
-
-.project-chip[data-state="closed"] {
-  opacity: 0.5;
+  background: var(--error-fg);
 }
 
 @keyframes project-pulse {
@@ -249,17 +317,17 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding-bottom: 4px;
+  padding-bottom: 2px;
 }
 
 .rail-session {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  padding: 7px 9px 7px 25px;
+  padding: 9px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
@@ -286,19 +354,19 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 .rail-session-time {
   flex: 0 0 auto;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--muted-2);
 }
 
 .rail-sessions-empty {
-  padding: 4px 9px 6px 25px;
-  font-size: 11.5px;
+  padding: 6px 10px 8px;
+  font-size: 12.5px;
   color: var(--muted-2);
 }
 
@@ -310,21 +378,21 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 11px 14px;
   border-top: 1px solid var(--border-soft);
 }
 
 .project-rail-add {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 6px;
+  gap: 7px;
+  padding: 6px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -333,16 +401,60 @@ body {
   color: var(--fg-dim);
 }
 
-/* ---- chrome the sidebar replaces -------------------------------------- */
-/* The brand, the session tabs, the two session buttons and the settings gear
-   all moved into the sidebar. The markup stays (chat-src looks these ids up)
-   but the web page must not show two of each. */
+/* ---- the header, on the web ------------------------------------------- */
+/* The brand, the session tabs, the two session buttons, the settings gear
+   and the view switch all live in the sidebar now, and the mode already has
+   its colour there. The markup stays (chat-src looks these ids up) but the
+   page must not show two of each. What remains is a 40px title bar that
+   40-projects.js fills with the session's name and mode. */
 
 #chrome-brand,
 #session-tabs,
 #session-new-btn,
 #session-history-btn,
-#settings-btn {
+#settings-btn,
+#view-switch,
+#top-accent {
+  display: none;
+}
+
+#chrome-inner {
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 20px;
+}
+
+/* Its buttons are hidden above; without them the rule and padding drew a
+   stray line at the far right. The hint inside still shows. */
+.chrome-actions {
+  margin-left: auto;
+  padding: 0;
+  border-left: 0;
+}
+
+.rail-head-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.rail-head-mode {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--mode-accent) 14%, transparent);
+  color: var(--mode-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rail-head-mode:empty {
   display: none;
 }
 
@@ -354,10 +466,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -371,9 +483,9 @@ body {
 
 .rail-settings-menu {
   position: absolute;
-  bottom: 46px;
-  left: 12px;
-  right: 12px;
+  bottom: 48px;
+  left: 14px;
+  right: 14px;
   z-index: 60;
   padding: 5px;
   border: 1px solid var(--border);
@@ -389,9 +501,9 @@ body {
 .rail-menu-section {
   padding: 5px 8px 4px;
   color: var(--muted-2);
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -400,13 +512,13 @@ body {
   align-items: center;
   gap: 7px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -451,13 +563,13 @@ body {
 .project-menu button {
   display: block;
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -467,33 +579,9 @@ body {
 }
 
 /* ---- large screens ----------------------------------------------------- */
-/* At 1500px the sidebar was a column of small grey text in a lot of space.
-   Everything here grows together so the ratios hold. */
+/* The type is sized for a wide window already; only the column widens. */
 @media (min-width: 1500px) {
   .project-rail {
-    flex-basis: 312px;
-  }
-  .rail-word {
-    font-size: 17px;
-  }
-  .rail-new-session {
-    padding: 11px 14px;
-    font-size: 14px;
-  }
-  .project-name {
-    font-size: 13px;
-  }
-  .rail-session {
-    padding: 8px 10px 8px 26px;
-  }
-  .rail-session-title {
-    font-size: 13.5px;
-  }
-  .rail-session-time {
-    font-size: 11.5px;
-  }
-  .project-rail-add,
-  .rail-menu-item {
-    font-size: 13px;
+    flex-basis: 320px;
   }
 }

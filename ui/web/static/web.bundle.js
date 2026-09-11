@@ -6775,7 +6775,21 @@
       return;
     }
     list.innerHTML = "";
-    for (const row of rows) {
+    // The open project heads the list, its sessions under it; everything else
+    // follows under one label. The renderer message above keeps the original
+    // order — its consumers and tests were written against it.
+    const ordered = rows.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+    const hasActive = rows.some((r) => r.active);
+    let otherLabelDone = false;
+    let headTitle = "";
+    for (const row of ordered) {
+      if (!row.active && hasActive && !otherLabelDone) {
+        const sec = document.createElement("div");
+        sec.className = "rail-section";
+        sec.textContent = "Other workspaces";
+        list.appendChild(sec);
+        otherLabelDone = true;
+      }
       // Only the project on screen has a session list — the core is asked for
       // one per connection — so every other group stays folded, and its header
       // switches to it rather than expanding an empty list.
@@ -6825,6 +6839,10 @@
       // looking at is missing from the list until they say something. Showing
       // it anyway is the difference between "where am I" and an empty sidebar.
       const openIsListed = listed.some((s) => s.id === openSessionId);
+      if (row.active) {
+        const cur = listed.find((s) => s.id === openSessionId);
+        headTitle = openSessionId ? (cur && cur.title ? cur.title : "New session") : "";
+      }
       if (row.active && openSessionId && !openIsListed) {
         const item = document.createElement("button");
         item.type = "button";
@@ -6871,7 +6889,119 @@
       group.appendChild(sessions);
       list.appendChild(group);
     }
+    renderRailHead(headTitle);
   }
+
+  // ---- the header, on the web ---------------------------------------------
+  //
+  // rail.css hides everything chat.css puts in #chrome-strip except the hint,
+  // because all of it moved into the sidebar; without this the strip would be
+  // 40px of nothing above the transcript. It states the session instead: its
+  // title and the mode it runs in. Built here, not in the markup, because
+  // everything inside #app is shared with the VS Code webview byte for byte.
+
+  /** @type {any} */
+  let railHeadTitleEl = null;
+  /** @type {any} */
+  let railHeadModeEl = null;
+  let lastRailHeadTitle = "";
+
+  function ensureRailHead() {
+    if (railHeadTitleEl) {
+      return true;
+    }
+    const inner = document.getElementById("chrome-inner");
+    if (!inner || !document.createElement) {
+      return false;
+    }
+    railHeadTitleEl = document.createElement("span");
+    railHeadTitleEl.className = "rail-head-title";
+    railHeadModeEl = document.createElement("span");
+    railHeadModeEl.className = "rail-head-mode";
+    // Ahead of the hidden brand, so the title leads the strip and the hint
+    // keeps the right edge.
+    if (inner.insertBefore && inner.firstChild) {
+      inner.insertBefore(railHeadModeEl, inner.firstChild);
+      inner.insertBefore(railHeadTitleEl, railHeadModeEl);
+    } else {
+      inner.appendChild(railHeadTitleEl);
+      inner.appendChild(railHeadModeEl);
+    }
+    return true;
+  }
+
+  /** @param {string} title The open session's title; "" when no project is on screen. */
+  function renderRailHead(title) {
+    lastRailHeadTitle = title;
+    if (!ensureRailHead()) {
+      return;
+    }
+    // textContent: the title is the user's own first message.
+    railHeadTitleEl.textContent = title;
+    railHeadTitleEl.title = title;
+    const app = document.getElementById("app");
+    const label = document.getElementById("mode-label");
+    const mode = app && app.dataset ? app.dataset.mode || "" : "";
+    const shown = label && label.textContent ? label.textContent : mode;
+    railHeadModeEl.textContent = title && mode ? shown : "";
+  }
+
+  // ---- the view switch, in the sidebar --------------------------------------
+  //
+  // The real segmented control is #view-switch in the header: chat-src binds
+  // it, the webview shows it, rail.css hides it here. These two buttons press
+  // it and mirror #app[data-view], so the trajectory module stays the one
+  // owner of the view state.
+
+  const railViewSegs = [
+    { view: "chat", el: document.getElementById("rail-view-chat"), target: document.getElementById("view-chat-btn") },
+    { view: "trajectory", el: document.getElementById("rail-view-trajectory"), target: document.getElementById("view-trajectory-btn") },
+  ];
+
+  function syncRailView() {
+    const app = document.getElementById("app");
+    const view = app && app.dataset && app.dataset.view === "trajectory" ? "trajectory" : "chat";
+    for (const seg of railViewSegs) {
+      if (seg.el && seg.el.setAttribute) {
+        seg.el.setAttribute("aria-selected", seg.view === view ? "true" : "false");
+      }
+    }
+  }
+
+  for (const seg of railViewSegs) {
+    if (!seg.el || !seg.el.addEventListener) {
+      continue;
+    }
+    seg.el.addEventListener("click", () => {
+      if (seg.target && typeof seg.target.click === "function") {
+        seg.target.click();
+      }
+      syncRailView();
+    });
+    // Arrow keys move between the two segments, as a tablist does.
+    seg.el.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
+        return;
+      }
+      if (ev.preventDefault) ev.preventDefault();
+      const other = railViewSegs.find((s) => s !== seg);
+      if (other && other.el && typeof other.el.click === "function") {
+        other.el.click();
+        if (other.el.focus) other.el.focus();
+      }
+    });
+  }
+
+  // Changes that do not come through these buttons — the mode picker, the
+  // header's own switch — still have to show here.
+  const railAppEl = document.getElementById("app");
+  if (railAppEl && typeof MutationObserver === "function") {
+    new MutationObserver(() => {
+      syncRailView();
+      renderRailHead(lastRailHeadTitle);
+    }).observe(railAppEl, { attributes: true, attributeFilter: ["data-view", "data-mode"] });
+  }
+  syncRailView();
 
   // ---- input -------------------------------------------------------------
 
