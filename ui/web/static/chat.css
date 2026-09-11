@@ -1,27 +1,57 @@
+/* Geist ships with the extension and is served from the same origin as this
+   stylesheet, so the UI looks the same offline and in both hosts. The paths are
+   relative to this file: media/fonts/ in the webview, static/fonts/ on the web
+   (bundle-web.mjs copies the directory). Symbol glyphs used as icons (∞ ◇ ⌕ ◫)
+   fall outside these subsets and resolve from the fallback stack. */
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("fonts/geist-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
 :root {
-  --bg: #181818;
-  --fg: #e4e4e4;
-  --muted: #737373;
-  --border: #2e2e2e;
-  --surface: #1a1a1a;
-  --composer-bg: #181818;
-  --composer-border: #2e2e2e;
-  --pill-bg: transparent;
+  --bg: #0a0a0b;
+  --fg: #e7e7ea;
+  --fg-dim: #b3b3b8;
+  --muted: #83838a;
+  --muted-2: #55555c;
+  --border: #232326;
+  --border-soft: #19191c;
+  --surface: #17171a;
+  --surface-2: #1d1d20;
+  --composer-bg: #121214;
+  --composer-border: #232326;
+  --pill-bg: #17171a;
   --pill-hover: rgba(255, 255, 255, 0.06);
-  --pill-border: #3a3a3a;
-  --menu-bg: #1c1c1c;
+  --pill-border: #2a2a2e;
+  --menu-bg: #131316;
   --menu-hover: rgba(255, 255, 255, 0.05);
   --menu-selected: rgba(255, 255, 255, 0.08);
-  --menu-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
   --send-bg: #ececec;
   --send-fg: #111;
-  --user-bg: #262626;
-  --tool-fg: #6eb3ff;
+  --user-bg: #1b1b1e;
+  --tool-fg: #86adf7;
   --error-fg: #e8836b;
   --accent: #a3a3a3;
   /* Process indicators follow active chat mode (see #app[data-mode]). */
   --mode-accent: #bb9af7;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
@@ -68,52 +98,31 @@ body {
 }
 
 /* ── Header strip (full width) ── */
+/* Flat and full width: a floating glass card with an accent glow read as a
+   toy, and it cost the strip its alignment with the panes below it. The mode
+   is still signalled, by the hairline in #top-accent. */
 #chrome-strip {
   flex: 0 0 auto;
-  width: calc(100% - 16px);
-  margin: 8px 8px 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
-  background:
-    radial-gradient(
-      48% 180% at -8% 50%,
-      color-mix(in srgb, var(--mode-accent) 10%, transparent),
-      transparent 68%
-    ),
-    radial-gradient(
-      48% 180% at 108% 50%,
-      color-mix(in srgb, var(--mode-accent) 10%, transparent),
-      transparent 68%
-    ),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)),
-    rgba(24, 24, 24, 0.8);
-  -webkit-backdrop-filter: blur(28px) saturate(115%);
-  backdrop-filter: blur(28px) saturate(115%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.025),
-    0 10px 30px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: var(--bg);
   position: relative;
   z-index: 20;
   overflow: hidden;
 }
 
+/* One hairline along the top edge, not a wash over the whole strip: the mode
+   still has a colour, and the header still reads as chrome. */
 #top-accent {
   position: absolute;
-  inset: 0;
-  width: auto;
-  height: auto;
-  background:
-    radial-gradient(
-      42% 160% at -5% 50%,
-      color-mix(in srgb, var(--mode-accent) 16%, transparent),
-      transparent 70%
-    ),
-    radial-gradient(
-      42% 160% at 105% 50%,
-      color-mix(in srgb, var(--mode-accent) 16%, transparent),
-      transparent 70%
-    );
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--mode-accent);
   pointer-events: none;
 }
 

@@ -81,4 +81,15 @@ fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "chat.css"), path.join(
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "logo.png"), path.join(outDir, "logo.png"));
 fs.copyFileSync(path.join(root, "rail.css"), path.join(outDir, "rail.css"));
 
+// chat.css resolves @font-face against its own URL, so the fonts directory has
+// to sit beside the copied stylesheet.
+{
+  const fontsSrc = path.join(repo, "ui", "vscode", "media", "fonts");
+  const fontsOut = path.join(outDir, "fonts");
+  fs.mkdirSync(fontsOut, { recursive: true });
+  for (const name of fs.readdirSync(fontsSrc)) {
+    fs.copyFileSync(path.join(fontsSrc, name), path.join(fontsOut, name));
+  }
+}
+
 console.log("bundled ui/web/static (" + out.split(/\r?\n/).length + " lines of JS)");

@@ -1,7 +1,8 @@
-/* The project rail. Web-only: chat.css is shared with the VS Code webview and
-   must not learn about projects. */
+/* The project sidebar. Web-only: chat.css is shared with the VS Code webview
+   and must not learn about projects. Colours come from chat.css tokens; only
+   the sidebar's own ground is defined here. */
 
-/* The rail sits beside #app, so this stylesheet never touches #app's own
+/* The sidebar sits beside #app, so this stylesheet never touches #app's own
    layout: chat.css keeps its flex column and every flex child inside it keeps
    working. html and body are already height:100% from chat.css. */
 body {
@@ -15,92 +16,191 @@ body {
 }
 
 .project-rail {
-  flex: 0 0 52px;
+  --rail-bg: #08080a;
+  flex: 0 0 268px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 0;
-  border-right: 1px solid rgba(127, 127, 127, 0.25);
-  overflow-y: auto;
-  overflow-x: hidden;
+  background: var(--rail-bg);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
 }
 
-.project-rail-list {
+/* ---- brand ------------------------------------------------------------- */
+
+.rail-brand {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  width: 100%;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 17px 16px 15px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.project-chip {
-  position: relative;
-  width: 36px;
-  height: 36px;
-  border: 1px solid rgba(127, 127, 127, 0.35);
-  border-radius: 9px;
-  background: transparent;
-  color: inherit;
-  font: 600 13px/1 system-ui, sans-serif;
-  cursor: pointer;
+.rail-mark {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+.rail-word {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--fg);
+}
+
+.rail-tag {
+  margin-left: auto;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---- new session ------------------------------------------------------- */
+
+.rail-new-session {
+  flex: 0 0 auto;
+  margin: 12px 12px 10px;
+  padding: 9px 12px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-/* Active: a left marker, not only a tint, so the current project reads at a
-   glance and without relying on hue. */
-.project-chip[data-active="true"]::before {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: 4px;
-  bottom: 4px;
-  width: 3px;
-  border-radius: 2px;
-  background: currentColor;
+.rail-new-session:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.rail-new-session:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---- the project / session tree ---------------------------------------- */
+
+.project-rail-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px 12px;
+}
+
+.project-group + .project-group {
+  margin-top: 2px;
+}
+
+/* The header keeps the .project-chip class: every existing listener in
+   40-projects.js (click, contextmenu, Shift+F10) is bound to it. */
+.project-chip {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 8px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-chip:hover .project-name {
+  color: var(--fg-dim);
+}
+
+/* A caret drawn from borders: collapsed points right, expanded points down. */
+.project-chevron {
+  width: 0;
+  height: 0;
+  flex: 0 0 auto;
+  margin: 0 1px;
+  border-left: 4px solid var(--muted-2);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transform: rotate(90deg);
+  transition: transform 0.12s ease;
+}
+
+.project-group[data-collapsed="true"] .project-chevron {
+  transform: rotate(0deg);
+}
+
+.project-group[data-collapsed="true"] .project-sessions {
+  display: none;
+}
+
+.project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.project-group[data-active="true"] .project-name {
+  color: var(--fg-dim);
 }
 
 /* "Close project" and "Remove from list" are reachable by keyboard via
-   Shift+F10 / the ContextMenu key (40-projects.js); a focused chip needs a
+   Shift+F10 / the ContextMenu key (40-projects.js); a focused header needs a
    visible outline for that path to be usable at all. */
 .project-chip:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
+  outline: 2px solid var(--fg-dim);
+  outline-offset: -2px;
+  border-radius: 6px;
 }
 
-/* State is carried by a corner badge whose SHAPE differs per state, so the
-   rail is readable in either theme and without colour vision. */
-.project-chip::after {
-  content: "";
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 10px;
-  height: 10px;
+/* State is carried by a dot whose SHAPE differs per state, so the tree stays
+   readable without colour vision. */
+.project-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
   border-radius: 50%;
   background: transparent;
 }
 
-.project-chip[data-status="working"]::after {
-  content: "";
+.project-chip[data-status="idle"] .project-dot {
+  background: #4a9d6b;
+  box-shadow: 0 0 0 2px rgba(74, 157, 107, 0.16);
+}
+
+.project-chip[data-status="working"] .project-dot {
   background: #d18616;
   animation: project-pulse 1.2s ease-in-out infinite;
 }
 
-.project-chip[data-status="asking"]::after {
-  content: "!";
-  background: #c8372d;
-  color: #fff;
-  font: 700 8px/10px system-ui, sans-serif;
-  text-align: center;
+.project-chip[data-status="asking"] .project-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 3px;
+  background: #c8372d;
 }
 
 .project-chip[data-state="closed"] {
-  opacity: 0.45;
-  border-style: dashed;
+  opacity: 0.5;
 }
 
 @keyframes project-pulse {
@@ -109,31 +209,122 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .project-chip[data-status="working"]::after { animation: none; }
+  .project-chip[data-status="working"] .project-dot { animation: none; }
+}
+
+/* ---- sessions inside a project ---------------------------------------- */
+
+.project-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: 4px;
+}
+
+.rail-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px 7px 25px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-session:hover {
+  background: var(--surface);
+}
+
+.rail-session[data-active="true"] {
+  background: color-mix(in srgb, var(--mode-accent) 13%, transparent);
+  box-shadow: inset 2px 0 0 var(--mode-accent);
+}
+
+.rail-session[data-active="true"] .rail-session-title {
+  color: var(--fg);
+}
+
+.rail-session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.rail-session-time {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+}
+
+.rail-sessions-empty {
+  padding: 4px 9px 6px 25px;
+  font-size: 11.5px;
+  color: var(--muted-2);
+}
+
+/* ---- footer ------------------------------------------------------------ */
+
+.rail-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .project-rail-add {
-  margin-top: auto;
-  width: 36px;
-  height: 36px;
-  border: 1px dashed rgba(127, 127, 127, 0.5);
-  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
-  color: inherit;
-  font: 400 18px/1 system-ui, sans-serif;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
+
+.project-rail-add:hover {
+  background: var(--surface);
+  color: var(--fg-dim);
+}
+
+/* ---- chrome the sidebar replaces -------------------------------------- */
+/* The brand, the session tabs and the two session buttons all moved into the
+   sidebar. The markup stays (chat-src looks these ids up) but the web page
+   must not show two of each. */
+
+#chrome-brand,
+#session-tabs,
+#session-new-btn,
+#session-history-btn {
+  display: none;
+}
+
+/* ---- the project context menu ----------------------------------------- */
 
 .project-menu {
   position: fixed;
   z-index: 60;
   min-width: 180px;
   padding: 4px;
-  border: 1px solid rgba(127, 127, 127, 0.35);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: Canvas;
-  color: CanvasText;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  background: var(--menu-bg);
+  color: var(--fg);
+  box-shadow: var(--menu-shadow);
 }
 
 .project-menu[hidden] { display: none; }
@@ -147,6 +338,11 @@ body {
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 12.5px;
   text-align: left;
   cursor: pointer;
+}
+
+.project-menu button:hover {
+  background: var(--menu-hover);
 }

@@ -5627,6 +5627,10 @@
   async function refreshSessionList(projectId) {
     try {
       const res = await connFor(projectId).send("session.list", {});
+      // The sidebar keeps a list per project, so a late answer is still this
+      // project's truth even when the user has switched away — unlike the
+      // renderer message below, which paints whatever is on screen.
+      noteSessionList(projectId, res.sessions || []);
       if (projectId === currentProjectId) {
         toRenderer({ type: "sessionList", sessions: res.sessions || [] });
       }
@@ -6138,6 +6142,50 @@
   const conns = new Map();
   /** @type {Array<any>} */
   let known = [];
+  /** Each project's sessions, as last listed. @type {Map<string, Array<any>>} */
+  const sessionsByProject = new Map();
+  /** Projects the user folded away by hand. @type {Set<string>} */
+  const collapsedProjects = new Set();
+
+  /**
+   * Called by refreshSessionList for every project, on screen or not, so the
+   * sidebar can show a project's sessions without re-asking the core.
+   * @param {string} projectId @param {Array<any>} sessions
+   */
+  function noteSessionList(projectId, sessions) {
+    sessionsByProject.set(projectId, Array.isArray(sessions) ? sessions : []);
+    renderProjects();
+  }
+
+  /**
+   * "4m" / "3h" / "5d" for a session row. Sessions written by an older core
+   * can lack updated_at, so fall back to the timestamp in the id
+   * (YYYYMMDDTHHMMSS-xxxx) exactly as the session menu does.
+   * @param {any} s
+   */
+  function sessionAge(s) {
+    let ms = Date.parse(s.updated_at || s.created_at || "");
+    if (!isFinite(ms)) {
+      const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(s.id || "");
+      ms = m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : NaN;
+    }
+    if (!isFinite(ms)) {
+      return "";
+    }
+    const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (secs < 60) {
+      return secs + "s";
+    }
+    const mins = Math.round(secs / 60);
+    if (mins < 60) {
+      return mins + "m";
+    }
+    const hours = Math.round(mins / 60);
+    if (hours < 24) {
+      return hours + "h";
+    }
+    return Math.round(hours / 24) + "d";
+  }
 
   /** The Conn for an open project, or null. @param {string} projectId */
   function connFor(projectId) {
@@ -6391,6 +6439,17 @@
     }
     list.innerHTML = "";
     for (const row of rows) {
+      // Only the project on screen has a session list — the core is asked for
+      // one per connection — so every other group stays folded, and its header
+      // switches to it rather than expanding an empty list.
+      const collapsed = row.active ? collapsedProjects.has(row.id) : true;
+
+      const group = document.createElement("div");
+      group.className = "project-group";
+      group.dataset.projectId = row.id;
+      group.dataset.active = row.active ? "true" : "false";
+      group.dataset.collapsed = collapsed ? "true" : "false";
+
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "project-chip";
@@ -6400,8 +6459,80 @@
       chip.dataset.active = row.active ? "true" : "false";
       chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
       chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
-      chip.textContent = (row.name || "?").slice(0, 2);
-      list.appendChild(chip);
+      chip.setAttribute("aria-expanded", collapsed ? "false" : "true");
+
+      // Drawn in CSS: an inline SVG here would need createElementNS, which the
+      // adapter tests' document stub does not have, and the glyph is decoration.
+      const chevron = document.createElement("span");
+      chevron.className = "project-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      chip.appendChild(chevron);
+
+      const name = document.createElement("span");
+      name.className = "project-name";
+      // textContent, not innerHTML: the name is a folder name off disk.
+      name.textContent = row.name || "?";
+      chip.appendChild(name);
+
+      const dot = document.createElement("span");
+      dot.className = "project-dot";
+      chip.appendChild(dot);
+      group.appendChild(chip);
+
+      const sessions = document.createElement("div");
+      sessions.className = "project-sessions";
+      const listed = sessionsByProject.get(row.id) || [];
+      const openSessionId = (peekProjectState(row.id) || {}).sessionId || "";
+      // session.list only returns sessions that have been written to disk, and
+      // a session is written by its first message — so the session the user is
+      // looking at is missing from the list until they say something. Showing
+      // it anyway is the difference between "where am I" and an empty sidebar.
+      const openIsListed = listed.some((s) => s.id === openSessionId);
+      if (row.active && openSessionId && !openIsListed) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "rail-session";
+        item.dataset.projectId = row.id;
+        item.dataset.sessionId = openSessionId;
+        item.dataset.active = "true";
+        const title = document.createElement("span");
+        title.className = "rail-session-title";
+        title.textContent = "New session";
+        item.title = openSessionId;
+        const age = document.createElement("span");
+        age.className = "rail-session-time";
+        age.textContent = "now";
+        item.appendChild(title);
+        item.appendChild(age);
+        sessions.appendChild(item);
+      }
+      if (listed.length === 0 && !(row.active && openSessionId)) {
+        const empty = document.createElement("div");
+        empty.className = "rail-sessions-empty";
+        empty.textContent = "No sessions yet";
+        sessions.appendChild(empty);
+      }
+      for (const s of listed.slice(0, 100)) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "rail-session";
+        item.dataset.projectId = row.id;
+        item.dataset.sessionId = s.id || "";
+        item.dataset.active = row.active && s.id === openSessionId ? "true" : "false";
+        const title = document.createElement("span");
+        title.className = "rail-session-title";
+        // textContent: titles are the user's own first message.
+        title.textContent = s.title || s.id || "untitled";
+        item.title = s.title || s.id || "";
+        const age = document.createElement("span");
+        age.className = "rail-session-time";
+        age.textContent = sessionAge(s);
+        item.appendChild(title);
+        item.appendChild(age);
+        sessions.appendChild(item);
+      }
+      group.appendChild(sessions);
+      list.appendChild(group);
     }
   }
 
@@ -6447,11 +6578,29 @@
   const railEl = document.getElementById("project-rail-list");
   if (railEl && railEl.addEventListener) {
     railEl.addEventListener("click", (ev) => {
+      const row = ev.target && ev.target.closest ? ev.target.closest(".rail-session") : null;
+      if (row) {
+        void openSessionRow(row.dataset.projectId || "", row.dataset.sessionId || "");
+        return;
+      }
       const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
       if (!chip) {
         return;
       }
-      void switchProject(chip.dataset.projectId || "");
+      const projectId = chip.dataset.projectId || "";
+      if (projectId === currentProjectId) {
+        // Switching to the project already on screen does nothing, so the
+        // header's job there is to fold its session list away.
+        if (collapsedProjects.has(projectId)) {
+          collapsedProjects.delete(projectId);
+        } else {
+          collapsedProjects.add(projectId);
+        }
+        renderProjects();
+        return;
+      }
+      collapsedProjects.delete(projectId);
+      void switchProject(projectId);
     });
     railEl.addEventListener("contextmenu", (ev) => {
       const chip = ev.target && ev.target.closest ? ev.target.closest(".project-chip") : null;
@@ -6495,6 +6644,35 @@
     addBtn.addEventListener("click", () => {
       void addProject();
     });
+  }
+
+  const newSessionBtn = document.getElementById("rail-new-session-btn");
+  if (newSessionBtn && newSessionBtn.addEventListener) {
+    newSessionBtn.addEventListener("click", () => {
+      void startSession(undefined);
+    });
+  }
+
+  /**
+   * Open one session from the sidebar. A row of another project is reachable
+   * whenever that project has been on screen before, so switch first and only
+   * then ask for the session.
+   * @param {string} projectId @param {string} sessionId
+   */
+  async function openSessionRow(projectId, sessionId) {
+    if (!projectId || !sessionId) {
+      return;
+    }
+    if (projectId !== currentProjectId) {
+      await switchProject(projectId);
+      if (projectId !== currentProjectId) {
+        return;
+      }
+    }
+    if (projectState(projectId).sessionId === sessionId) {
+      return;
+    }
+    await startSession(sessionId);
   }
 
   /**

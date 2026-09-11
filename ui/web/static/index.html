@@ -8,9 +8,32 @@
   <title>Orchestra</title>
 </head>
 <body>
-  <nav id="project-rail" class="project-rail" aria-label="Projects">
+  <nav id="project-rail" class="project-rail" aria-label="Projects and sessions">
+    <div class="rail-brand">
+      <svg class="rail-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 5.5 6.5 17M12 5.5 17.5 17M6.5 17h11" stroke="#fff" stroke-opacity="0.4" stroke-width="1.3" stroke-linecap="round"/>
+        <rect x="9" y="1.5" width="6" height="6" rx="1.4" fill="#fff"/>
+        <rect x="2" y="15" width="6" height="6" rx="1.4" fill="#fff" fill-opacity="0.82"/>
+        <rect x="16" y="15" width="6" height="6" rx="1.4" fill="#fff" fill-opacity="0.65"/>
+      </svg>
+      <span class="rail-word">Orchestra</span>
+      <span class="rail-tag">Code</span>
+    </div>
+    <button type="button" id="rail-new-session-btn" class="rail-new-session" title="New session in this project">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+      New session
+    </button>
     <div id="project-rail-list" class="project-rail-list" role="tablist"></div>
-    <button type="button" id="project-add-btn" class="project-rail-add" title="Add a project folder" aria-label="Add a project folder">+</button>
+    <div class="rail-foot">
+      <button type="button" id="project-add-btn" class="project-rail-add" title="Add a project folder" aria-label="Add a project folder">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+        Add workspace
+      </button>
+    </div>
   </nav>
   <div id="app" data-mode="agent" data-view="chat">
     <header id="chrome-strip">

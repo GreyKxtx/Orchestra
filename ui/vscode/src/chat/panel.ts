@@ -2333,6 +2333,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       `style-src ${webview.cspSource}`,
       `script-src 'nonce-${nonce}'`,
       `img-src ${webview.cspSource} data:`,
+      // chat.css @font-face points at media/fonts/; without this the bundled
+      // Geist is blocked by default-src 'none' and the UI silently falls back.
+      `font-src ${webview.cspSource}`,
     ].join("; ");
 
     return `<!DOCTYPE html>

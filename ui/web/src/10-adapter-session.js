@@ -198,6 +198,10 @@
   async function refreshSessionList(projectId) {
     try {
       const res = await connFor(projectId).send("session.list", {});
+      // The sidebar keeps a list per project, so a late answer is still this
+      // project's truth even when the user has switched away — unlike the
+      // renderer message below, which paints whatever is on screen.
+      noteSessionList(projectId, res.sessions || []);
       if (projectId === currentProjectId) {
         toRenderer({ type: "sessionList", sessions: res.sessions || [] });
       }
