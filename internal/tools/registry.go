@@ -479,6 +479,35 @@ func compactLeadDesc(s string) string {
 	return s
 }
 
+// SmallContextTokens is the window at or below which a model is treated as
+// small. It matches the circuit breaker's threshold so "small model" means
+// one thing across the agent.
+const SmallContextTokens = 32768
+
+// CompactSchemasForSmallContext drops parameter descriptions from every tool
+// schema, leaving the tool descriptions alone.
+//
+// On a 25k local model the schemas are most of what is charged before the
+// first file is read — build mode spends 2838 bytes on the system prompt and
+// 15939 on schemas. Around 2.5 KB of that is parameter prose that largely
+// restates the type, enum and minimum sitting beside it, and the structure
+// survives this untouched.
+//
+// Tool descriptions are deliberately kept. Reaching for the wrong tool is the
+// mistake small models make most often, and that text is what prevents it;
+// the Orchestra Lead truncates those too, but it has a fourteen-tool surface
+// and a prompt that routes for it.
+func CompactSchemasForSmallContext(defs []llm.ToolDef) []llm.ToolDef {
+	out := make([]llm.ToolDef, len(defs))
+	for i, d := range defs {
+		if stripped := stripSchemaDescriptions(d.Function.Parameters); len(stripped) > 0 {
+			d.Function.Parameters = stripped
+		}
+		out[i] = d
+	}
+	return out
+}
+
 func stripSchemaDescriptions(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw

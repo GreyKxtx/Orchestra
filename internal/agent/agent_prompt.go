@@ -70,6 +70,13 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	base = dedupToolDefs(base)
 	if a.opts.Mode == ModeOrchestra {
 		base = tools.FilterOrchestraLeadTools(base)
+		return base // already compacted by the Lead filter
+	}
+	// A small window cannot afford the parameter prose: it is ~2.5 KB of the
+	// ~16 KB of schemas build mode sends before the model has read anything,
+	// and the type/enum/required beside it says the same thing structurally.
+	if ctx := a.opts.ModelContextTokens; ctx > 0 && ctx <= tools.SmallContextTokens {
+		base = tools.CompactSchemasForSmallContext(base)
 	}
 	return base
 }
