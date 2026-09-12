@@ -18,6 +18,15 @@ import (
 
 // nextStep returns the next step, raw response, full LLM response, and error.
 // stepNum is the current step count (used for streaming event tagging).
+
+// contextWindowHint is the one piece of advice that actually resolves a
+// prompt-too-large failure, and it is raised from two places — the guard in
+// nextStep and the provider's own rejection in Run. It lives here so the two
+// stay identical, and so neither appends it to a message that already carries
+// it: for a while a first step that was refused before it was sent printed the
+// sentence twice in one line.
+const contextWindowHint = "raise Context Length (num_ctx) in LM Studio / .orchestra.yml extra_body.num_ctx"
+
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
 	systemPrompt := a.buildSystemPrompt()
@@ -148,8 +157,8 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 						cancel()
 					}
 					return nil, "", nil, fmt.Errorf(
-						"prompt too large (~%d tokens) for model context %d — raise Context Length (num_ctx) in LM Studio / .orchestra.yml extra_body.num_ctx",
-						est, ctxTok)
+						"prompt too large (~%d tokens) for model context %d — %s",
+						est, ctxTok, contextWindowHint)
 				}
 			}
 		}

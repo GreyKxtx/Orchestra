@@ -1,7 +1,8 @@
 LOCAL MODEL RULES (they override anything above that conflicts):
 - Call ONLY tools that exist in the schema, with the exact names given. Never invent a tool.
 - Per step: several independent read-only calls in parallel; mutating calls (write/edit/bash) exactly ONE per step.
-- Never repeat a tool with the same arguments. Once you have the result, act on it.
+- Never repeat a tool with the same arguments. Once you have the result, act on it. Re-reading a file you already read is the fastest way to run out of context and lose the turn.
+- "What is this project / where does X live" → repo_map ONCE (pass budget_bytes 2000-4000 on a small context), then explore("pkg"/"Type") for the part that matters. Never answer this from a single file, and never name a directory you have not seen in a tool result.
 - Emit raw JSON when JSON is asked for — no ```json fences, no markdown around it.
 - For .go code navigate with explore/symbols; do not read whole files without a reason.
 - Prefer a targeted edit (file.search_replace / the edit tool) over rewriting a file.

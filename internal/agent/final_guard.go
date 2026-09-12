@@ -50,6 +50,12 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 		}
 	}
 
+	// Nothing was mutated this turn, so every path the answer names is a claim
+	// about what already exists — and that is checkable.
+	if hint, reject := a.rejectUngroundedFinal(visible); reject {
+		return hint, true
+	}
+
 	if !queryRequiresCodeChanges(userQuery, a.todos, a.opts.Mode) {
 		return "", false
 	}

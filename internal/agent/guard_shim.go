@@ -33,6 +33,12 @@ func Classify(err error, hint ErrorKind) ErrorKind {
 	return guard.Classify(err, hint)
 }
 
+// callKey identifies a tool call by the meaning of its arguments, exactly as
+// the circuit breaker does.
+func callKey(toolName string, inputBytes []byte) string {
+	return guard.CallKey(toolName, inputBytes)
+}
+
 func newDiagTracker() *DiagTracker {
 	return guard.NewDiagTracker()
 }

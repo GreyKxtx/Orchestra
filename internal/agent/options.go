@@ -578,6 +578,11 @@ type Agent struct {
 	// denied or failed mutating attempt.
 	turnMutatingTools int
 
+	// groundingCorrected records that this turn already sent the answer back
+	// once for naming paths the workspace does not have. One correction only:
+	// a model that will not ground itself must not spend the window trying.
+	groundingCorrected bool
+
 	// exploreFirstSatisfied is set after read/grep/explore (explore-first gate).
 	exploreFirstSatisfied bool
 

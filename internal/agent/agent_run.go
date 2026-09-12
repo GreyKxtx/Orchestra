@@ -43,6 +43,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// Initialize todos from session state (empty for one-shot runs).
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
 	a.turnMutatingTools = 0
+	a.groundingCorrected = false
 	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0
 	a.llmInfraErr = nil
@@ -86,6 +87,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.syncModelContextFromClient()
 	maxStepsReminderSent := false
 	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
+	// syncModelContextFromClient ran just above, so this is the window the
+	// server actually reports. On a small one the repeat budget shrinks: two
+	// copies of a file is a large share of a 16k prompt.
+	cb.SetContextWindow(a.opts.ModelContextTokens)
 	cb.ResetDedup()
 	cb.SetOnClassified(func(kind ErrorKind, meta RecordMeta) {
 		if a.opts.AgentLogger == nil {
@@ -231,7 +236,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 						history = compacted
 						historyRewritten = true
 						a.recordCompactMetrics(before, after, true)
-						cb.ResetReadOnlyCalls()
+						// Forgive one repeat, do not forget them all: on a small
+					// window compaction runs every few steps, and clearing the
+					// counters reset the doom-loop guard faster than it could
+					// trip.
+					cb.ForgiveReadOnlyCallsAfterCompaction()
 						if a.opts.OnEvent != nil {
 							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
 								Kind:    llm.StreamEventRecoverableError,
@@ -271,9 +280,13 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			// instead of failing the turn.
 			if ctx.Err() == nil && llm.IsContextOverflowError(err) {
 				if historyBytes(history) == 0 {
-					return history, nil, fmt.Errorf(
-						"%w — raise Context Length (num_ctx) in LM Studio / .orchestra.yml extra_body.num_ctx",
-						err)
+					// nextStep raises this same hint when it refuses a first
+					// step it can already measure as too large, and wrapping
+					// it again printed the sentence twice in one line.
+					if strings.Contains(err.Error(), contextWindowHint) {
+						return history, nil, err
+					}
+					return history, nil, fmt.Errorf("%w — %s", err, contextWindowHint)
 				}
 				if shrunk, ok := a.recoverFromOverflow(ctx, userQuery, history, err, steps); ok {
 					// ok == true only when recovery actually reclaimed bytes,

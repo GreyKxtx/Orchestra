@@ -680,6 +680,13 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 				ToolCallID: toolCallID,
 				Content:    stopMsg,
 			})
+			// A refusal the model ignores is the same signal as a denial it
+			// ignores: it is not adapting. Counted on the same budget, so a
+			// model stuck on one file ends the turn instead of re-asking
+			// until MaxSteps with the answer already in its history.
+			if cbErr := cb.RecordDenied(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
 			return serialToolOutcome{}, nil
 		}
 	} else if cb.IsDuplicateCall(name, tc.Input) {
@@ -698,6 +705,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			ToolCallID: toolCallID,
 			Content:    stopMsg,
 		})
+		// Same budget as a denial: a duplicate the model keeps re-issuing is a
+		// stuck turn, not a recoverable step.
+		if cbErr := cb.RecordDenied(name); cbErr != nil {
+			return serialToolOutcome{}, cbErr
+		}
 		return serialToolOutcome{}, nil
 	}
 

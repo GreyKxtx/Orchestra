@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/orchestra/orchestra/protocol"
@@ -41,6 +42,9 @@ type CircuitBreaker struct {
 	successfulCallKeys map[string]int
 	// readOnlyCallKeys tracks repeated identical read-only tool calls (doom-loop guard).
 	readOnlyCallKeys map[string]int
+	// contextTokens is the model's window, when known; it sizes the repeat
+	// budget (see readOnlyLimits).
+	contextTokens int
 
 	onClassified OnClassifiedFunc
 }
@@ -48,7 +52,47 @@ type CircuitBreaker struct {
 const (
 	readOnlyWarnRepeats  = 3 // inject a nudge into history
 	readOnlyBlockRepeats = 5 // block further identical calls
+
+	// A window at or under this is small enough that one re-read is a
+	// measurable fraction of everything the model may see, so the budget for
+	// identical reads shrinks. Compaction resets these counters
+	// (ResetReadOnlyCalls), so a genuinely lost result can still be re-fetched.
+	smallContextTokens        = 32768
+	smallReadOnlyWarnRepeats  = 2
+	smallReadOnlyBlockRepeats = 3
 )
+
+// SetContextWindow tells the breaker how much room the model actually has, so
+// the repeat budget can match it. Zero or negative leaves the defaults.
+func (cb *CircuitBreaker) SetContextWindow(tokens int) {
+	if cb == nil || tokens <= 0 {
+		return
+	}
+	cb.contextTokens = tokens
+}
+
+// readOnlyLimits are the warn/block thresholds for identical read-only calls.
+func (cb *CircuitBreaker) readOnlyLimits() (warn, block int) {
+	if cb != nil && cb.contextTokens > 0 && cb.contextTokens <= smallContextTokens {
+		return smallReadOnlyWarnRepeats, smallReadOnlyBlockRepeats
+	}
+	return readOnlyWarnRepeats, readOnlyBlockRepeats
+}
+
+// callKey identifies a tool call by its tool name and the MEANING of its
+// arguments. Small models re-emit the same call with different whitespace and
+// key order from one step to the next; keyed on raw bytes, every such variant
+// looked like a brand new call and no repeat guard ever fired.
+func callKey(toolName string, inputBytes []byte) string {
+	var v any
+	if err := json.Unmarshal(inputBytes, &v); err == nil {
+		// encoding/json sorts object keys, so this is canonical.
+		if canonical, err := json.Marshal(v); err == nil {
+			return toolName + ":" + string(canonical)
+		}
+	}
+	return toolName + ":" + string(inputBytes)
+}
 
 // dedupExemptTools are read-only tools where re-fetching with identical args
 // is legitimate: history compaction may have dropped the prior result, the
@@ -66,14 +110,22 @@ func DedupExemptTool(toolName string) bool {
 	return dedupExemptTools[toolName]
 }
 
+// CallKey identifies a tool call the same way the breaker does, for callers
+// that collapse duplicates before the breaker ever sees them (the parallel
+// tool batch). Using a different rule there would let a batch through that the
+// breaker would have stopped.
+func CallKey(toolName string, inputBytes []byte) string {
+	return callKey(toolName, inputBytes)
+}
+
 // IsReadOnlyBlocked reports whether an identical read-only call should be
 // rejected to break doom-loops (same tool+args repeated many times).
 func (cb *CircuitBreaker) IsReadOnlyBlocked(toolName string, inputBytes []byte) bool {
 	if !DedupExemptTool(toolName) {
 		return false
 	}
-	key := toolName + ":" + string(inputBytes)
-	return cb.readOnlyCallKeys[key] >= readOnlyBlockRepeats
+	_, block := cb.readOnlyLimits()
+	return cb.readOnlyCallKeys[callKey(toolName, inputBytes)] >= block
 }
 
 // RecordReadOnlyCall tracks identical read-only tool calls. Returns a user-role
@@ -83,10 +135,11 @@ func (cb *CircuitBreaker) RecordReadOnlyCall(toolName string, inputBytes []byte)
 	if !DedupExemptTool(toolName) {
 		return ""
 	}
-	key := toolName + ":" + string(inputBytes)
+	key := callKey(toolName, inputBytes)
 	cb.readOnlyCallKeys[key]++
 	n := cb.readOnlyCallKeys[key]
-	if n >= readOnlyWarnRepeats && n < readOnlyBlockRepeats {
+	warn, block := cb.readOnlyLimits()
+	if n >= warn && n < block {
 		return fmt.Sprintf(
 			"⚠️ You called «%s» %d times with identical arguments. The result is already in your history — proceed to edit/write/bash or emit your final answer.",
 			toolName, n,
@@ -95,9 +148,32 @@ func (cb *CircuitBreaker) RecordReadOnlyCall(toolName string, inputBytes []byte)
 	return ""
 }
 
-// ResetReadOnlyCalls clears read-only repeat counters (e.g. after history compaction).
+// ResetReadOnlyCalls clears read-only repeat counters.
 func (cb *CircuitBreaker) ResetReadOnlyCalls() {
 	cb.readOnlyCallKeys = make(map[string]int, 8)
+}
+
+// ForgiveReadOnlyCallsAfterCompaction credits back exactly one repeat per
+// call, for when history compaction may have dropped a result the model
+// legitimately needs again.
+//
+// It used to clear the counters outright. On a small window compaction fires
+// every few steps, so clearing them meant the doom-loop guard was reset faster
+// than it could ever trip: one observed turn read the same file four times and
+// rebuilt the repo map three times, at ~60k prompt tokens and three minutes,
+// because every compaction wiped the evidence. Forgiving one repeat keeps the
+// honest re-fetch working while a loop still converges on a block.
+func (cb *CircuitBreaker) ForgiveReadOnlyCallsAfterCompaction() {
+	if cb == nil {
+		return
+	}
+	for key, n := range cb.readOnlyCallKeys {
+		if n <= 1 {
+			delete(cb.readOnlyCallKeys, key)
+			continue
+		}
+		cb.readOnlyCallKeys[key] = n - 1
+	}
 }
 
 // ResetDedup clears duplicate-call tracking at the start of each user turn so
@@ -141,7 +217,11 @@ func (cb *CircuitBreaker) RecordDenied(toolName string) *protocol.Error {
 func (cb *CircuitBreaker) recordDenied(toolName string) *protocol.Error {
 	cb.deniedPerTool[toolName]++
 	if cb.deniedPerTool[toolName] > cb.maxDenied {
-		return protocol.NewError(protocol.InvalidLLMOutput, "model repeatedly requested denied tool", map[string]any{
+		// The tool goes in the sentence, not only in the data: this message is
+		// what the user reads in the transcript when a turn gives up, and
+		// "denied tool" alone says neither which tool nor what to change.
+		return protocol.NewError(protocol.InvalidLLMOutput,
+			"the model kept calling «"+toolName+"» after it was refused — stopping the turn", map[string]any{
 			"tool":        toolName,
 			"count":       cb.deniedPerTool[toolName],
 			"max_repeats": cb.maxDenied,
@@ -253,8 +333,7 @@ func (cb *CircuitBreaker) IsDuplicateCall(toolName string, inputBytes []byte) bo
 	if DedupExemptTool(toolName) {
 		return false
 	}
-	key := toolName + ":" + string(inputBytes)
-	return cb.successfulCallKeys[key] > 0
+	return cb.successfulCallKeys[callKey(toolName, inputBytes)] > 0
 }
 
 // RecordSuccessfulCall tracks repeated successful calls of the same tool+args.
@@ -265,7 +344,7 @@ func (cb *CircuitBreaker) RecordSuccessfulCall(toolName string, inputBytes []byt
 	if DedupExemptTool(toolName) {
 		return ""
 	}
-	key := toolName + ":" + string(inputBytes)
+	key := callKey(toolName, inputBytes)
 	cb.successfulCallKeys[key]++
 	if cb.successfulCallKeys[key] == 2 {
 		return "⚠️ You already called «" + toolName + "» with identical arguments. Use edit/write to apply changes, or call with different arguments."

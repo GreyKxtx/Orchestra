@@ -200,13 +200,38 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		}
 	}
 
+	// 2b) Identical read-only calls inside ONE batch run once.
+	//
+	// The doom-loop guard below counts repeats only after a batch has
+	// finished, so a model that emits the same read a dozen times in a single
+	// step used to get a dozen copies of the file in its next prompt — the
+	// fastest way there is to blow a small context window, and exactly what a
+	// 16k-window local model does when it loses the thread. The first call
+	// runs; every later twin is answered with a pointer to it.
+	firstOfKey := make(map[string]int, len(calls))
+	dupOf := make([]int, len(calls))
+	for i := range dupOf {
+		dupOf[i] = -1
+	}
+	for i, tc := range calls {
+		if denied[i] || !dedupExemptTool(tc.Name) {
+			continue
+		}
+		key := callKey(tc.Name, tc.Input)
+		if first, ok := firstOfKey[key]; ok {
+			dupOf[i] = first
+			continue
+		}
+		firstOfKey[key] = i
+	}
+
 	// 3) Fan out tool execution. Results are collected by index so the tool
 	//    reply order matches the assistant message's tool_calls order.
 	sem := make(chan struct{}, parallelBatchWorkerLimit)
 	var wg sync.WaitGroup
 
 	for i, tc := range calls {
-		if denied[i] {
+		if denied[i] || dupOf[i] >= 0 {
 			continue
 		}
 		if dedupExemptTool(tc.Name) && cb != nil && cb.IsReadOnlyBlocked(tc.Name, tc.Input) {
@@ -253,6 +278,29 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		}(i, tc)
 	}
 	wg.Wait()
+
+	// 3b) Answer the twins. The reply is short on purpose: the result they
+	//     would have carried is already in this same step's history.
+	for i, tc := range calls {
+		if dupOf[i] < 0 {
+			continue
+		}
+		results[i] = fmt.Sprintf(
+			"(identical call: «%s» with the same arguments already ran in this step — its result is above. Do not repeat it; use it.)",
+			tc.Name,
+		)
+		if a.opts.OnEvent != nil {
+			name, id, content := tc.Name, tc.ID, results[i]
+			_ = safeRun("OnEvent ToolCallCompleted (dup)", func() {
+				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
+					Kind:         llm.StreamEventToolCallCompleted,
+					ToolCallID:   id,
+					ToolCallName: name,
+					Content:      content,
+				}})
+			})
+		}
+	}
 
 	// 4) Stitch tool replies into history in original order.
 	for i, tc := range calls {
