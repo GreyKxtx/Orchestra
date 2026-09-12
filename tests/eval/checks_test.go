@@ -220,3 +220,92 @@ func TestMechanicalChecks_LeaveUnknownTypesToTheCaller(t *testing.T) {
 		t.Error("a substring check must fall through to the simple evaluator")
 	}
 }
+
+// ---- answer checks ---------------------------------------------------------
+//
+// A question is graded on what the model said, and nothing was written, so
+// every file check passes whatever it answered. These are the only checks
+// that can see an ask-mode failure at all.
+
+func answerEnv(t *testing.T, answer string, files map[string]string) checkEnv {
+	t.Helper()
+	env := goWorkspace(t, files)
+	env.answer = answer
+	return env
+}
+
+func TestCheck_AnswerNotEmpty(t *testing.T) {
+	files := map[string]string{"a.go": "package main\n"}
+	mustFail(t, answerEnv(t, "   \n\t ", files), Check{Type: "answer_not_empty"}, "whitespace as an answer")
+	mustPass(t, answerEnv(t, "It reverses the string.", files), Check{Type: "answer_not_empty"})
+}
+
+func TestCheck_AnswerMatches(t *testing.T) {
+	files := map[string]string{"a.go": "package main\n"}
+	c := Check{Type: "answer_matches", Pattern: `(?i)(revers|backward|opposite order)`}
+	mustPass(t, answerEnv(t, "Reverse returns the string backwards.", files), c)
+	mustFail(t, answerEnv(t, "It is a helper in strutil.go.", files), c,
+		"an answer that never says what the function does")
+}
+
+// The fluent invention: a confident list of functions for a package that is
+// not there. Nothing is written, so only the answer can be judged.
+func TestCheck_AnswerNotMatchesCatchesInventedFunctions(t *testing.T) {
+	files := map[string]string{"a.go": "package main\n"}
+	c := Check{Type: "answer_not_matches", Pattern: `func\s+[A-Z]\w*\(`}
+	mustFail(t, answerEnv(t, "The package exposes func Track(event string) and func Flush().", files), c,
+		"a list of functions for a package that does not exist")
+	mustPass(t, answerEnv(t, "There is no such package in this project.", files), c)
+}
+
+// ---- answer_invents_no_path ------------------------------------------------
+
+func inventEnv(t *testing.T, answer string) checkEnv {
+	t.Helper()
+	return answerEnv(t, answer, map[string]string{
+		"go.mod":              goodModule,
+		"main.go":             "package main\n\nfunc main() {}\n",
+		"internal/store/s.go": "package store\n",
+	})
+}
+
+func TestCheck_AnswerInventsNoPath(t *testing.T) {
+	mustPass(t, inventEnv(t, "The code lives in internal/store and main.go."),
+		Check{Type: "answer_invents_no_path"})
+	mustFail(t, inventEnv(t, "Telemetry is under internal/telemetry, next to the store."),
+		Check{Type: "answer_invents_no_path"},
+		"a directory the project does not have")
+}
+
+// The check has to survive contact with ordinary prose, or it gets switched
+// off and stops catching anything. An import path is not a claim about this
+// workspace: its first segment is not an entry of the project.
+func TestCheck_AnswerInventsNoPathIgnoresImportPaths(t *testing.T) {
+	for _, answer := range []string{
+		"It uses net/http and encoding/json.",
+		"The dependency is github.com/spf13/cobra.",
+		"See golang.org/x/tools/go/packages for the details.",
+		"Run go test ./... to check.",
+	} {
+		if failure, _ := evaluateMechanicalCheck(inventEnv(t, answer), Check{Type: "answer_invents_no_path"}); failure != "" {
+			t.Errorf("flagged ordinary prose as an invented path: %q → %s", answer, failure)
+		}
+	}
+}
+
+// A path named with a trailing slash is the same claim.
+func TestCheck_AnswerInventsNoPathSeesTrailingSlashes(t *testing.T) {
+	mustFail(t, inventEnv(t, "Handlers go in internal/api/."),
+		Check{Type: "answer_invents_no_path"}, "internal/api/, which does not exist")
+}
+
+func TestExcerpt_KeepsAFailureLineReadable(t *testing.T) {
+	long := strings.Repeat("word ", 100)
+	got := excerpt(long)
+	if len(got) > 200 {
+		t.Errorf("excerpt must stay short, got %d chars", len(got))
+	}
+	if excerpt("") != "(nothing)" {
+		t.Errorf("an empty answer must read as such, got %q", excerpt(""))
+	}
+}

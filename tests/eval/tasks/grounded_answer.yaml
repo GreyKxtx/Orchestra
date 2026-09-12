@@ -1,0 +1,39 @@
+# The cheapest question there is, and the one that showed a model naming
+# directories the project does not have. answer_invents_no_path only counts a
+# path whose first segment is a real entry, so "net/http" is not an invention
+# and "internal/telemetry" is.
+name: grounded_answer
+description: Describes the project without inventing paths
+mode: ask
+max_steps: 8
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    func main() {
+    	println(Reverse("abc"))
+    }
+  strutil.go: |
+    package main
+
+    // Reverse returns s with its characters in the opposite order.
+    func Reverse(s string) string {
+    	r := []rune(s)
+    	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+    		r[i], r[j] = r[j], r[i]
+    	}
+    	return string(r)
+    }
+  internal/store/store.go: |
+    package store
+
+    // Item is a stored line.
+    type Item struct{ ID string }
+query: "Briefly: what is this project and which directories does it consist of?"
+checks:
+  - type: answer_not_empty
+  - type: answer_invents_no_path
+  - type: workspace_unchanged

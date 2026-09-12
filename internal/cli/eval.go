@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
+	"github.com/orchestra/orchestra/llm"
 	evalharness "github.com/orchestra/orchestra/tests/eval"
 	"github.com/spf13/cobra"
 )
@@ -24,9 +25,9 @@ var evalCmd = &cobra.Command{
 }
 
 var (
-	evalApply    bool
-	evalModel    string
-	evalTimeout  int
+	evalApply   bool
+	evalModel   string
+	evalTimeout int
 )
 
 func init() {
@@ -54,7 +55,8 @@ func runEval(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Running %d eval task(s) from %s\n\n", len(tasks), tasksDir)
 
 	// Build RunAgent using Core.
-	runAgent := func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error) {
+	runAgent := func(ctx context.Context, run evalharness.AgentRun) (evalharness.AgentOutcome, error) {
+		workspaceRoot := run.WorkspaceRoot
 		cfgPath := filepath.Join(workspaceRoot, ".orchestra.yml")
 
 		// Write a minimal config if none exists (eval uses project dir for config)
@@ -66,32 +68,56 @@ func runEval(cmd *cobra.Command, args []string) error {
 			}
 			srcCfg, cfgErr := config.Load(cwdCfgPath)
 			if cfgErr != nil {
-				return 0, fmt.Errorf("load config: %w", cfgErr)
+				return evalharness.AgentOutcome{}, fmt.Errorf("load config: %w", cfgErr)
 			}
 			srcCfg.ProjectRoot = workspaceRoot
 			if evalModel != "" {
 				srcCfg.LLM.Model = evalModel
 			}
 			if e := config.Save(cfgPath, srcCfg); e != nil {
-				return 0, fmt.Errorf("write eval config: %w", e)
+				return evalharness.AgentOutcome{}, fmt.Errorf("write eval config: %w", e)
 			}
 		}
 
 		c, err := core.New(workspaceRoot, core.Options{LLMClient: getTestLLMClient()})
 		if err != nil {
-			return 0, fmt.Errorf("core: %w", err)
+			return evalharness.AgentOutcome{}, fmt.Errorf("core: %w", err)
 		}
 		defer c.Close()
 
+		// The answer is streamed, not returned: neither agent.Result nor
+		// AgentRunResult carries the final prose. Every other consumer — the
+		// editor panel, the web adapter — builds it by accumulating
+		// message_delta, so the harness does exactly the same rather than
+		// widening the core's result shape for the sake of a test.
+		var answer strings.Builder
+		onEvent := func(method string, params any) {
+			if method != "agent/event" {
+				return
+			}
+			m, ok := params.(map[string]any)
+			if !ok {
+				return
+			}
+			if kind, _ := m["type"].(string); kind != string(llm.StreamEventMessageDelta) {
+				return
+			}
+			if chunk, _ := m["content"].(string); chunk != "" {
+				answer.WriteString(chunk)
+			}
+		}
+
 		res, err := c.AgentRun(ctx, core.AgentRunParams{
-			Query:    query,
-			Apply:    apply,
-			MaxSteps: maxSteps,
+			Query:    run.Query,
+			Apply:    run.Apply,
+			MaxSteps: run.MaxSteps,
+			Mode:     run.Mode,
+			OnEvent:  onEvent,
 		})
 		if err != nil {
-			return 0, err
+			return evalharness.AgentOutcome{}, err
 		}
-		return res.Steps, nil
+		return evalharness.AgentOutcome{Steps: res.Steps, Answer: answer.String()}, nil
 	}
 
 	runner := &evalharness.Runner{RunAgent: runAgent}

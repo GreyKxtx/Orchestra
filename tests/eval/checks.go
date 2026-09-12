@@ -41,6 +41,9 @@ type checkEnv struct {
 	// original holds the task's own Files, so a check can prove the agent
 	// left something alone. Keyed by slash-separated relative path.
 	original map[string]string
+	// answer is the prose the model produced, for the checks that grade what
+	// it said rather than what it wrote.
+	answer string
 }
 
 func (e checkEnv) abs(rel string) string {
@@ -142,6 +145,39 @@ func evaluateMechanicalCheck(env checkEnv, c Check) (string, bool) {
 		}
 		return "", true
 
+	case "answer_matches", "answer_not_matches":
+		re, err := regexp.Compile(c.Pattern)
+		if err != nil {
+			return fmt.Sprintf("%s: bad pattern %q: %v", c.Type, c.Pattern, err), true
+		}
+		matched := re.MatchString(env.answer)
+		if c.Type == "answer_matches" && !matched {
+			return fmt.Sprintf("answer_matches: nothing in the answer matches %q; it said: %s",
+				c.Pattern, excerpt(env.answer)), true
+		}
+		if c.Type == "answer_not_matches" && matched {
+			return fmt.Sprintf("answer_not_matches: %q matches but should not; it said: %s",
+				c.Pattern, excerpt(env.answer)), true
+		}
+		return "", true
+
+	case "answer_not_empty":
+		if strings.TrimSpace(env.answer) == "" {
+			return "answer_not_empty: the model said nothing", true
+		}
+		return "", true
+
+	case "answer_invents_no_path":
+		// The failure this catches is the one that reads best: a confident
+		// description of directories the project does not have. It cost a
+		// whole turn once — the model named a path, then spent five tool
+		// calls trying to read variations of it.
+		if invented := inventedPaths(env, env.answer); len(invented) > 0 {
+			return fmt.Sprintf("answer_invents_no_path: named %s, which the workspace does not have",
+				strings.Join(invented, ", ")), true
+		}
+		return "", true
+
 	case "workspace_unchanged":
 		// Every file the task wrote, still as it was: what a read-only task
 		// needs, and what no per-file check can state in one line.
@@ -157,4 +193,56 @@ func evaluateMechanicalCheck(env checkEnv, c Check) (string, bool) {
 		return "", true
 	}
 	return "", false
+}
+
+// pathLike matches the path-shaped tokens in prose: a/b, a/b.go, dir/. Bare
+// words are not candidates — "the internal package" names no path.
+var pathLike = regexp.MustCompile(`[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+/?`)
+
+// inventedPaths returns the path-shaped things the answer names that the
+// workspace does not contain.
+//
+// Deliberately conservative. It only judges a token that looks like a path
+// AND whose first segment is a real entry of the workspace — so "net/http",
+// "github.com/x/y" and "encoding/json" are not counted as inventions, while
+// "internal/telemetry" in a project whose internal/ holds only store is.
+// A check that cries wolf on import paths would be turned off within a day.
+func inventedPaths(env checkEnv, answer string) []string {
+	roots := map[string]bool{}
+	entries, err := os.ReadDir(env.root)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		roots[e.Name()] = true
+	}
+	seen := map[string]bool{}
+	var bad []string
+	for _, tok := range pathLike.FindAllString(answer, -1) {
+		clean := strings.TrimSuffix(tok, "/")
+		first := clean
+		if i := strings.Index(clean, "/"); i >= 0 {
+			first = clean[:i]
+		}
+		if !roots[first] || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		if _, statErr := os.Stat(env.abs(clean)); statErr != nil {
+			bad = append(bad, clean)
+		}
+	}
+	return bad
+}
+
+// excerpt trims an answer down to something a failure line can carry.
+func excerpt(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 160 {
+		return s[:160] + "…"
+	}
+	if s == "" {
+		return "(nothing)"
+	}
+	return s
 }

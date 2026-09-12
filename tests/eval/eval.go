@@ -15,16 +15,47 @@ import (
 
 // Task is a single eval task definition.
 type Task struct {
-	Name        string            `yaml:"name"`
-	Description string            `yaml:"description"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
 	// Files are written to a temp workspace before the agent runs.
-	Files  map[string]string `yaml:"files"`
+	Files map[string]string `yaml:"files"`
 	// Query is the prompt sent to the agent.
-	Query  string            `yaml:"query"`
+	Query string `yaml:"query"`
 	// Checks define success criteria evaluated after the agent run.
-	Checks []Check           `yaml:"checks"`
+	Checks []Check `yaml:"checks"`
 	// MaxSteps caps the agent loop for this task (default 12).
-	MaxSteps int             `yaml:"max_steps"`
+	MaxSteps int `yaml:"max_steps"`
+	// Mode selects the agent mode ("build", "ask", "plan", "debug", ...).
+	// Empty leaves the core's default, which is what every task used before
+	// modes were gradable.
+	Mode string `yaml:"mode,omitempty"`
+	// Apply decides whether the run writes to disk. A pointer because the
+	// default is true and "apply: false" has to be distinguishable from
+	// "apply not mentioned": a task that grades "you changed nothing" is only
+	// worth anything if the run was allowed to try.
+	Apply *bool `yaml:"apply,omitempty"`
+}
+
+// AgentRun is one request to the agent under test.
+type AgentRun struct {
+	WorkspaceRoot string
+	Query         string
+	MaxSteps      int
+	Apply         bool
+	Mode          string
+}
+
+// AgentOutcome is what came back.
+//
+// Answer is the prose the user would have seen, accumulated from the run's
+// message_delta events exactly as the editor and web hosts accumulate it. It
+// is not read off a result field, because there is none: neither agent.Result
+// nor core.AgentRunResult carries the final text — the answer is streamed,
+// and every consumer builds it the same way. A task that grades what the
+// model SAID rather than what it wrote needs this and nothing else.
+type AgentOutcome struct {
+	Steps  int
+	Answer string
 }
 
 // Check is a single success criterion.
@@ -53,22 +84,23 @@ type Check struct {
 
 // Result records the outcome of running one task.
 type Result struct {
-	TaskName         string
-	Passed           bool
-	Steps            int
-	InvalidRetries   int // validation_error events from llm_log
-	ResolveFailed    int // resolve_failed events from llm_log
-	ToolCalls        int
-	Duration         time.Duration
-	Error            error
-	Failures         []string // descriptions of failed checks
+	TaskName       string
+	Passed         bool
+	Steps          int
+	InvalidRetries int // validation_error events from llm_log
+	ResolveFailed  int // resolve_failed events from llm_log
+	ToolCalls      int
+	Duration       time.Duration
+	// Answer is the prose the model produced, for the checks that grade it.
+	Answer   string
+	Error    error
+	Failures []string // descriptions of failed checks
 }
 
 // Runner executes eval tasks.
 type Runner struct {
-	// RunAgent is the function that runs the agent on a task workspace.
-	// Returns (steps, error).
-	RunAgent func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error)
+	// RunAgent runs the agent on a task workspace.
+	RunAgent func(ctx context.Context, run AgentRun) (AgentOutcome, error)
 }
 
 // RunTask runs a single task in an isolated temp workspace.
@@ -102,9 +134,21 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 		maxSteps = 12
 	}
 
+	apply := true
+	if task.Apply != nil {
+		apply = *task.Apply
+	}
+
 	// Run agent.
-	steps, err := r.RunAgent(ctx, tmpDir, task.Query, maxSteps, true)
-	result.Steps = steps
+	outcome, err := r.RunAgent(ctx, AgentRun{
+		WorkspaceRoot: tmpDir,
+		Query:         task.Query,
+		MaxSteps:      maxSteps,
+		Apply:         apply,
+		Mode:          task.Mode,
+	})
+	result.Steps = outcome.Steps
+	result.Answer = outcome.Answer
 	result.Duration = time.Since(start)
 	if err != nil {
 		result.Error = err
@@ -120,7 +164,7 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 	// Evaluate checks. The task's own Files are carried along so a check can
 	// compare against what the workspace started as, not merely against what
 	// it now contains.
-	env := checkEnv{root: tmpDir, original: task.Files}
+	env := checkEnv{root: tmpDir, original: task.Files, answer: outcome.Answer}
 	var failures []string
 	for _, check := range task.Checks {
 		if f := evaluateCheck(env, check); f != "" {

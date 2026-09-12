@@ -41,6 +41,8 @@ var knownCheckTypes = map[string]bool{
 	"file_matches": true, "file_not_matches": true,
 	"go_build": true, "go_test": true,
 	"file_unchanged": true, "workspace_unchanged": true,
+	"answer_matches": true, "answer_not_matches": true,
+	"answer_not_empty": true, "answer_invents_no_path": true,
 }
 
 func TestTasks_AreWellFormed(t *testing.T) {
@@ -63,6 +65,10 @@ func TestTasks_AreWellFormed(t *testing.T) {
 				case "file_matches", "file_not_matches":
 					if c.Pattern == "" {
 						t.Errorf("%s on %q has no pattern", c.Type, c.Path)
+					}
+				case "answer_matches", "answer_not_matches":
+					if c.Pattern == "" {
+						t.Errorf("%s has no pattern", c.Type)
 					}
 				case "file_contains", "file_not_contains":
 					if c.Content == "" {

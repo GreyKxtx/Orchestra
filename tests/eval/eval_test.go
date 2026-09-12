@@ -201,11 +201,11 @@ func TestLoadTasks_InvalidDir(t *testing.T) {
 
 func TestRunTask_PassesWhenChecksPass(t *testing.T) {
 	runner := &Runner{
-		RunAgent: func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error) {
-			if err := os.WriteFile(filepath.Join(workspaceRoot, "result.go"), []byte("package main"), 0644); err != nil {
-				return 0, err
+		RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			if err := os.WriteFile(filepath.Join(run.WorkspaceRoot, "result.go"), []byte("package main"), 0644); err != nil {
+				return AgentOutcome{}, err
 			}
-			return 3, nil
+			return AgentOutcome{Steps: 3}, nil
 		},
 	}
 
@@ -230,8 +230,8 @@ func TestRunTask_PassesWhenChecksPass(t *testing.T) {
 
 func TestRunTask_FailsWhenChecksFail(t *testing.T) {
 	runner := &Runner{
-		RunAgent: func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error) {
-			return 2, nil // doesn't create required file
+		RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			return AgentOutcome{Steps: 2}, nil // doesn't create required file
 		},
 	}
 
@@ -256,13 +256,13 @@ func TestRunTask_FailsWhenChecksFail(t *testing.T) {
 func TestRunTask_WritesInitialFiles(t *testing.T) {
 	var seenContent string
 	runner := &Runner{
-		RunAgent: func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error) {
-			data, err := os.ReadFile(filepath.Join(workspaceRoot, "main.go"))
+		RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			data, err := os.ReadFile(filepath.Join(run.WorkspaceRoot, "main.go"))
 			if err != nil {
-				return 0, err
+				return AgentOutcome{}, err
 			}
 			seenContent = string(data)
-			return 1, nil
+			return AgentOutcome{Steps: 1}, nil
 		},
 	}
 
@@ -284,9 +284,9 @@ func TestRunTask_WritesInitialFiles(t *testing.T) {
 func TestRunTask_DefaultMaxSteps(t *testing.T) {
 	var capturedMaxSteps int
 	runner := &Runner{
-		RunAgent: func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error) {
-			capturedMaxSteps = maxSteps
-			return 1, nil
+		RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			capturedMaxSteps = run.MaxSteps
+			return AgentOutcome{Steps: 1}, nil
 		},
 	}
 
@@ -304,8 +304,8 @@ func TestRunTask_DefaultMaxSteps(t *testing.T) {
 
 func TestRunTask_DurationIsSet(t *testing.T) {
 	runner := &Runner{
-		RunAgent: func(ctx context.Context, workspaceRoot, query string, maxSteps int, apply bool) (int, error) {
-			return 1, nil
+		RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			return AgentOutcome{Steps: 1}, nil
 		},
 	}
 	task := Task{Name: "dur", Query: "go"}

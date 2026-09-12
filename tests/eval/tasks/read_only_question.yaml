@@ -1,0 +1,41 @@
+# Two things at once, and the second is the one that bites: the model must
+# answer AND leave the workspace alone. apply is left on deliberately — a
+# check that the agent changed nothing proves nothing if the agent was never
+# able to change anything.
+name: read_only_question
+description: Answers a question about existing code without writing anything
+mode: ask
+max_steps: 8
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    func main() {
+    	println(Reverse("abc"))
+    }
+  strutil.go: |
+    package main
+
+    // Reverse returns s with its characters in the opposite order.
+    func Reverse(s string) string {
+    	r := []rune(s)
+    	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+    		r[i], r[j] = r[j], r[i]
+    	}
+    	return string(r)
+    }
+  internal/store/store.go: |
+    package store
+
+    // Item is a stored line.
+    type Item struct{ ID string }
+query: "What does the function Reverse in strutil.go do? Answer in one sentence. Change nothing."
+checks:
+  - type: answer_not_empty
+  - type: answer_matches
+    pattern: '(?i)(revers|backward|opposite order)'
+  - type: workspace_unchanged
+  - type: answer_invents_no_path
