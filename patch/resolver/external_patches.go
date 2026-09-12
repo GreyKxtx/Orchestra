@@ -214,8 +214,6 @@ func resolveUnifiedDiff(projectRoot string, p patches.Patch) (ops.ReplaceRangeOp
 }
 
 func resolveWriteAtomic(projectRoot string, p patches.Patch) (ops.AnyOp, error) {
-	_ = projectRoot // resolution is path-only; apply phase enforces workspace safety.
-
 	// Guardrails: require at least one safety condition.
 	mustNotExist := false
 	condHash := ""
@@ -245,6 +243,10 @@ func resolveWriteAtomic(projectRoot string, p patches.Patch) (ops.AnyOp, error) 
 			"size":      len(p.Content),
 			"max_bytes": writeAtomicMaxBytes,
 		})
+	}
+
+	if err := checkNotDestructive(projectRoot, p, mustNotExist); err != nil {
+		return ops.AnyOp{}, err
 	}
 
 	wa := ops.WriteAtomicOp{

@@ -48,6 +48,19 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 				})
 			}
 		}
+		// Staging bypasses patch resolution, so the destructive-write guard
+		// has to be asked here too — otherwise a dry run stages the file
+		// emptied and the model sees its own damage confirmed.
+		if !req.MustNotExist {
+			if current, ok := c.Overlay.currentContent(c, relSlash); ok {
+				if reason := resolver.DestructiveWriteReason(current, req.Content); reason != "" {
+					return nil, protocol.NewError(protocol.InvalidLLMOutput,
+						"refusing to write "+relSlash+": "+reason,
+						map[string]any{"path": relSlash})
+				}
+			}
+		}
+
 		contentHash := cache.ComputeSHA256([]byte(req.Content))
 		if err := c.Overlay.stageFile(c, relSlash, req.Content, contentHash); err != nil {
 			return nil, err

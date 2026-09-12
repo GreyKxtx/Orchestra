@@ -244,6 +244,20 @@ func (o *Overlay) currentHash(relSlash string) string {
 	return cache.ComputeSHA256(b)
 }
 
+// currentContent returns what relSlash holds right now — staged content in a
+// dry run, otherwise what is on disk. ok is false when the file does not
+// exist either way.
+func (o *Overlay) currentContent(_ *Client, relSlash string) (string, bool) {
+	if content, _, ok := o.stagedContent(relSlash); ok {
+		return content, true
+	}
+	b, err := os.ReadFile(filepath.Join(o.root, filepath.FromSlash(relSlash)))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
 func (o *Overlay) StagedContent(relSlash string) (content, hash string, ok bool) {
 	return o.stagedContent(relSlash)
 }
