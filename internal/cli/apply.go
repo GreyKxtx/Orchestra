@@ -1184,7 +1184,9 @@ func namedLLMClient(cfg *config.ProjectConfig, provider, model string, logger *l
 		if oc, ok := llm.AsOpenAIClient(client); ok && logger != nil {
 			oc.SetLogger(logger)
 		}
-		return client, nil
+		// Same rule as Core.resolveNamedClient: a named provider keeps the
+		// standby its own config asks for.
+		return llm.MaybeWrapFallback(client, cfg.LLMRegistry(), provCfg, logger), nil
 	}
 	if model != "" {
 		override := cfg.LLM
@@ -1193,7 +1195,7 @@ func namedLLMClient(cfg *config.ProjectConfig, provider, model string, logger *l
 		if oc, ok := llm.AsOpenAIClient(client); ok && logger != nil {
 			oc.SetLogger(logger)
 		}
-		return client, nil
+		return llm.MaybeWrapFallback(client, cfg.LLMRegistry(), override, logger), nil
 	}
 	return nil, fmt.Errorf("provider or model required")
 }

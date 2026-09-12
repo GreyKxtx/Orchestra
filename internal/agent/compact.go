@@ -82,9 +82,21 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 		client = a.opts.CompactionClient
 	}
 	resp, err := client.Complete(ctx, req)
+	// A dedicated (cheap) compaction provider is an optimisation, not a
+	// dependency. When it is not listening — the usual state of a "fast"
+	// endpoint on a machine that is off — summarise with the model that is
+	// already answering this turn instead of losing the turn to a helper.
+	if err != nil && client != a.llm && a.llm != nil && llm.IsUnreachableError(err) {
+		a.logf("compaction provider unreachable (%v) — summarising with the main model", err)
+		client = a.llm
+		resp, err = client.Complete(ctx, req)
+	}
 	if err != nil {
 		err = fmt.Errorf("compaction LLM call: %w", err)
-		if llm.IsUnreachableError(err) {
+		// Only the model running the turn stops the run when it is
+		// unreachable; a dead helper must not mark the main LLM as dead,
+		// because that flag aborts the turn and blocks every later recovery.
+		if llm.IsUnreachableError(err) && client == a.llm {
 			a.llmInfraErr = err
 		}
 		return nil, err
