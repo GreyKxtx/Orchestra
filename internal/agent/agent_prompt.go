@@ -72,12 +72,24 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		base = tools.FilterOrchestraLeadTools(base)
 		return base // already compacted by the Lead filter
 	}
-	// A small window cannot afford the parameter prose: it is ~2.5 KB of the
-	// ~16 KB of schemas build mode sends before the model has read anything,
-	// and the type/enum/required beside it says the same thing structurally.
-	if ctx := a.opts.ModelContextTokens; ctx > 0 && ctx <= tools.SmallContextTokens {
-		base = tools.CompactSchemasForSmallContext(base)
-	}
+	// Parameter descriptions are NOT dropped for a small window, though the
+	// argument for it was good: the prose is ~2.5 KB of the ~16 KB of schemas
+	// build mode sends before the model has read anything, and the
+	// type/enum/required beside it looked like it said the same thing.
+	//
+	// It does not. Measured over three rounds of a twelve-task suite against
+	// a 9B model at a 25k window, dropping the descriptions took 24/36 to
+	// 20/36, and the loss was not spread evenly: edit-in-large-file was the
+	// one heavy task that passed every round, and it then failed every round,
+	// each time with the model searching for text it had already replaced.
+	// The guard against destructive whole-file writes fired 69 times in the
+	// full-schema run and not once in the compact one — not because the model
+	// had become careful, but because it no longer got as far as writing.
+	//
+	// tools.CompactSchemasForSmallContext is kept, and unused by the agent,
+	// because the measurement is what makes this decision and a later model
+	// or a tighter window could reverse it. Re-run the suite before wiring it
+	// back in.
 	return base
 }
 

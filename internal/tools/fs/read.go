@@ -51,8 +51,22 @@ func (c *Client) Read(ctx context.Context, req FSReadRequest) (*FSReadResponse, 
 		return nil, err
 	}
 
-	if strings.HasSuffix(relSlash, ".go") && c.Hooks.GoFileRedirect != nil {
+	// req.MaxBytes, not the defaulted maxBytes: asking for a fixed number of
+	// bytes is asking for the bytes. The model that broke item.go tried
+	// max_bytes 200 to get round the redirect and got the redirect again.
+	askedForBytes := req.MaxBytes > 0
+	if strings.HasSuffix(relSlash, ".go") && c.Hooks.GoFileRedirect != nil &&
+		!askedForBytes && goFileIsLongEnoughToRedirect(content) {
 		if redirect := c.Hooks.GoFileRedirect(ctx, relSlash, hash); redirect != "" {
+			// The package clause is the one line a whole-file write must
+			// reproduce and the only one the symbol list cannot carry: the
+			// index stores symbols, not the file's own header, and every
+			// other tool names a Go symbol by import path. Those differ for
+			// `package main` at a module root, and a model with only the
+			// import path in front of it writes the import path.
+			if pkg := goPackageClause(content); pkg != "" {
+				redirect = pkg + "\n\n" + redirect
+			}
 			return &FSReadResponse{
 				Path:      relSlash,
 				Content:   redirect,
@@ -83,14 +97,69 @@ func (c *Client) Read(ctx context.Context, req FSReadRequest) (*FSReadResponse, 
 	}, nil
 }
 
+// goRedirectMinLines is how long a .go file has to be before answering with a
+// symbol list beats answering with the file.
+//
+// The redirect exists to keep a thousand-line file out of the context window,
+// and below this its own premise is false: a 91-byte item.go was redirected
+// with "the file may be thousands of lines", and since the redirect replaces
+// the content there was then no way to see the file at all — max_bytes does
+// not help, because the redirect is chosen before any truncation. The model
+// wrote the file back with the wrong package clause and broke the build.
+const goRedirectMinLines = 200
+
+// goFileIsLongEnoughToRedirect reports whether a symbol list saves enough to
+// be worth withholding the file.
+func goFileIsLongEnoughToRedirect(content string) bool {
+	return strings.Count(content, "\n") >= goRedirectMinLines
+}
+
+// goPackageClause returns the file's `package X` declaration, or "" when it
+// has none. Scanning rather than parsing: the clause is the first line that
+// is not blank, a comment or inside one, which is cheap and exact enough to
+// quote back.
+func goPackageClause(content string) string {
+	inBlockComment := false
+	for _, raw := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(raw)
+		if inBlockComment {
+			if i := strings.Index(line, "*/"); i >= 0 {
+				line = strings.TrimSpace(line[i+2:])
+				inBlockComment = false
+			} else {
+				continue
+			}
+		}
+		for strings.HasPrefix(line, "/*") {
+			end := strings.Index(line, "*/")
+			if end < 0 {
+				inBlockComment = true
+				line = ""
+				break
+			}
+			line = strings.TrimSpace(line[end+2:])
+		}
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if strings.HasPrefix(line, "package ") {
+			return line
+		}
+		// The first real line was not a package clause, so there is none.
+		return ""
+	}
+	return ""
+}
+
 // FormatGoFileRedirect builds a symbol-list response for .go files.
 func FormatGoFileRedirect(relSlash, hash string, syms []GoSymbol) string {
 	if len(syms) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("Reading a .go file with read is wasteful — the file may be thousands of lines.\n")
-	sb.WriteString("Use explore() to read the code. The file_hash below is for patching.\n\n")
+	sb.WriteString("This .go file is long, so here are its symbols instead of its text.\n")
+	sb.WriteString("Use explore(\"Name\") for one symbol's code, or read again with max_bytes\n")
+	sb.WriteString("for the file itself. The file_hash below is for patching.\n\n")
 	sb.WriteString("file_hash: " + hash + "\n\n")
 	sb.WriteString("Symbols in " + relSlash + ":\n")
 	for _, s := range syms {

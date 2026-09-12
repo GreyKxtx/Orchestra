@@ -332,7 +332,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			Before: diffPreviewBytes(fp.before),
 			After:  diffPreviewBytes(fp.after),
 		})
-		if !bytes.Equal(fp.before, fp.after) {
+		if planWrites(fp.exists, fp.before, fp.after) {
 			result.ChangedFiles = append(result.ChangedFiles, rel)
 		}
 	}
@@ -353,7 +353,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	// before we touch it and bail before any write if it has drifted.
 	for _, rel := range paths {
 		fp := plans[rel]
-		if bytes.Equal(fp.before, fp.after) {
+		if !planWrites(fp.exists, fp.before, fp.after) {
 			// We're not going to write this file (no change planned), so
 			// drift here doesn't matter.
 			continue
@@ -441,7 +441,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	// preceding a file write within the same batch).
 	for _, rel := range paths {
 		fp := plans[rel]
-		if bytes.Equal(fp.before, fp.after) {
+		if !planWrites(fp.exists, fp.before, fp.after) {
 			continue
 		}
 
@@ -451,6 +451,24 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	}
 
 	return result, nil
+}
+
+// planWrites reports whether a planned file has to be written to disk.
+//
+// Differing bytes are the ordinary case. The other one is a file that is not
+// there yet: creating it empty leaves before and after both empty, so a plain
+// bytes.Equal check skips the write — and the caller is told the write
+// succeeded while nothing was created. That is what `write` with
+// must_not_exist and no content did, reporting bytes_written 0 and success
+// over a path that then read back as missing.
+//
+// Taking the parameters rather than a filePlan because filePlan is a
+// function-local type inside ApplyAnyOps, as backupSpec below notes.
+func planWrites(exists bool, before, after []byte) bool {
+	if !exists {
+		return true
+	}
+	return !bytes.Equal(before, after)
 }
 
 // backupSpec is the minimum data writeBackupsParallel needs from a
