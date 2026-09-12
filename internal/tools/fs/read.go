@@ -45,6 +45,9 @@ func (c *Client) Read(ctx context.Context, req FSReadRequest) (*FSReadResponse, 
 
 	content, size, mtimeUnix, hash, truncated, err := readFileWithHash(absPath, maxBytes)
 	if err != nil {
+		if missing := missingPathError(c.Root, relSlash, err); missing != nil {
+			return nil, missing
+		}
 		return nil, err
 	}
 

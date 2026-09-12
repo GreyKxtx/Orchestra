@@ -27,18 +27,21 @@ func (c *Client) List(ctx context.Context, req FSListRequest) (*FSListResponse, 
 	if listPath == "" {
 		listPath = "."
 	}
-	startAbs, _, err := resolveWorkspacePath(c.Root, listPath)
+	startAbs, relSlash, err := resolveWorkspacePath(c.Root, listPath)
 	if err != nil {
 		return nil, err
 	}
 	st, err := os.Stat(startAbs)
 	if err != nil {
+		if missing := missingPathError(c.Root, relSlash, err); missing != nil {
+			return nil, missing
+		}
 		return nil, err
 	}
 	if !st.IsDir() {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, "path is not a directory", map[string]any{
-			"path": listPath,
-		})
+		return nil, protocol.NewError(protocol.InvalidLLMOutput,
+			relSlash+" is a file, not a directory — use read to see its contents",
+			map[string]any{"path": relSlash})
 	}
 
 	recursive := true
