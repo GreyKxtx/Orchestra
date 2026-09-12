@@ -1,0 +1,43 @@
+# The task that exposed the read redirect. item.go is 91 bytes and read used
+# to answer it with "the file may be thousands of lines" and a symbol list,
+# withholding the package clause — which is the one line a whole-file write
+# has to reproduce, and which differs from the import path for `package main`
+# at a module root. The model wrote `package evalws` and broke the build.
+#
+# go_build is what catches that; every other check here passed while it was
+# broken.
+name: add_method
+description: Add a method and the import it needs
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    func main() {
+    }
+  item.go: |
+    package main
+
+    // Item is one line of an order.
+    type Item struct {
+    	Name string
+    	Qty  int
+    }
+query: "In item.go add a method Label() string to the type Item that returns Name, then \" x\", then Qty as a number (for example \"boot x3\"). Add whatever import it needs."
+checks:
+  - type: file_matches
+    path: item.go
+    pattern: 'func\s*\(\s*\w+\s+\*?Item\s*\)\s+Label\(\s*\)\s+string'
+  - type: file_matches
+    path: item.go
+    pattern: '\.Name'
+  - type: file_matches
+    path: item.go
+    pattern: '\.Qty'
+  - type: file_matches
+    path: item.go
+    pattern: '(strconv\.Itoa|fmt\.Sprintf|fmt\.Sprint)'
+  - type: go_build

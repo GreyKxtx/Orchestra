@@ -20,3 +20,4 @@ checks:
   - type: file_contains
     path: math.go
     content: "func Add"
+  - type: go_build

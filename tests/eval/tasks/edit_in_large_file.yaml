@@ -1,0 +1,344 @@
+# The one task whose fixture is long enough to matter: over 300 lines, past
+# the point where read answers a .go file with its symbol list instead of its
+# text. It is also the task that regressed hardest when tool-schema parameter
+# descriptions were dropped — 3/3 to 0/3 — each failure the model searching
+# for text it had already replaced.
+#
+# The checks that carry it are the ones about what did NOT change: a model
+# that rewrites the file wholesale can get MaxRetries right and still destroy
+# the work. file_matches on the last function is the cheapest proof the tail
+# survived.
+name: edit_in_large_file
+description: Change one constant in a 300-line file without rewriting it
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  limits.go: |
+    package main
+
+    // Tuning constants for the request pipeline.
+    const (
+    	MaxRetries    = 3
+    	MaxIdleConns  = 64
+    	QueueDepth    = 128
+    )
+
+    // step1 is a placeholder stage in the pipeline.
+    func step1(n int) int {
+    	return n + 1
+    }
+
+    // step2 is a placeholder stage in the pipeline.
+    func step2(n int) int {
+    	return n + 2
+    }
+
+    // step3 is a placeholder stage in the pipeline.
+    func step3(n int) int {
+    	return n + 3
+    }
+
+    // step4 is a placeholder stage in the pipeline.
+    func step4(n int) int {
+    	return n + 4
+    }
+
+    // step5 is a placeholder stage in the pipeline.
+    func step5(n int) int {
+    	return n + 5
+    }
+
+    // step6 is a placeholder stage in the pipeline.
+    func step6(n int) int {
+    	return n + 6
+    }
+
+    // step7 is a placeholder stage in the pipeline.
+    func step7(n int) int {
+    	return n + 7
+    }
+
+    // step8 is a placeholder stage in the pipeline.
+    func step8(n int) int {
+    	return n + 8
+    }
+
+    // step9 is a placeholder stage in the pipeline.
+    func step9(n int) int {
+    	return n + 9
+    }
+
+    // step10 is a placeholder stage in the pipeline.
+    func step10(n int) int {
+    	return n + 10
+    }
+
+    // step11 is a placeholder stage in the pipeline.
+    func step11(n int) int {
+    	return n + 11
+    }
+
+    // step12 is a placeholder stage in the pipeline.
+    func step12(n int) int {
+    	return n + 12
+    }
+
+    // step13 is a placeholder stage in the pipeline.
+    func step13(n int) int {
+    	return n + 13
+    }
+
+    // step14 is a placeholder stage in the pipeline.
+    func step14(n int) int {
+    	return n + 14
+    }
+
+    // step15 is a placeholder stage in the pipeline.
+    func step15(n int) int {
+    	return n + 15
+    }
+
+    // step16 is a placeholder stage in the pipeline.
+    func step16(n int) int {
+    	return n + 16
+    }
+
+    // step17 is a placeholder stage in the pipeline.
+    func step17(n int) int {
+    	return n + 17
+    }
+
+    // step18 is a placeholder stage in the pipeline.
+    func step18(n int) int {
+    	return n + 18
+    }
+
+    // step19 is a placeholder stage in the pipeline.
+    func step19(n int) int {
+    	return n + 19
+    }
+
+    // step20 is a placeholder stage in the pipeline.
+    func step20(n int) int {
+    	return n + 20
+    }
+
+    // step21 is a placeholder stage in the pipeline.
+    func step21(n int) int {
+    	return n + 21
+    }
+
+    // step22 is a placeholder stage in the pipeline.
+    func step22(n int) int {
+    	return n + 22
+    }
+
+    // step23 is a placeholder stage in the pipeline.
+    func step23(n int) int {
+    	return n + 23
+    }
+
+    // step24 is a placeholder stage in the pipeline.
+    func step24(n int) int {
+    	return n + 24
+    }
+
+    // step25 is a placeholder stage in the pipeline.
+    func step25(n int) int {
+    	return n + 25
+    }
+
+    // step26 is a placeholder stage in the pipeline.
+    func step26(n int) int {
+    	return n + 26
+    }
+
+    // step27 is a placeholder stage in the pipeline.
+    func step27(n int) int {
+    	return n + 27
+    }
+
+    // step28 is a placeholder stage in the pipeline.
+    func step28(n int) int {
+    	return n + 28
+    }
+
+    // step29 is a placeholder stage in the pipeline.
+    func step29(n int) int {
+    	return n + 29
+    }
+
+    // step30 is a placeholder stage in the pipeline.
+    func step30(n int) int {
+    	return n + 30
+    }
+
+    // step31 is a placeholder stage in the pipeline.
+    func step31(n int) int {
+    	return n + 31
+    }
+
+    // step32 is a placeholder stage in the pipeline.
+    func step32(n int) int {
+    	return n + 32
+    }
+
+    // step33 is a placeholder stage in the pipeline.
+    func step33(n int) int {
+    	return n + 33
+    }
+
+    // step34 is a placeholder stage in the pipeline.
+    func step34(n int) int {
+    	return n + 34
+    }
+
+    // step35 is a placeholder stage in the pipeline.
+    func step35(n int) int {
+    	return n + 35
+    }
+
+    // step36 is a placeholder stage in the pipeline.
+    func step36(n int) int {
+    	return n + 36
+    }
+
+    // step37 is a placeholder stage in the pipeline.
+    func step37(n int) int {
+    	return n + 37
+    }
+
+    // step38 is a placeholder stage in the pipeline.
+    func step38(n int) int {
+    	return n + 38
+    }
+
+    // step39 is a placeholder stage in the pipeline.
+    func step39(n int) int {
+    	return n + 39
+    }
+
+    // step40 is a placeholder stage in the pipeline.
+    func step40(n int) int {
+    	return n + 40
+    }
+
+    // step41 is a placeholder stage in the pipeline.
+    func step41(n int) int {
+    	return n + 41
+    }
+
+    // step42 is a placeholder stage in the pipeline.
+    func step42(n int) int {
+    	return n + 42
+    }
+
+    // step43 is a placeholder stage in the pipeline.
+    func step43(n int) int {
+    	return n + 43
+    }
+
+    // step44 is a placeholder stage in the pipeline.
+    func step44(n int) int {
+    	return n + 44
+    }
+
+    // step45 is a placeholder stage in the pipeline.
+    func step45(n int) int {
+    	return n + 45
+    }
+
+    // step46 is a placeholder stage in the pipeline.
+    func step46(n int) int {
+    	return n + 46
+    }
+
+    // step47 is a placeholder stage in the pipeline.
+    func step47(n int) int {
+    	return n + 47
+    }
+
+    // step48 is a placeholder stage in the pipeline.
+    func step48(n int) int {
+    	return n + 48
+    }
+
+    // step49 is a placeholder stage in the pipeline.
+    func step49(n int) int {
+    	return n + 49
+    }
+
+    // step50 is a placeholder stage in the pipeline.
+    func step50(n int) int {
+    	return n + 50
+    }
+
+    // step51 is a placeholder stage in the pipeline.
+    func step51(n int) int {
+    	return n + 51
+    }
+
+    // step52 is a placeholder stage in the pipeline.
+    func step52(n int) int {
+    	return n + 52
+    }
+
+    // step53 is a placeholder stage in the pipeline.
+    func step53(n int) int {
+    	return n + 53
+    }
+
+    // step54 is a placeholder stage in the pipeline.
+    func step54(n int) int {
+    	return n + 54
+    }
+
+    // step55 is a placeholder stage in the pipeline.
+    func step55(n int) int {
+    	return n + 55
+    }
+
+    // step56 is a placeholder stage in the pipeline.
+    func step56(n int) int {
+    	return n + 56
+    }
+
+    // step57 is a placeholder stage in the pipeline.
+    func step57(n int) int {
+    	return n + 57
+    }
+
+    // step58 is a placeholder stage in the pipeline.
+    func step58(n int) int {
+    	return n + 58
+    }
+
+    // step59 is a placeholder stage in the pipeline.
+    func step59(n int) int {
+    	return n + 59
+    }
+
+    // step60 is a placeholder stage in the pipeline.
+    func step60(n int) int {
+    	return n + 60
+    }
+query: "In limits.go the constant MaxRetries is 3 and should be 10. Change only that."
+checks:
+  - type: file_matches
+    path: limits.go
+    pattern: 'MaxRetries\s*=\s*10\b'
+  - type: file_matches
+    path: limits.go
+    pattern: 'MaxIdleConns\s*=\s*64\b'
+  - type: file_matches
+    path: limits.go
+    pattern: 'QueueDepth\s*=\s*128\b'
+  - type: file_matches
+    path: limits.go
+    pattern: 'func step1\(n int\) int'
+  - type: file_matches
+    path: limits.go
+    pattern: 'func step60\(n int\) int'
+  - type: go_build

@@ -1,0 +1,29 @@
+# A helper in one file and its caller in another. The failure this catches is
+# the half-finished one: the helper written, the call site forgotten, which
+# every per-file substring check passes and go_build does not.
+name: two_files
+description: Add a helper in one file and use it in another
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  util.go: |
+    package main
+  main.go: |
+    package main
+
+    func main() {
+    }
+query: "Add a function Double(n int) int to util.go that returns n*2, and call it from main in main.go, printing the result of Double(21) with fmt.Println."
+checks:
+  - type: file_matches
+    path: util.go
+    pattern: 'func Double\(\s*n int\s*\) int'
+  - type: file_matches
+    path: util.go
+    pattern: 'return\s+n\s*\*\s*2'
+  - type: file_matches
+    path: main.go
+    pattern: 'Double\(\s*21\s*\)'
+  - type: go_build

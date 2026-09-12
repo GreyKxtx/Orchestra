@@ -1,0 +1,46 @@
+# Changing one value is the commonest edit there is, and the way it goes wrong
+# is that the whole file comes back rewritten — comments reflowed, neighbours
+# "tidied". The untouched-neighbour checks are the point; without them a model
+# that rewrote everything and got the one number right would pass.
+name: surgical_edit
+description: Change one value and leave its neighbours byte-identical
+max_steps: 10
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  config.go: |
+    package main
+
+    // Timeout is the request timeout in seconds.
+    func Timeout() int {
+    	return 30
+    }
+
+    // Retries is how many times a failed request is retried.
+    func Retries() int {
+    	return 3
+    }
+
+    // UserAgent identifies this client.
+    func UserAgent() string {
+    	return "evalws/1.0"
+    }
+query: "In config.go change only the value returned by Timeout from 30 to 60. Leave Retries, UserAgent and every comment alone."
+checks:
+  - type: file_matches
+    path: config.go
+    pattern: 'func Timeout\(\) int \{\s*return 60\s*\}'
+  - type: file_matches
+    path: config.go
+    pattern: 'func Retries\(\) int \{\s*return 3\s*\}'
+  - type: file_matches
+    path: config.go
+    pattern: 'func UserAgent\(\) string \{\s*return "evalws/1\.0"\s*\}'
+  - type: file_contains
+    path: config.go
+    content: "// Timeout is the request timeout in seconds."
+  - type: file_contains
+    path: config.go
+    content: "// UserAgent identifies this client."
+  - type: go_build

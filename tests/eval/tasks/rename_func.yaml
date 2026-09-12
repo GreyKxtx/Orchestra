@@ -33,3 +33,4 @@ checks:
   - type: file_contains
     path: math_test.go
     content: "Sum(1, 2)"
+  - type: go_build

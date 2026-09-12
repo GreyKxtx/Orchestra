@@ -15,7 +15,7 @@ func TestEvaluateCheck_FileContains_Pass(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package main\nfunc Foo() {}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	result := evaluateCheck(dir, Check{Type: "file_contains", Path: "foo.go", Content: "func Foo"})
+	result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_contains", Path: "foo.go", Content: "func Foo"})
 	if result != "" {
 		t.Fatalf("expected pass (empty string), got: %q", result)
 	}
@@ -26,14 +26,14 @@ func TestEvaluateCheck_FileContains_Fail(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package main"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	result := evaluateCheck(dir, Check{Type: "file_contains", Path: "foo.go", Content: "func Bar"})
+	result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_contains", Path: "foo.go", Content: "func Bar"})
 	if result == "" {
 		t.Fatal("expected failure when content not present")
 	}
 }
 
 func TestEvaluateCheck_FileContains_MissingFile(t *testing.T) {
-	result := evaluateCheck(t.TempDir(), Check{Type: "file_contains", Path: "missing.go", Content: "x"})
+	result := evaluateCheck(checkEnv{root: t.TempDir()}, Check{Type: "file_contains", Path: "missing.go", Content: "x"})
 	if result == "" {
 		t.Fatal("expected failure for missing file")
 	}
@@ -44,19 +44,19 @@ func TestEvaluateCheck_FileExists_Pass(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "exists.go"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateCheck(dir, Check{Type: "file_exists", Path: "exists.go"}); result != "" {
+	if result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_exists", Path: "exists.go"}); result != "" {
 		t.Fatalf("expected pass, got: %q", result)
 	}
 }
 
 func TestEvaluateCheck_FileExists_Fail(t *testing.T) {
-	if result := evaluateCheck(t.TempDir(), Check{Type: "file_exists", Path: "missing.go"}); result == "" {
+	if result := evaluateCheck(checkEnv{root: t.TempDir()}, Check{Type: "file_exists", Path: "missing.go"}); result == "" {
 		t.Fatal("expected failure for missing file")
 	}
 }
 
 func TestEvaluateCheck_FileNotExists_Pass(t *testing.T) {
-	if result := evaluateCheck(t.TempDir(), Check{Type: "file_not_exists", Path: "gone.go"}); result != "" {
+	if result := evaluateCheck(checkEnv{root: t.TempDir()}, Check{Type: "file_not_exists", Path: "gone.go"}); result != "" {
 		t.Fatalf("expected pass for absent file, got: %q", result)
 	}
 }
@@ -66,7 +66,7 @@ func TestEvaluateCheck_FileNotExists_Fail(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "present.go"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateCheck(dir, Check{Type: "file_not_exists", Path: "present.go"}); result == "" {
+	if result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_not_exists", Path: "present.go"}); result == "" {
 		t.Fatal("expected failure when file exists but should not")
 	}
 }
@@ -76,7 +76,7 @@ func TestEvaluateCheck_FileNotContains_Pass(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.go"), []byte("hello world"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateCheck(dir, Check{Type: "file_not_contains", Path: "f.go", Content: "forbidden"}); result != "" {
+	if result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_not_contains", Path: "f.go", Content: "forbidden"}); result != "" {
 		t.Fatalf("expected pass, got: %q", result)
 	}
 }
@@ -86,13 +86,13 @@ func TestEvaluateCheck_FileNotContains_Fail(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.go"), []byte("hello world"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateCheck(dir, Check{Type: "file_not_contains", Path: "f.go", Content: "hello"}); result == "" {
+	if result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_not_contains", Path: "f.go", Content: "hello"}); result == "" {
 		t.Fatal("expected failure when forbidden content is present")
 	}
 }
 
 func TestEvaluateCheck_UnknownType(t *testing.T) {
-	result := evaluateCheck(t.TempDir(), Check{Type: "bogus_type", Path: "x"})
+	result := evaluateCheck(checkEnv{root: t.TempDir()}, Check{Type: "bogus_type", Path: "x"})
 	if result == "" {
 		t.Fatal("expected failure for unknown check type")
 	}

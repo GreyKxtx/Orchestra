@@ -21,3 +21,7 @@ checks:
   - type: file_contains
     path: math_test.go
     content: "Double("
+  - type: file_matches
+    path: math_test.go
+    pattern: 't\.(Fatal|Error|Fatalf|Errorf)'
+  - type: go_test

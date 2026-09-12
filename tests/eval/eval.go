@@ -29,10 +29,26 @@ type Task struct {
 
 // Check is a single success criterion.
 type Check struct {
-	// Type: "file_contains", "file_exists", "file_not_contains", "file_not_exists".
+	// Type is one of:
+	//
+	//   file_exists / file_not_exists / file_contains / file_not_contains
+	//       the substring checks; cheap, and unable to tell correct work
+	//       from work that merely contains the right words.
+	//   file_matches / file_not_matches
+	//       regexp against Pattern, for asserting a shape — a method with
+	//       the right receiver, a number converted rather than concatenated.
+	//   go_build / go_test
+	//       the workspace compiles, and its tests pass. Content optionally
+	//       names the package pattern (default "./...").
+	//   file_unchanged / workspace_unchanged
+	//       the file, or every file the task wrote, is byte-identical to
+	//       what the task wrote. What a read-only task needs to prove.
+	//
+	// See checks.go for why the mechanical ones exist.
 	Type    string `yaml:"type"`
 	Path    string `yaml:"path"`
 	Content string `yaml:"content,omitempty"`
+	Pattern string `yaml:"pattern,omitempty"`
 }
 
 // Result records the outcome of running one task.
@@ -101,10 +117,13 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 		result.ToolCalls = metrics.ToolCalls
 	}
 
-	// Evaluate checks.
+	// Evaluate checks. The task's own Files are carried along so a check can
+	// compare against what the workspace started as, not merely against what
+	// it now contains.
+	env := checkEnv{root: tmpDir, original: task.Files}
 	var failures []string
 	for _, check := range task.Checks {
-		if f := evaluateCheck(tmpDir, check); f != "" {
+		if f := evaluateCheck(env, check); f != "" {
 			failures = append(failures, f)
 		}
 	}
@@ -113,8 +132,11 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 	return result
 }
 
-func evaluateCheck(workspaceRoot string, c Check) string {
-	abs := filepath.Join(workspaceRoot, filepath.FromSlash(c.Path))
+func evaluateCheck(env checkEnv, c Check) string {
+	if failure, handled := evaluateMechanicalCheck(env, c); handled {
+		return failure
+	}
+	abs := env.abs(c.Path)
 	switch c.Type {
 	case "file_exists":
 		if _, err := os.Stat(abs); err != nil {

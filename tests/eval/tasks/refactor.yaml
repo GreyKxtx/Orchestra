@@ -32,3 +32,4 @@ checks:
   - type: file_contains
     path: util.go
     content: "clamp"
+  - type: go_build

@@ -1,0 +1,38 @@
+# The model is told the project does not build and not where. Describe
+# concatenates an int onto a string: it reads correctly, and only the compiler
+# objects — which is the whole reason go_build exists as a check.
+name: fix_compile_error
+description: Find and fix a type error it was not pointed at
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  broken.go: |
+    package main
+
+    // Sum adds the numbers in the slice.
+    func Sum(nums []int) int {
+    	total := 0
+    	for _, n := range nums {
+    		total += n
+    	}
+    	return total
+    }
+
+    // Describe returns a label for the count.
+    func Describe(nums []int) string {
+    	return "count: " + len(nums)
+    }
+query: "This project does not compile. Find the compile error and fix it. Change nothing else."
+checks:
+  - type: go_build
+  - type: file_matches
+    path: broken.go
+    pattern: 'total\s*\+=\s*n'
+  - type: file_matches
+    path: broken.go
+    pattern: 'func Describe\(\s*nums \[\]int\s*\) string'
+  - type: file_contains
+    path: broken.go
+    content: "count"
