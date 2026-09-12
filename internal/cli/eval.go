@@ -117,7 +117,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return evalharness.AgentOutcome{}, err
 		}
-		return evalharness.AgentOutcome{Steps: res.Steps, Answer: answer.String()}, nil
+		return evalharness.AgentOutcome{Steps: res.Steps, Answer: answer.String(), PlanPath: res.PlanPath}, nil
 	}
 
 	runner := &evalharness.Runner{RunAgent: runAgent}

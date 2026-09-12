@@ -44,10 +44,33 @@ type checkEnv struct {
 	// answer is the prose the model produced, for the checks that grade what
 	// it said rather than what it wrote.
 	answer string
+	// planPath is where plan mode wrote its plan, relative to root. Empty for
+	// every other mode, and empty for a plan run that produced no plan.
+	planPath string
 }
 
+// planToken is how a task names a file whose name it cannot know. Plan mode
+// writes .orchestra/plans/<timestamp>-plan.md for a run with no session, so
+// the path exists only after the run; a task says `path: "{plan}"` and the
+// harness fills in what the run actually produced.
+const planToken = "{plan}"
+
 func (e checkEnv) abs(rel string) string {
+	if strings.HasPrefix(rel, planToken) {
+		rel = e.planPath + strings.TrimPrefix(rel, planToken)
+	}
 	return filepath.Join(e.root, filepath.FromSlash(rel))
+}
+
+// planUnresolved reports the failure for a check that names {plan} on a run
+// that produced no plan path. Without this the substitution would leave the
+// workspace root, and `file_exists` on a directory succeeds — a plan-mode task
+// would pass by writing no plan at all.
+func (e checkEnv) planUnresolved(c Check) string {
+	if !strings.Contains(c.Path, planToken) || e.planPath != "" {
+		return ""
+	}
+	return fmt.Sprintf("%s %q: the run produced no plan path, so there is no plan to check", c.Type, c.Path)
 }
 
 // runGo runs one go subcommand in the workspace and returns its combined

@@ -1,0 +1,72 @@
+# Plan mode's output is prose, so the temptation is to grade it with
+# file_contains and call that a suite. It is not: a plan that says "fix the
+# nil map in the store" contains every word the checks look for and can still
+# point at the wrong package, or at a package that does not exist.
+#
+# What carries this task is that the workspace has three packages and the bug
+# is in one of them: naming internal/store/store.go is a claim about where the
+# model looked, not a word lifted from the query. And workspace_unchanged holds
+# plan mode to its own contract — the mode exists to NOT edit, and the query
+# below is phrased as a fix precisely so a mode that quietly edits is caught.
+#
+# A path-invention check was tried here and removed. The model's plan proposed
+# adding internal/store/store_test.go, which is exactly right and does not
+# exist yet: an answer is a claim about what IS, a plan is a proposal about
+# what WILL BE, and only the first can be graded that way.
+#
+# The bug is real: Store.items is never allocated, so Add panics with
+# "assignment to entry in nil map" on the first call.
+name: plan_locates_the_fix
+description: Plan a fix in the right existing file, and edit nothing
+mode: plan
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "evalws/internal/api"
+
+    func main() {
+    	api.Serve()
+    }
+  internal/store/store.go: |
+    package store
+
+    // Store keeps order quantities in memory.
+    type Store struct {
+    	items map[string]int
+    }
+
+    // Add records one item.
+    func (s *Store) Add(name string, qty int) {
+    	s.items[name] = qty
+    }
+
+    // Count returns how many distinct items are held.
+    func (s *Store) Count() int {
+    	return len(s.items)
+    }
+  internal/api/handler.go: |
+    package api
+
+    import "evalws/internal/store"
+
+    // Serve wires up the one handler this program has.
+    func Serve() {
+    	s := &store.Store{}
+    	s.Add("boot", 3)
+    }
+query: "Calling Store.Add panics. Work out why and write a plan for fixing it. Do not change any code — this is planning only."
+checks:
+  - type: file_exists
+    path: "{plan}"
+  - type: file_matches
+    path: "{plan}"
+    pattern: 'internal/store/store\.go'
+  - type: file_matches
+    path: "{plan}"
+    pattern: '(?i)(nil map|make\(map|map\[string\]int\{)'
+  - type: workspace_unchanged

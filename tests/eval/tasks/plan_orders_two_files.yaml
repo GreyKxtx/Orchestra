@@ -1,0 +1,59 @@
+# The thing a plan is FOR is the part no single-file check can see: that the
+# change touches more than one file, and that the plan knows it. Moving a
+# constant onto a struct breaks the caller, and a plan that names only the file
+# holding the constant has planned a build failure.
+#
+# So the two file_matches here are not decoration — they are the whole task.
+# Everything else (the fix itself, the wording) is already covered elsewhere.
+name: plan_orders_two_files
+description: Plan a change that cannot be confined to one file
+mode: plan
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "evalws/internal/api"
+
+    func main() {
+    	c := api.NewClient("https://example.test")
+    	c.Do()
+    }
+  internal/api/client.go: |
+    package api
+
+    // maxRetries is how many times Do retries a failed call.
+    const maxRetries = 3
+
+    // Client calls one endpoint.
+    type Client struct {
+    	endpoint string
+    }
+
+    // NewClient returns a client for endpoint.
+    func NewClient(endpoint string) *Client {
+    	return &Client{endpoint: endpoint}
+    }
+
+    // Do performs the call, retrying on failure.
+    func (c *Client) Do() int {
+    	attempts := 0
+    	for attempts < maxRetries {
+    		attempts++
+    	}
+    	return attempts
+    }
+query: "The retry count is hard-coded. Plan turning maxRetries into a field on Client that the caller chooses, keeping 3 as the value main.go asks for. Do not change any code — this is planning only."
+checks:
+  - type: file_exists
+    path: "{plan}"
+  - type: file_matches
+    path: "{plan}"
+    pattern: 'internal/api/client\.go'
+  - type: file_matches
+    path: "{plan}"
+    pattern: 'main\.go'
+  - type: workspace_unchanged

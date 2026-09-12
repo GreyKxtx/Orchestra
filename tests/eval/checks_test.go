@@ -299,6 +299,61 @@ func TestCheck_AnswerInventsNoPathSeesTrailingSlashes(t *testing.T) {
 		Check{Type: "answer_invents_no_path"}, "internal/api/, which does not exist")
 }
 
+// ---- the plan file ---------------------------------------------------------
+
+// planEnv is a workspace with real subdirectories — the invented-path check
+// only judges a token whose first segment is a real entry, so a flat fixture
+// would give it nothing to be right or wrong about.
+func planEnv(t *testing.T, plan string) checkEnv {
+	t.Helper()
+	env := goWorkspace(t, map[string]string{
+		"go.mod":                  goodModule,
+		"main.go":                 "package main\n\nfunc main() {}\n",
+		"internal/store/s.go":     "package store\n",
+		"internal/api/handler.go": "package api\n",
+	})
+	env.planPath = ".orchestra/plans/20260912-120000-plan.md"
+	abs := env.abs("{plan}")
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+// {plan} has to resolve to what the run produced, in every check that takes a
+// path — otherwise a plan task can only assert that something, somewhere, was
+// written.
+func TestCheck_PlanTokenResolvesToTheRunsPlan(t *testing.T) {
+	env := planEnv(t, "# Plan\n\nChange internal/store/s.go.\n")
+	mustPass(t, env, Check{Type: "file_matches", Path: "{plan}", Pattern: `internal/store/s\.go`})
+	if failure := evaluateCheck(env, Check{Type: "file_exists", Path: "{plan}"}); failure != "" {
+		t.Errorf("file_exists must find the plan: %s", failure)
+	}
+}
+
+// The failure that would make every plan task vacuous: a run that wrote no
+// plan leaves planPath empty, "{plan}" collapses to the workspace root, and
+// file_exists on a directory succeeds. Then a model that plans nothing passes.
+func TestCheck_APlanCheckOnARunThatWroteNoPlanFails(t *testing.T) {
+	env := goWorkspace(t, map[string]string{"go.mod": goodModule})
+	for _, c := range []Check{
+		{Type: "file_exists", Path: "{plan}"},
+		{Type: "file_matches", Path: "{plan}", Pattern: "anything"},
+		{Type: "file_contains", Path: "{plan}", Content: "anything"},
+	} {
+		failure := evaluateCheck(env, c)
+		if failure == "" {
+			t.Errorf("%s passed on a run that produced no plan at all", c.Type)
+		}
+		if !strings.Contains(failure, "no plan") {
+			t.Errorf("%s must say the plan is missing, said: %s", c.Type, failure)
+		}
+	}
+}
+
 func TestExcerpt_KeepsAFailureLineReadable(t *testing.T) {
 	long := strings.Repeat("word ", 100)
 	got := excerpt(long)

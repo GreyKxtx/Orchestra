@@ -56,6 +56,10 @@ type AgentRun struct {
 type AgentOutcome struct {
 	Steps  int
 	Answer string
+	// PlanPath is where plan mode wrote its plan, relative to the workspace
+	// root. The name carries a timestamp, so a task cannot state it — it says
+	// "{plan}" and this is what that resolves to.
+	PlanPath string
 }
 
 // Check is a single success criterion.
@@ -74,9 +78,20 @@ type Check struct {
 	//   file_unchanged / workspace_unchanged
 	//       the file, or every file the task wrote, is byte-identical to
 	//       what the task wrote. What a read-only task needs to prove.
+	//   answer_not_empty / answer_matches / answer_not_matches
+	//       against the prose the model streamed, for the modes whose whole
+	//       output is what they said.
+	//   answer_invents_no_path
+	//       no path-shaped token in the answer that the workspace does not
+	//       have. Sound because an answer is a claim about what IS; the same
+	//       judgement against a PLAN is not, and was tried and removed — a
+	//       plan legitimately names files to create.
 	//
 	// See checks.go for why the mechanical ones exist.
-	Type    string `yaml:"type"`
+	Type string `yaml:"type"`
+	// Path is workspace-relative. It may start with "{plan}", which resolves
+	// to wherever plan mode actually put its plan — the name carries a
+	// timestamp, so a task cannot state it.
 	Path    string `yaml:"path"`
 	Content string `yaml:"content,omitempty"`
 	Pattern string `yaml:"pattern,omitempty"`
@@ -164,7 +179,7 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 	// Evaluate checks. The task's own Files are carried along so a check can
 	// compare against what the workspace started as, not merely against what
 	// it now contains.
-	env := checkEnv{root: tmpDir, original: task.Files, answer: outcome.Answer}
+	env := checkEnv{root: tmpDir, original: task.Files, answer: outcome.Answer, planPath: outcome.PlanPath}
 	var failures []string
 	for _, check := range task.Checks {
 		if f := evaluateCheck(env, check); f != "" {
@@ -177,6 +192,9 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 }
 
 func evaluateCheck(env checkEnv, c Check) string {
+	if failure := env.planUnresolved(c); failure != "" {
+		return failure
+	}
 	if failure, handled := evaluateMechanicalCheck(env, c); handled {
 		return failure
 	}
