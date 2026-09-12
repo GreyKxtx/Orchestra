@@ -57,7 +57,7 @@ func init() {
 	webCmd.Flags().BoolVar(&webNoOpen, "no-open", false, "Do not open a browser")
 	webCmd.Flags().BoolVar(&webDebug, "debug", false, "Enable debug logs to stderr")
 	webCmd.Flags().BoolVar(&webInit, "init", false, "Initialise the workspace when it has no .orchestra.yml (same as orchestra init)")
-	webCmd.Flags().BoolVar(&webAnnounce, "announce", false, "Sidecar mode: print one JSON line (the discovery object) to stdout when listening; exit when stdin closes")
+	webCmd.Flags().BoolVar(&webAnnounce, "announce", false, "Sidecar mode: print one JSON line (the discovery object) to stdout when listening; exit when stdin closes. Not for a headless run whose stdin is closed at spawn — the server would exit before the first request; use --port and --token instead")
 	webCmd.Flags().BoolVar(&webNoProject, "no-project", false, "Start with no project open: the UI shows its start screen and the user picks one")
 	rootCmd.AddCommand(webCmd)
 }

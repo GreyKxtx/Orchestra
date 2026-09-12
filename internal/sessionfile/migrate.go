@@ -35,7 +35,7 @@ func ParseSnapshot(data []byte, fileID string) (*Snapshot, error) {
 	if probe.Version >= 2 {
 		var snap Snapshot
 		if err := json.Unmarshal(data, &snap); err != nil {
-			return nil, fmt.Errorf("sessionfile: parse v2: %w", err)
+			return nil, fmt.Errorf("sessionfile: parse v%d snapshot: %w", probe.Version, err)
 		}
 		normalizeSnapshot(&snap, fileID)
 		return &snap, nil

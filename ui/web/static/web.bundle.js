@@ -187,10 +187,6 @@
     active = conn;
   }
 
-  function activeConn() {
-    return active;
-  }
-
   // Only one of the original four helpers survives: wsNotify, for
   // dispatchToCore's "cancelTurn" ($/cancelRequest is a fire-and-forget
   // notification, not a call awaited across a switch, so routing it to

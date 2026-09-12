@@ -8,7 +8,7 @@ real, and parked with a stated reason — and the reason is the useful part, so
 it is kept. What was fixed at the time is not listed.
 
 Re-triaged 2026-09-12 against the code as it stands. Forty-six findings were
-recorded across the three original documents; two had been closed by later work
+recorded across the three original documents; three had been closed by later work
 and are gone from this list rather than marked, so the list holds only what is
 still true. Four items are escalated, two narrowed. The three source documents
 are replaced by this one.
@@ -143,28 +143,23 @@ request means one pending ask in practice — but a second request for a project
 already mid-ask would overwrite `pendingAsk` and re-notify. The brief's own
 reference code has the same shape.
 
-**4.6 `ui/desktop/README.md` describes four chip states** while an internal
-self-review table called the set "five". No inconsistency with the code:
-`status` is a four-value enum and "active" is a separate boolean marker.
-Wording only, inherited from the brief's verbatim text.
-
-**4.7 `sendTurn`'s `connFor(projectId).sendCancellable(...)` has no null
+**4.6 `sendTurn`'s `connFor(projectId).sendCancellable(...)` has no null
 guard,** where the deleted `wsSendCancellable` would have rejected gracefully.
 Safe by construction today — `projectId` is read from `currentProjectId`
 synchronously with no yield point before `connFor` — but a less defensive shape
 than what it replaced.
 
-**4.8 The keyboard-opened rail menu does not move focus into itself.** A
+**4.7 The keyboard-opened rail menu does not move focus into itself.** A
 keyboard user must Tab away from the chip to reach "Close project" / "Remove
 from list". Mirrors the mouse path exactly. The natural follow-up to 3.2.
 
-**4.9 `activeConn()` in `00-web-prelude.js` has zero callers** anywhere in
+**4.8 `activeConn()` in `00-web-prelude.js` has zero callers** anywhere in
 `ui/web`; only `setActiveConn` is used. Pre-existing dead code — still dead as
 of this triage. The fix round's report justified keeping it by pointing at the
 `active` variable it wraps, which `wsNotify` does read directly; that is the
 variable, not the accessor.
 
-**4.10 `closeProject` / `forgetProject` never explicitly hide the overlay.** If
+**4.9 `closeProject` / `forgetProject` never explicitly hide the overlay.** If
 the only remaining project is closed while its own permission ask is on screen,
 the overlay stays up with dead buttons until the next switch. Safe by
 construction — `projectState()` lazily rebuilds an empty record for the deleted
