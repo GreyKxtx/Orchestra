@@ -274,3 +274,44 @@ test("a child tool completed without a recorded start still nests under its pare
   assert.equal(rows[3].depth, 3);
   assert.equal(rows[3].durationMs, undefined, "no start was recorded, so no duration is claimed");
 });
+
+test("a turn boundary sets the turn's edges and adds no row of its own", () => {
+  const rows = buildTrajectoryTree([
+    ev("turn/start", { turn_id: "t1", session_id: "s" }, 1000, 1),
+    ae("step_start", { step: 1 }, 1010, 2),
+    ae("step_done", { step: 1 }, 1040, 3),
+    ev("turn/end", { turn_id: "t1", session_id: "s", duration_ms: 90 }, 1050, 4),
+  ]);
+  assert.ok(
+    !rows.some((r) => /turn\/(start|end)/.test(r.label || "")),
+    `a boundary must not become a row; got labels: ${rows.map((r) => r.label).join(", ")}`
+  );
+  const turn = rows.find((r) => r.kind === "turn");
+  assert.ok(turn, "the turn row must exist");
+  assert.equal(turn.durationMs, 90, "the core's measurement wins over the span between events");
+  assert.equal(turn.startMs, 1000, "the turn starts where the boundary says");
+});
+
+test("a turn that emitted nothing but its boundary is still a turn", () => {
+  // The whole point of recording a boundary: before it, a turn with no
+  // notifications left no trace and could not be told from one that never ran.
+  const rows = buildTrajectoryTree([
+    ev("turn/start", { turn_id: "t9", session_id: "s" }, 500, 1),
+    ev("turn/end", { turn_id: "t9", session_id: "s", duration_ms: 12 }, 512, 2),
+  ]);
+  const turns = rows.filter((r) => r.kind === "turn");
+  assert.equal(turns.length, 1, `want one turn row, got ${rows.length} rows`);
+  assert.equal(turns[0].durationMs, 12);
+  assert.equal(turns[0].outcome, "done", "a turn with an end is not still open");
+});
+
+test("a turn with no boundary still derives its duration from the events", () => {
+  // Sessions recorded before boundaries existed must keep working.
+  const rows = buildTrajectoryTree([
+    ae("step_start", { step: 1 }, 2000, 1),
+    ae("step_done", { step: 1 }, 2050, 2),
+  ]);
+  const turn = rows.find((r) => r.kind === "turn");
+  assert.ok(turn, "the turn row must exist");
+  assert.equal(turn.durationMs, 50, "falls back to the span between the first and last event");
+});

@@ -34,3 +34,20 @@ type Event struct {
 
 // SourceCore is the only source this build emits.
 const SourceCore = "core"
+
+// Turn boundaries. Every other Type in the log is the notification method that
+// carried the event; these two are recorded directly, because a turn beginning
+// and ending is not something the client is told — it is something the log has
+// to know.
+//
+// Without them a reader infers the boundary from the first and last event it
+// happens to see, which is wrong for a turn that produced no notifications at
+// all, and leaves the turn itself with no duration. That gap cannot be closed
+// after the fact: a session recorded without boundaries is missing them
+// forever, which is why they are here rather than deferred again.
+const (
+	// TypeTurnStart carries {turn_id, session_id}.
+	TypeTurnStart = "turn/start"
+	// TypeTurnEnd carries {turn_id, session_id, duration_ms}.
+	TypeTurnEnd = "turn/end"
+)

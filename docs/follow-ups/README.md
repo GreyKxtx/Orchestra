@@ -10,7 +10,7 @@ it is kept. What was fixed at the time is not listed.
 Re-triaged 2026-09-12 against the code as it stands, and worked down from
 there. Everything closed — whether by later work before the triage, or during
 it — is deleted rather than annotated, so this list holds only what is still
-true. Four of what remains is escalated and two narrowed, each marked as such
+true. Three of what remains is escalated and two narrowed, each marked as such
 with what changed. The three source documents are replaced by this one; their
 text is in git history if the reasoning behind a closed item is ever wanted.
 
@@ -58,29 +58,19 @@ afterwards, and both times it cost a full review-and-fix cycle.
 
 ## 2. Escalated in this triage
 
-**2.1 The log still has no turn boundary event or duration field (was C2a 11).**
-The recorded vocabulary has no `turn/start` or `turn/end`, and no step carries a
-literal duration — a reader derives elapsed time from consecutive core-stamped
-timestamps. The original finding said to decide this *before* C2b, because a
-boundary event costs nothing to add now and **cannot be added retroactively to
-sessions already recorded**. C2b has shipped and the event still does not exist.
-The decision window closed; every session recorded from here on is missing it
-permanently. This is the one item on the list that gets more expensive every day
-it waits.
-
-**2.2 `40-projects.js` now carries four jobs in 2035 lines (was C1 8).** It was
+**2.1 `40-projects.js` now carries four jobs in 2035 lines (was C1 8).** It was
 372 lines when the finding was raised — connection registry, HTTP client, rail
 DOM, and input plus startup, behind comment banners. It is five and a half times
 that now. The remedy has not changed and is still nearly free: the bundler
 orders fragments numerically, so `41-projects-rail.js` is a move, not a rewrite.
 
-**2.3 `renderProjects` rebuilds every chip, now from two places (was C1 1).**
+**2.2 `renderProjects` rebuilds every chip, now from two places (was C1 1).**
 `list.innerHTML = ""` destroys keyboard focus on a chip whenever *any* project's
 status flips, and with a pulsing "working" status that is often. There were one
 of these; there are now two (`40-projects.js:729` and `:1703`). The fix is keyed
 reconciliation, not a one-liner.
 
-**2.4 `SessionTrajectory`'s "empty" predicate — and its recommended fix is now
+**2.3 `SessionTrajectory`'s "empty" predicate — and its recommended fix is now
 wrong (was C2b 17).** The finding said to call `sessionLooksRestoredLocked`
 (negated) instead of keeping a second, narrower copy. Since then the predicate
 gained a clause:

@@ -75,15 +75,32 @@ type agentLaunch struct {
 	// session to record against, or when the log could not be opened;
 	// Close is safe either way.
 	Trajectory *trajectory.Writer
+
+	// turnStartedAt is when the boundary was recorded, so Close can say how
+	// long the turn took rather than leaving a reader to subtract timestamps
+	// of whatever events happened to bracket it.
+	turnStartedAt time.Time
+	sessionID     string
 }
 
-// Close releases what the launch holds open. Callers own the turn, so they
-// own this: prepareAgentLaunch returns before the first event exists and
-// cannot defer it itself.
+// Close releases what the launch holds open, and records where the turn ended.
+// Callers own the turn, so they own this: prepareAgentLaunch returns before
+// the first event exists and cannot defer it itself.
 func (l *agentLaunch) Close() {
 	if l == nil || l.Trajectory == nil {
 		return
 	}
+	// Best-effort, like every other write to the log: a boundary that cannot
+	// be recorded must not fail a turn that has already run.
+	dur := int64(0)
+	if !l.turnStartedAt.IsZero() {
+		dur = time.Since(l.turnStartedAt).Milliseconds()
+	}
+	_ = l.Trajectory.Append(trajectory.TypeTurnEnd, map[string]any{
+		"turn_id":     l.EventEnvelope.TurnID,
+		"session_id":  l.sessionID,
+		"duration_ms": dur,
+	})
 	_ = l.Trajectory.Close()
 }
 
@@ -179,6 +196,13 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (launch *agentLaunch, re
 		} else {
 			tw = w
 			spec.OnEvent = teeToTrajectory(spec.OnEvent, tw)
+			// The first line of the turn, written before the agent can emit
+			// anything, so a turn that produces no notifications at all is
+			// still visible as a turn that ran.
+			_ = tw.Append(trajectory.TypeTurnStart, map[string]any{
+				"turn_id":    env.TurnID,
+				"session_id": spec.SessionID,
+			})
 		}
 	}
 	// The launch owns the writer once it exists, and its three callers defer
@@ -396,6 +420,8 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (launch *agentLaunch, re
 		RouteConfidence: routeConfidence,
 		EventEnvelope:   env,
 		Trajectory:      tw,
+		turnStartedAt:   time.Now(),
+		sessionID:       spec.SessionID,
 	}, nil
 }
 

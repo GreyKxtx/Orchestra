@@ -3426,6 +3426,20 @@
       const t = turnFor(str(d.turn_id));
       touch(t, ms, live);
 
+      // The turn's own boundary. It exists so a turn that emitted nothing at
+      // all is still a turn, and so the turn's duration is the core's
+      // measurement rather than the span of whatever events bracketed it. It
+      // sets the turn's edges and adds no row of its own — turnFor/touch above
+      // have already taken the timestamp.
+      if (method === "turn/start" || method === "turn/end") {
+        if (method === "turn/end") {
+          const d2 = num(d.duration_ms);
+          if (d2 !== undefined) t.durationMs = d2;
+          if (t.outcome === "open") t.outcome = "done";
+        }
+        continue;
+      }
+
       if (method === "workflow/stage_start" || method === "workflow/stage_done") {
         const stageKey = t.key + "/stage:" + str(d.stage_id) + "#" + (num(d.attempt) ?? 0);
         let st = t.depth1.find((c) => c.kind === "stage" && c.key === stageKey);
@@ -3593,7 +3607,11 @@
     };
 
     for (const t of turns.values()) {
-      push(t, { key: t.key, label: "turn " + t.ordinal, startMs: t.startMs, endMs: t.endMs, live: t.live }, 0, "turn", { outcome: t.outcome });
+      push(t, { key: t.key, label: "turn " + t.ordinal, startMs: t.startMs, endMs: t.endMs, live: t.live }, 0, "turn",
+        // The core measured this turn where it ran. Prefer that over the span
+        // between the first and last event we happened to receive; extra is
+        // merged last, so it wins over the derived value.
+        t.durationMs === undefined ? { outcome: t.outcome } : { outcome: t.outcome, durationMs: t.durationMs });
       for (const n of t.depth1) {
         if (n.kind !== "step") {
           push(t, n, 1, n.kind, { outcome: n.outcome, output: n.output || undefined });
