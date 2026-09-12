@@ -228,10 +228,20 @@ export function loadBundle(opts = {}) {
     // synchronous turn. Reading fetchResponder before yielding would freeze in
     // the default responder set above, no matter what the test configures.
     await Promise.resolve();
-    const body = fetchResponder(String(url), init || {});
+    const raw = fetchResponder(String(url), init || {});
+    // A responder that wants a failure says so with __httpStatus; everything
+    // else is a 200. Without this the harness could only ever produce success,
+    // so the page's handling of a rejected request went untested.
+    let status = 200;
+    let body = raw;
+    if (raw && typeof raw.__httpStatus === "number") {
+      status = raw.__httpStatus;
+      body = { ...raw };
+      delete body.__httpStatus;
+    }
     return {
-      ok: true,
-      status: 200,
+      ok: status >= 200 && status < 300,
+      status,
       json: async () => body,
       text: async () => JSON.stringify(body),
     };
@@ -2710,4 +2720,65 @@ test("the provider's balance reaches the cost popover", async () => {
   assert.ok(msg, "the renderer draws the balance row from a credits message");
   assert.equal(msg.supported, true);
   assert.equal(msg.balance, 12.5);
+});
+
+test("a rejected project request reads as a sentence, not as a machine code", async () => {
+  // The server answers with `error` — a code — and puts the cause in `detail`.
+  // The page used to show the code: "could not list projects: not_initialized".
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({ __httpStatus: 503, error: "not_initialized" }));
+  await tick();
+
+  const note = b.inbound.find((m) => m.type === "systemNote" && /could not list projects/.test(m.text || ""));
+  assert.ok(note, `no systemNote for the failed listing; got: ${b.inbound.map((m) => m.type).join(", ")}`);
+  assert.ok(
+    /still starting/.test(note.text),
+    `the note must explain the failure, got: ${note.text}`
+  );
+  assert.ok(
+    !/not_initialized/.test(note.text),
+    `the raw code must not reach the user, got: ${note.text}`
+  );
+});
+
+test("a rejected request falls back to the server's detail when the code is unknown", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    __httpStatus: 500,
+    error: "something_new",
+    detail: "the disk is full",
+  }));
+  await tick();
+
+  const note = b.inbound.find((m) => m.type === "systemNote" && /could not list projects/.test(m.text || ""));
+  assert.ok(note, "no systemNote for the failed listing");
+  assert.ok(/the disk is full/.test(note.text), `detail must be preferred, got: ${note.text}`);
+});
+
+test("a background project's connection does not fetch its trajectory", async () => {
+  // The source gate is `projectId === currentProjectId`, and it reads
+  // correctly — but every fixture that opens a background project only looks
+  // at its traffic after switching into it, so a spurious fetch would have
+  // gone unnoticed. This is the negative assertion that was missing.
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+  await tick();
+
+  const strays = b.sent.filter(
+    (m) => m.method === "session.trajectory" && String(m.url).includes("project=B")
+  );
+  assert.equal(
+    strays.length,
+    0,
+    `a background project must not fetch its trajectory; got ${strays.length}`
+  );
 });

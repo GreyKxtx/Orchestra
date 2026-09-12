@@ -377,7 +377,10 @@
     }
     try {
       const res = await conn.send("session.trajectory", { session_id: sessionId });
-      if (projectId !== currentProjectId || projectState(projectId).sessionId !== sessionId) {
+      // peekProjectState, not projectState: the latter lazily creates a
+      // record, so a guard running after the project was forgotten would
+      // resurrect an orphan entry that renderProjects then iterates past.
+      if (projectId !== currentProjectId || (peekProjectState(projectId) || {}).sessionId !== sessionId) {
         // The user left this project, or moved to another session of it,
         // while the request was in flight: the answer is for a view that is
         // no longer on screen.
@@ -389,7 +392,7 @@
         events: res && Array.isArray(res.events) ? res.events : [],
       });
     } catch (err) {
-      if (projectId === currentProjectId && projectState(projectId).sessionId === sessionId) {
+      if (projectId === currentProjectId && (peekProjectState(projectId) || {}).sessionId === sessionId) {
         toRenderer({ type: "trajectory", recorded: true, events: [], error: String(err && err.message ? err.message : err) });
       }
     }

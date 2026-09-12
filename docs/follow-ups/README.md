@@ -7,11 +7,12 @@ These are not bug reports awaiting triage. Each was raised in a review, judged
 real, and parked with a stated reason — and the reason is the useful part, so
 it is kept. What was fixed at the time is not listed.
 
-Re-triaged 2026-09-12 against the code as it stands. Forty-six findings were
-recorded across the three original documents; three had been closed by later work
-and are gone from this list rather than marked, so the list holds only what is
-still true. Four items are escalated, two narrowed. The three source documents
-are replaced by this one.
+Re-triaged 2026-09-12 against the code as it stands, and worked down from
+there. Everything closed — whether by later work before the triage, or during
+it — is deleted rather than annotated, so this list holds only what is still
+true. Four of what remains is escalated and two narrowed, each marked as such
+with what changed. The three source documents are replaced by this one; their
+text is in git history if the reasoning behind a closed item is ever wanted.
 
 Specs: `docs/superpowers/specs/2026-09-09-multi-project-window-design.md`
 Plans: `docs/superpowers/plans/2026-09-10-trajectory-{event-log,view}.md`
@@ -115,51 +116,34 @@ still a tablist over plain buttons. One place left, not a general problem.
 
 ## 4. The rail and the web host (C1)
 
-**4.1 `forgetProject` does not move off the active project, but `closeProject`
-does.** Forgetting the project you are looking at leaves `currentProjectId`
-naming an entry no longer in `known`, with no chip for it. Asymmetric with its
-sibling for no stated reason.
-
-**4.2 Machine error codes are shown to the user.** `api()` sets `err.message`
-from the response's `error` field, which is a code — `bad_request`,
-`already_open`, `no_such_dir`, `open_failed` — so the user reads "could not open
-C:\x: already_open". The server sends a `detail` field alongside it that nothing
-reads.
-
-**4.3 The harness's mocked `fetch` times around microtask ordering.** The
+**4.1 The harness's mocked `fetch` times around microtask ordering.** The
 `await Promise.resolve()` deferral is correct in substance; accepting the
 responder in `loadBundle({ fetchResponder })` would remove the coupling instead
 of timing around it. Not racy today — this is about how easy it is to break.
 
-**4.4 `turnStart`'s reset keys off delivery-time `currentProjectId`.**
+**4.2 `turnStart`'s reset keys off delivery-time `currentProjectId`.**
 `20-adapter-events.js` resets `turnTextByProject`/blocks for whichever project
 is active when the message *drains*, and `toRenderer` is an async `postMessage`.
 Sending in A and switching to B before it drains wipes B's accumulators. Narrow,
 same class as the stale-guard findings that were fixed.
 
-**4.5 `notifyAsking` fires on any `onServerRequest` where the status is already
+**4.3 `notifyAsking` fires on any `onServerRequest` where the status is already
 `"asking"`,** not only on the idle→asking transition. Benign today — one core
 request means one pending ask in practice — but a second request for a project
 already mid-ask would overwrite `pendingAsk` and re-notify. The brief's own
 reference code has the same shape.
 
-**4.6 `sendTurn`'s `connFor(projectId).sendCancellable(...)` has no null
+**4.4 `sendTurn`'s `connFor(projectId).sendCancellable(...)` has no null
 guard,** where the deleted `wsSendCancellable` would have rejected gracefully.
 Safe by construction today — `projectId` is read from `currentProjectId`
 synchronously with no yield point before `connFor` — but a less defensive shape
 than what it replaced.
 
-**4.7 The keyboard-opened rail menu does not move focus into itself.** A
+**4.5 The keyboard-opened rail menu does not move focus into itself.** A
 keyboard user must Tab away from the chip to reach "Close project" / "Remove
 from list". Mirrors the mouse path exactly. The natural follow-up to 3.2.
 
-**4.8 `activeConn()` in `00-web-prelude.js` has zero callers** anywhere in
-`ui/web`; only `setActiveConn` is used. Pre-existing dead code — still dead as
-of this triage. The fix round's report justified keeping it by pointing at the
-`active` variable it wraps, which `wsNotify` does read directly; that is the
-variable, not the accessor.
-
-**4.9 `closeProject` / `forgetProject` never explicitly hide the overlay.** If
+**4.6 `closeProject` / `forgetProject` never explicitly hide the overlay.** If
 the only remaining project is closed while its own permission ask is on screen,
 the overlay stays up with dead buttons until the next switch. Safe by
 construction — `projectState()` lazily rebuilds an empty record for the deleted
@@ -277,7 +261,7 @@ fixture when the harness next changes.
 **6.6 Two back-to-back turns racing their re-fetches.** The guard drops an
 answer for a session the project has left, but two fetches for the *same*
 session can still land out of order, leaving a slightly stale snapshot until the
-next re-fetch. A request counter per session would close it. Same shape as 6.15.
+next re-fetch. A request counter per session would close it. Same shape as 6.12.
 
 **6.7 The `catch` path of `refreshTrajectory` is untested.** Every fixture
 answers with success. The code reads correctly against the constraint and the
@@ -289,36 +273,22 @@ dead socket.** `ensureConn` builds a replacement and `forgetProjectState` wipes
 the record, so the turn-end re-fetch goes nowhere. Intentional — the turn went
 out on that connection — and the next session start refreshes anyway.
 
-**6.9 No test traps a background project's `onConnected` firing a fetch.** The
-source gate (`projectId === currentProjectId`) is correct by reading; fixtures
-that open a background project only inspect its traffic after switching in, so a
-spurious fetch would pass unnoticed. One negative assertion would do.
-
-**6.10 `projectState()` in the guard auto-vivifies an orphan map entry after a
-project is forgotten.** Harmless: `renderProjects` iterates the server's list
-via `peekProjectState`, which in the guard would avoid the orphan.
-
-**6.11 The VS Code turn-end re-fetch uses the session id at completion, not the
+**6.9 The VS Code turn-end re-fetch uses the session id at completion, not the
 one the turn ran on.** `openSession`/`newSession` do not check `sendInFlight`,
 so a mid-turn switch is reachable; the `finally` then fetches the new session's
 log. The guard keeps the wrong rows off the pane and the old session self-heals
 when reopened. Mirrors the pre-existing `header` post two lines above.
 
-**6.12 `forwardAgentEvent`'s `render` gate would drop the trajectory forward
+**6.10 `forwardAgentEvent`'s `render` gate would drop the trajectory forward
 when `render === false`.** Every caller passes `true` today. If a future caller
 passes `false`, the pane misses live rows until the turn-end re-fetch.
 
-**6.13 `workflow/stage_start|done` is dead wiring in the extension.** Those
+**6.11 `workflow/stage_start|done` is dead wiring in the extension.** Those
 notifications come only from the standalone `workflow.run` RPC, which carries no
 session and is not teed into any log; nothing in `ui/vscode/src` calls it. The
 renderer's stage rows are exercised by recorded fixtures, not by this path.
 
-**6.14 `orchestra web --announce` ties the server's lifetime to stdin EOF.**
-Correct for its sidecar purpose, and a trap for a headless run whose stdin is
-closed at spawn: the server exits before the first request. Use `--port N
---token T` for a standalone run; worth one sentence in the flag's help text.
-
-**6.15 A failed turn-end re-fetch wipes the live rows the user already saw,**
+**6.12 A failed turn-end re-fetch wipes the live rows the user already saw,**
 replacing them with "Trajectory unavailable." Both hosts' `catch` paths post
 `{recorded: true, events: [], error}`, and `replaceTrajectory` treats any
 `trajectory` message as a full replace — so a transient RPC hiccup at turn end
@@ -326,13 +296,13 @@ turns a correct, fully-populated live view into an empty error state. The
 renderer needs to distinguish "no events because none happened" from "no events
 because this answer replaces nothing useful". Worth doing alongside 6.6.
 
-**6.16 The web host's turn-end re-fetch has the same limitation as 6.11:** it
+**6.13 The web host's turn-end re-fetch has the same limitation as 6.9:** it
 reads `st.sessionId` at completion time, not the one the turn ran on. If the
 user switches sessions mid-turn the old session's completed turn never gets its
 "replace live with recorded" refresh. Self-heals when the old session is
 reopened.
 
-**6.17 The extension's F5 check has no headless substitute.** `panel.ts` and
+**6.14 The extension's F5 check has no headless substitute.** `panel.ts` and
 `coreSession.ts` import `vscode` and have no test harness; the renderer they
 drive is covered through the web page instead. A `@vscode/test-electron` runner
 that opens the panel and reads the webview's posted messages would give the VS

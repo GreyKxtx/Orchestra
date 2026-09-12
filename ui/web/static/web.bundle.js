@@ -6187,7 +6187,10 @@
     }
     try {
       const res = await conn.send("session.trajectory", { session_id: sessionId });
-      if (projectId !== currentProjectId || projectState(projectId).sessionId !== sessionId) {
+      // peekProjectState, not projectState: the latter lazily creates a
+      // record, so a guard running after the project was forgotten would
+      // resurrect an orphan entry that renderProjects then iterates past.
+      if (projectId !== currentProjectId || (peekProjectState(projectId) || {}).sessionId !== sessionId) {
         // The user left this project, or moved to another session of it,
         // while the request was in flight: the answer is for a view that is
         // no longer on screen.
@@ -6199,7 +6202,7 @@
         events: res && Array.isArray(res.events) ? res.events : [],
       });
     } catch (err) {
-      if (projectId === currentProjectId && projectState(projectId).sessionId === sessionId) {
+      if (projectId === currentProjectId && (peekProjectState(projectId) || {}).sessionId === sessionId) {
         toRenderer({ type: "trajectory", recorded: true, events: [], error: String(err && err.message ? err.message : err) });
       }
     }
@@ -7504,7 +7507,7 @@
       body = {};
     }
     if (!res.ok) {
-      const err = new Error(body.error || `request failed (${res.status})`);
+      const err = new Error(humanApiError(body, res.status));
       // @ts-ignore — the caller distinguishes not_initialized from the rest.
       err.code = body.error || "";
       // @ts-ignore
@@ -7512,6 +7515,44 @@
       throw err;
     }
     return body;
+  }
+
+  /**
+   * Turn the project API's machine code into something a person can read.
+   *
+   * The server answers with `error` — a code like `already_open` — and for the
+   * failures that have a cause it sends the cause in `detail`. The client used
+   * the code as the message and never read `detail`, so opening a project that
+   * was already open said "could not open C:\work: already_open", with the
+   * real explanation sitting unused in the same response.
+   *
+   * `err.code` keeps the raw value: callers branch on it.
+   * @param {any} body @param {number} status
+   */
+  function humanApiError(body, status) {
+    const code = String((body && body.error) || "").trim();
+    const detail = String((body && body.detail) || "").trim();
+    switch (code) {
+      case "already_open":
+        return "that project is already open";
+      case "no_such_dir":
+        return "there is no folder at that path";
+      case "project_not_open":
+        return "that project is not open";
+      case "not_initialized":
+        return "the core is still starting — try again in a moment";
+      case "clone_not_enabled":
+        return "cloning is turned off in this build";
+      case "open_failed":
+        return detail || "the project could not be opened";
+      case "forget_failed":
+        return detail || "the project could not be removed from the list";
+      case "clone_failed":
+        return detail || "the clone did not finish";
+      case "bad_request":
+        return detail || "the request was rejected";
+    }
+    return detail || code || `request failed (${status})`;
   }
 
   async function refreshProjects() {
@@ -7611,6 +7652,15 @@
       });
     }
     await refreshProjects();
+    // Same move as closeProject: forgetting the project you are looking at
+    // otherwise leaves currentProjectId naming an entry that is no longer in
+    // `known` and has no chip, so the window shows a project that is gone.
+    if (projectId === currentProjectId) {
+      const next = known.find((p) => p.state === "ready" && p.id !== projectId);
+      if (next) {
+        await switchProject(next.id);
+      }
+    }
   }
 
   // ---- the rail ----------------------------------------------------------
