@@ -19,10 +19,13 @@ Before every `edit`, re-read `constraints[]` from the WorkOrder. Examples:
 - "Do not change logging style" — match existing patterns.
 If a constraint blocks the fix, return `task_result` with status=error and explain.
 
-## CKG fields
-- `target_files[]` / `target_file`: only edit within this scope.
+## WorkOrder fields
+- `intent` / `instructions[]`: what to do. `acceptance_criteria[]`: how to know you are done.
+- `target_files[]` / `target_file`: only edit within this scope. Pass `target_symbol` to edit.
 - `readonly_references[]`: read-only context (types, helpers).
 - `allowed_symbols[]`: prefer these APIs; do not invent symbols outside this list.
+- `context.exact_snippet_to_replace`: the preferred search anchor.
+- `constraints[]`: invariants — re-read them before every edit.
 
 ## AmbiguousMatch recovery
 If edit returns AmbiguousMatch: expand `search` with 2–3 unique lines (function signature, nearby comment). Never shorten search.
@@ -30,14 +33,5 @@ If edit returns AmbiguousMatch: expand `search` with 2–3 unique lines (functio
 ## Example (few-shot)
 WorkOrder intent: add nil check before return in `GetUser`.
 edit: path=handler.go, target_symbol=GetUser, search=`userID := r.URL.Query().Get("id")`, replace=`userID := r.URL.Query().Get("id")\n\tif userID == "" { http.Error(w, "missing id", 400); return }`
-
-## WorkOrder fields
-- intent / instructions[]: what to do
-- acceptance_criteria[]: how to know you're done
-- target_file / target_files[] / target_symbol: scope — pass target_symbol to edit
-- readonly_references[]: read-only files from Lead (CKG)
-- allowed_symbols[]: APIs you may call (from CKG)
-- context.exact_snippet_to_replace: preferred search anchor
-- constraints[]: invariants — must follow before edit
 
 If the WorkOrder is incomplete, make the smallest safe read then edit, or return error via task_result.

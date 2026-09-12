@@ -285,7 +285,7 @@ func (c *Client) GitCommit(ctx context.Context, req GitCommitRequest) (*GitCommi
 			if runErr != nil {
 				return nil, runErr
 			}
-			return nil, protocol.NewError(protocol.ExecFailed, "git add failed",
+			return nil, protocol.NewError(protocol.ExecFailed, gitFailureMessage("git add", stderr),
 				map[string]any{"path": p, "stderr": stderr, "exit": code})
 		}
 	}
@@ -300,7 +300,7 @@ func (c *Client) GitCommit(ctx context.Context, req GitCommitRequest) (*GitCommi
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git commit failed",
+		return nil, protocol.NewError(protocol.ExecFailed, gitFailureMessage("git commit", stderr),
 			map[string]any{"stderr": stderr, "stdout": stdout, "exit": code})
 	}
 
@@ -350,8 +350,7 @@ func (c *Client) GitBranch(ctx context.Context, req GitBranchRequest) (*GitBranc
 			return nil, err
 		}
 		if code != 0 {
-			return nil, protocol.NewError(protocol.ExecFailed, "git branch delete failed",
-				map[string]any{"stderr": stderr, "exit": code})
+			return nil, gitExitError("git branch delete", stderr, code)
 		}
 		return &GitBranchResponse{Output: stdout + stderr}, nil
 	}
@@ -366,8 +365,7 @@ func (c *Client) GitBranch(ctx context.Context, req GitBranchRequest) (*GitBranc
 			return nil, err
 		}
 		if code != 0 {
-			return nil, protocol.NewError(protocol.ExecFailed, "git branch create failed",
-				map[string]any{"stderr": stderr, "exit": code})
+			return nil, gitExitError("git branch create", stderr, code)
 		}
 		return &GitBranchResponse{Output: stdout + stderr}, nil
 	}
@@ -377,8 +375,7 @@ func (c *Client) GitBranch(ctx context.Context, req GitBranchRequest) (*GitBranc
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git branch list failed",
-			map[string]any{"stderr": stderr, "exit": code})
+		return nil, gitExitError("git branch list", stderr, code)
 	}
 
 	var branches []string
@@ -450,8 +447,7 @@ func (c *Client) GitCheckout(ctx context.Context, req GitCheckoutRequest) (*GitC
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git checkout failed",
-			map[string]any{"stderr": stderr, "exit": code})
+		return nil, gitExitError("git checkout", stderr, code)
 	}
 	return &GitCheckoutResponse{Output: stdout + stderr}, nil
 }
@@ -503,8 +499,7 @@ func (c *Client) GitPush(ctx context.Context, req GitPushRequest) (*GitPushRespo
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git push failed",
-			map[string]any{"stderr": stderr, "exit": code})
+		return nil, gitExitError("git push", stderr, code)
 	}
 	return &GitPushResponse{Output: stdout + stderr}, nil
 }

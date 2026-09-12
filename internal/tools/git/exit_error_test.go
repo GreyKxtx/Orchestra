@@ -40,3 +40,81 @@ func TestGitExitError_SurvivesEmptyStderr(t *testing.T) {
 		t.Errorf("with nothing to quote it must still say which command failed, got: %s", err)
 	}
 }
+
+// For a mutating command the useful message is the one that names a different
+// next action. "git push failed" invites a retry; "the remote has commits this
+// branch does not" does not.
+func TestGitFailureMessage_MutatingCommandsNameTheNextAction(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		stderr  string
+		want    string
+		absent  string
+	}{
+		{
+			name:    "nothing staged",
+			command: "git commit",
+			stderr:  "nothing to commit, working tree clean\n",
+			want:    "nothing staged",
+		},
+		{
+			name:    "no identity configured",
+			command: "git commit",
+			stderr:  "fatal: unable to auto-detect email address\n*** Please tell me who you are.\n",
+			want:    "user.name/user.email",
+		},
+		{
+			name:    "branch already exists",
+			command: "git branch create",
+			stderr:  "fatal: a branch named 'feat/x' already exists\n",
+			want:    "check it out instead",
+		},
+		{
+			name:    "checkout would clobber work",
+			command: "git checkout",
+			stderr:  "error: Your local changes to the following files would be overwritten by checkout:\n\tmain.go\n",
+			want:    "commit or set the local changes aside",
+		},
+		{
+			name:    "no upstream",
+			command: "git push",
+			stderr:  "fatal: The current branch feat/x has no upstream branch.\n",
+			want:    "set_upstream",
+		},
+		{
+			name:    "remote moved",
+			command: "git push",
+			stderr:  "! [rejected] main -> main (non-fast-forward)\nhint: Updates were rejected\n",
+			want:    "pull and rebase before pushing",
+			absent:  "force",
+		},
+		{
+			name:    "credentials refused",
+			command: "git push",
+			stderr:  "fatal: Authentication failed for 'https://github.com/x/y.git/'\n",
+			want:    "needs the user",
+		},
+		{
+			name:    "branch busy in another worktree",
+			command: "git checkout",
+			stderr:  "fatal: 'master' is already checked out at '/repo'\n",
+			want:    "another worktree",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := gitFailureMessage(c.command, c.stderr)
+			if !strings.Contains(got, c.want) {
+				t.Errorf("message must carry %q, got: %s", c.want, got)
+			}
+			if got == c.command+" failed" {
+				t.Errorf("message says nothing beyond the command name: %s", got)
+			}
+			// "never force" is advice, not an instruction to force.
+			if c.absent != "" && strings.Contains(got, c.absent) && !strings.Contains(got, "never "+c.absent) {
+				t.Errorf("message must not suggest %q, got: %s", c.absent, got)
+			}
+		})
+	}
+}
