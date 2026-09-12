@@ -70,6 +70,14 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 		return nil, err
 	}
 
+	// An edit's result is only known once the ops are resolved against the
+	// file, so the syntax gate runs on a dry pass first: the applier hands
+	// back the content each file would end up with, and a broken one is
+	// refused before anything is written.
+	if err := c.gateEditResult(opsList); err != nil {
+		return nil, err
+	}
+
 	_, err = applier.ApplyAnyOps(c.Root, opsList, applier.ApplyOptions{
 		DryRun:       false,
 		Backup:       req.Backup,

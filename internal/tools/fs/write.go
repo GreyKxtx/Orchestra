@@ -80,6 +80,10 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 		}, nil
 	}
 
+	if err := c.gateSyntax(relSlash, req.Content); err != nil {
+		return nil, err
+	}
+
 	patch := patches.Patch{
 		Type:    patches.TypeFileWriteAtomic,
 		Path:    path,

@@ -49,13 +49,26 @@ func ValidateSyntax(relPath string, content []byte) error {
 	})
 }
 
+// findSyntaxProblemNode returns the first node tree-sitter could not parse.
+//
+// A missing token is NOT a node of type "MISSING" — tree-sitter flags it on
+// the node while Type() reports the token that should have been there ("}"
+// for an unclosed brace). Matching on the type name meant the entire
+// missing-token half of this check never fired, so the gate passed every file
+// whose only fault was something left out. IsMissing is the flag that asks
+// the question properly.
+//
+// HasError short-circuits whole subtrees that parsed cleanly, which matters
+// on large files: without it every node is visited even when nothing is wrong.
 func findSyntaxProblemNode(n *sitter.Node) *sitter.Node {
 	if n == nil {
 		return nil
 	}
-	switch n.Type() {
-	case "ERROR", "MISSING":
+	if n.IsMissing() || n.Type() == "ERROR" {
 		return n
+	}
+	if !n.HasError() {
+		return nil
 	}
 	for i := 0; i < int(n.ChildCount()); i++ {
 		if found := findSyntaxProblemNode(n.Child(i)); found != nil {
