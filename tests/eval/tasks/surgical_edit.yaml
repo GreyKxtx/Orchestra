@@ -9,6 +9,11 @@ files:
   go.mod: |
     module evalws
     go 1.21
+  main.go: |
+    package main
+
+    func main() {
+    }
   config.go: |
     package main
 

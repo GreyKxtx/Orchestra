@@ -15,6 +15,11 @@ files:
   go.mod: |
     module evalws
     go 1.21
+  main.go: |
+    package main
+
+    func main() {
+    }
   limits.go: |
     package main
 

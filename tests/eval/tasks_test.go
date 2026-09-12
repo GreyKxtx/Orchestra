@@ -57,6 +57,24 @@ func TestTasks_AreWellFormed(t *testing.T) {
 			if len(task.Files) == 0 {
 				t.Error("a task with no files gives the model an empty workspace")
 			}
+			// A fixture that says `package main` and defines no `func main`
+			// cannot be linked, so its go_build check fails on the untouched
+			// workspace and on every workspace the model could produce. This
+			// is the static half of the net — it also covers the task that is
+			// ALLOWED not to compile, where the compile check cannot tell the
+			// intended error from this one.
+			declaresMain, definesMain := false, false
+			for _, body := range task.Files {
+				if strings.Contains(body, "package main") {
+					declaresMain = true
+				}
+				if strings.Contains(body, "func main(") {
+					definesMain = true
+				}
+			}
+			if declaresMain && !definesMain {
+				t.Error("the fixture is package main with no func main, so it cannot link")
+			}
 			for _, c := range task.Checks {
 				if !knownCheckTypes[c.Type] {
 					t.Errorf("check type %q is not implemented, so this task can never pass", c.Type)
@@ -119,28 +137,52 @@ func TestTasks_AreNotAlreadySatisfiedByTheirOwnFixture(t *testing.T) {
 	}
 }
 
-// The fixture has to be in the state the task's wording claims. fix_bug says
-// there is a bug; fix_compile_error says the project does not build. If the
-// fixture is fine, the task is a lie and its result is noise.
-func TestTasks_FixCompileErrorStartsWithAWorkspaceThatDoesNotBuild(t *testing.T) {
-	var task *Task
-	for _, candidate := range loadRepoTasks(t) {
-		if candidate.Name == "fix_compile_error" {
-			c := candidate
-			task = &c
-			break
-		}
-	}
-	if task == nil {
-		t.Skip("fix_compile_error is not in this task set")
-	}
-	root := t.TempDir()
-	for rel, body := range task.Files {
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := runGo(root, "build", "./..."); err == nil {
-		t.Error("the fixture compiles, so the task asks the model to fix nothing")
+// startsBroken names the tasks whose fixture is MEANT not to compile, because
+// making it compile is the task. Every other fixture must build.
+var startsBroken = map[string]bool{"fix_compile_error": true}
+
+// The fixture has to be in the state the task's wording claims, in both
+// directions — and both directions have now cost a run.
+//
+// fix_compile_error says the project does not build: if its fixture were fine,
+// the task would ask the model to fix nothing.
+//
+// The other way round is the one that got through. Three fixtures declared
+// `package main` and defined no `func main`, so `go build ./...` failed on the
+// untouched workspace with "function main is undeclared in the main package" —
+// and went on failing whatever the model wrote. They ran as three FAILs in a
+// thirteen-task suite and read exactly like model errors.
+//
+// TestTasks_AreNotAlreadySatisfiedByTheirOwnFixture cannot see this: it asks
+// for at least one check to fail on the fixture, and a go_build that can never
+// pass satisfies that requirement perfectly.
+func TestTasks_FixturesCompileUnlessTheTaskIsToFixTheBuild(t *testing.T) {
+	for _, task := range loadRepoTasks(t) {
+		t.Run(task.Name, func(t *testing.T) {
+			if _, ok := task.Files["go.mod"]; !ok {
+				t.Skip("not a Go module, so there is nothing to compile")
+			}
+			root := t.TempDir()
+			for rel, body := range task.Files {
+				abs := filepath.Join(root, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := runGo(root, "build", "./...")
+			if startsBroken[task.Name] {
+				if err == nil {
+					t.Error("the fixture compiles, so the task asks the model to fix nothing")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("the fixture does not compile, so go_build can never pass: %s (%v)",
+					firstToolchainError(out), err)
+			}
+		})
 	}
 }
