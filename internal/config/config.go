@@ -7,6 +7,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -397,12 +398,13 @@ var validAgentToolNames = map[string]bool{
 	"semantic_search": true, "repo_map": true, "ast_rename": true,
 	"memory_write": true, "memory_read": true, "memory_search": true, "runtime_query": true,
 	"lesson_promote": true, "playbook_promote": true,
-	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
+	"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
 	"plan_exit": true, "question": true,
 	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
 	"lsp.diagnostics": true, "lsp.rename": true,
 	"diff.preview": true,
 	"git.status":   true, "git.log": true, "git.diff": true,
+	"git.worktree.list": true, "git.worktree.add": true, "git.worktree.remove": true, "git.worktree.prune": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
 	"gh.pr.list": true, "gh.pr.create": true, "gh.pr.view": true,
 	"gh.issue.list": true, "gh.issue.view": true,
@@ -481,8 +483,18 @@ type UIConfig struct {
 
 // ProjectConfig represents the Orchestra configuration
 type ProjectConfig struct {
+	// ProjectRoot is absolute after Load: a relative project_root in the file
+	// ("." from `orchestra init`) is resolved against the file's own
+	// directory — see resolveProjectRoot.
 	ProjectRoot string   `yaml:"project_root"`
 	ExcludeDirs []string `yaml:"exclude_dirs"`
+	// projectRootSpelling is project_root exactly as the loaded file spells
+	// it, when that spelling was relative. Save writes it back in place of
+	// the resolved ProjectRoot, so a shared, committed config keeps saying "."
+	// instead of acquiring one machine's absolute path on every settings
+	// round trip. Empty for a config built in memory or loaded with an
+	// absolute root. Unexported, so yaml never sees it.
+	projectRootSpelling string
 	// ContextLimit is the v0.2/v0.3 name kept for backward compatibility.
 	// Prefer Limits.ContextKB.
 	ContextLimit int               `yaml:"context_limit_kb"`
@@ -850,6 +862,7 @@ func Load(path string) (*ProjectConfig, error) {
 	}
 
 	cfg.applyDefaults()
+	cfg.resolveProjectRoot(path)
 
 	fromMCPJSON, err := LoadMCPJSON(filepath.Dir(path))
 	if err != nil {
@@ -914,7 +927,20 @@ func Save(path string, cfg *ProjectConfig) error {
 	unlock := acquireFileLock(path)
 	defer unlock()
 
-	data, err := yaml.Marshal(cfg)
+	// Write project_root as the file spelled it when the root has not been
+	// changed since Load: the committed config says "." on purpose, and the
+	// absolute path Load resolved it to belongs to this machine alone.
+	out := *cfg
+	if sp := cfg.projectRootSpelling; sp != "" {
+		dir := filepath.Dir(path)
+		if abs, aerr := filepath.Abs(dir); aerr == nil {
+			dir = abs
+		}
+		if sameRootPath(resolveRootSpelling(dir, sp), cfg.ProjectRoot) {
+			out.ProjectRoot = sp
+		}
+	}
+	data, err := yaml.Marshal(&out)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
@@ -1042,6 +1068,42 @@ func (c *ProjectConfig) applyDefaults() {
 func boolPtr(v bool) *bool { return &v }
 
 func intPtr(v int) *int { return &v }
+
+// resolveProjectRoot makes ProjectRoot absolute, relative to the directory
+// the config file is in. That is what a relative project_root means to anyone
+// reading the file — `orchestra init` writes "." for "this folder" — and it is
+// not what filepath.Abs does with it later: that resolves against the
+// process's working directory, which for a core started by `orchestra web` or
+// the desktop shell is wherever that process happened to start. Every
+// consumer of ProjectRoot — the tools' root, the CKG database, the project
+// id, the memory notes — then landed in that directory instead of the
+// project's.
+func (c *ProjectConfig) resolveProjectRoot(configPath string) {
+	raw := strings.TrimSpace(c.ProjectRoot)
+	if raw == "" || filepath.IsAbs(raw) {
+		return
+	}
+	dir := filepath.Dir(configPath)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	c.projectRootSpelling = raw
+	c.ProjectRoot = resolveRootSpelling(dir, raw)
+}
+
+// resolveRootSpelling is the one way a relative project_root is turned into
+// a path, used by Load and, to recognise an unchanged root, by Save.
+func resolveRootSpelling(dir, spelling string) string {
+	return filepath.Clean(filepath.Join(dir, filepath.FromSlash(spelling)))
+}
+
+func sameRootPath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
 
 // Validate validates the configuration
 func (c *ProjectConfig) Validate() error {

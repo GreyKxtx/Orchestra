@@ -181,19 +181,23 @@ func TestResolveToolNames_PlanEnterUnknown(t *testing.T) {
 
 func TestListToolsForMode_OrchestraLeadSurface(t *testing.T) {
 	defs := ListToolsForMode("orchestra", Capabilities{Exec: true, Web: true, Browser: true}, true, true)
-	if len(defs) > 14 {
-		t.Fatalf("orchestra Lead must expose ≤14 tools, got %d", len(defs))
+	if len(defs) > 16 {
+		t.Fatalf("orchestra Lead must expose ≤16 tools, got %d", len(defs))
 	}
 	names := make(map[string]bool)
 	for _, d := range defs {
 		names[d.Function.Name] = true
 	}
-	for _, want := range []string{"read", "write", "grep", "explore", "repo_map", "task", "task_spawn", "task_wait", "task_cancel", "question", "memory_read", "memory_search", "lesson_promote", "playbook_promote"} {
+	// contract_freeze and update_working_state were on the forbidden list
+	// while their handlers refused every mode BUT the Lead — so the G6 freeze
+	// orchestrastate demands ("unblock: … + contract_freeze") could only be
+	// reached by hand-writing a waiver. They are Lead tools now.
+	for _, want := range []string{"read", "write", "grep", "explore", "repo_map", "task", "task_spawn", "task_wait", "task_cancel", "question", "memory_read", "memory_search", "lesson_promote", "playbook_promote", "contract_freeze", "update_working_state"} {
 		if !names[want] {
 			t.Fatalf("orchestra mode missing tool %q", want)
 		}
 	}
-	for _, forbid := range []string{"edit", "plan_enter", "ls", "glob", "symbols", "bash", "task_result", "memory_write", "contract_freeze", "todowrite", "lsp.definition", "lsp.hover", "git.status", "diff.preview", "runtime_query", "update_working_state"} {
+	for _, forbid := range []string{"edit", "plan_enter", "ls", "glob", "symbols", "bash", "task_result", "memory_write", "todowrite", "lsp.definition", "lsp.hover", "git.status", "diff.preview", "runtime_query"} {
 		if names[forbid] {
 			t.Fatalf("orchestra mode must not expose %q", forbid)
 		}
@@ -206,8 +210,9 @@ func TestFilterOrchestraLeadTools_DropsWorkerExtras(t *testing.T) {
 		llm.ToolDef{Function: llm.ToolFunctionDef{Name: "semantic_search"}},
 	)
 	out := FilterOrchestraLeadTools(in)
-	if len(out) > 14 {
-		t.Fatalf("filtered Lead tools = %d, want ≤14", len(out))
+	// 14 + the two Lead-only gate tools (contract_freeze, update_working_state).
+	if len(out) > 16 {
+		t.Fatalf("filtered Lead tools = %d, want ≤16", len(out))
 	}
 	for _, d := range out {
 		if d.Function.Name == "edit" || d.Function.Name == "semantic_search" {

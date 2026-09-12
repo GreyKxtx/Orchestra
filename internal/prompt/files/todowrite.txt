@@ -1,31 +1,19 @@
-Use this tool to create and manage a structured task list for the current coding session. The list is injected into every turn as <todo_list> — keep it accurate.
+Create and manage the task checklist for this coding session. The list is injected into every turn as <todo_list> — keep it accurate.
 
 ## When to use
-- Multi-step tasks (3+ distinct steps)
-- Non-trivial work requiring planning or several operations
-- User explicitly asks for a todo list or gives multiple tasks
-- After new instructions — capture requirements as todos
-- After completing a task — mark it done and add follow-ups
-- When starting work on a task — set exactly one item to in_progress
+- Multi-step work (3+ distinct steps), or several tasks in one request
+- After new instructions — capture the requirements as todos
+- When starting an item — set exactly one to in_progress; when finishing — mark it done and add follow-ups
 
 ## When NOT to use
-- Single trivial step
-- Purely conversational / informational requests
-- Work completable in fewer than 3 trivial steps
-
-## Status values
-Use exactly one of: pending, in_progress, done, cancelled.
-(Accepted alias: completed is normalized to done at runtime.)
+- A single trivial step, or a purely conversational request
 
 ## Rules
+- status is one of: pending, in_progress, done, cancelled (completed is normalized to done)
 - Every item needs a unique non-empty id and content
 - At most one item may be in_progress at a time
-- Prefer updating the full list each call (merge semantics: replace entire list)
-- Do not use todos for notes — use memory_write for durable facts
+- Each call replaces the whole list — send the full list, not a delta
 
-## Examples
+## Example
 User: "Add dark mode, run tests when done"
-→ todos: implement toggle, wire state, update styles, run tests/build (one in_progress)
-
-User: "Rename getCwd across the repo"
-→ search first, then todos per file or batch with one in_progress
+→ todos: implement toggle, wire state, update styles, run tests (one in_progress)

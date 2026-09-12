@@ -306,7 +306,7 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
@@ -326,7 +326,7 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	// fs.write is kept so the model can write .orchestra/plan.md — enforced at runtime.
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		// lsp.rename excluded: plan mode is read-only.
@@ -343,7 +343,7 @@ func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsExplore() []llm.ToolDef {
 	return applyParallelFlags([]llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		// lsp.rename excluded: explore mode is read-only.
 		// task_result is appended for child explore via childToolsForSubagent.
@@ -354,7 +354,11 @@ func listToolsExplore() []llm.ToolDef {
 func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(),
+		// repo_map is the cheapest answer to "what is this project?" — one
+		// call, a per-file outline under a byte budget. Without it the only
+		// way to orient in a read-only mode was to read files one by one,
+		// which is how a small context window gets spent on nothing.
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 	}
 	if hasQuestionAsker {
@@ -367,7 +371,7 @@ func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
 func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
 		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
 		session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
@@ -387,7 +391,7 @@ func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoWrite(), session.ToolTodoRead(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
@@ -409,7 +413,7 @@ func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm
 func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
 		session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), task.ToolTaskResult(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
@@ -422,13 +426,22 @@ func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
 	return applyParallelFlags(out)
 }
 
-// orchestraLeadToolNames is the strict Lead allowlist (≤14). Lead delegates
+// orchestraLeadToolNames is the strict Lead allowlist (≤16). Lead delegates
 // code/LSP/exec to workers; ExtraTools (MCP, semantic_search, …) are filtered
 // to this set in the agent layer.
+//
+// contract_freeze and update_working_state are Lead-only by construction —
+// agent.handleContractFreeze / handleUpdateWorkingState refuse every other
+// mode. They were implemented, wired to the phase machine and referenced by
+// orchestrastate's unblock message ("… + contract_freeze") while sitting in
+// no tool list at all, so the G6 freeze the runtime demanded could only be
+// bypassed with a manual waiver. Both are compacted like every other Lead
+// entry (compactLeadToolDef), so the two cost the schema ~300 bytes.
 var orchestraLeadToolNames = map[string]bool{
 	"read": true, "grep": true, "explore": true, "repo_map": true, "write": true,
 	"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true, "question": true,
 	"memory_read": true, "memory_search": true, "lesson_promote": true, "playbook_promote": true,
+	"contract_freeze": true, "update_working_state": true,
 }
 
 // FilterOrchestraLeadTools keeps only the Orchestra Lead allowlist. Unknown
@@ -503,6 +516,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 		fs.ToolFSRead(), fs.ToolSearchText(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolFSWrite(),
 		session.ToolMemoryRead(), session.ToolMemorySearch(),
 		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
+		session.ToolUpdateWorkingState(), session.ToolContractFreeze(),
 	}
 	if hasSubtasks {
 		out = appendSubtaskTools(out)
@@ -517,7 +531,7 @@ func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 func listToolsVerifier(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 		git.ToolGitStatus(), git.ToolGitDiff(),
 	}
@@ -533,7 +547,7 @@ func listToolsVerifier(caps Capabilities) []llm.ToolDef {
 func listToolsProduct(hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(),
+		fs.ToolSearchText(), nav.ToolRepoMap(),
 		session.ToolTodoWrite(), session.ToolTodoRead(),
 		task.ToolTaskResult(),
 	}
@@ -551,7 +565,7 @@ func listToolsProduct(hasQuestionAsker bool) []llm.ToolDef {
 func listToolsDocs(hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(),
 		session.ToolTodoWrite(), session.ToolTodoRead(),
 		task.ToolTaskResult(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
@@ -566,7 +580,7 @@ func listToolsDocs(hasQuestionAsker bool) []llm.ToolDef {
 func listToolsWorker(caps Capabilities) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(),
 		task.ToolTaskResult(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
 	}
@@ -579,13 +593,14 @@ func listToolsWorker(caps Capabilities) []llm.ToolDef {
 func allToolDefsMap() map[string]llm.ToolDef {
 	all := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), session.ToolUpdateWorkingState(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), nav.ToolRepoMap(), fs.ToolASTRename(),
-		task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
+		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
+		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), session.ToolUpdateWorkingState(), exec.ToolExecRun(), exec.ToolExecBashOutput(), exec.ToolExecBashKill(), web.ToolWebFetch(), web.ToolWebSearch(), nav.ToolSemanticSearch(), fs.ToolASTRename(),
+		task.ToolTask(), task.ToolTaskSpawn(), task.ToolTaskWait(), task.ToolTaskCancel(), task.ToolTaskResult(),
 		task.ToolPlanExit(), session.ToolQuestion(), session.ToolContractFreeze(),
 		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
 		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
 		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
+		git.ToolGitWorktreeAdd(), git.ToolGitWorktreeRemove(), git.ToolGitWorktreePrune(),
 		git.ToolGitCommit(), git.ToolGitBranch(), git.ToolGitCheckout(), git.ToolGitPush(),
 		git.ToolGHPRList(), git.ToolGHPRCreate(), git.ToolGHPRView(), git.ToolGHIssueList(), git.ToolGHIssueView(),
 		web.ToolBrowserNavigate(), web.ToolBrowserSnapshot(), web.ToolBrowserScreenshot(),
