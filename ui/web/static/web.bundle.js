@@ -7680,6 +7680,12 @@
       }
     }
   }
+  // ---- the rail and the header's tab strip -----------------------------------
+  //
+  // Split out of 40-projects.js, which had grown to 2035 lines carrying four
+  // jobs behind comment banners. The bundler concatenates these fragments
+  // numerically into one IIFE, so everything 40 declares is in scope here and
+  // the startup block still runs last.
 
   // ---- the rail ----------------------------------------------------------
 
@@ -8238,6 +8244,12 @@
     }
     return true;
   }
+  // ---- input, appearance and the sidebar's width -----------------------------
+  //
+  // Split out of 40-projects.js, which had grown to 2035 lines carrying four
+  // jobs behind comment banners. The bundler concatenates these fragments
+  // numerically into one IIFE, so everything 40 declares is in scope here and
+  // the startup block still runs last.
 
   // ---- input -------------------------------------------------------------
 
@@ -8705,12 +8717,13 @@
     }
     await startSession(sessionId);
   }
+  // ---- the start screen, and startup -----------------------------------------
+  //
+  // Split out of 40-projects.js, which had grown to 2035 lines carrying four
+  // jobs behind comment banners. The bundler concatenates these fragments
+  // numerically into one IIFE, so everything 40 declares is in scope here and
+  // the startup block still runs last.
 
-  /**
-   * Ask for a folder and open it. The native picker is only available when the
-   * page is inside the desktop shell, which grants exactly this call; a plain
-   * browser gets a path prompt instead.
-   */
   // ---- the start screen --------------------------------------------------
   //
   // Shown when no workspace is open. The desktop shell starts the core with
@@ -9164,6 +9177,11 @@
     return String(path || "").trim();
   }
 
+  /**
+   * Ask for a folder and open it. The native picker is only available when the
+   * page is inside the desktop shell, which grants exactly this call; a plain
+   * browser gets a path prompt instead.
+   */
   async function addProject() {
     const path = await pickProjectFolder();
     if (!path) {

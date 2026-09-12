@@ -10,7 +10,7 @@ it is kept. What was fixed at the time is not listed.
 Re-triaged 2026-09-12 against the code as it stands, and worked down from
 there. Everything closed — whether by later work before the triage, or during
 it — is deleted rather than annotated, so this list holds only what is still
-true. Three of what remains is escalated and two narrowed, each marked as such
+true. One of what remains is escalated and two narrowed, each marked as such
 with what changed. The three source documents are replaced by this one; their
 text is in git history if the reasoning behind a closed item is ever wanted.
 
@@ -58,35 +58,11 @@ afterwards, and both times it cost a full review-and-fix cycle.
 
 ## 2. Escalated in this triage
 
-**2.1 `40-projects.js` now carries four jobs in 2035 lines (was C1 8).** It was
-372 lines when the finding was raised — connection registry, HTTP client, rail
-DOM, and input plus startup, behind comment banners. It is five and a half times
-that now. The remedy has not changed and is still nearly free: the bundler
-orders fragments numerically, so `41-projects-rail.js` is a move, not a rewrite.
-
-**2.2 `renderProjects` rebuilds every chip, now from two places (was C1 1).**
+**2.1 `renderProjects` rebuilds every chip, now from two places (was C1 1).**
 `list.innerHTML = ""` destroys keyboard focus on a chip whenever *any* project's
 status flips, and with a pulsing "working" status that is often. There were one
 of these; there are now two (`40-projects.js:729` and `:1703`). The fix is keyed
 reconciliation, not a one-liner.
-
-**2.3 `SessionTrajectory`'s "empty" predicate — and its recommended fix is now
-wrong (was C2b 17).** The finding said to call `sessionLooksRestoredLocked`
-(negated) instead of keeping a second, narrower copy. Since then the predicate
-gained a clause:
-
-```go
-empty := (len(sess.History) == 0 && len(sess.UIMessages()) == 0) || sess.IsBusy()
-```
-
-It is no longer a subset of that helper, and calling the helper directly would
-now reintroduce the "a fresh session predates the log" bug that clause fixed.
-The duplication is still real; the remedy has to be a shared predicate that
-covers both, and whoever takes it must not follow the old instruction.
-
----
-
-## 3. Narrowed in this triage
 
 **3.1 Switching into a project mid-turn loses the live text (was C1 9).** The
 answer named at the time was C2's append-only log — a whole subsystem. That

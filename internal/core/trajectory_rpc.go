@@ -3,6 +3,8 @@ package core
 import (
 	"strings"
 
+	coresession "github.com/orchestra/orchestra/internal/core/session"
+
 	"github.com/orchestra/orchestra/internal/trajectory"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -51,15 +53,9 @@ func (c *Core) SessionTrajectory(p SessionTrajectoryParams) (*SessionTrajectoryR
 		// "predates the log" here would be untrue of every new chat.
 		if sess, lookErr := c.sessions.GetOrLoad(c.workspaceRoot, id); lookErr == nil && sess != nil {
 			sess.Lock()
-			// A session with an in-flight turn and no sidecar is mid-launch of
-			// its first turn — the sidecar is created inside
-			// prepareAgentLaunch, after SessionMessage has already appended
-			// the user's UI message and marked the session busy. That window
-			// must read the same as "nothing recorded yet", not "predates the
-			// log": nothing was missed, the log just has not been born yet.
-			empty := (len(sess.History) == 0 && len(sess.UIMessages()) == 0) || sess.IsBusy()
+			nothingYet := sessionHasNothingToRecordLocked(sess)
 			sess.Unlock()
-			if empty {
+			if nothingYet {
 				recorded = true
 			}
 		}
@@ -70,4 +66,32 @@ func (c *Core) SessionTrajectory(p SessionTrajectoryParams) (*SessionTrajectoryR
 		events = []trajectory.Event{}
 	}
 	return &SessionTrajectoryResult{Recorded: recorded, Events: events}, nil
+}
+
+// sessionHasNothingToRecordLocked reports whether this session could not yet
+// have a log — so a missing sidecar means "nothing has happened", not "this
+// session predates the feature". Caller must hold sess.Lock.
+//
+// It looks like a narrower copy of sessionLooksRestoredLocked and is not.
+// The two answer different questions, and merging them would be a regression
+// in both directions:
+//
+//   - sessionLooksRestoredLocked asks whether a session carries durable state
+//     worth re-reading — history, UI messages, todos or a plan path. A session
+//     holding only a todo list answers yes.
+//   - this asks whether a turn can have run. A session holding only a todo
+//     list has never run one, so it has no log and never did; negating the
+//     other predicate here would tell the user it "predates the log", which is
+//     untrue of a chat they started a minute ago.
+//
+// The busy clause is the other half. A session mid-launch of its first turn
+// has already had the user's message appended and been marked busy, while the
+// sidecar is created later inside prepareAgentLaunch. That window must read as
+// "nothing recorded yet" too: nothing was missed, the log just has not been
+// born.
+func sessionHasNothingToRecordLocked(sess *coresession.Session) bool {
+	if sess == nil {
+		return false
+	}
+	return (len(sess.History) == 0 && len(sess.UIMessages()) == 0) || sess.IsBusy()
 }
