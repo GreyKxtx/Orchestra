@@ -10,8 +10,11 @@ import (
 
 func TestOrchestraLeadStep1TokenBudget(t *testing.T) {
 	defs := tools.ListToolsForMode("orchestra", tools.Capabilities{}, true, true)
-	if len(defs) > 14 {
-		t.Fatalf("Lead tools = %d, want ≤14", len(defs))
+	// 14 delegation/research tools + contract_freeze and update_working_state,
+	// the two gate tools only the Lead may call. The token budget below is the
+	// constraint that matters; the count is a cheap early warning.
+	if len(defs) > 16 {
+		t.Fatalf("Lead tools = %d, want ≤16", len(defs))
 	}
 	sys := promptpkg.BuildSystemPromptForMode("orchestra", "default")
 	req := llm.CompleteRequest{
