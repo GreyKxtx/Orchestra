@@ -8,7 +8,7 @@
   /**
    * Per-project session state. The renderer shows one project at a time, so
    * exactly one of these is "current"; the others are what a switch restores.
-   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any}>}
+   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any, llm: any}>}
    */
   const perProject = new Map();
   let currentProjectId = "";
@@ -17,7 +17,15 @@
   function projectState(projectId) {
     let st = perProject.get(projectId);
     if (!st) {
-      st = { sessionId: "", inFlightTurnId: null, workspaceRoot: "", status: "idle", pendingAsk: null };
+      st = {
+        sessionId: "",
+        inFlightTurnId: null,
+        workspaceRoot: "",
+        status: "idle",
+        pendingAsk: null,
+        // The core's last answer about the model and its window; see pushLLMInfo.
+        llm: null,
+      };
       perProject.set(projectId, st);
     }
     return st;
@@ -26,6 +34,257 @@
   /** @param {string} projectId */
   function forgetProjectState(projectId) {
     perProject.delete(projectId);
+  }
+
+  // ---- what the composer says about the model -----------------------------
+  //
+  // The model pill and the context gauge under the input read two renderer
+  // messages: header (model, provider) and contextInfo (the window and the
+  // reply budget) — ui/vscode/media/chat-src/07-events.js. The editor's host
+  // sends both from the core's own answer (panel.ts refreshHeaderAndHistory).
+  // This host used to send a header with no model on every switch and no
+  // contextInfo at all, so the pill kept whichever project's model it had
+  // seen last and the gauge measured against a 128K default that was nobody's
+  // window.
+
+  /**
+   * The ceiling the gauge measures against. num_ctx is the window the request
+   * asks the server for; context_tokens is the most the model can take, from
+   * the catalogue or the server's own answer. A prompt has to fit under both,
+   * so the smaller one is the real limit: a local model run with num_ctx 20000
+   * overflows at 20000 however large its catalogue entry says it could be.
+   * @param {any} numCtx @param {any} contextTokens
+   */
+  function contextLimitFor(numCtx, contextTokens) {
+    const asked = Number(numCtx) > 0 ? Number(numCtx) : 0;
+    const most = Number(contextTokens) > 0 ? Number(contextTokens) : 0;
+    if (asked > 0 && most > 0) {
+      return Math.min(asked, most);
+    }
+    return asked || most || 128000;
+  }
+
+  /**
+   * Ask the core what the project is talking to, keep the answer with the
+   * project, and tell the composer if that project is the one on screen. Kept
+   * per project so a switch can repaint from the last answer at once
+   * (postLLMInfo) while a fresh read is on its way.
+   * @param {string} projectId
+   */
+  async function pushLLMInfo(projectId) {
+    const conn = connFor(projectId);
+    if (!conn) {
+      return;
+    }
+    // Asked for alongside the model, not after it: the balance is a separate
+    // call, and chaining it behind this await means a core that is slow to
+    // answer about the model never reports a balance at all.
+    void pushCredits(projectId);
+    let llm;
+    try {
+      llm = (await conn.send("runtime.get_llm", {})) || {};
+    } catch (err) {
+      // The pill keeps its last label: there is nothing truer to put there.
+      return;
+    }
+    const st = projectState(projectId);
+    const maxTokens = Number(llm.max_tokens) || 0;
+    st.llm = {
+      model: String(llm.model || ""),
+      provider: String(llm.provider || ""),
+      contextLimit: contextLimitFor(llm.num_ctx, llm.context_tokens),
+      maxResponseTokens: maxTokens > 0 ? maxTokens : 4096,
+    };
+    if (projectId === currentProjectId) {
+      postLLMInfo(projectId);
+    }
+  }
+
+  /**
+   * The provider's account balance for the cost popover. The renderer already
+   * draws the row from a "credits" message (07-events.js) — the editor host
+   * sent one and the web host never did, so the popover here could only ever
+   * show spend, never what is left.
+   *
+   * Best-effort by design: providers without a balance API (every local
+   * server, plain OpenAI) answer supported=false, and the row is omitted.
+   * @param {string} projectId
+   */
+  async function pushCredits(projectId) {
+    const conn = connFor(projectId);
+    if (!conn || !conn.isOpen()) {
+      return;
+    }
+    try {
+      const c = (await conn.send("runtime.credits", {})) || {};
+      if (projectId !== currentProjectId) {
+        return;
+      }
+      toRenderer({
+        type: "credits",
+        supported: !!c.supported,
+        provider: String(c.provider || ""),
+        balance: Number(c.balance) || 0,
+      });
+    } catch (err) {
+      // No balance API, no key, or an endpoint that is down: the popover
+      // simply keeps showing spend without a balance row.
+    }
+  }
+
+  /**
+   * The title the tab strip shows for a session, from the last session.list
+   * (40-projects.js keeps it in sessionsByProject). A header message has to
+   * carry it: the renderer renames the active tab from every header it gets
+   * (07-events.js), and one without a title says "New chat" — over a
+   * conversation that has a name.
+   * @param {string} projectId @param {string} sessionId
+   */
+  function sessionTitleFor(projectId, sessionId) {
+    const row = (sessionsByProject.get(projectId) || []).find((s) => s && s.id === sessionId);
+    const title = row && typeof row.title === "string" ? row.title.trim() : "";
+    return title || "New chat";
+  }
+
+  /** The composer's model and window, from the last answer. @param {string} projectId */
+  function postLLMInfo(projectId) {
+    const st = projectState(projectId);
+    if (!st.llm) {
+      return;
+    }
+    toRenderer({
+      type: "header",
+      sessionId: st.sessionId,
+      title: sessionTitleFor(projectId, st.sessionId),
+      model: st.llm.model,
+      provider: st.llm.provider,
+    });
+    toRenderer({
+      type: "contextInfo",
+      info: {
+        contextLimit: st.llm.contextLimit,
+        maxResponseTokens: st.llm.maxResponseTokens,
+        model: st.llm.model,
+      },
+    });
+  }
+
+  /**
+   * A saved transcript in the shape the renderer draws it.
+   *
+   * The session file keeps a message the way Go writes it — tool_blocks,
+   * args_raw, duration_ms, attachments — and the renderer (shared with the
+   * editor's webview) reads toolBlocks, argsRaw, durationMs, files. Posting
+   * the raw rows straight through, as this used to, restored the words and
+   * silently dropped everything else. Mirrors the mapping panel.ts does for
+   * the editor.
+   * @param {any[]} uiMessages
+   */
+  function historyMessagesFrom(uiMessages) {
+    const list = Array.isArray(uiMessages) ? uiMessages : [];
+    const out = [];
+    list.forEach((m, idx) => {
+      if (!m || typeof m !== "object") {
+        return;
+      }
+      const role = m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant";
+      const text = String(m.text || m.content || "");
+      const reasoning = uiReasoningOf(m);
+      const toolBlocks = uiToolBlocksOf(m);
+      const files = (Array.isArray(m.attachments) ? m.attachments : [])
+        .filter((a) => a && (a.path || a.name))
+        .map((a) => ({
+          name: String(a.name || String(a.path || "").split(/[\\/]/).pop() || "file"),
+          path: String(a.path || ""),
+          ext: a.ext ? String(a.ext) : undefined,
+          kind: a.kind === "image" ? "image" : "file",
+        }));
+      if (!text && !reasoning && toolBlocks.length === 0 && files.length === 0) {
+        return;
+      }
+      const row = { role, text };
+      // The index into the core's own list: rewind aims at it, so it counts
+      // every row, including any this loop leaves out.
+      if (role === "user") row.uiIndex = idx;
+      if (files.length) row.files = files;
+      if (reasoning) row.reasoning = reasoning;
+      if (toolBlocks.length) row.toolBlocks = toolBlocks;
+      out.push(row);
+    });
+    return out;
+  }
+
+  /** A saved message's reasoning, whether written flat or as segments. */
+  function uiReasoningOf(m) {
+    const direct = String((m && m.reasoning) || "").trim();
+    if (direct) {
+      return direct;
+    }
+    const parts = [];
+    for (const seg of (m && m.segments) || []) {
+      if (seg && seg.kind === "reasoning" && seg.text) parts.push(seg.text);
+    }
+    return parts.join("").trim();
+  }
+
+  /** A saved message's tool blocks, flat or in segments, renderer-spelled. */
+  function uiToolBlocksOf(m) {
+    const raw = [];
+    for (const t of (m && m.tool_blocks) || []) {
+      if (t && t.name) raw.push(t);
+    }
+    if (raw.length === 0) {
+      for (const seg of (m && m.segments) || []) {
+        if (!seg || seg.kind !== "tools" || !Array.isArray(seg.tools)) continue;
+        for (const t of seg.tools) {
+          if (t && t.name) raw.push(t);
+        }
+      }
+    }
+    return raw.map((t) => ({
+      id: t.id,
+      name: t.name,
+      argsRaw: t.args_raw || t.args_preview || "",
+      status: t.status || "completed",
+      result: t.result || "",
+      diagnostics: Array.isArray(t.diagnostics) && t.diagnostics.length ? t.diagnostics : undefined,
+      durationMs: typeof t.duration_ms === "number" && t.duration_ms > 0 ? t.duration_ms : undefined,
+    }));
+  }
+
+  /**
+   * The last measured prompt in a saved transcript. The core writes each
+   * assistant message's prompt_ctx and tokens_out into the session file
+   * (internal/sessionfile/uimessage.go); reopening a session paints the gauge
+   * from them, as panel.ts does, instead of showing an empty ring over a
+   * conversation that is plainly not empty. Messages without the fields leave
+   * it empty, which is the truth: nothing was measured.
+   * @param {any[]} uiMessages
+   */
+  function postRestoredUsage(uiMessages) {
+    const msgs = Array.isArray(uiMessages) ? uiMessages : [];
+    let prompt = 0;
+    let completion = 0;
+    for (const m of msgs) {
+      if (!m || String(m.role || "").toLowerCase() !== "assistant") {
+        continue;
+      }
+      if (Number(m.prompt_ctx) > 0) {
+        prompt = Number(m.prompt_ctx);
+      } else if (prompt === 0 && Number(m.tokens_in) > 0) {
+        prompt = Number(m.tokens_in);
+      }
+      if (Number(m.tokens_out) > 0) {
+        completion = Number(m.tokens_out);
+      }
+    }
+    if (prompt <= 0) {
+      return;
+    }
+    toRenderer({
+      type: "stepUsage",
+      usage: { prompt_tokens: prompt, completion_tokens: completion, source: "restored" },
+    });
   }
 
   /**
@@ -62,6 +321,19 @@
       });
       const started = await conn.send("session.start", {});
       st.sessionId = started.session_id || "";
+      // Not awaited: the pill and the gauge fill in from the core's answer
+      // when it comes, and the transcript does not wait for them.
+      void pushLLMInfo(projectId);
+      // What "/" offers beyond the built-in commands: this workspace's own
+      // skills and .claude/commands, which only the core can enumerate.
+      void pushSkillCommands(projectId);
+      // Settings opened while this workspace was still coming up had nothing
+      // to read from and said so; now there is. Without this the panel kept
+      // that note, an empty provider list and no tool catalogue until it was
+      // closed and opened again.
+      if (projectId === currentProjectId && settingsPanelOpen()) {
+        void pushSettingsState();
+      }
       if (projectId === currentProjectId) {
         toRenderer({
           type: "header",
@@ -83,6 +355,8 @@
       }
       st.status = "idle";
     }
+    // Live, or failed trying: either way the project's frame stops loading.
+    noteProjectLive(projectId);
     renderProjects();
   }
 
@@ -132,6 +406,20 @@
     const st = projectState(projectId);
     const conn = connFor(projectId);
     setActiveConn(conn);
+    // Paint the switch now, not after the round trips below. renderProjects is
+    // also what puts the start screen away, and this function does not reach
+    // its closing render until session.list has answered — so a slow core left
+    // the start screen covering a project that was already open and selected.
+    renderProjects();
+
+    // The pill and the gauge are the composer's, and the composer is shared by
+    // every project: paint this project's model and window over the previous
+    // project's now, from the last answer, and read them again in case the
+    // model was changed while this project was in the background.
+    postLLMInfo(projectId);
+    void pushLLMInfo(projectId);
+    // Each workspace has its own commands; the palette must follow the switch.
+    void pushSkillCommands(projectId);
 
     toRenderer({ type: "clearMessages" });
     // Take the outgoing project's overlay down unconditionally, then raise this
@@ -155,7 +443,8 @@
         if (projectId !== currentProjectId) {
           return;
         }
-        toRenderer({ type: "history", messages: view.ui_messages || [] });
+        toRenderer({ type: "history", messages: historyMessagesFrom(view.ui_messages) });
+        postRestoredUsage(view.ui_messages);
       } catch (err) {
         if (projectId === currentProjectId) {
           toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
@@ -242,6 +531,12 @@
         closeSessionTab(msg.sessionId || "");
         return;
 
+      case "deleteSession":
+        // Web-only: throws the chat away in the core. The sidebar's × asks
+        // twice before it gets here.
+        void deleteSession(msg.projectId || currentProjectId, msg.sessionId || "");
+        return;
+
       case "listSessions":
         void refreshSessionList(currentProjectId);
         return;
@@ -288,7 +583,26 @@
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
-    toRenderer({ type: "userEcho", text: msg.text || "" });
+    // The session this turn belongs to: the person can open another one while
+    // it runs, and the answer must be written back to the session that asked.
+    const sessionId = st.sessionId;
+    // The chips on the message: files attached through the paperclip, a drop
+    // or a paste (60-composer.js). Only ones with a path can go to the core —
+    // it reads them from the workspace — and the echo shows the same ones.
+    const files = (Array.isArray(msg.files) ? msg.files : []).filter(
+      (f) => f && typeof f.path === "string" && f.path
+    );
+    const attachments = files.map((f) => {
+      const a = { path: f.path };
+      if (typeof f.name === "string" && f.name) {
+        a.name = f.name;
+      }
+      if (f.kind === "image" || f.kind === "file") {
+        a.kind = f.kind;
+      }
+      return a;
+    });
+    toRenderer({ type: "userEcho", text: msg.text || "", files: files.length ? files : undefined });
     toRenderer({ type: "turnStart" });
     toRenderer({ type: "turnInFlight", inFlight: true });
     st.status = "working";
@@ -302,13 +616,14 @@
     // frame are provably the same value.
     const conn = connFor(projectId);
     const turn = conn.sendCancellable("session.message", {
-      session_id: st.sessionId,
+      session_id: sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
       // disk. Access mode still gates the shell (allow_exec below).
       apply: true,
       allow_exec: Boolean(msg.allowExec),
       profile: msg.profile || "",
+      ...(attachments.length ? { attachments } : {}),
     });
     st.inFlightTurnId = turn.id;
     // turnComplete's contract is `{ ok: boolean }`, and the renderer treats a
@@ -329,6 +644,12 @@
       st.inFlightTurnId = null;
       st.status = "idle";
       renderProjects();
+      // Write the answer into the session before anything else: the core
+      // records the person's message when the turn starts and nothing else,
+      // so an answer this page does not save is gone when the session is
+      // reopened. Not gated on the visible project — a turn that finished in
+      // the background is exactly as worth keeping.
+      void saveAssistantTurn(projectId, conn, sessionId);
       if (projectId === currentProjectId) {
         toRenderer({ type: "turnInFlight", inFlight: false });
         toRenderer({ type: "turnComplete", ok: !failed });
@@ -336,6 +657,68 @@
         // closes the writer before it answers — so this replaces the live
         // rows with the recorded ones, which carry the core's own timings.
         void refreshTrajectory(projectId, conn, st.sessionId);
+      }
+    }
+  }
+
+  /**
+   * Append this turn's answer to the session's ui_messages.
+   *
+   * The core's own projection holds only what it can know without a client:
+   * the person's message, appended when the turn starts (session_rpc.go,
+   * SessionMessage). The answer — text, reasoning, the tools that ran, what
+   * the step cost — exists only as a stream of events, so every host writes
+   * it back itself; the editor does it in coreSession.ts (syncUIProjection)
+   * and this is the same contract for the page. Read-modify-write against
+   * session.get rather than a blind push, because the core appended the user
+   * message after this page last saw the list.
+   *
+   * @param {string} projectId @param {any} conn @param {string} sessionId
+   */
+  async function saveAssistantTurn(projectId, conn, sessionId) {
+    if (!sessionId || !conn) {
+      return;
+    }
+    const answerMsg = assistantTurnProjection(projectId);
+    if (!answerMsg) {
+      return; // nothing was said and nothing ran: there is nothing to keep
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const view = (await conn.send("session.get", { session_id: sessionId })) || {};
+        const ui = Array.isArray(view.ui_messages) ? view.ui_messages.slice() : [];
+        const last = ui.length ? ui[ui.length - 1] : null;
+        const lastRole = last ? String((last && last.role) || "").toLowerCase() : "";
+        const lastText = last ? String((last && (last.text || last.content)) || "").trim() : "";
+        if (lastRole === "assistant" && lastText === answerMsg.text) {
+          // The same answer already there — a retry, or another host that got
+          // in first. Update it in place rather than saying it twice.
+          ui[ui.length - 1] = Object.assign({}, last, answerMsg);
+        } else {
+          ui.push(answerMsg);
+        }
+        // title and model are read back and sent again on purpose: the core
+        // sets both from these params, so leaving them out renames the
+        // session to nothing.
+        await conn.send("session.ui_sync", {
+          session_id: sessionId,
+          title: typeof view.title === "string" ? view.title : "",
+          model: typeof view.model === "string" ? view.model : "",
+          ui_messages: ui,
+        });
+        return;
+      } catch (err) {
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        // Say so rather than lose the answer silently.
+        if (projectId === currentProjectId) {
+          toRenderer({
+            type: "systemNote",
+            text: "The answer could not be saved to this session: " + String((err && err.message) || err),
+          });
+        }
       }
     }
   }
@@ -358,7 +741,8 @@
       if (started.restored) {
         const view = await conn.send("session.get", { session_id: st.sessionId });
         if (projectId === currentProjectId) {
-          toRenderer({ type: "history", messages: view.ui_messages || [] });
+          toRenderer({ type: "history", messages: historyMessagesFrom(view.ui_messages) });
+          postRestoredUsage(view.ui_messages);
         }
       }
       if (projectId === currentProjectId) {

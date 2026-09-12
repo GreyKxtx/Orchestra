@@ -27,13 +27,26 @@
     }
   }
 
+  /**
+   * What the panel says while there is nothing to read from yet. The gear is
+   * reachable the moment a workspace is chosen, before its core is up; the
+   * settings follow once it is — onConnected pushes them (see
+   * settingsPanelOpen) — and the panel says so instead of "no project".
+   */
+  const SETTINGS_OPENING_NOTE = "The workspace is still opening — its settings will load as soon as it is ready.";
+
   /** @param {string} method @param {any} params @returns {Promise<any>} */
   function settingsRpc(method, params) {
     const conn = currentProjectId ? connFor(currentProjectId) : null;
-    if (!conn) {
-      return Promise.reject(new Error("no project is open"));
+    if (!conn || !conn.isOpen()) {
+      return Promise.reject(new Error(pendingOpen() || currentProjectId ? SETTINGS_OPENING_NOTE : "no project is open"));
     }
     return conn.send(method, params || {});
+  }
+
+  /** Whether the settings dialog is on screen. */
+  function settingsPanelOpen() {
+    return Boolean(railSettingsModal) && railSettingsModal.hidden === false;
   }
 
   const num = (v) => (typeof v === "number" ? v : 0);
@@ -261,12 +274,48 @@
   /** The section to open on the next push; the panel navigates to it once. */
   let settingsPendingSection = "general";
 
+  /**
+   * Counts pushes. An answer that arrives for an earlier push is dropped when
+   * a later one has started since: the frame is loaded once and repainted on
+   * every open, so by the time a slow read comes back the panel can be
+   * showing another project, and the answer is about this one.
+   */
+  let settingsPushSeq = 0;
+
+  function settingsProjectEntry() {
+    return known.find((p) => p.id === currentProjectId) || null;
+  }
+
   function settingsWorkspaceRoot() {
-    const entry = known.find((p) => p.id === currentProjectId);
+    const entry = settingsProjectEntry();
     return (entry && entry.path) || "";
   }
 
+  /**
+   * Which workspace this is. Everything on these screens is written to that
+   * workspace's own .orchestra.yml — provider, models, roles, index, MCP
+   * servers, agents are per workspace, not shared — so the panel has to say
+   * which one it is editing, or the separation is invisible.
+   *
+   * Sent before any read, not after all of them: the name is in the project
+   * list already. It used to follow the state, and the frame keeps whatever
+   * it showed last until told otherwise — so for as long as a slow read held
+   * the state back, the panel kept the previous project's name over this
+   * project's settings, and looked like it had not noticed the switch.
+   */
+  function postSettingsWorkspace() {
+    const entry = settingsProjectEntry();
+    postToSettings({
+      type: "workspace",
+      name: (entry && entry.name) || "",
+      path: (entry && entry.path) || "",
+    });
+  }
+
   async function pushSettingsState() {
+    const seq = ++settingsPushSeq;
+    const projectId = currentProjectId;
+    postSettingsWorkspace();
     try {
       const [llm, prompt, agents, mcp, index, skills, providerCatalog, orchestra, catalogFile] =
         await Promise.all([
@@ -276,23 +325,23 @@
           listMCP(),
           getIndexStatus(),
           listSkills(),
-          listProviders({ probe: true, includeSecrets: true }),
+          // Without probe: the catalogue as the config has it, answered at
+          // once. The models come in a second message, from
+          // probeSettingsProviders below. Probing asks every configured
+          // provider's server for its models, and one on a host that is down
+          // — a VPN that is not up — holds the answer for as long as the HTTP
+          // timeouts allow; the whole panel used to wait on it, showing
+          // nothing new for half a minute.
+          listProviders({ includeSecrets: true }),
           getOrchestra().catch(() => null),
           ensureMcpCatalogFile(),
         ]);
+      if (seq !== settingsPushSeq || projectId !== currentProjectId) {
+        return; // the panel has moved on to another project
+      }
       const ws = settingsWorkspaceRoot();
       const navigateSection = settingsPendingSection;
       settingsPendingSection = "";
-      // Which workspace this is. Everything on these screens is written to
-      // that workspace's own .orchestra.yml — provider, models, roles, index,
-      // MCP servers, agents are per workspace, not shared — so the panel has
-      // to say which one it is editing, or the separation is invisible.
-      const openProjectEntry = known.find((p) => p.id === currentProjectId);
-      postToSettings({
-        type: "workspace",
-        name: (openProjectEntry && openProjectEntry.name) || "",
-        path: (openProjectEntry && openProjectEntry.path) || ws,
-      });
       postToSettings({
         type: "state",
         llm,
@@ -315,8 +364,39 @@
           source: "local",
         },
       });
+      void probeSettingsProviders(seq, projectId);
     } catch (err) {
+      if (seq !== settingsPushSeq || projectId !== currentProjectId) {
+        return;
+      }
       postToSettings({ type: "error", message: String((err && err.message) || err) });
+    }
+  }
+
+  /**
+   * The second half of a push: the catalogue with each provider's models,
+   * which means asking their servers. It arrives in the same providerCatalog
+   * message the Refresh button's answer does, so the panel takes it the same
+   * way — the selection kept, the model list filled in. Until then the models
+   * pane says it is loading rather than that nothing came back.
+   * @param {number} seq @param {string} projectId
+   */
+  async function probeSettingsProviders(seq, projectId) {
+    const current = () => seq === settingsPushSeq && projectId === currentProjectId;
+    postToSettings({ type: "modelsBusy", busy: true, message: "Loading models…" });
+    try {
+      const catalog = await listProviders({ probe: true, includeSecrets: true });
+      if (current()) {
+        postToSettings({ type: "providerCatalog", catalog });
+      }
+    } catch (err) {
+      if (current()) {
+        settingsNote("Could not load models: " + String((err && err.message) || err));
+      }
+    } finally {
+      if (current()) {
+        postToSettings({ type: "modelsBusy", busy: false });
+      }
     }
   }
 
@@ -481,6 +561,9 @@
             ? "Provider credentials saved — pick a model and save again to activate"
             : "Model settings saved"
         );
+        // The chat's own pill and context gauge show the model too; a change
+        // made here has to reach them, or they name the model that was.
+        void pushLLMInfo(currentProjectId);
         await pushSettingsState();
         return;
       }

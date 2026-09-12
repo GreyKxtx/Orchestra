@@ -14,6 +14,63 @@
   const sessionsByProject = new Map();
   /** Projects the user folded away by hand. @type {Set<string>} */
   const collapsedProjects = new Set();
+  /**
+   * The live search over saved chats. hits=null means "not searching", so the
+   * sidebar draws the ordinary list; an empty array means "searched and found
+   * nothing", which has to look different from it.
+   * @type {{projectId: string, query: string, hits: Array<any>|null}}
+   */
+  const sessionSearch = { projectId: "", query: "", hits: null };
+
+  /**
+   * Full-text search across this workspace's saved chats (session.search,
+   * protocol v14 — implemented in the core since then and never called by any
+   * interface until now). Results replace the session list in place, so a hit
+   * is opened by the same click that opens any chat.
+   * @param {string} query
+   */
+  async function showSessionSearch(query) {
+    const q = String(query || "").trim();
+    if (!q) {
+      sessionSearch.projectId = "";
+      sessionSearch.query = "";
+      sessionSearch.hits = null;
+      renderProjects();
+      return;
+    }
+    const projectId = currentProjectId;
+    const conn = projectId ? connFor(projectId) : null;
+    if (!conn || !conn.isOpen()) {
+      return;
+    }
+    sessionSearch.projectId = projectId;
+    sessionSearch.query = q;
+    revealSessionList();
+    let hits = [];
+    try {
+      const r = (await conn.send("session.search", { query: q, insensitive: true, limit: 50 })) || {};
+      hits = Array.isArray(r.hits) ? r.hits : [];
+    } catch (err) {
+      hits = [];
+    }
+    // A slow search that lands after the user moved on must not repaint
+    // someone else's sidebar.
+    if (sessionSearch.query !== q || sessionSearch.projectId !== projectId) {
+      return;
+    }
+    // One row per chat: a chat matching six times is one chat to open, and the
+    // first hit carries the snippet worth showing.
+    const seen = new Set();
+    sessionSearch.hits = hits.filter((h) => {
+      const id = String((h && h.session_id) || "");
+      if (!id || seen.has(id)) {
+        return false;
+      }
+      seen.add(id);
+      return true;
+    });
+    renderProjects();
+  }
 
   /**
    * Called by refreshSessionList for every project, on screen or not, so the
@@ -93,6 +150,7 @@
       onClose: (id) => {
         conns.delete(id);
         forgetProjectState(id);
+        noteProjectLive(id);
         if (id === currentProjectId) {
           // A dropped socket ends the session on the core side, so say so
           // plainly rather than reconnecting into what looks like the same
@@ -109,6 +167,7 @@
         if (id === currentProjectId) {
           toRenderer({ type: "status", status: "error", detail: "connection error" });
         }
+        noteProjectLive(id);
       },
       onNotification: (id, msg) => {
         if (noteProjectEvent(id, msg)) {
@@ -137,13 +196,136 @@
     }
     const entry = known.find((p) => p.id === projectId);
     if (entry && entry.state === "closed") {
-      const opened = await openProject(entry.path, false);
+      // Marked before the await, because this is the slow half: a closed
+      // workspace has to start a core, which is a second or two of a sidebar
+      // that looked like it had ignored the click.
+      markRailOpening(projectId);
+      // init: true, as on the start screen. A workspace in this list is one
+      // the person put there; refusing it for want of a .orchestra.yml left
+      // the click doing nothing but writing a note into the transcript of
+      // whichever project they were still looking at.
+      const opened = await openProject(entry.path, true);
+      markRailOpening("");
       if (!opened) {
         return;
       }
     }
     ensureConn(projectId);
     await activateProject(projectId);
+  }
+
+  /**
+   * Name the workspace in the chat's own header. The sidebar says which one is
+   * open, but it is a column of names off to one side and can now be folded
+   * away entirely — while the transcript, the tabs and the composer look the
+   * same whichever project they belong to. Sending a message to the wrong
+   * workspace is a real mistake and nothing on that half of the window stood
+   * in its way.
+   *
+   * Built here rather than in the markup on purpose: everything inside #app is
+   * byte-identical with the VS Code webview's, and the editor's panel always
+   * has its one folder, so it has nothing to name. The element is created
+   * beside the logo at runtime, which leaves that parity alone.
+   */
+  /**
+   * Held rather than looked up: it carries no id, because check-web requires
+   * every id the code reaches for to exist in index.html, and this element
+   * deliberately does not — it is built at runtime precisely so the shared
+   * markup stays untouched.
+   * @type {any}
+   */
+  let chromeProjectEl = null;
+
+  /** @type {any} */
+  let skeletonEl = null;
+
+  /**
+   * Grey placeholder lines in the transcript while a workspace is coming up.
+   * Built at runtime and appended to #messages, which the renderer clears
+   * with its own clearMessages when the real transcript arrives — so the
+   * placeholder is gone the moment there is something to show instead.
+   * @param {boolean} on
+   */
+  function paintSkeleton(on) {
+    const messages = document.getElementById("messages");
+    if (!messages || !messages.appendChild) {
+      return;
+    }
+    const attached = Boolean(skeletonEl && skeletonEl.parentNode === messages);
+    if (!on) {
+      if (attached && messages.removeChild) {
+        messages.removeChild(skeletonEl);
+      }
+      return;
+    }
+    if (attached) {
+      return;
+    }
+    // Only into an empty transcript: a project switched to while another was
+    // on screen paints over that one's history, not under it.
+    if (messages.childNodes && messages.childNodes.length > 0) {
+      return;
+    }
+    skeletonEl = document.createElement("div");
+    skeletonEl.className = "skel";
+    skeletonEl.setAttribute("aria-hidden", "true");
+    // Two exchanges' worth of lines: a short one on the right, a longer run
+    // on the left. Widths vary so it reads as text, not as bars.
+    const rows = [
+      ["skel-row skel-user", "34%"],
+      ["skel-row", "72%"],
+      ["skel-row", "58%"],
+      ["skel-row", "66%"],
+      ["skel-row skel-user", "22%"],
+      ["skel-row", "80%"],
+      ["skel-row", "47%"],
+    ];
+    for (const [cls, width] of rows) {
+      const row = document.createElement("div");
+      row.className = cls;
+      if (row.style && row.style.setProperty) {
+        row.style.setProperty("--w", width);
+      }
+      skeletonEl.appendChild(row);
+    }
+    messages.appendChild(skeletonEl);
+  }
+
+  function paintChromeProject() {
+    const brand = document.getElementById("chrome-brand");
+    if (!brand || !brand.appendChild) {
+      return;
+    }
+    if (!chromeProjectEl) {
+      chromeProjectEl = document.createElement("span");
+      chromeProjectEl.className = "chrome-project";
+      brand.appendChild(chromeProjectEl);
+    }
+    const label = chromeProjectEl;
+    // The one on screen; failing that, the one on its way, so the name is up
+    // before the core is.
+    const entry =
+      known.find((p) => p.id === currentProjectId) ||
+      known.find((p) => pendingOpenId && p.id === pendingOpenId) ||
+      known.find((p) => pendingOpenPath && p.path === pendingOpenPath);
+    // textContent: a folder name off disk.
+    label.textContent = (entry && (entry.name || entry.path)) || "";
+    label.title = (entry && entry.path) || "";
+    label.hidden = !label.textContent;
+    if (brand.removeAttribute && label.textContent) {
+      // The brand block was decoration while it held only the logo; it names
+      // the workspace now, so it stops being hidden from a screen reader.
+      brand.removeAttribute("aria-hidden");
+    }
+  }
+
+  /** The workspace whose core is starting, so its row can say so. */
+  let railOpeningId = "";
+
+  /** @param {string} projectId "" clears it. */
+  function markRailOpening(projectId) {
+    railOpeningId = projectId || "";
+    renderProjects();
   }
 
   /**
@@ -171,7 +353,9 @@
       // closed current workspace is opened here.
       const entry = known.find((p) => p.id === id);
       if (entry && entry.state === "closed") {
-        const opened = await openProject(entry.path, false);
+        markRailOpening(id);
+        const opened = await openProject(entry.path, true);
+        markRailOpening("");
         if (!opened) {
           return;
         }
@@ -372,6 +556,45 @@
   }
 
   /**
+   * The button that throws a chat away. It asks twice — the first click arms
+   * it for a few seconds — because there is no undo: the core removes the
+   * snapshot and the event log from disk.
+   * @param {string} projectId @param {string} sessionId
+   */
+  function railDeleteButton(projectId, sessionId) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rail-session-del";
+    btn.dataset.projectId = projectId;
+    btn.dataset.sessionId = sessionId;
+    btn.title = "Delete this chat";
+    btn.setAttribute("aria-label", "Delete this chat");
+    btn.textContent = "×";
+    let armed = 0;
+    btn.addEventListener("click", (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      if (e && e.preventDefault) e.preventDefault();
+      if (!armed) {
+        armed = 1;
+        btn.classList.add("armed");
+        btn.textContent = "Delete?";
+        btn.title = "Click again to delete this chat for good";
+        setTimeout(() => {
+          if (!armed) return;
+          armed = 0;
+          btn.classList.remove("armed");
+          btn.textContent = "×";
+          btn.title = "Delete this chat";
+        }, 4000);
+        return;
+      }
+      armed = 0;
+      void deleteSession(projectId, sessionId);
+    });
+    return btn;
+  }
+
+  /**
    * The workspaces heading, which always carries the add button — including
    * when there is nothing under it yet, which is exactly when a new user
    * needs it.
@@ -386,6 +609,89 @@
     sec.appendChild(text);
     sec.appendChild(railAddButton("add-project", "Add a workspace folder"));
     return sec;
+  }
+
+  /**
+   * The box above a workspace's chats. It searches their text, not their
+   * titles: the core reads the saved messages, so "that thing about the
+   * circuit breaker" finds the chat even when its title says nothing.
+   * @param {string} projectId @returns {HTMLElement}
+   */
+  function railSessionSearchBox(projectId) {
+    const box = document.createElement("input");
+    box.type = "search";
+    box.className = "rail-session-search";
+    box.placeholder = "Search chats";
+    box.setAttribute("aria-label", "Search this workspace's chats");
+    if (sessionSearch.projectId === projectId) {
+      box.value = sessionSearch.query;
+    }
+    let debounce = 0;
+    box.addEventListener("input", () => {
+      const q = String(box.value || "");
+      if (debounce) {
+        clearTimeout(debounce);
+      }
+      // Each keystroke is a file walk across every saved session, so let the
+      // typing settle first.
+      debounce = setTimeout(() => {
+        void showSessionSearch(q);
+      }, 200);
+    });
+    box.addEventListener("keydown", (e) => {
+      if (e && e.key === "Escape") {
+        box.value = "";
+        void showSessionSearch("");
+      }
+    });
+    return box;
+  }
+
+  /**
+   * The search results, drawn as ordinary chat rows so the rail's existing
+   * click handler opens them, with the matching line underneath.
+   * @param {HTMLElement} container @param {string} projectId @param {string} openSessionId
+   */
+  function renderSessionHits(container, projectId, openSessionId) {
+    const hits = sessionSearch.hits || [];
+    if (hits.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "rail-sessions-empty";
+      empty.textContent = `No chat mentions “${sessionSearch.query}”`;
+      container.appendChild(empty);
+      return;
+    }
+    for (const h of hits) {
+      const sessionId = String((h && h.session_id) || "");
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "rail-session";
+      item.dataset.projectId = projectId;
+      item.dataset.sessionId = sessionId;
+      item.dataset.active = sessionId === openSessionId ? "true" : "false";
+      const title = document.createElement("span");
+      title.className = "rail-session-title";
+      title.textContent = String((h && h.title) || "") || sessionId || "untitled";
+      const age = document.createElement("span");
+      age.className = "rail-session-time";
+      age.textContent = sessionAge({ id: sessionId, updated_at: h && h.updated_at });
+      item.appendChild(title);
+      item.appendChild(age);
+      const snippet = String((h && h.snippet) || "").trim();
+      if (snippet) {
+        const line = document.createElement("span");
+        line.className = "rail-session-snippet";
+        // textContent: a snippet is the user's or the model's own words.
+        line.textContent = snippet;
+        item.appendChild(line);
+        item.title = snippet;
+      }
+      const rowEl = document.createElement("div");
+      rowEl.className = "rail-session-row";
+      rowEl.appendChild(item);
+      rowEl.appendChild(railDeleteButton(projectId, sessionId));
+      container.appendChild(rowEl);
+    }
   }
 
   /**
@@ -409,6 +715,12 @@
       };
     });
     toRenderer({ type: "projectList", projects: rows });
+    // Before the early return below: the editor's webview has neither a rail
+    // nor a start screen, and syncStartScreen is a no-op there, but the web
+    // host must not skip it just because the rail is missing.
+    syncStartScreen();
+
+    paintChromeProject();
 
     const list = document.getElementById("project-rail-list");
     if (!list) {
@@ -452,6 +764,9 @@
       chip.dataset.active = row.active ? "true" : "false";
       chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
       chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
+      if (railOpeningId && row.id === railOpeningId) {
+        chip.dataset.opening = "true";
+      }
       chip.setAttribute("aria-expanded", collapsed ? "false" : "true");
 
       // Drawn in CSS: an inline SVG here would need createElementNS, which the
@@ -500,6 +815,19 @@
       sessions.className = "project-sessions";
       const listed = sessionsByProject.get(row.id) || [];
       const openSessionId = (peekProjectState(row.id) || {}).sessionId || "";
+
+      // Searching replaces the list rather than sitting beside it: the whole
+      // point is to narrow a hundred chats to the three that mention a thing.
+      const searching = row.active && sessionSearch.projectId === row.id && sessionSearch.hits !== null;
+      if (row.active) {
+        sessions.appendChild(railSessionSearchBox(row.id));
+      }
+      if (searching) {
+        renderSessionHits(sessions, row.id, openSessionId);
+        group.appendChild(sessions);
+        list.appendChild(group);
+        continue;
+      }
       // session.list only returns sessions that have been written to disk, and
       // a session is written by its first message — so the session the user is
       // looking at is missing from the list until they say something. Showing
@@ -546,7 +874,13 @@
         age.textContent = sessionAge(s);
         item.appendChild(title);
         item.appendChild(age);
-        sessions.appendChild(item);
+        // A button cannot nest in a button, so the row is a pair: the chat
+        // itself, and the one that throws it away.
+        const rowEl = document.createElement("div");
+        rowEl.className = "rail-session-row";
+        rowEl.appendChild(item);
+        rowEl.appendChild(railDeleteButton(row.id, s.id || ""));
+        sessions.appendChild(rowEl);
       }
       group.appendChild(sessions);
       list.appendChild(group);
@@ -643,6 +977,81 @@
       void startSession(undefined);
     }
     pushSessionTabs();
+  }
+
+  /**
+   * Delete a chat for good: the core removes its snapshot and its event log
+   * (session.close, which cancels a running turn first). Closing a tab only
+   * hides it from the strip — this is the one that throws the chat away, so
+   * the rail's button asks twice before calling it.
+   *
+   * The chat on screen can be deleted too; a workspace is never left without
+   * one, so a fresh session takes its place.
+   * @param {string} projectId @param {string} sessionId
+   */
+  async function deleteSession(projectId, sessionId) {
+    if (!projectId || !sessionId) {
+      return;
+    }
+    const conn = connFor(projectId);
+    if (!conn || !conn.isOpen()) {
+      toRenderer({ type: "error", message: "The workspace is not open, so its chats cannot be deleted." });
+      return;
+    }
+    try {
+      await conn.send("session.close", { session_id: sessionId });
+    } catch (err) {
+      toRenderer({
+        type: "error",
+        message: "Could not delete the chat: " + String((err && err.message) || err),
+      });
+      return;
+    }
+    // Off the strip and out of the cached list before anything is read back,
+    // so the row goes away on the click rather than on the next poll.
+    hiddenTabsFor(projectId).delete(sessionId);
+    noteSessionList(
+      projectId,
+      (sessionsByProject.get(projectId) || []).filter((s) => s && s.id !== sessionId)
+    );
+    const st = projectState(projectId);
+    if (st.sessionId === sessionId) {
+      st.sessionId = "";
+      if (projectId === currentProjectId) {
+        const next = visibleTabs()[0];
+        if (next) {
+          await openSessionRow(projectId, next.id);
+        } else {
+          await startSession(undefined);
+        }
+      }
+    }
+    pushSessionTabs();
+    void refreshSessionList(projectId);
+  }
+
+  /**
+   * Put this workspace's chats in front of the user. On the web that is the
+   * sidebar — the header's "all sessions" button is hidden here, because the
+   * rail is where the list lives — so unfold the rail, open the workspace's
+   * group and scroll to the chat on screen. Answers false where there is no
+   * rail (the editor's webview), so the caller can fall back to the button.
+   */
+  function revealSessionList() {
+    const list = document.getElementById("project-rail-list");
+    if (!list || !currentProjectId) {
+      return false;
+    }
+    if (railCollapsed()) {
+      applyRail(0, false);
+    }
+    collapsedProjects.delete(currentProjectId);
+    renderProjects();
+    const active = list.querySelector ? list.querySelector('.rail-session[data-active="true"]') : null;
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({ block: "nearest" });
+    }
+    return true;
   }
 
   // ---- input -------------------------------------------------------------
@@ -852,6 +1261,189 @@
     }
   }
 
+  // ---- the sidebar's width ------------------------------------------------
+  //
+  // Dragging its edge sets the width; clicking the edge folds the sidebar away
+  // and back. Both are remembered, because a width you have to set again on
+  // every launch is not a width you have set.
+
+  /** Narrower than this and a workspace name has nowhere to go. */
+  const RAIL_MIN = 200;
+  /** Wider than this and the sidebar is competing with the transcript. */
+  const RAIL_MAX = 520;
+  /** Dragged below this, the sidebar folds rather than becoming unusable. */
+  const RAIL_FOLD_AT = 150;
+
+  const railColumn = document.getElementById("project-rail");
+  const railResizer = document.getElementById("rail-resizer");
+
+  /** @param {number} px */
+  function clampRailWidth(px) {
+    return Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(px)));
+  }
+
+  /** @returns {{width: number, collapsed: boolean}} */
+  function savedRail() {
+    let width = 0;
+    let collapsed = false;
+    try {
+      if (window.localStorage) {
+        width = parseInt(window.localStorage.getItem("orchestra.railWidth") || "", 10);
+        collapsed = window.localStorage.getItem("orchestra.railCollapsed") === "1";
+      }
+    } catch (e) {
+      // A locked-down browser just gets the default.
+    }
+    return { width: isFinite(width) && width > 0 ? clampRailWidth(width) : 0, collapsed };
+  }
+
+  /**
+   * @param {number} width 0 keeps whatever width is set — pass one only when
+   *   changing it, so folding and unfolding never lose the dragged size.
+   * @param {boolean} collapsed
+   */
+  function applyRail(width, collapsed) {
+    const root = document.documentElement;
+    if (width && root && root.style && root.style.setProperty) {
+      root.style.setProperty("--rail-w", width + "px");
+    }
+    if (railColumn) {
+      railColumn.dataset.collapsed = collapsed ? "true" : "false";
+    }
+    if (railResizer) {
+      railResizer.dataset.collapsed = collapsed ? "true" : "false";
+      if (railResizer.setAttribute) {
+        railResizer.setAttribute("aria-label", collapsed ? "Show sidebar" : "Sidebar width");
+      }
+    }
+    try {
+      if (window.localStorage) {
+        if (width) {
+          window.localStorage.setItem("orchestra.railWidth", String(width));
+        }
+        window.localStorage.setItem("orchestra.railCollapsed", collapsed ? "1" : "0");
+      }
+    } catch (e) {
+      // Same: the click still takes effect for this session.
+    }
+  }
+
+  function railCollapsed() {
+    return Boolean(railColumn && railColumn.dataset && railColumn.dataset.collapsed === "true");
+  }
+
+  /** The width the sidebar has right now, dragged or default. */
+  function railWidthNow() {
+    if (railColumn && railColumn.getBoundingClientRect) {
+      const w = railColumn.getBoundingClientRect().width;
+      if (w > 1) {
+        return clampRailWidth(w);
+      }
+    }
+    return savedRail().width || 296;
+  }
+
+  {
+    const start = savedRail();
+    applyRail(start.width, start.collapsed);
+  }
+
+  if (railResizer && railResizer.addEventListener && railColumn) {
+    let dragging = false;
+    let moved = false;
+    let originLeft = 0;
+    let startX = 0;
+
+    const endDrag = () => {
+      if (!dragging) {
+        return;
+      }
+      dragging = false;
+      railResizer.dataset.dragging = "false";
+      if (document.body && document.body.dataset) {
+        document.body.dataset.railDrag = "false";
+      }
+      // A press that never moved is a click, and a click folds. Doing this on
+      // pointerup rather than on "click" keeps the two gestures from both
+      // firing off one press.
+      if (!moved) {
+        applyRail(0, !railCollapsed());
+      }
+    };
+
+    railResizer.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== undefined && ev.button !== 0) {
+        return;
+      }
+      dragging = true;
+      moved = false;
+      const box = railColumn.getBoundingClientRect ? railColumn.getBoundingClientRect() : null;
+      originLeft = box ? box.left : 0;
+      startX = ev.clientX;
+      railResizer.dataset.dragging = "true";
+      if (document.body && document.body.dataset) {
+        document.body.dataset.railDrag = "true";
+      }
+      if (railResizer.setPointerCapture && ev.pointerId !== undefined) {
+        // Capture, or the drag dies the moment the pointer crosses into the
+        // transcript — which is where every useful drag goes.
+        try {
+          railResizer.setPointerCapture(ev.pointerId);
+        } catch (e) {
+          // Not fatal: the listeners below still fire while the button is down.
+        }
+      }
+      if (ev.preventDefault) {
+        ev.preventDefault();
+      }
+    });
+
+    railResizer.addEventListener("pointermove", (ev) => {
+      if (!dragging) {
+        return;
+      }
+      const want = ev.clientX - originLeft;
+      // Measured against where the press landed, not against the current
+      // width: folded, the pointer starts a whole sidebar away from the width
+      // it would set, and any jitter would then read as a drag and swallow
+      // the click that was meant to unfold it.
+      if (Math.abs(ev.clientX - startX) > 3) {
+        moved = true;
+      }
+      if (!moved) {
+        return;
+      }
+      if (want < RAIL_FOLD_AT) {
+        // Dragged shut. The width is left alone, so letting go and clicking
+        // the edge again brings back the size that was there before.
+        applyRail(0, true);
+        return;
+      }
+      applyRail(clampRailWidth(want), false);
+    });
+
+    railResizer.addEventListener("pointerup", endDrag);
+    railResizer.addEventListener("pointercancel", endDrag);
+
+    // The same two gestures from the keyboard, since the handle is focusable.
+    railResizer.addEventListener("keydown", (ev) => {
+      const key = ev.key;
+      if (key === "Enter" || key === " " || key === "Spacebar") {
+        applyRail(0, !railCollapsed());
+      } else if (key === "ArrowLeft") {
+        const next = railWidthNow() - 24;
+        applyRail(next < RAIL_FOLD_AT ? 0 : clampRailWidth(next), next < RAIL_FOLD_AT);
+      } else if (key === "ArrowRight") {
+        applyRail(clampRailWidth(railWidthNow() + 24), false);
+      } else {
+        return;
+      }
+      if (ev.preventDefault) {
+        ev.preventDefault();
+      }
+    });
+  }
+
   const railSettingsBtn = document.getElementById("rail-settings-btn");
   const railSettingsModal = document.getElementById("rail-settings-modal");
   const railSettingsCloseBtn = document.getElementById("rail-settings-close");
@@ -941,18 +1533,122 @@
   // you meant; a plain `orchestra web` opens the folder it was run in and
   // never sees this, unless every project is closed from the sidebar.
 
-  /** @param {boolean} on */
-  function showStartScreen(on) {
+  /**
+   * The start screen is a view of state, not a place the code navigates to:
+   * it is up exactly while no workspace is on screen. It used to be switched
+   * by hand at each place that opened something, and the places that opened
+   * something without going through the screen were missed — clicking a
+   * workspace in the sidebar left the start screen covering the chat of a
+   * project that was open, selected and listing its sessions. So it is
+   * derived here instead, from the one project the window is showing, and
+   * renderProjects calls it; every path that changes what is open already
+   * ends there.
+   */
+  /** How long the start screen takes to fade; matches rail.css. */
+  const FADE_MS = 280;
+
+  /**
+   * Run the arrival animation on one element once. The attribute is what the
+   * keyframes hang off, and it has to come off again or the animation never
+   * replays on the next switch.
+   * @param {any} el
+   */
+  function enterAnimation(el) {
+    if (!el || !el.dataset || !window.setTimeout) {
+      return;
+    }
+    el.dataset.entering = "true";
+    window.setTimeout(() => {
+      el.dataset.entering = "false";
+    }, 760);
+  }
+
+  function syncStartScreen() {
     const screen = document.getElementById("start-screen");
     const app = document.getElementById("app");
     if (!screen || !app) {
       return;
     }
-    screen.hidden = !on;
-    app.hidden = on;
-    if (on) {
+    const ready =
+      Boolean(currentProjectId) &&
+      known.some((p) => p.id === currentProjectId && p.state === "ready");
+    const open = ready || pendingOpen();
+    const wasOpen = !app.hidden;
+    app.hidden = !open;
+    // Loading until the project is live, not merely open: the core can be up
+    // with its socket still connecting, and the composer must not take a
+    // message it has nowhere to send.
+    const loading = open && (!ready || pendingOpen());
+    if (app.dataset) {
+      app.dataset.loading = loading ? "true" : "false";
+    }
+    paintSkeleton(loading);
+    if (open && !wasOpen) {
+      // Leaving the start screen: it fades out over the project rather than
+      // being switched off under it, and the project rises into place. Both
+      // halves are CSS; this only marks which is which and clears up after.
+      enterAnimation(app);
+      enterAnimation(document.getElementById("project-rail"));
+      if (!screen.hidden && screen.dataset) {
+        screen.dataset.leaving = "true";
+        if (window.setTimeout) {
+          window.setTimeout(() => {
+            screen.hidden = true;
+            screen.dataset.leaving = "false";
+          }, FADE_MS);
+        } else {
+          screen.hidden = true;
+        }
+      }
+    } else {
+      if (screen.dataset) {
+        screen.dataset.leaving = "false";
+      }
+      screen.hidden = open;
+    }
+    // The sidebar goes with the chat. It is a sibling of #app rather than a
+    // child, so hiding the chat alone left a column of workspaces down the
+    // edge of a screen whose whole subject is which workspace to open — the
+    // same list twice, one of them unreadable as a launcher. With nothing
+    // open the start screen takes the window.
+    const rail = document.getElementById("project-rail");
+    if (rail) {
+      rail.hidden = !open;
+    }
+    const edge = document.getElementById("rail-resizer");
+    if (edge) {
+      edge.hidden = !open;
+    }
+    if (!open) {
       renderStartScreen();
     }
+  }
+
+  /**
+   * Say that a workspace is opening, and stop the screen taking another
+   * click while it is. "" ends it. The id, when given, is the row that was
+   * clicked: it keeps its contrast and spins, so it is clear which workspace
+   * is coming while the rest of the list steps back.
+   * @param {string} message @param {string} [projectId]
+   */
+  function startBusy(message, projectId) {
+    // Kept rather than only written to the row, because opening a workspace
+    // refreshes the list and rebuilds every row: renderStartScreen reads this
+    // back, so the spinner survives its own progress.
+    busyProjectId = message ? projectId || "" : "";
+    const card = document.querySelector ? document.querySelector(".start-card") : null;
+    const line = document.getElementById("start-busy");
+    const text = document.getElementById("start-busy-text");
+    if (card) {
+      card.dataset.busy = message ? "true" : "false";
+    }
+    if (text) {
+      text.textContent = message || "";
+    }
+    if (line) {
+      line.hidden = !message;
+    }
+    renderStartScreen();
   }
 
   /** @param {string} message "" clears it. */
@@ -963,6 +1659,40 @@
     }
     el.textContent = message || "";
     el.hidden = !message;
+  }
+
+  /** The workspace currently opening, if the start screen is waiting on one. */
+  let busyProjectId = "";
+
+  /**
+   * The workspace the window has left the start screen for, but which is not
+   * live yet — its core starting, its socket not open. Either the id (a row
+   * on the start screen) or only the path (a folder just picked). While one
+   * is set the chat is on screen in its loading state, and syncStartScreen
+   * treats it as open: the start screen leaves at the click, not when the
+   * core finally answers, and the wait is spent looking at the project's own
+   * frame filling in rather than at a dimmed launcher.
+   */
+  let pendingOpenId = "";
+  let pendingOpenPath = "";
+
+  function pendingOpen() {
+    return Boolean(pendingOpenId || pendingOpenPath);
+  }
+
+  /**
+   * The project's socket is up and its session started — or failed, which
+   * ends the wait just the same. Called from the connection callbacks in
+   * 10-adapter-session.js.
+   * @param {string} projectId
+   */
+  function noteProjectLive(projectId) {
+    if (!pendingOpen() || projectId !== currentProjectId) {
+      return;
+    }
+    pendingOpenId = "";
+    pendingOpenPath = "";
+    renderProjects();
   }
 
   function renderStartScreen() {
@@ -987,6 +1717,9 @@
       item.title = p.path || "";
       if (p.missing) {
         item.dataset.missing = "true";
+      }
+      if (busyProjectId && p.id === busyProjectId) {
+        item.dataset.busy = "true";
       }
 
       const name = document.createElement("span");
@@ -1019,11 +1752,35 @@
    * stays on the screen with the reason, because there is nowhere else to go.
    * @param {string} path
    */
-  async function openFromStart(path) {
+  async function openFromStart(path, projectId) {
     startError("");
     if (!path) {
       return;
     }
+    const entry = known.find((p) => p.path === path);
+    startBusy("Opening " + ((entry && entry.name) || path) + "…", projectId || "");
+    pendingOpenId = projectId || "";
+    pendingOpenPath = path;
+    renderProjects();
+    try {
+      await openAndEnter(path);
+    } finally {
+      startBusy("");
+      const now = known.find((p) => p.path === path);
+      if (!now || currentProjectId !== now.id) {
+        // It did not get there. The start screen is still the place, and
+        // it has to be usable again — with the reason, which openAndEnter
+        // has already written into it.
+        pendingOpenId = "";
+        pendingOpenPath = "";
+        renderProjects();
+      }
+      // Otherwise the wait ends when the socket is live: noteProjectLive.
+    }
+  }
+
+  /** @param {string} path */
+  async function openAndEnter(path) {
     // init: true, and nothing is asked. Picking a folder to work in IS the
     // consent to set it up — `orchestra web --init` has always treated a
     // folder chosen in a dialog exactly this way — and the only question
@@ -1053,8 +1810,8 @@
       return;
     }
     await switchProject(entry.id);
-    if (currentProjectId === entry.id) {
-      showStartScreen(false);
+    if (currentProjectId !== entry.id) {
+      startError("Opened " + path + ", but could not switch to it.");
     }
   }
 
@@ -1094,6 +1851,7 @@
       go.disabled = true;
       go.textContent = "Cloning…";
     }
+    startBusy("Cloning " + url + "…", "");
     try {
       const created = await api("/api/projects/clone", {
         method: "POST",
@@ -1102,13 +1860,11 @@
       await refreshProjects();
       if (created && created.id) {
         await switchProject(created.id);
-        showStartScreen(false);
-        return;
       }
-      renderStartScreen();
     } catch (e) {
       startError(String((e && e.message) || e));
     } finally {
+      startBusy("");
       if (go) {
         go.disabled = false;
         go.textContent = "Clone";
@@ -1125,8 +1881,6 @@
           startError("");
           void (async () => {
             await forgetProject(drop.dataset.forgetId || "");
-            await refreshProjects();
-            renderStartScreen();
           })();
           return;
         }
@@ -1152,7 +1906,7 @@
           }
           return;
         }
-        void openFromStart(item.dataset.path || "");
+        void openFromStart(item.dataset.path || "", item.dataset.projectId || "");
       });
     }
     const openBtn = document.getElementById("start-open-btn");
@@ -1160,10 +1914,11 @@
       openBtn.addEventListener("click", () => {
         void (async () => {
           startError("");
-          const opened = await addProject();
-          if (opened) {
-            await enterProject(opened);
+          const picked = await pickProjectFolder();
+          if (!picked) {
+            return;
           }
+          await openFromStart(picked, "");
         })();
       });
     }
@@ -1201,7 +1956,14 @@
     }
   }
 
-  async function addProject() {
+  /**
+   * Ask for a folder and return it, or "" if the person backed out. Separate
+   * from opening it because the start screen has to name the folder in its
+   * "opening…" line before the open starts, and the dialog is the only place
+   * the name comes from.
+   * @returns {Promise<string>}
+   */
+  async function pickProjectFolder() {
     let path = "";
     const t = window.__TAURI__;
     if (t && t.dialog && t.dialog.open) {
@@ -1214,7 +1976,11 @@
     } else if (window.prompt) {
       path = window.prompt("Project folder (absolute path)") || "";
     }
-    path = String(path || "").trim();
+    return String(path || "").trim();
+  }
+
+  async function addProject() {
+    const path = await pickProjectFolder();
     if (!path) {
       return "";
     }
@@ -1261,11 +2027,9 @@
       // is opened for a project that does not exist.
       currentProjectId = "";
       renderProjects();
-      showStartScreen(true);
       return;
     }
     currentProjectId = first.id;
     setActiveConn(ensureConn(currentProjectId));
     renderProjects();
-    showStartScreen(false);
   })();

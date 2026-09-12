@@ -3,8 +3,16 @@
    the sidebar's own ground is defined here, in all three theme states, because
    naming it in chat.css would be exactly the leak that comment forbids. */
 :root {
-  --rail-bg: #060607;
+  --rail-bg: #0e0e11;
+  /* The sidebar's width, dragged by the handle on its edge and remembered in
+     localStorage. A custom property so the handle can set one number and the
+     column, the media query below and the collapsed state all follow it. */
+  --rail-w: 296px;
   --rail-dot: rgba(255, 255, 255, 0.075);
+  /* The start screen's own dots: a wider pitch than the sidebar's, because
+     this is a whole window rather than a column, and quiet enough to be
+     texture under the reading rather than something competing with it. */
+  --start-dot: rgba(255, 255, 255, 0.09);
   /* Text on the one filled control, the new-session button, which is painted
      in the mode accent. */
   --rail-on-accent: #17131f;
@@ -14,6 +22,7 @@
   :root:not([data-theme="dark"]) {
     --rail-bg: #f4f4f5;
     --rail-dot: rgba(0, 0, 0, 0.10);
+    --start-dot: rgba(0, 0, 0, 0.1);
     --rail-on-accent: #ffffff;
   }
 }
@@ -21,6 +30,7 @@
 :root[data-theme="light"] {
   --rail-bg: #f4f4f5;
   --rail-dot: rgba(0, 0, 0, 0.10);
+  --start-dot: rgba(0, 0, 0, 0.1);
   --rail-on-accent: #ffffff;
 }
 
@@ -40,7 +50,8 @@ body {
 /* All navigation lives here — the view switch included — so the header
    above the transcript can shrink to a title bar. */
 .project-rail {
-  flex: 0 0 296px;
+  flex: 0 0 var(--rail-w);
+  width: var(--rail-w);
   display: flex;
   flex-direction: column;
   /* A dot grid, quiet enough to read as texture rather than content: it
@@ -403,6 +414,95 @@ body {
   color: var(--muted-2);
 }
 
+/* Searching the saved chats (session.search). The box sits above the list and
+   replaces it with the chats whose text matches, each showing the line that
+   matched — a title alone rarely says which chat it was. */
+.rail-session-search {
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg-inset, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.rail-session-search::placeholder {
+  color: var(--muted-2);
+}
+
+.rail-session-search:focus-visible {
+  outline: 2px solid var(--accent, var(--border-soft));
+  outline-offset: -1px;
+}
+
+/* A hit row is a normal chat row plus the matching line, so it grows a second
+   line and stops being a single centred strip. */
+.rail-session > .rail-session-snippet {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted-2);
+}
+
+.rail-session:has(> .rail-session-snippet) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+/* A chat and the button that throws it away. The button asks twice: the
+   first click arms it ("Delete?"), the second calls session.close, which
+   removes the snapshot and the event log from disk. */
+.rail-session-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rail-session-row > .rail-session {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rail-session-del {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+
+.rail-session-row:hover .rail-session-del,
+.rail-session-del:focus-visible {
+  opacity: 0.65;
+}
+
+.rail-session-del:hover {
+  opacity: 1;
+  color: var(--fg);
+  background: var(--surface);
+}
+
+.rail-session-del.armed {
+  opacity: 1;
+  font-size: 11px;
+  padding: 3px 7px;
+  color: var(--error-fg);
+  background: var(--error-bg);
+}
+
 .rail-sessions-empty {
   padding: 6px 10px 8px;
   font-size: 12.5px;
@@ -416,11 +516,17 @@ body {
    show — they are the header's whole job, driven by exactly the renderer the
    VS Code panel drives. */
 
-#chrome-brand,
 #session-new-btn,
 #session-history-btn,
 #settings-btn,
 #top-accent {
+  display: none;
+}
+
+/* The brand block stays, but not for the logo: the sidebar carries the mark,
+   and this block is where paintChromeProject writes the name of the open
+   workspace. */
+#chrome-brand .chrome-logo {
   display: none;
 }
 
@@ -553,74 +659,430 @@ body {
 /* ---- large screens ----------------------------------------------------- */
 /* The type is sized for a wide window already; only the column widens. */
 @media (min-width: 1500px) {
-  .project-rail {
-    flex-basis: 320px;
+  :root {
+    --rail-w: 320px;
   }
+}
+
+/* ---- the open workspace, named in the chat's header --------------------- */
+/* Written beside the logo by paintChromeProject. Small caps rather than a
+   title: it is a label saying where you are, not a heading. */
+.chrome-project {
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.chrome-project[hidden] {
+  display: none;
+}
+
+/* ---- a workspace whose core is starting -------------------------------- */
+/* The click landed; the core takes a moment. Without this the sidebar sat
+   exactly as it was and the switch read as a click that did nothing. */
+.project-chip[data-opening="true"] .project-count,
+.project-chip[data-opening="true"] .project-dot {
+  display: none;
+}
+
+.project-chip[data-opening="true"]::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-top-color: var(--mode-accent);
+  border-radius: 50%;
+  animation: start-spin 720ms linear infinite;
+}
+
+.project-chip[data-opening="true"] .project-name {
+  color: var(--fg-dim);
+}
+
+/* ---- the sidebar's edge ------------------------------------------------ */
+/* Drag it to set the width, click it to fold the sidebar away and back. It
+   stays put when the sidebar is folded — that strip at the window's edge is
+   the way back, and the only one, so it is never the thing that disappears.
+
+   Wider than it looks: the bar is a hairline, the grab area either side of it
+   is a comfortable target, which is why the hit box is padding and the line
+   is drawn by a child. */
+.rail-resizer {
+  position: relative;
+  flex: 0 0 9px;
+  align-self: stretch;
+  margin-left: -4px;
+  margin-right: -4px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 4px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.rail-resizer:hover::before,
+.rail-resizer:focus-visible::before,
+.rail-resizer[data-dragging="true"]::before {
+  background: var(--mode-accent);
+}
+
+.rail-resizer:focus-visible {
+  outline: none;
+}
+
+.rail-resizer[hidden] {
+  display: none;
+}
+
+/* Folded: the column goes to nothing and loses its border, and the handle
+   sits alone against the window edge. Widening it slightly there makes the
+   one remaining target easier to hit. */
+.project-rail[data-collapsed="true"] {
+  flex-basis: 0;
+  width: 0;
+  border-right: 0;
+}
+
+.rail-resizer[data-collapsed="true"] {
+  flex-basis: 7px;
+  margin-left: 0;
+  cursor: e-resize;
+}
+
+.rail-resizer[data-collapsed="true"]::before {
+  inset: 0 2px 0 0;
+  background: var(--border);
+}
+
+.rail-resizer[data-collapsed="true"]:hover::before,
+.rail-resizer[data-collapsed="true"]:focus-visible::before {
+  background: var(--mode-accent);
+}
+
+/* While dragging, the pointer owns the window: without this every pass over
+   the transcript selects text and the cursor flickers between the two panes. */
+body[data-rail-drag="true"] {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* ---- the start screen -------------------------------------------------- */
 /* Shown when no workspace is open — which is how the desktop app starts, so
    the window opens on a choice rather than on a guess about which project you
-   meant. It takes #app's place beside the sidebar; #app carries display:flex
-   from chat.css, so hiding it needs a rule, not just the attribute. */
+   meant. It takes the whole window: the sidebar goes down with the chat,
+   because a column listing workspaces beside a screen that exists to pick one
+   is the same list twice. Both carry display:flex, so hiding either needs a
+   rule and not just the attribute. */
 
-#app[hidden] {
+#app[hidden],
+.project-rail[hidden] {
   display: none;
 }
 
 .start-screen {
+  position: relative;
+  display: flex;
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
   overflow-y: auto;
-  background: var(--bg);
+  transition: opacity 260ms ease;
+  /* The same dot grid the sidebar carries, on a wider pitch because this is a
+     whole window rather than a column: a plain black field this large reads
+     as a screen that has not loaded, and the texture gives the mark and the
+     two buttons something to sit on. Still, and quiet: it is under the only
+     thing being read on this screen, so it stays texture. */
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, var(--start-dot) 1.3px, transparent 1.3px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
 }
 
 .start-screen[hidden] {
   display: none;
 }
 
+/* Opening a workspace. Rather than the screen blinking out and the chat
+   blinking in, everything here quiets: the content settles back and dims
+   except for the line saying which workspace is coming, and the project fades
+   up underneath. Fixed for the length of the fade so the two overlap instead
+   of sharing the row. */
+.start-screen[data-leaving="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.start-card {
+  transition:
+    transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 260ms ease;
+}
+
+.start-card[data-busy="true"] {
+  transform: scale(0.988);
+}
+
+.start-card[data-busy="true"] .start-brand,
+.start-card[data-busy="true"] .start-lead,
+.start-card[data-busy="true"] .start-actions,
+.start-card[data-busy="true"] .start-recent {
+  opacity: 0.42;
+  transition: opacity 260ms ease;
+}
+
+/* The project arriving. The sidebar slides in from the window's edge, the
+   mark and the name fade up on it a beat later, and the chat rises into
+   place beside it — each piece a little after the last, so it reads as the
+   room assembling rather than as one thing blinking on. `both` holds the
+   delayed pieces at their first frame until their turn. */
+@keyframes rail-enter {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes brand-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes app-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.project-rail[data-entering="true"] {
+  animation: rail-enter 380ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.project-rail[data-entering="true"] .rail-brand {
+  animation: brand-enter 380ms 220ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+#app[data-entering="true"] {
+  animation: app-enter 380ms 140ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* While the project is coming up: grey lines where the transcript will be,
+   and the composer held back until there is a session to send to. The wait
+   is spent inside the project's own frame, watching it fill in, instead of
+   on a launcher that has stopped doing anything. */
+#app[data-loading="true"] #composer-wrap {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+#app[data-loading="true"] .view-switch {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.skel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 28px auto 0;
+  padding: 0 22px;
+}
+
+.skel-row {
+  width: var(--w, 60%);
+  height: 13px;
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 45%, var(--surface) 90%);
+  background-size: 220% 100%;
+  animation: skel-shimmer 1.5s ease-in-out infinite;
+}
+
+/* The person's own lines sit on the right, as their messages do. */
+.skel-user {
+  align-self: flex-end;
+  height: 15px;
+  border-radius: 9px;
+}
+
+.skel-row + .skel-user,
+.skel-user + .skel-row {
+  margin-top: 12px;
+}
+
+@keyframes skel-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-screen,
+  .start-card,
+  .start-card[data-busy="true"] .start-brand,
+  .start-card[data-busy="true"] .start-lead,
+  .start-card[data-busy="true"] .start-actions,
+  .start-card[data-busy="true"] .start-recent {
+    transition: none;
+  }
+
+  .start-card[data-busy="true"] {
+    transform: none;
+  }
+
+  #app[data-entering="true"],
+  .project-rail[data-entering="true"],
+  .project-rail[data-entering="true"] .rail-brand,
+  .skel-row {
+    animation: none;
+  }
+}
+
+/* The screen is a title page, so it is set like one: the mark, the name, the
+   line under it and the two ways in all share one centre line, and only the
+   list of workspaces below reverts to rows, which is how a list is read. */
+/* margin: auto inside the flex parent, not align-items: center — it centres
+   on both axes the same way and, unlike centring on the container, a card
+   taller than the window overflows downwards instead of losing its top edge
+   off the top of the screen. */
 .start-inner {
+  position: relative;
   width: min(100%, 620px);
-  margin: 0 auto;
-  padding: 13vh 28px 48px;
+  margin: auto;
+  padding: 40px 28px;
+  text-align: center;
+}
+
+/* No border, no fill, no shadow. The content sat first in a hole cut out of
+   the grid and then on a pane of frosted glass, and both drew a shape around
+   it that the screen does not need: there is one thing on this window, so
+   nothing has to be marked off from anything else. What keeps it readable now
+   is the grid being quiet, not a surface laid over it. */
+.start-card {
+  padding: 8px 24px 4px;
 }
 
 .start-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: center;
+  gap: 18px;
   color: var(--fg);
 }
 
 .start-mark {
-  width: 38px;
-  height: 38px;
+  width: 56px;
+  height: 56px;
   flex: 0 0 auto;
 }
 
 .start-wordmark {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 9px;
   min-width: 0;
 }
 
 .start-word {
-  font-size: 24px;
+  font-size: 34px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
 }
 
+/* "Code" carries the one moving flourish on the screen: a highlight crossing
+   the word every few seconds. The gradient begins and ends on the same muted
+   grey the word used to be, so the sweep starts from rest, returns to rest,
+   and the loop's jump back has nothing to show. Painted through the glyphs
+   with background-clip, so it is the letters that light up, not a box behind
+   them. */
 .start-word-sub {
-  font-size: 24px;
+  font-size: 34px;
   font-weight: 500;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: var(--muted);
+  background-image: linear-gradient(
+    100deg,
+    var(--muted) 0%,
+    var(--muted) 32%,
+    color-mix(in srgb, var(--mode-accent) 70%, var(--muted)) 44%,
+    color-mix(in srgb, var(--fg) 88%, var(--mode-accent)) 50%,
+    color-mix(in srgb, var(--mode-accent) 70%, var(--muted)) 56%,
+    var(--muted) 68%,
+    var(--muted) 100%
+  );
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: start-word-sheen 5.5s ease-in-out infinite;
+}
+
+@keyframes start-word-sheen {
+  0%,
+  18% {
+    background-position: 100% 0;
+  }
+  72%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+/* Nothing here is information, so under a reduced-motion setting all of it
+   stops: the sweep parks mid-word, where it looks deliberate, and the grid
+   stops answering the pointer. */
+@media (prefers-reduced-motion: reduce) {
+  .start-word-sub {
+    animation: none;
+    background-position: 50% 0;
+  }
+
+  .start-screen::before,
+  .start-screen::after {
+    display: none;
+  }
 }
 
 .start-lead {
-  margin: 12px 0 22px;
+  margin: 16px 0 26px;
   font-size: 14px;
   color: var(--muted);
 }
@@ -628,17 +1090,26 @@ body {
 .start-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  justify-content: center;
+  gap: 10px;
 }
 
+/* The two ways in are one pair, not a choice with a recommendation: same
+   border, same weight, same width, so neither leads. Opening a folder you
+   already have and cloning one you do not are simply the two things a person
+   arrives here to do. */
 .start-action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 9px 14px;
+  min-width: 196px;
+  padding: 10px 16px;
   border: 1px solid var(--pill-border);
   border-radius: 8px;
-  background: transparent;
+  /* A lift off the glass rather than a fill: the blur behind the card has
+     already made the ground even, so a button only has to read as raised. */
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
   color: var(--fg-dim);
   font: inherit;
   font-size: 13.5px;
@@ -647,11 +1118,12 @@ body {
 }
 
 .start-action:hover {
-  background: var(--hover-wash);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
   color: var(--fg);
 }
 
-/* One filled control, as everywhere else in this UI. */
+/* One filled control, as everywhere else in this UI — and on this screen it
+   is the clone form's own submit, which only exists once that form is open. */
 .start-action-primary {
   border-color: transparent;
   background: var(--mode-accent);
@@ -668,6 +1140,78 @@ body {
   opacity: 0.45;
   cursor: default;
   filter: none;
+}
+
+/* While a workspace opens. The core has to start before the window can show
+   anything, which is a second or two on a cold project — long enough that a
+   screen holding still reads as a click that did not land. */
+.start-busy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.start-busy[hidden] {
+  display: none;
+}
+
+.start-spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-top-color: var(--mode-accent);
+  border-radius: 50%;
+  animation: start-spin 720ms linear infinite;
+}
+
+@keyframes start-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* Everything else stops taking clicks: a second workspace asked for while the
+   first is still starting would open a core nobody is going to look at. The
+   row that was clicked keeps full contrast and shows the spinner, so it is
+   clear which one is coming. */
+.start-card[data-busy="true"] .start-action,
+.start-card[data-busy="true"] .start-recent-item {
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.start-card[data-busy="true"] .start-recent-item[data-busy="true"] {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.start-recent-item[data-busy="true"] .start-recent-count {
+  display: none;
+}
+
+.start-recent-item[data-busy="true"]::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-top-color: var(--mode-accent);
+  border-radius: 50%;
+  animation: start-spin 720ms linear infinite;
+}
+
+/* The spin is the only thing on this screen that carries information, so it
+   keeps turning under a reduced-motion setting — slower, and that is all. */
+@media (prefers-reduced-motion: reduce) {
+  .start-spinner,
+  .start-recent-item[data-busy="true"]::after {
+    animation-duration: 1600ms;
+  }
 }
 
 .start-clone {
@@ -688,7 +1232,14 @@ body {
 .start-clone-row {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
+}
+
+/* Beside a URL field these two are a row's worth of controls, not the pair of
+   equals above, so they take their width from their labels again. */
+.start-clone-row .start-action {
+  min-width: 0;
 }
 
 .start-clone-input {
@@ -749,6 +1300,7 @@ body {
 .start-recent-list {
   display: flex;
   flex-direction: column;
+  border-radius: 10px;
 }
 
 .start-recent-item {
@@ -772,7 +1324,7 @@ body {
 }
 
 .start-recent-item:hover {
-  background: var(--surface);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
 }
 
@@ -831,4 +1383,406 @@ body {
   padding: 4px 10px;
   font-size: 12.5px;
   vertical-align: baseline;
+}
+
+/* ── The Graph view (web only; ui/web/src/70-graph.js builds it) ──────────────
+   A third pane beside the transcript and the trajectory: a radial tree of the
+   project on the left, what the index holds on the right. The shared switch
+   stamps data-view on #app; "graph" is one more value of it. */
+#app[data-view="graph"] #messages,
+#app[data-view="graph"] #trajectory,
+#app[data-view="graph"] #composer-wrap {
+  display: none;
+}
+
+.graph-pane {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+#app[data-view="graph"] .graph-pane {
+  display: flex;
+}
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.graph-stats {
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.graph-depth-value {
+  min-width: 78px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-tool {
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--pill-bg);
+  border: 1px solid var(--pill-border);
+  border-radius: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.graph-tool:hover {
+  border-color: var(--muted);
+}
+
+.graph-tool.on {
+  border-color: var(--accent, #8b8cff);
+}
+
+.graph-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.graph-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.graph-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.graph-canvas.dragging {
+  cursor: grabbing;
+}
+
+.graph-canvas.over-node {
+  cursor: pointer;
+}
+
+.graph-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 440px;
+  padding: 0 20px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.graph-hint[hidden] {
+  display: none;
+}
+
+.graph-card {
+  position: absolute;
+  z-index: 6;
+  min-width: 180px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--menu-bg);
+  border: 1px solid var(--pill-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  color: var(--fg);
+  pointer-events: none;
+}
+
+.graph-card[hidden] {
+  display: none;
+}
+
+.graph-card-title {
+  font-weight: 600;
+}
+
+.graph-card-path {
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11px;
+  word-break: break-all;
+  margin: 2px 0 6px;
+}
+
+.graph-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.graph-card-row span:last-child {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The readout beside the picture: what the index holds, then whatever is
+   selected — its neighbours and, for a file, its functions. */
+.graph-side {
+  flex: 0 0 300px;
+  width: 300px;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid var(--border-soft);
+  padding: 14px 14px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .graph-side {
+    display: none;
+  }
+}
+
+.graph-block {
+  display: block;
+}
+
+.graph-block-title {
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.graph-head-name {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.graph-head-path {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  word-break: break-all;
+  margin: 2px 0 6px;
+}
+
+.graph-ro {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11.5px;
+  line-height: 1.85;
+  color: var(--muted);
+}
+
+.graph-ro-dots {
+  flex: 1 1 auto;
+  min-width: 12px;
+  border-bottom: 1px dotted var(--border);
+  transform: translateY(-3px);
+}
+
+.graph-ro-v {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-ro.ok .graph-ro-v {
+  color: var(--accent, #8b8cff);
+}
+
+.graph-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.graph-link-row,
+.graph-sym {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 7px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-link-row:hover,
+.graph-sym:hover,
+.graph-sym.open {
+  background: var(--pill-bg);
+}
+
+.graph-link-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 8px;
+}
+
+.graph-link-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-link-weight {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-link-path {
+  grid-column: 1 / -1;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+.graph-sym {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.graph-sym-kind {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.graph-sym-name {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-sym-lines {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-code {
+  margin: 2px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.graph-code-note {
+  margin: -4px 0 10px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.graph-empty {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ── The turn rail (web only; ui/web/src/75-turn-rail.js builds it) ──────────
+   The transcript's scrollbar gives way to a column of short bars, one per
+   message of the person's own, at the height of that message in the scroll.
+   The lit bar is the question currently in view; a click scrolls to one. */
+#messages {
+  scrollbar-width: none;
+}
+
+#messages::-webkit-scrollbar {
+  display: none;
+}
+
+.turn-rail {
+  position: absolute;
+  right: 6px;
+  width: 16px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.turn-rail[hidden] {
+  display: none;
+}
+
+.turn-tick {
+  position: absolute;
+  left: 3px;
+  width: 10px;
+  height: 3px;
+  margin-top: -1px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 26%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    background 120ms ease,
+    transform 120ms ease,
+    height 120ms ease;
+}
+
+.turn-tick:hover,
+.turn-tick:focus-visible {
+  background: var(--fg);
+  transform: scaleX(1.4);
+  outline: none;
+}
+
+.turn-tick.current {
+  height: 4px;
+  background: var(--accent, #8b8cff);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-tick {
+    transition: none;
+  }
 }

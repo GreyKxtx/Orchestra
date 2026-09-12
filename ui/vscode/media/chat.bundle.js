@@ -3068,6 +3068,33 @@
           host.postMessage({ type: "rewindToMessage", uiIndex: idx });
         });
         wrap.appendChild(rewind);
+
+        // Rewind truncates this chat; branching keeps it and continues the
+        // conversation in a copy, which is what you want when the question is
+        // "what if I had asked differently" rather than "undo that".
+        //
+        // Not on the first message: the branch is everything BEFORE the point
+        // (sessionfile.ForkSnapshot), so branching there would produce an
+        // empty chat — the core rejects it, and a button that can only fail is
+        // worse than no button. Starting over from nothing is /clear.
+        if (opts.uiIndex > 0) {
+          const fork = document.createElement("button");
+          fork.type = "button";
+          fork.className = "fork-btn";
+          fork.title = "Branch a new chat from here";
+          fork.textContent = "⑂ Branch";
+          fork.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = typeof opts.uiIndex === "number" ? opts.uiIndex : Number(el.dataset.uiIndex);
+            if (!Number.isFinite(idx) || idx < 1) {
+              return;
+            }
+            fork.disabled = true;
+            host.postMessage({ type: "forkFromMessage", uiIndex: idx });
+          });
+          wrap.appendChild(fork);
+        }
       }
       if (text || wrap.querySelector(".rewind-btn")) {
         el.appendChild(wrap);
@@ -3132,7 +3159,11 @@
         } else {
           trackSubagent(msg, "start", "");
         }
-        setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        // A restored turn is a replay, not work in progress: narrating it
+        // leaves "Ls…" in the chrome strip of a session that is sitting idle.
+        if (!msg.restored) {
+          setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        }
         if (host) host.scrollTop = host.scrollHeight;
         messagesEl.scrollTop = messagesEl.scrollHeight;
         return;
@@ -3181,7 +3212,11 @@
       } else {
         trackSubagent(msg, "start", "");
       }
-      setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+      // A restored turn is a replay, not work in progress: narrating it
+        // leaves "Ls…" in the chrome strip of a session that is sitting idle.
+        if (!msg.restored) {
+          setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        }
       if (host) host.scrollTop = host.scrollHeight;
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return;

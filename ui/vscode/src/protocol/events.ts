@@ -396,6 +396,8 @@ export type WebviewToHost =
   | { type: "questionReply"; answers: string[] }
   | { type: "mentionSearch"; query: string }
   | { type: "rewindToMessage"; uiIndex: number }
+  // Branch a new chat from that checkpoint, leaving this one intact.
+  | { type: "forkFromMessage"; uiIndex: number }
   | { type: "compactSession"; query?: string }
   | { type: "slashCommand"; cmd: string; arg?: string }
   | { type: "cancelQueuedSend"; id: string }

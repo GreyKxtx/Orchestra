@@ -1,6 +1,7 @@
 // Renders ui/desktop/icon.svg to every raster the app needs.
 //
-//   src-tauri/icons/32x32.png, 128x128.png, 128x128@2x.png, icon.png, icon.ico
+//   src-tauri/icons/32x32.png, 128x128.png, 128x128@2x.png, icon.png,
+//                   icon.ico, icon.icns
 //   ui/web/static/favicon.ico   (the page the window loads; without one the
 //                                webview asks for /favicon.ico and gets a 404)
 //
@@ -179,6 +180,47 @@ function buildIco(entries) {
   return Buffer.concat([header, dir, ...entries.map((e) => e.png)]);
 }
 
+/**
+ * Pack PNGs into an .icns. Same arithmetic as the .ico: a four-byte magic and
+ * a total length, then one chunk per image — an OSType, the chunk's own
+ * length counting its eight-byte header, and a PNG. The OSTypes below are the
+ * PNG-carrying ones; macOS has read them since 10.7.
+ *
+ * This exists because tauri.conf.json lists icons/icon.icns, and without it
+ * the file stays the purple square the Tauri template ships — a wrong icon
+ * sitting in the repo waiting for the first macOS build.
+ * @param {Map<number, Buffer>} pngs
+ */
+function buildIcns(pngs) {
+  /** OSType → the pixel size it carries. */
+  const TYPES = [
+    ["icp4", 16],
+    ["icp5", 32],
+    ["icp6", 64],
+    ["ic07", 128],
+    ["ic08", 256],
+    ["ic09", 512],
+    ["ic11", 32], // 16pt @2x
+    ["ic12", 64], // 32pt @2x
+    ["ic13", 256], // 128pt @2x
+    ["ic14", 512], // 256pt @2x
+  ];
+  const chunks = [];
+  for (const [type, size] of TYPES) {
+    const png = pngs.get(size);
+    if (!png) continue;
+    const head = Buffer.alloc(8);
+    head.write(type, 0, 4, "ascii");
+    head.writeUInt32BE(png.length + 8, 4);
+    chunks.push(head, png);
+  }
+  const body = Buffer.concat(chunks);
+  const head = Buffer.alloc(8);
+  head.write("icns", 0, 4, "ascii");
+  head.writeUInt32BE(body.length + 8, 4);
+  return Buffer.concat([head, body]);
+}
+
 const svg = fs.readFileSync(svgPath, "utf8");
 const pngs = await render(svg, SIZES);
 
@@ -193,6 +235,8 @@ write(path.join(iconsDir, "32x32.png"), pngs.get(32));
 write(path.join(iconsDir, "128x128.png"), pngs.get(128));
 write(path.join(iconsDir, "128x128@2x.png"), pngs.get(256));
 write(path.join(iconsDir, "icon.png"), pngs.get(512));
+
+write(path.join(iconsDir, "icon.icns"), buildIcns(pngs));
 
 const ico = buildIco(ICO_SIZES.map((size) => ({ size, png: pngs.get(size) })));
 write(path.join(iconsDir, "icon.ico"), ico);

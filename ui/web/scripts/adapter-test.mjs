@@ -33,10 +33,15 @@ export function loadBundle(opts = {}) {
   let socket = null;
 
   class FakeWebSocket {
+    static CONNECTING = 0;
     static OPEN = 1;
+    static CLOSED = 3;
     constructor(url) {
       this.url = url;
-      this.readyState = 1;
+      // As in a browser: connecting until "open" fires. A send before that
+      // is refused ("not connected"), which is what a settings panel opened
+      // while the core is still starting must see.
+      this.readyState = 0;
       this.listeners = {};
       socket = this;
       sockets.push(this);
@@ -48,6 +53,8 @@ export function loadBundle(opts = {}) {
       sent.push({ url: this.url, ...JSON.parse(data) });
     }
     emit(type, ev) {
+      if (type === "open") this.readyState = 1;
+      if (type === "close") this.readyState = 3;
       for (const fn of this.listeners[type] || []) fn(ev);
     }
   }
@@ -78,7 +85,10 @@ export function loadBundle(opts = {}) {
       (this._listeners[type] ||= []).push(fn);
     },
     click() {
-      for (const fn of this._listeners.click || []) fn({ preventDefault() {} });
+      // A real click event carries both, and listeners in the shared renderer
+      // call stopPropagation as a matter of course.
+      const ev = { preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}, target: this };
+      for (const fn of this._listeners.click || []) fn(ev);
     },
     append() {},
     keydown(key) {
@@ -123,7 +133,12 @@ export function loadBundle(opts = {}) {
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     cancelAnimationFrame: (h) => clearTimeout(h),
     WebSocket: FakeWebSocket,
-    location: { protocol: "http:", host: "127.0.0.1:9", search: opts.search ?? "" },
+    location: {
+      protocol: "http:",
+      host: "127.0.0.1:9",
+      origin: "http://127.0.0.1:9",
+      search: opts.search ?? "",
+    },
     sessionStorage: {
       getItem: (k) => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => store.set(k, String(v)),
@@ -250,6 +265,24 @@ export function loadBundle(opts = {}) {
       s.emit("message", { data: JSON.stringify(obj) });
     },
     post: (msg) => sandbox.window.postMessage(msg),
+    /**
+     * A message from an iframe: same-origin, with the frame's contentWindow as
+     * its source. 50-settings.js accepts nothing else on the window's message
+     * channel — every other message there belongs to the renderer.
+     */
+    postFromFrame: (frameId, msg) => {
+      const frame = elementsById.get(frameId);
+      assert.ok(frame && frame.contentWindow, `frame ${frameId} has no contentWindow`);
+      const cloned = JSON.parse(JSON.stringify(msg));
+      for (const fn of handlers.slice()) {
+        try {
+          fn({ data: cloned, source: frame.contentWindow, origin: sandbox.location.origin });
+        } catch (e) {
+          // As in postMessage above: a renderer fragment tripping over the
+          // stub DOM must not mask what the adapter did.
+        }
+      }
+    },
     close: () => socket.emit("close", {}),
     get socketURL() {
       return socket ? socket.url : "";
@@ -409,9 +442,11 @@ test("a tool call becomes a running block, then a completed one", async () => {
 
   const blocks = b.inbound.filter((m) => m.type === "toolBlock");
   assert.equal(blocks.length, 2, `expected start+complete, got ${blocks.length}`);
-  assert.equal(blocks[0].block.status, "running");
-  assert.equal(blocks[1].block.status, "done");
-  assert.equal(blocks[1].block.result, "ok");
+  // The renderer draws a block from its phase, not from a status field.
+  assert.equal(blocks[0].phase, "start");
+  assert.equal(blocks[0].toolName, "bash");
+  assert.equal(blocks[1].phase, "complete");
+  assert.equal(blocks[1].content, "ok");
 });
 
 test("exec output is streamed into the tool block", async () => {
@@ -679,7 +714,8 @@ test("switching repaints from the core rather than a buffer", async () => {
   await tick();
 
   const history = b.inbound.filter((m) => m.type === "history").pop();
-  assert.deepEqual(history.messages, [{ role: "user", text: "earlier" }]);
+  // uiIndex is the row's place in the core's own list, which rewind aims at.
+  assert.deepEqual(history.messages, [{ role: "user", text: "earlier", uiIndex: 0 }]);
 });
 
 // ---- fix round 1 regression tests --------------------------------------
@@ -1697,4 +1733,981 @@ test("no open workspace means the start screen and no socket at all", async () =
   assert.equal(screen.hidden, false, "the start screen must be showing");
   assert.ok(app, "#app was never looked up");
   assert.equal(app.hidden, true, "the transcript must be hidden behind it");
+  // The sidebar too: with nothing open it would list the same workspaces the
+  // screen itself is offering, down the edge of the window, as a second and
+  // worse copy of the choice being made.
+  const rail = b.elementById("project-rail");
+  assert.ok(rail, "the sidebar was never looked up");
+  assert.equal(rail.hidden, true, "the sidebar must be hidden too");
+});
+
+test("opening a workspace from the sidebar takes the start screen down", async () => {
+  // The start screen used to be switched off by hand, and only where the user
+  // was expected to leave it — the two buttons on the screen itself. The
+  // sidebar lists every remembered workspace and is on screen the whole time,
+  // so clicking one there opened the project, selected it, listed its
+  // sessions, and left the start screen sitting on top of the chat.
+  let opened = false;
+  const entry = (state) => ({
+    id: "p-1",
+    path: "/w1",
+    name: "w1",
+    state,
+    sessions: 2,
+  });
+
+  const b = loadBundle({ search: "" });
+  b.setFetchResponder(() => ({ projects: [entry(opened ? "ready" : "closed")] }));
+  await tick();
+  await tick();
+
+  const screen = b.elementById("start-screen");
+  const app = b.elementById("app");
+  assert.equal(screen.hidden, false, "nothing is open yet, so the start screen shows");
+
+  // What the rail's chip does with a workspace whose core is closed.
+  b.setFetchResponder((url, init) => {
+    if (url === "/api/projects" && init && init.method === "POST") {
+      opened = true;
+      return {};
+    }
+    return { projects: [entry(opened ? "ready" : "closed")] };
+  });
+  dispatch(b, { type: "switchProject", projectId: "p-1" });
+  await tick();
+  await tick();
+
+  assert.ok(b.socketFor("p-1"), "the workspace's socket must be open");
+  assert.equal(app.hidden, false, "the chat must be on screen at once");
+  // The start screen fades out over the project rather than being switched
+  // off under it, so it is still in the document for the length of the fade.
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(screen.hidden, true, "the start screen must be gone");
+  assert.equal(app.hidden, false, "the chat must be on screen");
+  assert.equal(
+    b.elementById("project-rail").hidden,
+    false,
+    "and the sidebar must be back with it",
+  );
+});
+
+// ---- the settings panel -----------------------------------------------------
+//
+// 50-settings.js is the host half of the settings iframe: the frame posts
+// "ready" or "reload", the host reads the core over the current project's
+// socket and posts the state back. These tests stand in for the frame with a
+// contentWindow that records what it was sent.
+
+/** @returns {any[]} what the host posted into the frame */
+function attachSettingsFrame(b) {
+  const frame = b.elementById("settings-frame");
+  assert.ok(frame, "50-settings.js never looked the settings frame up");
+  const posted = [];
+  frame.contentWindow = {
+    postMessage(msg) {
+      posted.push(JSON.parse(JSON.stringify(msg)));
+    },
+  };
+  return posted;
+}
+
+/**
+ * A model probe: runtime.list_providers asked to call every configured
+ * provider's server for its models. The slow read — a provider on a host that
+ * is down holds it for as long as the HTTP timeouts allow.
+ */
+const isModelProbe = (m) =>
+  m.method === "runtime.list_providers" && m.id !== undefined && m.params && m.params.probe === true;
+
+/** Minimal answers for the reads pushSettingsState makes. */
+function settingsAnswer(method, model) {
+  switch (method) {
+    case "runtime.get_llm":
+      return { provider: "lmstudio", api_base: "http://localhost:1234/v1", model };
+    case "runtime.list_providers":
+      return {
+        providers: [{ key: "lmstudio", ready: true, active: true, current_model: model }],
+        active_provider: "lmstudio",
+        active_model: model,
+      };
+    default:
+      return {};
+  }
+}
+
+/** Answer every unanswered request on a project's socket except a model probe. */
+function answerSettingsReads(b, projectId, model) {
+  if (!b.__answered) {
+    b.__answered = new Set();
+  }
+  const on = (m) => String(m.url).includes(`project=${encodeURIComponent(projectId)}`);
+  for (const req of b.sent.filter((m) => m.id !== undefined && on(m) && !isModelProbe(m))) {
+    if (b.__answered.has(req.url + ":" + req.id)) {
+      continue;
+    }
+    b.__answered.add(req.url + ":" + req.id);
+    b.deliverTo(projectId, { jsonrpc: "2.0", id: req.id, result: settingsAnswer(req.method, model) });
+  }
+}
+
+function probedCatalog(model) {
+  return {
+    providers: [{ key: "lmstudio", ready: true, active: true, models: [{ id: model }], model_count: 1 }],
+    active_provider: "lmstudio",
+    active_model: model,
+  };
+}
+
+test("the settings panel names the workspace at once and gets its state without waiting on the model probe", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  const posted = attachSettingsFrame(b);
+
+  // The frame has loaded and asks for its state.
+  b.postFromFrame("settings-frame", { type: "ready" });
+  await tick();
+
+  // Nothing has been answered, and the panel already knows whose settings it
+  // is showing: the name is in the project list, no round trip needed. It
+  // used to go out only after every read had answered — so while a slow read
+  // held the state back, the panel kept naming the project it was opened on
+  // last, over this project's settings.
+  const ws = posted.find((m) => m.type === "workspace");
+  assert.ok(
+    ws,
+    "the workspace must be named before any RPC answers; posted: " + posted.map((m) => m.type).join(", ")
+  );
+  assert.equal(ws.name, "a");
+  assert.equal(ws.path, "/a");
+
+  // Answer every read but the model probe. The whole panel used to wait for
+  // it — half a minute for a provider on a host that is down, showing
+  // nothing new the entire time.
+  answerSettingsReads(b, "A", "m-a");
+  await tick();
+  await tick();
+  const state = posted.find((m) => m.type === "state");
+  assert.ok(
+    state,
+    "the state must arrive without the probe; posted: " + posted.map((m) => m.type).join(", ")
+  );
+  assert.equal(state.workspaceRoot, "/a");
+  assert.equal(state.llm.model, "m-a");
+
+  // The probe is still asked for, and its answer lands as its own message —
+  // the one the Refresh button's answer already arrives in.
+  const probe = b.sent.find(isModelProbe);
+  assert.ok(probe, "the model probe must still be asked for");
+  b.deliverTo("A", { jsonrpc: "2.0", id: probe.id, result: probedCatalog("m-a") });
+  await tick();
+  const catalog = posted.find((m) => m.type === "providerCatalog");
+  assert.ok(catalog, "the probed catalogue must reach the panel");
+  assert.equal(catalog.catalog.providers[0].models.length, 1);
+});
+
+test("a model probe answered after switching projects does not paint the other project's panel", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+  const posted = attachSettingsFrame(b);
+
+  // Settings opened on A: its reads answer, its probe hangs.
+  b.postFromFrame("settings-frame", { type: "ready" });
+  await tick();
+  answerSettingsReads(b, "A", "m-a");
+  await tick();
+  await tick();
+  assert.ok(posted.find((m) => m.type === "state" && m.llm.model === "m-a"), "A's state must show");
+  const probeA = b.sent.find((m) => isModelProbe(m) && String(m.url).includes("project=A"));
+  assert.ok(probeA, "A's probe must have gone out");
+
+  // Over to B; settings opened again there.
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  await tick();
+  posted.length = 0;
+  b.postFromFrame("settings-frame", { type: "reload" });
+  await tick();
+  const ws = posted.find((m) => m.type === "workspace");
+  assert.ok(ws && ws.name === "b", "the panel must name B at once");
+  answerSettingsReads(b, "B", "m-b");
+  await tick();
+  await tick();
+  assert.ok(posted.find((m) => m.type === "state" && m.llm.model === "m-b"), "B's state must show");
+
+  // A's probe comes back now. It is about A's providers; B's panel must not
+  // take it.
+  posted.length = 0;
+  b.deliverTo("A", { jsonrpc: "2.0", id: probeA.id, result: probedCatalog("m-a") });
+  await tick();
+  assert.equal(
+    posted.filter((m) => m.type === "providerCatalog").length,
+    0,
+    "A's late probe must be dropped"
+  );
+
+  // B's own probe lands.
+  const probeB = b.sent.find((m) => isModelProbe(m) && String(m.url).includes("project=B"));
+  assert.ok(probeB, "B's probe must have gone out");
+  b.deliverTo("B", { jsonrpc: "2.0", id: probeB.id, result: probedCatalog("m-b") });
+  await tick();
+  const catalog = posted.find((m) => m.type === "providerCatalog");
+  assert.ok(catalog, "B's probe must reach the panel");
+  assert.equal(catalog.catalog.activeModel, "m-b");
+});
+
+// ---- the composer's model pill and context gauge ----------------------------
+//
+// Both read renderer messages the editor's host has always sent and this one
+// did not: header carries the model, contextInfo the window and the reply
+// budget, stepUsage the prompt size of the last step (07-events.js).
+
+const twoProjects = () => ({
+  projects: [
+    { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+    { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+  ],
+});
+
+test("connecting tells the composer the real model and its context window", async () => {
+  const b = await handshake(loadBundle());
+  // The handshake answered core.health, initialize and session.start; the
+  // read that fills the pill and the gauge is still pending.
+  answer(b, "runtime.get_llm", {
+    provider: "lmstudio",
+    model: "qwen/qwen3.6-27b",
+    num_ctx: 20000,
+    context_tokens: 32768,
+    max_tokens: 8192,
+  });
+  await tick();
+  const header = b.inbound.filter((m) => m.type === "header" && m.model).pop();
+  assert.ok(
+    header,
+    "the header must carry the model; headers: " + JSON.stringify(b.inbound.filter((m) => m.type === "header"))
+  );
+  assert.equal(header.model, "qwen/qwen3.6-27b");
+  assert.equal(header.provider, "lmstudio");
+  const info = b.inbound.filter((m) => m.type === "contextInfo").pop();
+  assert.ok(info, "contextInfo must be sent");
+  // num_ctx is the window the request asks for; the catalogue's 32K is more
+  // than that, so the prompt overflows at 20000 — the gauge measures against
+  // the smaller of the two.
+  assert.equal(info.info.contextLimit, 20000);
+  assert.equal(info.info.maxResponseTokens, 8192);
+  assert.equal(info.info.model, "qwen/qwen3.6-27b");
+});
+
+test("switching projects repaints the composer with that project's model and window", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(twoProjects);
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+  answerOn(b, "A", "runtime.get_llm", { model: "m-a", provider: "lmstudio", num_ctx: 8000 });
+  answerOn(b, "B", "runtime.get_llm", {
+    model: "m-b",
+    provider: "openrouter",
+    context_tokens: 64000,
+    max_tokens: 2048,
+  });
+  await tick();
+  // B answered while it was in the background: nothing on screen changes.
+  assert.equal(
+    b.inbound.filter((m) => m.type === "header" && m.model === "m-b").length,
+    0,
+    "a background project's model must not reach the composer"
+  );
+
+  b.inbound.length = 0;
+  dispatch(b, { type: "switchProject", projectId: "B" });
+  await tick();
+  // From the answer already in hand — before B's socket has said anything.
+  const header = b.inbound.find((m) => m.type === "header" && m.model);
+  assert.ok(header, "the switch must name B's model at once");
+  assert.equal(header.model, "m-b");
+  assert.equal(header.provider, "openrouter");
+  const info = b.inbound.find((m) => m.type === "contextInfo");
+  assert.ok(info, "the switch must carry B's window");
+  assert.equal(info.info.contextLimit, 64000);
+  assert.equal(info.info.maxResponseTokens, 2048);
+  // And B is asked again, in case the model changed while it was in the
+  // background.
+  const reads = b.sent.filter(
+    (m) => m.method === "runtime.get_llm" && String(m.url).includes("project=B")
+  );
+  assert.equal(reads.length, 2, "the switch must re-read B's model");
+});
+
+test("step usage and the agent's own estimate reach the context gauge; a worker's estimate does not", async () => {
+  const b = await handshake(loadBundle());
+  const event = (params) =>
+    b.deliver({
+      jsonrpc: "2.0",
+      method: "agent/event",
+      params: { session_id: "s-1", step: 1, ...params },
+    });
+
+  b.inbound.length = 0;
+  event({
+    type: "context_estimate",
+    data: {
+      prompt_tokens: 7000,
+      source: "estimate",
+      breakdown: [
+        { key: "system", label: "System prompt", tokens: 900 },
+        { key: "tools", label: "Tool definitions", tokens: 6000 },
+        { key: "conversation", label: "Conversation", tokens: 100 },
+        { key: "", label: "nameless", tokens: 5 },
+      ],
+    },
+  });
+  const est = b.inbound.find((m) => m.type === "stepUsage");
+  assert.ok(est, "the estimate must reach the gauge");
+  assert.equal(est.usage.prompt_tokens, 7000);
+  assert.equal(est.usage.source, "estimate");
+  assert.deepEqual(
+    est.usage.breakdown.map((r) => r.key),
+    ["system", "tools", "conversation"],
+    "a breakdown row without a key is dropped"
+  );
+  assert.equal(est.scope, undefined);
+
+  b.inbound.length = 0;
+  event({
+    type: "step_usage",
+    data: { prompt_tokens: 7420, completion_tokens: 88, total_tokens: 7508, cost_usd: 0 },
+  });
+  const real = b.inbound.find((m) => m.type === "stepUsage");
+  assert.ok(real, "the measurement must reach the gauge");
+  assert.equal(real.usage.prompt_tokens, 7420);
+  assert.equal(real.usage.completion_tokens, 88);
+  assert.equal(real.usage.source, undefined);
+
+  b.inbound.length = 0;
+  event({ type: "context_estimate", scope: "child", data: { prompt_tokens: 3000, source: "estimate" } });
+  assert.equal(
+    b.inbound.filter((m) => m.type === "stepUsage").length,
+    0,
+    "a worker's estimate says nothing about the main window"
+  );
+  event({ type: "step_usage", data: { prompt_tokens: 0, completion_tokens: 0 } });
+  assert.equal(
+    b.inbound.filter((m) => m.type === "stepUsage").length,
+    0,
+    "a measurement of nothing must not empty the gauge"
+  );
+
+  event({
+    type: "step_usage",
+    scope: "child",
+    data: { prompt_tokens: 3000, completion_tokens: 10, cost_usd: 0.01 },
+  });
+  const child = b.inbound.find((m) => m.type === "stepUsage");
+  assert.ok(child, "a worker's measured usage still carries its cost");
+  assert.equal(child.scope, "child");
+  assert.equal(child.usage.cost_usd, 0.01);
+});
+
+test("reopening a session paints the gauge from the transcript's last measured prompt", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "openSession", sessionId: "s-old" });
+  await tick();
+  answer(b, "session.start", { session_id: "s-old", restored: true });
+  await tick();
+  answer(b, "session.get", {
+    session_id: "s-old",
+    ui_messages: [
+      { role: "user", text: "hi" },
+      { role: "assistant", text: "first", prompt_ctx: 3100, tokens_out: 40 },
+      { role: "user", text: "more" },
+      { role: "assistant", text: "second", prompt_ctx: 5120, tokens_out: 64 },
+    ],
+  });
+  await tick();
+  const history = b.inbound.findIndex((m) => m.type === "history");
+  assert.ok(history >= 0, "the transcript must be painted");
+  const usage = b.inbound.find((m, i) => i > history && m.type === "stepUsage");
+  assert.ok(usage, "the last measured prompt must follow the transcript");
+  assert.equal(usage.usage.prompt_tokens, 5120);
+  assert.equal(usage.usage.completion_tokens, 64);
+  assert.equal(usage.usage.source, "restored");
+});
+
+test("picking a model from the pill re-reads the model and its window from the core", async () => {
+  const b = await handshake(loadBundle());
+  answer(b, "runtime.get_llm", { model: "m-1", provider: "lmstudio", num_ctx: 8000 });
+  await tick();
+  b.inbound.length = 0;
+  dispatch(b, { type: "setModel", model: "m-2", provider: "lmstudio" });
+  await tick();
+  answer(b, "runtime.set_model", { model: "m-2", provider: "lmstudio", persisted: true });
+  await tick();
+  const reads = b.sent.filter((m) => m.method === "runtime.get_llm");
+  assert.equal(reads.length, 2, "the change must be read back from the core");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: reads[1].id,
+    result: { model: "m-2", provider: "lmstudio", num_ctx: 32000, max_tokens: 4096 },
+  });
+  await tick();
+  const header = b.inbound.filter((m) => m.type === "header" && m.model).pop();
+  assert.ok(header, "the pill must be told the new model");
+  assert.equal(header.model, "m-2");
+  const info = b.inbound.filter((m) => m.type === "contextInfo").pop();
+  assert.ok(info, "the gauge must be told the new window");
+  assert.equal(info.info.contextLimit, 32000);
+});
+
+test("the composer's header keeps the session's title", async () => {
+  const b = await handshake(loadBundle());
+  // The strip knows the session by name...
+  answer(b, "session.list", {
+    sessions: [{ id: "s-1", title: "Renaming the gauge", updated_at: "2026-09-11T10:00:00Z" }],
+  });
+  await tick();
+  b.inbound.length = 0;
+  // ...and the header that brings the model must not take the name away:
+  // the renderer renames the active tab from every header, and one without
+  // a title says "New chat".
+  answer(b, "runtime.get_llm", { model: "m-1", provider: "lmstudio", num_ctx: 8000 });
+  await tick();
+  const header = b.inbound.find((m) => m.type === "header" && m.model === "m-1");
+  assert.ok(header, "the header must carry the model");
+  assert.equal(header.title, "Renaming the gauge");
+});
+
+// ---- settings opened before the core is up ----------------------------------
+
+test("settings opened while the workspace is still coming up fill in once it is live", async () => {
+  let opened = false;
+  const entry = (state) => ({ id: "p-1", path: "/w1", name: "w1", state, sessions: 0 });
+  const b = loadBundle({ search: "" });
+  b.setFetchResponder(() => ({ projects: [entry(opened ? "ready" : "closed")] }));
+  await tick();
+  await tick();
+  b.setFetchResponder((url, init) => {
+    if (url === "/api/projects" && init && init.method === "POST") {
+      opened = true;
+      return {};
+    }
+    return { projects: [entry(opened ? "ready" : "closed")] };
+  });
+  dispatch(b, { type: "switchProject", projectId: "p-1" });
+  await tick();
+  await tick();
+  assert.ok(b.socketFor("p-1"), "the workspace's socket is being dialled");
+
+  // The gear is reachable now, before the core has said a word. The markup
+  // ships the dialog with the hidden attribute; the stub has to be told.
+  b.elementById("rail-settings-modal").hidden = true;
+  b.elementById("rail-settings-btn").click();
+  const posted = attachSettingsFrame(b);
+  b.postFromFrame("settings-frame", { type: "ready" });
+  await tick();
+  await tick();
+  const note = posted.find((m) => m.type === "error");
+  assert.ok(
+    note && /still opening/.test(note.message),
+    "the panel must say the workspace is opening; posted: " + JSON.stringify(posted)
+  );
+  assert.ok(posted.find((m) => m.type === "workspace" && m.name === "w1"), "and still name it");
+
+  // Then the core comes up — and the panel is filled without being reopened.
+  posted.length = 0;
+  await handshakeFor(b, "p-1");
+  await tick();
+  assert.ok(
+    posted.find((m) => m.type === "workspace" && m.name === "w1"),
+    "the panel must be pushed again once the workspace is live; posted: " + posted.map((m) => m.type).join(", ")
+  );
+  answerSettingsReads(b, "p-1", "m-1");
+  await tick();
+  await tick();
+  assert.ok(posted.find((m) => m.type === "state"), "and get its state");
+});
+
+// ---- attachments --------------------------------------------------------------
+
+test("the paperclip on the desktop attaches workspace files by path and explains the rest", async () => {
+  const b = await handshake(loadBundle());
+  b.setTauri({ dialog: { open: async () => ["/w/src/a.go", "/elsewhere/notes.txt"] } });
+  b.inbound.length = 0;
+  dispatch(b, { type: "attach" });
+  await tick();
+  await tick();
+  const picked = b.inbound.find((m) => m.type === "filesPicked");
+  assert.ok(picked, "files inside the workspace must reach the composer");
+  assert.deepEqual(picked.files, [{ name: "a.go", path: "/w/src/a.go", ext: "go", kind: "file" }]);
+  const note = b.inbound.find((m) => m.type === "systemNote" && /outside the workspace/.test(m.text));
+  assert.ok(note && note.text.includes("notes.txt"), "a file outside the workspace is named, not silently dropped");
+});
+
+test("dropped or pasted bytes are stored by the core and come back as a chip", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "attachBytes", name: "shot.png", mime: "image/png", dataBase64: "iVBORw0KGgo=" });
+  await tick();
+  const req = answer(b, "attachments.store", {
+    name: "shot.png",
+    path: "/w/.orchestra/attachments/1-shot.png",
+    rel: ".orchestra/attachments/1-shot.png",
+    ext: "png",
+    kind: "image",
+    size: 8,
+  });
+  assert.equal(req.params.data_base64, "iVBORw0KGgo=");
+  assert.equal(req.params.mime, "image/png");
+  assert.equal(req.params.name, "shot.png");
+  await tick();
+  const picked = b.inbound.find((m) => m.type === "filesPicked");
+  assert.ok(picked, "the stored file must come back as a chip");
+  assert.equal(picked.files[0].path, "/w/.orchestra/attachments/1-shot.png");
+  assert.equal(picked.files[0].kind, "image");
+  assert.match(picked.files[0].previewUri, /^data:image\/png;base64,/);
+});
+
+test("a send with chips carries them to session.message as attachments", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, {
+    type: "send",
+    text: "look at this",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: false,
+    files: [
+      { name: "a.go", path: "/w/src/a.go", ext: "go", kind: "file" },
+      { name: "no-path.txt" },
+    ],
+  });
+  await tick();
+  const req = b.sent.find((m) => m.method === "session.message");
+  assert.ok(req, "the turn must be sent");
+  assert.deepEqual(req.params.attachments, [{ path: "/w/src/a.go", name: "a.go", kind: "file" }]);
+  const echo = b.inbound.find((m) => m.type === "userEcho");
+  assert.ok(echo && echo.files && echo.files.length === 1, "the echo shows the chip that was sent");
+});
+
+// ---- persisting the assistant turn -------------------------------------------
+
+/** Stream one full assistant turn into a bundle whose turn is in flight. */
+function streamTurn(b) {
+  const ev = (params) => b.deliver({ jsonrpc: "2.0", method: "agent/event", params });
+  ev({ type: "reasoning_delta", content: "pondering" });
+  ev({ type: "tool_call_start", tool_call_id: "t1", tool_call_name: "read" });
+  ev({ type: "tool_call_delta", tool_call_id: "t1", args_delta: '{"path":"a.go"}' });
+  ev({ type: "tool_call_completed", tool_call_id: "t1", tool_call_name: "read", content: "package a" });
+  ev({ type: "message_delta", content: "Hel" });
+  ev({ type: "message_delta", content: "lo" });
+  ev({ type: "step_usage", data: { prompt_tokens: 120, completion_tokens: 7 } });
+}
+
+test("the answer the model streamed is written back into the session", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", apply: false, allowExec: false });
+  await tick();
+  streamTurn(b);
+  answer(b, "session.message", { steps: 1 });
+  await tick();
+  await tick();
+  answer(b, "session.get", {
+    session_id: "s-1",
+    title: "A chat",
+    model: "m1",
+    ui_messages: [{ role: "user", text: "hi" }],
+  });
+  await tick();
+  await tick();
+
+  const sync = b.sent.find((m) => m.method === "session.ui_sync");
+  assert.ok(sync, "the answer must be saved; sent: " + b.sent.map((m) => m.method).join(", "));
+  assert.equal(sync.params.session_id, "s-1");
+  assert.equal(sync.params.title, "A chat", "the write-back must not wipe the session's title");
+  const ui = sync.params.ui_messages;
+  assert.equal(ui.length, 2, "the user's message stays, the answer is appended: " + JSON.stringify(ui));
+  assert.equal(ui[0].role, "user");
+  const last = ui[1];
+  assert.equal(last.role, "assistant");
+  assert.equal(last.text, "Hello");
+  assert.equal(last.reasoning, "pondering");
+  assert.equal(last.prompt_ctx, 120);
+  assert.equal(last.tokens_out, 7);
+  assert.ok(Array.isArray(last.tool_blocks) && last.tool_blocks.length === 1, "the tools ran too");
+  assert.equal(last.tool_blocks[0].name, "read");
+  assert.equal(last.tool_blocks[0].args_raw, '{"path":"a.go"}');
+  assert.equal(last.tool_blocks[0].result, "package a");
+  assert.equal(last.tool_blocks[0].status, "completed");
+});
+
+test("a second turn appends rather than replacing the first answer", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", apply: false, allowExec: false });
+  await tick();
+  b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", content: "one" } });
+  answer(b, "session.message", {});
+  await tick();
+  await tick();
+  answer(b, "session.get", {
+    session_id: "s-1",
+    title: "A chat",
+    ui_messages: [{ role: "user", text: "hi" }, { role: "assistant", text: "older" }],
+  });
+  await tick();
+  await tick();
+  const sync = b.sent.find((m) => m.method === "session.ui_sync");
+  assert.ok(sync, "the answer must be saved");
+  const ui = sync.params.ui_messages;
+  assert.equal(ui.length, 3, "an earlier answer must survive: " + JSON.stringify(ui));
+  assert.equal(ui[1].text, "older");
+  assert.equal(ui[2].text, "one");
+});
+
+test("a turn that produced nothing is not written back", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", apply: false, allowExec: false });
+  await tick();
+  answer(b, "session.message", {});
+  await tick();
+  await tick();
+  assert.ok(
+    !b.sent.find((m) => m.method === "session.ui_sync"),
+    "nothing was said, so nothing is written: " + b.sent.map((m) => m.method).join(", ")
+  );
+});
+
+test("restored history reaches the renderer with its reasoning, tools and files", async () => {
+  const b = await handshake(loadBundle());
+  b.inbound.length = 0;
+  b.sent.length = 0;
+  dispatch(b, { type: "openSession", sessionId: "s-2" });
+  await tick();
+  answer(b, "session.start", { session_id: "s-2", restored: true });
+  await tick();
+  answer(b, "session.get", {
+    session_id: "s-2",
+    ui_messages: [
+      { role: "user", text: "look", attachments: [{ name: "a.go", path: "/w/a.go", ext: "go", kind: "file" }] },
+      {
+        role: "assistant",
+        text: "done",
+        reasoning: "hmm",
+        tool_blocks: [
+          { id: "t1", name: "read", args_raw: "{}", status: "completed", result: "ok", duration_ms: 12 },
+        ],
+      },
+    ],
+  });
+  await tick();
+  const hist = b.inbound.find((m) => m.type === "history");
+  assert.ok(hist, "the restored session must reach the renderer");
+  assert.equal(hist.messages.length, 2);
+  assert.equal(hist.messages[0].role, "user");
+  assert.equal(hist.messages[0].uiIndex, 0, "a user message carries its index, or rewind has nothing to aim at");
+  assert.deepEqual(hist.messages[0].files, [{ name: "a.go", path: "/w/a.go", ext: "go", kind: "file" }]);
+  assert.equal(hist.messages[1].role, "assistant");
+  assert.equal(hist.messages[1].text, "done");
+  assert.equal(hist.messages[1].reasoning, "hmm");
+  assert.ok(Array.isArray(hist.messages[1].toolBlocks), "the renderer reads toolBlocks, not tool_blocks");
+  assert.equal(hist.messages[1].toolBlocks[0].argsRaw, "{}");
+  assert.equal(hist.messages[1].toolBlocks[0].durationMs, 12);
+});
+
+test("a tool call reaches the renderer in the phases it draws", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_start", tool_call_id: "t1", tool_call_name: "read", step: 2 },
+  });
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_delta", tool_call_id: "t1", args_delta: '{"path":"a.go"}' },
+  });
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_completed", tool_call_id: "t1", tool_call_name: "read", content: "package a" },
+  });
+  const blocks = b.inbound.filter((m) => m.type === "toolBlock");
+  assert.deepEqual(
+    blocks.map((m) => m.phase),
+    ["start", "update", "complete"],
+    "the renderer draws a tool block by phase: " + JSON.stringify(blocks)
+  );
+  assert.equal(blocks[0].toolCallId, "t1");
+  assert.equal(blocks[0].toolName, "read");
+  assert.equal(blocks[1].argsDelta, '{"path":"a.go"}');
+  assert.equal(blocks[2].content, "package a");
+});
+
+// ---- deleting a chat ----------------------------------------------------------
+
+test("deleting a chat removes it from the core, not just from the strip", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "deleteSession", sessionId: "s-old" });
+  await tick();
+  const close = b.sent.find((m) => m.method === "session.close");
+  assert.ok(close, "the chat must be deleted in the core; sent: " + b.sent.map((m) => m.method).join(", "));
+  assert.equal(close.params.session_id, "s-old");
+  b.deliver({ jsonrpc: "2.0", id: close.id, result: null });
+  await tick();
+  await tick();
+  assert.ok(b.sent.find((m) => m.method === "session.list"), "the sidebar must be read again after a delete");
+});
+
+test("deleting the chat you are in opens a fresh one", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  dispatch(b, { type: "deleteSession", sessionId: "s-1" });
+  await tick();
+  const close = b.sent.find((m) => m.method === "session.close");
+  assert.ok(close, "the open chat must be deleted too");
+  b.deliver({ jsonrpc: "2.0", id: close.id, result: null });
+  await tick();
+  await tick();
+  assert.ok(
+    b.sent.find((m) => m.method === "session.start"),
+    "deleting the chat on screen must leave a new one open; sent: " + b.sent.map((m) => m.method).join(", ")
+  );
+});
+
+test("a chat that could not be deleted says so and stays", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "deleteSession", sessionId: "s-old" });
+  await tick();
+  const close = b.sent.find((m) => m.method === "session.close");
+  b.deliver({ jsonrpc: "2.0", id: close.id, error: { message: "file is locked" } });
+  await tick();
+  await tick();
+  const note = b.inbound.find((m) => m.type === "error" || m.type === "systemNote");
+  assert.ok(note && /locked/.test(note.message || note.text || ""), "a failed delete must be reported");
+});
+
+// ---- commands -----------------------------------------------------------------
+
+test("the project's own commands reach the palette", async () => {
+  const b = await handshake(loadBundle());
+  const req = b.sent.find((m) => m.method === "skill.list");
+  assert.ok(req, "the host must ask the core what commands this project has");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: { skills: [{ name: "review", description: "Review the diff" }, { name: "clear", description: "shadows a built-in" }] },
+  });
+  await tick();
+  const msg = b.inbound.find((m) => m.type === "skillsList");
+  assert.ok(msg, "the palette is filled by a skillsList message");
+  assert.deepEqual(
+    msg.skills,
+    [{ name: "review", description: "Review the diff" }],
+    "a name that shadows a built-in command is left out, as in the editor"
+  );
+});
+
+test("/model opens the model menu instead of explaining where it is", async () => {
+  const b = await handshake(loadBundle());
+  b.inbound.length = 0;
+  const pill = b.elementById("model-pill");
+  assert.ok(pill, "the composer's model pill is in the page");
+  let clicked = 0;
+  pill.addEventListener("click", () => clicked++);
+  dispatch(b, { type: "slashCommand", cmd: "/model" });
+  await tick();
+  assert.equal(clicked, 1, "the command must open the menu itself");
+});
+
+test("/sessions opens the list of chats instead of explaining where it is", async () => {
+  const b = await handshake(loadBundle());
+  b.inbound.length = 0;
+  dispatch(b, { type: "slashCommand", cmd: "/sessions" });
+  await tick();
+  // On the web the list lives in the sidebar: the command unfolds it and
+  // repaints it, rather than answering with a sentence about the tab strip.
+  assert.ok(
+    b.inbound.find((m) => m.type === "projectList"),
+    "the sidebar must be repainted: " + b.inbound.map((m) => m.type).join(", ")
+  );
+  assert.ok(
+    !b.inbound.find((m) => m.type === "systemNote"),
+    "the command acts; it does not explain where the control is"
+  );
+});
+
+test("a workspace command is invoked with the names the core reads", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "slashCommand", cmd: "/review-diff", arg: "HEAD~1" });
+  await tick();
+  const req = b.sent.find((m) => m.method === "skill.invoke");
+  assert.ok(req, "the command must reach the core; sent: " + b.sent.map((m) => m.method).join(", "));
+  // internal/core/skill.go reads name + arguments. Sending anything else is
+  // "skill name is empty" — every command failing for a spelling.
+  assert.equal(req.params.name, "review-diff");
+  assert.equal(req.params.arguments, "HEAD~1");
+});
+
+test("rewind aims at the message you clicked, not at the first one", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  dispatch(b, { type: "rewindToMessage", uiIndex: 4 });
+  await tick();
+  const req = b.sent.find((m) => m.method === "session.rewind");
+  assert.ok(req, "rewind must reach the core; sent: " + b.sent.map((m) => m.method).join(", "));
+  // SessionRewindParams reads ui_message_index. The web host sent ui_index,
+  // which decodes to 0 — so every rewind, from any message, truncated the
+  // whole chat back to its first message.
+  assert.equal(req.params.ui_message_index, 4, "the index the core reads must carry the clicked message");
+  assert.equal(req.params.ui_index, undefined, "the old spelling must be gone, not sent alongside");
+});
+
+test("branching forks the chat and opens the branch", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "forkFromMessage", uiIndex: 2 });
+  await tick();
+  const req = b.sent.find((m) => m.method === "session.fork");
+  assert.ok(req, "branching must reach the core; sent: " + b.sent.map((m) => m.method).join(", "));
+  assert.equal(req.params.session_id, "s-1");
+  assert.equal(req.params.ui_message_index, 2, "fork takes the same index rewind does");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: { session_id: "s-2", parent_id: "s-1", ui_messages: 3, history_messages: 6 },
+  });
+  await tick();
+  // The branch is a different session, so the host has to open it — a fork
+  // that leaves you looking at the parent has done nothing visible.
+  const open = b.sent.find((m) => m.method === "session.start" && m.params && m.params.session_id === "s-2");
+  assert.ok(open, "the new branch must be opened; sent: " + b.sent.map((m) => m.method).join(", "));
+});
+
+test("branching at the very first message is not attempted", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  dispatch(b, { type: "forkFromMessage", uiIndex: 0 });
+  await tick();
+  // sessionfile.ForkSnapshot refuses index 0 — the branch would hold nothing.
+  // Asking anyway would answer a plausible click with a raw core error.
+  assert.ok(
+    !b.sent.find((m) => m.method === "session.fork"),
+    "the host must not ask for a branch the core will refuse"
+  );
+});
+
+test("/search asks the core to search saved chats", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  dispatch(b, { type: "slashCommand", cmd: "/search", arg: "circuit breaker" });
+  await tick();
+  const req = b.sent.find((m) => m.method === "session.search");
+  assert.ok(req, "session.search must be called; sent: " + b.sent.map((m) => m.method).join(", "));
+  assert.equal(req.params.query, "circuit breaker");
+  assert.equal(req.params.insensitive, true, "typing lowercase must still find a capitalised line");
+});
+
+test("a search that finds the same chat twice offers it once", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  dispatch(b, { type: "slashCommand", cmd: "/search", arg: "breaker" });
+  await tick();
+  const req = b.sent.find((m) => m.method === "session.search");
+  assert.ok(req);
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: {
+      hits: [
+        { session_id: "s-9", title: "Guards", index: 2, role: "user", snippet: "the breaker trips" },
+        { session_id: "s-9", title: "Guards", index: 7, role: "assistant", snippet: "breaker again" },
+        { session_id: "s-8", title: "Other", index: 1, role: "user", snippet: "breaker elsewhere" },
+      ],
+    },
+  });
+  await tick();
+  // The sidebar lists chats to open, so six matches in one chat are one row.
+  assert.ok(
+    b.inbound.find((m) => m.type === "projectList"),
+    "the sidebar must be repainted with the results"
+  );
+});
+
+test("/workflows lists what the workspace has instead of staying CLI-only", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "slashCommand", cmd: "/workflows" });
+  await tick();
+  const req = b.sent.find((m) => m.method === "workflow.list");
+  assert.ok(req, "workflow.list must be called; sent: " + b.sent.map((m) => m.method).join(", "));
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: { workflows: [{ name: "review", description: "Review the diff", stages: ["read", "judge"] }] },
+  });
+  await tick();
+  const note = b.inbound.find((m) => m.type === "systemNote" && /review/.test(m.text || ""));
+  assert.ok(note, "the workflow must be named back to the user");
+  assert.match(note.text, /\/workflow review/, "the note must show how to run it");
+});
+
+test("/workflow runs one and reports where it ended", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+  dispatch(b, { type: "slashCommand", cmd: "/workflow", arg: "review the auth package" });
+  await tick();
+  const req = b.sent.find((m) => m.method === "workflow.run");
+  assert.ok(req, "workflow.run must be called; sent: " + b.sent.map((m) => m.method).join(", "));
+  assert.equal(req.params.name, "review", "the first word is the workflow");
+  assert.equal(req.params.arguments, "the auth package", "the rest is its argument");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: { name: "review", stages: [{ stage_id: "read", attempt: 1, action: "done" }], duration_ms: 4000 },
+  });
+  await tick();
+  assert.ok(
+    b.inbound.find((m) => m.type === "systemNote" && /workflow:review/.test(m.text || "")),
+    "the run's outcome must come back to the chat"
+  );
+});
+
+test("the provider's balance reaches the cost popover", async () => {
+  const b = await handshake(loadBundle());
+  const req = b.sent.find((m) => m.method === "runtime.credits");
+  assert.ok(req, "the web host must ask for the balance as the editor host does");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: { provider: "openrouter", supported: true, balance: 12.5 },
+  });
+  await tick();
+  const msg = b.inbound.find((m) => m.type === "credits");
+  assert.ok(msg, "the renderer draws the balance row from a credits message");
+  assert.equal(msg.supported, true);
+  assert.equal(msg.balance, 12.5);
 });

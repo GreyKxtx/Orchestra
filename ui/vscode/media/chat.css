@@ -24,27 +24,32 @@
 }
 
 :root {
-  --bg: #0a0a0b;
+  /* The dark ground is a grey, not a black. At #0a0a0b the transcript sat in
+     a hole: every surface above it had to be lifted far enough to be seen,
+     which made each panel read as a separate object instead of as depth in
+     one room. Everything below moves with it — the ladder is what carries the
+     depth, and one step raised on its own only flattens the next. */
+  --bg: #151517;
   --fg: #e7e7ea;
   --fg-dim: #b3b3b8;
-  --muted: #83838a;
-  --muted-2: #55555c;
-  --border: #232326;
-  --border-soft: #19191c;
-  --surface: #17171a;
-  --surface-2: #1d1d20;
-  --composer-bg: #121214;
-  --composer-border: #232326;
-  --pill-bg: #17171a;
+  --muted: #86868d;
+  --muted-2: #5c5c64;
+  --border: #2b2b30;
+  --border-soft: #212125;
+  --surface: #1f1f23;
+  --surface-2: #26262b;
+  --composer-bg: #1b1b1f;
+  --composer-border: #2e2e34;
+  --pill-bg: #1f1f23;
   --pill-hover: rgba(255, 255, 255, 0.06);
-  --pill-border: #2a2a2e;
-  --menu-bg: #131316;
+  --pill-border: #33333a;
+  --menu-bg: #1c1c20;
   --menu-hover: rgba(255, 255, 255, 0.05);
   --menu-selected: rgba(255, 255, 255, 0.08);
   --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
   --send-bg: #ececec;
   --send-fg: #111;
-  --user-bg: #1b1b1e;
+  --user-bg: #232328;
   --tool-fg: #86adf7;
   --error-fg: #e8836b;
   --accent: #a3a3a3;
@@ -57,7 +62,7 @@
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
   --code-bg: rgba(255, 255, 255, 0.07);
   --code-block-bg: rgba(255, 255, 255, 0.03);
-  --well-bg: #0d0d0d;
+  --well-bg: #121214;
   --card-bg: #141414;
   --track-bg: #3a3a3a;
   --toggle-bg: #444444;
@@ -96,7 +101,7 @@
      against this one name, so widening the layout on a big screen is one
      declaration in the large-screen block at the end of this file rather
      than four that can drift apart. */
-  --content-max: 720px;
+  --content-max: 880px;
   /* How large the whole interface is drawn. Every size in this file is a
      literal pixel, so one zoom on the root scales all of them together and
      keeps the proportions tuned below exactly. The ladder at the end of this
@@ -346,20 +351,23 @@ body {
   pointer-events: none;
 }
 
+/* One rhythm for the whole strip: tabs, the view switch and the icon
+   buttons are all 32px tall and vertically centred, so the header reads as
+   one row of controls rather than three groups of different sizes. */
 #chrome-inner {
   display: flex;
-  align-items: stretch;
-  gap: 0;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  min-height: 46px;
-  padding: 0;
+  min-height: 48px;
+  padding: 0 4px 0 0;
 }
 
 .chrome-brand {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  padding: 0 8px 0 12px;
+  padding: 0 4px 0 12px;
 }
 
 .chrome-logo {
@@ -387,8 +395,10 @@ body.vscode-high-contrast-light .chrome-logo {
 .session-tabs {
   display: flex;
   flex: 1 1 auto;
-  align-items: stretch;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
+  padding: 0 2px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -401,7 +411,7 @@ body.vscode-high-contrast-light .chrome-logo {
 .session-tabs-empty {
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 8px;
   font-size: 13px;
   color: var(--muted);
 }
@@ -412,9 +422,10 @@ body.vscode-high-contrast-light .chrome-logo {
   gap: 7px;
   flex: 0 0 auto;
   max-width: 220px;
-  padding: 8px 12px;
-  border: none;
-  border-right: 1px solid var(--border);
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -422,7 +433,7 @@ body.vscode-high-contrast-light .chrome-logo {
   font-weight: 450;
   letter-spacing: -0.01em;
   cursor: pointer;
-  transition: color 0.12s, background 0.12s;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
 
 .session-tab:hover {
@@ -432,6 +443,7 @@ body.vscode-high-contrast-light .chrome-logo {
 
 .session-tab.active {
   color: var(--fg);
+  border-color: var(--border-soft);
   background: var(--active-wash);
 }
 
@@ -482,9 +494,9 @@ body.vscode-high-contrast-light .chrome-logo {
 .chrome-actions {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   flex: 0 0 auto;
-  padding: 0 8px 0 4px;
+  padding: 0 4px 0 6px;
   border-left: 1px solid var(--border);
 }
 
@@ -494,9 +506,9 @@ body.vscode-high-contrast-light .chrome-logo {
   justify-content: center;
   width: 32px;
   height: 32px;
-  margin: 3px 0;
-  border: none;
-  border-radius: 6px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -625,9 +637,18 @@ body.vscode-high-contrast-light .chrome-logo {
   font-size: 13px;
 }
 
+/* The person's own messages sit to the right, as a compact bubble no wider
+   than it needs to be, on a tinted ground with no outline: a question is a
+   short thing next to the answer it got, and a full-width boxed card made
+   every one of them read as a section heading. */
 .msg.user {
-  background: color-mix(in srgb, var(--fg) 5%, var(--user-bg));
-  border: 1px solid color-mix(in srgb, var(--fg) 22%, var(--border));
+  align-self: flex-end;
+  width: auto;
+  max-width: min(78%, 640px);
+  padding: 9px 14px;
+  border-radius: 16px 16px 6px 16px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--user-bg));
+  border: 1px solid transparent;
   color: var(--fg);
   position: relative;
 }
@@ -875,12 +896,15 @@ body.vscode-high-contrast-light .chrome-logo {
   border-color: var(--fg-dim);
 }
 
+/* Full width, unlike the transcript above it. The transcript is read, so it
+   keeps a measure; the composer is typed into, and a line of code or a pasted
+   path wrapping three times in a 720px well while the window is twice that
+   wide is the reason this cap came off. */
 #composer-wrap {
   flex: 0 0 auto;
   width: 100%;
-  max-width: var(--content-max);
   margin: 0 auto;
-  padding: 6px 10px 12px;
+  padding: 6px 16px 12px;
   position: relative;
 }
 
@@ -3446,7 +3470,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .user-wrap {
   display: block;
   position: relative;
-  padding-right: 72px;
 }
 
 .msg-attachments {
@@ -3515,10 +3538,17 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: block;
 }
 
-.rewind-btn {
+/* Rewind waits just outside the bubble, to its left, and shows on hover: the
+   bubble itself stays the width of its words. */
+/* Two actions on a user message, stacked in the gutter beside it: rewind
+   truncates this chat to that point; branch keeps it and continues in a copy
+   (session.fork). They differ only in the vertical offset. */
+.rewind-btn,
+.fork-btn {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: 50%;
+  right: calc(100% + 22px);
+  white-space: nowrap;
   opacity: 0;
   font-size: 10px;
   padding: 3px 8px;
@@ -3531,16 +3561,27 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   pointer-events: auto;
 }
 
-.rewind-btn:disabled {
+.rewind-btn {
+  transform: translateY(calc(-50% - 13px));
+}
+
+.fork-btn {
+  transform: translateY(calc(-50% + 13px));
+}
+
+.rewind-btn:disabled,
+.fork-btn:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 
-.msg.user:hover .rewind-btn {
+.msg.user:hover .rewind-btn,
+.msg.user:hover .fork-btn {
   opacity: 1;
 }
 
-.rewind-btn:hover {
+.rewind-btn:hover,
+.fork-btn:hover {
   color: var(--fg);
   border-color: var(--muted);
 }
@@ -4057,43 +4098,62 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
    this chooses HOW you are looking at it. A raised group on its own ground
    rather than a hairline box — at the far edge a wireframe outline reads as
    an afterthought. */
+/* A segmented control, sunk into the strip rather than stuck onto it: the
+   track is a shade below the header and the chosen segment is the one thing
+   raised out of it, with an edge and a shadow of its own. The two labels then
+   differ by depth rather than only by the weight of their text, which is what
+   made the old pair hard to tell apart at a glance. */
+/* 2px well + 26px segment + 2px well + the 1px border on each side = the
+   32px every other control in the strip is. */
 .view-switch {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   flex: 0 0 auto;
   align-self: center;
-  margin: 0 8px 0 10px;
-  padding: 4px;
+  margin: 0 2px;
+  padding: 2px;
   border: 1px solid var(--border-soft);
   border-radius: 10px;
-  background: var(--composer-bg);
+  background: var(--well-bg);
 }
 .view-segment {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 15px;
-  border: none;
-  border-radius: 7px;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
-  transition: color 0.12s, background 0.12s;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
 .view-segment svg {
   flex: 0 0 auto;
+  opacity: 0.75;
 }
 .view-segment:hover {
-  color: var(--fg);
+  color: var(--fg-dim);
+  background: var(--hover-wash);
 }
 .view-segment[aria-selected="true"] {
   color: var(--fg);
   font-weight: 600;
+  border-color: var(--border);
   background: var(--surface-2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+/* The chosen view's icon takes the mode accent — the one place on the strip
+   that says which of the two you are in without being read. */
+.view-segment[aria-selected="true"] svg {
+  opacity: 1;
+  color: var(--mode-accent);
 }
 .view-segment:focus-visible {
   outline: 2px solid var(--fg-dim);

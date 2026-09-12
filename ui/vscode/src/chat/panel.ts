@@ -1072,6 +1072,34 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           }
           return;
         }
+        case "forkFromMessage": {
+          if (typeof msg.uiIndex !== "number" || msg.uiIndex < 0) {
+            return;
+          }
+          try {
+            if (this.sendInFlight) {
+              this.clearSendQueue();
+              await this.session.cancelTurn();
+            }
+            const res = await this.session.forkSession(msg.uiIndex);
+            if (!res.sessionId) {
+              throw new Error("fork returned no session");
+            }
+            // Switch to the branch; the chat it came from stays on disk.
+            this.resetTurnProjection();
+            await this.session.startSession({ sessionId: res.sessionId });
+            await this.refreshHeaderAndHistory();
+            void vscode.window.showInformationMessage(
+              `Orchestra: branched a new chat (${res.uiMessages} msgs)`
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.post({ type: "error", message });
+            void vscode.window.showErrorMessage(`Orchestra branch: ${message}`);
+          }
+          return;
+        }
+
         case "rewindToMessage": {
           if (typeof msg.uiIndex !== "number" || msg.uiIndex < 0) {
             return;

@@ -64,6 +64,12 @@
          click delegation. -->
     <div id="project-rail-list" class="project-rail-list" role="tablist"></div>
   </nav>
+  <!-- The sidebar's edge, and the only handle it has: drag to resize, click
+       to fold it away and back. A flex item between the two panes rather than
+       something floating over either, so neither has to know it is there.
+       Web-only, like the sidebar itself. -->
+  <div id="rail-resizer" class="rail-resizer" role="separator" aria-orientation="vertical"
+       aria-label="Sidebar width" tabindex="0"></div>
   <div id="app" data-mode="agent" data-view="chat">
     <header id="chrome-strip">
       <div id="top-accent" aria-hidden="true"></div>
@@ -326,52 +332,65 @@
        it has no use for this. #app is hidden while this is up. -->
   <main id="start-screen" class="start-screen" hidden>
     <div class="start-inner">
-      <div class="start-brand">
-        <svg class="start-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
-          <polygon points="10,13.5 15.63,16.75 10,20 4.37,16.75"/>
-          <polygon points="4.37,16.75 10,20 10,26.5 4.37,23.25" fill-opacity="0.55"/>
-          <polygon points="10,20 15.63,16.75 15.63,23.25 10,26.5" fill-opacity="0.78"/>
-          <polygon points="22,13.5 27.63,16.75 22,20 16.37,16.75"/>
-          <polygon points="16.37,16.75 22,20 22,26.5 16.37,23.25" fill-opacity="0.55"/>
-          <polygon points="22,20 27.63,16.75 27.63,23.25 22,26.5" fill-opacity="0.78"/>
-          <polygon points="16,4 21.63,7.25 16,10.5 10.37,7.25"/>
-          <polygon points="10.37,7.25 16,10.5 16,17 10.37,13.75" fill-opacity="0.55"/>
-          <polygon points="16,10.5 21.63,7.25 21.63,13.75 16,17" fill-opacity="0.78"/>
-        </svg>
-        <div class="start-wordmark">
-          <span class="start-word">Orchestra</span>
-          <span class="start-word-sub">Code</span>
-        </div>
-      </div>
-      <p class="start-lead">Open a workspace to start working in it.</p>
-      <div class="start-actions">
-        <button type="button" id="start-open-btn" class="start-action start-action-primary">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+      <!-- Frosted glass over the moving ground: the waves stay visible
+           through it, blurred, and the text sits on an even surface with
+           an edge of its own. -->
+      <div class="start-card">
+        <div class="start-brand">
+          <svg class="start-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+            <polygon points="10,13.5 15.63,16.75 10,20 4.37,16.75"/>
+            <polygon points="4.37,16.75 10,20 10,26.5 4.37,23.25" fill-opacity="0.55"/>
+            <polygon points="10,20 15.63,16.75 15.63,23.25 10,26.5" fill-opacity="0.78"/>
+            <polygon points="22,13.5 27.63,16.75 22,20 16.37,16.75"/>
+            <polygon points="16.37,16.75 22,20 22,26.5 16.37,23.25" fill-opacity="0.55"/>
+            <polygon points="22,20 27.63,16.75 27.63,23.25 22,26.5" fill-opacity="0.78"/>
+            <polygon points="16,4 21.63,7.25 16,10.5 10.37,7.25"/>
+            <polygon points="10.37,7.25 16,10.5 16,17 10.37,13.75" fill-opacity="0.55"/>
+            <polygon points="16,10.5 21.63,7.25 21.63,13.75 16,17" fill-opacity="0.78"/>
           </svg>
-          Open folder…
-        </button>
-        <button type="button" id="start-clone-btn" class="start-action">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/>
-            <path d="M12 8.6v2.9a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v-.1M18 15.4v-.1a2 2 0 0 0-2-2h-2a2 2 0 0 1-2-2V8.6"/>
-          </svg>
-          Clone from GitHub…
-        </button>
-      </div>
-      <div id="start-clone-form" class="start-clone" hidden>
-        <label class="start-clone-label" for="start-clone-url">Repository URL</label>
-        <div class="start-clone-row">
-          <input type="text" id="start-clone-url" class="start-clone-input" placeholder="https://github.com/owner/repo" spellcheck="false" />
-          <button type="button" id="start-clone-go" class="start-action start-action-primary">Clone</button>
-          <button type="button" id="start-clone-cancel" class="start-action">Cancel</button>
+          <div class="start-wordmark">
+            <span class="start-word">Orchestra</span>
+            <span class="start-word-sub">Code</span>
+          </div>
         </div>
-        <p class="start-clone-hint">You will be asked where to put it. Private repositories need git credentials already set up on this machine.</p>
-      </div>
-      <p id="start-error" class="start-error" hidden></p>
-      <div class="start-recent">
-        <div class="start-recent-head">Recent workspaces</div>
-        <div id="start-recent-list" class="start-recent-list"></div>
+        <p class="start-lead">Open a workspace to start working in it.</p>
+        <div class="start-actions">
+          <button type="button" id="start-open-btn" class="start-action">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+            </svg>
+            Open folder…
+          </button>
+          <button type="button" id="start-clone-btn" class="start-action">
+            <!-- GitHub's own mark. The button says GitHub, so it shows GitHub,
+                 not a drawing of a branch — which is what a person scans for. -->
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+            </svg>
+            Clone from GitHub…
+          </button>
+        </div>
+        <!-- What the screen says while a workspace is opening. Starting a core
+             takes a moment, and until this existed the window simply sat
+             there after the click. -->
+        <p id="start-busy" class="start-busy" hidden aria-live="polite">
+          <span class="start-spinner" aria-hidden="true"></span>
+          <span id="start-busy-text"></span>
+        </p>
+        <div id="start-clone-form" class="start-clone" hidden>
+          <label class="start-clone-label" for="start-clone-url">Repository URL</label>
+          <div class="start-clone-row">
+            <input type="text" id="start-clone-url" class="start-clone-input" placeholder="https://github.com/owner/repo" spellcheck="false" />
+            <button type="button" id="start-clone-go" class="start-action start-action-primary">Clone</button>
+            <button type="button" id="start-clone-cancel" class="start-action">Cancel</button>
+          </div>
+          <p class="start-clone-hint">You will be asked where to put it. Private repositories need git credentials already set up on this machine.</p>
+        </div>
+        <p id="start-error" class="start-error" hidden></p>
+        <div class="start-recent">
+          <div class="start-recent-head">Recent workspaces</div>
+          <div id="start-recent-list" class="start-recent-list"></div>
+        </div>
       </div>
     </div>
   </main>

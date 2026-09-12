@@ -151,7 +151,20 @@
         }
         pendingCalls.delete(msg.id);
         if (msg.error) {
-          p.reject(new Error(msg.error.message || "rpc error"));
+          // -32603 carries the literal string "Internal error" as its message
+          // and the thing that actually went wrong in data.error
+          // (protocol/jsonrpc/server.go). Rejecting with the message alone
+          // put "Internal error" in the transcript and threw the only useful
+          // half away, leaving nothing to act on and nothing to report.
+          const detail =
+            msg.error.data && typeof msg.error.data.error === "string"
+              ? msg.error.data.error
+              : "";
+          const text = detail || msg.error.message || "rpc error";
+          const err = new Error(text);
+          // @ts-ignore — kept for callers that branch on the code.
+          err.rpcCode = msg.error.code;
+          p.reject(err);
         } else {
           p.resolve(msg.result);
         }
@@ -3268,6 +3281,33 @@
           host.postMessage({ type: "rewindToMessage", uiIndex: idx });
         });
         wrap.appendChild(rewind);
+
+        // Rewind truncates this chat; branching keeps it and continues the
+        // conversation in a copy, which is what you want when the question is
+        // "what if I had asked differently" rather than "undo that".
+        //
+        // Not on the first message: the branch is everything BEFORE the point
+        // (sessionfile.ForkSnapshot), so branching there would produce an
+        // empty chat — the core rejects it, and a button that can only fail is
+        // worse than no button. Starting over from nothing is /clear.
+        if (opts.uiIndex > 0) {
+          const fork = document.createElement("button");
+          fork.type = "button";
+          fork.className = "fork-btn";
+          fork.title = "Branch a new chat from here";
+          fork.textContent = "⑂ Branch";
+          fork.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = typeof opts.uiIndex === "number" ? opts.uiIndex : Number(el.dataset.uiIndex);
+            if (!Number.isFinite(idx) || idx < 1) {
+              return;
+            }
+            fork.disabled = true;
+            host.postMessage({ type: "forkFromMessage", uiIndex: idx });
+          });
+          wrap.appendChild(fork);
+        }
       }
       if (text || wrap.querySelector(".rewind-btn")) {
         el.appendChild(wrap);
@@ -3332,7 +3372,11 @@
         } else {
           trackSubagent(msg, "start", "");
         }
-        setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        // A restored turn is a replay, not work in progress: narrating it
+        // leaves "Ls…" in the chrome strip of a session that is sitting idle.
+        if (!msg.restored) {
+          setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        }
         if (host) host.scrollTop = host.scrollHeight;
         messagesEl.scrollTop = messagesEl.scrollHeight;
         return;
@@ -3381,7 +3425,11 @@
       } else {
         trackSubagent(msg, "start", "");
       }
-      setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+      // A restored turn is a replay, not work in progress: narrating it
+        // leaves "Ls…" in the chrome strip of a session that is sitting idle.
+        if (!msg.restored) {
+          setChromeHint(toolDisplayName(msg.toolName) + "…", false);
+        }
       if (host) host.scrollTop = host.scrollHeight;
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return;
@@ -5774,7 +5822,7 @@
   /**
    * Per-project session state. The renderer shows one project at a time, so
    * exactly one of these is "current"; the others are what a switch restores.
-   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any}>}
+   * @type {Map<string, {sessionId: string, inFlightTurnId: any, workspaceRoot: string, status: string, pendingAsk: any, llm: any}>}
    */
   const perProject = new Map();
   let currentProjectId = "";
@@ -5783,7 +5831,15 @@
   function projectState(projectId) {
     let st = perProject.get(projectId);
     if (!st) {
-      st = { sessionId: "", inFlightTurnId: null, workspaceRoot: "", status: "idle", pendingAsk: null };
+      st = {
+        sessionId: "",
+        inFlightTurnId: null,
+        workspaceRoot: "",
+        status: "idle",
+        pendingAsk: null,
+        // The core's last answer about the model and its window; see pushLLMInfo.
+        llm: null,
+      };
       perProject.set(projectId, st);
     }
     return st;
@@ -5792,6 +5848,257 @@
   /** @param {string} projectId */
   function forgetProjectState(projectId) {
     perProject.delete(projectId);
+  }
+
+  // ---- what the composer says about the model -----------------------------
+  //
+  // The model pill and the context gauge under the input read two renderer
+  // messages: header (model, provider) and contextInfo (the window and the
+  // reply budget) — ui/vscode/media/chat-src/07-events.js. The editor's host
+  // sends both from the core's own answer (panel.ts refreshHeaderAndHistory).
+  // This host used to send a header with no model on every switch and no
+  // contextInfo at all, so the pill kept whichever project's model it had
+  // seen last and the gauge measured against a 128K default that was nobody's
+  // window.
+
+  /**
+   * The ceiling the gauge measures against. num_ctx is the window the request
+   * asks the server for; context_tokens is the most the model can take, from
+   * the catalogue or the server's own answer. A prompt has to fit under both,
+   * so the smaller one is the real limit: a local model run with num_ctx 20000
+   * overflows at 20000 however large its catalogue entry says it could be.
+   * @param {any} numCtx @param {any} contextTokens
+   */
+  function contextLimitFor(numCtx, contextTokens) {
+    const asked = Number(numCtx) > 0 ? Number(numCtx) : 0;
+    const most = Number(contextTokens) > 0 ? Number(contextTokens) : 0;
+    if (asked > 0 && most > 0) {
+      return Math.min(asked, most);
+    }
+    return asked || most || 128000;
+  }
+
+  /**
+   * Ask the core what the project is talking to, keep the answer with the
+   * project, and tell the composer if that project is the one on screen. Kept
+   * per project so a switch can repaint from the last answer at once
+   * (postLLMInfo) while a fresh read is on its way.
+   * @param {string} projectId
+   */
+  async function pushLLMInfo(projectId) {
+    const conn = connFor(projectId);
+    if (!conn) {
+      return;
+    }
+    // Asked for alongside the model, not after it: the balance is a separate
+    // call, and chaining it behind this await means a core that is slow to
+    // answer about the model never reports a balance at all.
+    void pushCredits(projectId);
+    let llm;
+    try {
+      llm = (await conn.send("runtime.get_llm", {})) || {};
+    } catch (err) {
+      // The pill keeps its last label: there is nothing truer to put there.
+      return;
+    }
+    const st = projectState(projectId);
+    const maxTokens = Number(llm.max_tokens) || 0;
+    st.llm = {
+      model: String(llm.model || ""),
+      provider: String(llm.provider || ""),
+      contextLimit: contextLimitFor(llm.num_ctx, llm.context_tokens),
+      maxResponseTokens: maxTokens > 0 ? maxTokens : 4096,
+    };
+    if (projectId === currentProjectId) {
+      postLLMInfo(projectId);
+    }
+  }
+
+  /**
+   * The provider's account balance for the cost popover. The renderer already
+   * draws the row from a "credits" message (07-events.js) — the editor host
+   * sent one and the web host never did, so the popover here could only ever
+   * show spend, never what is left.
+   *
+   * Best-effort by design: providers without a balance API (every local
+   * server, plain OpenAI) answer supported=false, and the row is omitted.
+   * @param {string} projectId
+   */
+  async function pushCredits(projectId) {
+    const conn = connFor(projectId);
+    if (!conn || !conn.isOpen()) {
+      return;
+    }
+    try {
+      const c = (await conn.send("runtime.credits", {})) || {};
+      if (projectId !== currentProjectId) {
+        return;
+      }
+      toRenderer({
+        type: "credits",
+        supported: !!c.supported,
+        provider: String(c.provider || ""),
+        balance: Number(c.balance) || 0,
+      });
+    } catch (err) {
+      // No balance API, no key, or an endpoint that is down: the popover
+      // simply keeps showing spend without a balance row.
+    }
+  }
+
+  /**
+   * The title the tab strip shows for a session, from the last session.list
+   * (40-projects.js keeps it in sessionsByProject). A header message has to
+   * carry it: the renderer renames the active tab from every header it gets
+   * (07-events.js), and one without a title says "New chat" — over a
+   * conversation that has a name.
+   * @param {string} projectId @param {string} sessionId
+   */
+  function sessionTitleFor(projectId, sessionId) {
+    const row = (sessionsByProject.get(projectId) || []).find((s) => s && s.id === sessionId);
+    const title = row && typeof row.title === "string" ? row.title.trim() : "";
+    return title || "New chat";
+  }
+
+  /** The composer's model and window, from the last answer. @param {string} projectId */
+  function postLLMInfo(projectId) {
+    const st = projectState(projectId);
+    if (!st.llm) {
+      return;
+    }
+    toRenderer({
+      type: "header",
+      sessionId: st.sessionId,
+      title: sessionTitleFor(projectId, st.sessionId),
+      model: st.llm.model,
+      provider: st.llm.provider,
+    });
+    toRenderer({
+      type: "contextInfo",
+      info: {
+        contextLimit: st.llm.contextLimit,
+        maxResponseTokens: st.llm.maxResponseTokens,
+        model: st.llm.model,
+      },
+    });
+  }
+
+  /**
+   * A saved transcript in the shape the renderer draws it.
+   *
+   * The session file keeps a message the way Go writes it — tool_blocks,
+   * args_raw, duration_ms, attachments — and the renderer (shared with the
+   * editor's webview) reads toolBlocks, argsRaw, durationMs, files. Posting
+   * the raw rows straight through, as this used to, restored the words and
+   * silently dropped everything else. Mirrors the mapping panel.ts does for
+   * the editor.
+   * @param {any[]} uiMessages
+   */
+  function historyMessagesFrom(uiMessages) {
+    const list = Array.isArray(uiMessages) ? uiMessages : [];
+    const out = [];
+    list.forEach((m, idx) => {
+      if (!m || typeof m !== "object") {
+        return;
+      }
+      const role = m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant";
+      const text = String(m.text || m.content || "");
+      const reasoning = uiReasoningOf(m);
+      const toolBlocks = uiToolBlocksOf(m);
+      const files = (Array.isArray(m.attachments) ? m.attachments : [])
+        .filter((a) => a && (a.path || a.name))
+        .map((a) => ({
+          name: String(a.name || String(a.path || "").split(/[\\/]/).pop() || "file"),
+          path: String(a.path || ""),
+          ext: a.ext ? String(a.ext) : undefined,
+          kind: a.kind === "image" ? "image" : "file",
+        }));
+      if (!text && !reasoning && toolBlocks.length === 0 && files.length === 0) {
+        return;
+      }
+      const row = { role, text };
+      // The index into the core's own list: rewind aims at it, so it counts
+      // every row, including any this loop leaves out.
+      if (role === "user") row.uiIndex = idx;
+      if (files.length) row.files = files;
+      if (reasoning) row.reasoning = reasoning;
+      if (toolBlocks.length) row.toolBlocks = toolBlocks;
+      out.push(row);
+    });
+    return out;
+  }
+
+  /** A saved message's reasoning, whether written flat or as segments. */
+  function uiReasoningOf(m) {
+    const direct = String((m && m.reasoning) || "").trim();
+    if (direct) {
+      return direct;
+    }
+    const parts = [];
+    for (const seg of (m && m.segments) || []) {
+      if (seg && seg.kind === "reasoning" && seg.text) parts.push(seg.text);
+    }
+    return parts.join("").trim();
+  }
+
+  /** A saved message's tool blocks, flat or in segments, renderer-spelled. */
+  function uiToolBlocksOf(m) {
+    const raw = [];
+    for (const t of (m && m.tool_blocks) || []) {
+      if (t && t.name) raw.push(t);
+    }
+    if (raw.length === 0) {
+      for (const seg of (m && m.segments) || []) {
+        if (!seg || seg.kind !== "tools" || !Array.isArray(seg.tools)) continue;
+        for (const t of seg.tools) {
+          if (t && t.name) raw.push(t);
+        }
+      }
+    }
+    return raw.map((t) => ({
+      id: t.id,
+      name: t.name,
+      argsRaw: t.args_raw || t.args_preview || "",
+      status: t.status || "completed",
+      result: t.result || "",
+      diagnostics: Array.isArray(t.diagnostics) && t.diagnostics.length ? t.diagnostics : undefined,
+      durationMs: typeof t.duration_ms === "number" && t.duration_ms > 0 ? t.duration_ms : undefined,
+    }));
+  }
+
+  /**
+   * The last measured prompt in a saved transcript. The core writes each
+   * assistant message's prompt_ctx and tokens_out into the session file
+   * (internal/sessionfile/uimessage.go); reopening a session paints the gauge
+   * from them, as panel.ts does, instead of showing an empty ring over a
+   * conversation that is plainly not empty. Messages without the fields leave
+   * it empty, which is the truth: nothing was measured.
+   * @param {any[]} uiMessages
+   */
+  function postRestoredUsage(uiMessages) {
+    const msgs = Array.isArray(uiMessages) ? uiMessages : [];
+    let prompt = 0;
+    let completion = 0;
+    for (const m of msgs) {
+      if (!m || String(m.role || "").toLowerCase() !== "assistant") {
+        continue;
+      }
+      if (Number(m.prompt_ctx) > 0) {
+        prompt = Number(m.prompt_ctx);
+      } else if (prompt === 0 && Number(m.tokens_in) > 0) {
+        prompt = Number(m.tokens_in);
+      }
+      if (Number(m.tokens_out) > 0) {
+        completion = Number(m.tokens_out);
+      }
+    }
+    if (prompt <= 0) {
+      return;
+    }
+    toRenderer({
+      type: "stepUsage",
+      usage: { prompt_tokens: prompt, completion_tokens: completion, source: "restored" },
+    });
   }
 
   /**
@@ -5828,6 +6135,19 @@
       });
       const started = await conn.send("session.start", {});
       st.sessionId = started.session_id || "";
+      // Not awaited: the pill and the gauge fill in from the core's answer
+      // when it comes, and the transcript does not wait for them.
+      void pushLLMInfo(projectId);
+      // What "/" offers beyond the built-in commands: this workspace's own
+      // skills and .claude/commands, which only the core can enumerate.
+      void pushSkillCommands(projectId);
+      // Settings opened while this workspace was still coming up had nothing
+      // to read from and said so; now there is. Without this the panel kept
+      // that note, an empty provider list and no tool catalogue until it was
+      // closed and opened again.
+      if (projectId === currentProjectId && settingsPanelOpen()) {
+        void pushSettingsState();
+      }
       if (projectId === currentProjectId) {
         toRenderer({
           type: "header",
@@ -5849,6 +6169,8 @@
       }
       st.status = "idle";
     }
+    // Live, or failed trying: either way the project's frame stops loading.
+    noteProjectLive(projectId);
     renderProjects();
   }
 
@@ -5898,6 +6220,20 @@
     const st = projectState(projectId);
     const conn = connFor(projectId);
     setActiveConn(conn);
+    // Paint the switch now, not after the round trips below. renderProjects is
+    // also what puts the start screen away, and this function does not reach
+    // its closing render until session.list has answered — so a slow core left
+    // the start screen covering a project that was already open and selected.
+    renderProjects();
+
+    // The pill and the gauge are the composer's, and the composer is shared by
+    // every project: paint this project's model and window over the previous
+    // project's now, from the last answer, and read them again in case the
+    // model was changed while this project was in the background.
+    postLLMInfo(projectId);
+    void pushLLMInfo(projectId);
+    // Each workspace has its own commands; the palette must follow the switch.
+    void pushSkillCommands(projectId);
 
     toRenderer({ type: "clearMessages" });
     // Take the outgoing project's overlay down unconditionally, then raise this
@@ -5921,7 +6257,8 @@
         if (projectId !== currentProjectId) {
           return;
         }
-        toRenderer({ type: "history", messages: view.ui_messages || [] });
+        toRenderer({ type: "history", messages: historyMessagesFrom(view.ui_messages) });
+        postRestoredUsage(view.ui_messages);
       } catch (err) {
         if (projectId === currentProjectId) {
           toRenderer({ type: "error", message: String(err && err.message ? err.message : err) });
@@ -6008,6 +6345,12 @@
         closeSessionTab(msg.sessionId || "");
         return;
 
+      case "deleteSession":
+        // Web-only: throws the chat away in the core. The sidebar's × asks
+        // twice before it gets here.
+        void deleteSession(msg.projectId || currentProjectId, msg.sessionId || "");
+        return;
+
       case "listSessions":
         void refreshSessionList(currentProjectId);
         return;
@@ -6054,7 +6397,26 @@
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
-    toRenderer({ type: "userEcho", text: msg.text || "" });
+    // The session this turn belongs to: the person can open another one while
+    // it runs, and the answer must be written back to the session that asked.
+    const sessionId = st.sessionId;
+    // The chips on the message: files attached through the paperclip, a drop
+    // or a paste (60-composer.js). Only ones with a path can go to the core —
+    // it reads them from the workspace — and the echo shows the same ones.
+    const files = (Array.isArray(msg.files) ? msg.files : []).filter(
+      (f) => f && typeof f.path === "string" && f.path
+    );
+    const attachments = files.map((f) => {
+      const a = { path: f.path };
+      if (typeof f.name === "string" && f.name) {
+        a.name = f.name;
+      }
+      if (f.kind === "image" || f.kind === "file") {
+        a.kind = f.kind;
+      }
+      return a;
+    });
+    toRenderer({ type: "userEcho", text: msg.text || "", files: files.length ? files : undefined });
     toRenderer({ type: "turnStart" });
     toRenderer({ type: "turnInFlight", inFlight: true });
     st.status = "working";
@@ -6068,13 +6430,14 @@
     // frame are provably the same value.
     const conn = connFor(projectId);
     const turn = conn.sendCancellable("session.message", {
-      session_id: st.sessionId,
+      session_id: sessionId,
       content: msg.text || "",
       // The web host has no editor to stage changes in, so a turn writes to
       // disk. Access mode still gates the shell (allow_exec below).
       apply: true,
       allow_exec: Boolean(msg.allowExec),
       profile: msg.profile || "",
+      ...(attachments.length ? { attachments } : {}),
     });
     st.inFlightTurnId = turn.id;
     // turnComplete's contract is `{ ok: boolean }`, and the renderer treats a
@@ -6095,6 +6458,12 @@
       st.inFlightTurnId = null;
       st.status = "idle";
       renderProjects();
+      // Write the answer into the session before anything else: the core
+      // records the person's message when the turn starts and nothing else,
+      // so an answer this page does not save is gone when the session is
+      // reopened. Not gated on the visible project — a turn that finished in
+      // the background is exactly as worth keeping.
+      void saveAssistantTurn(projectId, conn, sessionId);
       if (projectId === currentProjectId) {
         toRenderer({ type: "turnInFlight", inFlight: false });
         toRenderer({ type: "turnComplete", ok: !failed });
@@ -6102,6 +6471,68 @@
         // closes the writer before it answers — so this replaces the live
         // rows with the recorded ones, which carry the core's own timings.
         void refreshTrajectory(projectId, conn, st.sessionId);
+      }
+    }
+  }
+
+  /**
+   * Append this turn's answer to the session's ui_messages.
+   *
+   * The core's own projection holds only what it can know without a client:
+   * the person's message, appended when the turn starts (session_rpc.go,
+   * SessionMessage). The answer — text, reasoning, the tools that ran, what
+   * the step cost — exists only as a stream of events, so every host writes
+   * it back itself; the editor does it in coreSession.ts (syncUIProjection)
+   * and this is the same contract for the page. Read-modify-write against
+   * session.get rather than a blind push, because the core appended the user
+   * message after this page last saw the list.
+   *
+   * @param {string} projectId @param {any} conn @param {string} sessionId
+   */
+  async function saveAssistantTurn(projectId, conn, sessionId) {
+    if (!sessionId || !conn) {
+      return;
+    }
+    const answerMsg = assistantTurnProjection(projectId);
+    if (!answerMsg) {
+      return; // nothing was said and nothing ran: there is nothing to keep
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const view = (await conn.send("session.get", { session_id: sessionId })) || {};
+        const ui = Array.isArray(view.ui_messages) ? view.ui_messages.slice() : [];
+        const last = ui.length ? ui[ui.length - 1] : null;
+        const lastRole = last ? String((last && last.role) || "").toLowerCase() : "";
+        const lastText = last ? String((last && (last.text || last.content)) || "").trim() : "";
+        if (lastRole === "assistant" && lastText === answerMsg.text) {
+          // The same answer already there — a retry, or another host that got
+          // in first. Update it in place rather than saying it twice.
+          ui[ui.length - 1] = Object.assign({}, last, answerMsg);
+        } else {
+          ui.push(answerMsg);
+        }
+        // title and model are read back and sent again on purpose: the core
+        // sets both from these params, so leaving them out renames the
+        // session to nothing.
+        await conn.send("session.ui_sync", {
+          session_id: sessionId,
+          title: typeof view.title === "string" ? view.title : "",
+          model: typeof view.model === "string" ? view.model : "",
+          ui_messages: ui,
+        });
+        return;
+      } catch (err) {
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        // Say so rather than lose the answer silently.
+        if (projectId === currentProjectId) {
+          toRenderer({
+            type: "systemNote",
+            text: "The answer could not be saved to this session: " + String((err && err.message) || err),
+          });
+        }
       }
     }
   }
@@ -6124,7 +6555,8 @@
       if (started.restored) {
         const view = await conn.send("session.get", { session_id: st.sessionId });
         if (projectId === currentProjectId) {
-          toRenderer({ type: "history", messages: view.ui_messages || [] });
+          toRenderer({ type: "history", messages: historyMessagesFrom(view.ui_messages) });
+          postRestoredUsage(view.ui_messages);
         }
       }
       if (projectId === currentProjectId) {
@@ -6156,6 +6588,16 @@
   const turnTextByProject = new Map();
   /** @type {Map<string, Map<string, any>>} */
   const liveToolBlocksByProject = new Map();
+  // The rest of the turn, kept for the same reason: the core records the
+  // person's message itself but never the answer, so whatever is going to be
+  // in the session file afterwards has to be accumulated here and written
+  // back when the turn ends (saveAssistantTurn in 10-adapter-session.js).
+  /** @type {Map<string, string>} */
+  const turnReasoningByProject = new Map();
+  /** @type {Map<string, any[]>} */
+  const turnToolsByProject = new Map();
+  /** @type {Map<string, any>} */
+  const turnUsageByProject = new Map();
 
   // Named blocksForProject, not toolBlocks: ui/vscode/media/chat-src/01-dom-state.js
   // already declares a top-level `const toolBlocks = new Map()`, and the whole
@@ -6271,10 +6713,16 @@
 
       case "reasoning_delta":
         if (ev.content && !isChild) {
+          turnReasoningByProject.set(projectId, (turnReasoningByProject.get(projectId) || "") + ev.content);
           toRenderer({ type: "reasoningDelta", content: ev.content });
         }
         break;
 
+      // A tool block is drawn in three phases, and the renderer (shared with
+      // the editor's webview: chat-src/05e-messages.js) reads exactly the
+      // fields the editor host posts — phase, toolCallId, toolName, argsDelta,
+      // content. It does nothing at all with any other shape, which is why
+      // these must stay in step with ui/vscode/src/chat/panel.ts.
       case "tool_call_start": {
         if (isChild || !ev.tool_call_id) {
           break;
@@ -6288,19 +6736,32 @@
           startedAt: Date.now(),
         };
         blocks.set(ev.tool_call_id, block);
-        toRenderer({ type: "toolBlock", block: { ...block } });
+        toRenderer({
+          type: "toolBlock",
+          phase: "start",
+          toolCallId: block.id,
+          toolName: block.name,
+          step: ev.step,
+        });
         break;
       }
 
       case "tool_call_delta": {
-        if (isChild || !ev.tool_call_id) {
+        if (isChild || !ev.tool_call_id || !ev.args_delta) {
           break;
         }
         const block = blocks.get(ev.tool_call_id);
         if (block) {
-          block.argsRaw += ev.args_delta || "";
-          toRenderer({ type: "toolBlock", block: { ...block } });
+          block.argsRaw += ev.args_delta;
         }
+        toRenderer({
+          type: "toolBlock",
+          phase: "update",
+          toolCallId: ev.tool_call_id,
+          toolName: ev.tool_call_name || (block && block.name) || "tool",
+          argsDelta: ev.args_delta,
+          step: ev.step,
+        });
         break;
       }
 
@@ -6312,13 +6773,26 @@
           id: ev.tool_call_id,
           name: ev.tool_call_name || "tool",
           argsRaw: "",
-          startedAt: Date.now(),
+          startedAt: 0,
         };
-        block.status = "done";
-        block.result = ev.content || "";
-        block.durationMs = Date.now() - (block.startedAt || Date.now());
+        const content = ev.content || "";
+        block.status = toolStatusOf(content);
+        block.result = content;
+        block.diagnostics = Array.isArray(ev.diagnostics) ? ev.diagnostics : undefined;
+        // Only when this page saw the start; a tool whose start went to
+        // another page has no honest duration to keep.
+        block.durationMs = block.startedAt ? Date.now() - block.startedAt : 0;
         blocks.delete(ev.tool_call_id);
-        toRenderer({ type: "toolBlock", block: { ...block } });
+        turnToolsFor(projectId).push(block);
+        toRenderer({
+          type: "toolBlock",
+          phase: "complete",
+          toolCallId: block.id,
+          toolName: block.name,
+          content,
+          diagnostics: block.diagnostics,
+          step: ev.step,
+        });
         break;
       }
 
@@ -6345,14 +6819,176 @@
         });
         break;
 
+      case "step_usage":
+      case "context_estimate": {
+        // The context gauge under the composer. step_usage is what the server
+        // counted for the step; context_estimate is the agent's own count of
+        // what it is about to send, with the per-category breakdown the
+        // popover draws — it comes first, and the measurement replaces it.
+        // The renderer keeps a worker's (child) usage off the gauge and counts
+        // only its cost, so the scope travels with the message; a worker's
+        // estimate has neither use and stops here. So does a measurement of
+        // nothing — a server that reports no usage must not empty the ring.
+        const usage = stepUsageFrom(ev.data);
+        if (!usage) {
+          break;
+        }
+        if (ev.type === "context_estimate") {
+          if (isChild) {
+            break;
+          }
+          usage.source = "estimate";
+        }
+        if (!isChild && !(usage.prompt_tokens > 0)) {
+          break;
+        }
+        // What the server counted goes onto the saved answer as well, so a
+        // reopened session can show what the turn cost. An estimate does not:
+        // only a measurement may be recorded as spend.
+        if (!isChild && ev.type === "step_usage") {
+          const acc = turnUsageByProject.get(projectId) || {};
+          if (usage.prompt_tokens > 0) acc.promptCtx = usage.prompt_tokens;
+          if (usage.completion_tokens > 0) acc.tokensOut = usage.completion_tokens;
+          if (usage.total_tokens > 0) acc.tokensIn = usage.total_tokens;
+          turnUsageByProject.set(projectId, acc);
+        }
+        toRenderer({ type: "stepUsage", usage, scope: ev.scope });
+        break;
+      }
+
       case "recoverable_error":
-      case "error":
+      case "error": {
+        // Housekeeping about the context window travels on the error channel
+        // because that is the channel the agent has, but none of it is a
+        // failure. The editor's webview translates these in
+        // streamSanitize.ts; the web UI never did, so a routine "the history
+        // is about to be summarised" arrived in the transcript as the bare
+        // word CONTEXT_PRESSURE under a red error heading.
+        const note = compactionNotice(ev.content || "");
+        if (note) {
+          toRenderer({ type: "systemNote", text: note });
+          break;
+        }
         toRenderer({ type: "error", message: ev.content || "error" });
         break;
+      }
 
       default:
         break;
     }
+  }
+
+  /**
+   * The usage in a step_usage or context_estimate event, in the shape the
+   * renderer's stepUsage handler reads — the same reading parseStepUsage in
+   * ui/vscode/src/chat/panel.ts does for the editor. Fields that are not
+   * numbers are left out rather than zeroed; a breakdown row without a key or
+   * without tokens is dropped.
+   * @param {any} data @returns {any|null}
+   */
+  function stepUsageFrom(data) {
+    if (!data || typeof data !== "object") {
+      return null;
+    }
+    const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    const usage = {
+      prompt_tokens: num(data.prompt_tokens),
+      completion_tokens: num(data.completion_tokens),
+      total_tokens: num(data.total_tokens),
+      cost_usd: num(data.cost_usd),
+      source: typeof data.source === "string" ? data.source : undefined,
+    };
+    const breakdown = Array.isArray(data.breakdown)
+      ? data.breakdown
+          .filter((b) => b && typeof b === "object")
+          .map((b) => ({
+            key: typeof b.key === "string" ? b.key : "",
+            label: typeof b.label === "string" ? b.label : "",
+            tokens: num(b.tokens) || 0,
+          }))
+          .filter((b) => b.key !== "" && b.tokens > 0)
+      : [];
+    if (breakdown.length > 0) {
+      usage.breakdown = breakdown;
+    }
+    return usage;
+  }
+
+  /**
+   * The plain-language version of a context-housekeeping notice, or "" when
+   * the message is a real error. Kept in step with
+   * ui/vscode/src/chat/streamSanitize.ts, which does the same job for the
+   * editor's webview.
+   * @param {string} message
+   */
+  function compactionNotice(message) {
+    const m = String(message || "").trim();
+    if (m === "CONTEXT_PRESSURE") {
+      return "The context is nearly full — the history will be summarised before the next step.";
+    }
+    if (m === "CONTEXT_COMPACTED") {
+      return "History summarised; the turn carries on.";
+    }
+    if (/контекст переполнен/i.test(m)) {
+      return "Summarising the chat — " + m;
+    }
+    return "";
+  }
+
+  /** The tools this project's turn has finished, in the order they ran. */
+  function turnToolsFor(projectId) {
+    let list = turnToolsByProject.get(projectId);
+    if (!list) {
+      list = [];
+      turnToolsByProject.set(projectId, list);
+    }
+    return list;
+  }
+
+  /**
+   * The persisted spelling of a finished tool's status, read off its result
+   * the way the editor host's toolStatusFromResult does.
+   * @param {string} content
+   */
+  function toolStatusOf(content) {
+    const s = String(content || "");
+    if (s.startsWith("error: ")) return "failed";
+    if (s.startsWith("skipped: ")) return "skipped";
+    return "completed";
+  }
+
+  /**
+   * The turn's answer as a ui_messages row, or null when the model said
+   * nothing at all. Mirrors buildAssistantProjection in
+   * ui/vscode/src/chat/turnProjection.ts — the same session file is read back
+   * by the editor, the TUI and this page, so the shape is not ours to invent.
+   * @param {string} projectId
+   */
+  function assistantTurnProjection(projectId) {
+    const text = (turnTextByProject.get(projectId) || "").trim();
+    const reasoning = (turnReasoningByProject.get(projectId) || "").trim();
+    const tools = (turnToolsByProject.get(projectId) || []).map((t) => {
+      const b = { name: t.name || "tool", status: t.status || "completed" };
+      if (t.id) b.id = t.id;
+      if (t.argsRaw) b.args_raw = t.argsRaw;
+      if (t.result) b.result = t.result;
+      if (t.diagnostics && t.diagnostics.length) b.diagnostics = t.diagnostics;
+      // Absent rather than zero: a persisted 0 renders as "0ms" beside tools
+      // that really did take no measurable time.
+      if (t.durationMs > 0) b.duration_ms = t.durationMs;
+      return b;
+    });
+    if (!text && !reasoning && tools.length === 0) {
+      return null;
+    }
+    const msg = { role: "assistant", text };
+    if (reasoning) msg.reasoning = reasoning;
+    if (tools.length) msg.tool_blocks = tools;
+    const usage = turnUsageByProject.get(projectId) || {};
+    if (usage.promptCtx > 0) msg.prompt_ctx = usage.promptCtx;
+    if (usage.tokensIn > 0) msg.tokens_in = usage.tokensIn;
+    if (usage.tokensOut > 0) msg.tokens_out = usage.tokensOut;
+    return msg;
   }
 
   // A new turn starts with an empty transcript — for the project whose turn it
@@ -6360,6 +6996,9 @@
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {
       turnTextByProject.set(currentProjectId, "");
+      turnReasoningByProject.set(currentProjectId, "");
+      turnToolsByProject.set(currentProjectId, []);
+      turnUsageByProject.delete(currentProjectId);
       blocksForProject(currentProjectId).clear();
     }
   });
@@ -6496,6 +7135,63 @@
   const sessionsByProject = new Map();
   /** Projects the user folded away by hand. @type {Set<string>} */
   const collapsedProjects = new Set();
+  /**
+   * The live search over saved chats. hits=null means "not searching", so the
+   * sidebar draws the ordinary list; an empty array means "searched and found
+   * nothing", which has to look different from it.
+   * @type {{projectId: string, query: string, hits: Array<any>|null}}
+   */
+  const sessionSearch = { projectId: "", query: "", hits: null };
+
+  /**
+   * Full-text search across this workspace's saved chats (session.search,
+   * protocol v14 — implemented in the core since then and never called by any
+   * interface until now). Results replace the session list in place, so a hit
+   * is opened by the same click that opens any chat.
+   * @param {string} query
+   */
+  async function showSessionSearch(query) {
+    const q = String(query || "").trim();
+    if (!q) {
+      sessionSearch.projectId = "";
+      sessionSearch.query = "";
+      sessionSearch.hits = null;
+      renderProjects();
+      return;
+    }
+    const projectId = currentProjectId;
+    const conn = projectId ? connFor(projectId) : null;
+    if (!conn || !conn.isOpen()) {
+      return;
+    }
+    sessionSearch.projectId = projectId;
+    sessionSearch.query = q;
+    revealSessionList();
+    let hits = [];
+    try {
+      const r = (await conn.send("session.search", { query: q, insensitive: true, limit: 50 })) || {};
+      hits = Array.isArray(r.hits) ? r.hits : [];
+    } catch (err) {
+      hits = [];
+    }
+    // A slow search that lands after the user moved on must not repaint
+    // someone else's sidebar.
+    if (sessionSearch.query !== q || sessionSearch.projectId !== projectId) {
+      return;
+    }
+    // One row per chat: a chat matching six times is one chat to open, and the
+    // first hit carries the snippet worth showing.
+    const seen = new Set();
+    sessionSearch.hits = hits.filter((h) => {
+      const id = String((h && h.session_id) || "");
+      if (!id || seen.has(id)) {
+        return false;
+      }
+      seen.add(id);
+      return true;
+    });
+    renderProjects();
+  }
 
   /**
    * Called by refreshSessionList for every project, on screen or not, so the
@@ -6575,6 +7271,7 @@
       onClose: (id) => {
         conns.delete(id);
         forgetProjectState(id);
+        noteProjectLive(id);
         if (id === currentProjectId) {
           // A dropped socket ends the session on the core side, so say so
           // plainly rather than reconnecting into what looks like the same
@@ -6591,6 +7288,7 @@
         if (id === currentProjectId) {
           toRenderer({ type: "status", status: "error", detail: "connection error" });
         }
+        noteProjectLive(id);
       },
       onNotification: (id, msg) => {
         if (noteProjectEvent(id, msg)) {
@@ -6619,13 +7317,136 @@
     }
     const entry = known.find((p) => p.id === projectId);
     if (entry && entry.state === "closed") {
-      const opened = await openProject(entry.path, false);
+      // Marked before the await, because this is the slow half: a closed
+      // workspace has to start a core, which is a second or two of a sidebar
+      // that looked like it had ignored the click.
+      markRailOpening(projectId);
+      // init: true, as on the start screen. A workspace in this list is one
+      // the person put there; refusing it for want of a .orchestra.yml left
+      // the click doing nothing but writing a note into the transcript of
+      // whichever project they were still looking at.
+      const opened = await openProject(entry.path, true);
+      markRailOpening("");
       if (!opened) {
         return;
       }
     }
     ensureConn(projectId);
     await activateProject(projectId);
+  }
+
+  /**
+   * Name the workspace in the chat's own header. The sidebar says which one is
+   * open, but it is a column of names off to one side and can now be folded
+   * away entirely — while the transcript, the tabs and the composer look the
+   * same whichever project they belong to. Sending a message to the wrong
+   * workspace is a real mistake and nothing on that half of the window stood
+   * in its way.
+   *
+   * Built here rather than in the markup on purpose: everything inside #app is
+   * byte-identical with the VS Code webview's, and the editor's panel always
+   * has its one folder, so it has nothing to name. The element is created
+   * beside the logo at runtime, which leaves that parity alone.
+   */
+  /**
+   * Held rather than looked up: it carries no id, because check-web requires
+   * every id the code reaches for to exist in index.html, and this element
+   * deliberately does not — it is built at runtime precisely so the shared
+   * markup stays untouched.
+   * @type {any}
+   */
+  let chromeProjectEl = null;
+
+  /** @type {any} */
+  let skeletonEl = null;
+
+  /**
+   * Grey placeholder lines in the transcript while a workspace is coming up.
+   * Built at runtime and appended to #messages, which the renderer clears
+   * with its own clearMessages when the real transcript arrives — so the
+   * placeholder is gone the moment there is something to show instead.
+   * @param {boolean} on
+   */
+  function paintSkeleton(on) {
+    const messages = document.getElementById("messages");
+    if (!messages || !messages.appendChild) {
+      return;
+    }
+    const attached = Boolean(skeletonEl && skeletonEl.parentNode === messages);
+    if (!on) {
+      if (attached && messages.removeChild) {
+        messages.removeChild(skeletonEl);
+      }
+      return;
+    }
+    if (attached) {
+      return;
+    }
+    // Only into an empty transcript: a project switched to while another was
+    // on screen paints over that one's history, not under it.
+    if (messages.childNodes && messages.childNodes.length > 0) {
+      return;
+    }
+    skeletonEl = document.createElement("div");
+    skeletonEl.className = "skel";
+    skeletonEl.setAttribute("aria-hidden", "true");
+    // Two exchanges' worth of lines: a short one on the right, a longer run
+    // on the left. Widths vary so it reads as text, not as bars.
+    const rows = [
+      ["skel-row skel-user", "34%"],
+      ["skel-row", "72%"],
+      ["skel-row", "58%"],
+      ["skel-row", "66%"],
+      ["skel-row skel-user", "22%"],
+      ["skel-row", "80%"],
+      ["skel-row", "47%"],
+    ];
+    for (const [cls, width] of rows) {
+      const row = document.createElement("div");
+      row.className = cls;
+      if (row.style && row.style.setProperty) {
+        row.style.setProperty("--w", width);
+      }
+      skeletonEl.appendChild(row);
+    }
+    messages.appendChild(skeletonEl);
+  }
+
+  function paintChromeProject() {
+    const brand = document.getElementById("chrome-brand");
+    if (!brand || !brand.appendChild) {
+      return;
+    }
+    if (!chromeProjectEl) {
+      chromeProjectEl = document.createElement("span");
+      chromeProjectEl.className = "chrome-project";
+      brand.appendChild(chromeProjectEl);
+    }
+    const label = chromeProjectEl;
+    // The one on screen; failing that, the one on its way, so the name is up
+    // before the core is.
+    const entry =
+      known.find((p) => p.id === currentProjectId) ||
+      known.find((p) => pendingOpenId && p.id === pendingOpenId) ||
+      known.find((p) => pendingOpenPath && p.path === pendingOpenPath);
+    // textContent: a folder name off disk.
+    label.textContent = (entry && (entry.name || entry.path)) || "";
+    label.title = (entry && entry.path) || "";
+    label.hidden = !label.textContent;
+    if (brand.removeAttribute && label.textContent) {
+      // The brand block was decoration while it held only the logo; it names
+      // the workspace now, so it stops being hidden from a screen reader.
+      brand.removeAttribute("aria-hidden");
+    }
+  }
+
+  /** The workspace whose core is starting, so its row can say so. */
+  let railOpeningId = "";
+
+  /** @param {string} projectId "" clears it. */
+  function markRailOpening(projectId) {
+    railOpeningId = projectId || "";
+    renderProjects();
   }
 
   /**
@@ -6653,7 +7474,9 @@
       // closed current workspace is opened here.
       const entry = known.find((p) => p.id === id);
       if (entry && entry.state === "closed") {
-        const opened = await openProject(entry.path, false);
+        markRailOpening(id);
+        const opened = await openProject(entry.path, true);
+        markRailOpening("");
         if (!opened) {
           return;
         }
@@ -6854,6 +7677,45 @@
   }
 
   /**
+   * The button that throws a chat away. It asks twice — the first click arms
+   * it for a few seconds — because there is no undo: the core removes the
+   * snapshot and the event log from disk.
+   * @param {string} projectId @param {string} sessionId
+   */
+  function railDeleteButton(projectId, sessionId) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rail-session-del";
+    btn.dataset.projectId = projectId;
+    btn.dataset.sessionId = sessionId;
+    btn.title = "Delete this chat";
+    btn.setAttribute("aria-label", "Delete this chat");
+    btn.textContent = "×";
+    let armed = 0;
+    btn.addEventListener("click", (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      if (e && e.preventDefault) e.preventDefault();
+      if (!armed) {
+        armed = 1;
+        btn.classList.add("armed");
+        btn.textContent = "Delete?";
+        btn.title = "Click again to delete this chat for good";
+        setTimeout(() => {
+          if (!armed) return;
+          armed = 0;
+          btn.classList.remove("armed");
+          btn.textContent = "×";
+          btn.title = "Delete this chat";
+        }, 4000);
+        return;
+      }
+      armed = 0;
+      void deleteSession(projectId, sessionId);
+    });
+    return btn;
+  }
+
+  /**
    * The workspaces heading, which always carries the add button — including
    * when there is nothing under it yet, which is exactly when a new user
    * needs it.
@@ -6868,6 +7730,89 @@
     sec.appendChild(text);
     sec.appendChild(railAddButton("add-project", "Add a workspace folder"));
     return sec;
+  }
+
+  /**
+   * The box above a workspace's chats. It searches their text, not their
+   * titles: the core reads the saved messages, so "that thing about the
+   * circuit breaker" finds the chat even when its title says nothing.
+   * @param {string} projectId @returns {HTMLElement}
+   */
+  function railSessionSearchBox(projectId) {
+    const box = document.createElement("input");
+    box.type = "search";
+    box.className = "rail-session-search";
+    box.placeholder = "Search chats";
+    box.setAttribute("aria-label", "Search this workspace's chats");
+    if (sessionSearch.projectId === projectId) {
+      box.value = sessionSearch.query;
+    }
+    let debounce = 0;
+    box.addEventListener("input", () => {
+      const q = String(box.value || "");
+      if (debounce) {
+        clearTimeout(debounce);
+      }
+      // Each keystroke is a file walk across every saved session, so let the
+      // typing settle first.
+      debounce = setTimeout(() => {
+        void showSessionSearch(q);
+      }, 200);
+    });
+    box.addEventListener("keydown", (e) => {
+      if (e && e.key === "Escape") {
+        box.value = "";
+        void showSessionSearch("");
+      }
+    });
+    return box;
+  }
+
+  /**
+   * The search results, drawn as ordinary chat rows so the rail's existing
+   * click handler opens them, with the matching line underneath.
+   * @param {HTMLElement} container @param {string} projectId @param {string} openSessionId
+   */
+  function renderSessionHits(container, projectId, openSessionId) {
+    const hits = sessionSearch.hits || [];
+    if (hits.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "rail-sessions-empty";
+      empty.textContent = `No chat mentions “${sessionSearch.query}”`;
+      container.appendChild(empty);
+      return;
+    }
+    for (const h of hits) {
+      const sessionId = String((h && h.session_id) || "");
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "rail-session";
+      item.dataset.projectId = projectId;
+      item.dataset.sessionId = sessionId;
+      item.dataset.active = sessionId === openSessionId ? "true" : "false";
+      const title = document.createElement("span");
+      title.className = "rail-session-title";
+      title.textContent = String((h && h.title) || "") || sessionId || "untitled";
+      const age = document.createElement("span");
+      age.className = "rail-session-time";
+      age.textContent = sessionAge({ id: sessionId, updated_at: h && h.updated_at });
+      item.appendChild(title);
+      item.appendChild(age);
+      const snippet = String((h && h.snippet) || "").trim();
+      if (snippet) {
+        const line = document.createElement("span");
+        line.className = "rail-session-snippet";
+        // textContent: a snippet is the user's or the model's own words.
+        line.textContent = snippet;
+        item.appendChild(line);
+        item.title = snippet;
+      }
+      const rowEl = document.createElement("div");
+      rowEl.className = "rail-session-row";
+      rowEl.appendChild(item);
+      rowEl.appendChild(railDeleteButton(projectId, sessionId));
+      container.appendChild(rowEl);
+    }
   }
 
   /**
@@ -6891,6 +7836,12 @@
       };
     });
     toRenderer({ type: "projectList", projects: rows });
+    // Before the early return below: the editor's webview has neither a rail
+    // nor a start screen, and syncStartScreen is a no-op there, but the web
+    // host must not skip it just because the rail is missing.
+    syncStartScreen();
+
+    paintChromeProject();
 
     const list = document.getElementById("project-rail-list");
     if (!list) {
@@ -6934,6 +7885,9 @@
       chip.dataset.active = row.active ? "true" : "false";
       chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
       chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
+      if (railOpeningId && row.id === railOpeningId) {
+        chip.dataset.opening = "true";
+      }
       chip.setAttribute("aria-expanded", collapsed ? "false" : "true");
 
       // Drawn in CSS: an inline SVG here would need createElementNS, which the
@@ -6982,6 +7936,19 @@
       sessions.className = "project-sessions";
       const listed = sessionsByProject.get(row.id) || [];
       const openSessionId = (peekProjectState(row.id) || {}).sessionId || "";
+
+      // Searching replaces the list rather than sitting beside it: the whole
+      // point is to narrow a hundred chats to the three that mention a thing.
+      const searching = row.active && sessionSearch.projectId === row.id && sessionSearch.hits !== null;
+      if (row.active) {
+        sessions.appendChild(railSessionSearchBox(row.id));
+      }
+      if (searching) {
+        renderSessionHits(sessions, row.id, openSessionId);
+        group.appendChild(sessions);
+        list.appendChild(group);
+        continue;
+      }
       // session.list only returns sessions that have been written to disk, and
       // a session is written by its first message — so the session the user is
       // looking at is missing from the list until they say something. Showing
@@ -7028,7 +7995,13 @@
         age.textContent = sessionAge(s);
         item.appendChild(title);
         item.appendChild(age);
-        sessions.appendChild(item);
+        // A button cannot nest in a button, so the row is a pair: the chat
+        // itself, and the one that throws it away.
+        const rowEl = document.createElement("div");
+        rowEl.className = "rail-session-row";
+        rowEl.appendChild(item);
+        rowEl.appendChild(railDeleteButton(row.id, s.id || ""));
+        sessions.appendChild(rowEl);
       }
       group.appendChild(sessions);
       list.appendChild(group);
@@ -7125,6 +8098,81 @@
       void startSession(undefined);
     }
     pushSessionTabs();
+  }
+
+  /**
+   * Delete a chat for good: the core removes its snapshot and its event log
+   * (session.close, which cancels a running turn first). Closing a tab only
+   * hides it from the strip — this is the one that throws the chat away, so
+   * the rail's button asks twice before calling it.
+   *
+   * The chat on screen can be deleted too; a workspace is never left without
+   * one, so a fresh session takes its place.
+   * @param {string} projectId @param {string} sessionId
+   */
+  async function deleteSession(projectId, sessionId) {
+    if (!projectId || !sessionId) {
+      return;
+    }
+    const conn = connFor(projectId);
+    if (!conn || !conn.isOpen()) {
+      toRenderer({ type: "error", message: "The workspace is not open, so its chats cannot be deleted." });
+      return;
+    }
+    try {
+      await conn.send("session.close", { session_id: sessionId });
+    } catch (err) {
+      toRenderer({
+        type: "error",
+        message: "Could not delete the chat: " + String((err && err.message) || err),
+      });
+      return;
+    }
+    // Off the strip and out of the cached list before anything is read back,
+    // so the row goes away on the click rather than on the next poll.
+    hiddenTabsFor(projectId).delete(sessionId);
+    noteSessionList(
+      projectId,
+      (sessionsByProject.get(projectId) || []).filter((s) => s && s.id !== sessionId)
+    );
+    const st = projectState(projectId);
+    if (st.sessionId === sessionId) {
+      st.sessionId = "";
+      if (projectId === currentProjectId) {
+        const next = visibleTabs()[0];
+        if (next) {
+          await openSessionRow(projectId, next.id);
+        } else {
+          await startSession(undefined);
+        }
+      }
+    }
+    pushSessionTabs();
+    void refreshSessionList(projectId);
+  }
+
+  /**
+   * Put this workspace's chats in front of the user. On the web that is the
+   * sidebar — the header's "all sessions" button is hidden here, because the
+   * rail is where the list lives — so unfold the rail, open the workspace's
+   * group and scroll to the chat on screen. Answers false where there is no
+   * rail (the editor's webview), so the caller can fall back to the button.
+   */
+  function revealSessionList() {
+    const list = document.getElementById("project-rail-list");
+    if (!list || !currentProjectId) {
+      return false;
+    }
+    if (railCollapsed()) {
+      applyRail(0, false);
+    }
+    collapsedProjects.delete(currentProjectId);
+    renderProjects();
+    const active = list.querySelector ? list.querySelector('.rail-session[data-active="true"]') : null;
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({ block: "nearest" });
+    }
+    return true;
   }
 
   // ---- input -------------------------------------------------------------
@@ -7334,6 +8382,189 @@
     }
   }
 
+  // ---- the sidebar's width ------------------------------------------------
+  //
+  // Dragging its edge sets the width; clicking the edge folds the sidebar away
+  // and back. Both are remembered, because a width you have to set again on
+  // every launch is not a width you have set.
+
+  /** Narrower than this and a workspace name has nowhere to go. */
+  const RAIL_MIN = 200;
+  /** Wider than this and the sidebar is competing with the transcript. */
+  const RAIL_MAX = 520;
+  /** Dragged below this, the sidebar folds rather than becoming unusable. */
+  const RAIL_FOLD_AT = 150;
+
+  const railColumn = document.getElementById("project-rail");
+  const railResizer = document.getElementById("rail-resizer");
+
+  /** @param {number} px */
+  function clampRailWidth(px) {
+    return Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(px)));
+  }
+
+  /** @returns {{width: number, collapsed: boolean}} */
+  function savedRail() {
+    let width = 0;
+    let collapsed = false;
+    try {
+      if (window.localStorage) {
+        width = parseInt(window.localStorage.getItem("orchestra.railWidth") || "", 10);
+        collapsed = window.localStorage.getItem("orchestra.railCollapsed") === "1";
+      }
+    } catch (e) {
+      // A locked-down browser just gets the default.
+    }
+    return { width: isFinite(width) && width > 0 ? clampRailWidth(width) : 0, collapsed };
+  }
+
+  /**
+   * @param {number} width 0 keeps whatever width is set — pass one only when
+   *   changing it, so folding and unfolding never lose the dragged size.
+   * @param {boolean} collapsed
+   */
+  function applyRail(width, collapsed) {
+    const root = document.documentElement;
+    if (width && root && root.style && root.style.setProperty) {
+      root.style.setProperty("--rail-w", width + "px");
+    }
+    if (railColumn) {
+      railColumn.dataset.collapsed = collapsed ? "true" : "false";
+    }
+    if (railResizer) {
+      railResizer.dataset.collapsed = collapsed ? "true" : "false";
+      if (railResizer.setAttribute) {
+        railResizer.setAttribute("aria-label", collapsed ? "Show sidebar" : "Sidebar width");
+      }
+    }
+    try {
+      if (window.localStorage) {
+        if (width) {
+          window.localStorage.setItem("orchestra.railWidth", String(width));
+        }
+        window.localStorage.setItem("orchestra.railCollapsed", collapsed ? "1" : "0");
+      }
+    } catch (e) {
+      // Same: the click still takes effect for this session.
+    }
+  }
+
+  function railCollapsed() {
+    return Boolean(railColumn && railColumn.dataset && railColumn.dataset.collapsed === "true");
+  }
+
+  /** The width the sidebar has right now, dragged or default. */
+  function railWidthNow() {
+    if (railColumn && railColumn.getBoundingClientRect) {
+      const w = railColumn.getBoundingClientRect().width;
+      if (w > 1) {
+        return clampRailWidth(w);
+      }
+    }
+    return savedRail().width || 296;
+  }
+
+  {
+    const start = savedRail();
+    applyRail(start.width, start.collapsed);
+  }
+
+  if (railResizer && railResizer.addEventListener && railColumn) {
+    let dragging = false;
+    let moved = false;
+    let originLeft = 0;
+    let startX = 0;
+
+    const endDrag = () => {
+      if (!dragging) {
+        return;
+      }
+      dragging = false;
+      railResizer.dataset.dragging = "false";
+      if (document.body && document.body.dataset) {
+        document.body.dataset.railDrag = "false";
+      }
+      // A press that never moved is a click, and a click folds. Doing this on
+      // pointerup rather than on "click" keeps the two gestures from both
+      // firing off one press.
+      if (!moved) {
+        applyRail(0, !railCollapsed());
+      }
+    };
+
+    railResizer.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== undefined && ev.button !== 0) {
+        return;
+      }
+      dragging = true;
+      moved = false;
+      const box = railColumn.getBoundingClientRect ? railColumn.getBoundingClientRect() : null;
+      originLeft = box ? box.left : 0;
+      startX = ev.clientX;
+      railResizer.dataset.dragging = "true";
+      if (document.body && document.body.dataset) {
+        document.body.dataset.railDrag = "true";
+      }
+      if (railResizer.setPointerCapture && ev.pointerId !== undefined) {
+        // Capture, or the drag dies the moment the pointer crosses into the
+        // transcript — which is where every useful drag goes.
+        try {
+          railResizer.setPointerCapture(ev.pointerId);
+        } catch (e) {
+          // Not fatal: the listeners below still fire while the button is down.
+        }
+      }
+      if (ev.preventDefault) {
+        ev.preventDefault();
+      }
+    });
+
+    railResizer.addEventListener("pointermove", (ev) => {
+      if (!dragging) {
+        return;
+      }
+      const want = ev.clientX - originLeft;
+      // Measured against where the press landed, not against the current
+      // width: folded, the pointer starts a whole sidebar away from the width
+      // it would set, and any jitter would then read as a drag and swallow
+      // the click that was meant to unfold it.
+      if (Math.abs(ev.clientX - startX) > 3) {
+        moved = true;
+      }
+      if (!moved) {
+        return;
+      }
+      if (want < RAIL_FOLD_AT) {
+        // Dragged shut. The width is left alone, so letting go and clicking
+        // the edge again brings back the size that was there before.
+        applyRail(0, true);
+        return;
+      }
+      applyRail(clampRailWidth(want), false);
+    });
+
+    railResizer.addEventListener("pointerup", endDrag);
+    railResizer.addEventListener("pointercancel", endDrag);
+
+    // The same two gestures from the keyboard, since the handle is focusable.
+    railResizer.addEventListener("keydown", (ev) => {
+      const key = ev.key;
+      if (key === "Enter" || key === " " || key === "Spacebar") {
+        applyRail(0, !railCollapsed());
+      } else if (key === "ArrowLeft") {
+        const next = railWidthNow() - 24;
+        applyRail(next < RAIL_FOLD_AT ? 0 : clampRailWidth(next), next < RAIL_FOLD_AT);
+      } else if (key === "ArrowRight") {
+        applyRail(clampRailWidth(railWidthNow() + 24), false);
+      } else {
+        return;
+      }
+      if (ev.preventDefault) {
+        ev.preventDefault();
+      }
+    });
+  }
+
   const railSettingsBtn = document.getElementById("rail-settings-btn");
   const railSettingsModal = document.getElementById("rail-settings-modal");
   const railSettingsCloseBtn = document.getElementById("rail-settings-close");
@@ -7423,18 +8654,122 @@
   // you meant; a plain `orchestra web` opens the folder it was run in and
   // never sees this, unless every project is closed from the sidebar.
 
-  /** @param {boolean} on */
-  function showStartScreen(on) {
+  /**
+   * The start screen is a view of state, not a place the code navigates to:
+   * it is up exactly while no workspace is on screen. It used to be switched
+   * by hand at each place that opened something, and the places that opened
+   * something without going through the screen were missed — clicking a
+   * workspace in the sidebar left the start screen covering the chat of a
+   * project that was open, selected and listing its sessions. So it is
+   * derived here instead, from the one project the window is showing, and
+   * renderProjects calls it; every path that changes what is open already
+   * ends there.
+   */
+  /** How long the start screen takes to fade; matches rail.css. */
+  const FADE_MS = 280;
+
+  /**
+   * Run the arrival animation on one element once. The attribute is what the
+   * keyframes hang off, and it has to come off again or the animation never
+   * replays on the next switch.
+   * @param {any} el
+   */
+  function enterAnimation(el) {
+    if (!el || !el.dataset || !window.setTimeout) {
+      return;
+    }
+    el.dataset.entering = "true";
+    window.setTimeout(() => {
+      el.dataset.entering = "false";
+    }, 760);
+  }
+
+  function syncStartScreen() {
     const screen = document.getElementById("start-screen");
     const app = document.getElementById("app");
     if (!screen || !app) {
       return;
     }
-    screen.hidden = !on;
-    app.hidden = on;
-    if (on) {
+    const ready =
+      Boolean(currentProjectId) &&
+      known.some((p) => p.id === currentProjectId && p.state === "ready");
+    const open = ready || pendingOpen();
+    const wasOpen = !app.hidden;
+    app.hidden = !open;
+    // Loading until the project is live, not merely open: the core can be up
+    // with its socket still connecting, and the composer must not take a
+    // message it has nowhere to send.
+    const loading = open && (!ready || pendingOpen());
+    if (app.dataset) {
+      app.dataset.loading = loading ? "true" : "false";
+    }
+    paintSkeleton(loading);
+    if (open && !wasOpen) {
+      // Leaving the start screen: it fades out over the project rather than
+      // being switched off under it, and the project rises into place. Both
+      // halves are CSS; this only marks which is which and clears up after.
+      enterAnimation(app);
+      enterAnimation(document.getElementById("project-rail"));
+      if (!screen.hidden && screen.dataset) {
+        screen.dataset.leaving = "true";
+        if (window.setTimeout) {
+          window.setTimeout(() => {
+            screen.hidden = true;
+            screen.dataset.leaving = "false";
+          }, FADE_MS);
+        } else {
+          screen.hidden = true;
+        }
+      }
+    } else {
+      if (screen.dataset) {
+        screen.dataset.leaving = "false";
+      }
+      screen.hidden = open;
+    }
+    // The sidebar goes with the chat. It is a sibling of #app rather than a
+    // child, so hiding the chat alone left a column of workspaces down the
+    // edge of a screen whose whole subject is which workspace to open — the
+    // same list twice, one of them unreadable as a launcher. With nothing
+    // open the start screen takes the window.
+    const rail = document.getElementById("project-rail");
+    if (rail) {
+      rail.hidden = !open;
+    }
+    const edge = document.getElementById("rail-resizer");
+    if (edge) {
+      edge.hidden = !open;
+    }
+    if (!open) {
       renderStartScreen();
     }
+  }
+
+  /**
+   * Say that a workspace is opening, and stop the screen taking another
+   * click while it is. "" ends it. The id, when given, is the row that was
+   * clicked: it keeps its contrast and spins, so it is clear which workspace
+   * is coming while the rest of the list steps back.
+   * @param {string} message @param {string} [projectId]
+   */
+  function startBusy(message, projectId) {
+    // Kept rather than only written to the row, because opening a workspace
+    // refreshes the list and rebuilds every row: renderStartScreen reads this
+    // back, so the spinner survives its own progress.
+    busyProjectId = message ? projectId || "" : "";
+    const card = document.querySelector ? document.querySelector(".start-card") : null;
+    const line = document.getElementById("start-busy");
+    const text = document.getElementById("start-busy-text");
+    if (card) {
+      card.dataset.busy = message ? "true" : "false";
+    }
+    if (text) {
+      text.textContent = message || "";
+    }
+    if (line) {
+      line.hidden = !message;
+    }
+    renderStartScreen();
   }
 
   /** @param {string} message "" clears it. */
@@ -7445,6 +8780,40 @@
     }
     el.textContent = message || "";
     el.hidden = !message;
+  }
+
+  /** The workspace currently opening, if the start screen is waiting on one. */
+  let busyProjectId = "";
+
+  /**
+   * The workspace the window has left the start screen for, but which is not
+   * live yet — its core starting, its socket not open. Either the id (a row
+   * on the start screen) or only the path (a folder just picked). While one
+   * is set the chat is on screen in its loading state, and syncStartScreen
+   * treats it as open: the start screen leaves at the click, not when the
+   * core finally answers, and the wait is spent looking at the project's own
+   * frame filling in rather than at a dimmed launcher.
+   */
+  let pendingOpenId = "";
+  let pendingOpenPath = "";
+
+  function pendingOpen() {
+    return Boolean(pendingOpenId || pendingOpenPath);
+  }
+
+  /**
+   * The project's socket is up and its session started — or failed, which
+   * ends the wait just the same. Called from the connection callbacks in
+   * 10-adapter-session.js.
+   * @param {string} projectId
+   */
+  function noteProjectLive(projectId) {
+    if (!pendingOpen() || projectId !== currentProjectId) {
+      return;
+    }
+    pendingOpenId = "";
+    pendingOpenPath = "";
+    renderProjects();
   }
 
   function renderStartScreen() {
@@ -7469,6 +8838,9 @@
       item.title = p.path || "";
       if (p.missing) {
         item.dataset.missing = "true";
+      }
+      if (busyProjectId && p.id === busyProjectId) {
+        item.dataset.busy = "true";
       }
 
       const name = document.createElement("span");
@@ -7501,11 +8873,35 @@
    * stays on the screen with the reason, because there is nowhere else to go.
    * @param {string} path
    */
-  async function openFromStart(path) {
+  async function openFromStart(path, projectId) {
     startError("");
     if (!path) {
       return;
     }
+    const entry = known.find((p) => p.path === path);
+    startBusy("Opening " + ((entry && entry.name) || path) + "…", projectId || "");
+    pendingOpenId = projectId || "";
+    pendingOpenPath = path;
+    renderProjects();
+    try {
+      await openAndEnter(path);
+    } finally {
+      startBusy("");
+      const now = known.find((p) => p.path === path);
+      if (!now || currentProjectId !== now.id) {
+        // It did not get there. The start screen is still the place, and
+        // it has to be usable again — with the reason, which openAndEnter
+        // has already written into it.
+        pendingOpenId = "";
+        pendingOpenPath = "";
+        renderProjects();
+      }
+      // Otherwise the wait ends when the socket is live: noteProjectLive.
+    }
+  }
+
+  /** @param {string} path */
+  async function openAndEnter(path) {
     // init: true, and nothing is asked. Picking a folder to work in IS the
     // consent to set it up — `orchestra web --init` has always treated a
     // folder chosen in a dialog exactly this way — and the only question
@@ -7535,8 +8931,8 @@
       return;
     }
     await switchProject(entry.id);
-    if (currentProjectId === entry.id) {
-      showStartScreen(false);
+    if (currentProjectId !== entry.id) {
+      startError("Opened " + path + ", but could not switch to it.");
     }
   }
 
@@ -7576,6 +8972,7 @@
       go.disabled = true;
       go.textContent = "Cloning…";
     }
+    startBusy("Cloning " + url + "…", "");
     try {
       const created = await api("/api/projects/clone", {
         method: "POST",
@@ -7584,13 +8981,11 @@
       await refreshProjects();
       if (created && created.id) {
         await switchProject(created.id);
-        showStartScreen(false);
-        return;
       }
-      renderStartScreen();
     } catch (e) {
       startError(String((e && e.message) || e));
     } finally {
+      startBusy("");
       if (go) {
         go.disabled = false;
         go.textContent = "Clone";
@@ -7607,8 +9002,6 @@
           startError("");
           void (async () => {
             await forgetProject(drop.dataset.forgetId || "");
-            await refreshProjects();
-            renderStartScreen();
           })();
           return;
         }
@@ -7634,7 +9027,7 @@
           }
           return;
         }
-        void openFromStart(item.dataset.path || "");
+        void openFromStart(item.dataset.path || "", item.dataset.projectId || "");
       });
     }
     const openBtn = document.getElementById("start-open-btn");
@@ -7642,10 +9035,11 @@
       openBtn.addEventListener("click", () => {
         void (async () => {
           startError("");
-          const opened = await addProject();
-          if (opened) {
-            await enterProject(opened);
+          const picked = await pickProjectFolder();
+          if (!picked) {
+            return;
           }
+          await openFromStart(picked, "");
         })();
       });
     }
@@ -7683,7 +9077,14 @@
     }
   }
 
-  async function addProject() {
+  /**
+   * Ask for a folder and return it, or "" if the person backed out. Separate
+   * from opening it because the start screen has to name the folder in its
+   * "opening…" line before the open starts, and the dialog is the only place
+   * the name comes from.
+   * @returns {Promise<string>}
+   */
+  async function pickProjectFolder() {
     let path = "";
     const t = window.__TAURI__;
     if (t && t.dialog && t.dialog.open) {
@@ -7696,7 +9097,11 @@
     } else if (window.prompt) {
       path = window.prompt("Project folder (absolute path)") || "";
     }
-    path = String(path || "").trim();
+    return String(path || "").trim();
+  }
+
+  async function addProject() {
+    const path = await pickProjectFolder();
     if (!path) {
       return "";
     }
@@ -7743,13 +9148,11 @@
       // is opened for a project that does not exist.
       currentProjectId = "";
       renderProjects();
-      showStartScreen(true);
       return;
     }
     currentProjectId = first.id;
     setActiveConn(ensureConn(currentProjectId));
     renderProjects();
-    showStartScreen(false);
   })();
   // The settings panel's host half, on the web.
   //
@@ -7780,13 +9183,26 @@
     }
   }
 
+  /**
+   * What the panel says while there is nothing to read from yet. The gear is
+   * reachable the moment a workspace is chosen, before its core is up; the
+   * settings follow once it is — onConnected pushes them (see
+   * settingsPanelOpen) — and the panel says so instead of "no project".
+   */
+  const SETTINGS_OPENING_NOTE = "The workspace is still opening — its settings will load as soon as it is ready.";
+
   /** @param {string} method @param {any} params @returns {Promise<any>} */
   function settingsRpc(method, params) {
     const conn = currentProjectId ? connFor(currentProjectId) : null;
-    if (!conn) {
-      return Promise.reject(new Error("no project is open"));
+    if (!conn || !conn.isOpen()) {
+      return Promise.reject(new Error(pendingOpen() || currentProjectId ? SETTINGS_OPENING_NOTE : "no project is open"));
     }
     return conn.send(method, params || {});
+  }
+
+  /** Whether the settings dialog is on screen. */
+  function settingsPanelOpen() {
+    return Boolean(railSettingsModal) && railSettingsModal.hidden === false;
   }
 
   const num = (v) => (typeof v === "number" ? v : 0);
@@ -8014,12 +9430,48 @@
   /** The section to open on the next push; the panel navigates to it once. */
   let settingsPendingSection = "general";
 
+  /**
+   * Counts pushes. An answer that arrives for an earlier push is dropped when
+   * a later one has started since: the frame is loaded once and repainted on
+   * every open, so by the time a slow read comes back the panel can be
+   * showing another project, and the answer is about this one.
+   */
+  let settingsPushSeq = 0;
+
+  function settingsProjectEntry() {
+    return known.find((p) => p.id === currentProjectId) || null;
+  }
+
   function settingsWorkspaceRoot() {
-    const entry = known.find((p) => p.id === currentProjectId);
+    const entry = settingsProjectEntry();
     return (entry && entry.path) || "";
   }
 
+  /**
+   * Which workspace this is. Everything on these screens is written to that
+   * workspace's own .orchestra.yml — provider, models, roles, index, MCP
+   * servers, agents are per workspace, not shared — so the panel has to say
+   * which one it is editing, or the separation is invisible.
+   *
+   * Sent before any read, not after all of them: the name is in the project
+   * list already. It used to follow the state, and the frame keeps whatever
+   * it showed last until told otherwise — so for as long as a slow read held
+   * the state back, the panel kept the previous project's name over this
+   * project's settings, and looked like it had not noticed the switch.
+   */
+  function postSettingsWorkspace() {
+    const entry = settingsProjectEntry();
+    postToSettings({
+      type: "workspace",
+      name: (entry && entry.name) || "",
+      path: (entry && entry.path) || "",
+    });
+  }
+
   async function pushSettingsState() {
+    const seq = ++settingsPushSeq;
+    const projectId = currentProjectId;
+    postSettingsWorkspace();
     try {
       const [llm, prompt, agents, mcp, index, skills, providerCatalog, orchestra, catalogFile] =
         await Promise.all([
@@ -8029,23 +9481,23 @@
           listMCP(),
           getIndexStatus(),
           listSkills(),
-          listProviders({ probe: true, includeSecrets: true }),
+          // Without probe: the catalogue as the config has it, answered at
+          // once. The models come in a second message, from
+          // probeSettingsProviders below. Probing asks every configured
+          // provider's server for its models, and one on a host that is down
+          // — a VPN that is not up — holds the answer for as long as the HTTP
+          // timeouts allow; the whole panel used to wait on it, showing
+          // nothing new for half a minute.
+          listProviders({ includeSecrets: true }),
           getOrchestra().catch(() => null),
           ensureMcpCatalogFile(),
         ]);
+      if (seq !== settingsPushSeq || projectId !== currentProjectId) {
+        return; // the panel has moved on to another project
+      }
       const ws = settingsWorkspaceRoot();
       const navigateSection = settingsPendingSection;
       settingsPendingSection = "";
-      // Which workspace this is. Everything on these screens is written to
-      // that workspace's own .orchestra.yml — provider, models, roles, index,
-      // MCP servers, agents are per workspace, not shared — so the panel has
-      // to say which one it is editing, or the separation is invisible.
-      const openProjectEntry = known.find((p) => p.id === currentProjectId);
-      postToSettings({
-        type: "workspace",
-        name: (openProjectEntry && openProjectEntry.name) || "",
-        path: (openProjectEntry && openProjectEntry.path) || ws,
-      });
       postToSettings({
         type: "state",
         llm,
@@ -8068,8 +9520,39 @@
           source: "local",
         },
       });
+      void probeSettingsProviders(seq, projectId);
     } catch (err) {
+      if (seq !== settingsPushSeq || projectId !== currentProjectId) {
+        return;
+      }
       postToSettings({ type: "error", message: String((err && err.message) || err) });
+    }
+  }
+
+  /**
+   * The second half of a push: the catalogue with each provider's models,
+   * which means asking their servers. It arrives in the same providerCatalog
+   * message the Refresh button's answer does, so the panel takes it the same
+   * way — the selection kept, the model list filled in. Until then the models
+   * pane says it is loading rather than that nothing came back.
+   * @param {number} seq @param {string} projectId
+   */
+  async function probeSettingsProviders(seq, projectId) {
+    const current = () => seq === settingsPushSeq && projectId === currentProjectId;
+    postToSettings({ type: "modelsBusy", busy: true, message: "Loading models…" });
+    try {
+      const catalog = await listProviders({ probe: true, includeSecrets: true });
+      if (current()) {
+        postToSettings({ type: "providerCatalog", catalog });
+      }
+    } catch (err) {
+      if (current()) {
+        settingsNote("Could not load models: " + String((err && err.message) || err));
+      }
+    } finally {
+      if (current()) {
+        postToSettings({ type: "modelsBusy", busy: false });
+      }
     }
   }
 
@@ -8234,6 +9717,9 @@
             ? "Provider credentials saved — pick a model and save again to activate"
             : "Model settings saved"
         );
+        // The chat's own pill and context gauge show the model too; a change
+        // made here has to reach them, or they name the model that was.
+        void pushLLMInfo(currentProjectId);
         await pushSettingsState();
         return;
       }
@@ -8481,6 +9967,10 @@
         void rewindToMessage(msg.uiIndex);
         return true;
 
+      case "forkFromMessage":
+        void forkFromMessage(msg.uiIndex);
+        return true;
+
       case "applyPending":
         void settlePending(true);
         return true;
@@ -8500,9 +9990,195 @@
         // screen.
         return true;
 
+      case "attach":
+        void pickAttachments();
+        return true;
+
+      case "attachBytes":
+        void storeAttachmentBytes(msg);
+        return true;
+
       default:
         return false;
     }
+  }
+
+  /* ---- attachments -------------------------------------------------------- */
+  //
+  // The paperclip posts "attach"; dropping or pasting a file posts
+  // "attachBytes" with its contents. The editor's host answers the first
+  // with the editor's file dialog and the second by writing the bytes into
+  // the workspace itself (ui/vscode/src/chat/panel.ts). This host has neither
+  // a dialog of its own nor a filesystem: the desktop shell lends it a native
+  // picker (Tauri's dialog plugin), a browser has <input type=file>, and the
+  // bytes go to the core — attachments.store keeps them under
+  // .orchestra/attachments, inside the workspace, where a turn can read them.
+
+  const IMAGE_ATTACHMENT_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg"]);
+  /** An image this small travels as a data: URL so the chip can show it. */
+  const ATTACHMENT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+
+  /** @param {string} ext */
+  function attachmentKind(ext) {
+    return IMAGE_ATTACHMENT_EXTS.has(String(ext || "").toLowerCase()) ? "image" : "file";
+  }
+
+  /** The renderer's file chip for a path on disk. @param {string} p */
+  function attachmentRefFromPath(p) {
+    const norm = String(p || "").replace(/\\/g, "/");
+    const name = norm.slice(norm.lastIndexOf("/") + 1) || norm;
+    const dot = name.lastIndexOf(".");
+    const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+    return { name, path: p, ext: ext || undefined, kind: attachmentKind(ext) };
+  }
+
+  /**
+   * Whether p lies inside root. Paths from the desktop's picker are absolute
+   * and spelled as the OS spells them; both sides are folded to forward
+   * slashes and, when a drive letter says this is Windows, to one case.
+   * @param {string} root @param {string} p
+   */
+  function pathInsideWorkspace(root, p) {
+    let r = String(root || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    let q = String(p || "").replace(/\\/g, "/");
+    if (!r || !q) {
+      return false;
+    }
+    if (/^[a-z]:/i.test(r)) {
+      r = r.toLowerCase();
+      q = q.toLowerCase();
+    }
+    return q === r || q.startsWith(r + "/");
+  }
+
+  function workspaceRootNow() {
+    return currentProjectId ? projectState(currentProjectId).workspaceRoot || "" : "";
+  }
+
+  async function pickAttachments() {
+    if (!composerConn()) {
+      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      return;
+    }
+    const t = window.__TAURI__;
+    if (t && t.dialog && t.dialog.open) {
+      let picked;
+      try {
+        picked = await t.dialog.open({
+          multiple: true,
+          directory: false,
+          title: "Attach files",
+          defaultPath: workspaceRootNow() || undefined,
+        });
+      } catch (err) {
+        toRenderer({ type: "systemNote", text: `[error] attach: ${String((err && err.message) || err)}` });
+        return;
+      }
+      const paths = (Array.isArray(picked) ? picked : picked ? [picked] : [])
+        .map((p) => String(p || ""))
+        .filter(Boolean);
+      if (!paths.length) {
+        return; // cancelled
+      }
+      // A file inside the workspace is attached where it is — the agent then
+      // reads and edits the real file, not a copy. One outside it cannot be
+      // read from here: the shell grants this page a picker, not the disk.
+      const root = workspaceRootNow();
+      const inside = paths.filter((p) => pathInsideWorkspace(root, p));
+      const outside = paths.filter((p) => !pathInsideWorkspace(root, p));
+      if (inside.length) {
+        toRenderer({ type: "filesPicked", files: inside.map(attachmentRefFromPath) });
+      }
+      if (outside.length) {
+        const names = outside.map((p) => attachmentRefFromPath(p).name).join(", ");
+        toRenderer({
+          type: "systemNote",
+          text:
+            `Not attached — outside the workspace: ${names}. ` +
+            "Drag the file into the chat or paste it instead; a copy is kept in .orchestra/attachments.",
+        });
+      }
+      return;
+    }
+    // A browser: the page's own file input, made for this click and removed
+    // after it. Its files come as bytes, which is the attachBytes path.
+    if (!document.body || !document.body.appendChild) {
+      return;
+    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.hidden = true;
+    input.addEventListener("change", () => {
+      const files = Array.from(input.files || []);
+      if (input.remove) {
+        input.remove();
+      }
+      for (const file of files) {
+        void storeAttachmentFile(file);
+      }
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  /** @param {File} file */
+  async function storeAttachmentFile(file) {
+    if (!file) {
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      toRenderer({ type: "systemNote", text: `Skipped ${file.name || "file"}: exceeds 20 MB limit` });
+      return;
+    }
+    let dataBase64 = "";
+    try {
+      dataBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const s = String(reader.result || "");
+          resolve(s.slice(s.indexOf(",") + 1));
+        };
+        reader.onerror = () => reject(reader.error || new Error("read failed"));
+        reader.readAsDataURL(file);
+      });
+    } catch (err) {
+      toRenderer({ type: "systemNote", text: `[error] attach ${file.name || "file"}: ${String((err && err.message) || err)}` });
+      return;
+    }
+    await storeAttachmentBytes({ name: file.name || "attachment", mime: file.type || undefined, dataBase64 });
+  }
+
+  /**
+   * Bytes to the core, an attachment back. The chip gets a data: preview for
+   * a small image — the bytes are right here, and this host serves no files.
+   * @param {{name?: string, mime?: string, dataBase64?: string}} msg
+   */
+  async function storeAttachmentBytes(msg) {
+    const dataBase64 = String((msg && msg.dataBase64) || "");
+    if (!dataBase64) {
+      return;
+    }
+    const name = String((msg && msg.name) || "attachment");
+    const mime = msg && msg.mime ? String(msg.mime) : "";
+    const params = { name, data_base64: dataBase64 };
+    if (mime) {
+      params.mime = mime;
+    }
+    const r = await composerRpc("attachments.store", params, "attach");
+    if (!r || !r.path) {
+      return; // composerRpc has already said what went wrong
+    }
+    const ref = {
+      name: String(r.name || name),
+      path: String(r.path),
+      ext: r.ext ? String(r.ext) : undefined,
+      kind: r.kind === "image" ? "image" : "file",
+    };
+    if (ref.kind === "image" && mime.startsWith("image/") && dataBase64.length <= (ATTACHMENT_PREVIEW_MAX_BYTES * 4) / 3) {
+      ref.previewUri = `data:${mime};base64,${dataBase64}`;
+    }
+    toRenderer({ type: "filesPicked", files: [ref] });
   }
 
   /** The connection for the project on screen, or null. */
@@ -8635,16 +10311,12 @@
       type: "systemNote",
       text: `Model: ${r.model || model}${r.persisted ? " (saved)" : ""}`,
     });
-    // The composer's pill reads its label off the header message, so the
-    // header has to carry the new model — without it the core had saved the
-    // change and the pill still showed the old name.
-    const st = projectState(currentProjectId);
-    toRenderer({
-      type: "header",
-      sessionId: st.sessionId,
-      model: String(r.model || model),
-      provider: String(r.provider || provider || ""),
-    });
+    // The pill reads its label off the header message and the gauge its
+    // ceiling off contextInfo. Both come from the core's own answer, which
+    // now names the new model and the window that goes with it — without
+    // this the core had saved the change and the pill still showed the old
+    // name over the old window.
+    await pushLLMInfo(currentProjectId);
     await pushProviderModels();
   }
 
@@ -8681,13 +10353,64 @@
     "Slash commands:",
     "/clear — new chat",
     "/compact [hint] — compress LLM context",
-    "/sessions — switch session (the tabs above)",
-    "/model — change model (composer pill)",
+    "/search text — find text across saved chats",
+    "/sessions — open the list of chats",
+    "/model — open the model menu",
+    "/workflows — list this workspace's workflows",
+    "/workflow name [args] — run one",
     "/settings — Orchestra settings",
-    "/<skill-name> args — run a loaded skill",
+    "/<command> args — run one of this workspace's own commands",
     "Rewind: hover a user message → ↩ Rewind",
+    "Branch: hover a user message → ⑂ Branch",
+    "Delete a chat: hover it in the sidebar → ×",
     "@file — mention files in composer",
   ].join("\n");
+
+  /** What "/" already means, so a workspace command of the same name is not
+   * offered twice — the same rule the editor's skillSlashNames applies. */
+  const BUILTIN_SLASH_NAMES = [
+    "clear",
+    "compact",
+    "help",
+    "model",
+    "rewind",
+    "search",
+    "sessions",
+    "settings",
+    "workflow",
+    "workflows",
+  ];
+
+  /**
+   * This workspace's own commands — skills under .orchestra/skills and
+   * ~/.orchestra/skills, plus .claude/commands — into the "/" palette. Only
+   * the core can enumerate them, and without this the palette offered the
+   * seven built-ins and nothing else, so a project's own command could only
+   * be run by typing its whole name and hoping.
+   * @param {string} projectId
+   */
+  async function pushSkillCommands(projectId) {
+    const conn = projectId ? connFor(projectId) : null;
+    if (!conn || !conn.isOpen()) {
+      return;
+    }
+    try {
+      const r = (await conn.send("skill.list", {})) || {};
+      if (projectId !== currentProjectId) {
+        return;
+      }
+      const skills = (Array.isArray(r.skills) ? r.skills : [])
+        .map((s) => ({
+          name: String((s && s.name) || "").trim(),
+          description: String((s && s.description) || ""),
+        }))
+        .filter((s) => s.name && BUILTIN_SLASH_NAMES.indexOf(s.name.toLowerCase()) === -1);
+      toRenderer({ type: "skillsList", skills });
+    } catch (err) {
+      // A workspace with no commands — or a core that cannot list them —
+      // simply leaves the palette with its built-ins.
+    }
+  }
 
   /** @param {string} cmd @param {string} [arg] */
   async function runSlashCommand(cmd, arg) {
@@ -8707,12 +10430,31 @@
         }
         return;
       }
-      case "/sessions":
+      // These two used to answer with a sentence about where the control is,
+      // which reads as a command that does nothing. They open it instead.
+      case "/sessions": {
+        // The sidebar is where the web keeps the list; the header's button
+        // for it is hidden here, so fall back to it only if there is no rail.
+        if (revealSessionList()) {
+          return;
+        }
+        const btn = document.getElementById("session-history-btn");
+        if (btn && btn.click) {
+          btn.click();
+          return;
+        }
         toRenderer({ type: "systemNote", text: "Switch chats from the tabs in the title bar." });
         return;
-      case "/model":
+      }
+      case "/model": {
+        const pill = document.getElementById("model-pill");
+        if (pill && pill.click) {
+          pill.click();
+          return;
+        }
         toRenderer({ type: "systemNote", text: "Use the model pill in the composer to change model." });
         return;
+      }
       case "/settings":
         showRailSettings(true, "general");
         return;
@@ -8724,6 +10466,15 @@
           type: "systemNote",
           text: "Hover a user message and click ↩ Rewind to truncate history to that checkpoint.",
         });
+        return;
+      case "/search":
+        await searchSessions(arg || "");
+        return;
+      case "/workflows":
+        await listWorkflows();
+        return;
+      case "/workflow":
+        await runWorkflow(arg || "");
         return;
       default:
         await runSkillCommand(name.replace(/^\//, ""), arg || "");
@@ -8745,7 +10496,10 @@
       return;
     }
     try {
-      const r = (await conn.send("skill.invoke", { skill: name, task: args })) || {};
+      // name + arguments: what internal/core/skill.go reads, and what the
+      // editor host sends. Any other spelling arrives as an empty name and
+      // the command fails before it starts.
+      const r = (await conn.send("skill.invoke", { name, arguments: args })) || {};
       toRenderer({
         type: "systemNote",
         text: `[skill:${r.skill || name}] ${r.steps || 0} step(s) · marker=${r.marker || "(no marker)"}\n---\n${r.output || ""}`,
@@ -8758,6 +10512,109 @@
         text: /not found|unknown skill/i.test(message)
           ? `Unknown command: /${name}. Try /help`
           : `[error] skill.invoke: ${message}`,
+      });
+    }
+  }
+
+  /* ---- searching saved chats --------------------------------------------- */
+
+  /**
+   * Full-text search across this workspace's saved sessions. The core has
+   * shipped session.search since protocol v14 and no interface ever called
+   * it, so a conversation you remembered having could only be found by
+   * opening chats one at a time.
+   *
+   * Results land in the sidebar, where the chats already live and a row is
+   * already clickable — a list of titles in a chat note would name them
+   * without being able to open them.
+   * @param {string} query
+   */
+  async function searchSessions(query) {
+    const q = String(query || "").trim();
+    if (!q) {
+      showSessionSearch("");
+      toRenderer({ type: "systemNote", text: "/search text — find text across this workspace's chats." });
+      return;
+    }
+    const conn = composerConn();
+    if (!conn) {
+      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      return;
+    }
+    await showSessionSearch(q);
+  }
+
+  /* ---- workflows --------------------------------------------------------- */
+
+  /** The workspace's multi-stage workflows, which until now ran only from the CLI. */
+  async function listWorkflows() {
+    const conn = composerConn();
+    if (!conn) {
+      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      return;
+    }
+    let rows = [];
+    try {
+      const r = (await conn.send("workflow.list", {})) || {};
+      rows = Array.isArray(r.workflows) ? r.workflows : [];
+    } catch (err) {
+      toRenderer({ type: "systemNote", text: `[error] workflow.list: ${String((err && err.message) || err)}` });
+      return;
+    }
+    if (rows.length === 0) {
+      toRenderer({
+        type: "systemNote",
+        text: "No workflows in this workspace. They live in .orchestra/workflows.",
+      });
+      return;
+    }
+    const lines = rows.map((w) => {
+      const name = String((w && w.name) || "").trim();
+      const desc = String((w && w.description) || "").trim();
+      const stages = Array.isArray(w && w.stages) ? w.stages.length : 0;
+      return `/workflow ${name} — ${desc || "(no description)"} · ${stages} stage(s)`;
+    });
+    toRenderer({ type: "systemNote", text: ["Workflows:", ...lines].join("\n") });
+  }
+
+  /**
+   * Runs one workflow. Everything after the name is its argument, so
+   * "/workflow review the auth package" runs "review" with "the auth package".
+   * @param {string} arg
+   */
+  async function runWorkflow(arg) {
+    const raw = String(arg || "").trim();
+    if (!raw) {
+      await listWorkflows();
+      return;
+    }
+    const space = raw.search(/\s/);
+    const name = space === -1 ? raw : raw.slice(0, space);
+    const args = space === -1 ? "" : raw.slice(space + 1).trim();
+    const conn = composerConn();
+    if (!conn) {
+      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      return;
+    }
+    toRenderer({ type: "systemNote", text: `Running workflow "${name}"…` });
+    try {
+      // Workflows run stage by stage against the model, so this waits for as
+      // long as the run takes; the socket call carries no deadline of its own.
+      const r = (await conn.send("workflow.run", { name, arguments: args })) || {};
+      const stages = Array.isArray(r.stages) ? r.stages : [];
+      const took = Number(r.duration_ms) || 0;
+      const head = r.failure_reason
+        ? `[workflow:${r.name || name}] stopped at ${r.final_stage || "?"} — ${r.failure_reason}`
+        : `[workflow:${r.name || name}] done in ${Math.round(took / 1000)}s`;
+      const body = stages.map((s) => `  ${s.stage_id}${s.attempt > 1 ? ` (attempt ${s.attempt})` : ""} → ${s.action}${s.marker ? ` · ${s.marker}` : ""}`);
+      toRenderer({ type: "systemNote", text: [head, ...body].join("\n") });
+    } catch (err) {
+      const message = String((err && err.message) || err);
+      toRenderer({
+        type: "systemNote",
+        text: /not found|unknown workflow/i.test(message)
+          ? `Unknown workflow: ${name}. Try /workflows`
+          : `[error] workflow.run: ${message}`,
       });
     }
   }
@@ -8821,9 +10678,12 @@
     if (!st.sessionId) {
       return;
     }
+    // ui_message_index is what internal/core reads (SessionRewindParams), and
+    // what the editor host and the TUI send. Any other spelling decodes as 0,
+    // which silently rewinds the whole chat to its first message.
     const r = await composerRpc(
       "session.rewind",
-      { session_id: st.sessionId, ui_index: uiIndex },
+      { session_id: st.sessionId, ui_message_index: uiIndex },
       "rewind"
     );
     if (!r) {
@@ -8838,6 +10698,42 @@
     toRenderer({ type: "clearMessages" });
     toRenderer({ type: "history", messages: view.ui_messages || [] });
     toRenderer({ type: "header", sessionId: st.sessionId });
+  }
+
+  /**
+   * Branch a new chat from a checkpoint, leaving this one intact. The core has
+   * had session.fork since protocol v14 and only the TUI ever called it, so in
+   * the app the only way to revisit a decision was rewind — which throws the
+   * rest of the conversation away.
+   * @param {number} uiIndex
+   */
+  async function forkFromMessage(uiIndex) {
+    // Index 0 is refused by the core: the branch is everything BEFORE the
+    // point, so it would be an empty chat.
+    if (typeof uiIndex !== "number" || uiIndex < 1) {
+      return;
+    }
+    const projectId = currentProjectId;
+    const st = projectState(projectId);
+    if (!st.sessionId) {
+      return;
+    }
+    // ui_message_index, exclusive, pointing at a user message — the same
+    // index rewind takes (SessionForkParams).
+    const r = await composerRpc(
+      "session.fork",
+      { session_id: st.sessionId, ui_message_index: uiIndex },
+      "branch"
+    );
+    const branchId = String((r && r.session_id) || "");
+    if (!branchId) {
+      return;
+    }
+    await openSessionRow(projectId, branchId);
+    toRenderer({
+      type: "systemNote",
+      text: "Branched: this chat has everything up to that message, and the original is untouched. Ask it differently here.",
+    });
   }
 
   /** @param {boolean} apply true applies the staged changes, false discards. */
@@ -8887,4 +10783,1395 @@
       renderProjects();
     }
   }
+  // ---- the Graph view -------------------------------------------------------
+  //
+  // A third segment beside Chat and Trajectory: the shape of the project, read
+  // from the code knowledge graph the core keeps (.orchestra/ckg.db, over
+  // index.graph). The workspace sits in the middle with the files that answer
+  // to no folder; every ring outwards is one more level of nesting, and a
+  // curve across the rings says symbols in one file call or use symbols in the
+  // other — its width how many. Beside the picture a readout of what the index
+  // holds (files, folders, symbols, tests, languages) and, for whatever is
+  // selected, its neighbours and — for a file — its functions with the first
+  // lines of each, read back with index.outline.
+  //
+  // Built at runtime, like the project label in the header: everything inside
+  // #app is byte-identical with the VS Code webview's markup, and the editor
+  // has its own graph viewer. The shared switch (05f-trajectory.js) knows two
+  // views and stamps data-view on #app; this segment stamps "graph" the same
+  // way and follows the attribute back, so either side's click leaves exactly
+  // one segment selected.
+
+  const GRAPH_LEVEL = "file";
+  /** Past this many drawn nodes the picture folds a level of nesting away. */
+  const GRAPH_VISIBLE_CAP = 2600;
+  /** Only the heaviest relations are drawn; the rest are in the readout. */
+  const GRAPH_LINK_CAP = 600;
+  /** Rings never closer than this, nor further apart. */
+  const GRAPH_RING_MIN = 110;
+  const GRAPH_RING_MAX = 460;
+
+  const graphApp = document.getElementById("app");
+  const graphSwitchEl = document.getElementById("view-switch");
+  const graphTrajectoryBtn = document.getElementById("view-trajectory-btn");
+  const graphChatBtn = document.getElementById("view-chat-btn");
+  const graphTrajectoryPane = document.getElementById("trajectory");
+
+  /** @type {any} */ let graphBtn = null;
+  /** @type {any} */ let graphPane = null;
+  /** @type {any} */ let graphStage = null;
+  /** @type {any} */ let graphCanvas = null;
+  /** @type {any} */ let graphStatsEl = null;
+  /** @type {any} */ let graphHintEl = null;
+  /** @type {any} */ let graphCardEl = null;
+  /** @type {any} */ let graphSideEl = null;
+  /** @type {any} */ let graphFilesBtn = null;
+  /** @type {any} */ let graphLinksBtn = null;
+  /** @type {any} */ let graphDepthOutEl = null;
+
+  /** @type {{projectId: string, available: boolean, nodes: any[], links: any[], stats: any} | null} */
+  let graphData = null;
+  /** @type {any} */ let graphTree = null;
+  /** @type {any} */ let graphLayout = null;
+  let graphLoading = false;
+  let graphShowFiles = true;
+  let graphShowLinks = true;
+  let graphDepth = 3;
+  let graphDrawQueued = false;
+  /** @type {any} */ let graphHover = null;
+  /** @type {string} */ let graphSelectedId = "";
+  /** @type {any} */ let graphDrag = null;
+  /** @type {any} */ let graphOutline = null;
+  let graphOutlineSeq = 0;
+  let graphOpenSymbol = -1;
+
+  function graphViewActive() {
+    return Boolean(graphApp && graphApp.dataset && graphApp.dataset.view === "graph");
+  }
+
+  const GRAPH_ICON =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+    '<circle cx="6" cy="18" r="2.4" stroke="currentColor" stroke-width="2"/>' +
+    '<circle cx="12" cy="6" r="2.4" stroke="currentColor" stroke-width="2"/>' +
+    '<circle cx="18" cy="18" r="2.4" stroke="currentColor" stroke-width="2"/>' +
+    '<path d="M7.4 16 10.6 8.2M13.4 8.2l3.2 7.8M8.4 18h7.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
+    "</svg>";
+
+  /** One colour per language, so a ring of files says what it is made of. */
+  const GRAPH_LANG_COLORS = {
+    go: "#7fd1e8",
+    ts: "#6aa6f5",
+    tsx: "#6aa6f5",
+    js: "#e6c368",
+    jsx: "#e6c368",
+    mjs: "#e6c368",
+    cjs: "#e6c368",
+    py: "#66c288",
+    rs: "#e09660",
+    java: "#e08484",
+    kt: "#c08ae8",
+    rb: "#e07a7a",
+    php: "#9a8ae0",
+    c: "#8fb6d8",
+    h: "#8fb6d8",
+    cc: "#8fb6d8",
+    cpp: "#8fb6d8",
+    hpp: "#8fb6d8",
+    cs: "#79c6a8",
+    css: "#6ad0b0",
+    scss: "#6ad0b0",
+    html: "#e0906a",
+    md: "#9a9aa4",
+    json: "#b294e0",
+    yml: "#b294e0",
+    yaml: "#b294e0",
+    toml: "#b294e0",
+    sql: "#d0a05a",
+    sh: "#86bf86",
+  };
+
+  /** @param {string} id */
+  function graphExtOf(id) {
+    const base = id.slice(id.lastIndexOf("/") + 1);
+    const dot = base.lastIndexOf(".");
+    return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+  }
+
+  /** @param {string} id */
+  function graphColorFor(id) {
+    return GRAPH_LANG_COLORS[graphExtOf(id)] || "";
+  }
+
+  function ensureGraphView() {
+    if (graphBtn || !graphApp || !graphSwitchEl || !graphSwitchEl.appendChild) {
+      return;
+    }
+    graphBtn = document.createElement("button");
+    graphBtn.type = "button";
+    graphBtn.className = "view-segment";
+    graphBtn.setAttribute("role", "tab");
+    graphBtn.setAttribute("aria-selected", "false");
+    // A fixed string, none of it from data.
+    graphBtn.innerHTML = GRAPH_ICON + "Graph";
+    graphBtn.addEventListener("click", () => showGraphView());
+    graphBtn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft" && graphTrajectoryBtn && graphTrajectoryBtn.click) {
+        e.preventDefault();
+        graphTrajectoryBtn.click();
+        if (graphTrajectoryBtn.focus) graphTrajectoryBtn.focus();
+      }
+    });
+    if (graphTrajectoryBtn && graphTrajectoryBtn.parentNode === graphSwitchEl && graphSwitchEl.insertBefore) {
+      graphSwitchEl.insertBefore(graphBtn, graphTrajectoryBtn.nextSibling);
+    } else {
+      graphSwitchEl.appendChild(graphBtn);
+    }
+
+    graphPane = document.createElement("div");
+    graphPane.className = "graph-pane";
+    graphPane.setAttribute("role", "tabpanel");
+    graphPane.setAttribute("aria-label", "Project graph");
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "graph-toolbar";
+    graphStatsEl = document.createElement("span");
+    graphStatsEl.className = "graph-stats";
+
+    const depth = document.createElement("span");
+    depth.className = "graph-depth";
+    const less = graphToolButton("−", "One level of nesting less", () => stepGraphDepth(-1));
+    graphDepthOutEl = document.createElement("span");
+    graphDepthOutEl.className = "graph-depth-value";
+    const more = graphToolButton("+", "One level of nesting more", () => stepGraphDepth(1));
+    depth.append(less, graphDepthOutEl, more);
+
+    graphFilesBtn = graphToolButton("Files", "Draw the files, not only the folders", () => {
+      graphShowFiles = !graphShowFiles;
+      layoutGraph(true);
+      renderGraphSide();
+      scheduleGraphDraw();
+    });
+    graphLinksBtn = graphToolButton("Links", "Draw the calls between files", () => {
+      graphShowLinks = !graphShowLinks;
+      syncGraphControls();
+      scheduleGraphDraw();
+    });
+    const fit = graphToolButton("Fit", "Fit the whole graph in view", () => {
+      if (graphLayout) {
+        graphLayout.fitPending = true;
+        scheduleGraphDraw();
+      }
+    });
+    const refresh = graphToolButton("Refresh", "Read the graph again", () => void loadGraph(true));
+    toolbar.append(graphStatsEl, depth, graphFilesBtn, graphLinksBtn, fit, refresh);
+
+    const body = document.createElement("div");
+    body.className = "graph-body";
+    graphStage = document.createElement("div");
+    graphStage.className = "graph-stage";
+    graphCanvas = document.createElement("canvas");
+    graphCanvas.className = "graph-canvas";
+    graphHintEl = document.createElement("div");
+    graphHintEl.className = "graph-hint";
+    graphHintEl.hidden = true;
+    graphCardEl = document.createElement("div");
+    graphCardEl.className = "graph-card";
+    graphCardEl.hidden = true;
+    graphStage.append(graphCanvas, graphHintEl, graphCardEl);
+    graphSideEl = document.createElement("aside");
+    graphSideEl.className = "graph-side";
+    body.append(graphStage, graphSideEl);
+    graphPane.append(toolbar, body);
+
+    if (graphTrajectoryPane && graphTrajectoryPane.parentNode === graphApp && graphApp.insertBefore) {
+      graphApp.insertBefore(graphPane, graphTrajectoryPane.nextSibling);
+    } else {
+      graphApp.appendChild(graphPane);
+    }
+    bindGraphCanvas();
+    syncGraphControls();
+    renderGraphSide();
+
+    if (typeof MutationObserver === "function" && graphApp.dataset) {
+      new MutationObserver(() => syncGraphSegment()).observe(graphApp, {
+        attributes: true,
+        attributeFilter: ["data-view"],
+      });
+    }
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => scheduleGraphDraw()).observe(graphPane);
+    }
+  }
+
+  /** @param {string} label @param {string} title @param {() => void} onClick */
+  function graphToolButton(label, title, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "graph-tool";
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function showGraphView() {
+    ensureGraphView();
+    if (!graphApp || !graphApp.dataset) {
+      return;
+    }
+    graphApp.dataset.view = "graph";
+    syncGraphSegment();
+    void loadGraph(false);
+  }
+
+  /** One selected segment, whichever side stamped the view. */
+  function syncGraphSegment() {
+    const active = graphViewActive();
+    if (graphBtn && graphBtn.setAttribute) {
+      graphBtn.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    if (active) {
+      for (const b of [graphChatBtn, graphTrajectoryBtn]) {
+        if (b && b.setAttribute) b.setAttribute("aria-selected", "false");
+      }
+      void loadGraph(false);
+      scheduleGraphDraw();
+    }
+  }
+
+  /** @param {number} by */
+  function stepGraphDepth(by) {
+    if (!graphTree) return;
+    const next = Math.max(1, Math.min(graphTree.maxDepth, graphDepth + by));
+    if (next === graphDepth) return;
+    graphDepth = next;
+    layoutGraph(true);
+    renderGraphSide();
+    scheduleGraphDraw();
+  }
+
+  function syncGraphControls() {
+    if (graphDepthOutEl) {
+      const max = graphTree ? graphTree.maxDepth : graphDepth;
+      graphDepthOutEl.textContent = "levels " + graphDepth + "/" + max;
+      graphDepthOutEl.title = "How many levels of nesting the rings go out to";
+    }
+    if (graphFilesBtn) {
+      graphFilesBtn.classList.toggle("on", graphShowFiles);
+      graphFilesBtn.title = graphShowFiles
+        ? "Draw folders only, with the calls between them summed up"
+        : "Draw every file, not only the folders";
+    }
+    if (graphLinksBtn) {
+      graphLinksBtn.classList.toggle("on", graphShowLinks);
+      graphLinksBtn.title = graphShowLinks
+        ? "Leave out the calls between files, keeping the nesting"
+        : "Draw the calls between files again";
+    }
+    if (graphStatsEl && graphLayout) {
+      const folders = graphLayout.nodes.filter((n) => n.group === "folder").length;
+      const files = graphLayout.nodes.filter((n) => n.group === "file").length;
+      const drawn = graphLayout.relationsDrawn;
+      const total = graphLayout.relationsTotal;
+      graphStatsEl.textContent =
+        folders + " folders · " + files + " files · " +
+        (drawn < total ? "the " + drawn + " heaviest of " + total + " links" : drawn + " links");
+    }
+  }
+
+  /** @param {string} text */
+  function setGraphHint(text) {
+    if (!graphHintEl) return;
+    graphHintEl.textContent = text;
+    graphHintEl.hidden = !text;
+  }
+
+  /** @param {boolean} force */
+  async function loadGraph(force) {
+    const projectId = currentProjectId;
+    const conn = projectId ? connFor(projectId) : null;
+    if (!conn || !conn.isOpen()) {
+      graphData = null;
+      graphTree = null;
+      graphLayout = null;
+      setGraphHint(pendingOpen() ? "The workspace is still opening…" : "No workspace is open.");
+      if (graphStatsEl) graphStatsEl.textContent = "";
+      renderGraphSide();
+      return;
+    }
+    if (!force && graphData && graphData.projectId === projectId) {
+      return;
+    }
+    if (graphLoading) {
+      return;
+    }
+    graphLoading = true;
+    setGraphHint("Reading the project graph…");
+    try {
+      const r = (await conn.send("index.graph", { level: GRAPH_LEVEL })) || {};
+      if (projectId !== currentProjectId) {
+        return; // the user has moved on; the next show reads that project's
+      }
+      graphData = {
+        projectId,
+        available: Boolean(r.available),
+        nodes: Array.isArray(r.nodes) ? r.nodes : [],
+        links: Array.isArray(r.links) ? r.links : [],
+        stats: r.stats && typeof r.stats === "object" ? r.stats : {},
+      };
+      graphSelectedId = "";
+      graphOutline = null;
+      graphOpenSymbol = -1;
+      buildGraphTree();
+      layoutGraph(true);
+      if (!graphData.available || graphData.nodes.length === 0) {
+        setGraphHint("Nothing is indexed yet. Settings → Index & Graph → Rebuild graph, then Refresh here.");
+      } else {
+        setGraphHint("");
+      }
+      renderGraphSide();
+      scheduleGraphDraw();
+    } catch (err) {
+      if (projectId === currentProjectId) {
+        setGraphHint("Could not read the graph: " + String((err && err.message) || err));
+      }
+    } finally {
+      graphLoading = false;
+    }
+  }
+
+  // A project switch or a new session clears the transcript; the graph is
+  // the project's, so it follows the same signal rather than activateProject.
+  window.addEventListener("message", (ev) => {
+    if (ev.data && ev.data.type === "clearMessages" && graphViewActive()) {
+      void loadGraph(false);
+    }
+  });
+
+  /* ---- the tree ------------------------------------------------------------- */
+
+  /** @param {any} n */
+  function graphSymbolCount(n) {
+    const m = n && n.meta ? n.meta : {};
+    for (const k of Object.keys(m)) {
+      if (/символ|symbol/i.test(k) && typeof m[k] === "number") return m[k];
+    }
+    return 0;
+  }
+
+  /** @param {string} id */
+  function graphParentOf(id) {
+    const i = id.lastIndexOf("/");
+    return i > 0 ? id.slice(0, i) : "";
+  }
+
+  function graphProjectName() {
+    const entry = typeof known !== "undefined" ? known.find((p) => p.id === currentProjectId) : null;
+    return (entry && (entry.name || entry.path)) || "workspace";
+  }
+
+  /**
+   * Folders and files as one tree, the workspace at its root. Every folder in
+   * a file's path exists even when the graph named only some of them, so a
+   * ring is a level of nesting and nothing hangs off nowhere.
+   */
+  function buildGraphTree() {
+    const root = {
+      id: "",
+      name: graphProjectName(),
+      group: "root",
+      depth: 0,
+      parent: null,
+      children: [],
+      symbols: 0,
+      files: 0,
+      subFiles: 0,
+      subSymbols: 0,
+      leaves: 0,
+      meta: {},
+    };
+    const byId = new Map([["", root]]);
+
+    const folder = (id) => {
+      const have = byId.get(id);
+      if (have) return have;
+      const parentId = graphParentOf(id);
+      const parent = folder(parentId);
+      const node = {
+        id,
+        name: id.slice(parentId ? parentId.length + 1 : 0) || id,
+        group: "folder",
+        depth: parent.depth + 1,
+        parent,
+        children: [],
+        symbols: 0,
+        files: 0,
+        subFiles: 0,
+        subSymbols: 0,
+        leaves: 0,
+        meta: {},
+      };
+      byId.set(id, node);
+      parent.children.push(node);
+      return node;
+    };
+
+    const nodes = graphData ? graphData.nodes : [];
+    for (const raw of nodes) {
+      if (raw.group === "folder" && raw.id) {
+        const f = folder(raw.id);
+        f.meta = raw.meta || {};
+        if (raw.name) f.name = raw.name;
+      }
+    }
+    for (const raw of nodes) {
+      if (raw.group !== "file" || !raw.id) continue;
+      const parent = folder(graphParentOf(raw.id));
+      const node = {
+        id: raw.id,
+        name: raw.name || raw.id.slice(raw.id.lastIndexOf("/") + 1),
+        group: "file",
+        depth: parent.depth + 1,
+        parent,
+        children: [],
+        symbols: graphSymbolCount(raw),
+        files: 0,
+        subFiles: 1,
+        subSymbols: 0,
+        leaves: 1,
+        meta: raw.meta || {},
+      };
+      byId.set(node.id, node);
+      parent.children.push(node);
+    }
+
+    // Roll the counts up and note how deep the tree runs.
+    let maxDepth = 1;
+    const roll = (n) => {
+      let files = n.group === "file" ? 1 : 0;
+      let symbols = n.symbols;
+      for (const c of n.children) {
+        roll(c);
+        files += c.subFiles;
+        symbols += c.subSymbols;
+      }
+      n.subFiles = files;
+      n.subSymbols = symbols;
+      if (n.depth > maxDepth) maxDepth = n.depth;
+      // Folders first, then files; each by name, so the picture is the same
+      // every time it is drawn.
+      n.children.sort((a, b) => {
+        if (a.group !== b.group) return a.group === "folder" ? -1 : 1;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
+    };
+    roll(root);
+
+    graphTree = { root, byId, maxDepth };
+    graphDepth = autoGraphDepth();
+  }
+
+  /** @param {number} depth */
+  function countGraphVisible(depth) {
+    let n = 0;
+    const walk = (node) => {
+      if (node.depth > depth) return;
+      if (node.group === "file" && !graphShowFiles) return;
+      n++;
+      for (const c of node.children) walk(c);
+    };
+    walk(graphTree.root);
+    return n;
+  }
+
+  /** The most nesting that still draws a picture rather than a cloud. */
+  function autoGraphDepth() {
+    if (!graphTree) return 3;
+    let best = 1;
+    for (let d = 1; d <= graphTree.maxDepth; d++) {
+      if (countGraphVisible(d) > GRAPH_VISIBLE_CAP) break;
+      best = d;
+    }
+    return Math.max(1, Math.min(graphTree.maxDepth, best));
+  }
+
+  /* ---- the layout ----------------------------------------------------------- */
+
+  /**
+   * A radial tree: the workspace at the centre, one ring per level of nesting,
+   * every subtree its own wedge. Deterministic — no simulation to settle, so a
+   * thousand files draw as fast as ten and land in the same place twice.
+   * @param {boolean} refit
+   */
+  function layoutGraph(refit) {
+    if (!graphTree) {
+      graphLayout = null;
+      syncGraphControls();
+      return;
+    }
+    if (graphDepth > graphTree.maxDepth) graphDepth = graphTree.maxDepth;
+
+    const visible = [];
+    const byId = new Map();
+    const pick = (node) => {
+      if (node.group === "file" && !graphShowFiles) return null;
+      const shown = {
+        id: node.id,
+        name: node.name,
+        group: node.group,
+        depth: node.depth,
+        meta: node.meta,
+        symbols: node.group === "file" ? node.symbols : node.subSymbols,
+        files: node.subFiles,
+        folded: 0,
+        children: [],
+        leaves: 1,
+        angle: 0,
+        radius: 0,
+        x: 0,
+        y: 0,
+        r: 4,
+        outW: 0,
+        inW: 0,
+        neighbours: new Map(),
+      };
+      if (node.depth < graphDepth) {
+        for (const c of node.children) {
+          const kid = pick(c);
+          if (kid) shown.children.push(kid);
+        }
+      }
+      if (!shown.children.length && node.children.length) {
+        // The subtree stops here: say how much of it is folded away.
+        shown.folded = node.subFiles - (node.group === "file" ? 1 : 0);
+      }
+      shown.leaves = shown.children.length
+        ? shown.children.reduce((a, c) => a + c.leaves, 0)
+        : 1;
+      visible.push(shown);
+      byId.set(shown.id, shown);
+      return shown;
+    };
+    const root = pick(graphTree.root);
+
+    // Angles by leaf count, so a wide subtree gets a wide wedge; radius by
+    // depth, spread so the outermost ring has room for its leaves.
+    const leaves = Math.max(1, root.leaves);
+    const depthSpan = Math.max(1, graphDepth);
+    const ringGap = Math.max(
+      GRAPH_RING_MIN,
+      Math.min(GRAPH_RING_MAX, (leaves * 17) / (2 * Math.PI * depthSpan))
+    );
+    const place = (node, a0, a1) => {
+      node.angle = (a0 + a1) / 2;
+      node.span = a1 - a0;
+      node.radius = node.depth * ringGap;
+      node.x = Math.cos(node.angle) * node.radius;
+      node.y = Math.sin(node.angle) * node.radius;
+      node.r =
+        node.group === "file"
+          ? Math.min(12, 3.4 + Math.sqrt(node.symbols) * 0.7)
+          : node.group === "root"
+            ? 16
+            : Math.min(18, 5.5 + Math.sqrt(node.files + 1) * 1.7);
+      let a = a0;
+      for (const c of node.children) {
+        const span = ((a1 - a0) * c.leaves) / Math.max(1, node.leaves);
+        place(c, a, a + span);
+        a += span;
+      }
+    };
+    // A hair short of a full turn: the first and last wedge stay apart.
+    place(root, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 0.997);
+
+    // Links: containment from the tree, relations from the graph, both folded
+    // onto whichever ancestor is actually drawn.
+    const links = [];
+    const index = new Map(visible.map((n, i) => [n.id, i]));
+    for (const n of visible) {
+      for (const c of n.children) {
+        links.push({ a: index.get(n.id), b: index.get(c.id), rel: "in_folder", w: 1 });
+      }
+    }
+    const visibleAncestor = (id) => {
+      let node = graphTree.byId.get(id);
+      while (node && !byId.has(node.id)) node = node.parent;
+      return node ? node.id : null;
+    };
+    const weights = new Map();
+    for (const l of graphData ? graphData.links : []) {
+      if (l.relation === "in_folder") continue;
+      const a = visibleAncestor(l.source);
+      const b = visibleAncestor(l.target);
+      if (a === null || b === null || a === b) continue;
+      const key = a + "\u0000" + b;
+      weights.set(key, (weights.get(key) || 0) + (Number(l.weight) || 1));
+    }
+    const relations = [];
+    for (const [key, w] of weights) {
+      const [a, b] = key.split("\u0000");
+      const ia = index.get(a);
+      const ib = index.get(b);
+      if (ia === undefined || ib === undefined) continue;
+      relations.push({ a: ia, b: ib, rel: "calls", w });
+      const na = visible[ia];
+      const nb = visible[ib];
+      na.outW += w;
+      nb.inW += w;
+      na.neighbours.set(b, (na.neighbours.get(b) || 0) + w);
+      nb.neighbours.set(a, (nb.neighbours.get(a) || 0) + w);
+    }
+    // Every relation counts towards a node's own numbers and its list of
+    // neighbours; only the heaviest are drawn, or the picture is a haze.
+    relations.sort((x, y) => y.w - x.w);
+    for (const e of relations.slice(0, GRAPH_LINK_CAP)) links.push(e);
+    const relationsDrawn = Math.min(relations.length, GRAPH_LINK_CAP);
+    const relationsTotal = relations.length;
+
+    const keep = graphLayout && !refit ? graphLayout : null;
+    graphLayout = {
+      nodes: visible,
+      links,
+      byId,
+      index,
+      relationsDrawn,
+      relationsTotal,
+      ringGap,
+      maxRadius: depthSpan * ringGap,
+      scale: keep ? keep.scale : 1,
+      tx: keep ? keep.tx : 0,
+      ty: keep ? keep.ty : 0,
+      fitPending: !keep,
+    };
+    graphHover = null;
+    syncGraphControls();
+  }
+
+  function graphCssVar(name, fallback) {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return v || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function fitGraphToView(width, height) {
+    const s = graphLayout;
+    if (!s || !s.nodes.length) return;
+    let reach = 1;
+    for (const n of s.nodes) reach = Math.max(reach, n.radius + n.r);
+    const span = reach * 2 + 60;
+    s.scale = Math.max(0.04, Math.min(2.5, Math.min((width - 32) / span, (height - 32) / span)));
+    s.tx = width / 2;
+    s.ty = height / 2;
+  }
+
+  function scheduleGraphDraw() {
+    if (graphDrawQueued) return;
+    graphDrawQueued = true;
+    requestAnimationFrame(() => {
+      graphDrawQueued = false;
+      drawGraph();
+    });
+  }
+
+  function drawGraph() {
+    if (!graphViewActive() || !graphCanvas || !graphCanvas.getContext) return;
+    const rect = graphCanvas.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    const dpr = window.devicePixelRatio || 1;
+    if (graphCanvas.width !== Math.floor(width * dpr) || graphCanvas.height !== Math.floor(height * dpr)) {
+      graphCanvas.width = Math.floor(width * dpr);
+      graphCanvas.height = Math.floor(height * dpr);
+    }
+    const ctx = graphCanvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const s = graphLayout;
+    if (!s) return;
+    if (s.fitPending) {
+      fitGraphToView(width, height);
+      s.fitPending = false;
+    }
+
+    const fg = graphCssVar("--fg", "#e6e6ea");
+    const muted = graphCssVar("--muted", "#86868d");
+    const accent = graphCssVar("--accent", "#8b8cff");
+    const border = graphCssVar("--border", "#2b2b30");
+    const surface = graphCssVar("--surface", "#1f1f23");
+    const focus = graphSelectedId ? s.byId.get(graphSelectedId) : null;
+    const hot = graphHover || focus;
+
+    ctx.save();
+    ctx.translate(s.tx, s.ty);
+    ctx.scale(s.scale, s.scale);
+    const inv = 1 / s.scale;
+
+    // The rings themselves: one per level of nesting that has anything on it.
+    let deepest = 0;
+    for (const n of s.nodes) deepest = Math.max(deepest, n.depth);
+    ctx.strokeStyle = border;
+    ctx.globalAlpha = 0.55;
+    for (let d = 1; d <= deepest; d++) {
+      ctx.beginPath();
+      ctx.arc(0, 0, d * s.ringGap, 0, Math.PI * 2);
+      ctx.lineWidth = inv;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Containment, drawn as the tree it is: out along the parent's ring to
+    // the child's angle, then outwards to the child.
+    ctx.lineCap = "round";
+    for (const e of s.links) {
+      if (e.rel !== "in_folder") continue;
+      const a = s.nodes[e.a];
+      const b = s.nodes[e.b];
+      const lit = hot === a || hot === b;
+      ctx.strokeStyle = lit ? muted : border;
+      ctx.globalAlpha = lit ? 1 : 0.8;
+      ctx.lineWidth = (lit ? 1.6 : 1) * inv;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(Math.cos(b.angle) * a.radius, Math.sin(b.angle) * a.radius, b.x, b.y);
+      ctx.stroke();
+    }
+
+    // Relations, bowed towards the middle so a bundle of them reads as one
+    // stream rather than a net over the whole picture.
+    for (const e of s.links) {
+      if (e.rel === "in_folder") continue;
+      const a = s.nodes[e.a];
+      const b = s.nodes[e.b];
+      const lit = hot === a || hot === b;
+      if (!graphShowLinks && !lit) continue;
+      ctx.strokeStyle = lit ? fg : accent;
+      ctx.globalAlpha = lit ? 0.95 : hot ? 0.05 : 0.13;
+      ctx.lineWidth = Math.min(4, 0.7 + Math.log(e.w + 1) * 0.6) * inv;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(((a.x + b.x) / 2) * 0.35, ((a.y + b.y) / 2) * 0.35, b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    for (const a of s.nodes) {
+      const lit = hot === a;
+      const near = hot && hot.neighbours && hot.neighbours.has(a.id);
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2);
+      if (a.group === "file") {
+        ctx.fillStyle = lit ? fg : graphColorFor(a.id) || accent;
+        ctx.globalAlpha = hot && !lit && !near ? 0.55 : 1;
+        ctx.fill();
+      } else {
+        ctx.fillStyle = surface;
+        ctx.fill();
+        ctx.lineWidth = (lit ? 2.4 : 1.5) * inv;
+        ctx.strokeStyle = lit ? fg : a.group === "root" ? accent : muted;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      if (graphSelectedId && a.id === graphSelectedId) {
+        ctx.beginPath();
+        ctx.arc(a.x, a.y, a.r + 5 * inv, 0, Math.PI * 2);
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 2 * inv;
+        ctx.stroke();
+      }
+    }
+
+    // Labels at screen size, turned to sit along their ring: folders whenever
+    // there are few enough to read, files when the view is close enough or the
+    // node is the one being looked at. The name is the point of the picture.
+    ctx.textBaseline = "middle";
+    for (const a of s.nodes) {
+      const lit = hot === a;
+      // A name is drawn when its own slice of the ring is wide enough on
+      // screen to hold one, which is what keeps a thousand files from
+      // writing over each other; the one being looked at always is.
+      const room = a.span * Math.max(a.radius, s.ringGap) * s.scale;
+      const named = hot && hot.neighbours && hot.neighbours.size <= 40 && hot.neighbours.has(a.id);
+      const show = a.group === "root" || lit || named || room > (a.group === "folder" ? 12 : 13);
+      if (!show) continue;
+      const size = (a.group === "root" ? 14 : a.group === "folder" ? 12 : 11) * inv;
+      ctx.font = size + "px ui-sans-serif, system-ui, sans-serif";
+      ctx.fillStyle = lit || a.group === "root" ? fg : muted;
+      ctx.globalAlpha = lit ? 1 : 0.9;
+      if (a.group === "root") {
+        ctx.textAlign = "center";
+        ctx.fillText(a.name, 0, -a.r - 10 * inv);
+        ctx.textAlign = "left";
+        continue;
+      }
+      // Along the ray, reading outwards; flipped on the left half so no name
+      // is upside down.
+      const flip = Math.cos(a.angle) < 0;
+      ctx.save();
+      ctx.translate(a.x, a.y);
+      ctx.rotate(a.angle + (flip ? Math.PI : 0));
+      ctx.textAlign = flip ? "right" : "left";
+      ctx.fillText(a.name, (flip ? -1 : 1) * (a.r + 5 * inv), 0);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "left";
+    ctx.restore();
+  }
+
+  /* ---- the pointer ---------------------------------------------------------- */
+
+  /** World coordinates of a pointer event on the canvas. */
+  function graphWorldPoint(ev) {
+    const rect = graphCanvas.getBoundingClientRect();
+    const sx = ev.clientX - rect.left;
+    const sy = ev.clientY - rect.top;
+    const s = graphLayout;
+    return { sx, sy, x: (sx - s.tx) / s.scale, y: (sy - s.ty) / s.scale };
+  }
+
+  function graphNodeAt(x, y) {
+    const s = graphLayout;
+    if (!s) return null;
+    let best = null;
+    let bestD = Infinity;
+    const slack = 5 / s.scale;
+    for (const a of s.nodes) {
+      const dx = a.x - x;
+      const dy = a.y - y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= a.r + slack && d < bestD) {
+        best = a;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  function showGraphCard(node, sx, sy) {
+    if (!graphCardEl) return;
+    if (!node) {
+      graphCardEl.hidden = true;
+      return;
+    }
+    // textContent throughout: names and paths come off the disk.
+    graphCardEl.innerHTML = "";
+    const title = document.createElement("div");
+    title.className = "graph-card-title";
+    title.textContent = node.name;
+    const path = document.createElement("div");
+    path.className = "graph-card-path";
+    path.textContent = node.id || "(workspace root)";
+    graphCardEl.append(title, path);
+    const rows = [];
+    if (node.group === "file") {
+      rows.push(["file", node.symbols ? node.symbols + " symbols" : ""]);
+    } else {
+      rows.push([node.group === "root" ? "workspace" : "folder", node.files + " files"]);
+      if (node.folded) rows.push(["folded in", node.folded + " files deeper"]);
+    }
+    if (node.outW || node.inW) rows.push(["links", node.outW + " out · " + node.inW + " in"]);
+    for (const [k, v] of rows) {
+      if (!v) continue;
+      const row = document.createElement("div");
+      row.className = "graph-card-row";
+      const key = document.createElement("span");
+      key.textContent = k;
+      const val = document.createElement("span");
+      val.textContent = v;
+      row.append(key, val);
+      graphCardEl.appendChild(row);
+    }
+    graphCardEl.hidden = false;
+    const stage = graphStage.getBoundingClientRect();
+    const canvasRect = graphCanvas.getBoundingClientRect();
+    let left = canvasRect.left - stage.left + sx + 14;
+    let top = canvasRect.top - stage.top + sy + 14;
+    const cw = graphCardEl.offsetWidth || 220;
+    const ch = graphCardEl.offsetHeight || 90;
+    if (left + cw > stage.width - 8) left = Math.max(8, left - cw - 28);
+    if (top + ch > stage.height - 8) top = Math.max(8, top - ch - 28);
+    graphCardEl.style.left = left + "px";
+    graphCardEl.style.top = top + "px";
+  }
+
+  function bindGraphCanvas() {
+    if (!graphCanvas || !graphCanvas.addEventListener) return;
+    graphCanvas.addEventListener("pointerdown", (ev) => {
+      if (!graphLayout) return;
+      const p = graphWorldPoint(ev);
+      graphDrag = { lastX: p.sx, lastY: p.sy, moved: 0, node: graphNodeAt(p.x, p.y) };
+      if (graphCanvas.setPointerCapture) graphCanvas.setPointerCapture(ev.pointerId);
+    });
+    graphCanvas.addEventListener("pointermove", (ev) => {
+      if (!graphLayout) return;
+      const p = graphWorldPoint(ev);
+      if (graphDrag) {
+        const dx = p.sx - graphDrag.lastX;
+        const dy = p.sy - graphDrag.lastY;
+        graphDrag.lastX = p.sx;
+        graphDrag.lastY = p.sy;
+        graphDrag.moved += Math.abs(dx) + Math.abs(dy);
+        if (graphDrag.moved > 3) {
+          graphLayout.tx += dx;
+          graphLayout.ty += dy;
+          graphCanvas.classList.add("dragging");
+          showGraphCard(null);
+          scheduleGraphDraw();
+        }
+        return;
+      }
+      const node = graphNodeAt(p.x, p.y);
+      if (node !== graphHover) {
+        graphHover = node;
+        scheduleGraphDraw();
+      }
+      showGraphCard(node, p.sx, p.sy);
+      graphCanvas.classList.toggle("over-node", Boolean(node));
+    });
+    const release = (ev) => {
+      const drag = graphDrag;
+      graphDrag = null;
+      graphCanvas.classList.remove("dragging");
+      if (drag && drag.moved <= 3 && ev.type === "pointerup") {
+        selectGraphNode(drag.node ? drag.node.id : "");
+      }
+    };
+    graphCanvas.addEventListener("pointerup", release);
+    graphCanvas.addEventListener("pointercancel", release);
+    graphCanvas.addEventListener("pointerleave", () => {
+      graphHover = null;
+      showGraphCard(null);
+      scheduleGraphDraw();
+    });
+    graphCanvas.addEventListener(
+      "wheel",
+      (ev) => {
+        if (!graphLayout) return;
+        ev.preventDefault();
+        const p = graphWorldPoint(ev);
+        const factor = Math.exp(-ev.deltaY * 0.0012);
+        const next = Math.max(0.03, Math.min(8, graphLayout.scale * factor));
+        // Zoom about the pointer: the world point under it stays put.
+        graphLayout.tx = p.sx - p.x * next;
+        graphLayout.ty = p.sy - p.y * next;
+        graphLayout.scale = next;
+        graphLayout.fitPending = false;
+        scheduleGraphDraw();
+      },
+      { passive: false }
+    );
+    graphCanvas.addEventListener("dblclick", () => {
+      if (graphLayout) {
+        graphLayout.fitPending = true;
+        scheduleGraphDraw();
+      }
+    });
+  }
+
+  /* ---- the readout ---------------------------------------------------------- */
+
+  /** @param {string} id */
+  function selectGraphNode(id) {
+    const node = graphLayout ? graphLayout.byId.get(id) : null;
+    graphSelectedId = node ? id : "";
+    graphOpenSymbol = -1;
+    graphOutline = null;
+    renderGraphSide();
+    scheduleGraphDraw();
+    if (node && node.group === "file") {
+      void loadGraphOutline(node.id);
+    }
+  }
+
+  /** @param {string} path */
+  async function loadGraphOutline(path) {
+    const projectId = currentProjectId;
+    const conn = projectId ? connFor(projectId) : null;
+    if (!conn || !conn.isOpen()) return;
+    const seq = ++graphOutlineSeq;
+    graphOutline = { path, loading: true, error: "", result: null };
+    renderGraphSide();
+    try {
+      const r = await conn.send("index.outline", { path });
+      if (seq !== graphOutlineSeq || projectId !== currentProjectId) return;
+      graphOutline = { path, loading: false, error: "", result: r || {} };
+    } catch (err) {
+      if (seq !== graphOutlineSeq) return;
+      graphOutline = { path, loading: false, error: String((err && err.message) || err), result: null };
+    }
+    renderGraphSide();
+  }
+
+  /** @param {any} parent @param {string} cls @param {string} text */
+  function graphEl(parent, cls, text) {
+    const el = document.createElement("div");
+    el.className = cls;
+    if (text !== undefined) el.textContent = text;
+    if (parent) parent.appendChild(el);
+    return el;
+  }
+
+  /** A label, a leader, a value — the shape a console gives a count. */
+  function graphReadout(parent, label, value, extraClass) {
+    const row = document.createElement("div");
+    row.className = "graph-ro" + (extraClass ? " " + extraClass : "");
+    const k = document.createElement("span");
+    k.className = "graph-ro-k";
+    k.textContent = label;
+    const dots = document.createElement("span");
+    dots.className = "graph-ro-dots";
+    const v = document.createElement("span");
+    v.className = "graph-ro-v";
+    v.textContent = String(value);
+    row.append(k, dots, v);
+    parent.appendChild(row);
+    return row;
+  }
+
+  function graphSection(parent, title) {
+    const block = document.createElement("section");
+    block.className = "graph-block";
+    graphEl(block, "graph-block-title", title);
+    parent.appendChild(block);
+    return block;
+  }
+
+  function renderGraphSide() {
+    if (!graphSideEl) return;
+    graphSideEl.innerHTML = "";
+    const stats = (graphData && graphData.stats) || {};
+    const nodes = (graphData && graphData.nodes) || [];
+
+    const head = graphSection(graphSideEl, "Workspace");
+    graphEl(head, "graph-head-name", graphProjectName());
+    const entry = typeof known !== "undefined" ? known.find((p) => p.id === currentProjectId) : null;
+    if (entry && entry.path) graphEl(head, "graph-head-path", entry.path);
+    graphReadout(head, "index", graphData ? (graphData.available ? "ready" : "empty") : "—",
+      graphData && graphData.available ? "ok" : "");
+
+    // Whatever is selected goes straight under the workspace: it is what the
+    // person just clicked, and the counters are not going anywhere.
+    if (graphSelectedId) renderGraphSelection(graphSideEl);
+
+    if (graphData) {
+      const folders = nodes.filter((n) => n.group === "folder").length;
+      const files = nodes.filter((n) => n.group === "file").length;
+      const relations = (graphData.links || []).filter((l) => l.relation !== "in_folder").length;
+      const index = graphSection(graphSideEl, "What is indexed");
+      graphReadout(index, "files", stats.files || files);
+      graphReadout(index, "folders", folders);
+      graphReadout(index, "symbols", stats.nodes || 0);
+      graphReadout(index, "functions", stats.funcs || 0);
+      graphReadout(index, "types", stats.types || 0);
+      graphReadout(index, "tests", stats.tests || 0);
+      graphReadout(index, "packages", stats.packages || 0);
+      graphReadout(index, "relations", stats.edges || 0);
+      graphReadout(index, "file links", relations);
+      if (stats.embeddings) {
+        graphReadout(index, "embeddings", stats.embeddings + (stats.missing_embeddings ? " (+" + stats.missing_embeddings + " missing)" : ""));
+      }
+      graphReadout(index, "nesting", graphTree ? graphTree.maxDepth + " levels" : "—");
+
+      // What the files are made of: the graph's own languages when it has
+      // them, the extensions of the file nodes otherwise.
+      const kinds = new Map();
+      const langs = stats.langs && typeof stats.langs === "object" ? stats.langs : null;
+      if (langs) {
+        for (const k of Object.keys(langs)) kinds.set(k, langs[k]);
+      } else {
+        for (const n of nodes) {
+          if (n.group !== "file") continue;
+          const ext = graphExtOf(n.id) || "other";
+          kinds.set(ext, (kinds.get(ext) || 0) + 1);
+        }
+      }
+      const sorted = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+      if (sorted.length) {
+        const block = graphSection(graphSideEl, "File types");
+        for (const [name, count] of sorted) {
+          const row = graphReadout(block, name, count, "graph-ro-lang");
+          const dot = document.createElement("i");
+          dot.className = "graph-swatch";
+          dot.style.background = GRAPH_LANG_COLORS[String(name).toLowerCase()] || "var(--accent)";
+          row.insertBefore(dot, row.firstChild);
+        }
+      }
+
+      // The files everything else leans on: the picture's centre of gravity.
+      if (graphLayout) {
+        const hubs = graphLayout.nodes
+          .filter((n) => n.group === "file" && n.inW + n.outW > 0)
+          .sort((a, b) => b.inW + b.outW - (a.inW + a.outW))
+          .slice(0, 6);
+        if (hubs.length) {
+          const block = graphSection(graphSideEl, "Most connected");
+          for (const h of hubs) graphNeighbourRow(block, h.id, h.inW + h.outW);
+        }
+      }
+    }
+
+    if (!graphSelectedId) renderGraphSelection(graphSideEl);
+  }
+
+  /** @param {any} parent @param {string} id @param {number} weight */
+  function graphNeighbourRow(parent, id, weight) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "graph-link-row";
+    const name = document.createElement("span");
+    name.className = "graph-link-name";
+    name.textContent = id.slice(id.lastIndexOf("/") + 1);
+    const path = document.createElement("span");
+    path.className = "graph-link-path";
+    path.textContent = id;
+    const w = document.createElement("span");
+    w.className = "graph-link-weight";
+    w.textContent = String(weight);
+    // Name and weight share the first row; the path runs under both.
+    row.append(name, w, path);
+    row.title = id;
+    row.addEventListener("click", () => selectGraphNode(id));
+    parent.appendChild(row);
+    return row;
+  }
+
+  const GRAPH_SYMBOL_LABELS = {
+    func: "fn",
+    method: "fn",
+    struct: "type",
+    interface: "iface",
+    type: "type",
+    test: "test",
+    const: "const",
+    var: "var",
+  };
+
+  /** @param {any} parent */
+  function renderGraphSelection(parent) {
+    const node = graphLayout && graphSelectedId ? graphLayout.byId.get(graphSelectedId) : null;
+    if (!node) {
+      const empty = graphSection(parent, "Selection");
+      graphEl(empty, "graph-empty", "Click a node to see what is inside it and what it is wired to.");
+      return;
+    }
+    const block = graphSection(parent, node.group === "file" ? "File" : "Folder");
+    graphEl(block, "graph-head-name", node.name);
+    graphEl(block, "graph-head-path", node.id || "(workspace root)");
+    if (node.group === "file") {
+      graphReadout(block, "symbols", node.symbols);
+      const ext = graphExtOf(node.id);
+      if (ext) graphReadout(block, "type", ext);
+    } else {
+      graphReadout(block, "files", node.files);
+      graphReadout(block, "symbols", node.symbols);
+      if (node.folded) graphReadout(block, "folded away", node.folded + " files");
+    }
+    graphReadout(block, "links out", node.outW);
+    graphReadout(block, "links in", node.inW);
+
+    // For a file the functions come first — that is what the person opened it
+    // for; its neighbours follow.
+    if (node.group === "file") renderGraphFunctions(parent, node);
+    const neighbours = [...node.neighbours.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    if (neighbours.length) {
+      const nb = graphSection(parent, "Wired to");
+      for (const [id, w] of neighbours) graphNeighbourRow(nb, id, w);
+    }
+  }
+
+  /** @param {any} parent @param {any} node */
+  function renderGraphFunctions(parent, node) {
+    const fns = graphSection(parent, "Inside this file");
+    if (!graphOutline || graphOutline.path !== node.id) {
+      graphEl(fns, "graph-empty", "Reading…");
+      return;
+    }
+    if (graphOutline.loading) {
+      graphEl(fns, "graph-empty", "Reading…");
+      return;
+    }
+    if (graphOutline.error) {
+      graphEl(fns, "graph-empty", graphOutline.error);
+      return;
+    }
+    const res = graphOutline.result || {};
+    const symbols = Array.isArray(res.symbols) ? res.symbols : [];
+    if (res.lines) {
+      graphReadout(fns, "lines", res.lines);
+    }
+    if (!symbols.length) {
+      graphEl(fns, "graph-empty", res.available ? "No symbols indexed in this file." : "This file is not in the index.");
+      return;
+    }
+    symbols.forEach((sym, i) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "graph-sym" + (graphOpenSymbol === i ? " open" : "");
+      const kind = document.createElement("span");
+      kind.className = "graph-sym-kind";
+      kind.textContent = GRAPH_SYMBOL_LABELS[String(sym.kind || "").toLowerCase()] || String(sym.kind || "sym");
+      const name = document.createElement("span");
+      name.className = "graph-sym-name";
+      name.textContent = sym.name || "(unnamed)";
+      const where = document.createElement("span");
+      where.className = "graph-sym-lines";
+      where.textContent = sym.line_start ? sym.line_start + "–" + sym.line_end : "";
+      row.append(kind, name, where);
+      row.title = (sym.fqn || sym.name || "") + " · " + (sym.calls_out || 0) + " out · " + (sym.calls_in || 0) + " in";
+      row.addEventListener("click", () => {
+        graphOpenSymbol = graphOpenSymbol === i ? -1 : i;
+        renderGraphSide();
+      });
+      fns.appendChild(row);
+      if (graphOpenSymbol === i) {
+        const pre = document.createElement("pre");
+        pre.className = "graph-code";
+        // textContent: this is source off the disk, never markup.
+        pre.textContent = sym.preview || "(no source to show)";
+        fns.appendChild(pre);
+        if (sym.truncated) {
+          const shown = (sym.preview || "").split("\n").length;
+          const whole = Number(sym.line_end) - Number(sym.line_start) + 1;
+          graphEl(fns, "graph-code-note", "first " + shown + " of " + whole + " lines");
+        }
+      }
+    });
+  }
+
+  ensureGraphView();
+  // ---- the turn rail ----------------------------------------------------------
+  //
+  // One short bar per message of the person's own, down the right edge of
+  // the transcript, in place of the scrollbar (rail.css hides that). Each bar
+  // sits where its message is in the scroll, the one for the message in view
+  // is lit, and a click scrolls to it: a long conversation is navigated by
+  // its questions rather than by dragging a thumb. Built at runtime, outside
+  // the shared markup, like the graph view — the editor's webview keeps its
+  // scrollbar.
+
+  const railMessagesEl = document.getElementById("messages");
+  const railAppEl = document.getElementById("app");
+  /** @type {any} */
+  let turnRailEl = null;
+  /** @type {{el: any, tick: any}[]} */
+  let turnRailItems = [];
+  let turnRailQueued = false;
+
+  function ensureTurnRail() {
+    if (turnRailEl || !railAppEl || !railAppEl.appendChild) {
+      return;
+    }
+    turnRailEl = document.createElement("div");
+    turnRailEl.className = "turn-rail";
+    turnRailEl.setAttribute("aria-hidden", "true");
+    turnRailEl.hidden = true;
+    railAppEl.appendChild(turnRailEl);
+  }
+
+  function scheduleTurnRail() {
+    if (turnRailQueued) return;
+    turnRailQueued = true;
+    requestAnimationFrame(() => {
+      turnRailQueued = false;
+      rebuildTurnRail();
+    });
+  }
+
+  /** The transcript's own text of a user message, for the bar's tooltip. */
+  function turnRailLabel(el) {
+    const body = el.querySelector ? el.querySelector(".user-text") : null;
+    const text = String((body || el).textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.length > 90 ? text.slice(0, 87) + "…" : text;
+  }
+
+  function rebuildTurnRail() {
+    ensureTurnRail();
+    if (!turnRailEl || !railMessagesEl || !railMessagesEl.querySelectorAll) {
+      return;
+    }
+    const users = Array.from(railMessagesEl.querySelectorAll(".msg.user"));
+    const chatView = !railAppEl.dataset || !railAppEl.dataset.view || railAppEl.dataset.view === "chat";
+    const show = users.length > 0 && chatView && !railMessagesEl.hidden;
+    turnRailEl.hidden = !show;
+    turnRailItems = [];
+    if (!show) {
+      return;
+    }
+    if (!railMessagesEl.getBoundingClientRect || !railAppEl.getBoundingClientRect) {
+      return;
+    }
+    const appRect = railAppEl.getBoundingClientRect();
+    const box = railMessagesEl.getBoundingClientRect();
+    turnRailEl.style.top = Math.round(box.top - appRect.top + 8) + "px";
+    turnRailEl.style.height = Math.max(0, Math.round(box.height - 16)) + "px";
+    const total = Math.max(railMessagesEl.scrollHeight || box.height, 1);
+    turnRailEl.innerHTML = "";
+    for (const el of users) {
+      const r = el.getBoundingClientRect();
+      const offset = r.top - box.top + (railMessagesEl.scrollTop || 0);
+      const tick = document.createElement("button");
+      tick.type = "button";
+      tick.className = "turn-tick";
+      const label = turnRailLabel(el);
+      tick.title = label;
+      tick.setAttribute("aria-label", label || "message");
+      tick.style.top = Math.min(100, Math.max(0, (offset / total) * 100)).toFixed(2) + "%";
+      tick.addEventListener("click", () => {
+        const at = el.getBoundingClientRect().top - railMessagesEl.getBoundingClientRect().top + (railMessagesEl.scrollTop || 0);
+        if (railMessagesEl.scrollTo) {
+          railMessagesEl.scrollTo({ top: Math.max(0, at - 12), behavior: "smooth" });
+        } else {
+          railMessagesEl.scrollTop = Math.max(0, at - 12);
+        }
+      });
+      turnRailEl.appendChild(tick);
+      turnRailItems.push({ el, tick });
+    }
+    updateTurnRailCurrent();
+  }
+
+  /** Light the bar of the last question that has scrolled into the upper part of the view. */
+  function updateTurnRailCurrent() {
+    if (!turnRailItems.length || !railMessagesEl.getBoundingClientRect) return;
+    const box = railMessagesEl.getBoundingClientRect();
+    const line = box.top + box.height * 0.4;
+    let current = null;
+    for (const item of turnRailItems) {
+      if (item.el.getBoundingClientRect().top <= line) current = item;
+    }
+    if (!current) current = turnRailItems[0];
+    for (const item of turnRailItems) {
+      item.tick.classList.toggle("current", item === current);
+    }
+  }
+
+  if (railMessagesEl && railMessagesEl.addEventListener) {
+    railMessagesEl.addEventListener("scroll", () => updateTurnRailCurrent(), { passive: true });
+  }
+  if (railMessagesEl && typeof MutationObserver === "function") {
+    new MutationObserver(() => scheduleTurnRail()).observe(railMessagesEl, { childList: true });
+  }
+  if (railMessagesEl && typeof ResizeObserver === "function") {
+    new ResizeObserver(() => scheduleTurnRail()).observe(railMessagesEl);
+  }
+  if (railAppEl && typeof MutationObserver === "function") {
+    new MutationObserver(() => scheduleTurnRail()).observe(railAppEl, {
+      attributes: true,
+      attributeFilter: ["data-view"],
+    });
+  }
+  // The transcript changes wholesale on these; the observer above sees the
+  // children, this sees the moment.
+  window.addEventListener("message", (ev) => {
+    const t = ev.data && ev.data.type;
+    if (t === "clearMessages" || t === "history" || t === "userEcho") {
+      scheduleTurnRail();
+    }
+  });
 })();

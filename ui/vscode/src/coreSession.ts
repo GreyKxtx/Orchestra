@@ -22,7 +22,7 @@ import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjectio
 import { RpcClient } from "./rpc/client";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 16;
+const PROTOCOL_VERSION = 18;
 const OPS_VERSION = 1;
 export const TOOLS_VERSION = 14;
 
@@ -1464,6 +1464,35 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     return {
       uiMessages: typeof r.ui_messages === "number" ? r.ui_messages : 0,
       historyMessages: typeof r.history_messages === "number" ? r.history_messages : 0,
+    };
+  }
+
+  /**
+   * Branch a new session from a user checkpoint, leaving this one intact
+   * (session.fork). Returns the new session's id; the caller switches to it.
+   */
+  async forkSession(uiMessageIndex: number): Promise<{
+    sessionId: string;
+    parentId: string;
+    uiMessages: number;
+  }> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing");
+    }
+    const sessionId = (this.sessionId || "").trim();
+    if (!sessionId) {
+      throw new Error("session_id required");
+    }
+    const r = (await this.client.request(
+      "session.fork",
+      { session_id: sessionId, ui_message_index: uiMessageIndex },
+      60_000
+    )) as { session_id?: string; parent_id?: string; ui_messages?: number };
+    return {
+      sessionId: String(r.session_id || ""),
+      parentId: String(r.parent_id || ""),
+      uiMessages: typeof r.ui_messages === "number" ? r.ui_messages : 0,
     };
   }
 

@@ -147,7 +147,20 @@
         }
         pendingCalls.delete(msg.id);
         if (msg.error) {
-          p.reject(new Error(msg.error.message || "rpc error"));
+          // -32603 carries the literal string "Internal error" as its message
+          // and the thing that actually went wrong in data.error
+          // (protocol/jsonrpc/server.go). Rejecting with the message alone
+          // put "Internal error" in the transcript and threw the only useful
+          // half away, leaving nothing to act on and nothing to report.
+          const detail =
+            msg.error.data && typeof msg.error.data.error === "string"
+              ? msg.error.data.error
+              : "";
+          const text = detail || msg.error.message || "rpc error";
+          const err = new Error(text);
+          // @ts-ignore — kept for callers that branch on the code.
+          err.rpcCode = msg.error.code;
+          p.reject(err);
         } else {
           p.resolve(msg.result);
         }
