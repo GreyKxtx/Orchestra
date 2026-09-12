@@ -3,12 +3,39 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
+
+// modelsDialTimeout bounds the TCP connect of a models probe. The probe is
+// made for every configured provider each time the settings panel opens, and
+// a provider whose host is down — a VPN that is not up — answers no SYN at
+// all: the default dialer then sits on the OS's retry schedule until the
+// client's whole timeout fires. A live server accepts a connection in
+// milliseconds, however slow its model is; only a dead one is cut short here.
+const modelsDialTimeout = 3 * time.Second
+
+// modelsTransport carries every models probe. A variable so a test can stand
+// in a transport that fails the way a dead host does and count the attempts.
+var modelsTransport http.RoundTripper = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   modelsDialTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	IdleConnTimeout:       90 * time.Second,
+	MaxIdleConns:          8,
+	MaxIdleConnsPerHost:   4,
+	ExpectContinueTimeout: 1 * time.Second,
+	ForceAttemptHTTP2:     true,
+}
 
 // RemoteModel is one entry from OpenAI-compatible GET …/models.
 type RemoteModel struct {
@@ -41,12 +68,23 @@ func ListRemoteModels(ctx context.Context, cfg LLMConfig) ([]RemoteModel, error)
 	}
 
 	var lastErr error
-	for _, url := range candidates {
-		models, err := fetchModelsURL(ctx, url, cfg.APIKey)
+	for _, endpoint := range candidates {
+		models, err := fetchModelsURL(ctx, endpoint, cfg.APIKey)
 		if err == nil {
 			return models, nil
 		}
 		lastErr = err
+		// The candidates are two paths on one host. Not reaching the host at
+		// all — a dial that times out or is refused, a TLS failure, the
+		// caller's context gone — fails the second path the same way, so
+		// trying it only doubles the wait. An HTTP answer is different: a 404
+		// on /v1/models says the server is there and the path is wrong.
+		// http.Client.Do wraps every transport-level failure in *url.Error;
+		// the status and decode errors below are this file's own.
+		var transportErr *url.Error
+		if errors.As(err, &transportErr) {
+			break
+		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no models endpoint tried")
@@ -54,15 +92,15 @@ func ListRemoteModels(ctx context.Context, cfg LLMConfig) ([]RemoteModel, error)
 	return nil, lastErr
 }
 
-func fetchModelsURL(ctx context.Context, url, apiKey string) ([]RemoteModel, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func fetchModelsURL(ctx context.Context, endpoint, apiKey string) ([]RemoteModel, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(apiKey) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: modelsTransport}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -73,7 +111,7 @@ func fetchModelsURL(ctx context.Context, url, apiKey string) ([]RemoteModel, err
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GET %s: HTTP %d: %s", url, resp.StatusCode, truncateForErr(string(body), 200))
+		return nil, fmt.Errorf("GET %s: HTTP %d: %s", endpoint, resp.StatusCode, truncateForErr(string(body), 200))
 	}
 	var payload struct {
 		Data []RemoteModel `json:"data"`

@@ -45,6 +45,9 @@ type OpenAIClient struct {
 	wantMaxTokens int // user-configured; may exceed safe cap until context is known
 	maxTokens     int // effective value sent on the wire
 	contextTokens int // server / num_ctx window; 0 = unknown
+	// promptCal learns bytes-per-token from the usage this endpoint reports,
+	// so the pre-send size guard stops refusing prompts that actually fit.
+	promptCal promptCalibration
 	temperature   float32
 	toolChoice    string // resolved: auto | omit | none | required
 	// toolChoiceImplicit is true when cfg.ToolChoice was left blank and
@@ -326,7 +329,7 @@ func (c *OpenAIClient) maxTokensForRequest(req CompleteRequest) (int, error) {
 	if c.contextTokens <= 0 {
 		return want, nil
 	}
-	promptTok := estimateRequestTokens(req)
+	promptTok := c.estimatePromptTokens(req)
 	if promptTok >= c.contextTokens-256 {
 		return 0, fmt.Errorf(
 			"prompt too large (~%d tokens) for model context %d — compact history or start a new session",
@@ -979,6 +982,9 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 	out := &CompleteResponse{Message: msg}
 	newToolNameMapper(req.Tools).RestoreResponse(out)
 	if apiResp.Usage != nil {
+		// What the prompt really cost, fed back so the pre-send size guard
+		// measures instead of guessing (see prompt_calibration.go).
+		c.observePromptUsage(estimateRequestBytes(req), apiResp.Usage.PromptTokens)
 		out.Usage = &TokenUsage{
 			PromptTokens:       apiResp.Usage.PromptTokens,
 			CompletionTokens:   apiResp.Usage.CompletionTokens,
@@ -1031,7 +1037,9 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
 		out, err := c.streamOnce(ctx, url, req, maxTok)
 		if err == nil {
-			return out, nil
+			// The streamed answer carries its usage in the final chunk, which
+			// is where this endpoint tells us what its tokenizer really does.
+			return c.watchPromptUsage(out, estimateRequestBytes(req)), nil
 		}
 		lastErr = wrapUnreachable(c.baseURL, err)
 		if ctx.Err() != nil {
