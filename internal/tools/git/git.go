@@ -110,8 +110,7 @@ func (c *Client) GitStatus(ctx context.Context, _ GitStatusRequest) (*GitStatusR
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git status failed",
-			map[string]any{"stderr": stderr, "exit": code})
+		return nil, gitExitError("git status", stderr, code)
 	}
 
 	branch := ""
@@ -186,8 +185,7 @@ func (c *Client) GitLog(ctx context.Context, req GitLogRequest) (*GitLogResponse
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git log failed",
-			map[string]any{"stderr": stderr, "exit": code})
+		return nil, gitExitError("git log", stderr, code)
 	}
 
 	truncated := strings.HasSuffix(stdout, "[output truncated]")
@@ -239,8 +237,7 @@ func (c *Client) GitDiff(ctx context.Context, req GitDiffRequest) (*GitDiffRespo
 		return nil, err
 	}
 	if code != 0 {
-		return nil, protocol.NewError(protocol.ExecFailed, "git diff failed",
-			map[string]any{"stderr": stderr, "exit": code})
+		return nil, gitExitError("git diff", stderr, code)
 	}
 
 	truncated := strings.HasSuffix(stdout, "[output truncated]")
