@@ -348,6 +348,9 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 // Close releases resources held by Core (tools.Runner, MCP manager).
 // Safe to call multiple times.
 func (c *Core) Close() error {
+	if c.limitsCancel != nil {
+		c.limitsCancel()
+	}
 	if c.mcpManager != nil {
 		c.mcpManager.Close()
 	}

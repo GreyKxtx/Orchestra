@@ -84,6 +84,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 	// dispatching so read-modify-write persists never clobber external edits.
 	if method != "initialize" {
 		h.core.RefreshConfigIfChanged()
+		h.core.applyDiscoveredModelLimits()
 	}
 
 	switch method {
@@ -459,6 +460,33 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			})
 		}
 		return h.core.IndexEmbed(ctx, p)
+
+	case "index.graph":
+		var p IndexGraphParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.IndexGraph(ctx, p)
+
+	case "index.outline":
+		var p IndexOutlineParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.IndexOutline(ctx, p)
+
+	case "attachments.store":
+		var p AttachmentsStoreParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.AttachmentsStore(p)
 
 	case "ops.apply":
 		var p OpsApplyParams

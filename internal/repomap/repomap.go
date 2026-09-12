@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -225,7 +226,21 @@ func Format(rm *RepoMap, budgetBytes int) string {
 		return text
 	}
 
-	// Layer 3: greedy drop of smallest files until we fit. Iteration is bounded
+	// Layer 3: the shape of the repository.
+	//
+	// Layer 4 below drops the smallest files first, which keeps the single
+	// largest outline and omits everything else — for a 3 KB budget on a
+	// thousand-file repo that answers "what is inside this one file" when the
+	// question was "what is this project". Once the outline overruns the
+	// budget by a wide margin, a digest of directories — how many files and
+	// symbols each holds — is the honest map, and it fits any repo.
+	if len(text) > budgetBytes*digestOverflowFactor {
+		if digest := renderDirDigest(rm, budgetBytes); digest != "" {
+			return digest
+		}
+	}
+
+	// Layer 4: greedy drop of smallest files until we fit. Iteration is bounded
 	// by len(pruned), so worst case is O(n²) in file count — acceptable for
 	// budgets that ever require this much trimming (rare).
 	sortedBySize := append([]FileOutline(nil), pruned...)
@@ -257,6 +272,90 @@ func Format(rm *RepoMap, budgetBytes int) string {
 	}
 	// Nothing fits; return the bare omission line so the caller knows.
 	return fmt.Sprintf("(%d files; %d bytes budget too small for any outline)\n", len(rm.Files), budgetBytes)
+}
+
+// digestOverflowFactor is how far the per-file outline may overrun the budget
+// before the directory digest replaces it. Below it, dropping files keeps a
+// map that is still a map; above it, what survives is not representative.
+const digestOverflowFactor = 2
+
+// renderDirDigest is the repository at directory granularity: one line per
+// directory with how many files and symbols it holds, biggest first, and a
+// pointer to what to call next. Returns "" when even that does not fit, so the
+// caller can fall through to dropping files.
+func renderDirDigest(rm *RepoMap, budgetBytes int) string {
+	type dirStat struct {
+		dir     string
+		files   int
+		symbols int
+	}
+	byDir := make(map[string]*dirStat, 32)
+	totalSymbols := 0
+	for _, f := range rm.Files {
+		dir := path.Dir(filepath.ToSlash(f.Path))
+		if dir == "." || dir == "/" {
+			dir = "(root)"
+		}
+		d := byDir[dir]
+		if d == nil {
+			d = &dirStat{dir: dir}
+			byDir[dir] = d
+		}
+		d.files++
+		d.symbols += len(f.Symbols)
+		totalSymbols += len(f.Symbols)
+	}
+	dirs := make([]*dirStat, 0, len(byDir))
+	for _, d := range byDir {
+		dirs = append(dirs, d)
+	}
+	sort.SliceStable(dirs, func(i, j int) bool {
+		if dirs[i].symbols != dirs[j].symbols {
+			return dirs[i].symbols > dirs[j].symbols
+		}
+		return dirs[i].dir < dirs[j].dir
+	})
+
+	head := fmt.Sprintf("repo: %d files · %d symbols · %d dirs (shape only — the outline needs a bigger budget_bytes):\n",
+		len(rm.Files), totalSymbols, len(dirs))
+	const tailFmt = "(+%d more dir%s; explore(\"<dir>\") for its symbols)\n"
+	tailAll := "(explore(\"<dir>\") for a directory's symbols)\n"
+	if len(head)+len(tailAll) > budgetBytes {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(head)
+	shown := 0
+	for _, d := range dirs {
+		line := fmt.Sprintf("  %s — %d file%s, %d symbol%s\n", d.dir, d.files, plural(d.files), d.symbols, plural(d.symbols))
+		left := len(dirs) - shown - 1
+		tail := tailAll
+		if left > 0 {
+			tail = fmt.Sprintf(tailFmt, left, dirPlural(left))
+		}
+		if b.Len()+len(line)+len(tail) > budgetBytes {
+			break
+		}
+		b.WriteString(line)
+		shown++
+	}
+	if shown == 0 {
+		return ""
+	}
+	if left := len(dirs) - shown; left > 0 {
+		b.WriteString(fmt.Sprintf(tailFmt, left, dirPlural(left)))
+	} else {
+		b.WriteString(tailAll)
+	}
+	return b.String()
+}
+
+func dirPlural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func renderFiles(files []FileOutline) string {

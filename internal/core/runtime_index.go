@@ -2,10 +2,14 @@ package core
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -103,6 +107,176 @@ type IndexEmbedResult struct {
 	Total     int    `json:"total"`
 	Remaining int    `json:"remaining"`
 	Elapsed   string `json:"elapsed"`
+}
+
+// IndexGraphParams selects the granularity of index.graph: "file" (default)
+// — folders, files and weighted file-to-file relations, what the Graph view
+// draws — or "symbol", every indexed symbol with its relations.
+type IndexGraphParams struct {
+	Level string `json:"level,omitempty"`
+}
+
+// IndexGraphResult is the graph as the UI draws it. Available is false when
+// the workspace has no graph store yet; nodes and links are then empty, never
+// null. Stats is the same counter set index.status reports — the Graph view
+// shows it beside the picture, so it must not cost a second round trip.
+type IndexGraphResult struct {
+	Available bool            `json:"available"`
+	Level     string          `json:"level"`
+	Nodes     []ckg.GraphNode `json:"nodes"`
+	Links     []ckg.GraphLink `json:"links"`
+	Stats     toolsCKGView    `json:"stats"`
+}
+
+// IndexOutlineParams asks for one file's symbols, by workspace-relative path
+// with forward slashes — the id of a file node in index.graph.
+type IndexOutlineParams struct {
+	Path string `json:"path"`
+	// Preview off returns the symbol list without reading the file.
+	Preview *bool `json:"preview,omitempty"`
+}
+
+// IndexOutlineSymbol is a symbol plus the first lines of its source, which is
+// what the Graph view shows when a function is opened.
+type IndexOutlineSymbol struct {
+	ckg.OutlineSymbol
+	Preview string `json:"preview,omitempty"`
+	// Truncated says the preview stops short of the symbol's last line.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// IndexOutlineResult is one file as the Graph view's detail pane reads it.
+type IndexOutlineResult struct {
+	Available bool                 `json:"available"`
+	Path      string               `json:"path"`
+	Language  string               `json:"language"`
+	Lines     int                  `json:"lines"`
+	Bytes     int                  `json:"bytes"`
+	Symbols   []IndexOutlineSymbol `json:"symbols"`
+}
+
+const (
+	// outlinePreviewLines is how much of one symbol comes back; a screenful,
+	// enough to tell what a function does without shipping the file twice.
+	outlinePreviewLines = 40
+	// outlinePreviewBudget caps the whole answer's preview lines.
+	outlinePreviewBudget = 2000
+	// outlineMaxFileBytes is the largest file read for previews.
+	outlineMaxFileBytes = 2 * 1024 * 1024
+)
+
+// IndexOutline answers index.outline: a file's indexed symbols, each with the
+// first lines of its source. The file is read through the workspace resolver,
+// so a path that points outside the workspace is refused rather than read.
+func (c *Core) IndexOutline(ctx context.Context, params IndexOutlineParams) (*IndexOutlineResult, error) {
+	if c == nil || c.tools == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	rel := strings.TrimSpace(strings.ReplaceAll(params.Path, "\\", "/"))
+	if rel == "" {
+		return nil, protocol.NewError(protocol.InvalidParams, "path is required", nil)
+	}
+	res := &IndexOutlineResult{Path: rel, Symbols: []IndexOutlineSymbol{}}
+
+	outline, ok, err := c.tools.CKGFileOutline(ctx, rel)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+	}
+	if ok && outline != nil {
+		res.Available = outline.Available
+		res.Language = outline.Language
+		for _, s := range outline.Symbols {
+			res.Symbols = append(res.Symbols, IndexOutlineSymbol{OutlineSymbol: s})
+		}
+	}
+
+	preview := true
+	if params.Preview != nil {
+		preview = *params.Preview
+	}
+	abs, _, err := fsutil.ResolveInWorkspace(c.workspaceRoot, filepath.Join(c.workspaceRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil, protocol.NewError(protocol.PathTraversal, err.Error(), nil)
+	}
+	info, statErr := os.Stat(abs)
+	if statErr != nil || info.IsDir() || info.Size() > outlineMaxFileBytes {
+		return res, nil
+	}
+	data, readErr := os.ReadFile(abs)
+	if readErr != nil {
+		return res, nil
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	res.Bytes = len(data)
+	res.Lines = len(lines)
+	if !preview {
+		return res, nil
+	}
+	budget := outlinePreviewBudget
+	for i := range res.Symbols {
+		s := &res.Symbols[i]
+		start := s.LineStart
+		if start < 1 {
+			start = 1
+		}
+		if start > len(lines) {
+			continue
+		}
+		end := s.LineEnd
+		if end < start {
+			end = start
+		}
+		if end > len(lines) {
+			end = len(lines)
+		}
+		want := end - start + 1
+		take := want
+		if take > outlinePreviewLines {
+			take = outlinePreviewLines
+		}
+		if take > budget {
+			take = budget
+		}
+		if take <= 0 {
+			break
+		}
+		s.Preview = strings.Join(lines[start-1:start-1+take], "\n")
+		s.Truncated = take < want
+		budget -= take
+	}
+	return res, nil
+}
+
+// IndexGraph answers index.graph from the CKG store.
+func (c *Core) IndexGraph(ctx context.Context, params IndexGraphParams) (*IndexGraphResult, error) {
+	if c == nil || c.tools == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	level := strings.ToLower(strings.TrimSpace(params.Level))
+	if level == "" {
+		level = "file"
+	}
+	if level != "file" && level != "symbol" {
+		return nil, protocol.NewError(protocol.InvalidParams, "level must be file or symbol", map[string]any{"level": params.Level})
+	}
+	g, ok, err := c.tools.CKGGraph(ctx, level)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+	}
+	res := &IndexGraphResult{Available: ok, Level: level, Nodes: []ckg.GraphNode{}, Links: []ckg.GraphLink{}}
+	if view, statErr := c.tools.CKGIndexStatus(ctx); statErr == nil {
+		res.Stats = ckgViewToRPC(view)
+		res.Stats.DBPath = ""
+	}
+	if ok && g != nil {
+		if g.Nodes != nil {
+			res.Nodes = g.Nodes
+		}
+		if g.Links != nil {
+			res.Links = g.Links
+		}
+	}
+	return res, nil
 }
 
 // IndexStatus returns graph counters and index configuration.

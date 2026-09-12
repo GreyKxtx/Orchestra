@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `15`
+- **`protocol.ProtocolVersion`**: `18`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `14`
 
@@ -15,6 +15,8 @@
 
 ### История ProtocolVersion
 
+- **v18** (2026-09-11): `index.graph` дополнительно возвращает `stats` — тот же набор счётчиков, что и `index.status` (файлы, узлы, рёбра, функции, типы, тесты, языки), чтобы вкладка Graph показывала их рядом с картинкой без второго запроса. `index.outline` — символы одного файла с первыми строками исходника каждого символа.
+- **v17** (2026-09-11): `index.graph` — граф знаний о коде в том виде, в котором его рисует вкладка Graph: на уровне `file` (папки, файлы и взвешенные связи файл→файл) или `symbol` (каждый проиндексированный символ). `attachments.store` — клиент без своей файловой системы (браузер, web view десктопа) отдаёт core байты файла и получает вложение под `<workspace>/.orchestra/attachments/`, которое можно передать в `session.message.attachments[]`. Хост VS Code делает то же самое сам (panel.ts, `attachBytes`).
 - **v16** (2026-09-10): `session.trajectory` — читает append-only per-session event log (`.orchestra/sessions/<id>.events.jsonl`) обратно как `{recorded, events[]}`. Снапшот сессии на диске не меняется и остаётся на v4 — лог это sidecar-файл рядом со снапшотом, а не часть его схемы. Также добавлен тип агентского события `context_estimate` — байтовая оценка размера промпта, отдельная от `step_usage` (реальных цифр, которые сообщил провайдер): их нельзя суммировать или подменять друг другом, и только `step_usage` может записываться как измеренный расход.
 - **v15** (2026-09-08): транспорт `/ws` — двунаправленный JSON-RPC поверх WebSocket (`orchestra web`); один message на фрейм, без `Content-Length`. Методы не менялись.
 - **v14** (2026-09-06): `session.fork` — ветка от user-чекпоинта без разрушения оригинала; `session.search` — поиск по тексту сообщений во всех сохранённых сессиях.
@@ -420,6 +422,96 @@ Server fields: `name`, `command[]`, `env`, `disabled`, `call_timeout_s`, `allowe
 
 Temporary connect (or use named cfg entry) and list tool names; does not persist.
 
+### `mcp.prompts`
+
+Возвращает промпты, предлагаемые запущенными MCP-серверами (палитра команд спрашивает безусловно, поэтому отсутствие серверов — пустой список, а не ошибка).
+
+`params`: `{}`
+
+Response `result`:
+
+- `prompts` (array of `{server, name, description}`)
+
+### `mcp.prompt.get`
+
+Рендерит промпт MCP-сервера в текст пользовательского хода.
+
+`params`:
+
+- `server` (string)
+- `name` (string)
+- `args` (string, optional) — сырой текст после команды; ядро раскладывает его по объявленным аргументам промпта
+
+Response `result`:
+
+- `text` (string)
+
+### `runtime.get_orchestra`
+
+Возвращает настройки оркестрации для UI настроек: роли и их привязки к провайдерам/моделям.
+
+`params`: `{}`
+
+Response `result`:
+
+- `roles` (array) — `{key, label, provider, model, ...}`
+- `default_tier` (string)
+- `max_worker_retries` (int)
+- `worker_verify_enabled` (bool), `max_worker_verify_retries` (int), `worker_llm_verify_enabled` (bool)
+- `main_provider` / `main_model` (string), `fast_provider` (string, optional)
+- `named` (map, optional) — именованные провайдеры
+
+### `runtime.configure_orchestra`
+
+Обновляет то же самое. Поля-указатели меняются только когда переданы; `provider_patches` правит записи `providers:`. Default `persist: true` пишет `.orchestra.yml`.
+
+`params`: `roles`, `default_tier?`, `max_worker_retries?`, `worker_verify_enabled?`, `max_worker_verify_retries?`, `worker_llm_verify_enabled?`, `provider_patches?`, `persist?`
+
+Response `result`:
+
+- `saved` (bool)
+
+### `runtime.credits`
+
+Спрашивает у провайдера баланс/кредиты (OpenRouter). `supported=false` означает, что у провайдера нет известного нам API баланса — локальные серверы и обычный OpenAI base сюда попадают.
+
+`params`:
+
+- `provider` (string, optional) — по умолчанию активный
+
+Response `result`:
+
+- `provider` (string)
+- `supported` (bool)
+- `total_credits`, `total_usage`, `balance` (float, optional)
+
+### `ops.apply`
+
+Применяет список внутренних ops к рабочей копии. Предназначен для потока «подтвердить применение»: клиент получил ops событием `pending_ops`, пользователь подтвердил, клиент присылает их обратно.
+
+`params`:
+
+- `ops` (array of internal ops)
+- `backup` (bool)
+
+Response `result`:
+
+- `applied` (bool)
+- `changed_files` (array of string)
+
+### `lesson.rule_respond`
+
+Ответ человека на предложенное правило. `accept=true` дописывает `rule_line` в файл инструкций проекта (по умолчанию `ORCHESTRA.md`, если своего нет); отказ не трогает файлы. В обоих случаях сигнал `(dept, file, verify)` сбрасывается, и та же комбинация должна повториться трижды, прежде чем спросят снова.
+
+`params`:
+
+- `accept` (bool)
+- `dept`, `file`, `verify`, `rule_line` (string)
+
+Response `result`:
+
+- `applied` (bool)
+
 ### `agents.list` / `agents.upsert` / `agents.delete`
 
 CRUD for custom `agents[]` in `.orchestra.yml`. Built-in mode names are reserved (`built_in_modes` in list). Agent fields: `name`, `system_prompt`, `tools`, `model`, `provider`.
@@ -637,6 +729,33 @@ Response `result`:
 - `applied` (bool) — false если pending пуст
 - `apply_response` (optional) — при `applied=true`
 
+### `session.discard_pending`
+
+Сбрасывает staging-overlay и pending ops сессии, ничего не записывая на диск («отклонить всё» в VS Code / TUI).
+
+`params`:
+
+- `session_id` (string)
+
+Response `result`:
+
+- `discarded` (bool)
+
+### `session.compact`
+
+Принудительно запускает ModeCompaction над LLM-историей сессии и сохраняет sticky-checkpoint. `ui_messages` не трогаются: сжимается то, что уходит в модель, а не то, что видит пользователь.
+
+`params`:
+
+- `session_id` (string)
+- `query` (string, optional) — подсказка о цели для саммари
+
+Response `result`:
+
+- `session_id` (string)
+- `before_msgs` / `after_msgs` (int)
+- `before_bytes` / `after_bytes` (int, optional)
+
 ### `session.history`
 
 Возвращает накопленную историю сообщений сессии.
@@ -750,6 +869,79 @@ Response `result`:
 - `session_id` (string)
 
 Response `result`: `null`
+
+### `index.graph`
+
+Граф знаний о коде (CKG) для вкладки Graph. Читается из `.orchestra/ckg.db` рабочего пространства; ничего не индексирует.
+
+`params`:
+
+- `level` (string, optional) — `file` (по умолчанию) или `symbol`.
+
+Response `result`:
+
+- `available` (bool) — `false`, если у рабочего пространства ещё нет графа; `nodes` и `links` тогда пустые (`[]`, никогда не `null`).
+- `level` (string) — уровень, на котором построен ответ.
+- `nodes` (array of `{id, group, name, meta}`) — на уровне `file` группы `folder` и `file`; на уровне `symbol` ещё `func`, `method`, `struct`, `interface`, `test`. `id` файла и папки — путь от корня с прямыми слэшами; `id` символа — его FQN.
+- `links` (array of `{source, target, relation, weight?}`) — на уровне `file`: `in_folder` (файл или папка → родительская папка) и отношения между файлами (`calls`, `uses`, …) с `weight` — числом символьных связей, которые они заменяют; на уровне `symbol`: `in_file` и отношения между символами без `weight`.
+- `stats` (object) — счётчики индекса: `available`, `files`, `nodes`, `edges`, `embeddings`, `missing_embeddings`, `funcs`, `types`, `packages`, `tests`, `langs` (`{язык: файлов}`). Тот же набор, что у `index.status`, без `db_path`.
+
+Пример:
+
+```json
+{"method": "index.graph", "params": {"level": "file"}}
+```
+
+```json
+{"result": {"available": true, "level": "file", "nodes": [{"id": "internal/core", "group": "folder", "name": "core"}, {"id": "internal/core/core.go", "group": "file", "name": "core.go"}], "links": [{"source": "internal/core/core.go", "target": "internal/core", "relation": "in_folder"}, {"source": "internal/core/core.go", "target": "internal/core/rpc_handler.go", "relation": "calls", "weight": 12}]}}
+```
+
+### `index.outline`
+
+Символы одного файла из графа плюс превью исходника каждого символа. Вкладка Graph читает это, когда выбран файл: список функций, типов и тестов и первые строки каждого.
+
+`params`:
+
+- `path` (string) — путь файла от корня рабочего пространства с прямыми слэшами (`id` узла-файла из `index.graph`). Путь наружу рабочего пространства отклоняется (`PathTraversal`).
+- `preview` (bool, optional) — `false` возвращает список символов, не читая файл.
+
+Response `result`:
+
+- `available` (bool) — файл есть в графе.
+- `path`, `language` (string)
+- `lines`, `bytes` (int) — размер файла; `0`, если файл не прочитан (нет на диске, каталог, больше 2 МБ).
+- `symbols` (array of `{name, fqn, kind, line_start, line_end, calls_out, calls_in, preview?, truncated?}`) — по возрастанию `line_start`. `preview` — не больше 40 строк символа, суммарно не больше 2000 строк на ответ; `truncated` — превью обрывается раньше `line_end`.
+
+Пример:
+
+```json
+{"method": "index.outline", "params": {"path": "internal/core/core.go"}}
+```
+
+```json
+{"result": {"available": true, "path": "internal/core/core.go", "language": "go", "lines": 412, "bytes": 11238, "symbols": [{"name": "New", "fqn": "internal/core.New", "kind": "func", "line_start": 61, "line_end": 140, "calls_out": 18, "calls_in": 4, "preview": "func New(cfg *config.ProjectConfig) (*Core, error) {", "truncated": true}]}}
+```
+
+### `attachments.store`
+
+Сохраняет байты файла под `<workspace>/.orchestra/attachments/<unix-ms>-<имя>` и возвращает вложение для `session.message.attachments[]`. Для клиентов без своей файловой системы — браузера и web view десктопа, где перетаскивание, вставка и выбор файла дают байты, но не путь в рабочем пространстве. Core пишет только внутрь рабочего пространства; лимит 20 МБ, как у хоста VS Code и у рендерера.
+
+`params`:
+
+- `name` (string) — имя файла от клиента; берётся только базовое имя, небезопасные символы заменяются на `_`, пробелы на `-`; без расширения оно берётся из `mime` (`image/png` → `.png`), иначе `.bin`.
+- `mime` (string, optional)
+- `data_base64` (string) — содержимое в base64, непустое.
+
+Response `result`:
+
+- `name` (string) — имя, под которым файл сохранён (без метки времени)
+- `path` (string) — абсолютный путь
+- `rel` (string) — путь от корня рабочего пространства с прямыми слэшами
+- `ext` (string, optional) — расширение без точки, в нижнем регистре
+- `kind` (string) — `image` или `file`
+- `size` (int) — байт записано
+
+Ошибки: `InvalidParams` для пустых, не-base64 и слишком больших данных; `PathTraversal`, если итоговый путь вышел бы за корень (по построению не случается).
 
 ## Ошибки
 
@@ -869,7 +1061,7 @@ without spinning up a full workflow.
 `params`:
 
 - `name` (string, required)
-- `arguments` (string, required)
+- `arguments` (string, optional) — то, что человек набрал после имени команды; подставляется в `$ARGUMENTS`. Пустое значение допустимо: файл команды несёт свои инструкции сам.
 - `allow_exec` / `allow_web` / `allow_browser` (bool, optional)
 
 Errors: `NotFound` (-32012), `InvalidParams` (-32602).

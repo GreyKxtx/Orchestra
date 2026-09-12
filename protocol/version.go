@@ -32,7 +32,17 @@ const (
 	//      prompt-context estimate, distinct from provider-reported
 	//      "step_usage" — the two must never be summed or substituted for
 	//      one another, and only step_usage may be recorded as measured spend.
-	ProtocolVersion = 16
+	// v17: index.graph — the code knowledge graph as the UI's Graph view draws
+	//      it, at file level (folders, files, weighted file-to-file relations)
+	//      or symbol level; attachments.store — a client without a filesystem
+	//      of its own (browser, desktop web view) hands the core a file's bytes
+	//      and gets back an attachment under <workspace>/.orchestra/attachments
+	//      to send with session.message.
+	// v18: index.graph also answers with `stats` (the index.status counter set:
+	//      files, nodes, edges, funcs, types, tests, langs) so the Graph view
+	//      can show them beside the picture; index.outline — one file's indexed
+	//      symbols with the first lines of each symbol's source.
+	ProtocolVersion = 18
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

@@ -67,6 +67,14 @@ type Core struct {
 	// an MCP goroutine outside runMu, while every model writer mutates those
 	// fields in place under runMu alone. Writers call publishSamplingTarget.
 	sampling samplingTarget
+
+	// What the LLM server reported as the model's context window, found in
+	// the background after New — see model_limits.go. limitsMu guards it;
+	// the writer is the discovery goroutine, the reader the RPC pre-dispatch
+	// hook, which applies it to cfg.LLM under the usual locks.
+	limitsMu         sync.Mutex
+	discoveredLimits *llm.ModelLimits
+	limitsCancel     context.CancelFunc
 }
 
 type Options struct {
@@ -132,11 +140,16 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	injected := opts.LLMClient != nil
 	llmClient := opts.LLMClient
 	if llmClient == nil && !opts.ToolsOnly {
-		// Discover max_model_len from the server so max_tokens / num_ctx stay valid
-		// even when .orchestra.yml is stale or missing num_ctx.
-		discCtx, discCancel := context.WithTimeout(context.Background(), 8*time.Second)
-		llm.ResolveModelLimits(discCtx, &cfg.LLM)
-		discCancel()
+		// The model's window from the static catalogue, now, with no network:
+		// enough for history budgeting to start from something sane. What the
+		// server actually reports is asked for in the background below and
+		// applied before the next RPC — asking here, on the constructor's
+		// critical path, cost an 8-second timeout every time a project whose
+		// endpoint was down or on a VPN was opened, and the window on that
+		// wait showed nothing but a dimmed start screen.
+		if lim, ok := llm.CatalogModelLimits(cfg.LLM); ok {
+			llm.ApplyDiscoveredLimits(&cfg.LLM, lim)
+		}
 		logger := llm.NewLogger(rootAbs)
 		llmClient = llm.NewClient(cfg.LLM)
 		if oc, ok := llm.AsOpenAIClient(llmClient); ok {
@@ -188,6 +201,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		}
 	}
 	c.noteConfigMTime()
+	if !injected && !opts.ToolsOnly {
+		c.startModelLimitDiscovery()
+	}
 	// Startup GC for staged runtime artifacts (attachments, diff-preview).
 	// Self-terminating goroutine — see artifacts_gc.go.
 	go cleanupWorkspaceArtifacts(rootAbs)

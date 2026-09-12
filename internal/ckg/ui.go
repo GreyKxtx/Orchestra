@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -31,7 +32,77 @@ type GraphNode struct {
 type GraphLink struct {
 	Source   string `json:"source"`
 	Target   string `json:"target"`
-	Relation string `json:"relation"` // in_file, calls, uses
+	Relation string `json:"relation"` // in_file, calls, uses; in_folder in the file-level graph
+	// Weight is how many symbol-level relations a file-level link stands
+	// for (BuildFileGraphData); zero on symbol-level links.
+	Weight int `json:"weight,omitempty"`
+}
+
+// BuildFileGraphData is the graph at file granularity: folders and files as
+// nodes, containment and file-to-file relations as links, each relation link
+// carrying how many symbol-level edges it stands for. The symbol graph of a
+// real repository runs to tens of thousands of nodes — too many to lay out,
+// and not what "the shape of the project" means to someone looking at it.
+// Symbols whose target has no file (external, unresolved) contribute nothing.
+func BuildFileGraphData(ctx context.Context, store *Store) (*GraphData, error) {
+	full, err := BuildGraphData(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	out := &GraphData{Nodes: []GraphNode{}, Links: []GraphLink{}}
+	fileOf := make(map[string]string) // symbol id → file path
+	for _, l := range full.Links {
+		if l.Relation == "in_file" {
+			fileOf[l.Source] = l.Target
+		}
+	}
+	for _, n := range full.Nodes {
+		if n.Group == "file" || n.Group == "folder" {
+			out.Nodes = append(out.Nodes, n)
+		}
+	}
+
+	type pair struct{ from, to string }
+	weights := make(map[pair]int)
+	relation := make(map[pair]string)
+	for _, l := range full.Links {
+		if l.Relation == "in_file" {
+			continue
+		}
+		from, to := fileOf[l.Source], fileOf[l.Target]
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		p := pair{from, to}
+		weights[p]++
+		if relation[p] == "" || l.Relation == "calls" {
+			relation[p] = l.Relation
+		}
+	}
+	pairs := make([]pair, 0, len(weights))
+	for p := range weights {
+		pairs = append(pairs, p)
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].from != pairs[j].from {
+			return pairs[i].from < pairs[j].from
+		}
+		return pairs[i].to < pairs[j].to
+	})
+	for _, p := range pairs {
+		out.Links = append(out.Links, GraphLink{Source: p.from, Target: p.to, Relation: relation[p], Weight: weights[p]})
+	}
+
+	// Containment: every file and folder hangs off its parent folder. The
+	// full graph already has a folder node for every ancestor directory.
+	for _, n := range out.Nodes {
+		parent := path.Dir(n.ID)
+		if parent == "." || parent == "/" || parent == n.ID {
+			continue
+		}
+		out.Links = append(out.Links, GraphLink{Source: n.ID, Target: parent, Relation: "in_folder"})
+	}
+	return out, nil
 }
 
 func sourceHandlerFunc(workspaceRoot string) http.HandlerFunc {
@@ -77,7 +148,7 @@ func StartUIServer(store *Store, workspaceRoot string, port int) error {
 
 	mux.HandleFunc("/api/graph", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		data, err := buildGraphData(ctx, store)
+		data, err := BuildGraphData(ctx, store)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -104,7 +175,7 @@ func StartUIServer(store *Store, workspaceRoot string, port int) error {
 	return http.ListenAndServe(addr, mux)
 }
 
-func buildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
+func BuildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 	data := &GraphData{
 		Nodes: []GraphNode{},
 		Links: []GraphLink{},

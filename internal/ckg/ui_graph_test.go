@@ -9,7 +9,7 @@ func TestBuildGraphData_Empty(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	data, err := buildGraphData(ctx, s)
+	data, err := BuildGraphData(ctx, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestBuildGraphData_WithNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := buildGraphData(ctx, s)
+	data, err := BuildGraphData(ctx, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestBuildGraphData_SkipsVendorAndTestdata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := buildGraphData(ctx, s)
+	data, err := BuildGraphData(ctx, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestBuildGraphData_WithEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := buildGraphData(ctx, s)
+	data, err := BuildGraphData(ctx, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestBuildGraphData_TestFunctionGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := buildGraphData(ctx, s)
+	data, err := BuildGraphData(ctx, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,5 +140,65 @@ func TestBuildGraphData_TestFunctionGroup(t *testing.T) {
 		if n.ID == "pkg.TestFoo" && n.Group != "test" {
 			t.Errorf("TestFoo should have group 'test', got %q", n.Group)
 		}
+	}
+}
+
+// The file-level graph folds symbol relations into one weighted link per
+// pair of files, keeps folders and files, and hangs each off its folder.
+func TestBuildFileGraphData_AggregatesRelationsBetweenFiles(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	callee := []Node{
+		{FQN: "pkg.B", ShortName: "B", Kind: "func", LineStart: 1, LineEnd: 3},
+		{FQN: "pkg.C", ShortName: "C", Kind: "func", LineStart: 5, LineEnd: 7},
+	}
+	if err := s.SaveFileNodes(ctx, "pkg/b.go", "h1", "go", "pkg", "pkg", callee, nil); err != nil {
+		t.Fatal(err)
+	}
+	caller := []Node{{FQN: "pkg.A", ShortName: "A", Kind: "func", LineStart: 1, LineEnd: 9}}
+	edges := []Edge{
+		{SourceFQN: "pkg.A", TargetFQN: "pkg.B", Relation: "calls"},
+		{SourceFQN: "pkg.A", TargetFQN: "pkg.C", Relation: "calls"},
+		{SourceFQN: "pkg.A", TargetFQN: "fmt.Println", Relation: "calls", IsExternal: true},
+	}
+	if err := s.SaveFileNodes(ctx, "pkg/a.go", "h2", "go", "pkg", "pkg", caller, edges); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := BuildFileGraphData(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := map[string]int{}
+	for _, n := range data.Nodes {
+		groups[n.Group]++
+		if n.Group != "file" && n.Group != "folder" {
+			t.Errorf("symbol node %q leaked into the file graph", n.ID)
+		}
+	}
+	if groups["file"] != 2 || groups["folder"] != 1 {
+		t.Fatalf("nodes: %v", data.Nodes)
+	}
+
+	var calls, inFolder int
+	for _, l := range data.Links {
+		switch l.Relation {
+		case "calls":
+			calls++
+			if l.Source != "pkg/a.go" || l.Target != "pkg/b.go" || l.Weight != 2 {
+				t.Errorf("calls link = %+v, want pkg/a.go → pkg/b.go weight 2", l)
+			}
+		case "in_folder":
+			inFolder++
+			if l.Target != "pkg" {
+				t.Errorf("in_folder link = %+v, want the parent folder pkg", l)
+			}
+		default:
+			t.Errorf("unexpected relation %q", l.Relation)
+		}
+	}
+	if calls != 1 || inFolder != 2 {
+		t.Fatalf("links: calls=%d in_folder=%d: %v", calls, inFolder, data.Links)
 	}
 }

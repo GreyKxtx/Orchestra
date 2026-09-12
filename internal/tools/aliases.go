@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/internal/tools/git"
@@ -110,6 +111,10 @@ type (
 	RepoMapResponse        = nav.RepoMapResponse
 	CKGIndexView           = nav.CKGIndexView
 	CKGEmbedResult         = nav.CKGEmbedResult
+	// CKGGraphData is the graph index.graph answers with (Runner.CKGGraph).
+	CKGGraphData = ckg.GraphData
+	// CKGFileOutline is one file's symbols (Runner.CKGFileOutline).
+	CKGFileOutline = ckg.FileOutline
 )
 
 // Nav tool defs (backward compat).

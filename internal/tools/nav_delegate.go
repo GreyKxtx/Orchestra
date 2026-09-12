@@ -46,6 +46,16 @@ func (r *Runner) CKGIndexStatus(ctx context.Context) (CKGIndexView, error) {
 	return r.navClient().CKGIndexStatus(ctx)
 }
 
+// CKGGraph is the graph for the UI's Graph view; see nav.Client.CKGGraph.
+func (r *Runner) CKGGraph(ctx context.Context, level string) (*CKGGraphData, bool, error) {
+	return r.navClient().CKGGraph(ctx, level)
+}
+
+// CKGFileOutline is one file's indexed symbols; see nav.Client.CKGFileOutline.
+func (r *Runner) CKGFileOutline(ctx context.Context, path string) (*CKGFileOutline, bool, error) {
+	return r.navClient().CKGFileOutline(ctx, path)
+}
+
 func (r *Runner) RebuildCKG(ctx context.Context) error {
 	return r.navClient().RebuildCKG(ctx)
 }

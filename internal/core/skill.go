@@ -85,9 +85,10 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	if strings.TrimSpace(params.Name) == "" {
 		return nil, protocol.NewError(protocol.InvalidParams, "skill name is empty", nil)
 	}
-	if strings.TrimSpace(params.Arguments) == "" {
-		return nil, protocol.NewError(protocol.InvalidParams, "skill arguments are empty", nil)
-	}
+	// No argument is a normal way to run a command: a command file carries its
+	// own instructions, and $ARGUMENTS is what the person typed after the name
+	// — often nothing at all (.claude/commands/*.md is written that way).
+	// Refusing an empty one made every such command fail before it started.
 
 	ss, err := skills.DiscoverCached(c.workspaceRoot)
 	if err != nil {
@@ -193,7 +194,14 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		c.runMu.Unlock()
 	}()
 
-	history, res, runErr := ag.Run(ctx, nil, params.Arguments)
+	// The command's own body is the instruction (it is the system prompt), but
+	// the agent still needs a user turn to answer; a command run with nothing
+	// after its name gets one that says what was asked.
+	query := strings.TrimSpace(params.Arguments)
+	if query == "" {
+		query = "Run the /" + params.Name + " command."
+	}
+	history, res, runErr := ag.Run(ctx, nil, query)
 	if runErr != nil {
 		return nil, fmt.Errorf("skill %q: %w", params.Name, runErr)
 	}
