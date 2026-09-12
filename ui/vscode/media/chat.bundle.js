@@ -3716,11 +3716,28 @@
     scheduleTrajectoryRender();
   }
 
-  /** The host fetched session.trajectory: this is now the whole truth. */
+  /**
+   * The host fetched session.trajectory: this is now the whole truth.
+   *
+   * With one exception, and it is the common case rather than a corner. A
+   * failed fetch reaches here as an error carrying no events, and both hosts
+   * send it at turn end — exactly when the pane is full of live rows the user
+   * has been watching go by. Replacing those with "Trajectory unavailable"
+   * would throw a correct view away because one re-read hiccuped, so an empty
+   * answer that failed keeps what is on screen and reports the failure beside
+   * it. An empty answer that succeeded still replaces: that one is the core
+   * saying the session genuinely has no events.
+   */
   function replaceTrajectory(recorded, events, error) {
+    const list = Array.isArray(events) ? events.slice() : [];
+    const failed = typeof error === "string" && error !== "";
+    trajError = failed ? error : "";
+    if (failed && list.length === 0 && trajEvents.length > 0) {
+      scheduleTrajectoryRender();
+      return;
+    }
     trajRecorded = Boolean(recorded);
-    trajEvents = Array.isArray(events) ? events.slice() : [];
-    trajError = typeof error === "string" ? error : "";
+    trajEvents = list;
     scheduleTrajectoryRender();
   }
 
@@ -3777,7 +3794,10 @@
     trajectorySummary.textContent =
       turns + " turn" + (turns === 1 ? "" : "s") + " · " + rows.length + " rows" +
       (liveCount ? " · " + liveCount + " live" : "") +
-      (q ? " · " + shown.length + " matching" : "");
+      (q ? " · " + shown.length + " matching" : "") +
+      // These rows survived a failed re-read (see replaceTrajectory). Say so:
+      // they are what the pane saw live, not what the core has on disk.
+      (trajError ? " · could not refresh: " + trajError : "");
     renderTrajTimeline(rows);
     const frag = document.createDocumentFragment();
     for (const r of shown) frag.appendChild(renderTrajRow(r));

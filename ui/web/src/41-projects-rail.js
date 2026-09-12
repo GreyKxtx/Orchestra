@@ -156,51 +156,330 @@
     return box;
   }
 
+  // ---- repainting without throwing the rail away ---------------------------
+
   /**
-   * The search results, drawn as ordinary chat rows so the rail's existing
-   * click handler opens them, with the matching line underneath.
-   * @param {HTMLElement} container @param {string} projectId @param {string} openSessionId
+   * Put `entries` under `parent`, in order, reusing the nodes already there.
+   *
+   * The rail repaints on every status flip, and a running turn flips status
+   * constantly, so emptying the list first — which is what it used to do —
+   * cost the user real things. The keyboard focus came off whatever chip they
+   * were on. The chat-search box emptied mid-word: its value only reaches
+   * sessionSearch after a 200 ms debounce, so a repaint inside that window
+   * threw the keystrokes away. And the delete button's "click again to
+   * confirm" lives in a closure, so an armed one silently disarmed.
+   *
+   * Matching by key keeps every node that is still wanted, along with its
+   * focus, its caret, its listeners and whatever those listeners closed over.
+   * Each entry renders from the node it had last time, or from nothing on the
+   * first paint; a key no entry claims is removed.
+   *
+   * @param {HTMLElement} parent
+   * @param {{key: string, render: (existing: any) => any}[]} entries
    */
-  function renderSessionHits(container, projectId, openSessionId) {
-    const hits = sessionSearch.hits || [];
-    if (hits.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "rail-sessions-empty";
-      empty.textContent = `No chat mentions “${sessionSearch.query}”`;
-      container.appendChild(empty);
-      return;
-    }
-    for (const h of hits) {
-      const sessionId = String((h && h.session_id) || "");
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "rail-session";
-      item.dataset.projectId = projectId;
-      item.dataset.sessionId = sessionId;
-      item.dataset.active = sessionId === openSessionId ? "true" : "false";
-      const title = document.createElement("span");
-      title.className = "rail-session-title";
-      title.textContent = String((h && h.title) || "") || sessionId || "untitled";
-      const age = document.createElement("span");
-      age.className = "rail-session-time";
-      age.textContent = sessionAge({ id: sessionId, updated_at: h && h.updated_at });
-      item.appendChild(title);
-      item.appendChild(age);
-      const snippet = String((h && h.snippet) || "").trim();
-      if (snippet) {
-        const line = document.createElement("span");
-        line.className = "rail-session-snippet";
-        // textContent: a snippet is the user's or the model's own words.
-        line.textContent = snippet;
-        item.appendChild(line);
-        item.title = snippet;
+  function reconcileByKey(parent, entries) {
+    const spare = new Map();
+    for (const node of Array.prototype.slice.call(parent.children)) {
+      const key = node.dataset && node.dataset.railKey;
+      if (key) {
+        spare.set(key, node);
+      } else {
+        // Written by something other than this function, so there is no key
+        // to match it by and no way to know what it was for.
+        parent.removeChild(node);
       }
-      const rowEl = document.createElement("div");
-      rowEl.className = "rail-session-row";
-      rowEl.appendChild(item);
-      rowEl.appendChild(railDeleteButton(projectId, sessionId));
-      container.appendChild(rowEl);
     }
+    let cursor = parent.firstChild;
+    for (const entry of entries) {
+      const node = entry.render(spare.get(entry.key) || null);
+      spare.delete(entry.key);
+      node.dataset.railKey = entry.key;
+      if (node === cursor) {
+        cursor = node.nextSibling;
+        continue;
+      }
+      // Either new, or reused from further down the list: insertBefore moves
+      // a node that already has a parent, which is what makes reordering work.
+      parent.insertBefore(node, cursor);
+    }
+    for (const node of spare.values()) {
+      if (node.parentNode === parent) {
+        parent.removeChild(node);
+      }
+    }
+  }
+
+  /**
+   * Reuse, or make one. Class names never change between repaints of the same
+   * key, so they are written once, at birth.
+   * @param {any} existing @param {string} tag @param {string} cls
+   */
+  function railNode(existing, tag, cls) {
+    if (existing) {
+      return existing;
+    }
+    const node = document.createElement(tag);
+    node.className = cls;
+    return node;
+  }
+
+  /** The key carries the label, so a reused heading always reads correctly. */
+  function railHeadingEntry(label) {
+    return { key: "heading:" + label, render: (had) => had || railSectionHeading(label) };
+  }
+
+  /**
+   * One chat row: the button that opens it and the one that throws it away.
+   * `snippet`, present only on a search result, is the matching line.
+   * @typedef {{id: string, label: string, age: string, tooltip: string, snippet?: string}} RailSessionInfo
+   * @param {string} projectId @param {RailSessionInfo} info @param {boolean} active @param {any} existing
+   */
+  function railSessionRow(projectId, info, active, existing) {
+    const rowEl = railNode(existing, "div", "rail-session-row");
+    // A button cannot nest in a button, so the row is a pair.
+    reconcileByKey(rowEl, [
+      { key: "open", render: (had) => railSessionButton(projectId, info, active, had) },
+      { key: "del", render: (had) => had || railDeleteButton(projectId, info.id) },
+    ]);
+    return rowEl;
+  }
+
+  /** @param {string} projectId @param {RailSessionInfo} info @param {boolean} active @param {any} existing */
+  function railSessionButton(projectId, info, active, existing) {
+    const item = railNode(existing, "button", "rail-session");
+    item.type = "button";
+    item.dataset.projectId = projectId;
+    item.dataset.sessionId = info.id;
+    item.dataset.active = active ? "true" : "false";
+    item.title = info.tooltip;
+    const parts = [
+      {
+        key: "title",
+        render: (had) => {
+          const t = railNode(had, "span", "rail-session-title");
+          // textContent: titles are the user's own first message.
+          t.textContent = info.label;
+          return t;
+        },
+      },
+      {
+        key: "time",
+        render: (had) => {
+          const a = railNode(had, "span", "rail-session-time");
+          a.textContent = info.age;
+          return a;
+        },
+      },
+    ];
+    if (info.snippet) {
+      parts.push({
+        key: "snippet",
+        render: (had) => {
+          const line = railNode(had, "span", "rail-session-snippet");
+          // textContent: a snippet is the user's or the model's own words.
+          line.textContent = info.snippet;
+          return line;
+        },
+      });
+    }
+    reconcileByKey(item, parts);
+    return item;
+  }
+
+  /** @param {any} row @param {boolean} collapsed @param {any} existing */
+  function railProjectChip(row, collapsed, existing) {
+    const chip = railNode(existing, "button", "project-chip");
+    chip.type = "button";
+    chip.dataset.projectId = row.id;
+    chip.dataset.state = row.state;
+    chip.dataset.status = row.status;
+    chip.dataset.active = row.active ? "true" : "false";
+    chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
+    chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
+    if (railOpeningId && row.id === railOpeningId) {
+      chip.dataset.opening = "true";
+    } else {
+      // A chip outlives the repaint now, so the flag has to be taken off
+      // again; it used to go away with the node that carried it.
+      delete chip.dataset.opening;
+    }
+    chip.setAttribute("aria-expanded", collapsed ? "false" : "true");
+
+    // How many chats the workspace holds. The server counts them off disk,
+    // which is the only way a workspace whose core is closed can have a
+    // number at all; the open one prefers its live list, so starting a
+    // session bumps the count straight away instead of at the next poll.
+    const listedNow = sessionsByProject.get(row.id);
+    const count = row.active && listedNow ? listedNow.length : row.sessions;
+
+    const parts = [
+      {
+        // Drawn in CSS: an inline SVG here would need createElementNS, which
+        // the adapter tests' document stub does not have, and it is decoration.
+        key: "chevron",
+        render: (had) => {
+          const c = railNode(had, "span", "project-chevron");
+          c.setAttribute("aria-hidden", "true");
+          return c;
+        },
+      },
+      {
+        key: "name",
+        render: (had) => {
+          const n = railNode(had, "span", "project-name");
+          // textContent, not innerHTML: the name is a folder name off disk.
+          n.textContent = row.name || "?";
+          return n;
+        },
+      },
+    ];
+    if (typeof count === "number" && count >= 0) {
+      parts.push({
+        key: "count",
+        render: (had) => {
+          const badge = railNode(had, "span", "project-count");
+          badge.textContent = String(count);
+          badge.title = count === 1 ? "1 chat" : count + " chats";
+          return badge;
+        },
+      });
+    }
+    parts.push({ key: "dot", render: (had) => railNode(had, "span", "project-dot") });
+    reconcileByKey(chip, parts);
+    return chip;
+  }
+
+  /** The chats under one workspace — or its search results, which replace them. */
+  function railProjectSessions(row, existing) {
+    const sessions = railNode(existing, "div", "project-sessions");
+    const listed = sessionsByProject.get(row.id) || [];
+    const openSessionId = (peekProjectState(row.id) || {}).sessionId || "";
+    const entries = [];
+    if (row.active) {
+      entries.push({
+        key: "search",
+        render: (had) => {
+          if (!had) {
+            return railSessionSearchBox(row.id);
+          }
+          // Keep the box in step with the state — /search in the composer
+          // sets the query from outside — but never while the user is in it:
+          // their keystrokes only reach sessionSearch after the debounce, and
+          // writing the older value back over them is the exact data loss
+          // this reconciliation exists to stop.
+          const want = sessionSearch.projectId === row.id ? sessionSearch.query : "";
+          if (document.activeElement !== had && had.value !== want) {
+            had.value = want;
+          }
+          return had;
+        },
+      });
+    }
+
+    // Searching replaces the list rather than sitting beside it: the whole
+    // point is to narrow a hundred chats to the three that mention a thing.
+    const searching = row.active && sessionSearch.projectId === row.id && sessionSearch.hits !== null;
+    if (searching) {
+      const hits = sessionSearch.hits || [];
+      if (hits.length === 0) {
+        entries.push({
+          key: "no-hits",
+          render: (had) => {
+            const empty = railNode(had, "div", "rail-sessions-empty");
+            empty.textContent = `No chat mentions “${sessionSearch.query}”`;
+            return empty;
+          },
+        });
+      }
+      // Drawn as ordinary chat rows, so the rail's existing click handler
+      // opens them, with the matching line underneath.
+      for (const h of hits) {
+        const id = String((h && h.session_id) || "");
+        const snippet = String((h && h.snippet) || "").trim();
+        const info = {
+          id,
+          label: String((h && h.title) || "") || id || "untitled",
+          age: sessionAge({ id, updated_at: h && h.updated_at }),
+          tooltip: snippet,
+          snippet,
+        };
+        entries.push({
+          key: "hit:" + id,
+          render: (had) => railSessionRow(row.id, info, id === openSessionId, had),
+        });
+      }
+      reconcileByKey(sessions, entries);
+      return sessions;
+    }
+
+    // session.list only returns sessions that have been written to disk, and
+    // a session is written by its first message — so the session the user is
+    // looking at is missing from the list until they say something. Showing
+    // it anyway is the difference between "where am I" and an empty sidebar.
+    const openIsListed = listed.some((s) => s.id === openSessionId);
+    if (row.active && openSessionId && !openIsListed) {
+      const info = { id: openSessionId, label: "New session", age: "now", tooltip: openSessionId };
+      entries.push({ key: "new", render: (had) => railSessionButton(row.id, info, true, had) });
+    }
+    if (listed.length === 0 && !(row.active && openSessionId)) {
+      entries.push({
+        key: "empty",
+        render: (had) => {
+          const empty = railNode(had, "div", "rail-sessions-empty");
+          empty.textContent = "No sessions yet";
+          return empty;
+        },
+      });
+    }
+    for (const s of listed.slice(0, 100)) {
+      const info = {
+        id: s.id || "",
+        label: s.title || s.id || "untitled",
+        age: sessionAge(s),
+        tooltip: s.title || s.id || "",
+      };
+      const active = Boolean(row.active && s.id === openSessionId);
+      entries.push({
+        key: "row:" + info.id,
+        render: (had) => railSessionRow(row.id, info, active, had),
+      });
+    }
+    reconcileByKey(sessions, entries);
+    return sessions;
+  }
+
+  /** One workspace: its header, and the chats under it. */
+  function railProjectGroup(row, existing) {
+    // Only the project on screen has a session list — the core is asked for
+    // one per connection — so every other group stays folded, and its header
+    // switches to it rather than expanding an empty list.
+    const collapsed = row.active ? collapsedProjects.has(row.id) : true;
+    const group = railNode(existing, "div", "project-group");
+    group.dataset.projectId = row.id;
+    group.dataset.active = row.active ? "true" : "false";
+    group.dataset.collapsed = collapsed ? "true" : "false";
+    reconcileByKey(group, [
+      {
+        key: "head",
+        render: (had) => {
+          // The header is a row, not just the chip: the open workspace carries
+          // the button that starts a session in it. A <button> cannot nest
+          // inside another, so the two are siblings.
+          const head = railNode(had, "div", "project-head");
+          const parts = [{ key: "chip", render: (h) => railProjectChip(row, collapsed, h) }];
+          if (row.active) {
+            parts.push({
+              key: "add",
+              render: (h) => h || railAddButton("new-session", "New session in this workspace", row.id),
+            });
+          }
+          reconcileByKey(head, parts);
+          return head;
+        },
+      },
+      { key: "sessions", render: (had) => railProjectSessions(row, had) },
+    ]);
+    return group;
   }
 
   /**
@@ -235,171 +514,33 @@
     if (!list) {
       return;
     }
-    list.innerHTML = "";
     // The open project heads the list, its sessions under it; everything else
     // follows under one label. The renderer message above keeps the original
     // order — its consumers and tests were written against it.
     const ordered = rows.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
     const hasActive = rows.some((r) => r.active);
+    const entries = [];
     let otherLabelDone = false;
     // With nothing open there is no "other" to be other than, so the heading
     // is simply the list's own, at the top where a heading belongs.
     if (!hasActive) {
-      list.appendChild(railSectionHeading("Workspaces"));
+      entries.push(railHeadingEntry("Workspaces"));
       otherLabelDone = true;
     }
     for (const row of ordered) {
       if (!row.active && hasActive && !otherLabelDone) {
-        list.appendChild(railSectionHeading("Other workspaces"));
+        entries.push(railHeadingEntry("Other workspaces"));
         otherLabelDone = true;
       }
-      // Only the project on screen has a session list — the core is asked for
-      // one per connection — so every other group stays folded, and its header
-      // switches to it rather than expanding an empty list.
-      const collapsed = row.active ? collapsedProjects.has(row.id) : true;
-
-      const group = document.createElement("div");
-      group.className = "project-group";
-      group.dataset.projectId = row.id;
-      group.dataset.active = row.active ? "true" : "false";
-      group.dataset.collapsed = collapsed ? "true" : "false";
-
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "project-chip";
-      chip.dataset.projectId = row.id;
-      chip.dataset.state = row.state;
-      chip.dataset.status = row.status;
-      chip.dataset.active = row.active ? "true" : "false";
-      chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
-      chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
-      if (railOpeningId && row.id === railOpeningId) {
-        chip.dataset.opening = "true";
-      }
-      chip.setAttribute("aria-expanded", collapsed ? "false" : "true");
-
-      // Drawn in CSS: an inline SVG here would need createElementNS, which the
-      // adapter tests' document stub does not have, and the glyph is decoration.
-      const chevron = document.createElement("span");
-      chevron.className = "project-chevron";
-      chevron.setAttribute("aria-hidden", "true");
-      chip.appendChild(chevron);
-
-      const name = document.createElement("span");
-      name.className = "project-name";
-      // textContent, not innerHTML: the name is a folder name off disk.
-      name.textContent = row.name || "?";
-      chip.appendChild(name);
-
-      // How many chats the workspace holds. The server counts them off disk,
-      // which is the only way a workspace whose core is closed can have a
-      // number at all; the open one prefers its live list, so starting a
-      // session bumps the count straight away instead of at the next poll.
-      const listedNow = sessionsByProject.get(row.id);
-      const count = row.active && listedNow ? listedNow.length : row.sessions;
-      if (typeof count === "number" && count >= 0) {
-        const badge = document.createElement("span");
-        badge.className = "project-count";
-        badge.textContent = String(count);
-        badge.title = count === 1 ? "1 chat" : count + " chats";
-        chip.appendChild(badge);
-      }
-
-      const dot = document.createElement("span");
-      dot.className = "project-dot";
-      chip.appendChild(dot);
-
-      // The header is a row, not just the chip: the open workspace carries
-      // the button that starts a session in it. A <button> cannot nest inside
-      // another, so the two are siblings.
-      const head = document.createElement("div");
-      head.className = "project-head";
-      head.appendChild(chip);
-      if (row.active) {
-        head.appendChild(railAddButton("new-session", "New session in this workspace", row.id));
-      }
-      group.appendChild(head);
-
-      const sessions = document.createElement("div");
-      sessions.className = "project-sessions";
-      const listed = sessionsByProject.get(row.id) || [];
-      const openSessionId = (peekProjectState(row.id) || {}).sessionId || "";
-
-      // Searching replaces the list rather than sitting beside it: the whole
-      // point is to narrow a hundred chats to the three that mention a thing.
-      const searching = row.active && sessionSearch.projectId === row.id && sessionSearch.hits !== null;
-      if (row.active) {
-        sessions.appendChild(railSessionSearchBox(row.id));
-      }
-      if (searching) {
-        renderSessionHits(sessions, row.id, openSessionId);
-        group.appendChild(sessions);
-        list.appendChild(group);
-        continue;
-      }
-      // session.list only returns sessions that have been written to disk, and
-      // a session is written by its first message — so the session the user is
-      // looking at is missing from the list until they say something. Showing
-      // it anyway is the difference between "where am I" and an empty sidebar.
-      const openIsListed = listed.some((s) => s.id === openSessionId);
-      if (row.active && openSessionId && !openIsListed) {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "rail-session";
-        item.dataset.projectId = row.id;
-        item.dataset.sessionId = openSessionId;
-        item.dataset.active = "true";
-        const title = document.createElement("span");
-        title.className = "rail-session-title";
-        title.textContent = "New session";
-        item.title = openSessionId;
-        const age = document.createElement("span");
-        age.className = "rail-session-time";
-        age.textContent = "now";
-        item.appendChild(title);
-        item.appendChild(age);
-        sessions.appendChild(item);
-      }
-      if (listed.length === 0 && !(row.active && openSessionId)) {
-        const empty = document.createElement("div");
-        empty.className = "rail-sessions-empty";
-        empty.textContent = "No sessions yet";
-        sessions.appendChild(empty);
-      }
-      for (const s of listed.slice(0, 100)) {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "rail-session";
-        item.dataset.projectId = row.id;
-        item.dataset.sessionId = s.id || "";
-        item.dataset.active = row.active && s.id === openSessionId ? "true" : "false";
-        const title = document.createElement("span");
-        title.className = "rail-session-title";
-        // textContent: titles are the user's own first message.
-        title.textContent = s.title || s.id || "untitled";
-        item.title = s.title || s.id || "";
-        const age = document.createElement("span");
-        age.className = "rail-session-time";
-        age.textContent = sessionAge(s);
-        item.appendChild(title);
-        item.appendChild(age);
-        // A button cannot nest in a button, so the row is a pair: the chat
-        // itself, and the one that throws it away.
-        const rowEl = document.createElement("div");
-        rowEl.className = "rail-session-row";
-        rowEl.appendChild(item);
-        rowEl.appendChild(railDeleteButton(row.id, s.id || ""));
-        sessions.appendChild(rowEl);
-      }
-      group.appendChild(sessions);
-      list.appendChild(group);
+      entries.push({ key: "group:" + row.id, render: (had) => railProjectGroup(row, had) });
     }
     // The inline heading is only written when other workspaces follow it. When
     // none do — one workspace open, or none at all on a first run — the
     // heading still has to appear, because it carries the only way to add one.
     if (!otherLabelDone) {
-      list.appendChild(railSectionHeading("Workspaces"));
+      entries.push(railHeadingEntry("Workspaces"));
     }
+    reconcileByKey(list, entries);
     pushSessionTabs();
   }
 

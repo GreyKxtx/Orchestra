@@ -179,51 +179,83 @@
     if (!list) {
       return;
     }
-    list.innerHTML = "";
+    // Keyed, like the rail (reconcileByKey in 41-projects-rail.js): opening a
+    // workspace repaints this list to mark that row busy, and rebuilding it
+    // took the keyboard focus off the row the user had just pressed Enter on.
     if (known.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "start-recent-empty";
-      empty.textContent = "No workspaces yet — open a folder or clone a repository.";
-      list.appendChild(empty);
+      reconcileByKey(list, [
+        {
+          key: "empty",
+          render: (had) => {
+            const empty = railNode(had, "div", "start-recent-empty");
+            empty.textContent = "No workspaces yet — open a folder or clone a repository.";
+            return empty;
+          },
+        },
+      ]);
       return;
     }
-    for (const p of known) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "start-recent-item";
-      item.dataset.projectId = p.id || "";
-      item.dataset.path = p.path || "";
-      item.title = p.path || "";
-      if (p.missing) {
-        item.dataset.missing = "true";
-      }
-      if (busyProjectId && p.id === busyProjectId) {
-        item.dataset.busy = "true";
-      }
+    const entries = known.map((p) => ({
+      key: "project:" + (p.id || p.path || ""),
+      render: (had) => {
+        const item = railNode(had, "button", "start-recent-item");
+        item.type = "button";
+        item.dataset.projectId = p.id || "";
+        item.dataset.path = p.path || "";
+        item.title = p.path || "";
+        // A row outlives the repaint now, so both flags have to come off
+        // again; they used to go away with the node that carried them.
+        if (p.missing) {
+          item.dataset.missing = "true";
+        } else {
+          delete item.dataset.missing;
+        }
+        if (busyProjectId && p.id === busyProjectId) {
+          item.dataset.busy = "true";
+        } else {
+          delete item.dataset.busy;
+        }
 
-      const name = document.createElement("span");
-      name.className = "start-recent-name";
-      // textContent: the name is a folder name off disk.
-      name.textContent = p.name || p.path || "?";
-      item.appendChild(name);
-
-      const path = document.createElement("span");
-      path.className = "start-recent-path";
-      path.textContent = p.path || "";
-      item.appendChild(path);
-
-      const count = document.createElement("span");
-      count.className = "start-recent-count";
-      if (p.missing) {
-        count.textContent = "folder is gone";
-      } else if (typeof p.sessions === "number" && p.sessions >= 0) {
-        count.textContent = p.sessions === 1 ? "1 chat" : p.sessions + " chats";
-      }
-      if (count.textContent) {
-        item.appendChild(count);
-      }
-      list.appendChild(item);
-    }
+        let countText = "";
+        if (p.missing) {
+          countText = "folder is gone";
+        } else if (typeof p.sessions === "number" && p.sessions >= 0) {
+          countText = p.sessions === 1 ? "1 chat" : p.sessions + " chats";
+        }
+        const parts = [
+          {
+            key: "name",
+            render: (h) => {
+              const name = railNode(h, "span", "start-recent-name");
+              // textContent: the name is a folder name off disk.
+              name.textContent = p.name || p.path || "?";
+              return name;
+            },
+          },
+          {
+            key: "path",
+            render: (h) => {
+              const path = railNode(h, "span", "start-recent-path");
+              path.textContent = p.path || "";
+              return path;
+            },
+          },
+        ];
+        if (countText) {
+          parts.push({
+            key: "count",
+            render: (h) => {
+              const count = railNode(h, "span", "start-recent-count");
+              count.textContent = countText;
+              return count;
+            },
+          });
+        }
+        reconcileByKey(item, parts);
+        return item;
+      },
+    }));
+    reconcileByKey(list, entries);
   }
 
   /**

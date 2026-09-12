@@ -91,6 +91,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   private chatHtmlWebview: vscode.Webview | undefined;
   /** Coalesced streaming: deltaSync snapshots are flushed at most every 40 ms. */
   private deltaSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Orders trajectory fetches — see refreshTrajectory. */
+  private trajectorySeq = 0;
   /** Critical messages re-posted after a webview reload ("ready"). */
   private pendingPermission: PermissionRequestPayload | undefined;
   private pendingQuestions: QuestionItemPayload[] | undefined;
@@ -1585,20 +1587,31 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
    * Replace the Trajectory view from the core's log. A failed fetch is
    * reported as unavailable, never as "not recorded" — those are different
    * answers, and the spec forbids the view from guessing.
+   *
+   * The session check is not enough on its own: two turns back to back on the
+   * same session issue two fetches, the core answers each in its own
+   * goroutine, and nothing makes them land in the order they were sent — so
+   * the older answer can arrive last and paint a snapshot missing the turn
+   * that just finished. The sequence number orders them; an answer that is no
+   * longer the latest has already been superseded and is dropped.
    */
   private async refreshTrajectory(sessionId: string): Promise<void> {
     if (!sessionId) {
       return;
     }
+    const seq = ++this.trajectorySeq;
+    // The user switched sessions, or a later fetch went out, while this one
+    // was in flight.
+    const stillWanted = (): boolean =>
+      this.session.getSessionId() === sessionId && this.trajectorySeq === seq;
     try {
       const res = await this.session.sessionTrajectory(sessionId);
-      if (this.session.getSessionId() !== sessionId) {
-        // The user switched sessions while the fetch was in flight.
+      if (!stillWanted()) {
         return;
       }
       this.post({ type: "trajectory", recorded: res.recorded, events: res.events });
     } catch (err) {
-      if (this.session.getSessionId() !== sessionId) {
+      if (!stillWanted()) {
         return;
       }
       this.post({

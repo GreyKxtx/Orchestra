@@ -369,21 +369,36 @@
    *
    * A failed fetch is reported as such, not as "not recorded": those are
    * different answers and the view says which.
+   *
+   * The session guard above is not enough on its own. Two turns back to back
+   * on the *same* session issue two fetches, the core answers each in its own
+   * goroutine, and nothing makes them land in order — so the older answer can
+   * arrive last and paint a snapshot missing the turn that just finished. The
+   * sequence number is what orders them: every fetch takes the next one, and
+   * an answer whose number is no longer the project's latest is a view that
+   * has already been superseded.
    * @param {string} projectId @param {any} conn @param {string} sessionId
    */
   async function refreshTrajectory(projectId, conn, sessionId) {
     if (!sessionId) {
       return;
     }
+    const issuing = projectState(projectId);
+    const seq = (issuing.trajSeq = (issuing.trajSeq || 0) + 1);
+    // peekProjectState, not projectState: the latter lazily creates a record,
+    // so a guard running after the project was forgotten would resurrect an
+    // orphan entry that renderProjects then iterates past.
+    const stillWanted = () => {
+      const st = peekProjectState(projectId) || {};
+      // The user left this project, or moved to another session of it, while
+      // the request was in flight: the answer is for a view that is no longer
+      // on screen. Or a later fetch for this same session has been issued,
+      // which makes this one the older of two.
+      return projectId === currentProjectId && st.sessionId === sessionId && st.trajSeq === seq;
+    };
     try {
       const res = await conn.send("session.trajectory", { session_id: sessionId });
-      // peekProjectState, not projectState: the latter lazily creates a
-      // record, so a guard running after the project was forgotten would
-      // resurrect an orphan entry that renderProjects then iterates past.
-      if (projectId !== currentProjectId || (peekProjectState(projectId) || {}).sessionId !== sessionId) {
-        // The user left this project, or moved to another session of it,
-        // while the request was in flight: the answer is for a view that is
-        // no longer on screen.
+      if (!stillWanted()) {
         return;
       }
       toRenderer({
@@ -392,7 +407,7 @@
         events: res && Array.isArray(res.events) ? res.events : [],
       });
     } catch (err) {
-      if (projectId === currentProjectId && (peekProjectState(projectId) || {}).sessionId === sessionId) {
+      if (stillWanted()) {
         toRenderer({ type: "trajectory", recorded: true, events: [], error: String(err && err.message ? err.message : err) });
       }
     }

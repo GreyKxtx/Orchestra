@@ -10,7 +10,7 @@ it is kept. What was fixed at the time is not listed.
 Re-triaged 2026-09-12 against the code as it stands, and worked down from
 there. Everything closed — whether by later work before the triage, or during
 it — is deleted rather than annotated, so this list holds only what is still
-true. One of what remains is escalated and two narrowed, each marked as such
+true. Two of what remains are narrowed rather than whole, each marked as such
 with what changed. The three source documents are replaced by this one; their
 text is in git history if the reasoning behind a closed item is ever wanted.
 
@@ -56,13 +56,7 @@ afterwards, and both times it cost a full review-and-fix cycle.
 
 ---
 
-## 2. Escalated in this triage
-
-**2.1 `renderProjects` rebuilds every chip, now from two places (was C1 1).**
-`list.innerHTML = ""` destroys keyboard focus on a chip whenever *any* project's
-status flips, and with a pulsing "working" status that is often. There were one
-of these; there are now two (`40-projects.js:729` and `:1703`). The fix is keyed
-reconciliation, not a one-liner.
+## 2. Narrowed in this triage
 
 **3.1 Switching into a project mid-turn loses the live text (was C1 9).** The
 answer named at the time was C2's append-only log — a whole subsystem. That
@@ -224,16 +218,6 @@ input; renders the rows); a burst of live events in one frame (coalesced by
 reading, not by assertion). The first is plausible in production and deserves a
 fixture when the harness next changes.
 
-**6.6 Two back-to-back turns racing their re-fetches.** The guard drops an
-answer for a session the project has left, but two fetches for the *same*
-session can still land out of order, leaving a slightly stale snapshot until the
-next re-fetch. A request counter per session would close it. Same shape as 6.12.
-
-**6.7 The `catch` path of `refreshTrajectory` is untested.** Every fixture
-answers with success. The code reads correctly against the constraint and the
-renderer's "Trajectory unavailable" path has its own test; the join between them
-does not.
-
 **6.8 A WebSocket reconnect mid-turn leaves `sendTurn`'s captured `conn` on the
 dead socket.** `ensureConn` builds a replacement and `forgetProjectState` wipes
 the record, so the turn-end re-fetch goes nowhere. Intentional — the turn went
@@ -253,14 +237,6 @@ passes `false`, the pane misses live rows until the turn-end re-fetch.
 notifications come only from the standalone `workflow.run` RPC, which carries no
 session and is not teed into any log; nothing in `ui/vscode/src` calls it. The
 renderer's stage rows are exercised by recorded fixtures, not by this path.
-
-**6.12 A failed turn-end re-fetch wipes the live rows the user already saw,**
-replacing them with "Trajectory unavailable." Both hosts' `catch` paths post
-`{recorded: true, events: [], error}`, and `replaceTrajectory` treats any
-`trajectory` message as a full replace — so a transient RPC hiccup at turn end
-turns a correct, fully-populated live view into an empty error state. The
-renderer needs to distinguish "no events because none happened" from "no events
-because this answer replaces nothing useful". Worth doing alongside 6.6.
 
 **6.13 The web host's turn-end re-fetch has the same limitation as 6.9:** it
 reads `st.sessionId` at completion time, not the one the turn ran on. If the

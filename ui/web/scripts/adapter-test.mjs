@@ -79,49 +79,126 @@ export function loadBundle(opts = {}) {
       contains: (name) => classes.has(name),
     };
   };
-  const el = () => ({
-    _listeners: {},
-    addEventListener(type, fn) {
-      (this._listeners[type] ||= []).push(fn);
-    },
-    click() {
-      // A real click event carries both, and listeners in the shared renderer
-      // call stopPropagation as a matter of course.
-      const ev = { preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}, target: this };
-      for (const fn of this._listeners.click || []) fn(ev);
-    },
-    append() {},
-    keydown(key) {
-      for (const fn of this._listeners.keydown || []) fn({ key, preventDefault() {} });
-    },
-    removeEventListener() {},
-    classList: makeClassList(),
-    appendChild() {},
-    removeChild() {},
-    insertBefore() {},
-    setAttribute() {},
-    removeAttribute() {},
-    getAttribute: () => null,
-    closest: () => null,
-    focus() {},
-    blur() {},
-    remove() {},
-    style: { setProperty() {}, removeProperty() {}, getPropertyValue: () => "" },
-    dataset: {},
-    children: [],
-    childNodes: [],
-    textContent: "",
-    innerHTML: "",
-    innerText: "",
-    value: "",
-    scrollTop: 0,
-    scrollHeight: 0,
-    clientHeight: 0,
-    offsetHeight: 0,
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }),
-  });
+  // A real parent/child tree, not a set of no-ops. The rail reconciles its
+  // rows by key against the nodes already in the list, so a stub whose
+  // appendChild discards its argument and whose children is a permanently
+  // empty array would report "nothing is there" on every repaint — every node
+  // would be built fresh, and a reconciler that did not reconcile at all would
+  // pass. Same reason classList is real above.
+  const insert = (parent, node, ref) => {
+    if (!node) {
+      return node;
+    }
+    if (node._fragment) {
+      for (const c of node.childNodes.slice()) {
+        insert(parent, c, ref);
+      }
+      return node;
+    }
+    if (node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+    const at = ref ? parent.childNodes.indexOf(ref) : -1;
+    if (at >= 0) {
+      parent.childNodes.splice(at, 0, node);
+    } else {
+      parent.childNodes.push(node);
+    }
+    node.parentNode = parent;
+    return node;
+  };
+  const el = () => {
+    let html = "";
+    const node = {
+      _listeners: {},
+      parentNode: null,
+      childNodes: [],
+      addEventListener(type, fn) {
+        (this._listeners[type] ||= []).push(fn);
+      },
+      click() {
+        // A real click event carries both, and listeners in the shared renderer
+        // call stopPropagation as a matter of course.
+        const ev = { preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}, target: this };
+        for (const fn of this._listeners.click || []) fn(ev);
+      },
+      append(...nodes) {
+        for (const n of nodes) insert(this, n, null);
+      },
+      keydown(key) {
+        for (const fn of this._listeners.keydown || []) fn({ key, preventDefault() {} });
+      },
+      input(value) {
+        if (value !== undefined) this.value = value;
+        for (const fn of this._listeners.input || []) fn({ target: this });
+      },
+      removeEventListener() {},
+      classList: makeClassList(),
+      appendChild(n) {
+        return insert(this, n, null);
+      },
+      insertBefore(n, ref) {
+        return insert(this, n, ref || null);
+      },
+      removeChild(n) {
+        const at = this.childNodes.indexOf(n);
+        if (at >= 0) {
+          this.childNodes.splice(at, 1);
+          n.parentNode = null;
+        }
+        return n;
+      },
+      setAttribute() {},
+      removeAttribute() {},
+      getAttribute: () => null,
+      closest: () => null,
+      focus() {
+        sandbox.document.activeElement = this;
+      },
+      blur() {
+        if (sandbox.document.activeElement === this) sandbox.document.activeElement = null;
+      },
+      remove() {
+        if (this.parentNode) this.parentNode.removeChild(this);
+      },
+      style: { setProperty() {}, removeProperty() {}, getPropertyValue: () => "" },
+      dataset: {},
+      textContent: "",
+      innerText: "",
+      value: "",
+      scrollTop: 0,
+      scrollHeight: 0,
+      clientHeight: 0,
+      offsetHeight: 0,
+      scrollIntoView() {},
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0 }),
+    };
+    // Live, like a real HTMLCollection: code that removes while iterating sees
+    // what a browser would show it.
+    Object.defineProperty(node, "children", { get: () => node.childNodes });
+    Object.defineProperty(node, "firstChild", { get: () => node.childNodes[0] || null });
+    Object.defineProperty(node, "nextSibling", {
+      get: () => {
+        const p = node.parentNode;
+        if (!p) return null;
+        return p.childNodes[p.childNodes.indexOf(node) + 1] || null;
+      },
+    });
+    // Assigning innerHTML replaces the element's content — which, whatever the
+    // markup says, means the nodes that were there are gone. The markup itself
+    // is stored, not parsed: nothing here reads a child back out of it.
+    Object.defineProperty(node, "innerHTML", {
+      get: () => html,
+      set: (v) => {
+        html = String(v);
+        for (const c of node.childNodes) c.parentNode = null;
+        node.childNodes.length = 0;
+      },
+    });
+    return node;
+  };
 
   const sandbox = {
     console,
@@ -159,7 +236,12 @@ export function loadBundle(opts = {}) {
       },
       createElement: () => el(),
       createTextNode: () => el(),
-      createDocumentFragment: () => el(),
+      createDocumentFragment: () => {
+        const f = el();
+        f._fragment = true;
+        return f;
+      },
+      activeElement: null,
       addEventListener() {},
       removeEventListener() {},
       body: el(),
@@ -299,7 +381,26 @@ export function loadBundle(opts = {}) {
     },
     /** The stub element for an id, if the bundle has looked it up. */
     elementById: (id) => elementsById.get(id) || null,
+    /** Whatever last had focus() called on it — the rail must not lose it. */
+    activeElement: () => sandbox.document.activeElement,
   };
+}
+
+/** Every node under `root`, depth first, `root` included. */
+function walk(node, out = []) {
+  if (!node) {
+    return out;
+  }
+  out.push(node);
+  for (const c of node.childNodes || []) {
+    walk(c, out);
+  }
+  return out;
+}
+
+/** The nodes under `root` carrying exactly this class. */
+function byClass(root, cls) {
+  return walk(root).filter((n) => String(n.className || "") === cls);
 }
 
 /** Answer the next request for `method` with `result`, so a chain can proceed. */
@@ -2781,4 +2882,218 @@ test("a background project's connection does not fetch its trajectory", async ()
     0,
     `a background project must not fetch its trajectory; got ${strays.length}`
   );
+});
+
+// ---- the rail repaints without throwing itself away -------------------------
+//
+// Each of these fails against the innerHTML rebuild they replaced: the node the
+// assertion holds is not the node in the list any more.
+
+test("a status flip elsewhere leaves the focused chip focused, and the same node", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  const list = b.elementById("project-rail-list");
+  const chipB = byClass(list, "project-chip").find((c) => c.dataset.projectId === "B");
+  assert.ok(chipB, `no chip for B; the rail holds ${byClass(list, "project-chip").length} chips`);
+  chipB.focus();
+
+  // B starts working — the flip the rail repaints on, dozens of times a turn.
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "tool_call_start", step: 1, turn_id: "t1", tool_call_id: "c1", tool_call_name: "read", session_id: "s-B" },
+  });
+  await tick();
+
+  assert.equal(chipB.dataset.status, "working", "the repaint under test never happened");
+  assert.ok(
+    byClass(list, "project-chip").includes(chipB),
+    "the chip was rebuilt rather than updated — anything the user was doing to it is gone"
+  );
+  assert.equal(b.activeElement(), chipB, "the repaint took the keyboard focus off the chip");
+});
+
+test("a repaint mid-word does not empty the chat-search box", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({
+    projects: [
+      { id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 },
+      { id: "B", path: "/b", name: "b", state: "ready", error: "", opened_at: 2 },
+    ],
+  }));
+  await tick();
+  await handshakeFor(b, "A");
+  await openBackground(b, "B");
+
+  const list = b.elementById("project-rail-list");
+  const box = byClass(list, "rail-session-search")[0];
+  assert.ok(box, "the open workspace has no chat-search box");
+  // Typed, but not yet debounced into sessionSearch — the 200 ms window in
+  // which the old rebuild threw the keystrokes away.
+  box.focus();
+  box.value = "circuit brea";
+
+  b.deliverTo("B", {
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "message_delta", step: 1, content: "x", turn_id: "t9", session_id: "s-B" },
+  });
+  await tick();
+
+  const after = byClass(list, "rail-session-search")[0];
+  assert.equal(after, box, "the search box was rebuilt");
+  assert.equal(after.value, "circuit brea", "the repaint threw away what the user had typed");
+  assert.equal(b.activeElement(), box, "the repaint took the focus out of the search box");
+});
+
+test("a deleted chat's row leaves the rail, and the rows around it keep their nodes", async () => {
+  const b = await handshake(loadBundle());
+  const ask = b.sent.filter((m) => m.method === "session.list").pop();
+  assert.ok(ask, "connecting never read the sidebar");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: ask.id,
+    result: {
+      sessions: [
+        { id: "s-1", title: "the open one", updated_at: 3, msg_count: 2 },
+        { id: "s-old", title: "an older chat", updated_at: 2, msg_count: 5 },
+        { id: "s-keep", title: "another", updated_at: 1, msg_count: 1 },
+      ],
+    },
+  });
+  await tick();
+
+  const rail = b.elementById("project-rail-list");
+  const idsOf = () => byClass(rail, "rail-session").map((n) => n.dataset.sessionId);
+  assert.deepEqual(idsOf(), ["s-1", "s-old", "s-keep"], "the sidebar did not draw the three chats");
+  const keep = byClass(rail, "rail-session").find((n) => n.dataset.sessionId === "s-keep");
+
+  dispatch(b, { type: "deleteSession", sessionId: "s-old" });
+  await tick();
+  const close = b.sent.find((m) => m.method === "session.close");
+  assert.ok(close, "the chat must be deleted in the core");
+  b.deliver({ jsonrpc: "2.0", id: close.id, result: null });
+  await tick();
+  await tick();
+
+  assert.deepEqual(idsOf(), ["s-1", "s-keep"], "the deleted chat still has a row in the rail");
+  assert.equal(
+    byClass(rail, "rail-session").find((n) => n.dataset.sessionId === "s-keep"),
+    keep,
+    "a row that was not touched was rebuilt along with the one that went"
+  );
+});
+
+// ---- the trajectory re-fetch ------------------------------------------------
+
+test("two re-fetches of the same session paint the newer answer, whatever order they land in", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({ projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }] }));
+  await tick();
+  await handshakeFor(b, "A");
+  answerOn(b, "A", "session.trajectory", { recorded: true, events: [] });
+  await tick();
+  b.sent.length = 0;
+  b.inbound.length = 0;
+
+  // Two turns back to back on one session, each ending with its own re-read.
+  const send = (text) =>
+    dispatch(b, { type: "send", text, mode: "build", profile: "", apply: false, allowExec: true, files: [] });
+  send("one");
+  await tick();
+  const first = b.sent.find((m) => m.method === "session.message");
+  assert.ok(first, "the first turn never went out");
+  b.deliverTo("A", { jsonrpc: "2.0", id: first.id, result: {} });
+  await tick();
+  send("two");
+  await tick();
+  const second = b.sent.filter((m) => m.method === "session.message").pop();
+  assert.ok(second && second !== first, "the second turn never went out");
+  b.deliverTo("A", { jsonrpc: "2.0", id: second.id, result: {} });
+  await tick();
+
+  const reads = b.sent.filter((m) => m.method === "session.trajectory" && m.params.session_id === "s-A");
+  assert.equal(reads.length, 2, `both turns must have re-read the log; got ${reads.length}`);
+
+  // The core answers each request in its own goroutine: the second can come
+  // back first, and then the first — carrying the older snapshot.
+  const fresh = [
+    { seq: 1, time_ms: 1, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t1", content: "one" } },
+    { seq: 2, time_ms: 2, type: "agent/event", data: { type: "step_done", step: 1, turn_id: "t2", content: "two" } },
+  ];
+  b.deliverTo("A", { jsonrpc: "2.0", id: reads[1].id, result: { recorded: true, events: fresh } });
+  await tick();
+  b.deliverTo("A", { jsonrpc: "2.0", id: reads[0].id, result: { recorded: true, events: fresh.slice(0, 1) } });
+  await tick();
+
+  const painted = b.inbound.filter((m) => m.type === "trajectory");
+  assert.ok(painted.length >= 1, "neither answer was painted");
+  assert.deepEqual(
+    painted[painted.length - 1].events,
+    fresh,
+    "the older of two answers for the same session painted over the newer one"
+  );
+});
+
+test("a failed re-read keeps the rows the user was watching and says the refresh failed", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const live = [
+    { seq: 1, time_ms: 1000, type: "agent/event", data: { type: "tool_call_start", step: 1, turn_id: "t1", tool_call_id: "c1", tool_call_name: "read" } },
+    { seq: 2, time_ms: 1200, type: "agent/event", data: { type: "tool_call_completed", step: 1, turn_id: "t1", tool_call_id: "c1", content: "ok" } },
+  ];
+  b.post({ type: "trajectory", recorded: true, events: live });
+  await tick();
+  const summary = b.elementById("trajectory-summary");
+  assert.match(summary.textContent, /1 turn · 3 rows/);
+
+  // Turn end, and the re-read fails: what both hosts post on their catch path.
+  b.post({ type: "trajectory", recorded: true, events: [], error: "socket closed" });
+  await tick();
+  assert.match(
+    summary.textContent,
+    /1 turn · 3 rows/,
+    "a transient failure replaced a correct, fully-populated view with an empty one"
+  );
+  assert.match(summary.textContent, /could not refresh: socket closed/);
+
+  // The next read succeeds: the note goes away with it.
+  b.post({ type: "trajectory", recorded: true, events: live });
+  await tick();
+  assert.doesNotMatch(summary.textContent, /could not refresh/);
+
+  // A failure with nothing on screen to protect still reads as unavailable.
+  b.post({ type: "trajectory", recorded: true, events: [] });
+  await tick();
+  b.post({ type: "trajectory", recorded: true, events: [], error: "socket closed" });
+  await tick();
+  assert.match(summary.textContent, /unavailable.*socket closed/);
+});
+
+test("a trajectory read that the core refuses reaches the renderer as unavailable, not as unrecorded", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  b.setFetchResponder(() => ({ projects: [{ id: "A", path: "/a", name: "a", state: "ready", error: "", opened_at: 1 }] }));
+  await tick();
+  await handshakeFor(b, "A");
+  b.inbound.length = 0;
+
+  const req = b.sent.filter((m) => m.method === "session.trajectory").pop();
+  assert.ok(req, "connecting never read the log");
+  b.deliverTo("A", { jsonrpc: "2.0", id: req.id, error: { code: -32603, message: "read .orchestra/sessions: permission denied" } });
+  await tick();
+
+  const msg = b.inbound.filter((m) => m.type === "trajectory").pop();
+  assert.ok(msg, "a failed read told the renderer nothing at all");
+  assert.equal(msg.recorded, true, "a failure must not read as 'this session predates the log'");
+  assert.deepEqual(msg.events, []);
+  assert.match(String(msg.error), /permission denied/);
 });
