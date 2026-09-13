@@ -29,8 +29,12 @@ func (c *Client) Delete(ctx context.Context, req FSDeleteRequest) (*FSDeleteResp
 			map[string]any{"path": relSlash})
 	}
 
-	if c.isDryRun() {
-		return &FSDeleteResponse{Path: relSlash}, nil
+	if c.isDryRun() && !c.Overlay.CommitsToDisk() {
+		return &FSDeleteResponse{
+			Path: relSlash,
+			Pending: relSlash + " was NOT deleted: this run only previews changes. " +
+				"The file is still there; nothing further will remove it in this run.",
+		}, nil
 	}
 
 	var removeErr error
@@ -89,8 +93,13 @@ func (c *Client) Rename(ctx context.Context, req FSRenameRequest) (*FSRenameResp
 			map[string]any{"new_path": relDst})
 	}
 
-	if c.isDryRun() {
-		return &FSRenameResponse{Path: relSrc, NewPath: relDst}, nil
+	if c.isDryRun() && !c.Overlay.CommitsToDisk() {
+		return &FSRenameResponse{
+			Path:    relSrc,
+			NewPath: relDst,
+			Pending: relSrc + " was NOT renamed: this run only previews changes. " +
+				"It is still at its old name; nothing further will move it in this run.",
+		}, nil
 	}
 
 	if mkErr := os.MkdirAll(filepath.Dir(absDst), 0o755); mkErr != nil {

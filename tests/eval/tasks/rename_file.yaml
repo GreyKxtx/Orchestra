@@ -1,0 +1,42 @@
+# fs.rename writes to disk and no task graded it. A rename is two facts at
+# once — the old name is gone AND the new one holds the same content — and a
+# model that "renames" with write+delete, or with write alone, satisfies only
+# part of it. go_build catches neither on its own, since the package compiles
+# under either name.
+name: rename_file
+description: Rename a file, keeping its contents and the build
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Area(3, 4))
+    }
+  util.go: |
+    package main
+
+    // Area returns the area of a rectangle.
+    func Area(w, h int) int {
+    	return w * h
+    }
+query: "Rename util.go to geometry.go. The contents must not change, and main.go must not change either."
+checks:
+  - type: file_exists
+    path: geometry.go
+  - type: file_not_exists
+    path: util.go
+  - type: file_matches
+    path: geometry.go
+    pattern: 'func Area\(w, h int\) int'
+  - type: file_matches
+    path: geometry.go
+    pattern: 'return\s+w\s*\*\s*h'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

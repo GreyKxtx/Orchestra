@@ -119,6 +119,9 @@ type FSDeleteRequest struct {
 
 type FSDeleteResponse struct {
 	Path string `json:"path"`
+	// Pending is set when the run only previews: the file is still there, and
+	// saying so is the difference between a deletion and a promise of one.
+	Pending string `json:"pending,omitempty"`
 }
 
 type FSRenameRequest struct {
@@ -129,6 +132,8 @@ type FSRenameRequest struct {
 type FSRenameResponse struct {
 	Path    string `json:"path"`
 	NewPath string `json:"new_path"`
+	// Pending is set when the run only previews; see FSDeleteResponse.
+	Pending string `json:"pending,omitempty"`
 }
 
 type FSPreviewRequest struct {

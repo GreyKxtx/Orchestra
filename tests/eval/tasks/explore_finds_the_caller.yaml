@@ -1,0 +1,53 @@
+# explore mode had no eval task at all: a read-only mode whose whole job is to
+# answer where something lives. Three packages, and only one of them calls the
+# function asked about — so naming internal/billing/invoice.go is a claim about
+# where the model looked, not a word lifted from the query.
+#
+# workspace_unchanged holds the mode to its contract: explore is read-only, and
+# a mode that quietly edits is exactly what this catches.
+name: explore_finds_the_caller
+description: Say where a function is called from, and change nothing
+mode: explore
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  internal/money/money.go: |
+    package money
+
+    // Round returns cents rounded to the nearest whole unit.
+    func Round(cents int) int {
+    	if cents%100 >= 50 {
+    		return cents/100 + 1
+    	}
+    	return cents / 100
+    }
+  internal/billing/invoice.go: |
+    package billing
+
+    import "evalws/internal/money"
+
+    // Total is the amount shown on the invoice.
+    func Total(lines []int) int {
+    	sum := 0
+    	for _, c := range lines {
+    		sum += c
+    	}
+    	return money.Round(sum)
+    }
+  internal/report/summary.go: |
+    package report
+
+    // Summary counts the rows in a report. It does no arithmetic on money.
+    func Summary(rows []string) int {
+    	return len(rows)
+    }
+query: "Which file calls money.Round? Answer with the file path and the function that calls it."
+checks:
+  - type: answer_matches
+    pattern: 'internal[/\\]billing[/\\]invoice\.go'
+  - type: answer_matches
+    pattern: '(?i)\bTotal\b'
+  - type: answer_invents_no_path
+  - type: workspace_unchanged

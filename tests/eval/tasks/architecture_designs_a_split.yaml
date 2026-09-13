@@ -1,0 +1,59 @@
+# architecture mode had no eval task. It is a writing mode whose writes are
+# scoped: the plan path, .orchestra/plans/*.md, .orchestra/state.md,
+# .orchestra/depts/*.md — and nothing else. Both halves of that need proving:
+# that it produces a document at all, and that the code is untouched.
+#
+# The workspace has one file doing two unrelated jobs, so naming both concerns
+# is a claim about having read it, not a word lifted from the query.
+name: architecture_designs_a_split
+description: Produce a design document and touch no code
+mode: architecture
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  internal/app/app.go: |
+    package app
+
+    import (
+    	"fmt"
+    	"net/http"
+    )
+
+    // Config holds what the program was started with.
+    type Config struct {
+    	Addr    string
+    	Verbose bool
+    }
+
+    // Parse reads a config out of raw key=value lines.
+    func Parse(lines []string) Config {
+    	cfg := Config{Addr: ":8080"}
+    	for _, l := range lines {
+    		if l == "verbose=true" {
+    			cfg.Verbose = true
+    		}
+    	}
+    	return cfg
+    }
+
+    // Serve starts the HTTP server described by cfg.
+    func Serve(cfg Config) error {
+    	mux := http.NewServeMux()
+    	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    		fmt.Fprintln(w, "ok")
+    	})
+    	return http.ListenAndServe(cfg.Addr, mux)
+    }
+query: "internal/app/app.go mixes configuration parsing with HTTP serving. Write a design document for splitting it into two packages. Do not change any code."
+checks:
+  - type: file_exists
+    path: "{plan}"
+  - type: file_matches
+    path: "{plan}"
+    pattern: '(?i)config'
+  - type: file_matches
+    path: "{plan}"
+    pattern: '(?i)(http|serve|server)'
+  - type: workspace_unchanged

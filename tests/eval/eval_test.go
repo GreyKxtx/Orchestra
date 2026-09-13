@@ -55,9 +55,14 @@ func TestEvaluateCheck_FileExists_Fail(t *testing.T) {
 	}
 }
 
+// file_not_exists grades a deletion, so the task has to have created the file
+// it expects to be gone. This test used to assert the opposite — that the
+// check passes against an empty workspace — which is the same thing as saying
+// it cannot fail.
 func TestEvaluateCheck_FileNotExists_Pass(t *testing.T) {
-	if result := evaluateCheck(checkEnv{root: t.TempDir()}, Check{Type: "file_not_exists", Path: "gone.go"}); result != "" {
-		t.Fatalf("expected pass for absent file, got: %q", result)
+	env := checkEnv{root: t.TempDir(), original: map[string]string{"gone.go": "package main\n"}}
+	if result := evaluateCheck(env, Check{Type: "file_not_exists", Path: "gone.go"}); result != "" {
+		t.Fatalf("expected pass for a file the task defined and the agent deleted, got: %q", result)
 	}
 }
 
@@ -66,8 +71,31 @@ func TestEvaluateCheck_FileNotExists_Fail(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "present.go"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_not_exists", Path: "present.go"}); result == "" {
+	env := checkEnv{root: dir, original: map[string]string{"present.go": "x"}}
+	if result := evaluateCheck(env, Check{Type: "file_not_exists", Path: "present.go"}); result == "" {
 		t.Fatal("expected failure when file exists but should not")
+	}
+}
+
+// The trap file_unchanged already guards against.
+func TestEvaluateCheck_FileNotExists_RefusesAFileTheTaskNeverCreated(t *testing.T) {
+	env := checkEnv{root: t.TempDir()}
+	if result := evaluateCheck(env, Check{Type: "file_not_exists", Path: "never-existed.go"}); result == "" {
+		t.Fatal("the absence of a file that was never there proves nothing, so this " +
+			"check must refuse to grade it rather than pass")
+	}
+}
+
+// Stat accepts a directory, so file_exists did too — and a path that resolves
+// to a folder (a {plan} with no plan, a name the agent made a directory) let a
+// task pass with the work not done.
+func TestEvaluateCheck_FileExists_RejectsADirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if result := evaluateCheck(checkEnv{root: dir}, Check{Type: "file_exists", Path: "pkg"}); result == "" {
+		t.Fatal("a directory is not the file the task asked for")
 	}
 }
 

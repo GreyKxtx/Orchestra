@@ -1,0 +1,42 @@
+# fs.delete writes to disk and no task graded it. The shape here is the one
+# that makes deletion dangerous: two files, only one of them dead, and the
+# workspace must still compile afterwards. A delete that takes the wrong file,
+# or that leaves the file behind and only says it deleted it, both fail.
+name: delete_dead_file
+description: Delete the file nothing uses, keep the one that is used
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Greet("world"))
+    }
+  greet.go: |
+    package main
+
+    // Greet builds the greeting main prints.
+    func Greet(name string) string {
+    	return "hello, " + name
+    }
+  legacy.go: |
+    package main
+
+    // OldGreet was the previous greeting. Nothing calls it any more.
+    func OldGreet(name string) string {
+    	return "HELLO " + name
+    }
+query: "legacy.go is dead code — nothing in this project calls OldGreet. Delete the file. Leave everything else exactly as it is."
+checks:
+  - type: file_not_exists
+    path: legacy.go
+  - type: file_unchanged
+    path: greet.go
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

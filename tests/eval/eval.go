@@ -34,6 +34,10 @@ type Task struct {
 	// "apply not mentioned": a task that grades "you changed nothing" is only
 	// worth anything if the run was allowed to try.
 	Apply *bool `yaml:"apply,omitempty"`
+	// Git makes the workspace a repository with one commit holding Files.
+	// Without it git.status/log/diff answer "this workspace is not a git
+	// repository" and no task can grade them — which is why none did.
+	Git bool `yaml:"git,omitempty"`
 }
 
 // AgentRun is one request to the agent under test.
@@ -168,6 +172,13 @@ func (r *Runner) RunTask(ctx context.Context, task Task) (result Result) {
 		}
 	}
 
+	if task.Git {
+		if err := initGitWorkspace(ctx, tmpDir); err != nil {
+			result.Error = err
+			return result
+		}
+	}
+
 	maxSteps := task.MaxSteps
 	if maxSteps <= 0 {
 		maxSteps = 12
@@ -226,10 +237,25 @@ func evaluateCheck(env checkEnv, c Check) string {
 	abs := env.abs(c.Path)
 	switch c.Type {
 	case "file_exists":
-		if _, err := os.Stat(abs); err != nil {
+		info, err := os.Stat(abs)
+		if err != nil {
 			return fmt.Sprintf("file_exists %q: %v", c.Path, err)
 		}
+		// A directory is not the file the task asked for. Stat alone accepts
+		// one, which is how a task whose path resolves to the workspace root
+		// — a {plan} that never got a plan, a path the agent made a folder —
+		// passes without the work being done.
+		if info.IsDir() {
+			return fmt.Sprintf("file_exists %q: this is a directory, not a file", c.Path)
+		}
 	case "file_not_exists":
+		// Guarded like file_unchanged: the absence of a file the task never
+		// created proves nothing, and a check that cannot fail is worse than
+		// no check — it reads as coverage. A task asserting a deletion must
+		// define the file it expects to be gone.
+		if _, ok := env.original[c.Path]; !ok {
+			return fmt.Sprintf("file_not_exists %q: the task does not define this file, so its absence proves nothing", c.Path)
+		}
 		if _, err := os.Stat(abs); err == nil {
 			return fmt.Sprintf("file_not_exists %q: file exists but should not", c.Path)
 		}

@@ -28,6 +28,12 @@ type Overlay struct {
 	root    string
 	DryRun  bool
 	ASTGate bool
+	// commitsToDisk marks a run that stages only as a means to an end: write
+	// and edit accumulate here and the agent commits each one to disk right
+	// after the tool returns. Deletes and renames have nothing to stage — the
+	// strict op format has no op for either — so they need to know whether the
+	// run they are part of will land on disk at all.
+	commitsToDisk bool
 
 	mu     sync.RWMutex
 	staged map[string]*stagedFile
@@ -61,6 +67,28 @@ func (o *Overlay) SetDryRun(v bool) {
 	if !v {
 		o.staged = make(map[string]*stagedFile)
 	}
+}
+
+// SetCommitsToDisk records whether this run applies its changes. It is the
+// same condition the agent uses to commit each staged write, and the only way
+// delete and rename can tell a real run from a preview.
+func (o *Overlay) SetCommitsToDisk(v bool) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.commitsToDisk = v
+}
+
+// CommitsToDisk reports whether this run applies its changes.
+func (o *Overlay) CommitsToDisk() bool {
+	if o == nil {
+		return false
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.commitsToDisk
 }
 
 // SetASTGate toggles tree-sitter syntax validation before staging.

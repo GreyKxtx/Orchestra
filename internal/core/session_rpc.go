@@ -414,6 +414,8 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	c.tools.ClearStaged()
 	c.tools.SetAllowExecDespiteDryRun(params.Apply)
 	defer c.tools.SetAllowExecDespiteDryRun(false)
+	c.tools.SetCommitsToDisk(params.Apply)
+	defer c.tools.SetCommitsToDisk(false)
 
 	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:                params.Mode,

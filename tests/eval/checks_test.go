@@ -364,3 +364,4 @@ func TestExcerpt_KeepsAFailureLineReadable(t *testing.T) {
 		t.Errorf("an empty answer must read as such, got %q", excerpt(""))
 	}
 }
+

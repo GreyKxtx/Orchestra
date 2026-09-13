@@ -1,0 +1,43 @@
+# general mode is the multi-step execution subagent, and nothing exercised it.
+# It has the full read+write surface — delete and rename included, which is
+# what this chore needs and what build-mode tasks never asked of it.
+#
+# The trap is that the workspace compiles either way: scratch.go holds an
+# unused var, so go_build passes whether or not it is gone. file_not_exists is
+# what makes the deletion the point, and the two file_unchanged checks catch
+# the model that "helps" by moving the constant the note talks about.
+name: general_finishes_a_chore
+description: "Delete a dead file in general mode, and leave the rest alone"
+mode: general
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println("listening on", DefaultAddr)
+    }
+  config.go: |
+    package main
+
+    // DefaultAddr is where the server listens when nothing says otherwise.
+    const DefaultAddr = ":8080"
+  scratch.go: |
+    package main
+
+    // tmpNote was a reminder to the author. Nothing reads it.
+    var tmpNote = "remember to move DefaultAddr into config.go"
+query: "DefaultAddr is already where it belongs. scratch.go is a leftover note that nothing uses — delete that file. Change nothing else."
+checks:
+  - type: file_not_exists
+    path: scratch.go
+  - type: file_unchanged
+    path: config.go
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

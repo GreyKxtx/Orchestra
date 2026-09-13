@@ -548,3 +548,14 @@ func (r *Runner) consumeDeptLessonWrite() error {
 	r.deptLessonWrites++
 	return nil
 }
+
+// SetCommitsToDisk records whether this run applies its changes, so the
+// filesystem tools that cannot stage — delete and rename, which the strict op
+// format has no op for — can tell a real run from a preview. Set from the same
+// Apply flag that drives SetAllowExecDespiteDryRun and the per-tool commit.
+func (r *Runner) SetCommitsToDisk(v bool) {
+	if r == nil || r.fsTools == nil {
+		return
+	}
+	r.fsTools.Overlay.SetCommitsToDisk(v)
+}

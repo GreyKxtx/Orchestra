@@ -1,0 +1,51 @@
+# task / task_spawn / task_wait / task_result are offered in every build-mode
+# run and no eval task ever reached them. They are also the most machinery per
+# line of any tool group: a child agent, its own tool set, its own result
+# protocol, and a parent that has to wait and then act on what came back.
+#
+# The delegation is asked for outright. A coverage task may name the tool it
+# covers — the alternative is a query contrived to make delegation look
+# attractive, which grades the model's taste instead of the mechanism.
+#
+# Both files must end up right: the child's edit has to land on disk, and the
+# parent has to do its own half rather than declaring victory on the child's.
+name: subagent_does_the_edit
+description: Delegate one file to a subagent, do the other yourself
+max_steps: 16
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Greeting(), Farewell())
+    }
+  greeting.go: |
+    package main
+
+    // Greeting is said on the way in.
+    func Greeting() string {
+    	return "hello"
+    }
+  farewell.go: |
+    package main
+
+    // Farewell is said on the way out.
+    func Farewell() string {
+    	return "bye"
+    }
+query: "Two small changes. Spawn a subagent with the task tool and have it change Greeting in greeting.go to return \"good morning\". While it works, change Farewell in farewell.go yourself to return \"good night\". Both files must end up changed."
+checks:
+  - type: file_matches
+    path: greeting.go
+    pattern: 'return\s+"good morning"'
+  - type: file_matches
+    path: farewell.go
+    pattern: 'return\s+"good night"'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

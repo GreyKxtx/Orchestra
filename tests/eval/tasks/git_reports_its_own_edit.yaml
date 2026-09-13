@@ -1,0 +1,44 @@
+# The read-only git tools were ungradable until the harness could make a
+# workspace that is a repository: every call answered "this workspace is not a
+# git repository". With `git: true` the workspace starts as one clean commit,
+# so anything git.status reports afterwards is the agent's own work.
+#
+# The task is deliberately two-part — make the change, then report what the
+# repository says about it — because only the second half needs git at all. A
+# model that edits and guesses fails the answer checks; one that runs
+# git.status sees exactly one modified file and nothing else.
+name: git_reports_its_own_edit
+description: Change a file, then report what git says changed
+git: true
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Label())
+    }
+  label.go: |
+    package main
+
+    // Label is the name shown at startup.
+    func Label() string {
+    	return "orchestra"
+    }
+  notes.md: |
+    Scratch notes. Not code, and nothing reads this.
+query: "Change Label to return \"orchestra-dev\" instead. Then check what the repository reports as changed, and tell me exactly which files are modified according to git."
+checks:
+  - type: file_matches
+    path: label.go
+    pattern: 'return\s+"orchestra-dev"'
+  - type: answer_matches
+    pattern: 'label\.go'
+  - type: answer_not_matches
+    pattern: 'notes\.md'
+  - type: go_build

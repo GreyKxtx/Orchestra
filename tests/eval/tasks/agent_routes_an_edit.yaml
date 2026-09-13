@@ -1,0 +1,42 @@
+# mode: agent is the auto-router — it classifies the query and re-enters as
+# build, plan or explore before the loop starts. Nothing exercised it, so the
+# one LLM call that happens before the agent loop was unmeasured; it is also
+# the call that, until 13.09.2026, ran on a detached context and could not be
+# cancelled or timed out.
+#
+# The query is unambiguously an edit, so a router that sends it anywhere but
+# build fails on the file checks rather than on a judgement call about routing.
+name: agent_routes_an_edit
+description: Auto-routed mode must reach build for a plain edit
+mode: agent
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Triple(7))
+    }
+  math.go: |
+    package main
+
+    // Triple returns three times n.
+    func Triple(n int) int {
+    	return n + n
+    }
+query: "Triple is wrong: it returns n+n, which doubles instead of tripling. Fix the body so it returns three times n."
+checks:
+  - type: file_matches
+    path: math.go
+    pattern: 'return\s+(n\s*\*\s*3|3\s*\*\s*n|n\s*\+\s*n\s*\+\s*n)'
+  - type: file_not_matches
+    path: math.go
+    pattern: 'return\s+n\s*\+\s*n\s*$'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

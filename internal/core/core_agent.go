@@ -189,6 +189,8 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	c.tools.ClearStaged()
 	c.tools.SetAllowExecDespiteDryRun(params.Apply)
 	defer c.tools.SetAllowExecDespiteDryRun(false)
+	c.tools.SetCommitsToDisk(params.Apply)
+	defer c.tools.SetCommitsToDisk(false)
 
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
