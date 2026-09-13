@@ -314,3 +314,77 @@ func TestRunTask_DurationIsSet(t *testing.T) {
 		t.Fatal("expected non-negative duration")
 	}
 }
+
+// ── keeping a failed workspace ───────────────────────────────────────────────
+
+// The workspace of a failed run is the only one worth looking at, and it was
+// the one being deleted. It holds .orchestra/llm_log.jsonl — the record of
+// what the model called and what it was refused — so without it a failure has
+// to be reproduced by hand outside the harness, which for an intermittent
+// failure usually means it does not reproduce at all.
+
+func keepRunner(keep bool) *Runner {
+	return &Runner{
+		KeepFailed: keep,
+		RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			// Stand in for the run's own artefacts.
+			dir := filepath.Join(run.WorkspaceRoot, ".orchestra")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return AgentOutcome{}, err
+			}
+			if err := os.WriteFile(filepath.Join(dir, "llm_log.jsonl"), []byte("{}\n"), 0o644); err != nil {
+				return AgentOutcome{}, err
+			}
+			return AgentOutcome{Steps: 1}, nil
+		},
+	}
+}
+
+var failingTask = Task{
+	Name:   "keeps_nothing",
+	Query:  "do it",
+	Files:  map[string]string{"a.txt": "x"},
+	Checks: []Check{{Type: "file_exists", Path: "never_written.go"}},
+}
+
+func TestRunTask_KeepsAFailedWorkspaceWhenAsked(t *testing.T) {
+	res := keepRunner(true).RunTask(context.Background(), failingTask)
+	if res.Passed {
+		t.Fatal("fixture invalid: this task must fail")
+	}
+	if res.Workspace == "" {
+		t.Fatal("a failed run reported no workspace, so there is nothing to inspect")
+	}
+	t.Cleanup(func() { os.RemoveAll(res.Workspace) })
+	if _, err := os.Stat(filepath.Join(res.Workspace, ".orchestra", "llm_log.jsonl")); err != nil {
+		t.Errorf("the kept workspace does not hold the run's log: %v", err)
+	}
+}
+
+// Kept means kept on failure only. A suite that leaves every workspace behind
+// fills the disk over a long run and buries the one that matters.
+func TestRunTask_DeletesAPassingWorkspaceEvenWhenKeeping(t *testing.T) {
+	passing := failingTask
+	passing.Name = "keeps_nothing_passing"
+	passing.Checks = []Check{{Type: "file_exists", Path: "a.txt"}}
+
+	res := keepRunner(true).RunTask(context.Background(), passing)
+	if !res.Passed {
+		t.Fatalf("fixture invalid: this task must pass, failures: %v", res.Failures)
+	}
+	if res.Workspace != "" {
+		os.RemoveAll(res.Workspace)
+		t.Error("a passing run kept its workspace")
+	}
+}
+
+func TestRunTask_DeletesAFailedWorkspaceByDefault(t *testing.T) {
+	res := keepRunner(false).RunTask(context.Background(), failingTask)
+	if res.Passed {
+		t.Fatal("fixture invalid: this task must fail")
+	}
+	if res.Workspace != "" {
+		os.RemoveAll(res.Workspace)
+		t.Error("the workspace was kept without being asked for")
+	}
+}

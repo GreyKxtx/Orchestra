@@ -31,6 +31,7 @@ var (
 	evalTimeout int
 	evalOnly    []string
 	evalRepeat  int
+	evalKeep    bool
 )
 
 func init() {
@@ -39,6 +40,7 @@ func init() {
 	evalCmd.Flags().IntVar(&evalTimeout, "timeout", 120, "Per-task timeout in seconds")
 	evalCmd.Flags().StringSliceVar(&evalOnly, "task", nil, "Run only these tasks by name (repeatable, or comma-separated)")
 	evalCmd.Flags().IntVar(&evalRepeat, "repeat", 1, "Run each task this many times; a task that wins some runs and loses others is reported FLAKY")
+	evalCmd.Flags().BoolVar(&evalKeep, "keep-failed", false, "Leave a failed run's workspace on disk and print where, so its .orchestra/llm_log.jsonl can be read")
 	rootCmd.AddCommand(evalCmd)
 }
 
@@ -196,7 +198,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 		return evalharness.AgentOutcome{Steps: res.Steps, Answer: answer.String(), PlanPath: res.PlanPath}, nil
 	}
 
-	runner := &evalharness.Runner{RunAgent: runAgent}
+	runner := &evalharness.Runner{RunAgent: runAgent, KeepFailed: evalKeep}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	header := "TASK\tSTATUS\tSTEPS\tRETRIES\tRESOLVE\tDURATION\tDETAILS"
@@ -259,6 +261,12 @@ func runEval(cmd *cobra.Command, args []string) error {
 				verdict = "PASS"
 			}
 			fmt.Fprintf(os.Stderr, "%s: %s in %s\n", label, verdict, result.Duration.Round(time.Second))
+			// Printed per run, not per task: with --repeat the interesting one
+			// is usually a single failing run among passes, and one path in the
+			// summary would not say which run it came from.
+			if result.Workspace != "" {
+				fmt.Fprintf(os.Stderr, "%s: workspace kept at %s\n", label, result.Workspace)
+			}
 		}
 
 		status := evalStatus(won, evalRepeat)

@@ -110,18 +110,31 @@ type Result struct {
 	Answer   string
 	Error    error
 	Failures []string // descriptions of failed checks
+	// Workspace is where the run happened, set only when the workspace was
+	// kept. See Runner.KeepFailed.
+	Workspace string
 }
 
 // Runner executes eval tasks.
 type Runner struct {
+	// KeepFailed leaves the workspace of a failed run on disk instead of
+	// deleting it, and reports the path in Result.Workspace.
+	//
+	// A failed run is the only one worth looking at, and it was the one being
+	// thrown away: the workspace holds .orchestra/llm_log.jsonl, which is the
+	// record of what the model called and what it was refused. Diagnosing a
+	// failure meant reproducing it by hand outside the harness and hoping it
+	// failed the same way — and an intermittent failure usually did not.
+	KeepFailed bool
+
 	// RunAgent runs the agent on a task workspace.
 	RunAgent func(ctx context.Context, run AgentRun) (AgentOutcome, error)
 }
 
 // RunTask runs a single task in an isolated temp workspace.
-func (r *Runner) RunTask(ctx context.Context, task Task) Result {
+func (r *Runner) RunTask(ctx context.Context, task Task) (result Result) {
 	start := time.Now()
-	result := Result{TaskName: task.Name}
+	result = Result{TaskName: task.Name}
 
 	// Create temp workspace.
 	tmpDir, err := os.MkdirTemp("", "orch-eval-*")
@@ -129,7 +142,15 @@ func (r *Runner) RunTask(ctx context.Context, task Task) Result {
 		result.Error = fmt.Errorf("create temp dir: %w", err)
 		return result
 	}
-	defer os.RemoveAll(tmpDir)
+	// Named return, so this sees the outcome however the function left: every
+	// path below returns the same Result the caller gets.
+	defer func() {
+		if r.KeepFailed && (!result.Passed || result.Error != nil) {
+			result.Workspace = tmpDir
+			return
+		}
+		os.RemoveAll(tmpDir)
+	}()
 
 	// Write initial files.
 	for relPath, content := range task.Files {
