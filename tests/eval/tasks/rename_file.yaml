@@ -27,6 +27,8 @@ files:
     }
 query: "Rename util.go to geometry.go. The contents must not change, and main.go must not change either."
 checks:
+  - type: tool_used
+    content: fs.rename
   - type: file_exists
     path: geometry.go
   - type: file_not_exists

@@ -50,6 +50,11 @@ files:
     }
 query: "Use the LSP to find every place geom.Scale is called. Answer with the file paths of the callers and nothing else."
 checks:
+  # Without this the task grades only the answer, and grep can produce the
+  # right answer here — which would leave lsp.references as uncovered as it
+  # was before the task existed.
+  - type: tool_used
+    content: lsp.references
   - type: answer_matches
     pattern: 'internal[/\\]render[/\\]render\.go'
   - type: answer_matches

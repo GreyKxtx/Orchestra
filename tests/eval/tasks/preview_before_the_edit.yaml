@@ -1,0 +1,47 @@
+# diff.preview is offered in build, plan, general, worker, verifier and
+# architecture, and no run ever called it. Its whole purpose is the step
+# before an edit — check the replacement lands where you think — so a task
+# that asks for the preview and then the edit exercises it in the order it was
+# designed for.
+#
+# The file has the same short line twice. A preview shows which occurrence a
+# given search string would hit; an edit that guesses either rewrites the
+# wrong one or is refused as ambiguous. So the task has a right answer that
+# only looking can produce.
+name: preview_before_the_edit
+description: Preview a replacement, then make the edit it showed
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Label())
+    }
+  label.go: |
+    package main
+
+    // Label is what the header shows.
+    func Label() string {
+    	prefix := "build"
+    	suffix := "build"
+    	return prefix + "-" + suffix
+    }
+query: "In label.go the suffix variable should be \"release\" instead of \"build\". The prefix must stay as it is. Use diff.preview first to confirm your replacement hits the suffix line and not the prefix line, then make the edit."
+checks:
+  - type: tool_used
+    content: diff.preview
+  - type: file_matches
+    path: label.go
+    pattern: 'suffix\s*:=\s*"release"'
+  - type: file_matches
+    path: label.go
+    pattern: 'prefix\s*:=\s*"build"'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

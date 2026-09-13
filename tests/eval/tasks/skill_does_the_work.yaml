@@ -1,0 +1,59 @@
+# skill_invoke runs a file-based skill as a synchronous child, and nothing
+# exercised it. The skill itself is part of the workspace — a task can write
+# .orchestra/skills/<name>.md the same way it writes source — so this needs no
+# harness support beyond what already exists.
+#
+# The skill below is deliberately narrow: it renames one constant, which is
+# not what the parent would do unprompted. So a workspace where the rename
+# happened is evidence the child ran, not evidence the parent was capable.
+name: skill_does_the_work
+description: Delegate to a file-based skill and let it make the change
+max_steps: 16
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(retryLimit)
+    }
+  limits.go: |
+    package main
+
+    // retryLimit is how many times we retry a failed call.
+    const retryLimit = 3
+  .orchestra/skills/bumper.md: |
+    ---
+    name: bumper
+    description: Raise a numeric constant in Go source to a requested value.
+    tools: [read, glob, grep, edit, write]
+    ---
+
+    <role>
+    You raise one numeric constant to a new value and change nothing else.
+    </role>
+
+    <execution_flow>
+    1. Find the constant named in the task.
+    2. Read the file that declares it.
+    3. Use edit to replace only the number.
+    4. Say what you changed, in one line.
+    </execution_flow>
+
+    Task: $ARGUMENTS
+query: "Use the skill_invoke tool with the bumper skill to raise retryLimit from 3 to 5. Do not make the edit yourself."
+checks:
+  # The check that makes this a coverage task rather than a chore: without
+  # it the parent can make the edit itself and the task still passes green.
+  - type: tool_used
+    content: skill_invoke
+  - type: file_matches
+    path: limits.go
+    pattern: 'retryLimit\s*=\s*5'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

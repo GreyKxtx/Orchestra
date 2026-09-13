@@ -34,6 +34,8 @@ files:
     Scratch notes. Not code, and nothing reads this.
 query: "Change Label to return \"orchestra-dev\" instead. Then check what the repository reports as changed, and tell me exactly which files are modified according to git."
 checks:
+  - type: tool_used
+    content: git.status
   - type: file_matches
     path: label.go
     pattern: 'return\s+"orchestra-dev"'

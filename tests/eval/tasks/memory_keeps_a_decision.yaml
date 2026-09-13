@@ -15,6 +15,14 @@ files:
   go.mod: |
     module evalws
     go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Dial())
+    }
   client.go: |
     package main
 
@@ -29,6 +37,8 @@ files:
     }
 query: "Record this in the project memory so future sessions know it: we settled on a 5 second dial timeout because the upstream gateway drops idle connections at 6 seconds. Do not change any code."
 checks:
+  - type: tool_used
+    content: memory_write
   - type: file_contains
     path: .orchestra/memory/agent.md
     content: "5"

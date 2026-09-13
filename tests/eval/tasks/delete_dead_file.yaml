@@ -33,6 +33,8 @@ files:
     }
 query: "legacy.go is dead code — nothing in this project calls OldGreet. Delete the file. Leave everything else exactly as it is."
 checks:
+  - type: tool_used
+    content: fs.delete
   - type: file_not_exists
     path: legacy.go
   - type: file_unchanged

@@ -106,3 +106,22 @@ func isContentOnlyPatchesJSON(raw string) bool {
 	withoutJSON := strings.TrimSpace(strings.Replace(visible, jsonStr, "", 1))
 	return withoutJSON == ""
 }
+
+// countMutatingTool records a tool call that changed the workspace.
+//
+// This counter is what lets the final guard tell a turn that did its work
+// from one that only talked about it. It counted write and edit, and nothing
+// else — so a turn whose job was a deletion or a rename reached the final step
+// looking idle, and was refused with advice to edit a file it had correctly
+// removed. memory_write is here for the same reason: recording something is
+// the whole job of the turns that use it, and the alternative is a turn that
+// can never end.
+func (a *Agent) countMutatingTool(name string) {
+	if a == nil {
+		return
+	}
+	switch normalizeToolName(name) {
+	case "write", "edit", "fs.delete", "fs.rename", "ast_rename", "lsp.rename", "memory_write":
+		a.turnMutatingTools++
+	}
+}

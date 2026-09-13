@@ -135,9 +135,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 		return serialToolOutcome{}, nil
 	}
-	if name == "write" || name == "edit" {
-		a.turnMutatingTools++
-	}
+	a.countMutatingTool(name)
 
 	effectiveAllowExec := a.opts.AllowExec
 	effectiveAllowWeb := a.opts.AllowWeb

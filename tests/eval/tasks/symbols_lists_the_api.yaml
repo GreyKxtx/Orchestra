@@ -54,6 +54,11 @@ checks:
     pattern: '\bBalance\b'
   - type: answer_matches
     pattern: '\bExport\b'
-  - type: answer_not_matches
-    pattern: '\bvalidate\b'
+  # Two attempts at "validate must not appear" both failed correct answers: a
+  # model that names it to say it is UNEXPORTED is right, and no regexp over
+  # prose told that apart from naming it as exported. A check that fails
+  # correct work is worse than no check, so it is gone — and what this task is
+  # actually about, that the outline was consulted, is asserted directly.
+  - type: tool_used
+    content: symbols
   - type: workspace_unchanged

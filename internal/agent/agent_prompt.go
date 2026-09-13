@@ -48,6 +48,16 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	if len(a.opts.ExtraTools) > 0 {
 		base = append(base, a.opts.ExtraTools...)
 	}
+	// task_result is how a CHILD reports back, and a main agent's task_result
+	// is refused on purpose (see Options.IsChild). Modes that can run either
+	// way — general above all — were advertising it to main runs too, and the
+	// model does what the schema says: the first eval run of general mode
+	// finished its work, called task_result, was refused, and had no way left
+	// to end the turn. Offering a completion the runtime rejects is worse than
+	// offering none.
+	if !a.opts.IsChild {
+		base = withoutTool(base, "task_result")
+	}
 	if a.opts.Mode != ModeOrchestra && a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {
 		names := make([]string, len(a.opts.Skills))
 		for i, s := range a.opts.Skills {
@@ -326,4 +336,16 @@ var familiesWithReliableToolCalling = map[string]bool{
 // model, and a redundant catalog costs tokens while a missing one costs the run.
 func needsToolCatalog(family string) bool {
 	return !familiesWithReliableToolCalling[promptpkg.NormalizePromptFamily(family)]
+}
+
+// withoutTool drops one tool from a schema by name, preserving order.
+func withoutTool(defs []llm.ToolDef, name string) []llm.ToolDef {
+	out := defs[:0:0]
+	for _, def := range defs {
+		if def.Function.Name == name {
+			continue
+		}
+		out = append(out, def)
+	}
+	return out
 }

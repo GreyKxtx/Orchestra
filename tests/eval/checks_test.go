@@ -365,3 +365,42 @@ func TestExcerpt_KeepsAFailureLineReadable(t *testing.T) {
 	}
 }
 
+
+// ---- tool_used --------------------------------------------------------------
+
+// Every other check looks at the workspace after the run, which cannot tell
+// who did the work. The skill_invoke task passed twice with the parent making
+// the edit itself and the skill never invoked — the files were right, so the
+// task was green, and the tool it exists to cover had no coverage at all.
+
+func TestCheck_ToolUsedAcceptsAToolTheRunCalled(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"skill_invoke": 1, "read": 4}}
+	mustPass(t, env, Check{Type: "tool_used", Content: "skill_invoke"})
+}
+
+func TestCheck_ToolUsedCatchesATaskThatCoveredNothing(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"read": 4, "edit": 1}}
+	mustFail(t, env, Check{Type: "tool_used", Content: "skill_invoke"},
+		"a run that never called the tool the task is about")
+}
+
+// The failure has to say what the model did instead — otherwise the only
+// information is that something is missing.
+func TestCheck_ToolUsedNamesWhatWasCalledInstead(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"read": 4, "edit": 1}}
+	failure, _ := evaluateMechanicalCheck(env, Check{Type: "tool_used", Content: "skill_invoke"})
+	if !strings.Contains(failure, "edit") || !strings.Contains(failure, "read") {
+		t.Errorf("the failure must list what the run did call:\n%s", failure)
+	}
+}
+
+func TestCheck_ToolNotUsedCatchesTheToolTheTaskForbade(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"bash": 2}}
+	mustFail(t, env, Check{Type: "tool_not_used", Content: "bash"}, "a forbidden tool that was called")
+}
+
+// A check that names no tool cannot fail, so it must refuse rather than pass.
+func TestCheck_ToolUsedRefusesAnEmptyName(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"read": 1}}
+	mustFail(t, env, Check{Type: "tool_used"}, "a check with no tool name")
+}

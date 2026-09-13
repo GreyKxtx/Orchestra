@@ -90,6 +90,11 @@ type Check struct {
 	//       have. Sound because an answer is a claim about what IS; the same
 	//       judgement against a PLAN is not, and was tried and removed — a
 	//       plan legitimately names files to create.
+	//   tool_used / tool_not_used
+	//       Content names a tool; the run did, or did not, call it. The only
+	//       check that grades HOW the work was done, and the only way a task
+	//       written to cover one tool can prove it reached that tool — the
+	//       workspace afterwards cannot say who changed it.
 	//
 	// See checks.go for why the mechanical ones exist.
 	Type string `yaml:"type"`
@@ -215,7 +220,8 @@ func (r *Runner) RunTask(ctx context.Context, task Task) (result Result) {
 	// Evaluate checks. The task's own Files are carried along so a check can
 	// compare against what the workspace started as, not merely against what
 	// it now contains.
-	env := checkEnv{root: tmpDir, original: task.Files, answer: outcome.Answer, planPath: outcome.PlanPath}
+	env := checkEnv{root: tmpDir, original: task.Files, answer: outcome.Answer,
+		planPath: outcome.PlanPath, tools: result.Tools}
 	var failures []string
 	for _, check := range task.Checks {
 		if f := evaluateCheck(env, check); f != "" {

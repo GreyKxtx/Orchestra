@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -47,6 +48,12 @@ type checkEnv struct {
 	// planPath is where plan mode wrote its plan, relative to root. Empty for
 	// every other mode, and empty for a plan run that produced no plan.
 	planPath string
+	// tools counts the run's tool calls by name, so a task written to cover a
+	// particular tool can prove the tool was reached. Without it a coverage
+	// task passes on the outcome alone: the skill_invoke task below did
+	// exactly that — the parent made the edit itself, the files ended up
+	// right, and the tool the task exists for was never called.
+	tools map[string]int
 }
 
 // planToken is how a task names a file whose name it cannot know. Plan mode
@@ -184,6 +191,26 @@ func evaluateMechanicalCheck(env checkEnv, c Check) (string, bool) {
 		}
 		return "", true
 
+	case "tool_used", "tool_not_used":
+		// The one check that grades HOW the work was done. Every other check
+		// looks at the workspace afterwards, and a task written to cover a
+		// particular tool passes on the outcome alone — which is how the
+		// skill_invoke task passed twice with the parent making the edit
+		// itself and the tool never called.
+		name := strings.TrimSpace(c.Content)
+		if name == "" {
+			return fmt.Sprintf("%s: no tool named; put the tool name in `content`", c.Type), true
+		}
+		used := env.tools[name] > 0
+		if c.Type == "tool_used" && !used {
+			return fmt.Sprintf("tool_used %q: the run never called it (called: %s)",
+				name, namesOf(env.tools)), true
+		}
+		if c.Type == "tool_not_used" && used {
+			return fmt.Sprintf("tool_not_used %q: called %d time(s)", name, env.tools[name]), true
+		}
+		return "", true
+
 	case "answer_not_empty":
 		if strings.TrimSpace(env.answer) == "" {
 			return "answer_not_empty: the model said nothing", true
@@ -268,4 +295,18 @@ func excerpt(s string) string {
 		return "(nothing)"
 	}
 	return s
+}
+
+// namesOf lists the tools a run called, so a failed tool_used check says what
+// the model did instead of what it did not do.
+func namesOf(tools map[string]int) string {
+	if len(tools) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(tools))
+	for name := range tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }

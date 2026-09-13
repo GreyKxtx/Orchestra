@@ -1,0 +1,53 @@
+# The orchestra branch — Lead, workers, and the WorkOrder protocol between
+# them — is the most machinery in the project and had no end-to-end check of
+# any kind. orchestra is the only one of the three a user can start: worker is
+# child-only, so a Lead run is the single door to all of it.
+#
+# The Lead cannot edit code itself (its writes are scoped to plans and
+# scratchpads), which is what makes this gradable without naming any tool: if
+# both files end up changed, the work went through a worker. There is no other
+# route.
+#
+# Two independent files, so the Lead has something to split. go_build catches
+# the half-done version that per-file checks would pass.
+name: orchestra_delegates_two_edits
+description: Lead mode must get two files changed through its workers
+mode: orchestra
+max_steps: 24
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Width(), Height())
+    }
+  width.go: |
+    package main
+
+    // Width is the frame width in pixels.
+    func Width() int {
+    	return 640
+    }
+  height.go: |
+    package main
+
+    // Height is the frame height in pixels.
+    func Height() int {
+    	return 480
+    }
+query: "We are moving to 1080p. Change Width to return 1920 and Height to return 1080. Leave main.go alone."
+checks:
+  - type: file_matches
+    path: width.go
+    pattern: 'return\s+1920'
+  - type: file_matches
+    path: height.go
+    pattern: 'return\s+1080'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

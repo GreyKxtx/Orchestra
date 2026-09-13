@@ -40,6 +40,8 @@ files:
     }
 query: "Two small changes. Spawn a subagent with the task tool and have it change Greeting in greeting.go to return \"good morning\". While it works, change Farewell in farewell.go yourself to return \"good night\". Both files must end up changed."
 checks:
+  - type: tool_used
+    content: task
   - type: file_matches
     path: greeting.go
     pattern: 'return\s+"good morning"'
