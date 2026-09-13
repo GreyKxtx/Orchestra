@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // isAgentInProcessTool reports tools handled in the agent serial pipeline
@@ -544,14 +544,29 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		if !allowed {
 			label := "plan mode"
 			scope := fmt.Sprintf("%s, .orchestra/plans/*.md, .orchestra/state.md, or .orchestra/depts/*.md", a.effectivePlanPath())
+			// A refusal that names only where writes ARE allowed answers a
+			// question the model did not ask. It wanted this file changed, and
+			// being told it may write to .orchestra/plans/*.md instead leaves
+			// it with nowhere to go — so it calls write again, and again, until
+			// the denied-repeat breaker ends the turn with nothing done. That
+			// is measured, not supposed: an orchestra run against a local model
+			// spent every one of its steps this way.
+			//
+			// So each of these says what to do with the file as well as what
+			// not to do. The route is in the system prompt already; the point
+			// is that it is here too, at the moment of the refusal.
+			nextStep := ""
 			switch a.opts.Mode {
 			case ModeOrchestra:
 				label = "orchestra lead"
+				nextStep = ". To change this file, delegate it: task(subagent_type=\"worker\", prompt=\"…\") — the worker edits, you do not"
+			case ModePlan:
+				nextStep = ". Plan mode does not edit; describe the change in the plan, and it is applied after you plan_exit"
 			case ModeArchitecture:
 				label = "architecture mode"
 				scope = fmt.Sprintf("%s, .orchestra/plans/*.md, .orchestra/playbooks/{dept}.md, .orchestra/playbooks/local/{dept}.md (decision_ref required), .orchestra/specs/** (not conventions.md)", a.effectivePlanPath())
 			}
-			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s", label, scope))
+			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s%s", label, scope, nextStep))
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
