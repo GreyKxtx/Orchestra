@@ -15,11 +15,17 @@ type RunMetrics struct {
 	ToolCalls        int
 	ToolResults      int
 	ClassifiedSteps  int
+	// Tools counts calls per tool name. The suite is the only place where a
+	// tool is exercised end to end by a real model, so which tools it reaches
+	// is the one honest answer to "what is covered" — and a count of calls
+	// cannot give it.
+	Tools map[string]int
 }
 
 type logEntry struct {
-	Event string `json:"event"`
-	Kind  string `json:"kind"`
+	Event    string `json:"event"`
+	Kind     string `json:"kind"`
+	ToolName string `json:"tool_name"`
 }
 
 // ParseLLMLog reads an llm_log.jsonl file and counts eval-relevant events.
@@ -47,6 +53,12 @@ func ParseLLMLog(path string) (RunMetrics, error) {
 		switch e.Event {
 		case "tool_call":
 			m.ToolCalls++
+			if e.ToolName != "" {
+				if m.Tools == nil {
+					m.Tools = make(map[string]int, 8)
+				}
+				m.Tools[e.ToolName]++
+			}
 		case "tool_result":
 			m.ToolResults++
 		case "step.classified":

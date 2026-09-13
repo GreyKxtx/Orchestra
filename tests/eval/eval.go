@@ -105,7 +105,10 @@ type Result struct {
 	InvalidRetries int // validation_error events from llm_log
 	ResolveFailed  int // resolve_failed events from llm_log
 	ToolCalls      int
-	Duration       time.Duration
+	// Tools counts calls per tool name, so a suite run can say which tools a
+	// real model actually reached rather than which ones it was offered.
+	Tools    map[string]int
+	Duration time.Duration
 	// Answer is the prose the model produced, for the checks that grade it.
 	Answer   string
 	Error    error
@@ -195,6 +198,7 @@ func (r *Runner) RunTask(ctx context.Context, task Task) (result Result) {
 		result.InvalidRetries = metrics.ValidationErrors
 		result.ResolveFailed = metrics.ResolveFailed
 		result.ToolCalls = metrics.ToolCalls
+		result.Tools = metrics.Tools
 	}
 
 	// Evaluate checks. The task's own Files are carried along so a check can

@@ -41,3 +41,39 @@ func TestParseLLMLog_MissingFile(t *testing.T) {
 		t.Fatalf("expected zero metrics for missing log")
 	}
 }
+
+// The suite is the only place a tool is exercised end to end by a real model,
+// so which tools it reached is the one measurable answer to "what does the
+// eval cover". A count of calls cannot give it, and a list of registered
+// tools answers a different question — what the model was offered.
+func TestParseLLMLog_RecordsWhichToolsWereCalled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "llm_log.jsonl")
+	content := `{"event":"tool_call","tool_name":"read"}
+{"event":"tool_call","tool_name":"read"}
+{"event":"tool_call","tool_name":"edit"}
+{"event":"tool_result","tool_name":"edit"}
+{"event":"tool_call"}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := ParseLLMLog(path)
+	if err != nil {
+		t.Fatalf("ParseLLMLog: %v", err)
+	}
+	if m.Tools["read"] != 2 {
+		t.Errorf("read was called twice, got %d", m.Tools["read"])
+	}
+	if m.Tools["edit"] != 1 {
+		t.Errorf("edit was called once, got %d; a tool_result must not count as a call",
+			m.Tools["edit"])
+	}
+	if len(m.Tools) != 2 {
+		t.Errorf("a tool_call with no name must not become an entry: %v", m.Tools)
+	}
+	if m.ToolCalls != 4 {
+		t.Errorf("the total must still count every tool_call, named or not: %d", m.ToolCalls)
+	}
+}

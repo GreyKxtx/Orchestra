@@ -209,6 +209,10 @@ func runEval(cmd *cobra.Command, args []string) error {
 
 	clean, broken, flaky := 0, 0, 0
 	var totalSteps, totalRetries, totalResolve, runs int
+	// Which tools a real model actually reached across the suite. Offered is
+	// not exercised: the registry says what the model may call, and only a run
+	// says what it did call.
+	toolsSeen := map[string]int{}
 	for i, task := range tasks {
 		var (
 			won      int
@@ -249,6 +253,9 @@ func runEval(cmd *cobra.Command, args []string) error {
 				case len(result.Failures) > 0:
 					details = strings.Join(result.Failures, "; ")
 				}
+			}
+			for name, n := range result.Tools {
+				toolsSeen[name] += n
 			}
 			steps += result.Steps
 			retries += result.InvalidRetries
@@ -311,8 +318,32 @@ func runEval(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(os.Stderr, ")")
 	fmt.Fprintf(os.Stderr, "avg steps: %.1f  avg invalid retries: %.1f  avg resolve_failed: %.1f  (Phase 1 target retries: <3.0)\n",
 		avgSteps, avgRetries, avgResolve)
+	fmt.Fprintf(os.Stderr, "tools exercised: %s\n", formatToolsSeen(toolsSeen))
 	if broken+flaky > 0 {
 		return fmt.Errorf("%d task(s) failed, %d flaky", broken, flaky)
 	}
 	return nil
+}
+
+// formatToolsSeen renders the per-tool call counts of a suite run, most-used
+// first, for the line that answers "what did this suite actually cover".
+func formatToolsSeen(seen map[string]int) string {
+	if len(seen) == 0 {
+		return "none recorded"
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if seen[names[i]] != seen[names[j]] {
+			return seen[names[i]] > seen[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s=%d", name, seen[name]))
+	}
+	return strings.Join(parts, " ")
 }
