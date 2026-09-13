@@ -415,7 +415,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	c.tools.SetAllowExecDespiteDryRun(params.Apply)
 	defer c.tools.SetAllowExecDespiteDryRun(false)
 
-	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:                params.Mode,
 		Profile:             params.Profile,
 		PlanPath:            planPath,
@@ -1070,7 +1070,7 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 		return &SessionCompactResult{SessionID: params.SessionID}, nil
 	}
 
-	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:   string(agent.ModeBuild),
 		Apply:  false,
 		Backup: true,

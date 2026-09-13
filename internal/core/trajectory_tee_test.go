@@ -199,7 +199,7 @@ func TestPrepareAgentLaunch_DoesNotLeakTheWriterWhenItFailsEarly(t *testing.T) {
 	})
 
 	const sessionID = "leak-probe"
-	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+	launch, err := c.prepareAgentLaunch(context.Background(), agentLaunchSpec{
 		Mode:      "leaky",
 		SessionID: sessionID,
 	})

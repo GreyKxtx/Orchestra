@@ -144,7 +144,7 @@ func resolveProfileName(cfg *config.ProjectConfig, profile string) (string, erro
 	return name, nil
 }
 
-func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (launch *agentLaunch, retErr error) {
+func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (launch *agentLaunch, retErr error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core config is nil", nil)
 	}
@@ -247,7 +247,7 @@ func (c *Core) prepareAgentLaunch(spec agentLaunchSpec) (launch *agentLaunch, re
 	routeConfidence := 0.0
 
 	if strings.EqualFold(requestedMode, string(agent.ModeAgent)) {
-		dec := c.classifyAgentMode(context.Background(), spec.Query, agentLogger)
+		dec := c.classifyAgentMode(ctx, spec.Query, agentLogger)
 		effectiveMode = dec.Mode
 		routeReason = dec.Reason
 		routeConfidence = dec.Confidence

@@ -153,7 +153,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
-	launch, err := c.prepareAgentLaunch(agentLaunchSpec{
+	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:                params.Mode,
 		Profile:             params.Profile,
 		Query:               agentQuery,
