@@ -811,6 +811,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 	if name == "write" || name == "edit" {
 		toolPath := extractWriteOrEditPath(tc.Input)
+		// Recorded here rather than at the call site, because only a tool that
+		// got this far actually changed the file. A failed edit followed by the
+		// same change as a final patch is a legitimate recovery, and must not
+		// be mistaken for a restatement of a change that already landed.
+		a.recordMutatedPath(toolPath)
 		a.commitStagedAfterMutatingTool(ctx, steps, toolPath)
 		a.previewStagedAfterMutatingTool(ctx, steps)
 		a.maybeHintStagedReady(history, toolPath)

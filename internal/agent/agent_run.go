@@ -43,6 +43,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// Initialize todos from session state (empty for one-shot runs).
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
 	a.turnMutatingTools = 0
+	a.turnMutatedPaths = nil
 	a.groundingCorrected = false
 	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0

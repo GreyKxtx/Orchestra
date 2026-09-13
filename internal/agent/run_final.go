@@ -94,6 +94,13 @@ func (a *Agent) handleFinalStep(
 		}
 	}
 
+	if hint := a.restatedPatchHint(finalPatches); hint != "" {
+		a.logf("final rejected: a patch restates a change already staged this turn")
+		*history = append(*history, llm.Message{Role: llm.RoleUser, Content: hint})
+		emitStepDone("invalid")
+		return finalStepOutcome{Retry: true}, nil
+	}
+
 	if len(finalPatches) > 0 {
 		a.logf("final received patches=%d -> applying to staging overlay", len(finalPatches))
 		start := time.Now()

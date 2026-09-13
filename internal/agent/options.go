@@ -578,6 +578,13 @@ type Agent struct {
 	// denied or failed mutating attempt.
 	turnMutatingTools int
 
+	// turnMutatedPaths records the files write/edit actually changed in the
+	// current Run. StagedOps cannot answer this: with Apply=true each mutating
+	// tool is committed to disk and unstaged immediately, so by the final step
+	// the overlay is empty and the change is invisible to anything that asks
+	// what this turn has already touched.
+	turnMutatedPaths map[string]bool
+
 	// groundingCorrected records that this turn already sent the answer back
 	// once for naming paths the workspace does not have. One correction only:
 	// a model that will not ground itself must not spend the window trying.
