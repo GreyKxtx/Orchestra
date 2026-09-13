@@ -389,6 +389,9 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 		case patches.TypeFileUnifiedDiff:
 			newContent, err = resolver.ApplyUnifiedDiff(currentContent, p.Diff)
 		case patches.TypeFileWriteAtomic:
+			if reason := writeAtomicPatchRefusal(p, string(currentContent)); reason != "" {
+				return protocol.NewError(protocol.InvalidLLMOutput, reason, map[string]any{"path": relSlash})
+			}
 			if p.Conditions != nil {
 				if p.Conditions.MustNotExist && o.fileExistsOnDisk(relSlash) {
 					return protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{"path": relSlash})
@@ -466,4 +469,39 @@ func (c *Client) CommitStagedPath(ctx context.Context, path string, backup bool)
 	}
 	c.Overlay.unstagePath(relSlash)
 	return resp, nil
+}
+
+// writeAtomicPatchRefusal states why a whole-file patch must not be applied,
+// or "" when it is safe.
+//
+// The staging path used to apply write_atomic as `newContent = p.Content` with
+// no check at all, while the resolver path (resolveWriteAtomic) required a
+// safety condition and ran the destructive-write guard. A model that declared
+// file.write_atomic and filled in the search/replace fields therefore handed
+// over an EMPTY Content, and the final apply wrote that empty string over the
+// file — after the edit/write tools had already put the right content on disk.
+//
+// That is the eval task two_files, failing about one run in four:
+//
+//	{"path":"util.go","type":"file.write_atomic",
+//	 "search":"","replace":"package main\n\nfunc Double(n int) int {…"}
+//
+//	disk_commit util.go        55   ← the tool wrote it correctly
+//	disk_commit final:util.go   0   ← the final apply emptied it
+//
+// Both files ended at zero bytes and the run reported success. The model was
+// wrong to send that patch; nothing should have carried the mistake through to
+// erasing a file.
+func writeAtomicPatchRefusal(p patches.Patch, current string) string {
+	// A patch whose declared type disagrees with the fields it carries. Naming
+	// the contradiction is what lets the model fix it; "empty content" alone
+	// would send it looking in the wrong place.
+	if p.Content == "" && (p.Search != "" || p.Replace != "") {
+		return "patch declares type file.write_atomic but carries search/replace and no content — " +
+			"use type file.search_replace for a partial edit, or put the complete new file in content"
+	}
+	if reason := resolver.DestructiveWriteReason(current, p.Content); reason != "" {
+		return "refusing to write " + p.Path + ": " + reason
+	}
+	return ""
 }

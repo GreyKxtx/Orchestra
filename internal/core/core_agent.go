@@ -78,7 +78,16 @@ type AgentRunResult struct {
 
 	Todos []tools.TodoItem `json:"todos,omitempty"`
 
-	// PlanPath is the session plan markdown file when plan mode was used.
+	// PlanPath is the plan markdown file this run WROTE. Empty when the run
+	// produced no plan — including a plan-mode run that explored and stopped
+	// without planning, which is a thing local models do.
+	//
+	// It used to carry the path the run was configured with, which exists for
+	// every plan/architecture/orchestra run whether or not a plan was ever
+	// written. A caller then had a path to a file that was never created: the
+	// eval harness reported "cannot find the path specified" for a run whose
+	// real story was that the model never called plan_exit, and a UI offering
+	// to open the plan would open nothing.
 	PlanPath string `json:"plan_path,omitempty"`
 
 	// Usage summarises token consumption for this run.
@@ -206,7 +215,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		ApplyResponse: res.ApplyResponse,
 		SwitchToBuild: res.SwitchToBuild,
 		Todos:         res.Todos,
-		PlanPath:      launch.Opts.PlanPath,
+		PlanPath:      writtenPlanPath(c.workspaceRoot, launch.Opts.PlanPath),
 		Usage:         usageSnapshotFrom(launch.Usage),
 		EffectiveMode: launch.EffectiveMode,
 	}

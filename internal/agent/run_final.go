@@ -148,6 +148,19 @@ func (a *Agent) handleFinalStep(
 	}
 
 	a.logf("final staged_ops=%d -> FSApplyOps dry_run=%v", len(stagedOps), !a.opts.Apply)
+	// What the final apply is about to write, per file. The tools already
+	// committed their own changes to disk by now, so anything still staged
+	// here overwrites what is there — and an op carrying empty content
+	// silently empties a file the turn had already written correctly.
+	if a.opts.AgentLogger != nil {
+		for _, op := range stagedOps {
+			n := 0
+			if op.WriteAtomic != nil {
+				n = len(op.WriteAtomic.Content)
+			}
+			a.opts.AgentLogger.LogDiskCommit("final:"+op.Path, n, "")
+		}
+	}
 
 	start := time.Now()
 	resp, err := a.tools.FSApplyOps(ctx, tools.FSApplyOpsRequest{

@@ -1,6 +1,8 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent"
@@ -44,4 +46,24 @@ func sessionPlanPathLocked(sess *coresession.Session, mode string) string {
 	p := plan.SessionRelPath(sess.ID)
 	sess.SetPlanPath(p)
 	return p
+}
+
+// writtenPlanPath returns relPath only when a plan actually exists there.
+//
+// resolvePlanPath answers "where would a plan go", which every plan-mode run
+// has. Whether a plan was WRITTEN is a different question, and the run result
+// is the place that has to answer the second one: its consumers open the file
+// or check it, and a path to a file that was never created makes a run that
+// did not plan look like a run whose plan went missing.
+func writtenPlanPath(workspaceRoot, relPath string) string {
+	rel := strings.TrimSpace(relPath)
+	if rel == "" {
+		return ""
+	}
+	abs := filepath.Join(workspaceRoot, filepath.FromSlash(rel))
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() || info.Size() == 0 {
+		return ""
+	}
+	return rel
 }
