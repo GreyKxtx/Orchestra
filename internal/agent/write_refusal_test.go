@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,5 +149,88 @@ func TestWriteRefusal_StillNamesTheAllowedPaths(t *testing.T) {
 		if !strings.Contains(got, ".orchestra/plans/test-plan.md") {
 			t.Errorf("%s: the refusal must still name the path that IS writable:\n%s", mode, got)
 		}
+	}
+}
+
+// A refusal that leaves no trace is a turn nobody can diagnose afterwards.
+// Denied calls return before the normal tool_call logging, so llm_log.jsonl
+// showed only the tools that got THROUGH: an orchestra Lead whose turn was
+// spent being refused for `write` appeared never to have called write at all,
+// and the trace showed the delegation it also attempted instead — exactly
+// backwards from what a reader needs.
+func TestWriteRefusal_ADeniedCallIsInTheLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "store"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "store", "store.go"),
+		[]byte("package store\n\ntype Store struct{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	t.Cleanup(func() { tr.Close() })
+
+	client := &recordingLLM{steps: []string{
+		`{"type":"tool_call","tool":{"name":"read","input":{"path":"internal/store/store.go"}}}`,
+		`{"type":"tool_call","tool":{"name":"write","input":{"path":"internal/store/store.go","content":"package store"}}}`,
+		`{"type":"final","final":{"patches":[]}}`,
+	}}
+
+	ag, err := New(client, v, tr, Options{
+		MaxSteps:    6,
+		Mode:        ModeOrchestra,
+		PlanPath:    ".orchestra/plans/test-plan.md",
+		AgentLogger: llm.NewLogger(root),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, _, err := ag.Run(context.Background(), nil, "add a Total method to Store"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		t.Fatalf("the run wrote no log at all: %v", err)
+	}
+	var sawCall, sawReason bool
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var e struct {
+			Event    string `json:"event"`
+			ToolName string `json:"tool_name"`
+			ErrorStr string `json:"error"`
+		}
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		if e.Event == "tool_call" && e.ToolName == "write" {
+			sawCall = true
+		}
+		if e.Event == "tool_result" && e.ToolName == "write" && strings.Contains(e.ErrorStr, "denied") {
+			sawReason = true
+			// The log carries what the model was told, not merely that it was
+			// told something — otherwise the trace cannot answer whether the
+			// hint was present when the model ignored it.
+			if !strings.Contains(e.ErrorStr, "task(") {
+				t.Errorf("the logged reason must carry what the model was told:\n%s", e.ErrorStr)
+			}
+		}
+	}
+	if !sawCall {
+		t.Error("the refused write left no tool_call in llm_log.jsonl — the turn cannot be diagnosed from its trace")
+	}
+	if !sawReason {
+		t.Error("the refusal reason was not recorded, so the log says a call happened and not why it failed")
 	}
 }

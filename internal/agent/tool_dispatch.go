@@ -80,6 +80,26 @@ type serialToolOutcome struct {
 	Err         error
 }
 
+// deniedToolResult formats a refusal and records that it happened.
+//
+// Refusals return before LogToolCall, so a denied call used to leave no trace
+// at all: a turn killed by repeated refusals showed, in llm_log.jsonl, only
+// the tools that got through. An orchestra Lead that spent its whole turn
+// being refused for `write` appeared never to have called write — the trace
+// showed the delegation it also attempted and nothing else, which is exactly
+// backwards from what a reader needs to see.
+//
+// Logged as a call plus a result carrying the reason, so the count of
+// attempts and what was said each time both survive the run.
+func (a *Agent) deniedToolResult(name string, input json.RawMessage, reason string) string {
+	if a.opts.AgentLogger != nil {
+		a.opts.AgentLogger.LogToolCall(name, len(input))
+		a.opts.AgentLogger.LogToolResult(name, 0, 0, "denied: "+reason)
+	}
+	a.logf("tool_call name=%s status=denied reason=%s", name, reason)
+	return formatToolDeniedJSON(name, input, reason)
+}
+
 // runSerialToolCall executes one tool call through the full serial pipeline
 // (permissions, in-process handlers, Runner.Call). Appends tool messages to
 // history. Returns a non-nil error for circuit-breaker trips; EarlyResult when
@@ -94,7 +114,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		toolCallID = fmt.Sprintf("call_%d_%d", steps, time.Now().UnixNano())
 	}
 	if scopeErr := a.checkExploreFirstGate(name, *history); scopeErr != nil {
-		toolResult := formatToolDeniedJSON(name, tc.Input, scopeErr.Error())
+		toolResult := a.deniedToolResult(name, tc.Input, scopeErr.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -112,7 +132,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		if act, matched := checkPermissions(a.opts.PermissionRules, name, subject); matched {
 			switch act {
 			case "deny":
-				toolResult := formatToolDeniedJSON(name, tc.Input, "tool call denied by permission ruleset")
+				toolResult := a.deniedToolResult(name, tc.Input, "tool call denied by permission ruleset")
 				*history = append(*history, llm.Message{
 					Role:       llm.RoleTool,
 					ToolCallID: toolCallID,
@@ -132,7 +152,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 					if permErr != nil {
 						reason = permErr.Error()
 					}
-					toolResult := formatToolDeniedJSON(name, tc.Input, reason)
+					toolResult := a.deniedToolResult(name, tc.Input, reason)
 					*history = append(*history, llm.Message{
 						Role:       llm.RoleTool,
 						ToolCallID: toolCallID,
@@ -166,7 +186,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			if resp.Reason != "" {
 				reason = resp.Reason
 			}
-			toolResult := formatToolDeniedJSON(name, tc.Input, reason)
+			toolResult := a.deniedToolResult(name, tc.Input, reason)
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
@@ -186,7 +206,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			if len(a.opts.ExecAllow) > 0 {
 				msg = fmt.Sprintf("exec.run: command %q is not in the allowlist", cmd)
 			}
-			toolResult := formatToolDeniedJSON(name, tc.Input, msg)
+			toolResult := a.deniedToolResult(name, tc.Input, msg)
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
@@ -200,7 +220,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if name == "webfetch" && !effectiveAllowWeb {
-		toolResult := formatToolDeniedJSON(name, tc.Input, "webfetch requires user consent (use --allow-web)")
+		toolResult := a.deniedToolResult(name, tc.Input, "webfetch requires user consent (use --allow-web)")
 		*history = append(*history, llm.Message{
 			Role:       llm.RoleTool,
 			ToolCallID: toolCallID,
@@ -566,7 +586,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 				label = "architecture mode"
 				scope = fmt.Sprintf("%s, .orchestra/plans/*.md, .orchestra/playbooks/{dept}.md, .orchestra/playbooks/local/{dept}.md (decision_ref required), .orchestra/specs/** (not conventions.md)", a.effectivePlanPath())
 			}
-			toolResult := formatToolDeniedJSON(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s%s", label, scope, nextStep))
+			toolResult := a.deniedToolResult(name, tc.Input, fmt.Sprintf("%s: writes are allowed only to %s%s", label, scope, nextStep))
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
@@ -574,7 +594,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			return serialToolOutcome{}, nil
 		}
 		if narrowErr := a.checkDeptPlaybookNarrowing(tc.Input); narrowErr != nil {
-			toolResult := formatToolDeniedJSON(name, tc.Input, narrowErr.Error())
+			toolResult := a.deniedToolResult(name, tc.Input, narrowErr.Error())
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
@@ -582,7 +602,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			return serialToolOutcome{}, nil
 		}
 		if overlayErr := a.checkLocalPlaybookOverlayGate(name, tc.Input); overlayErr != nil {
-			toolResult := formatToolDeniedJSON(name, tc.Input, overlayErr.Error())
+			toolResult := a.deniedToolResult(name, tc.Input, overlayErr.Error())
 			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 			if cbErr := cb.RecordDenied(name); cbErr != nil {
 				return serialToolOutcome{}, cbErr
@@ -592,7 +612,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if scopeErr := a.checkWorkerEditScope(name, tc.Input); scopeErr != nil {
-		toolResult := formatToolDeniedJSON(name, tc.Input, scopeErr.Error())
+		toolResult := a.deniedToolResult(name, tc.Input, scopeErr.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -601,7 +621,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if scopeErr := a.checkProductEditScope(name, tc.Input); scopeErr != nil {
-		toolResult := formatToolDeniedJSON(name, tc.Input, scopeErr.Error())
+		toolResult := a.deniedToolResult(name, tc.Input, scopeErr.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -610,7 +630,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if scopeErr := a.checkDocsEditScope(name, tc.Input); scopeErr != nil {
-		toolResult := formatToolDeniedJSON(name, tc.Input, scopeErr.Error())
+		toolResult := a.deniedToolResult(name, tc.Input, scopeErr.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -619,7 +639,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if gateErr := a.confirmHumanGate(ctx, name, tc.Input); gateErr != nil {
-		toolResult := formatToolDeniedJSON(name, tc.Input, gateErr.Error())
+		toolResult := a.deniedToolResult(name, tc.Input, gateErr.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -628,7 +648,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if a.opts.Mode == ModeAsk && (name == "write" || name == "edit" || name == "bash" || name == "fs.delete" || name == "fs.rename" || name == "skill_invoke") {
-		toolResult := formatToolDeniedJSON(name, tc.Input, "ask mode is read-only")
+		toolResult := a.deniedToolResult(name, tc.Input, "ask mode is read-only")
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -637,7 +657,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if a.opts.Mode == ModeVerifier && (name == "write" || name == "edit" || name == "fs.delete" || name == "fs.rename" || name == "skill_invoke" || name == "lsp.rename") {
-		toolResult := formatToolDeniedJSON(name, tc.Input, "verifier mode is read-only (bash allowed for verification commands)")
+		toolResult := a.deniedToolResult(name, tc.Input, "verifier mode is read-only (bash allowed for verification commands)")
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
 			return serialToolOutcome{}, cbErr
@@ -661,7 +681,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if a.opts.HooksRunner != nil {
 		dec := a.runPreToolHooks(callCtx, name, tc.Input)
 		if dec.Denied {
-			toolResult := formatToolDeniedJSON(name, tc.Input, hookDenialReason(dec))
+			toolResult := a.deniedToolResult(name, tc.Input, hookDenialReason(dec))
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
