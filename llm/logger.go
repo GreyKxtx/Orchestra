@@ -312,3 +312,26 @@ func sanitizeSecrets(s string) string {
 	s = reURLToken.ReplaceAllString(s, "${1}***")
 	return s
 }
+
+// LogDiskCommit records what a mutating tool actually put on disk.
+//
+// The tool's own result cannot answer this. In dry-run staging write and edit
+// reply from the request — bytes_written is len(content) — and the disk write
+// happens later, in CommitStagedPath, whose result went only to logf, which is
+// off unless --debug. So a run where the tool reported 55 bytes written and
+// the file ended up empty left no trace of the step in between, and the eval
+// harness could not tell a tool that lied from a commit that lost the content.
+//
+// bytes is the size of the file after the commit, from the applier's own diff.
+func (l *Logger) LogDiskCommit(path string, bytes int, errStr string) {
+	if l == nil {
+		return
+	}
+	l.appendLog(LLMLogEntry{
+		TSUnix:      time.Now().Unix(),
+		Event:       "disk_commit",
+		ToolName:    path,
+		OutputBytes: bytes,
+		ErrorStr:    errStr,
+	})
+}

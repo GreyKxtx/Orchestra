@@ -217,6 +217,9 @@ func (a *Agent) commitStagedAfterMutatingTool(ctx context.Context, steps int, to
 	}
 	resp, err := a.tools.CommitStagedPath(ctx, toolPath, a.opts.Backup)
 	if err != nil {
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogDiskCommit(toolPath, 0, err.Error())
+		}
 		a.logf("incremental commit path=%s err=%v", toolPath, err)
 		if a.opts.OnEvent != nil {
 			a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
@@ -227,7 +230,18 @@ func (a *Agent) commitStagedAfterMutatingTool(ctx context.Context, steps int, to
 		return
 	}
 	if resp == nil || len(resp.ChangedFiles) == 0 {
+		// Not an error, and not nothing: the tool reported a change and the
+		// commit moved no file. Worth a line, because a silent return here is
+		// indistinguishable from a commit that worked.
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogDiskCommit(toolPath, 0, "commit changed no file")
+		}
 		return
+	}
+	if a.opts.AgentLogger != nil {
+		for _, d := range resp.Diffs {
+			a.opts.AgentLogger.LogDiskCommit(d.Path, len(d.After), "")
+		}
 	}
 	a.logf("incremental commit path=%s files=%d", toolPath, len(resp.ChangedFiles))
 	a.emitPendingOpsEvent(steps, a.tools.StagedOps(), resp.Diffs, true)
