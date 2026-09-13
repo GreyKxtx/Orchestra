@@ -80,6 +80,20 @@ type serialToolOutcome struct {
 	Err         error
 }
 
+// recordBlocked records a refusal that happens AFTER the call has been logged,
+// and whose message to the model is prose rather than the denied-JSON shape.
+//
+// The read-only and duplicate blockers are refusals by every measure that
+// matters — they stop the call and they spend the denied-repeat budget — but
+// they left a tool_call in the trace with no result beside it. A turn that
+// died on a repeated write therefore read as a turn where six writes simply
+// vanished, which is how this was nearly diagnosed as a guard misfiring.
+func (a *Agent) recordBlocked(name, reason string) {
+	if a.opts.AgentLogger != nil {
+		a.opts.AgentLogger.LogToolResult(name, 0, 0, "denied: "+reason)
+	}
+}
+
 // deniedToolResult formats a refusal and records that it happened.
 //
 // Refusals return before LogToolCall, so a denied call used to leave no trace
@@ -710,6 +724,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		if cb.IsReadOnlyBlocked(name, tc.Input) {
 			stopMsg := "⛔ The tool «" + name + "» was called too many times with identical arguments — the result is already in your history. Proceed with edit/write or use different arguments."
 			a.logf("tool_call name=%s read_only_doom_blocked", name)
+			a.recordBlocked(name, "read-only call repeated with identical arguments")
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,
 				ToolCallID: toolCallID,
@@ -727,6 +742,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	} else if cb.IsDuplicateCall(name, tc.Input) {
 		stopMsg := "⛔ The tool «" + name + "» was already called with these exact arguments — duplicate blocked. Use edit/write to apply changes or call with different arguments."
 		a.logf("tool_call name=%s dedup_blocked", name)
+		a.recordBlocked(name, "duplicate call with identical arguments")
 		if a.opts.OnEvent != nil {
 			a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
 				Kind:         llm.StreamEventToolCallCompleted,
