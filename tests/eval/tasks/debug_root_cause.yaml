@@ -1,0 +1,99 @@
+# A debug task that is really a build task teaches nothing. What makes this
+# one debugging is that the symptom and the cause are in different packages:
+# the test that fails exercises stats.Mean, and stats.Mean is correct. The
+# wrong number comes from parse.Ages, which throws away strconv.Atoi's error,
+# so a line with a trailing space becomes a silent 0.
+#
+# Three checks, each blocking a way of passing without debugging:
+#
+#   go_test        the only proof the number is right. There is no way to
+#                  reach 20 without actually parsing "30 " — a model that
+#                  patches Mean to skip zeros gets 15 and still fails.
+#   file_unchanged the test itself. Editing the expectation from 20 to 10 is
+#                  the commonest way a model "fixes" a failing test, and every
+#                  other check would pass.
+#   file_unchanged stats.go — the symptom site. Touching it means the model
+#                  never found the cause, even if it stumbled into a fix.
+#
+# answer_matches is the mode's own contract: debug mode is asked for a root
+# cause with evidence, not just an edit. The pattern is deliberately loose —
+# it accepts naming the package, the call, or the input that breaks it.
+name: debug_root_cause
+description: Fix the cause in one package when the symptom is in another
+mode: debug
+max_steps: 16
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import (
+    	"fmt"
+
+    	"evalws/internal/parse"
+    	"evalws/internal/stats"
+    )
+
+    func main() {
+    	fmt.Println(stats.Mean(parse.Ages([]string{"10", "20"})))
+    }
+  main_test.go: |
+    package main
+
+    import (
+    	"testing"
+
+    	"evalws/internal/parse"
+    	"evalws/internal/stats"
+    )
+
+    // The ages are 10, 20 and 30, so the mean is 20. The last line has a
+    // trailing space, the way lines in a real text file do.
+    func TestMeanAge(t *testing.T) {
+    	lines := []string{"10", "", "20", "30 "}
+    	if got := stats.Mean(parse.Ages(lines)); got != 20 {
+    		t.Fatalf("mean age = %d, want 20", got)
+    	}
+    }
+  internal/parse/parse.go: |
+    package parse
+
+    import "strconv"
+
+    // Ages reads one age per line, skipping blank lines.
+    func Ages(lines []string) []int {
+    	out := make([]int, 0, len(lines))
+    	for _, line := range lines {
+    		if line == "" {
+    			continue
+    		}
+    		n, _ := strconv.Atoi(line)
+    		out = append(out, n)
+    	}
+    	return out
+    }
+  internal/stats/stats.go: |
+    package stats
+
+    // Mean returns the average of xs, rounded down, and 0 for no values.
+    func Mean(xs []int) int {
+    	if len(xs) == 0 {
+    		return 0
+    	}
+    	sum := 0
+    	for _, x := range xs {
+    		sum += x
+    	}
+    	return sum / len(xs)
+    }
+query: "TestMeanAge fails: it wants 20 and gets 10. Find the root cause and fix it. Do not change the test."
+checks:
+  - type: go_test
+  - type: file_unchanged
+    path: main_test.go
+  - type: file_unchanged
+    path: internal/stats/stats.go
+  - type: answer_matches
+    pattern: '(?i)(parse|Atoi|trailing space|whitespace|TrimSpace|trim)'

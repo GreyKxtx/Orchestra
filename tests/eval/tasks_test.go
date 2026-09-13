@@ -1,11 +1,26 @@
 package eval
 
 import (
+	"embed"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// taskFiles is embedded so that the task set is part of the BUILD, and it is
+// embedded for that reason before it is used for any other.
+//
+// go test caches a passing run keyed partly on the files the test opened.
+// LoadTasks opens every task, so editing one invalidates the cache — but it
+// FINDS them with os.ReadDir, and a directory read is not tracked. Adding a
+// task therefore did not invalidate anything: the validator answered
+// "ok (cached)" for a task file it had never opened. That is the same defect
+// as a fixture that cannot link and a {plan} check that cannot fail — a check
+// that reports success without having looked.
+//
+//go:embed tasks
+var taskFiles embed.FS
 
 // The tasks themselves need checking, because a broken one is invisible: it
 // runs, it reports, and the number it contributes means nothing.
@@ -43,6 +58,38 @@ var knownCheckTypes = map[string]bool{
 	"file_unchanged": true, "workspace_unchanged": true,
 	"answer_matches": true, "answer_not_matches": true,
 	"answer_not_empty": true, "answer_invents_no_path": true,
+}
+
+// And since the files are embedded anyway, they may as well be counted: a
+// task LoadTasks does not pick up is a task nobody runs, and it fails
+// silently — the suite simply reports one fewer result than the directory
+// holds, which nobody notices.
+func TestTasks_EveryFileInTheDirectoryIsLoaded(t *testing.T) {
+	entries, err := taskFiles.ReadDir("tasks")
+	if err != nil {
+		t.Fatalf("read embedded tasks: %v", err)
+	}
+	var onDisk []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".yaml") || strings.HasSuffix(e.Name(), ".yml") {
+			onDisk = append(onDisk, e.Name())
+		}
+	}
+	loaded := loadRepoTasks(t)
+	if len(loaded) != len(onDisk) {
+		t.Errorf("the directory holds %d task files and LoadTasks returned %d — something is being skipped\nfiles: %s",
+			len(onDisk), len(loaded), strings.Join(onDisk, ", "))
+	}
+	seen := map[string]bool{}
+	for _, task := range loaded {
+		if seen[task.Name] {
+			t.Errorf("two tasks are both named %q, so one of them is reported under the other's name", task.Name)
+		}
+		seen[task.Name] = true
+	}
 }
 
 func TestTasks_AreWellFormed(t *testing.T) {

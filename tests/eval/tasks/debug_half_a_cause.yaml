@@ -1,0 +1,78 @@
+# The other way debugging goes wrong: the model finds half the cause, fixes
+# that half, and stops — because the half it found is the half that is easy to
+# see.
+#
+# Truncate counts bytes twice, and both counts are wrong for non-ASCII. The
+# visible half is the slice, s[:n], which cuts a multi-byte rune down the
+# middle and produces mojibake. The half that hides is the guard, len(s) <= n,
+# which reports a six-rune Russian word as twelve bytes and so truncates a
+# string that already fits.
+#
+# Fixing only the slice passes nothing: "привет" with n=6 comes back as
+# "привет…", because the guard still thinks it is too long. That is the whole
+# point of the task, and go_test is what states it — there is no partial
+# credit and no way to read the difference off the text of the file.
+name: debug_half_a_cause
+description: Find both halves of a cause when fixing one half is not enough
+mode: debug
+max_steps: 16
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import (
+    	"fmt"
+
+    	"evalws/internal/text"
+    )
+
+    func main() {
+    	fmt.Println(text.Truncate("hello world", 5))
+    }
+  main_test.go: |
+    package main
+
+    import (
+    	"testing"
+
+    	"evalws/internal/text"
+    )
+
+    func TestTruncate(t *testing.T) {
+    	cases := []struct {
+    		in   string
+    		n    int
+    		want string
+    	}{
+    		{"hello", 5, "hello"},
+    		{"hello world", 5, "hello…"},
+    		{"привет", 6, "привет"},
+    		{"привет мир", 6, "привет…"},
+    	}
+    	for _, c := range cases {
+    		if got := text.Truncate(c.in, c.n); got != c.want {
+    			t.Errorf("Truncate(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+    		}
+    	}
+    }
+  internal/text/text.go: |
+    package text
+
+    // Truncate shortens s to n characters, marking a cut with an ellipsis.
+    // A string that already fits is returned unchanged.
+    func Truncate(s string, n int) string {
+    	if len(s) <= n {
+    		return s
+    	}
+    	return s[:n] + "…"
+    }
+query: "TestTruncate fails on the Russian cases. Find the root cause and fix it. Do not change the test."
+checks:
+  - type: go_test
+  - type: file_unchanged
+    path: main_test.go
+  - type: answer_matches
+    pattern: '(?i)(rune|byte|utf-?8|multi-?byte)'
