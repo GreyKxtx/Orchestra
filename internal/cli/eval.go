@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -28,13 +29,77 @@ var (
 	evalApply   bool
 	evalModel   string
 	evalTimeout int
+	evalOnly    []string
+	evalRepeat  int
 )
 
 func init() {
 	evalCmd.Flags().BoolVar(&evalApply, "apply", true, "Actually apply changes during eval (default true)")
 	evalCmd.Flags().StringVar(&evalModel, "model", "", "Override model from config")
 	evalCmd.Flags().IntVar(&evalTimeout, "timeout", 120, "Per-task timeout in seconds")
+	evalCmd.Flags().StringSliceVar(&evalOnly, "task", nil, "Run only these tasks by name (repeatable, or comma-separated)")
+	evalCmd.Flags().IntVar(&evalRepeat, "repeat", 1, "Run each task this many times; a task that wins some runs and loses others is reported FLAKY")
 	rootCmd.AddCommand(evalCmd)
+}
+
+// evalStatus names the outcome of running one task `runs` times, of which
+// `won` succeeded.
+//
+// Three outcomes, not two. A task that wins some runs and loses others has
+// not passed and has not failed — it has told you the suite cannot answer the
+// question yet. Folding that into either verdict is how a run reports a score
+// it has not established: this very suite scored a task FAIL and then PASS on
+// consecutive runs with nothing changed in between, and reported both with
+// the same confidence.
+func evalStatus(won, runs int) string {
+	switch {
+	case runs <= 0:
+		return "FAIL"
+	case won == runs:
+		return "PASS"
+	case won == 0:
+		return "FAIL"
+	default:
+		return "FLAKY"
+	}
+}
+
+// selectTasks narrows the set to the names asked for.
+//
+// A name that matches nothing is an error rather than an empty run: the whole
+// point of --task is to iterate on one task, and a typo that silently runs
+// zero of them reads exactly like a suite that passed.
+func selectTasks(tasks []evalharness.Task, only []string) ([]evalharness.Task, error) {
+	if len(only) == 0 {
+		return tasks, nil
+	}
+	want := make(map[string]bool, len(only))
+	for _, name := range only {
+		if n := strings.TrimSpace(name); n != "" {
+			want[n] = true
+		}
+	}
+	var picked []evalharness.Task
+	for _, task := range tasks {
+		if want[task.Name] {
+			picked = append(picked, task)
+			delete(want, task.Name)
+		}
+	}
+	if len(want) > 0 {
+		missing := make([]string, 0, len(want))
+		for name := range want {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		available := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			available = append(available, task.Name)
+		}
+		return nil, fmt.Errorf("no such task: %s\navailable: %s",
+			strings.Join(missing, ", "), strings.Join(available, ", "))
+	}
+	return picked, nil
 }
 
 func runEval(cmd *cobra.Command, args []string) error {
@@ -51,8 +116,19 @@ func runEval(cmd *cobra.Command, args []string) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("no tasks found in %s", tasksDir)
 	}
+	tasks, err = selectTasks(tasks, evalOnly)
+	if err != nil {
+		return err
+	}
+	if evalRepeat < 1 {
+		return fmt.Errorf("--repeat must be at least 1, got %d", evalRepeat)
+	}
 
-	fmt.Fprintf(os.Stderr, "Running %d eval task(s) from %s\n\n", len(tasks), tasksDir)
+	fmt.Fprintf(os.Stderr, "Running %d eval task(s) from %s", len(tasks), tasksDir)
+	if evalRepeat > 1 {
+		fmt.Fprintf(os.Stderr, ", %d run(s) each", evalRepeat)
+	}
+	fmt.Fprint(os.Stderr, "\n\n")
 
 	// Build RunAgent using Core.
 	runAgent := func(ctx context.Context, run evalharness.AgentRun) (evalharness.AgentOutcome, error) {
@@ -123,56 +199,112 @@ func runEval(cmd *cobra.Command, args []string) error {
 	runner := &evalharness.Runner{RunAgent: runAgent}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TASK\tSTATUS\tSTEPS\tRETRIES\tRESOLVE\tDURATION\tDETAILS")
+	header := "TASK\tSTATUS\tSTEPS\tRETRIES\tRESOLVE\tDURATION\tDETAILS"
+	if evalRepeat > 1 {
+		header = "TASK\tSTATUS\tRUNS\tSTEPS\tRETRIES\tRESOLVE\tDURATION\tDETAILS"
+	}
+	fmt.Fprintln(tw, header)
 
-	passed, failed := 0, 0
-	var totalSteps, totalRetries, totalResolve int
-	for _, task := range tasks {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(evalTimeout)*time.Second)
-		result := runner.RunTask(ctx, task)
-		cancel()
+	clean, broken, flaky := 0, 0, 0
+	var totalSteps, totalRetries, totalResolve, runs int
+	for i, task := range tasks {
+		var (
+			won      int
+			details  string
+			steps    int
+			retries  int
+			resolve  int
+			duration time.Duration
+		)
+		for r := 0; r < evalRepeat; r++ {
+			// Progress, because the table is buffered until the end so its
+			// columns line up — which on a long suite means an hour with
+			// nothing on screen at all.
+			//
+			// Each of these is written as a COMPLETE line. The agent and the
+			// LSP write to this same stream while a task runs, so a half-line
+			// waiting for its verdict gets another process's output spliced
+			// into the middle of it.
+			label := fmt.Sprintf("[%d/%d] %s", i+1, len(tasks), task.Name)
+			if evalRepeat > 1 {
+				label += fmt.Sprintf(" (run %d/%d)", r+1, evalRepeat)
+			}
+			fmt.Fprintf(os.Stderr, "%s: started\n", label)
 
-		status := "PASS"
-		if !result.Passed {
-			status = "FAIL"
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(evalTimeout)*time.Second)
+			result := runner.RunTask(ctx, task)
+			cancel()
+
+			ok := result.Passed && result.Error == nil
+			if ok {
+				won++
+			} else if details == "" {
+				// Keep the FIRST failure seen. On a flaky task that is the one
+				// worth reading; a later clean run must not erase it.
+				switch {
+				case result.Error != nil:
+					details = result.Error.Error()
+				case len(result.Failures) > 0:
+					details = strings.Join(result.Failures, "; ")
+				}
+			}
+			steps += result.Steps
+			retries += result.InvalidRetries
+			resolve += result.ResolveFailed
+			duration += result.Duration
+			runs++
+
+			verdict := "FAIL"
+			if ok {
+				verdict = "PASS"
+			}
+			fmt.Fprintf(os.Stderr, "%s: %s in %s\n", label, verdict, result.Duration.Round(time.Second))
 		}
-		if result.Error != nil {
-			status = "ERROR"
+
+		status := evalStatus(won, evalRepeat)
+		switch status {
+		case "PASS":
+			clean++
+		case "FLAKY":
+			flaky++
+		default:
+			broken++
 		}
 
-		details := ""
-		if result.Error != nil {
-			details = result.Error.Error()
-		} else if len(result.Failures) > 0 {
-			details = strings.Join(result.Failures, "; ")
-		}
+		totalSteps += steps
+		totalRetries += retries
+		totalResolve += resolve
 
+		if evalRepeat > 1 {
+			fmt.Fprintf(tw, "%s\t%s\t%d/%d\t%d\t%d\t%d\t%s\t%s\n",
+				task.Name, status, won, evalRepeat,
+				steps/evalRepeat, retries, resolve,
+				(duration / time.Duration(evalRepeat)).Round(time.Millisecond), details)
+			continue
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			task.Name, status, result.Steps, result.InvalidRetries, result.ResolveFailed,
-			result.Duration.Round(time.Millisecond),
-			details)
-
-		totalSteps += result.Steps
-		totalRetries += result.InvalidRetries
-		totalResolve += result.ResolveFailed
-
-		if result.Passed && result.Error == nil {
-			passed++
-		} else {
-			failed++
-		}
+			task.Name, status, steps, retries, resolve,
+			duration.Round(time.Millisecond), details)
 	}
 	tw.Flush()
 
 	n := len(tasks)
-	avgSteps := float64(totalSteps) / float64(n)
-	avgRetries := float64(totalRetries) / float64(n)
-	avgResolve := float64(totalResolve) / float64(n)
-	fmt.Fprintf(os.Stderr, "\n%d passed, %d failed (total: %d)\n", passed, failed, n)
+	avgSteps := float64(totalSteps) / float64(runs)
+	avgRetries := float64(totalRetries) / float64(runs)
+	avgResolve := float64(totalResolve) / float64(runs)
+	fmt.Fprintf(os.Stderr, "\n%d passed, %d failed", clean, broken)
+	if flaky > 0 {
+		fmt.Fprintf(os.Stderr, ", %d flaky", flaky)
+	}
+	fmt.Fprintf(os.Stderr, " (%d task(s)", n)
+	if evalRepeat > 1 {
+		fmt.Fprintf(os.Stderr, " × %d runs", evalRepeat)
+	}
+	fmt.Fprintln(os.Stderr, ")")
 	fmt.Fprintf(os.Stderr, "avg steps: %.1f  avg invalid retries: %.1f  avg resolve_failed: %.1f  (Phase 1 target retries: <3.0)\n",
 		avgSteps, avgRetries, avgResolve)
-	if failed > 0 {
-		return fmt.Errorf("%d task(s) failed", failed)
+	if broken+flaky > 0 {
+		return fmt.Errorf("%d task(s) failed, %d flaky", broken, flaky)
 	}
 	return nil
 }
