@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
@@ -249,6 +250,13 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			// kills only this one call, not the whole process. A.Run sees the
 			// synthesised error via results[idx] and the circuit breaker
 			// counts it like any other tool error.
+			// The result is logged here as well as the call. The serial path
+			// has always logged both; this one logged only the call, so a
+			// trace showed that a read happened and never whether it
+			// answered, failed, or came back empty — and the reads of a turn
+			// are most of its turn. Diagnosing two_files needed a proxy in
+			// front of the model server to recover what these calls returned.
+			started := time.Now()
 			err := safeRunErr("parallel tool "+call.Name, func() error {
 				if a.opts.AgentLogger != nil {
 					a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input))
@@ -257,6 +265,9 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				if callErr != nil {
 					a.observeWorkingTool(call.Name, call.Input, out, callErr)
 					return callErr
+				}
+				if a.opts.AgentLogger != nil {
+					a.opts.AgentLogger.LogToolResult(call.Name, len(out), time.Since(started).Milliseconds(), "")
 				}
 				results[idx] = rewrote[idx] + a.prepareToolHistoryContent(call.Name, call.Input, out)
 				if a.opts.OnEvent != nil {
@@ -268,6 +279,9 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			})
 			if err != nil {
 				errored[idx] = true
+				if a.opts.AgentLogger != nil {
+					a.opts.AgentLogger.LogToolResult(call.Name, 0, time.Since(started).Milliseconds(), err.Error())
+				}
 				results[idx] = formatToolErrorJSON(call.Name, call.Input, err)
 				if a.opts.OnEvent != nil {
 					_ = safeRun("OnEvent ToolCallCompleted (err)", func() {
@@ -289,6 +303,11 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			"(identical call: «%s» with the same arguments already ran in this step — its result is above. Do not repeat it; use it.)",
 			tc.Name,
 		)
+		// Logged too, so a trace shows why this call has no result of its own
+		// rather than appearing to have vanished.
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogToolResult(tc.Name, 0, 0, "identical call in the same step; answered from the twin above")
+		}
 		if a.opts.OnEvent != nil {
 			name, id, content := tc.Name, tc.ID, results[i]
 			_ = safeRun("OnEvent ToolCallCompleted (dup)", func() {
