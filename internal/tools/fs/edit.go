@@ -54,7 +54,15 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 			diags, pending = c.Hooks.Diagnose(ctx, relSlash, string(newContent))
 		}
 		diags = append(diags, c.extraDiagnostics(string(newContent))...)
-		return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags, DiagnosticsPending: pending}, nil
+		applied, region := describeChange(relSlash, string(currentContent), string(newContent))
+		return &FSEditResponse{
+			Path:               relSlash,
+			FileHash:           newHash,
+			Applied:            applied,
+			ChangedRegion:      region,
+			Diagnostics:        diags,
+			DiagnosticsPending: pending,
+		}, nil
 	}
 
 	patch := patches.Patch{
@@ -78,6 +86,14 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 		return nil, err
 	}
 
+	absPath, relSlash, resolveErr := resolveWorkspacePath(c.Root, path)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	// Read before applying: afterwards the previous content is gone, and
+	// without it the tool cannot tell the model what its edit actually did.
+	beforeContent, _ := os.ReadFile(absPath)
+
 	_, err = applier.ApplyAnyOps(c.Root, opsList, applier.ApplyOptions{
 		DryRun:       false,
 		Backup:       req.Backup,
@@ -87,10 +103,6 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 		return nil, err
 	}
 
-	absPath, relSlash, resolveErr := resolveWorkspacePath(c.Root, path)
-	if resolveErr != nil {
-		return nil, resolveErr
-	}
 	content, _, _, newHash, _, readErr := readFileWithHash(absPath, -1)
 	if readErr != nil {
 		return &FSEditResponse{Path: relSlash}, nil
@@ -102,6 +114,14 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 		diags, pending = c.Hooks.Diagnose(ctx, relSlash, content)
 	}
 	diags = append(diags, c.extraDiagnostics(content)...)
+	applied, region := describeChange(relSlash, string(beforeContent), content)
 
-	return &FSEditResponse{Path: relSlash, FileHash: newHash, Diagnostics: diags, DiagnosticsPending: pending}, nil
+	return &FSEditResponse{
+		Path:               relSlash,
+		FileHash:           newHash,
+		Applied:            applied,
+		ChangedRegion:      region,
+		Diagnostics:        diags,
+		DiagnosticsPending: pending,
+	}, nil
 }

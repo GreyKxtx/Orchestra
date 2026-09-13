@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"github.com/orchestra/orchestra/patch/applier"
@@ -51,13 +52,15 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 		// Staging bypasses patch resolution, so the destructive-write guard
 		// has to be asked here too — otherwise a dry run stages the file
 		// emptied and the model sees its own damage confirmed.
-		if !req.MustNotExist {
-			if current, ok := c.Overlay.currentContent(c, relSlash); ok {
-				if reason := resolver.DestructiveWriteReason(current, req.Content); reason != "" {
-					return nil, protocol.NewError(protocol.InvalidLLMOutput,
-						"refusing to write "+relSlash+": "+reason,
-						map[string]any{"path": relSlash})
-				}
+		previousContent := ""
+		if current, ok := c.Overlay.currentContent(c, relSlash); ok {
+			previousContent = current
+		}
+		if !req.MustNotExist && previousContent != "" {
+			if reason := resolver.DestructiveWriteReason(previousContent, req.Content); reason != "" {
+				return nil, protocol.NewError(protocol.InvalidLLMOutput,
+					"refusing to write "+relSlash+": "+reason,
+					map[string]any{"path": relSlash})
 			}
 		}
 
@@ -71,10 +74,13 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 			diags, pending = c.Hooks.Diagnose(ctx, relSlash, req.Content)
 		}
 		diags = append(diags, c.extraDiagnostics(req.Content)...)
+		applied, region := describeChange(relSlash, previousContent, req.Content)
 		return &FSWriteResponse{
 			Path:               relSlash,
 			FileHash:           contentHash,
 			BytesWritten:       len(req.Content),
+			Applied:            applied,
+			ChangedRegion:      region,
 			Diagnostics:        diags,
 			DiagnosticsPending: pending,
 		}, nil
@@ -100,6 +106,15 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 		return nil, err
 	}
 
+	// Read before applying: afterwards the previous content is gone, and
+	// without it the tool cannot tell the model what its write actually did.
+	previousContent := ""
+	if absPath, _, e := resolveWorkspacePath(c.Root, path); e == nil {
+		if b, readErr := os.ReadFile(absPath); readErr == nil {
+			previousContent = string(b)
+		}
+	}
+
 	_, err = applier.ApplyAnyOps(c.Root, opsList, applier.ApplyOptions{
 		DryRun:       false,
 		Backup:       req.Backup,
@@ -118,10 +133,14 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 	}
 	diags = append(diags, c.extraDiagnostics(req.Content)...)
 
+	applied, region := describeChange(relSlash, previousContent, req.Content)
+
 	return &FSWriteResponse{
 		Path:               path,
 		FileHash:           contentHash,
 		BytesWritten:       len(req.Content),
+		Applied:            applied,
+		ChangedRegion:      region,
 		Diagnostics:        diags,
 		DiagnosticsPending: pending,
 	}, nil

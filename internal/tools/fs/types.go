@@ -79,11 +79,17 @@ type FSWriteRequest struct {
 }
 
 type FSWriteResponse struct {
-	Path               string          `json:"path"`
-	FileHash           string          `json:"file_hash"`
-	BytesWritten       int             `json:"bytes_written"`
+	Path         string `json:"path"`
+	FileHash     string `json:"file_hash"`
+	BytesWritten int    `json:"bytes_written"`
+	// Applied states in words what the write did, and ChangedRegion shows the
+	// result with line numbers. Without them the model's only news of its own
+	// change is a sha256, and it cannot tell a write that landed from one that
+	// changed nothing.
+	Applied            string           `json:"applied,omitempty"`
+	ChangedRegion      string           `json:"changed_region,omitempty"`
 	Diagnostics        []ToolDiagnostic `json:"diagnostics,omitempty"`
-	DiagnosticsPending bool            `json:"diagnostics_pending,omitempty"`
+	DiagnosticsPending bool             `json:"diagnostics_pending,omitempty"`
 }
 
 type FSEditRequest struct {
@@ -96,10 +102,14 @@ type FSEditRequest struct {
 }
 
 type FSEditResponse struct {
-	Path               string          `json:"path"`
-	FileHash           string          `json:"file_hash"`
+	Path     string `json:"path"`
+	FileHash string `json:"file_hash"`
+	// See FSWriteResponse: an edit that answers with only a hash leaves the
+	// model guessing whether its change is in the file.
+	Applied            string           `json:"applied,omitempty"`
+	ChangedRegion      string           `json:"changed_region,omitempty"`
 	Diagnostics        []ToolDiagnostic `json:"diagnostics,omitempty"`
-	DiagnosticsPending bool            `json:"diagnostics_pending,omitempty"`
+	DiagnosticsPending bool             `json:"diagnostics_pending,omitempty"`
 }
 
 type FSDeleteRequest struct {
