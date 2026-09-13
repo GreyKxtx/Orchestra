@@ -740,7 +740,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			return serialToolOutcome{}, nil
 		}
 	} else if cb.IsDuplicateCall(name, tc.Input) {
-		stopMsg := "⛔ The tool «" + name + "» was already called with these exact arguments — duplicate blocked. Use edit/write to apply changes or call with different arguments."
+		stopMsg := duplicateCallRefusal(name)
 		a.logf("tool_call name=%s dedup_blocked", name)
 		a.recordBlocked(name, "duplicate call with identical arguments")
 		if a.opts.OnEvent != nil {
