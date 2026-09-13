@@ -128,3 +128,28 @@ func (a *Agent) markWorkerExploreSatisfied(name string) { a.markExploreFirstSati
 func (a *Agent) checkWorkerExploreFirstGate(name string, history []llm.Message) error {
 	return a.checkExploreFirstGate(name, history)
 }
+
+// markParallelExploreSatisfied opens the gate for a batch of read-only calls.
+//
+// The serial path marks the gate per successful tool, but every tool the gate
+// accepts is read-only, and read-only calls issued together in one assistant
+// message run on the parallel path instead — where nothing marked it. A model
+// that batched its reads, which is what the schema encourages, could look at
+// the repository all turn and still be told to look at it first.
+//
+// denied and errored are the parallel path's own per-call outcome slices: a
+// call that was refused or failed saw nothing, and must not count.
+func (a *Agent) markParallelExploreSatisfied(calls []ToolCall, denied, errored []bool) {
+	if a == nil || !exploreFirstMode(a.opts.Mode) {
+		return
+	}
+	for i, call := range calls {
+		if i < len(denied) && denied[i] {
+			continue
+		}
+		if i < len(errored) && errored[i] {
+			continue
+		}
+		a.markExploreFirstSatisfied(call.Name)
+	}
+}

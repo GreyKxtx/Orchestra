@@ -336,6 +336,11 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	//    The model spamming 16 parallel denied/erroring tools must stop the
 	//    run on the same step it stopped on serially. Mirrors the serial
 	//    pipeline at agent.go:483-686.
+	// Before the breaker bookkeeping, and outside it: what the model has looked
+	// at is a fact about the turn, not about the breaker, and the gate must not
+	// depend on one being present.
+	a.markParallelExploreSatisfied(calls, denied, errored)
+
 	if cb != nil {
 		anyErr := false
 		var readOnlyHints []string

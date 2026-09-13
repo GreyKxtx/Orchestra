@@ -1,0 +1,60 @@
+# lsp.references, lsp.definition and lsp.hover are advertised in every mode
+# and none of them was ever exercised. Only lsp.diagnostics was, and that one
+# the agent calls itself after an edit — so the model-facing LSP surface had
+# no coverage at all.
+#
+# The shape here is the one where grep and references disagree: Scale appears
+# as a word in a comment and in an unrelated package's identifier, so an
+# answer built from text search over-reports. A correct answer names the two
+# real call sites and neither decoy.
+name: lsp_finds_every_caller
+description: Report every caller of a function using the LSP
+mode: ask
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  internal/geom/geom.go: |
+    package geom
+
+    // Scale multiplies both sides.
+    func Scale(w, h, by int) (int, int) {
+    	return w * by, h * by
+    }
+  internal/render/render.go: |
+    package render
+
+    import "evalws/internal/geom"
+
+    // Frame draws one frame.
+    func Frame(w, h int) (int, int) {
+    	return geom.Scale(w, h, 2)
+    }
+  internal/thumb/thumb.go: |
+    package thumb
+
+    import "evalws/internal/geom"
+
+    // Small makes a thumbnail.
+    func Small(w, h int) (int, int) {
+    	return geom.Scale(w, h, 1)
+    }
+  internal/audio/audio.go: |
+    package audio
+
+    // ScaleGain adjusts volume. Nothing here touches geometry, and the word
+    // Scale below is about sound, not size.
+    func ScaleGain(db int) int {
+    	return db
+    }
+query: "Use the LSP to find every place geom.Scale is called. Answer with the file paths of the callers and nothing else."
+checks:
+  - type: answer_matches
+    pattern: 'internal[/\\]render[/\\]render\.go'
+  - type: answer_matches
+    pattern: 'internal[/\\]thumb[/\\]thumb\.go'
+  - type: answer_not_matches
+    pattern: 'internal[/\\]audio[/\\]audio\.go'
+  - type: answer_invents_no_path
+  - type: workspace_unchanged

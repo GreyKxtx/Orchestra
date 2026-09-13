@@ -1,0 +1,59 @@
+# symbols is offered in every mode and, measured across a whole suite run, the
+# model never called it once. That is worth knowing either way: if the tool
+# answers well when used, the gap is in how it is described; if it answers
+# badly, the model is right to avoid it. Neither can be told apart without a
+# task that uses it.
+#
+# The tool is named in the query on purpose. A task contrived to make symbols
+# the obviously cheapest route would grade the model's judgement; this one
+# grades the tool's answer.
+#
+# Two packages, and the exported names differ from the unexported ones by more
+# than case, so an answer that lists them right is a claim about having read
+# the outline rather than the file names.
+name: symbols_lists_the_api
+description: Use the symbols tool to report a package's exported API
+mode: ask
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  internal/ledger/ledger.go: |
+    package ledger
+
+    // Post appends one entry to the ledger.
+    func Post(account string, cents int) error {
+    	return validate(account)
+    }
+
+    // Balance totals the entries for one account.
+    func Balance(account string) int {
+    	return 0
+    }
+
+    func validate(account string) error {
+    	return nil
+    }
+  internal/ledger/report.go: |
+    package ledger
+
+    // Export writes the ledger out in the agreed format.
+    func Export(path string) error {
+    	return nil
+    }
+
+    func header() string {
+    	return "account,cents"
+    }
+query: "Use the symbols tool on internal/ledger and tell me every exported function it declares. List the names only."
+checks:
+  - type: answer_matches
+    pattern: '\bPost\b'
+  - type: answer_matches
+    pattern: '\bBalance\b'
+  - type: answer_matches
+    pattern: '\bExport\b'
+  - type: answer_not_matches
+    pattern: '\bvalidate\b'
+  - type: workspace_unchanged

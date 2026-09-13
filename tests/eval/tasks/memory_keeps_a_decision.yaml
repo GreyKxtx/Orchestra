@@ -1,0 +1,38 @@
+# memory_write / memory_read are offered in build, general and architecture
+# and no task reached either. Project memory is a real file —
+# .orchestra/memory/agent.md — so what was written is gradable, which is why
+# this task can exist at all.
+#
+# The fact to remember is not in the code: nothing in the workspace says which
+# timeout was chosen or why. A model that writes the note from the query has
+# still exercised the tool; one that invents a different number has not, and
+# the pattern catches that.
+name: memory_keeps_a_decision
+description: Record a project decision in memory, and change no code
+max_steps: 12
+apply: true
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  client.go: |
+    package main
+
+    import "time"
+
+    // dialTimeout is how long we wait for a connection.
+    var dialTimeout = 5 * time.Second
+
+    // Dial pretends to connect.
+    func Dial() time.Duration {
+    	return dialTimeout
+    }
+query: "Record this in the project memory so future sessions know it: we settled on a 5 second dial timeout because the upstream gateway drops idle connections at 6 seconds. Do not change any code."
+checks:
+  - type: file_contains
+    path: .orchestra/memory/agent.md
+    content: "5"
+  - type: file_matches
+    path: .orchestra/memory/agent.md
+    pattern: '(?i)(gateway|idle|timeout)'
+  - type: workspace_unchanged
