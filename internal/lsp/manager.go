@@ -31,8 +31,8 @@ type LSPServerConfig struct {
 type LSPConfig struct {
 	Enabled              *bool             `yaml:"enabled,omitempty"`
 	Servers              []LSPServerConfig `yaml:"servers,omitempty"`
-	DiagnosticsTimeoutMS   int               `yaml:"diagnostics_timeout_ms,omitempty"`
-	InitializeTimeoutMS    int               `yaml:"initialize_timeout_ms,omitempty"`
+	DiagnosticsTimeoutMS int               `yaml:"diagnostics_timeout_ms,omitempty"`
+	InitializeTimeoutMS  int               `yaml:"initialize_timeout_ms,omitempty"`
 	// LazyStart: when true (default), servers spawn on first use instead of NewManager.
 	LazyStart *bool `yaml:"lazy_start,omitempty"`
 	// IdleTTLSeconds: shutdown idle servers after N seconds; nil → 300; 0 → disabled.
@@ -125,9 +125,9 @@ type serverEntry struct {
 type Manager struct {
 	workspaceRoot string
 	servers       []*serverEntry
-	diagTimeoutMS   int
-	initTimeoutMS   int
-	content         ContentProvider
+	diagTimeoutMS int
+	initTimeoutMS int
+	content       ContentProvider
 	lazyStart     bool
 	idleTTL       time.Duration
 	stopCh        chan struct{}
@@ -136,10 +136,10 @@ type Manager struct {
 	// warmup still in flight when the owner shuts down cannot leak a process.
 	// servers itself is immutable after construction and is never nil-ed, so
 	// concurrent readers need no lock.
-	closed atomic.Bool
-	autoInstall   string // ask | true | false (mutable when user picks Always)
-	consent       permission.Requester
-	installing    atomic.Bool
+	closed      atomic.Bool
+	autoInstall string // ask | true | false (mutable when user picks Always)
+	consent     permission.Requester
+	installing  atomic.Bool
 
 	ensureSyncBudget time.Duration // see LSPConfig.EnsureSyncBudgetMS
 
@@ -196,7 +196,11 @@ func (m *Manager) SetContentProvider(p ContentProvider) {
 // tool call for that language. Returns per-server start errors only in eager mode.
 func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 	m := &Manager{
-		workspaceRoot:    workspaceRoot,
+		// Expanded once, here, so every URI the manager builds from this root
+		// is the spelling the server itself uses. A short 8.3 root makes the
+		// server place every file outside the workspace and report nothing
+		// diagnosable — see longpath_windows.go.
+		workspaceRoot:    longWorkspacePath(workspaceRoot),
 		diagTimeoutMS:    cfg.DiagnosticsTimeoutMS,
 		initTimeoutMS:    cfg.InitializeTimeoutMS,
 		lazyStart:        cfg.lazyStartEnabled(),
