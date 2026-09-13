@@ -75,6 +75,17 @@ func (a *Agent) handleFinalStep(
 
 	finalPatches := append([]patches.Patch{}, step.Final.Patches...)
 
+	// Before anything reads a patch's type, make the type agree with the
+	// fields. Every guard below switches on Type, so a mislabelled patch slips
+	// past the ones meant for what it actually is.
+	finalPatches, normalized := normalizeFinalPatches(finalPatches)
+	for _, note := range normalized {
+		a.logf("final patch relabelled %s", note)
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogStepClassified(steps, "patch_relabelled", "", note)
+		}
+	}
+
 	if a.opts.Mode == ModeOrchestra && len(finalPatches) > 0 {
 		var blocked []string
 		planPath := a.effectivePlanPath()
