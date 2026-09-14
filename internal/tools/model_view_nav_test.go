@@ -48,8 +48,15 @@ func TestModelView_SymbolsListsEveryDeclarationInTheFile(t *testing.T) {
 
 // symbols hands the model ops.Range — the INTERNAL ops coordinate type, which
 // is 0-based by contract (docs/PROTOCOL.md, ops_version). Every other
-// model-facing view of a line is 1-based: `read` prefixes each line "4: ",
-// `explore` says "строки 4-7", `grep` reports 1-based lines.
+// model-facing view of a line is 1-based, and that is measured rather than
+// assumed: `read` prefixes each line "4: ", `explore` says "строки 4-7",
+// `grep` reports 1-based lines, and the LSP tools declare it outright in their
+// own schemas ("line": {"minimum": 1}) — see
+// TestModelView_LspPositionsAreOneBasedLikeReadAndUnlikeSymbols, which proves
+// hover answers for 1-based line 4 and not for 0-based line 3.
+//
+// Five model-facing views of a line; symbols is the only one counting from
+// zero, and the only one that documents nothing.
 //
 // So for `type Item struct` on the fourth line of item.go, symbols answers
 // line 3 and read answers line 4, and nothing in the tool's description tells
