@@ -83,7 +83,30 @@
 read=32 edit=11 ls=8 glob=6 lsp.diagnostics=6 grep=5 write=4 repo_map=3 ast_rename=2 explore=1
 ```
 
-Десять из 69. **После 14 новых задач (13-14.09.2026) объединение по всем прогонам — 25:**
+**Замер 14.09.2026, `Qwen3.5-9B-Q4_K_M` через llama.cpp, весь набор из 35 задач, 13 минут,
+28 PASS / 7 FAIL:**
+
+```
+read=56 edit=27 task=20 grep=19 glob=17 ls=16 explore=10 write=9 git.status=5 symbols=4
+git.log=3 repo_map=3 diff.preview=2 fs.delete=2 memory_write=2 ast_rename=1 fs.rename=1
+lsp.hover=1 lsp.references=1 memory_read=1 task_spawn=1 task_wait=1
+```
+
+`lsp.hover` здесь впервые за всё время — его не вызывал ни один прежний прогон.
+
+Из семи провалов **пять — честные промахи модели** (не свела типы, не назвала причину в
+плане, не позвала `skill_invoke` и `todowrite`), один — `orchestra_delegates_two_edits`,
+и один не наш вовсе:
+
+```
+edit_in_large_file  FAIL  request (13595 tokens) exceeds the available context size (12288)
+```
+
+Сервер поднят с `-c 12288`, задача умерла на нулевом шаге, не начав работу. Это предел
+стенда, а не продукта, — но пока он такой, длинные задачи сравнивать с замерами на широком
+окне нельзя: там, где раньше история помещалась целиком, здесь включится сжатие.
+
+Десять из 69. **Объединение по всем сохранённым прогонам на 14.09.2026 — 26:**
 добавились `fs.delete`, `fs.rename`, `symbols`, `diff.preview`, `lsp.references`,
 `lsp.definition`, `task`, `task_spawn`, `task_wait`, `git.status`, `git.diff`, `git.log`,
 `memory_write`, `memory_read`, `memory_search`.
@@ -97,11 +120,19 @@ read=32 edit=11 ls=8 glob=6 lsp.diagnostics=6 grep=5 write=4 repo_map=3 ast_rena
 |---|---|---|
 | Выключено флагами и сетью | 28 | `bash`×3, `browser.*`×10, мутирующий git и `git.worktree.*`×8, `gh.*`×5, web×2 |
 | Харнессу недоступно | 5 | `plan_exit`, `plan_enter`, `question`, `task_result`, `semantic_search` — см. ниже |
-| **Открытые дыры** | **11** | `lsp.hover`, `lsp.rename`, `todowrite`, `todoread`, `skill_invoke`, `task_cancel`, `runtime_query`, `update_working_state`, `contract_freeze`, `lesson_promote`, `playbook_promote` |
+| **Открытые дыры** | **4** | `lsp.rename`, `skill_invoke`, `lesson_promote`, `playbook_promote` |
 
-То есть из 41 инструмента, до которого эвал вообще способен дотянуться, покрыто 25.
-Честная цифра прогресса — эта, а не 25/69: последняя считает непокрытым `browser.click`,
+То есть из 41 инструмента, до которого эвал вообще способен дотянуться, покрыто 26.
+Честная цифра прогресса — эта, а не 26/69: последняя считает непокрытым `browser.click`,
 который в эвале не включится никогда.
+
+**Семь дыр закрыто 14.09 не эвалом, а двумя другими уровнями** — и это был вывод дня, а не
+обходной путь. `todowrite`, `todoread`, `task_cancel`, `update_working_state`,
+`contract_freeze` перехватываются агентом, а не Runner'ом: `Runner.Call` отвечает на них
+`unknown tool`, поэтому контракт ответа до них не достаёт и жить он может только в
+`internal/agent` со скриптованной моделью. `lsp.hover` и `runtime_query` закрыты контрактом
+ответа. `lsp.rename` тоже покрыт контрактом, но в колонке E2E остаётся пустым: модель
+выбирает `ast_rename`.
 
 ### Файловая система и навигация
 
@@ -129,8 +160,8 @@ read=32 edit=11 ls=8 glob=6 lsp.diagnostics=6 grep=5 write=4 repo_map=3 ast_rena
 | `lsp.diagnostics` | ✅ | вызывается автоматически после edit/write, не моделью |
 | `lsp.references` | ✅ | lsp_finds_every_caller |
 | `lsp.definition` | ✅ | lsp_explains_a_symbol. Два пакета объявляют `Frame`, и различить их может только LSP — grep тут врёт |
-| `lsp.hover` | ❌ | задача его допускает (`tool_used: lsp.definition, lsp.hover`), модель выбирает `definition` |
-| `lsp.rename` | ❌ | `ast_rename` покрыт, LSP-переименование — нет |
+| `lsp.hover` | ✅ | впервые вызван 14.09 на llama.cpp. Контракт — `model_view_lsp_test.go`: подпись **и** док-комментарий, иначе вызов потрачен зря и модель всё равно идёт читать файл |
+| `lsp.rename` | ❌ E2E, ✅ контракт | модель выбирает `ast_rename`. Контракт закрепляет главное: инструмент **предлагает** правки и ничего не пишет — и в описании это сказано модели. `fs.delete` был той же формы с обратным исходом |
 
 ### Подагенты и сессия
 
@@ -140,13 +171,15 @@ read=32 edit=11 ls=8 glob=6 lsp.diagnostics=6 grep=5 write=4 repo_map=3 ast_rena
 | `memory_write` | ✅ | memory_keeps_a_decision |
 | `skill_invoke` | ⏳ | skill_does_the_work. Первая версия задачи проходила, **не вызвав его** — родитель делал правку сам; из-за этого и появился `tool_used` |
 | `task_spawn`, `task_wait` | ✅ | та же subagent_does_the_edit: модель делегировала не `task`, а парой spawn+wait. Из-за этого `tool_used` и научился принимать альтернативы — проверка была уже одного правильного способа, чем продукт |
-| `task_cancel` | ❌ | отменять в эвале нечего: детская задача всегда доходит до конца |
+| `task_cancel` | ❌ E2E, ✅ агентом | отменять в эвале нечего: детская задача всегда доходит до конца. `task_cancel_test.go` проверяет то, что важно: после отмены `task_wait` обязан сказать «cancelled», а не «done». Прежний `mockSubtaskRunner` отменял возвратом `nil` и забывал, поэтому ни один тест на нём отменённого ребёнка от завершённого не отличал |
 | `task_result` | ❌ | только у подагента. Главному прогону больше не предлагается — он его отвергал |
-| `todowrite`, `todoread` | ❌ | todos_track_a_three_part_chore написана, но на 9B падает ровно на `tool_used: todowrite`: правки делаются, список не ведётся |
+| `todowrite`, `todoread` | ❌ E2E, ✅ агентом | на 9B задача падает ровно на `tool_used: todowrite`: правки делаются, список не ведётся. Контракт ответа до них не достаёт — их перехватывает агент, `Runner.Call` отвечает `unknown tool`. `todo_loop_test.go` проверяет главное: страж финала не даёт закончить ход с открытыми todo и предлагает три выхода, и все три **доказаны исполнимыми**. Отказ, называющий несуществующий выход, — это дефект отказа на дубль правки |
+| `runtime_query` | ❌ E2E, ✅ контракт | ответ на несуществующий trace_id называет сам id: иначе модель, держащая несколько, не поймёт, какой пришёл пустым |
 | `memory_read`, `memory_search` | ✅ | memory_recalls_a_decision. Проверки `tool_used` у неё нет намеренно: память проекта попадает в системный промпт до хода, и правильный ответ может не звать инструмент вовсе |
 | `plan_exit` | ❌ эвалом, ✅ юнитом | эвал его покрыть не может: переход происходит только по согласию пользователя, а пользователя в прогоне нет. Закрыт тремя тестами в `plan_to_build_test.go`, включая отрицательный контроль (отказ не должен ни переключать режим, ни править код) |
 | `question` | ❌ | требует интерактивного спрашивающего |
-| `runtime_query`, `update_working_state`, `contract_freeze`, `lesson_promote`, `playbook_promote` | ❌ | |
+| `update_working_state`, `contract_freeze` | ❌ E2E, ✅ раскладкой | только у Lead'а оркестры. `gated_tool_exposure_test.go` проверяет правило, а не частный случай: инструмент объявлен ровно тем режимам, чей обработчик его примет — 52 сочетания, обе стороны. «Предложен и отвергнут» — это дефект `task_result` в general; «принимается, но никому не предложен» — тихий, когда инструмент мёртв и никто не сообщает |
+| `lesson_promote`, `playbook_promote` | ❌ | раскладка по режимам закреплена там же, существо — нет |
 
 ### Git и GitHub
 
