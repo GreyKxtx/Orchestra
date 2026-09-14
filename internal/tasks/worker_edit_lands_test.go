@@ -147,4 +147,96 @@ func TestWorker_AnEditByAChildReachesTheWorkspace(t *testing.T) {
 		t.Errorf("the child reported status=%q and neither the file nor the staging overlay "+
 			"holds the edit — the work does not exist anywhere:\n%s", res.Status, onDisk)
 	}
+	if !strings.Contains(res.Result, "verified_success") {
+		t.Errorf("a worker that did apply its edit must still report success:\n%s", res.Result)
+	}
+}
+
+// refusedChildLLM skips the read, so the explore-first gate denies every edit
+// it makes — a worker that tries and is refused, which is what the failing
+// Lead run was full of.
+type refusedChildLLM struct{ calls int }
+
+func (r *refusedChildLLM) Plan(ctx context.Context, prompt string) (string, error) {
+	_, _ = ctx, prompt
+	return "{}", nil
+}
+
+func (r *refusedChildLLM) Complete(ctx context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	_, _ = ctx, req
+	r.calls++
+	mk := func(id, name, args string) *llm.CompleteResponse {
+		return &llm.CompleteResponse{Message: llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{ID: id, Type: "function",
+				Function: llm.ToolCallFunc{Name: name, Arguments: llm.ToolArguments(args)}}},
+		}}
+	}
+	if r.calls == 1 {
+		return mk("d1", "edit", `{"path":"width.go","search":"return 640","replace":"return 1920"}`), nil
+	}
+	return mk("d2", "task_result", `{"status":"done","result":"width.go now returns 1920"}`), nil
+}
+
+// The defect this file was written to find. A worker whose every edit was
+// refused answered the Lead with exactly what a worker that did the job
+// answers: {"status":"verified_success","verification":{"passed":true}}.
+//
+// Verification cannot catch it. Its checks ask whether the named files are
+// valid, and a file nobody touched always is — the LSP check passed and
+// go_build was skipped in dry-run. So the Lead was told the work was done,
+// believed it, and moved on; one run spent 27 delegations and 148 model calls
+// that way with both target files untouched at the end.
+func TestWorker_AClaimOfSuccessWithNothingAppliedIsNotReportedAsVerified(t *testing.T) {
+	root := t.TempDir()
+	const before = "package main\n\nfunc Width() int {\n\treturn 640\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "width.go"), []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module evalws\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.SetDryRun(true)
+	r := New(&refusedChildLLM{}, v, tr, ChildAgentConfig{})
+	t.Cleanup(func() { r.Close(); _ = tr.Close() })
+
+	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{
+		Goal:         "In width.go, change Width to return 1920.\ntarget_files: width.go",
+		SubagentType: "worker", MaxSteps: 4, TimeoutMS: 30_000,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	res, err := r.Wait(context.Background(), id, 30_000)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if res == nil {
+		t.Fatal("no result")
+	}
+
+	// Nothing may have landed, or this test is not reproducing the case.
+	if after, _ := os.ReadFile(filepath.Join(root, "width.go")); string(after) != before {
+		t.Fatalf("the edit was applied after all, so this is not the refused case:\n%s", after)
+	}
+	if len(tr.StagedOps()) != 0 {
+		t.Fatalf("something staged; this is not the refused case")
+	}
+
+	if strings.Contains(res.Result, "verified_success") {
+		t.Errorf("a worker that changed nothing reported verified_success. The Lead cannot "+
+			"tell this from a finished job, so it counts the WorkOrder done:\n%s", res.Result)
+	}
+	if !strings.Contains(res.Result, "no_changes") {
+		t.Errorf("the answer does not say the workspace is unchanged, which is the one fact "+
+			"the Lead needs to decide what to do next:\n%s", res.Result)
+	}
 }

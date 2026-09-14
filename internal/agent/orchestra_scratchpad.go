@@ -234,7 +234,13 @@ func looksLikeWorkerResult(raw string) bool {
 	}
 	st, _ := m["status"].(string)
 	switch strings.ToLower(strings.TrimSpace(st)) {
-	case "success", "ok", "done", "error", "verification_failed", "verified_success":
+	// no_changes and needs_review are worker answers like any other: the Lead
+	// has to record and compact them, or the one outcome it most needs to act
+	// on is the one that never reaches its scratchpad. needs_review predates
+	// no_changes and was missing here for the same reason — the list is written
+	// out by hand next to a set of wrap* functions that grew past it.
+	case "success", "ok", "done", "error",
+		"verification_failed", "verified_success", "no_changes", "needs_review":
 		_, hasPath := m["path"]
 		_, hasWorker := m["worker_result"]
 		return hasPath || hasWorker

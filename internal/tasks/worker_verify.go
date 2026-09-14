@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -325,6 +326,124 @@ func goBuildPackages(paths []string) []string {
 	return out
 }
 
+// appliedEditPaths returns the paths of mutating calls whose RESULT shows the
+// change was actually made.
+//
+// CollectEditedPaths above answers a different question — which files the
+// worker aimed at — and that is the right input for "what should we verify".
+// It is the wrong input for "did anything happen", because it reads the calls
+// and never the answers: a worker whose every edit was refused still produces
+// a full list of paths it tried.
+//
+// That is how a worker came to report verified_success having changed nothing.
+// Its edits were denied by the explore-first gate, CollectEditedPaths returned
+// width.go anyway, the LSP check on the untouched file passed (of course — it
+// was still valid Go), go_build was skipped in dry-run, and the Lead was told
+// the job was done. Measured, not supposed: one Lead run spent 27 delegations
+// and 148 model calls that way and changed nothing.
+//
+// The test is positive evidence rather than a list of failure shapes, which
+// would have to be kept in step with every refusal the runtime can produce: an
+// edit or write that landed answers with a file_hash, and nothing else does.
+func appliedEditPaths(hist []llm.Message) []string {
+	results := make(map[string]string, len(hist))
+	for _, m := range hist {
+		if m.Role == llm.RoleTool && m.ToolCallID != "" {
+			results[m.ToolCallID] = m.Content
+		}
+	}
+	seen := make(map[string]struct{})
+	for _, m := range hist {
+		if m.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			name := strings.ToLower(strings.TrimSpace(tc.Function.Name))
+			if !mutatesWorkspace(name) {
+				continue
+			}
+			if !toolResultShowsAChange(name, results[tc.ID]) {
+				continue
+			}
+			p := strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(
+				guard.ExtractWriteOrEditPath(json.RawMessage(tc.Function.Arguments)))), "./")
+			if p != "" {
+				seen[p] = struct{}{}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mutatesWorkspace(name string) bool {
+	switch name {
+	case "edit", "write", "fs.delete", "fs.rename", "ast_rename":
+		return true
+	}
+	return false
+}
+
+// toolResultShowsAChange reads the answer, not the request.
+func toolResultShowsAChange(name, result string) bool {
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		// A non-JSON answer from a mutating tool is an error string.
+		return false
+	}
+	if s, _ := payload["status"].(string); s == "denied" || s == "error" {
+		return false
+	}
+	switch name {
+	case "edit", "write":
+		h, _ := payload["file_hash"].(string)
+		return strings.TrimSpace(h) != ""
+	default:
+		// fs.delete and fs.rename answer with a `pending` line precisely when
+		// the run only previewed and the file is still there.
+		if p, _ := payload["pending"].(string); strings.TrimSpace(p) != "" {
+			return false
+		}
+		return true
+	}
+}
+
+// wrapWorkerNoChanges is the answer for a worker that claimed success without
+// touching anything. It is deliberately not a verification failure: the
+// WorkOrder may already have been satisfied, the worker may have been refused,
+// or it may simply have stopped early. Only the Lead has the context to tell
+// those apart, and this hands it the fact instead of a verdict.
+func wrapWorkerNoChanges(workerResult string, attempted []string) string {
+	payload := map[string]any{
+		"status":        "no_changes",
+		"worker_result": parseJSONOrString(workerResult),
+		"detail": "The worker reported success and no edit or write of its was applied, " +
+			"so the workspace is unchanged. This is not a verification failure — the " +
+			"result is simply not evidence of work.",
+		"suggestion_for_lead": "Check whether the WorkOrder was already satisfied. If it " +
+			"was not, re-issue it naming the exact file and change; do not count this as done.",
+	}
+	if len(attempted) > 0 {
+		payload["attempted_paths"] = attempted
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return workerResult
+	}
+	return string(b)
+}
+
 func formatWorkerVerifyRetryPrompt(failure string) string {
 	return "\n\n--- VERIFICATION FAILED (system) ---\n" +
 		strings.TrimSpace(failure) +
@@ -624,6 +743,17 @@ func (r *TaskRunner) runWorkerRounds(
 		taskResult := ""
 		if res != nil {
 			taskResult = res.SubtaskResult
+		}
+		// A claim of success with nothing applied is answered before any
+		// verification runs, because verification cannot catch it: its checks
+		// ask whether the named files are valid, and an untouched file always
+		// is. This is independent of whether verification is enabled at all —
+		// the claim is equally empty either way.
+		if workerTaskResultSuccess(taskResult) && len(appliedEditPaths(hist)) == 0 {
+			if res != nil {
+				res.SubtaskResult = wrapWorkerNoChanges(taskResult, CollectEditedPaths(hist, ""))
+			}
+			return hist, res, nil
 		}
 		if !r.resolvedWorkerVerifyEnabled() || !workerTaskResultSuccess(taskResult) {
 			return hist, res, nil
