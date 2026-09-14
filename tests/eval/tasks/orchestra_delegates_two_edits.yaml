@@ -10,6 +10,18 @@
 #
 # Two independent files, so the Lead has something to split. go_build catches
 # the half-done version that per-file checks would pass.
+#
+# Measured 14.09.2026, Qwen3.5-9B on a 65536-token window. The same query run
+# outside the eval, with no step cap, SUCCEEDS: both files correct, main.go
+# untouched. It takes the Lead 120 steps and 629 model calls to get there, and
+# of 127 worker answers exactly one is a full result — the rest are short and
+# the Lead keeps re-delegating.
+#
+# So max_steps 24 is what this task fails on, not the delegation path, and
+# raising the cap is not the fix: 120 steps of a 9B is twenty minutes for one
+# task in a suite that runs in thirteen. The task is shaped for its intended
+# setup — a 27B Lead with 9B workers — and stays amber until that exists.
+# Anyone reading a red line here should read this paragraph first.
 name: orchestra_delegates_two_edits
 description: Lead mode must get two files changed through its workers
 mode: orchestra
