@@ -58,6 +58,7 @@ var knownCheckTypes = map[string]bool{
 	"file_unchanged": true, "workspace_unchanged": true,
 	"answer_matches": true, "answer_not_matches": true,
 	"answer_not_empty": true, "answer_invents_no_path": true,
+	"tool_used": true, "tool_not_used": true,
 }
 
 // And since the files are embedded anyway, they may as well be counted: a
@@ -153,9 +154,12 @@ func TestTasks_AreWellFormed(t *testing.T) {
 // worthless: the model can do nothing at all and still be scored correct.
 // This runs each task's checks against its UNTOUCHED fixture and requires at
 // least one to fail.
+// Parallel for the same reason as the compile test below: every subtest owns
+// its workspace, and a go_build check per task is the cost here too.
 func TestTasks_AreNotAlreadySatisfiedByTheirOwnFixture(t *testing.T) {
 	for _, task := range loadRepoTasks(t) {
 		t.Run(task.Name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for rel, body := range task.Files {
 				abs := filepath.Join(root, filepath.FromSlash(rel))
@@ -203,9 +207,16 @@ var startsBroken = map[string]bool{"fix_compile_error": true}
 // TestTasks_AreNotAlreadySatisfiedByTheirOwnFixture cannot see this: it asks
 // for at least one check to fail on the fixture, and a go_build that can never
 // pass satisfies that requirement perfectly.
+// Each subtest writes its own fixture into its own t.TempDir() and shells out
+// to `go build`; nothing is shared, so they run in parallel. Serially this test
+// alone cost about 14s per fixture — on Windows most of that is the filesystem,
+// not the compiler — and at 35 Go fixtures it walked the whole package past
+// `go test`'s 600s default and failed the suite on time rather than on truth.
+// The task count only grows from here.
 func TestTasks_FixturesCompileUnlessTheTaskIsToFixTheBuild(t *testing.T) {
 	for _, task := range loadRepoTasks(t) {
 		t.Run(task.Name, func(t *testing.T) {
+			t.Parallel()
 			if _, ok := task.Files["go.mod"]; !ok {
 				t.Skip("not a Go module, so there is nothing to compile")
 			}
@@ -229,6 +240,28 @@ func TestTasks_FixturesCompileUnlessTheTaskIsToFixTheBuild(t *testing.T) {
 			if err != nil {
 				t.Errorf("the fixture does not compile, so go_build can never pass: %s (%v)",
 					firstToolchainError(out), err)
+			}
+		})
+	}
+}
+
+// knownCheckTypes is maintained by hand, and it drifted: `tool_used` and
+// `tool_not_used` were implemented, used by six tasks and absent from this
+// map, so every one of those tasks was reported as "can never pass".
+//
+// Nobody saw it for a day. TestTasks_AreWellFormed says exactly that, and it
+// was never reached — the package walked past `go test`'s 600s default on the
+// serial fixture builds and failed on time instead. One defect hid the other.
+//
+// This closes the other direction: a type listed here that the evaluator does
+// not implement would pass the well-formedness test and then fail every run.
+func TestKnownCheckTypes_AreAllActuallyImplemented(t *testing.T) {
+	for typ := range knownCheckTypes {
+		t.Run(typ, func(t *testing.T) {
+			env := checkEnv{root: t.TempDir(), original: map[string]string{}, tools: map[string]int{}}
+			got := evaluateCheck(env, Check{Type: typ})
+			if strings.Contains(got, "unknown check type") {
+				t.Errorf("%q is listed as known but the evaluator rejects it: %s", typ, got)
 			}
 		})
 	}
