@@ -1,0 +1,50 @@
+# memory_read and memory_search are the other half of memory_write, and the
+# half that was never exercised: memory_keeps_a_decision proves a note can be
+# written, nothing proved one can be read back.
+#
+# The fact lives ONLY in memory. The code says 5 seconds and the memory says
+# why it is 5 and not 30 — a model that answers from the source alone cannot
+# produce the gateway, so the answer check is a claim about having read the
+# note rather than the file.
+name: memory_recalls_a_decision
+description: Answer from project memory, not from the code
+mode: ask
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Dial())
+    }
+  client.go: |
+    package main
+
+    import "time"
+
+    var dialTimeout = 5 * time.Second
+
+    // Dial pretends to connect.
+    func Dial() time.Duration {
+    	return dialTimeout
+    }
+  .orchestra/memory/agent.md: |
+    # Project memory
+
+    - decision: the dial timeout is 5 seconds because the upstream gateway
+      drops idle connections at 6 seconds. Raising it past 6 makes every slow
+      call fail twice instead of once.
+query: "Why is the dial timeout set to the value it has? Check what the project remembers about it before answering."
+checks:
+  - type: tool_used
+    content: memory_read, memory_search
+  - type: answer_matches
+    pattern: '(?i)gateway'
+  - type: answer_matches
+    pattern: '6'
+  - type: workspace_unchanged

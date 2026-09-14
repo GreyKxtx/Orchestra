@@ -1,0 +1,60 @@
+# todowrite and todoread leave no trace in the workspace, so until tool_used
+# existed there was nothing a task could assert about them. They are offered
+# in build, plan and architecture and were never called once.
+#
+# Three independent edits in three files: the shape the todo list exists for.
+# The checks grade the work as well as the bookkeeping — a model that keeps a
+# tidy list and edits nothing fails, and so does one that edits everything and
+# never opens the list.
+name: todos_track_a_three_part_chore
+description: Keep a todo list across three separate edits
+max_steps: 18
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println(Host(), Port(), Scheme())
+    }
+  host.go: |
+    package main
+
+    // Host is where the service lives.
+    func Host() string {
+    	return "localhost"
+    }
+  port.go: |
+    package main
+
+    // Port is the port it listens on.
+    func Port() int {
+    	return 8080
+    }
+  scheme.go: |
+    package main
+
+    // Scheme is the protocol used.
+    func Scheme() string {
+    	return "http"
+    }
+query: "Three changes, in three files. Host must return \"api.example.com\", Port must return 443, and Scheme must return \"https\". Track the three as a todo list with todowrite as you go, so nothing is forgotten."
+checks:
+  - type: tool_used
+    content: todowrite
+  - type: file_matches
+    path: host.go
+    pattern: 'return\s+"api\.example\.com"'
+  - type: file_matches
+    path: port.go
+    pattern: 'return\s+443'
+  - type: file_matches
+    path: scheme.go
+    pattern: 'return\s+"https"'
+  - type: file_unchanged
+    path: main.go
+  - type: go_build

@@ -1,0 +1,51 @@
+# lsp.definition and lsp.hover are advertised in every mode and neither was
+# ever called. lsp_finds_every_caller covers references; this covers the other
+# direction — from a use back to what it is.
+#
+# Two packages declare a type with the same name, and the one in use is the
+# one imported. grep cannot tell them apart; the LSP can. So the answer names
+# a package rather than repeating a word from the query.
+name: lsp_explains_a_symbol
+description: Say what a symbol at a use site actually is
+mode: ask
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  internal/wire/wire.go: |
+    package wire
+
+    // Frame is a unit of the wire protocol: a header and a payload.
+    type Frame struct {
+    	Header []byte
+    	Body   []byte
+    }
+  internal/video/video.go: |
+    package video
+
+    // Frame is one picture out of a stream, with its timestamp in ms.
+    type Frame struct {
+    	Millis int
+    	Pixels []byte
+    }
+  internal/decoder/decoder.go: |
+    package decoder
+
+    import "evalws/internal/video"
+
+    // Decode turns bytes into one frame.
+    func Decode(b []byte) video.Frame {
+    	return video.Frame{Millis: 0, Pixels: b}
+    }
+query: "In internal/decoder/decoder.go, what exactly is the Frame type that Decode returns? Use the LSP to look it up, and say which package declares it and what fields it has."
+checks:
+  - type: tool_used
+    content: lsp.definition, lsp.hover
+  - type: answer_matches
+    pattern: '(?i)\bvideo\b'
+  - type: answer_matches
+    pattern: '(?i)\bMillis\b'
+  - type: answer_not_matches
+    pattern: '(?i)\bHeader\b'
+  - type: workspace_unchanged

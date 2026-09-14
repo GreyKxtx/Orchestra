@@ -1,0 +1,31 @@
+# git.log had a stand — `git: true` builds the workspace as a repository —
+# and no task. It is the one git tool whose answer lives only in history:
+# status and diff describe the working tree, log describes what came before.
+#
+# The harness makes exactly one commit, with a message no file contains. So
+# an answer carrying that message is evidence the history was read, and an
+# answer that invents one is caught by the same check.
+name: git_history_answers
+description: Answer a question that only the commit history can answer
+mode: ask
+git: true
+max_steps: 12
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import "fmt"
+
+    func main() {
+    	fmt.Println("hello")
+    }
+query: "How many commits does this repository have, and what does the newest commit message say? Answer both."
+checks:
+  - type: tool_used
+    content: git.log
+  - type: answer_matches
+    pattern: '(?i)the workspace as the task defined it'
+  - type: workspace_unchanged
