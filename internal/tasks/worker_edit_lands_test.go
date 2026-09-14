@@ -65,13 +65,17 @@ func (e *editingChildLLM) Complete(ctx context.Context, req llm.CompleteRequest)
 	if e.calls == 2 {
 		return call("c1", "edit", `{"path":"width.go","search":"return 640","replace":"return 1920"}`), nil
 	}
+	// task_result takes one argument, "content"; the agent reads that field and
+	// ignores every other key. This script used to send {"status","result"},
+	// which arrived empty — the test still passed, because an empty result was
+	// read as success. See empty_task_result_test.go.
 	return &llm.CompleteResponse{Message: llm.Message{
 		Role: llm.RoleAssistant,
 		ToolCalls: []llm.ToolCall{{
 			ID: "c2", Type: "function",
 			Function: llm.ToolCallFunc{
 				Name:      "task_result",
-				Arguments: llm.ToolArguments(`{"status":"done","result":"width.go now returns 1920"}`),
+				Arguments: llm.ToolArguments(`{"content":"{\"status\":\"success\",\"path\":\"width.go\",\"summary\":\"width.go now returns 1920\"}"}`),
 			},
 		}},
 	}}, nil
@@ -175,7 +179,7 @@ func (r *refusedChildLLM) Complete(ctx context.Context, req llm.CompleteRequest)
 	if r.calls == 1 {
 		return mk("d1", "edit", `{"path":"width.go","search":"return 640","replace":"return 1920"}`), nil
 	}
-	return mk("d2", "task_result", `{"status":"done","result":"width.go now returns 1920"}`), nil
+	return mk("d2", "task_result", `{"content":"{\"status\":\"success\",\"path\":\"width.go\",\"summary\":\"width.go now returns 1920\"}"}`), nil
 }
 
 // The defect this file was written to find. A worker whose every edit was

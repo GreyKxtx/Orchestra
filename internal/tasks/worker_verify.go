@@ -444,6 +444,33 @@ func wrapWorkerNoChanges(workerResult string, attempted []string) string {
 	return string(b)
 }
 
+// wrapWorkerNoResult answers the case where the child finished without saying
+// anything at all — its task_result never carried content, or it ran out of
+// steps before reporting. That empty string used to read as success
+// (workerTaskResultSuccess treats an absent status as success), so the Lead was
+// handed {"status":"verified_success","worker_result":""}: a WorkOrder marked
+// done with no account of what was done. Nothing about the workspace is claimed
+// here — edits may well have landed — only that no result was reported.
+func wrapWorkerNoResult(attempted []string) string {
+	payload := map[string]any{
+		"status": "no_result",
+		"detail": "The child finished without reporting a result: its task_result " +
+			"carried no content, or it ran out of steps before calling one. Any edits " +
+			"it made may still have landed — this says nothing about the workspace, " +
+			"only that nothing was reported.",
+		"suggestion_for_lead": "Do not count this as done. Inspect the target files " +
+			"yourself, or re-issue the WorkOrder naming the exact file and change.",
+	}
+	if len(attempted) > 0 {
+		payload["attempted_paths"] = attempted
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return `{"status":"no_result"}`
+	}
+	return string(b)
+}
+
 func formatWorkerVerifyRetryPrompt(failure string) string {
 	return "\n\n--- VERIFICATION FAILED (system) ---\n" +
 		strings.TrimSpace(failure) +
@@ -743,6 +770,18 @@ func (r *TaskRunner) runWorkerRounds(
 		taskResult := ""
 		if res != nil {
 			taskResult = res.SubtaskResult
+		}
+		// No answer at all is answered first. workerTaskResultSuccess reads an
+		// absent status as success, which is right for a worker that replies in
+		// prose but wrong for a worker that replies with nothing: an empty
+		// string used to pass verification (the named files are valid, because
+		// nobody asked about them) and reach the Lead as verified_success with
+		// an empty worker_result.
+		if strings.TrimSpace(taskResult) == "" {
+			if res != nil {
+				res.SubtaskResult = wrapWorkerNoResult(CollectEditedPaths(hist, ""))
+			}
+			return hist, res, nil
 		}
 		// A claim of success with nothing applied is answered before any
 		// verification runs, because verification cannot catch it: its checks

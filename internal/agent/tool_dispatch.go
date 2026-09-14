@@ -260,6 +260,28 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			Content string `json:"content"`
 		}
 		_ = json.Unmarshal(tc.Input, &req)
+		// An empty content ends the child with nothing to say, and an empty
+		// answer is read downstream as a successful one: workerTaskResultSuccess
+		// treats an absent status as success, so the Lead is handed
+		// {"status":"verified_success","worker_result":""} — told the job is
+		// done and given no account of it. The common way to get here is a
+		// model guessing the argument name ({"result":...}, {"summary":...}):
+		// the unmarshal above ignores the mismatch and leaves Content blank.
+		// Ask for the answer again instead of finishing without one.
+		if strings.TrimSpace(req.Content) == "" {
+			*history = append(*history, llm.Message{
+				Role:       llm.RoleTool,
+				ToolCallID: toolCallID,
+				Content: formatToolErrorJSON(name, tc.Input, fmt.Errorf(
+					"task_result needs its content argument: the result goes in \"content\" "+
+						"as a string, and every other key is ignored. Resend task_result "+
+						"with {\"content\": \"<your result>\"}")),
+			})
+			if cbErr := cb.RecordToolError(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+			return serialToolOutcome{}, nil
+		}
 		if schemaErr := a.checkWorkerResultSchema(req.Content); schemaErr != nil {
 			*history = append(*history, llm.Message{
 				Role:       llm.RoleTool,

@@ -240,10 +240,16 @@ func looksLikeWorkerResult(raw string) bool {
 	// no_changes and was missing here for the same reason — the list is written
 	// out by hand next to a set of wrap* functions that grew past it.
 	case "success", "ok", "done", "error",
-		"verification_failed", "verified_success", "no_changes", "needs_review":
+		"verification_failed", "verified_success", "no_changes", "needs_review",
+		"llm_verification_failed":
 		_, hasPath := m["path"]
 		_, hasWorker := m["worker_result"]
 		return hasPath || hasWorker
+	case "no_result":
+		// no_result carries neither path nor worker_result: there is no result
+		// to carry, which is the whole point of it. The status alone identifies
+		// it, and it is the outcome the Lead can least afford to miss.
+		return true
 	}
 	return false
 }
