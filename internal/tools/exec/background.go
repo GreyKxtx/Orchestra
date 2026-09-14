@@ -150,12 +150,21 @@ func (r *BackgroundRegistry) SpawnBackground(parent context.Context, req BashBac
 		cap = 256 * 1024
 	}
 
+	// The same shell decision foreground Run makes. Without it "go test ./..."
+	// was handed to CommandContext as the name of a binary and never started —
+	// while the bash description sends the model here precisely for build,
+	// test and dev-server command lines.
+	cmdName, argList, _, shellErr := MaybeShellExec(strings.TrimSpace(req.Command), req.Args)
+	if shellErr != nil {
+		return nil, shellErr
+	}
+
 	ctx, cancel := context.WithCancel(parent)
 	if req.TimeoutMS > 0 {
 		ctx, cancel = context.WithTimeout(parent, time.Duration(req.TimeoutMS)*time.Millisecond)
 	}
 
-	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
+	cmd := exec.CommandContext(ctx, cmdName, argList...)
 	cmd.Dir = req.Workdir
 	cmd.Stdin = nil
 	subproc.SetProcessGroup(cmd)

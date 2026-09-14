@@ -14,22 +14,35 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 	if r == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
 	}
+	if err := r.execBlockedInDryRun(req.Command); err != nil {
+		return nil, err
+	}
+	return exec.Run(ctx, r.workspaceRoot, r.execTimeout, r.execOutputLimit, req)
+}
+
+// execBlockedInDryRun is the one "no side effects in a dry-run preview" check
+// for every way a command can start. It used to live inline in ExecRun only,
+// so run_in_background=true ran any command the same preview refused.
+func (r *Runner) execBlockedInDryRun(command string) error {
 	r.dryRunMu.RLock()
 	dry := r.dryRun
 	block := r.blockExecInDryRun
 	allowDespite := r.allowExecDespiteDryRun
 	r.dryRunMu.RUnlock()
 	if dry && block && !allowDespite {
-		return nil, protocol.NewError(protocol.ExecFailed,
+		return protocol.NewError(protocol.ExecFailed,
 			"exec.run disabled in dry-run preview: use apply:true (TUI always applies) and shell allow (Shift+Tab) for commands",
-			map[string]any{"command": req.Command})
+			map[string]any{"command": command})
 	}
-	return exec.Run(ctx, r.workspaceRoot, r.execTimeout, r.execOutputLimit, req)
+	return nil
 }
 
 func (r *Runner) ExecBashBackground(ctx context.Context, req ExecRunRequest) (*ExecBashBackgroundResponse, error) {
 	if r == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
+	}
+	if err := r.execBlockedInDryRun(req.Command); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.Command) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "command is empty", nil)

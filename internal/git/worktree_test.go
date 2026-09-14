@@ -46,6 +46,47 @@ func TestMainRepoRoot(t *testing.T) {
 	}
 }
 
+// TestMainRepoRoot only ever asked from the repository root, where
+// `git rev-parse --git-common-dir` answers ".git". From a subdirectory it
+// answers "../.git" — relative to the directory asked from, not to the
+// top level — and joining that with --show-toplevel lands one level ABOVE the
+// repository. Every caller then operates on the repository's parent: worktree
+// add created .orchestra/worktrees there and failed with "not a git
+// repository".
+func TestMainRepoRoot_FromASubdirectoryIsStillTheRepositoryRoot(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	sub := filepath.Join(dir, "services", "api")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main, err := MainRepoRoot(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	if main != filepath.Clean(want) {
+		t.Fatalf("MainRepoRoot(%q) = %q, want the repository root %q", sub, main, want)
+	}
+}
+
+// Asked from a linked worktree, the main root is the main checkout — the
+// directory holding the shared .git — not the linked worktree itself.
+func TestMainRepoRoot_FromALinkedWorktreeIsTheMainCheckout(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, dir, "worktree", "add", "-b", "side", linked)
+	main, err := MainRepoRoot(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	if main != filepath.Clean(want) {
+		t.Fatalf("MainRepoRoot(linked) = %q, want the main checkout %q", main, want)
+	}
+}
+
 func TestWorktreeAddListRemove(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)

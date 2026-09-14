@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	coregit "github.com/orchestra/orchestra/internal/git"
@@ -10,6 +12,45 @@ import (
 )
 
 // ─── git.worktree.* ───────────────────────────────────────────────────────────
+
+// managedWorktreesOutsideProject fails closed when the repository root — where
+// managed worktrees and their registry live — is not the project root. That is
+// the case for a project inside a monorepo and for a project opened from a
+// linked worktree, and there add would write a whole checkout, and remove and
+// prune would delete one, above project_root. CLAUDE.md: never write outside
+// project_root; fail closed on escape. List is exempt: it only reads, like
+// git.status. The user-run `orchestra worktree` CLI does not go through here.
+func (c *Client) managedWorktreesOutsideProject(tool string) error {
+	mainRoot, err := coregit.MainRepoRoot(c.root)
+	if err != nil {
+		return protocol.NewError(protocol.ExecFailed, err.Error(), nil)
+	}
+	if samePath(mainRoot, c.root) {
+		return nil
+	}
+	return protocol.NewError(protocol.ExecFailed,
+		tool+" is unavailable here: managed worktrees live under the repository root, "+
+			"which is outside this project's root, and tools never write outside the project root. "+
+			"Ask the user to create the worktree themselves (orchestra worktree add).",
+		map[string]any{"repository_root": filepath.ToSlash(mainRoot), "project_root": filepath.ToSlash(c.root)})
+}
+
+func samePath(a, b string) bool {
+	norm := func(p string) string {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			p = resolved
+		}
+		return filepath.Clean(p)
+	}
+	na, nb := norm(a), norm(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(na, nb)
+	}
+	return na == nb
+}
 
 type GitWorktreeListRequest struct{}
 
@@ -50,6 +91,9 @@ func (c *Client) GitWorktreeAdd(ctx context.Context, req GitWorktreeAddRequest) 
 	if name == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "name is required", nil)
 	}
+	if err := c.managedWorktreesOutsideProject("git.worktree.add"); err != nil {
+		return nil, err
+	}
 	entry, err := coregit.AddWorktree(c.root, name, req.Branch, req.BaseRef, req.Force)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"name": name})
@@ -75,6 +119,9 @@ func (c *Client) GitWorktreeRemove(ctx context.Context, req GitWorktreeRemoveReq
 	if name == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "name is required", nil)
 	}
+	if err := c.managedWorktreesOutsideProject("git.worktree.remove"); err != nil {
+		return nil, err
+	}
 	if err := coregit.RemoveWorktree(c.root, name, req.Force); err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"name": name})
 	}
@@ -92,6 +139,9 @@ func (c *Client) GitWorktreePrune(ctx context.Context, _ GitWorktreePruneRequest
 		return nil, fmt.Errorf("runner is nil")
 	}
 	_ = ctx
+	if err := c.managedWorktreesOutsideProject("git.worktree.prune"); err != nil {
+		return nil, err
+	}
 	n, err := coregit.PruneWorktrees(c.root)
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), nil)

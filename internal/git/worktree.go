@@ -56,12 +56,15 @@ func MainRepoRoot(dir string) (string, error) {
 		return "", fmt.Errorf("git-common-dir is empty")
 	}
 	if !filepath.IsAbs(common) {
-		top, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+		// A relative --git-common-dir is relative to the directory git was run
+		// in, not to the top level: from <repo>/services/api it is "../../.git".
+		// Joining it with --show-toplevel used to climb above the repository —
+		// as far as the user's home directory for a deep enough project.
+		absDir, err := filepath.Abs(dir)
 		if err != nil {
-			return "", fmt.Errorf("rev-parse --show-toplevel: %w", err)
+			return "", fmt.Errorf("resolve %q: %w", dir, err)
 		}
-		topDir := strings.TrimSpace(string(top))
-		common = filepath.Join(topDir, common)
+		common = filepath.Join(absDir, common)
 	}
 	common = filepath.Clean(common)
 	base := filepath.Dir(common)
