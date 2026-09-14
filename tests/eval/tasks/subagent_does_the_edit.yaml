@@ -40,8 +40,11 @@ files:
     }
 query: "Two small changes. Spawn a subagent with the task tool and have it change Greeting in greeting.go to return \"good morning\". While it works, change Farewell in farewell.go yourself to return \"good night\". Both files must end up changed."
 checks:
+  # Either spelling counts: the model may delegate with the one-shot `task`
+  # tool or with task_spawn + task_wait. What the task is about is that the
+  # work went through a child at all.
   - type: tool_used
-    content: task
+    content: task, task_spawn
   - type: file_matches
     path: greeting.go
     pattern: 'return\s+"good morning"'

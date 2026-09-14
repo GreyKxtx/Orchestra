@@ -197,17 +197,28 @@ func evaluateMechanicalCheck(env checkEnv, c Check) (string, bool) {
 		// particular tool passes on the outcome alone — which is how the
 		// skill_invoke task passed twice with the parent making the edit
 		// itself and the tool never called.
-		name := strings.TrimSpace(c.Content)
-		if name == "" {
+		// Content may name several tools, comma-separated, meaning "any of
+		// these". A task usually cares that a capability was used, not which
+		// spelling reached it: the subagent task asked for `task` and the
+		// model delegated with task_spawn + task_wait, which is the same work
+		// done a different way.
+		wanted := splitToolNames(c.Content)
+		if len(wanted) == 0 {
 			return fmt.Sprintf("%s: no tool named; put the tool name in `content`", c.Type), true
 		}
-		used := env.tools[name] > 0
-		if c.Type == "tool_used" && !used {
-			return fmt.Sprintf("tool_used %q: the run never called it (called: %s)",
-				name, namesOf(env.tools)), true
+		hit := ""
+		for _, name := range wanted {
+			if env.tools[name] > 0 {
+				hit = name
+				break
+			}
 		}
-		if c.Type == "tool_not_used" && used {
-			return fmt.Sprintf("tool_not_used %q: called %d time(s)", name, env.tools[name]), true
+		if c.Type == "tool_used" && hit == "" {
+			return fmt.Sprintf("tool_used %q: the run never called it (called: %s)",
+				c.Content, namesOf(env.tools)), true
+		}
+		if c.Type == "tool_not_used" && hit != "" {
+			return fmt.Sprintf("tool_not_used %q: called %d time(s)", hit, env.tools[hit]), true
 		}
 		return "", true
 
@@ -309,4 +320,16 @@ func namesOf(tools map[string]int) string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// splitToolNames reads a tool_used `content` field: one name, or several
+// separated by commas.
+func splitToolNames(content string) []string {
+	var out []string
+	for _, part := range strings.Split(content, ",") {
+		if name := strings.TrimSpace(part); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }

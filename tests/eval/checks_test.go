@@ -404,3 +404,17 @@ func TestCheck_ToolUsedRefusesAnEmptyName(t *testing.T) {
 	env := checkEnv{root: t.TempDir(), tools: map[string]int{"read": 1}}
 	mustFail(t, env, Check{Type: "tool_used"}, "a check with no tool name")
 }
+
+// A task cares that the capability was used, not which spelling reached it.
+// The subagent task asked for `task` and the model delegated with task_spawn
+// plus task_wait — the same work, a different route, and the check failed it.
+func TestCheck_ToolUsedAcceptsAnyOfSeveralNames(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"task_spawn": 1, "task_wait": 1}}
+	mustPass(t, env, Check{Type: "tool_used", Content: "task, task_spawn"})
+}
+
+func TestCheck_ToolUsedWithAlternativesStillFailsWhenNoneWereCalled(t *testing.T) {
+	env := checkEnv{root: t.TempDir(), tools: map[string]int{"edit": 1}}
+	mustFail(t, env, Check{Type: "tool_used", Content: "task, task_spawn"},
+		"a run that delegated nothing at all")
+}

@@ -91,10 +91,11 @@ type Check struct {
 	//       judgement against a PLAN is not, and was tried and removed — a
 	//       plan legitimately names files to create.
 	//   tool_used / tool_not_used
-	//       Content names a tool; the run did, or did not, call it. The only
-	//       check that grades HOW the work was done, and the only way a task
-	//       written to cover one tool can prove it reached that tool — the
-	//       workspace afterwards cannot say who changed it.
+	//       Content names a tool, or several comma-separated meaning "any of
+	//       these"; the run did, or did not, call one. The only check that
+	//       grades HOW the work was done, and the only way a task written to
+	//       cover one tool can prove it reached that tool — the workspace
+	//       afterwards cannot say who changed it.
 	//
 	// See checks.go for why the mechanical ones exist.
 	Type string `yaml:"type"`
