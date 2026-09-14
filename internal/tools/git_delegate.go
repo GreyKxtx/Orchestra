@@ -25,19 +25,41 @@ func (r *Runner) GitDiff(ctx context.Context, req GitDiffRequest) (*GitDiffRespo
 	return r.gitClient().GitDiff(ctx, req)
 }
 
+// The tools below rewrite git state or publish it. They are gated on exec
+// consent, on the reasoning that bash could run the same commands — which
+// holds for consent and not for the dry-run preview, where bash is refused and
+// these were not. A preview that commits, switches the branch under the user
+// or pushes is exactly the side effect BlockExecInDryRun promises will not
+// happen. Reads (status, log, diff, a plain branch listing) stay open: a
+// preview that cannot look at the repository is useless.
+
 func (r *Runner) GitCommit(ctx context.Context, req GitCommitRequest) (*GitCommitResponse, error) {
+	if err := r.execBlockedInDryRun("git commit"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GitCommit(ctx, req)
 }
 
 func (r *Runner) GitBranch(ctx context.Context, req GitBranchRequest) (*GitBranchResponse, error) {
+	if req.Create != "" || req.Delete != "" {
+		if err := r.execBlockedInDryRun("git branch"); err != nil {
+			return nil, err
+		}
+	}
 	return r.gitClient().GitBranch(ctx, req)
 }
 
 func (r *Runner) GitCheckout(ctx context.Context, req GitCheckoutRequest) (*GitCheckoutResponse, error) {
+	if err := r.execBlockedInDryRun("git checkout"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GitCheckout(ctx, req)
 }
 
 func (r *Runner) GitPush(ctx context.Context, req GitPushRequest) (*GitPushResponse, error) {
+	if err := r.execBlockedInDryRun("git push"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GitPush(ctx, req)
 }
 
@@ -46,14 +68,23 @@ func (r *Runner) GitWorktreeList(ctx context.Context, req GitWorktreeListRequest
 }
 
 func (r *Runner) GitWorktreeAdd(ctx context.Context, req GitWorktreeAddRequest) (*GitWorktreeAddResponse, error) {
+	if err := r.execBlockedInDryRun("git worktree add"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GitWorktreeAdd(ctx, req)
 }
 
 func (r *Runner) GitWorktreeRemove(ctx context.Context, req GitWorktreeRemoveRequest) (*GitWorktreeRemoveResponse, error) {
+	if err := r.execBlockedInDryRun("git worktree remove"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GitWorktreeRemove(ctx, req)
 }
 
 func (r *Runner) GitWorktreePrune(ctx context.Context, req GitWorktreePruneRequest) (*GitWorktreePruneResponse, error) {
+	if err := r.execBlockedInDryRun("git worktree prune"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GitWorktreePrune(ctx, req)
 }
 
@@ -62,6 +93,9 @@ func (r *Runner) GHPRList(ctx context.Context, req GHPRListRequest) (*GHPRListRe
 }
 
 func (r *Runner) GHPRCreate(ctx context.Context, req GHPRCreateRequest) (*GHPRCreateResponse, error) {
+	if err := r.execBlockedInDryRun("gh pr create"); err != nil {
+		return nil, err
+	}
 	return r.gitClient().GHPRCreate(ctx, req)
 }
 

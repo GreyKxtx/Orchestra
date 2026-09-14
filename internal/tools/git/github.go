@@ -14,22 +14,42 @@ import (
 const ghOutputLimit = 512 * 1024 // 512 KB
 
 var (
-	ghOnce  sync.Once
+	ghMu    sync.Mutex
 	ghFound bool
 	ghBin   string
 )
 
 // GHAvailable reports whether the gh CLI is available in PATH.
-// The result is cached after the first call.
+//
+// A positive answer is cached: the binary does not move while the process
+// runs. A negative one is NOT — it used to be, through a sync.Once, so a
+// process that started before gh was installed kept answering "gh CLI not
+// available in PATH" for its whole life, with a restart as the only cure.
+// Looking again costs a PATH scan on a call that is about to start a process
+// anyway.
 func GHAvailable() bool {
-	ghOnce.Do(func() {
-		p, err := exec.LookPath("gh")
-		if err == nil {
-			ghBin = p
-			ghFound = true
-		}
-	})
-	return ghFound
+	ghMu.Lock()
+	defer ghMu.Unlock()
+	if ghFound {
+		return true
+	}
+	p, err := exec.LookPath("gh")
+	if err != nil {
+		return false
+	}
+	ghBin = p
+	ghFound = true
+	return true
+}
+
+// ghPath returns the resolved gh binary, refreshing it if needed.
+func ghPath() string {
+	if !GHAvailable() {
+		return ""
+	}
+	ghMu.Lock()
+	defer ghMu.Unlock()
+	return ghBin
 }
 
 // runGH runs a gh CLI command in the workspace root and returns stdout bytes.
@@ -41,7 +61,7 @@ func runGH(ctx context.Context, workdir string, args ...string) ([]byte, error) 
 	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(tctx, ghBin, args...)
+	cmd := exec.CommandContext(tctx, ghPath(), args...)
 	cmd.Dir = workdir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
