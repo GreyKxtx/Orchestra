@@ -335,3 +335,36 @@ func (a *Agent) maybeHintStagedReady(history *[]llm.Message, toolPath string) {
 		),
 	})
 }
+
+// stopOnBreaker decides what a turn stopped by the circuit breaker returns.
+//
+// Running out of steps already returns a Result rather than an error — the
+// edits are on disk and pretending otherwise helps nobody. A breaker trip is
+// the same situation: the model went in circles, but the work it did before
+// that is real and committed. Returning only the error threw it away, and a
+// caller could not tell "nothing happened" from "everything happened and then
+// the model would not stop talking".
+//
+// A turn that changed nothing has nothing to report, so it still fails: the
+// breaker has to stay a signal.
+func (a *Agent) stopOnBreaker(history []llm.Message, steps int, cbErr error) ([]llm.Message, *Result, error) {
+	if a.turnMutatingTools == 0 {
+		return history, nil, cbErr
+	}
+	reason := "blocked"
+	a.logf("breaker stopped the turn after %d mutating tool call(s); reporting the work: %v",
+		a.turnMutatingTools, cbErr)
+	if a.opts.OnEvent != nil {
+		a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
+			Kind: llm.StreamEventRecoverableError,
+			Content: "the turn was stopped (" + cbErr.Error() +
+				"), but the changes it already made are kept",
+		}})
+	}
+	return history, &Result{
+		Steps:      steps,
+		Applied:    a.opts.Apply,
+		Todos:      a.todos,
+		StopReason: reason,
+	}, nil
+}

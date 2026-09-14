@@ -135,7 +135,6 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 		return serialToolOutcome{}, nil
 	}
-	a.countMutatingTool(name)
 
 	effectiveAllowExec := a.opts.AllowExec
 	effectiveAllowWeb := a.opts.AllowWeb
@@ -806,6 +805,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		ToolCallID: toolCallID,
 		Content:    hookRewrite + a.prepareToolHistoryContent(name, tc.Input, out),
 	})
+
+	// Counted here, on the success path, and not where the call is dispatched:
+	// a write that was refused or failed changed nothing, and a turn whose
+	// only mutating call errored must not look like a turn that did work.
+	a.countMutatingTool(name)
 
 	if name == "write" || name == "edit" {
 		toolPath := extractWriteOrEditPath(tc.Input)

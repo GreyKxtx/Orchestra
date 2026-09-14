@@ -315,7 +315,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			calls := a.resolveToolCalls(step, llmResp)
 			if len(calls) == 0 {
 				if cbErr := cb.RecordInvalid(); cbErr != nil {
-					return history, nil, cbErr
+					return a.stopOnBreaker(history, steps, cbErr)
 				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
@@ -330,7 +330,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 				var cbErr *protocol.Error
 				history, cbErr = a.runParallelToolBatch(ctx, cb, history, calls, llmResp, steps)
 				if cbErr != nil {
-					return history, nil, cbErr
+					return a.stopOnBreaker(history, steps, cbErr)
 				}
 				emitStepDone("tool_call")
 				notifyStepHistory(history)
@@ -353,7 +353,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			for _, tc := range calls {
 				outcome, err := a.runSerialToolCall(ctx, cb, &history, tc, steps, emitStepDone)
 				if err != nil {
-					return history, nil, err
+					return a.stopOnBreaker(history, steps, err)
 				}
 				if outcome.EarlyResult != nil {
 					return history, outcome.EarlyResult, nil
@@ -367,7 +367,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		case StepFinal:
 			if hint, reject := a.rejectPrematureFinal(userQuery, step, raw, steps); reject {
 				if cbErr := cb.RecordInvalid(); cbErr != nil {
-					return history, nil, cbErr
+					return a.stopOnBreaker(history, steps, cbErr)
 				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
@@ -397,7 +397,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			// MaxInvalidRetries cap so a model emitting persistently bogus
 			// step shapes can't loop forever within MaxSteps.
 			if cbErr := cb.RecordInvalid(); cbErr != nil {
-				return history, nil, cbErr
+				return a.stopOnBreaker(history, steps, cbErr)
 			}
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,

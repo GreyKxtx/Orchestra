@@ -6,9 +6,15 @@
 # why it is 5 and not 30 — a model that answers from the source alone cannot
 # produce the gateway, so the answer check is a claim about having read the
 # note rather than the file.
+# Not ask mode: listToolsAsk ships no memory tools.
+#
+# And the tool_used check is deliberately absent. Project memory is injected
+# into the system prompt before the turn starts, so a model that answers
+# correctly has no reason to call memory_read at all — requiring the call
+# would fail correct work. What is gradable is that the injected memory
+# reaches the answer, and that is what this task asserts.
 name: memory_recalls_a_decision
 description: Answer from project memory, not from the code
-mode: ask
 max_steps: 12
 files:
   go.mod: |
@@ -41,8 +47,6 @@ files:
       call fail twice instead of once.
 query: "Why is the dial timeout set to the value it has? Check what the project remembers about it before answering."
 checks:
-  - type: tool_used
-    content: memory_read, memory_search
   - type: answer_matches
     pattern: '(?i)gateway'
   - type: answer_matches
