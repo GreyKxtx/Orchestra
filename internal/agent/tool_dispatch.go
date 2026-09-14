@@ -90,7 +90,8 @@ type serialToolOutcome struct {
 // vanished, which is how this was nearly diagnosed as a guard misfiring.
 func (a *Agent) recordBlocked(name, reason string) {
 	if a.opts.AgentLogger != nil {
-		a.opts.AgentLogger.LogToolResult(name, 0, 0, "denied: "+reason)
+		// The reason is already the error field; a preview would repeat it.
+		a.opts.AgentLogger.LogToolResult(name, 0, 0, "denied: "+reason, "")
 	}
 }
 
@@ -107,8 +108,8 @@ func (a *Agent) recordBlocked(name, reason string) {
 // attempts and what was said each time both survive the run.
 func (a *Agent) deniedToolResult(name string, input json.RawMessage, reason string) string {
 	if a.opts.AgentLogger != nil {
-		a.opts.AgentLogger.LogToolCall(name, len(input))
-		a.opts.AgentLogger.LogToolResult(name, 0, 0, "denied: "+reason)
+		a.opts.AgentLogger.LogToolCall(name, len(input), string(input))
+		a.opts.AgentLogger.LogToolResult(name, 0, 0, "denied: "+reason, "")
 	}
 	a.logf("tool_call name=%s status=denied reason=%s", name, reason)
 	return formatToolDeniedJSON(name, input, reason)
@@ -330,7 +331,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		// In-process tools bypass tools.Runner, so mirror its llm_log entries
 		// here — otherwise failed spawns leave no trace in .orchestra logs.
 		if a.opts.AgentLogger != nil {
-			a.opts.AgentLogger.LogToolCall(name, len(tc.Input))
+			a.opts.AgentLogger.LogToolCall(name, len(tc.Input), string(tc.Input))
 		}
 		taskStart := time.Now()
 		out, taskErr := a.handleTaskTool(ctx, name, toolCallID, tc.Input)
@@ -339,7 +340,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			if taskErr != nil {
 				errStr = taskErr.Error()
 			}
-			a.opts.AgentLogger.LogToolResult(name, len(out), time.Since(taskStart).Milliseconds(), errStr)
+			a.opts.AgentLogger.LogToolResult(name, len(out), time.Since(taskStart).Milliseconds(), errStr, string(out))
 		}
 		a.observeWorkingTool(name, tc.Input, out, taskErr)
 		var content string
@@ -714,7 +715,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if a.opts.AgentLogger != nil {
-		a.opts.AgentLogger.LogToolCall(name, len(tc.Input))
+		a.opts.AgentLogger.LogToolCall(name, len(tc.Input), string(tc.Input))
 	}
 
 	if dedupExemptTool(name) {
@@ -775,7 +776,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if err != nil {
 		a.logf("tool_call name=%s status=error duration_ms=%d err=%v", name, dur, err)
 		if a.opts.AgentLogger != nil {
-			a.opts.AgentLogger.LogToolResult(name, 0, dur, err.Error())
+			a.opts.AgentLogger.LogToolResult(name, 0, dur, err.Error(), "")
 		}
 		toolResult := formatToolErrorJSON(name, tc.Input, err)
 		*history = append(*history, llm.Message{
@@ -797,7 +798,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 	a.logf("tool_call name=%s status=ok duration_ms=%d output_bytes=%d", name, dur, len(out))
 	if a.opts.AgentLogger != nil {
-		a.opts.AgentLogger.LogToolResult(name, len(out), dur, "")
+		a.opts.AgentLogger.LogToolResult(name, len(out), dur, "", string(out))
 	}
 	a.markExploreFirstSatisfied(name)
 	*history = append(*history, llm.Message{

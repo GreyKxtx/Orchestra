@@ -30,10 +30,21 @@ type LLMLogEntry struct {
 	ResponsePreview string   `json:"response_preview,omitempty"`
 
 	// tool_call / tool_result fields
-	ToolName    string `json:"tool_name,omitempty"`
-	InputBytes  int    `json:"input_bytes,omitempty"`
-	OutputBytes int    `json:"output_bytes,omitempty"`
-	ErrorStr    string `json:"error,omitempty"`
+	//
+	// The previews are the difference between a log that says what happened
+	// and one that can be read back. Sizes alone had already cost two
+	// investigations: a delegation that changed nothing showed up as "the
+	// worker answered 112 bytes", and finding out what those bytes said took
+	// a scripted-child test and a separate direct run, because the log could
+	// not say. llm_request / llm_response have carried previews all along;
+	// these put tool calls on the same footing, through the same
+	// truncateAndSanitize that strips key material.
+	ToolName      string `json:"tool_name,omitempty"`
+	InputBytes    int    `json:"input_bytes,omitempty"`
+	OutputBytes   int    `json:"output_bytes,omitempty"`
+	ErrorStr      string `json:"error,omitempty"`
+	InputPreview  string `json:"input_preview,omitempty"`
+	OutputPreview string `json:"output_preview,omitempty"`
 
 	// step.classified fields; memory.note reuses Kind (outcome) and Detail
 	Step   int    `json:"step,omitempty"`
@@ -123,30 +134,39 @@ func (l *Logger) LogError(httpCode int, errorBody string, durationMS int64) {
 }
 
 // LogToolCall logs a tool invocation before execution.
-func (l *Logger) LogToolCall(toolName string, inputBytes int) {
+func (l *Logger) LogToolCall(toolName string, inputBytes int, inputPreview string) {
 	if l == nil {
 		return
 	}
 	l.appendLog(LLMLogEntry{
-		TSUnix:     time.Now().Unix(),
-		Event:      "tool_call",
-		ToolName:   toolName,
-		InputBytes: inputBytes,
+		TSUnix:       time.Now().Unix(),
+		Event:        "tool_call",
+		ToolName:     toolName,
+		InputBytes:   inputBytes,
+		InputPreview: truncateAndSanitize(inputPreview, toolPreviewBytes),
 	})
 }
 
+// toolPreviewBytes is smaller than the 2048 the request/response previews use.
+// A tool call is one line of a conversation and there are many per step, while
+// a request preview is the whole prompt once; 1 KiB is enough to hold a worker
+// result, a denial with its reason, or an edit's arguments, which is what these
+// are read for.
+const toolPreviewBytes = 1024
+
 // LogToolResult logs the result (or error) of a tool invocation.
-func (l *Logger) LogToolResult(toolName string, outputBytes int, durationMS int64, errStr string) {
+func (l *Logger) LogToolResult(toolName string, outputBytes int, durationMS int64, errStr string, outputPreview string) {
 	if l == nil {
 		return
 	}
 	l.appendLog(LLMLogEntry{
-		TSUnix:      time.Now().Unix(),
-		Event:       "tool_result",
-		ToolName:    toolName,
-		OutputBytes: outputBytes,
-		DurationMS:  durationMS,
-		ErrorStr:    errStr,
+		TSUnix:        time.Now().Unix(),
+		Event:         "tool_result",
+		ToolName:      toolName,
+		OutputBytes:   outputBytes,
+		DurationMS:    durationMS,
+		ErrorStr:      errStr,
+		OutputPreview: truncateAndSanitize(outputPreview, toolPreviewBytes),
 	})
 }
 

@@ -259,7 +259,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			started := time.Now()
 			err := safeRunErr("parallel tool "+call.Name, func() error {
 				if a.opts.AgentLogger != nil {
-					a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input))
+					a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input), string(call.Input))
 				}
 				out, callErr := a.tools.Call(ctx, call.Name, call.Input)
 				if callErr != nil {
@@ -267,7 +267,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 					return callErr
 				}
 				if a.opts.AgentLogger != nil {
-					a.opts.AgentLogger.LogToolResult(call.Name, len(out), time.Since(started).Milliseconds(), "")
+					a.opts.AgentLogger.LogToolResult(call.Name, len(out), time.Since(started).Milliseconds(), "", string(out))
 				}
 				results[idx] = rewrote[idx] + a.prepareToolHistoryContent(call.Name, call.Input, out)
 				if a.opts.OnEvent != nil {
@@ -280,7 +280,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			if err != nil {
 				errored[idx] = true
 				if a.opts.AgentLogger != nil {
-					a.opts.AgentLogger.LogToolResult(call.Name, 0, time.Since(started).Milliseconds(), err.Error())
+					a.opts.AgentLogger.LogToolResult(call.Name, 0, time.Since(started).Milliseconds(), err.Error(), "")
 				}
 				results[idx] = formatToolErrorJSON(call.Name, call.Input, err)
 				if a.opts.OnEvent != nil {
@@ -306,7 +306,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		// Logged too, so a trace shows why this call has no result of its own
 		// rather than appearing to have vanished.
 		if a.opts.AgentLogger != nil {
-			a.opts.AgentLogger.LogToolResult(tc.Name, 0, 0, "identical call in the same step; answered from the twin above")
+			a.opts.AgentLogger.LogToolResult(tc.Name, 0, 0, "identical call in the same step; answered from the twin above", "")
 		}
 		if a.opts.OnEvent != nil {
 			name, id, content := tc.Name, tc.ID, results[i]

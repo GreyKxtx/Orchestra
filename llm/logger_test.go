@@ -12,9 +12,9 @@ import (
 func TestLogger_LogStepClassified(t *testing.T) {
 	dir := t.TempDir()
 	l := NewLogger(dir)
-	l.LogToolCall("edit", 12)
+	l.LogToolCall("edit", 12, `{"path":"a.go"}`)
 	l.LogStepClassified(3, "validation_error", "", "invalid json")
-	l.LogToolResult("edit", 4, 10, "")
+	l.LogToolResult("edit", 4, 10, "", `{"file_hash":"sha256:ab"}`)
 
 	f, err := os.Open(filepath.Join(dir, ".orchestra", "llm_log.jsonl"))
 	if err != nil {
@@ -53,8 +53,8 @@ func TestLogger_LogStepClassified(t *testing.T) {
 func TestLogger_NilSafe(t *testing.T) {
 	var l *Logger
 	l.LogStepClassified(1, "tool_failed", "read", "boom")
-	l.LogToolCall("x", 1)
-	l.LogToolResult("x", 0, 0, "err")
+	l.LogToolCall("x", 1, "")
+	l.LogToolResult("x", 0, 0, "err", "")
 	l.LogMemoryNote("failed", "digest", "boom")
 }
 
@@ -141,5 +141,71 @@ func TestSanitizeSecrets(t *testing.T) {
 	plain := "hello world, no secrets here"
 	if got := sanitizeSecrets(plain); got != plain {
 		t.Errorf("plain text mangled: %q", got)
+	}
+}
+
+// A tool trace that records only sizes cannot be read back, and that is not a
+// hypothetical: a delegation that changed nothing appeared in llm_log.jsonl as
+// "the worker answered 112 bytes", and finding out what those bytes said took
+// a scripted-child test and a separate direct run because the log could not
+// say. llm_request and llm_response have carried previews all along; these put
+// tool calls on the same footing.
+func TestLogger_ToolEventsCarryWhatWasSaidNotJustHowLong(t *testing.T) {
+	dir := t.TempDir()
+	l := NewLogger(dir)
+	l.LogToolCall("task", 40, `{"subagent_type":"worker","prompt":"change width.go"}`)
+	l.LogToolResult("task", 112, 8900, "", `{"status":"no_changes","detail":"nothing applied"}`)
+
+	body, err := os.ReadFile(filepath.Join(dir, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "change width.go") {
+		t.Errorf("the call's arguments are not in the trace, so a reader cannot tell what "+
+			"was delegated:\n%s", got)
+	}
+	if !strings.Contains(got, "no_changes") {
+		t.Errorf("the result is not in the trace, which is the whole reason the sizes were "+
+			"not enough:\n%s", got)
+	}
+}
+
+// Tool arguments carry whatever the model put in them, so the same
+// sanitisation the request previews get has to apply here — otherwise the new
+// field is a way for a key to reach a log file.
+func TestLogger_ToolPreviewsAreStrippedOfKeyMaterial(t *testing.T) {
+	dir := t.TempDir()
+	l := NewLogger(dir)
+	l.LogToolCall("webfetch", 60, `{"url":"https://x.test/?api_key=sk-abcdefghijklmnop"}`)
+	l.LogToolResult("webfetch", 20, 5, "", `Authorization: Bearer sk-ant-secret-value-here`)
+
+	body, err := os.ReadFile(filepath.Join(dir, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	for _, leaked := range []string{"sk-abcdefghijklmnop", "sk-ant-secret-value-here"} {
+		if strings.Contains(got, leaked) {
+			t.Errorf("key material reached the log through a tool preview: %q\n%s", leaked, got)
+		}
+	}
+}
+
+// A long result must not turn the trace into the payload it was summarising.
+func TestLogger_ToolPreviewsAreCapped(t *testing.T) {
+	dir := t.TempDir()
+	l := NewLogger(dir)
+	l.LogToolResult("read", 100000, 5, "", strings.Repeat("x", 100000))
+
+	body, err := os.ReadFile(filepath.Join(dir, ".orchestra", "llm_log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) > 8*1024 {
+		t.Errorf("one tool result wrote %d bytes of log; the preview is not capped", len(body))
+	}
+	if !strings.Contains(string(body), "truncated") {
+		t.Errorf("a clipped preview must say it was clipped, or it reads as the whole answer:\n%s", body)
 	}
 }
