@@ -62,7 +62,13 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 	if ckgEmbedBatchSize > 0 {
 		emb.BatchSize = ckgEmbedBatchSize
 	}
-	dbPath := filepath.Join(cfg.ProjectRoot, ".orchestra", "ckg.db")
+	// On a project nothing has run in yet, .orchestra/ does not exist and the
+	// store failed to open with a bare "unable to open database file (14)".
+	artifactDir := filepath.Join(cfg.ProjectRoot, ".orchestra")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", artifactDir, err)
+	}
+	dbPath := filepath.Join(artifactDir, "ckg.db")
 	store, err := ckg.NewStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open ckg store: %w", err)
@@ -71,7 +77,17 @@ func runCKGEmbed(cmd *cobra.Command, _ []string) error {
 
 	w := cmd.OutOrStdout()
 
+	// Embeddings are made from graph nodes, and this command used to embed
+	// whatever graph was already there. Nothing builds the graph except core's
+	// warmup, so on a project core had never opened it found no nodes and
+	// answered "No nodes need embedding" — which reads as "the index is
+	// complete" while semantic_search finds nothing. Bring the graph up to date
+	// first; it is incremental, so on an indexed project it costs a scan.
 	start := time.Now()
+	orch := ckg.NewOrchestratorWithIgnores(store, cfg.ProjectRoot, cfg.ExcludeDirs)
+	if err := orch.UpdateGraph(cmd.Context()); err != nil {
+		return fmt.Errorf("update code graph before embedding: %w", err)
+	}
 	res, err := embedindex.Run(cmd.Context(), embedindex.Options{
 		ProjectRoot: cfg.ProjectRoot,
 		Store:       store,

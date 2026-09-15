@@ -221,3 +221,50 @@ func TestMigrateV4ToV5DropRebuild(t *testing.T) {
 		}
 	}
 }
+
+// Building the graph for Orchestra's own internal/ (406 files) stopped with
+//
+//	lazy resolve short_name Run: UNIQUE constraint failed:
+//	edges.source_id, edges.target_fqn, edges.relation
+//
+// and core's warmup runs the same UpdateGraph, so the graph behind explore and
+// semantic_search was cut short on a real codebase.
+//
+// Edges are inserted with INSERT OR IGNORE, so duplicates are fine there. The
+// short-name pass afterwards rewrites target_fqn from "Run" to the resolved
+// FQN with a plain UPDATE — and when the same source already has an edge to
+// that FQN (it called b.Run() qualified as well as Run unqualified), the
+// rewrite produces the duplicate the insert was careful to avoid. The error
+// aborts the file's transaction, and UpdateGraph with it.
+func TestSaveFileNodes_ShortNameResolveDoesNotCollideWithAnExistingEdge(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// The caller has two dangling edges to what will turn out to be one node:
+	// one by FQN, one by short name.
+	caller := []Node{{FQN: "ex/a.Caller", ShortName: "Caller", Kind: "func", LineStart: 1, LineEnd: 5}}
+	callerEdges := []Edge{
+		{SourceFQN: "ex/a.Caller", TargetFQN: "ex/b.Run", Relation: "calls"},
+		{SourceFQN: "ex/a.Caller", TargetFQN: "Run", Relation: "calls"},
+	}
+	if err := s.SaveFileNodes(ctx, "a.go", "h1", "go", "ex", "a", caller, callerEdges); err != nil {
+		t.Fatalf("save caller: %v", err)
+	}
+
+	// Run arrives. Resolving the short-name edge to ex/b.Run must not fail
+	// because an edge to ex/b.Run already exists.
+	run := []Node{{FQN: "ex/b.Run", ShortName: "Run", Kind: "func", LineStart: 1, LineEnd: 3}}
+	if err := s.SaveFileNodes(ctx, "b.go", "h2", "go", "ex", "b", run, nil); err != nil {
+		t.Fatalf("indexing a file failed because a call was reachable two ways: %v", err)
+	}
+
+	// The call is still recorded, resolved, once.
+	var resolved int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM edges WHERE target_fqn = 'ex/b.Run' AND target_id IS NOT NULL`).Scan(&resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != 1 {
+		t.Errorf("want exactly one resolved Caller→Run edge, got %d", resolved)
+	}
+}

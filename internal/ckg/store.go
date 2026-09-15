@@ -466,8 +466,15 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 
 		// Also resolve dangling call edges that still carry short names.
 		// We update only when the short name is globally unique at update time.
+		//
+		// OR IGNORE, like the edge INSERT above: rewriting target_fqn from "Run"
+		// to the resolved FQN collides with an edge the same source already has
+		// to that FQN (it called b.Run() qualified as well as Run unqualified).
+		// A plain UPDATE failed the file's transaction on the UNIQUE index and
+		// stopped UpdateGraph — it did on Orchestra's own internal/. The
+		// short-name duplicate that stays behind is removed by delShortDup.
 		updShort, err := tx.PrepareContext(ctx, `
-			UPDATE edges
+			UPDATE OR IGNORE edges
 			SET target_id = ?, target_fqn = ?
 			WHERE target_id IS NULL
 			  AND relation IN ('calls', 'instantiates')
@@ -481,12 +488,35 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 		}
 		defer updShort.Close()
 
+		delShortDup, err := tx.PrepareContext(ctx, `
+			DELETE FROM edges
+			WHERE target_id IS NULL
+			  AND relation IN ('calls', 'instantiates')
+			  AND target_fqn = ?
+			  AND EXISTS (
+				  SELECT 1 FROM edges e2
+				  WHERE e2.source_id = edges.source_id
+				    AND e2.relation = edges.relation
+				    AND e2.target_fqn = ?
+			  )
+			  AND NOT EXISTS (
+				  SELECT 1 FROM nodes n2
+				  WHERE n2.short_name = ? AND n2.id <> ?
+			  )`)
+		if err != nil {
+			return fmt.Errorf("prepare short_name duplicate cleanup: %w", err)
+		}
+		defer delShortDup.Close()
+
 		for _, n := range nodes {
 			if n.ShortName == "" {
 				continue
 			}
 			if _, err := updShort.ExecContext(ctx, n.ID, n.FQN, n.ShortName, n.ShortName, n.ID); err != nil {
 				return fmt.Errorf("lazy resolve short_name %s: %w", n.ShortName, err)
+			}
+			if _, err := delShortDup.ExecContext(ctx, n.ShortName, n.FQN, n.ShortName, n.ID); err != nil {
+				return fmt.Errorf("drop short_name duplicate %s: %w", n.ShortName, err)
 			}
 		}
 	}

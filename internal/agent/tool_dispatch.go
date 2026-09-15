@@ -509,7 +509,24 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		var req struct {
 			Questions []tools.QuestionItem `json:"questions"`
 		}
-		if qErr := json.Unmarshal(tc.Input, &req); qErr != nil || a.opts.QuestionAsker == nil {
+		qErr := json.Unmarshal(tc.Input, &req)
+		// A model that flattens the argument — {"question": "..."} instead of
+		// {"questions": [{"question": "..."}]} — unmarshals cleanly into an
+		// empty slice. That used to reach the asker as a prompt with no question
+		// in it and come back to the model as {"answers":[]}: the user, it seemed,
+		// had nothing to say. Refuse instead, and say which shape is wanted.
+		if qErr == nil {
+			if len(req.Questions) == 0 {
+				qErr = fmt.Errorf(`no questions to ask: the argument is {"questions": [{"question": "...", "options": ["..."]}]} — an array under "questions", even for one question`)
+			}
+			for _, item := range req.Questions {
+				if strings.TrimSpace(item.Question) == "" {
+					qErr = fmt.Errorf(`every entry in "questions" needs a non-empty "question"`)
+					break
+				}
+			}
+		}
+		if qErr != nil || a.opts.QuestionAsker == nil {
 			msg := `{"error":"question tool unavailable"}`
 			if a.opts.QuestionAsker != nil {
 				msg = formatToolErrorJSON(name, tc.Input, qErr)
