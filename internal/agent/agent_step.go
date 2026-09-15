@@ -27,13 +27,39 @@ import (
 // sentence twice in one line.
 const contextWindowHint = "raise Context Length (num_ctx) in LM Studio / .orchestra.yml extra_body.num_ctx"
 
+// latestUserQueryIs reports whether the newest <user_query> message in msgs is
+// queryBlock.
+func latestUserQueryIs(msgs []llm.Message, queryBlock string) bool {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role != llm.RoleUser || !strings.HasPrefix(strings.TrimSpace(m.Content), "<user_query>") {
+			continue
+		}
+		return strings.TrimSpace(m.Content) == queryBlock
+	}
+	return false
+}
+
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
 	systemPrompt := a.buildSystemPrompt()
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
-	userPrompt := promptpkg.BuildUserPrompt(userQuery, snap, tools.ToolNames(toolDefs))
+	userContext := promptpkg.BuildUserContext(snap, tools.ToolNames(toolDefs))
+	queryBlock := promptpkg.UserQueryBlock(userQuery)
+	// A session turn opens with the query already in history (session_rpc.go),
+	// so the leading message carried it a second time. It leaves the query out
+	// then — and, holding nothing that changes between turns, stays a cacheable
+	// prefix across the whole session. An image turn keeps the query next to
+	// its images.
+	queryInHistory := len(a.opts.UserImages) == 0 && latestUserQueryIs(history, queryBlock)
+	fullPrompt := userContext + queryBlock + "\n"
+	userPrompt := fullPrompt
+	if queryInHistory {
+		userPrompt = strings.TrimRight(userContext, "\n")
+	}
 	// CKG context only on step 1 (saves tokens; later steps use explore/grep in history).
 	if stepNum == 1 && a.ckgContext != "" {
+		fullPrompt += "\n\n" + a.ckgContext
 		userPrompt += "\n\n" + a.ckgContext
 	}
 
@@ -86,6 +112,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	// The volatile tail is appended after truncation, so reserve its size here.
 	if a.opts.MaxPromptBytes > 0 {
 		budget := a.opts.MaxPromptBytes - len(volatileBlock)
+		if queryInHistory {
+			budget -= len(queryBlock) // room to put it back, below
+		}
 		if budget < a.opts.MaxPromptBytes/2 {
 			budget = a.opts.MaxPromptBytes / 2
 		}
@@ -93,6 +122,12 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		messages = truncateMessages(messages, budget)
 		if a.opts.Debug && len(messages) != beforeTruncate {
 			a.logf("agent.nextStep messages truncated: %d -> %d (budget=%d)", beforeTruncate, len(messages), budget)
+		}
+		// Truncation keeps the leading message and drops the middle of history,
+		// which on a long turn is where the query sits. The leading message takes
+		// it back.
+		if queryInHistory && len(messages) >= 2 && !latestUserQueryIs(messages[2:], queryBlock) {
+			messages[1].Content = fullPrompt
 		}
 	}
 	if volatileBlock != "" {

@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/cache"
@@ -403,7 +404,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// question together with its answer.
 	inHistory = append(inHistory, llm.Message{
 		Role:    llm.RoleUser,
-		Content: "<user_query>\n" + strings.TrimSpace(agentQuery) + "\n</user_query>",
+		Content: promptpkg.UserQueryBlock(agentQuery),
 	})
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)

@@ -8,6 +8,19 @@ import (
 // BuildUserPrompt builds the user-facing message content:
 // it includes the IDE snapshot and the user's query.
 func BuildUserPrompt(userQuery string, snap WorkspaceSnapshot, allowedTools []string) string {
+	return BuildUserContext(snap, allowedTools) + UserQueryBlock(userQuery) + "\n"
+}
+
+// UserQueryBlock wraps the user's query the way every prompt carries it. A
+// session keeps each turn's query in its history in this exact form, which is
+// how the agent recognises that a query is already in the transcript.
+func UserQueryBlock(userQuery string) string {
+	return "<user_query>\n" + strings.TrimSpace(userQuery) + "\n</user_query>"
+}
+
+// BuildUserContext is BuildUserPrompt without the query: the IDE snapshot and
+// the tool names.
+func BuildUserContext(snap WorkspaceSnapshot, allowedTools []string) string {
 	var b strings.Builder
 
 	b.WriteString("<user_info>\n")
@@ -67,10 +80,6 @@ func BuildUserPrompt(userQuery string, snap WorkspaceSnapshot, allowedTools []st
 		b.WriteString("\n</tool_names>\n")
 		b.WriteString("(full descriptions: see <available_tools> in system prompt)\n\n")
 	}
-
-	b.WriteString("<user_query>\n")
-	b.WriteString(strings.TrimSpace(userQuery))
-	b.WriteString("\n</user_query>\n")
 
 	return b.String()
 }

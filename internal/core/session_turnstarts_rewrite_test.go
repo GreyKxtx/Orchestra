@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/config"
+	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/cache"
@@ -283,14 +284,16 @@ func (l *stepScriptLLM) Complete(_ context.Context, req llm.CompleteRequest) (*l
 			}}, nil
 		}
 	}
-	// agent_step.go builds `system + user + history`, so the FIRST user
-	// message is this turn's prompt. Later user-role entries are the synthetic
-	// ones the agent injects into history and must not be matched.
-	for _, m := range req.Messages {
-		if m.Role != llm.RoleUser {
+	// This turn's query is the newest <user_query> in the request: a session
+	// turn carries it in history, and a request whose history lost it carries it
+	// in the leading message, after which no older query survives. Earlier
+	// turns' queries and the agent's synthetic user messages must not match.
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		m := req.Messages[i]
+		if m.Role != llm.RoleUser || !strings.Contains(m.Content, "<user_query>") {
 			continue
 		}
-		if l.failOnPrompt != "" && strings.Contains(m.Content, l.failOnPrompt) {
+		if l.failOnPrompt != "" && strings.Contains(m.Content, promptpkg.UserQueryBlock(l.failOnPrompt)) {
 			l.failures++
 			return nil, errors.New("llm died right after the rewrite")
 		}
