@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/orchestra/orchestra/internal/tools"
+)
 
 // A turn whose job was on a web page could not say it had finished.
 //
@@ -40,5 +44,32 @@ func TestPrematureFinal_ReadingAPageIsNotAMutation(t *testing.T) {
 	}
 	if a.turnMutatingTools != 0 {
 		t.Errorf("page reads counted as mutations: %d", a.turnMutatingTools)
+	}
+}
+
+// The query-word heuristic behind "Task requires code changes" refused five
+// correct answers in one day of live runs ("Create account", "Do not change",
+// "until it finishes", "in their comment"). A turn dies on the second refusal
+// when max_invalid_retries is 1. The reminder now comes once per turn: a model
+// that answers again without edits is taken at its word. Open todos are a
+// different, exact signal and still block every time.
+func TestPrematureFinal_TheCodeChangeReminderComesOncePerTurn(t *testing.T) {
+	a := &Agent{}
+	final := &Step{Type: StepFinal, Final: &Final{}}
+	const query = "list the courierStep functions that mention refund in their comment"
+	const answer = "courierStep18, courierStep22 and courierStep23 mention refund."
+
+	if _, reject := a.rejectPrematureFinal(query, final, answer, 4); !reject {
+		t.Fatal("the first prose final on a query that reads as a change request should get the reminder")
+	}
+	if hint, reject := a.rejectPrematureFinal(query, final, answer, 5); reject {
+		t.Errorf("the same answer after the reminder was refused again:\n%s", hint)
+	}
+
+	withTodos := &Agent{todos: []tools.TodoItem{{ID: "1", Content: "edit", Status: tools.TodoPending}}}
+	for step := 4; step < 7; step++ {
+		if _, reject := withTodos.rejectPrematureFinal(query, final, answer, step); !reject {
+			t.Fatalf("an open todo stopped blocking the final at step %d", step)
+		}
 	}
 }

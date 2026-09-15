@@ -589,6 +589,10 @@ type Agent struct {
 	// once for naming paths the workspace does not have. One correction only:
 	// a model that will not ground itself must not spend the window trying.
 	groundingCorrected bool
+	// codeChangeReminded records that this turn already got the "task requires
+	// code changes" reminder; the query-word heuristic behind it is not sure
+	// enough to refuse a second time.
+	codeChangeReminded bool
 
 	// exploreFirstSatisfied is set after read/grep/explore (explore-first gate).
 	exploreFirstSatisfied bool

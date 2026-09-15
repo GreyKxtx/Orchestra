@@ -59,6 +59,13 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 	if !queryRequiresCodeChanges(userQuery, a.todos, a.opts.Mode) {
 		return "", false
 	}
+	// The query-word heuristic misreads questions ("in their comment", "until
+	// it finishes") often enough that refusing every time killed correct turns.
+	// It reminds once per turn; a model that answers again is taken at its word.
+	if a.codeChangeReminded {
+		return "", false
+	}
+	a.codeChangeReminded = true
 
 	if isContentOnlyPatchesJSON(raw) {
 		return "You sent {\"patches\":[]} without calling edit/write. Read the file, then use edit or write.", true

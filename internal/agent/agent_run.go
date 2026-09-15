@@ -45,6 +45,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.turnMutatingTools = 0
 	a.turnMutatedPaths = nil
 	a.groundingCorrected = false
+	a.codeChangeReminded = false
 	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0
 	a.llmInfraErr = nil
