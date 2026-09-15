@@ -75,7 +75,11 @@ fn a_missing_binary_is_skipped_and_the_next_candidate_used() {
     std::env::set_var("PATH", "");
     let empty = std::env::temp_dir().join("orchestra-desktop-empty-dir");
     let _ = std::fs::create_dir_all(&empty);
-    let result = start(Some(&empty), Some(Path::new(".")), Duration::from_millis(500));
+    let result = start(
+        Some(&empty),
+        Some(Path::new(".")),
+        Duration::from_millis(500),
+    );
     if let Some(p) = saved {
         std::env::set_var("PATH", p);
     }

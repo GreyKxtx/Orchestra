@@ -16,6 +16,7 @@ import (
 // signature and no doc, or a doc and no signature, sends the model to read the
 // file anyway and the call was wasted.
 func TestModelView_HoverGivesTheSignatureAndTheDocComment(t *testing.T) {
+	requireGoLanguageServer(t)
 	r, _ := modelViewWorkspace(t)
 
 	// mathx.go, 1-based: 1 package | 2 blank | 3 doc comment | 4 func Add(...)
@@ -33,6 +34,7 @@ func TestModelView_HoverGivesTheSignatureAndTheDocComment(t *testing.T) {
 // it must read as "nothing here" rather than as a broken tool — otherwise the
 // model retries the same call instead of correcting the position.
 func TestModelView_HoverOnNothingSaysSoInsteadOfFailing(t *testing.T) {
+	requireGoLanguageServer(t)
 	r, _ := modelViewWorkspace(t)
 
 	out, err := call(t, r, "lsp.hover", map[string]any{"path": "mathx.go", "line": 2, "col": 1})
@@ -55,6 +57,7 @@ func TestModelView_HoverOnNothingSaysSoInsteadOfFailing(t *testing.T) {
 // changes nothing AND is documented as changing nothing. If it ever starts
 // writing, the description becomes the lie instead.
 func TestModelView_LspRenameProposesEditsAndTouchesNothing(t *testing.T) {
+	requireGoLanguageServer(t)
 	r, root := modelViewWorkspace(t)
 
 	before := readFixture(t, root, "mathx.go")
@@ -88,6 +91,7 @@ func TestModelView_LspRenameProposesEditsAndTouchesNothing(t *testing.T) {
 // keeps TestModelView_SymbolsLineNumbersMatchRead honest: it establishes what
 // the other tools actually do rather than assuming it.
 func TestModelView_LspPositionsAreOneBasedLikeRead(t *testing.T) {
+	requireGoLanguageServer(t)
 	r, _ := modelViewWorkspace(t)
 
 	// 1-based line 4 is `func Add(a, b int) int`; 0-based it would be line 3.

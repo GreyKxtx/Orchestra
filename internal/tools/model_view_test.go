@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/lsp/provision"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -59,6 +60,17 @@ func modelViewWorkspace(t *testing.T) (*tools.Runner, string) {
 	}
 	t.Cleanup(func() { r.Close() })
 	return r, root
+}
+
+// requireGoLanguageServer skips a test that reads gopls's answer on a machine
+// without gopls. There the Runner starts installing it and the call answers
+// "install in progress", and symbols falls back to a tier that lists no struct
+// fields — true of that machine, and not what these tests are about.
+func requireGoLanguageServer(t *testing.T) {
+	t.Helper()
+	if _, err := provision.Resolve([]string{"gopls"}); err != nil {
+		t.Skipf("gopls is not installed, and this test reads its answer: %v", err)
+	}
 }
 
 // call runs a tool the way the agent loop does and returns what the model

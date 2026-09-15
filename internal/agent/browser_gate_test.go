@@ -49,9 +49,14 @@ var validBrowserArgs = map[string]string{
 	"browser.close":      `{}`,
 }
 
-// reachedBrowserClient is what the browser client answers when its server
-// command cannot be started.
-const reachedBrowserClient = "Node.js and npx"
+// reachedBrowserClient reports whether a tool result is the browser client
+// failing to start its server command — which only a call the agent let through
+// can produce. The wording is the OS's: a missing executable is "executable
+// file not found" on Windows, which the client turns into its npx hint, and
+// "no such file or directory" on Linux, which it reports as is.
+func reachedBrowserClient(got string) bool {
+	return strings.Contains(got, "Node.js and npx") || strings.Contains(got, "start browser subprocess")
+}
 
 // runBrowserCall runs one tool call through an agent whose Runner HAS a browser
 // client. The client's command does not exist, so a call that reaches it fails
@@ -95,11 +100,11 @@ func runBrowserCall(t *testing.T, allowBrowser bool, name string) string {
 // by naming the tool.
 func TestAgent_RefusesBrowserToolsARunWasNotGiven(t *testing.T) {
 	for _, name := range browserToolNames(t) {
-		if got := runBrowserCall(t, true, name); !strings.Contains(got, reachedBrowserClient) {
+		if got := runBrowserCall(t, true, name); !reachedBrowserClient(got) {
 			t.Fatalf("%s does not reach the client even when allowed, so its refusal below would prove nothing:\n%s", name, got)
 		}
 		got := runBrowserCall(t, false, name)
-		if strings.Contains(got, reachedBrowserClient) {
+		if reachedBrowserClient(got) {
 			t.Errorf("%s reached the browser in a run without allow_browser:\n%s", name, got)
 		}
 		if !strings.Contains(got, "allow_browser") {
@@ -146,7 +151,7 @@ func TestAgent_RefusesBrowserToolsInAParallelBatchToo(t *testing.T) {
 	if _, _, err := ag.Run(context.Background(), nil, "look"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := client.results["p2"]; strings.Contains(got, reachedBrowserClient) || !strings.Contains(got, "allow_browser") {
+	if got := client.results["p2"]; reachedBrowserClient(got) || !strings.Contains(got, "allow_browser") {
 		t.Errorf("browser.snapshot in a parallel batch was not refused:\n%s", got)
 	}
 	if got := client.results["p1"]; !strings.Contains(got, "hello") {
@@ -181,7 +186,7 @@ func (b *batchLLM) Complete(_ context.Context, req llm.CompleteRequest) (*llm.Co
 
 func TestAgent_LetsBrowserToolsThroughWhenTheRunHasThem(t *testing.T) {
 	got := runBrowserCall(t, true, "browser.navigate")
-	if !strings.Contains(got, reachedBrowserClient) {
+	if !reachedBrowserClient(got) {
 		t.Errorf("a run with allow_browser did not reach the browser client:\n%s", got)
 	}
 }

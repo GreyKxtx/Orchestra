@@ -225,10 +225,19 @@ mod tests {
         let args = sidecar_args(None);
         assert_eq!(
             args,
-            vec!["web", "--no-project", "--no-open", "--port", "0", "--announce"]
+            vec![
+                "web",
+                "--no-project",
+                "--no-open",
+                "--port",
+                "0",
+                "--announce"
+            ]
         );
         assert!(
-            !args.iter().any(|a| a == "--workspace-root" || a == "--init"),
+            !args
+                .iter()
+                .any(|a| a == "--workspace-root" || a == "--init"),
             "no project means no workspace to name and none to initialise: {args:?}"
         );
     }

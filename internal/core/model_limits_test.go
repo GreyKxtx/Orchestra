@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,13 +17,19 @@ import (
 // and a project whose endpoint was down — or on a VPN that was not up —
 // took the full eight seconds to open, every time, showing nothing.
 func TestNew_DoesNotWaitForModelLimitDiscovery(t *testing.T) {
+	// The server answers only when the test says so. Timing New with a clock
+	// failed on loaded CI runners — New alone took 3 to 25 seconds there while
+	// the server under test was idle — so the proof is an ordering instead: New
+	// returns while the server's request is still unanswered and not given up.
+	release := make(chan struct{})
 	answered := make(chan struct{}, 1)
+	abandoned := make(chan struct{})
+	var abandonOnce sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Slow, the way a server behind a dead route is slow — but it does
-		// answer, so the test can also check the answer lands.
 		select {
-		case <-time.After(1500 * time.Millisecond):
+		case <-release:
 		case <-r.Context().Done():
+			abandonOnce.Do(func() { close(abandoned) })
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -33,6 +40,8 @@ func TestNew_DoesNotWaitForModelLimitDiscovery(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 
 	root := t.TempDir()
 	cfg := config.DefaultConfig(root)
@@ -43,23 +52,42 @@ func TestNew_DoesNotWaitForModelLimitDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	started := time.Now()
-	c, err := New(root, Options{})
-	if err != nil {
-		t.Fatal(err)
+	type made struct {
+		c   *Core
+		err error
+	}
+	done := make(chan made, 1)
+	go func() {
+		c, err := New(root, Options{})
+		done <- made{c, err}
+	}()
+	var c *Core
+	select {
+	case m := <-done:
+		if m.err != nil {
+			t.Fatal(m.err)
+		}
+		c = m.c
+	case <-time.After(2 * time.Minute):
+		t.Fatal("New waited on an LLM server that had not answered")
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	if took := time.Since(started); took > time.Second {
-		t.Fatalf("New waited on the LLM server: %v", took)
+	// A New that asked with a timeout has cancelled the request by now; the
+	// handler sees that a moment later.
+	select {
+	case <-abandoned:
+		t.Fatal("New waited on the LLM server until its request gave up")
+	case <-time.After(300 * time.Millisecond):
 	}
+	releaseOnce.Do(func() { close(release) })
 
 	// The answer arrives later and is applied where every RPC passes through.
 	select {
 	case <-answered:
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("the server was never asked")
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		c.applyDiscoveredModelLimits()
 		c.cfgMu.RLock()

@@ -294,6 +294,13 @@ func convertLSPConfig(c config.LSPConfig) lsp.LSPConfig {
 }
 
 func mergeLSPConfig(workspaceRoot string, c config.LSPConfig) lsp.LSPConfig {
+	// ORCHESTRA_LSP_AUTO_INSTALL overrides lsp.auto_install for the whole
+	// process, the way ORCHESTRA_LSP_CACHE moves the install directory: a CI
+	// runner or an offline machine has no business downloading language
+	// servers because a workspace holds a .go or .yml file.
+	if v := strings.TrimSpace(os.Getenv("ORCHESTRA_LSP_AUTO_INSTALL")); v != "" {
+		c.AutoInstall = v
+	}
 	base := convertLSPConfig(c)
 	if c.Enabled != nil && !*c.Enabled {
 		base.Servers = nil

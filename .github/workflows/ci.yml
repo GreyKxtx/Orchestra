@@ -10,6 +10,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Unit tests must not download language servers: each test workspace
+      # with a .go or .yml file started go install / npm install in the
+      # shared ~/.orchestra/lsp, in parallel, and timed tests failed under
+      # that load. Tests that read gopls's answers skip without it.
+      ORCHESTRA_LSP_AUTO_INSTALL: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -36,6 +42,12 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
+    env:
+      # Unit tests must not download language servers: each test workspace
+      # with a .go or .yml file started go install / npm install in the
+      # shared ~/.orchestra/lsp, in parallel, and timed tests failed under
+      # that load. Tests that read gopls's answers skip without it.
+      ORCHESTRA_LSP_AUTO_INSTALL: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v6

@@ -32,6 +32,7 @@ func readFixture(t *testing.T, root, rel string) string {
 // An outline that omits a symbol is worse than no outline: the model treats
 // the list as complete and concludes the symbol is not there.
 func TestModelView_SymbolsListsEveryDeclarationInTheFile(t *testing.T) {
+	requireGoLanguageServer(t)
 	r, _ := modelViewWorkspace(t)
 
 	out := mustCall(t, r, "symbols", map[string]any{"path": "item.go"})
