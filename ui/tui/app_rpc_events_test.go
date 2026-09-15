@@ -228,6 +228,36 @@ func TestPendingOps_AppliedShowsNoticeWithoutReview(t *testing.T) {
 	}
 }
 
+// A turn that applies writes to disk as it goes; its diff is for reading and
+// reverting, not for applying. The chat still labelled it "⏵ 1 pending ·
+// [d]iff · [x]discard" (seen in the TUI after the 27B fixed cart.go): nothing
+// was pending, and x there reverts the file under the cursor or does nothing
+// — there is no batch to discard.
+func TestPendingOps_AppliedDiffIsNotCalledPending(t *testing.T) {
+	a, _ := startedTurnApp(t)
+
+	a.handleRPCEvent(rpcclient.Event{
+		Kind: rpcclient.EventPendingOps,
+		PendingOps: &rpcclient.PendingOpsPayload{
+			Applied: true,
+			Ops:     []map[string]any{{"op": "file.write_atomic", "path": "cart.go"}},
+			Diff:    []rpcclient.FileDiff{{Path: "cart.go", Before: "sum += it.Cents\n", After: "sum += it.Cents * it.Qty\n"}},
+		},
+	})
+	a.syncActionBar()
+	a.chat.SetMessages(a.session.Messages)
+
+	plain := stripANSIForTest(a.chat.View())
+	if !strings.Contains(plain, "cart.go") {
+		t.Fatalf("the applied diff must still be shown: %s", plain)
+	}
+	for _, wrong := range []string{"pending", "discard"} {
+		if strings.Contains(plain, wrong) {
+			t.Errorf("changes already on disk are labelled %q: %s", wrong, plain)
+		}
+	}
+}
+
 func TestDiffReviewApply_FullFlowThroughCore(t *testing.T) {
 	a, f := startedTurnApp(t)
 	// End the turn so review hotkeys are active.

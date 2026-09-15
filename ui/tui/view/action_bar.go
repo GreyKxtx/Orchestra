@@ -16,8 +16,12 @@ type ActionBarState struct {
 
 // RenderActionBar draws the OpenCode-style inline bar:
 // ⏵ N pending ops · [a]pply · [d]iff · [x]discard
+//
+// Only for ops awaiting apply. A diff a turn has already written is not
+// pending and has no batch to discard; its own header carries the per-file
+// keys.
 func RenderActionBar(st ActionBarState, width int) string {
-	if st.OpCount <= 0 && st.FileCount <= 0 {
+	if !st.Review || (st.OpCount <= 0 && st.FileCount <= 0) {
 		return ""
 	}
 	t := ThemeForApp()
@@ -34,13 +38,9 @@ func RenderActionBar(st ActionBarState, width int) string {
 		label = fmt.Sprintf("⏵ %d ops · %d files", st.OpCount, st.FileCount)
 	}
 
-	var hints string
-	if st.Review && st.Expanded {
+	hints := key.Render("[a]") + "pply · " + key.Render("[d]") + "iff · " + key.Render("[x]") + "discard"
+	if st.Expanded {
 		hints = key.Render("[a]") + " accept · " + key.Render("[x]") + " reject · Enter apply · " + key.Render("[d]") + " collapse"
-	} else if st.Review {
-		hints = key.Render("[a]") + "pply · " + key.Render("[d]") + "iff · " + key.Render("[x]") + "discard"
-	} else {
-		hints = key.Render("[d]") + "iff · " + key.Render("[x]") + "discard"
 	}
 
 	line := accent.Render(label) + muted.Render(" · ") + muted.Render(hints)

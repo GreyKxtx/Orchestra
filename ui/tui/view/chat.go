@@ -72,7 +72,7 @@ func (c *Chat) SetDiffReviewCursor(idx int) { c.diffReviewCursor = idx }
 // SetActionBar configures the inline pending-ops bar appended after the newest diff.
 func (c *Chat) SetActionBar(st ActionBarState) {
 	c.actionBar = st
-	c.showActionBar = st.OpCount > 0 || st.FileCount > 0
+	c.showActionBar = st.Review && (st.OpCount > 0 || st.FileCount > 0)
 }
 
 // (▣ <mode> · <model>) and the user-message ┃ accent stay in sync with
