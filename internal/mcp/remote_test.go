@@ -27,7 +27,8 @@ func startTestMCPServer(t *testing.T) (endpoint string, authHeader func() string
 	t.Helper()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "test-server", Version: "1.0.0"}, nil)
 
-	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "echo", Description: "Echo the text back"},
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "echo", Description: "Echo the text back",
+		Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: true}},
 		func(_ context.Context, _ *mcpsdk.CallToolRequest, in echoInput) (*mcpsdk.CallToolResult, any, error) {
 			return &mcpsdk.CallToolResult{
 				Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "echo:" + in.Text}},

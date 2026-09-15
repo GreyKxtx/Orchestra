@@ -165,7 +165,9 @@ func (c *RemoteClient) refreshTools(ctx context.Context) error {
 				schema = raw
 			}
 		}
-		tools = append(tools, MCPTool{Name: t.Name, Description: t.Description, InputSchema: schema})
+		tool := MCPTool{Name: t.Name, Description: t.Description, InputSchema: schema}
+		tool.Annotations.ReadOnlyHint = t.Annotations != nil && t.Annotations.ReadOnlyHint
+		tools = append(tools, tool)
 	}
 	c.mu.Lock()
 	c.tools = tools

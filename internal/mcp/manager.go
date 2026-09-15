@@ -222,6 +222,10 @@ func (m *Manager) ListToolDefs() []llm.ToolDef {
 					Description: t.Description,
 					Parameters:  schema,
 				},
+				// A server tool runs for real — outside the staging overlay, in
+				// a preview turn too — unless its server says it only reads.
+				// The agent asks the user before each call of a Mutating one.
+				Mutating: !t.Annotations.ReadOnlyHint,
 			})
 		}
 	}

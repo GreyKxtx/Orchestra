@@ -173,6 +173,8 @@
 
 Тулы внешних MCP-серверов из `mcp:` в `.orchestra.yml` подключаются под именами `mcp:<server>:<tool>`. Перечень — `orchestra mcp list-tools`.
 
+MCP-тул исполняется по-настоящему, мимо staging-оверлея. Тул, который сервер не пометил `readOnlyHint: true`, спрашивает разрешение пользователя на каждый вызов (`permission/request`, `kind: "mcp.tool"`); без интерфейса вызов отклоняется, если его не разрешает правило в `permissions.rules` (например `{tool: "mcp:fs:*", action: allow}`). Режимы без свободной записи (`ask`, `plan`, `explore`, `architecture`, `verifier`, `product`, `documentation`) получают только читающие MCP-тулы.
+
 ---
 
 ## Конфигурация и роадмапы

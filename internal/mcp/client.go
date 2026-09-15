@@ -27,6 +27,16 @@ type MCPTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema"`
+	Annotations ToolAnnotations `json:"annotations"`
+}
+
+// ToolAnnotations are the hints a server attaches to a tool. Only the one
+// Orchestra acts on is decoded.
+type ToolAnnotations struct {
+	// ReadOnlyHint is the server's word that the tool changes nothing. It is
+	// the only thing that lets a call through without the user's consent, so
+	// absent means false, as the spec's default does.
+	ReadOnlyHint bool `json:"readOnlyHint"`
 }
 
 type rpcRequest struct {

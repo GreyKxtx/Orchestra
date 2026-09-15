@@ -593,6 +593,9 @@ type Agent struct {
 	// code changes" reminder; the query-word heuristic behind it is not sure
 	// enough to refuse a second time.
 	codeChangeReminded bool
+	// mcpAlwaysAllowed holds the MCP tools the user answered "always" for;
+	// later calls of the same tool in this agent's life do not ask again.
+	mcpAlwaysAllowed map[string]bool
 
 	// exploreFirstSatisfied is set after read/grep/explore (explore-first gate).
 	exploreFirstSatisfied bool

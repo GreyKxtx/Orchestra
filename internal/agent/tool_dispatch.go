@@ -73,7 +73,7 @@ func (a *Agent) batchNeedsSerialGates(calls []ToolCall) bool {
 				return true
 			}
 		}
-		if (isWebTool(name) && !a.opts.AllowWeb) || a.browserCallRefusal(name) != nil {
+		if (isWebTool(name) && !a.opts.AllowWeb) || a.browserCallRefusal(name) != nil || a.mcpCallNeedsConsent(name) {
 			return true
 		}
 	}
@@ -154,7 +154,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if toolCallID == "" {
 		toolCallID = fmt.Sprintf("call_%d_%d", steps, time.Now().UnixNano())
 	}
-	if refusal := a.browserCallRefusal(name); refusal != nil {
+	refusal := a.browserCallRefusal(name)
+	if refusal == nil {
+		refusal = a.mcpModeRefusal(name)
+	}
+	if refusal != nil {
 		toolResult := a.deniedToolResult(name, tc.Input, refusal.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
 		if cbErr := cb.RecordDenied(name); cbErr != nil {
@@ -173,6 +177,8 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 	effectiveAllowExec := a.opts.AllowExec
 	effectiveAllowWeb := a.opts.AllowWeb
+	// A rule that allows the call, or asks and gets a yes, is the MCP consent.
+	mcpConsented := false
 	if len(a.opts.PermissionRules) > 0 {
 		subject := subjectForTool(name, tc.Input)
 		if act, matched := checkPermissions(a.opts.PermissionRules, name, subject); matched {
@@ -191,6 +197,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 			case "allow":
 				effectiveAllowExec = true
 				effectiveAllowWeb = true
+				mcpConsented = true
 			case "ask":
 				approved, permErr := a.requestInteractivePermission(ctx, name, subject, tc.Input)
 				if permErr != nil || !approved {
@@ -209,7 +216,19 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 					}
 					return serialToolOutcome{}, nil
 				}
+				mcpConsented = true
 			}
+		}
+	}
+
+	if !mcpConsented && a.mcpCallNeedsConsent(name) {
+		if approved, reason := a.requestMCPConsent(ctx, name, string(tc.Input)); !approved {
+			toolResult := a.deniedToolResult(name, tc.Input, reason)
+			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+			if cbErr := cb.RecordDenied(name); cbErr != nil {
+				return serialToolOutcome{}, cbErr
+			}
+			return serialToolOutcome{}, nil
 		}
 	}
 

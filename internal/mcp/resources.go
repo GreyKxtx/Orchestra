@@ -173,6 +173,9 @@ func (m *Manager) resourceToolDefs(c ServerClient) []llm.ToolDef {
 				Description: "List the context resources offered by the " + server + " MCP server (uri, name, description). Reading a resource has no side effects.",
 				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 			},
+			// resources/list and resources/read are reads by the protocol's
+			// definition, so these two never need the user's consent.
+			Mutating: false,
 		})
 	}
 	if !taken[resourceReadTool] {

@@ -1173,7 +1173,9 @@ Params:
 {"tool": "bash", "description": "go test ./...", "reason": "to verify the fix"}
 ```
 
-Optional `kind` names the consent flow so a client can render it differently: absent/`"exec"` (shell), `"lsp.install"`, `"lesson_rule"`, and the two MCP kinds below.
+Optional `kind` names the consent flow so a client can render it differently: absent/`"exec"` (shell), `"lsp.install"`, `"lesson_rule"`, `"mcp.tool"`, and the two MCP kinds below.
+
+**MCP tool calls.** An MCP server tool runs for real, outside the staging overlay, so in a turn that does not apply changes too. Unless its server marks it `annotations.readOnlyHint: true`, the agent sends `permission/request` before **each** call, with `tool` set to `mcp:<server>:<tool>`, `kind: "mcp.tool"`, and `description` holding the call's arguments (clipped). A matching `permissions.rules` entry decides instead (`allow` runs it unasked, `deny` refuses, `ask` asks). With no client to ask, the call is refused. Modes that only read (`ask`, `plan`, `explore`, `architecture`, `verifier`, `product`, `documentation`) are offered only the read-only MCP tools, and refuse a call to any other without asking.
 
 Expected response (`result`):
 
@@ -1181,7 +1183,7 @@ Expected response (`result`):
 {"approved": true, "reason": "ok"}
 ```
 
-`always: true` in the response means "approve, and stop asking": for `lsp.install` the client persists `lsp.auto_install`; for the MCP kinds the core remembers the (server, kind) pair for the rest of the process.
+`always: true` in the response means "approve, and stop asking": for `lsp.install` the client persists `lsp.auto_install`; for `mcp.sampling` / `mcp.elicitation` the core remembers the (server, kind) pair for the rest of the process; for `mcp.tool` the agent stops asking about that tool for the rest of the turn.
 
 If no client request handler is registered (`Client.SetRequestHandler` not called), the client returns method-not-found and the server falls back to the static permission gate (config `exec.confirm` / `--allow-exec`).
 

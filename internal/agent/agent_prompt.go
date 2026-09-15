@@ -48,7 +48,13 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		}
 	}
 	if len(a.opts.ExtraTools) > 0 {
-		base = append(base, a.opts.ExtraTools...)
+		extra := a.opts.ExtraTools
+		// CustomTools is a list someone wrote for this agent, MCP included on
+		// purpose; a built-in mode that only reads gets the read-only MCP tools.
+		if len(a.opts.CustomTools) == 0 && !modeOffersWritingMCPTools(a.opts.Mode) {
+			extra = withoutWritingMCPTools(extra)
+		}
+		base = append(base, extra...)
 	}
 	// task_result is how a CHILD reports back, and a main agent's task_result
 	// is refused on purpose (see Options.IsChild). Modes that can run either

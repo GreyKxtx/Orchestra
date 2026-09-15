@@ -83,6 +83,7 @@ func runFakeMCPServer() {
 							"name":        "cwd",
 							"description": "Reports the server process's working directory",
 							"inputSchema": map[string]any{"type": "object"},
+							"annotations": map[string]any{"readOnlyHint": true},
 						},
 						map[string]any{
 							"name":        "exit",
