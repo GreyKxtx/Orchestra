@@ -43,6 +43,15 @@ func (a *App) padChat(content string) string {
 // between dialog overlay, onboarding wizard, welcome layout, and the main
 // chat layout (chat scroll + action bar + palettes + input + status bar).
 func (a *App) View() string {
+	// Text from the workspace keeps its CRLF (a diff's Before is written back
+	// byte for byte on revert), and a \r that reaches the terminal returns the
+	// cursor to the start of the row, where the padding after it blanks the
+	// line. lipgloss folds a bare "\r\n" but not one split by a style reset, so
+	// the frame is cleaned here, once, for every source.
+	return strings.ReplaceAll(a.render(), "\r", "")
+}
+
+func (a *App) render() string {
 	if a.width == 0 || a.height == 0 {
 		return ""
 	}

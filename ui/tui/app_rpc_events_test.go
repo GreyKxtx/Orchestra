@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 )
@@ -256,6 +259,46 @@ func TestPendingOps_AppliedDiffIsNotCalledPending(t *testing.T) {
 		if strings.Contains(plain, wrong) {
 			t.Errorf("changes already on disk are labelled %q: %s", wrong, plain)
 		}
+	}
+}
+
+// A file checked out with CRLF (core.autocrlf on Windows) reaches the diff
+// with a \r ending every line. Written to the terminal, the \r returns the
+// cursor to the start of the row and the padding after it blanks the line:
+// the 27B's fix to cart.go rendered as "── cart.go ── +1 −1" over eight empty
+// rows. The data keeps its \r — a revert writes Before back byte for byte —
+// and the frame does not carry it.
+//
+// Tests render without colour, and lipgloss folds a bare "\r\n" into "\n" —
+// the \r survives only when a style's reset sequence sits between the two, as
+// it does in a real terminal. So the test renders in colour.
+func TestView_CRLFContentDoesNotBlankItsRows(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	a, _ := startedTurnApp(t)
+	a.handleRPCEvent(rpcclient.Event{
+		Kind: rpcclient.EventPendingOps,
+		PendingOps: &rpcclient.PendingOpsPayload{
+			Applied: true,
+			Ops:     []map[string]any{{"op": "file.write_atomic", "path": "cart.go"}},
+			Diff: []rpcclient.FileDiff{{Path: "cart.go",
+				Before: "func Total() {\r\n\tsum += it.Cents\r\n}\r\n",
+				After:  "func Total() {\r\n\tsum += it.Cents * it.Qty\r\n}\r\n"}},
+		},
+	})
+	a.handleRPCEvent(rpcclient.Event{Kind: rpcclient.EventAgentRunCompleted})
+
+	frame := a.View()
+	if strings.Contains(frame, "\r") {
+		t.Errorf("the frame carries a carriage return: %q", frame)
+	}
+	if !strings.Contains(stripANSIForTest(frame), "it.Cents * it.Qty") {
+		t.Errorf("the changed line is not on screen: %s", stripANSIForTest(frame))
+	}
+	if d := a.session.Messages[a.session.LastDiffIndex()].DiffFiles[0]; !strings.Contains(d.Before, "\r\n") {
+		t.Errorf("the diff data lost its CRLF, a revert would rewrite the file's endings: %q", d.Before)
 	}
 }
 
