@@ -110,10 +110,10 @@ func TestAgent_RefusesBrowserToolsARunWasNotGiven(t *testing.T) {
 
 // The parallel batch takes a call only when its offered definition is marked
 // ParallelSafe. Today that happens for browser.snapshot only through mode
-// lists, which carry browser tools only with allow_browser — so the batch's
-// own refusal is a backstop, and this test builds the definitions a future
-// tool source could hand the agent. Without the backstop it fails (checked by
-// disabling it).
+// lists, which carry browser tools only with allow_browser — so this test
+// builds the definitions a future tool source could hand the agent. Such a
+// batch goes to the serial path (batchNeedsSerialGates); the batch's own
+// refusal is the backstop behind that.
 func TestAgent_RefusesBrowserToolsInAParallelBatchToo(t *testing.T) {
 	v, err := schema.NewValidator()
 	if err != nil {

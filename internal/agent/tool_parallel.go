@@ -135,7 +135,8 @@ const parallelBatchWorkerLimit = 16
 // Only ParallelSafe tools reach this path вЂ” see NormalizeLLMWithDefs. The
 // rich per-tool serial pipeline (exec consent, plan-mode write guard, todo
 // dispatcher, вЂ¦) is therefore not exercised here; we go straight through
-// PreTool hook + audit log + a.tools.Call.
+// PreTool hook + audit log + a.tools.Call. A batch that needs one of those
+// gates never gets here: see batchNeedsSerialGates.
 //
 // Hook safety: PreTool hooks run SERIALLY before the parallel fan-out. Most
 // real-world hooks aren't thread-safe (they append to log files, mutate
@@ -175,10 +176,10 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	// its input, so the model does not read the result as an answer to the
 	// arguments it actually sent.
 	rewrote := make([]string, len(calls))
-	// A backstop: a browser call reaches this batch only through an offered
-	// ParallelSafe definition, and mode lists offer browser tools only with
-	// AllowBrowser. Any other source of such definitions would bypass the
-	// serial path's refusal, so the batch refuses too.
+	// A backstop: Run sends a batch with any gated call — a permission rule, a
+	// web or browser tool without consent — to the serial path
+	// (batchNeedsSerialGates). A browser refusal here still holds for a caller
+	// that skips that check.
 	for i, call := range calls {
 		if refusal := a.browserCallRefusal(normalizeToolName(call.Name)); refusal != nil {
 			denied[i] = true

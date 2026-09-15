@@ -54,6 +54,32 @@ func (a *Agent) resolveToolCalls(step *Step, llmResp *llm.CompleteResponse) []To
 	return nil
 }
 
+// isWebTool is a tool that reaches the network on the model's behalf and needs
+// web consent: webfetch sends the URL, websearch sends the query.
+func isWebTool(name string) bool {
+	return name == "webfetch" || name == "websearch"
+}
+
+// batchNeedsSerialGates reports whether a call in the batch has a gate that
+// only the serial path applies: a permission rule matching it, or a web or
+// browser tool this run has no consent for. The parallel batch checks none of
+// these, so two reads a deny rule covers, or two web calls in a mode that lists
+// them without consent (product), ran unchecked. Such a batch runs serially.
+func (a *Agent) batchNeedsSerialGates(calls []ToolCall) bool {
+	for _, c := range calls {
+		name := normalizeToolName(c.Name)
+		if len(a.opts.PermissionRules) > 0 {
+			if _, matched := checkPermissions(a.opts.PermissionRules, name, subjectForTool(name, c.Input)); matched {
+				return true
+			}
+		}
+		if (isWebTool(name) && !a.opts.AllowWeb) || a.browserCallRefusal(name) != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // allParallelSafeCalls reports whether every call may run via runParallelToolBatch.
 // In-process agent tools are never parallel-safe even when the registry marks
 // them ParallelSafe (e.g. todoread).
@@ -239,8 +265,8 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 	}
 
-	if name == "webfetch" && !effectiveAllowWeb {
-		toolResult := a.deniedToolResult(name, tc.Input, "webfetch requires user consent (use --allow-web)")
+	if isWebTool(name) && !effectiveAllowWeb {
+		toolResult := a.deniedToolResult(name, tc.Input, name+" requires user consent (use --allow-web, or web.confirm: false)")
 		*history = append(*history, llm.Message{
 			Role:       llm.RoleTool,
 			ToolCallID: toolCallID,

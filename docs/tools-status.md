@@ -67,8 +67,13 @@
 | `bash` | `exec.run` | ✅ | Shell-команда, timeout + output cap; требует `--allow-exec`. С `run_in_background: true` — возвращает `bg_id` сразу |
 | `bash.output` | — | ✅ | Новый stdout/stderr с прошлого опроса + статус/exit code для bg-процесса; `peek: true` без сдвига курсора |
 | `bash.kill` | — | ✅ | Терминирует bg-процесс |
-| `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита; требует `--allow-web` |
-| `websearch` | `web.search` | ✅ | Поиск через Tavily / Brave (provider в `.orchestra.yml`); требует `--allow-web` |
+| `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита; требует `--allow-web` (в `core` — `web.confirm: false`) |
+| `websearch` | `web.search` | ✅ | Поиск через Tavily / Brave (provider в `.orchestra.yml`); требует `--allow-web` (в `core` — `web.confirm: false`) |
+
+Согласие на веб проверяется при каждом вызове — и в последовательном пути, и когда модель
+зовёт несколько инструментов за шаг: пакет, где хоть одному вызову нужна проверка (правило
+`permissions.rules`, веб или браузер без согласия), идёт последовательно. `tool.call` держит
+`webfetch`/`websearch` за `web.confirm`, как `bash` за `exec.confirm`.
 | `memory_write` | `memory.write` | ✅ | `scope=project` → `.orchestra/memory/agent.md`; `session` → session file; `<dept>` → `.orchestra/memory/lessons/<dept>.md` (400 chars, 3/run) |
 | `memory_read` | `memory.read` | ✅ | Слои: `orchestra`, `session`, `repo`, `lessons`, `global`, `all`; без args — список источников |
 | `memory_search` | `memory.search` | ✅ | Substring-поиск по agent/session/global/ORCHESTRA + dept lessons |

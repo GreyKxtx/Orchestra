@@ -231,6 +231,9 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	if c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
 		allowExec = true
 	}
+	// web.confirm: false is the only web consent core has; the turn, its
+	// skills and its subagents all take it from here.
+	allowWeb := c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm
 
 	var agentLogger *llm.Logger
 	if c.llmClient != nil {
@@ -348,6 +351,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		Apply:                spec.Apply,
 		Backup:               spec.Backup,
 		AllowExec:            allowExec,
+		AllowWeb:             allowWeb,
 		AllowBrowser:         allowBrowser,
 		ExecAllow:            c.cfg.Exec.Allow,
 		ExecDeny:             c.cfg.Exec.Deny,
@@ -380,7 +384,6 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	if skillsAllowedInMode(effectiveMode) {
 		if discovered, err := skills.DiscoverCached(c.workspaceRoot); err == nil && len(discovered) > 0 {
 			refs, _ := skills.DiscoverRefs(c.workspaceRoot)
-			allowWeb := c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm
 			opts.Skills = skillrun.Specs(discovered)
 			opts.SkillRunner = skillrun.New(
 				c.cfg, discovered, refs, customOpts.llmClient, c.validator, c.tools, agentLogger,

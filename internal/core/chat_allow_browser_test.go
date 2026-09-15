@@ -42,10 +42,25 @@ func (l *toolListLLM) offersBrowser() bool {
 	return false
 }
 
-func newChatCore(t *testing.T, client llm.Client) *Core {
+func (l *toolListLLM) offers(name string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, n := range l.names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+func newChatCore(t *testing.T, client llm.Client, edit ...func(*config.ProjectConfig)) *Core {
 	t.Helper()
 	root := t.TempDir()
-	if err := config.Save(filepath.Join(root, ".orchestra.yml"), config.DefaultConfig(root)); err != nil {
+	cfg := config.DefaultConfig(root)
+	for _, e := range edit {
+		e(cfg)
+	}
+	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
 		t.Fatal(err)
 	}
 	c, err := New(root, Options{LLMClient: client})
@@ -85,6 +100,27 @@ func TestChat_OffersTheBrowserOnlyToTurnsGivenAllowBrowser(t *testing.T) {
 		}
 		if got := client.offersBrowser(); got != allow {
 			t.Errorf("session.message allow_browser=%v: browser tools offered = %v", allow, got)
+		}
+	}
+}
+
+// web.confirm: false is the config's consent to webfetch and websearch. Core
+// passed it to subagents and skills and never to the turn itself, so a chat
+// turn — what VS Code, the TUI and the web UI run — had no web tools at all.
+func TestChat_WebConfirmFalseGivesTheTurnWebTools(t *testing.T) {
+	for _, consent := range []bool{false, true} {
+		client := &toolListLLM{}
+		c := newChatCore(t, client, func(cfg *config.ProjectConfig) {
+			confirm := !consent
+			cfg.Web.Confirm = &confirm
+		})
+		if _, err := c.AgentRun(context.Background(), AgentRunParams{Query: "look it up", Mode: "build"}); err != nil {
+			t.Fatalf("web.confirm=%v: %v", !consent, err)
+		}
+		for _, tool := range []string{"webfetch", "websearch"} {
+			if got := client.offers(tool); got != consent {
+				t.Errorf("web.confirm=%v: %s offered = %v", !consent, tool, got)
+			}
 		}
 	}
 }

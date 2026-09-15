@@ -356,11 +356,20 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 		}
 	}
 
+	// Web tools reach the network on the caller's behalf, held to web.confirm
+	// the way bash is held to exec.confirm.
+	if (canonicalName == "webfetch" || canonicalName == "websearch") && c.cfg != nil &&
+		(c.cfg.Web.Confirm == nil || *c.cfg.Web.Confirm) {
+		return nil, protocol.NewError(protocol.ExecDenied,
+			canonicalName+" requires user consent (set web.confirm: false in .orchestra.yml)",
+			map[string]any{"tool": params.Name})
+	}
+
 	// tool.call carries no allow_browser and belongs to no run whose consent
 	// could be checked, so the browser stays with agent runs given it.
 	if strings.HasPrefix(canonicalName, "browser.") {
 		return nil, protocol.NewError(protocol.ExecDenied,
-			"browser tools are not available through tool.call: they run inside skill.invoke or workflow.run with allow_browser: true",
+			"browser tools are not available through tool.call: they run inside agent.run, session.message, skill.invoke or workflow.run with allow_browser: true",
 			map[string]any{"tool": params.Name})
 	}
 

@@ -53,3 +53,35 @@ func TestCore_ToolCallRefusesBrowserTools(t *testing.T) {
 		t.Errorf("the refusal does not say where browser tools are available: %v", err)
 	}
 }
+
+// tool.call held bash to exec.confirm and let webfetch and websearch through
+// with no check, so any connected client could reach the network where the
+// config had not consented to it.
+func TestCore_ToolCallHoldsWebToolsToWebConfirm(t *testing.T) {
+	for _, consent := range []bool{false, true} {
+		root := t.TempDir()
+		cfg := config.DefaultConfig(root)
+		confirm := !consent
+		cfg.Web.Confirm = &confirm
+		if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
+			t.Fatal(err)
+		}
+		c, err := New(root, Options{ToolsOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, input := range map[string]string{
+			// Loopback: the fetcher's SSRF dialer refuses it, so an allowed call
+			// fails without touching the network.
+			"webfetch":  `{"url":"http://127.0.0.1:1/"}`,
+			"websearch": `{"query":"orchestra"}`,
+		} {
+			_, err := c.ToolCall(context.Background(), ToolCallParams{Name: name, Input: json.RawMessage(input)})
+			refused := err != nil && strings.Contains(err.Error(), "consent")
+			if refused == consent {
+				t.Errorf("web.confirm=%v: %s refused for consent = %v (err: %v)", confirm, name, refused, err)
+			}
+		}
+		_ = c.Close()
+	}
+}

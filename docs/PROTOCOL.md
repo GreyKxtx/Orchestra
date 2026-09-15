@@ -602,6 +602,10 @@ Response `result` — JSON-объект/массив (ответ инструм�
 запусков, получивших `allow_browser: true` (`agent.run`, `session.message`, `skill.invoke`,
 `workflow.run`).
 
+`webfetch` и `websearch` через `tool.call` выполняются только при `web.confirm: false`, иначе
+ответ `ExecDenied` — так же, как `bash` при `exec.confirm`. Тот же `web.confirm: false` даёт
+веб-инструменты ходам `agent.run` и `session.message`, их подагентам и skills.
+
 ## Методы сессий
 
 Сессия инкапсулирует multi-turn диалог. С **ProtocolVersion 6** состояние персистится в `.orchestra/sessions/<id>.json` (schema **v2**): `history` (LLM-память), `ui_messages` (TUI projection), `pending_ops`, `todos`, `plan_path`.

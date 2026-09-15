@@ -326,7 +326,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			}
 
 			toolDefs := a.buildToolDefs()
-			if len(calls) >= 2 && allParallelSafeCalls(calls, toolDefs) {
+			if len(calls) >= 2 && allParallelSafeCalls(calls, toolDefs) && !a.batchNeedsSerialGates(calls) {
 				var cbErr *protocol.Error
 				history, cbErr = a.runParallelToolBatch(ctx, cb, history, calls, llmResp, steps)
 				if cbErr != nil {
