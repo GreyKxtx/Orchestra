@@ -44,7 +44,7 @@ General · **Providers** (provider catalog + API models, vision toggle) · Index
 - **Orchestra: Settings**
 - **Orchestra: Ping Core**
 
-**Protocol v19** — see `docs/PROTOCOL.md`. Handshake: `protocol_version=19`, `ops_version=1`, `tools_version=14`. `orchestra version` prints all three.
+**Protocol v19** — see `docs/PROTOCOL.md`. Handshake: `protocol_version=19`, `ops_version=1`, `tools_version=15`. `orchestra version` prints all three.
 
 **Browser.** The access menu has a «Браузер» switch: turns sent while it is on get `allow_browser` and the agent may drive a Playwright browser (Node.js and `npx` required; no effect under the Fast profile). The switch is remembered per chat view.
 

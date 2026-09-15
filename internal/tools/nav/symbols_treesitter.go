@@ -11,8 +11,6 @@ import (
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/golang"
-
-	"github.com/orchestra/orchestra/patch/ops"
 )
 
 func goSymbolsViaTreeSitter(ctx context.Context, src []byte) ([]Symbol, bool) {
@@ -47,7 +45,7 @@ func goSymbolsViaTreeSitter(ctx context.Context, src []byte) ([]Symbol, bool) {
 			if nameNode != nil {
 				name := strings.TrimSpace(nameNode.Content(src))
 				if name != "" {
-					out = append(out, Symbol{Name: name, Kind: "function", Range: rangeFromNode(n)})
+					out = append(out, symbolFromNode(name, "function", n))
 				}
 			}
 
@@ -59,7 +57,7 @@ func goSymbolsViaTreeSitter(ctx context.Context, src []byte) ([]Symbol, bool) {
 			if nameNode != nil {
 				name := strings.TrimSpace(nameNode.Content(src))
 				if name != "" {
-					out = append(out, Symbol{Name: name, Kind: "method", Range: rangeFromNode(n)})
+					out = append(out, symbolFromNode(name, "method", n))
 				}
 			}
 
@@ -71,7 +69,7 @@ func goSymbolsViaTreeSitter(ctx context.Context, src []byte) ([]Symbol, bool) {
 			if nameNode != nil {
 				name := strings.TrimSpace(nameNode.Content(src))
 				if name != "" {
-					out = append(out, Symbol{Name: name, Kind: "type", Range: rangeFromNode(n)})
+					out = append(out, symbolFromNode(name, "type", n))
 				}
 			}
 		}
@@ -85,15 +83,15 @@ func goSymbolsViaTreeSitter(ctx context.Context, src []byte) ([]Symbol, bool) {
 	return out, true
 }
 
-func rangeFromNode(n *sitter.Node) *ops.Range {
-	if n == nil {
-		return nil
-	}
+// symbolFromNode converts tree-sitter's 0-based points to the 1-based
+// positions Symbol carries.
+func symbolFromNode(name, kind string, n *sitter.Node) Symbol {
 	sp := n.StartPoint()
 	ep := n.EndPoint()
-	return &ops.Range{
-		Start: ops.Position{Line: int(sp.Row), Col: int(sp.Column)},
-		End:   ops.Position{Line: int(ep.Row), Col: int(ep.Column)},
+	return Symbol{
+		Name: name, Kind: kind,
+		StartLine: int(sp.Row) + 1, StartCol: int(sp.Column) + 1,
+		EndLine: int(ep.Row) + 1, EndCol: int(ep.Column) + 1,
 	}
 }
 

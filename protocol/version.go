@@ -70,7 +70,9 @@ const (
 	//      `memory_search` when embed.model is configured; explore-first spawn
 	//      policy for workers; single-approval playbook_promote; child_done
 	//      promote suggestion fields for UI.
-	ToolsVersion = 14
+	// v15: symbols answers start_line/start_col/end_line/end_col, 1-based like
+	//      read and the lsp.* tools, instead of a 0-based ops `range`.
+	ToolsVersion = 15
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

@@ -14,7 +14,7 @@ import (
 	"github.com/orchestra/orchestra/protocol"
 )
 
-func TestInitialize_ToolsVersion14Handshake(t *testing.T) {
+func TestInitialize_CurrentToolsVersionHandshake(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.DefaultConfig(root)
 	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
@@ -31,8 +31,8 @@ func TestInitialize_ToolsVersion14Handshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}
-	if protocol.ToolsVersion != 14 {
-		t.Fatalf("protocol.ToolsVersion = %d, want 14", protocol.ToolsVersion)
+	if protocol.ToolsVersion != 15 {
+		t.Fatalf("protocol.ToolsVersion = %d, want 15", protocol.ToolsVersion)
 	}
 
 	params, err := json.Marshal(InitializeParams{
@@ -40,17 +40,17 @@ func TestInitialize_ToolsVersion14Handshake(t *testing.T) {
 		ProjectID:       projectID,
 		ProtocolVersion: protocol.ProtocolVersion,
 		OpsVersion:      protocol.OpsVersion,
-		ToolsVersion:    14,
+		ToolsVersion:    protocol.ToolsVersion,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if _, err := h.Handle(context.Background(), "initialize", params); err != nil {
-		t.Fatalf("handshake with tools_version=14 failed: %v", err)
+		t.Fatalf("handshake with tools_version=%d failed: %v", protocol.ToolsVersion, err)
 	}
 }
 
-func TestInitialize_ToolsVersion13Mismatch(t *testing.T) {
+func TestInitialize_PreviousToolsVersionMismatch(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.DefaultConfig(root)
 	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
@@ -72,14 +72,14 @@ func TestInitialize_ToolsVersion13Mismatch(t *testing.T) {
 		ProjectID:       projectID,
 		ProtocolVersion: protocol.ProtocolVersion,
 		OpsVersion:      protocol.OpsVersion,
-		ToolsVersion:    13,
+		ToolsVersion:    protocol.ToolsVersion - 1,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	_, err = h.Handle(context.Background(), "initialize", params)
 	if err == nil {
-		t.Fatal("expected ProtocolMismatch for tools_version=13")
+		t.Fatalf("expected ProtocolMismatch for tools_version=%d", protocol.ToolsVersion-1)
 	}
 	pe, ok := protocol.AsError(err)
 	if !ok || pe.Code != protocol.ProtocolMismatch {

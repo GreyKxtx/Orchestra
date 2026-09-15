@@ -46,29 +46,17 @@ func TestModelView_SymbolsListsEveryDeclarationInTheFile(t *testing.T) {
 	}
 }
 
-// symbols hands the model ops.Range — the INTERNAL ops coordinate type, which
-// is 0-based by contract (docs/PROTOCOL.md, ops_version). Every other
-// model-facing view of a line is 1-based, and that is measured rather than
-// assumed: `read` prefixes each line "4: ", `explore` says "строки 4-7",
-// `grep` reports 1-based lines, and the LSP tools declare it outright in their
-// own schemas ("line": {"minimum": 1}) — see
-// TestModelView_LspPositionsAreOneBasedLikeReadAndUnlikeSymbols, which proves
-// hover answers for 1-based line 4 and not for 0-based line 3.
+// symbols handed the model ops.Range — the INTERNAL ops coordinate type, 0-based
+// by contract — while every other model-facing view of a line is 1-based:
+// `read` prefixes each line "4: ", `explore` says "строки 4-7", `grep` reports
+// 1-based lines, and the LSP tools take and return 1-based positions (see
+// TestModelView_LspPositionsAreOneBasedLikeRead). For `type Item struct` on the
+// fourth line of item.go, symbols said line 3 and read said line 4, and nothing
+// told the model which it was holding.
 //
-// Five model-facing views of a line; symbols is the only one counting from
-// zero, and the only one that documents nothing.
-//
-// So for `type Item struct` on the fourth line of item.go, symbols answers
-// line 3 and read answers line 4, and nothing in the tool's description tells
-// the model which it is holding. The model never emits internal ops — the
-// agent loop resolves external patches into them — so this is the one place
-// the strict format's convention reaches an audience that has no use for it.
-//
-// This test pins the current answer rather than asserting the one that would
-// be consistent: changing it is a tools contract change and belongs with a
-// ToolsVersion bump, not with a test. If it ever changes, this fails loudly
-// instead of quietly shifting every symbol in the model's view by one line.
-func TestModelView_SymbolsLineNumbersAreZeroBasedUnlikeEveryOtherTool(t *testing.T) {
+// ToolsVersion 15: symbols answers start_line/start_col/end_line/end_col, 1-based,
+// in the shape the LSP tools already use.
+func TestModelView_SymbolsLineNumbersMatchRead(t *testing.T) {
 	r, _ := modelViewWorkspace(t)
 
 	// item.go, 1-based:  1 package main | 2 blank | 3 comment | 4 type Item struct
@@ -79,11 +67,11 @@ func TestModelView_SymbolsLineNumbersAreZeroBasedUnlikeEveryOtherTool(t *testing
 	}
 
 	out := mustCall(t, r, "symbols", map[string]any{"path": "item.go"})
-	if !strings.Contains(out, `"line":3`) {
-		t.Errorf("symbols no longer answers 0-based for a declaration read calls line 4.\n"+
-			"If that was deliberate, this is the good change — make it everywhere, bump\n"+
-			"ToolsVersion and delete this test. If it was not, a model asking symbols\n"+
-			"where a symbol lives is now being told the wrong line:\n%s", out)
+	if !strings.Contains(out, `"start_line":4`) {
+		t.Errorf("symbols does not put Item on line 4, where read has it:\n%s", out)
+	}
+	if strings.Contains(out, `"range"`) {
+		t.Errorf("symbols still carries the 0-based ops range beside the 1-based lines:\n%s", out)
 	}
 }
 

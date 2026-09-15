@@ -85,10 +85,9 @@ func TestModelView_LspRenameProposesEditsAndTouchesNothing(t *testing.T) {
 
 // Every LSP tool takes 1-based line and col — the schemas say so outright
 // ("minimum": 1) — and answers in the same numbering. This is the check that
-// keeps TestModelView_SymbolsLineNumbersAreZeroBasedUnlikeEveryOtherTool
-// honest: it establishes what "every other tool" actually does rather than
-// assuming it.
-func TestModelView_LspPositionsAreOneBasedLikeReadAndUnlikeSymbols(t *testing.T) {
+// keeps TestModelView_SymbolsLineNumbersMatchRead honest: it establishes what
+// the other tools actually do rather than assuming it.
+func TestModelView_LspPositionsAreOneBasedLikeRead(t *testing.T) {
 	r, _ := modelViewWorkspace(t)
 
 	// 1-based line 4 is `func Add(a, b int) int`; 0-based it would be line 3.

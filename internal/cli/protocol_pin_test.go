@@ -39,3 +39,25 @@ func TestVSCodeExtensionPinsCurrentProtocolVersion(t *testing.T) {
 			rel, got, protocol.ProtocolVersion)
 	}
 }
+
+// The extension sends its TOOLS_VERSION in initialize, and core refuses a
+// mismatch — the same failure as the protocol pin above, for the other number.
+func TestVSCodeExtensionPinsCurrentToolsVersion(t *testing.T) {
+	rel := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
+	data, err := os.ReadFile(rel)
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	m := regexp.MustCompile(`TOOLS_VERSION\s*=\s*(\d+)`).FindSubmatch(data)
+	if m == nil {
+		t.Fatalf("%s: no TOOLS_VERSION assignment found", rel)
+	}
+	got, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		t.Fatalf("%s: TOOLS_VERSION is not a number: %v", rel, err)
+	}
+	if got != protocol.ToolsVersion {
+		t.Errorf("%s pins TOOLS_VERSION = %d, core is %d — initialize fails on "+
+			"mismatch, so these must move together", rel, got, protocol.ToolsVersion)
+	}
+}

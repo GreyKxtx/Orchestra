@@ -10,7 +10,7 @@ func ToolCodeSymbols() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "symbols",
-			Description: "Outline of a file's symbols. Resolution order: LSP document symbols → tree-sitter (Go, when built with CGO) → regex (Go). Non-Go files with no LSP return an empty list.",
+			Description: "Outline of a file's symbols with start_line/start_col/end_line/end_col, 1-based like read's line numbers. Resolution order: LSP document symbols → tree-sitter (Go, when built with CGO) → regex (Go). Non-Go files with no LSP return an empty list.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

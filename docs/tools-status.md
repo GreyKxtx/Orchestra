@@ -46,7 +46,7 @@
 | Имя | Внутреннее | Статус | Что делает |
 |-----|-----------|--------|------------|
 | `grep` | `search.text` | ✅ | Regex-поиск; авто-fallback на ripgrep если есть в PATH |
-| `symbols` | `code.symbols` | ✅ | Символы / outline файла |
+| `symbols` | `code.symbols` | ✅ | Символы / outline файла; позиции `start_line`/`start_col`/`end_line`/`end_col` с 1, как у `read` (ToolsVersion 15) |
 | `explore` | `explore_codebase` | ✅ | CKG: пакет / тип / символ — авто-выбор уровня по форме запроса |
 | `semantic_search` | — | ✅ | Cosine-поиск по эмбеддингам CKG-узлов; требует `embed.model` в config + `orchestra ckg embed` для индексации |
 
@@ -69,16 +69,16 @@
 | `bash.kill` | — | ✅ | Терминирует bg-процесс |
 | `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита; требует `--allow-web` (в `core` — `web.confirm: false`) |
 | `websearch` | `web.search` | ✅ | Поиск через Tavily / Brave (provider в `.orchestra.yml`); требует `--allow-web` (в `core` — `web.confirm: false`) |
-
-Согласие на веб проверяется при каждом вызове — и в последовательном пути, и когда модель
-зовёт несколько инструментов за шаг: пакет, где хоть одному вызову нужна проверка (правило
-`permissions.rules`, веб или браузер без согласия), идёт последовательно. `tool.call` держит
-`webfetch`/`websearch` за `web.confirm`, как `bash` за `exec.confirm`.
 | `memory_write` | `memory.write` | ✅ | `scope=project` → `.orchestra/memory/agent.md`; `session` → session file; `<dept>` → `.orchestra/memory/lessons/<dept>.md` (400 chars, 3/run) |
 | `memory_read` | `memory.read` | ✅ | Слои: `orchestra`, `session`, `repo`, `lessons`, `global`, `all`; без args — список источников |
 | `memory_search` | `memory.search` | ✅ | Substring-поиск по agent/session/global/ORCHESTRA + dept lessons |
 | `lesson_promote` | — | ✅ | Dept/Orchestra Lead: draft local playbook overlay из pattern lesson; Question Barrier auto-seals `decision_ref` |
 | `playbook_promote` | — | ✅ | Dept/Orchestra Lead: merge approved overlay → L2 `.orchestra/playbooks/<dept>.md` |
+
+Согласие на веб проверяется при каждом вызове — и в последовательном пути, и когда модель
+зовёт несколько инструментов за шаг: пакет, где хоть одному вызову нужна проверка (правило
+`permissions.rules`, веб или браузер без согласия), идёт последовательно. `tool.call` держит
+`webfetch`/`websearch` за `web.confirm`, как `bash` за `exec.confirm`.
 
 ### Git и GitHub
 

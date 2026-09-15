@@ -435,7 +435,7 @@ async function handshake(b) {
     project_id: "p",
     protocol_version: 15,
     ops_version: 1,
-    tools_version: 14,
+    tools_version: 15,
   });
   await tick();
   answer(b, "initialize", {});
@@ -457,7 +457,7 @@ test("connecting handshakes and starts a session", async () => {
     project_id: "p",
     protocol_version: 15,
     ops_version: 1,
-    tools_version: 14,
+    tools_version: 15,
   });
   await tick();
 
@@ -677,7 +677,7 @@ async function handshakeFor(b, projectId) {
     project_id: projectId,
     protocol_version: 15,
     ops_version: 1,
-    tools_version: 14,
+    tools_version: 15,
   });
   await tick();
   answerOn(b, projectId, "initialize", {});

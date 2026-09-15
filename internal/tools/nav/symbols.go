@@ -16,7 +16,6 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools/toolpath"
-	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -24,10 +23,15 @@ type CodeSymbolsRequest struct {
 	Path string `json:"path"`
 }
 
+// Symbol is one outline entry. Positions are 1-based, like read's line prefixes
+// and the LSP tools' positions: the model never sees 0-based ops coordinates.
 type Symbol struct {
-	Name  string     `json:"name"`
-	Kind  string     `json:"kind"`
-	Range *ops.Range `json:"range,omitempty"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	StartLine int    `json:"start_line"`
+	StartCol  int    `json:"start_col"`
+	EndLine   int    `json:"end_line"`
+	EndCol    int    `json:"end_col"`
 }
 
 type CodeSymbolsResponse struct {
@@ -90,13 +94,11 @@ func (c *Client) CodeSymbols(ctx context.Context, req CodeSymbolsRequest) (*Code
 func lspSymbolsToCodeSymbols(in []lsp.ToolSymbol) []Symbol {
 	out := make([]Symbol, len(in))
 	for i, s := range in {
+		// lsp.ToolSymbol is already 1-based.
 		out[i] = Symbol{
-			Name: s.Name,
-			Kind: s.Kind,
-			Range: &ops.Range{
-				Start: ops.Position{Line: s.StartLine - 1, Col: s.StartCol - 1},
-				End:   ops.Position{Line: s.EndLine - 1, Col: s.EndCol - 1},
-			},
+			Name: s.Name, Kind: s.Kind,
+			StartLine: s.StartLine, StartCol: s.StartCol,
+			EndLine: s.EndLine, EndCol: s.EndCol,
 		}
 	}
 	return out
@@ -112,42 +114,26 @@ func goSymbolsViaRegex(src []byte) []Symbol {
 	reType := regexp.MustCompile(`^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
 
 	var out []Symbol
+	// at spans the name on 0-based line i from byte offset col, in 1-based positions.
+	at := func(name, kind string, i, col int) Symbol {
+		return Symbol{
+			Name: name, Kind: kind,
+			StartLine: i + 1, StartCol: col + 1,
+			EndLine: i + 1, EndCol: col + len(name) + 1,
+		}
+	}
 
 	for i, line := range lines {
 		if m := reMethod.FindStringSubmatchIndex(line); m != nil {
-			name := line[m[2]:m[3]]
-			col := m[2]
-			out = append(out, Symbol{
-				Name: name, Kind: "method",
-				Range: &ops.Range{
-					Start: ops.Position{Line: i, Col: col},
-					End:   ops.Position{Line: i, Col: col + len(name)},
-				},
-			})
+			out = append(out, at(line[m[2]:m[3]], "method", i, m[2]))
 			continue
 		}
 		if m := reFunc.FindStringSubmatchIndex(line); m != nil {
-			name := line[m[2]:m[3]]
-			col := m[2]
-			out = append(out, Symbol{
-				Name: name, Kind: "function",
-				Range: &ops.Range{
-					Start: ops.Position{Line: i, Col: col},
-					End:   ops.Position{Line: i, Col: col + len(name)},
-				},
-			})
+			out = append(out, at(line[m[2]:m[3]], "function", i, m[2]))
 			continue
 		}
 		if m := reType.FindStringSubmatchIndex(line); m != nil {
-			name := line[m[2]:m[3]]
-			col := m[2]
-			out = append(out, Symbol{
-				Name: name, Kind: "type",
-				Range: &ops.Range{
-					Start: ops.Position{Line: i, Col: col},
-					End:   ops.Position{Line: i, Col: col + len(name)},
-				},
-			})
+			out = append(out, at(line[m[2]:m[3]], "type", i, m[2]))
 		}
 	}
 
