@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
@@ -255,6 +256,37 @@ func TestPendingOps_AppliedDiffIsNotCalledPending(t *testing.T) {
 		if strings.Contains(plain, wrong) {
 			t.Errorf("changes already on disk are labelled %q: %s", wrong, plain)
 		}
+	}
+}
+
+// core scopes every event that carries a task_id to the child, the lifecycle
+// events included. The TUI sent all child-scoped events to the tool/log
+// handler, which filed child_started and child_done as log lines: a child
+// never started and never finished. Seen with the 27B: after the turn ended,
+// "task_1 … [verifying 0ms]" and "task_2 … [running 0ms]" kept spinning.
+func TestChildLifecycleEventsReachTheTrackerWhenScopedToTheChild(t *testing.T) {
+	a, _ := startedTurnApp(t)
+	child := func(kind rpcclient.EventKind, mut func(*rpcclient.Event)) {
+		ev := rpcclient.Event{Kind: kind, Scope: "child", TaskID: "task_1", SubagentType: "explore"}
+		if mut != nil {
+			mut(&ev)
+		}
+		a.handleRPCEvent(ev)
+	}
+
+	child(rpcclient.EventChildStarted, func(ev *rpcclient.Event) { ev.Content = "run go test" })
+	child(rpcclient.EventToolCallCompleted, func(ev *rpcclient.Event) { ev.ToolCallName = "read" })
+	tasks := a.subagents.Snapshot(time.Time{})
+	if len(tasks) != 1 || tasks[0].Status != "running" || tasks[0].StartTime.IsZero() {
+		t.Fatalf("child_started did not start the task: %+v", tasks)
+	}
+
+	child(rpcclient.EventChildDone, func(ev *rpcclient.Event) { ev.ChildStatus = "success"; ev.Content = "tests pass" })
+	if a.subagents.HasActive() {
+		t.Fatalf("child_done left the task active: %+v", a.subagents.Snapshot(time.Time{}))
+	}
+	if got := a.subagents.Snapshot(time.Time{}); got[0].Status != "done" {
+		t.Fatalf("status after child_done = %q", got[0].Status)
 	}
 }
 

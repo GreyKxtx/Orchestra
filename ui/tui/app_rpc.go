@@ -169,7 +169,9 @@ func (a *App) handleRPCEvent(ev rpcclient.Event) tea.Cmd {
 	// rebuilds chat when chatDirty while the turn is busy (~10 fps).
 	skipRender := false
 
-	if strings.EqualFold(strings.TrimSpace(ev.Scope), "child") && strings.TrimSpace(ev.TaskID) != "" {
+	// core scopes every event carrying a task_id to the child, child_started
+	// and child_done included; those drive the subagent tracker, not its log.
+	if strings.EqualFold(strings.TrimSpace(ev.Scope), "child") && strings.TrimSpace(ev.TaskID) != "" && !isChildLifecycleEvent(ev.Kind) {
 		skipRender = a.handleChildScopedEvent(ev)
 		if !skipRender {
 			a.flushChat(true)
@@ -516,6 +518,14 @@ func (a *App) handleRPCChrome(ev rpcclient.Event) {
 			fmt.Sprintf("Learning (%s): %s — Lead: review task_result / promote tool", label, strings.Join(parts, " + ")))
 		a.chatDirty = true
 	}
+}
+
+func isChildLifecycleEvent(kind rpcclient.EventKind) bool {
+	switch kind {
+	case rpcclient.EventChildStarted, rpcclient.EventChildQueued, rpcclient.EventChildDone:
+		return true
+	}
+	return false
 }
 
 // handleChildScopedEvent absorbs worker tool/stream events so they never
