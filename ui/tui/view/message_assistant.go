@@ -220,7 +220,7 @@ func assistantFooter(mode, model string, dur time.Duration, tokensIn, tokensOut 
 	if streaming {
 		out += muted.Italic(true).Render(" · работаю…")
 	}
-	if model != "" {
+	if model = DisplayModelName(model); model != "" {
 		out += muted.Render(" · " + model)
 	}
 	if dur > 0 {
@@ -242,4 +242,28 @@ func turnElapsed(m state.Message) time.Duration {
 		return time.Since(m.StartedAt)
 	}
 	return 0
+}
+
+// DisplayModelName is the model id as a person reads it. llama.cpp names a
+// model by the file it loaded, and that path wrapped the turn footer and the
+// input row over three lines; a path is shown as its file name without the
+// extension. A namespaced id such as "qwen/qwen3.8-27b" is not a path.
+func DisplayModelName(id string) string {
+	id = strings.TrimSpace(id)
+	lower := strings.ToLower(id)
+	isPath := strings.HasPrefix(id, "/") || strings.Contains(id, `\`) ||
+		strings.HasSuffix(lower, ".gguf") || strings.HasSuffix(lower, ".safetensors") || strings.HasSuffix(lower, ".bin")
+	if !isPath {
+		return id
+	}
+	if i := strings.LastIndexAny(id, `/\`); i >= 0 {
+		id = id[i+1:]
+	}
+	if dot := strings.LastIndex(id, "."); dot > 0 {
+		switch strings.ToLower(id[dot:]) {
+		case ".gguf", ".safetensors", ".bin":
+			id = id[:dot]
+		}
+	}
+	return id
 }

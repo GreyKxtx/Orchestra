@@ -109,7 +109,7 @@ func (a *App) modeProviderLine(bg lipgloss.Color) string {
 	} else if a.routeBadge != "" && mode == "agent" {
 		mode = a.routeBadge
 	}
-	model := a.cfg.Model
+	model := view.DisplayModelName(a.cfg.Model)
 	if model == "" {
 		model = "no model"
 	}
@@ -228,7 +228,7 @@ func (a *App) buildWelcomeInfo() view.WelcomeInfo {
 	return view.WelcomeInfo{
 		ProjectPath:  projectPath,
 		ProjectName:  projectName,
-		ModelName:    a.cfg.Model,
+		ModelName:    view.DisplayModelName(a.cfg.Model),
 		SessionCount: countSessions(projectPath),
 	}
 }

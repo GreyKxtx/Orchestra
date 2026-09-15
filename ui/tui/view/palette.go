@@ -29,7 +29,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/model", "текущая модель"},
 	{"/orchestra", "planner + worker tiers"},
 	{"/quit", "выйти из Orchestra TUI"},
-	{"/rewind", "checkpoint rewind (скелет)"},
+	{"/rewind", "откатить историю к сообщению (файлы не откатываются)"},
 	{"/fork", "ветка от сообщения (оригинал остаётся)"},
 	{"/sessions", "сохранённые сессии · /sessions <текст> — поиск по сообщениям"},
 	{"/shell", "права на shell: ask ↔ allow"},

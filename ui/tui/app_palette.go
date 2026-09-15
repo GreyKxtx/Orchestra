@@ -255,7 +255,7 @@ const helpText = `Orchestra TUI — клавиши:
   Tab           цикл mode (build / plan / explore / ask / debug / architecture / agent / orchestra)
   Ctrl+T / t    tools → diff (d / Ctrl+D — diff)
   /compact      сжать LLM-контекст сессии
-  /rewind       checkpoint rewind (скелет)
+  /rewind       откатить историю к сообщению (файлы не откатываются)
   /memory       слои памяти + pinned facts
   /memory open  открыть ORCHESTRA.md (или fallback) в $EDITOR
   /memory refresh  что реально инжектировано в последний ход
