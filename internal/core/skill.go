@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
@@ -162,9 +163,17 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	if c.cfg != nil && c.cfg.Agent.MaxSteps > 0 {
 		maxSteps = c.cfg.Agent.MaxSteps
 	}
+	// llm.timeout_s bounds each model step, as on every other run path; left
+	// unset, the agent's 25-second default applied and its timeout message
+	// told the user to raise a setting this path did not read.
+	var stepTimeout time.Duration
+	if c.cfg != nil {
+		stepTimeout = time.Duration(c.cfg.LLM.TimeoutS) * time.Second
+	}
 
 	agOpts := agent.Options{
 		MaxSteps:             maxSteps,
+		LLMStepTimeout:       stepTimeout,
 		AllowExec:            allowExec,
 		AllowWeb:             params.AllowWeb,
 		AllowBrowser:         params.AllowBrowser,

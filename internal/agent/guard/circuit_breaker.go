@@ -3,6 +3,7 @@ package guard
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/orchestra/orchestra/protocol"
 
@@ -106,8 +107,26 @@ var dedupExemptTools = map[string]bool{
 	"git.status": true, "git.log": true, "git.diff": true,
 }
 
+// A page is state outside the conversation: after a click the same
+// browser.snapshot {} shows a different page, and clicking "Next" twice moves
+// two pages on. So no browser call is a duplicate on sight — all of them take
+// the repeat budget instead — and a page action forgets the page reads before
+// it, since what they returned is no longer the page.
+var browserPageReads = map[string]bool{"browser.snapshot": true, "browser.screenshot": true}
+
 func DedupExemptTool(toolName string) bool {
-	return dedupExemptTools[toolName]
+	return dedupExemptTools[toolName] || strings.HasPrefix(toolName, "browser.")
+}
+
+// forgetPageReads drops the repeat counts of page reads after an action
+// changed the page.
+func (cb *CircuitBreaker) forgetPageReads() {
+	for key := range cb.readOnlyCallKeys {
+		name, _, _ := strings.Cut(key, ":")
+		if browserPageReads[name] {
+			delete(cb.readOnlyCallKeys, key)
+		}
+	}
 }
 
 // CallKey identifies a tool call the same way the breaker does, for callers
@@ -134,6 +153,9 @@ func (cb *CircuitBreaker) IsReadOnlyBlocked(toolName string, inputBytes []byte) 
 func (cb *CircuitBreaker) RecordReadOnlyCall(toolName string, inputBytes []byte) string {
 	if !DedupExemptTool(toolName) {
 		return ""
+	}
+	if strings.HasPrefix(toolName, "browser.") && !browserPageReads[toolName] {
+		cb.forgetPageReads()
 	}
 	key := callKey(toolName, inputBytes)
 	cb.readOnlyCallKeys[key]++

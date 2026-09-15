@@ -353,6 +353,14 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 		}
 	}
 
+	// tool.call carries no allow_browser and belongs to no run whose consent
+	// could be checked, so the browser stays with agent runs given it.
+	if strings.HasPrefix(canonicalName, "browser.") {
+		return nil, protocol.NewError(protocol.ExecDenied,
+			"browser tools are not available through tool.call: they run inside skill.invoke or workflow.run with allow_browser: true",
+			map[string]any{"tool": params.Name})
+	}
+
 	return c.tools.Call(ctx, params.Name, params.Input)
 }
 

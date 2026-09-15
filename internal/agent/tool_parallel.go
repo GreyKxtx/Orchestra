@@ -175,8 +175,19 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	// its input, so the model does not read the result as an answer to the
 	// arguments it actually sent.
 	rewrote := make([]string, len(calls))
+	// A batch runs in parallel only when every call is offered and parallel-safe,
+	// which no browser tool is; refuse here too so that stays a detail.
+	for i, call := range calls {
+		if refusal := a.browserCallRefusal(normalizeToolName(call.Name)); refusal != nil {
+			denied[i] = true
+			results[i] = a.deniedToolResult(call.Name, call.Input, refusal.Error())
+		}
+	}
 	if a.opts.HooksRunner != nil {
 		for i, call := range calls {
+			if denied[i] {
+				continue
+			}
 			dec := a.runPreToolHooks(ctx, call.Name, call.Input)
 			if !dec.Denied && len(dec.Input) > 0 {
 				// The fan-out below re-ranges over calls, so the rewritten

@@ -595,6 +595,10 @@ Response `result`:
 
 Response `result` — JSON-объект/массив (ответ инструмента).
 
+`browser.*` через `tool.call` не выполняются: ответ `ExecDenied`. У `tool.call` нет
+`allow_browser`, а браузер `core` общий для всех сессий, поэтому он доступен только агентам
+запусков, получивших `allow_browser: true` (`skill.invoke`, `workflow.run`).
+
 ## Методы сессий
 
 Сессия инкапсулирует multi-turn диалог. С **ProtocolVersion 6** состояние персистится в `.orchestra/sessions/<id>.json` (schema **v2**): `history` (LLM-память), `ui_messages` (TUI projection), `pending_ops`, `todos`, `plan_path`.

@@ -111,6 +111,9 @@ type RunnerOptions struct {
 
 	Browser      config.BrowserConfig
 	AllowBrowser bool
+	// BrowserCommand replaces the command that starts the browser MCP server.
+	// For tests only.
+	BrowserCommand []string
 
 	// DryRun enables staging mode: write/edit accumulate in memory instead of disk.
 	// FSRead serves staged content. StagedOps() returns write_atomic ops for plan.json.
@@ -202,6 +205,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 			ViewportHeight: opts.Browser.ViewportHeight,
 			AllowEval:      opts.Browser.AllowEval,
 			WorkDir:        rootAbs,
+			CmdOverride:    opts.BrowserCommand,
 		})
 	}
 
@@ -442,6 +446,12 @@ func (r *Runner) WarmupEmbeddings(ctx context.Context, after <-chan error) <-cha
 
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).
 // Safe to call multiple times.
+// BrowserEnabled reports whether the Runner can serve browser.* tools. The
+// client behind it starts its server only on the first browser call.
+func (r *Runner) BrowserEnabled() bool {
+	return r != nil && r.browserClient != nil
+}
+
 func (r *Runner) Close() error {
 	r.closeBg()
 	if r.browserClient != nil {

@@ -101,8 +101,18 @@
 имена аргументов, поэтому перенос версии — это перезапись
 `internal/tools/web/testdata/playwright-mcp-tools.json` и прогон
 `ORCH_E2E_BROWSER=1 go test ./internal/tools/web -run TestBrowserE2E`. Файлы сервера
-(снимки, логи, скриншоты) пишутся в `.orchestra/browser`. Работают в `orchestra apply` и
-`orchestra workflow`; у Runner'а `orchestra core` браузерного клиента нет.
+(снимки, логи, скриншоты) пишутся в `.orchestra/browser`.
+
+Где доступны: `orchestra apply` и `orchestra workflow` с `--allow-browser`; в `orchestra core` —
+`skill.invoke` и `workflow.run` с `allow_browser: true`. У `core` один Runner на все сессии,
+поэтому разрешение проверяет агент на каждом вызове `browser.*`, а не наличие клиента:
+запуск без `allow_browser` получает отказ, даже если назовёт инструмент сам. `tool.call`
+браузерные инструменты не выполняет. Обычный чат (`agent.run`) браузера пока не получает —
+для этого нужен параметр в протоколе.
+
+Повторный `browser.snapshot {}` после действия на странице — не дубликат: действие
+(`navigate`, `click`, `type`, …) сбрасывает счётчик чтений страницы, а одинаковые вызовы
+без действий между ними по-прежнему упираются в лимит повторов.
 
 | Имя | Статус |
 |-----|--------|

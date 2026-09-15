@@ -128,6 +128,14 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if toolCallID == "" {
 		toolCallID = fmt.Sprintf("call_%d_%d", steps, time.Now().UnixNano())
 	}
+	if refusal := a.browserCallRefusal(name); refusal != nil {
+		toolResult := a.deniedToolResult(name, tc.Input, refusal.Error())
+		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
+		if cbErr := cb.RecordDenied(name); cbErr != nil {
+			return serialToolOutcome{}, cbErr
+		}
+		return serialToolOutcome{}, nil
+	}
 	if scopeErr := a.checkExploreFirstGate(name, *history); scopeErr != nil {
 		toolResult := a.deniedToolResult(name, tc.Input, scopeErr.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})

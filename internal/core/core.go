@@ -127,6 +127,12 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		WebSearch:          cfg.Web.Search,
 		LSP:                cfg.LSP,
 		Embed:              cfg.ResolvedEmbed(),
+		// One Runner serves every session, so the browser client is here for
+		// the runs given allow_browser (skill.invoke, workflow.run) and each
+		// agent refuses browser tools in a run without it. The server starts
+		// on the first browser call, not here; tool.call refuses browser tools.
+		Browser:      cfg.Browser,
+		AllowBrowser: true,
 		// JSON-RPC core makes a hard "no side effects in dry-run" promise to
 		// remote clients (TUI / IDE / web). Block bash bypassing the staging
 		// overlay. CLI's plan-mode uses its own Runner without this flag so
