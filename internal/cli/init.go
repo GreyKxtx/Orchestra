@@ -9,6 +9,7 @@ import (
 
 	"github.com/orchestra/orchestra/docs/examples"
 	"github.com/orchestra/orchestra/internal/config"
+	coregit "github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/instrument"
 	"github.com/orchestra/orchestra/internal/lsp/provision"
 	"github.com/spf13/cobra"
@@ -53,25 +54,9 @@ const gitignoreMarker = "# Orchestra: local secrets & runtime artifacts"
 
 // gitignoreBlock ignores runtime/secret artifacts while keeping the knowledge
 // files (state, decisions, plans, specs, playbooks, product docs) tracked.
-const gitignoreBlock = gitignoreMarker + ` (added by orchestra init)
-.orchestra.local.yml
-ORCHESTRA.local.md
-*.orchestra.bak
-*.bak
-*.tmp
-.orchestra/*
-.orchestra/*.db*
-!.orchestra/state.md
-!.orchestra/decisions.md
-!.orchestra/system.txt
-!.orchestra/plans/
-.orchestra/plans/local/
-!.orchestra/specs/
-!.orchestra/playbooks/
-.orchestra/playbooks/local/
-!.orchestra/product/
-!.orchestra/docs/
-`
+// The patterns are shared with git.commit, which applies them to add: ["."]
+// in projects init never ran in.
+const gitignoreBlock = gitignoreMarker + " (added by orchestra init)\n" + coregit.OrchestraIgnorePatterns
 
 const gitignoreLocalPlaybooks = ".orchestra/playbooks/local/"
 const gitignoreLocalPlans = ".orchestra/plans/local/"

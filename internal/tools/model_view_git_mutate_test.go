@@ -177,3 +177,114 @@ func TestModelView_GitPushForceIsForceWithLease(t *testing.T) {
 		t.Errorf("the other person's commit is no longer the remote head: %q", remoteHead)
 	}
 }
+
+// orchestra init writes a .gitignore block whose comment says what it is for:
+// "Secrets can live in .orchestra.local.yml and runtime logs under .orchestra/,
+// so a bare `git add .` after init must not be able to commit them." That
+// protection lives only in the .gitignore init writes. A project nobody ran
+// init in — a repo opened straight in the IDE, the eval workspace — has none,
+// and git.commit with add: ["."] is the model's own path to committing the
+// CKG database and the run logs. An earlier test in this file did exactly that
+// by accident: "create mode 100644 .orchestra/ckg.db".
+func TestModelView_GitCommitDoesNotCommitOrchestraRuntimeArtifacts(t *testing.T) {
+	root := t.TempDir()
+	gitRepoWith(t, root, map[string]string{"main.go": "package main\n"})
+	r, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	write := func(rel, body string) {
+		t.Helper()
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Runtime artifacts a real run leaves behind.
+	write(".orchestra/llm_log.jsonl", `{"event":"request"}`+"\n")
+	write(".orchestra/last_result.json", "{}\n")
+	write(".orchestra/extra.db", "not really sqlite\n")
+	write(".orchestra/plans/local/scratch.md", "# my local plan\n")
+	// Project knowledge init deliberately keeps tracked.
+	write(".orchestra/decisions.md", "# Decisions\n")
+	write(".orchestra/plans/refactor.md", "# Plan\n")
+	// The user's actual change.
+	write("feature.go", "package main\n")
+
+	out := mustCall(t, r, "git.commit", map[string]any{"message": "feature", "add": []string{"."}})
+	committed := gitOut(t, root, "show", "--name-only", "--pretty=", "HEAD")
+	t.Logf("git.commit answered %s\ncommitted:\n%s", out, committed)
+
+	if !strings.Contains(committed, "feature.go") {
+		t.Fatalf("the user's own change was not committed:\n%s", committed)
+	}
+	for _, artifact := range []string{"llm_log.jsonl", "last_result.json", ".db", "plans/local/"} {
+		if strings.Contains(committed, artifact) {
+			t.Errorf("git.commit add . committed the Orchestra runtime artifact %q — the thing "+
+				"init's .gitignore block exists to prevent:\n%s", artifact, committed)
+		}
+	}
+	for _, knowledge := range []string{".orchestra/decisions.md", ".orchestra/plans/refactor.md"} {
+		if !strings.Contains(committed, knowledge) {
+			t.Errorf("project knowledge %s, which init keeps tracked, was left out:\n%s", knowledge, committed)
+		}
+	}
+}
+
+// The same rule from a project inside a monorepo, plus the three things the
+// filtered add must not lose: the user's own .gitignore, a change to a file
+// that is already tracked, and the secrets file init's block names first.
+//
+// The subdirectory is the case that decides the implementation. git ls-files
+// --exclude-from anchors a pattern with a slash at the top of the REPOSITORY,
+// while init's block is read from the PROJECT root's .gitignore — so an
+// unanchored ".orchestra/*" silently matched nothing from services/api.
+func TestModelView_GitCommitFiltersArtifactsFromAMonorepoSubdirectoryToo(t *testing.T) {
+	repo := t.TempDir()
+	gitRepoWith(t, repo, map[string]string{
+		"services/api/main.go":    "package main\n",
+		"services/api/.gitignore": "secret.env\n",
+	})
+	projectRoot := filepath.Join(repo, "services", "api")
+	r, err := tools.NewRunner(projectRoot, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	write := func(rel, body string) {
+		t.Helper()
+		abs := filepath.Join(projectRoot, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".orchestra.local.yml", "llm:\n  api_key: sk-not-a-real-key\n")
+	write(".orchestra/llm_log.jsonl", "{}\n")
+	write(".orchestra/decisions.md", "# Decisions\n")
+	write("secret.env", "TOKEN=1\n")
+	write("main.go", "package main\n\nfunc main() {}\n") // a tracked file, modified
+	write("handler.go", "package main\n")
+
+	mustCall(t, r, "git.commit", map[string]any{"message": "api change", "add": []string{"."}})
+	committed := gitOut(t, repo, "show", "--name-only", "--pretty=", "HEAD")
+
+	for _, want := range []string{"services/api/main.go", "services/api/handler.go", "services/api/.orchestra/decisions.md"} {
+		if !strings.Contains(committed, want) {
+			t.Errorf("%s should have been committed:\n%s", want, committed)
+		}
+	}
+	for _, never := range []string{".orchestra.local.yml", "llm_log.jsonl", "secret.env"} {
+		if strings.Contains(committed, never) {
+			t.Errorf("%s was committed from a monorepo subdirectory:\n%s", never, committed)
+		}
+	}
+}

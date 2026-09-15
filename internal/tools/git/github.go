@@ -197,12 +197,15 @@ func (c *Client) GHPRCreate(ctx context.Context, req GHPRCreateRequest) (*GHPRCr
 		return nil, fmt.Errorf("gh pr create: title is required")
 	}
 
+	// gh pr create has no --json flag (list and view do). It used to be passed
+	// here, and gh rejects it during flag parsing — "unknown flag: --json" — so
+	// no pull request could ever be created. What gh does print on success is
+	// the new PR's URL on stdout; progress goes to stderr.
 	args := []string{
 		"pr", "create",
 		"--title", req.Title,
-		"--json", "number,url,title",
+		"--body", req.Body,
 	}
-	args = append(args, "--body", req.Body)
 	if req.Base != "" {
 		args = append(args, "--base", req.Base)
 	}
@@ -215,11 +218,38 @@ func (c *Client) GHPRCreate(ctx context.Context, req GHPRCreateRequest) (*GHPRCr
 		return nil, err
 	}
 
-	var resp GHPRCreateResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return nil, fmt.Errorf("gh pr create: parse JSON: %w", err)
+	url, number := parseCreatedPRURL(string(out))
+	if url == "" {
+		return nil, fmt.Errorf("gh pr create: no pull request URL in gh's output: %s",
+			strings.TrimSpace(string(out)))
 	}
-	return &resp, nil
+	return &GHPRCreateResponse{Number: number, URL: url, Title: req.Title}, nil
+}
+
+// parseCreatedPRURL finds the pull request URL gh pr create prints and the
+// number at its end. The last matching line wins: gh may print notices first.
+func parseCreatedPRURL(out string) (url string, number int) {
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		idx := strings.LastIndex(line, "/pull/")
+		if !strings.HasPrefix(line, "http") || idx < 0 {
+			continue
+		}
+		n := 0
+		digits := line[idx+len("/pull/"):]
+		for _, ch := range digits {
+			if ch < '0' || ch > '9' {
+				n = 0
+				break
+			}
+			n = n*10 + int(ch-'0')
+		}
+		if n > 0 {
+			return line, n
+		}
+	}
+	return "", 0
 }
 
 // ─── gh.pr.view ──────────────────────────────────────────────────────────────

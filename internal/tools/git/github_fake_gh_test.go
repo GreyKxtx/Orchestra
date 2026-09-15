@@ -216,3 +216,81 @@ func TestGHAvailable_NoticesGHAppearingLater(t *testing.T) {
 		t.Error("gh was installed while the process ran and is still reported missing")
 	}
 }
+
+// fakeGHScript installs a stub gh with a body of the test's choosing.
+func fakeGHScript(t *testing.T, windowsBody, unixBody string) {
+	t.Helper()
+	dir := t.TempDir()
+	path, script := filepath.Join(dir, "gh"), "#!/bin/sh\n"+unixBody
+	if runtime.GOOS == "windows" {
+		path, script = filepath.Join(dir, "gh.cmd"), "@echo off\r\n"+windowsBody
+	}
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ghMu.Lock()
+	prevBin, prevFound := ghBin, ghFound
+	ghBin, ghFound = path, true
+	ghMu.Unlock()
+	t.Cleanup(func() {
+		ghMu.Lock()
+		ghBin, ghFound = prevBin, prevFound
+		ghMu.Unlock()
+	})
+}
+
+// gh.pr.create asked gh for `pr create ... --json number,url,title`. gh pr
+// create has no --json flag — list and view do, create does not. Run against
+// the real gh 2.97.0 in an empty directory, that exact argv answers
+// "unknown flag: --json" and exits 1 during flag parsing, before any network
+// or repository access. So the tool could not create a pull request under any
+// circumstances, and nothing noticed: the existing tests check an empty title
+// and skip when gh is absent.
+//
+// This stub does what the real gh was observed to do: reject --json on
+// pr create, and otherwise print the new PR's URL on stdout — gh's actual
+// output for a created PR.
+func TestGHPRCreate_UsesFlagsGHPRCreateHasAndReadsTheURLItPrints(t *testing.T) {
+	fakeGHScript(t,
+		"echo %* | findstr /C:\"--json\" >nul && (echo unknown flag: --json 1>&2 & exit /b 1)\r\n"+
+			"echo Creating pull request for feature into main in acme/widgets 1>&2\r\n"+
+			"echo https://github.com/acme/widgets/pull/42\r\n",
+		"case \"$*\" in *--json*) echo 'unknown flag: --json' >&2; exit 1;; esac\n"+
+			"echo 'Creating pull request for feature into main in acme/widgets' >&2\n"+
+			"echo 'https://github.com/acme/widgets/pull/42'\n")
+	c := NewClient(t.TempDir())
+
+	resp, err := c.GHPRCreate(context.Background(), GHPRCreateRequest{Title: "Add retries", Body: "Why: flaky network"})
+	if err != nil {
+		t.Fatalf("gh.pr.create cannot create a pull request with the gh it is written for: %v", err)
+	}
+	if resp.URL != "https://github.com/acme/widgets/pull/42" {
+		t.Errorf("the URL gh printed did not reach the model: %+v", resp)
+	}
+	if resp.Number != 42 {
+		t.Errorf("the PR number was not read from the URL: %+v", resp)
+	}
+	if resp.Title != "Add retries" {
+		t.Errorf("the title is missing from the answer: %+v", resp)
+	}
+}
+
+// Filters on the pull request list, the way TestGHIssueList does for issues.
+func TestGHPRList_PassesTheModelsFiltersToGH(t *testing.T) {
+	readArgs := fakeGH(t, `[{"number":3,"title":"Retry uploads","state":"MERGED","author":{"login":"ann"},"url":"https://example.invalid/3","baseRefName":"main","headRefName":"retry","updatedAt":"2026-01-01T00:00:00Z"}]`, 0)
+	c := NewClient(t.TempDir())
+
+	resp, err := c.GHPRList(context.Background(), GHPRListRequest{State: "merged", Limit: 5, Base: "main"})
+	if err != nil {
+		t.Fatalf("GHPRList: %v", err)
+	}
+	args := readArgs()
+	for _, pair := range [][2]string{{"--state", "merged"}, {"--limit", "5"}, {"--base", "main"}} {
+		if !hasArgPair(args, pair[0], pair[1]) {
+			t.Errorf("%s %s did not reach gh: %v", pair[0], pair[1], args)
+		}
+	}
+	if len(resp.PRs) != 1 || resp.PRs[0].Author != "ann" || resp.PRs[0].Head != "retry" {
+		t.Errorf("the answer was not flattened into the documented shape: %+v", resp)
+	}
+}

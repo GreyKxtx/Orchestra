@@ -216,7 +216,10 @@ func childToolsForSubagent(subagentType string, caps tools.Capabilities) []llm.T
 	default:
 		defs = tools.ListToolsForMode(subagentType, caps, false, false)
 	}
-	return ensureTaskResult(defs)
+	// debug and general reuse the top-level mode lists, which include the
+	// repo-mutating git tools. A child must not have them: it shares the
+	// parent's working tree.
+	return ensureTaskResult(tools.StripRepoMutatingTools(defs))
 }
 
 func ensureTaskResult(defs []llm.ToolDef) []llm.ToolDef {

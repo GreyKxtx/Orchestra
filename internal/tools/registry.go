@@ -209,6 +209,32 @@ var mutatingTools = map[string]bool{
 	"skill_invoke": true,
 }
 
+// StripRepoMutatingTools removes the tools appendRepoMutatingTools adds —
+// commit, branch, checkout, push, worktree management, PR creation.
+//
+// A child agent shares the parent's Runner and therefore the parent's working
+// tree, so a git.checkout in one child switches the branch under every sibling
+// and the parent. Four of the nine subagent types get their tools from
+// purpose-built child lists that never had these; debug and general reuse the
+// top-level mode lists, which do, and were handed the whole set.
+//
+// The set is derived from appendRepoMutatingTools rather than written out
+// again, so a tool added there is stripped here on the same day.
+func StripRepoMutatingTools(defs []llm.ToolDef) []llm.ToolDef {
+	mutating := map[string]bool{}
+	for _, d := range appendRepoMutatingTools(nil, Capabilities{Exec: true}) {
+		mutating[d.Function.Name] = true
+	}
+	out := make([]llm.ToolDef, 0, len(defs))
+	for _, d := range defs {
+		if mutating[d.Function.Name] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 func applyParallelFlags(defs []llm.ToolDef) []llm.ToolDef {
 	for i := range defs {
 		switch n := defs[i].Function.Name; {

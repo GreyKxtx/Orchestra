@@ -273,7 +273,10 @@ func (c *Client) GitCommit(ctx context.Context, req GitCommitRequest) (*GitCommi
 		}
 		addArgs := []string{"add"}
 		if p == "." {
-			addArgs = append(addArgs, ".")
+			if err := c.addAllExceptOrchestraArtifacts(ctx); err != nil {
+				return nil, err
+			}
+			continue
 		} else {
 			_, relSlash, pathErr := toolpath.ResolveWorkspacePath(c.root, p)
 			if pathErr != nil {
