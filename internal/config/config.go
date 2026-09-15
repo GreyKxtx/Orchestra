@@ -927,38 +927,17 @@ func Save(path string, cfg *ProjectConfig) error {
 	unlock := acquireFileLock(path)
 	defer unlock()
 
-	// Write project_root as the file spelled it when the root has not been
-	// changed since Load: the committed config says "." on purpose, and the
-	// absolute path Load resolved it to belongs to this machine alone.
-	out := *cfg
-	if sp := cfg.projectRootSpelling; sp != "" {
-		dir := filepath.Dir(path)
-		if abs, aerr := filepath.Abs(dir); aerr == nil {
-			dir = abs
+	data, err := renderForSave(path, cfg)
+	if err != nil {
+		return err
+	}
+	// An existing file keeps what the user wrote — comments, key order, and the
+	// absence of every default Load filled in; only the values that changed
+	// are written into it.
+	if existing, rerr := os.ReadFile(path); rerr == nil {
+		if merged, ok := mergeChangesIntoFile(path, existing, data); ok {
+			data = merged
 		}
-		if sameRootPath(resolveRootSpelling(dir, sp), cfg.ProjectRoot) {
-			out.ProjectRoot = sp
-		}
-	}
-	data, err := yaml.Marshal(&out)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-	data, err = maskLocalOverlay(path, data)
-	if err != nil {
-		return err
-	}
-	// Same reasoning one layer down: values inherited from ~/.orchestra/config.yml
-	// are owned by that file and must not be written into the committed config.
-	data, err = maskGlobalConfig(path, data)
-	if err != nil {
-		return err
-	}
-	// Same reasoning again: mcp.servers entries Load() merged in from
-	// .mcp.json are owned by that file, not this one.
-	data, err = maskMCPJSONServers(path, data)
-	if err != nil {
-		return err
 	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
@@ -991,6 +970,42 @@ func Save(path string, cfg *ProjectConfig) error {
 		return fmt.Errorf("failed to replace config file: %w", err)
 	}
 	return nil
+}
+
+// renderForSave is the whole config as it may be written to path: marshalled,
+// with project_root in the file's own spelling and every key owned by another
+// file masked back.
+func renderForSave(path string, cfg *ProjectConfig) ([]byte, error) {
+	// Write project_root as the file spelled it when the root has not been
+	// changed since Load: the committed config says "." on purpose, and the
+	// absolute path Load resolved it to belongs to this machine alone.
+	out := *cfg
+	if sp := cfg.projectRootSpelling; sp != "" {
+		dir := filepath.Dir(path)
+		if abs, aerr := filepath.Abs(dir); aerr == nil {
+			dir = abs
+		}
+		if sameRootPath(resolveRootSpelling(dir, sp), cfg.ProjectRoot) {
+			out.ProjectRoot = sp
+		}
+	}
+	data, err := yaml.Marshal(&out)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+	data, err = maskLocalOverlay(path, data)
+	if err != nil {
+		return nil, err
+	}
+	// Same reasoning one layer down: values inherited from ~/.orchestra/config.yml
+	// are owned by that file and must not be written into the committed config.
+	data, err = maskGlobalConfig(path, data)
+	if err != nil {
+		return nil, err
+	}
+	// Same reasoning again: mcp.servers entries Load() merged in from
+	// .mcp.json are owned by that file, not this one.
+	return maskMCPJSONServers(path, data)
 }
 
 func (c *ProjectConfig) applyDefaults() {
