@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -607,9 +606,9 @@ func (a *App) probeLLMCmd(phase string, p view.ProviderEntry, apiKey, model stri
 func (a *App) handleLLMProbe(m llmProbeMsg) tea.Cmd {
 	var after tea.Cmd
 	if m.result.ContextTokens > 0 {
-		// Persist may keep a lower user num_ctx; chrome updates via limitsAppliedMsg
+		// Keeps a lower user num_ctx; chrome updates via limitsAppliedMsg
 		// with the *effective* window, not raw server max_model_len.
-		after = a.persistDiscoveredLimitsCmd(m.result)
+		after = a.discoveredLimitsCmd(m.result)
 	}
 	switch m.phase {
 	case "endpoint":
@@ -659,44 +658,43 @@ func (a *App) handleLLMProbe(m llmProbeMsg) tea.Cmd {
 	return after
 }
 
-// persistDiscoveredLimitsCmd reconciles server max_model_len with user num_ctx
+// discoveredLimitsCmd reconciles server max_model_len with user num_ctx
 // (fill if unset, clamp if oversize, keep intentional lower windows) and
-// clamps max_tokens when needed.
-func (a *App) persistDiscoveredLimitsCmd(res llm.ProbeResult) tea.Cmd {
+// clamps max_tokens when needed — for this session's chrome only.
+//
+// The result is not written to .orchestra.yml. A written window reads as the
+// user's choice from then on: the model reloaded with a larger context keeps
+// the old one, and a clean workspace is dirty after every start. core
+// discovers the window again on its own start.
+func (a *App) discoveredLimitsCmd(res llm.ProbeResult) tea.Cmd {
 	if res.ContextTokens <= 0 {
 		return nil
 	}
-	store := a.cfgStore
+	path, root := "", ""
+	if a.cfgStore != nil {
+		path, root = a.cfgStore.path, a.cfgStore.workspaceRoot
+	}
 	ctxTok := res.ContextTokens
 	return func() tea.Msg {
-		var out limitsAppliedMsg
-		err := store.Mutate(func(cfg *config.ProjectConfig) error {
-			lim := llm.ModelLimits{ContextTokens: ctxTok, MaxTokensCap: res.MaxTokensCap}
-			beforeTok := cfg.LLM.MaxTokens
-			beforeCtx := int(cfg.EffectiveNumCtx())
-			if !llm.ApplyDiscoveredLimits(&cfg.LLM, lim) {
-				return errConfigUnchanged
-			}
-			applied := int(cfg.EffectiveNumCtx())
-			if applied <= 0 {
-				applied = contextLenFromCfgExtra(cfg)
-			}
-			out = limitsAppliedMsg{
-				contextTokens: applied,
-				serverMax:     ctxTok,
-				maxTokens:     cfg.LLM.MaxTokens,
-				clamped:       beforeTok > 0 && cfg.LLM.MaxTokens < beforeTok,
-				ctxClamped:    beforeCtx > 0 && applied > 0 && beforeCtx > applied,
-			}
-			return nil
-		})
-		if errors.Is(err, errConfigUnchanged) {
-			return nil
+		cfg, err := config.Load(path)
+		if err != nil || cfg == nil {
+			cfg = config.DefaultConfig(root)
 		}
-		if err != nil {
-			return limitsAppliedMsg{err: err}
+		lim := llm.ModelLimits{ContextTokens: ctxTok, MaxTokensCap: res.MaxTokensCap}
+		beforeTok := cfg.LLM.MaxTokens
+		beforeCtx := int(cfg.EffectiveNumCtx())
+		llm.ApplyDiscoveredLimits(&cfg.LLM, lim)
+		applied := int(cfg.EffectiveNumCtx())
+		if applied <= 0 {
+			applied = contextLenFromCfgExtra(cfg)
 		}
-		return out
+		return limitsAppliedMsg{
+			contextTokens: applied,
+			serverMax:     ctxTok,
+			maxTokens:     cfg.LLM.MaxTokens,
+			clamped:       beforeTok > 0 && cfg.LLM.MaxTokens < beforeTok,
+			ctxClamped:    beforeCtx > 0 && applied > 0 && beforeCtx > applied,
+		}
 	}
 }
 

@@ -264,7 +264,7 @@ type llmProbeMsg struct {
 	result   llm.ProbeResult
 }
 
-// limitsAppliedMsg reports that server-discovered context was reconciled into config.
+// limitsAppliedMsg reports the server-discovered window reconciled with the config (in memory).
 type limitsAppliedMsg struct {
 	contextTokens int // effective num_ctx after reconcile
 	serverMax     int // raw max_model_len from probe
