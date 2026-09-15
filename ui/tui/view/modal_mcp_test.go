@@ -40,3 +40,23 @@ func TestModal_MCPElicitationRender(t *testing.T) {
 		t.Fatalf("elicitation is a question to the user, not a model call:\n%s", out)
 	}
 }
+
+// An MCP tool that can write is neither a shell command nor a server asking a
+// question: the modal names the server, the tool and its arguments, and says
+// the call is real even in a turn that does not apply changes.
+func TestModal_MCPToolRender(t *testing.T) {
+	m := NewPermissionModal("mcp:fs:write_file", `{"path":"notes/todo.txt","content":"buy milk"}`, "mcp.tool")
+	m.SetSize(100)
+	out := m.Render()
+
+	for _, want := range []string{"write_file", "fs", "notes/todo.txt", "по-настоящему", "[y]", "[a] до конца хода", "[t]", "[n]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mcp.tool modal missing %q:\n%s", want, out)
+		}
+	}
+	for _, reject := range []string{"вопрос", "модел", "shell", "Команда:"} {
+		if strings.Contains(out, reject) {
+			t.Errorf("mcp.tool modal reads as another kind of request (%q):\n%s", reject, out)
+		}
+	}
+}

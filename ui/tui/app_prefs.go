@@ -62,6 +62,8 @@ func (a *App) respondShellPermission(approved, sessionAllow, toolAlways bool) {
 		case isLSP:
 			_ = a.persistLSPAutoInstall(true)
 			a.showToast("lsp · auto_install — всегда")
+		case kind == "mcp.tool":
+			a.showToast("mcp · " + strings.TrimPrefix(tool, "mcp:") + " — до конца хода")
 		case isMCP:
 			a.showToast("mcp · " + strings.TrimPrefix(tool, "mcp:") + " — не спрашивать больше")
 		default:
@@ -103,7 +105,7 @@ func (a *App) showNextPermissionModal() {
 		if !ok {
 			return
 		}
-		if a.toolAllowedThisSession(next.Tool) {
+		if a.toolAllowedThisSession(next.Tool, next.Kind) {
 			// Auto-approve without showing a modal, then keep draining.
 			if a.rpc != nil {
 				a.rpc.RespondPermission(next.ReqID, true)
@@ -128,14 +130,29 @@ func (a *App) persistLSPAutoInstall(on bool) error {
 	})
 }
 
-func (a *App) toolAllowedThisSession(tool string) bool {
-	if a.allowExec {
+// toolAllowedThisSession reports whether a permission request is answered
+// yes without asking. "shell · allow" covers shell commands and nothing else:
+// it used to approve every request, so turning it on also installed language
+// servers, let MCP servers run the user's model and ask them questions, and
+// ran MCP tools that write — none of which the switch names.
+func (a *App) toolAllowedThisSession(tool, kind string) bool {
+	if a.allowExec && isShellPermission(tool, kind) {
 		return true
 	}
 	if a.sessionToolAllow == nil {
 		return false
 	}
 	return a.sessionToolAllow[strings.ToLower(strings.TrimSpace(tool))]
+}
+
+// isShellPermission is a request to run a shell command: the bash consent
+// (no kind) or a permissions rule that asks about bash (kind "exec").
+func isShellPermission(tool, kind string) bool {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	if tool != "bash" && tool != "" {
+		return false
+	}
+	return kind == "" || strings.EqualFold(kind, "exec")
 }
 
 func (a *App) persistUIPrefs() error {

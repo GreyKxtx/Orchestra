@@ -588,7 +588,7 @@ func (a *App) showDiffReview() {
 // otherwise pushes the request into the permission FSM, presenting a modal
 // when it became current.
 func (a *App) handlePermissionRequestEvent(pr *rpcclient.PermissionRequestPayload) {
-	if a.toolAllowedThisSession(pr.Tool) {
+	if a.toolAllowedThisSession(pr.Tool, pr.Kind) {
 		if a.rpc != nil {
 			a.rpc.RespondPermission(pr.ReqID, true)
 		}

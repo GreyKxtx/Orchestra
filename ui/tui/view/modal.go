@@ -133,6 +133,23 @@ func (m *Modal) Render() string {
 		return border.Render(body)
 	}
 
+	// An MCP tool its server did not mark read-only. It runs for real, outside
+	// the preview, so the modal says which tool on which server and with what.
+	// [a] is "until this turn ends" — the agent remembers it no longer.
+	if m.Kind == "mcp.tool" {
+		server, name := strings.TrimPrefix(tool, "mcp:"), ""
+		if i := strings.Index(server, ":"); i >= 0 {
+			server, name = server[:i], server[i+1:]
+		}
+		title := lipgloss.NewStyle().
+			Foreground(t.Warning()).
+			Bold(true).
+			Render("⚠ MCP-инструмент " + name)
+		body := fmt.Sprintf("%s\n\nСервер %s хочет выполнить %s. Сервер не пометил его как только читающий — он выполнится по-настоящему, даже если ход не применяет изменения.\nАргументы: %s\n\n[y] один раз   [a] до конца хода   [t] всегда в этой сессии   [n] запретить",
+			title, server, name, desc)
+		return border.Render(body)
+	}
+
 	// An MCP server asking for the model or the user's attention. The server
 	// is named first: "something wants your model" is not a question anyone
 	// can answer. [a] here means "stop asking for this server" and is carried
