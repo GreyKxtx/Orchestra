@@ -546,6 +546,10 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			dec := autorouter.Classify(cmd.Context(), routerClient, query)
 			agentMode = dec.Mode
 			fmt.Fprintf(os.Stderr, "[auto_router] agent → %s (%.0f%%) %s\n", dec.Mode, dec.Confidence*100, dec.Reason)
+			if mode, kept := agent.ModeForRoutedTurn(agentMode, allowBrowserEffective && agent.ProfileAllowsBrowser(profileName)); kept {
+				fmt.Fprintf(os.Stderr, "[auto_router] --allow-browser is on and %s mode has no browser tools: staying in agent mode\n", agentMode)
+				agentMode = mode
+			}
 		}
 
 		if strings.EqualFold(agentMode, string(agent.ModeOrchestra)) && getTestLLMClient() == nil {

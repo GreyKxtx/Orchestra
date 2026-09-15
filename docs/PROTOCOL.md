@@ -557,7 +557,7 @@ Response `result`:
 - `apply` (bool, optional; default=false)
 - `backup` (bool, optional)
 - `allow_exec` (bool, optional; default=false)
-- `allow_browser` (bool, optional; default=false; v19+) — дать ходу инструменты `browser.*` (Playwright MCP); не действует при профиле `fast`
+- `allow_browser` (bool, optional; default=false; v19+) — дать ходу инструменты `browser.*` (Playwright MCP); не действует при профиле `fast`. При `mode: "agent"` ход, который маршрутизатор отправил бы в режим без браузера (`ask`, `explore`, `plan`), остаётся в режиме `agent` (инструменты `build`); `effective_mode` тогда `agent`, причина — в событии `mode_route`
 - `debug` (bool, optional)
 - `mode` (string, optional) — имя built-in режима (`build`, `plan`, `explore`, …) или custom-агента, определённого в `agents:` в `.orchestra.yml`; пустая строка → поведение `build` по умолчанию.
 - `apply_output` (string, optional; default=`disk`) — `disk` (запись/dry-run как раньше) или `patch` (экспорт unified `.patch`, диск не трогается; mutually exclusive с `apply=true`).

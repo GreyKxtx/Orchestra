@@ -254,6 +254,10 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		effectiveMode = dec.Mode
 		routeReason = dec.Reason
 		routeConfidence = dec.Confidence
+		if mode, kept := agent.ModeForRoutedTurn(effectiveMode, allowBrowser); kept {
+			routeReason = fmt.Sprintf("the browser is on and %s mode has no browser tools; router: %s", effectiveMode, routeReason)
+			effectiveMode = mode
+		}
 		if spec.OnEvent != nil {
 			spec.OnEvent("agent/event", mergeEventEnvelope(map[string]any{
 				"step": 0,

@@ -89,6 +89,33 @@ func TestChat_OffersTheBrowserOnlyToTurnsGivenAllowBrowser(t *testing.T) {
 	}
 }
 
+// Mode agent routes by the query alone, and the router's choices other than
+// build — ask, explore, plan — have no browser tools, so a user who switched
+// the browser on and asked about a page got a turn that could not open it.
+// With the browser on, a route to a mode without it keeps the turn in agent
+// mode; without the browser, routing is unchanged.
+func TestChat_AgentModeWithTheBrowserDoesNotRouteToAModeWithoutIt(t *testing.T) {
+	const query = "explain what the page at http://127.0.0.1:1/ says" // heuristic: ask
+	for _, allow := range []bool{false, true} {
+		client := &toolListLLM{}
+		c := newChatCore(t, client)
+		res, err := c.AgentRun(context.Background(), AgentRunParams{Query: query, Mode: "agent", AllowBrowser: allow})
+		if err != nil {
+			t.Fatalf("allow_browser=%v: %v", allow, err)
+		}
+		wantMode := "ask"
+		if allow {
+			wantMode = "agent"
+		}
+		if res.EffectiveMode != wantMode {
+			t.Errorf("allow_browser=%v: effective mode = %q, want %q", allow, res.EffectiveMode, wantMode)
+		}
+		if got := client.offersBrowser(); got != allow {
+			t.Errorf("allow_browser=%v: browser tools offered = %v", allow, got)
+		}
+	}
+}
+
 // The fast profile leaves the browser out even when the turn asks for it —
 // and the decision is taken once, so the turn's subagents and skills do not
 // keep what the turn itself was denied.
