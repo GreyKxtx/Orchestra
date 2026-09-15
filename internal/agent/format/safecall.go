@@ -11,16 +11,16 @@ import (
 // writes the panic + stack to os.Stderr labelled with `label` so the
 // operator can correlate the failure with its subsystem.
 //
-// Use for void callbacks where the contract is "fire-and-forget" вЂ” event
+// Use for void callbacks where the contract is "fire-and-forget" — event
 // sinks, audit loggers, progress hooks.
 //
 // C3 in docs/superpowers/plans/2026-05-19-post-audit-refactor.md: before
-// this, a panic in any tool / hook / OnEvent killed the goroutine вЂ” and
+// this, a panic in any tool / hook / OnEvent killed the goroutine — and
 // inside runParallelToolBatch that goroutine is a fan-out worker, so a
 // single buggy tool/hook took down the whole process.
 //
 // N7 in audit ledger (Sprint 6): every existing call site used the form
-// `_ = safeRun(...)`, silently swallowing panics вЂ” the operator never
+// `_ = safeRun(...)`, silently swallowing panics — the operator never
 // saw why an OnEvent hook stopped firing. Logging from inside safeRun
 // removes that footgun.
 func SafeRun(label string, fn func()) (recovered any) {
@@ -42,7 +42,7 @@ func SafeRun(label string, fn func()) (recovered any) {
 //
 // Used for hook calls (HooksRunner.RunPreTool / RunPostTool) and any
 // tool-dispatch wrapper where the calling pipeline already has an error
-// branch вЂ” converting panicв†’error means we don't have to introduce a
+// branch — converting panic→error means we don't have to introduce a
 // new control-flow path.
 func SafeRunErr(label string, fn func() error) (err error) {
 	defer func() {

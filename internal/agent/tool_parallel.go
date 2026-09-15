@@ -23,7 +23,7 @@ func execCommandFromInput(input json.RawMessage) string {
 }
 
 // execCommandAllowed reports whether cmd is permitted by the allow/deny lists.
-// Deny takes precedence. Empty allow list with no deny list в†’ deny all.
+// Deny takes precedence. Empty allow list with no deny list → deny all.
 func execCommandAllowed(cmd string, allow, deny []string) bool {
 	base := strings.ToLower(filepath.Base(strings.TrimSpace(cmd)))
 	base = strings.TrimSuffix(base, ".exe")
@@ -132,9 +132,9 @@ const parallelBatchWorkerLimit = 16
 // exactly one matching tool message reply, so we preserve ordering even when
 // individual calls finish out-of-order.
 //
-// Only ParallelSafe tools reach this path вЂ” see NormalizeLLMWithDefs. The
+// Only ParallelSafe tools reach this path — see NormalizeLLMWithDefs. The
 // rich per-tool serial pipeline (exec consent, plan-mode write guard, todo
-// dispatcher, вЂ¦) is therefore not exercised here; we go straight through
+// dispatcher, …) is therefore not exercised here; we go straight through
 // PreTool hook + audit log + a.tools.Call. A batch that needs one of those
 // gates never gets here: see batchNeedsSerialGates.
 //
@@ -161,7 +161,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	}
 
 	results := make([]string, len(calls))
-	// denied[i] is true when the pre-tool hook rejected call i вЂ” we'll skip
+	// denied[i] is true when the pre-tool hook rejected call i — we'll skip
 	// the parallel tool execution for that index and just emit the denial.
 	denied := make([]bool, len(calls))
 	// errored[i] is true when a.tools.Call returned a non-nil error for call i.
@@ -251,7 +251,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		}
 		if dedupExemptTool(tc.Name) && cb != nil && cb.IsReadOnlyBlocked(tc.Name, tc.Input) {
 			denied[i] = true
-			results[i] = "в›” STOP. The tool В«" + tc.Name + "В» was called too many times with identical arguments вЂ” proceed with a different tool or final answer."
+			results[i] = "⛔ STOP. The tool «" + tc.Name + "» was called too many times with identical arguments — proceed with a different tool or final answer."
 			continue
 		}
 		wg.Add(1)
@@ -344,7 +344,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		})
 	}
 
-	// 5) Circuit-breaker bookkeeping вЂ” runs single-threaded after fan-out so
+	// 5) Circuit-breaker bookkeeping — runs single-threaded after fan-out so
 	//    the unsynchronised CB counters stay consistent. Order matches the
 	//    original calls slice so a stable "first trip wins" decision is taken.
 	//    The model spamming 16 parallel denied/erroring tools must stop the

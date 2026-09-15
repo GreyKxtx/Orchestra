@@ -84,7 +84,7 @@ func TestExploreSymbolAmbiguousShortName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "неоднозначен") {
+	if !strings.Contains(out, "is ambiguous") {
 		t.Fatalf("expected ambiguity message, got: %s", out)
 	}
 	if !strings.Contains(out, "ex/a.Run") || !strings.Contains(out, "ex/b.Run") {
@@ -132,7 +132,7 @@ func TestExploreSymbol_FQNPrefixFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ExploreSymbol(%q): unexpected error: %v", query, err)
 		}
-		if strings.Contains(out, "не найден") {
+		if strings.Contains(out, "is not in the code graph") || strings.Contains(out, "No exact match") {
 			t.Errorf("ExploreSymbol(%q): got 'not found', expected symbol to be found; output:\n%s", query, out)
 		}
 		if !strings.Contains(out, "Agent.Run") {
@@ -179,8 +179,8 @@ func TestExplorePackage_ImportsSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExploreSymbol(ex/auth): %v", err)
 	}
-	if !strings.Contains(authResult, "Используется в") {
-		t.Errorf("expected 'Используется в' in auth result:\n%s", authResult)
+	if !strings.Contains(authResult, "Imported by") {
+		t.Errorf("expected 'Imported by' in auth result:\n%s", authResult)
 	}
 	if !strings.Contains(authResult, "ex/api") {
 		t.Errorf("expected 'ex/api' importer in auth result:\n%s", authResult)
@@ -194,8 +194,8 @@ func TestExplorePackage_ImportsSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExploreSymbol(ex/api): %v", err)
 	}
-	if !strings.Contains(apiResult, "Импортирует") {
-		t.Errorf("expected 'Импортирует' in api result:\n%s", apiResult)
+	if !strings.Contains(apiResult, "Imports:") {
+		t.Errorf("expected 'Imports:' in api result:\n%s", apiResult)
 	}
 	if !strings.Contains(apiResult, "ex/auth") {
 		t.Errorf("expected 'ex/auth' in api imports:\n%s", apiResult)

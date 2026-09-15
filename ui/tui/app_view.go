@@ -13,12 +13,12 @@ import (
 const statusBarScreenRows = 2
 
 // chatSidePad is the symmetric horizontal margin applied to the chat
-// scrollback area only вЂ” so individual messages don't hug the terminal edge.
+// scrollback area only — so individual messages don't hug the terminal edge.
 // The input box, action bar, palette and status bar render at the full
 // terminal width: they have their own internal padding / border / bg, and
 // wrapping them in an outer style would re-flow already laid-out cells and
 // visually shred multi-line, bordered, bg-styled blocks (the "sliced" input
-// bug). Welcome view has its own centered layout вЂ” unaffected.
+// bug). Welcome view has its own centered layout — unaffected.
 const chatSidePad = 1
 
 // chatVerticalPad is the blank-line gutter above and below the chat scrollback
@@ -39,7 +39,7 @@ func (a *App) padChat(content string) string {
 		Render(content)
 }
 
-// View renders the full screen layout вЂ” top-of-screen dispatcher that picks
+// View renders the full screen layout — top-of-screen dispatcher that picks
 // between dialog overlay, onboarding wizard, welcome layout, and the main
 // chat layout (chat scroll + action bar + palettes + input + status bar).
 func (a *App) View() string {
@@ -132,7 +132,7 @@ func (a *App) overlayModals(screen string) string {
 	return screen
 }
 
-// renderChatInputBox renders the same grey-bg в–Њ box that the welcome screen
+// renderChatInputBox renders the same grey-bg ▌ box that the welcome screen
 // uses, scaled to the current terminal width minus a one-cell gutter on each
 // side. Resizing the terminal grows/shrinks the box automatically; clamped
 // to a 40-cell minimum so narrow terminals don't crush the textarea below
@@ -186,7 +186,7 @@ func (a *App) renderInputBox(width int) string {
 }
 
 // agentModes lists the available agent modes cycled by Tab. The names must
-// match the built-in modes recognized by internal/config вЂ” otherwise the
+// match the built-in modes recognized by internal/config — otherwise the
 // core returns "unknown agent mode" on agent.run.
 var agentModes = []string{"build", "plan", "explore", "ask", "debug", "architecture", "agent", "orchestra"}
 

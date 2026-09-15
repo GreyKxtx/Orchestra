@@ -48,7 +48,7 @@ func TestModelView_SymbolsListsEveryDeclarationInTheFile(t *testing.T) {
 
 // symbols handed the model ops.Range — the INTERNAL ops coordinate type, 0-based
 // by contract — while every other model-facing view of a line is 1-based:
-// `read` prefixes each line "4: ", `explore` says "строки 4-7", `grep` reports
+// `read` prefixes each line "4: ", `explore` says "lines 4-7", `grep` reports
 // 1-based lines, and the LSP tools take and return 1-based positions (see
 // TestModelView_LspPositionsAreOneBasedLikeRead). For `type Item struct` on the
 // fourth line of item.go, symbols said line 3 and read said line 4, and nothing
@@ -141,6 +141,22 @@ func TestModelView_ExploreOnAnUnknownSymbolSaysSoRatherThanAnsweringEmpty(t *tes
 	if strings.TrimSpace(out) == "" || out == `{"content":""}` {
 		t.Errorf("an empty answer reads as 'the tool is broken' and costs the model a "+
 			"retry; it has to say the symbol was not found:\n%s", out)
+	}
+}
+
+// Tool answers to the model are English. explore was the exception: every
+// heading, hint and "not found" came back in Russian.
+func TestModelView_ExploreAnswersInEnglish(t *testing.T) {
+	r, _ := modelViewWorkspace(t)
+
+	for _, name := range []string{"Item", "evalws.Item", "NoSuchSymbolAnywhere", "Ite", "internal/store"} {
+		out, _ := call(t, r, "explore", map[string]any{"symbol_name": name})
+		for _, ch := range out {
+			if ch >= 0x0400 && ch <= 0x04FF {
+				t.Errorf("explore(%q) answers in Russian:\n%s", name, out)
+				break
+			}
+		}
 	}
 }
 

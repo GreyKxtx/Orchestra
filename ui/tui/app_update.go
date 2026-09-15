@@ -83,7 +83,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.onboarding != nil {
 			a.onboarding.LoadingModels = false
 			if m.err != nil {
-				a.onboarding.ModelError = "LM Studio РЅРµРґРѕСЃС‚СѓРїРµРЅ: " + m.err.Error()
+				a.onboarding.ModelError = "LM Studio недоступен: " + m.err.Error()
 			} else {
 				a.onboarding.Models = m.models
 				a.onboarding.ModelError = ""

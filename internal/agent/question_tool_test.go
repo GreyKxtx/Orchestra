@@ -162,6 +162,13 @@ func TestPlanEnter_AnInventedCallDoesNotPretendTheModeChanged(t *testing.T) {
 	if !strings.Contains(client.toolResult, "not_supported") {
 		t.Errorf("the stub's answer changed; a model must be able to tell nothing happened:\n%s", client.toolResult)
 	}
+	// Tool answers to the model are English; this one was the Russian exception.
+	for _, r := range client.toolResult {
+		if r >= 0x0400 && r <= 0x04FF {
+			t.Errorf("the stub answers the model in Russian:\n%s", client.toolResult)
+			break
+		}
+	}
 }
 
 // Pins that plan_enter stays unoffered. Its description reads "Switch to PLAN

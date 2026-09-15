@@ -167,7 +167,7 @@ type Options struct {
 	Apply  bool
 	Backup bool
 
-	// AllowExec bypasses all exec consent checks вЂ” equivalent to --allow-exec (debug/override).
+	// AllowExec bypasses all exec consent checks — equivalent to --allow-exec (debug/override).
 	AllowExec bool
 	// ExecAllow is a per-command allowlist (basename, e.g. "go", "npm").
 	// If non-empty, exec.run is shown to the model and only listed commands are allowed.
@@ -175,17 +175,17 @@ type Options struct {
 	// ExecDeny is a per-command denylist (takes precedence over ExecAllow).
 	ExecDeny []string
 
-	// AllowWeb enables the webfetch tool вЂ” equivalent to --allow-web.
+	// AllowWeb enables the webfetch tool — equivalent to --allow-web.
 	AllowWeb bool
 
-	// AllowBrowser enables browser.* tools вЂ” equivalent to --allow-browser.
+	// AllowBrowser enables browser.* tools — equivalent to --allow-browser.
 	AllowBrowser bool
 
 	// PermissionRules is the ordered per-tool permission ruleset from config.permissions.
 	// Evaluated before the AllowExec / AllowWeb gates; first matching rule wins.
-	// allow в†’ permit even without --allow-exec/--allow-web.
-	// deny  в†’ always block with TOOL_DENIED.
-	// No match в†’ fall through to existing gates.
+	// allow → permit even without --allow-exec/--allow-web.
+	// deny  → always block with TOOL_DENIED.
+	// No match → fall through to existing gates.
 	PermissionRules []configpkg.PermissionRule
 
 	// InitialTodos is the model's task checklist loaded from the session at turn start.
@@ -215,7 +215,7 @@ type Options struct {
 	SystemPromptOverride string
 
 	// Mode selects the agent role. See the Mode constants
-	// (ModeBuild / ModePlan / ModeExplore / вЂ¦) for the registered set.
+	// (ModeBuild / ModePlan / ModeExplore / …) for the registered set.
 	// Empty string behaves identically to ModeBuild for backward
 	// compatibility; an unknown non-empty value also falls through to
 	// build (see IsKnownMode if you want strict rejection).
@@ -303,7 +303,7 @@ type Options struct {
 	// IsChild signals that this agent was spawned from another agent via
 	// task.spawn or skill_invoke and is expected to finish by emitting a
 	// `task_result` tool call. Main agents (set by CLI apply, JSON-RPC
-	// agent.run) leave this false вЂ” a `task_result` emitted by a main
+	// agent.run) leave this false — a `task_result` emitted by a main
 	// agent is treated as an invalid call (with a hint to the model) rather
 	// than terminating the run. H11 in audit ledger.
 	IsChild bool
@@ -343,7 +343,7 @@ type Options struct {
 
 	// PermissionRequester, if non-nil, is consulted before bash/exec.run runs
 	// instead of (or before) the static AllowExec gate.
-	// Nil в†’ fall through to existing AllowExec / ExecAllow gates (CLI mode).
+	// Nil → fall through to existing AllowExec / ExecAllow gates (CLI mode).
 	PermissionRequester PermissionRequester
 
 	// CompactionClient, if non-nil, is used for ModeCompaction LLM calls
@@ -420,7 +420,7 @@ type Options struct {
 //
 // M5 in audit ledger: Record may be invoked concurrently from the main
 // agent loop AND from in-process child agents (skill_invoke, task_spawn)
-// that share the same tracker вЂ” implementations MUST be goroutine-safe.
+// that share the same tracker — implementations MUST be goroutine-safe.
 // usage.Tracker satisfies this via an internal mutex; custom recorders
 // (test fakes, alternative metrics sinks) need to as well.
 type UsageRecorder interface {
@@ -547,7 +547,7 @@ type Agent struct {
 	// rules would silently drop out of the prompt mid-turn.
 	queryInstructions string
 
-	// justSwitchedFromPlan is true for the first nextStep call after planв†’build switch.
+	// justSwitchedFromPlan is true for the first nextStep call after plan→build switch.
 	// Cleared after the reminder is injected so it fires at most once.
 	justSwitchedFromPlan bool
 
@@ -555,8 +555,8 @@ type Agent struct {
 	// AllowExec/Web/Browser, SubtaskRunner, QuestionAsker, Skills,
 	// ExtraTools, CustomTools) are fixed at agent construction time, so
 	// the slice is identical across every nextStep call. P1 in audit
-	// ledger (Sprint 6): previously rebuilt every step вЂ” ~50 tool defs
-	// Г— N steps re-serialised on each LLM request.
+	// ledger (Sprint 6): previously rebuilt every step — ~50 tool defs
+	// × N steps re-serialised on each LLM request.
 	toolDefsOnce  sync.Once
 	toolDefsCache []llm.ToolDef
 

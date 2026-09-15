@@ -17,6 +17,10 @@ func setHome(t *testing.T, dir string) {
 	t.Setenv("USERPROFILE", dir)
 }
 
+// mojibakeDash is "—" read as cp1251, spelled with escapes so this file does
+// not itself carry the corruption it tests for.
+const mojibakeDash = "\xd0\xb2\xd0\x82"
+
 func TestFormatInject_AgentHeaderIsNotDoubleEncoded(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".orchestra", "memory", "agent.md"),
@@ -27,10 +31,10 @@ func TestFormatInject_AgentHeaderIsNotDoubleEncoded(t *testing.T) {
 	if !strings.Contains(block, "project builds with vite") {
 		t.Fatalf("agent entry missing: %s", block)
 	}
-	// "вЂ" is the signature of a UTF-8 em dash decoded as cp1251 and re-encoded.
-	// This header goes into every system prompt, so corruption here is served
-	// to the model on every single step.
-	if strings.Contains(block, "вЂ") {
+	// mojibakeDash is the signature of a UTF-8 em dash decoded as cp1251 and
+	// re-encoded. This header goes into every system prompt, so corruption here
+	// is served to the model on every single step.
+	if strings.Contains(block, mojibakeDash) {
 		t.Fatalf("double-encoded text reaches the prompt: %q", block)
 	}
 }
@@ -43,7 +47,7 @@ func TestAppendSession_ErrorIsNotDoubleEncoded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when no session is active")
 	}
-	if strings.Contains(err.Error(), "вЂ") {
+	if strings.Contains(err.Error(), mojibakeDash) {
 		t.Fatalf("double-encoded text in error surfaced to the model: %q", err.Error())
 	}
 }

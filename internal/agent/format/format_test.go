@@ -55,7 +55,7 @@ func TestFormatApplyErrorCompact_PlainErrorFallback(t *testing.T) {
 
 // TestExtractLSPErrors_CapsToTwentyWithSummary is the H2 regression:
 // a cascade of 100 errors must be truncated and the LLM must see how
-// many were dropped вЂ” otherwise the user can't tell whether the report
+// many were dropped — otherwise the user can't tell whether the report
 // was partial.
 func TestExtractLSPErrors_CapsToTwentyWithSummary(t *testing.T) {
 	diags := []map[string]any{}

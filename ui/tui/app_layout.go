@@ -19,7 +19,7 @@ func (a *App) layout() {
 
 	actionBarRows := 0
 	progressRows := 0
-	// Task panel overlays chat вЂ” does not consume layout rows (avoids input jumping).
+	// Task panel overlays chat — does not consume layout rows (avoids input jumping).
 	if a.workflowProgress != nil && a.workflowProgress.Active() {
 		progressRows = 1
 	}
@@ -62,7 +62,7 @@ func (a *App) layout() {
 		chatHeight = 1
 	}
 
-	// Textarea sizes to the chat input box's inner content width вЂ” this is
+	// Textarea sizes to the chat input box's inner content width — this is
 	// what WelcomeRender passes through. Without this, the textarea keeps
 	// its initial width and the rendered row doesn't match the resized box.
 	inputW := a.width - 2*chatSidePad
@@ -74,10 +74,10 @@ func (a *App) layout() {
 	// so we set it here to match what renderInputBox actually renders.
 	//
 	// CRITICAL: welcome view renders the box at a FIXED width (80, clamped
-	// to terminal width) вЂ” different from chat-mode's full-width input.
+	// to terminal width) — different from chat-mode's full-width input.
 	// If we leave the textarea at chat width, ta.Width() between View()
 	// calls disagrees with what was on screen, and bubbles' CursorUp/Down
-	// uses the wrong wrap в†’ cursor jumps to the wrong visual row.
+	// uses the wrong wrap → cursor jumps to the wrong visual row.
 	boxW := inputW
 	if a.showWelcome {
 		boxW = 80
@@ -113,7 +113,7 @@ func (a *App) layout() {
 	// After (re)sizing, recompute soft-wrap visual height so the box
 	// grows immediately on resize without waiting for the next keystroke.
 	a.input.SyncHeight(5)
-	// Width() excludes borders. palette now has 1 left border (в–Њ) matching input box.
+	// Width() excludes borders. palette now has 1 left border (▌) matching input box.
 	// palette total = SetSize + 1; input total = inputW + 1. After PaddingLeft(1): both = inputW + 2.
 	a.slashPalette.SetSize(inputW)
 	a.mentionPalette.SetSize(inputW)

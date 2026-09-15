@@ -625,7 +625,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		*history = append(*history, llm.Message{
 			Role:       llm.RoleTool,
 			ToolCallID: toolCallID,
-			Content:    `{"status":"not_supported","message":"plan_enter недоступен в текущем режиме. Запусти orchestra apply --mode plan для планирования."}`,
+			Content:    `{"status":"not_supported","message":"plan_enter does not switch modes; this turn stays in its current mode. Planning runs in plan mode (orchestra apply --mode plan)."}`,
 		})
 		return serialToolOutcome{}, nil
 	}

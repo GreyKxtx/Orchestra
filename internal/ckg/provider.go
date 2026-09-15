@@ -159,9 +159,9 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 	}
 	if len(hits) > 1 {
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Запрос '%s' неоднозначен — найдено %d символов. Уточните:\n\n", query, len(hits)))
+		sb.WriteString(fmt.Sprintf("Query '%s' is ambiguous: %d symbols match. Ask for one of them:\n\n", query, len(hits)))
 		for _, h := range hits {
-			sb.WriteString(fmt.Sprintf("- `%s` (%s в %s, строки %d-%d)\n", h.fqn, h.kind, h.relPath, h.lineStart, h.lineEnd))
+			sb.WriteString(fmt.Sprintf("- `%s` (%s in %s, lines %d-%d)\n", h.fqn, h.kind, h.relPath, h.lineStart, h.lineEnd))
 		}
 		return sb.String(), nil
 	}
@@ -184,7 +184,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 		}
 		snippet := strings.Join(lines[ls-1:le], "\n")
 
-		sb.WriteString(fmt.Sprintf("### `%s` (%s) в `%s` (строки %d-%d)\n", h.fqn, h.kind, h.relPath, ls, le))
+		sb.WriteString(fmt.Sprintf("### `%s` (%s) in `%s` (lines %d-%d)\n", h.fqn, h.kind, h.relPath, ls, le))
 		ext := filepath.Ext(h.relPath)
 		sb.WriteString(fmt.Sprintf("```%s\n%s\n```\n", LanguageFromExt(ext), snippet))
 		sb.WriteString("\n")
@@ -214,9 +214,9 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 				}
 				mRows.Close()
 				if len(methods) > 0 {
-					sb.WriteString("**Методы (explore нужный конкретный метод):**\n")
+					sb.WriteString("**Methods (explore the one you need):**\n")
 					for _, m := range methods {
-						sb.WriteString(fmt.Sprintf("- `%s` (строки %d-%d)\n", m.sn, m.ls, m.le))
+						sb.WriteString(fmt.Sprintf("- `%s` (lines %d-%d)\n", m.sn, m.ls, m.le))
 					}
 					sb.WriteString("\n")
 				}
@@ -251,18 +251,18 @@ func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, err
 		if err := rows.Scan(&fqn, &kind, &path); err != nil {
 			return "", fmt.Errorf("fuzzy fallback: scan suggestion: %w", err)
 		}
-		sugg = append(sugg, fmt.Sprintf("- `%s` (%s в %s)", fqn, kind, path))
+		sugg = append(sugg, fmt.Sprintf("- `%s` (%s in %s)", fqn, kind, path))
 	}
 	if err := rows.Err(); err != nil {
 		return "", fmt.Errorf("fuzzy fallback: iterate suggestions: %w", err)
 	}
 	if len(sugg) == 0 {
-		return fmt.Sprintf("Символ '%s' не найден в графе.", query), nil
+		return fmt.Sprintf("Symbol '%s' is not in the code graph.", query), nil
 	}
-	return fmt.Sprintf("Символ '%s' не найден точно. Похожие:\n%s", query, strings.Join(sugg, "\n")), nil
+	return fmt.Sprintf("No exact match for symbol '%s'. Similar:\n%s", query, strings.Join(sugg, "\n")), nil
 }
 
-// appendImportsSection appends a "### Зависимости" section to sb for pkgPath.
+// appendImportsSection appends a "### Dependencies" section to sb for pkgPath.
 // Silently skips if no import data is available.
 func (p *Provider) appendImportsSection(ctx context.Context, sb *strings.Builder, pkgPath string) {
 	// Find the full package FQN from a package-kind node in the package files.
@@ -314,15 +314,15 @@ func (p *Provider) appendImportsSection(ctx context.Context, sb *strings.Builder
 		return
 	}
 
-	sb.WriteString("### Зависимости\n")
+	sb.WriteString("### Dependencies\n")
 	if len(outImports) > 0 {
-		sb.WriteString("**Импортирует:**\n")
+		sb.WriteString("**Imports:**\n")
 		for _, imp := range outImports {
 			sb.WriteString(fmt.Sprintf("- `%s`\n", imp))
 		}
 	}
 	if len(importers) > 0 {
-		sb.WriteString("**Используется в:**\n")
+		sb.WriteString("**Imported by:**\n")
 		for _, imp := range importers {
 			sb.WriteString(fmt.Sprintf("- `%s`\n", imp))
 		}
@@ -388,13 +388,13 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 		p.appendImportsSection(ctx, &sb, pkgPath)
 		if sb.Len() > 0 {
 			var out strings.Builder
-			out.WriteString(fmt.Sprintf("## Пакет `%s` (нет символов)\n\n", pkgPath))
+			out.WriteString(fmt.Sprintf("## Package `%s` (no symbols)\n\n", pkgPath))
 			out.WriteString(sb.String())
 			out.WriteString("---\n")
-			out.WriteString(fmt.Sprintf("→ Конкретный поиск: grep(\"паттерн\", paths=[\"%s\"])\n", pkgPath))
+			out.WriteString(fmt.Sprintf("→ Specific search: grep(\"pattern\", paths=[\"%s\"])\n", pkgPath))
 			return out.String(), nil
 		}
-		return fmt.Sprintf("Пакет '%s' не найден в графе или пуст.\nПоказать список известных пакетов: glob(\"**/*.go\").", pkgPath), nil
+		return fmt.Sprintf("Package '%s' is not in the code graph, or is empty.\nTo list known packages: glob(\"**/*.go\").", pkgPath), nil
 	}
 
 	// Count unique files.
@@ -457,16 +457,16 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Пакет `%s` (%d файлов)\n\n", pkgPath, len(fileSet)))
+	sb.WriteString(fmt.Sprintf("## Package `%s` (%d files)\n\n", pkgPath, len(fileSet)))
 
 	// --- Types ---
 	if len(types) > 0 {
-		sb.WriteString("### Типы (struct / interface)\n")
+		sb.WriteString("### Types (struct / interface)\n")
 		for _, e := range types {
 			line := fmt.Sprintf("- `%s` (%s, %s:%d-%d)",
 				e.s.shortName, e.s.kind, filepath.Base(e.s.relPath), e.s.lineStart, e.s.lineEnd)
 			if e.methodCnt > 0 {
-				line += fmt.Sprintf(" — %d методов: %s", e.methodCnt, strings.Join(e.methodNames, ", "))
+				line += fmt.Sprintf(" — %d methods: %s", e.methodCnt, strings.Join(e.methodNames, ", "))
 			}
 			sb.WriteString(line + "\n")
 		}
@@ -475,7 +475,7 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 
 	// --- Exported funcs ---
 	if len(exportedFuncs) > 0 {
-		sb.WriteString("### Экспортируемые функции\n")
+		sb.WriteString("### Exported functions\n")
 		for _, s := range exportedFuncs {
 			sb.WriteString(fmt.Sprintf("- `%s` (%s:%d)\n", s.shortName, filepath.Base(s.relPath), s.lineStart))
 		}
@@ -489,7 +489,7 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 			base := filepath.Base(s.relPath)
 			byFile[base] = append(byFile[base], s.shortName)
 		}
-		sb.WriteString("### Внутренние функции (по файлам)\n")
+		sb.WriteString("### Unexported functions (by file)\n")
 		for file, names := range byFile {
 			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", file, strings.Join(names, ", ")))
 		}
@@ -499,16 +499,16 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 	// --- Orphan methods (receiver not in types list, e.g. defined in another file) ---
 	for recv, methods := range methodsByRecv {
 		if _, found := typeIndex[recv]; !found {
-			sb.WriteString(fmt.Sprintf("### Методы `%s` (тип определён вне пакета или в другом файле)\n", recv))
+			sb.WriteString(fmt.Sprintf("### Methods of `%s` (type declared outside the package or in another file)\n", recv))
 			sb.WriteString("- " + strings.Join(methods, ", ") + "\n\n")
 		}
 	}
 
-	// Зависимости (imports / imported-by).
+	// Dependencies (imports / imported-by).
 	p.appendImportsSection(ctx, &sb, pkgPath)
 
 	sb.WriteString("---\n")
-	sb.WriteString(fmt.Sprintf("→ Детали типа: explore(\"Agent\") · Метод целиком: explore(\"Agent.Run\") · Конкретный поиск: grep(\"паттерн\", paths=[\"%s\"])\n", pkgPath))
+	sb.WriteString(fmt.Sprintf("→ Type details: explore(\"Agent\") · Whole method: explore(\"Agent.Run\") · Specific search: grep(\"pattern\", paths=[\"%s\"])\n", pkgPath))
 
 	return sb.String(), nil
 }

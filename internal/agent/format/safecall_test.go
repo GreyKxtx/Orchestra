@@ -59,7 +59,7 @@ func TestSafeRun_ConvertsPanicToRecoveredValue(t *testing.T) {
 	}
 }
 
-// TestSafeRun_LogsPanicToStderr вЂ” N7 in audit ledger (Sprint 6). Every
+// TestSafeRun_LogsPanicToStderr — N7 in audit ledger (Sprint 6). Every
 // existing call site uses `_ = SafeRun(...)`, so safeRun itself must log
 // the panic or it's invisible to the operator.
 func TestSafeRun_LogsPanicToStderr(t *testing.T) {
@@ -79,7 +79,7 @@ func TestSafeRun_LogsPanicToStderr(t *testing.T) {
 	}
 }
 
-// TestSafeRun_NoLogOnSuccess вЂ” happy path must not write to stderr.
+// TestSafeRun_NoLogOnSuccess — happy path must not write to stderr.
 func TestSafeRun_NoLogOnSuccess(t *testing.T) {
 	out := captureStderr(t, func() {
 		_ = SafeRun("happy", func() {})

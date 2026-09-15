@@ -89,7 +89,7 @@ func errorDataInts(pe *protocol.Error, key string) []int {
 // formatResolveErrorCompact returns a compact resolve error message. H1
 // fix: include path from the resolver's Data payload so the model knows
 // which file to re-read instead of guessing across a multi-file patch.
-// L3 in audit ledger: hints are English вЂ” most chat-tuned LLMs respond
+// L3 in audit ledger: hints are English — most chat-tuned LLMs respond
 // more reliably to English error contexts. The path/code tokens are
 // the load-bearing structural fields.
 func ResolveErrorCompact(err error) string {
@@ -108,7 +108,7 @@ func ResolveErrorCompact(err error) string {
 // from the resolver's structured Data payload so the LLM gets to pinpoint
 // the failing file in a multi-file patch and knows how many ambiguous
 // hits it needs to disambiguate. Previously the hint was a single
-// "С„Р°Р№Р» РёР·РјРµРЅРёР»СЃСЏ" line with zero specifics вЂ” the biggest single driver
+// "файл изменился" line with zero specifics — the biggest single driver
 // of retry-loop bloat in observed runs.
 func ApplyErrorCompact(err error, code protocol.ErrorCode) string {
 	pe, _ := protocol.AsError(err)
@@ -151,14 +151,14 @@ func ApplyErrorCompact(err error, code protocol.ErrorCode) string {
 // MaxLSPErrorsInjected caps how many diagnostics are pasted back into the
 // agent's history after a write/edit. A syntax error that cascades into
 // hundreds of parser errors (large generated TS file, broken Go go.mod)
-// would otherwise blow MaxPromptBytes and force aggressive truncation вЂ”
+// would otherwise blow MaxPromptBytes and force aggressive truncation —
 // the model loses useful context and the diagnostics themselves still
 // don't all fit. H2 in audit ledger.
 const MaxLSPErrorsInjected = 20
 
 // extractLSPErrors parses a write/edit tool response JSON and returns a
 // user-facing hint if diagnostics with severity "error" are present.
-// Capped at MaxLSPErrorsInjected entries вЂ” additional errors are
+// Capped at MaxLSPErrorsInjected entries — additional errors are
 // summarised as "...N more" so the model knows the report is partial.
 // Returns "" if there are no errors (warnings and info are silently ignored).
 func ExtractLSPErrors(out json.RawMessage) string {
@@ -198,7 +198,7 @@ func ExtractLSPErrors(out json.RawMessage) string {
 	// model treats it as a constraint, not a side note. Identical re-call
 	// is also blocked at the dedup gate (agent.go:885), but the soft form
 	// here nudges the model to think before retrying with cosmetic tweaks.
-	return "LSP_ERRORS вЂ” the next write/edit on this file with the same errors will be blocked. File was written but has compilation errors:\n" +
+	return "LSP_ERRORS — the next write/edit on this file with the same errors will be blocked. File was written but has compilation errors:\n" +
 		body +
 		"\nDiagnose the cause (read + lsp.hover / lsp.references) and fix it before another write/edit. Cosmetic re-writes on the same lines will not help."
 }

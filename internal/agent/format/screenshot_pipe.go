@@ -26,11 +26,11 @@ func ExtractScreenshotImagePart(out json.RawMessage) (llm.ContentPart, bool) {
 	if img == "" {
 		return llm.ContentPart{}, false
 	}
-	// Already a data URI вЂ” pass through verbatim.
+	// Already a data URI — pass through verbatim.
 	if strings.HasPrefix(img, "data:image/") {
 		return llm.ContentPart{Kind: llm.PartImage, ImageURL: img}, true
 	}
-	// Raw base64 вЂ” decode to bytes and let the LLM client emit the data URI.
+	// Raw base64 — decode to bytes and let the LLM client emit the data URI.
 	data, err := base64.StdEncoding.DecodeString(img)
 	if err != nil {
 		return llm.ContentPart{}, false
