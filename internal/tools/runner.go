@@ -201,6 +201,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 			ViewportWidth:  opts.Browser.ViewportWidth,
 			ViewportHeight: opts.Browser.ViewportHeight,
 			AllowEval:      opts.Browser.AllowEval,
+			WorkDir:        rootAbs,
 		})
 	}
 

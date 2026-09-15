@@ -96,7 +96,13 @@
 
 ### Браузер (Playwright MCP)
 
-Регистрируются только при `--allow-browser` (требует Node.js + `npx`).
+Регистрируются только при `--allow-browser` (требует Node.js + `npx`). Сервер закреплён на
+версии `browser.PlaywrightMCPPackage` (`@playwright/mcp@0.0.81`): между версиями он меняет
+имена аргументов, поэтому перенос версии — это перезапись
+`internal/tools/web/testdata/playwright-mcp-tools.json` и прогон
+`ORCH_E2E_BROWSER=1 go test ./internal/tools/web -run TestBrowserE2E`. Файлы сервера
+(снимки, логи, скриншоты) пишутся в `.orchestra/browser`. Работают в `orchestra apply` и
+`orchestra workflow`; у Runner'а `orchestra core` браузерного клиента нет.
 
 | Имя | Статус |
 |-----|--------|

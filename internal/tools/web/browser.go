@@ -3,15 +3,78 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/orchestra/orchestra/protocol"
 )
+
+// The arguments below are the ones browser.PlaywrightMCPPackage accepts, as
+// recorded in testdata/playwright-mcp-tools.json. That server addresses an
+// element by `target` — a ref from its snapshot or a selector — and treats
+// `element` only as a human-readable description.
 
 // errNoBrowser is returned when browser tools are called without --allow-browser.
 func errNoBrowser() error {
 	return protocol.NewError(protocol.ExecDenied,
 		"browser tools require --allow-browser flag", nil)
+}
+
+// setTarget addresses an element: the snapshot ref when there is one, otherwise
+// the element string, which the server resolves as a selector.
+func setTarget(args map[string]any, element, ref string) {
+	if ref != "" {
+		args["target"] = ref
+	} else {
+		args["target"] = element
+	}
+	if element != "" {
+		args["element"] = element
+	}
+}
+
+const (
+	pagePollInterval   = 250 * time.Millisecond
+	defaultWaitTimeout = 5 * time.Second // the server's own action timeout
+	maxWaitTimeout     = 2 * time.Minute
+	networkIdleTimeout = 30 * time.Second
+)
+
+// evaluateResult is the value line of a browser_evaluate answer
+// ("### Result\n<json value>\n### Ran Playwright code...").
+func evaluateResult(text string) string {
+	_, after, ok := strings.Cut(text, "### Result\n")
+	if !ok {
+		return ""
+	}
+	line, _, _ := strings.Cut(after, "\n")
+	return strings.TrimSpace(line)
+}
+
+// waitForPage asks the page fn — fixed code of ours, not the model's, so the
+// allow_eval gate does not apply — until it answers true or the timeout passes.
+func waitForPage(ctx context.Context, cfg Config, fn string, timeout time.Duration, what string) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		res, err := cfg.Browser.Call(ctx, "browser_evaluate", map[string]any{"function": fn})
+		if err != nil {
+			return err
+		}
+		if evaluateResult(res.TextContent()) == "true" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return protocol.NewError(protocol.ExecTimeout,
+				fmt.Sprintf("waited %dms and %s did not happen", timeout.Milliseconds(), what), nil)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pagePollInterval):
+		}
+	}
 }
 
 // --- browser.navigate ---
@@ -32,13 +95,19 @@ func BrowserNavigate(ctx context.Context, cfg Config, req BrowserNavigateRequest
 	if strings.TrimSpace(req.URL) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "url is required", nil)
 	}
-	args := map[string]any{"url": req.URL}
-	if req.WaitUntil != "" {
-		args["waitUntil"] = req.WaitUntil
-	}
-	res, err := cfg.Browser.Call(ctx, "browser_navigate", args)
+	// The server's navigation already waits for the load event, which covers
+	// "load" and "domcontentloaded"; "networkidle" is waited for here.
+	res, err := cfg.Browser.Call(ctx, "browser_navigate", map[string]any{"url": req.URL})
 	if err != nil {
 		return nil, err
+	}
+	if req.WaitUntil == "networkidle" {
+		const idle = `async () => { const n = performance.getEntriesByType('resource').length; ` +
+			`await new Promise(r => setTimeout(r, 500)); ` +
+			`return document.readyState === 'complete' && performance.getEntriesByType('resource').length === n; }`
+		if err := waitForPage(ctx, cfg, idle, networkIdleTimeout, "the network going idle"); err != nil {
+			return nil, err
+		}
 	}
 	return &BrowserNavigateResponse{Result: res.TextContent()}, nil
 }
@@ -78,6 +147,7 @@ func BrowserScreenshot(ctx context.Context, cfg Config, req BrowserScreenshotReq
 	}
 	res, err := cfg.Browser.Call(ctx, "browser_take_screenshot", map[string]any{
 		"fullPage": req.FullPage,
+		"scale":    "css",
 	})
 	if err != nil {
 		return nil, err
@@ -108,12 +178,7 @@ func BrowserClick(ctx context.Context, cfg Config, req BrowserClickRequest) (*Br
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "element or ref is required", nil)
 	}
 	args := map[string]any{}
-	if req.Element != "" {
-		args["element"] = req.Element
-	}
-	if req.Ref != "" {
-		args["ref"] = req.Ref
-	}
+	setTarget(args, req.Element, req.Ref)
 	res, err := cfg.Browser.Call(ctx, "browser_click", args)
 	if err != nil {
 		return nil, err
@@ -144,16 +209,10 @@ func BrowserType(ctx context.Context, cfg Config, req BrowserTypeRequest) (*Brow
 	if req.Element == "" && req.Ref == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "element or ref is required", nil)
 	}
+	// The server fills the field, replacing what it held, so Clear is what
+	// happens either way.
 	args := map[string]any{"text": req.Text}
-	if req.Element != "" {
-		args["element"] = req.Element
-	}
-	if req.Ref != "" {
-		args["ref"] = req.Ref
-	}
-	if req.Clear {
-		args["clear"] = true
-	}
+	setTarget(args, req.Element, req.Ref)
 	res, err := cfg.Browser.Call(ctx, "browser_type", args)
 	if err != nil {
 		return nil, err
@@ -190,16 +249,13 @@ func BrowserFill(ctx context.Context, cfg Config, req BrowserFillRequest) (*Brow
 			return nil, protocol.NewError(protocol.InvalidLLMOutput,
 				"each field requires element or ref", nil)
 		}
-		mf := map[string]any{"value": f.Value}
-		if f.Ref != "" {
-			mf["ref"] = f.Ref
-		}
-		if f.Element != "" {
-			mf["element"] = f.Element
-		}
+		// The server wants a field name and kind; the tool fills text fields.
+		mf := map[string]any{"value": f.Value, "type": "textbox"}
+		setTarget(mf, f.Element, f.Ref)
+		mf["name"] = mf["target"]
 		mcpFields = append(mcpFields, mf)
 	}
-	_, err := cfg.Browser.Call(ctx, "browser_fill_form", map[string]any{"form": mcpFields})
+	_, err := cfg.Browser.Call(ctx, "browser_fill_form", map[string]any{"fields": mcpFields})
 	if err != nil {
 		return nil, err
 	}
@@ -229,12 +285,7 @@ func BrowserSelect(ctx context.Context, cfg Config, req BrowserSelectRequest) (*
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "value is required", nil)
 	}
 	args := map[string]any{"values": []string{req.Value}}
-	if req.Element != "" {
-		args["element"] = req.Element
-	}
-	if req.Ref != "" {
-		args["ref"] = req.Ref
-	}
+	setTarget(args, req.Element, req.Ref)
 	res, err := cfg.Browser.Call(ctx, "browser_select_option", args)
 	if err != nil {
 		return nil, err
@@ -263,8 +314,9 @@ func BrowserEval(ctx context.Context, cfg Config, req BrowserEvalRequest) (*Brow
 	if strings.TrimSpace(req.Expression) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "expression is required", nil)
 	}
+	// The server takes a function or a bare expression, which it wraps.
 	res, err := cfg.Browser.Call(ctx, "browser_evaluate", map[string]any{
-		"expression": req.Expression,
+		"function": req.Expression,
 	})
 	if err != nil {
 		return nil, err
@@ -293,24 +345,33 @@ func BrowserWait(ctx context.Context, cfg Config, req BrowserWaitRequest) (*Brow
 		return nil, protocol.NewError(protocol.InvalidLLMOutput,
 			"one of url, selector, or text is required", nil)
 	}
-	args := map[string]any{}
+	timeout := defaultWaitTimeout
+	if req.TimeoutMS > 0 {
+		timeout = min(time.Duration(req.TimeoutMS)*time.Millisecond, maxWaitTimeout)
+	}
+	// The server waits only for text or a fixed time, so every condition is
+	// checked by asking the page; all given conditions must hold.
+	cond, _ := json.Marshal(map[string]string{"url": req.URL, "selector": req.Selector, "text": req.Text})
+	fn := "() => { const c = " + string(cond) + "; " +
+		"if (c.url && !location.href.includes(c.url)) return false; " +
+		"if (c.selector && !document.querySelector(c.selector)) return false; " +
+		"if (c.text && !(document.body && document.body.innerText.includes(c.text))) return false; " +
+		"return true; }"
+	var what []string
 	if req.URL != "" {
-		args["url"] = req.URL
+		what = append(what, fmt.Sprintf("a URL containing %q", req.URL))
 	}
 	if req.Selector != "" {
-		args["selector"] = req.Selector
+		what = append(what, fmt.Sprintf("an element matching %q", req.Selector))
 	}
 	if req.Text != "" {
-		args["text"] = req.Text
+		what = append(what, fmt.Sprintf("the text %q", req.Text))
 	}
-	if req.TimeoutMS > 0 {
-		args["timeout"] = req.TimeoutMS
-	}
-	res, err := cfg.Browser.Call(ctx, "browser_wait_for", args)
-	if err != nil {
+	desc := strings.Join(what, " and ")
+	if err := waitForPage(ctx, cfg, fn, timeout, desc); err != nil {
 		return nil, err
 	}
-	return &BrowserWaitResponse{Result: res.TextContent()}, nil
+	return &BrowserWaitResponse{Result: "found " + desc}, nil
 }
 
 // --- browser.close ---

@@ -98,7 +98,7 @@ func ToolBrowserClick() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.click",
-			Description: "Click an element, addressed by name or by a ref from snapshot.",
+			Description: "Click an element: ref is the [ref=...] id from browser.snapshot; without a ref, element is a CSS selector.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -116,7 +116,7 @@ func ToolBrowserType() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.type",
-			Description: "Type text into an input, addressed by name or by a ref from snapshot.",
+			Description: "Type text into an input, replacing what it holds: ref is the [ref=...] id from browser.snapshot; without a ref, element is a CSS selector.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -137,7 +137,7 @@ func ToolBrowserFill() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.fill",
-			Description: "Fill several form fields in one call.",
+			Description: "Fill several text fields in one call; each field is addressed like browser.type (ref from browser.snapshot, or element as a CSS selector).",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -167,7 +167,7 @@ func ToolBrowserSelect() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.select",
-			Description: "Choose an option in a <select> dropdown.",
+			Description: "Choose an option in a <select> dropdown by its value or visible text; the dropdown is addressed like browser.click.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
@@ -205,7 +205,7 @@ func ToolBrowserWait() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "browser.wait",
-			Description: "Wait for a condition: a URL match, a CSS selector appearing, or text appearing on the page.",
+			Description: "Wait until the page URL contains url, an element matches selector, and/or text appears; every condition given must hold. timeout_ms defaults to 5000.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

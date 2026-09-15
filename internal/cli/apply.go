@@ -302,19 +302,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		plan.Query = query
 		plan.GeneratedAtUnix = time.Now().Unix()
 
-		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-			ExcludeDirs:        cfg.ExcludeDirs,
-			ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
-			ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
-			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
-			WebMaxContentBytes: cfg.Web.MaxContentBytes,
-			WebSearch:          cfg.Web.Search,
-			LSP:                cfg.LSP,
-			DryRun:             dryRun,
-			Browser:            cfg.Browser,
-			AllowBrowser:       allowBrowserEffective,
-			Embed:              cfg.ResolvedEmbed(),
-		})
+		runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, dryRun, allowBrowserEffective))
 		if err != nil {
 			retErr = err
 			return retErr
@@ -387,19 +375,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
-		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-			ExcludeDirs:        cfg.ExcludeDirs,
-			ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
-			ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
-			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
-			WebMaxContentBytes: cfg.Web.MaxContentBytes,
-			WebSearch:          cfg.Web.Search,
-			LSP:                cfg.LSP,
-			DryRun:             dryRun,
-			Browser:            cfg.Browser,
-			AllowBrowser:       allowBrowserEffective,
-			Embed:              cfg.ResolvedEmbed(),
-		})
+		runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, dryRun, allowBrowserEffective))
 		if err != nil {
 			retErr = err
 			return retErr
@@ -510,19 +486,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
-		runner, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-			ExcludeDirs:        cfg.ExcludeDirs,
-			ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
-			ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
-			WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
-			WebMaxContentBytes: cfg.Web.MaxContentBytes,
-			WebSearch:          cfg.Web.Search,
-			LSP:                cfg.LSP,
-			DryRun:             dryRun,
-			Browser:            cfg.Browser,
-			AllowBrowser:       allowBrowserEffective,
-			Embed:              cfg.ResolvedEmbed(),
-		})
+		runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, dryRun, allowBrowserEffective))
 		if err != nil {
 			retErr = err
 			return retErr

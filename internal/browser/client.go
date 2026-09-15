@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,13 @@ import (
 
 const npxInstallHint = "browser tools require Node.js and npx; install from https://nodejs.org"
 
+// PlaywrightMCPPackage is the npm package the client starts, pinned to an
+// exact version: the server renames and reshapes tool arguments between
+// releases, and under @latest the ones internal/tools/web sends stopped being
+// accepted without anything here changing. Moving the pin means re-recording
+// internal/tools/web/testdata/playwright-mcp-tools.json from the new version.
+const PlaywrightMCPPackage = "@playwright/mcp@0.0.81"
+
 // Config configures the browser MCP subprocess.
 type Config struct {
 	Headless       bool
@@ -26,6 +34,9 @@ type Config struct {
 	ViewportWidth  int
 	ViewportHeight int
 	AllowEval      bool
+	// WorkDir is the project root. The server runs there and writes its
+	// snapshots, logs and screenshots under WorkDir/.orchestra/browser.
+	WorkDir string
 	// CmdOverride replaces "npx @playwright/mcp" — for tests only.
 	CmdOverride []string
 	// EnvOverride sets cmd.Env on the subprocess — for tests only.
@@ -128,13 +139,19 @@ func (c *Client) makeCmd() *exec.Cmd {
 			cmd = exec.Command(c.cfg.CmdOverride[0], c.cfg.CmdOverride[1:]...)
 		}
 	} else {
-		args := []string{"--yes", "@playwright/mcp@latest"}
+		args := []string{"--yes", PlaywrightMCPPackage}
 		if c.cfg.Headless {
 			args = append(args, "--headless")
 		}
 		args = append(args, "--viewport-size",
 			fmt.Sprintf("%d,%d", c.cfg.ViewportWidth, c.cfg.ViewportHeight))
+		if c.cfg.WorkDir != "" {
+			args = append(args, "--output-dir", filepath.Join(c.cfg.WorkDir, ".orchestra", "browser"))
+		}
 		cmd = exec.Command("npx", args...)
+	}
+	if c.cfg.WorkDir != "" {
+		cmd.Dir = c.cfg.WorkDir
 	}
 	if len(c.cfg.EnvOverride) > 0 {
 		cmd.Env = c.cfg.EnvOverride

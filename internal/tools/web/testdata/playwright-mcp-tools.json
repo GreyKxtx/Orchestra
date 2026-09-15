@@ -1,0 +1,296 @@
+{
+  "package": "@playwright/mcp@0.0.81",
+  "server": {
+    "name": "Playwright",
+    "version": "1.64.0-alpha-2026-09-14"
+  },
+  "tools": {
+    "browser_navigate": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The URL to navigate to"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "browser_snapshot": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "target": {
+          "description": "Exact target element reference from the page snapshot, or a unique element selector",
+          "type": "string"
+        },
+        "filename": {
+          "description": "Save snapshot to a file instead of returning it in the response. Relative file names are resolved against the workspace root.",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Limit the depth of the snapshot tree",
+          "type": "number"
+        },
+        "boxes": {
+          "description": "Include each element's bounding box as [box=x,y,width,height] in the snapshot. Coordinates are viewport-relative, in CSS pixels (Element.getBoundingClientRect)",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser_take_screenshot": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Human-readable element description used to obtain permission to interact with the element",
+          "type": "string"
+        },
+        "target": {
+          "description": "Exact target element reference from the page snapshot, or a unique element selector",
+          "type": "string"
+        },
+        "type": {
+          "description": "Image format for the screenshot. If unset, inferred from the filename extension, otherwise png.",
+          "type": "string",
+          "enum": [
+            "png",
+            "jpeg",
+            "webp"
+          ]
+        },
+        "filename": {
+          "description": "File name to save the screenshot to. Relative file names are resolved against the workspace root. If not specified, the screenshot is saved into the output directory as `page-{timestamp}.{png|jpeg|webp}`.",
+          "type": "string"
+        },
+        "fullPage": {
+          "description": "When true, takes a screenshot of the full scrollable page, instead of the currently visible viewport. Cannot be used with element screenshots.",
+          "type": "boolean"
+        },
+        "scale": {
+          "default": "css",
+          "description": "Image resolution scale. \"css\" produces a screenshot sized in CSS pixels (smaller, consistent across devices). \"device\" produces a high-resolution screenshot using device pixels (larger, accounts for the device pixel ratio). Default is css.",
+          "type": "string",
+          "enum": [
+            "css",
+            "device"
+          ]
+        }
+      },
+      "required": [
+        "scale"
+      ],
+      "additionalProperties": false
+    },
+    "browser_click": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Human-readable element description used to obtain permission to interact with the element",
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "description": "Exact target element reference from the page snapshot, or a unique element selector"
+        },
+        "doubleClick": {
+          "description": "Whether to perform a double click instead of a single click",
+          "type": "boolean"
+        },
+        "button": {
+          "description": "Button to click, defaults to left",
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ]
+        },
+        "modifiers": {
+          "description": "Modifier keys to press",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Alt",
+              "Control",
+              "ControlOrMeta",
+              "Meta",
+              "Shift"
+            ]
+          }
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "browser_type": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Human-readable element description used to obtain permission to interact with the element",
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "description": "Exact target element reference from the page snapshot, or a unique element selector"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text to type into the element"
+        },
+        "submit": {
+          "description": "Whether to submit entered text (press Enter after)",
+          "type": "boolean"
+        },
+        "slowly": {
+          "description": "Whether to type one character at a time. Useful for triggering key handlers in the page. By default entire text is filled in at once.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "browser_fill_form": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "element": {
+                "description": "Human-readable element description used to obtain permission to interact with the element",
+                "type": "string"
+              },
+              "target": {
+                "type": "string",
+                "description": "Exact target element reference from the page snapshot, or a unique element selector"
+              },
+              "name": {
+                "type": "string",
+                "description": "Human-readable field name"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "textbox",
+                  "checkbox",
+                  "radio",
+                  "combobox",
+                  "slider"
+                ],
+                "description": "Type of the field"
+              },
+              "value": {
+                "type": "string",
+                "description": "Value to fill in the field. If the field is a checkbox, the value should be `true` or `false`. If the field is a combobox, the value should be the text of the option."
+              }
+            },
+            "required": [
+              "target",
+              "name",
+              "type",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Fields to fill in"
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    "browser_select_option": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Human-readable element description used to obtain permission to interact with the element",
+          "type": "string"
+        },
+        "target": {
+          "type": "string",
+          "description": "Exact target element reference from the page snapshot, or a unique element selector"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Array of values to select in the dropdown. This can be a single value or multiple values."
+        }
+      },
+      "required": [
+        "target",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "browser_evaluate": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Human-readable element description used to obtain permission to interact with the element",
+          "type": "string"
+        },
+        "target": {
+          "description": "Exact target element reference from the page snapshot, or a unique element selector",
+          "type": "string"
+        },
+        "function": {
+          "type": "string",
+          "description": "() => { /* code */ } or (element) => { /* code */ } when element is provided"
+        },
+        "filename": {
+          "description": "File name to save the result to. Relative file names are resolved against the workspace root. If not provided, result is returned as text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "function"
+      ],
+      "additionalProperties": false
+    },
+    "browser_wait_for": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "time": {
+          "description": "The time to wait in seconds",
+          "type": "number"
+        },
+        "text": {
+          "description": "The text to wait for",
+          "type": "string"
+        },
+        "textGone": {
+          "description": "The text to wait for to disappear",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser_close": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+}
