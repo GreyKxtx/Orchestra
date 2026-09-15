@@ -380,11 +380,13 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 		a.clearActiveCancel()
 		if a.turnError != "" {
 			a.reasoning.Reset()
+			// The error is part of the turn: a turn that failed before the model
+			// said anything is not drawn as an empty answer.
+			a.session.AppendAssistantNotice(state.SystemKindError, a.turnError)
 			a.session.FinishAssistant()
 			a.failAgentTurn()
 			a.statusBar.ClearError()
 			a.chat.SetStreamCursor(false)
-			a.session.AppendSystemNotice(state.SystemKindError, a.turnError)
 			a.turnError = ""
 			a.chrome.livePromptTokens = 0
 			a.layout()

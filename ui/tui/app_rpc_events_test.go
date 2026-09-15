@@ -109,6 +109,27 @@ func TestTurnError_SurfacesOnCompletion(t *testing.T) {
 	}
 }
 
+// A turn that fails before the model says anything was drawn as an empty
+// answer — "Модель не вернула текст. Проверьте tool calling в LM Studio…" —
+// with the real error below it. With the server down, that sends the user to
+// check tool calling on a server that never answered. The error belongs to the
+// turn, and a turn that has one is not an empty answer.
+func TestTurnError_IsNotAlsoCalledAnEmptyAnswer(t *testing.T) {
+	a, _ := startedTurnApp(t)
+
+	a.handleRPCEvent(rpcclient.Event{Kind: rpcclient.EventError, Err: "LLM Endpoint unreachable at http://127.0.0.1:1. Check if LM Studio / vLLM is running."})
+	a.handleRPCEvent(rpcclient.Event{Kind: rpcclient.EventAgentRunCompleted})
+	a.chat.SetMessages(a.session.Messages)
+
+	plain := stripANSIForTest(a.chat.View())
+	if !strings.Contains(plain, "unreachable") {
+		t.Fatalf("the error is not shown: %s", plain)
+	}
+	if strings.Contains(plain, "Модель не вернула текст") {
+		t.Errorf("a failed turn is also reported as an empty answer: %s", plain)
+	}
+}
+
 func TestConnectionClosed_MidTurnFailsTurn(t *testing.T) {
 	a, _ := startedTurnApp(t)
 
