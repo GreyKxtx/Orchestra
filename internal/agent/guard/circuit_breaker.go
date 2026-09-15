@@ -95,6 +95,28 @@ func callKey(toolName string, inputBytes []byte) string {
 	return toolName + ":" + string(inputBytes)
 }
 
+// callPaths is the set of workspace paths a call's arguments name (path and
+// new_path), normalized so "./a", "/a" and "a" are one file. Tool names are
+// not consulted: dedup only records calls that are not read-only.
+func callPaths(inputBytes []byte) map[string]bool {
+	var args struct {
+		Path    string `json:"path"`
+		NewPath string `json:"new_path"`
+	}
+	if json.Unmarshal(inputBytes, &args) != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, p := range []string{args.Path, args.NewPath} {
+		p = strings.ReplaceAll(strings.TrimSpace(p), `\`, "/")
+		p = strings.TrimPrefix(strings.TrimPrefix(p, "./"), "/")
+		if p != "" {
+			out[p] = true
+		}
+	}
+	return out
+}
+
 // dedupExemptTools are read-only tools where re-fetching with identical args
 // is legitimate: history compaction may have dropped the prior result, the
 // file may have changed after a write, or the model may need a second look.
@@ -373,6 +395,23 @@ func (cb *CircuitBreaker) RecordSuccessfulCall(toolName string, inputBytes []byt
 		return ""
 	}
 	key := callKey(toolName, inputBytes)
+	// A call that changed a path makes every other recorded call on that path
+	// worth making again: a delete after the file was re-written is not a
+	// repeat, even with the same arguments.
+	if changed := callPaths(inputBytes); len(changed) > 0 {
+		for other := range cb.successfulCallKeys {
+			if other == key {
+				continue
+			}
+			_, args, _ := strings.Cut(other, ":")
+			for p := range callPaths([]byte(args)) {
+				if changed[p] {
+					delete(cb.successfulCallKeys, other)
+					break
+				}
+			}
+		}
+	}
 	cb.successfulCallKeys[key]++
 	if cb.successfulCallKeys[key] == 2 {
 		return "⚠️ You already called «" + toolName + "» with identical arguments. Use edit/write to apply changes, or call with different arguments."
