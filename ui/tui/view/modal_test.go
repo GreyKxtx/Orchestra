@@ -44,6 +44,28 @@ func TestModal_LessonRuleRender(t *testing.T) {
 	}
 }
 
+// The core describes a bash request with the call's raw arguments, so the
+// prompt read `Команда: {"command":"go test ./..."}`. The user is asked about
+// a command: it is shown as one, with the directory when the call names one.
+func TestModal_ShellShowsTheCommandNotItsJSON(t *testing.T) {
+	m := NewModal("bash", `{"command":"go test ./...","workdir":"shop"}`)
+	m.SetSize(100)
+	out := m.Render()
+	if !strings.Contains(out, "Команда: go test ./...") || !strings.Contains(out, "shop") {
+		t.Errorf("the shell prompt does not show the command plainly:\n%s", out)
+	}
+	if strings.Contains(out, `{"command"`) {
+		t.Errorf("the shell prompt shows the raw arguments:\n%s", out)
+	}
+
+	// A preview cut at 200 bytes is no longer JSON; it is shown as it came.
+	cut := NewModal("bash", `{"command":"echo `+strings.Repeat("x", 190)+`...`)
+	cut.SetSize(100)
+	if !strings.Contains(cut.Render(), "echo") {
+		t.Errorf("a truncated description vanished:\n%s", cut.Render())
+	}
+}
+
 func TestModal_ShellRender(t *testing.T) {
 	m := NewModal("bash", "go test ./...")
 	m.SetSize(80)

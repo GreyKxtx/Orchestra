@@ -1,6 +1,7 @@
 package view
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -173,7 +174,20 @@ func (m *Modal) Render() string {
 		Foreground(t.Warning()).
 		Bold(true).
 		Render("⚠ Разрешение shell")
+	command := desc
+	var args struct {
+		Command string `json:"command"`
+		Workdir string `json:"workdir"`
+	}
+	// The core sends the call's raw arguments; a preview it cut short is not
+	// JSON any more and is shown as it came.
+	if json.Unmarshal([]byte(m.Description), &args) == nil && strings.TrimSpace(args.Command) != "" {
+		command = args.Command
+		if args.Workdir != "" {
+			command += "\nКаталог: " + args.Workdir
+		}
+	}
 	body := fmt.Sprintf("%s\n\nИнструмент: %s\nКоманда: %s\n\n[y] один раз   [a] на сессию   [t] этот tool   [n] запретить",
-		title, tool, desc)
+		title, tool, command)
 	return border.Render(body)
 }
