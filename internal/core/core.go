@@ -188,7 +188,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 
 	// Start MCP servers (non-fatal: errors are logged but don't abort Core startup).
 	if !opts.ToolsOnly && len(cfg.MCP.Servers) > 0 {
-		mcpMgr, startErrs := mcp.NewManager(context.Background(), cfg.MCP, c.mcpHost.hooks())
+		mcpMgr, startErrs := mcp.NewManager(context.Background(), cfg.MCP, rootAbs, c.mcpHost.hooks())
 		for _, err := range startErrs {
 			// Log to stderr — not a fatal error.
 			fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", err)

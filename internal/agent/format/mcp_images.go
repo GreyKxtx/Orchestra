@@ -3,6 +3,7 @@ package format
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/orchestra/orchestra/llm"
@@ -13,6 +14,47 @@ import (
 // whole context window in a single call, and the model rarely needs more than
 // a few frames to answer.
 const maxMCPImagesPerCall = 4
+
+// ReplaceMCPImagesWithNote rewrites an mcp:* tool result for the history text:
+// each image's base64 is replaced by one line naming its type and size, and
+// whether the model is shown it (in the message after the tool result). The
+// text of the result is kept as it came. A result without images, or one that
+// is not the manager's JSON, comes back unchanged.
+func ReplaceMCPImagesWithNote(out []byte, shown bool) []byte {
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return out
+	}
+	var images []struct {
+		Data string `json:"data"`
+		MIME string `json:"mime"`
+	}
+	if err := json.Unmarshal(resp["images"], &images); err != nil || len(images) == 0 {
+		return out
+	}
+	notes := make([]string, 0, len(images))
+	for i, img := range images {
+		mime := strings.TrimSpace(img.MIME)
+		if mime == "" {
+			mime = "image/png"
+		}
+		size := base64.StdEncoding.DecodedLen(len(strings.TrimSpace(img.Data)))
+		state := "not shown: this model is not given images"
+		if shown {
+			state = "shown to you in the next message"
+			if i >= maxMCPImagesPerCall {
+				state = "not shown: over the per-call image limit"
+			}
+		}
+		notes = append(notes, fmt.Sprintf("image %d (%s, %.1f KB) — %s", i+1, mime, float64(size)/1024, state))
+	}
+	resp["images"], _ = json.Marshal(notes)
+	rewritten, err := json.Marshal(resp)
+	if err != nil {
+		return out
+	}
+	return rewritten
+}
 
 // ExtractMCPImageParts pulls the images out of an mcp:* tool result so they
 // can be shown to the model as real image content rather than described in

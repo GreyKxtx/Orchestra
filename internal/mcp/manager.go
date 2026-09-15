@@ -31,6 +31,22 @@ type Manager struct {
 	resCache map[string][]MCPResource
 	// promptCache is the same, for prompts/list.
 	promptCache map[string][]MCPPrompt
+	// workDir and hooks are what every server is started with — including
+	// again after a crash, which must not quietly move it or strip its hooks.
+	workDir string
+	hooks   Hooks
+}
+
+// startOptions is how the Manager starts srv, the first time and on restart.
+func (m *Manager) startOptions(srv config.MCPServerConfig) StartOptions {
+	opts := StartOptions{WorkDir: m.workDir}
+	if srv.CallTimeoutS > 0 {
+		opts.CallTimeout = time.Duration(srv.CallTimeoutS) * time.Second
+	}
+	opts.Inbound.Consent = m.hooks.Consent
+	opts.Inbound.Sample = m.hooks.Sample
+	opts.Inbound.Elicit = m.hooks.Elicit
+	return opts
 }
 
 // ServerClient is the surface the Manager drives, satisfied by the stdio
@@ -103,14 +119,16 @@ const mcpStartTimeout = 30 * time.Second
 // blocks the rest (was: serial start, no timeout = N stuck servers = hang
 // for N×infinity). Non-fatal errors (individual server startup failures)
 // are returned for the caller to log; they don't abort Core construction.
-func NewManager(ctx context.Context, cfg config.MCPConfig, hooks ...Hooks) (*Manager, []error) {
+//
+// workDir is the project root local servers run in (see StartOptions.WorkDir).
+func NewManager(ctx context.Context, cfg config.MCPConfig, workDir string, hooks ...Hooks) (*Manager, []error) {
 	// Variadic so the callers that serve no inbound requests — the CLI's
-	// list-tools, apply — need no change and cannot opt in by accident.
+	// list-tools — cannot opt in by accident.
 	var hk Hooks
 	if len(hooks) > 0 {
 		hk = hooks[0]
 	}
-	m := &Manager{}
+	m := &Manager{workDir: workDir, hooks: hk}
 	type startRes struct {
 		idx int
 		c   ServerClient
@@ -142,14 +160,7 @@ func NewManager(ctx context.Context, cfg config.MCPConfig, hooks ...Hooks) (*Man
 			defer wg.Done()
 			startCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
 			defer cancel()
-			var opts StartOptions
-			if srv.CallTimeoutS > 0 {
-				opts.CallTimeout = time.Duration(srv.CallTimeoutS) * time.Second
-			}
-			opts.Inbound.Consent = hk.Consent
-			opts.Inbound.Sample = hk.Sample
-			opts.Inbound.Elicit = hk.Elicit
-			c, err := startServer(startCtx, srv, opts)
+			c, err := startServer(startCtx, srv, m.startOptions(srv))
 			if err == nil && c != nil && len(srv.AllowedTools) > 0 {
 				c.SetAllowedTools(srv.AllowedTools)
 			}
@@ -317,11 +328,7 @@ func (m *Manager) maybeRestart(ctx context.Context, serverName string) (ServerCl
 	// block on a slow restart handshake.
 	startCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
 	defer cancel()
-	var opts StartOptions
-	if cfg.CallTimeoutS > 0 {
-		opts.CallTimeout = time.Duration(cfg.CallTimeoutS) * time.Second
-	}
-	fresh, err := startServer(startCtx, cfg, opts)
+	fresh, err := startServer(startCtx, cfg, m.startOptions(cfg))
 	if err != nil {
 		return nil, err
 	}

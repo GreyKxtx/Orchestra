@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -192,7 +193,7 @@ func (a *App) testMCPCmd(serverName string) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		mgr, errs := mcp.NewManager(ctx, mcpCfg)
+		mgr, errs := mcp.NewManager(ctx, mcpCfg, filepath.Dir(cfgPath))
 		defer mgr.Close()
 
 		var b bytes.Buffer

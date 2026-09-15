@@ -80,6 +80,16 @@ func runFakeMCPServer() {
 				"result": map[string]any{
 					"tools": []any{
 						map[string]any{
+							"name":        "cwd",
+							"description": "Reports the server process's working directory",
+							"inputSchema": map[string]any{"type": "object"},
+						},
+						map[string]any{
+							"name":        "exit",
+							"description": "Exits the server process, as a crash would",
+							"inputSchema": map[string]any{"type": "object"},
+						},
+						map[string]any{
 							"name":        "ask_model",
 							"description": "Asks the client to sample its model, then reports what came back",
 							"inputSchema": map[string]any{"type": "object"},
@@ -108,6 +118,20 @@ func runFakeMCPServer() {
 			}
 			_ = json.Unmarshal(req["params"], &params)
 
+			if params.Name == "exit" {
+				os.Exit(0)
+			}
+			if params.Name == "cwd" {
+				wd, _ := os.Getwd()
+				_ = enc.Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      idRaw,
+					"result": map[string]any{
+						"content": []any{map[string]any{"type": "text", "text": wd}},
+					},
+				})
+				continue
+			}
 			if params.Name == "ask_model" {
 				_, advertised := clientCaps["sampling"]
 				text, rpcErr := fakeServerSamples(dec, enc)
@@ -246,7 +270,7 @@ func TestMCPManager_RealSubprocess(t *testing.T) {
 		},
 	}
 
-	mgr, errs := NewManager(ctx, cfg)
+	mgr, errs := NewManager(ctx, cfg, "")
 	if len(errs) > 0 {
 		t.Fatalf("NewManager errors: %v", errs)
 	}

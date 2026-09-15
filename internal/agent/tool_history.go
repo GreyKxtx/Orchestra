@@ -3,11 +3,18 @@ package agent
 import (
 	"encoding/json"
 	"strings"
+
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
 )
 
 // prepareToolHistoryContent optionally digests large tool output and auto-writes session memory.
 func (a *Agent) prepareToolHistoryContent(name string, input json.RawMessage, out []byte) string {
 	a.observeWorkingTool(name, input, out, nil)
+	if strings.HasPrefix(name, "mcp:") {
+		// The image message is built from the raw result; the history text
+		// only says what came back.
+		out = agentformat.ReplaceMCPImagesWithNote(out, a.opts.MultimodalLLM)
+	}
 	content := string(out)
 	if a.opts.Mode == ModeOrchestra {
 		switch strings.ToLower(strings.TrimSpace(name)) {

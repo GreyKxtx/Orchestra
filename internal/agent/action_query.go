@@ -84,9 +84,44 @@ func queryRequiresCodeChanges(query string, todos []tools.TodoItem, mode Mode) b
 				break
 			}
 		}
-		if !skip {
+		if !skip && hasUnnegatedOccurrence(q, m.needle) {
 			return true
 		}
 	}
 	return false
+}
+
+// negations are the words that turn an action into its opposite when they
+// directly precede it: "do not change any files", "не исправляй".
+var negations = []string{"not ", "n't ", "never ", "no ", "не ", "ни ", "без "}
+
+// hasUnnegatedOccurrence reports whether needle occurs in q at least once
+// without a negation right before it. A turn that says "tell me what it
+// returned, do not change any files" was being held to editing something.
+func hasUnnegatedOccurrence(q, needle string) bool {
+	for from := 0; ; {
+		i := strings.Index(q[from:], needle)
+		if i < 0 {
+			return false
+		}
+		at := from + i
+		before := q[:at]
+		negated := false
+		for _, n := range negations {
+			// "n't" ends a word ("don't"); the others must start one, so
+			// "knot " or "piano " is not a negation.
+			if strings.HasSuffix(before, n) && (n == "n't " || len(before) == len(n) || !isWordByte(before[len(before)-len(n)-1])) {
+				negated = true
+				break
+			}
+		}
+		if !negated {
+			return true
+		}
+		from = at + len(needle)
+	}
+}
+
+func isWordByte(c byte) bool {
+	return c >= 0x80 || c == '\'' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 }

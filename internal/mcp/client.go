@@ -135,6 +135,10 @@ type StartOptions struct {
 	// The zero value serves none of them, which is the safe default for
 	// every caller that has not thought about it.
 	Inbound InboundOptions
+	// WorkDir is the directory a local server runs in: the project root, so
+	// relative paths in the committed config mean the same thing however
+	// Orchestra was started. Empty inherits Orchestra's working directory.
+	WorkDir string
 }
 
 // Start launches the MCP subprocess and runs the initialize + tools/list
@@ -146,6 +150,11 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = buildEnv(env)
+	var so StartOptions
+	if len(opts) > 0 {
+		so = opts[0]
+	}
+	cmd.Dir = so.WorkDir
 	subproc.SetProcessGroup(cmd) // S2 consolidation; H13 rationale (audit ledger)
 
 	stdin, err := cmd.StdinPipe()
@@ -168,10 +177,6 @@ func Start(ctx context.Context, name string, command []string, env map[string]st
 		return nil, fmt.Errorf("mcp %q: start: %w", name, err)
 	}
 
-	var so StartOptions
-	if len(opts) > 0 {
-		so = opts[0]
-	}
 	c := &Client{
 		name:        name,
 		cmd:         cmd,

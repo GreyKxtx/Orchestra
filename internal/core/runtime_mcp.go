@@ -116,7 +116,7 @@ func (c *Core) ReplaceMCP(ctx context.Context, mcpCfg config.MCPConfig) []string
 		c.cfg.MCP = mcpCfg
 		return nil
 	}
-	mgr, startErrs := mcp.NewManager(ctx, mcpCfg, c.mcpHooks())
+	mgr, startErrs := mcp.NewManager(ctx, mcpCfg, c.workspaceRoot, c.mcpHooks())
 	for _, err := range startErrs {
 		warnings = append(warnings, err.Error())
 		name := extractMCPErrName(err.Error())
@@ -410,6 +410,7 @@ func (c *Core) MCPTest(ctx context.Context, params MCPTestParams) (*MCPTestResul
 	if srv.CallTimeoutS > 0 {
 		opts.CallTimeout = time.Duration(srv.CallTimeoutS) * time.Second
 	}
+	opts.WorkDir = c.workspaceRoot
 	client, err := mcp.Start(testCtx, srv.Name, srv.Command, srv.Env, opts)
 	if err != nil {
 		return &MCPTestResult{

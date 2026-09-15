@@ -87,3 +87,35 @@ func TestParseCallResult_ErrorFlag(t *testing.T) {
 		t.Errorf("isErr=%v text=%q", isErr, text)
 	}
 }
+
+// Resource links and embedded resources were counted as dropped. A link is
+// how a server says "read this next" — seen live, get-resource-links answered
+// "Here are 2 resource links" and the model got no URIs to read. An embedded
+// resource with text is the answer itself.
+func TestParseCallResult_ForwardsResourceLinksAndEmbeddedText(t *testing.T) {
+	raw := []byte(`{"content":[
+		{"type":"text","text":"Here are the resources:"},
+		{"type":"resource_link","uri":"demo://resource/static/document/architecture.md","name":"architecture.md","mimeType":"text/markdown","description":"How it is built"},
+		{"type":"resource","resource":{"uri":"file:///notes/release.md","mimeType":"text/plain","text":"bump version to 2.4.1"}},
+		{"type":"resource","resource":{"uri":"file:///logo.png","mimeType":"image/png","blob":"iVBORw0KGgo="}}
+	]}`)
+	text, _, _, err := parseCallResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"demo://resource/static/document/architecture.md", "architecture.md", "How it is built",
+		"file:///notes/release.md", "bump version to 2.4.1",
+		"file:///logo.png", "image/png",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the result does not carry %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "dropped") {
+		t.Errorf("resources were forwarded, so nothing is dropped:\n%s", text)
+	}
+	if strings.Contains(text, "iVBORw0KGgo") {
+		t.Errorf("a binary resource's bytes reached the text:\n%s", text)
+	}
+}

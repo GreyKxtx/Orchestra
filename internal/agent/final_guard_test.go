@@ -24,6 +24,15 @@ func TestQueryRequiresCodeChanges(t *testing.T) {
 		{"what comment is at the end of the file", nil, ModeBuild, false},
 		{"добавь комментарий в конец файла", nil, ModeBuild, true},
 		{"what was implemented in this module", nil, ModeBuild, false},
+		// A negated action is the opposite request. Seen live: "Call the MCP tool,
+		// tell me what it returned. Do not change any files." was refused its
+		// answer twice for not editing, and the turn died.
+		{"tell me what it returned. Do not change any files.", nil, ModeBuild, false},
+		{"just look, don't fix anything yet", nil, ModeBuild, false},
+		{"summarise it without changing the code", nil, ModeBuild, false},
+		{"посмотри, но не исправляй", nil, ModeBuild, false},
+		{"fix the bug, but do not touch the tests", nil, ModeBuild, true},
+		{"don't just explain it — fix the bug", nil, ModeBuild, true},
 		{"hello", nil, ModeExplore, false},
 		{"implement feature", nil, ModeExplore, false},
 		{"fix the bug", nil, ModeAsk, false},

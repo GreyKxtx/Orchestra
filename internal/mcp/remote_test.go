@@ -191,7 +191,7 @@ func TestNewManager_StartsARemoteServer(t *testing.T) {
 
 	m, errs := NewManager(context.Background(), config.MCPConfig{
 		Servers: []config.MCPServerConfig{{Name: "remote", URL: endpoint}},
-	})
+	}, "")
 	t.Cleanup(m.Close)
 
 	if len(errs) != 0 {
@@ -217,7 +217,7 @@ func TestNewManager_StartsARemoteServer(t *testing.T) {
 func TestNewManager_ReportsServerWithNoTransport(t *testing.T) {
 	m, errs := NewManager(context.Background(), config.MCPConfig{
 		Servers: []config.MCPServerConfig{{Name: "broken"}},
-	})
+	}, "")
 	t.Cleanup(m.Close)
 
 	// The old filter skipped anything without a command, so a server with a
@@ -240,5 +240,59 @@ func TestStartRemote_UnreachableEndpointFails(t *testing.T) {
 	// be reached must be reported at startup, not surface later as a missing tool.
 	if err == nil {
 		t.Fatal("connecting to a dead endpoint must fail")
+	}
+}
+
+// The remote client converts results with its own code, and it dropped what
+// the stdio client had learned to carry: resource links, embedded resources
+// and a structured-only answer all reached the model as "dropped" or empty.
+func TestRemoteClient_CarriesResourcesAndStructuredContentLikeStdio(t *testing.T) {
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "rich-server", Version: "1.0.0"}, nil)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "resources", Description: "Answers with a link and embedded resources"},
+		func(_ context.Context, _ *mcpsdk.CallToolRequest, _ echoInput) (*mcpsdk.CallToolResult, any, error) {
+			return &mcpsdk.CallToolResult{
+				Content: []mcpsdk.Content{
+					&mcpsdk.TextContent{Text: "Here are the resources:"},
+					&mcpsdk.ResourceLink{URI: "demo://doc/architecture.md", Name: "architecture.md", MIMEType: "text/markdown", Description: "How it is built"},
+					&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{URI: "file:///notes/release.md", MIMEType: "text/plain", Text: "bump version to 2.4.1"}},
+					&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{URI: "file:///logo.png", MIMEType: "image/png", Blob: []byte("\x89PNG")}},
+				},
+			}, nil, nil
+		})
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "structured", Description: "Answers with structured content only"},
+		func(_ context.Context, _ *mcpsdk.CallToolRequest, _ echoInput) (*mcpsdk.CallToolResult, any, error) {
+			return &mcpsdk.CallToolResult{
+				Content:           []mcpsdk.Content{},
+				StructuredContent: map[string]any{"temperature": 33},
+			}, nil, nil
+		})
+	ts := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
+	t.Cleanup(ts.Close)
+
+	c, err := StartRemote(context.Background(), RemoteConfig{Name: "test", URL: ts.URL}, StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	out, err := c.Call(context.Background(), "resources", json.RawMessage(`{"text":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"demo://doc/architecture.md", "How it is built", "file:///notes/release.md", "bump version to 2.4.1", "file:///logo.png"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the remote result does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "dropped") {
+		t.Errorf("resources were dropped:\n%s", out)
+	}
+
+	out, err = c.Call(context.Background(), "structured", json.RawMessage(`{"text":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"temperature":33`) {
+		t.Errorf("a structured-only answer reached the model as %q", out)
 	}
 }

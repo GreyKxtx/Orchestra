@@ -287,14 +287,28 @@ func (c *RemoteClient) CallRich(ctx context.Context, toolName string, arguments 
 				mime = "image/png"
 			}
 			images = append(images, MCPImage{Data: v.Data, MIME: mime})
+		case *mcpsdk.ResourceLink:
+			out.WriteString(resourceLinkText(v.Name, v.URI, v.MIMEType, v.Description))
+		case *mcpsdk.EmbeddedResource:
+			if v.Resource == nil {
+				dropped++
+				continue
+			}
+			out.WriteString(embeddedResourceText(v.Resource.URI, v.Resource.MIMEType, v.Resource.Text, len(v.Resource.Blob)))
 		default:
 			dropped++
 		}
 	}
-	// Same contract as the stdio client: say what could not be carried rather
-	// than let the model assume the text was the whole answer.
+	// Same contract as the stdio client: a structured-only answer is the answer,
+	// and what could not be carried is said rather than left for the model to
+	// assume the text was the whole of it.
+	if strings.TrimSpace(out.String()) == "" && res.StructuredContent != nil {
+		if b, err := json.Marshal(res.StructuredContent); err == nil {
+			out.Write(b)
+		}
+	}
 	if dropped > 0 {
-		fmt.Fprintf(&out, "\n[orchestra: dropped %d non-text content item(s); text and images are forwarded, other kinds are not]", dropped)
+		out.WriteString(droppedNotice(dropped))
 	}
 	if res.IsError {
 		return "", nil, fmt.Errorf("mcp tool error: %s", out.String())

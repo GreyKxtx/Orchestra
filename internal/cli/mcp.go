@@ -62,10 +62,10 @@ func runMCPListTools(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w (run 'orchestra init' first)", err)
 	}
-	return printMCPTools(cmd.Context(), cmd.OutOrStdout(), cfg.MCP)
+	return printMCPTools(cmd.Context(), cmd.OutOrStdout(), cfg.MCP, cwd)
 }
 
-func printMCPTools(ctx context.Context, w io.Writer, cfg config.MCPConfig) error {
+func printMCPTools(ctx context.Context, w io.Writer, cfg config.MCPConfig, workDir string) error {
 	if len(cfg.Servers) == 0 {
 		fmt.Fprintln(w, "No MCP servers configured in .orchestra.yml")
 		fmt.Fprintln(w)
@@ -81,7 +81,7 @@ func printMCPTools(ctx context.Context, w io.Writer, cfg config.MCPConfig) error
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	mgr, errs := mcp.NewManager(ctx, cfg)
+	mgr, errs := mcp.NewManager(ctx, cfg, workDir)
 	defer mgr.Close()
 
 	// Group tools by server name (parsed from "mcp:<server>:<tool>").

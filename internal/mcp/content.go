@@ -16,7 +16,9 @@ type MCPImage struct {
 // parseCallResult splits an MCP tools/call result into the text the model
 // reads, the images it can be shown, and the server's error flag.
 //
-// Anything we cannot carry — audio, embedded resources — is still counted in
+// Resource links and embedded resources become text: a link's URI is what the
+// model reads next, and a text resource is the answer itself; a binary one is
+// named, not pasted. Anything we cannot carry — audio — is still counted in
 // a trailing notice rather than silently omitted, so the model does not treat
 // the text as the whole answer. An image that fails to decode counts as
 // dropped for the same reason: claiming to have forwarded it would be worse
@@ -28,6 +30,17 @@ func parseCallResult(raw json.RawMessage) (text string, images []MCPImage, isErr
 			Text     string `json:"text,omitempty"`
 			Data     string `json:"data,omitempty"`
 			MimeType string `json:"mimeType,omitempty"`
+			// resource_link
+			URI         string `json:"uri,omitempty"`
+			Name        string `json:"name,omitempty"`
+			Description string `json:"description,omitempty"`
+			// resource (embedded)
+			Resource *struct {
+				URI      string `json:"uri"`
+				MimeType string `json:"mimeType,omitempty"`
+				Text     string `json:"text,omitempty"`
+				Blob     string `json:"blob,omitempty"`
+			} `json:"resource,omitempty"`
 		} `json:"content"`
 		// StructuredContent arrived with protocol revision 2025-06-18. The
 		// spec asks servers to mirror it into a text item, but the ones that
@@ -52,6 +65,15 @@ func parseCallResult(raw json.RawMessage) (text string, images []MCPImage, isErr
 				continue
 			}
 			images = append(images, img)
+		case "resource_link":
+			b.WriteString(resourceLinkText(item.Name, item.URI, item.MimeType, item.Description))
+		case "resource":
+			if item.Resource == nil {
+				dropped++
+				continue
+			}
+			r := item.Resource
+			b.WriteString(embeddedResourceText(r.URI, r.MimeType, r.Text, base64.StdEncoding.DecodedLen(len(r.Blob))))
 		default:
 			dropped++
 		}
@@ -63,9 +85,34 @@ func parseCallResult(raw json.RawMessage) (text string, images []MCPImage, isErr
 		out = string(result.StructuredContent)
 	}
 	if dropped > 0 {
-		out += fmt.Sprintf("\n[orchestra: dropped %d non-text content item(s); text and images are forwarded, other kinds are not]", dropped)
+		out += droppedNotice(dropped)
 	}
 	return out, images, result.IsError, nil
+}
+
+// resourceLinkText is how a server says "read this next": the model needs the
+// URI. Shared by the stdio and remote clients.
+func resourceLinkText(name, uri, mime, description string) string {
+	s := fmt.Sprintf("\n[resource link: %s <%s>", name, uri)
+	if mime != "" {
+		s += " " + mime
+	}
+	if description != "" {
+		s += " — " + description
+	}
+	return s + "]"
+}
+
+// embeddedResourceText carries a text resource whole and names a binary one.
+func embeddedResourceText(uri, mime, text string, blobBytes int) string {
+	if text != "" {
+		return fmt.Sprintf("\n[resource %s]\n%s", uri, text)
+	}
+	return fmt.Sprintf("\n[binary resource %s %s, %d bytes — not shown]", uri, mime, blobBytes)
+}
+
+func droppedNotice(n int) string {
+	return fmt.Sprintf("\n[orchestra: dropped %d non-text content item(s); text, images and resources are forwarded, other kinds are not]", n)
 }
 
 // decodeImage turns a base64 content item into bytes. MIME defaults to PNG,
