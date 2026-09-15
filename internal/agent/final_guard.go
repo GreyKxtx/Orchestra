@@ -115,13 +115,17 @@ func isContentOnlyPatchesJSON(raw string) bool {
 // looking idle, and was refused with advice to edit a file it had correctly
 // removed. memory_write is here for the same reason: recording something is
 // the whole job of the turns that use it, and the alternative is a turn that
-// can never end.
+// can never end. Acting on a web page — click, type, fill, select — is the
+// same: a page task says "click Create account" or "add to cart", which reads
+// as a request for code changes. Reading a page (navigate, snapshot, eval, …)
+// is not work, as ls is not.
 func (a *Agent) countMutatingTool(name string) {
 	if a == nil {
 		return
 	}
 	switch normalizeToolName(name) {
-	case "write", "edit", "fs.delete", "fs.rename", "ast_rename", "lsp.rename", "memory_write":
+	case "write", "edit", "fs.delete", "fs.rename", "ast_rename", "lsp.rename", "memory_write",
+		"browser.click", "browser.type", "browser.fill", "browser.select":
 		a.turnMutatingTools++
 	}
 }

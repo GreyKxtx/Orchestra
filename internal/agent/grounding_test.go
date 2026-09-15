@@ -70,10 +70,30 @@ func TestUnknownWorkspacePaths_LeavesInnocentTextAlone(t *testing.T) {
 		"a file that exists":     "The entry point is internal/agent/agent.go.",
 		"a file under a real dir": "Artifacts land in .orchestra/plan.json after a run.",
 		"fenced example code":    "```\nmkdir pkg/newthing\n```",
+		// Seen live: a correct description of a web page was sent back once
+		// for naming "combobox/dropdown" as a path.
+		"two words joined by a slash": "3. **Plan** - a combobox/dropdown with three options: Free, Pro, Team",
+		"and/or":                      "Fill the name and/or the email.",
 	}
 	for name, answer := range cases {
 		if got := unknownWorkspacePaths(answer, root); len(got) != 0 {
 			t.Errorf("%s must not be flagged, got %v", name, got)
+		}
+	}
+}
+
+// Two words joined by a slash read like "combobox/dropdown" in prose, so a short
+// path is taken as a claim only when something else marks it as one: code
+// formatting, a file extension, a third segment.
+func TestUnknownWorkspacePaths_CatchesAShortPathMarkedAsAPath(t *testing.T) {
+	root := groundingFixture(t)
+	for name, answer := range map[string]string{
+		"in backticks":      "MCP support lives in `pkg/mcp`.",
+		"with an extension": "See nosuchdir/thing.md.",
+		"three segments":    "MCP support lives in pkg/mcp/client.",
+	} {
+		if got := unknownWorkspacePaths(answer, root); len(got) == 0 {
+			t.Errorf("%s: an invented path must be caught", name)
 		}
 	}
 }

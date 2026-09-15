@@ -48,15 +48,25 @@ func unknownWorkspacePaths(answer, workspaceRoot string) []string {
 	}
 	text := fencedBlock.ReplaceAllString(stripThinkBlocks(answer), " ")
 
+	type candidate struct{ raw, rel string }
+	var candidates []candidate
+	describesWorkspace := false
+	for _, raw := range pathCandidate.FindAllString(text, -1) {
+		if rel, ok := groundingCandidate(raw, text); ok {
+			candidates = append(candidates, candidate{raw, rel})
+			describesWorkspace = describesWorkspace || pathExistsIn(root, rel)
+		}
+	}
+
 	seen := make(map[string]bool)
 	var out []string
-	for _, raw := range pathCandidate.FindAllString(text, -1) {
-		rel, ok := groundingCandidate(raw, text)
-		if !ok || seen[rel] {
+	for _, c := range candidates {
+		raw, rel := c.raw, c.rel
+		if seen[rel] {
 			continue
 		}
 		seen[rel] = true
-		if pathExistsIn(root, rel) {
+		if pathExistsIn(root, rel) || !markedAsPath(raw, rel, text, describesWorkspace) {
 			continue
 		}
 		// A missing file inside a directory that exists is not an invented
@@ -95,6 +105,45 @@ func groundingCandidate(raw, text string) (string, bool) {
 		return "", false
 	}
 	return rel, true
+}
+
+// markedAsPath tells a path from two words joined by a slash. "pkg/mcp" and
+// "combobox/dropdown" have the same shape, and a wrong complaint makes the
+// model rewrite a correct answer, so a two-segment name counts only when
+// something marks it as a path: the answer names a real path beside it (it is
+// describing the workspace), code formatting, a dot (an extension, a dot
+// directory), a third segment, or its first segment named as a directory again
+// — the way an invented tree lists "pkg/" and "pkg/mcp".
+func markedAsPath(raw, rel, text string, describesWorkspace bool) bool {
+	if describesWorkspace || strings.Count(rel, "/") >= 2 || strings.Contains(rel, ".") {
+		return true
+	}
+	if i := strings.Index(text, raw); i > 0 && text[i-1] == '`' {
+		return true
+	}
+	first, _, _ := strings.Cut(rel, "/")
+	return countDirMentions(text, first+"/") >= 2
+}
+
+// countDirMentions counts occurrences of dir that start a word.
+func countDirMentions(text, dir string) int {
+	n := 0
+	for i := 0; ; {
+		j := strings.Index(text[i:], dir)
+		if j < 0 {
+			return n
+		}
+		at := i + j
+		if at == 0 || !isPathChar(text[at-1]) {
+			n++
+		}
+		i = at + len(dir)
+	}
+}
+
+func isPathChar(c byte) bool {
+	return c == '_' || c == '-' || c == '.' || c == '/' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 func pathExistsIn(root, rel string) bool {
