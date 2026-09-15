@@ -38,6 +38,9 @@ type Task struct {
 	// Without it git.status/log/diff answer "this workspace is not a git
 	// repository" and no task can grade them — which is why none did.
 	Git bool `yaml:"git,omitempty"`
+	// Exec gives the run exec consent (what --allow-exec gives on the CLI).
+	// Without it every bash call is refused, which is why no task graded bash.
+	Exec bool `yaml:"exec,omitempty"`
 }
 
 // AgentRun is one request to the agent under test.
@@ -47,6 +50,7 @@ type AgentRun struct {
 	MaxSteps      int
 	Apply         bool
 	Mode          string
+	AllowExec     bool
 }
 
 // AgentOutcome is what came back.
@@ -202,6 +206,7 @@ func (r *Runner) RunTask(ctx context.Context, task Task) (result Result) {
 		MaxSteps:      maxSteps,
 		Apply:         apply,
 		Mode:          task.Mode,
+		AllowExec:     task.Exec,
 	})
 	result.Steps = outcome.Steps
 	result.Answer = outcome.Answer

@@ -54,7 +54,14 @@ type BackgroundRegistry struct {
 	seq    uint64
 	procs  map[string]*bgProcess
 	bufCap int
+	// outputWait bounds how long BashOutput waits on a running process that
+	// has nothing new to report. Zero means defaultOutputWait.
+	outputWait time.Duration
 }
+
+// defaultOutputWait is how long bash.output waits for output or exit. Answering
+// "running, nothing new" at once taught a model to poll as fast as it could.
+const defaultOutputWait = 10 * time.Second
 
 // NewBackgroundRegistry creates an empty background process registry.
 func NewBackgroundRegistry() *BackgroundRegistry {
@@ -298,7 +305,31 @@ func (r *BackgroundRegistry) BashOutput(req BashOutputRequest) (*BashOutputRespo
 			"bg_id": req.BgID,
 		})
 	}
+	wait := r.outputWait
+	if wait <= 0 {
+		wait = defaultOutputWait
+	}
+	p.waitForNews(wait)
 	return p.fetchOutput(req.Peek), nil
+}
+
+// waitForNews returns once the process has unread output or has stopped
+// running, or when wait has passed.
+func (p *bgProcess) waitForNews(wait time.Duration) {
+	deadline := time.Now().Add(wait)
+	for {
+		p.mu.Lock()
+		news := p.status != bgRunning ||
+			p.stdoutBuf.Len() > p.stdoutOff || p.stderrBuf.Len() > p.stderrOff
+		p.mu.Unlock()
+		if news || !time.Now().Before(deadline) {
+			return
+		}
+		select {
+		case <-p.done:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // BashKill cancels a running background process.

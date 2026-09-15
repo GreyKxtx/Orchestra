@@ -115,8 +115,14 @@ var dedupExemptTools = map[string]bool{
 var browserPageReads = map[string]bool{"browser.snapshot": true, "browser.screenshot": true}
 
 func DedupExemptTool(toolName string) bool {
-	return dedupExemptTools[toolName] || strings.HasPrefix(toolName, "browser.")
+	return dedupExemptTools[toolName] || strings.HasPrefix(toolName, "browser.") || pollTools[toolName]
 }
+
+// pollTools answer differently each time by design: bash.output reports what a
+// running job printed since the last look. They are neither duplicates nor
+// repeats; bash.output waits for news server-side, so polling it is not a hot
+// loop, and the job's timeout and max_steps bound it.
+var pollTools = map[string]bool{"bash.output": true}
 
 // forgetPageReads drops the repeat counts of page reads after an action
 // changed the page.
@@ -140,7 +146,7 @@ func CallKey(toolName string, inputBytes []byte) string {
 // IsReadOnlyBlocked reports whether an identical read-only call should be
 // rejected to break doom-loops (same tool+args repeated many times).
 func (cb *CircuitBreaker) IsReadOnlyBlocked(toolName string, inputBytes []byte) bool {
-	if !DedupExemptTool(toolName) {
+	if !DedupExemptTool(toolName) || pollTools[toolName] {
 		return false
 	}
 	_, block := cb.readOnlyLimits()
@@ -151,7 +157,7 @@ func (cb *CircuitBreaker) IsReadOnlyBlocked(toolName string, inputBytes []byte) 
 // hint to inject after a successful call (warn threshold) and whether the
 // call should have been blocked (caller should check IsReadOnlyBlocked first).
 func (cb *CircuitBreaker) RecordReadOnlyCall(toolName string, inputBytes []byte) string {
-	if !DedupExemptTool(toolName) {
+	if !DedupExemptTool(toolName) || pollTools[toolName] {
 		return ""
 	}
 	if strings.HasPrefix(toolName, "browser.") && !browserPageReads[toolName] {

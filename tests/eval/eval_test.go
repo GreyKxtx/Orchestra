@@ -416,3 +416,21 @@ func TestRunTask_DeletesAFailedWorkspaceByDefault(t *testing.T) {
 		t.Error("the workspace was kept without being asked for")
 	}
 }
+
+// bash could not be graded at all: the harness had no way to give a run exec
+// consent, so every bash call in a task was refused and no task asked for one.
+// `exec: true` hands the run the consent --allow-exec gives on the CLI; without
+// it the run still has none.
+func TestRunTask_ExecGivesTheRunExecConsent(t *testing.T) {
+	for _, exec := range []bool{false, true} {
+		var got bool
+		runner := &Runner{RunAgent: func(ctx context.Context, run AgentRun) (AgentOutcome, error) {
+			got = run.AllowExec
+			return AgentOutcome{}, nil
+		}}
+		runner.RunTask(context.Background(), Task{Name: "exec", Query: "run it", Exec: exec})
+		if got != exec {
+			t.Errorf("exec: %v in the task, AllowExec = %v in the run", exec, got)
+		}
+	}
+}

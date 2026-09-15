@@ -186,11 +186,12 @@ func runEval(cmd *cobra.Command, args []string) error {
 		}
 
 		res, err := c.AgentRun(ctx, core.AgentRunParams{
-			Query:    run.Query,
-			Apply:    run.Apply,
-			MaxSteps: run.MaxSteps,
-			Mode:     run.Mode,
-			OnEvent:  onEvent,
+			Query:     run.Query,
+			Apply:     run.Apply,
+			MaxSteps:  run.MaxSteps,
+			Mode:      run.Mode,
+			AllowExec: run.AllowExec,
+			OnEvent:   onEvent,
 		})
 		if err != nil {
 			return evalharness.AgentOutcome{}, err

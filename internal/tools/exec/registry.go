@@ -35,7 +35,7 @@ func ToolExecBashOutput() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "bash.output",
-			Description: "Return the stdout/stderr a background process produced since the last poll, plus its status (running/done/killed/timed_out). Pass peek=true to read without advancing the cursor.",
+			Description: "Return the stdout/stderr a background process produced since the last poll, plus its status (running/done/killed/timed_out). While the process runs with nothing new, the call waits up to 10 seconds for output or exit before answering — call it again to keep waiting. Pass peek=true to read without advancing the cursor.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

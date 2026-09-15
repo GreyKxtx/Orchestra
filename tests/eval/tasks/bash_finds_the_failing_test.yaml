@@ -1,0 +1,55 @@
+# bash was never graded: the harness had no way to give a run exec consent.
+# Here the fastest honest route is to run the tests and read which case fails —
+# the bug is a boundary, one case out of seven, and the test names say nothing
+# about it. tool_used makes sure the answer came from running them, and the
+# test file must be left alone: "make the test pass" by editing the test is
+# the classic wrong fix.
+name: bash_finds_the_failing_test
+description: Run the tests, find the failing case from the output, fix the code
+exec: true
+max_steps: 16
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  shipping.go: |
+    package evalws
+
+    // ShippingCents returns the shipping fee for an order total, in cents.
+    // Orders of 5000 cents or more ship free; smaller orders pay a flat 499.
+    func ShippingCents(totalCents int) int {
+    	if totalCents > 5000 {
+    		return 0
+    	}
+    	return 499
+    }
+  shipping_test.go: |
+    package evalws
+
+    import "testing"
+
+    func TestShippingCents(t *testing.T) {
+    	cases := []struct {
+    		total, want int
+    	}{
+    		{0, 499},
+    		{1, 499},
+    		{2500, 499},
+    		{4999, 499},
+    		{5000, 0},
+    		{5001, 0},
+    		{12000, 0},
+    	}
+    	for _, c := range cases {
+    		if got := ShippingCents(c.total); got != c.want {
+    			t.Errorf("ShippingCents(%d) = %d, want %d", c.total, got, c.want)
+    		}
+    	}
+    }
+query: "One of the tests in this module fails. Run the tests, find the cause from their output, and fix the code. Do not edit the test file."
+checks:
+  - type: tool_used
+    content: bash
+  - type: file_unchanged
+    path: shipping_test.go
+  - type: go_test

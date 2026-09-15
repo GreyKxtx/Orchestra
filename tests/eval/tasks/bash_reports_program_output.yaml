@@ -1,0 +1,30 @@
+# The answer is a CRC-32 the model cannot work out by reading the code, so the
+# only way to the exact line is to run the program. workspace_unchanged holds
+# the other half of the contract: running a command is not a licence to edit
+# anything. The run applies — core refuses every command in a preview turn.
+name: bash_reports_program_output
+description: Run the program and report the exact line it prints
+exec: true
+max_steps: 10
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  main.go: |
+    package main
+
+    import (
+    	"fmt"
+    	"hash/crc32"
+    )
+
+    func main() {
+    	fmt.Printf("checksum=%08x\n", crc32.ChecksumIEEE([]byte("orchestra-eval-7f3a")))
+    }
+query: "Run this program with `go run .` and tell me the exact checksum line it prints. Do not change any files."
+checks:
+  - type: tool_used
+    content: bash
+  - type: answer_matches
+    pattern: 'checksum=d2edfd4e'
+  - type: workspace_unchanged

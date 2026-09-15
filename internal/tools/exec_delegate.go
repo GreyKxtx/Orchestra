@@ -24,17 +24,27 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 // for every way a command can start. It used to live inline in ExecRun only,
 // so run_in_background=true ran any command the same preview refused.
 func (r *Runner) execBlockedInDryRun(command string) error {
-	r.dryRunMu.RLock()
-	dry := r.dryRun
-	block := r.blockExecInDryRun
-	allowDespite := r.allowExecDespiteDryRun
-	r.dryRunMu.RUnlock()
-	if dry && block && !allowDespite {
+	if r.ExecRefusedByDryRun() {
+		// Read by the model, which can neither press keys nor change how the
+		// turn was started — so it says what to do instead.
 		return protocol.NewError(protocol.ExecFailed,
-			"exec.run disabled in dry-run preview: use apply:true (TUI always applies) and shell allow (Shift+Tab) for commands",
+			"commands cannot run in this turn: it is a dry-run preview that changes nothing (apply is off). "+
+				"Answer without running commands, or tell the user that running it needs a turn with changes applied",
 			map[string]any{"command": command})
 	}
 	return nil
+}
+
+// ExecRefusedByDryRun reports whether every command is refused right now: a
+// dry-run preview on a Runner that blocks exec there (core), not unlocked by
+// apply. The agent uses it to leave bash out of a turn that could never run it.
+func (r *Runner) ExecRefusedByDryRun() bool {
+	if r == nil {
+		return false
+	}
+	r.dryRunMu.RLock()
+	defer r.dryRunMu.RUnlock()
+	return r.dryRun && r.blockExecInDryRun && !r.allowExecDespiteDryRun
 }
 
 func (r *Runner) ExecBashBackground(ctx context.Context, req ExecRunRequest) (*ExecBashBackgroundResponse, error) {

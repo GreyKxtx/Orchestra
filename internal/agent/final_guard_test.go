@@ -33,6 +33,12 @@ func TestQueryRequiresCodeChanges(t *testing.T) {
 		{"посмотри, но не исправляй", nil, ModeBuild, false},
 		{"fix the bug, but do not touch the tests", nil, ModeBuild, true},
 		{"don't just explain it — fix the bug", nil, ModeBuild, true},
+		// Describing a process is not asking for a change. Seen live: "use
+		// bash.output to wait until it finishes, tell me whether the tests
+		// passed" had its correct answer refused twice.
+		{"use bash.output to wait until it finishes and tell me whether the tests passed", nil, ModeBuild, false},
+		{"tell me when the job completes", nil, ModeBuild, false},
+		{"finish the migration", nil, ModeBuild, true},
 		{"hello", nil, ModeExplore, false},
 		{"implement feature", nil, ModeExplore, false},
 		{"fix the bug", nil, ModeAsk, false},

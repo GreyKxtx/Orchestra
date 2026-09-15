@@ -1,0 +1,33 @@
+# bash.output is how a model reads a job it started with run_in_background.
+# The suite takes a few seconds on purpose, so the first look may find it still
+# running; the answer has to come from a finished run. The last test prints a
+# token only visible in verbose output, which is what proves the model read
+# the job's output rather than guessing that tests usually pass.
+name: bash_waits_for_a_background_job
+description: Start the tests in the background, wait for them, report the result
+exec: true
+max_steps: 14
+files:
+  go.mod: |
+    module evalws
+    go 1.21
+  slow_test.go: |
+    package evalws
+
+    import (
+    	"testing"
+    	"time"
+    )
+
+    func TestWarmup(t *testing.T) { time.Sleep(2 * time.Second) }
+
+    func TestSettle(t *testing.T) { time.Sleep(2 * time.Second) }
+
+    func TestReport(t *testing.T) { t.Log("marker: amber-falcon-42") }
+query: "Start `go test -v ./...` in the background with bash (run_in_background), then use bash.output to wait until it finishes. Tell me whether the tests passed and the marker that TestReport logs. Do not change any files."
+checks:
+  - type: tool_used
+    content: bash.output
+  - type: answer_matches
+    pattern: 'amber-falcon-42'
+  - type: workspace_unchanged

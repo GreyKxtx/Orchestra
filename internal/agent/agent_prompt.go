@@ -30,7 +30,9 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		base = append(base, a.opts.CustomTools...)
 	} else {
 		caps := tools.Capabilities{
-			Exec:    a.opts.AllowExec || len(a.opts.ExecAllow) > 0,
+			// A preview turn in core refuses every command; offering bash
+			// there only buys refusals until the breaker ends the turn.
+			Exec:    (a.opts.AllowExec || len(a.opts.ExecAllow) > 0) && !a.tools.ExecRefusedByDryRun(),
 			Web:     a.opts.AllowWeb,
 			Browser: a.opts.AllowBrowser,
 		}
