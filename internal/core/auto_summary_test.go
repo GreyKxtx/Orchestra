@@ -199,3 +199,29 @@ func TestAutoSummaryMemory_PrefersModelProseWhenAvailable(t *testing.T) {
 		t.Errorf("status must say the note came from the model, got %+v", st)
 	}
 }
+
+// The same rule with the model answering. Only the fallback path checked that
+// the turn changed anything, so with a live endpoint every question asked in a
+// session left a model-written paragraph in agent.md — which is injected into
+// every later prompt of the project. Seen live on a 9B: six read-only turns,
+// six notes, one of them "Updated inventory.go …" for a turn that edited
+// nothing, written after the user had asked for nothing to be saved.
+func TestAutoSummaryMemory_ReadOnlyTurnWritesNothingEvenWhenTheModelAnswers(t *testing.T) {
+	c, root := newSummaryCore(t, proseLLM{text: "Updated inventory.go with the step logic."})
+	const sid = "sess-readonly-live"
+	st := working.New("read inventory.go and tell me what inventoryStep7 adds")
+	st.ObserveTool("read", []byte(`{"path":"inventory.go"}`), nil, nil)
+	if err := working.PersistTurnDigest(root, sid, st.BuildTurnDigest(0)); err != nil {
+		t.Fatal(err)
+	}
+
+	status := c.maybeAutoSummaryMemory(context.Background(), sid, longHistory(12), &agent.Result{Steps: 3})
+
+	if _, err := os.Stat(filepath.Join(root, ".orchestra", "memory", "agent.md")); !os.IsNotExist(err) {
+		data, _ := os.ReadFile(filepath.Join(root, ".orchestra", "memory", "agent.md"))
+		t.Fatalf("a look-around turn is not a durable fact, wrote: %s", data)
+	}
+	if status == nil || status.Outcome != "skipped" {
+		t.Errorf("the status must say the note was skipped, got %+v", status)
+	}
+}

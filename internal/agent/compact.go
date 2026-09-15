@@ -117,6 +117,7 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	body.WriteString(strings.TrimSpace(userQuery))
 	body.WriteString("\n\n")
 	body.WriteString(summary)
+	body.WriteString(renderUsersWords(usersWords(older)))
 
 	compacted := make([]llm.Message, 0, 1+len(tail))
 	compacted = append(compacted, llm.Message{
@@ -125,6 +126,83 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	})
 	compacted = append(compacted, tail...)
 	return compacted, nil
+}
+
+// usersWordsHeader opens the checkpoint section that carries what the user
+// wrote, word for word. The summary is the model's; a small summariser drops
+// instructions and decisions the user gave, and those are exactly what the rest
+// of the conversation depends on. The section is the last thing in a
+// checkpoint, so the next compaction can read it back.
+const usersWordsHeader = "## The user's own words (verbatim, oldest first)"
+
+const (
+	maxCarriedUserWords = 12
+	userWordsMaxChars   = 1500
+)
+
+// usersWords collects what the user wrote in hist: the <user_query> of each
+// turn, and whatever an earlier checkpoint already carried. The agent's own
+// user-role notes (validation errors, hints, working state) are not the user's
+// words and are left out.
+func usersWords(hist []llm.Message) []string {
+	var out []string
+	for _, m := range hist {
+		if m.Role != llm.RoleUser {
+			continue
+		}
+		if strings.HasPrefix(m.Content, checkpointHeader) {
+			out = append(out, carriedUsersWords(m.Content)...)
+			continue
+		}
+		_, rest, ok := strings.Cut(m.Content, "<user_query>")
+		if !ok {
+			continue
+		}
+		q, _, _ := strings.Cut(rest, "</user_query>")
+		if q = strings.TrimSpace(q); q != "" {
+			out = append(out, clipChars(q, userWordsMaxChars))
+		}
+	}
+	if len(out) > maxCarriedUserWords {
+		// The first request frames the whole conversation; keep it, then the
+		// most recent ones.
+		out = append(out[:1:1], out[len(out)-maxCarriedUserWords+1:]...)
+	}
+	return out
+}
+
+func renderUsersWords(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n")
+	b.WriteString(usersWordsHeader)
+	b.WriteString("\n")
+	for _, w := range words {
+		b.WriteString("- ")
+		b.WriteString(strings.ReplaceAll(w, "\n", "\n  "))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// carriedUsersWords reads the section renderUsersWords wrote back out.
+func carriedUsersWords(checkpoint string) []string {
+	_, section, ok := strings.Cut(checkpoint, usersWordsHeader+"\n")
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(section, "\n") {
+		switch {
+		case strings.HasPrefix(line, "- "):
+			out = append(out, strings.TrimPrefix(line, "- "))
+		case strings.HasPrefix(line, "  ") && len(out) > 0:
+			out[len(out)-1] += "\n" + strings.TrimPrefix(line, "  ")
+		}
+	}
+	return out
 }
 
 // CompactNow runs ModeCompaction on hist (summary of older history + verbatim tail).

@@ -31,3 +31,5 @@ CRITICAL:
 - FOCUS ON STATE: the goal, the facts, the changed files, the open errors, the next step.
 - 600 words maximum. Do not repeat the same thing across sections.
 - Do not invent completed work and do not add files that never appeared in the history.
+- A tool result ending in "…[clipped]" was cut off. Report only what its visible part shows; never describe code, lines or values you did not see — write "not seen (result was clipped)" instead.
+- The user's own messages are carried into the checkpoint word for word by the runtime; you do not need to restate them.

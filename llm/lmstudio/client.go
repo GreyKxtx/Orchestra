@@ -76,16 +76,21 @@ type v0Response struct {
 }
 
 // v1Model matches the OpenAI-compatible /v1/models response.
-// vLLM exposes max_model_len; LM Studio may use max_context_length / context_length.
+// vLLM exposes max_model_len; LM Studio may use max_context_length / context_length;
+// llama.cpp's server puts the window it runs with under meta.n_ctx (n_ctx_train,
+// beside it, is what the model supports, not what the server accepts).
 type v1Model struct {
 	ID               string `json:"id"`
 	MaxContextLength int64  `json:"max_context_length"`
 	MaxModelLen      int64  `json:"max_model_len"`
 	ContextLength    int64  `json:"context_length"`
+	Meta             struct {
+		NCtx int64 `json:"n_ctx"`
+	} `json:"meta"`
 }
 
 func (m v1Model) resolvedContextLen() int64 {
-	for _, n := range []int64{m.MaxModelLen, m.MaxContextLength, m.ContextLength} {
+	for _, n := range []int64{m.MaxModelLen, m.MaxContextLength, m.ContextLength, m.Meta.NCtx} {
 		if n > 0 {
 			return n
 		}

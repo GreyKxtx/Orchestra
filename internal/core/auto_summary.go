@@ -51,18 +51,19 @@ func (c *Core) maybeAutoSummaryMemory(ctx context.Context, sessionID string, his
 }
 
 func (c *Core) buildMemoryNote(ctx context.Context, sessionID string, hist []llm.Message) *MemoryNoteStatus {
+	// One rule for both sources: a turn that changed nothing leaves no project
+	// memory. The digest path always held it; the model path did not, so with
+	// a live endpoint every read-only question wrote a paragraph — often a
+	// wrong one — into agent.md, which every later prompt carries.
+	digestNote := working.MemoryNoteFromDigest(working.LastTurnDigest(c.workspaceRoot, sessionID))
+	if digestNote == "" {
+		return &MemoryNoteStatus{Outcome: "skipped", Detail: "turn changed no files"}
+	}
 	source := "model"
-	note, modelErr := c.llmSummaryNote(ctx, hist)
+	note, _ := c.llmSummaryNote(ctx, hist)
 	if note == "" {
 		source = "digest"
-		note = working.MemoryNoteFromDigest(working.LastTurnDigest(c.workspaceRoot, sessionID))
-	}
-	if note == "" {
-		reason := "turn changed no files"
-		if modelErr != nil {
-			reason = "model summary failed (" + modelErr.Error() + ") and " + reason
-		}
-		return &MemoryNoteStatus{Outcome: "skipped", Detail: reason}
+		note = digestNote
 	}
 
 	entry := fmt.Sprintf("[session:%s] %s", sessionID, note)

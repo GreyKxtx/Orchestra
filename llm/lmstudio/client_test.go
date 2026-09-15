@@ -108,3 +108,29 @@ func TestListModels_V1MaxModelLen(t *testing.T) {
 		t.Fatalf("FindModelContext = %d", n)
 	}
 }
+
+// llama.cpp's server reports the window it was started with under meta.n_ctx,
+// next to n_ctx_train (what the model was trained for). Neither was read, so
+// discovery found nothing and the name catalog answered instead: a Qwen3.5-9B
+// served with -c 32768 was taken for 131072 tokens. Compaction then waited for
+// a prompt four times larger than the server accepts, and the server refused
+// first ("request exceeds the available context size"). The running window is
+// n_ctx, not n_ctx_train.
+func TestListModels_V1LlamaCppMetaNCtx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v0/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"models":[{"name":"/models/Qwen3.5-9B-Q4_K_M.gguf"}],"object":"list","data":[{"id":"/models/Qwen3.5-9B-Q4_K_M.gguf","object":"model","owned_by":"llamacpp","meta":{"vocab_type":1,"n_vocab":248320,"n_ctx":32768,"n_ctx_train":262144,"n_embd":4096}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	n, err := lmstudio.NewClient(srv.URL, "").FindModelContext("/models/Qwen3.5-9B-Q4_K_M.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 32768 {
+		t.Fatalf("FindModelContext = %d, want the served window 32768 (n_ctx), not n_ctx_train", n)
+	}
+}

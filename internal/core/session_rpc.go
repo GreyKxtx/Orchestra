@@ -394,6 +394,17 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// History with partial-turn content — a turn-end computation would be
 	// wrong for every turn during which a mid-turn snapshot fired.
 	sess.AppendTurnStart(len(inHistory))
+	// The user's message opens the turn in History. The agent rebuilds the
+	// current query into every request, but nothing else kept it, so the next
+	// turn saw only the model's replies — "use the name I gave you" had no name
+	// to use. Same <user_query> wrapping as the prompt, which is also what
+	// compaction reads to carry the user's words into its checkpoint. The turn
+	// start recorded above points at this message, so rewind and fork cut the
+	// question together with its answer.
+	inHistory = append(inHistory, llm.Message{
+		Role:    llm.RoleUser,
+		Content: "<user_query>\n" + strings.TrimSpace(agentQuery) + "\n</user_query>",
+	})
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
