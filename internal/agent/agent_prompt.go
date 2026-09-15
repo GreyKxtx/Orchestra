@@ -29,10 +29,15 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		// are still appended below.
 		base = append(base, a.opts.CustomTools...)
 	} else {
+		// Exec consent is static (--allow-exec, exec.allow) or per call: a
+		// requester asks the user before each bash command, so bash is offered.
+		// git.commit, git.push and the rest do not ask, and stay behind the
+		// static consent.
+		staticExec := a.opts.AllowExec || len(a.opts.ExecAllow) > 0
 		caps := tools.Capabilities{
 			// A preview turn in core refuses every command; offering bash
 			// there only buys refusals until the breaker ends the turn.
-			Exec:    (a.opts.AllowExec || len(a.opts.ExecAllow) > 0) && !a.tools.ExecRefusedByDryRun(),
+			Exec:    (staticExec || a.opts.PermissionRequester != nil) && !a.tools.ExecRefusedByDryRun(),
 			Web:     a.opts.AllowWeb,
 			Browser: a.opts.AllowBrowser,
 		}
@@ -45,6 +50,9 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 			base = tools.ListToolsWithSubtasks(caps)
 		default:
 			base = tools.ListTools(caps)
+		}
+		if caps.Exec && !staticExec {
+			base = tools.StripRepoMutatingTools(base)
 		}
 	}
 	if len(a.opts.ExtraTools) > 0 {
