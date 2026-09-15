@@ -25,6 +25,12 @@ type Config struct {
 	BraveEndpoint   string
 	Browser         *browser.Client
 	AllowBrowserEval bool
+
+	// blockIP overrides isBlockedIP. Tests only: every local test server is on
+	// loopback, which the SSRF guard refuses, so without this the success path
+	// of webfetch — the one the model actually relies on — cannot be exercised
+	// at all. Unexported, so nothing outside this package can loosen the guard.
+	blockIP func(net.IP) bool
 }
 
 // WebFetchRequest is the input for the webfetch tool.
@@ -71,7 +77,7 @@ func WebFetch(ctx context.Context, cfg Config, req WebFetchRequest) (*WebFetchRe
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			DialContext: ssrfSafeDialer(),
+			DialContext: ssrfSafeDialer(cfg.blockIP),
 		},
 	}
 
@@ -111,6 +117,14 @@ func WebFetch(ctx context.Context, cfg Config, req WebFetchRequest) (*WebFetchRe
 	}
 
 	contentType := resp.Header.Get("Content-Type")
+	// "Fetch a URL and return the page as text" — so a PDF, image or archive is
+	// named, not decoded as a string. Its bytes used to go to the model as page
+	// content, up to MaxContentBytes of context spent on noise the model could
+	// not tell from a real page.
+	if kind, textual := textualContent(contentType, bodyBytes); !textual {
+		return nil, fmt.Errorf("content at %s is %s, not text: webfetch returns text and HTML pages only",
+			resp.Request.URL.String(), kind)
+	}
 	var title, content string
 	if strings.Contains(contentType, "html") || isLikelyHTML(bodyBytes) {
 		title, content = extractTextFromHTML(string(bodyBytes))
@@ -128,7 +142,10 @@ func WebFetch(ctx context.Context, cfg Config, req WebFetchRequest) (*WebFetchRe
 
 // ssrfSafeDialer returns a DialContext function that resolves DNS and rejects
 // private/loopback/link-local addresses before making the connection.
-func ssrfSafeDialer() func(ctx context.Context, network, addr string) (net.Conn, error) {
+func ssrfSafeDialer(blocked func(net.IP) bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if blocked == nil {
+		blocked = isBlockedIP
+	}
 	base := &net.Dialer{Timeout: 10 * time.Second}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
@@ -138,7 +155,7 @@ func ssrfSafeDialer() func(ctx context.Context, network, addr string) (net.Conn,
 
 		// Reject raw IP literals that are private/loopback before DNS lookup.
 		if ip := net.ParseIP(host); ip != nil {
-			if isBlockedIP(ip) {
+			if blocked(ip) {
 				return nil, fmt.Errorf("blocked: private/loopback/link-local address %s", ip)
 			}
 			return base.DialContext(ctx, network, addr)
@@ -153,7 +170,7 @@ func ssrfSafeDialer() func(ctx context.Context, network, addr string) (net.Conn,
 			return nil, fmt.Errorf("no addresses resolved for %q", host)
 		}
 		for _, ia := range ips {
-			if isBlockedIP(ia.IP) {
+			if blocked(ia.IP) {
 				return nil, fmt.Errorf("blocked: %q resolves to private/loopback/link-local IP %s", host, ia.IP)
 			}
 		}
@@ -220,6 +237,32 @@ func extractTextFromHTML(src string) (title, text string) {
 	walk(doc)
 
 	return strings.TrimSpace(titleBuf.String()), strings.TrimSpace(textBuf.String())
+}
+
+// textualContent reports whether a response is text the model can read, and
+// the media type it was judged by. The declared Content-Type decides when it is
+// specific; when it is missing or the generic application/octet-stream, the
+// body is sniffed. HTML under a wrong type still counts, as it did before.
+func textualContent(contentType string, body []byte) (kind string, textual bool) {
+	mt := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	if mt == "" || mt == "application/octet-stream" {
+		mt = strings.TrimSpace(strings.SplitN(http.DetectContentType(body), ";", 2)[0])
+	}
+	if isLikelyHTML(body) {
+		return mt, true
+	}
+	switch {
+	case strings.HasPrefix(mt, "text/"),
+		strings.HasSuffix(mt, "+json"), strings.HasSuffix(mt, "+xml"):
+		return mt, true
+	}
+	switch mt {
+	case "application/json", "application/xml", "application/xhtml+xml",
+		"application/javascript", "application/x-javascript", "application/ecmascript",
+		"application/yaml", "application/x-yaml", "application/toml", "application/x-sh":
+		return mt, true
+	}
+	return mt, false
 }
 
 // isLikelyHTML returns true if the first 512 bytes contain an HTML tag.

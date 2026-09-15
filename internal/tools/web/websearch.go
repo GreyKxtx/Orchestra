@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -18,8 +19,43 @@ const (
 	tavilyDefaultEndpoint = "https://api.tavily.com/search"
 	braveDefaultEndpoint  = "https://api.search.brave.com/res/v1/web/search"
 	webSearchTimeout      = 20 * time.Second
-	webSearchMaxBytes     = 64 * 1024
+
+	// webSearchMaxResponseBytes bounds what is read from the provider, and it
+	// is read BEFORE the JSON is parsed. It used to be 64 KB, which is not a cap
+	// on what reaches the model but a guarantee that any larger answer is cut
+	// mid-document and fails as "parse response: unexpected end of JSON input".
+	// What reaches the model is bounded after parsing instead: at most 20
+	// results, each snippet at most webSearchMaxSnippetBytes.
+	webSearchMaxResponseBytes = 4 << 20
+	webSearchMaxSnippetBytes  = 2000
 )
+
+// readProviderResponse reads a provider body whole, or says it is too large —
+// never hands a truncated document to the JSON parser.
+func readProviderResponse(provider string, body io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, webSearchMaxResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%s: read response: %w", provider, err)
+	}
+	if len(raw) > webSearchMaxResponseBytes {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			fmt.Sprintf("%s: response larger than %d bytes; ask for fewer results", provider, webSearchMaxResponseBytes), nil)
+	}
+	return raw, nil
+}
+
+// clipSnippet keeps a snippet within webSearchMaxSnippetBytes on a UTF-8
+// boundary.
+func clipSnippet(s string) string {
+	if len(s) <= webSearchMaxSnippetBytes {
+		return s
+	}
+	cut := webSearchMaxSnippetBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 // WebSearchRequest is the input for the websearch tool.
 type WebSearchRequest struct {
@@ -72,7 +108,7 @@ func WebSearch(ctx context.Context, cfg Config, req WebSearchRequest) (*WebSearc
 
 	var transport http.RoundTripper
 	if cfg.TavilyEndpoint == "" && cfg.BraveEndpoint == "" {
-		transport = &http.Transport{DialContext: ssrfSafeDialer()}
+		transport = &http.Transport{DialContext: ssrfSafeDialer(nil)}
 	} else {
 		transport = http.DefaultTransport
 	}
@@ -120,9 +156,9 @@ func searchTavily(ctx context.Context, cfg Config, client *http.Client, query st
 	if resp.StatusCode >= 400 {
 		return nil, protocol.NewError(protocol.ExecFailed, fmt.Sprintf("tavily: HTTP %d", resp.StatusCode), nil)
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, webSearchMaxBytes))
+	raw, readErr := readProviderResponse("tavily", resp.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("tavily: read response: %w", readErr)
+		return nil, readErr
 	}
 	var apiResp struct {
 		Query   string `json:"query"`
@@ -141,7 +177,7 @@ func searchTavily(ctx context.Context, cfg Config, client *http.Client, query st
 		results = append(results, WebSearchResult{
 			Title:   item.Title,
 			URL:     item.URL,
-			Snippet: item.Content,
+			Snippet: clipSnippet(item.Content),
 			Score:   item.Score,
 		})
 	}
@@ -179,9 +215,9 @@ func searchBrave(ctx context.Context, cfg Config, client *http.Client, query str
 	if resp.StatusCode >= 400 {
 		return nil, protocol.NewError(protocol.ExecFailed, fmt.Sprintf("brave: HTTP %d", resp.StatusCode), nil)
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, webSearchMaxBytes))
+	raw, readErr := readProviderResponse("brave", resp.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("brave: read response: %w", readErr)
+		return nil, readErr
 	}
 	var apiResp struct {
 		Web struct {
@@ -200,7 +236,7 @@ func searchBrave(ctx context.Context, cfg Config, client *http.Client, query str
 		results = append(results, WebSearchResult{
 			Title:   item.Title,
 			URL:     item.URL,
-			Snippet: item.Description,
+			Snippet: clipSnippet(item.Description),
 		})
 	}
 	return &WebSearchResponse{Query: query, Results: results}, nil
