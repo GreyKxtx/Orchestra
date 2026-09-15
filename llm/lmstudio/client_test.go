@@ -43,6 +43,41 @@ func TestListModels_V0API(t *testing.T) {
 	}
 }
 
+// LM Studio lists what a model supports (max_context_length) and, for a loaded
+// model, the window it was loaded with (loaded_context_length). Only the first
+// was read: Qwen3.8-27B loaded at 25088 was taken for 262144, and the TUI showed
+// 11.1k/256.0k while the server would refuse a prompt a tenth that size.
+// Compaction plans against the same number. A loaded model's window is the one
+// it runs with; a model not loaded yet has only its maximum to go by.
+func TestFindModelContext_V0PrefersTheLoadedWindow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v0/models" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"qwen/qwen3.8-27b","object":"model","type":"vlm","state":"loaded","max_context_length":262144,"loaded_context_length":25088},
+			{"id":"openai/gpt-oss-20b","object":"model","type":"llm","state":"not-loaded","max_context_length":131072}
+		]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := lmstudio.NewClient(srv.URL, "")
+	if n, err := client.FindModelContext("qwen/qwen3.8-27b"); err != nil || n != 25088 {
+		t.Errorf("FindModelContext(loaded) = %d, %v; want the loaded window 25088", n, err)
+	}
+	if n, err := client.FindModelContext("openai/gpt-oss-20b"); err != nil || n != 131072 {
+		t.Errorf("FindModelContext(not loaded) = %d, %v; want its maximum 131072", n, err)
+	}
+	models, err := client.ListModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if models[0].MaxContextLength != 262144 {
+		t.Errorf("the model's maximum is still what a load dialog offers: got %d", models[0].MaxContextLength)
+	}
+}
+
 func TestListModels_V1Fallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v0/models" {

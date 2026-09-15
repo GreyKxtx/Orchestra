@@ -24,7 +24,19 @@ import (
 type RemoteModel struct {
 	ID               string
 	MaxContextLength int64
-	IsLoaded         bool // true when model is currently loaded in memory
+	// LoadedContextLength is the window a loaded model runs with (LM Studio
+	// v0 only); 0 when the model is not loaded or the server does not say.
+	LoadedContextLength int64
+	IsLoaded            bool // true when model is currently loaded in memory
+}
+
+// ContextWindow is the window a request to the model gets: the loaded one when
+// the server reports it, else the model's maximum.
+func (m RemoteModel) ContextWindow() int64 {
+	if m.LoadedContextLength > 0 {
+		return m.LoadedContextLength
+	}
+	return m.MaxContextLength
 }
 
 // Client talks to a LM Studio (or OpenAI-compatible) local server.
@@ -69,6 +81,9 @@ type v0Model struct {
 	Type             string `json:"type"`
 	State            string `json:"state"`
 	MaxContextLength int64  `json:"max_context_length"`
+	// LoadedContextLength is present for a loaded model: the window it was
+	// loaded with, which is what the server accepts.
+	LoadedContextLength int64 `json:"loaded_context_length"`
 }
 
 type v0Response struct {
@@ -218,9 +233,10 @@ func (c *Client) listV0() ([]RemoteModel, error) {
 			continue
 		}
 		result = append(result, RemoteModel{
-			ID:               m.ID,
-			MaxContextLength: m.MaxContextLength,
-			IsLoaded:         m.State == "loaded",
+			ID:                  m.ID,
+			MaxContextLength:    m.MaxContextLength,
+			LoadedContextLength: m.LoadedContextLength,
+			IsLoaded:            m.State == "loaded",
 		})
 	}
 	return result, nil
@@ -254,8 +270,9 @@ func (c *Client) listV1() ([]RemoteModel, error) {
 	return result, nil
 }
 
-// FindModelContext returns the server-advertised context window for modelID
-// (exact or case-insensitive match). Returns 0,nil when the model is listed
+// FindModelContext returns the context window a request to modelID gets
+// (exact or case-insensitive match): the loaded window when LM Studio reports
+// one, else the advertised maximum. Returns 0,nil when the model is listed
 // without a context field; error only on transport/decode failures.
 func (c *Client) FindModelContext(modelID string) (int64, error) {
 	models, err := c.ListModels()
@@ -266,8 +283,8 @@ func (c *Client) FindModelContext(modelID string) (int64, error) {
 	if want == "" {
 		// Prefer the first model that reports a context length.
 		for _, m := range models {
-			if m.MaxContextLength > 0 {
-				return m.MaxContextLength, nil
+			if n := m.ContextWindow(); n > 0 {
+				return n, nil
 			}
 		}
 		return 0, nil
@@ -276,14 +293,14 @@ func (c *Client) FindModelContext(modelID string) (int64, error) {
 	for i := range models {
 		m := &models[i]
 		if m.ID == want {
-			return m.MaxContextLength, nil
+			return m.ContextWindow(), nil
 		}
 		if strings.EqualFold(m.ID, want) {
 			fuzzy = m
 		}
 	}
 	if fuzzy != nil {
-		return fuzzy.MaxContextLength, nil
+		return fuzzy.ContextWindow(), nil
 	}
 	// Suffix / contains match (vLLM may serve "Qwen/…" while config has "qwen/…").
 	low := strings.ToLower(want)
@@ -291,8 +308,8 @@ func (c *Client) FindModelContext(modelID string) (int64, error) {
 		m := &models[i]
 		id := strings.ToLower(m.ID)
 		if strings.HasSuffix(id, low) || strings.HasSuffix(low, id) || strings.Contains(id, low) {
-			if m.MaxContextLength > 0 {
-				return m.MaxContextLength, nil
+			if n := m.ContextWindow(); n > 0 {
+				return n, nil
 			}
 		}
 	}
