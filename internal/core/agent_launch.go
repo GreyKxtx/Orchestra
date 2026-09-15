@@ -34,10 +34,11 @@ type agentLaunchSpec struct {
 	SessionID string
 	Query     string // user turn text; used by mode=agent auto-router
 
-	Apply     bool
-	Backup    bool
-	AllowExec bool
-	Debug     bool
+	Apply        bool
+	Backup       bool
+	AllowExec    bool
+	AllowBrowser bool
+	Debug        bool
 
 	MaxSteps          int
 	MaxInvalidRetries int
@@ -160,6 +161,8 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	if err != nil {
 		return nil, err
 	}
+	// One answer for the turn, its subagents and its skills.
+	allowBrowser := spec.AllowBrowser && agent.ProfileAllowsBrowser(profileName)
 
 	var respFmt *llm.ResponseFormat
 	respFmt = agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
@@ -287,6 +290,9 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	}
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
+	// Subagents get the browser when the turn has it; the agent refuses
+	// browser.* to any run without it, children included.
+	childCfg.Caps.Browser = allowBrowser
 	// Question Barrier (spec §4.3) shares the interactive channel with the
 	// question tool; nil (core stdio mode) keeps the barrier off.
 	childCfg.QuestionAsker = spec.QuestionAsker
@@ -338,6 +344,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		Apply:                spec.Apply,
 		Backup:               spec.Backup,
 		AllowExec:            allowExec,
+		AllowBrowser:         allowBrowser,
 		ExecAllow:            c.cfg.Exec.Allow,
 		ExecDeny:             c.cfg.Exec.Deny,
 		PermissionRules:      c.cfg.Permissions.Rules,
@@ -373,7 +380,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 			opts.Skills = skillrun.Specs(discovered)
 			opts.SkillRunner = skillrun.New(
 				c.cfg, discovered, refs, customOpts.llmClient, c.validator, c.tools, agentLogger,
-				c.cfg.Agent.MaxSteps, allowExec, allowWeb, false,
+				c.cfg.Agent.MaxSteps, allowExec, allowWeb, allowBrowser,
 			)
 		}
 	}

@@ -490,6 +490,27 @@ test("a composer send becomes session.message", async () => {
   assert.equal(msg.params.content, "hello");
   assert.equal(msg.params.allow_exec, true);
   assert.equal(msg.params.apply, true, "the web host applies to disk: it has no Accept/Reject editor UI");
+  assert.equal(msg.params.allow_browser, undefined, "the browser is off unless the composer's switch is on");
+});
+
+test("the composer's browser switch reaches session.message as allow_browser", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+
+  dispatch(b, {
+    type: "send",
+    text: "open the page",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: false,
+    allowBrowser: true,
+    files: [],
+  });
+
+  const msg = b.sent.find((m) => m.method === "session.message");
+  assert.ok(msg, "no session.message went out");
+  assert.equal(msg.params.allow_browser, true);
 });
 
 test("cancelTurn sends $/cancelRequest for the in-flight turn", async () => {

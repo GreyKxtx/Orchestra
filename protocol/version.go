@@ -42,7 +42,10 @@ const (
 	//      files, nodes, edges, funcs, types, tests, langs) so the Graph view
 	//      can show them beside the picture; index.outline — one file's indexed
 	//      symbols with the first lines of each symbol's source.
-	ProtocolVersion = 18
+	// v19: agent.run and session.message take allow_browser — the turn, its
+	//      subagents and its skills get browser.* tools (not under the fast
+	//      profile). tool.call answers browser.* with ExecDenied.
+	ProtocolVersion = 19
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

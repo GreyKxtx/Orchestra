@@ -33,6 +33,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/fork", "ветка от сообщения (оригинал остаётся)"},
 	{"/sessions", "сохранённые сессии · /sessions <текст> — поиск по сообщениям"},
 	{"/shell", "права на shell: ask ↔ allow"},
+	{"/browser", "браузер для агента: on ↔ off"},
 	{"/skill", "запустить skill"},
 	{"/skills", "список skills"},
 	{"/theme", "тема: orchestra ↔ neutral"},

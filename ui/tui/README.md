@@ -72,6 +72,7 @@ TUI по умолчанию коммитит write/edit сразу (`apply=true`
 ## Slash / команды
 
 `/shell` — переключить `shell · ask` ↔ `shell · allow` (алиас `/exec`).  
+`/browser` — дать ходам агента браузер (Playwright MCP, `allow_browser`) или забрать; действует до выхода из TUI и не при профиле `fast`.  
 `/attach <path>` — прикрепить файл (image/PDF/SVG); копия в `.orchestra/attachments/`, chips в user bubble, multimodal в LLM при `llm.multimodal: true`.  
 `/diff`, `/clear`, `/sessions`, `/help`, `/quit`, `/provider`, `/model`, …
 

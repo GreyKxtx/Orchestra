@@ -11,9 +11,10 @@ import (
 
 func (a *App) agentRunOptions() rpcclient.AgentRunOptions {
 	return rpcclient.AgentRunOptions{
-		Apply:     true,
-		AllowExec: a.allowExec,
-		Profile:   a.cfg.Profile,
+		Apply:        true,
+		AllowExec:    a.allowExec,
+		AllowBrowser: a.allowBrowser,
+		Profile:      a.cfg.Profile,
 	}
 }
 

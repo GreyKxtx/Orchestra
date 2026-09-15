@@ -371,6 +371,7 @@ export type WebviewToHost =
       mode?: string;
       profile?: string;
       allowExec?: boolean;
+      allowBrowser?: boolean;
       files?: ChatFileRef[];
     }
   | { type: "attach" }

@@ -198,6 +198,8 @@
     typeof saved.accessId === "string" && ACCESS_MODES.some((m) => m.id === saved.accessId)
       ? saved.accessId
       : "ask";
+  // Browser tools for the turn (allow_browser). Off until the user turns it on.
+  let browserOn = saved.browserOn === true;
   let assistantBubble = null;
   /** @type {HTMLElement | null} */
   let assistantTurn = null;

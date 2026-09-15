@@ -266,6 +266,7 @@ const helpText = `Orchestra TUI — клавиши:
   Ctrl+K        command palette
   Ctrl+S        sessions (если есть в проекте)
   /shell        ask ↔ allow
+  /browser      браузер для агента on ↔ off (до выхода из TUI)
   /theme        тема orchestra ↔ neutral
   d             diff последнего commit
   y / a / t / n shell: раз / сессия / этот tool / нет
@@ -364,6 +365,15 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 			} else {
 				a.showToast("shell · ask — спрашивать перед командой")
 			}
+		}
+		a.layout()
+	case "/browser":
+		dismissWelcome()
+		a.allowBrowser = !a.allowBrowser
+		if a.allowBrowser {
+			a.showToast("browser · on — агент может открывать страницы (не при профиле fast)")
+		} else {
+			a.showToast("browser · off")
 		}
 		a.layout()
 	case "/theme":

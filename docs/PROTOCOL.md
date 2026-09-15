@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `18`
+- **`protocol.ProtocolVersion`**: `19`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `14`
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v19** (2026-09-15): `agent.run` и `session.message` принимают `allow_browser` — ход, его подагенты и skills получают `browser.*` (кроме профиля `fast`). Разрешение проверяет агент на каждом вызове: ход без `allow_browser` получает отказ, даже назвав инструмент сам. `tool.call` на `browser.*` отвечает `ExecDenied`. Клиенты: VS Code и веб — переключатель «Браузер» в меню «Доступ», TUI — `/browser`.
 - **v18** (2026-09-11): `index.graph` дополнительно возвращает `stats` — тот же набор счётчиков, что и `index.status` (файлы, узлы, рёбра, функции, типы, тесты, языки), чтобы вкладка Graph показывала их рядом с картинкой без второго запроса. `index.outline` — символы одного файла с первыми строками исходника каждого символа.
 - **v17** (2026-09-11): `index.graph` — граф знаний о коде в том виде, в котором его рисует вкладка Graph: на уровне `file` (папки, файлы и взвешенные связи файл→файл) или `symbol` (каждый проиндексированный символ). `attachments.store` — клиент без своей файловой системы (браузер, web view десктопа) отдаёт core байты файла и получает вложение под `<workspace>/.orchestra/attachments/`, которое можно передать в `session.message.attachments[]`. Хост VS Code делает то же самое сам (panel.ts, `attachBytes`).
 - **v16** (2026-09-10): `session.trajectory` — читает append-only per-session event log (`.orchestra/sessions/<id>.events.jsonl`) обратно как `{recorded, events[]}`. Снапшот сессии на диске не меняется и остаётся на v4 — лог это sidecar-файл рядом со снапшотом, а не часть его схемы. Также добавлен тип агентского события `context_estimate` — байтовая оценка размера промпта, отдельная от `step_usage` (реальных цифр, которые сообщил провайдер): их нельзя суммировать или подменять друг другом, и только `step_usage` может записываться как измеренный расход.
@@ -556,6 +557,7 @@ Response `result`:
 - `apply` (bool, optional; default=false)
 - `backup` (bool, optional)
 - `allow_exec` (bool, optional; default=false)
+- `allow_browser` (bool, optional; default=false; v19+) — дать ходу инструменты `browser.*` (Playwright MCP); не действует при профиле `fast`
 - `debug` (bool, optional)
 - `mode` (string, optional) — имя built-in режима (`build`, `plan`, `explore`, …) или custom-агента, определённого в `agents:` в `.orchestra.yml`; пустая строка → поведение `build` по умолчанию.
 - `apply_output` (string, optional; default=`disk`) — `disk` (запись/dry-run как раньше) или `patch` (экспорт unified `.patch`, диск не трогается; mutually exclusive с `apply=true`).
@@ -597,7 +599,8 @@ Response `result` — JSON-объект/массив (ответ инструм�
 
 `browser.*` через `tool.call` не выполняются: ответ `ExecDenied`. У `tool.call` нет
 `allow_browser`, а браузер `core` общий для всех сессий, поэтому он доступен только агентам
-запусков, получивших `allow_browser: true` (`skill.invoke`, `workflow.run`).
+запусков, получивших `allow_browser: true` (`agent.run`, `session.message`, `skill.invoke`,
+`workflow.run`).
 
 ## Методы сессий
 
@@ -672,6 +675,7 @@ Response `result`: `{ "session_id": "...", "saved": true }`
 - `apply` (bool, optional; default=false) — применить изменения на диск
 - `backup` (bool, optional) — делать резервные копии изменённых файлов
 - `allow_exec` (bool, optional) — разрешить инструмент `exec.run`
+- `allow_browser` (bool, optional; v19+) — как у `agent.run`
 - `max_steps` (int, optional)
 - `max_invalid_retries` (int, optional)
 - `max_prompt_bytes` (int, optional)

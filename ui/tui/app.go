@@ -195,6 +195,8 @@ type App struct {
 	floodRunCount int
 
 	allowExec bool // allow bash/exec.run in agent runs
+	// allowBrowser gives turns browser.* tools (/browser). Not persisted.
+	allowBrowser bool
 
 	// routeBadge is set when mode=agent auto-routes (e.g. "agent→build").
 	routeBadge string

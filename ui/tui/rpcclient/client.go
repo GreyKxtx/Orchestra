@@ -163,10 +163,23 @@ func (c *Client) Events() <-chan Event {
 
 // AgentRunOptions controls an agent.run or session.message call from the TUI.
 type AgentRunOptions struct {
-	Apply       bool
-	AllowExec   bool
-	Profile     string
-	Attachments []RPCAttachment
+	Apply     bool
+	AllowExec bool
+	// AllowBrowser gives the turn browser.* tools (protocol 19).
+	AllowBrowser bool
+	Profile      string
+	Attachments  []RPCAttachment
+}
+
+// addTurnFlags puts the consent flags of a turn into agent.run or
+// session.message params. allow_browser goes out only when on.
+func addTurnFlags(params map[string]any, opts AgentRunOptions) {
+	params["apply"] = opts.Apply
+	params["backup"] = opts.Apply
+	params["allow_exec"] = opts.AllowExec
+	if opts.AllowBrowser {
+		params["allow_browser"] = true
+	}
 }
 
 // RPCAttachment mirrors core message attachment params.
@@ -291,10 +304,8 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 	params := map[string]any{
 		"session_id": sessionID,
 		"content":    query,
-		"apply":      opts.Apply,
-		"backup":     opts.Apply,
-		"allow_exec": opts.AllowExec,
 	}
+	addTurnFlags(params, opts)
 	if mode != "" {
 		params["mode"] = mode
 	}
@@ -360,11 +371,9 @@ func (c *Client) RespondRuleSuggestion(ctx context.Context, accept bool, s RuleS
 // Prefer SessionMessage for interactive TUI chat.
 func (c *Client) AgentRun(ctx context.Context, query, mode string, opts AgentRunOptions) error {
 	params := map[string]any{
-		"query":      query,
-		"apply":      opts.Apply,
-		"backup":     opts.Apply,
-		"allow_exec": opts.AllowExec,
+		"query": query,
 	}
+	addTurnFlags(params, opts)
 	if mode != "" {
 		params["mode"] = mode
 	}

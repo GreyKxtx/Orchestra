@@ -35,6 +35,7 @@ var DefaultModalCommands = []ModalCommand{
 	{"/memory", "слои памяти · /memory search <текст> — поиск", "Session"},
 	{"/diff", "diff последнего commit", "Session"},
 	{"/shell", "права на shell: ask ↔ allow", "Session"},
+	{"/browser", "браузер для агента: on ↔ off", "Session"},
 	{"/theme", "тема: orchestra ↔ neutral", "System"},
 	// System
 	{"/help", "клавиши и команды", "System"},

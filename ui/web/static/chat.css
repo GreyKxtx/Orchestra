@@ -1866,12 +1866,14 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   opacity: 1;
 }
 
-.menu-row-fast .menu-row-label {
+.menu-row-fast .menu-row-label,
+.menu-row-browser .menu-row-label {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
+.menu-row-browser .menu-row-label .mi,
 .menu-row-fast .menu-row-label .mi.effort-fast {
   display: inline-flex;
   align-items: center;

@@ -243,6 +243,8 @@ type SessionMessageParams struct {
 	Apply     bool `json:"apply,omitempty"`
 	Backup    bool `json:"backup,omitempty"`
 	AllowExec bool `json:"allow_exec,omitempty"`
+	// AllowBrowser gives the turn browser.* tools (ProtocolVersion 19).
+	AllowBrowser bool `json:"allow_browser,omitempty"`
 
 	MaxSteps          int `json:"max_steps,omitempty"`
 	MaxInvalidRetries int `json:"max_invalid_retries,omitempty"`
@@ -426,6 +428,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
+		AllowBrowser:        params.AllowBrowser,
 		Debug:               c.debug,
 		MaxSteps:            params.MaxSteps,
 		MaxInvalidRetries:   params.MaxInvalidRetries,

@@ -640,6 +640,8 @@
       // disk. Access mode still gates the shell (allow_exec below).
       apply: true,
       allow_exec: Boolean(msg.allowExec),
+      // The composer's browser switch (access menu): browser.* for this turn.
+      ...(msg.allowBrowser === true ? { allow_browser: true } : {}),
       profile: msg.profile || "",
       ...(attachments.length ? { attachments } : {}),
     });

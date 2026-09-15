@@ -54,7 +54,6 @@ func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 		setInt(&opts.MaxFinalFailures, 3, preserveNonZero)
 		setInt(&opts.MaxToolErrorRepeats, 4, preserveNonZero)
 		setInt(&opts.CompactThresholdPct, 60, preserveNonZero)
-		opts.AllowBrowser = false
 	case ProfilePrecision:
 		setInt(&opts.MaxSteps, 36, preserveNonZero)
 		setInt(&opts.MaxPromptBytes, 128*1024, preserveNonZero)
@@ -63,7 +62,18 @@ func ApplyProfile(opts *Options, profile string, preserveNonZero bool) error {
 		setInt(&opts.MaxToolErrorRepeats, 8, preserveNonZero)
 		setInt(&opts.CompactThresholdPct, 75, preserveNonZero)
 	}
+	if !ProfileAllowsBrowser(name) {
+		opts.AllowBrowser = false
+	}
 	return nil
+}
+
+// ProfileAllowsBrowser reports whether a run under profile may have browser
+// tools. The fast profile leaves them out. Callers that hand the browser to a
+// run's subagents or skills must ask this too, or those would keep what the
+// run itself was denied.
+func ProfileAllowsBrowser(profile string) bool {
+	return !strings.EqualFold(strings.TrimSpace(profile), ProfileFast)
 }
 
 func setInt(dst *int, v int, preserveNonZero bool) {

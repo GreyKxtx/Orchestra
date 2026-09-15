@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -104,6 +106,77 @@ func TestAgent_RefusesBrowserToolsARunWasNotGiven(t *testing.T) {
 			t.Errorf("%s: the refusal does not say what would allow it:\n%s", name, got)
 		}
 	}
+}
+
+// The parallel batch takes a call only when its offered definition is marked
+// ParallelSafe. Today that happens for browser.snapshot only through mode
+// lists, which carry browser tools only with allow_browser — so the batch's
+// own refusal is a backstop, and this test builds the definitions a future
+// tool source could hand the agent. Without the backstop it fails (checked by
+// disabling it).
+func TestAgent_RefusesBrowserToolsInAParallelBatchToo(t *testing.T) {
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{
+		AllowBrowser:   true,
+		BrowserCommand: []string{filepath.Join(root, "no-such-browser-server")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	custom, err := tools.ResolveToolNames([]string{"read", "browser.snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range custom {
+		custom[i].ParallelSafe = true
+	}
+	client := &batchLLM{results: map[string]string{}}
+	ag, err := New(client, v, tr, Options{MaxSteps: 4, Mode: ModeBuild, CustomTools: custom})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ag.Run(context.Background(), nil, "look"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := client.results["p2"]; strings.Contains(got, reachedBrowserClient) || !strings.Contains(got, "allow_browser") {
+		t.Errorf("browser.snapshot in a parallel batch was not refused:\n%s", got)
+	}
+	if got := client.results["p1"]; !strings.Contains(got, "hello") {
+		t.Errorf("the read beside it should still run: %s", got)
+	}
+}
+
+// batchLLM sends [read, browser.snapshot] in one step, then finishes.
+type batchLLM struct {
+	calls   int
+	results map[string]string
+}
+
+func (b *batchLLM) Plan(context.Context, string) (string, error) { return "{}", nil }
+
+func (b *batchLLM) Complete(_ context.Context, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	b.calls++
+	for _, m := range req.Messages {
+		if m.Role == llm.RoleTool {
+			b.results[m.ToolCallID] = m.Content
+		}
+	}
+	if b.calls == 1 {
+		return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "p1", Type: "function", Function: llm.ToolCallFunc{Name: "read", Arguments: llm.ToolArguments(`{"path":"a.txt"}`)}},
+			{ID: "p2", Type: "function", Function: llm.ToolCallFunc{Name: "browser.snapshot", Arguments: llm.ToolArguments(`{}`)}},
+		}}}, nil
+	}
+	return &llm.CompleteResponse{Message: llm.Message{Role: llm.RoleAssistant,
+		Content: `{"type":"final","final":{"patches":[]}}`}}, nil
 }
 
 func TestAgent_LetsBrowserToolsThroughWhenTheRunHasThem(t *testing.T) {

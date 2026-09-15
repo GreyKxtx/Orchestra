@@ -30,7 +30,9 @@ type AgentRunParams struct {
 	MaxPromptBytes    int `json:"max_prompt_bytes,omitempty"`
 
 	AllowExec bool `json:"allow_exec,omitempty"`
-	Debug     bool `json:"debug,omitempty"`
+	// AllowBrowser gives the turn browser.* tools (ProtocolVersion 19).
+	AllowBrowser bool `json:"allow_browser,omitempty"`
+	Debug        bool `json:"debug,omitempty"`
 
 	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
 	Mode string `json:"mode,omitempty"`
@@ -160,6 +162,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
+		AllowBrowser:        params.AllowBrowser,
 		Debug:               params.Debug || c.debug,
 		MaxSteps:            params.MaxSteps,
 		MaxInvalidRetries:   params.MaxInvalidRetries,

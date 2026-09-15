@@ -48,6 +48,7 @@ interface PendingSend {
   mode?: string;
   profile?: string;
   allowExec?: boolean;
+  allowBrowser?: boolean;
   files?: ChatFileRef[];
 }
 
@@ -980,6 +981,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             mode: msg.mode,
             profile: msg.profile,
             allowExec: msg.allowExec,
+            allowBrowser: msg.allowBrowser,
             files: msg.files,
           });
           return;
@@ -1349,6 +1351,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       const turnResult = (await this.session.sendMessage(userText, {
         apply: item.allowExec === true,
         allowExec: item.allowExec === true,
+        allowBrowser: item.allowBrowser === true,
         mode: item.mode,
         profile: item.profile,
         attachments: prepared,

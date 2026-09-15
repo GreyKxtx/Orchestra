@@ -175,8 +175,10 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	// its input, so the model does not read the result as an answer to the
 	// arguments it actually sent.
 	rewrote := make([]string, len(calls))
-	// A batch runs in parallel only when every call is offered and parallel-safe,
-	// which no browser tool is; refuse here too so that stays a detail.
+	// A backstop: a browser call reaches this batch only through an offered
+	// ParallelSafe definition, and mode lists offer browser tools only with
+	// AllowBrowser. Any other source of such definitions would bypass the
+	// serial path's refusal, so the batch refuses too.
 	for i, call := range calls {
 		if refusal := a.browserCallRefusal(normalizeToolName(call.Name)); refusal != nil {
 			denied[i] = true

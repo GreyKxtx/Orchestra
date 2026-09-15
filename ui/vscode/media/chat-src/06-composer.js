@@ -309,6 +309,7 @@
       profile: effectiveProfile(),
       apply: false,
       allowExec: accessId === "auto",
+      allowBrowser: browserOn,
       files: files.map((f) => ({
         name: f.name,
         path: f.path,
@@ -619,6 +620,11 @@
 
   accessMenu?.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-toggle")) {
+      browserOn = !browserOn;
+      syncAccessUi();
+      return;
+    }
     const item = /** @type {HTMLElement | null} */ (e.target.closest("[data-access]"));
     if (!item || !accessMenu.contains(item)) {
       return;

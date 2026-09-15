@@ -22,7 +22,7 @@ import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjectio
 import { RpcClient } from "./rpc/client";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 18;
+const PROTOCOL_VERSION = 19;
 const OPS_VERSION = 1;
 export const TOOLS_VERSION = 14;
 
@@ -1246,6 +1246,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       mode?: string;
       profile?: string;
       allowExec?: boolean;
+      allowBrowser?: boolean;
       attachments?: Array<{
         name: string;
         path?: string;
@@ -1288,6 +1289,9 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         backup: options?.apply ?? false,
         allow_exec: options?.allowExec ?? false,
       };
+      if (options?.allowBrowser) {
+        params.allow_browser = true;
+      }
       if (options?.mode && options.mode.trim() !== "") {
         params.mode = options.mode.trim();
       }

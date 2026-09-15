@@ -184,6 +184,18 @@
     note.textContent =
       "Ask: правки в staging + Accept/Reject. Auto: правки пишутся на диск сразу.";
     accessMenu.appendChild(note);
+    const optHead = document.createElement("div");
+    optHead.className = "menu-section";
+    optHead.textContent = "Инструменты";
+    accessMenu.appendChild(optHead);
+    const browserRow = document.createElement("div");
+    browserRow.className = "menu-row menu-row-browser";
+    browserRow.title =
+      "Агент может открывать страницы, нажимать и вводить текст в браузере (Playwright). Не действует при Fast.";
+    browserRow.innerHTML =
+      '<span class="menu-row-label"><span class="mi" aria-hidden="true">◎</span>Браузер</span>' +
+      '<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="Браузер"></button>';
+    accessMenu.appendChild(browserRow);
   }
 
   function syncAccessUi() {
@@ -204,7 +216,15 @@
       const id = el.getAttribute("data-access");
       el.classList.toggle("selected", id === accessId);
     });
-    host.setState({ ...(host.getState() || {}), accessId });
+    const browserToggle = document.getElementById("browser-toggle");
+    if (browserToggle) {
+      browserToggle.classList.toggle("on", browserOn);
+      browserToggle.setAttribute("aria-checked", browserOn ? "true" : "false");
+    }
+    if (accessBtn) {
+      accessBtn.title = browserOn ? `${m.hint} · браузер включён` : m.hint;
+    }
+    host.setState({ ...(host.getState() || {}), accessId, browserOn });
   }
 
   function statsHtml(stats) {
