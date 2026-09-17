@@ -39,6 +39,8 @@ Thumbs.db
 .orchestra/playbooks/local/
 .orchestra.local.yml
 .orchestra.yml.local
+# Provider credentials: the config names ${VAR}, this file holds the value.
+.orchestra.env
 *.orchestra.bak
 *.bak
 *.tmp

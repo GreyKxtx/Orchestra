@@ -527,6 +527,11 @@ type ProjectConfig struct {
 	// bindings). Loaded from the config directory by Load; never marshalled
 	// back into .orchestra.yml.
 	Routing *OrchestraRouting `yaml:"-"`
+	// envRefs records every ${VAR} Load resolved in a credential field, keyed
+	// by config path ("llm.api_key", "providers.gemini.api_key"). Save writes
+	// the reference back in place of the value. Unexported, so yaml never
+	// sees it — and so a marshalled config can never carry the secrets.
+	envRefs map[string]envRef
 }
 
 // ModelPricing is the per-1M-token USD price for one model.
@@ -864,6 +869,10 @@ func Load(path string) (*ProjectConfig, error) {
 	cfg.applyDefaults()
 	cfg.resolveProjectRoot(path)
 
+	// Credentials named as ${VAR} resolve here, before Validate reads the
+	// endpoints and before llmauth attaches a token source to them.
+	cfg.expandEnvRefs(filepath.Dir(path))
+
 	fromMCPJSON, err := LoadMCPJSON(filepath.Dir(path))
 	if err != nil {
 		return nil, err
@@ -980,6 +989,10 @@ func renderForSave(path string, cfg *ProjectConfig) ([]byte, error) {
 	// changed since Load: the committed config says "." on purpose, and the
 	// absolute path Load resolved it to belongs to this machine alone.
 	out := *cfg
+	// A ${VAR} the config named is what goes back on disk, never the secret it
+	// resolved to at load: otherwise the first setting the UI saves commits the
+	// key along with it.
+	out.restoreEnvRefs()
 	if sp := cfg.projectRootSpelling; sp != "" {
 		dir := filepath.Dir(path)
 		if abs, aerr := filepath.Abs(dir); aerr == nil {
