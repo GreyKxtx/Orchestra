@@ -4,6 +4,7 @@ package toolpath
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -88,7 +89,28 @@ func ResolveWorkspacePath(workspaceRoot, p string) (abs string, relSlash string,
 	}
 
 	relSlash = filepath.ToSlash(rel)
+	if IsCredentialFile(relSlash) {
+		return "", "", protocol.NewError(protocol.InvalidParams,
+			"refusing "+relSlash+": it holds this project's credentials, and tools never read or write it",
+			map[string]any{"path": p, "reason": "credential file"})
+	}
 	return absAbs, relSlash, nil
+}
+
+// IsCredentialFile reports whether a workspace-relative path names a file
+// whose whole content is secrets: the provider keys in .orchestra.env, and
+// whatever the user kept out of the shared config in .orchestra.local.yml.
+//
+// Tools resolve paths here before reading, writing or diffing them, so this
+// is the one place that keeps a model from putting the project's keys into
+// its next prompt — and a run on a free provider from handing them to a
+// service that trains on what it is sent.
+func IsCredentialFile(relSlash string) bool {
+	switch strings.ToLower(path.Base(relSlash)) {
+	case ".orchestra.env", ".orchestra.local.yml":
+		return true
+	}
+	return false
 }
 
 // IsWithinRoot checks if targetAbs is within rootAbs using realpath comparison.
