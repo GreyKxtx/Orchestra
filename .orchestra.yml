@@ -16,6 +16,34 @@ llm:
     multimodal: true
     extra_body:
         num_ctx: 32768
+# Named providers, selectable with --provider <name> or provider: <name>.
+# The keys are never written here: ${VAR} is read from the environment, or
+# from the gitignored .orchestra.env next to this file.
+providers:
+    gemini:
+        provider: gemini
+        api_base: https://generativelanguage.googleapis.com/v1beta/openai
+        api_key: ${GEMINI_API_KEY}
+        model: gemini-3.8-flash
+        max_tokens: 8192
+        temperature: 0.2
+        timeout_s: 180
+    openrouter:
+        provider: openrouter
+        api_base: https://openrouter.ai/api/v1
+        api_key: ${OPENROUTER_API_KEY}
+        model: nvidia/nemotron-3-super-120b-a12b:free
+        max_tokens: 8192
+        temperature: 0.2
+        timeout_s: 180
+    openai:
+        provider: openai
+        api_base: https://api.openai.com/v1
+        api_key: ${OPENAI_API_KEY}
+        model: gpt-5.4-mini
+        max_tokens: 8192
+        temperature: 0.2
+        timeout_s: 180
 lsp:
     servers:
         - language: go
