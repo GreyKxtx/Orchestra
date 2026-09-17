@@ -73,6 +73,9 @@ func (r *Runner) InvokeSkill(ctx context.Context, name, task string) (string, er
 	if s == nil {
 		return "", fmt.Errorf("unknown skill %q", name)
 	}
+	if err := r.cfg.CheckSkillNameFree(s.Name); err != nil {
+		return "", err
+	}
 	for _, t := range s.Tools {
 		if !config.ValidAgentTool(t) {
 			return "", fmt.Errorf("skill %q: invalid tool name %q", name, t)

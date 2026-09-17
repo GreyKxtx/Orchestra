@@ -379,7 +379,23 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if a.opts.SkillRunner != nil && name == "skill_invoke" {
+		// In-process tools bypass tools.Runner, so mirror its llm_log entries
+		// here — otherwise a delegated subtask is indistinguishable, in the
+		// log, from work the parent did inline. The eval's tool_used check
+		// reads these entries, so without them `tool_used: skill_invoke` can
+		// never pass however well the model delegates.
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogToolCall(name, len(tc.Input), string(tc.Input))
+		}
+		skillStart := time.Now()
 		out, skillErr := a.handleSkillInvoke(ctx, tc.Input)
+		if a.opts.AgentLogger != nil {
+			errStr := ""
+			if skillErr != nil {
+				errStr = skillErr.Error()
+			}
+			a.opts.AgentLogger.LogToolResult(name, len(out), time.Since(skillStart).Milliseconds(), errStr, string(out))
+		}
 		a.observeWorkingTool(name, tc.Input, out, skillErr)
 		var content string
 		if skillErr != nil {
@@ -440,7 +456,21 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if name == "todowrite" || name == "todoread" {
+		// Mirrored for the same reason as skill_invoke above: the checklist is
+		// otherwise invisible to anyone reading the log, and to the eval check
+		// written to prove the model keeps one.
+		if a.opts.AgentLogger != nil {
+			a.opts.AgentLogger.LogToolCall(name, len(tc.Input), string(tc.Input))
+		}
+		todoStart := time.Now()
 		out, err := a.handleTodoTool(name, tc.Input)
+		if a.opts.AgentLogger != nil {
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+			}
+			a.opts.AgentLogger.LogToolResult(name, len(out), time.Since(todoStart).Milliseconds(), errStr, string(out))
+		}
 		a.observeWorkingTool(name, tc.Input, out, err)
 		var content string
 		if err != nil {

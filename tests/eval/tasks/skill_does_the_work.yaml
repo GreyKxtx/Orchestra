@@ -3,11 +3,26 @@
 # .orchestra/skills/<name>.md the same way it writes source — so this needs no
 # harness support beyond what already exists.
 #
-# The skill below is deliberately narrow: it renames one constant, which is
-# not what the parent would do unprompted. So a workspace where the rename
-# happened is evidence the child ran, not evidence the parent was capable.
+# The first version asked for a one-line constant bump and added "do not make
+# the edit yourself". Four models from three families passed over the tool and
+# made the edit directly, which is the cheaper choice: delegating a one-line
+# rename costs a whole child run. The task was measuring obedience.
+#
+# It now measures the thing it is named after. The new value is not in the
+# query and appears in no source file — only the skill body carries the rule
+# that produces it, and glob and list never show that file, since .orchestra
+# is in exclude_dirs.
+#
+# One honest gap: read does not consult exclude_dirs (only glob and list do),
+# so a parent that guesses the path .orchestra/skills/bumper.md can read the
+# rule and apply it itself. That is why both checks below are kept. The three
+# outcomes are then distinguishable in the log:
+#
+#   - never delegated, invented a number   → both checks fail
+#   - read the skill file and did it alone → value right, tool_used fails
+#   - invoked the skill                    → green
 name: skill_does_the_work
-description: Delegate to a file-based skill and let it make the change
+description: Delegate to a file-based skill that holds the rule the answer needs
 max_steps: 16
 files:
   go.mod: |
@@ -29,31 +44,40 @@ files:
   .orchestra/skills/bumper.md: |
     ---
     name: bumper
-    description: Raise a numeric constant in Go source to a requested value.
+    description: Raise a numeric constant in Go source to this project's next tier value.
     tools: [read, glob, grep, edit, write]
     ---
 
     <role>
-    You raise one numeric constant to a new value and change nothing else.
+    You raise one numeric constant to its next tier and change nothing else.
     </role>
+
+    <tier_rule>
+    This project sizes retry constants by tier. The next tier after a value N
+    is N * 4 + 1. For N = 3 the next tier is 13. This rule lives here and
+    nowhere else in the repository.
+    </tier_rule>
 
     <execution_flow>
     1. Find the constant named in the task.
     2. Read the file that declares it.
-    3. Use edit to replace only the number.
-    4. Say what you changed, in one line.
+    3. Compute its next tier with the rule above.
+    4. Use edit to replace only the number.
+    5. Say what you changed and to what, in one line.
     </execution_flow>
 
     Task: $ARGUMENTS
-query: "Use the skill_invoke tool with the bumper skill to raise retryLimit from 3 to 5. Do not make the edit yourself."
+query: "Raise retryLimit to its next tier. The rule that defines the next tier is not in the source — the bumper skill holds it, so invoke that skill for this."
 checks:
-  # The check that makes this a coverage task rather than a chore: without
-  # it the parent can make the edit itself and the task still passes green.
-  - type: tool_used
-    content: skill_invoke
+  # 13 appears in no file the parent can read: only the skill body derives it.
+  # So this check alone proves the child ran — tool_used below says the same
+  # thing a second way, and both are kept because they fail differently when
+  # the delegation half-works (invoked but ignored, or edited but not invoked).
   - type: file_matches
     path: limits.go
-    pattern: 'retryLimit\s*=\s*5'
+    pattern: 'retryLimit\s*=\s*13'
+  - type: tool_used
+    content: skill_invoke
   - type: file_unchanged
     path: main.go
   - type: go_build

@@ -1376,6 +1376,26 @@ func IsBuiltInMode(name string) bool {
 	return ok
 }
 
+// CheckSkillNameFree reports whether a skill may run under this name.
+//
+// A name identifies a role, and a project has three doors into one: a
+// built-in mode, an entry in agents:, and a skill file. The guards used to sit
+// on the doors rather than on the name — `orchestra apply --skill reviewer`
+// refused a clash with agents:, while skill_invoke and the RPC skill.invoke
+// behind the TUI's /skill ran the same shadowing skill without a word, so
+// which role a project got depended on how it was asked for.
+//
+// A nil config checks the built-in modes only: those are reserved everywhere.
+func (c *ProjectConfig) CheckSkillNameFree(name string) error {
+	if IsBuiltInMode(name) {
+		return fmt.Errorf("skill %q: name collides with a built-in agent mode", name)
+	}
+	if c != nil && c.FindAgent(name) != nil {
+		return fmt.Errorf("skill %q: name collides with an entry in agents: in .orchestra.yml", name)
+	}
+	return nil
+}
+
 // BuiltInModeKind returns the mode's kind and whether it is built in at all.
 func BuiltInModeKind(name string) (ModeKind, bool) {
 	k, ok := builtInAgentModes[name]

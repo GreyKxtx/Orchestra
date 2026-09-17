@@ -22,8 +22,10 @@ func resolveSkillAgent(projectRoot, name, arguments string) (*config.AgentDefini
 			return nil, fmt.Errorf("skill %q: invalid tool name %q", name, t)
 		}
 	}
-	if config.IsBuiltInMode(s.Name) {
-		return nil, fmt.Errorf("skill %q: name collides with a built-in agent mode", s.Name)
+	// Built-in modes only: the caller holds the config and checks agents:.
+	var noCfg *config.ProjectConfig
+	if err := noCfg.CheckSkillNameFree(s.Name); err != nil {
+		return nil, err
 	}
 	refs, err := skills.DiscoverRefs(projectRoot)
 	if err != nil {

@@ -100,6 +100,9 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		return nil, protocol.NewError(protocol.NotFound,
 			fmt.Sprintf("skill %q not found", params.Name), nil)
 	}
+	if err := c.cfg.CheckSkillNameFree(s.Name); err != nil {
+		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
+	}
 	for _, t := range s.Tools {
 		if !config.ValidAgentTool(t) {
 			return nil, fmt.Errorf("skill %q: invalid tool name %q", params.Name, t)
