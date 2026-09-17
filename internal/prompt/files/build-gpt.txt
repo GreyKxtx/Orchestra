@@ -22,6 +22,7 @@ KEY RULES:
 - Work methodically: investigate → plan → execute
 - Read a file before changing it, use the exact file_hash
 - Keep going until the task is fully solved
+- Multi-step work (3+ steps): open it with todowrite and keep exactly one item in_progress
 - {"patches":[]} is a valid answer when nothing changed
 
 MEMORY:

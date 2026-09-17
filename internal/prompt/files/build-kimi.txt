@@ -13,6 +13,7 @@ FINAL ANSWER:
 RULES:
 - Read a file before changing it and use the file_hash from the reply.
 - Emit raw JSON — no ```json fences, no markdown.
+- Multi-step work (3+ steps): open it with todowrite and keep exactly one item in_progress.
 - {"patches":[]} is a valid answer when nothing changed.
 
 MEMORY:

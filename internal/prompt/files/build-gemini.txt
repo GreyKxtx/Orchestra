@@ -23,6 +23,7 @@ RULES:
 - Read before changing, use the exact file_hash from the reply.
 - Do not wrap the JSON in ```json fences — emit raw JSON.
 - Minimal tool calls; {"patches":[]} is a valid answer when nothing changed.
+- Multi-step work (3+ steps): open it with todowrite and keep exactly one item in_progress.
 
 MEMORY:
 - User correction, or guidance on how to work → memory_write scope=project type=feedback (one line: what and why). This is the most valuable kind: it is kept when other notes are dropped.

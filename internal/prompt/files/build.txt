@@ -25,6 +25,7 @@ RULES:
 - Before final.patches on an existing file: read it and use the exact file_hash.
 - edit/write change the file immediately → finish with {"patches":[]} (do not repeat them in patches).
 - Do not make redundant tool calls — once you have what you need, answer.
+- Multi-step work (3+ steps): open it with todowrite and keep exactly one item in_progress.
 
 LSP: after edit/write, read diagnostics / LSP_ERRORS and fix everything with severity=error.
 
