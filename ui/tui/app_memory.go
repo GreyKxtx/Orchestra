@@ -47,9 +47,16 @@ func (a *App) handleSessionCompactDone(m sessionCompactDoneMsg) {
 	if m.err != nil {
 		a.session.AppendSystemNotice(state.SystemKindError, "compact: "+m.err.Error())
 	} else {
-		a.session.AppendSystemNotice(state.SystemKindInfo,
-			fmt.Sprintf("Контекст сжат: %d → %d msgs (LLM history)", m.before, m.after))
-		a.chrome.promptTokensUsed = 0
+		// Compaction summarizes the older half and keeps the recent tail, so
+		// the message count often does not drop: "8 → 8 msgs" reads as a
+		// no-op. The counts are worth printing only when they fell.
+		notice := fmt.Sprintf("Контекст сжат: старая часть истории заменена сводкой (сообщений: %d)", m.after)
+		if m.after < m.before {
+			notice = fmt.Sprintf("Контекст сжат: %d → %d сообщений (история для модели)", m.before, m.after)
+		}
+		a.session.AppendSystemNotice(state.SystemKindInfo, notice)
+		// The prompt size in the status bar belongs to the last turn; the next
+		// turn reports the new one. Zero would claim an empty context.
 		a.syncStatusBar()
 	}
 	a.chat.SetMessages(a.session.Messages)

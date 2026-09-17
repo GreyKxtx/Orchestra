@@ -155,8 +155,8 @@ func (d *SessionsDialog) Render(screenW, screenH int) string {
 		if m.MsgCount > 0 {
 			desc += fmt.Sprintf("  ·  %d msgs", m.MsgCount)
 		}
-		if m.Model != "" {
-			desc += "  ·  " + m.Model
+		if model := DisplayModelName(m.Model); model != "" {
+			desc += "  ·  " + model
 		}
 		items = append(items, listDialogItem{
 			Title:       m.Title,
