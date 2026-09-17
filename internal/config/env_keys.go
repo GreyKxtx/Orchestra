@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -139,6 +140,73 @@ func readEnvFile(path string) map[string]string {
 		out[name] = unquoteEnvValue(strings.TrimSpace(value))
 	}
 	return out
+}
+
+// EnvVarFor returns the variable the loaded file named for a credential
+// field ("llm.api_key", "providers.gemini.api_key"), or "" when the file
+// spelled a literal there.
+//
+// Reading the field itself is not enough: by the time anyone sees the config,
+// Load has already replaced ${NAME} with the value — with nothing at all when
+// the variable is unset — so the name survives only here.
+func (c *ProjectConfig) EnvVarFor(field string) string {
+	return EnvRefName(c.envRefs[field].literal)
+}
+
+// EnvRefName returns the variable a credential field names, or "" when the
+// field holds a literal. Callers storing a key reuse the name the config
+// already refers to instead of inventing a second one for the same field.
+func EnvRefName(value string) string {
+	m := envRefPattern.FindStringSubmatch(value)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// UpsertEnvVar writes name=value into the project's .orchestra.env, replacing
+// the variable's line if it is already there and leaving every other line —
+// comments and other keys included — exactly as it found it.
+//
+// The file is created 0600: it holds secrets in plain text, and it is the
+// place they go instead of the committed config.
+func UpsertEnvVar(dir, name, value string) error {
+	path := filepath.Join(dir, EnvFileName)
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", EnvFileName, err)
+	}
+
+	line := name + "=" + value
+	assign := regexp.MustCompile(`^\s*(export\s+)?` + regexp.QuoteMeta(name) + `\s*=`)
+	var out []string
+	replaced := false
+	if len(existing) > 0 {
+		for _, l := range strings.Split(strings.ReplaceAll(string(existing), "\r\n", "\n"), "\n") {
+			if assign.MatchString(l) {
+				if replaced {
+					continue // a duplicate of the key we just rewrote
+				}
+				out, replaced = append(out, line), true
+				continue
+			}
+			out = append(out, l)
+		}
+		// Split leaves a trailing empty element for a file ending in a
+		// newline; drop it so the join below does not double it.
+		if n := len(out); n > 0 && out[n-1] == "" {
+			out = out[:n-1]
+		}
+	}
+	if !replaced {
+		out = append(out, line)
+	}
+
+	body := strings.Join(out, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		return fmt.Errorf("write %s: %w", EnvFileName, err)
+	}
+	return nil
 }
 
 // unquoteEnvValue drops one matching pair of surrounding quotes, so a key

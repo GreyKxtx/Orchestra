@@ -65,6 +65,12 @@ func runAuthList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAuthSetKey stores the secret in the gitignored .orchestra.env and leaves
+// a ${NAME} reference in the config.
+//
+// It used to write the key itself into .orchestra.yml — a file that is
+// committed, shared between frontends and rewritten whenever a setting
+// changes. Putting a credential there meant the next `git add` published it.
 func runAuthSetKey(cmd *cobra.Command, args []string) error {
 	name := strings.TrimSpace(args[0])
 	key := strings.TrimSpace(authSetKeyValue)
@@ -81,25 +87,71 @@ func runAuthSetKey(cmd *cobra.Command, args []string) error {
 	}
 	cfgPath := filepath.Join(cfg.ProjectRoot, ".orchestra.yml")
 
-	if name == "default" || name == "llm" {
-		cfg.LLM.APIKey = key
-	} else {
-		if cfg.Providers == nil {
-			cfg.Providers = map[string]config.LLMConfig{}
-		}
+	// Reuse the variable the config already names, so setting a key twice
+	// does not leave two variables for one field. The field itself no longer
+	// shows it — Load resolved ${NAME} before anyone got here — so ask the
+	// config what the file said.
+	field := "llm.api_key"
+	current := cfg.LLM.APIKey
+	if name != "default" && name != "llm" {
 		p, ok := cfg.Providers[name]
 		if !ok {
 			return fmt.Errorf("provider %q not found; add it under providers: in .orchestra.yml first", name)
 		}
-		p.APIKey = key
-		cfg.Providers[name] = p
+		field, current = "providers."+name+".api_key", p.APIKey
+	}
+	envName := cfg.EnvVarFor(field)
+	if envName == "" {
+		envName = config.EnvRefName(current)
+	}
+	if envName == "" {
+		envName = envVarNameFor(name)
+	}
+	ref := "${" + envName + "}"
+	// The file already points at this variable: only the secret needs writing.
+	alreadyReferenced := cfg.EnvVarFor(field) == envName
+
+	if err := config.UpsertEnvVar(cfg.ProjectRoot, envName, key); err != nil {
+		return err
 	}
 
-	if err := config.Save(cfgPath, cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
+	// The config keeps the reference, never the key. Writing it is still
+	// needed the first time: until the field says ${NAME}, nothing reads the
+	// variable.
+	if !alreadyReferenced {
+		if name == "default" || name == "llm" {
+			cfg.LLM.APIKey = ref
+		} else {
+			p := cfg.Providers[name]
+			p.APIKey = ref
+			cfg.Providers[name] = p
+		}
+		if err := config.Save(cfgPath, cfg); err != nil {
+			return fmt.Errorf("save config: %w", err)
+		}
 	}
-	fmt.Printf("Updated api_key for %q in %s\n", name, cfgPath)
+
+	fmt.Printf("Stored the key for %q as %s in %s\n", name, envName, filepath.Join(cfg.ProjectRoot, config.EnvFileName))
+	fmt.Printf("%s refers to it as %s — the key itself is not in the config.\n", cfgPath, ref)
 	return nil
+}
+
+// envVarNameFor is the variable a provider's key goes into when the config
+// does not already name one: "gemini" → GEMINI_API_KEY.
+func envVarNameFor(provider string) string {
+	if provider == "default" || provider == "llm" {
+		return "ORCHESTRA_API_KEY"
+	}
+	var b strings.Builder
+	for _, r := range strings.ToUpper(provider) {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String() + "_API_KEY"
 }
 
 func redactKey(k string) string {

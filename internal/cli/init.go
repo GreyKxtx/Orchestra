@@ -85,7 +85,7 @@ func ensureGitignore(projectRoot string) error {
 		extra.WriteString(block)
 		body += block
 	}
-	for _, line := range []string{gitignoreLocalPlaybooks, gitignoreLocalPlans, gitignoreSQLite, "*.bak", "*.tmp", "ORCHESTRA.local.md"} {
+	for _, line := range []string{gitignoreLocalPlaybooks, gitignoreLocalPlans, gitignoreSQLite, config.EnvFileName, "*.bak", "*.tmp", "ORCHESTRA.local.md"} {
 		if strings.Contains(body, line) {
 			continue
 		}

@@ -17,7 +17,9 @@ func TestEnsureGitignore_CreatesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{".orchestra.local.yml", ".orchestra/*", "!.orchestra/state.md", "*.orchestra.bak", "*.bak", "*.tmp", ".orchestra/*.db*", ".orchestra/playbooks/local/", ".orchestra/plans/local/"} {
+	// .orchestra.env holds provider keys in plain text: a project initialised
+	// by Orchestra must not be able to commit it with a bare `git add .`.
+	for _, want := range []string{".orchestra.local.yml", ".orchestra.env", ".orchestra/*", "!.orchestra/state.md", "*.orchestra.bak", "*.bak", "*.tmp", ".orchestra/*.db*", ".orchestra/playbooks/local/", ".orchestra/plans/local/"} {
 		if !strings.Contains(string(first), want) {
 			t.Errorf("gitignore missing %q:\n%s", want, first)
 		}

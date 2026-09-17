@@ -278,6 +278,23 @@ providers:
     api_key: sk-or-...   # only this leaf is masked; the rest of the provider's fields come from .orchestra.yml
 ```
 
+### Secrets in the environment: `${VAR}` and `.orchestra.env`
+
+A credential field can name an environment variable instead of holding the key:
+
+```yaml
+providers:
+  gemini:
+    api_base: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key: ${GEMINI_API_KEY}
+```
+
+The value comes from the process environment, or from `.orchestra.env` beside the config when the environment does not carry it — one `KEY=value` per line, `#` for comments, gitignored by `orchestra init`. An exported variable wins over the file, so a key can be set for a single run.
+
+Saving a setting from the TUI writes the `${GEMINI_API_KEY}` reference back, never the value it resolved to. An unset variable resolves to an empty key rather than the literal `${GEMINI_API_KEY}` — that string would otherwise be sent as the bearer token and come back as an opaque 401.
+
+`orchestra auth set-key <provider> --key sk-…` takes this route: the secret goes into `.orchestra.env`, the config keeps the reference. `orchestra auth list` prints `no credential configured` when the variable is empty — the quickest check that a key is actually being picked up.
+
 ### Credentials that are not a static key: `auth:`
 
 Some endpoints authenticate with a short-lived bearer rather than a permanent
