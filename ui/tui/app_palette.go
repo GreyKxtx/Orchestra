@@ -383,6 +383,27 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 		a.layout()
 	case "/quit":
 		return tea.Quit
+	// Every /command goes through this dispatcher — the palette opens on "/"
+	// and Enter runs the highlighted entry — so a command the menu offers and
+	// this switch does not know silently does nothing. These five did.
+	case "/skills":
+		dismissWelcome()
+		return a.cmdListSkills()
+	case "/workflows":
+		dismissWelcome()
+		return a.cmdListWorkflows()
+	case "/attach":
+		a.showToast("/attach <путь к файлу>")
+	case "/skill":
+		dismissWelcome()
+		a.session.AppendMessage(state.Message{Role: state.RoleSystem,
+			Text: "usage: /skill <name> <arguments…>\nRun `/skills` to see available names."})
+		a.chat.SetMessages(a.session.Messages)
+	case "/workflow":
+		dismissWelcome()
+		a.session.AppendMessage(state.Message{Role: state.RoleSystem,
+			Text: "usage: /workflow <name> <arguments…>\nRun `/workflows` to see available names."})
+		a.chat.SetMessages(a.session.Messages)
 	}
 	return nil
 }
