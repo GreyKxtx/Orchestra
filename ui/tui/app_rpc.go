@@ -28,6 +28,16 @@ func isContextCompactedNotice(msg string) bool {
 	return strings.HasPrefix(strings.TrimSpace(msg), "CONTEXT_COMPACTED")
 }
 
+// isCancellationError reports whether msg is the core answering that the call
+// was cancelled — what Esc produces, since the TUI closes the request context
+// itself.
+func isCancellationError(msg string) bool {
+	m := strings.ToLower(strings.TrimSpace(msg))
+	return strings.Contains(m, "context canceled") || strings.Contains(m, "context cancelled") ||
+		m == "canceled" || m == "cancelled" || strings.Contains(m, "request canceled") ||
+		strings.Contains(m, "request cancelled")
+}
+
 func isContextPressureNotice(msg string) bool {
 	return strings.HasPrefix(strings.TrimSpace(msg), "CONTEXT_PRESSURE")
 }
@@ -378,6 +388,10 @@ func (a *App) handleRPCTurnTerminal(ev rpcclient.Event) tea.Cmd {
 		}
 	case rpcclient.EventAgentRunCompleted:
 		a.clearActiveCancel()
+		if a.turnCancelled && isCancellationError(a.turnError) {
+			a.turnError = ""
+		}
+		a.turnCancelled = false
 		if a.turnError != "" {
 			a.reasoning.Reset()
 			// The error is part of the turn: a turn that failed before the model

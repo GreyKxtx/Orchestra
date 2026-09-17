@@ -68,7 +68,9 @@ func (c Chat) renderToolGroup(blocks []state.ToolBlock, width int, expanded, str
 	lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(muted.Render(footerText)))
 
 	if !expanded && !streaming {
-		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(muted.Render("ctrl+t")))
+		// A bare "ctrl+t" on its own line reads as something the user typed;
+		// say what the key does.
+		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(muted.Render("ctrl+t — подробнее")))
 	}
 
 	return strings.Join(lines, "\n")

@@ -81,7 +81,10 @@ type App struct {
 
 	turn      *state.TurnFSM // turn lifecycle FSM (M3)
 	turnError string
-	subagents *state.SubagentTracker
+	// turnCancelled marks a turn the user stopped with Esc, so the
+	// cancellation the core reports back is not shown as a failure.
+	turnCancelled bool
+	subagents     *state.SubagentTracker
 
 	chrome chromeMetrics
 

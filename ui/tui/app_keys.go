@@ -391,6 +391,9 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		// event path (EventAgentRunCompleted, workflowResultMsg, etc.).
 		if a.turn.CanCancel() && a.activeCancel != nil {
 			a.clearActiveCancel()
+			// The cancelled call comes back as "context canceled" — the error
+			// for the context closed right here. The turn did not go wrong.
+			a.turnCancelled = true
 			a.session.AppendMessage(state.Message{
 				Role:       state.RoleSystem,
 				SystemKind: state.SystemKindInfo,
