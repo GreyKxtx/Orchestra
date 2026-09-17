@@ -221,6 +221,35 @@ func TestFilterOrchestraLeadTools_DropsWorkerExtras(t *testing.T) {
 	}
 }
 
+// The Lead surface is a documented contract (docs/modes.md) and the strongest
+// claim the orchestra mode makes: the Lead cannot touch code. docs/modes.md
+// promised "строго 14" for a while after contract_freeze and
+// update_working_state were added, so the count is pinned by name here rather
+// than by an upper bound that silently absorbs the next addition.
+func TestOrchestraLeadSurface_IsExactlyTheDocumentedSet(t *testing.T) {
+	want := map[string]bool{
+		"read": true, "grep": true, "explore": true, "repo_map": true, "write": true,
+		"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true,
+		"question": true, "memory_read": true, "memory_search": true,
+		"lesson_promote": true, "playbook_promote": true,
+		"contract_freeze": true, "update_working_state": true,
+	}
+	got := map[string]bool{}
+	for _, d := range FilterOrchestraLeadTools(ListToolsForMode("orchestra", Capabilities{Exec: true, Web: true}, true, true)) {
+		got[d.Function.Name] = true
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("Lead surface lost %q; update docs/modes.md if that is intended", name)
+		}
+	}
+	for name := range got {
+		if !want[name] {
+			t.Errorf("Lead surface gained %q; add it to docs/modes.md and to this list", name)
+		}
+	}
+}
+
 func TestListToolsForMode_ProductSurface(t *testing.T) {
 	names := make(map[string]bool)
 	for _, d := range ListToolsForMode("product", Capabilities{}, true, true) {

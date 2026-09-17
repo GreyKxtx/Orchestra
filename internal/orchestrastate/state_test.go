@@ -131,6 +131,28 @@ func TestGuardSpawnMatrix(t *testing.T) {
 		{"worker blocked in delivery", PhaseDelivery, "approved", "worker", true, "execution|maintenance"},
 		{"worker allowed in execution", PhaseExecution, "approved", "worker", false, ""},
 		{"worker allowed in maintenance without PRD", PhaseMaintenance, "", "worker", false, ""},
+
+		// The gate named only "worker" while these three carry write and edit,
+		// so "no code changes before the contract is frozen" held for one child
+		// type out of four. An unrecognised type is the widest of them: it
+		// falls through tools.ListToolsForMode to the full build surface, so a
+		// typo or a custom agent name used to walk straight past the phase
+		// machine. See tasks.TestPhaseGateCoversEveryChildThatCanWrite, which
+		// ties this list to the tool surfaces themselves.
+		{"debug blocked in discovery", PhaseDiscovery, "", "debug", true, "PRD"},
+		{"general blocked in documentation", PhaseDocumentation, "approved", "general", true, "execution|maintenance"},
+		{"unknown child type blocked in discovery", PhaseDiscovery, "", "coder", true, "PRD"},
+		{"unknown child type named in the refusal", PhaseDelivery, "approved", "coder", true, "unknown child type"},
+		{"general allowed in execution", PhaseExecution, "approved", "general", false, ""},
+		{"debug allowed in maintenance", PhaseMaintenance, "", "debug", false, ""},
+
+		// Scoped writers produce the artifacts a phase is about. Gating them
+		// would deadlock the phase that needs them — the PRD gate's own
+		// unblock path is "spawn product".
+		{"product allowed in discovery", PhaseDiscovery, "", "product", false, ""},
+		{"documentation allowed in documentation", PhaseDocumentation, "", "documentation", false, ""},
+		{"architecture allowed in contract", PhaseContract, "", "architecture", false, ""},
+		{"verifier allowed in delivery", PhaseDelivery, "approved", "verifier", false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

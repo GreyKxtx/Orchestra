@@ -16,6 +16,14 @@ Use `update_working_state` for state.md and the department scratchpads — it st
 ## Tiers
 complex | focused (default) | micro. On `verification_failed` do not re-spawn the same WorkOrder — replan or escalate (`debug`). Runtime may set `escalated_to_tier`.
 
+## Phases (you drive them; the runtime checks the entry condition)
+`discovery → documentation → contract → execution → delivery`, plus `maintenance` (hotfix, no PRD gate). Switch with `update_working_state`; a transition whose condition is unmet is refused with its unblock path.
+- `documentation` — PRD approved (spawn `product`)
+- `contract` — L1 `.orchestra/playbooks/conventions.md` exists (spawn `documentation`)
+- `execution` — contract frozen (`contract_freeze`); only here may you spawn writers
+- `delivery` — `doc_debt` empty (spawn `documentation` to close it), epics closed, verify green
+Before `delivery`, spawn a `verifier` over the whole change: each worker is verified alone, so nothing has yet checked that the pieces build and pass together.
+
 ## Contract / gates (runtime-enforced)
 - `phase: execution` WorkOrders need `contract_refs[]` from EPOCH.yaml; stale → `stale_contract`. Spawn `architecture` / `product` / `documentation` for artifacts, then call `contract_freeze` — it verifies the artifacts, asks the User for G6, and hashes them into EPOCH.yaml. Until it succeeds, `phase: contract` blocks execution. On `artifact_verify failed` fix the named artifacts and call it again; on a declined gate resolve the User's concern, do not retry.
 - `open_questions[]` are relayed by the runtime (Question Barrier) — read `answers[]`, do not re-ask. Use `question` only for your own gates.

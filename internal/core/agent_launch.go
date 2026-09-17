@@ -372,6 +372,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		QuestionAsker:        spec.QuestionAsker,
 		HumanGates:           c.cfg.Orchestra.RequiredGates(),
 		StateMaxBytes:        c.cfg.Orchestra.ResolvedStateMaxBytes(),
+		PhaseEnforcement:     c.cfg.Orchestra.ResolvedPhaseEnforcement(),
 		UsageTracker:         usageTracker,
 		ProviderLabel:        providerLabel,
 		ModelLabel:           modelLabel,

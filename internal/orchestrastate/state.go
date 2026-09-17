@@ -127,6 +127,13 @@ func Load(projectRoot string) (*State, bool, error) {
 	return st, true, nil
 }
 
+// ParseContent reads a state document that has not been written yet. The phase
+// guard needs the incoming phase before the file is replaced, so a refused
+// transition leaves the old state in place.
+func ParseContent(content string) (*State, error) {
+	return parse(content)
+}
+
 func parse(content string) (*State, error) {
 	front, body, ok := splitFrontmatter(content)
 	if !ok {
@@ -259,11 +266,43 @@ const (
 	EnforcementPromptOnly = "prompt_only"
 )
 
-// isExecuting reports whether the subagent mutates the workspace and is
-// therefore phase-gated. explore/ask/debug/architecture/verifier are
-// read-only against production files and stay unrestricted.
+// nonExecutingSubagents is the closed allowlist of child types that may spawn
+// in any phase. Every entry is either read-only against the workspace or has
+// its writes confined to the artifacts a phase exists to produce:
+//
+//	explore, ask, verifier   — no write/edit tool at all
+//	architecture             — writes confined to plans, the L2 playbook and specs
+//	product                  — writes confined to .orchestra/product/ (and the PRD
+//	                           gate's own unblock path is "spawn product")
+//	documentation            — writes confined to conventions.md, .orchestra/docs/, docs/
+//
+// Anything else mutates production files and is phase-gated.
+//
+// The list is an allowlist rather than a "gate the writers" denylist because
+// the denylist form was open at both ends. It named only "worker", so general
+// and debug children — both carrying write, edit and (general) delete/rename —
+// walked through the gate untouched; and an unrecognised subagent_type falls
+// through tools.ListToolsForMode's default arm to the full build surface, so a
+// typo or a custom agent name bypassed the phase machine entirely. Invariant
+// #7 is fail-closed spawn: an unknown child type is gated, not waved through.
+var nonExecutingSubagents = map[string]bool{
+	"explore":       true,
+	"ask":           true,
+	"verifier":      true,
+	"architecture":  true,
+	"product":       true,
+	"documentation": true,
+}
+
+// isExecuting reports whether the subagent can mutate production files and is
+// therefore phase-gated. An empty type defaults to explore (see
+// tasks.childToolsForSubagent), which is read-only.
 func isExecuting(subagentType string) bool {
-	return strings.EqualFold(strings.TrimSpace(subagentType), "worker")
+	t := strings.ToLower(strings.TrimSpace(subagentType))
+	if t == "" {
+		return false
+	}
+	return !nonExecutingSubagents[t]
 }
 
 // GuardSpawn is the fail-closed phase gate evaluated before spawning a child.
@@ -304,10 +343,99 @@ func GuardSpawn(projectRoot, enforcement, subagentType string) error {
 		return nil
 	}
 	if st.Phase != PhaseExecution {
-		return fmt.Errorf("runtime_guard: workers allowed only in execution|maintenance (phase=%s); "+
-			"unblock: transition per state machine | phase=maintenance", phaseLabel(st.Phase))
+		return fmt.Errorf("runtime_guard: %s writes production files, allowed only in execution|maintenance (phase=%s); "+
+			"unblock: transition per state machine | phase=maintenance | delegate the read-only part to explore|verifier",
+			subagentLabel(subagentType), phaseLabel(st.Phase))
 	}
 	return nil
+}
+
+// ConventionsFileRel is the L1 playbook the Docs Lead writes at stage 1. The
+// contract phase opens once it exists (spec §4.2 transition table). It lives
+// here rather than in tasks because the phase guard needs it and tasks already
+// depends on this package.
+const ConventionsFileRel = ".orchestra/playbooks/conventions.md"
+
+// GuardPhaseTransition enforces the session state machine's transition table
+// (spec §4.2). The Lead drives phases by writing state.md through
+// update_working_state, and that write used to be unchecked: any phase could
+// be set from any other, so "execution opens once the contract is frozen" and
+// "delivery waits for doc_debt to clear" were diagram, not runtime. A machine
+// whose transitions are advisory is a machine the model can skip.
+//
+// Only conditions the runtime can observe on disk are enforced. "Epics closed"
+// and "verify green" have no ledger to read yet, so the delivery gate checks
+// doc_debt alone; the remaining conditions stay the Lead's judgment, which the
+// prompt states and this guard does not pretend to check.
+//
+// Every refusal names an unblock path (spec §5.2). Inactive under prompt_only,
+// and on the first write of a state file (no prior phase) so bootstrapping a
+// session is never blocked.
+func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next *State) error {
+	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
+		return nil
+	}
+	if from == "" || to == "" || from == to {
+		return nil
+	}
+	switch to {
+	// maintenance is itself an unblock path, and a scope change legitimately
+	// reopens discovery from anywhere.
+	case PhaseMaintenance, PhaseDiscovery:
+		return nil
+
+	case PhaseDocumentation:
+		if prdApproved(projectRoot, next) || next.HasWaiver(WaiverPRD) {
+			return nil
+		}
+		return fmt.Errorf("runtime_guard: documentation needs an approved PRD (prd_status=%s); "+
+			"unblock: spawn product | phase=maintenance | user waiver 'prd' in %s",
+			prdStatusLabel(next), StateFileRel)
+
+	case PhaseContract:
+		if fileExists(projectRoot, ConventionsFileRel) || next.HasWaiver(WaiverPlaybooks) {
+			return nil
+		}
+		return fmt.Errorf("runtime_guard: contract needs L1 conventions (%s missing); "+
+			"unblock: spawn documentation | user waiver 'playbooks' in %s (L0 defaults)",
+			ConventionsFileRel, StateFileRel)
+
+	case PhaseExecution:
+		if next.HasWaiver(WaiverContract) {
+			return nil
+		}
+		_, found, err := contract.Load(projectRoot)
+		if err != nil {
+			return fmt.Errorf("runtime_guard: %w; unblock: fix or delete the contract epoch file", err)
+		}
+		if found {
+			return nil
+		}
+		return fmt.Errorf("runtime_guard: execution needs a frozen contract (no contract epoch recorded); "+
+			"unblock: complete Domain_Model+NFR+OpenAPI v0 + contract_freeze | user waiver 'contract' in %s",
+			StateFileRel)
+
+	case PhaseDelivery:
+		if len(next.DocDebt) == 0 || next.HasWaiver(WaiverDocDebt) {
+			return nil
+		}
+		return fmt.Errorf("runtime_guard: delivery needs doc_debt empty (%d file(s) still owed: %s); "+
+			"unblock: spawn documentation to close them | user waiver 'doc_debt' in %s",
+			len(next.DocDebt), strings.Join(next.DocDebt, ", "), StateFileRel)
+	}
+	return nil
+}
+
+func fileExists(projectRoot, rel string) bool {
+	st, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(rel)))
+	return err == nil && !st.IsDir()
+}
+
+func prdStatusLabel(st *State) string {
+	if st == nil || strings.TrimSpace(st.PRDStatus) == "" {
+		return "unset"
+	}
+	return strings.TrimSpace(st.PRDStatus)
 }
 
 // GuardWorkOrderContract is the Contract Epoch gate (spec §5.3) evaluated for
@@ -444,6 +572,21 @@ func phaseLabel(p Phase) string {
 		return "unset"
 	}
 	return string(p)
+}
+
+// subagentLabel names the blocked child in a guard message. An unrecognised
+// type is gated on purpose (see nonExecutingSubagents), and the message says
+// so — otherwise a typo reads as an unexplained refusal.
+func subagentLabel(subagentType string) string {
+	t := strings.ToLower(strings.TrimSpace(subagentType))
+	switch t {
+	case "":
+		return "child"
+	case "worker", "general", "debug":
+		return t
+	default:
+		return fmt.Sprintf("%q (unknown child type, gated as a writer)", t)
+	}
 }
 
 // prdApproved checks state frontmatter first, then the PRD.md frontmatter

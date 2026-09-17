@@ -57,6 +57,23 @@ func DeptScratchpadRelPath(instance string) string {
 	return DeptScratchpadDir + "/" + instance + ".md"
 }
 
+// guardStateTransition evaluates the state machine's entry conditions for the
+// phase the Lead is about to write (spec §4.2).
+//
+// Content the runtime cannot parse is not treated as a transition: state.md is
+// a markdown document the Lead also uses for goals and epic notes, and a
+// missing frontmatter block is a separate problem from an illegal transition.
+// Phase enforcement reads the phase, so no frontmatter means no phase change
+// to judge.
+func (a *Agent) guardStateTransition(prevPhase orchestrastate.Phase, content string) error {
+	next, err := orchestrastate.ParseContent(content)
+	if err != nil || next == nil {
+		return nil
+	}
+	return orchestrastate.GuardPhaseTransition(
+		a.tools.WorkspaceRoot(), a.opts.PhaseEnforcement, prevPhase, next.Phase, next)
+}
+
 func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage, error) {
 	if a.opts.Mode != ModeOrchestra {
 		return nil, fmt.Errorf("update_working_state is only available in orchestra Lead mode")
@@ -86,6 +103,12 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 	if relPath == plan.OrchestraStateRelPath {
 		if prev, found, err := orchestrastate.Load(a.tools.WorkspaceRoot()); err == nil && found {
 			prevPhase = prev.Phase
+		}
+		// Transition gate (spec §4.2). Evaluated before the write, so a
+		// refused transition leaves the state file as it was: the Lead cannot
+		// declare a phase whose entry condition is unmet and then act on it.
+		if err := a.guardStateTransition(prevPhase, content); err != nil {
+			return nil, err
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

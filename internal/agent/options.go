@@ -242,6 +242,13 @@ type Options struct {
 	// 0 = orchestrastate.DefaultStateMaxBytes.
 	StateMaxBytes int
 
+	// PhaseEnforcement is orchestra.phase_enforcement ("strict" | "prompt_only").
+	// It gates the Lead's own phase transitions the same way it gates spawns:
+	// under prompt_only the state machine advises, under strict the runtime
+	// refuses a transition whose entry condition is unmet (spec §4.2).
+	// Empty behaves as strict, matching config.ResolvedPhaseEnforcement.
+	PhaseEnforcement string
+
 	// JustSwitchedFromPlan, when true, injects a one-shot build-switch reminder on the first step.
 	// Set by the caller when restarting an agent in build mode after plan approval.
 	JustSwitchedFromPlan bool

@@ -137,11 +137,15 @@ orchestra:
   max_worker_retries: 3
 ```
 
-**Инструменты (строго 14):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans|state.md|depts`), `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
+**Инструменты (строго 16):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans|state.md|depts`), `update_working_state`, `contract_freeze`, `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
+
+Список — `orchestraLeadToolNames` в `internal/tools/registry.go`; `update_working_state` и `contract_freeze` доступны только Lead по построению (остальные режимы получают отказ в `internal/agent`).
 
 **Промпт:** `orchestra.txt`. TUI: `/orchestra` — настройки planner/tiers; badge `orchestra · lead`. Tab: `… → agent → orchestra`.
 
 **Маршрутизация по tiers (L1–L5, Fab 5):** [architecture/orchestra-routing.md](./architecture/orchestra-routing.md).
+
+**Чем режим отличается от обычных подагентов** (что даёт роль ребёнка, что — режим родителя, что — машина состояний, и что не проверяется): [architecture/orchestra-vs-subagents.md](./architecture/orchestra-vs-subagents.md).
 
 ---
 

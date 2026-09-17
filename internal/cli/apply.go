@@ -768,6 +768,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			QuestionAsker:        cliQuestionAsker,
 			HumanGates:           cfg.Orchestra.RequiredGates(),
 			StateMaxBytes:        cfg.Orchestra.ResolvedStateMaxBytes(),
+			PhaseEnforcement:     cfg.Orchestra.ResolvedPhaseEnforcement(),
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
 			SubtaskRunner:        taskRunner,

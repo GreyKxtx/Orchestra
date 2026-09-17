@@ -7,6 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/decisions"
+	"github.com/orchestra/orchestra/internal/orchestrastate"
 )
 
 // L1 project conventions (spec §6.1): written by the Docs Lead at stage 1,
@@ -14,7 +15,10 @@ import (
 // set of cross-cutting rules without a common dialog history.
 
 // ConventionsRelPath is the L1 playbook location relative to project root.
-const ConventionsRelPath = ".orchestra/playbooks/conventions.md"
+// The phase guard opens the contract phase on this same file, so the path has
+// one definition (in orchestrastate, which tasks already depends on) rather
+// than two that can drift.
+const ConventionsRelPath = orchestrastate.ConventionsFileRel
 
 // conventionsInjectMaxBytes caps the injected block; the child can read the
 // full file itself when it needs more.
