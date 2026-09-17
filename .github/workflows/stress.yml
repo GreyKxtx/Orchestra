@@ -11,6 +11,9 @@ permissions:
 jobs:
   stress:
     runs-on: ubuntu-latest
+    # A stress run that genuinely hangs should die in minutes, not burn the
+    # default six hours of runner time. Comfortably above the two steps below.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -23,5 +26,15 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Stress (race, -count=50)
-        run: go test -race -count=50 ./protocol/jsonrpc ./internal/core
+      # One package per step, each with its own budget. go test's default
+      # timeout is 10 minutes per test binary, and internal/core outgrew it:
+      # a single race-enabled pass takes ~25s, so 50 of them need ~20 minutes.
+      # With both packages on one command line the nightly run had been failing
+      # as "test timed out after 10m0s" since 2026-09-13 with nothing actually
+      # wrong — the goroutine dump showed the test still running, not stuck.
+      # Split, the dump on a real hang also names the package that hung.
+      - name: Stress protocol/jsonrpc (race, -count=50)
+        run: go test -race -count=50 -timeout=20m ./protocol/jsonrpc
+
+      - name: Stress internal/core (race, -count=50)
+        run: go test -race -count=50 -timeout=45m ./internal/core
