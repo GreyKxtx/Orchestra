@@ -70,3 +70,9 @@ sse.log
 
 # Superpowers SDD scratch (ledger, briefs, review packages)
 .superpowers/
+
+# Agent scratch space. .claude/settings.json is shared on purpose; scratch is
+# not — it collects throwaway scripts and, when the UI is checked with a real
+# browser, a whole browser profile (cookies, login data, tokens). One `git add
+# -A` away from publishing those to a public repository.
+.claude/scratch/
