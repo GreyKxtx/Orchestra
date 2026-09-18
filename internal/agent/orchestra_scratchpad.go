@@ -215,7 +215,17 @@ func appendWorkerSummaryToScratchpad(root, summaryLine string) error {
 	if b, err := os.ReadFile(path); err == nil {
 		content = string(b)
 	} else if os.IsNotExist(err) {
-		content = plan.DefaultOrchestraScratchpad("")
+		// No state.md means the Lead has not opened the phase machine, and
+		// the bookkeeping must not open it. This used to create the file from
+		// the old Goal/Done/Next template — no YAML frontmatter — and the very
+		// next spawn hit GuardSpawn, which fails closed on a state file it
+		// cannot parse ("missing YAML frontmatter"). The runtime's own note
+		// about worker one locked out worker two. Seen live on the 27B in
+		// orchestra_delegates_two_edits, whenever the Lead spawned the two
+		// workers one after the other instead of together. The worker's
+		// result already reaches the Lead through the tool result; the Done
+		// line is a convenience for a scratchpad that exists.
+		return nil
 	} else {
 		return err
 	}
