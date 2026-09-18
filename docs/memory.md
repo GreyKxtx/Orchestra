@@ -98,6 +98,7 @@ agent:
   compact_threshold_pct: 0     # 0 = auto (window-derived); -1 = off
   bytes_per_context_token: 4
   child_max_steps: 24
+  child_timeout_s: 600         # child lifetime / sync task wait when the model omits timeout_ms
 ```
 
 ### What reaches `agent.md`, and when

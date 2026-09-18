@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Fixed — a 27B Lead can keep its workers alive and its history sendable (2026-09)
+
+- **`agent.child_timeout_s` (default 600)** — the child lifetime and the sync `task` wait when the model omits `timeout_ms` were hard-coded to 120 s. A worker on a local 27B model spends 20-100 s per step, so every worker that read two files before writing one was cancelled mid-write and the Lead respawned it into the same wall: eight children lost in one 50-minute run. `agent.Options.ChildTimeoutMS` carries the value; the `task` / `task_spawn` schemas and `task.txt` say ten minutes.
+- **Tool arguments that are not JSON are wrapped on the wire** — `llm.ToolArguments.MarshalJSON` sends `{"_invalid_json": "<text>"}` for arguments that do not parse (a garbled or cut-short tool call). vLLM's Qwen chat template json-loads every historic tool call, so one broken entry made every later request fail with HTTP 400 "Unterminated string" and the run could never recover. `Raw()` still hands the tool the original text, so the model still gets "invalid input".
+- **An expired context is not "LLM Endpoint unreachable"** — `llm.IsUnreachableError` returns false for `context.DeadlineExceeded` / `context.Canceled`; a child whose lifetime ran out mid-POST reported the server down while it was idle.
+
 ### Fixed — cache counters reach the UI on the streaming path (2026-08)
 
 - **`Agent.emitStepUsage` now fires on the streaming path too** — it was gated on `!canStream`, and core synthesised a `step_usage` notification from `StreamEventDone` instead, rebuilding the payload field by field. That hand-built copy never learned about `cached_prompt_tokens` / `cache_write_tokens`, so the prompt-cache observability added with the cache work was invisible on the path every interactive run takes. The synthesis in `core/agent_events.go` is gone (it would now only duplicate the agent's own event) and `rpcclient.UsageTurnPayload` carries the two counters.

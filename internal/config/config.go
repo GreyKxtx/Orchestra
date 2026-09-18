@@ -59,6 +59,9 @@ type AgentConfig struct {
 	Profile string `yaml:"profile,omitempty"`
 	// ChildMaxSteps caps child agent MaxSteps for task/task_spawn (default 12).
 	ChildMaxSteps int `yaml:"child_max_steps,omitempty"`
+	// ChildTimeoutS is the child lifetime / sync wait used when the model
+	// omits timeout_ms on task / task_spawn (default 600 s).
+	ChildTimeoutS int `yaml:"child_timeout_s,omitempty"`
 }
 
 // ApplyOutputDisk writes changes to the workspace (subject to --apply / dry-run).

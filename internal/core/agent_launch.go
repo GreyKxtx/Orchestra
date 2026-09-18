@@ -366,6 +366,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		OnEvent:              onEvent,
 		AgentLogger:          agentLogger,
 		SubtaskRunner:        taskRunner,
+		ChildTimeoutMS:       c.cfg.Agent.ResolvedChildTimeoutMS(),
 		HooksRunner:          hooksRunner,
 		ExtraTools:           c.extraToolDefs(),
 		PermissionRequester:  convertPermissionRequester(spec.PermissionRequester),

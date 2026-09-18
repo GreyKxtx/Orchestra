@@ -48,6 +48,23 @@ func (a AgentConfig) ResolvedChildMaxSteps() int {
 // of steps mid-task and returned a partial result the lead had to redo.
 const DefaultChildMaxSteps = 24
 
+// ResolvedChildTimeoutMS returns the child lifetime (and the sync `task`
+// wait) applied when the model omits timeout_ms, in milliseconds.
+func (a AgentConfig) ResolvedChildTimeoutMS() int {
+	if a.ChildTimeoutS <= 0 {
+		return DefaultChildTimeoutS * 1000
+	}
+	return a.ChildTimeoutS * 1000
+}
+
+// DefaultChildTimeoutS is the default child lifetime. It was 120 s, which a
+// 27B model on a local GPU cannot fit a single worker into: every step is
+// 20-100 s of prefill and decode, so a worker that read two files and wrote
+// one was cancelled mid-write, and the Lead respawned it into the same wall
+// (eight children lost in one 50-minute run, 2026-09-18). Ten minutes is a
+// lifetime, not a target; the Lead still passes timeout_ms to shorten it.
+const DefaultChildTimeoutS = 600
+
 // ResolvedBytesPerContextToken returns the estimate calibration (default 4).
 func (a AgentConfig) ResolvedBytesPerContextToken() int {
 	if a.BytesPerContextToken <= 0 {

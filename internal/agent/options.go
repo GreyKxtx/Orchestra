@@ -298,6 +298,10 @@ type Options struct {
 	// SubtaskRunner, if non-nil, enables task.spawn/task.wait/task.cancel tools.
 	SubtaskRunner SubtaskRunner
 
+	// ChildTimeoutMS is the child lifetime (and sync `task` wait) used when
+	// the model omits timeout_ms. 0 → DefaultChildTimeoutMS.
+	ChildTimeoutMS int
+
 	// Skills are the file-based skills discovered for this run. When non-empty
 	// AND SkillRunner is non-nil, the agent exposes the skill_invoke tool and
 	// lists available skills in the system prompt.

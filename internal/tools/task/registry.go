@@ -36,7 +36,7 @@ func ToolTask() llm.ToolDef {
     "provider": { "type": "string", "description": "Optional named providers: map entry for child LLM" },
     "model": { "type": "string", "description": "Optional model id override for child LLM" },
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
-    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Wait timeout (default 120000)" }
+    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Wait timeout / child lifetime (default 600000 = 10 min; local models need minutes per step)" }
   }
 }`),
 		},
@@ -77,7 +77,7 @@ func ToolTaskSpawn() llm.ToolDef {
     "provider": { "type": "string" },
     "model": { "type": "string" },
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
-    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Child lifetime (default 120000); 0 also uses 120000" }
+    "timeout_ms": { "type": "integer", "minimum": 0, "description": "Child lifetime (default 600000 = 10 min); 0 also uses the default" }
   }
 }`),
 		},

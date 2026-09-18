@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -33,6 +34,12 @@ func IsUnreachableError(err error) bool {
 	var u *UnreachableError
 	if errors.As(err, &u) {
 		return true
+	}
+	// A request cut off by its own context is not a connectivity verdict: a
+	// child whose lifetime expired mid-POST reported "LLM Endpoint
+	// unreachable" while the server was idle (2026-09-18).
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
 	}
 	s := strings.ToLower(err.Error())
 	connectWrap := strings.Contains(s, "failed to send stream request") ||

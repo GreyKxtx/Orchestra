@@ -261,8 +261,9 @@ func modeForSubagent(subagentType string) agent.Mode {
 const DefaultChildMaxSteps = 12
 
 // DefaultTaskTimeoutMS is used for sync `task` and for `task_spawn` when the
-// model omits timeout_ms (avoids orphan background children).
-const DefaultTaskTimeoutMS = 120_000
+// model omits timeout_ms (avoids orphan background children). The agent
+// applies it (agent.Options.ChildTimeoutMS, from agent.child_timeout_s).
+const DefaultTaskTimeoutMS = agent.DefaultChildTimeoutMS
 
 // Spawn creates a new child agent task and starts it in a goroutine.
 func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (string, error) {

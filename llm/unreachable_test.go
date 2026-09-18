@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,5 +30,15 @@ func TestIsUnreachableError(t *testing.T) {
 	}
 	if IsTransientLLMError(dial) {
 		t.Fatal("unreachable must not be retried as transient")
+	}
+	// A POST cut off by the caller's own context says nothing about the
+	// server; a child whose lifetime expired reported the endpoint down.
+	expired := fmt.Errorf(`failed to send stream request: Post "http://127.0.0.1:1234/v1/chat/completions": %w`, context.DeadlineExceeded)
+	if IsUnreachableError(expired) {
+		t.Fatal("an expired context must not be reported as unreachable")
+	}
+	cancelled := fmt.Errorf("failed to send request: %w", context.Canceled)
+	if IsUnreachableError(cancelled) {
+		t.Fatal("a cancelled context must not be reported as unreachable")
 	}
 }

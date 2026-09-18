@@ -318,15 +318,35 @@ func (a ToolArguments) Raw() json.RawMessage {
 
 // MarshalJSON ensures ToolArguments is serialized as a JSON string (OpenAI-compatible format),
 // not as base64-encoded bytes.
+//
+// Arguments that are not valid JSON — a model that cut its own tool call
+// short or garbled it — are wrapped in a valid object instead of going out
+// verbatim. Servers that render the chat template parse every historic
+// tool call's arguments (vLLM's Qwen template json.loads them); one broken
+// entry in the history made every later request fail with HTTP 400
+// "Unterminated string", and the run could never recover (2026-09-18).
+// Raw() still returns the original text, so the tool that executes the call
+// sees — and reports — the invalid input.
 func (a ToolArguments) MarshalJSON() ([]byte, error) {
 	raw := bytes.TrimSpace([]byte(a))
 	if len(raw) == 0 {
 		raw = []byte("{}")
 	}
+	if !json.Valid(raw) {
+		wrapped, err := json.Marshal(map[string]string{invalidArgumentsKey: string(raw)})
+		if err != nil {
+			return nil, err
+		}
+		raw = wrapped
+	}
 	// Serialize as JSON string containing the JSON object
 	// This matches OpenAI format: "arguments": "{\"path\":\"...\"}"
 	return json.Marshal(string(raw))
 }
+
+// invalidArgumentsKey carries the original text of tool arguments that were
+// not valid JSON when they are sent back to the provider.
+const invalidArgumentsKey = "_invalid_json"
 
 // ResponseFormat requests structured output from the provider.
 type ResponseFormat struct {

@@ -38,7 +38,7 @@ Default bias (build/debug modes only): DO THE WORK YOURSELF with read/edit/write
 - subagent_type — explore|ask|debug|architecture|verifier|general|worker
 - tier — orchestra worker tier (complex|focused|micro) when subagent_type=worker
 - max_steps — optional cap (default 12)
-- timeout_ms — optional wait timeout (default 120000)
+- timeout_ms — optional wait timeout / child lifetime (default 600000 = 10 min)
 
 ## Notes
 - Child gets NO parent chat history — only the prompt/WorkOrder

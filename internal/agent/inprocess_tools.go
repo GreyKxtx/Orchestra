@@ -118,7 +118,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		}
 		timeoutMS := req.TimeoutMS
 		if timeoutMS <= 0 {
-			timeoutMS = 120_000
+			timeoutMS = a.childTimeoutMS()
 		}
 		taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 			Goal:             goal,
@@ -185,7 +185,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		}
 		timeoutMS := req.TimeoutMS
 		if timeoutMS <= 0 {
-			timeoutMS = 120_000 // same default as sync task — avoid orphan children
+			timeoutMS = a.childTimeoutMS() // same default as sync task — avoid orphan children
 		}
 
 		// Batch mode (spec §5.6): workorders[] spawns one worker per WorkOrder.
@@ -283,4 +283,18 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 	default:
 		return nil, fmt.Errorf("unknown task tool: %s", name)
 	}
+}
+
+// DefaultChildTimeoutMS is the child lifetime (and sync `task` wait) when
+// neither the model nor the config says otherwise. Ten minutes: a 27B model
+// on a local GPU spends 20-100 s per step, and the old 120 s cancelled every
+// worker that read two files before writing one.
+const DefaultChildTimeoutMS = 600_000
+
+// childTimeoutMS is the timeout applied when the model omits timeout_ms.
+func (a *Agent) childTimeoutMS() int {
+	if a != nil && a.opts.ChildTimeoutMS > 0 {
+		return a.opts.ChildTimeoutMS
+	}
+	return DefaultChildTimeoutMS
 }

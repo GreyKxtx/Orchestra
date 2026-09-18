@@ -772,6 +772,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			OnEvent:              buildCLIRenderer(),
 			AgentLogger:          agentLogger,
 			SubtaskRunner:        taskRunner,
+			ChildTimeoutMS:       cfg.Agent.ResolvedChildTimeoutMS(),
 			Skills:               skillSpecsList,
 			SkillRunner:          skillRunner,
 			HooksRunner:          hooksRunner,
