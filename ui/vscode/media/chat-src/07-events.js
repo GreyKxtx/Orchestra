@@ -170,6 +170,20 @@
         renderPendingBar();
         syncToolDiffStats();
         break;
+      // Changes the turn wrote to disk itself. Nothing to approve, so the bar
+      // stays down — but the tool blocks get the core's own before/after and
+      // upgrade to the same inline diff a dry run shows.
+      case "appliedOps": {
+        const incoming = Array.isArray(msg.diff) ? msg.diff : [];
+        if (incoming.length === 0) break;
+        const byPath = new Map(appliedDiffs.map((d) => [String(d.path || ""), d]));
+        for (const d of incoming) {
+          byPath.set(String(d.path || ""), d);
+        }
+        appliedDiffs = Array.from(byPath.values());
+        void syncToolDiffPreviews();
+        break;
+      }
       case "permissionRequest":
         showPermissionOverlay(msg.request || {});
         break;
@@ -189,6 +203,8 @@
         toolBlocks.clear();
         toolArgs.clear();
         execSteps.clear();
+        // The blocks these described are gone with the transcript.
+        appliedDiffs = [];
         todos = [];
         todosExpanded = false;
         todosHadOpen = false;

@@ -177,6 +177,12 @@
 
   /** @type {{ ops: any[]; diff: { path?: string; before?: string; after?: string; reviewStatus?: string }[] }} */
   let pendingState = { ops: [], diff: [] };
+  // Diffs for changes the turn already wrote to disk. Kept apart from
+  // pendingState on purpose: these need no decision from the user, so they must
+  // never raise the apply bar — they only give the tool blocks a real diff to
+  // draw instead of one rebuilt from the call's arguments.
+  /** @type {{ path?: string; before?: string; after?: string }[]} */
+  let appliedDiffs = [];
   let diffReviewCursor = 0;
   /** @type {{ id: string; type: string; label: string; status: string; taskId?: string; parentToolCallId?: string; toolsEl?: HTMLElement; toolCount?: number }[]} */
   let subagents = [];
@@ -855,14 +861,27 @@
     return block?.classList?.contains("kind-write") === true;
   }
 
+  function diffPathMatches(candidate, norm) {
+    const p = (candidate || "").replace(/\\/g, "/");
+    return p === norm || p.endsWith("/" + norm) || norm.endsWith("/" + p) || basename(p) === basename(norm);
+  }
+
   function findDiffForPath(filePath) {
     if (!filePath) return null;
     const norm = filePath.replace(/\\/g, "/");
     if (pendingState.diff.length) {
-      const hit = pendingState.diff.find((d) => {
-        const p = (d.path || "").replace(/\\/g, "/");
-        return p === norm || p.endsWith("/" + norm) || norm.endsWith("/" + p) || basename(p) === basename(norm);
-      });
+      const hit = pendingState.diff.find((d) => diffPathMatches(d.path, norm));
+      if (hit) {
+        return hit;
+      }
+    }
+    // Changes already written to disk. The core computes the same before/after
+    // it computes for a dry run, so a turn that applies as it goes shows the
+    // same diff as one that waits for approval. Without this the block falls
+    // back to what it can rebuild from the call's arguments — for `write` that
+    // is before="" and a rewritten file renders as entirely new lines.
+    if (appliedDiffs.length) {
+      const hit = appliedDiffs.find((d) => diffPathMatches(d.path, norm));
       if (hit) {
         return hit;
       }
@@ -5313,6 +5332,20 @@
         renderPendingBar();
         syncToolDiffStats();
         break;
+      // Changes the turn wrote to disk itself. Nothing to approve, so the bar
+      // stays down — but the tool blocks get the core's own before/after and
+      // upgrade to the same inline diff a dry run shows.
+      case "appliedOps": {
+        const incoming = Array.isArray(msg.diff) ? msg.diff : [];
+        if (incoming.length === 0) break;
+        const byPath = new Map(appliedDiffs.map((d) => [String(d.path || ""), d]));
+        for (const d of incoming) {
+          byPath.set(String(d.path || ""), d);
+        }
+        appliedDiffs = Array.from(byPath.values());
+        void syncToolDiffPreviews();
+        break;
+      }
       case "permissionRequest":
         showPermissionOverlay(msg.request || {});
         break;
@@ -5332,6 +5365,8 @@
         toolBlocks.clear();
         toolArgs.clear();
         execSteps.clear();
+        // The blocks these described are gone with the transcript.
+        appliedDiffs = [];
         todos = [];
         todosExpanded = false;
         todosHadOpen = false;

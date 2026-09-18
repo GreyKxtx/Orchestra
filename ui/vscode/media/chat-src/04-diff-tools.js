@@ -2,14 +2,27 @@
     return block?.classList?.contains("kind-write") === true;
   }
 
+  function diffPathMatches(candidate, norm) {
+    const p = (candidate || "").replace(/\\/g, "/");
+    return p === norm || p.endsWith("/" + norm) || norm.endsWith("/" + p) || basename(p) === basename(norm);
+  }
+
   function findDiffForPath(filePath) {
     if (!filePath) return null;
     const norm = filePath.replace(/\\/g, "/");
     if (pendingState.diff.length) {
-      const hit = pendingState.diff.find((d) => {
-        const p = (d.path || "").replace(/\\/g, "/");
-        return p === norm || p.endsWith("/" + norm) || norm.endsWith("/" + p) || basename(p) === basename(norm);
-      });
+      const hit = pendingState.diff.find((d) => diffPathMatches(d.path, norm));
+      if (hit) {
+        return hit;
+      }
+    }
+    // Changes already written to disk. The core computes the same before/after
+    // it computes for a dry run, so a turn that applies as it goes shows the
+    // same diff as one that waits for approval. Without this the block falls
+    // back to what it can rebuild from the call's arguments — for `write` that
+    // is before="" and a rewritten file renders as entirely new lines.
+    if (appliedDiffs.length) {
+      const hit = appliedDiffs.find((d) => diffPathMatches(d.path, norm));
       if (hit) {
         return hit;
       }

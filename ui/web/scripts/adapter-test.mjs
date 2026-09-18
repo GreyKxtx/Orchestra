@@ -705,6 +705,69 @@ test("ops the core already wrote clear the bar instead of offering it", async ()
   );
 });
 
+// The renderer has drawn the workflow strip all along, but only the extension
+// host ever fed it: in the browser a workflow ran with nothing on screen.
+test("a workflow's stages reach the renderer's strip", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "workflow/stage_start",
+    params: { name: "release", stage_id: "build", title: "Build" },
+  });
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "workflow/stage_done",
+    params: { name: "release", stage_id: "build", title: "Build" },
+  });
+
+  const stages = b.inbound.filter((m) => m.type === "workflowStage");
+  assert.equal(stages.length, 2, "both stage events must reach the strip");
+  assert.equal(stages[0].phase, "start");
+  assert.equal(stages[0].stage.stage_id, "build");
+  assert.equal(stages[1].phase, "done");
+});
+
+// A turn that writes as it goes sends its diffs with applied:true. Both hosts
+// used to drop that payload and post only "the bar is gone", which left the
+// tool blocks rebuilding a diff from the call's arguments — and a `write` has
+// no "before" there, so a rewritten file drew as entirely new lines.
+test("the diff of a change already written reaches the renderer", async () => {
+  const b = await ready(loadBundle());
+  const before = "package main\n";
+  const after = "package main\n\nfunc main() {}\n";
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: {
+      type: "pending_ops",
+      data: {
+        ops: [{ op: "file.write_atomic", path: "main.go" }],
+        diff: [{ path: "main.go", before, after }],
+        applied: true,
+      },
+    },
+  });
+
+  assert.ok(
+    b.inbound.find((m) => m.type === "pendingCleared"),
+    "an applied turn must still take the bar down"
+  );
+  assert.equal(
+    b.inbound.filter((m) => m.type === "pendingOps").length,
+    0,
+    "an applied turn must not ask the user to approve what is already on disk"
+  );
+  const applied = b.inbound.find((m) => m.type === "appliedOps");
+  assert.ok(applied, "the diffs of an applied change were dropped");
+  assert.equal(applied.diff.length, 1);
+  assert.equal(applied.diff[0].path, "main.go");
+  assert.equal(
+    applied.diff[0].before,
+    before,
+    "the real before must survive; rebuilding it from a write's arguments gives an empty one"
+  );
+});
+
 // The review list offers a decision per file (Keep / Drop, or a/x). Before
 // this the host ignored the file list and settled the whole turn, so rejecting
 // one bad edit threw away every good one beside it.

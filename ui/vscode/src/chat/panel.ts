@@ -1819,7 +1819,17 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         if (payload && !payload.applied) {
           post({ type: "pendingOps", payload });
         } else if (payload?.applied) {
+          // Already on disk: no bar, nothing to approve.
           post({ type: "pendingCleared" });
+          // But the diffs in the payload are the core's own before/after, and
+          // they used to be dropped here. The tool blocks then fell back to
+          // rebuilding a diff from the call's arguments, where a `write` has
+          // no "before" at all — so a rewritten file drew as entirely new
+          // lines, and the more confident the mode, the less the user could
+          // see of what changed.
+          if (payload.diff && payload.diff.length > 0) {
+            post({ type: "appliedOps", diff: payload.diff });
+          }
         }
         break;
       }

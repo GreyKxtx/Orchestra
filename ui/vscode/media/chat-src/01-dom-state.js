@@ -173,6 +173,12 @@
 
   /** @type {{ ops: any[]; diff: { path?: string; before?: string; after?: string; reviewStatus?: string }[] }} */
   let pendingState = { ops: [], diff: [] };
+  // Diffs for changes the turn already wrote to disk. Kept apart from
+  // pendingState on purpose: these need no decision from the user, so they must
+  // never raise the apply bar — they only give the tool blocks a real diff to
+  // draw instead of one rebuilt from the call's arguments.
+  /** @type {{ path?: string; before?: string; after?: string }[]} */
+  let appliedDiffs = [];
   let diffReviewCursor = 0;
   /** @type {{ id: string; type: string; label: string; status: string; taskId?: string; parentToolCallId?: string; toolsEl?: HTMLElement; toolCount?: number }[]} */
   let subagents = [];

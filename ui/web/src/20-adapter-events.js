@@ -189,6 +189,17 @@
       toRenderer({ type: "execChunk", chunk: (msg.params && msg.params.chunk) || "" });
       return;
     }
+    // The renderer has drawn the workflow strip all along; only the extension
+    // host ever fed it (panel.ts, onWorkflow). In the browser a workflow ran
+    // with nothing on screen to say which stage it was on.
+    if (msg.method === "workflow/stage_start" || msg.method === "workflow/stage_done") {
+      toRenderer({
+        type: "workflowStage",
+        phase: msg.method === "workflow/stage_start" ? "start" : "done",
+        stage: msg.params || {},
+      });
+      return;
+    }
     if (msg.method !== "agent/event") {
       return;
     }
@@ -310,7 +321,14 @@
       case "pending_ops": {
         const payload = parsePendingOpsPayload(ev.data) || parsePendingOpsPayload(ev.content);
         if (payload && payload.applied) {
+          // Already on disk: no bar. But the diffs in the payload are the
+          // core's own before/after, and dropping them left the tool blocks
+          // rebuilding a diff from the call's arguments — where a `write` has
+          // no "before", so a rewritten file drew as entirely new lines.
           toRenderer({ type: "pendingCleared" });
+          if (Array.isArray(payload.diff) && payload.diff.length > 0) {
+            toRenderer({ type: "appliedOps", diff: payload.diff });
+          }
         } else if (payload) {
           toRenderer({ type: "pendingOps", payload });
         }

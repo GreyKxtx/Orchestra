@@ -349,6 +349,10 @@ export type HostToWebview =
   | { type: "mentionResults"; query: string; files: ChatFileRef[] }
   | { type: "pendingOps"; payload: PendingOpsPayload }
   | { type: "pendingCleared" }
+  // Diffs for changes the turn already wrote. No decision to make, so this
+  // never raises the apply bar — it only lets the tool blocks draw the real
+  // change instead of one rebuilt from the call's arguments.
+  | { type: "appliedOps"; diff: PendingFileDiff[] }
   | { type: "permissionRequest"; request: PermissionRequestPayload }
   | { type: "questionAsk"; questions: QuestionItemPayload[] }
   | { type: "error"; message: string }
