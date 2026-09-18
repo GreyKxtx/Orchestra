@@ -119,6 +119,17 @@
           "type": "string",
           "default": "",
           "description": "Project root passed to orchestra core. Empty = first workspace folder (or folder picker if none)."
+        },
+        "orchestra.language": {
+          "type": "string",
+          "enum": ["auto", "en", "ru"],
+          "enumDescriptions": [
+            "Follow the editor's display language",
+            "English",
+            "Русский"
+          ],
+          "default": "auto",
+          "description": "Language of the Orchestra chat and its notices. Does not affect what the model is sent."
         }
       }
     }

@@ -344,6 +344,13 @@ export function loadBundle(opts = {}) {
     },
     socketFor: (projectId) =>
       sockets.find((s) => s.url.includes(`project=${encodeURIComponent(projectId)}`)) || null,
+    /** The stub element the page reached through getElementById, so a test can
+     * assert on what was actually rendered into it. */
+    elementById: (id) => elementsById.get(id) || null,
+    /** Every socket ever dialled for this project, oldest first — a reconnect
+     * adds one rather than reusing the old. */
+    allSocketsFor: (projectId) =>
+      sockets.filter((s) => s.url.includes(`project=${encodeURIComponent(projectId)}`)),
     open: () => socket.emit("open", {}),
     openFor: (projectId) => {
       const s = sockets.find((x) => x.url.includes(`project=${encodeURIComponent(projectId)}`));
@@ -702,6 +709,102 @@ test("ops the core already wrote clear the bar instead of offering it", async ()
     b.inbound.filter((m) => m.type === "pendingOps").length,
     0,
     "an applied turn must not raise the review bar"
+  );
+});
+
+// The chat speaks the viewer's language. The host decides which — a saved
+// choice, else the browser's — and the renderer must redraw what it has
+// already built, not only what it builds next.
+test("the host tells the renderer which language to speak", async () => {
+  const b = await handshake(loadBundle());
+  const told = b.inbound.filter((m) => m.type === "uiLang");
+  assert.equal(told.length, 1, "the renderer was never told a language");
+  assert.equal(typeof told[0].lang, "string");
+
+  // The access menu is built from the catalogue, so switching language has to
+  // change what is in the DOM — not just what a later rebuild would produce.
+  b.post({ type: "uiLang", lang: "ru" });
+  await tick();
+  const heads = walk(b.elementById("access-menu")).filter(
+    (n) => String(n.className || "") === "menu-section"
+  );
+  assert.ok(heads.length > 0, "the access menu was never rebuilt");
+  assert.ok(
+    heads.some((h) => h.textContent === "Доступ"),
+    `expected a Russian section heading, got: ${heads.map((h) => h.textContent).join(", ")}`
+  );
+
+  b.post({ type: "uiLang", lang: "en" });
+  await tick();
+  const back = walk(b.elementById("access-menu")).filter(
+    (n) => String(n.className || "") === "menu-section"
+  );
+  assert.ok(
+    back.some((h) => h.textContent === "Access"),
+    `expected an English section heading, got: ${back.map((h) => h.textContent).join(", ")}`
+  );
+});
+
+// A socket drops for reasons that have nothing to do with the core: a laptop
+// sleeping, a network switching, a proxy timing out an idle connection. The
+// core is a separate process and the session is on disk, so both outlive the
+// socket — this used to say "reload to start a new session" and throw away a
+// conversation that was still there.
+test("a dropped socket reconnects into the same chat", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  b.inbound.length = 0;
+
+  b.socketFor("p-default").emit("close", {});
+  await tick();
+
+  assert.ok(
+    b.inbound.find((m) => m.type === "status" && m.status === "connecting"),
+    "a drop must say it is reconnecting, not that the conversation is over"
+  );
+  // The first retry waits 0ms, so one timer turn is enough to dial again.
+  await new Promise((r) => setTimeout(r, 5));
+  const sockets = b.allSocketsFor("p-default");
+  assert.equal(sockets.length, 2, "a dropped socket must be dialled again");
+
+  // The new socket handshakes like any other...
+  b.open();
+  answer(b, "core.health", {
+    workspace_root: "/w",
+    project_id: "p",
+    protocol_version: 15,
+    ops_version: 1,
+    tools_version: 15,
+  });
+  await tick();
+  answer(b, "initialize", {});
+  await tick();
+
+  // ...except that it asks for the session that was on screen, not a new one.
+  const start = b.sent.find((m) => m.method === "session.start");
+  assert.ok(start, `no session.start; sent: ${b.sent.map((m) => m.method).join(", ")}`);
+  assert.equal(
+    start.params.session_id,
+    "s-1",
+    "a reconnect must reopen the chat that was on screen, not start an empty one beside it"
+  );
+
+  answer(b, "session.start", { session_id: "s-1", restored: true });
+  await tick();
+  answer(b, "session.get", {
+    ui_messages: [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ],
+  });
+  await tick();
+
+  const history = b.inbound.filter((m) => m.type === "history").pop();
+  assert.ok(history, "the reopened chat was never repainted from the core");
+  assert.equal(history.messages.length, 2);
+  assert.ok(
+    b.inbound.find((m) => m.type === "turnComplete"),
+    "the composer must come out of Stop; the turn died with the socket"
   );
 });
 

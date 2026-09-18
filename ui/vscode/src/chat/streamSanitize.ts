@@ -1,3 +1,5 @@
+import { t } from "../i18n";
+
 /**
  * Hide agent final-action JSON (e.g. {"patches":[]}) from chat UI text.
  * Port of ui/tui/view/chat_helpers.go stripFinalEnvelope.
@@ -117,13 +119,13 @@ export function compactionNoticeText(message: string): string | null {
     return null;
   }
   if (m === "CONTEXT_PRESSURE") {
-    return "Контекст почти заполнен — история чата будет суммаризирована";
+    return t("notice.context_nearly_full");
   }
   if (m === "CONTEXT_COMPACTED") {
-    return "Суммаризация чата: история сжата, работа продолжается";
+    return t("notice.compaction_done");
   }
   if (/контекст переполнен/i.test(m)) {
-    return `Суммаризация чата — ${m}`;
+    return t("notice.compaction", { detail: m });
   }
   return null;
 }

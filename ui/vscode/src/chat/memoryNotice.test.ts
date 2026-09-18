@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import { memoryNoticeText } from "./memoryNotice";
+import { setLang } from "../i18n";
 
 // Mirrors ui/tui/app_rpc.go noticeTurnMemory: the field run's memory
 // failures went silently to stderr for nine days, so a failed write must be
@@ -19,14 +20,28 @@ describe("memoryNoticeText", () => {
   });
 
   it("names the source on a written note", () => {
-    // Same wording as ui/tui/app_rpc.go noticeTurnMemory — one concept,
-    // presented the same way in both clients.
+    setLang("en");
     const modelText = memoryNoticeText({ outcome: "written", source: "model" });
-    assert.ok(modelText && /сводка модели/.test(modelText));
+    assert.ok(modelText && /summary/.test(modelText));
 
     const digestText = memoryNoticeText({ outcome: "written", source: "digest" });
-    assert.ok(digestText && /дайджеста/.test(digestText));
+    assert.ok(digestText && /digest/.test(digestText));
     assert.notEqual(modelText, digestText);
+  });
+
+  it("says the same thing in Russian", () => {
+    // Same wording as ui/tui/app_rpc.go noticeTurnMemory — one concept,
+    // presented the same way in every client that speaks this language.
+    setLang("ru");
+    try {
+      const modelText = memoryNoticeText({ outcome: "written", source: "model" });
+      assert.ok(modelText && /сводка модели/.test(modelText));
+
+      const digestText = memoryNoticeText({ outcome: "written", source: "digest" });
+      assert.ok(digestText && /дайджеста/.test(digestText));
+    } finally {
+      setLang("en");
+    }
   });
 
   it("surfaces the reason on a failure", () => {

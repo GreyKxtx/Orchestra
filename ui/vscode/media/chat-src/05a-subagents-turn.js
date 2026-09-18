@@ -219,7 +219,7 @@
       toolTraceEl.className = "tool-trace trace-details";
       toolTraceSummary = document.createElement("summary");
       toolTraceSummary.className = "trace-summary";
-      toolTraceSummary.textContent = "Running tools…";
+      toolTraceSummary.textContent = i18n("turn.running_tools");
       const list = document.createElement("div");
       list.className = "tool-trace-list";
       toolTraceEl.appendChild(toolTraceSummary);
@@ -461,7 +461,7 @@
     if (changedRows.length > maxLines) {
       const more = document.createElement("div");
       more.className = "diff-more";
-      more.textContent = `… ${changedRows.length - maxLines} more changed lines`;
+      more.textContent = i18n("diff.more_lines", { n: changedRows.length - maxLines });
       container.appendChild(more);
     }
   }

@@ -9,11 +9,11 @@
         if (st === "error") {
           setChromeHint(msg.detail || "connection error", true);
         } else if (st === "connecting") {
-          busyStatusText = msg.detail || "Connecting…";
-          setChromeHint(msg.detail || "Connecting…", false);
+          busyStatusText = msg.detail || i18n("conn.connecting");
+          setChromeHint(msg.detail || i18n("conn.connecting"), false);
         } else if (st === "running") {
-          busyStatusText = "Working…";
-          setChromeHint("Working…", false);
+          busyStatusText = i18n("turn.working");
+          setChromeHint(i18n("turn.working"), false);
         } else {
           setChromeHint("", false);
         }
@@ -162,6 +162,24 @@
         diffReviewCursor = 0;
         renderPendingBar();
         void syncToolDiffPreviews();
+        break;
+      }
+      // The host decides the language — the editor's display language, the
+      // browser's, or what the user chose — and says so here. Sent once on
+      // startup and again whenever it changes, so this has to redraw what was
+      // already built rather than only affect what is built next.
+      case "uiLang": {
+        if (!setUiLang(msg.lang)) {
+          break;
+        }
+        applyStaticI18n();
+        initModeMenu();
+        initAccessMenu();
+        syncModeUi();
+        syncAccessUi();
+        if (!busy) {
+          busyStatusText = i18n("turn.working");
+        }
         break;
       }
       case "pendingCleared":
@@ -582,6 +600,11 @@
     }
   });
 
+  // The environment's own language is the starting point, so the first frame
+  // is already right for most people; the host may correct it (a VS Code
+  // setting, a saved choice) with a "uiLang" message straight after.
+  setUiLang("");
+  applyStaticI18n();
   initModeMenu();
   initEffortMenu();
   initAccessMenu();

@@ -20,6 +20,7 @@ import type {
 } from "./protocol/events";
 import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjection";
 import { RpcClient } from "./rpc/client";
+import { t } from "./i18n";
 
 /** Must match internal/protocol/version.go */
 const PROTOCOL_VERSION = 20;
@@ -359,7 +360,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
           continue;
         }
         // Surface the problem instead of silently losing the turn from history.
-        this.emit("stderr", `ui_sync failed — последний ответ может не сохраниться в истории: ${message}\n`);
+        this.emit("stderr", t("notice.ui_sync_failed", { detail: message }) + "\n");
       }
     }
   }
@@ -1326,7 +1327,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
           }
           if (/session is busy/i.test(msg)) {
             throw new Error(
-              "session is busy: предыдущий ход ещё выполняется. Нажмите Stop, чтобы прервать его."
+              t("notice.session_busy")
             );
           }
           throw err;

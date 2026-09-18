@@ -1,4 +1,5 @@
 import type { MemoryNotePayload } from "../protocol/events";
+import { t } from "../i18n";
 
 /**
  * memoryNoticeText mirrors ui/tui/app_rpc.go noticeTurnMemory: a failed
@@ -15,9 +16,9 @@ export function memoryNoticeText(memory: MemoryNotePayload | undefined | null): 
   }
   switch (memory.outcome) {
     case "written":
-      return `Память: заметка записана в agent.md (${memorySourceLabel(memory.source)})`;
+      return t("notice.memory_written", { source: memorySourceLabel(memory.source) });
     case "failed":
-      return `Память: запись не удалась — ${(memory.detail || "").trim()}`;
+      return t("notice.memory_failed", { detail: (memory.detail || "").trim() });
     default:
       return null;
   }
@@ -26,9 +27,9 @@ export function memoryNoticeText(memory: MemoryNotePayload | undefined | null): 
 function memorySourceLabel(source: string | undefined): string {
   switch (source) {
     case "model":
-      return "сводка модели";
+      return t("memory.source.model");
     case "digest":
-      return "из дайджеста хода";
+      return t("memory.source.digest");
     default:
       return source || "";
   }

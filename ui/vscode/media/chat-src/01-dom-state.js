@@ -17,8 +17,8 @@
 
   /** @type {{ label: string; ids: string[] }[]} */
   const MODE_GROUPS = [
-    { label: "Основные", ids: ["agent", "orchestra", "build", "plan"] },
-    { label: "Дополнительные", ids: ["explore", "ask", "debug", "architecture"] },
+    { labelKey: "mode.group.core", ids: ["agent", "orchestra", "build", "plan"] },
+    { labelKey: "mode.group.more", ids: ["explore", "ask", "debug", "architecture"] },
   ];
 
   /** @typedef {{ id: string; label: string; hint: string; icon: string }} AccessOpt */
@@ -28,13 +28,13 @@
     {
       id: "ask",
       label: "Ask",
-      hint: "Shell с подтверждением; правки через Accept/Reject",
+      hintKey: "access.ask.hint",
       icon: "◌",
     },
     {
       id: "auto",
       label: "Auto",
-      hint: "Shell и запись файлов сразу на диск (без Accept/Reject)",
+      hintKey: "access.auto.hint",
       icon: "▶",
     },
   ];
@@ -228,7 +228,7 @@
   let turnToolFirstStart = 0;
   let turnToolLastEnd = 0;
   let busy = false;
-  let busyStatusText = "Working…";
+  let busyStatusText = i18n("turn.working");
   /** @type {Array<{ id: string; preview: string; fileCount?: number }>} */
   let sendQueue = [];
   /** @type {HTMLElement | null} */

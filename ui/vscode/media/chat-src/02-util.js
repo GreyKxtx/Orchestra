@@ -165,36 +165,36 @@
     accessMenu.innerHTML = "";
     const head = document.createElement("div");
     head.className = "menu-section";
-    head.textContent = "Доступ";
+    head.textContent = i18n("access.section");
     accessMenu.appendChild(head);
     ACCESS_MODES.forEach((m) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "menu-item access-item";
       btn.dataset.access = m.id;
-      btn.title = m.hint;
+      btn.title = i18n(m.hintKey);
       btn.innerHTML =
         `<span class="mi access-icon access-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>` +
         `<span class="access-item-text"><span class="access-item-label">${escapeAttr(m.label)}</span>` +
-        `<span class="access-item-hint">${escapeAttr(m.hint)}</span></span>`;
+        `<span class="access-item-hint">${escapeAttr(i18n(m.hintKey))}</span></span>`;
       accessMenu.appendChild(btn);
     });
     const note = document.createElement("div");
     note.className = "menu-hint access-menu-note";
     note.textContent =
-      "Ask: правки в staging + Accept/Reject. Auto: правки пишутся на диск сразу.";
+      i18n("access.note");
     accessMenu.appendChild(note);
     const optHead = document.createElement("div");
     optHead.className = "menu-section";
-    optHead.textContent = "Инструменты";
+    optHead.textContent = i18n("access.tools.section");
     accessMenu.appendChild(optHead);
     const browserRow = document.createElement("div");
     browserRow.className = "menu-row menu-row-browser";
     browserRow.title =
-      "Агент может открывать страницы, нажимать и вводить текст в браузере (Playwright). Не действует при Fast.";
+      i18n("access.browser.hint");
     browserRow.innerHTML =
-      '<span class="menu-row-label"><span class="mi" aria-hidden="true">◎</span>Браузер</span>' +
-      '<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="Браузер"></button>';
+      `<span class="menu-row-label"><span class="mi" aria-hidden="true">◎</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
+      `<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="${escapeAttr(i18n("access.browser.label"))}"></button>`;
     accessMenu.appendChild(browserRow);
   }
 
@@ -210,7 +210,7 @@
     }
     if (accessBtn) {
       accessBtn.dataset.access = accessId;
-      accessBtn.title = m.hint;
+      accessBtn.title = i18n(m.hintKey);
     }
     accessMenu?.querySelectorAll("[data-access]").forEach((el) => {
       const id = el.getAttribute("data-access");
@@ -222,7 +222,9 @@
       browserToggle.setAttribute("aria-checked", browserOn ? "true" : "false");
     }
     if (accessBtn) {
-      accessBtn.title = browserOn ? `${m.hint} · браузер включён` : m.hint;
+      accessBtn.title = browserOn
+        ? i18n("access.browser.on", { hint: i18n(m.hintKey) })
+        : i18n(m.hintKey);
     }
     host.setState({ ...(host.getState() || {}), accessId, browserOn });
   }

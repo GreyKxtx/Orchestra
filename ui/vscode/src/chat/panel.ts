@@ -37,6 +37,7 @@ import {
   type TurnToolTracker,
 } from "./turnProjection";
 import { PendingHighlightManager } from "./pendingHighlight";
+import { applyUiLanguageFromSettings, t } from "../i18n";
 
 /** Matches core `attachments.MaxImageBytes` (20 MB). */
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -653,7 +654,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.externalTurnNoticeFor = `int:${sessionId}`;
       this.post({
         type: "systemNote",
-        text: "Предыдущий ход был прерван (процесс завершился аварийно). История сохранена до последнего выполненного шага.",
+        text: t("notice.turn_interrupted"),
       });
       return;
     }
@@ -664,7 +665,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         this.externalTurnNoticeFor = "";
         this.post({
           type: "systemNote",
-          text: "Фоновый ход завершён — история обновлена.",
+          text: t("notice.background_turn_done"),
         });
       }
       return;
@@ -673,7 +674,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.externalTurnNoticeFor = sessionId;
       this.post({
         type: "systemNote",
-        text: "Предыдущий ход этой сессии ещё завершается в фоновом процессе. История обновится автоматически, когда он закончит.",
+        text: t("notice.background_turn_running"),
       });
     }
     this.externalTurnTimer = setTimeout(() => {
@@ -732,6 +733,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     try {
       switch (msg.type) {
         case "ready":
+          // Before anything with words in it: the webview defaulted to the
+          // browser's language, and the editor's own (or the user's setting)
+          // is the better answer.
+          this.post({ type: "uiLang", lang: applyUiLanguageFromSettings() });
           if (this.session.getSessionId()) {
             await this.refreshHeaderAndHistory();
           }
@@ -1397,9 +1402,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         this.post({ type: "discardAssistantBubble" });
         this.post({
           type: "systemNote",
-          text:
-            "Модель вернула некорректный поток вместо вызова edit/write. " +
-            "Попробуйте ещё раз, уточните запрос или смените модель в composer.",
+          text: t("notice.bad_stream"),
         });
       }
       await this.syncTurnProjection();
@@ -2632,7 +2635,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               <span id="effort-fast-mark" class="effort-fast-mark" hidden aria-hidden="true">⚡</span>
               <span class="chev">▾</span>
             </button>
-            <button type="button" class="pill" id="access-btn" data-access="ask" aria-haspopup="menu" title="Ask — shell с подтверждением; правки через Accept/Reject">
+            <button type="button" class="pill" id="access-btn" data-access="ask" aria-haspopup="menu" data-i18n-title="access.ask.hint">
               <span class="ico access-icon access-ask" id="access-icon">◌</span>
               <span id="access-label">Ask</span>
               <span class="chev">▾</span>

@@ -130,6 +130,77 @@
     return conns.get(projectId) || null;
   }
 
+  // ---- reconnecting -------------------------------------------------------
+  //
+  // A socket can drop for reasons that have nothing to do with the core: a
+  // laptop sleeping, a network switching, a proxy timing out an idle
+  // connection. The core is a separate process held by the registry and the
+  // session is written to disk, so both are still there afterwards — which
+  // makes reconnecting and reopening the same session the honest answer, and
+  // "reload to start a new session" a needless loss of the conversation.
+
+  /** Projects whose socket we are closing ourselves; their close is not a drop. */
+  const closingOnPurpose = new Set();
+  /** projectId → attempts so far, so the wait grows and eventually gives up. */
+  const reconnectAttempts = new Map();
+  /** Wait before attempt n, capped. Immediate first try: most drops are brief. */
+  const RECONNECT_DELAYS_MS = [0, 500, 1000, 2000, 4000, 8000];
+
+  /** Close a project's socket without arming the reconnect. @param {string} projectId */
+  function closeConnOnPurpose(projectId) {
+    const conn = conns.get(projectId);
+    if (!conn) {
+      return;
+    }
+    closingOnPurpose.add(projectId);
+    reconnectAttempts.delete(projectId);
+    conn.close();
+    conns.delete(projectId);
+  }
+
+  /** @param {string} projectId */
+  function scheduleReconnect(projectId) {
+    const attempt = reconnectAttempts.get(projectId) || 0;
+    if (attempt >= RECONNECT_DELAYS_MS.length) {
+      // Out of tries. Say what is true — the core is not answering — rather
+      // than leaving a spinner that never resolves.
+      reconnectAttempts.delete(projectId);
+      if (projectId === currentProjectId) {
+        toRenderer({
+          type: "status",
+          status: "error",
+          detail: i18n("conn.lost"),
+        });
+      }
+      return;
+    }
+    reconnectAttempts.set(projectId, attempt + 1);
+    if (projectId === currentProjectId) {
+      toRenderer({
+        type: "status",
+        status: "connecting",
+        detail: attempt === 0 ? i18n("conn.reconnecting") : i18n("conn.reconnecting_n", { n: attempt + 1 }),
+      });
+    }
+    setTimeout(() => {
+      // The user may have closed or switched away from the project while we
+      // waited; ensureConn on a project nobody asked for would reopen it.
+      if (closingOnPurpose.has(projectId) || !perProjectKnows(projectId)) {
+        reconnectAttempts.delete(projectId);
+        return;
+      }
+      if (conns.has(projectId)) {
+        return; // something else already reconnected it
+      }
+      ensureConn(projectId);
+    }, RECONNECT_DELAYS_MS[attempt]);
+  }
+
+  /** Whether this project is still one the page is holding. @param {string} projectId */
+  function perProjectKnows(projectId) {
+    return projectId === currentProjectId || known.some((p) => p.id === projectId && p.state !== "closed");
+  }
+
   /**
    * Create the project's connection if it has none. The handshake runs from
    * onOpen, so a caller only awaits the socket, not the session.
@@ -142,6 +213,7 @@
     }
     const conn = createConn(projectId, {
       onOpen: (id) => {
+        reconnectAttempts.delete(id);
         if (id === currentProjectId) {
           toRenderer({ type: "status", status: "ok" });
         }
@@ -149,18 +221,28 @@
       },
       onClose: (id) => {
         conns.delete(id);
-        forgetProjectState(id);
         noteProjectLive(id);
-        if (id === currentProjectId) {
-          // A dropped socket ends the session on the core side, so say so
-          // plainly rather than reconnecting into what looks like the same
-          // conversation.
-          toRenderer({
-            type: "status",
-            status: "error",
-            detail: "disconnected — reload to start a new session",
-          });
+        if (closingOnPurpose.has(id)) {
+          // We closed it: the project was closed or forgotten. Nothing to
+          // recover, and nothing to reconnect to.
+          closingOnPurpose.delete(id);
+          forgetProjectState(id);
+          renderProjects();
+          return;
         }
+        // The socket dropped under us. The core is a separate process held by
+        // the registry and the session is on disk, so both outlive this
+        // socket — the conversation is recoverable, and the old behaviour
+        // (forget everything, tell the user to reload into a new session)
+        // threw away something that was still there.
+        const st = projectState(id);
+        // The turn died with the socket, whatever it had reached. Its id and
+        // any outstanding prompt refer to a connection that no longer exists.
+        st.inFlightTurnId = null;
+        st.pendingAsk = null;
+        st.status = "idle";
+        scheduleReconnect(id);
+
         renderProjects();
       },
       onError: (id) => {
@@ -490,11 +572,7 @@
 
   /** Close a project. It stays in the list. @param {string} projectId */
   async function closeProject(projectId) {
-    const conn = conns.get(projectId);
-    if (conn) {
-      conn.close();
-      conns.delete(projectId);
-    }
+    closeConnOnPurpose(projectId);
     forgetProjectState(projectId);
     try {
       await api("/api/projects/" + encodeURIComponent(projectId), { method: "DELETE" });
@@ -515,11 +593,7 @@
 
   /** Close a project and drop it from the list. @param {string} projectId */
   async function forgetProject(projectId) {
-    const conn = conns.get(projectId);
-    if (conn) {
-      conn.close();
-      conns.delete(projectId);
-    }
+    closeConnOnPurpose(projectId);
     forgetProjectState(projectId);
     try {
       await api("/api/projects/" + encodeURIComponent(projectId) + "?forget=1", {

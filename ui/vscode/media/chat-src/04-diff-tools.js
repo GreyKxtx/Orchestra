@@ -121,11 +121,11 @@
     head.className = "diff-preview-head";
     head.innerHTML =
       diffExtBadgeHtml(filePath) +
-      `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
+      `<button type="button" class="diff-preview-name" title="${escapeAttr(i18n("diff.open_file"))}">${escapeAttr(basename(filePath))}</button>` +
       `<span class="tool-diff-pending">…</span>`;
     const lines = document.createElement("div");
     lines.className = "diff-preview-body tool-diff-pending-body";
-    lines.textContent = "Loading diff preview…";
+    lines.textContent = i18n("diff.loading");
     diffWrap.appendChild(head);
     diffWrap.appendChild(lines);
     head.querySelector(".diff-preview-name")?.addEventListener("click", (e) => {
@@ -199,13 +199,13 @@
       head.className = "diff-preview-head";
       head.innerHTML =
         diffExtBadgeHtml(d.path || "") +
-        `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(d.path || "file"))}</button>` +
+        `<button type="button" class="diff-preview-name" title="${escapeAttr(i18n("diff.open_file"))}">${escapeAttr(basename(d.path || "file"))}</button>` +
         diffStatsHtml(stats) +
         // Per-file decisions, the same two the a/x keys make. Without them the
         // only discoverable choice is all-or-nothing on the bar below.
         `<span class="pending-item-acts">` +
-        `<button type="button" class="pending-item-act pending-item-keep" data-act="keep" title="Apply just this file (a)">Keep</button>` +
-        `<button type="button" class="pending-item-act pending-item-drop" data-act="drop" title="Reject just this file (x)">Drop</button>` +
+        `<button type="button" class="pending-item-act pending-item-keep" data-act="keep" title="${escapeAttr(i18n("diff.keep_title"))}">${escapeAttr(i18n("diff.keep"))}</button>` +
+        `<button type="button" class="pending-item-act pending-item-drop" data-act="drop" title="${escapeAttr(i18n("diff.drop_title"))}">${escapeAttr(i18n("diff.drop"))}</button>` +
         `</span>`;
 
       const body = document.createElement("div");

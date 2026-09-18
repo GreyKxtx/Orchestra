@@ -3,7 +3,7 @@
     if (hint && !chromeHint.classList.contains("hidden")) {
       return hint;
     }
-    let base = busyStatusText || "Working…";
+    let base = busyStatusText || i18n("turn.working");
     if (busy && sendQueue.length > 0) {
       const n = sendQueue.length;
       base += ` · ${n} queued`;
@@ -85,7 +85,7 @@
     }
     const lab = typingIndicatorEl.querySelector(".typing-label");
     if (lab) {
-      lab.textContent = label || "Working…";
+      lab.textContent = label || i18n("turn.working");
     }
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -121,7 +121,7 @@
       chromeHint.classList.add("hidden");
       chromeHint.classList.remove("error");
       if (busy) {
-        busyStatusText = "Working…";
+        busyStatusText = i18n("turn.working");
         updateBusyUi();
       }
       return;
@@ -142,10 +142,10 @@
     }
     if (next) {
       if (!busyStatusText) {
-        busyStatusText = "Working…";
+        busyStatusText = i18n("turn.working");
       }
     } else {
-      busyStatusText = "Working…";
+      busyStatusText = i18n("turn.working");
     }
     updateBusyUi();
     if (todos.length) {
@@ -166,7 +166,7 @@
   }
 
   function flashTodosDone() {
-    setChromeHint("✓ Tasks done", false);
+    setChromeHint(i18n("turn.tasks_done"), false);
     clearTimeout(todosDoneFlashTimer);
     todosDoneFlashTimer = window.setTimeout(() => {
       todosDoneFlashTimer = 0;

@@ -349,6 +349,9 @@ export type HostToWebview =
   | { type: "mentionResults"; query: string; files: ChatFileRef[] }
   | { type: "pendingOps"; payload: PendingOpsPayload }
   | { type: "pendingCleared" }
+  // The language the chat speaks. Sent once the webview says it is ready,
+  // and again whenever the setting changes.
+  | { type: "uiLang"; lang: string }
   // Diffs for changes the turn already wrote. No decision to make, so this
   // never raises the apply bar — it only lets the tool blocks draw the real
   // change instead of one rebuilt from the call's arguments.

@@ -319,8 +319,14 @@
         ops_version: health.ops_version,
         tools_version: health.tools_version,
       });
-      const started = await conn.send("session.start", {});
+      // A remembered id means this is a reconnect, not a first connection:
+      // reopen the conversation that was on screen instead of silently
+      // starting an empty one beside it. The core loads it from disk, so the
+      // history survives even a core that was restarted under us.
+      const wanted = st.sessionId;
+      const started = await conn.send("session.start", wanted ? { session_id: wanted } : {});
       st.sessionId = started.session_id || "";
+      const reopened = Boolean(wanted) && st.sessionId === wanted;
       // Not awaited: the pill and the gauge fill in from the core's answer
       // when it comes, and the transcript does not wait for them.
       void pushLLMInfo(projectId);
@@ -342,6 +348,29 @@
           sessionId: st.sessionId,
         });
         toRenderer({ type: "ready" });
+        if (reopened) {
+          // Repaint from the core rather than trust what is on screen. The
+          // turn that was streaming died with the socket, so the last bubble
+          // may be half a sentence; the core's own record is where the turn
+          // actually got to. Same two messages the project switch uses.
+          try {
+            const view = await conn.send("session.get", { session_id: st.sessionId });
+            if (projectId === currentProjectId) {
+              toRenderer({ type: "clearMessages" });
+              toRenderer({ type: "history", messages: historyMessagesFrom(view.ui_messages) });
+              postRestoredUsage(view.ui_messages);
+              // The composer is still in "Stop" from the turn that died.
+              toRenderer({ type: "turnComplete", ok: true });
+            }
+          } catch (err) {
+            // The session could not be read back; the connection is live and
+            // usable, so say what happened and leave the transcript alone.
+            toRenderer({
+              type: "systemNote",
+              text: i18n("conn.reopen_failed", { detail: String(err && err.message ? err.message : err) }),
+            });
+          }
+        }
         // The first session of this connection: give the Trajectory pane its
         // (usually empty) log now, or it sits on "Loading trajectory…" until
         // the user switches, starts a session, or finishes a turn.
@@ -517,12 +546,29 @@
     }
   }
 
+  /**
+   * The language the user chose, or "" for "follow the browser". Kept in
+   * localStorage beside the theme and the scale (theme-boot.js), because it is
+   * a per-viewer preference the core has no business holding: the same core
+   * serves a desktop window and a browser tab that may want different ones.
+   */
+  function savedUiLang() {
+    try {
+      return localStorage.getItem("orchestra.lang") || "";
+    } catch (e) {
+      // Storage can throw outright in a locked-down browser.
+      return "";
+    }
+  }
+
   /** @param {any} msg */
   function dispatchToCore(msg) {
     switch (msg.type) {
       case "ready":
         // The renderer announces itself; the socket's open handler already ran
-        // the handshake, so there is nothing further to do.
+        // the handshake. The one thing left is the language: the renderer has
+        // defaulted to the browser's, and a saved choice overrides it.
+        toRenderer({ type: "uiLang", lang: savedUiLang() });
         return;
 
       case "send":

@@ -21,6 +21,7 @@ const outDir = path.join(root, "static");
 // adapter fragments wrapped around the shared renderer.
 const order = [
   [sharedDir, "00-header.txt"],
+  [sharedDir, "00a-i18n.js"],
   [webDir, "00-web-prelude.js"],
   [sharedDir, "01-dom-state.js"],
   [sharedDir, "02-util.js"],

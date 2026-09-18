@@ -9,6 +9,7 @@ const outFile = path.join(root, "media", "chat.bundle.js");
 
 const order = [
   "00-header.txt",
+  "00a-i18n.js",
   "01-dom-state.js",
   "02-util.js",
   "03-markdown.js",

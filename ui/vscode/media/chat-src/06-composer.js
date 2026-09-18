@@ -7,7 +7,7 @@
     MODE_GROUPS.forEach((group) => {
       const head = document.createElement("div");
       head.className = "menu-section";
-      head.textContent = group.label;
+      head.textContent = i18n(group.labelKey);
       modeMenu.appendChild(head);
       group.ids.forEach((id) => {
         const m = byId.get(id);
