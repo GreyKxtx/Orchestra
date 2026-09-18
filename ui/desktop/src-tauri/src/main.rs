@@ -66,19 +66,14 @@ fn orchestra_home() -> Option<PathBuf> {
 fn boot(app: AppHandle) {
     let arg = std::env::args().nth(1);
     let home = orchestra_home();
-    let read = |name: &str| {
-        home.as_ref()
-            .and_then(|h| std::fs::read_to_string(h.join(name)).ok())
-    };
-    let desktop_json = read("desktop.json");
-    let projects_json = read("projects.json");
 
     // A path on the command line opens that project. With no argument the app
     // opens on the page's start screen instead of guessing: the remembered
     // list, "Open folder…" and "Clone from GitHub…" are all there, and the
-    // user says which. desktop.json and projects.json are still read, because
-    // the start screen is drawn from the same remembered list the core serves.
-    let _ = (&desktop_json, &projects_json);
+    // user says which. The shell therefore reads neither desktop.json nor
+    // projects.json on the way in — the core serves that list to the page
+    // itself. `home` is still needed on the way out, to remember the project
+    // that was opened.
     let is_dir = |p: &Path| p.is_dir();
     let workspace = boot::resolve_project(
         boot::Sources {

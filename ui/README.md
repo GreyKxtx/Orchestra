@@ -2,17 +2,25 @@
 
 Все клиенты ядра `orchestra core` живут здесь. Каждый — отдельный subdirectory с собственным README.
 
-| Каталог | Стек | Статус |
-|---|---|---|
-| `tui/` | Go + Bubble Tea + Lipgloss | реализован (streaming · tool blocks · `/attach` · @-mention · session v4) |
-| `vscode/` | TypeScript / Node | chat + settings · attachments/vision · protocol **v13** |
-| `desktop/` | TBD (Tauri или Electron) | планируется (Этап 3 product roadmap) |
+| Каталог | Стек | Транспорт | Статус |
+|---|---|---|---|
+| `tui/` | Go + Bubble Tea + Lipgloss | stdio | реализован (streaming · tool blocks · `/attach` · @-mention · session v4) |
+| `vscode/` | TypeScript / Node | stdio | chat + settings + trajectory · attachments/vision · protocol **v20** |
+| `web/` | JS без фреймворка, собирается в `static/` | WebSocket `/ws` | реализован; рендерер общий с `vscode/` |
+| `desktop/` | Rust + Tauri поверх `orchestra web` | — (окно на адрес ядра) | оболочка работает; упаковка инсталляторов не доделана |
 
 ## Принципы
 
-- Каждый клиент общается с ядром через JSON-RPC stdio (subprocess `orchestra core`).
+- Клиент общается с ядром либо через JSON-RPC по stdio (subprocess `orchestra
+  core`), либо через тот же JSON-RPC по WebSocket (`orchestra web`, `/ws`).
 - Не дублируем бизнес-логику ядра в клиентах. Клиент = только UI + транспорт.
 - Все клиенты опираются на sub-module **`protocol/`** (`github.com/orchestra/orchestra/protocol`) для wire-типов.
+- `vscode/` и `web/` делят **один рендерер**: фрагменты живут в
+  `vscode/media/chat-src/`, сборщик веба читает их там же, а не копирует. Роль
+  хоста играет либо расширение, либо веб-адаптер — но рендереру они обязаны
+  отвечать одинаковыми сообщениями. Свежесть собранных бандлов проверяют
+  `vscode/scripts/check-webview.mjs` и `web/scripts/check-web.mjs` в CI.
+- `desktop/` своего фронтенда не имеет: это окно на `orchestra web`.
 
 ## Добавление нового клиента
 

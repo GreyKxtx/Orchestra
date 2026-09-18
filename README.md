@@ -36,7 +36,7 @@ Primary transport: **JSON-RPC 2.0 over stdio** (LSP-style); the CLI sits on top 
 | Reasoning Stream | Parses `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 via LM Studio); auto-wraps into `<think>…</think>` for `ReasoningSplitter`; SSE tap behind the `ORCH_STREAM_DEBUG` env flag | ✅ |
 | TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy indicator in the status bar, mouse wheel scroll, "Thinking:" block with a `┃` border, render-cache invalidation on Ctrl+T, mode-aware accent colors | ✅ |
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
-| Orchestra Lead surface | Strict allowlist of **14 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
+| Orchestra Lead surface | Strict allowlist of **16 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
 | CKG v5 | Multi-hop explore (`depth`/`direction`), subgraph cap 1500 tokens, protocol **ToolsVersion 14** | ✅ |
 | Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote`; a single-agent turn that repeats the same anti-pattern 3× on one file offers a human `[y/n]` rule suggestion for `ORCHESTRA.md` | ✅ |
 | LLM fail-fast | An unreachable endpoint (dial / refused / i/o timeout) aborts the turn — no false `prompt too large` compaction loop | ✅ |
@@ -70,8 +70,8 @@ Check the install:
 
 ```bash
 orchestra version
-# orchestra v0.3.0 (a1b2c3d)
-# protocol 14 · ops 1 · tools 14
+# orchestra vnext (a1b2c3d)
+# protocol 20 · ops 1 · tools 15
 
 orchestra version --check   # compare against the latest GitHub release
 ```
