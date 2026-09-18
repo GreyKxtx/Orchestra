@@ -6520,9 +6520,14 @@
       // chooses specifically to stop edits happening was the one that did not
       // stop them.
       mode: msg.mode || "",
-      // The web host has no editor to stage changes in, so a turn writes to
-      // disk. Access mode still gates the shell (allow_exec below).
-      apply: true,
+      // Access mode, as the menu describes it: "Ask" holds the turn's edits
+      // for Accept/Reject, "Auto" writes them straight to disk. This host used
+      // to write either way, so the Ask hint — "правки через Accept/Reject" —
+      // was simply untrue here, and the one control a careful person uses to
+      // keep an agent off their files did nothing. Same rule as the editor
+      // (panel.ts): allowExec is what the access menu sets, and it governs
+      // both the shell and the writes.
+      apply: Boolean(msg.allowExec),
       // Writing to disk without a backup is not a decision this host gets to
       // make quietly: the same call in VS Code asks for one, and .orchestra.bak
       // is the only way back for a user whose files are not in git.
@@ -6677,6 +6682,78 @@
   // whole assistant bubble (deltaSync). Child-scoped events belong to a
   // subagent's own trace; they must not be folded into the parent's text —
   // see ui/vscode/src/chat/panel.ts:1589-1604 for the same rule.
+
+  /**
+   * The core sends a turn's staged ops as an agent event carrying JSON; the
+   * renderer's pending bar wants {ops, diff}. Mirrors parsePendingOps in
+   * ui/vscode/src/chat/panel.ts — same shape, same tolerance for a payload
+   * that arrives as a string.
+   * @param {any} data
+   */
+  function parsePendingOpsPayload(data) {
+    let d = data;
+    if (typeof d === "string") {
+      try {
+        d = JSON.parse(d);
+      } catch (err) {
+        return null;
+      }
+    }
+    if (!d || typeof d !== "object") {
+      return null;
+    }
+    const diff = (Array.isArray(d.diff) ? d.diff : [])
+      .map((item) => {
+        if (!item || typeof item !== "object" || typeof item.path !== "string" || !item.path) {
+          return null;
+        }
+        return {
+          path: item.path,
+          before: typeof item.before === "string" ? item.before : undefined,
+          after: typeof item.after === "string" ? item.after : undefined,
+        };
+      })
+      .filter((x) => x !== null);
+    return {
+      ops: Array.isArray(d.ops) ? d.ops : [],
+      diff,
+      applied: d.applied === true,
+    };
+  }
+
+  /**
+   * The checklist the agent keeps, as the renderer's todosUpdate wants it.
+   * Mirrors parseTodosUpdated in panel.ts: rows without an id or text are
+   * dropped rather than drawn as blanks.
+   * @param {any} content
+   */
+  function parseTodosPayload(content) {
+    const raw = String(content || "").trim();
+    if (!raw) {
+      return [];
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      return [];
+    }
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const out = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const id = typeof item.id === "string" ? item.id : "";
+      const text = typeof item.content === "string" ? item.content : "";
+      if (id && text) {
+        out.push({ id, content: text, status: typeof item.status === "string" ? item.status : "pending" });
+      }
+    }
+    return out;
+  }
 
   /** @type {Map<string, string>} */
   const turnTextByProject = new Map();
@@ -6887,6 +6964,33 @@
           diagnostics: block.diagnostics,
           step: ev.step,
         });
+        break;
+      }
+
+      // The checklist bar above the composer. #todos-bar, #todos-chip and
+      // #todos-list are in index.src.html and the renderer draws them from a
+      // todosUpdate message — this host never produced one, so the markup sat
+      // there permanently empty while the agent kept a checklist nobody saw.
+      case "todos_updated": {
+        const todos = parseTodosPayload(ev.content);
+        if (todos.length > 0) {
+          toRenderer({ type: "todosUpdate", todos });
+        }
+        break;
+      }
+
+      // The pending-ops / diff-review bar, same story: #pending-bar and its
+      // list exist in the page and the renderer listens for pendingOps /
+      // pendingCleared, which nothing here ever sent. Until this case existed,
+      // asking the core to withhold a turn's writes would have stranded them —
+      // staged, with no bar to apply them from.
+      case "pending_ops": {
+        const payload = parsePendingOpsPayload(ev.data) || parsePendingOpsPayload(ev.content);
+        if (payload && payload.applied) {
+          toRenderer({ type: "pendingCleared" });
+        } else if (payload) {
+          toRenderer({ type: "pendingOps", payload });
+        }
         break;
       }
 
@@ -11074,13 +11178,19 @@
     const method = apply ? "session.apply_pending" : "session.discard_pending";
     const r = await composerRpc(
       method,
-      { session_id: st.sessionId },
+      // backup asks the applier for .orchestra.bak. The same call in VS Code
+      // asks for one; this host wrote without it, so a user whose files are
+      // not in git had no way back from an applied change.
+      { session_id: st.sessionId, ...(apply ? { backup: true } : {}) },
       apply ? "apply changes" : "discard changes"
     );
     if (!r) {
       return;
     }
-    toRenderer({ type: "pending", files: [] });
+    // pendingCleared is what the renderer listens for (07-events.js). The
+    // message posted here was "pending", which that switch has no case for, so
+    // the bar stayed on screen after the user had applied or discarded.
+    toRenderer({ type: "pendingCleared" });
     toRenderer({
       type: "systemNote",
       text: apply ? "Changes applied." : "Changes discarded.",

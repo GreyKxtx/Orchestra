@@ -6,6 +6,78 @@
   // subagent's own trace; they must not be folded into the parent's text —
   // see ui/vscode/src/chat/panel.ts:1589-1604 for the same rule.
 
+  /**
+   * The core sends a turn's staged ops as an agent event carrying JSON; the
+   * renderer's pending bar wants {ops, diff}. Mirrors parsePendingOps in
+   * ui/vscode/src/chat/panel.ts — same shape, same tolerance for a payload
+   * that arrives as a string.
+   * @param {any} data
+   */
+  function parsePendingOpsPayload(data) {
+    let d = data;
+    if (typeof d === "string") {
+      try {
+        d = JSON.parse(d);
+      } catch (err) {
+        return null;
+      }
+    }
+    if (!d || typeof d !== "object") {
+      return null;
+    }
+    const diff = (Array.isArray(d.diff) ? d.diff : [])
+      .map((item) => {
+        if (!item || typeof item !== "object" || typeof item.path !== "string" || !item.path) {
+          return null;
+        }
+        return {
+          path: item.path,
+          before: typeof item.before === "string" ? item.before : undefined,
+          after: typeof item.after === "string" ? item.after : undefined,
+        };
+      })
+      .filter((x) => x !== null);
+    return {
+      ops: Array.isArray(d.ops) ? d.ops : [],
+      diff,
+      applied: d.applied === true,
+    };
+  }
+
+  /**
+   * The checklist the agent keeps, as the renderer's todosUpdate wants it.
+   * Mirrors parseTodosUpdated in panel.ts: rows without an id or text are
+   * dropped rather than drawn as blanks.
+   * @param {any} content
+   */
+  function parseTodosPayload(content) {
+    const raw = String(content || "").trim();
+    if (!raw) {
+      return [];
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      return [];
+    }
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const out = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const id = typeof item.id === "string" ? item.id : "";
+      const text = typeof item.content === "string" ? item.content : "";
+      if (id && text) {
+        out.push({ id, content: text, status: typeof item.status === "string" ? item.status : "pending" });
+      }
+    }
+    return out;
+  }
+
   /** @type {Map<string, string>} */
   const turnTextByProject = new Map();
   /** @type {Map<string, Map<string, any>>} */
@@ -215,6 +287,33 @@
           diagnostics: block.diagnostics,
           step: ev.step,
         });
+        break;
+      }
+
+      // The checklist bar above the composer. #todos-bar, #todos-chip and
+      // #todos-list are in index.src.html and the renderer draws them from a
+      // todosUpdate message — this host never produced one, so the markup sat
+      // there permanently empty while the agent kept a checklist nobody saw.
+      case "todos_updated": {
+        const todos = parseTodosPayload(ev.content);
+        if (todos.length > 0) {
+          toRenderer({ type: "todosUpdate", todos });
+        }
+        break;
+      }
+
+      // The pending-ops / diff-review bar, same story: #pending-bar and its
+      // list exist in the page and the renderer listens for pendingOps /
+      // pendingCleared, which nothing here ever sent. Until this case existed,
+      // asking the core to withhold a turn's writes would have stranded them —
+      // staged, with no bar to apply them from.
+      case "pending_ops": {
+        const payload = parsePendingOpsPayload(ev.data) || parsePendingOpsPayload(ev.content);
+        if (payload && payload.applied) {
+          toRenderer({ type: "pendingCleared" });
+        } else if (payload) {
+          toRenderer({ type: "pendingOps", payload });
+        }
         break;
       }
 

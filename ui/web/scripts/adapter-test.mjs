@@ -489,9 +489,33 @@ test("a composer send becomes session.message", async () => {
   assert.equal(msg.params.session_id, "s-1");
   assert.equal(msg.params.content, "hello");
   assert.equal(msg.params.allow_exec, true);
-  assert.equal(msg.params.apply, true, "the web host applies to disk: it has no Accept/Reject editor UI");
+  assert.equal(msg.params.apply, true, "access mode Auto writes straight to disk");
   assert.equal(msg.params.backup, true, "a host that writes straight to disk has to leave a .orchestra.bak");
   assert.equal(msg.params.allow_browser, undefined, "the browser is off unless the composer's switch is on");
+});
+
+// The access menu offers "Ask — Shell с подтверждением; правки через
+// Accept/Reject" and "Auto — запись файлов сразу на диск". This host wrote
+// either way, so Ask promised a review that never happened: the one control a
+// careful person uses to keep an agent off their files did nothing at all.
+test("access mode Ask holds the turn's edits instead of writing them", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+
+  dispatch(b, {
+    type: "send",
+    text: "change something",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: false, // the access menu's "Ask"
+    files: [],
+  });
+
+  const msg = b.sent.find((m) => m.method === "session.message");
+  assert.ok(msg, "no session.message went out");
+  assert.equal(msg.params.apply, false, "Ask must stage the edits for Accept/Reject, not write them");
+  assert.equal(msg.params.allow_exec, false);
 });
 
 // The composer has offered a mode pill from the start and this adapter dropped
@@ -582,6 +606,73 @@ test("child-scoped deltas do not leak into the main transcript", async () => {
   });
   const leaked = b.inbound.filter((m) => m.type === "delta" || m.type === "deltaSync");
   assert.equal(leaked.length, 0, "a child's tokens must not appear in the parent transcript");
+});
+
+// #todos-bar and #pending-bar are in index.src.html and the renderer draws
+// both from messages this adapter never produced, so they were permanently
+// empty markup: the agent kept a checklist nobody saw, and the diff-review bar
+// could not appear at all. The second one is load-bearing — until it works,
+// asking the core to withhold a turn's writes would strand the edits.
+
+test("the agent's checklist reaches the renderer", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: {
+      type: "todos_updated",
+      content: JSON.stringify([
+        { id: "1", content: "read the file", status: "completed" },
+        { id: "2", content: "make the edit", status: "in_progress" },
+        { id: "", content: "no id, must be dropped", status: "pending" },
+      ]),
+    },
+  });
+  const msg = b.inbound.find((m) => m.type === "todosUpdate");
+  assert.ok(msg, "todos_updated produced no todosUpdate");
+  assert.equal(msg.todos.length, 2, "rows without an id must be dropped, not drawn blank");
+  assert.equal(msg.todos[1].status, "in_progress");
+});
+
+test("staged ops reach the renderer as a pending bar", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: {
+      type: "pending_ops",
+      data: {
+        ops: [{ op: "file.write_atomic", path: "main.go" }],
+        diff: [{ path: "main.go", before: "old", after: "new" }],
+        applied: false,
+      },
+    },
+  });
+  const msg = b.inbound.find((m) => m.type === "pendingOps");
+  assert.ok(msg, "pending_ops produced no pendingOps");
+  assert.equal(msg.payload.ops.length, 1);
+  assert.equal(msg.payload.diff[0].path, "main.go");
+});
+
+test("ops the core already wrote clear the bar instead of offering it", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: {
+      type: "pending_ops",
+      data: { ops: [{ op: "file.write_atomic", path: "main.go" }], diff: [], applied: true },
+    },
+  });
+  assert.ok(
+    b.inbound.find((m) => m.type === "pendingCleared"),
+    "an applied turn must clear the bar, not ask the user to apply what is already on disk"
+  );
+  assert.equal(
+    b.inbound.filter((m) => m.type === "pendingOps").length,
+    0,
+    "an applied turn must not raise the review bar"
+  );
 });
 
 test("a tool call becomes a running block, then a completed one", async () => {

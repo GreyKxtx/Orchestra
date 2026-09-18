@@ -644,9 +644,14 @@
       // chooses specifically to stop edits happening was the one that did not
       // stop them.
       mode: msg.mode || "",
-      // The web host has no editor to stage changes in, so a turn writes to
-      // disk. Access mode still gates the shell (allow_exec below).
-      apply: true,
+      // Access mode, as the menu describes it: "Ask" holds the turn's edits
+      // for Accept/Reject, "Auto" writes them straight to disk. This host used
+      // to write either way, so the Ask hint — "правки через Accept/Reject" —
+      // was simply untrue here, and the one control a careful person uses to
+      // keep an agent off their files did nothing. Same rule as the editor
+      // (panel.ts): allowExec is what the access menu sets, and it governs
+      // both the shell and the writes.
+      apply: Boolean(msg.allowExec),
       // Writing to disk without a backup is not a decision this host gets to
       // make quietly: the same call in VS Code asks for one, and .orchestra.bak
       // is the only way back for a user whose files are not in git.

@@ -827,13 +827,19 @@
     const method = apply ? "session.apply_pending" : "session.discard_pending";
     const r = await composerRpc(
       method,
-      { session_id: st.sessionId },
+      // backup asks the applier for .orchestra.bak. The same call in VS Code
+      // asks for one; this host wrote without it, so a user whose files are
+      // not in git had no way back from an applied change.
+      { session_id: st.sessionId, ...(apply ? { backup: true } : {}) },
       apply ? "apply changes" : "discard changes"
     );
     if (!r) {
       return;
     }
-    toRenderer({ type: "pending", files: [] });
+    // pendingCleared is what the renderer listens for (07-events.js). The
+    // message posted here was "pending", which that switch has no case for, so
+    // the bar stayed on screen after the user had applied or discarded.
+    toRenderer({ type: "pendingCleared" });
     toRenderer({
       type: "systemNote",
       text: apply ? "Changes applied." : "Changes discarded.",
