@@ -88,23 +88,25 @@ body {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 48px;
-  padding: 0 14px;
+  gap: 10px;
+  height: 58px;
+  padding: 0 0 0 calc((var(--rail-strip-w) - 30px) / 2);
   border-bottom: 1px solid var(--border);
   color: var(--fg);
 }
 
+/* Sized and placed like a tile: the mark sits on the strip's centre line,
+   so folded, with the word gone, it is the strip's first square. */
 .rail-mark {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
 }
 
 .rail-word {
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   white-space: nowrap;
 }
 
@@ -261,14 +263,14 @@ body {
 }
 
 /* ---- a workspace tile ---------------------------------------------------- */
-/* A square with the workspace's initial, tinted by a hue derived from its
-   path (set through the CSSOM by renderProjects), so two folders both called
-   `ws` are two different colours — and the name under it, cut to the strip's
-   width, so a tile can be told apart without hovering. State sits on the
-   square's corner as a badge whose SHAPE differs per state; the one on screen
-   is marked on the strip's edge and by its label going to full colour. */
+/* A square with the workspace's initial and the name under it, cut to the
+   strip's width. Monochrome, in both themes: the first version tinted each
+   square by a hue hashed from the project's path, and the owner asked for
+   black and white — "simpler and more laconic". The name under the square is
+   what tells tiles apart now; the one on screen is the inverted square (the
+   page's foreground as ground) with the marker on the strip's edge. State
+   sits on the square's corner as a badge whose SHAPE differs per state. */
 .project-chip {
-  --project-tint: hsl(var(--project-hue, 220) 48% 66%);
   position: relative;
   flex: 0 0 auto;
   display: flex;
@@ -292,14 +294,15 @@ body {
   width: var(--rail-tile);
   height: var(--rail-tile);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--project-tint) 16%, var(--surface));
-  color: var(--project-tint);
+  background: var(--surface);
+  color: var(--fg-dim);
   transition: border-radius 0.15s ease, background 0.12s ease, color 0.12s ease;
 }
 
 .project-chip:hover .project-tile {
   border-radius: 9px;
-  background: color-mix(in srgb, var(--project-tint) 26%, var(--surface));
+  background: var(--surface-2);
+  color: var(--fg);
 }
 
 .project-chip:hover {
@@ -312,8 +315,8 @@ body {
 
 .project-chip[data-active="true"] .project-tile {
   border-radius: 9px;
-  color: var(--fg);
-  background: color-mix(in srgb, var(--project-tint) 38%, var(--surface-2));
+  color: var(--rail-bg);
+  background: var(--fg);
 }
 
 /* The marker: a bar on the strip's edge, level with the square. */
@@ -360,22 +363,11 @@ body {
 }
 
 .project-glyph {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.01em;
   user-select: none;
-}
-
-/* On the light ground the same hue has to be darker to read against white. */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .project-chip {
-    --project-tint: hsl(var(--project-hue, 220) 50% 44%);
-  }
-}
-
-:root[data-theme="light"] .project-chip {
-  --project-tint: hsl(var(--project-hue, 220) 50% 44%);
 }
 
 /* ---- the chat row's icon -------------------------------------------------- */
@@ -584,29 +576,36 @@ body {
 }
 
 /* ---- the header, on the web ------------------------------------------- */
-/* The brand, the two session buttons and the settings gear all have a home
-   in the sidebar now; the markup stays (chat-src looks these ids up) but the
-   page must not show two of each. The session tabs and the view switch do
-   show — they are the header's whole job, driven by exactly the renderer the
-   VS Code panel drives. */
+/* Everything that names or switches a chat has its home in the sidebar now:
+   the brand, the open project's name, the session tabs, the two session
+   buttons and the gear. The markup stays (chat-src looks these ids up and
+   the renderer keeps painting the tabs, exactly as it does for the VS Code
+   panel) but the page must not show two of each. What the header keeps is
+   the view switch — Chat, Trajectory, Graph — and the status hint: the one
+   thing the sidebar cannot say is which view of the open chat is on screen.
+   The tabs and the "project / chat" breadcrumb were the last to go; the
+   owner's read was that with chats switched in the sidebar they said the
+   same thing twice. */
 
 #session-new-btn,
 #session-history-btn,
 #settings-btn,
-#top-accent {
+#top-accent,
+#chrome-brand,
+#session-tabs {
   display: none;
 }
 
-/* The brand block stays, but not for the logo: the sidebar carries the mark,
-   and this block is where paintChromeProject writes the name of the open
-   workspace. */
-#chrome-brand .chrome-logo {
-  display: none;
+/* With the tabs gone the view switch is the header's first thing: it starts
+   where the transcript's content starts, and the hint goes to the far end. */
+#chrome-inner {
+  padding-left: 10px;
 }
 
 /* Its buttons are hidden above; without them the rule and padding drew a
    stray line at the far right. The hint inside still shows. */
 .chrome-actions {
+  margin-left: auto;
   padding: 0 10px 0 0;
   border-left: 0;
 }
@@ -843,29 +842,29 @@ body {
   display: none;
 }
 
-/* Folded: the column goes to nothing and loses its border, and the handle
-   sits alone against the window edge. Widening it slightly there makes the
-   one remaining target easier to hit. */
+/* Folded: the pane goes away and the strip stays — the mark at the top, the
+   tiles, the add button and the gear — because the strip is exactly what you
+   want while the chats are out of the way: which project is working, which
+   is waiting, and a click to switch. The word beside the mark goes with the
+   pane; a 74px column has room for one or the other. The first version
+   folded the whole column to nothing, and the owner's note was that the
+   project icons and the logo have to stay. */
 .project-rail[data-collapsed="true"] {
-  flex-basis: 0;
-  width: 0;
+  flex-basis: var(--rail-strip-w);
+  width: var(--rail-strip-w);
+}
+
+.project-rail[data-collapsed="true"] .rail-pane,
+.project-rail[data-collapsed="true"] .rail-word {
+  display: none;
+}
+
+.project-rail[data-collapsed="true"] .rail-strip {
   border-right: 0;
 }
 
 .rail-resizer[data-collapsed="true"] {
-  flex-basis: 7px;
-  margin-left: 0;
   cursor: e-resize;
-}
-
-.rail-resizer[data-collapsed="true"]::before {
-  inset: 0 2px 0 0;
-  background: var(--border);
-}
-
-.rail-resizer[data-collapsed="true"]:hover::before,
-.rail-resizer[data-collapsed="true"]:focus-visible::before {
-  background: var(--mode-accent);
 }
 
 /* While dragging, the pointer owns the window: without this every pass over

@@ -213,11 +213,12 @@
 
   // ---- the sidebar's width ------------------------------------------------
   //
-  // Dragging its edge sets the width; clicking the edge folds the sidebar away
-  // and back. Both are remembered, because a width you have to set again on
-  // every launch is not a width you have set.
+  // Dragging its edge sets the width; clicking the edge folds the pane away
+  // and back — the strip of tiles stays either way (rail.css draws the folded
+  // state at the strip's width). Both are remembered, because a width you
+  // have to set again on every launch is not a width you have set.
 
-  /** Narrower than this and, past the 60px strip, a chat title has nowhere to go. */
+  /** Narrower than this and, past the 74px strip, a chat title has nowhere to go. */
   const RAIL_MIN = 236;
   /** Wider than this and the sidebar is competing with the transcript. */
   const RAIL_MAX = 520;
@@ -290,7 +291,7 @@
         return clampRailWidth(w);
       }
     }
-    return savedRail().width || 296;
+    return savedRail().width || 312;
   }
 
   {

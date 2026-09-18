@@ -131,17 +131,33 @@ A brand row over two columns, web and desktop only
 (`ui/web/src/41-projects-rail.js`, `ui/web/rail.css`).
 
 **The brand row** across the top is the mark and the word "Orchestra", once.
-It says whose window this is; nothing else in the sidebar repeats it.
+It says whose window this is; nothing else in the sidebar repeats it. The
+mark is tile-sized and sits on the strip's centre line, so when the sidebar
+folds it reads as the strip's first square.
 
 **The strip** on the left is the list of workspaces: one 40px square per
-project, carrying the project's initial, tinted by a hue hashed from its
-**path** — so three folders all called `ws` are three different colours — with
-the project's **name under it**, cut to the strip's width. State sits on the
-square's corner as a badge whose shape differs per state (a pulsing dot for
-working, a square for waiting-for-you); an open idle project is simply a tile
-at full strength, a closed one is dimmed. The one on screen is marked by a bar
-on the strip's edge and by its label going to full colour. The add-workspace
-button and the gear close the strip.
+project, carrying the project's initial, with the project's **name under
+it**, cut to the strip's width. The squares are **monochrome in both themes**
+— the first version tinted each by a hue hashed from its path, and the owner
+asked for black and white as the simpler, more laconic choice; the label is
+what tells tiles apart. State sits on the square's corner as a badge whose
+shape differs per state (a pulsing dot for working, a square for
+waiting-for-you); an open idle project is a square on the surface colour, a
+closed one is dimmed, and the one on screen is the inverted square (foreground
+as ground) with a bar on the strip's edge. The add-workspace button and the
+gear close the strip.
+
+**The header above the transcript** keeps only the view switch (Chat,
+Trajectory, Graph) and the connection hint. The chat tabs and the
+"project / chat" breadcrumb it used to carry said what the sidebar already
+says; on the web they are hidden by `rail.css`, while the renderer keeps
+painting them for the VS Code panel, which has no sidebar.
+
+**Folding** (the handle on the sidebar's edge) takes the pane and the word
+away and leaves the strip: mark, tiles, add, gear. That is the Discord fold,
+and it is the point of having a strip — while the chats are out of the way
+you still see which project is working and which is waiting, and one click
+switches. Clicking the open project's tile while folded brings the pane back.
 
 **The pane** beside it is the chats of the project on screen, under one line
 that says its name and chat count. The path is *not* printed there: it is the
@@ -163,10 +179,6 @@ Two seams the tests and the handlers hang on, so keep them: every tile is a
 `.project-chip` with `data-project-id / data-status / data-active`, and every
 click on the sidebar is delegated from the `<nav id="project-rail">` — the
 tiles live in `#project-strip`, the chats in `#project-rail-list`.
-
-Not done yet: folding the sidebar hides the strip along with the pane. The
-useful fold is the Discord one — pane away, strip stays — because the strip is
-exactly what you want while the chats are out of the way.
 
 ## 5. What guards this
 

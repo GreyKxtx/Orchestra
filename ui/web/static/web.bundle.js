@@ -10374,21 +10374,6 @@
     return item;
   }
 
-  /**
-   * A stable hue per workspace, from its PATH. Three folders all called `ws`
-   * are three different projects, and the name alone cannot tell them apart;
-   * the path can, and a colour derived from it does so at a glance.
-   * @param {string} path @returns {number} 0..359
-   */
-  function projectHue(path) {
-    let h = 0;
-    const str = String(path || "");
-    for (let i = 0; i < str.length; i++) {
-      h = (h * 31 + str.charCodeAt(i)) >>> 0;
-    }
-    return h % 360;
-  }
-
   /** The one character on a tile: the first letter or digit of the name. */
   function projectGlyph(name) {
     const m = String(name || "").trim().match(/[\p{L}\p{N}]/u);
@@ -10396,9 +10381,10 @@
   }
 
   /**
-   * One workspace on the strip: a square carrying its initial, tinted by its
-   * path, with the state badge on its corner, the name under it, and the
-   * active marker on its edge. It keeps the .project-chip class and its data
+   * One workspace on the strip: a square carrying its initial, with the state
+   * badge on its corner, the name under it, and the active marker on its
+   * edge. Monochrome — the tiles are told apart by their labels, which is why
+   * the label is always drawn. It keeps the .project-chip class and its data
    * attributes: every listener in 42-projects-chrome.js and every test is
    * bound to those.
    * @param {any} row @param {any} existing
@@ -10423,12 +10409,6 @@
       // A chip outlives the repaint now, so the flag has to be taken off
       // again; it used to go away with the node that carried it.
       delete chip.dataset.opening;
-    }
-    // Through the CSSOM, never a style attribute in markup: both hosts serve
-    // this page under a CSP without 'unsafe-inline'. The stub document the
-    // adapter tests run in has no setProperty, hence the guard.
-    if (chip.style && chip.style.setProperty) {
-      chip.style.setProperty("--project-hue", String(projectHue(row.path)));
     }
     reconcileByKey(chip, [
       {
@@ -11047,11 +11027,12 @@
 
   // ---- the sidebar's width ------------------------------------------------
   //
-  // Dragging its edge sets the width; clicking the edge folds the sidebar away
-  // and back. Both are remembered, because a width you have to set again on
-  // every launch is not a width you have set.
+  // Dragging its edge sets the width; clicking the edge folds the pane away
+  // and back — the strip of tiles stays either way (rail.css draws the folded
+  // state at the strip's width). Both are remembered, because a width you
+  // have to set again on every launch is not a width you have set.
 
-  /** Narrower than this and, past the 60px strip, a chat title has nowhere to go. */
+  /** Narrower than this and, past the 74px strip, a chat title has nowhere to go. */
   const RAIL_MIN = 236;
   /** Wider than this and the sidebar is competing with the transcript. */
   const RAIL_MAX = 520;
@@ -11124,7 +11105,7 @@
         return clampRailWidth(w);
       }
     }
-    return savedRail().width || 296;
+    return savedRail().width || 312;
   }
 
   {
