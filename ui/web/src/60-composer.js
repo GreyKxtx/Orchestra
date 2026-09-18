@@ -57,11 +57,11 @@
         return true;
 
       case "applyPending":
-        void settlePending(true);
+        void settlePending(true, msg.paths);
         return true;
 
       case "discardPending":
-        void settlePending(false);
+        void settlePending(false, msg.paths);
         return true;
 
       case "deleteSession":
@@ -821,28 +821,58 @@
     });
   }
 
-  /** @param {boolean} apply true applies the staged changes, false discards. */
-  async function settlePending(apply) {
+  /** Strip the spelling differences between an op path and a diff path. */
+  function normPendingPath(p) {
+    return String(p || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  }
+
+  /**
+   * @param {boolean} apply true applies the staged changes, false discards.
+   * @param {string[]=} paths when given, settle only these files and leave the
+   *   rest of the turn pending — the review list's per-file Keep / Drop.
+   */
+  async function settlePending(apply, paths) {
     const st = projectState(currentProjectId);
     const method = apply ? "session.apply_pending" : "session.discard_pending";
+    const only = Array.isArray(paths) ? paths.filter((p) => String(p || "").trim()) : [];
     const r = await composerRpc(
       method,
       // backup asks the applier for .orchestra.bak. The same call in VS Code
       // asks for one; this host wrote without it, so a user whose files are
       // not in git had no way back from an applied change.
-      { session_id: st.sessionId, ...(apply ? { backup: true } : {}) },
+      {
+        session_id: st.sessionId,
+        ...(apply ? { backup: true } : {}),
+        ...(only.length ? { paths: only } : {}),
+      },
       apply ? "apply changes" : "discard changes"
     );
     if (!r) {
       return;
     }
-    // pendingCleared is what the renderer listens for (07-events.js). The
-    // message posted here was "pending", which that switch has no case for, so
-    // the bar stayed on screen after the user had applied or discarded.
-    toRenderer({ type: "pendingCleared" });
+    const remaining = Array.isArray(r.remaining_ops) ? r.remaining_ops : [];
+    if (only.length && remaining.length) {
+      // The core answers with ops only. The diffs for the files still pending
+      // are already in the renderer's own state, so carry them over filtered
+      // down — otherwise the review list would empty out after the first
+      // per-file decision and the rest of the turn would lose its diffs.
+      const kept = new Set(remaining.map((op) => normPendingPath(op && op.path)));
+      const diff = (pendingState.diff || []).filter((d) => kept.has(normPendingPath(d.path)));
+      toRenderer({ type: "pendingOps", payload: { ops: remaining, diff, applied: false } });
+    } else {
+      // pendingCleared is what the renderer listens for (07-events.js). The
+      // message posted here was "pending", which that switch has no case for,
+      // so the bar stayed on screen after the user had applied or discarded.
+      toRenderer({ type: "pendingCleared" });
+    }
+    const what = only.length === 1 ? only[0] : "Changes";
     toRenderer({
       type: "systemNote",
-      text: apply ? "Changes applied." : "Changes discarded.",
+      text: only.length
+        ? `${what} ${apply ? "applied" : "discarded"}.`
+        : apply
+          ? "Changes applied."
+          : "Changes discarded.",
     });
   }
 

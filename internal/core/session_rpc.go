@@ -765,15 +765,20 @@ type SessionApplyPendingResult struct {
 }
 
 type SessionDiscardPendingParams struct {
-	SessionID string `json:"session_id"`
+	SessionID string   `json:"session_id"`
+	Paths     []string `json:"paths,omitempty"` // optional: discard only ops whose path matches one of these (workspace-relative)
 }
 
 type SessionDiscardPendingResult struct {
-	Discarded bool `json:"discarded"`
+	Discarded    bool        `json:"discarded"`
+	RemainingOps []ops.AnyOp `json:"remaining_ops,omitempty"`
 }
 
 // SessionDiscardPending drops staged overlay changes and session pending ops
-// without writing to disk (VS Code / TUI "reject all").
+// without writing to disk (VS Code / TUI "reject all"). With Paths set it
+// drops only those files and leaves the rest of the turn pending, so a
+// reviewer can throw away one bad edit without losing the good ones — the
+// mirror of the Paths filter session.apply_pending already had.
 func (c *Core) SessionDiscardPending(params SessionDiscardPendingParams) (*SessionDiscardPendingResult, error) {
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
@@ -788,18 +793,35 @@ func (c *Core) SessionDiscardPending(params SessionDiscardPendingParams) (*Sessi
 
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
-	hadStaging := c.tools != nil && c.tools.HasStagedChanges()
+
 	sess.Lock()
-	hadPending := len(sess.CopyPending()) > 0
-	sess.SetPending(nil)
+	// With no Paths this returns (everything, nil) — the reject-all behaviour.
+	dropped, remaining := filterPendingOpsByPaths(sess.CopyPending(), params.Paths)
+	sess.SetPending(remaining)
 	sess.Unlock()
+
+	hadStaging := false
 	if c.tools != nil {
-		c.tools.ClearStaged()
+		if len(params.Paths) > 0 {
+			// Drop only the named files from the overlay; the others stay
+			// staged so a later apply still has them.
+			for _, p := range filterStagedPaths(c.tools.ListStagedPaths(), params.Paths) {
+				hadStaging = true
+				c.tools.UnstagePath(p)
+			}
+		} else {
+			hadStaging = c.tools.HasStagedChanges()
+			c.tools.ClearStaged()
+		}
 	}
+
 	if snapErr := sess.Snapshot(c.workspaceRoot); snapErr != nil {
 		fmt.Fprintf(os.Stderr, "core: session %s discard snapshot failed: %v\n", sess.ID, snapErr)
 	}
-	return &SessionDiscardPendingResult{Discarded: hadPending || hadStaging}, nil
+	return &SessionDiscardPendingResult{
+		Discarded:    len(dropped) > 0 || hadStaging,
+		RemainingOps: remaining,
+	}, nil
 }
 
 // SessionApplyPending applies ops stored from the last dry-run turn of the session.

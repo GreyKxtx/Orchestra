@@ -22,7 +22,7 @@ import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjectio
 import { RpcClient } from "./rpc/client";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 19;
+const PROTOCOL_VERSION = 20;
 const OPS_VERSION = 1;
 export const TOOLS_VERSION = 15;
 
@@ -1417,7 +1417,9 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     };
   }
 
-  async discardPending(): Promise<void> {
+  async discardPending(
+    paths?: string[]
+  ): Promise<{ discarded: boolean; remainingOps?: unknown[] }> {
     await this.ensure();
     if (!this.client) {
       throw new Error("core client missing");
@@ -1426,11 +1428,21 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     if (!sessionId) {
       throw new Error("session_id required");
     }
-    await this.client.request(
+    const params: { session_id: string; paths?: string[] } = {
+      session_id: sessionId,
+    };
+    if (paths && paths.length > 0) {
+      params.paths = paths;
+    }
+    const r = (await this.client.request(
       "session.discard_pending",
-      { session_id: sessionId },
+      params,
       30_000
-    );
+    )) as { discarded?: boolean; remaining_ops?: unknown[] };
+    return {
+      discarded: Boolean(r.discarded),
+      remainingOps: Array.isArray(r.remaining_ops) ? r.remaining_ops : undefined,
+    };
   }
 
   async applyOps(ops: unknown[], backup = true): Promise<void> {

@@ -401,6 +401,15 @@
       const d = pendingState.diff[idx];
       if (!d) return;
 
+      const actBtn = t.closest(".pending-item-act");
+      if (actBtn instanceof HTMLElement) {
+        if (!d.path) return;
+        const paths = [String(d.path)];
+        if (actBtn.getAttribute("data-act") === "keep") applyPendingChanges(paths);
+        else discardPendingChanges(paths);
+        return;
+      }
+
       const nameBtn = t.closest(".diff-preview-name");
       if (nameBtn) {
         diffReviewCursor = idx;

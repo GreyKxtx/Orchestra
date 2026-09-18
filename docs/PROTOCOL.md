@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `19`
+- **`protocol.ProtocolVersion`**: `20`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `15`
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v20** (2026-09-18): `session.discard_pending` принимает `paths[]` и отвечает `remaining_ops[]` — ровно так же, как `session.apply_pending`. До этого отклонить один плохой файл хода было нельзя: отклонялся весь ход целиком. Пустой `paths` — прежнее «отклонить всё».
 - **v19** (2026-09-15): `agent.run` и `session.message` принимают `allow_browser` — ход, его подагенты и skills получают `browser.*` (кроме профиля `fast`). Разрешение проверяет агент на каждом вызове: ход без `allow_browser` получает отказ, даже назвав инструмент сам. `tool.call` на `browser.*` отвечает `ExecDenied`. Клиенты: VS Code и веб — переключатель «Браузер» в меню «Доступ», TUI — `/browser`.
 - **v18** (2026-09-11): `index.graph` дополнительно возвращает `stats` — тот же набор счётчиков, что и `index.status` (файлы, узлы, рёбра, функции, типы, тесты, языки), чтобы вкладка Graph показывала их рядом с картинкой без второго запроса. `index.outline` — символы одного файла с первыми строками исходника каждого символа.
 - **v17** (2026-09-11): `index.graph` — граф знаний о коде в том виде, в котором его рисует вкладка Graph: на уровне `file` (папки, файлы и взвешенные связи файл→файл) или `symbol` (каждый проиндексированный символ). `attachments.store` — клиент без своей файловой системы (браузер, web view десктопа) отдаёт core байты файла и получает вложение под `<workspace>/.orchestra/attachments/`, которое можно передать в `session.message.attachments[]`. Хост VS Code делает то же самое сам (panel.ts, `attachBytes`).
@@ -736,23 +737,27 @@ Response `result`: `null`
 
 - `session_id` (string)
 - `backup` (bool, optional)
+- `paths` (string[], optional) — применить только ops по этим файлам (пути относительно workspace); пустой список — применить все
 
 Response `result`:
 
-- `applied` (bool) — false если pending пуст
+- `applied` (bool) — false если pending пуст (или ни один `paths` не совпал)
 - `apply_response` (optional) — при `applied=true`
+- `remaining_ops` (optional) — что осталось в pending после выборочного применения
 
 ### `session.discard_pending`
 
-Сбрасывает staging-overlay и pending ops сессии, ничего не записывая на диск («отклонить всё» в VS Code / TUI).
+Сбрасывает staging-overlay и pending ops сессии, ничего не записывая на диск («отклонить всё» в VS Code / TUI). С `paths` отклоняет только эти файлы, остальные остаются в pending.
 
 `params`:
 
 - `session_id` (string)
+- `paths` (string[], optional) — отклонить только ops по этим файлам; пустой список — отклонить всё
 
 Response `result`:
 
-- `discarded` (bool)
+- `discarded` (bool) — false если отклонять было нечего
+- `remaining_ops` (optional) — что осталось в pending после выборочного отклонения
 
 ### `session.compact`
 

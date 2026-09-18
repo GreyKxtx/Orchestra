@@ -551,6 +551,18 @@
     if (e.key === "Enter") {
       e.preventDefault();
       applyPendingChanges();
+      return;
+    }
+    // Per-file decisions: keep this one, throw this one away. Everything else
+    // in the turn stays pending, which is the whole point of the review list.
+    if (e.key === "a" || e.key === "A") {
+      e.preventDefault();
+      settleSelectedPendingFile(true);
+      return;
+    }
+    if (e.key === "x" || e.key === "X") {
+      e.preventDefault();
+      settleSelectedPendingFile(false);
     }
   });
 

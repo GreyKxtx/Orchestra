@@ -187,7 +187,13 @@
       head.innerHTML =
         diffExtBadgeHtml(d.path || "") +
         `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(d.path || "file"))}</button>` +
-        diffStatsHtml(stats);
+        diffStatsHtml(stats) +
+        // Per-file decisions, the same two the a/x keys make. Without them the
+        // only discoverable choice is all-or-nothing on the bar below.
+        `<span class="pending-item-acts">` +
+        `<button type="button" class="pending-item-act pending-item-keep" data-act="keep" title="Apply just this file (a)">Keep</button>` +
+        `<button type="button" class="pending-item-act pending-item-drop" data-act="drop" title="Reject just this file (x)">Drop</button>` +
+        `</span>`;
 
       const body = document.createElement("div");
       body.className = "diff-preview-body";
@@ -202,12 +208,31 @@
     }
   }
 
-  function applyPendingChanges() {
-    host.postMessage({ type: "applyPending" });
+  // Both take an optional file list. Without one the host applies or rejects
+  // the whole turn (the bar's two buttons); with one it settles just those
+  // files and the core hands back what is still pending, so a reviewer can
+  // keep the good edits of a turn and throw away the bad one.
+  function applyPendingChanges(paths) {
+    host.postMessage(
+      paths && paths.length ? { type: "applyPending", paths } : { type: "applyPending" }
+    );
   }
 
-  function discardPendingChanges() {
-    host.postMessage({ type: "discardPending" });
+  function discardPendingChanges(paths) {
+    host.postMessage(
+      paths && paths.length ? { type: "discardPending", paths } : { type: "discardPending" }
+    );
+  }
+
+  /** Apply or reject the file the review cursor is on. */
+  function settleSelectedPendingFile(apply) {
+    const d = pendingState.diff[diffReviewCursor];
+    const path = d && d.path ? String(d.path) : "";
+    if (!path) return;
+    // The cursor stays put: the list shrinks under it, so the next file slides
+    // into the selected slot and a reviewer can hold the key down.
+    if (apply) applyPendingChanges([path]);
+    else discardPendingChanges([path]);
   }
 
   function countDiffStats(before, after) {

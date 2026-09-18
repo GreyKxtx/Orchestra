@@ -385,7 +385,7 @@ export type WebviewToHost =
   | { type: "listOrchestraRoles" }
   | { type: "setModel"; model: string; provider?: string }
   | { type: "applyPending"; paths?: string[]; ops?: unknown[] }
-  | { type: "discardPending" }
+  | { type: "discardPending"; paths?: string[] }
   | { type: "togglePendingDiff" }
   | { type: "openSettings"; section?: string }
   | { type: "openOrchestraSettings" }

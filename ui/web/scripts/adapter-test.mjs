@@ -705,6 +705,67 @@ test("ops the core already wrote clear the bar instead of offering it", async ()
   );
 });
 
+// The review list offers a decision per file (Keep / Drop, or a/x). Before
+// this the host ignored the file list and settled the whole turn, so rejecting
+// one bad edit threw away every good one beside it.
+test("rejecting one file of a turn leaves the others in the review list", async () => {
+  const b = await handshake(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: {
+      type: "pending_ops",
+      data: {
+        ops: [
+          { op: "file.write_atomic", path: "a.go" },
+          { op: "file.write_atomic", path: "b.go" },
+        ],
+        diff: [
+          { path: "a.go", before: "1", after: "2" },
+          { path: "b.go", before: "3", after: "4" },
+        ],
+        applied: false,
+      },
+    },
+  });
+  await tick();
+  b.sent.length = 0;
+  b.inbound.length = 0;
+
+  dispatch(b, { type: "discardPending", paths: ["a.go"] });
+  await tick();
+
+  const req = b.sent.find((m) => m.method === "session.discard_pending");
+  assert.ok(req, `no session.discard_pending; sent: ${b.sent.map((m) => m.method).join(", ")}`);
+  assert.deepEqual(
+    req.params.paths,
+    ["a.go"],
+    "the rejected file must be named, or the core throws away the whole turn"
+  );
+
+  b.deliver({
+    jsonrpc: "2.0",
+    id: req.id,
+    result: { discarded: true, remaining_ops: [{ op: "file.write_atomic", path: "b.go" }] },
+  });
+  await tick();
+
+  assert.equal(
+    b.inbound.filter((m) => m.type === "pendingCleared").length,
+    0,
+    "the rest of the turn is still waiting for a decision — the bar must stay up"
+  );
+  const kept = b.inbound.find((m) => m.type === "pendingOps");
+  assert.ok(kept, "the files still pending were never re-posted");
+  assert.equal(kept.payload.ops.length, 1);
+  assert.equal(
+    kept.payload.diff.length,
+    1,
+    "a file still pending must keep its diff, or the reviewer decides blind"
+  );
+  assert.equal(kept.payload.diff[0].path, "b.go");
+});
+
 test("a tool call becomes a running block, then a completed one", async () => {
   const b = await ready(loadBundle());
   b.deliver({

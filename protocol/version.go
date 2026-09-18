@@ -45,7 +45,10 @@ const (
 	// v19: agent.run and session.message take allow_browser — the turn, its
 	//      subagents and its skills get browser.* tools (not under the fast
 	//      profile). tool.call answers browser.* with ExecDenied.
-	ProtocolVersion = 19
+	// v20: session.discard_pending takes paths[] and answers with
+	//      remaining_ops[], mirroring session.apply_pending — rejecting one
+	//      file of a turn no longer means rejecting all of them.
+	ProtocolVersion = 20
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

@@ -1021,15 +1021,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             const res = await this.session.applyPending(true, paths);
             if (res.applied) {
               void vscode.window.showInformationMessage("Orchestra: changes applied");
-              const remaining = res.remainingOps;
-              if (remaining && remaining.length > 0) {
-                this.post({
-                  type: "pendingOps",
-                  payload: { ops: remaining, diff: [], applied: false },
-                });
-              } else {
-                this.post({ type: "pendingCleared" });
-              }
+              this.postRemainingPending(res.remainingOps);
             } else {
               void vscode.window.showWarningMessage("Orchestra: no pending changes to apply");
             }
@@ -1041,8 +1033,13 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         }
         case "discardPending": {
           try {
-            await this.session.discardPending();
-            this.post({ type: "pendingCleared" });
+            const paths = Array.isArray(msg.paths)
+              ? msg.paths.filter((p): p is string => typeof p === "string" && p.trim() !== "")
+              : undefined;
+            const res = await this.session.discardPending(paths);
+            // A per-file reject leaves the rest of the turn waiting for a
+            // decision, so the bar must stay up with those files still in it.
+            this.postRemainingPending(res.remainingOps);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.post({ type: "error", message });
@@ -2286,6 +2283,45 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
 
   private webviewTarget(): vscode.Webview | undefined {
     return this.sidebar?.webview ?? this.panel?.webview;
+  }
+
+  /**
+   * Re-post what is still pending after a partial apply or reject.
+   *
+   * The core answers those with ops only, so the per-file diffs are carried
+   * over from the payload the webview was last given and filtered down to the
+   * remaining files. Without that the review list would empty out after the
+   * first per-file decision and the reviewer would lose the diffs for the rest
+   * of the turn.
+   */
+  private postRemainingPending(remaining: unknown[] | undefined): void {
+    if (!remaining || remaining.length === 0) {
+      this.post({ type: "pendingCleared" });
+      return;
+    }
+    const norm = (p: string): string =>
+      p.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    const kept = new Set(
+      remaining
+        .map((op) =>
+          op && typeof op === "object" ? (op as { path?: unknown }).path : undefined
+        )
+        .filter((p): p is string => typeof p === "string" && p.trim() !== "")
+        .map(norm)
+    );
+    const prev = this.lastPendingOps?.diff;
+    const diff = Array.isArray(prev)
+      ? prev.filter((d) => typeof d?.path === "string" && kept.has(norm(d.path)))
+      : [];
+    // The manager tracks one editor — the file the user opened from the review
+    // list. If that is the file just settled, its inline highlights now
+    // describe code that is already on disk (or gone), so drop them; opening
+    // another file that is still pending re-applies them.
+    this.pendingHighlights.clearAll();
+    this.post({
+      type: "pendingOps",
+      payload: { ops: remaining, diff, applied: false },
+    });
   }
 
   private post(msg: HostToWebview): void {

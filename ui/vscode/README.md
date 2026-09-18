@@ -28,7 +28,7 @@ orchestra core (subprocess)
 - **Orchestra: Open Chat** — Cursor-like composer, sessions, streaming, tool chips
 - **Attachments / vision** — drag-drop, paste, `@` mentions; protocol v13 `attachments[]`
 - **Dry-run / Apply toggle** — `session.message` with `apply: true|false`
-- **Pending ops bar** — per-file review (↑↓ · a/x · Enter), filtered `ops.apply`, or Apply All via `session.apply_pending`
+- **Pending ops bar** — per-file review (↑↓ to move, `a`/Keep applies one file, `x`/Drop rejects one, Enter applies all) over `session.apply_pending` / `session.discard_pending` with `paths[]`
 - **LSP install modal** — dedicated UI for `lsp.install` permission requests
 - **Permission / Question modals** — `permission/request`, `question/ask`
 - Mode pills → `mode`; Effort/Fast → `profile`

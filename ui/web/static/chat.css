@@ -2239,6 +2239,39 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   text-decoration: line-through;
 }
 
+/* Per-file Keep / Drop. Pushed to the right edge of the file's header row so
+   the decision sits with the file it decides, not with the turn-wide bar. */
+.pending-item-acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pending-item-act {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted, inherit);
+  cursor: pointer;
+}
+
+.pending-item-act:hover {
+  background: var(--surface-3, var(--surface-2));
+  color: inherit;
+}
+
+.pending-item-keep:hover {
+  border-color: var(--ok-border);
+}
+
+.pending-item-drop:hover {
+  border-color: var(--err-border, var(--border));
+}
+
 .diff-preview-head {
   display: flex;
   align-items: center;

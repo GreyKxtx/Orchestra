@@ -1249,7 +1249,13 @@
       head.innerHTML =
         diffExtBadgeHtml(d.path || "") +
         `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(d.path || "file"))}</button>` +
-        diffStatsHtml(stats);
+        diffStatsHtml(stats) +
+        // Per-file decisions, the same two the a/x keys make. Without them the
+        // only discoverable choice is all-or-nothing on the bar below.
+        `<span class="pending-item-acts">` +
+        `<button type="button" class="pending-item-act pending-item-keep" data-act="keep" title="Apply just this file (a)">Keep</button>` +
+        `<button type="button" class="pending-item-act pending-item-drop" data-act="drop" title="Reject just this file (x)">Drop</button>` +
+        `</span>`;
 
       const body = document.createElement("div");
       body.className = "diff-preview-body";
@@ -1264,12 +1270,31 @@
     }
   }
 
-  function applyPendingChanges() {
-    host.postMessage({ type: "applyPending" });
+  // Both take an optional file list. Without one the host applies or rejects
+  // the whole turn (the bar's two buttons); with one it settles just those
+  // files and the core hands back what is still pending, so a reviewer can
+  // keep the good edits of a turn and throw away the bad one.
+  function applyPendingChanges(paths) {
+    host.postMessage(
+      paths && paths.length ? { type: "applyPending", paths } : { type: "applyPending" }
+    );
   }
 
-  function discardPendingChanges() {
-    host.postMessage({ type: "discardPending" });
+  function discardPendingChanges(paths) {
+    host.postMessage(
+      paths && paths.length ? { type: "discardPending", paths } : { type: "discardPending" }
+    );
+  }
+
+  /** Apply or reject the file the review cursor is on. */
+  function settleSelectedPendingFile(apply) {
+    const d = pendingState.diff[diffReviewCursor];
+    const path = d && d.path ? String(d.path) : "";
+    if (!path) return;
+    // The cursor stays put: the list shrinks under it, so the next file slides
+    // into the selected slot and a reviewer can hold the key down.
+    if (apply) applyPendingChanges([path]);
+    else discardPendingChanges([path]);
   }
 
   function countDiffStats(before, after) {
@@ -1818,6 +1843,15 @@
       if (!Number.isFinite(idx) || idx < 0 || idx >= pendingState.diff.length) return;
       const d = pendingState.diff[idx];
       if (!d) return;
+
+      const actBtn = t.closest(".pending-item-act");
+      if (actBtn instanceof HTMLElement) {
+        if (!d.path) return;
+        const paths = [String(d.path)];
+        if (actBtn.getAttribute("data-act") === "keep") applyPendingChanges(paths);
+        else discardPendingChanges(paths);
+        return;
+      }
 
       const nameBtn = t.closest(".diff-preview-name");
       if (nameBtn) {
@@ -5862,6 +5896,18 @@
     if (e.key === "Enter") {
       e.preventDefault();
       applyPendingChanges();
+      return;
+    }
+    // Per-file decisions: keep this one, throw this one away. Everything else
+    // in the turn stays pending, which is the whole point of the review list.
+    if (e.key === "a" || e.key === "A") {
+      e.preventDefault();
+      settleSelectedPendingFile(true);
+      return;
+    }
+    if (e.key === "x" || e.key === "X") {
+      e.preventDefault();
+      settleSelectedPendingFile(false);
     }
   });
 
@@ -10423,11 +10469,11 @@
         return true;
 
       case "applyPending":
-        void settlePending(true);
+        void settlePending(true, msg.paths);
         return true;
 
       case "discardPending":
-        void settlePending(false);
+        void settlePending(false, msg.paths);
         return true;
 
       case "deleteSession":
@@ -11187,28 +11233,58 @@
     });
   }
 
-  /** @param {boolean} apply true applies the staged changes, false discards. */
-  async function settlePending(apply) {
+  /** Strip the spelling differences between an op path and a diff path. */
+  function normPendingPath(p) {
+    return String(p || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  }
+
+  /**
+   * @param {boolean} apply true applies the staged changes, false discards.
+   * @param {string[]=} paths when given, settle only these files and leave the
+   *   rest of the turn pending — the review list's per-file Keep / Drop.
+   */
+  async function settlePending(apply, paths) {
     const st = projectState(currentProjectId);
     const method = apply ? "session.apply_pending" : "session.discard_pending";
+    const only = Array.isArray(paths) ? paths.filter((p) => String(p || "").trim()) : [];
     const r = await composerRpc(
       method,
       // backup asks the applier for .orchestra.bak. The same call in VS Code
       // asks for one; this host wrote without it, so a user whose files are
       // not in git had no way back from an applied change.
-      { session_id: st.sessionId, ...(apply ? { backup: true } : {}) },
+      {
+        session_id: st.sessionId,
+        ...(apply ? { backup: true } : {}),
+        ...(only.length ? { paths: only } : {}),
+      },
       apply ? "apply changes" : "discard changes"
     );
     if (!r) {
       return;
     }
-    // pendingCleared is what the renderer listens for (07-events.js). The
-    // message posted here was "pending", which that switch has no case for, so
-    // the bar stayed on screen after the user had applied or discarded.
-    toRenderer({ type: "pendingCleared" });
+    const remaining = Array.isArray(r.remaining_ops) ? r.remaining_ops : [];
+    if (only.length && remaining.length) {
+      // The core answers with ops only. The diffs for the files still pending
+      // are already in the renderer's own state, so carry them over filtered
+      // down — otherwise the review list would empty out after the first
+      // per-file decision and the rest of the turn would lose its diffs.
+      const kept = new Set(remaining.map((op) => normPendingPath(op && op.path)));
+      const diff = (pendingState.diff || []).filter((d) => kept.has(normPendingPath(d.path)));
+      toRenderer({ type: "pendingOps", payload: { ops: remaining, diff, applied: false } });
+    } else {
+      // pendingCleared is what the renderer listens for (07-events.js). The
+      // message posted here was "pending", which that switch has no case for,
+      // so the bar stayed on screen after the user had applied or discarded.
+      toRenderer({ type: "pendingCleared" });
+    }
+    const what = only.length === 1 ? only[0] : "Changes";
     toRenderer({
       type: "systemNote",
-      text: apply ? "Changes applied." : "Changes discarded.",
+      text: only.length
+        ? `${what} ${apply ? "applied" : "discarded"}.`
+        : apply
+          ? "Changes applied."
+          : "Changes discarded.",
     });
   }
 
