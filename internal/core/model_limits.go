@@ -83,10 +83,6 @@ func (c *Core) applyDiscoveredModelLimits() {
 	if !changed {
 		return
 	}
-	client := llm.NewClient(fresh)
-	if oc, ok := llm.AsOpenAIClient(client); ok {
-		oc.SetLogger(llm.NewLogger(c.workspaceRoot))
-	}
-	c.llmClient = llm.MaybeWrapFallback(client, c.cfg.LLMRegistry(), fresh, llm.NewLogger(c.workspaceRoot))
+	c.llmClient = llm.BuildClient(fresh, c.cfg.LLMRegistry(), llm.NewLogger(c.workspaceRoot))
 	c.publishSamplingTarget()
 }

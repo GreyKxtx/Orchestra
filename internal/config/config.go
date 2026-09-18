@@ -474,11 +474,33 @@ type UIConfig struct {
 	// Theme is a registered theme name (see ui/tui/theme). Empty / unknown
 	// values fall back to the default ("neutral").
 	Theme string `yaml:"theme,omitempty"`
-	// AutoApply is deprecated: TUI always commits staged ops on agent final.
-	// Kept for config migration only; ignored by TUI.
-	AutoApply bool `yaml:"auto_apply,omitempty"`
+	// AutoApply controls whether the TUI commits a turn's staged edits as soon
+	// as the agent finishes (the default), or holds them for review and writes
+	// only what the user accepts.
+	//
+	// It was documented as read from .orchestra.yml and had no reader at all:
+	// the TUI hardcoded "apply", so the one setting a user would reach for to
+	// get "show me the diff first" was parsed and discarded. The review path it
+	// should have switched on was already built and wired — it was simply
+	// unreachable, because the TUI never asked for it.
+	//
+	// Tri-state on purpose: unset keeps today's behaviour, so nobody's workflow
+	// changes under them. Explicit false opts into review-before-write, which
+	// costs something real — edits stay in the staging overlay until accepted,
+	// so a command the agent runs in that turn (tests, a build) still sees the
+	// unedited files.
+	AutoApply *bool `yaml:"auto_apply,omitempty"`
 	// AllowExec mirrors `--allow-exec` for TUI agent runs (bash/git commit, etc.).
 	AllowExec bool `yaml:"allow_exec,omitempty"`
+}
+
+// ResolvedAutoApply reports whether the TUI commits a turn's edits on its own.
+// Unset means yes, which is what the TUI did before the key had a reader.
+func (u UIConfig) ResolvedAutoApply() bool {
+	if u.AutoApply == nil {
+		return true
+	}
+	return *u.AutoApply
 }
 
 // ProjectConfig represents the Orchestra configuration

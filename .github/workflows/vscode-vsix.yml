@@ -131,6 +131,17 @@ jobs:
         working-directory: ui/vscode
         run: npm run compile
 
+      # This workflow publishes to the Marketplace and to Open VSX. It ran
+      # neither the unit tests nor the bundle-staleness check, so a stale
+      # webview bundle or a broken helper could ship to users from a green run.
+      - name: Webview checks
+        working-directory: ui/vscode
+        run: npm run check:webview
+
+      - name: Extension unit tests
+        working-directory: ui/vscode
+        run: npm test
+
       - name: Package VSIX
         working-directory: ui/vscode
         run: npx @vscode/vsce package --no-dependencies

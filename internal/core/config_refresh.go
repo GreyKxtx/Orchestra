@@ -74,12 +74,11 @@ func (c *Core) RefreshConfigIfChanged() {
 	c.cfgMu.Unlock()
 
 	// Rebuild the LLM client when the active model/provider changed on disk.
+	// Through BuildClient, so the rebuilt client keeps the standby and the
+	// router: rebuilding it bare is how saving any setting used to switch
+	// llm.fallback_provider off for the rest of the process.
 	if !c.llmClientInjected && !reflect.DeepEqual(oldLLM, fresh.LLM) {
-		client := llm.NewClient(fresh.LLM)
-		if oc, ok := llm.AsOpenAIClient(client); ok {
-			oc.SetLogger(llm.NewLogger(c.workspaceRoot))
-		}
-		c.llmClient = client
+		c.llmClient = llm.BuildClient(fresh.LLM, fresh.LLMRegistry(), llm.NewLogger(c.workspaceRoot))
 	}
 	c.publishSamplingTarget()
 	// Push refreshed exclude dirs + embed credentials into the tools runner.

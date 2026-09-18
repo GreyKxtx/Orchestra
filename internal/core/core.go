@@ -156,12 +156,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		if lim, ok := llm.CatalogModelLimits(cfg.LLM); ok {
 			llm.ApplyDiscoveredLimits(&cfg.LLM, lim)
 		}
-		logger := llm.NewLogger(rootAbs)
-		llmClient = llm.NewClient(cfg.LLM)
-		if oc, ok := llm.AsOpenAIClient(llmClient); ok {
-			oc.SetLogger(logger)
-		}
-		llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
+		llmClient = llm.BuildClient(cfg.LLM, cfg.LLMRegistry(), llm.NewLogger(rootAbs))
 	}
 
 	tr.SetMemoryContext("", cfg.Memory.Resolve())

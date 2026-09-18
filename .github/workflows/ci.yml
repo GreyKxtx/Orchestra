@@ -104,6 +104,16 @@ jobs:
         working-directory: ui/vscode
         run: npm run check:webview
 
+      # The extension's own unit tests — framing, turn projection, markdown,
+      # stream sanitising, the memory notice, skill commands, core-binary
+      # resolution, the MCP registry. They were written, compiled by the step
+      # above, and then discarded: nothing ran them here or in the workflow
+      # that publishes the VSIX, so the extension shipped with its test suite
+      # green only on whoever's laptop last remembered to run it.
+      - name: Extension unit tests
+        working-directory: ui/vscode
+        run: npm test
+
       # No npm dependencies — plain node, run from the repo root.
       - name: Web UI checks
         run: node ui/web/scripts/check-web.mjs

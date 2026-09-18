@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/ui/tui"
 )
 
@@ -51,6 +51,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	themeName := ""
 	profile := ""
 	allowExec := false
+	// Unset ui.auto_apply keeps the behaviour the TUI had when the key had no
+	// reader at all: commit the turn's edits, then show the diff.
+	reviewBeforeApply := false
 	excludeDirs := []string(nil)
 	needsOnboarding := false
 
@@ -59,6 +62,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		themeName = cfg.UI.Theme
 		profile = strings.TrimSpace(cfg.Agent.Profile)
 		allowExec = cfg.UI.AllowExec
+		reviewBeforeApply = !cfg.UI.ResolvedAutoApply()
 		if len(cfg.ExcludeDirs) > 0 {
 			excludeDirs = append([]string(nil), cfg.ExcludeDirs...)
 		}
@@ -71,18 +75,19 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	return tui.Run(tui.Config{
-		Binary:          self,
-		WorkspaceRoot:   cwd,
-		ProjectID:       projectID,
-		Model:           model,
-		Mode:            "build",
-		CWD:             filepath.Base(cwd),
-		NeedsOnboarding: needsOnboarding,
-		ConfigPath:      cfgPath,
-		Theme:           themeName,
-		Profile:         profile,
-		AllowExec:       allowExec,
-		ExcludeDirs:     excludeDirs,
+		Binary:            self,
+		WorkspaceRoot:     cwd,
+		ProjectID:         projectID,
+		Model:             model,
+		Mode:              "build",
+		CWD:               filepath.Base(cwd),
+		NeedsOnboarding:   needsOnboarding,
+		ConfigPath:        cfgPath,
+		Theme:             themeName,
+		Profile:           profile,
+		AllowExec:         allowExec,
+		ReviewBeforeApply: reviewBeforeApply,
+		ExcludeDirs:       excludeDirs,
 	})
 }
 

@@ -490,7 +490,32 @@ test("a composer send becomes session.message", async () => {
   assert.equal(msg.params.content, "hello");
   assert.equal(msg.params.allow_exec, true);
   assert.equal(msg.params.apply, true, "the web host applies to disk: it has no Accept/Reject editor UI");
+  assert.equal(msg.params.backup, true, "a host that writes straight to disk has to leave a .orchestra.bak");
   assert.equal(msg.params.allow_browser, undefined, "the browser is off unless the composer's switch is on");
+});
+
+// The composer has offered a mode pill from the start and this adapter dropped
+// it, so every turn ran in the core's default mode. The failure was silent and
+// worst exactly where it mattered: "Plan" is the mode a person picks to stop
+// edits from happening, and picking it changed only an icon.
+test("the composer's mode pill reaches session.message", async () => {
+  const b = await handshake(loadBundle());
+
+  for (const mode of ["plan", "explore", "ask", "architecture"]) {
+    b.sent.length = 0;
+    dispatch(b, {
+      type: "send",
+      text: "hello",
+      mode,
+      profile: "",
+      apply: false,
+      allowExec: false,
+      files: [],
+    });
+    const msg = b.sent.find((m) => m.method === "session.message");
+    assert.ok(msg, `no session.message for mode ${mode}`);
+    assert.equal(msg.params.mode, mode, `mode ${mode} did not reach the wire`);
+  }
 });
 
 test("the composer's browser switch reaches session.message as allow_browser", async () => {

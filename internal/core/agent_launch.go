@@ -576,26 +576,18 @@ func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (l
 		if model != "" {
 			provCfg.Model = model
 		}
-		client := llm.NewClient(provCfg)
-		if oc, ok2 := llm.AsOpenAIClient(client); ok2 && logger != nil {
-			oc.SetLogger(logger)
-		}
-		// The default client is wrapped for failover at construction
-		// (core.go). A client resolved by name — compaction, auto-routing,
-		// every model switch from the UI — has to carry the same standby, or
-		// choosing a model silently drops the resilience the config asked for.
-		return llm.MaybeWrapFallback(client, c.cfg.LLMRegistry(), provCfg, logger), provider, provCfg.Model, nil
+		// The default client is wrapped at construction (core.go). A client
+		// resolved by name — compaction, auto-routing, every model switch from
+		// the UI — has to carry the same standby and router, or choosing a
+		// model silently drops what the config asked for.
+		return llm.BuildClient(provCfg, c.cfg.LLMRegistry(), logger), provider, provCfg.Model, nil
 	}
 	if model != "" {
-		overrideCfg := c.cfg.LLM
-		overrideCfg.Model = model
-		client := llm.NewClient(overrideCfg)
-		if oc, ok := llm.AsOpenAIClient(client); ok && logger != nil {
-			oc.SetLogger(logger)
-		}
 		// A bare model override still runs against the main endpoint, so it
 		// keeps the main config's standby.
-		return llm.MaybeWrapFallback(client, c.cfg.LLMRegistry(), overrideCfg, logger), providerLabelOf(c.cfg), model, nil
+		overrideCfg := c.cfg.LLM
+		overrideCfg.Model = model
+		return llm.BuildClient(overrideCfg, c.cfg.LLMRegistry(), logger), providerLabelOf(c.cfg), model, nil
 	}
 	return c.llmClient, providerLabelOf(c.cfg), c.cfg.LLM.Model, nil
 }

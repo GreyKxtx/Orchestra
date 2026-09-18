@@ -48,6 +48,15 @@ type Config struct {
 	AllowExec       bool     // allow bash/exec.run in TUI agent runs
 	Profile         string   // agent.profile: fast | precision | ""
 	ExcludeDirs     []string // from .orchestra.yml exclude_dirs
+	// ReviewBeforeApply holds a turn's edits in the staging overlay instead of
+	// committing them when the agent finishes; only files the user accepts are
+	// written. Set from ui.auto_apply: false in .orchestra.yml.
+	//
+	// Phrased as the opt-in rather than as AutoApply so the zero value is the
+	// established behaviour — a caller or test that leaves it alone gets what
+	// the TUI has always done, instead of silently switching the product into
+	// review mode.
+	ReviewBeforeApply bool
 }
 
 // App is the root Bubble Tea Model.

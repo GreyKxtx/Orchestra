@@ -9,9 +9,17 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/view"
 )
 
+// agentRunOptions carries the per-turn switches to core.
+//
+// Apply used to be hardcoded true, which is why the diff always arrived after
+// the writes had landed: the user reviewed and reverted instead of approving.
+// The pre-approval path existed and was wired — core holds the ops when Apply
+// is false and the TUI arms them for review — but nothing could reach it,
+// because this function never asked. It now follows ui.auto_apply, which
+// defaults to the old behaviour.
 func (a *App) agentRunOptions() rpcclient.AgentRunOptions {
 	return rpcclient.AgentRunOptions{
-		Apply:        true,
+		Apply:        !a.cfg.ReviewBeforeApply,
 		AllowExec:    a.allowExec,
 		AllowBrowser: a.allowBrowser,
 		Profile:      a.cfg.Profile,

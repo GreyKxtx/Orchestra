@@ -6512,9 +6512,21 @@
     const turn = conn.sendCancellable("session.message", {
       session_id: sessionId,
       content: msg.text || "",
+      // The composer has offered a mode pill since it was written — Build,
+      // Plan, Explore, Ask, Debug, Architecture, Agent — and this call dropped
+      // it, so every turn ran in the core's default mode. Picking "Plan" in the
+      // browser or the desktop app changed an icon and nothing else, which is
+      // the worst shape for that particular control: the one mode a user
+      // chooses specifically to stop edits happening was the one that did not
+      // stop them.
+      mode: msg.mode || "",
       // The web host has no editor to stage changes in, so a turn writes to
       // disk. Access mode still gates the shell (allow_exec below).
       apply: true,
+      // Writing to disk without a backup is not a decision this host gets to
+      // make quietly: the same call in VS Code asks for one, and .orchestra.bak
+      // is the only way back for a user whose files are not in git.
+      backup: true,
       allow_exec: Boolean(msg.allowExec),
       // The composer's browser switch (access menu): browser.* for this turn.
       ...(msg.allowBrowser === true ? { allow_browser: true } : {}),
