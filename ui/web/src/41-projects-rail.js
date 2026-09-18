@@ -286,10 +286,11 @@
   }
 
   /**
-   * One workspace on the strip: a tile carrying its initial, tinted by its
-   * path, with the state badge on its corner and the active marker on its
-   * edge. It keeps the .project-chip class and its data attributes: every
-   * listener in 42-projects-chrome.js and every test is bound to those.
+   * One workspace on the strip: a square carrying its initial, tinted by its
+   * path, with the state badge on its corner, the name under it, and the
+   * active marker on its edge. It keeps the .project-chip class and its data
+   * attributes: every listener in 42-projects-chrome.js and every test is
+   * bound to those.
    * @param {any} row @param {any} existing
    */
   function railProjectChip(row, existing) {
@@ -301,8 +302,8 @@
     chip.dataset.status = row.status;
     chip.dataset.active = row.active ? "true" : "false";
     chip.setAttribute("aria-selected", row.active ? "true" : "false");
-    // The tile shows one letter, so the tooltip carries what it cannot: the
-    // name, the path, and whether the project is waiting for an answer.
+    // The label under the square is cut to the strip's width, so the tooltip
+    // carries the whole name, the path, and whether the project is waiting.
     chip.title =
       (row.name || "?") + "\n" + (row.path || "") + (row.status === "asking" ? i18n("rail.waiting") : "");
     chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
@@ -321,16 +322,35 @@
     }
     reconcileByKey(chip, [
       {
-        key: "glyph",
+        key: "tile",
         render: (had) => {
-          const g = railNode(had, "span", "project-glyph");
-          g.setAttribute("aria-hidden", "true");
-          // textContent: the name is a folder name off disk.
-          g.textContent = projectGlyph(row.name);
-          return g;
+          const tile = railNode(had, "span", "project-tile");
+          tile.setAttribute("aria-hidden", "true");
+          reconcileByKey(tile, [
+            {
+              key: "glyph",
+              render: (h) => {
+                const g = railNode(h, "span", "project-glyph");
+                // textContent: the name is a folder name off disk.
+                g.textContent = projectGlyph(row.name);
+                return g;
+              },
+            },
+            { key: "dot", render: (h) => railNode(h, "span", "project-dot") },
+          ]);
+          return tile;
         },
       },
-      { key: "dot", render: (had) => railNode(had, "span", "project-dot") },
+      {
+        key: "label",
+        render: (had) => {
+          const l = railNode(had, "span", "project-label");
+          l.setAttribute("aria-hidden", "true");
+          // textContent: a folder name off disk.
+          l.textContent = row.name || "?";
+          return l;
+        },
+      },
     ]);
     return chip;
   }
@@ -440,9 +460,9 @@
   }
 
   /**
-   * The pane's heading: which workspace these chats belong to, in full — the
-   * name, the path, how many there are — and the button that starts one. The
-   * tile on the strip can only show a letter; this is where the rest goes.
+   * The pane's heading: which workspace these chats belong to — the name,
+   * how many there are — and the button that starts one. The path is not
+   * repeated here; it is the tooltip on the name, as it is on the tile.
    * @param {any} row @param {any} existing
    */
   function railPaneHead(row, existing) {
@@ -451,19 +471,20 @@
     // the count straight away instead of at the next poll.
     const listedNow = sessionsByProject.get(row.id);
     const count = listedNow ? listedNow.length : row.sessions;
-    const titleParts = [
+    const parts = [
       {
         key: "name",
         render: (h) => {
           const t = railNode(h, "span", "rail-pane-title");
           // textContent: a folder name off disk.
           t.textContent = row.name || "?";
+          t.title = row.path || "";
           return t;
         },
       },
     ];
     if (typeof count === "number" && count >= 0) {
-      titleParts.push({
+      parts.push({
         key: "count",
         render: (h) => {
           const c = railNode(h, "span", "rail-pane-count");
@@ -472,50 +493,11 @@
         },
       });
     }
-    reconcileByKey(head, [
-      {
-        key: "titles",
-        render: (had) => {
-          const box = railNode(had, "div", "rail-pane-titles");
-          reconcileByKey(box, [
-            {
-              key: "title-row",
-              render: (h) => {
-                const r = railNode(h, "div", "rail-pane-title-row");
-                reconcileByKey(r, titleParts);
-                return r;
-              },
-            },
-            {
-              key: "path",
-              render: (h) => {
-                // The box runs right-to-left so the ellipsis eats the START
-                // of a long path; the text inside is isolated back to LTR so
-                // the path itself still reads the right way round.
-                const pth = railNode(h, "div", "rail-pane-path");
-                pth.title = row.path || "";
-                reconcileByKey(pth, [
-                  {
-                    key: "text",
-                    render: (hh) => {
-                      const t = railNode(hh, "span", "rail-pane-path-text");
-                      t.textContent = row.path || "";
-                      return t;
-                    },
-                  },
-                ]);
-                return pth;
-              },
-            },
-          ]);
-          return box;
-        },
-      },
-      {
-        key: "add",
-        render: (had) => had || railAddButton("new-session", i18n("rail.new_session"), row.id),
-      },
-    ]);
+    parts.push({
+      key: "add",
+      render: (had) => had || railAddButton("new-session", i18n("rail.new_session"), row.id),
+    });
+    reconcileByKey(head, parts);
     return head;
   }
 

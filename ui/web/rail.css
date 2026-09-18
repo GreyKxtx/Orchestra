@@ -7,13 +7,12 @@
   /* The sidebar's width, dragged by the handle on its edge and remembered in
      localStorage. A custom property so the handle can set one number and the
      column, the media query below and the collapsed state all follow it. */
-  --rail-w: 300px;
+  --rail-w: 312px;
   /* The strip of workspace tiles down the sidebar's left edge, and the tile
-     itself. The gutter is what centres a tile in the strip; the active marker
-     sits in it. */
-  --rail-strip-w: 60px;
-  --rail-tile: 38px;
-  --rail-tile-gutter: 11px;
+     itself. The strip is wider than the tile by the room a label under it
+     needs: seven or eight characters of a folder name at 10.5px. */
+  --rail-strip-w: 74px;
+  --rail-tile: 40px;
   --rail-dot: rgba(255, 255, 255, 0.075);
   /* The start screen's own dots: a wider pitch than the sidebar's, because
      this is a whole window rather than a column, and quiet enough to be
@@ -59,7 +58,7 @@ body {
   flex: 0 0 var(--rail-w);
   width: var(--rail-w);
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   /* A dot grid, quiet enough to read as texture rather than content: it
      separates the navigator from the transcript without another border. */
   background-color: var(--rail-bg);
@@ -70,17 +69,52 @@ body {
   overflow: hidden;
 }
 
-/* ---- the strip --------------------------------------------------------- */
-/* The sidebar is two columns. The STRIP on the left is the list of
-   workspaces: one tile per project with its state on the tile — the point of
-   this sidebar is seeing, without switching, which project is working and
-   which is waiting for you. The PANE beside it is the chats of the one on
-   screen, under a heading that says which one that is.
+/* ---- the brand row, then the strip ------------------------------------- */
+/* The sidebar is a brand row over two columns. The row says whose window this
+   is — the mark and the name, once, across the whole width. Under it, the
+   STRIP on the left is the list of workspaces: one labelled tile per project
+   with its state on the tile — the point of this sidebar is seeing, without
+   switching, which project is working and which is waiting for you. The PANE
+   beside it is the chats of the one on screen, under its name.
 
    Before this, both lived in one flat list: the open project was a small-caps
    heading, the rest were folder rows with unlabelled numbers, three folders
    called `ws` were three identical lines, and two "+" buttons meant two
-   different things. Readable to whoever wrote it, and to nobody else. */
+   different things. Readable to whoever wrote it, and to nobody else. The
+   first strip had the mark alone at the top of a 60px column and a bare
+   initial on each tile; the owner's verdict was "I would keep the logo and
+   the name, and the tiles need names so I can tell what is where". */
+.rail-brand {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 48px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+
+.rail-mark {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.rail-word {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.rail-columns {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
 .rail-strip {
   flex: 0 0 var(--rail-strip-w);
   width: var(--rail-strip-w);
@@ -88,25 +122,8 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 12px 0 10px;
+  padding: 10px 0;
   border-right: 1px solid var(--border);
-}
-
-.rail-brand {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--rail-tile);
-  height: var(--rail-tile);
-  margin-bottom: 4px;
-  color: var(--fg);
-}
-
-.rail-mark {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
 }
 
 .project-strip {
@@ -116,8 +133,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 2px 0;
+  gap: 6px;
+  padding: 0;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
@@ -197,25 +214,14 @@ body {
   padding: 12px 10px 14px;
 }
 
-/* Which workspace these chats belong to, in full: the tile can only show a
-   letter, so the name, the count and the path go here. */
+/* Which workspace these chats belong to: the name, the count and the button
+   that starts a chat, on one line. The path is not here — the tile's label
+   and this title say the same name, and the path is a tooltip on both. */
 .rail-pane-head {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 0 2px 10px 6px;
-}
-
-.rail-pane-titles {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.rail-pane-title-row {
-  display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  min-width: 0;
+  padding: 0 2px 10px 6px;
 }
 
 .rail-pane-title {
@@ -224,41 +230,26 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--fg);
 }
 
 .rail-pane-count {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--muted-2);
 }
 
-/* The path, ellipsised from the START: the end of a path is the part that
-   tells folders apart. The box runs right-to-left for that; the text inside
-   is isolated back to left-to-right so it still reads the right way round. */
-.rail-pane-path {
-  margin-top: 2px;
-  direction: rtl;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  color: var(--muted-2);
-}
-
-.rail-pane-path-text {
-  direction: ltr;
-  unicode-bidi: isolate;
-}
-
 .rail-pane-head .rail-add {
   flex: 0 0 auto;
-  margin-top: 1px;
+  margin-left: auto;
 }
 
 /* No workspace on screen: the strip still lists them, the pane says so. */
@@ -272,62 +263,100 @@ body {
 /* ---- a workspace tile ---------------------------------------------------- */
 /* A square with the workspace's initial, tinted by a hue derived from its
    path (set through the CSSOM by renderProjects), so two folders both called
-   `ws` are two different colours. State sits on the corner as a badge whose
-   SHAPE differs per state; the one on screen is marked on the strip's edge. */
+   `ws` are two different colours — and the name under it, cut to the strip's
+   width, so a tile can be told apart without hovering. State sits on the
+   square's corner as a badge whose SHAPE differs per state; the one on screen
+   is marked on the strip's edge and by its label going to full colour. */
 .project-chip {
   --project-tint: hsl(var(--project-hue, 220) 48% 66%);
   position: relative;
   flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-tile {
+  position: relative;
+  display: flex;
   align-items: center;
   justify-content: center;
   width: var(--rail-tile);
   height: var(--rail-tile);
-  padding: 0;
-  border: 0;
   border-radius: 12px;
   background: color-mix(in srgb, var(--project-tint) 16%, var(--surface));
   color: var(--project-tint);
-  font: inherit;
-  cursor: pointer;
   transition: border-radius 0.15s ease, background 0.12s ease, color 0.12s ease;
 }
 
-.project-chip:hover {
+.project-chip:hover .project-tile {
   border-radius: 9px;
   background: color-mix(in srgb, var(--project-tint) 26%, var(--surface));
 }
 
+.project-chip:hover {
+  color: var(--fg-dim);
+}
+
 .project-chip[data-active="true"] {
+  color: var(--fg);
+}
+
+.project-chip[data-active="true"] .project-tile {
   border-radius: 9px;
   color: var(--fg);
   background: color-mix(in srgb, var(--project-tint) 38%, var(--surface-2));
 }
 
-/* The marker: a bar on the strip's edge beside the tile on screen. */
+/* The marker: a bar on the strip's edge, level with the square. */
 .project-chip[data-active="true"]::before {
   content: "";
   position: absolute;
-  left: calc(-1 * var(--rail-tile-gutter));
-  top: 22%;
-  height: 56%;
+  left: 0;
+  top: calc(3px + var(--rail-tile) * 0.22);
+  height: calc(var(--rail-tile) * 0.56);
   width: 3px;
   border-radius: 0 3px 3px 0;
   background: var(--fg);
 }
 
-/* In the list but not open: the tile is there to click, quietly. */
-.project-chip[data-state="closed"] {
+/* In the list but not open: the square is there to click, quietly. Only the
+   square dims — the label stays readable, or the strip's whole point (telling
+   the tiles apart without hovering) goes for every project but the open one. */
+.project-chip[data-state="closed"] .project-tile {
   opacity: 0.55;
 }
 
-.project-chip[data-state="closed"]:hover {
+.project-chip[data-state="closed"]:hover .project-tile {
   opacity: 0.85;
 }
 
 .project-chip:focus-visible {
+  outline: none;
+}
+
+.project-chip:focus-visible .project-tile {
   outline: 2px solid var(--fg-dim);
   outline-offset: 2px;
+}
+
+.project-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  user-select: none;
 }
 
 .project-glyph {
@@ -715,7 +744,7 @@ body {
 /* The type is sized for a wide window already; only the column widens. */
 @media (min-width: 1500px) {
   :root {
-    --rail-w: 330px;
+    --rail-w: 340px;
   }
 }
 
@@ -763,7 +792,7 @@ body {
   display: none;
 }
 
-.project-chip[data-opening="true"]::after {
+.project-chip[data-opening="true"] .project-tile::after {
   content: "";
   position: absolute;
   inset: 11px;

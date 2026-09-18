@@ -13,37 +13,41 @@
 </head>
 <body>
   <nav id="project-rail" class="project-rail" data-i18n-aria-label="rail.aria" aria-label="Projects and sessions">
-    <!-- Two columns. The STRIP on the left is the list of workspaces: one
-         tile per project, with its state on the tile — the point of this
-         sidebar is seeing, without switching, which project is working and
-         which is waiting for you. The PANE beside it is the chats of the one
-         on screen, under a heading that says which one that is. renderProjects
-         writes the tiles into #project-strip and the pane's contents into
-         #project-rail-list; every click is delegated from this <nav>. -->
-    <div class="rail-strip">
-      <div class="rail-brand" title="Orchestra" aria-hidden="true">
-        <svg class="rail-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
-        <polygon points="10,13.5 15.63,16.75 10,20 4.37,16.75"/>
-        <polygon points="4.37,16.75 10,20 10,26.5 4.37,23.25" fill-opacity="0.55"/>
-        <polygon points="10,20 15.63,16.75 15.63,23.25 10,26.5" fill-opacity="0.78"/>
-        <polygon points="22,13.5 27.63,16.75 22,20 16.37,16.75"/>
-        <polygon points="16.37,16.75 22,20 22,26.5 16.37,23.25" fill-opacity="0.55"/>
-        <polygon points="22,20 27.63,16.75 27.63,23.25 22,26.5" fill-opacity="0.78"/>
-        <polygon points="16,4 21.63,7.25 16,10.5 10.37,7.25"/>
-        <polygon points="10.37,7.25 16,10.5 16,17 10.37,13.75" fill-opacity="0.55"/>
-        <polygon points="16,10.5 21.63,7.25 21.63,13.75 16,17" fill-opacity="0.78"/>
+    <!-- The brand row across the top, then two columns under it. The STRIP
+         on the left is the list of workspaces: one labelled tile per project,
+         with its state on the tile — the point of this sidebar is seeing,
+         without switching, which project is working and which is waiting for
+         you. The PANE beside it is the chats of the one on screen, under its
+         name. renderProjects writes the tiles into #project-strip and the
+         pane's contents into #project-rail-list; every click is delegated
+         from this <nav>. -->
+    <div class="rail-brand" title="Orchestra">
+      <svg class="rail-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+        <polygon points="10,13.5 15.63,16.75 10,20 4.37,16.75"/>
+        <polygon points="4.37,16.75 10,20 10,26.5 4.37,23.25" fill-opacity="0.55"/>
+        <polygon points="10,20 15.63,16.75 15.63,23.25 10,26.5" fill-opacity="0.78"/>
+        <polygon points="22,13.5 27.63,16.75 22,20 16.37,16.75"/>
+        <polygon points="16.37,16.75 22,20 22,26.5 16.37,23.25" fill-opacity="0.55"/>
+        <polygon points="22,20 27.63,16.75 27.63,23.25 22,26.5" fill-opacity="0.78"/>
+        <polygon points="16,4 21.63,7.25 16,10.5 10.37,7.25"/>
+        <polygon points="10.37,7.25 16,10.5 16,17 10.37,13.75" fill-opacity="0.55"/>
+        <polygon points="16,10.5 21.63,7.25 21.63,13.75 16,17" fill-opacity="0.78"/>
       </svg>
-      </div>
-      <div id="project-strip" class="project-strip" role="tablist" data-i18n-aria-label="rail.workspaces_aria" aria-label="Workspaces"></div>
-      <button type="button" class="rail-add rail-strip-add" data-rail-action="add-project" data-i18n-title="rail.add_workspace" title="Add a workspace folder" data-i18n-aria-label="rail.add_workspace" aria-label="Add a workspace folder">
-        <svg class="oi" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5.5v13"/><path d="M5.5 12h13"/></svg>
-      </button>
-      <button type="button" id="rail-settings-btn" class="rail-settings" data-i18n-title="chrome.settings" title="Settings" data-i18n-aria-label="chrome.settings" aria-label="Settings" aria-expanded="false">
-        <svg class="oi" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2-1.2-2-3.5-2.3 1a7.9 7.9 0 0 0-1.7-1L15 3h-4l-.4 2.3a7.9 7.9 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.5 2.3-1a7.9 7.9 0 0 0 1.7 1L11 21h4l.4-2.3a7.9 7.9 0 0 0 1.7-1l2.3 1 2-3.5z"/></svg>
-      </button>
+      <span class="rail-word">Orchestra</span>
     </div>
-    <div class="rail-pane">
-      <div id="project-rail-list" class="rail-pane-body"></div>
+    <div class="rail-columns">
+      <div class="rail-strip">
+        <div id="project-strip" class="project-strip" role="tablist" data-i18n-aria-label="rail.workspaces_aria" aria-label="Workspaces"></div>
+        <button type="button" class="rail-add rail-strip-add" data-rail-action="add-project" data-i18n-title="rail.add_workspace" title="Add a workspace folder" data-i18n-aria-label="rail.add_workspace" aria-label="Add a workspace folder">
+          <svg class="oi" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5.5v13"/><path d="M5.5 12h13"/></svg>
+        </button>
+        <button type="button" id="rail-settings-btn" class="rail-settings" data-i18n-title="chrome.settings" title="Settings" data-i18n-aria-label="chrome.settings" aria-label="Settings" aria-expanded="false">
+          <svg class="oi" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2-1.2-2-3.5-2.3 1a7.9 7.9 0 0 0-1.7-1L15 3h-4l-.4 2.3a7.9 7.9 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.5 2.3-1a7.9 7.9 0 0 0 1.7 1L11 21h4l.4-2.3a7.9 7.9 0 0 0 1.7-1l2.3 1 2-3.5z"/></svg>
+        </button>
+      </div>
+      <div class="rail-pane">
+        <div id="project-rail-list" class="rail-pane-body"></div>
+      </div>
     </div>
   </nav>
   <!-- The sidebar's edge, and the only handle it has: drag to resize, click

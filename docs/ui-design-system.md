@@ -127,22 +127,27 @@ Two rules that came out of specific bugs, both worth keeping:
 
 ## 4. The sidebar
 
-Two columns, web and desktop only (`ui/web/src/41-projects-rail.js`,
-`ui/web/rail.css`).
+A brand row over two columns, web and desktop only
+(`ui/web/src/41-projects-rail.js`, `ui/web/rail.css`).
 
-**The strip** on the left is the list of workspaces: one 38px tile per
+**The brand row** across the top is the mark and the word "Orchestra", once.
+It says whose window this is; nothing else in the sidebar repeats it.
+
+**The strip** on the left is the list of workspaces: one 40px square per
 project, carrying the project's initial, tinted by a hue hashed from its
-**path** — so three folders all called `ws` are three different colours. State
-sits on the tile's corner as a badge whose shape differs per state (a pulsing
-dot for working, a square for waiting-for-you); an open idle project is simply
-a tile at full strength, a closed one is dimmed. The one on screen is marked
-by a bar on the strip's edge. The add-workspace button and the gear close the
-strip.
+**path** — so three folders all called `ws` are three different colours — with
+the project's **name under it**, cut to the strip's width. State sits on the
+square's corner as a badge whose shape differs per state (a pulsing dot for
+working, a square for waiting-for-you); an open idle project is simply a tile
+at full strength, a closed one is dimmed. The one on screen is marked by a bar
+on the strip's edge and by its label going to full colour. The add-workspace
+button and the gear close the strip.
 
-**The pane** beside it is the chats of the project on screen, under a heading
-that says which project that is in full — name, chat count, and the path
-ellipsised from the *start* (the end of a path is the part that tells folders
-apart).
+**The pane** beside it is the chats of the project on screen, under one line
+that says its name and chat count. The path is *not* printed there: it is the
+tooltip on the name and on the tile. The first version of this layout printed
+it under the name, and the owner's reading was that it was noise — the label
+on the tile and the heading already say the same word.
 
 This is the layout the multi-project spec described
 (`docs/superpowers/specs/2026-09-09-multi-project-window-design.md`: "a
