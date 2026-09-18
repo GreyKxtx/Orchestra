@@ -201,3 +201,178 @@ func TestNewStore_UnreadableListIsAnError(t *testing.T) {
 		t.Fatal("NewStore accepted an unreadable list")
 	}
 }
+
+// Two processes keep this list — a desktop window and a plain `orchestra web`,
+// or two desktop windows. Each loads the file once; a write that replaced the
+// whole file from a stale snapshot silently dropped whatever the other one had
+// remembered since.
+func TestStore_AddKeepsProjectsAnotherProcessRemembered(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "projects.json")
+
+	mine := filepath.Join(dir, "mine")
+	theirs := filepath.Join(dir, "theirs")
+	fresh := filepath.Join(dir, "fresh")
+	for _, d := range []string{mine, theirs, fresh} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	s, err := NewStore(p)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Add(mine); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Another process opens a project of its own and writes the file.
+	if err := SavePaths(p, []string{mine, theirs}); err != nil {
+		t.Fatalf("SavePaths: %v", err)
+	}
+
+	if err := s.Add(fresh); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	got, err := LoadPaths(p)
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	if !containsPath(got, theirs) {
+		t.Fatalf("the other process's project was lost: %v", got)
+	}
+	if !containsPath(got, mine) || !containsPath(got, fresh) {
+		t.Fatalf("own projects missing: %v", got)
+	}
+}
+
+// Forgetting must still forget, even when the reload just brought the entry
+// back in from disk.
+func TestStore_ForgetDropsAProjectOnlyTheFileKnew(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "projects.json")
+
+	keep := filepath.Join(dir, "keep")
+	drop := filepath.Join(dir, "drop")
+	for _, d := range []string{keep, drop} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	s, err := NewStore(p)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	// Both entries exist only on disk, written after this store loaded.
+	if err := SavePaths(p, []string{keep, drop}); err != nil {
+		t.Fatalf("SavePaths: %v", err)
+	}
+
+	found, err := s.Forget(drop)
+	if err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+	if !found {
+		t.Fatal("Forget reported the project as unknown; the reload must find it")
+	}
+	got, err := LoadPaths(p)
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	if containsPath(got, drop) {
+		t.Fatalf("forgotten project is still in the list: %v", got)
+	}
+	if !containsPath(got, keep) {
+		t.Fatalf("the other project was lost: %v", got)
+	}
+}
+
+func containsPath(list []string, want string) bool {
+	abs, err := filepath.Abs(want)
+	if err != nil {
+		return false
+	}
+	key := identity(filepath.Clean(abs))
+	for _, p := range list {
+		a, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		if identity(filepath.Clean(a)) == key {
+			return true
+		}
+	}
+	return false
+}
+
+// A window that loaded the list at startup used to show that list forever.
+// Opening a project in another window, or removing one there, is invisible
+// until a restart unless the read goes back to the file.
+func TestStore_PathsReflectsWhatAnotherProcessWrote(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "projects.json")
+
+	first := filepath.Join(dir, "first")
+	second := filepath.Join(dir, "second")
+	for _, d := range []string{first, second} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	s, err := NewStore(p)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Add(first); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Another process opens one project and removes the other.
+	if err := SavePaths(p, []string{second}); err != nil {
+		t.Fatalf("SavePaths: %v", err)
+	}
+
+	got := s.Paths()
+	if !containsPath(got, second) {
+		t.Fatalf("a project opened elsewhere is not listed: %v", got)
+	}
+	if containsPath(got, first) {
+		t.Fatalf("a project removed elsewhere is still listed: %v", got)
+	}
+}
+
+// An unreadable file is not an empty list: writing one back would lose every
+// remembered project over a permissions blip.
+func TestStore_UnreadableFileKeepsTheListInMemory(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "projects.json")
+
+	kept := filepath.Join(dir, "kept")
+	if err := os.MkdirAll(kept, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	s, err := NewStore(p)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := s.Add(kept); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// A directory where the file should be: os.ReadFile fails with something
+	// other than ErrNotExist, which is LoadPaths' "do not touch this" case.
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatalf("mkdir over the store path: %v", err)
+	}
+
+	if got := s.Paths(); !containsPath(got, kept) {
+		t.Fatalf("an unreadable file emptied the in-memory list: %v", got)
+	}
+}

@@ -119,6 +119,40 @@ func (s *Store) insert(abs string) bool {
 	return true
 }
 
+// reloadLocked re-reads the file and adopts it as the list. The caller holds
+// s.mu.
+//
+// The file is the truth, not this process's copy of it: every mutation below
+// persists immediately, so memory can only be behind, never ahead. And more
+// than one process keeps this list — a desktop window and a plain `orchestra
+// web`, or two desktop windows. Each loaded the file once at startup, so
+// without this a write replaced the whole file from a snapshot taken before
+// the other process existed: the user opens a project in one window, opens
+// another window later, and the first project is gone after a restart. Reading
+// without it showed each window a list frozen at its own startup.
+//
+// A file we could not read (permissions, a directory in the way) leaves memory
+// alone — LoadPaths reports that as an error precisely so a list we never saw
+// is never the list we write back.
+//
+// This shrinks the race to one read-modify-write rather than removing it: two
+// processes writing within the same few milliseconds can still lose an entry.
+// Nothing here is worth a cross-process lock file for that window.
+func (s *Store) reloadLocked() {
+	onDisk, err := LoadPaths(s.path)
+	if err != nil {
+		return
+	}
+	s.paths = nil
+	for _, p := range onDisk {
+		abs, aerr := filepath.Abs(p)
+		if aerr != nil {
+			continue // a path we cannot resolve is not a project we can open
+		}
+		s.insert(filepath.Clean(abs))
+	}
+}
+
 // snapshotLocked copies the list; the caller holds s.mu.
 func (s *Store) snapshotLocked() []string {
 	out := make([]string, len(s.paths))
@@ -126,10 +160,14 @@ func (s *Store) snapshotLocked() []string {
 	return out
 }
 
-// Paths returns the remembered paths in a stable order.
+// Paths returns the remembered paths in a stable order, as the file has them
+// now — a project another window opened or removed shows up here without a
+// restart. The one caller already stats every project it lists, so one small
+// read costs nothing beside it.
 func (s *Store) Paths() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reloadLocked()
 	return s.snapshotLocked()
 }
 
@@ -149,7 +187,10 @@ func (s *Store) Add(path string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reloadLocked()
 	if !s.insert(filepath.Clean(abs)) {
+		// Already remembered — by us, or by another process whose entry the
+		// reload just adopted. Either way the file already says so.
 		return nil
 	}
 	return SavePaths(s.path, s.snapshotLocked())
@@ -167,6 +208,7 @@ func (s *Store) Forget(path string) (bool, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reloadLocked()
 	kept := make([]string, 0, len(s.paths))
 	found := false
 	for _, p := range s.paths {
