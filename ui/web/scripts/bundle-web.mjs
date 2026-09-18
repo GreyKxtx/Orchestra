@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 const repo = path.join(root, "..", "..");
 const sharedDir = path.join(repo, "ui", "vscode", "media", "chat-src");
+const mediaDir = path.join(repo, "ui", "vscode", "media");
 const webDir = path.join(root, "src");
 const outDir = path.join(root, "static");
 
@@ -21,7 +22,7 @@ const outDir = path.join(root, "static");
 // adapter fragments wrapped around the shared renderer.
 const order = [
   [sharedDir, "00-header.txt"],
-  [sharedDir, "00a-i18n.js"],
+  [mediaDir, "i18n.js"],
   [webDir, "00-web-prelude.js"],
   [sharedDir, "01-dom-state.js"],
   [sharedDir, "02-util.js"],

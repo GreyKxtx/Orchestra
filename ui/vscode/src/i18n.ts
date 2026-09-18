@@ -1,8 +1,9 @@
 // The extension host's half of the UI language.
 //
-// The webview has its own catalogue (media/chat-src/00a-i18n.js) because it
-// runs in another context with no access to this module; the two share a key
-// space on purpose, so a string moved between host and webview keeps its key.
+// The webviews have their own catalogue (media/i18n.js, shared by the chat
+// bundle and the settings bundle) because they run in another context with no
+// access to this module; the two share a key space on purpose, so a string
+// moved between host and webview keeps its key.
 // This file holds only the keys the host itself produces — the notices it
 // posts into the transcript and the messages it puts in dialogs.
 //

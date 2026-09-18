@@ -57,8 +57,20 @@
       host.postMessage({ type: "listOrchestraRoles" });
     } else if (modelLabelEl) {
       setModelLabel(currentModel);
-      if (modelPill) modelPill.title = "Model";
+      if (modelPill) modelPill.title = i18n("model.title");
     }
+  }
+
+  /** The six roles the catalogue names; anything else keeps the core's label. */
+  const ORCH_ROLE_KEYS = ["planner", "lead", "complex", "focused", "micro", "embed"];
+
+  /** @param {any} r */
+  function orchRoleName(r) {
+    const key = r && r.key;
+    if (key && ORCH_ROLE_KEYS.indexOf(key) >= 0) {
+      return i18n("orch.role." + key);
+    }
+    return (r && (r.label || r.key)) || "";
   }
 
   /** Models actually configured for one orchestra role. @param {any} r */
@@ -75,54 +87,55 @@
     const plannerModels = planner ? orchRoleModels(planner) : [];
     const others = roles.filter((r) => r.key !== "planner" && orchRoleModels(r).length > 0);
     if (!roles.length) {
-      modelLabelEl.textContent = "Orchestra tiers";
-      modelLabelEl.title = "Loading tier map…";
-      if (modelPill) modelPill.title = "Orchestra tier models";
+      modelLabelEl.textContent = i18n("orch.tiers");
+      modelLabelEl.title = i18n("orch.loading_map");
+      if (modelPill) modelPill.title = i18n("orch.tier_models");
       return;
     }
     const base = plannerModels.length
       ? `L5 ${shortModel(plannerModels[0])}`
-      : "L5 not set";
+      : i18n("orch.l5_not_set");
     modelLabelEl.textContent = others.length ? `${base} +${others.length}` : base;
     const lines = roles.map((r) => {
       const models = orchRoleModels(r);
       const tier = r.tier ? `${r.tier} · ` : "";
-      return `${tier}${r.label}: ${models.length ? models.join(", ") : "— (main model fallback)"}`;
+      return `${tier}${orchRoleName(r)}: ${models.length ? models.join(", ") : i18n("orch.fallback_main")}`;
     });
     modelLabelEl.title = lines.join("\n");
-    if (modelPill) modelPill.title = "Orchestra tier models";
+    if (modelPill) modelPill.title = i18n("orch.tier_models");
   }
 
   /** Read-only tier → models breakdown inside the model dropdown. */
   function renderOrchestraRolesMenu() {
     if (!modelMenuList) return;
-    if (modelMenuTitle) modelMenuTitle.textContent = "Orchestra tiers";
+    if (modelMenuTitle) modelMenuTitle.textContent = i18n("orch.tiers");
     if (modelMenuSearch) modelMenuSearch.style.display = "none";
     modelMenuList.innerHTML = "";
     const roles = orchestraRolesInfo?.roles || [];
     if (!roles.length) {
       const hint = document.createElement("div");
       hint.className = "menu-hint";
-      hint.textContent = "Loading tier map…";
+      hint.textContent = i18n("orch.loading_map");
       modelMenuList.appendChild(hint);
     }
     roles.forEach((r) => {
       const head = document.createElement("div");
       head.className = "menu-section";
-      head.textContent = r.tier ? `${r.label} · ${r.tier}` : r.label;
+      const roleName = orchRoleName(r);
+      head.textContent = r.tier ? `${roleName} · ${r.tier}` : roleName;
       modelMenuList.appendChild(head);
       const models = orchRoleModels(r);
       if (!models.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
-        empty.textContent = "not set — falls back to the main model";
+        empty.textContent = i18n("orch.not_set");
         modelMenuList.appendChild(empty);
         return;
       }
       models.forEach((id, i) => {
         const row = document.createElement("div");
         row.className = "menu-hint orch-tier-model";
-        row.textContent = i === 0 ? id : `${id} (failover ${i + 1})`;
+        row.textContent = i === 0 ? id : i18n("orch.failover_n", { id, n: i + 1 });
         row.title = id;
         modelMenuList.appendChild(row);
       });
@@ -131,7 +144,7 @@
     cfg.type = "button";
     cfg.className = "menu-item";
     cfg.setAttribute("data-model-action", "configure-orchestra");
-    cfg.textContent = "Configure tiers…";
+    cfg.textContent = i18n("orch.configure");
     modelMenuList.appendChild(cfg);
   }
 
@@ -157,19 +170,19 @@
     effortMenu.innerHTML = "";
     const head = document.createElement("div");
     head.className = "menu-section";
-    head.textContent = "Effort";
+    head.textContent = i18n("effort.head");
     effortMenu.appendChild(head);
     EFFORTS.forEach((e) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "menu-item";
       btn.dataset.effort = e.id;
-      btn.innerHTML = `<span class="mi effort-icon effort-${escapeAttr(e.id)}">${effortMeterHtml(e.id)}</span>${escapeAttr(e.label)}`;
+      btn.innerHTML = `<span class="mi effort-icon effort-${escapeAttr(e.id)}">${effortMeterHtml(e.id)}</span>${escapeAttr(i18n(e.labelKey))}`;
       effortMenu.appendChild(btn);
     });
     const optHead = document.createElement("div");
     optHead.className = "menu-section";
-    optHead.textContent = "Options";
+    optHead.textContent = i18n("effort.options");
     effortMenu.appendChild(optHead);
     const fastRow = document.createElement("div");
     fastRow.className = "menu-row menu-row-fast";
@@ -182,8 +195,9 @@
 
   function syncEffortUi() {
     const e = currentEffort();
+    const effortName = i18n(e.labelKey);
     if (effortLabel) {
-      effortLabel.textContent = e.label;
+      effortLabel.textContent = effortName;
     }
     const icon = document.getElementById("effort-icon");
     if (icon) {
@@ -191,7 +205,7 @@
     }
     if (effortBtn) {
       effortBtn.dataset.effort = effortId;
-      effortBtn.title = fastOn ? `${e.label} · Fast profile` : e.label;
+      effortBtn.title = fastOn ? `${effortName} · Fast profile` : effortName;
     }
     const fastMark = document.getElementById("effort-fast-mark");
     if (fastMark) {
@@ -264,7 +278,7 @@
       const rm = document.createElement("button");
       rm.type = "button";
       rm.className = "file-attach-remove";
-      rm.setAttribute("aria-label", "Remove file");
+      rm.setAttribute("aria-label", i18n("attach.remove"));
       rm.textContent = "×";
       rm.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -376,7 +390,7 @@
       btn.type = "button";
       btn.className = "menu-item";
       btn.setAttribute("data-model-action", "refresh");
-      btn.textContent = "No providers — open Settings";
+      btn.textContent = i18n("model.no_providers");
       modelMenuList.appendChild(btn);
       return;
     }
@@ -397,14 +411,14 @@
       if (!models.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
-        empty.textContent = p.models_error || (p.ready ? "No models" : "Not configured");
+        empty.textContent = p.models_error || i18n(p.ready ? "model.none" : "model.not_configured");
         modelMenuList.appendChild(empty);
         return;
       }
       if (!filtered.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
-        empty.textContent = "No matches";
+        empty.textContent = i18n("palette.no_matches");
         modelMenuList.appendChild(empty);
         return;
       }
@@ -425,7 +439,7 @@
     if (shown === 0 && q) {
       const empty = document.createElement("div");
       empty.className = "menu-hint";
-      empty.textContent = `No models match “${modelMenuFilter}”`;
+      empty.textContent = i18n("model.no_match", { q: modelMenuFilter });
       modelMenuList.appendChild(empty);
     }
   }
@@ -443,7 +457,7 @@
       btn.type = "button";
       btn.className = "menu-item";
       btn.setAttribute("data-model-action", "refresh");
-      btn.textContent = "No models — retry";
+      btn.textContent = i18n("model.retry");
       modelMenuList.appendChild(btn);
       return;
     }
@@ -508,18 +522,20 @@
     costWrap.classList.remove("hidden");
     if (costLabelEl) {
       costLabelEl.textContent = hasSpend ? formatUsd(liveTotal) : formatUsd(creditsInfo?.balance || 0);
-      costLabelEl.title = hasSpend ? "Session spend" : "Balance";
+      costLabelEl.title = i18n(hasSpend ? "cost.session_spend" : "cost.balance");
     }
     if (costBalanceEl) {
-      costBalanceEl.textContent = hasBalance ? "balance " + formatUsd(creditsInfo?.balance || 0) : "";
+      costBalanceEl.textContent = hasBalance
+        ? i18n("cost.balance_prefix", { amount: formatUsd(creditsInfo?.balance || 0) })
+        : "";
     }
     if (costSummaryEl) {
       const bits = [];
-      bits.push("session " + formatUsd(liveTotal));
+      bits.push(i18n("cost.session", { amount: formatUsd(liveTotal) }));
       if (turnCostAccum > 0) {
-        bits.push("current turn " + formatUsd(turnCostAccum));
+        bits.push(i18n("cost.current_turn", { amount: formatUsd(turnCostAccum) }));
       } else if (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0) {
-        bits.push("last turn " + formatUsd(lastTurnUsage.cost_usd));
+        bits.push(i18n("cost.last_turn", { amount: formatUsd(lastTurnUsage.cost_usd) }));
       }
       costSummaryEl.textContent = bits.join(" · ");
     }
@@ -772,7 +788,7 @@
         const file = item.getAsFile();
         if (!file) continue;
         if (file.size > MAX_ATTACH_BYTES) {
-          appendMsg("system", "Pasted image exceeds 20 MB limit");
+          appendMsg("system", i18n("paste.too_big"));
           continue;
         }
         handledImage = true;
@@ -810,7 +826,7 @@
       return;
     }
     if (open) {
-      if (modelMenuTitle) modelMenuTitle.textContent = "Models";
+      if (modelMenuTitle) modelMenuTitle.textContent = i18n("model.menu_title");
       if (modelMenuSearch) modelMenuSearch.style.display = "";
       modelMenuFilter = "";
       if (modelMenuSearch) {

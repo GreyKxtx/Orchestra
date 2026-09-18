@@ -188,7 +188,7 @@
           key: "empty",
           render: (had) => {
             const empty = railNode(had, "div", "start-recent-empty");
-            empty.textContent = "No workspaces yet — open a folder or clone a repository.";
+            empty.textContent = i18n("start.none");
             return empty;
           },
         },
@@ -269,7 +269,7 @@
       return;
     }
     const entry = known.find((p) => p.path === path);
-    startBusy("Opening " + ((entry && entry.name) || path) + "…", projectId || "");
+    startBusy(i18n("start.opening", { name: (entry && entry.name) || path }), projectId || "");
     pendingOpenId = projectId || "";
     pendingOpenPath = path;
     renderProjects();
@@ -301,7 +301,7 @@
     // ASYNCHRONOUSLY, so the promise it returns reads as true and the code
     // carried on as if the user had agreed.
     if (!(await openProject(path, true))) {
-      startError("Could not open " + path + ".");
+      startError(i18n("start.could_not_open", { path }));
       return;
     }
     await enterProject(path);
@@ -317,12 +317,12 @@
     const entry =
       known.find((p) => p.path === path) || known.find((p) => p.state === "ready");
     if (!entry) {
-      startError("Opened " + path + ", but it is not in the workspace list.");
+      startError(i18n("start.opened_not_listed", { path }));
       return;
     }
     await switchProject(entry.id);
     if (currentProjectId !== entry.id) {
-      startError("Opened " + path + ", but could not switch to it.");
+      startError(i18n("start.opened_not_switched", { path }));
     }
   }
 
@@ -336,7 +336,7 @@
     );
     const url = input ? String(input.value || "").trim() : "";
     if (!url) {
-      startError("Enter a repository URL.");
+      startError(i18n("start.enter_url"));
       return;
     }
     startError("");
@@ -352,7 +352,7 @@
         parent = "";
       }
     } else if (window.prompt) {
-      parent = window.prompt("Clone into which folder? (absolute path)") || "";
+      parent = window.prompt(i18n("start.clone_where")) || "";
     }
     parent = String(parent || "").trim();
     if (!parent) {
@@ -406,12 +406,12 @@
           const el = document.getElementById("start-error");
           if (el) {
             el.textContent =
-              "The folder for " + (item.dataset.path || "this workspace") + " is not there any more. ";
+              i18n("start.folder_missing", { name: item.dataset.path || "" });
             const drop = document.createElement("button");
             drop.type = "button";
             drop.className = "start-action start-error-action";
             drop.dataset.forgetId = item.dataset.projectId || "";
-            drop.textContent = "Remove from the list";
+            drop.textContent = i18n("start.remove_from_list");
             el.appendChild(drop);
             el.hidden = false;
           }
@@ -485,7 +485,7 @@
         path = "";
       }
     } else if (window.prompt) {
-      path = window.prompt("Project folder (absolute path)") || "";
+      path = window.prompt(i18n("start.project_folder")) || "";
     }
     return String(path || "").trim();
   }

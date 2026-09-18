@@ -404,15 +404,25 @@ func requireSameOrigin(next http.HandlerFunc) http.HandlerFunc {
 //     an inline <script>
 //   - connect-src 'self' covers the WebSocket to this same origin (CSP 3)
 //   - img-src allows data:, which is how an attached image previews
+//   - frame-src 'self' and frame-ancestors 'self' are the settings panel: it
+//     is a second document of ours (ui/web/scripts/bundle-settings-web.mjs)
+//     loaded in an iframe, because it declares its own palette under the token
+//     names the chat page uses. Both halves are needed and both were missing:
+//     'none' on the first blocked the load, 'none' on the second blocked the
+//     chat page from being its ancestor. The gear opened an empty dialog, and
+//     nothing said why — a blocked frame is a console line, not an error the
+//     page can catch. 'self' is not a weakening against clickjacking: the page
+//     an attacker controls is another origin, and that is still refused.
 const staticCSP = "default-src 'none'; " +
 	"script-src 'self'; " +
 	"style-src 'self'; " +
 	"img-src 'self' data:; " +
 	"font-src 'self'; " +
 	"connect-src 'self'; " +
+	"frame-src 'self'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
-	"frame-ancestors 'none'"
+	"frame-ancestors 'self'"
 
 // setStaticSecurityHeaders stamps the policy on every asset response. It is set
 // on all of them, not just the HTML, because a stylesheet or a script fetched

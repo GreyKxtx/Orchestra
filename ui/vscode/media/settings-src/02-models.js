@@ -27,7 +27,7 @@
     const btn = el("toggleApiKey");
     if (!field) return;
     field.type = apiKeyVisible ? "text" : "password";
-    if (btn) btn.textContent = apiKeyVisible ? "Hide" : "Show";
+    if (btn) btn.textContent = i18n(apiKeyVisible ? "set.prov.hide" : "set.prov.show");
   }
 
   /** @param {any} p @param {{ force?: boolean }} [opts] */
@@ -65,27 +65,27 @@
     const keyHint = el("keyHint");
     if (keyHint) {
       if (p.api_key_set && p.api_key) {
-        keyHint.textContent = "Saved key loaded — edit and Save to update";
+        keyHint.textContent = i18n("set.prov.key.loaded");
       } else if (p.api_key_set) {
-        keyHint.textContent = "Key saved — click Show to view";
+        keyHint.textContent = i18n("set.prov.key.saved");
       } else if (p.needs_key) {
-        keyHint.textContent = "API key required";
+        keyHint.textContent = i18n("set.prov.key.required");
       } else {
-        keyHint.textContent = "No API key needed";
+        keyHint.textContent = i18n("set.prov.key.none");
       }
     }
     const status = el("providerStatus");
     if (status) {
       if (p.active) {
-        status.textContent = "Active provider";
+        status.textContent = i18n("set.prov.status.active");
       } else if (p.ready) {
-        status.textContent = "Configured — models loaded when available";
+        status.textContent = i18n("set.prov.status.ready");
       } else if (p.needs_key && !p.api_key_set) {
-        status.textContent = "Enter API key and save to enable";
+        status.textContent = i18n("set.prov.status.need_key");
       } else if (p.custom && !p.api_base) {
-        status.textContent = "Enter API base URL for custom provider";
+        status.textContent = i18n("set.prov.status.need_base");
       } else {
-        status.textContent = "Not configured";
+        status.textContent = i18n("set.prov.status.none");
       }
     }
   }
@@ -97,7 +97,7 @@
     if (!providers.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = "Loading providers…";
+      empty.textContent = i18n("set.prov.loading");
       list.appendChild(empty);
       return;
     }
@@ -115,7 +115,9 @@
       if (!items || !items.length) return;
       const head = document.createElement("div");
       head.className = "pick-group-label";
-      head.textContent = cat;
+      // The five buckets the core sorts providers into; the catalogue names
+      // them again so the heading reads in the chosen language.
+      head.textContent = i18n("set.prov.cat." + cat.toLowerCase());
       list.appendChild(head);
       items.forEach((p) => {
         const btn = document.createElement("button");
@@ -154,17 +156,21 @@
     if (!list) return;
     list.innerHTML = "";
     if (!p) {
-      if (status) status.textContent = "Select a provider";
+      if (status) status.textContent = i18n("set.models.select_provider");
       return;
     }
     if (p.models_error) {
-      if (status) status.textContent = `Failed to load models: ${p.models_error}`;
+      if (status) status.textContent = i18n("set.models.failed", { detail: p.models_error });
     } else if (!p.ready) {
-      if (status) status.textContent = "Configure credentials and save, then refresh";
+      if (status) status.textContent = i18n("set.models.configure_first");
     } else if (!p.models || !p.models.length) {
-      if (status) status.textContent = "No models returned — try Refresh";
+      if (status) status.textContent = i18n("set.models.none_returned");
     } else {
-      if (status) status.textContent = `${p.models.length} models from ${p.name || p.key}`;
+      if (status)
+        status.textContent = i18n("set.models.count_from", {
+          n: p.models.length,
+          provider: p.name || p.key,
+        });
     }
     const models = p.models || [];
     const q = (modelSearchFilter || "").trim().toLowerCase();
@@ -172,12 +178,17 @@
     if (!filtered.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = q ? `No models match “${modelSearchFilter}”` : p.ready ? "No models listed" : "Provider not ready";
+      empty.textContent = q
+        ? i18n("set.models.no_match", { q: modelSearchFilter })
+        : i18n(p.ready ? "set.models.none_listed" : "set.models.not_ready");
       list.appendChild(empty);
       return;
     }
     if (status && filtered.length !== models.length) {
-      status.textContent = `${filtered.length} / ${models.length} models (filtered)`;
+      status.textContent = i18n("set.models.filtered", {
+        shown: filtered.length,
+        total: models.length,
+      });
     }
     filtered.forEach((m) => {
       const id = m.id || "";
@@ -193,7 +204,8 @@
       const badge = document.createElement("span");
       badge.className = "badge" + (isActive ? " running" : " ok");
       const ctx = formatContextTokens(m.context_tokens);
-      if (isActive) badge.textContent = ctx ? `active · ${ctx}` : "active";
+      if (isActive)
+        badge.textContent = ctx ? i18n("set.models.active_ctx", { ctx }) : i18n("set.models.active");
       else if (ctx) badge.textContent = ctx;
       else badge.textContent = m.owned_by || "";
       btn.appendChild(badge);
@@ -251,7 +263,7 @@
   el("refreshModels")?.addEventListener("click", () => {
     showError("");
     const status = el("modelsStatus");
-    if (status) status.textContent = "Refreshing models…";
+    if (status) status.textContent = i18n("set.models.refreshing");
     vscode.postMessage({
       type: "refreshModels",
       provider: selectedProviderKey || "",

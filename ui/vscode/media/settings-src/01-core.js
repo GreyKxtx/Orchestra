@@ -128,3 +128,59 @@
   if (typeof window !== "undefined" && window.__ORCH_MCP_CATALOG) {
     mcpCatalog = window.__ORCH_MCP_CATALOG;
   }
+
+  // ---- language -----------------------------------------------------------
+  //
+  // This panel is its own document, so it reads the choice itself rather than
+  // waiting for a message: the VS Code host stamps window.__ORCH_LANG into the
+  // webview's head (from the `orchestra.language` setting), and on the web
+  // ui/web/src/settings/frame.js stamps it from localStorage. Empty means
+  // "follow the environment", which pickLang() reads off navigator.language.
+
+  /** What the picker shows when no language is forced. */
+  const UI_LANG_AUTO = "";
+
+  function savedUiLangSetting() {
+    const raw = typeof window !== "undefined" ? window.__ORCH_LANG : "";
+    return typeof raw === "string" ? raw : "";
+  }
+
+  function renderUiLanguageSelect() {
+    const sel = /** @type {HTMLSelectElement | null} */ (el("uiLanguage"));
+    if (!sel) return;
+    const current = savedUiLangSetting();
+    sel.innerHTML = "";
+    const auto = document.createElement("option");
+    auto.value = UI_LANG_AUTO;
+    auto.textContent = i18n("set.lang.auto");
+    sel.appendChild(auto);
+    for (const lang of UI_LANGUAGES) {
+      const opt = document.createElement("option");
+      opt.value = lang.id;
+      // A language names itself in its own language — a reader looking for
+      // "Русский" should not have to find it under "Russian".
+      opt.textContent = lang.label;
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+  }
+
+  /** Re-read the language and repaint everything already on screen. */
+  function applyUiLanguage() {
+    setUiLang(savedUiLangSetting());
+    applyStaticI18n();
+    renderUiLanguageSelect();
+  }
+
+  el("uiLanguage")?.addEventListener("change", () => {
+    const sel = /** @type {HTMLSelectElement | null} */ (el("uiLanguage"));
+    const lang = sel ? sel.value : "";
+    if (typeof window !== "undefined") {
+      window.__ORCH_LANG = lang;
+    }
+    // The host persists it — a VS Code setting, or this browser's storage —
+    // and tells the chat window, which is a different document.
+    vscode.postMessage({ type: "setLanguage", lang });
+    applyUiLanguage();
+    repaintTranslatedPanels();
+  });

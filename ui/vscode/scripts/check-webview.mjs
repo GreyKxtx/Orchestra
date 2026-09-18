@@ -17,6 +17,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { catalogueKeys, markupKeys } from "./i18n-keys.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -163,6 +164,41 @@ if (typeof formatToolDuration !== "function") {
     fail("01-dom-state.js must bind `const host = acquireVsCodeApi()`");
   } else {
     console.log("ok   host seam: bound in 01-dom-state.js");
+  }
+}
+
+// 5. Every data-i18n key in the markup exists in the catalogue.
+//
+// A key with a typo is not an error anywhere: i18n() returns the key itself,
+// so the screen reads "set.mcp.done" where it should say "Done". That is
+// invisible to every other check here — the bundle parses, the ids are all
+// present — and only shows up to whoever opens the panel.
+{
+  const known = catalogueKeys(path.join(root, "media"));
+  if (known.size === 0) {
+    fail("no keys could be read out of media/i18n.js");
+  }
+  const files = [
+    path.join(root, "media", "settings-body.html"),
+    path.join(root, "src", "chat", "panel.ts"),
+  ];
+  let used = 0;
+  const missing = [];
+  for (const file of files) {
+    for (const { key, line } of markupKeys(file)) {
+      used++;
+      if (!known.has(key)) {
+        missing.push(`${path.relative(root, file)}:${line} ${key}`);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    fail(
+      `${missing.length} data-i18n key(s) are not in media/i18n.js — each one renders as the ` +
+        `key itself: ${missing.join(", ")}`
+    );
+  } else {
+    console.log(`ok   ${used} data-i18n keys, all in the catalogue (${known.size} keys)`);
   }
 }
 

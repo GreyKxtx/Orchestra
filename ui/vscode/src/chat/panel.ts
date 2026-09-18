@@ -219,6 +219,22 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     };
     watcher.onDidChange(onConfigChanged, null, this.disposables);
     watcher.onDidCreate(onConfigChanged, null, this.disposables);
+
+    // The language can change from the settings panel, from settings.json, or
+    // with the editor's own display language. The chat window is a different
+    // document from the panel that offers the choice, so it hears about it
+    // here rather than being told by the panel.
+    vscode.workspace.onDidChangeConfiguration(
+      (e) => {
+        if (!e.affectsConfiguration("orchestra.language")) {
+          return;
+        }
+        this.post({ type: "uiLang", lang: applyUiLanguageFromSettings() });
+      },
+      null,
+      this.disposables
+    );
+
     this.disposables.push(watcher, {
       dispose: () => {
         if (timer) {
@@ -2448,37 +2464,37 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         <div id="chrome-brand" class="chrome-brand" title="Orchestra" aria-hidden="true">
           <img src="${logoUri}" alt="" width="22" height="22" class="chrome-logo" />
         </div>
-        <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Chat sessions"></div>
-        <div id="view-switch" class="view-switch" role="tablist" aria-label="View">
+        <div id="session-tabs" class="session-tabs" role="tablist" data-i18n-aria-label="chrome.sessions_aria" aria-label="Chat sessions"></div>
+        <div id="view-switch" class="view-switch" role="tablist" data-i18n-aria-label="chrome.view_aria" aria-label="View">
           <button type="button" id="view-chat-btn" class="view-segment" role="tab" aria-selected="true" aria-controls="messages">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M20 12a8 8 0 11-3.2-6.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
               <path d="M8 11h8M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
-            Chat
+            <span data-i18n="chrome.view_chat">Chat</span>
           </button>
           <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M4 18V7M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
               <path d="M8 15V11M12 15V8M16 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
-            Trajectory
+            <span data-i18n="chrome.view_trajectory">Trajectory</span>
           </button>
         </div>
         <div class="chrome-actions">
-          <button type="button" id="session-new-btn" class="chrome-action" title="New chat" aria-label="New chat">
+          <button type="button" id="session-new-btn" class="chrome-action" data-i18n-title="chrome.new_chat" title="New chat" data-i18n-aria-label="chrome.new_chat" aria-label="New chat">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
             </svg>
           </button>
-          <button type="button" id="session-history-btn" class="chrome-action" title="All sessions" aria-label="All sessions">
+          <button type="button" id="session-history-btn" class="chrome-action" data-i18n-title="chrome.all_sessions" title="All sessions" data-i18n-aria-label="chrome.all_sessions" aria-label="All sessions">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2"/>
               <path d="M12 7.5v4.5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
           <span id="chrome-hint" class="chrome-hint hidden" aria-live="polite"></span>
-          <button type="button" id="settings-btn" class="chrome-action chrome-icon" title="Settings" aria-label="Settings">
+          <button type="button" id="settings-btn" class="chrome-action chrome-icon" data-i18n-title="chrome.settings" title="Settings" data-i18n-aria-label="chrome.settings" aria-label="Settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="currentColor" stroke-width="2"/>
               <path d="M19.4 13a7.8 7.8 0 000-2l2-1.2-2-3.5-2.3 1a7.9 7.9 0 00-1.7-1L15 3h-4l-.4 2.3a7.9 7.9 0 00-1.7 1l-2.3-1-2 3.5 2 1.2a7.8 7.8 0 000 2l-2 1.2 2 3.5 2.3-1a7.9 7.9 0 001.7 1L11 21h4l.4-2.3a7.9 7.9 0 001.7-1l2.3 1 2-3.5-2-1.2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
@@ -2488,11 +2504,11 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       </div>
     </header>
     <div id="session-menu" class="menu top-menu" role="menu">
-      <button type="button" class="menu-item menu-item-action" data-session-action="new">New chat</button>
+      <button type="button" class="menu-item menu-item-action" data-session-action="new" data-i18n="chrome.new_chat">New chat</button>
       <div id="session-menu-list"></div>
     </div>
     <div id="subagents-bar" class="subagents-bar hidden">
-      <div class="subagents-head">Subagents</div>
+      <div class="subagents-head" data-i18n="chrome.subagents">Subagents</div>
       <div id="subagents-tree" class="subagents-tree"></div>
     </div>
     <div id="workflow-bar" class="workflow-bar hidden">
@@ -2505,31 +2521,31 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     <div id="messages"></div>
     <div id="trajectory" class="trajectory" role="tabpanel" aria-labelledby="view-trajectory-btn">
       <div id="traj-toolbar" class="traj-toolbar">
-        <div id="traj-metric" class="traj-metric" role="tablist" aria-label="Timeline scale">
-          <button type="button" id="traj-metric-duration" class="traj-metric-seg" role="tab" data-metric="duration" aria-selected="true">Duration</button>
-          <button type="button" id="traj-metric-turns" class="traj-metric-seg" role="tab" data-metric="turns" aria-selected="false">Turns</button>
-          <button type="button" id="traj-metric-calls" class="traj-metric-seg" role="tab" data-metric="calls" aria-selected="false">Calls</button>
+        <div id="traj-metric" class="traj-metric" role="tablist" data-i18n-aria-label="traj.scale_aria" aria-label="Timeline scale">
+          <button type="button" id="traj-metric-duration" class="traj-metric-seg" role="tab" data-metric="duration" aria-selected="true" data-i18n="traj.duration">Duration</button>
+          <button type="button" id="traj-metric-turns" class="traj-metric-seg" role="tab" data-metric="turns" aria-selected="false" data-i18n="traj.turns">Turns</button>
+          <button type="button" id="traj-metric-calls" class="traj-metric-seg" role="tab" data-metric="calls" aria-selected="false" data-i18n="traj.calls">Calls</button>
         </div>
-        <input type="search" id="traj-search" class="traj-search" placeholder="Search" aria-label="Filter trajectory rows" />
+        <input type="search" id="traj-search" class="traj-search" data-i18n-placeholder="traj.search" placeholder="Search" data-i18n-aria-label="traj.search_aria" aria-label="Filter trajectory rows" />
       </div>
       <div id="traj-timeline" class="traj-timeline" aria-hidden="true"></div>
       <div id="trajectory-summary" class="traj-summary" aria-live="polite"></div>
       <div class="traj-body">
         <div id="trajectory-rows" class="traj-rows"></div>
-        <aside id="traj-panel" class="traj-panel" hidden aria-label="Selected row">
+        <aside id="traj-panel" class="traj-panel" hidden data-i18n-aria-label="traj.row_aria" aria-label="Selected row">
           <div class="traj-panel-head">
             <span id="traj-panel-kind" class="traj-panel-kind"></span>
             <span id="traj-panel-loc" class="traj-panel-loc"></span>
-            <button type="button" id="traj-panel-close" class="traj-panel-close" aria-label="Close details">
+            <button type="button" id="traj-panel-close" class="traj-panel-close" data-i18n-aria-label="traj.close_details" aria-label="Close details">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
               </svg>
             </button>
           </div>
-          <div id="traj-panel-tabs" class="traj-panel-tabs" role="tablist" aria-label="Detail view">
-            <button type="button" id="traj-tab-summary" class="traj-panel-tab" role="tab" data-tab="summary" aria-selected="true">Summary</button>
-            <button type="button" id="traj-tab-preview" class="traj-panel-tab" role="tab" data-tab="preview" aria-selected="false">Preview</button>
-            <button type="button" id="traj-tab-raw" class="traj-panel-tab" role="tab" data-tab="raw" aria-selected="false">Raw</button>
+          <div id="traj-panel-tabs" class="traj-panel-tabs" role="tablist" data-i18n-aria-label="traj.detail_aria" aria-label="Detail view">
+            <button type="button" id="traj-tab-summary" class="traj-panel-tab" role="tab" data-tab="summary" aria-selected="true" data-i18n="traj.tab_summary">Summary</button>
+            <button type="button" id="traj-tab-preview" class="traj-panel-tab" role="tab" data-tab="preview" aria-selected="false" data-i18n="traj.tab_preview">Preview</button>
+            <button type="button" id="traj-tab-raw" class="traj-panel-tab" role="tab" data-tab="raw" aria-selected="false" data-i18n="traj.tab_raw">Raw</button>
           </div>
           <div id="traj-panel-body" class="traj-panel-body"></div>
         </aside>
@@ -2540,8 +2556,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         <div class="pending-head">
           <span id="pending-label" class="pending-label">0 pending changes</span>
           <div class="pending-head-actions">
-            <button type="button" id="pending-apply-btn" class="pending-icon-btn pending-apply-btn" title="Apply changes" aria-label="Apply">✓</button>
-            <button type="button" id="pending-reject-btn" class="pending-icon-btn pending-reject-btn" title="Discard changes" aria-label="Discard">✗</button>
+            <button type="button" id="pending-apply-btn" class="pending-icon-btn pending-apply-btn" data-i18n-title="pending.apply_title" title="Apply changes" data-i18n-aria-label="pending.apply_aria" aria-label="Apply">✓</button>
+            <button type="button" id="pending-reject-btn" class="pending-icon-btn pending-reject-btn" data-i18n-title="pending.discard_title" title="Discard changes" data-i18n-aria-label="pending.discard_aria" aria-label="Discard">✗</button>
           </div>
         </div>
         <div id="pending-review-list" class="pending-review-list"></div>
@@ -2552,17 +2568,17 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         <div class="diff-viewer-head">
           <span id="diff-viewer-title" class="diff-viewer-title"></span>
           <div class="diff-viewer-actions">
-            <button type="button" id="diff-viewer-editor-btn" class="pill small">Open in editor</button>
-            <button type="button" id="diff-viewer-close-btn" class="pill small">Close</button>
+            <button type="button" id="diff-viewer-editor-btn" class="pill small" data-i18n="diff.open_in_editor">Open in editor</button>
+            <button type="button" id="diff-viewer-close-btn" class="pill small" data-i18n="diff.close">Close</button>
           </div>
         </div>
         <div class="diff-viewer-panes">
           <div class="diff-pane">
-            <div class="diff-pane-label">Before</div>
+            <div class="diff-pane-label" data-i18n="diff.before">Before</div>
             <div id="diff-pane-before" class="diff-pane-body"></div>
           </div>
           <div class="diff-pane">
-            <div class="diff-pane-label">After</div>
+            <div class="diff-pane-label" data-i18n="diff.after">After</div>
             <div id="diff-pane-after" class="diff-pane-body"></div>
           </div>
         </div>
@@ -2573,11 +2589,11 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         <div class="image-preview-head">
           <span id="image-preview-title" class="image-preview-title"></span>
           <div class="image-preview-actions">
-            <button type="button" id="image-preview-prev-btn" class="pill small" aria-label="Previous image">‹</button>
-            <button type="button" id="image-preview-next-btn" class="pill small" aria-label="Next image">›</button>
+            <button type="button" id="image-preview-prev-btn" class="pill small" data-i18n-aria-label="image.prev" aria-label="Previous image">‹</button>
+            <button type="button" id="image-preview-next-btn" class="pill small" data-i18n-aria-label="image.next" aria-label="Next image">›</button>
             <span id="image-preview-counter" class="image-preview-counter"></span>
-            <button type="button" id="image-preview-open-btn" class="pill small">Open file</button>
-            <button type="button" id="image-preview-close-btn" class="pill small">Close</button>
+            <button type="button" id="image-preview-open-btn" class="pill small" data-i18n="image.open_file">Open file</button>
+            <button type="button" id="image-preview-close-btn" class="pill small" data-i18n="image.close">Close</button>
           </div>
         </div>
         <div class="image-preview-body">
@@ -2596,7 +2612,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
     </div>
     <div id="composer-wrap">
       <div id="todos-bar" class="todos-bar hidden">
-        <button type="button" id="todos-chip" class="todos-chip" aria-expanded="false" aria-label="Task checklist">
+        <button type="button" id="todos-chip" class="todos-chip" aria-expanded="false" data-i18n-aria-label="todos.aria" aria-label="Task checklist">
           <span id="todos-chip-glyph" class="todos-chip-glyph" aria-hidden="true">□</span>
           <span id="todos-chip-summary" class="todos-chip-summary"></span>
           <span id="todos-chip-chev" class="todos-chip-chev" aria-hidden="true">▾</span>
@@ -2607,21 +2623,21 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       <div id="effort-menu" class="menu effort" role="menu"></div>
       <div id="access-menu" class="menu access" role="menu"></div>
       <div id="model-menu" class="menu model-pop" role="menu">
-        <div class="menu-section" id="model-menu-title">Models</div>
-        <input id="model-menu-search" type="search" class="model-menu-search" placeholder="Search models…" autocomplete="off" />
+        <div class="menu-section" id="model-menu-title" data-i18n="model.menu_title">Models</div>
+        <input id="model-menu-search" type="search" class="model-menu-search" data-i18n-placeholder="model.search" placeholder="Search models…" autocomplete="off" />
         <div id="model-menu-list" class="model-list">
-          <button type="button" class="menu-item" data-model-action="refresh">Refresh list</button>
+          <button type="button" class="menu-item" data-model-action="refresh" data-i18n="model.refresh">Refresh list</button>
         </div>
       </div>
       <div id="palette-menu" class="menu palette-menu hidden" role="listbox"></div>
       <div id="composer">
         <div id="chip-files" class="chip-files"></div>
-        <div id="message-queue" class="message-queue hidden" aria-label="Queued messages"></div>
+        <div id="message-queue" class="message-queue hidden" data-i18n-aria-label="queue.aria" aria-label="Queued messages"></div>
         <div id="composer-status" class="composer-status hidden" aria-live="polite" aria-busy="false">
           <span class="composer-status-spinner" aria-hidden="true"></span>
           <span id="composer-status-label">Working…</span>
         </div>
-        <textarea id="input" rows="2" placeholder="Message, @ for files, / for commands…"></textarea>
+        <textarea id="input" rows="2" data-i18n-placeholder="composer.placeholder" placeholder="Message, @ for files, / for commands…"></textarea>
         <div id="toolbar">
           <div id="toolbar-left">
             <button type="button" class="pill" id="mode-btn" aria-haspopup="menu">
@@ -2640,11 +2656,11 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               <span id="access-label">Ask</span>
               <span class="chev">▾</span>
             </button>
-            <button type="button" class="pill" id="orch-config-btn" hidden title="Orchestra roles & tiers">
+            <button type="button" class="pill" id="orch-config-btn" hidden data-i18n-title="composer.orchestra_title" title="Orchestra roles & tiers">
               <span class="ico">◎</span>
               <span>Orchestra</span>
             </button>
-            <button type="button" class="pill" id="model-pill" aria-haspopup="menu" title="Model">
+            <button type="button" class="pill" id="model-pill" aria-haspopup="menu" data-i18n-title="model.title" title="Model">
               <span id="model-label">Model</span>
               <span class="chev">▾</span>
             </button>
@@ -2654,40 +2670,40 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               <span id="status-lsp"></span>
             </div>
             <div id="cost-wrap" class="cost-wrap hidden">
-              <button type="button" id="cost-btn" class="cost-btn" aria-label="Spend and balance">
+              <button type="button" id="cost-btn" class="cost-btn" data-i18n-aria-label="cost.aria" aria-label="Spend and balance">
                 <span id="cost-label">$0.00</span>
               </button>
-              <div id="cost-popover" class="cost-popover hidden" role="dialog" aria-label="Spend and balance">
+              <div id="cost-popover" class="cost-popover hidden" role="dialog" data-i18n-aria-label="cost.aria" aria-label="Spend and balance">
                 <div class="cost-head">
-                  <span class="cost-title">Spend</span>
+                  <span class="cost-title" data-i18n="cost.title">Spend</span>
                   <span id="cost-balance" class="cost-balance"></span>
                 </div>
                 <div id="cost-summary" class="cost-summary"></div>
                 <div id="cost-rows" class="cost-rows"></div>
-                <p class="cost-note">Provider-reported cost · OpenRouter usage accounting</p>
+                <p class="cost-note" data-i18n="cost.note">Provider-reported cost · OpenRouter usage accounting</p>
               </div>
             </div>
             <div id="context-wrap" class="context-wrap">
-              <button type="button" id="context-btn" class="context-btn" aria-label="Context usage">
+              <button type="button" id="context-btn" class="context-btn" data-i18n-aria-label="ctx.aria" aria-label="Context usage">
                 <span class="context-ring-fill" id="context-ring-fill"></span>
               </button>
-              <div id="context-popover" class="context-popover hidden" role="dialog" aria-label="Context usage">
+              <div id="context-popover" class="context-popover hidden" role="dialog" data-i18n-aria-label="ctx.aria" aria-label="Context usage">
                 <div class="ctx-head">
-                  <span class="ctx-title">Context</span>
+                  <span class="ctx-title" data-i18n="ctx.title">Context</span>
                   <span id="ctx-pct" class="ctx-pct"></span>
                 </div>
                 <div id="ctx-summary" class="ctx-summary"></div>
                 <div id="ctx-bar" class="ctx-bar"></div>
                 <div id="ctx-rows" class="ctx-rows"></div>
-                <p class="ctx-note">Estimate from last LLM step · conversation grows during the turn</p>
+                <p class="ctx-note" data-i18n="ctx.note">Estimate from last LLM step · conversation grows during the turn</p>
               </div>
             </div>
-            <button type="button" class="icon-btn" id="attach-btn" title="Attach files" aria-label="Attach files">
+            <button type="button" class="icon-btn" id="attach-btn" data-i18n-title="composer.attach" title="Attach files" data-i18n-aria-label="composer.attach" aria-label="Attach files">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M9.5 3.5l-4.2 4.2a2.1 2.1 0 003 3L13 6a3.5 3.5 0 10-5-5L3.2 5.8a4.8 4.8 0 106.8 6.8L13 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
               </svg>
             </button>
-            <button type="button" id="send" title="Send" aria-label="Send">
+            <button type="button" id="send" data-i18n-title="composer.send" title="Send" data-i18n-aria-label="composer.send" aria-label="Send">
               <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 12.5V3.5M8 3.5L4 7.5M8 3.5l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>

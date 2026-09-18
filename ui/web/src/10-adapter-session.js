@@ -561,6 +561,46 @@
     }
   }
 
+  /**
+   * Store the chosen language and tell both documents that read it: the chat
+   * renderer in this page, and the settings panel in its iframe.
+   * @param {string} lang
+   */
+  function applyUiLanguageChoice(lang) {
+    try {
+      if (lang) {
+        localStorage.setItem("orchestra.lang", lang);
+      } else {
+        localStorage.removeItem("orchestra.lang");
+      }
+    } catch (e) {
+      // A locked-down browser still gets the change for this page's lifetime.
+    }
+    // The renderer's own handler runs inside this call and switches the
+    // catalogue, so everything below already speaks the new language.
+    toRenderer({ type: "uiLang", lang });
+    postToSettings({ type: "language", lang });
+    // The sidebar and the start screen are this host's, not the renderer's:
+    // nothing in toRenderer reaches them, and they would have kept the old
+    // language until the next time something happened to repaint them.
+    repaintHostChrome();
+  }
+
+  /**
+   * Redraw the parts of the window the web host owns. Guarded because it runs
+   * on a language change, which can land before the first project list has
+   * arrived — and a repaint is never worth an exception on the message path.
+   */
+  function repaintHostChrome() {
+    try {
+      renderProjects();
+      renderStartScreen();
+      relabelGraphChrome();
+    } catch (e) {
+      // Nothing here is worth breaking the message that triggered it.
+    }
+  }
+
   /** @param {any} msg */
   function dispatchToCore(msg) {
     switch (msg.type) {

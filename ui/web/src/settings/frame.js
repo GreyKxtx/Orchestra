@@ -45,6 +45,25 @@
     window.__ORCH_ICON_V = "web";
   }
 
+  // ---- language -----------------------------------------------------------
+  //
+  // The panel reads window.__ORCH_LANG at boot (settings-src/01-core.js). In
+  // VS Code the extension stamps it into the webview's head; here the frame is
+  // same-origin with the page that owns the stored choice, so it reads it
+  // directly rather than waiting for a message and painting English first.
+
+  function savedFrameLang() {
+    try {
+      return (window.localStorage && window.localStorage.getItem("orchestra.lang")) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  if (typeof window.__ORCH_LANG !== "string") {
+    window.__ORCH_LANG = savedFrameLang();
+  }
+
   // ---- Appearance, which exists only on this host -------------------------
   //
   // VS Code panels follow the editor's theme, so the shared markup has no such
@@ -134,6 +153,13 @@
     }
     if (msg.type === "scale") {
       syncFrameScale(SCALES.indexOf(String(msg.scale)) >= 0 ? String(msg.scale) : "auto");
+    }
+    if (msg.type === "language") {
+      // The parent stores the choice and echoes it, so a change made in the
+      // chat window reaches an already-open panel.
+      window.__ORCH_LANG = typeof msg.lang === "string" ? msg.lang : "";
+      applyUiLanguage();
+      repaintTranslatedPanels();
     }
     if (msg.type === "workspace") {
       // Every setting on these screens belongs to one workspace's own

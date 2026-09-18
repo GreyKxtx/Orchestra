@@ -6,6 +6,10 @@
   // a language is one more object in CATALOGUE plus one more entry in
   // UI_LANGUAGES, and nothing else changes.
   //
+  // This file is not part of chat-src or settings-src: both bundles include it,
+  // on both hosts, so the chat window and the settings panel read one catalogue
+  // and a string that moves between them keeps its key.
+  //
   // Why a catalogue compiled into the bundle rather than files fetched at
   // runtime: the VS Code webview has no network of its own and the browser page
   // is served under a CSP with default-src 'none', so a fetch would be blocked
@@ -74,6 +78,614 @@
       "notice.context_nearly_full": "Context is nearly full — the chat history will be summarised",
       "notice.compaction_done": "Chat summarised: history compressed, work continues",
       "notice.compaction": "Chat summary — {detail}",
+
+      // ---- the window's own chrome --------------------------------------
+      "chrome.new_chat": "New chat",
+      "chrome.all_sessions": "All sessions",
+      "chrome.settings": "Settings",
+      "chrome.sessions_aria": "Chat sessions",
+      "chrome.view_aria": "View",
+      "chrome.view_chat": "Chat",
+      "chrome.view_trajectory": "Trajectory",
+      "chrome.subagents": "Subagents",
+
+      "traj.scale_aria": "Timeline scale",
+      "traj.duration": "Duration",
+      "traj.turns": "Turns",
+      "traj.calls": "Calls",
+      "traj.search": "Search",
+      "traj.search_aria": "Filter trajectory rows",
+      "traj.row_aria": "Selected row",
+      "traj.close_details": "Close details",
+      "traj.detail_aria": "Detail view",
+      "traj.tab_summary": "Summary",
+      "traj.tab_preview": "Preview",
+      "traj.tab_raw": "Raw",
+
+      "pending.apply_title": "Apply changes",
+      "pending.apply_aria": "Apply",
+      "pending.discard_title": "Discard changes",
+      "pending.discard_aria": "Discard",
+
+      "diff.open_in_editor": "Open in editor",
+      "diff.close": "Close",
+      "diff.before": "Before",
+      "diff.after": "After",
+
+      "image.prev": "Previous image",
+      "image.next": "Next image",
+      "image.open_file": "Open file",
+      "image.close": "Close",
+
+      "todos.aria": "Task checklist",
+      "model.menu_title": "Models",
+      "model.search": "Search models…",
+      "model.refresh": "Refresh list",
+      "model.title": "Model",
+      "queue.aria": "Queued messages",
+      "composer.placeholder": "Message, @ for files, / for commands…",
+      "composer.attach": "Attach files",
+      "composer.send": "Send",
+      "composer.orchestra_title": "Orchestra roles & tiers",
+      "cost.aria": "Spend and balance",
+      "cost.title": "Spend",
+      "cost.note": "Provider-reported cost · OpenRouter usage accounting",
+      "ctx.aria": "Context usage",
+      "ctx.title": "Context",
+      "ctx.note": "Estimate from last LLM step · conversation grows during the turn",
+      "ctx.row.conversation": "Conversation",
+      "ctx.row.prompt": "Prompt context",
+      "ctx.row.completion": "Completion",
+      "ctx.row.reserved": "Reserved for reply",
+
+      "cmd.clear": "New chat",
+      "cmd.compact": "Compress LLM context",
+      "cmd.help": "Show commands",
+      "cmd.model": "Change model",
+      "cmd.rewind": "Checkpoint rewind help",
+      "cmd.sessions": "Switch session",
+      "cmd.settings": "Open settings",
+
+      "tab.close": "Close session",
+      "code.open_file": "Open file",
+      "reason.brief": "Thought briefly",
+      "reason.for": "Thought for {n}s",
+      "diff.no_changes": "No line changes detected",
+      "diff.unavailable": "Diff preview unavailable",
+
+      "perm.install_lsp": "Install language server?",
+      "perm.allow_tool": "Allow {tool}?",
+      "perm.tool": "tool",
+      "perm.install_extra": "Install the language server for this workspace, or skip.",
+      "perm.skip": "Skip",
+      "perm.install_once": "Install once",
+      "perm.install_always": "Install always",
+      "perm.deny": "Deny",
+      "perm.allow_once": "Allow once",
+      "perm.allow_always": "Allow always",
+      "question.step": "Question {n}/{total}",
+      "question.next": "Next",
+
+      "queue.remove": "Remove from queue",
+      "typing.aria": "Assistant is working",
+      "palette.files": "Files",
+      "palette.no_files": "No files found",
+      "palette.no_matches": "No matches",
+      "attach.remove": "Remove file",
+      "paste.too_big": "Pasted image exceeds 20 MB limit",
+
+      "msg.rewind_title": "Rewind to here",
+      "msg.rewind": "↩ Rewind",
+      "msg.branch_title": "Branch a new chat from here",
+      "msg.branch": "⑂ Branch",
+      "msg.show_older": "Show {n} older messages",
+
+      "traj.shell_output": "shell output",
+      "traj.unavailable": "Trajectory unavailable: {detail}",
+      "traj.not_recorded": "No trajectory was recorded for this session — it predates the log.",
+      "traj.loading": "Loading trajectory…",
+      "traj.empty": "Nothing has happened in this session yet.",
+      "traj.turns_one": "1 turn",
+      "traj.turns_n": "{n} turns",
+      "traj.rows_n": "{n} rows",
+      "traj.live_n": "{n} live",
+      "traj.matching_n": "{n} matching",
+      "traj.refresh_failed": "could not refresh: {detail}",
+      "traj.fact.kind": "kind",
+      "traj.fact.label": "label",
+      "traj.fact.outcome": "outcome",
+      "traj.fact.offset": "offset",
+      "traj.fact.duration": "duration",
+      "traj.fact.tokens_in": "tokens in",
+      "traj.fact.tokens_out": "tokens out",
+      "traj.fact.live": "live",
+      "traj.fact.yes": "yes",
+      "traj.fact.event": "event",
+      "traj.fact.seq": "seq",
+      "traj.no_payload": "This row records that the event happened; it carries no payload.",
+      "traj.no_preview": "Nothing to preview for this row.",
+      "traj.open_full_diff": "Open full diff",
+      "traj.too_large": "The file is too large to align inline ({n} lines) — open the full diff.",
+      "traj.no_line_changed": "No line changed in this file.",
+      "traj.recorded_event": "recorded event",
+      "traj.live_row": "row (live — not yet read back from the log)",
+      "traj.result": "result",
+
+      "orch.tiers": "Orchestra tiers",
+      "orch.loading_map": "Loading tier map…",
+      "orch.tier_models": "Orchestra tier models",
+      "orch.l5_not_set": "L5 not set",
+      "orch.fallback_main": "— (main model fallback)",
+      "orch.not_set": "not set — falls back to the main model",
+      "orch.failover_n": "{id} (failover {n})",
+      "orch.configure": "Configure tiers…",
+
+      "effort.head": "Effort",
+      "effort.options": "Options",
+      "effort.low": "Low",
+      "effort.medium": "Medium",
+      "effort.high": "High",
+      // The core names these roles; the catalogue names them again so the panel
+      // can read in the reader's language. A role the core adds later falls
+      // back to whatever label it sends.
+      "orch.role.planner": "Orchestrator",
+      "orch.role.lead": "Dept Leads",
+      "orch.role.complex": "Worker · complex",
+      "orch.role.focused": "Worker · focused",
+      "orch.role.micro": "Worker · micro",
+      "orch.role.embed": "Embeddings",
+      "model.no_providers": "No providers — open Settings",
+      "model.none": "No models",
+      "model.not_configured": "Not configured",
+      "model.no_match": "No models match “{q}”",
+      "model.retry": "No models — retry",
+
+      "cost.session_spend": "Session spend",
+      "cost.balance": "Balance",
+      "cost.balance_prefix": "balance {amount}",
+      "cost.session": "session {amount}",
+      "cost.current_turn": "current turn {amount}",
+      "cost.last_turn": "last turn {amount}",
+
+      "conn.error": "connection error",
+      "session.none": "No saved sessions",
+      "session.delete": "Delete chat",
+      "turn.failed": "turn failed",
+      "turn.writing": "Writing…",
+
+      // ---- the sidebar and the start screen (the browser and the desktop) ---
+      "rail.aria": "Projects and sessions",
+      "rail.close_settings": "Close settings",
+      "rail.width": "Sidebar width",
+      "rail.show": "Show sidebar",
+      "rail.search_chats": "Search chats",
+      "rail.search_aria": "Search this workspace's chats",
+      "rail.delete_chat": "Delete this chat",
+      "rail.delete_confirm": "Delete?",
+      "rail.delete_confirm_title": "Click again to delete this chat for good",
+      "rail.add_workspace": "Add a workspace folder",
+      "rail.new_session": "New session in this workspace",
+      "rail.new_session_label": "New session",
+      "rail.now": "now",
+      "rail.other_workspaces": "Other workspaces",
+      "rail.no_sessions": "No sessions yet",
+      "rail.no_match": "No chat mentions “{q}”",
+      "rail.chats_one": "1 chat",
+      "rail.chats_n": "{n} chats",
+      "rail.waiting": " — waiting for you",
+      "rail.close_project": "Close project",
+      "rail.forget_project": "Remove from list",
+      "rail.delete_no_workspace": "The workspace is not open, so its chats cannot be deleted.",
+      "rail.delete_failed": "Could not delete the chat: {detail}",
+
+      "start.lead": "Open a workspace to start working in it.",
+      "start.open_folder": "Open folder…",
+      "start.clone_github": "Clone from GitHub…",
+      "start.clone_url_label": "Repository URL",
+      "start.clone": "Clone",
+      "start.cancel": "Cancel",
+      "start.clone_hint":
+        "You will be asked where to put it. Private repositories need git credentials already set up on this machine.",
+      "start.recent": "Recent workspaces",
+      "start.none": "No workspaces yet — open a folder or clone a repository.",
+      "start.opening": "Opening {name}…",
+      "start.could_not_open": "Could not open {path}.",
+      "start.opened_not_listed": "Opened {path}, but it is not in the workspace list.",
+      "start.opened_not_switched": "Opened {path}, but could not switch to it.",
+      "start.enter_url": "Enter a repository URL.",
+      "start.clone_where": "Clone into which folder? (absolute path)",
+      "start.project_folder": "Project folder (absolute path)",
+      "start.folder_missing": "The folder for {name} is not there any more. ",
+      "start.remove_from_list": "Remove from the list",
+      "start.opening_note":
+        "The workspace is still opening — its settings will load as soon as it is ready.",
+      "start.no_project": "no project is open",
+
+      "web.no_workspace": "No workspace is open.",
+      "web.opening": "The workspace is still opening…",
+      "web.compacted": "Context compacted.",
+      "web.switch_tabs": "Switch chats from the tabs in the title bar.",
+      "web.use_model_pill": "Use the model pill in the composer to change model.",
+      "web.search_usage": "/search text — find text across this workspace's chats.",
+      "web.no_workflows": "No workflows in this workspace. They live in .orchestra/workflows.",
+      "web.workflows_head": "Workflows:",
+      "web.no_description": "(no description)",
+      "web.stages_n": "{n} stage(s)",
+      "web.running_workflow": "Running workflow “{name}”…",
+      "web.changes_applied": "Changes applied.",
+      "web.changes_discarded": "Changes discarded.",
+      "web.file_applied": "{path} applied.",
+      "web.file_discarded": "{path} discarded.",
+      "web.configured_endpoint": "Configured endpoint",
+      "web.configured_endpoint_base": "Configured endpoint · {base}",
+      "web.slash_help": [
+        "Slash commands:",
+        "/clear — new chat",
+        "/compact [hint] — compress LLM context",
+        "/search text — find text across saved chats",
+        "/sessions — open the list of chats",
+        "/model — open the model menu",
+        "/workflows — list this workspace's workflows",
+        "/workflow name [args] — run one",
+        "/settings — Orchestra settings",
+        "/<command> args — run one of this workspace's own commands",
+        "Rewind: hover a user message → ↩ Rewind",
+        "Branch: hover a user message → ⑂ Branch",
+        "Delete a chat: hover it in the sidebar → ×",
+        "@file — mention files in composer",
+      ].join("\n"),
+
+      "graph.title": "Graph",
+      "graph.pane_aria": "Project graph",
+      "graph.depth_less": "One level of nesting less",
+      "graph.depth_more": "One level of nesting more",
+      "graph.files": "Files",
+      "graph.files_title": "Draw the files, not only the folders",
+      "graph.links": "Links",
+      "graph.links_title": "Draw the calls between files",
+      "graph.fit": "Fit",
+      "graph.fit_title": "Fit the whole graph in view",
+      "graph.refresh": "Refresh",
+      "graph.refresh_title": "Read the graph again",
+      "graph.levels": "levels {n}/{max}",
+      "graph.levels_title": "How many levels of nesting the rings go out to",
+      "graph.files_on_title": "Draw folders only, with the calls between them summed up",
+      "graph.files_off_title": "Draw every file, not only the folders",
+      "graph.links_on_title": "Leave out the calls between files, keeping the nesting",
+      "graph.links_off_title": "Draw the calls between files again",
+      "graph.stats_links": "{folders} folders · {files} files · {n} links",
+      "graph.stats_heaviest":
+        "{folders} folders · {files} files · the {drawn} heaviest of {total} links",
+      "graph.reading": "Reading the project graph…",
+      "graph.read_failed": "Could not read the graph: {detail}",
+      "graph.workspace_root": "(workspace root)",
+      "graph.row.file": "file",
+      "graph.row.workspace": "workspace",
+      "graph.row.folder": "folder",
+      "graph.row.folded_in": "folded in",
+      "graph.row.links": "links",
+      "graph.row.out_in": "{out} out · {in} in",
+      "graph.symbols_n": "{n} symbols",
+      "graph.files_n": "{n} files",
+      "graph.files_deeper": "{n} files deeper",
+      "graph.section.indexed": "What is indexed",
+      "graph.section.file_types": "File types",
+      "graph.section.most_connected": "Most connected",
+      "graph.section.selection": "Selection",
+      "graph.section.file": "File",
+      "graph.section.folder": "Folder",
+      "graph.section.wired_to": "Wired to",
+      "graph.section.inside": "Inside this file",
+      "graph.ro.files": "files",
+      "graph.ro.folders": "folders",
+      "graph.ro.symbols": "symbols",
+      "graph.ro.functions": "functions",
+      "graph.ro.types": "types",
+      "graph.ro.tests": "tests",
+      "graph.ro.packages": "packages",
+      "graph.ro.relations": "relations",
+      "graph.ro.file_links": "file links",
+      "graph.ro.embeddings": "embeddings",
+      "graph.ro.nesting": "nesting",
+      "graph.ro.levels_n": "{n} levels",
+      "graph.ro.missing": " (+{n} missing)",
+      "graph.ro.type": "type",
+      "graph.ro.folded_away": "folded away",
+      "graph.ro.links_out": "links out",
+      "graph.ro.links_in": "links in",
+      "graph.ro.lines": "lines",
+      "graph.select_hint": "Click a node to see what is inside it and what it is wired to.",
+      "graph.reading_short": "Reading…",
+      "graph.no_symbols": "No symbols indexed in this file.",
+      "graph.not_indexed": "This file is not in the index.",
+
+      // ---- the settings panel -------------------------------------------
+      "set.error": "error",
+      "set.nav.general": "General",
+      "set.nav.providers": "Providers",
+      "set.nav.index": "Index & Graph",
+      "set.nav.agent": "Agent",
+      "set.nav.tools": "Tools & MCP",
+      "set.nav.appearance": "Appearance",
+      "set.back_aria": "Back to chat",
+      "set.back": "Chat",
+      "set.workspace": "Workspace",
+      "set.save": "Save",
+      "set.apply": "Apply",
+      "set.close": "Close",
+      "set.reload_all": "Reload all",
+      "set.refresh_models": "Refresh models",
+
+      "set.general.sub": "Workspace and Orchestra core connection",
+      "set.general.binary": "Binary path",
+      "set.general.binary_ph": "auto-detect orchestra.exe",
+      "set.general.root": "Project root",
+      "set.general.root_ph": "workspace folder",
+      "set.general.restart_hint": "Restart core after changing binary or project root.",
+
+      "set.lang.title": "Interface language",
+      "set.lang.hint": "English and Russian for now. Anything not translated yet stays English.",
+      "set.lang.auto": "Automatic",
+
+      "set.orch.title": "Orchestra routing",
+      "set.orch.sub":
+        "Orchestrator (L5), department leads (L4), worker tiers, and the embedding model for semantic search. Pick models from the same provider — hover the <em>i</em> icon for what each role does.",
+      "set.orch.shared_provider": "Shared provider",
+      "set.orch.shared_hint":
+        "Pick one gateway (OpenRouter) and assign different models per role. Primary model = first selected.",
+      "set.orch.verify_summary": "Verification & retries",
+      "set.orch.verify_det": "Deterministic worker verify (LSP + go build)",
+      "set.orch.verify_llm": "LLM verifier after deterministic pass",
+      "set.orch.max_retries": "Max worker retries",
+      "set.orch.max_verify_retries": "Max verify retries",
+      "set.orch.default_tier": "Default tier",
+      "set.orch.modal_title": "Pick models",
+      "set.orch.ctx_filter_aria": "Minimum context window",
+      "set.orch.ctx_any": "Any context",
+      "set.orch.pick_models": "Pick models…",
+      "set.orch.slot.primary": "Primary",
+      "set.orch.slot.fallback2": "Fallback 2",
+      "set.orch.slot.fallback3": "Fallback 3",
+      "set.orch.slot.embed": "Embedding model",
+      "set.orch.slot.n": "Slot {n}",
+      "set.orch.tier_title": "Orchestra tier {tier} (see orchestra-routing §1)",
+      "set.orch.pick_embed": "Pick an embedding model",
+      "set.orch.pick_up_to_3": "Pick up to 3 models (failover order)",
+      "set.orch.hint_embed":
+        "Pick one embedding model (text-embedding-…, nomic, bge). Chat models fail on /v1/embeddings.",
+      "set.orch.hint_max": "Maximum 3 models — click a selected row to remove",
+      "set.orch.hint_select": "Select up to {max} models in failover order (primary first)",
+      "set.orch.modal_title_role": "Models · {role}",
+      "set.orch.no_models": "Configure provider & refresh models first",
+      "set.orch.filter_empty": "No models match the selected name and context window.",
+
+      "set.role.planner.title": "L5 · Orchestrator",
+      "set.role.planner.desc":
+        "Reads the PRD, plans epics, splits work into WorkOrders and coordinates every department. Never edits code itself. Use your strongest reasoning model — it drives the whole run.",
+      "set.role.planner.example": "e.g. Claude Sonnet / Opus, GPT-5, DeepSeek-R1",
+      "set.role.lead.title": "L4 · Department Leads",
+      "set.role.lead.desc":
+        "Product & Documentation leads: write PRD.md, user stories, L1 conventions and decompose work for workers. Needs solid reasoning, but cheaper than L5.",
+      "set.role.lead.example":
+        "e.g. Claude Sonnet, GPT-5 mini, Qwen3-235B · empty = uses the Orchestrator model",
+      "set.role.complex.title": "L3 · Worker (complex)",
+      "set.role.complex.desc":
+        "Big multi-file WorkOrders: new features, cross-module refactors, tricky bug fixes. Strongest of the worker tiers.",
+      "set.role.complex.example": "e.g. Qwen3-Coder-32B, DeepSeek-V3, Claude Haiku",
+      "set.role.focused.title": "L3 · Worker (focused)",
+      "set.role.focused.desc":
+        "Default tier: standard single-scope tasks — one function / file / test per WorkOrder. Most of the work runs here.",
+      "set.role.focused.example": "e.g. Qwen2.5-Coder-14B/32B, Codestral",
+      "set.role.micro.title": "L1 · Worker (micro)",
+      "set.role.micro.desc":
+        "Mechanical micro-edits: renames, comments, config tweaks, tiny fixes. Pick the cheapest / fastest model — quality demands are minimal.",
+      "set.role.micro.example": "e.g. Qwen2.5-Coder-7B, Llama-3.1-8B, local LM Studio model",
+      "set.role.embed.title": "Embeddings",
+      "set.role.embed.desc":
+        "Vector model for semantic_search and Index → Run embed. Must support POST /v1/embeddings — a chat model will fail. Uses the same provider credentials as Orchestra (OpenRouter, LM Studio, …).",
+      "set.role.embed.example": "e.g. openai/text-embedding-3-small, nomic-embed-text, bge-m3",
+
+      "set.prov.sub": "LLM provider and model — saved to <code>.orchestra.yml</code>",
+      "set.prov.provider": "Provider",
+      "set.prov.api_base": "API base",
+      "set.prov.api_key": "API key",
+      "set.prov.key_ph": "paste API key",
+      "set.prov.show": "Show",
+      "set.prov.hide": "Hide",
+      "set.prov.model": "Model",
+      "set.prov.adv": "Advanced generation",
+      "set.prov.prompt_family": "Prompt family",
+      "set.prov.temperature": "Temperature",
+      "set.prov.max_tokens": "Max tokens",
+      "set.prov.timeout": "Timeout (s)",
+      "set.prov.multimodal": "Vision / multimodal (image attachments)",
+      "set.prov.loading": "Loading providers…",
+      "set.prov.main_global": "Main (global llm)",
+      "set.prov.status.active": "Active provider",
+      "set.prov.status.ready": "Configured — models loaded when available",
+      "set.prov.status.need_key": "Enter API key and save to enable",
+      "set.prov.status.need_base": "Enter API base URL for custom provider",
+      "set.prov.status.none": "Not configured",
+      "set.prov.key.loaded": "Saved key loaded — edit and Save to update",
+      "set.prov.key.saved": "Key saved — click Show to view",
+      "set.prov.key.required": "API key required",
+      "set.prov.key.none": "No API key needed",
+      "set.badge.error": "error",
+      "set.badge.active": "active",
+      "set.badge.models_n": "{n} models",
+      "set.badge.ready": "ready",
+      "set.badge.needs_key": "needs key",
+      "set.badge.needs_url": "needs URL",
+
+      "set.models.select_provider": "Select a provider",
+      "set.models.failed": "Failed to load models: {detail}",
+      "set.models.configure_first": "Configure credentials and save, then refresh",
+      "set.models.none_returned": "No models returned — try Refresh",
+      "set.models.count_from": "{n} models from {provider}",
+      "set.models.no_match": "No models match “{q}”",
+      "set.models.none_listed": "No models listed",
+      "set.models.not_ready": "Provider not ready",
+      "set.models.filtered": "{shown} / {total} models (filtered)",
+      "set.models.refreshing": "Refreshing models…",
+      "set.models.loading": "Loading models…",
+      "set.models.active": "active",
+      "set.models.active_ctx": "active · {ctx}",
+
+      "set.index.sub":
+        "CKG structural graph + semantic embeddings for <code>explore</code> / <code>semantic_search</code>",
+      "set.index.stat.files": "indexed files",
+      "set.index.stat.symbols": "symbols",
+      "set.index.stat.links": "links",
+      "set.index.stat.embeddings": "embeddings",
+      "set.index.stat.functions": "functions",
+      "set.index.stat.types": "types",
+      "set.index.stat.tests": "tests",
+      "set.index.stat.packages": "packages",
+      "set.index.rebuild": "Rebuild graph",
+      "set.index.run_embed": "Run embed",
+      "set.index.open_graph": "Open graph viewer",
+      "set.index.scope": "Scope & limits",
+      "set.index.exclude": "Exclude dirs (one per line)",
+      "set.index.ctx_limit": "Context limit (KB)",
+      "set.index.max_files": "Max files",
+      "set.index.optional": "optional",
+      "set.index.semantic": "Semantic search options",
+      "set.index.batch": "Batch size",
+      "set.index.auto_explore": "Auto-explore top semantic hits",
+      "set.index.save": "Save index settings",
+      "set.index.rebuilding": "Rebuilding graph…",
+      "set.index.embedding": "Running embed (may take a while)…",
+      "set.index.no_ckg": "CKG store not available — start core first.",
+      "set.index.need_embed": "{n} symbols need embedding — press “Run embed” · {path}",
+      "set.index.graph_ready": "Graph ready · {path}",
+      "set.index.no_embed_model":
+        "No embedding model selected — pick one in General, then press Run embed.",
+      "set.index.embed_model": "Embedding model: {model}",
+      "set.index.embed_model_via": "Embedding model: {model} · via {provider}",
+      "set.index.embed_result": "Embed: +{embedded} ({total} total, {remaining} remaining, {elapsed})",
+      "set.index.graph_result": "Graph: {files} files, {nodes} nodes, {edges} edges",
+      "set.index.files_n": "{n} files",
+
+      "set.agent.system_prompt": "System prompt",
+      "set.agent.override": "Project override",
+      "set.agent.override_ph": "Leave empty to use the built-in / shared prompt…",
+      "set.agent.clear": "Clear override",
+      "set.agent.save_prompt": "Save prompt",
+      "set.agent.custom": "Custom agents",
+      "set.agent.name": "Name",
+      "set.agent.tools": "Tools",
+      "set.agent.tools_hint": "Toggle tools for this agent. All on = inherit full build toolset.",
+      "set.agent.new": "New",
+      "set.agent.delete": "Delete",
+      "set.agent.save": "Save agent",
+      "set.agent.none": "No custom agents yet",
+      "set.agent.tools_n": "{n} tools",
+      "set.agent.tools_all": "all tools",
+      "set.agent.need_one_tool":
+        "Enable at least one tool, or turn all on to inherit the full set.",
+      "set.agent.catalog_na": "Tool catalog unavailable — start core and reload.",
+      "set.agent.tools_full": "{n} tools · inherit full set",
+      "set.agent.tools_on": "{on} / {total} tools enabled",
+      "set.agent.toggle_all": "Toggle all {cat}",
+
+      "set.mcp.sub":
+        "Browse the official MCP Registry (plus featured locals) — install into <code>.orchestra.yml</code>. Installed servers use on/off toggles; open one to configure tools.",
+      "set.mcp.cat.all": "All",
+      "set.mcp.cat.installable": "Installable",
+      "set.mcp.cat.featured": "Featured",
+      "set.mcp.cat.remote": "Remote",
+      "set.prov.cat.local": "Local",
+      "set.prov.cat.cloud": "Cloud",
+      "set.prov.cat.gateway": "Gateway",
+      "set.prov.cat.other": "Other",
+      "set.prov.cat.named": "Named",
+      "set.mcp.tab_browse": "Browse",
+      "set.mcp.tab_installed": "Installed",
+      "set.mcp.search_ph": "Search registry (filesystem, github, slack…)",
+      "set.mcp.loading_catalog": "Loading catalog…",
+      "set.mcp.prev": "Prev",
+      "set.mcp.next": "Next",
+      "set.mcp.add_custom": "+ Custom server",
+      "set.skills.title": "Skills",
+      "set.skills.sub":
+        "File-based agent bundles discovered in <code>~/.orchestra/skills</code> and <code>.orchestra/skills</code>. Read-only here — add one by dropping a folder in either place.",
+      "set.skills.none": "No skills discovered — try orchestra skills install",
+      "set.skills.badge": "skill",
+      "set.hooks.summary": "Hooks, Git, Browser",
+      "set.hooks.hint":
+        "Configure <code>hooks</code>, <code>exec</code>, <code>web</code>, and <code>browser</code> in <code>.orchestra.yml</code>. UI editors coming later.",
+      "set.mcp.configure": "Configure",
+      "set.mcp.source": "Source",
+      "set.mcp.source_hint": "Command and environment for this MCP server.",
+      "set.mcp.server": "Server",
+      "set.mcp.enable_title": "Enable server",
+      "set.mcp.name": "Name",
+      "set.mcp.command": "Command",
+      "set.mcp.env": "Env (KEY=VAL per line)",
+      "set.mcp.tools": "Tools",
+      "set.mcp.tools_hint": "Enable or disable individual tools.",
+      "set.mcp.remove": "Remove",
+      "set.mcp.reload": "Reload",
+      "set.mcp.done": "Done",
+      "set.mcp.configure_named": "Configure {name}",
+      "set.mcp.configure_custom": "Configure custom server",
+      "set.mcp.new_server": "New server",
+      "set.mcp.custom": "Custom",
+      "set.mcp.enter_command": "Enter command below",
+      "set.mcp.enter_command_done": "Enter a custom command, then Done.",
+      "set.mcp.off": "Off",
+      "set.mcp.error": "Error",
+      "set.mcp.stopped": "Stopped",
+      "set.mcp.installed": "Installed",
+      "set.mcp.tool_one": "1 tool",
+      "set.mcp.tool_n": "{n} tools",
+      "set.mcp.loading_tools": "Loading tools…",
+      "set.mcp.turn_on": "Turn the server on to load tools.",
+      "set.mcp.no_tools": "No tools discovered yet — use Reload after save.",
+      "set.mcp.reloading": "Reloading tools…",
+      "set.mcp.registry_loading": "Loading MCP Registry…",
+      "set.mcp.src_registry": "Official MCP Registry",
+      "set.mcp.src_mixed": "Featured + Official MCP Registry",
+      "set.mcp.src_local": "Local featured catalog",
+      "set.mcp.loaded_n": " · {n} loaded",
+      "set.mcp.loading_more": " · loading more…",
+      "set.mcp.search_note": " · search “{q}”",
+      "set.mcp.empty_loading": "Loading…",
+      "set.mcp.empty_search": "No MCP servers match this search",
+      "set.mcp.empty_catalog": "No MCP servers in catalog",
+      "set.mcp.kind_remote": "remote",
+      "set.mcp.kind_featured": "featured",
+      "set.mcp.remote_only": "remote only",
+      "set.mcp.remote_only_title": "Orchestra currently installs stdio MCP servers",
+      "set.mcp.install": "Install",
+      "set.mcp.install_env": "Install…",
+      "set.mcp.docs": "Docs",
+      "set.mcp.remote_not_supported":
+        "This registry entry is remote-only — stdio install not available yet.",
+      "set.mcp.fill_env": "Fill required env for {name}, then Done.",
+      "set.mcp.installing": "Installing {name}…",
+      "set.mcp.none_installed": "No MCP servers installed — browse the catalog to add some",
+      "set.mcp.remove_server": "Remove server",
+      "set.mcp.remove_named": "Remove {name}",
+      "set.mcp.enable": "Enable",
+      "set.mcp.disable": "Disable",
+      "set.mcp.test_ok_one": "OK ({elapsed}): 1 tool",
+      "set.mcp.test_ok_n": "OK ({elapsed}): {n} tools",
+      "set.mcp.test_failed": "Failed: {detail}",
+      "set.mcp.unknown": "unknown",
+
+      "set.appear.sub": "How this page looks. Stored in this browser only.",
+      "set.appear.theme_aria": "Theme",
+      "set.appear.system": "Follow the system",
+      "set.appear.system_hint": "Whatever your OS is set to",
+      "set.appear.light": "Light",
+      "set.appear.light_hint": "Always the light palette",
+      "set.appear.dark": "Dark",
+      "set.appear.dark_hint": "Always the dark palette",
+      "set.appear.scale": "Interface scale",
+      "set.appear.scale_sub":
+        "How large everything is drawn. The automatic setting reads the window's width, which cannot know your monitor's physical size — set it yourself if the guess is wrong for your screen.",
+      "set.appear.auto": "Automatic",
     },
     ru: {
       "mode.group.core": "Основные",
@@ -126,6 +738,614 @@
       "notice.context_nearly_full": "Контекст почти заполнен — история чата будет суммаризирована",
       "notice.compaction_done": "Суммаризация чата: история сжата, работа продолжается",
       "notice.compaction": "Суммаризация чата — {detail}",
+
+      // ---- the window's own chrome --------------------------------------
+      "chrome.new_chat": "Новый чат",
+      "chrome.all_sessions": "Все чаты",
+      "chrome.settings": "Настройки",
+      "chrome.sessions_aria": "Чаты",
+      "chrome.view_aria": "Вид",
+      "chrome.view_chat": "Чат",
+      "chrome.view_trajectory": "Траектория",
+      "chrome.subagents": "Подагенты",
+
+      "traj.scale_aria": "Шкала времени",
+      "traj.duration": "Длительность",
+      "traj.turns": "Ходы",
+      "traj.calls": "Вызовы",
+      "traj.search": "Поиск",
+      "traj.search_aria": "Фильтр строк траектории",
+      "traj.row_aria": "Выбранная строка",
+      "traj.close_details": "Закрыть подробности",
+      "traj.detail_aria": "Подробности",
+      "traj.tab_summary": "Сводка",
+      "traj.tab_preview": "Просмотр",
+      "traj.tab_raw": "Как есть",
+
+      "pending.apply_title": "Применить изменения",
+      "pending.apply_aria": "Применить",
+      "pending.discard_title": "Отклонить изменения",
+      "pending.discard_aria": "Отклонить",
+
+      "diff.open_in_editor": "Открыть в редакторе",
+      "diff.close": "Закрыть",
+      "diff.before": "Было",
+      "diff.after": "Стало",
+
+      "image.prev": "Предыдущее изображение",
+      "image.next": "Следующее изображение",
+      "image.open_file": "Открыть файл",
+      "image.close": "Закрыть",
+
+      "todos.aria": "Список задач",
+      "model.menu_title": "Модели",
+      "model.search": "Поиск моделей…",
+      "model.refresh": "Обновить список",
+      "model.title": "Модель",
+      "queue.aria": "Сообщения в очереди",
+      "composer.placeholder": "Сообщение, @ — файлы, / — команды…",
+      "composer.attach": "Прикрепить файлы",
+      "composer.send": "Отправить",
+      "composer.orchestra_title": "Роли и уровни Orchestra",
+      "cost.aria": "Расходы и баланс",
+      "cost.title": "Расходы",
+      "cost.note": "Стоимость по данным провайдера · учёт расхода OpenRouter",
+      "ctx.aria": "Заполнение контекста",
+      "ctx.title": "Контекст",
+      "ctx.note": "Оценка по последнему шагу модели · за ход диалог растёт",
+      "ctx.row.conversation": "Диалог",
+      "ctx.row.prompt": "Контекст промпта",
+      "ctx.row.completion": "Ответ",
+      "ctx.row.reserved": "Зарезервировано под ответ",
+
+      "cmd.clear": "Новый чат",
+      "cmd.compact": "Сжать контекст модели",
+      "cmd.help": "Показать команды",
+      "cmd.model": "Сменить модель",
+      "cmd.rewind": "Справка по откату к контрольной точке",
+      "cmd.sessions": "Переключить чат",
+      "cmd.settings": "Открыть настройки",
+
+      "tab.close": "Закрыть чат",
+      "code.open_file": "Открыть файл",
+      "reason.brief": "Думал недолго",
+      "reason.for": "Думал {n} с",
+      "diff.no_changes": "Изменений в строках нет",
+      "diff.unavailable": "Показать изменения не удалось",
+
+      "perm.install_lsp": "Установить языковой сервер?",
+      "perm.allow_tool": "Разрешить {tool}?",
+      "perm.tool": "инструмент",
+      "perm.install_extra": "Установить языковой сервер для этого проекта или пропустить.",
+      "perm.skip": "Пропустить",
+      "perm.install_once": "Установить один раз",
+      "perm.install_always": "Устанавливать всегда",
+      "perm.deny": "Запретить",
+      "perm.allow_once": "Разрешить один раз",
+      "perm.allow_always": "Разрешать всегда",
+      "question.step": "Вопрос {n}/{total}",
+      "question.next": "Далее",
+
+      "queue.remove": "Убрать из очереди",
+      "typing.aria": "Ассистент работает",
+      "palette.files": "Файлы",
+      "palette.no_files": "Файлы не найдены",
+      "palette.no_matches": "Ничего не найдено",
+      "attach.remove": "Убрать файл",
+      "paste.too_big": "Вставленное изображение больше 20 МБ",
+
+      "msg.rewind_title": "Откатиться сюда",
+      "msg.rewind": "↩ Откат",
+      "msg.branch_title": "Ответвить новый чат отсюда",
+      "msg.branch": "⑂ Ветка",
+      "msg.show_older": "Показать ещё {n} сообщений",
+
+      "traj.shell_output": "вывод shell",
+      "traj.unavailable": "Траектория недоступна: {detail}",
+      "traj.not_recorded": "Для этого чата траектория не записывалась — он старше журнала.",
+      "traj.loading": "Загружаю траекторию…",
+      "traj.empty": "В этом чате пока ничего не происходило.",
+      "traj.turns_one": "1 ход",
+      "traj.turns_n": "ходов: {n}",
+      "traj.rows_n": "строк: {n}",
+      "traj.live_n": "в работе: {n}",
+      "traj.matching_n": "совпадений: {n}",
+      "traj.refresh_failed": "не удалось обновить: {detail}",
+      "traj.fact.kind": "вид",
+      "traj.fact.label": "название",
+      "traj.fact.outcome": "итог",
+      "traj.fact.offset": "смещение",
+      "traj.fact.duration": "длительность",
+      "traj.fact.tokens_in": "токенов на вход",
+      "traj.fact.tokens_out": "токенов на выход",
+      "traj.fact.live": "в работе",
+      "traj.fact.yes": "да",
+      "traj.fact.event": "событие",
+      "traj.fact.seq": "номер",
+      "traj.no_payload": "Эта строка фиксирует, что событие было; полезной нагрузки в ней нет.",
+      "traj.no_preview": "Для этой строки нечего показать.",
+      "traj.open_full_diff": "Открыть полный дифф",
+      "traj.too_large": "Файл слишком велик, чтобы показать построчно ({n} строк) — откройте полный дифф.",
+      "traj.no_line_changed": "В этом файле не изменилась ни одна строка.",
+      "traj.recorded_event": "записанное событие",
+      "traj.live_row": "строка (в работе — из журнала ещё не перечитана)",
+      "traj.result": "результат",
+
+      "orch.tiers": "Уровни Orchestra",
+      "orch.loading_map": "Загружаю карту уровней…",
+      "orch.tier_models": "Модели по уровням Orchestra",
+      "orch.l5_not_set": "L5 не задан",
+      "orch.fallback_main": "— (запасная: основная модель)",
+      "orch.not_set": "не задано — берётся основная модель",
+      "orch.failover_n": "{id} (подмена {n})",
+      "orch.configure": "Настроить уровни…",
+
+      "effort.head": "Усилие",
+      "effort.options": "Параметры",
+      "effort.low": "Низкое",
+      "effort.medium": "Среднее",
+      "effort.high": "Высокое",
+      "orch.role.planner": "Оркестратор",
+      "orch.role.lead": "Руководители направлений",
+      "orch.role.complex": "Исполнитель · сложные",
+      "orch.role.focused": "Исполнитель · обычные",
+      "orch.role.micro": "Исполнитель · мелочь",
+      "orch.role.embed": "Эмбеддинги",
+      "model.no_providers": "Провайдеров нет — откройте настройки",
+      "model.none": "Моделей нет",
+      "model.not_configured": "Не настроено",
+      "model.no_match": "Нет моделей по запросу «{q}»",
+      "model.retry": "Моделей нет — попробовать снова",
+
+      "cost.session_spend": "Расходы за чат",
+      "cost.balance": "Баланс",
+      "cost.balance_prefix": "баланс {amount}",
+      "cost.session": "за чат {amount}",
+      "cost.current_turn": "текущий ход {amount}",
+      "cost.last_turn": "прошлый ход {amount}",
+
+      "conn.error": "ошибка связи",
+      "session.none": "Сохранённых чатов нет",
+      "session.delete": "Удалить чат",
+      "turn.failed": "ход не удался",
+      "turn.writing": "Пишу…",
+
+      // ---- the sidebar and the start screen (the browser and the desktop) ---
+      "rail.aria": "Проекты и чаты",
+      "rail.close_settings": "Закрыть настройки",
+      "rail.width": "Ширина панели",
+      "rail.show": "Показать панель",
+      "rail.search_chats": "Поиск по чатам",
+      "rail.search_aria": "Поиск по чатам этого проекта",
+      "rail.delete_chat": "Удалить этот чат",
+      "rail.delete_confirm": "Удалить?",
+      "rail.delete_confirm_title": "Нажмите ещё раз, чтобы удалить чат навсегда",
+      "rail.add_workspace": "Добавить папку проекта",
+      "rail.new_session": "Новый чат в этом проекте",
+      "rail.new_session_label": "Новый чат",
+      "rail.now": "сейчас",
+      "rail.other_workspaces": "Другие проекты",
+      "rail.no_sessions": "Чатов пока нет",
+      "rail.no_match": "Ни в одном чате нет «{q}»",
+      "rail.chats_one": "1 чат",
+      "rail.chats_n": "чатов: {n}",
+      "rail.waiting": " — ждёт вас",
+      "rail.close_project": "Закрыть проект",
+      "rail.forget_project": "Убрать из списка",
+      "rail.delete_no_workspace": "Проект не открыт, поэтому удалять его чаты нельзя.",
+      "rail.delete_failed": "Не удалось удалить чат: {detail}",
+
+      "start.lead": "Откройте проект, чтобы начать в нём работать.",
+      "start.open_folder": "Открыть папку…",
+      "start.clone_github": "Клонировать с GitHub…",
+      "start.clone_url_label": "Адрес репозитория",
+      "start.clone": "Клонировать",
+      "start.cancel": "Отмена",
+      "start.clone_hint":
+        "Спросим, куда его положить. Для приватных репозиториев на этой машине уже должны быть настроены учётные данные git.",
+      "start.recent": "Недавние проекты",
+      "start.none": "Проектов пока нет — откройте папку или клонируйте репозиторий.",
+      "start.opening": "Открываю {name}…",
+      "start.could_not_open": "Не удалось открыть {path}.",
+      "start.opened_not_listed": "{path} открыт, но его нет в списке проектов.",
+      "start.opened_not_switched": "{path} открыт, но переключиться на него не удалось.",
+      "start.enter_url": "Введите адрес репозитория.",
+      "start.clone_where": "В какую папку клонировать? (абсолютный путь)",
+      "start.project_folder": "Папка проекта (абсолютный путь)",
+      "start.folder_missing": "Папки проекта {name} больше нет. ",
+      "start.remove_from_list": "Убрать из списка",
+      "start.opening_note":
+        "Проект ещё открывается — настройки загрузятся, как только он будет готов.",
+      "start.no_project": "проект не открыт",
+
+      "web.no_workspace": "Проект не открыт.",
+      "web.opening": "Проект ещё открывается…",
+      "web.compacted": "Контекст сжат.",
+      "web.switch_tabs": "Переключайте чаты вкладками в заголовке окна.",
+      "web.use_model_pill": "Смените модель кнопкой модели в composer.",
+      "web.search_usage": "/search текст — искать текст по чатам этого проекта.",
+      "web.no_workflows": "В этом проекте нет workflow. Они лежат в .orchestra/workflows.",
+      "web.workflows_head": "Workflow:",
+      "web.no_description": "(без описания)",
+      "web.stages_n": "этапов: {n}",
+      "web.running_workflow": "Запускаю workflow «{name}»…",
+      "web.changes_applied": "Изменения применены.",
+      "web.changes_discarded": "Изменения отклонены.",
+      "web.file_applied": "{path} — применён.",
+      "web.file_discarded": "{path} — отклонён.",
+      "web.configured_endpoint": "Настроенный адрес",
+      "web.configured_endpoint_base": "Настроенный адрес · {base}",
+      "web.slash_help": [
+        "Команды со слешем:",
+        "/clear — новый чат",
+        "/compact [подсказка] — сжать контекст модели",
+        "/search текст — искать текст по сохранённым чатам",
+        "/sessions — открыть список чатов",
+        "/model — открыть меню моделей",
+        "/workflows — показать workflow этого проекта",
+        "/workflow имя [аргументы] — запустить один",
+        "/settings — настройки Orchestra",
+        "/<команда> аргументы — запустить свою команду этого проекта",
+        "Откат: наведите на своё сообщение → ↩ Откат",
+        "Ветка: наведите на своё сообщение → ⑂ Ветка",
+        "Удалить чат: наведите на него в боковой панели → ×",
+        "@файл — упомянуть файлы в composer",
+      ].join("\n"),
+
+      "graph.title": "Граф",
+      "graph.pane_aria": "Граф проекта",
+      "graph.depth_less": "На уровень вложенности меньше",
+      "graph.depth_more": "На уровень вложенности больше",
+      "graph.files": "Файлы",
+      "graph.files_title": "Рисовать файлы, а не только папки",
+      "graph.links": "Связи",
+      "graph.links_title": "Рисовать вызовы между файлами",
+      "graph.fit": "Вместить",
+      "graph.fit_title": "Вместить весь граф в окно",
+      "graph.refresh": "Обновить",
+      "graph.refresh_title": "Перечитать граф",
+      "graph.levels": "уровней {n}/{max}",
+      "graph.levels_title": "На сколько уровней вложенности расходятся кольца",
+      "graph.files_on_title": "Рисовать только папки, суммируя вызовы между ними",
+      "graph.files_off_title": "Рисовать каждый файл, а не только папки",
+      "graph.links_on_title": "Убрать вызовы между файлами, оставив вложенность",
+      "graph.links_off_title": "Снова рисовать вызовы между файлами",
+      "graph.stats_links": "папок {folders} · файлов {files} · связей {n}",
+      "graph.stats_heaviest":
+        "папок {folders} · файлов {files} · {drawn} самых тяжёлых связей из {total}",
+      "graph.reading": "Читаю граф проекта…",
+      "graph.read_failed": "Не удалось прочитать граф: {detail}",
+      "graph.workspace_root": "(корень проекта)",
+      "graph.row.file": "файл",
+      "graph.row.workspace": "проект",
+      "graph.row.folder": "папка",
+      "graph.row.folded_in": "свёрнуто",
+      "graph.row.links": "связи",
+      "graph.row.out_in": "{out} исх. · {in} вх.",
+      "graph.symbols_n": "символов: {n}",
+      "graph.files_n": "файлов: {n}",
+      "graph.files_deeper": "файлов глубже: {n}",
+      "graph.section.indexed": "Что проиндексировано",
+      "graph.section.file_types": "Типы файлов",
+      "graph.section.most_connected": "Больше всего связей",
+      "graph.section.selection": "Выбор",
+      "graph.section.file": "Файл",
+      "graph.section.folder": "Папка",
+      "graph.section.wired_to": "С чем связан",
+      "graph.section.inside": "Что внутри файла",
+      "graph.ro.files": "файлы",
+      "graph.ro.folders": "папки",
+      "graph.ro.symbols": "символы",
+      "graph.ro.functions": "функции",
+      "graph.ro.types": "типы",
+      "graph.ro.tests": "тесты",
+      "graph.ro.packages": "пакеты",
+      "graph.ro.relations": "отношения",
+      "graph.ro.file_links": "связи файлов",
+      "graph.ro.embeddings": "эмбеддинги",
+      "graph.ro.nesting": "вложенность",
+      "graph.ro.levels_n": "уровней: {n}",
+      "graph.ro.missing": " (+{n} не хватает)",
+      "graph.ro.type": "тип",
+      "graph.ro.folded_away": "свёрнуто",
+      "graph.ro.links_out": "связей наружу",
+      "graph.ro.links_in": "связей внутрь",
+      "graph.ro.lines": "строк",
+      "graph.select_hint": "Нажмите на узел, чтобы увидеть, что внутри и с чем он связан.",
+      "graph.reading_short": "Читаю…",
+      "graph.no_symbols": "В этом файле нет проиндексированных символов.",
+      "graph.not_indexed": "Этого файла нет в индексе.",
+
+      // ---- the settings panel -------------------------------------------
+      "set.error": "ошибка",
+      "set.nav.general": "Общие",
+      "set.nav.providers": "Провайдеры",
+      "set.nav.index": "Индекс и граф",
+      "set.nav.agent": "Агент",
+      "set.nav.tools": "Инструменты и MCP",
+      "set.nav.appearance": "Оформление",
+      "set.back_aria": "Назад в чат",
+      "set.back": "Чат",
+      "set.workspace": "Проект",
+      "set.save": "Сохранить",
+      "set.apply": "Применить",
+      "set.close": "Закрыть",
+      "set.reload_all": "Перечитать всё",
+      "set.refresh_models": "Обновить модели",
+
+      "set.general.sub": "Проект и подключение к ядру Orchestra",
+      "set.general.binary": "Путь к программе",
+      "set.general.binary_ph": "определить orchestra.exe автоматически",
+      "set.general.root": "Корень проекта",
+      "set.general.root_ph": "папка проекта",
+      "set.general.restart_hint": "После смены программы или корня проекта перезапустите ядро.",
+
+      "set.lang.title": "Язык интерфейса",
+      "set.lang.hint":
+        "Пока английский и русский. Что ещё не переведено — остаётся на английском.",
+      "set.lang.auto": "Автоматически",
+
+      "set.orch.title": "Маршрутизация Orchestra",
+      "set.orch.sub":
+        "Оркестратор (L5), руководители направлений (L4), уровни исполнителей и модель эмбеддингов для семантического поиска. Берите модели одного провайдера — наведите на значок <em>i</em>, чтобы узнать, что делает каждая роль.",
+      "set.orch.shared_provider": "Общий провайдер",
+      "set.orch.shared_hint":
+        "Выберите один шлюз (OpenRouter) и назначьте разные модели по ролям. Основная модель — выбранная первой.",
+      "set.orch.verify_summary": "Проверка и повторы",
+      "set.orch.verify_det": "Детерминированная проверка исполнителя (LSP + go build)",
+      "set.orch.verify_llm": "Проверка моделью после детерминированной",
+      "set.orch.max_retries": "Максимум повторов исполнителя",
+      "set.orch.max_verify_retries": "Максимум повторов проверки",
+      "set.orch.default_tier": "Уровень по умолчанию",
+      "set.orch.modal_title": "Выбор моделей",
+      "set.orch.ctx_filter_aria": "Минимальный контекст",
+      "set.orch.ctx_any": "Любой контекст",
+      "set.orch.pick_models": "Выберите модели…",
+      "set.orch.slot.primary": "Основная",
+      "set.orch.slot.fallback2": "Запасная 2",
+      "set.orch.slot.fallback3": "Запасная 3",
+      "set.orch.slot.embed": "Модель эмбеддингов",
+      "set.orch.slot.n": "Слот {n}",
+      "set.orch.tier_title": "Уровень Orchestra {tier} (см. orchestra-routing §1)",
+      "set.orch.pick_embed": "Выберите модель эмбеддингов",
+      "set.orch.pick_up_to_3": "До 3 моделей в порядке подмены",
+      "set.orch.hint_embed":
+        "Выберите одну модель эмбеддингов (text-embedding-…, nomic, bge). Чат-модели на /v1/embeddings не работают.",
+      "set.orch.hint_max": "Максимум 3 модели — нажмите на выбранную, чтобы убрать",
+      "set.orch.hint_select": "Выберите до {max} моделей в порядке подмены (основная первой)",
+      "set.orch.modal_title_role": "Модели · {role}",
+      "set.orch.no_models": "Сначала настройте провайдера и обновите модели",
+      "set.orch.filter_empty": "Нет моделей под выбранное имя и размер контекста.",
+
+      "set.role.planner.title": "L5 · Оркестратор",
+      "set.role.planner.desc":
+        "Читает PRD, планирует эпики, делит работу на WorkOrder'ы и координирует все направления. Сам код не правит. Ставьте сюда самую сильную в рассуждениях модель — она ведёт весь прогон.",
+      "set.role.planner.example": "например Claude Sonnet / Opus, GPT-5, DeepSeek-R1",
+      "set.role.lead.title": "L4 · Руководители направлений",
+      "set.role.lead.desc":
+        "Руководители продукта и документации: пишут PRD.md, пользовательские истории, соглашения L1 и раскладывают работу для исполнителей. Нужны крепкие рассуждения, но дешевле L5.",
+      "set.role.lead.example":
+        "например Claude Sonnet, GPT-5 mini, Qwen3-235B · пусто — берётся модель оркестратора",
+      "set.role.complex.title": "L3 · Исполнитель (сложные)",
+      "set.role.complex.desc":
+        "Большие WorkOrder'ы на несколько файлов: новые возможности, рефакторинг между модулями, хитрые баги. Самый сильный из уровней исполнителей.",
+      "set.role.complex.example": "например Qwen3-Coder-32B, DeepSeek-V3, Claude Haiku",
+      "set.role.focused.title": "L3 · Исполнитель (обычные)",
+      "set.role.focused.desc":
+        "Уровень по умолчанию: обычные задачи в одной области — одна функция / файл / тест на WorkOrder. Здесь идёт большая часть работы.",
+      "set.role.focused.example": "например Qwen2.5-Coder-14B/32B, Codestral",
+      "set.role.micro.title": "L1 · Исполнитель (мелочь)",
+      "set.role.micro.desc":
+        "Механические микроправки: переименования, комментарии, мелочи в конфигах. Берите самую дешёвую и быструю модель — требования к качеству минимальны.",
+      "set.role.micro.example": "например Qwen2.5-Coder-7B, Llama-3.1-8B, локальная модель LM Studio",
+      "set.role.embed.title": "Эмбеддинги",
+      "set.role.embed.desc":
+        "Векторная модель для semantic_search и «Посчитать эмбеддинги» в разделе «Индекс». Должна поддерживать POST /v1/embeddings — чат-модель не подойдёт. Использует те же доступы провайдера, что и Orchestra (OpenRouter, LM Studio, …).",
+      "set.role.embed.example": "например openai/text-embedding-3-small, nomic-embed-text, bge-m3",
+
+      "set.prov.sub": "Провайдер LLM и модель — сохраняется в <code>.orchestra.yml</code>",
+      "set.prov.provider": "Провайдер",
+      "set.prov.api_base": "Адрес API",
+      "set.prov.api_key": "Ключ API",
+      "set.prov.key_ph": "вставьте ключ API",
+      "set.prov.show": "Показать",
+      "set.prov.hide": "Скрыть",
+      "set.prov.model": "Модель",
+      "set.prov.adv": "Параметры генерации",
+      "set.prov.prompt_family": "Семейство промптов",
+      "set.prov.temperature": "Температура",
+      "set.prov.max_tokens": "Максимум токенов",
+      "set.prov.timeout": "Таймаут (с)",
+      "set.prov.multimodal": "Зрение / мультимодальность (вложенные картинки)",
+      "set.prov.loading": "Загружаю провайдеров…",
+      "set.prov.main_global": "Основной (глобальный llm)",
+      "set.prov.status.active": "Активный провайдер",
+      "set.prov.status.ready": "Настроен — модели подгрузятся, когда будут доступны",
+      "set.prov.status.need_key": "Введите ключ API и сохраните, чтобы включить",
+      "set.prov.status.need_base": "Укажите адрес API для своего провайдера",
+      "set.prov.status.none": "Не настроен",
+      "set.prov.key.loaded": "Сохранённый ключ загружен — измените и сохраните, чтобы обновить",
+      "set.prov.key.saved": "Ключ сохранён — нажмите «Показать», чтобы увидеть",
+      "set.prov.key.required": "Нужен ключ API",
+      "set.prov.key.none": "Ключ API не нужен",
+      "set.badge.error": "ошибка",
+      "set.badge.active": "активен",
+      "set.badge.models_n": "моделей: {n}",
+      "set.badge.ready": "готов",
+      "set.badge.needs_key": "нужен ключ",
+      "set.badge.needs_url": "нужен адрес",
+
+      "set.models.select_provider": "Выберите провайдера",
+      "set.models.failed": "Не удалось загрузить модели: {detail}",
+      "set.models.configure_first": "Заполните доступы, сохраните и обновите",
+      "set.models.none_returned": "Модели не вернулись — нажмите «Обновить»",
+      "set.models.count_from": "{n} моделей у {provider}",
+      "set.models.no_match": "Нет моделей по запросу «{q}»",
+      "set.models.none_listed": "Список моделей пуст",
+      "set.models.not_ready": "Провайдер не готов",
+      "set.models.filtered": "{shown} / {total} моделей (с фильтром)",
+      "set.models.refreshing": "Обновляю модели…",
+      "set.models.loading": "Загружаю модели…",
+      "set.models.active": "активна",
+      "set.models.active_ctx": "активна · {ctx}",
+
+      "set.index.sub":
+        "Структурный граф CKG и семантические эмбеддинги для <code>explore</code> / <code>semantic_search</code>",
+      "set.index.stat.files": "файлов в индексе",
+      "set.index.stat.symbols": "символов",
+      "set.index.stat.links": "связей",
+      "set.index.stat.embeddings": "эмбеддингов",
+      "set.index.stat.functions": "функций",
+      "set.index.stat.types": "типов",
+      "set.index.stat.tests": "тестов",
+      "set.index.stat.packages": "пакетов",
+      "set.index.rebuild": "Перестроить граф",
+      "set.index.run_embed": "Посчитать эмбеддинги",
+      "set.index.open_graph": "Открыть просмотр графа",
+      "set.index.scope": "Область и пределы",
+      "set.index.exclude": "Исключить папки (по одной в строке)",
+      "set.index.ctx_limit": "Предел контекста (КБ)",
+      "set.index.max_files": "Максимум файлов",
+      "set.index.optional": "необязательно",
+      "set.index.semantic": "Параметры семантического поиска",
+      "set.index.batch": "Размер пачки",
+      "set.index.auto_explore": "Автоматически разбирать лучшие семантические попадания",
+      "set.index.save": "Сохранить настройки индекса",
+      "set.index.rebuilding": "Перестраиваю граф…",
+      "set.index.embedding": "Считаю эмбеддинги (может занять время)…",
+      "set.index.no_ckg": "Хранилище CKG недоступно — сначала запустите ядро.",
+      "set.index.need_embed": "{n} символов без эмбеддингов — нажмите «Посчитать эмбеддинги» · {path}",
+      "set.index.graph_ready": "Граф готов · {path}",
+      "set.index.no_embed_model":
+        "Модель эмбеддингов не выбрана — выберите её в разделе «Общие» и нажмите «Посчитать эмбеддинги».",
+      "set.index.embed_model": "Модель эмбеддингов: {model}",
+      "set.index.embed_model_via": "Модель эмбеддингов: {model} · через {provider}",
+      "set.index.embed_result":
+        "Эмбеддинги: +{embedded} (всего {total}, осталось {remaining}, {elapsed})",
+      "set.index.graph_result": "Граф: файлов {files}, узлов {nodes}, связей {edges}",
+      "set.index.files_n": "файлов: {n}",
+
+      "set.agent.system_prompt": "Системный промпт",
+      "set.agent.override": "Переопределение для проекта",
+      "set.agent.override_ph": "Пусто — используется встроенный или общий промпт…",
+      "set.agent.clear": "Убрать переопределение",
+      "set.agent.save_prompt": "Сохранить промпт",
+      "set.agent.custom": "Свои агенты",
+      "set.agent.name": "Имя",
+      "set.agent.tools": "Инструменты",
+      "set.agent.tools_hint":
+        "Включайте инструменты для этого агента. Все включены — наследуется полный набор режима build.",
+      "set.agent.new": "Новый",
+      "set.agent.delete": "Удалить",
+      "set.agent.save": "Сохранить агента",
+      "set.agent.none": "Своих агентов пока нет",
+      "set.agent.tools_n": "инструментов: {n}",
+      "set.agent.tools_all": "все инструменты",
+      "set.agent.need_one_tool":
+        "Включите хотя бы один инструмент — или включите все, чтобы наследовать полный набор.",
+      "set.agent.catalog_na": "Каталог инструментов недоступен — запустите ядро и перечитайте.",
+      "set.agent.tools_full": "инструментов: {n} · наследуется полный набор",
+      "set.agent.tools_on": "включено {on} из {total}",
+      "set.agent.toggle_all": "Переключить все: {cat}",
+
+      "set.mcp.sub":
+        "Смотрите официальный реестр MCP (и избранные локальные) — установка пишется в <code>.orchestra.yml</code>. У установленных серверов есть выключатель; откройте сервер, чтобы настроить инструменты.",
+      "set.mcp.cat.all": "Все",
+      "set.mcp.cat.installable": "Устанавливаемые",
+      "set.mcp.cat.featured": "Избранные",
+      "set.mcp.cat.remote": "Удалённые",
+      "set.prov.cat.local": "Локальные",
+      "set.prov.cat.cloud": "Облачные",
+      "set.prov.cat.gateway": "Шлюзы",
+      "set.prov.cat.other": "Прочие",
+      "set.prov.cat.named": "Именованные",
+      "set.mcp.tab_browse": "Каталог",
+      "set.mcp.tab_installed": "Установленные",
+      "set.mcp.search_ph": "Поиск по реестру (filesystem, github, slack…)",
+      "set.mcp.loading_catalog": "Загружаю каталог…",
+      "set.mcp.prev": "Назад",
+      "set.mcp.next": "Вперёд",
+      "set.mcp.add_custom": "+ Свой сервер",
+      "set.skills.title": "Навыки",
+      "set.skills.sub":
+        "Файловые наборы для агента, найденные в <code>~/.orchestra/skills</code> и <code>.orchestra/skills</code>. Здесь только чтение — чтобы добавить, положите папку в любое из этих мест.",
+      "set.skills.none": "Навыков не найдено — попробуйте orchestra skills install",
+      "set.skills.badge": "навык",
+      "set.hooks.summary": "Хуки, Git, браузер",
+      "set.hooks.hint":
+        "Настраивайте <code>hooks</code>, <code>exec</code>, <code>web</code> и <code>browser</code> в <code>.orchestra.yml</code>. Редакторы в интерфейсе будут позже.",
+      "set.mcp.configure": "Настройка",
+      "set.mcp.source": "Источник",
+      "set.mcp.source_hint": "Команда и переменные окружения для этого сервера MCP.",
+      "set.mcp.server": "Сервер",
+      "set.mcp.enable_title": "Включить сервер",
+      "set.mcp.name": "Имя",
+      "set.mcp.command": "Команда",
+      "set.mcp.env": "Переменные (KEY=VAL построчно)",
+      "set.mcp.tools": "Инструменты",
+      "set.mcp.tools_hint": "Включайте и выключайте отдельные инструменты.",
+      "set.mcp.remove": "Удалить",
+      "set.mcp.reload": "Перечитать",
+      "set.mcp.done": "Готово",
+      "set.mcp.configure_named": "Настройка {name}",
+      "set.mcp.configure_custom": "Настройка своего сервера",
+      "set.mcp.new_server": "Новый сервер",
+      "set.mcp.custom": "Свой",
+      "set.mcp.enter_command": "Введите команду ниже",
+      "set.mcp.enter_command_done": "Введите свою команду и нажмите «Готово».",
+      "set.mcp.off": "Выкл.",
+      "set.mcp.error": "Ошибка",
+      "set.mcp.stopped": "Остановлен",
+      "set.mcp.installed": "Установлен",
+      "set.mcp.tool_one": "1 инструмент",
+      "set.mcp.tool_n": "инструментов: {n}",
+      "set.mcp.loading_tools": "Загружаю инструменты…",
+      "set.mcp.turn_on": "Включите сервер, чтобы загрузить инструменты.",
+      "set.mcp.no_tools": "Инструменты пока не найдены — нажмите «Перечитать» после сохранения.",
+      "set.mcp.reloading": "Перечитываю инструменты…",
+      "set.mcp.registry_loading": "Загружаю реестр MCP…",
+      "set.mcp.src_registry": "Официальный реестр MCP",
+      "set.mcp.src_mixed": "Избранное + официальный реестр MCP",
+      "set.mcp.src_local": "Локальный каталог избранного",
+      "set.mcp.loaded_n": " · загружено {n}",
+      "set.mcp.loading_more": " · загружаю ещё…",
+      "set.mcp.search_note": " · поиск «{q}»",
+      "set.mcp.empty_loading": "Загружаю…",
+      "set.mcp.empty_search": "По этому запросу серверов MCP нет",
+      "set.mcp.empty_catalog": "В каталоге нет серверов MCP",
+      "set.mcp.kind_remote": "удалённый",
+      "set.mcp.kind_featured": "избранный",
+      "set.mcp.remote_only": "только удалённый",
+      "set.mcp.remote_only_title": "Orchestra пока ставит только stdio-серверы MCP",
+      "set.mcp.install": "Установить",
+      "set.mcp.install_env": "Установить…",
+      "set.mcp.docs": "Документация",
+      "set.mcp.remote_not_supported":
+        "Эта запись реестра только удалённая — установки stdio пока нет.",
+      "set.mcp.fill_env": "Заполните обязательные переменные для {name} и нажмите «Готово».",
+      "set.mcp.installing": "Устанавливаю {name}…",
+      "set.mcp.none_installed": "Серверов MCP не установлено — добавьте их из каталога",
+      "set.mcp.remove_server": "Удалить сервер",
+      "set.mcp.remove_named": "Удалить {name}",
+      "set.mcp.enable": "Включить",
+      "set.mcp.disable": "Выключить",
+      "set.mcp.test_ok_one": "OK ({elapsed}): 1 инструмент",
+      "set.mcp.test_ok_n": "OK ({elapsed}): инструментов {n}",
+      "set.mcp.test_failed": "Ошибка: {detail}",
+      "set.mcp.unknown": "неизвестно",
+
+      "set.appear.sub": "Как выглядит эта страница. Хранится только в этом браузере.",
+      "set.appear.theme_aria": "Тема",
+      "set.appear.system": "Как в системе",
+      "set.appear.system_hint": "То, что выбрано в операционной системе",
+      "set.appear.light": "Светлая",
+      "set.appear.light_hint": "Всегда светлая палитра",
+      "set.appear.dark": "Тёмная",
+      "set.appear.dark_hint": "Всегда тёмная палитра",
+      "set.appear.scale": "Масштаб интерфейса",
+      "set.appear.scale_sub":
+        "Насколько крупно всё нарисовано. Автоматический режим смотрит на ширину окна и не знает физический размер монитора — если он угадал неверно, задайте масштаб сами.",
+      "set.appear.auto": "Автоматически",
     },
   };
 
@@ -190,8 +1410,10 @@
 
   /**
    * Translate markup that was written in HTML rather than built in JS:
-   * data-i18n sets the text, data-i18n-title / -placeholder / -aria-label set
-   * that attribute. Safe to call again after a language change.
+   * data-i18n sets the text, data-i18n-html sets markup (for the handful of
+   * strings that carry a <code> or <em> — the catalogue is compiled in, never
+   * user input), and data-i18n-title / -placeholder / -aria-label set that
+   * attribute. Safe to call again after a language change.
    * @param {any=} root
    */
   function applyStaticI18n(root) {
@@ -201,6 +1423,7 @@
     }
     const pairs = [
       ["data-i18n", null],
+      ["data-i18n-html", "innerHTML"],
       ["data-i18n-title", "title"],
       ["data-i18n-placeholder", "placeholder"],
       ["data-i18n-aria-label", "aria-label"],
@@ -212,6 +1435,8 @@
         if (!key) continue;
         if (target === null) {
           el.textContent = i18n(key);
+        } else if (target === "innerHTML") {
+          el.innerHTML = i18n(key);
         } else {
           el.setAttribute(target, i18n(key));
         }
@@ -471,10 +1696,13 @@
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
 
   /** @type {EffortOpt[]} */
+  // Plain adjectives, so they translate. The mode names beside them (Agent,
+  // Orchestra, Plan) and the access levels (Ask, Auto) do not: those are this
+  // product's own vocabulary, the same words the CLI flags and the docs use.
   const EFFORTS = [
-    { id: "low", label: "Low", profile: "fast" },
-    { id: "medium", label: "Medium", profile: "" },
-    { id: "high", label: "High", profile: "precision" },
+    { id: "low", labelKey: "effort.low", profile: "fast" },
+    { id: "medium", labelKey: "effort.medium", profile: "" },
+    { id: "high", labelKey: "effort.high", profile: "precision" },
   ];
 
   const chromeHint = document.getElementById("chrome-hint");
@@ -563,15 +1791,20 @@
   const imagePreviewCounter = document.getElementById("image-preview-counter");
   const statusLsp = document.getElementById("status-lsp");
 
-  /** @type {{ cmd: string; desc: string }[]} */
+  /**
+   * The built-in slash commands. `descKey` rather than `desc` because the
+   * palette is rebuilt on every keystroke and the language can change under
+   * it — resolving the text at render time is what makes that work.
+   * @type {{ cmd: string; descKey: string }[]}
+   */
   const SLASH_CMDS = [
-    { cmd: "/clear", desc: "New chat" },
-    { cmd: "/compact", desc: "Compress LLM context" },
-    { cmd: "/help", desc: "Show commands" },
-    { cmd: "/model", desc: "Change model" },
-    { cmd: "/rewind", desc: "Checkpoint rewind help" },
-    { cmd: "/sessions", desc: "Switch session" },
-    { cmd: "/settings", desc: "Open settings" },
+    { cmd: "/clear", descKey: "cmd.clear" },
+    { cmd: "/compact", descKey: "cmd.compact" },
+    { cmd: "/help", descKey: "cmd.help" },
+    { cmd: "/model", descKey: "cmd.model" },
+    { cmd: "/rewind", descKey: "cmd.rewind" },
+    { cmd: "/sessions", descKey: "cmd.sessions" },
+    { cmd: "/settings", descKey: "cmd.settings" },
   ];
 
   /** Loaded skills, each usable as its own "/<name>" command. Replaced
@@ -736,7 +1969,7 @@
   }
 
   function truncateTabTitle(title) {
-    const t = (title || "New chat").trim() || "New chat";
+    const t = (title || i18n("chrome.new_chat")).trim() || i18n("chrome.new_chat");
     return t.length > 22 ? t.slice(0, 20) + "…" : t;
   }
 
@@ -751,7 +1984,7 @@
     if (list.length === 0) {
       const empty = document.createElement("div");
       empty.className = "session-tabs-empty";
-      empty.textContent = "New chat";
+      empty.textContent = i18n("chrome.new_chat");
       sessionTabsEl.appendChild(empty);
       return;
     }
@@ -780,7 +2013,7 @@
       close.className = "session-tab-close";
       close.setAttribute("data-close-session", s.id);
       close.setAttribute("role", "button");
-      close.setAttribute("aria-label", "Close session");
+      close.setAttribute("aria-label", i18n("tab.close"));
       close.textContent = "×";
 
       tab.appendChild(icon);
@@ -1066,7 +2299,7 @@
       `>` +
       `<div class="diff-preview-head code-ref-head">` +
       diffExtBadgeHtml(filePath) +
-      `<button type="button" class="diff-preview-name code-ref-title" title="Open file">${escapeAttr(title)}</button>` +
+      `<button type="button" class="diff-preview-name code-ref-title" title="${escapeAttr(i18n("code.open_file"))}">${escapeAttr(title)}</button>` +
       `</div>` +
       `<pre class="code-ref-body md-pre"><code>${escapeHtml(code)}</code></pre>` +
       `</div>`
@@ -1965,7 +3198,7 @@
       reasoningDetails.className = "reasoning-trace trace-details";
       const sum = document.createElement("summary");
       sum.className = "trace-summary";
-      sum.textContent = "Thought briefly";
+      sum.textContent = i18n("reason.brief");
       reasoningBody = document.createElement("pre");
       reasoningBody.className = "trace-body reasoning-body";
       reasoningDetails.appendChild(sum);
@@ -1991,7 +3224,7 @@
     const sum = reasoningDetails.querySelector(".trace-summary");
     if (sum) {
       const sec = reasoningStarted ? Math.round((Date.now() - reasoningStarted) / 1000) : 0;
-      sum.textContent = sec >= 2 ? `Thought for ${sec}s` : "Thought briefly";
+      sum.textContent = sec >= 2 ? i18n("reason.for", { n: sec }) : i18n("reason.brief");
     }
     reasoningDetails.open = false;
   }
@@ -2116,10 +3349,9 @@
     if (displayRows.length === 0) {
       const hint = document.createElement("div");
       hint.className = "diff-empty-hint";
-      hint.textContent =
-        (before || "") === (after || "")
-          ? "No line changes detected"
-          : "Diff preview unavailable";
+      hint.textContent = i18n(
+        (before || "") === (after || "") ? "diff.no_changes" : "diff.unavailable"
+      );
       container.appendChild(hint);
       return;
     }
@@ -2217,23 +3449,23 @@
     if (!overlay || !overlayTitle || !overlayBody || !overlayActions) return;
     const isLSP = request.kind === "lsp.install" || request.tool === "lsp.install";
     overlayTitle.textContent = isLSP
-      ? "Install language server?"
-      : `Allow ${request.tool || "tool"}?`;
-    const extra = isLSP ? "Install the language server for this workspace, or skip." : "";
+      ? i18n("perm.install_lsp")
+      : i18n("perm.allow_tool", { tool: request.tool || i18n("perm.tool") });
+    const extra = isLSP ? i18n("perm.install_extra") : "";
     overlayBody.textContent = [request.description, request.reason, extra]
       .filter(Boolean)
       .join("\n\n");
     overlayActions.innerHTML = "";
     const buttons = isLSP
       ? [
-          { label: "Skip", approved: false },
-          { label: "Install once", approved: true },
-          { label: "Install always", approved: true, always: true },
+          { label: i18n("perm.skip"), approved: false },
+          { label: i18n("perm.install_once"), approved: true },
+          { label: i18n("perm.install_always"), approved: true, always: true },
         ]
       : [
-          { label: "Deny", approved: false },
-          { label: "Allow once", approved: true },
-          { label: "Allow always", approved: true, always: true },
+          { label: i18n("perm.deny"), approved: false },
+          { label: i18n("perm.allow_once"), approved: true },
+          { label: i18n("perm.allow_always"), approved: true, always: true },
         ];
     buttons.forEach((btn) => {
       const el = document.createElement("button");
@@ -2270,7 +3502,10 @@
       hideOverlay();
       return;
     }
-    overlayTitle.textContent = `Question ${questionState.index + 1}/${questionState.questions.length}`;
+    overlayTitle.textContent = i18n("question.step", {
+      n: questionState.index + 1,
+      total: questionState.questions.length,
+    });
     overlayBody.textContent = q.question || "";
     overlayOptions.innerHTML = "";
     overlayActions.innerHTML = "";
@@ -2293,7 +3528,7 @@
       const next = document.createElement("button");
       next.type = "button";
       next.className = "pill primary";
-      next.textContent = "Next";
+      next.textContent = i18n("question.next");
       next.addEventListener("click", () => {
         questionState.answers.push(overlayInput?.value || "");
         questionState.index += 1;
@@ -2443,7 +3678,7 @@
       const rm = document.createElement("button");
       rm.type = "button";
       rm.className = "queue-cancel";
-      rm.setAttribute("aria-label", "Remove from queue");
+      rm.setAttribute("aria-label", i18n("queue.remove"));
       rm.textContent = "×";
       rm.addEventListener("click", () => {
         host.postMessage({ type: "cancelQueuedSend", id: item.id });
@@ -2476,7 +3711,7 @@
     if (!typingIndicatorEl) {
       typingIndicatorEl = document.createElement("div");
       typingIndicatorEl.className = "msg typing-indicator";
-      typingIndicatorEl.setAttribute("aria-label", "Assistant is working");
+      typingIndicatorEl.setAttribute("aria-label", i18n("typing.aria"));
       typingIndicatorEl.innerHTML =
         '<span class="typing-dots" aria-hidden="true">' +
         '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>' +
@@ -2633,11 +3868,11 @@
       if (mode === "mention") {
         const head = document.createElement("div");
         head.className = "menu-section palette-head";
-        head.textContent = "Files";
+        head.textContent = i18n("palette.files");
         paletteMenu.appendChild(head);
         const empty = document.createElement("div");
         empty.className = "palette-empty";
-        empty.textContent = "No files found";
+        empty.textContent = i18n("palette.no_files");
         paletteMenu.appendChild(empty);
         paletteMenu.classList.remove("hidden");
         return;
@@ -2648,7 +3883,7 @@
     if (mode === "mention") {
       const head = document.createElement("div");
       head.className = "menu-section palette-head";
-      head.textContent = "Files";
+      head.textContent = i18n("palette.files");
       paletteMenu.appendChild(head);
     }
     items.slice(0, 12).forEach((item, i) => {
@@ -2656,7 +3891,10 @@
       btn.type = "button";
       btn.className = "menu-item palette-item" + (i === 0 ? " selected" : "");
       if (mode === "slash") {
-        btn.innerHTML = `<span class="palette-cmd">${item.cmd}</span><span class="palette-desc">${item.desc || ""}</span>`;
+        // Built-ins carry a catalogue key; skills carry their own description,
+        // which is whatever the skill's own file says and is not translated.
+        const desc = item.descKey ? i18n(item.descKey) : item.desc || "";
+        btn.innerHTML = `<span class="palette-cmd">${item.cmd}</span><span class="palette-desc">${escapeHtml(desc)}</span>`;
       } else {
         const kind = item.kind || "binary";
         const thumb =
@@ -3226,12 +4464,12 @@
       if (used > 0) {
         conv = Math.max(conv, used - fixedSum);
       }
-      rows.push({ key: "conversation", label: "Conversation", tokens: Math.max(0, conv) });
+      rows.push({ key: "conversation", label: i18n("ctx.row.conversation"), tokens: Math.max(0, conv) });
     } else if (used > 0) {
-      rows.push({ key: "conversation", label: "Prompt context", tokens: used });
+      rows.push({ key: "conversation", label: i18n("ctx.row.prompt"), tokens: used });
     }
     if (ctxState.completion > 0) {
-      rows.push({ key: "completion", label: "Completion", tokens: ctxState.completion });
+      rows.push({ key: "completion", label: i18n("ctx.row.completion"), tokens: ctxState.completion });
     }
     return rows;
   }
@@ -3260,7 +4498,7 @@
       const total = Math.max(limit, 1);
       const segs = rows.slice();
       if (ctxState.maxResponse > 0) {
-        segs.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
+        segs.push({ key: "reserved", label: i18n("ctx.row.reserved"), tokens: ctxState.maxResponse });
       }
       segs.forEach((r) => {
         if (r.tokens <= 0) return;
@@ -3275,7 +4513,7 @@
     if (ctxRows) {
       ctxRows.innerHTML = "";
       const items = rows.slice();
-      items.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
+      items.push({ key: "reserved", label: i18n("ctx.row.reserved"), tokens: ctxState.maxResponse });
       items.forEach((item) => {
         if (item.tokens <= 0 && item.key !== "reserved") return;
         const row = document.createElement("div");
@@ -3484,7 +4722,7 @@
       reasoningDetails.className = "reasoning-trace trace-details";
       const sum = document.createElement("summary");
       sum.className = "trace-summary";
-      sum.textContent = "Thought briefly";
+      sum.textContent = i18n("reason.brief");
       reasoningBody = document.createElement("pre");
       reasoningBody.className = "trace-body reasoning-body";
       reasoningBody.textContent = reasoning;
@@ -3564,8 +4802,8 @@
         const rewind = document.createElement("button");
         rewind.type = "button";
         rewind.className = "rewind-btn";
-        rewind.title = "Rewind to here";
-        rewind.textContent = "↩ Rewind";
+        rewind.title = i18n("msg.rewind_title");
+        rewind.textContent = i18n("msg.rewind");
         rewind.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -3590,8 +4828,8 @@
           const fork = document.createElement("button");
           fork.type = "button";
           fork.className = "fork-btn";
-          fork.title = "Branch a new chat from here";
-          fork.textContent = "⑂ Branch";
+          fork.title = i18n("msg.branch_title");
+          fork.textContent = i18n("msg.branch");
           fork.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -3979,7 +5217,7 @@
           target.output += str(d.chunk);
           touch(target, ms, live);
         } else {
-          s.items.push({ kind: "other", key: s.key + "/exec:" + s.items.length, label: "shell output", startMs: ms, endMs: ms, live, output: str(d.chunk), seq });
+          s.items.push({ kind: "other", key: s.key + "/exec:" + s.items.length, label: i18n("traj.shell_output"), startMs: ms, endMs: ms, live, output: str(d.chunk), seq });
         }
         s.lastText = null;
         continue;
@@ -4278,17 +5516,19 @@
     trajRowsCache = rows;
     trajectoryRowsEl.innerHTML = "";
     if (trajError && rows.length === 0) {
-      trajectorySummary.textContent = "Trajectory unavailable: " + trajError;
+      trajectorySummary.textContent = i18n("traj.unavailable", { detail: trajError });
       clearTrajChrome();
       return;
     }
     if (trajRecorded === false && rows.length === 0) {
-      trajectorySummary.textContent = "No trajectory was recorded for this session — it predates the log.";
+      trajectorySummary.textContent = i18n("traj.not_recorded");
       clearTrajChrome();
       return;
     }
     if (rows.length === 0) {
-      trajectorySummary.textContent = trajRecorded === null ? "Loading trajectory…" : "Nothing has happened in this session yet.";
+      trajectorySummary.textContent = i18n(
+        trajRecorded === null ? "traj.loading" : "traj.empty"
+      );
       clearTrajChrome();
       return;
     }
@@ -4300,13 +5540,16 @@
     }
     const q = trajQuery.trim().toLowerCase();
     const shown = q ? rows.filter((r) => trajRowMatches(r, q)) : rows;
-    trajectorySummary.textContent =
-      turns + " turn" + (turns === 1 ? "" : "s") + " · " + rows.length + " rows" +
-      (liveCount ? " · " + liveCount + " live" : "") +
-      (q ? " · " + shown.length + " matching" : "") +
-      // These rows survived a failed re-read (see replaceTrajectory). Say so:
-      // they are what the pane saw live, not what the core has on disk.
-      (trajError ? " · could not refresh: " + trajError : "");
+    const summaryBits = [
+      i18n(turns === 1 ? "traj.turns_one" : "traj.turns_n", { n: turns }),
+      i18n("traj.rows_n", { n: rows.length }),
+    ];
+    if (liveCount) summaryBits.push(i18n("traj.live_n", { n: liveCount }));
+    if (q) summaryBits.push(i18n("traj.matching_n", { n: shown.length }));
+    // These rows survived a failed re-read (see replaceTrajectory). Say so:
+    // they are what the pane saw live, not what the core has on disk.
+    if (trajError) summaryBits.push(i18n("traj.refresh_failed", { detail: trajError }));
+    trajectorySummary.textContent = summaryBits.join(" · ");
     renderTrajTimeline(rows);
     const frag = document.createDocumentFragment();
     for (const r of shown) frag.appendChild(renderTrajRow(r));
@@ -4466,22 +5709,22 @@
       val.textContent = String(v);
       dl.append(key, val);
     };
-    fact("kind", row.kind);
-    fact("label", row.label);
-    fact("outcome", row.outcome);
-    fact("offset", row.offsetMs === undefined ? "" : "+" + formatToolDuration(row.offsetMs));
-    fact("duration", row.durationMs === undefined ? "" : formatToolDuration(row.durationMs));
-    fact("tokens in", row.tokensIn);
-    fact("tokens out", row.tokensOut);
-    fact("live", row.live ? "yes" : "");
-    fact("event", ev && ev.type ? ev.type + (ev.data && ev.data.type ? " · " + ev.data.type : "") : "");
-    fact("seq", row.seq);
+    fact(i18n("traj.fact.kind"), row.kind);
+    fact(i18n("traj.fact.label"), row.label);
+    fact(i18n("traj.fact.outcome"), row.outcome);
+    fact(i18n("traj.fact.offset"), row.offsetMs === undefined ? "" : "+" + formatToolDuration(row.offsetMs));
+    fact(i18n("traj.fact.duration"), row.durationMs === undefined ? "" : formatToolDuration(row.durationMs));
+    fact(i18n("traj.fact.tokens_in"), row.tokensIn);
+    fact(i18n("traj.fact.tokens_out"), row.tokensOut);
+    fact(i18n("traj.fact.live"), row.live ? i18n("traj.fact.yes") : "");
+    fact(i18n("traj.fact.event"), ev && ev.type ? ev.type + (ev.data && ev.data.type ? " · " + ev.data.type : "") : "");
+    fact(i18n("traj.fact.seq"), row.seq);
     trajPanelBodyEl.appendChild(dl);
     const hasDiff = ev && ev.data && ev.data.data && Array.isArray(ev.data.data.diff) && ev.data.data.diff.length > 0;
     if (!row.input && !row.output && !hasDiff) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "This row records that the event happened; it carries no payload.";
+      note.textContent = i18n("traj.no_payload");
       trajPanelBodyEl.appendChild(note);
     }
   }
@@ -4515,12 +5758,12 @@
       trajPanelPre("arguments", text);
     }
     if (row.output) {
-      trajPanelPre("result", row.output);
+      trajPanelPre(i18n("traj.result"), row.output);
     }
     if (!row.input && !row.output) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "Nothing to preview for this row.";
+      note.textContent = i18n("traj.no_preview");
       trajPanelBodyEl.appendChild(note);
     }
   }
@@ -4539,7 +5782,7 @@
     const open = document.createElement("button");
     open.type = "button";
     open.className = "traj-diff-open";
-    open.textContent = "Open full diff";
+    open.textContent = i18n("traj.open_full_diff");
     open.addEventListener("click", () => showDiffViewer(path, before, after, ""));
     head.append(name, count, open);
     trajPanelBodyEl.appendChild(head);
@@ -4548,7 +5791,7 @@
     if (lineCount > TRAJ_DIFF_LINE_BUDGET) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "The file is too large to align inline (" + lineCount + " lines) — open the full diff.";
+      note.textContent = i18n("traj.too_large", { n: lineCount });
       trajPanelBodyEl.appendChild(note);
       return;
     }
@@ -4564,7 +5807,7 @@
     if (!block.childNodes || block.childNodes.length === 0) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "No line changed in this file.";
+      note.textContent = i18n("traj.no_line_changed");
       trajPanelBodyEl.appendChild(note);
       return;
     }
@@ -4574,12 +5817,12 @@
   /** @param {TrajRow} row @param {any} ev */
   function renderTrajRaw(row, ev) {
     if (ev) {
-      trajPanelPre("recorded event", JSON.stringify(ev, null, 2));
+      trajPanelPre(i18n("traj.recorded_event"), JSON.stringify(ev, null, 2));
       return;
     }
     // A live row has no envelope yet: it arrived as a forwarded notification
     // with no seq or time_ms, so the row itself is the whole truth.
-    trajPanelPre("row (live — not yet read back from the log)", JSON.stringify(row, null, 2));
+    trajPanelPre(i18n("traj.live_row"), JSON.stringify(row, null, 2));
   }
 
   /**
@@ -4735,8 +5978,20 @@
       host.postMessage({ type: "listOrchestraRoles" });
     } else if (modelLabelEl) {
       setModelLabel(currentModel);
-      if (modelPill) modelPill.title = "Model";
+      if (modelPill) modelPill.title = i18n("model.title");
     }
+  }
+
+  /** The six roles the catalogue names; anything else keeps the core's label. */
+  const ORCH_ROLE_KEYS = ["planner", "lead", "complex", "focused", "micro", "embed"];
+
+  /** @param {any} r */
+  function orchRoleName(r) {
+    const key = r && r.key;
+    if (key && ORCH_ROLE_KEYS.indexOf(key) >= 0) {
+      return i18n("orch.role." + key);
+    }
+    return (r && (r.label || r.key)) || "";
   }
 
   /** Models actually configured for one orchestra role. @param {any} r */
@@ -4753,54 +6008,55 @@
     const plannerModels = planner ? orchRoleModels(planner) : [];
     const others = roles.filter((r) => r.key !== "planner" && orchRoleModels(r).length > 0);
     if (!roles.length) {
-      modelLabelEl.textContent = "Orchestra tiers";
-      modelLabelEl.title = "Loading tier map…";
-      if (modelPill) modelPill.title = "Orchestra tier models";
+      modelLabelEl.textContent = i18n("orch.tiers");
+      modelLabelEl.title = i18n("orch.loading_map");
+      if (modelPill) modelPill.title = i18n("orch.tier_models");
       return;
     }
     const base = plannerModels.length
       ? `L5 ${shortModel(plannerModels[0])}`
-      : "L5 not set";
+      : i18n("orch.l5_not_set");
     modelLabelEl.textContent = others.length ? `${base} +${others.length}` : base;
     const lines = roles.map((r) => {
       const models = orchRoleModels(r);
       const tier = r.tier ? `${r.tier} · ` : "";
-      return `${tier}${r.label}: ${models.length ? models.join(", ") : "— (main model fallback)"}`;
+      return `${tier}${orchRoleName(r)}: ${models.length ? models.join(", ") : i18n("orch.fallback_main")}`;
     });
     modelLabelEl.title = lines.join("\n");
-    if (modelPill) modelPill.title = "Orchestra tier models";
+    if (modelPill) modelPill.title = i18n("orch.tier_models");
   }
 
   /** Read-only tier → models breakdown inside the model dropdown. */
   function renderOrchestraRolesMenu() {
     if (!modelMenuList) return;
-    if (modelMenuTitle) modelMenuTitle.textContent = "Orchestra tiers";
+    if (modelMenuTitle) modelMenuTitle.textContent = i18n("orch.tiers");
     if (modelMenuSearch) modelMenuSearch.style.display = "none";
     modelMenuList.innerHTML = "";
     const roles = orchestraRolesInfo?.roles || [];
     if (!roles.length) {
       const hint = document.createElement("div");
       hint.className = "menu-hint";
-      hint.textContent = "Loading tier map…";
+      hint.textContent = i18n("orch.loading_map");
       modelMenuList.appendChild(hint);
     }
     roles.forEach((r) => {
       const head = document.createElement("div");
       head.className = "menu-section";
-      head.textContent = r.tier ? `${r.label} · ${r.tier}` : r.label;
+      const roleName = orchRoleName(r);
+      head.textContent = r.tier ? `${roleName} · ${r.tier}` : roleName;
       modelMenuList.appendChild(head);
       const models = orchRoleModels(r);
       if (!models.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
-        empty.textContent = "not set — falls back to the main model";
+        empty.textContent = i18n("orch.not_set");
         modelMenuList.appendChild(empty);
         return;
       }
       models.forEach((id, i) => {
         const row = document.createElement("div");
         row.className = "menu-hint orch-tier-model";
-        row.textContent = i === 0 ? id : `${id} (failover ${i + 1})`;
+        row.textContent = i === 0 ? id : i18n("orch.failover_n", { id, n: i + 1 });
         row.title = id;
         modelMenuList.appendChild(row);
       });
@@ -4809,7 +6065,7 @@
     cfg.type = "button";
     cfg.className = "menu-item";
     cfg.setAttribute("data-model-action", "configure-orchestra");
-    cfg.textContent = "Configure tiers…";
+    cfg.textContent = i18n("orch.configure");
     modelMenuList.appendChild(cfg);
   }
 
@@ -4835,19 +6091,19 @@
     effortMenu.innerHTML = "";
     const head = document.createElement("div");
     head.className = "menu-section";
-    head.textContent = "Effort";
+    head.textContent = i18n("effort.head");
     effortMenu.appendChild(head);
     EFFORTS.forEach((e) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "menu-item";
       btn.dataset.effort = e.id;
-      btn.innerHTML = `<span class="mi effort-icon effort-${escapeAttr(e.id)}">${effortMeterHtml(e.id)}</span>${escapeAttr(e.label)}`;
+      btn.innerHTML = `<span class="mi effort-icon effort-${escapeAttr(e.id)}">${effortMeterHtml(e.id)}</span>${escapeAttr(i18n(e.labelKey))}`;
       effortMenu.appendChild(btn);
     });
     const optHead = document.createElement("div");
     optHead.className = "menu-section";
-    optHead.textContent = "Options";
+    optHead.textContent = i18n("effort.options");
     effortMenu.appendChild(optHead);
     const fastRow = document.createElement("div");
     fastRow.className = "menu-row menu-row-fast";
@@ -4860,8 +6116,9 @@
 
   function syncEffortUi() {
     const e = currentEffort();
+    const effortName = i18n(e.labelKey);
     if (effortLabel) {
-      effortLabel.textContent = e.label;
+      effortLabel.textContent = effortName;
     }
     const icon = document.getElementById("effort-icon");
     if (icon) {
@@ -4869,7 +6126,7 @@
     }
     if (effortBtn) {
       effortBtn.dataset.effort = effortId;
-      effortBtn.title = fastOn ? `${e.label} · Fast profile` : e.label;
+      effortBtn.title = fastOn ? `${effortName} · Fast profile` : effortName;
     }
     const fastMark = document.getElementById("effort-fast-mark");
     if (fastMark) {
@@ -4942,7 +6199,7 @@
       const rm = document.createElement("button");
       rm.type = "button";
       rm.className = "file-attach-remove";
-      rm.setAttribute("aria-label", "Remove file");
+      rm.setAttribute("aria-label", i18n("attach.remove"));
       rm.textContent = "×";
       rm.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -5054,7 +6311,7 @@
       btn.type = "button";
       btn.className = "menu-item";
       btn.setAttribute("data-model-action", "refresh");
-      btn.textContent = "No providers — open Settings";
+      btn.textContent = i18n("model.no_providers");
       modelMenuList.appendChild(btn);
       return;
     }
@@ -5075,14 +6332,14 @@
       if (!models.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
-        empty.textContent = p.models_error || (p.ready ? "No models" : "Not configured");
+        empty.textContent = p.models_error || i18n(p.ready ? "model.none" : "model.not_configured");
         modelMenuList.appendChild(empty);
         return;
       }
       if (!filtered.length) {
         const empty = document.createElement("div");
         empty.className = "menu-hint";
-        empty.textContent = "No matches";
+        empty.textContent = i18n("palette.no_matches");
         modelMenuList.appendChild(empty);
         return;
       }
@@ -5103,7 +6360,7 @@
     if (shown === 0 && q) {
       const empty = document.createElement("div");
       empty.className = "menu-hint";
-      empty.textContent = `No models match “${modelMenuFilter}”`;
+      empty.textContent = i18n("model.no_match", { q: modelMenuFilter });
       modelMenuList.appendChild(empty);
     }
   }
@@ -5121,7 +6378,7 @@
       btn.type = "button";
       btn.className = "menu-item";
       btn.setAttribute("data-model-action", "refresh");
-      btn.textContent = "No models — retry";
+      btn.textContent = i18n("model.retry");
       modelMenuList.appendChild(btn);
       return;
     }
@@ -5186,18 +6443,20 @@
     costWrap.classList.remove("hidden");
     if (costLabelEl) {
       costLabelEl.textContent = hasSpend ? formatUsd(liveTotal) : formatUsd(creditsInfo?.balance || 0);
-      costLabelEl.title = hasSpend ? "Session spend" : "Balance";
+      costLabelEl.title = i18n(hasSpend ? "cost.session_spend" : "cost.balance");
     }
     if (costBalanceEl) {
-      costBalanceEl.textContent = hasBalance ? "balance " + formatUsd(creditsInfo?.balance || 0) : "";
+      costBalanceEl.textContent = hasBalance
+        ? i18n("cost.balance_prefix", { amount: formatUsd(creditsInfo?.balance || 0) })
+        : "";
     }
     if (costSummaryEl) {
       const bits = [];
-      bits.push("session " + formatUsd(liveTotal));
+      bits.push(i18n("cost.session", { amount: formatUsd(liveTotal) }));
       if (turnCostAccum > 0) {
-        bits.push("current turn " + formatUsd(turnCostAccum));
+        bits.push(i18n("cost.current_turn", { amount: formatUsd(turnCostAccum) }));
       } else if (lastTurnUsage && (lastTurnUsage.cost_usd || 0) > 0) {
-        bits.push("last turn " + formatUsd(lastTurnUsage.cost_usd));
+        bits.push(i18n("cost.last_turn", { amount: formatUsd(lastTurnUsage.cost_usd) }));
       }
       costSummaryEl.textContent = bits.join(" · ");
     }
@@ -5450,7 +6709,7 @@
         const file = item.getAsFile();
         if (!file) continue;
         if (file.size > MAX_ATTACH_BYTES) {
-          appendMsg("system", "Pasted image exceeds 20 MB limit");
+          appendMsg("system", i18n("paste.too_big"));
           continue;
         }
         handledImage = true;
@@ -5488,7 +6747,7 @@
       return;
     }
     if (open) {
-      if (modelMenuTitle) modelMenuTitle.textContent = "Models";
+      if (modelMenuTitle) modelMenuTitle.textContent = i18n("model.menu_title");
       if (modelMenuSearch) modelMenuSearch.style.display = "";
       modelMenuFilter = "";
       if (modelMenuSearch) {
@@ -5596,7 +6855,7 @@
       case "status": {
         const st = msg.status || "";
         if (st === "error") {
-          setChromeHint(msg.detail || "connection error", true);
+          setChromeHint(msg.detail || i18n("conn.error"), true);
         } else if (st === "connecting") {
           busyStatusText = msg.detail || i18n("conn.connecting");
           setChromeHint(msg.detail || i18n("conn.connecting"), false);
@@ -5626,7 +6885,7 @@
           turnCostAccum = 0;
         }
         activeSessionId = msg.sessionId || activeSessionId;
-        updateActiveTabTitle(msg.title || "New chat");
+        updateActiveTabTitle(msg.title || i18n("chrome.new_chat"));
         setModelLabel(msg.model || "");
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
@@ -5649,7 +6908,7 @@
         if (sessions.length === 0) {
           const empty = document.createElement("div");
           empty.className = "menu-section";
-          empty.textContent = "No saved sessions";
+          empty.textContent = i18n("session.none");
           sessionMenuList.appendChild(empty);
           break;
         }
@@ -5710,7 +6969,7 @@
           const del = document.createElement("span");
           del.className = "session-row-del";
           del.setAttribute("data-delete-session", s.id);
-          del.title = "Delete chat";
+          del.title = i18n("session.delete");
           del.textContent = "✕";
           row.appendChild(del);
 
@@ -5764,8 +7023,13 @@
         applyStaticI18n();
         initModeMenu();
         initAccessMenu();
+        initEffortMenu();
         syncModeUi();
         syncAccessUi();
+        syncEffortUi();
+        // The context popover is built from labels, not from markup, so it
+        // keeps the old language until something recomputes it.
+        renderContextUi();
         if (!busy) {
           busyStatusText = i18n("turn.working");
         }
@@ -5849,7 +7113,7 @@
           const moreBtn = document.createElement("button");
           moreBtn.type = "button";
           moreBtn.className = "history-more";
-          moreBtn.textContent = `Show ${hidden.length} older messages`;
+          moreBtn.textContent = i18n("msg.show_older", { n: hidden.length });
           moreBtn.addEventListener("click", () => {
             moreBtn.remove();
             const frag = document.createDocumentFragment();
@@ -5903,7 +7167,7 @@
       case "delta":
       case "deltaSync": {
         if (busy) {
-          busyStatusText = "Writing…";
+          busyStatusText = i18n("turn.writing");
           updateBusyUi();
         }
         const bubble = ensureAssistant();
@@ -6101,7 +7365,7 @@
         assistantBubble = null;
         resetTurnState();
         if (!msg.ok) {
-          setChromeHint("turn failed", true);
+          setChromeHint(i18n("turn.failed"), true);
         }
         break;
       case "filesPicked": {
@@ -6763,6 +8027,46 @@
     } catch (e) {
       // Storage can throw outright in a locked-down browser.
       return "";
+    }
+  }
+
+  /**
+   * Store the chosen language and tell both documents that read it: the chat
+   * renderer in this page, and the settings panel in its iframe.
+   * @param {string} lang
+   */
+  function applyUiLanguageChoice(lang) {
+    try {
+      if (lang) {
+        localStorage.setItem("orchestra.lang", lang);
+      } else {
+        localStorage.removeItem("orchestra.lang");
+      }
+    } catch (e) {
+      // A locked-down browser still gets the change for this page's lifetime.
+    }
+    // The renderer's own handler runs inside this call and switches the
+    // catalogue, so everything below already speaks the new language.
+    toRenderer({ type: "uiLang", lang });
+    postToSettings({ type: "language", lang });
+    // The sidebar and the start screen are this host's, not the renderer's:
+    // nothing in toRenderer reaches them, and they would have kept the old
+    // language until the next time something happened to repaint them.
+    repaintHostChrome();
+  }
+
+  /**
+   * Redraw the parts of the window the web host owns. Guarded because it runs
+   * on a language change, which can land before the first project list has
+   * arrived — and a repaint is never worth an exception on the message path.
+   */
+  function repaintHostChrome() {
+    try {
+      renderProjects();
+      renderStartScreen();
+      relabelGraphChrome();
+    } catch (e) {
+      // Nothing here is worth breaking the message that triggered it.
     }
   }
 
@@ -8421,8 +9725,8 @@
     btn.className = "rail-session-del";
     btn.dataset.projectId = projectId;
     btn.dataset.sessionId = sessionId;
-    btn.title = "Delete this chat";
-    btn.setAttribute("aria-label", "Delete this chat");
+    btn.title = i18n("rail.delete_chat");
+    btn.setAttribute("aria-label", i18n("rail.delete_chat"));
     btn.textContent = "×";
     let armed = 0;
     btn.addEventListener("click", (e) => {
@@ -8431,14 +9735,14 @@
       if (!armed) {
         armed = 1;
         btn.classList.add("armed");
-        btn.textContent = "Delete?";
-        btn.title = "Click again to delete this chat for good";
+        btn.textContent = i18n("rail.delete_confirm");
+        btn.title = i18n("rail.delete_confirm_title");
         setTimeout(() => {
           if (!armed) return;
           armed = 0;
           btn.classList.remove("armed");
           btn.textContent = "×";
-          btn.title = "Delete this chat";
+          btn.title = i18n("rail.delete_chat");
         }, 4000);
         return;
       }
@@ -8461,7 +9765,7 @@
     text.className = "rail-section-label";
     text.textContent = label;
     sec.appendChild(text);
-    sec.appendChild(railAddButton("add-project", "Add a workspace folder"));
+    sec.appendChild(railAddButton("add-project", i18n("rail.add_workspace")));
     return sec;
   }
 
@@ -8475,8 +9779,8 @@
     const box = document.createElement("input");
     box.type = "search";
     box.className = "rail-session-search";
-    box.placeholder = "Search chats";
-    box.setAttribute("aria-label", "Search this workspace's chats");
+    box.placeholder = i18n("rail.search_chats");
+    box.setAttribute("aria-label", i18n("rail.search_aria"));
     if (sessionSearch.projectId === projectId) {
       box.value = sessionSearch.query;
     }
@@ -8639,7 +9943,7 @@
     chip.dataset.state = row.state;
     chip.dataset.status = row.status;
     chip.dataset.active = row.active ? "true" : "false";
-    chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
+    chip.title = row.path + (row.status === "asking" ? i18n("rail.waiting") : "");
     chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
     if (railOpeningId && row.id === railOpeningId) {
       chip.dataset.opening = "true";
@@ -8684,7 +9988,7 @@
         render: (had) => {
           const badge = railNode(had, "span", "project-count");
           badge.textContent = String(count);
-          badge.title = count === 1 ? "1 chat" : count + " chats";
+          badge.title = i18n(count === 1 ? "rail.chats_one" : "rail.chats_n", { n: count });
           return badge;
         },
       });
@@ -8731,7 +10035,7 @@
           key: "no-hits",
           render: (had) => {
             const empty = railNode(had, "div", "rail-sessions-empty");
-            empty.textContent = `No chat mentions “${sessionSearch.query}”`;
+            empty.textContent = i18n("rail.no_match", { q: sessionSearch.query });
             return empty;
           },
         });
@@ -8763,7 +10067,12 @@
     // it anyway is the difference between "where am I" and an empty sidebar.
     const openIsListed = listed.some((s) => s.id === openSessionId);
     if (row.active && openSessionId && !openIsListed) {
-      const info = { id: openSessionId, label: "New session", age: "now", tooltip: openSessionId };
+      const info = {
+        id: openSessionId,
+        label: i18n("rail.new_session_label"),
+        age: i18n("rail.now"),
+        tooltip: openSessionId,
+      };
       entries.push({ key: "new", render: (had) => railSessionButton(row.id, info, true, had) });
     }
     if (listed.length === 0 && !(row.active && openSessionId)) {
@@ -8771,7 +10080,7 @@
         key: "empty",
         render: (had) => {
           const empty = railNode(had, "div", "rail-sessions-empty");
-          empty.textContent = "No sessions yet";
+          empty.textContent = i18n("rail.no_sessions");
           return empty;
         },
       });
@@ -8815,7 +10124,7 @@
           if (row.active) {
             parts.push({
               key: "add",
-              render: (h) => h || railAddButton("new-session", "New session in this workspace", row.id),
+              render: (h) => h || railAddButton("new-session", i18n("rail.new_session"), row.id),
             });
           }
           reconcileByKey(head, parts);
@@ -8874,7 +10183,7 @@
     }
     for (const row of ordered) {
       if (!row.active && hasActive && !otherLabelDone) {
-        entries.push(railHeadingEntry("Other workspaces"));
+        entries.push(railHeadingEntry(i18n("rail.other_workspaces")));
         otherLabelDone = true;
       }
       entries.push({ key: "group:" + row.id, render: (had) => railProjectGroup(row, had) });
@@ -8934,7 +10243,7 @@
       .slice(0, 16)
       .map((s) => ({
         id: s.id,
-        title: (s.title || "New chat").trim() || "New chat",
+        title: (s.title || i18n("chrome.new_chat")).trim() || i18n("chrome.new_chat"),
         model: s.model,
         msg_count: s.msg_count,
       }));
@@ -8943,7 +10252,7 @@
     // has no row until the user says something. Lead with it anyway.
     const shown = openSessionId && !hiddenTabsFor(currentProjectId || "").has(openSessionId);
     if (shown && !tabs.some((t) => t.id === openSessionId)) {
-      tabs.unshift({ id: openSessionId, title: "New chat" });
+      tabs.unshift({ id: openSessionId, title: i18n("chrome.new_chat") });
     }
     toRenderer({ type: "sessionTabs", activeId: openSessionId, tabs });
   }
@@ -8990,7 +10299,7 @@
     }
     const conn = connFor(projectId);
     if (!conn || !conn.isOpen()) {
-      toRenderer({ type: "error", message: "The workspace is not open, so its chats cannot be deleted." });
+      toRenderer({ type: "error", message: i18n("rail.delete_no_workspace") });
       return;
     }
     try {
@@ -8998,7 +10307,7 @@
     } catch (err) {
       toRenderer({
         type: "error",
-        message: "Could not delete the chat: " + String((err && err.message) || err),
+        message: i18n("rail.delete_failed", { detail: String((err && err.message) || err) }),
       });
       return;
     }
@@ -9088,7 +10397,7 @@
     if (entry && entry.state !== "closed") {
       const close = document.createElement("button");
       close.type = "button";
-      close.textContent = "Close project";
+      close.textContent = i18n("rail.close_project");
       close.addEventListener("click", () => {
         railMenu.hidden = true;
         void closeProject(projectId);
@@ -9097,7 +10406,7 @@
     }
     const forget = document.createElement("button");
     forget.type = "button";
-    forget.textContent = "Remove from list";
+    forget.textContent = i18n("rail.forget_project");
     forget.addEventListener("click", () => {
       railMenu.hidden = true;
       void forgetProject(projectId);
@@ -9314,7 +10623,7 @@
     if (railResizer) {
       railResizer.dataset.collapsed = collapsed ? "true" : "false";
       if (railResizer.setAttribute) {
-        railResizer.setAttribute("aria-label", collapsed ? "Show sidebar" : "Sidebar width");
+        railResizer.setAttribute("aria-label", i18n(collapsed ? "rail.show" : "rail.width"));
       }
     }
     try {
@@ -9711,7 +11020,7 @@
           key: "empty",
           render: (had) => {
             const empty = railNode(had, "div", "start-recent-empty");
-            empty.textContent = "No workspaces yet — open a folder or clone a repository.";
+            empty.textContent = i18n("start.none");
             return empty;
           },
         },
@@ -9792,7 +11101,7 @@
       return;
     }
     const entry = known.find((p) => p.path === path);
-    startBusy("Opening " + ((entry && entry.name) || path) + "…", projectId || "");
+    startBusy(i18n("start.opening", { name: (entry && entry.name) || path }), projectId || "");
     pendingOpenId = projectId || "";
     pendingOpenPath = path;
     renderProjects();
@@ -9824,7 +11133,7 @@
     // ASYNCHRONOUSLY, so the promise it returns reads as true and the code
     // carried on as if the user had agreed.
     if (!(await openProject(path, true))) {
-      startError("Could not open " + path + ".");
+      startError(i18n("start.could_not_open", { path }));
       return;
     }
     await enterProject(path);
@@ -9840,12 +11149,12 @@
     const entry =
       known.find((p) => p.path === path) || known.find((p) => p.state === "ready");
     if (!entry) {
-      startError("Opened " + path + ", but it is not in the workspace list.");
+      startError(i18n("start.opened_not_listed", { path }));
       return;
     }
     await switchProject(entry.id);
     if (currentProjectId !== entry.id) {
-      startError("Opened " + path + ", but could not switch to it.");
+      startError(i18n("start.opened_not_switched", { path }));
     }
   }
 
@@ -9859,7 +11168,7 @@
     );
     const url = input ? String(input.value || "").trim() : "";
     if (!url) {
-      startError("Enter a repository URL.");
+      startError(i18n("start.enter_url"));
       return;
     }
     startError("");
@@ -9875,7 +11184,7 @@
         parent = "";
       }
     } else if (window.prompt) {
-      parent = window.prompt("Clone into which folder? (absolute path)") || "";
+      parent = window.prompt(i18n("start.clone_where")) || "";
     }
     parent = String(parent || "").trim();
     if (!parent) {
@@ -9929,12 +11238,12 @@
           const el = document.getElementById("start-error");
           if (el) {
             el.textContent =
-              "The folder for " + (item.dataset.path || "this workspace") + " is not there any more. ";
+              i18n("start.folder_missing", { name: item.dataset.path || "" });
             const drop = document.createElement("button");
             drop.type = "button";
             drop.className = "start-action start-error-action";
             drop.dataset.forgetId = item.dataset.projectId || "";
-            drop.textContent = "Remove from the list";
+            drop.textContent = i18n("start.remove_from_list");
             el.appendChild(drop);
             el.hidden = false;
           }
@@ -10008,7 +11317,7 @@
         path = "";
       }
     } else if (window.prompt) {
-      path = window.prompt("Project folder (absolute path)") || "";
+      path = window.prompt(i18n("start.project_folder")) || "";
     }
     return String(path || "").trim();
   }
@@ -10107,13 +11416,17 @@
    * settings follow once it is — onConnected pushes them (see
    * settingsPanelOpen) — and the panel says so instead of "no project".
    */
-  const SETTINGS_OPENING_NOTE = "The workspace is still opening — its settings will load as soon as it is ready.";
+  const SETTINGS_OPENING_NOTE = () => i18n("start.opening_note");
 
   /** @param {string} method @param {any} params @returns {Promise<any>} */
   function settingsRpc(method, params) {
     const conn = currentProjectId ? connFor(currentProjectId) : null;
     if (!conn || !conn.isOpen()) {
-      return Promise.reject(new Error(pendingOpen() || currentProjectId ? SETTINGS_OPENING_NOTE : "no project is open"));
+      return Promise.reject(
+        new Error(
+          pendingOpen() || currentProjectId ? SETTINGS_OPENING_NOTE() : i18n("start.no_project")
+        )
+      );
     }
     return conn.send(method, params || {});
   }
@@ -10529,6 +11842,7 @@
     "backToChat",
     "setTheme",
     "setScale",
+    "setLanguage",
   ]);
 
   /** @param {any} msg */
@@ -10548,6 +11862,12 @@
         // Only this document is stamped: the dialog is inside it, so the
         // frame is scaled by the same zoom without knowing about it.
         applyScale(String(msg.scale || "auto"));
+        return;
+
+      case "setLanguage":
+        // The frame translated itself already. This document owns the stored
+        // choice and the chat renderer, which is the other half of the window.
+        applyUiLanguageChoice(String(msg.lang || ""));
         return;
 
       case "ready":
@@ -10975,7 +12295,7 @@
 
   async function pickAttachments() {
     if (!composerConn()) {
-      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      toRenderer({ type: "systemNote", text: i18n("web.no_workspace") });
       return;
     }
     const t = window.__TAURI__;
@@ -10985,7 +12305,7 @@
         picked = await t.dialog.open({
           multiple: true,
           directory: false,
-          title: "Attach files",
+          title: i18n("composer.attach"),
           defaultPath: workspaceRootNow() || undefined,
         });
       } catch (err) {
@@ -11201,7 +12521,9 @@
       const base = String((llm && llm.api_base) || "").replace(/^https?:\/\//, "");
       return {
         key: "",
-        name: base ? "Configured endpoint · " + base : "Configured endpoint",
+        name: base
+          ? i18n("web.configured_endpoint_base", { base })
+          : i18n("web.configured_endpoint"),
         active: true,
         ready: true,
         models: list,
@@ -11267,22 +12589,9 @@
 
   /* ---- slash commands ---------------------------------------------------- */
 
-  const SLASH_HELP = [
-    "Slash commands:",
-    "/clear — new chat",
-    "/compact [hint] — compress LLM context",
-    "/search text — find text across saved chats",
-    "/sessions — open the list of chats",
-    "/model — open the model menu",
-    "/workflows — list this workspace's workflows",
-    "/workflow name [args] — run one",
-    "/settings — Orchestra settings",
-    "/<command> args — run one of this workspace's own commands",
-    "Rewind: hover a user message → ↩ Rewind",
-    "Branch: hover a user message → ⑂ Branch",
-    "Delete a chat: hover it in the sidebar → ×",
-    "@file — mention files in composer",
-  ].join("\n");
+  // A function, not a constant: the language can change while the page is up,
+  // and /help must answer in the language the reader has chosen now.
+  const slashHelp = () => i18n("web.slash_help");
 
   /** What "/" already means, so a workspace command of the same name is not
    * offered twice — the same rule the editor's skillSlashNames applies. */
@@ -11344,7 +12653,7 @@
           "compact"
         );
         if (r) {
-          toRenderer({ type: "systemNote", text: "Context compacted." });
+          toRenderer({ type: "systemNote", text: i18n("web.compacted") });
         }
         return;
       }
@@ -11361,7 +12670,7 @@
           btn.click();
           return;
         }
-        toRenderer({ type: "systemNote", text: "Switch chats from the tabs in the title bar." });
+        toRenderer({ type: "systemNote", text: i18n("web.switch_tabs") });
         return;
       }
       case "/model": {
@@ -11370,14 +12679,14 @@
           pill.click();
           return;
         }
-        toRenderer({ type: "systemNote", text: "Use the model pill in the composer to change model." });
+        toRenderer({ type: "systemNote", text: i18n("web.use_model_pill") });
         return;
       }
       case "/settings":
         showRailSettings(true, "general");
         return;
       case "/help":
-        toRenderer({ type: "systemNote", text: SLASH_HELP });
+        toRenderer({ type: "systemNote", text: slashHelp() });
         return;
       case "/rewind":
         toRenderer({
@@ -11451,7 +12760,7 @@
     const q = String(query || "").trim();
     if (!q) {
       showSessionSearch("");
-      toRenderer({ type: "systemNote", text: "/search text — find text across this workspace's chats." });
+      toRenderer({ type: "systemNote", text: i18n("web.search_usage") });
       return;
     }
     const conn = composerConn();
@@ -11482,7 +12791,7 @@
     if (rows.length === 0) {
       toRenderer({
         type: "systemNote",
-        text: "No workflows in this workspace. They live in .orchestra/workflows.",
+        text: i18n("web.no_workflows"),
       });
       return;
     }
@@ -11490,9 +12799,9 @@
       const name = String((w && w.name) || "").trim();
       const desc = String((w && w.description) || "").trim();
       const stages = Array.isArray(w && w.stages) ? w.stages.length : 0;
-      return `/workflow ${name} — ${desc || "(no description)"} · ${stages} stage(s)`;
+      return `/workflow ${name} — ${desc || i18n("web.no_description")} · ${i18n("web.stages_n", { n: stages })}`;
     });
-    toRenderer({ type: "systemNote", text: ["Workflows:", ...lines].join("\n") });
+    toRenderer({ type: "systemNote", text: [i18n("web.workflows_head"), ...lines].join("\n") });
   }
 
   /**
@@ -11511,10 +12820,10 @@
     const args = space === -1 ? "" : raw.slice(space + 1).trim();
     const conn = composerConn();
     if (!conn) {
-      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      toRenderer({ type: "systemNote", text: i18n("web.no_workspace") });
       return;
     }
-    toRenderer({ type: "systemNote", text: `Running workflow "${name}"…` });
+    toRenderer({ type: "systemNote", text: i18n("web.running_workflow", { name }) });
     try {
       // Workflows run stage by stage against the model, so this waits for as
       // long as the run takes; the socket call carries no deadline of its own.
@@ -11698,14 +13007,13 @@
       // so the bar stayed on screen after the user had applied or discarded.
       toRenderer({ type: "pendingCleared" });
     }
-    const what = only.length === 1 ? only[0] : "Changes";
     toRenderer({
       type: "systemNote",
       text: only.length
-        ? `${what} ${apply ? "applied" : "discarded"}.`
-        : apply
-          ? "Changes applied."
-          : "Changes discarded.",
+        ? i18n(apply ? "web.file_applied" : "web.file_discarded", {
+            path: only.length === 1 ? only[0] : only.length + " files",
+          })
+        : i18n(apply ? "web.changes_applied" : "web.changes_discarded"),
     });
   }
 
@@ -11866,7 +13174,7 @@
     graphBtn.setAttribute("role", "tab");
     graphBtn.setAttribute("aria-selected", "false");
     // A fixed string, none of it from data.
-    graphBtn.innerHTML = GRAPH_ICON + "Graph";
+    graphBtn.innerHTML = GRAPH_ICON + escapeHtml(i18n("graph.title"));
     graphBtn.addEventListener("click", () => showGraphView());
     graphBtn.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft" && graphTrajectoryBtn && graphTrajectoryBtn.click) {
@@ -11884,7 +13192,7 @@
     graphPane = document.createElement("div");
     graphPane.className = "graph-pane";
     graphPane.setAttribute("role", "tabpanel");
-    graphPane.setAttribute("aria-label", "Project graph");
+    graphPane.setAttribute("aria-label", i18n("graph.pane_aria"));
 
     const toolbar = document.createElement("div");
     toolbar.className = "graph-toolbar";
@@ -11893,30 +13201,32 @@
 
     const depth = document.createElement("span");
     depth.className = "graph-depth";
-    const less = graphToolButton("−", "One level of nesting less", () => stepGraphDepth(-1));
+    const less = graphToolButton("−", "", "graph.depth_less", () => stepGraphDepth(-1));
     graphDepthOutEl = document.createElement("span");
     graphDepthOutEl.className = "graph-depth-value";
-    const more = graphToolButton("+", "One level of nesting more", () => stepGraphDepth(1));
+    const more = graphToolButton("+", "", "graph.depth_more", () => stepGraphDepth(1));
     depth.append(less, graphDepthOutEl, more);
 
-    graphFilesBtn = graphToolButton("Files", "Draw the files, not only the folders", () => {
+    graphFilesBtn = graphToolButton("", "graph.files", "graph.files_title", () => {
       graphShowFiles = !graphShowFiles;
       layoutGraph(true);
       renderGraphSide();
       scheduleGraphDraw();
     });
-    graphLinksBtn = graphToolButton("Links", "Draw the calls between files", () => {
+    graphLinksBtn = graphToolButton("", "graph.links", "graph.links_title", () => {
       graphShowLinks = !graphShowLinks;
       syncGraphControls();
       scheduleGraphDraw();
     });
-    const fit = graphToolButton("Fit", "Fit the whole graph in view", () => {
+    const fit = graphToolButton("", "graph.fit", "graph.fit_title", () => {
       if (graphLayout) {
         graphLayout.fitPending = true;
         scheduleGraphDraw();
       }
     });
-    const refresh = graphToolButton("Refresh", "Read the graph again", () => void loadGraph(true));
+    const refresh = graphToolButton("", "graph.refresh", "graph.refresh_title", () =>
+      void loadGraph(true)
+    );
     toolbar.append(graphStatsEl, depth, graphFilesBtn, graphLinksBtn, fit, refresh);
 
     const body = document.createElement("div");
@@ -11958,12 +13268,23 @@
   }
 
   /** @param {string} label @param {string} title @param {() => void} onClick */
-  function graphToolButton(label, title, onClick) {
+  /**
+   * One toolbar button. It carries its catalogue keys as data-i18n attributes
+   * so a language change can repaint it with applyStaticI18n, the same way the
+   * markup in the page is repainted — the toolbar is built once, on first open.
+   * @param {string} label a literal glyph, or "" when labelKey supplies the text
+   * @param {string} labelKey @param {string} titleKey @param {() => void} onClick
+   */
+  function graphToolButton(label, labelKey, titleKey, onClick) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "graph-tool";
-    b.textContent = label;
-    b.title = title;
+    b.textContent = labelKey ? i18n(labelKey) : label;
+    if (labelKey) {
+      b.setAttribute("data-i18n", labelKey);
+    }
+    b.title = i18n(titleKey);
+    b.setAttribute("data-i18n-title", titleKey);
     b.addEventListener("click", onClick);
     return b;
   }
@@ -12004,23 +13325,43 @@
     scheduleGraphDraw();
   }
 
+  /**
+   * Relabel what was built once, when the language changes. The view's chrome
+   * is created on first open and never rebuilt, so without this the segment
+   * and its tool buttons keep whichever language was in force back then.
+   */
+  function relabelGraphChrome() {
+    if (!graphBtn) {
+      return;
+    }
+    graphBtn.innerHTML = GRAPH_ICON + escapeHtml(i18n("graph.title"));
+    if (graphPane) {
+      graphPane.setAttribute("aria-label", i18n("graph.pane_aria"));
+      applyStaticI18n(graphPane);
+    }
+    // After applyStaticI18n, which would otherwise undo the state-dependent
+    // titles the two toggles carry.
+    syncGraphControls();
+    renderGraphSide();
+  }
+
   function syncGraphControls() {
     if (graphDepthOutEl) {
       const max = graphTree ? graphTree.maxDepth : graphDepth;
-      graphDepthOutEl.textContent = "levels " + graphDepth + "/" + max;
-      graphDepthOutEl.title = "How many levels of nesting the rings go out to";
+      graphDepthOutEl.textContent = i18n("graph.levels", { n: graphDepth, max });
+      graphDepthOutEl.title = i18n("graph.levels_title");
     }
     if (graphFilesBtn) {
       graphFilesBtn.classList.toggle("on", graphShowFiles);
-      graphFilesBtn.title = graphShowFiles
-        ? "Draw folders only, with the calls between them summed up"
-        : "Draw every file, not only the folders";
+      graphFilesBtn.title = i18n(
+        graphShowFiles ? "graph.files_on_title" : "graph.files_off_title"
+      );
     }
     if (graphLinksBtn) {
       graphLinksBtn.classList.toggle("on", graphShowLinks);
-      graphLinksBtn.title = graphShowLinks
-        ? "Leave out the calls between files, keeping the nesting"
-        : "Draw the calls between files again";
+      graphLinksBtn.title = i18n(
+        graphShowLinks ? "graph.links_on_title" : "graph.links_off_title"
+      );
     }
     if (graphStatsEl && graphLayout) {
       const folders = graphLayout.nodes.filter((n) => n.group === "folder").length;
@@ -12028,8 +13369,9 @@
       const drawn = graphLayout.relationsDrawn;
       const total = graphLayout.relationsTotal;
       graphStatsEl.textContent =
-        folders + " folders · " + files + " files · " +
-        (drawn < total ? "the " + drawn + " heaviest of " + total + " links" : drawn + " links");
+        drawn < total
+          ? i18n("graph.stats_heaviest", { folders, files, drawn, total })
+          : i18n("graph.stats_links", { folders, files, n: drawn });
     }
   }
 
@@ -12048,7 +13390,7 @@
       graphData = null;
       graphTree = null;
       graphLayout = null;
-      setGraphHint(pendingOpen() ? "The workspace is still opening…" : "No workspace is open.");
+      setGraphHint(i18n(pendingOpen() ? "web.opening" : "web.no_workspace"));
       if (graphStatsEl) graphStatsEl.textContent = "";
       renderGraphSide();
       return;
@@ -12060,7 +13402,7 @@
       return;
     }
     graphLoading = true;
-    setGraphHint("Reading the project graph…");
+    setGraphHint(i18n("graph.reading"));
     try {
       const r = (await conn.send("index.graph", { level: GRAPH_LEVEL })) || {};
       if (projectId !== currentProjectId) {
@@ -12087,7 +13429,9 @@
       scheduleGraphDraw();
     } catch (err) {
       if (projectId === currentProjectId) {
-        setGraphHint("Could not read the graph: " + String((err && err.message) || err));
+        setGraphHint(
+          i18n("graph.read_failed", { detail: String((err && err.message) || err) })
+        );
       }
     } finally {
       graphLoading = false;
@@ -12618,16 +13962,29 @@
     title.textContent = node.name;
     const path = document.createElement("div");
     path.className = "graph-card-path";
-    path.textContent = node.id || "(workspace root)";
+    path.textContent = node.id || i18n("graph.workspace_root");
     graphCardEl.append(title, path);
     const rows = [];
     if (node.group === "file") {
-      rows.push(["file", node.symbols ? node.symbols + " symbols" : ""]);
+      rows.push([
+        i18n("graph.row.file"),
+        node.symbols ? i18n("graph.symbols_n", { n: node.symbols }) : "",
+      ]);
     } else {
-      rows.push([node.group === "root" ? "workspace" : "folder", node.files + " files"]);
-      if (node.folded) rows.push(["folded in", node.folded + " files deeper"]);
+      rows.push([
+        i18n(node.group === "root" ? "graph.row.workspace" : "graph.row.folder"),
+        i18n("graph.files_n", { n: node.files }),
+      ]);
+      if (node.folded) {
+        rows.push([i18n("graph.row.folded_in"), i18n("graph.files_deeper", { n: node.folded })]);
+      }
     }
-    if (node.outW || node.inW) rows.push(["links", node.outW + " out · " + node.inW + " in"]);
+    if (node.outW || node.inW) {
+      rows.push([
+        i18n("graph.row.links"),
+        i18n("graph.row.out_in", { out: node.outW, in: node.inW }),
+      ]);
+    }
     for (const [k, v] of rows) {
       if (!v) continue;
       const row = document.createElement("div");
@@ -12815,20 +14172,31 @@
       const folders = nodes.filter((n) => n.group === "folder").length;
       const files = nodes.filter((n) => n.group === "file").length;
       const relations = (graphData.links || []).filter((l) => l.relation !== "in_folder").length;
-      const index = graphSection(graphSideEl, "What is indexed");
-      graphReadout(index, "files", stats.files || files);
-      graphReadout(index, "folders", folders);
-      graphReadout(index, "symbols", stats.nodes || 0);
-      graphReadout(index, "functions", stats.funcs || 0);
-      graphReadout(index, "types", stats.types || 0);
-      graphReadout(index, "tests", stats.tests || 0);
-      graphReadout(index, "packages", stats.packages || 0);
-      graphReadout(index, "relations", stats.edges || 0);
-      graphReadout(index, "file links", relations);
+      const index = graphSection(graphSideEl, i18n("graph.section.indexed"));
+      graphReadout(index, i18n("graph.ro.files"), stats.files || files);
+      graphReadout(index, i18n("graph.ro.folders"), folders);
+      graphReadout(index, i18n("graph.ro.symbols"), stats.nodes || 0);
+      graphReadout(index, i18n("graph.ro.functions"), stats.funcs || 0);
+      graphReadout(index, i18n("graph.ro.types"), stats.types || 0);
+      graphReadout(index, i18n("graph.ro.tests"), stats.tests || 0);
+      graphReadout(index, i18n("graph.ro.packages"), stats.packages || 0);
+      graphReadout(index, i18n("graph.ro.relations"), stats.edges || 0);
+      graphReadout(index, i18n("graph.ro.file_links"), relations);
       if (stats.embeddings) {
-        graphReadout(index, "embeddings", stats.embeddings + (stats.missing_embeddings ? " (+" + stats.missing_embeddings + " missing)" : ""));
+        graphReadout(
+          index,
+          i18n("graph.ro.embeddings"),
+          stats.embeddings +
+            (stats.missing_embeddings
+              ? i18n("graph.ro.missing", { n: stats.missing_embeddings })
+              : "")
+        );
       }
-      graphReadout(index, "nesting", graphTree ? graphTree.maxDepth + " levels" : "—");
+      graphReadout(
+        index,
+        i18n("graph.ro.nesting"),
+        graphTree ? i18n("graph.ro.levels_n", { n: graphTree.maxDepth }) : "—"
+      );
 
       // What the files are made of: the graph's own languages when it has
       // them, the extensions of the file nodes otherwise.
@@ -12845,7 +14213,7 @@
       }
       const sorted = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
       if (sorted.length) {
-        const block = graphSection(graphSideEl, "File types");
+        const block = graphSection(graphSideEl, i18n("graph.section.file_types"));
         for (const [name, count] of sorted) {
           const row = graphReadout(block, name, count, "graph-ro-lang");
           const dot = document.createElement("i");
@@ -12862,7 +14230,7 @@
           .sort((a, b) => b.inW + b.outW - (a.inW + a.outW))
           .slice(0, 6);
         if (hubs.length) {
-          const block = graphSection(graphSideEl, "Most connected");
+          const block = graphSection(graphSideEl, i18n("graph.section.most_connected"));
           for (const h of hubs) graphNeighbourRow(block, h.id, h.inW + h.outW);
         }
       }
@@ -12908,44 +14276,49 @@
   function renderGraphSelection(parent) {
     const node = graphLayout && graphSelectedId ? graphLayout.byId.get(graphSelectedId) : null;
     if (!node) {
-      const empty = graphSection(parent, "Selection");
-      graphEl(empty, "graph-empty", "Click a node to see what is inside it and what it is wired to.");
+      const empty = graphSection(parent, i18n("graph.section.selection"));
+      graphEl(empty, "graph-empty", i18n("graph.select_hint"));
       return;
     }
-    const block = graphSection(parent, node.group === "file" ? "File" : "Folder");
+    const block = graphSection(
+      parent,
+      i18n(node.group === "file" ? "graph.section.file" : "graph.section.folder")
+    );
     graphEl(block, "graph-head-name", node.name);
-    graphEl(block, "graph-head-path", node.id || "(workspace root)");
+    graphEl(block, "graph-head-path", node.id || i18n("graph.workspace_root"));
     if (node.group === "file") {
-      graphReadout(block, "symbols", node.symbols);
+      graphReadout(block, i18n("graph.ro.symbols"), node.symbols);
       const ext = graphExtOf(node.id);
-      if (ext) graphReadout(block, "type", ext);
+      if (ext) graphReadout(block, i18n("graph.ro.type"), ext);
     } else {
-      graphReadout(block, "files", node.files);
-      graphReadout(block, "symbols", node.symbols);
-      if (node.folded) graphReadout(block, "folded away", node.folded + " files");
+      graphReadout(block, i18n("graph.ro.files"), node.files);
+      graphReadout(block, i18n("graph.ro.symbols"), node.symbols);
+      if (node.folded) {
+        graphReadout(block, i18n("graph.ro.folded_away"), i18n("graph.files_n", { n: node.folded }));
+      }
     }
-    graphReadout(block, "links out", node.outW);
-    graphReadout(block, "links in", node.inW);
+    graphReadout(block, i18n("graph.ro.links_out"), node.outW);
+    graphReadout(block, i18n("graph.ro.links_in"), node.inW);
 
     // For a file the functions come first — that is what the person opened it
     // for; its neighbours follow.
     if (node.group === "file") renderGraphFunctions(parent, node);
     const neighbours = [...node.neighbours.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
     if (neighbours.length) {
-      const nb = graphSection(parent, "Wired to");
+      const nb = graphSection(parent, i18n("graph.section.wired_to"));
       for (const [id, w] of neighbours) graphNeighbourRow(nb, id, w);
     }
   }
 
   /** @param {any} parent @param {any} node */
   function renderGraphFunctions(parent, node) {
-    const fns = graphSection(parent, "Inside this file");
+    const fns = graphSection(parent, i18n("graph.section.inside"));
     if (!graphOutline || graphOutline.path !== node.id) {
-      graphEl(fns, "graph-empty", "Reading…");
+      graphEl(fns, "graph-empty", i18n("graph.reading_short"));
       return;
     }
     if (graphOutline.loading) {
-      graphEl(fns, "graph-empty", "Reading…");
+      graphEl(fns, "graph-empty", i18n("graph.reading_short"));
       return;
     }
     if (graphOutline.error) {
@@ -12955,10 +14328,14 @@
     const res = graphOutline.result || {};
     const symbols = Array.isArray(res.symbols) ? res.symbols : [];
     if (res.lines) {
-      graphReadout(fns, "lines", res.lines);
+      graphReadout(fns, i18n("graph.ro.lines"), res.lines);
     }
     if (!symbols.length) {
-      graphEl(fns, "graph-empty", res.available ? "No symbols indexed in this file." : "This file is not in the index.");
+      graphEl(
+        fns,
+        "graph-empty",
+        i18n(res.available ? "graph.no_symbols" : "graph.not_indexed")
+      );
       return;
     }
     symbols.forEach((sym, i) => {

@@ -42,10 +42,13 @@
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
 
   /** @type {EffortOpt[]} */
+  // Plain adjectives, so they translate. The mode names beside them (Agent,
+  // Orchestra, Plan) and the access levels (Ask, Auto) do not: those are this
+  // product's own vocabulary, the same words the CLI flags and the docs use.
   const EFFORTS = [
-    { id: "low", label: "Low", profile: "fast" },
-    { id: "medium", label: "Medium", profile: "" },
-    { id: "high", label: "High", profile: "precision" },
+    { id: "low", labelKey: "effort.low", profile: "fast" },
+    { id: "medium", labelKey: "effort.medium", profile: "" },
+    { id: "high", labelKey: "effort.high", profile: "precision" },
   ];
 
   const chromeHint = document.getElementById("chrome-hint");
@@ -134,15 +137,20 @@
   const imagePreviewCounter = document.getElementById("image-preview-counter");
   const statusLsp = document.getElementById("status-lsp");
 
-  /** @type {{ cmd: string; desc: string }[]} */
+  /**
+   * The built-in slash commands. `descKey` rather than `desc` because the
+   * palette is rebuilt on every keystroke and the language can change under
+   * it — resolving the text at render time is what makes that work.
+   * @type {{ cmd: string; descKey: string }[]}
+   */
   const SLASH_CMDS = [
-    { cmd: "/clear", desc: "New chat" },
-    { cmd: "/compact", desc: "Compress LLM context" },
-    { cmd: "/help", desc: "Show commands" },
-    { cmd: "/model", desc: "Change model" },
-    { cmd: "/rewind", desc: "Checkpoint rewind help" },
-    { cmd: "/sessions", desc: "Switch session" },
-    { cmd: "/settings", desc: "Open settings" },
+    { cmd: "/clear", descKey: "cmd.clear" },
+    { cmd: "/compact", descKey: "cmd.compact" },
+    { cmd: "/help", descKey: "cmd.help" },
+    { cmd: "/model", descKey: "cmd.model" },
+    { cmd: "/rewind", descKey: "cmd.rewind" },
+    { cmd: "/sessions", descKey: "cmd.sessions" },
+    { cmd: "/settings", descKey: "cmd.settings" },
   ];
 
   /** Loaded skills, each usable as its own "/<name>" command. Replaced

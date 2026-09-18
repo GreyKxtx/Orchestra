@@ -16,7 +16,7 @@
       reasoningDetails.className = "reasoning-trace trace-details";
       const sum = document.createElement("summary");
       sum.className = "trace-summary";
-      sum.textContent = "Thought briefly";
+      sum.textContent = i18n("reason.brief");
       reasoningBody = document.createElement("pre");
       reasoningBody.className = "trace-body reasoning-body";
       reasoningBody.textContent = reasoning;
@@ -96,8 +96,8 @@
         const rewind = document.createElement("button");
         rewind.type = "button";
         rewind.className = "rewind-btn";
-        rewind.title = "Rewind to here";
-        rewind.textContent = "↩ Rewind";
+        rewind.title = i18n("msg.rewind_title");
+        rewind.textContent = i18n("msg.rewind");
         rewind.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -122,8 +122,8 @@
           const fork = document.createElement("button");
           fork.type = "button";
           fork.className = "fork-btn";
-          fork.title = "Branch a new chat from here";
-          fork.textContent = "⑂ Branch";
+          fork.title = i18n("msg.branch_title");
+          fork.textContent = i18n("msg.branch");
           fork.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();

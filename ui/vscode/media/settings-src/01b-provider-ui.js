@@ -1,6 +1,6 @@
   const MAX_ORCH_MODELS = 3;
 
-  const ORCH_SLOT_LABELS = ["Primary", "Fallback 2", "Fallback 3"];
+  const ORCH_SLOT_LABEL_KEYS = ["set.orch.slot.primary", "set.orch.slot.fallback2", "set.orch.slot.fallback3"];
 
   /** @type {HTMLElement | null} */
   let openProvDropdown = null;
@@ -34,14 +34,17 @@
   /** @param {any} p */
   function providerBadgeMeta(p) {
     if (!p) return { text: "—", className: "disabled" };
-    if (p.models_error) return { text: "error", className: "error", title: p.models_error };
-    if (p.active) return { text: "active", className: "running" };
+    if (p.models_error)
+      return { text: i18n("set.badge.error"), className: "error", title: p.models_error };
+    if (p.active) return { text: i18n("set.badge.active"), className: "running" };
     if (p.ready && p.model_count > 0) {
-      return { text: `${p.model_count} models`, className: "ok" };
+      return { text: i18n("set.badge.models_n", { n: p.model_count }), className: "ok" };
     }
-    if (p.ready) return { text: "ready", className: "ready" };
-    if (p.needs_key && !p.api_key_set) return { text: "needs key", className: "disabled" };
-    if (p.custom && !p.api_base) return { text: "needs URL", className: "disabled" };
+    if (p.ready) return { text: i18n("set.badge.ready"), className: "ready" };
+    if (p.needs_key && !p.api_key_set)
+      return { text: i18n("set.badge.needs_key"), className: "disabled" };
+    if (p.custom && !p.api_base)
+      return { text: i18n("set.badge.needs_url"), className: "disabled" };
     return { text: "—", className: "disabled" };
   }
 
@@ -103,7 +106,7 @@
     /** @param {string} key */
     function labelFor(key) {
       const hit = options.find((o) => o.key === key);
-      return hit ? hit.label : key || "Main (global llm)";
+      return hit ? hit.label : key || i18n("set.prov.main_global");
     }
 
     /** @param {string} key */

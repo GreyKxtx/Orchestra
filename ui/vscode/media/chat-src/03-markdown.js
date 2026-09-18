@@ -116,7 +116,7 @@
       `>` +
       `<div class="diff-preview-head code-ref-head">` +
       diffExtBadgeHtml(filePath) +
-      `<button type="button" class="diff-preview-name code-ref-title" title="Open file">${escapeAttr(title)}</button>` +
+      `<button type="button" class="diff-preview-name code-ref-title" title="${escapeAttr(i18n("code.open_file"))}">${escapeAttr(title)}</button>` +
       `</div>` +
       `<pre class="code-ref-body md-pre"><code>${escapeHtml(code)}</code></pre>` +
       `</div>`

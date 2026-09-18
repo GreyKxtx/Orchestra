@@ -15,6 +15,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { catalogueKeys, markupKeys } from "../../vscode/scripts/i18n-keys.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -201,6 +202,42 @@ if (fs.existsSync(bundle)) {
     } else {
       console.log(`ok   settings.html carries all ${wanted.size} looked-up ids`);
     }
+  }
+}
+
+// 6. Every data-i18n key on the generated pages exists in the catalogue.
+//
+// Same reason as in ui/vscode/scripts/check-webview.mjs: a mistyped key is not
+// an error, it is a screen that reads "start.clone" where it should say
+// "Clone". Last, because it reads the pages the checks above have just
+// regenerated — including the Appearance section bundle-settings-web.mjs
+// injects, which exists in no source file.
+{
+  const known = catalogueKeys(path.join(repo, "ui", "vscode", "media"));
+  if (known.size === 0) {
+    fail("no keys could be read out of ui/vscode/media/i18n.js");
+  }
+  const pages = [
+    path.join(root, "static", "index.html"),
+    path.join(root, "static", "settings.html"),
+  ].filter((f) => fs.existsSync(f));
+  let used = 0;
+  const missing = [];
+  for (const file of pages) {
+    for (const { key, line } of markupKeys(file)) {
+      used++;
+      if (!known.has(key)) {
+        missing.push(`${path.relative(root, file)}:${line} ${key}`);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    fail(
+      `${missing.length} data-i18n key(s) are not in ui/vscode/media/i18n.js — each one renders ` +
+        `as the key itself: ${missing.join(", ")}`
+    );
+  } else {
+    console.log(`ok   ${used} data-i18n keys on the pages, all in the catalogue`);
   }
 }
 

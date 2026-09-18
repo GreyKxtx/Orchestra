@@ -33,13 +33,17 @@
    * settings follow once it is — onConnected pushes them (see
    * settingsPanelOpen) — and the panel says so instead of "no project".
    */
-  const SETTINGS_OPENING_NOTE = "The workspace is still opening — its settings will load as soon as it is ready.";
+  const SETTINGS_OPENING_NOTE = () => i18n("start.opening_note");
 
   /** @param {string} method @param {any} params @returns {Promise<any>} */
   function settingsRpc(method, params) {
     const conn = currentProjectId ? connFor(currentProjectId) : null;
     if (!conn || !conn.isOpen()) {
-      return Promise.reject(new Error(pendingOpen() || currentProjectId ? SETTINGS_OPENING_NOTE : "no project is open"));
+      return Promise.reject(
+        new Error(
+          pendingOpen() || currentProjectId ? SETTINGS_OPENING_NOTE() : i18n("start.no_project")
+        )
+      );
     }
     return conn.send(method, params || {});
   }
@@ -455,6 +459,7 @@
     "backToChat",
     "setTheme",
     "setScale",
+    "setLanguage",
   ]);
 
   /** @param {any} msg */
@@ -474,6 +479,12 @@
         // Only this document is stamped: the dialog is inside it, so the
         // frame is scaled by the same zoom without knowing about it.
         applyScale(String(msg.scale || "auto"));
+        return;
+
+      case "setLanguage":
+        // The frame translated itself already. This document owns the stored
+        // choice and the chat renderer, which is the other half of the window.
+        applyUiLanguageChoice(String(msg.lang || ""));
         return;
 
       case "ready":

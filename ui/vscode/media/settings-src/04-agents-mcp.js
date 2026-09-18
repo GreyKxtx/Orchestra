@@ -14,14 +14,14 @@
   el("rebuildGraph")?.addEventListener("click", () => {
     showError("");
     const out = el("indexActionOut");
-    if (out) out.textContent = "Rebuilding graph…";
+    if (out) out.textContent = i18n("set.index.rebuilding");
     vscode.postMessage({ type: "rebuildGraph" });
   });
 
   el("runEmbed")?.addEventListener("click", () => {
     showError("");
     const out = el("indexActionOut");
-    if (out) out.textContent = "Running embed (may take a while)…";
+    if (out) out.textContent = i18n("set.index.embedding");
     vscode.postMessage({ type: "runEmbed", rebuild: false });
   });
 
@@ -58,7 +58,7 @@
     showError("");
     const tools = collectAgentTools();
     if (tools === null) {
-      showError("Enable at least one tool, or turn all on to inherit the full set.");
+      showError(i18n("set.agent.need_one_tool"));
       return;
     }
     vscode.postMessage({
@@ -188,7 +188,7 @@
       host.querySelectorAll('input[type="checkbox"][data-tool]')
     );
     if (!boxes.length) {
-      hint.textContent = "Tool catalog unavailable — start core and reload.";
+      hint.textContent = i18n("set.agent.catalog_na");
       return;
     }
     let on = 0;
@@ -197,8 +197,8 @@
     });
     hint.textContent =
       on === boxes.length
-        ? `${boxes.length} tools · inherit full set`
-        : `${on} / ${boxes.length} tools enabled`;
+        ? i18n("set.agent.tools_full", { n: boxes.length })
+        : i18n("set.agent.tools_on", { on, total: boxes.length });
   }
 
   /** @param {any} a */
@@ -221,7 +221,7 @@
       .map((x) => String(x || "").trim())
       .filter(Boolean);
     if (!catalog.length) {
-      if (hint) hint.textContent = "Tool catalog unavailable — start core and reload.";
+      if (hint) hint.textContent = i18n("set.agent.catalog_na");
       return;
     }
     const selected = Array.isArray(a?.tools) ? a.tools.map((x) => String(x || "")) : null;
@@ -285,7 +285,7 @@
 
       const masterWrap = document.createElement("label");
       masterWrap.className = "mcp-switch";
-      masterWrap.title = `Toggle all ${cat}`;
+      masterWrap.title = i18n("set.agent.toggle_all", { cat });
       const master = document.createElement("input");
       master.type = "checkbox";
       master.setAttribute("data-cat-toggle", cat);
@@ -360,7 +360,7 @@
     if (!agents.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = "No custom agents yet";
+      empty.textContent = i18n("set.agent.none");
       list.appendChild(empty);
     } else {
       agents.forEach((a) => {
@@ -370,9 +370,10 @@
         btn.textContent = a.name;
         const badge = document.createElement("span");
         badge.className = "badge";
-        badge.textContent = Array.isArray(a.tools) && a.tools.length
-          ? `${a.tools.length} tools`
-          : "all tools";
+        badge.textContent =
+          Array.isArray(a.tools) && a.tools.length
+            ? i18n("set.agent.tools_n", { n: a.tools.length })
+            : i18n("set.agent.tools_all");
         btn.appendChild(badge);
         btn.addEventListener("click", () => fillAgentForm(a));
         list.appendChild(btn);
@@ -397,7 +398,7 @@
     if (!skills.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = "No skills discovered — try orchestra skills install";
+      empty.textContent = i18n("set.skills.none");
       list.appendChild(empty);
       return;
     }
@@ -409,7 +410,7 @@
       row.appendChild(title);
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = s.origin || "skill";
+      badge.textContent = s.origin || i18n("set.skills.badge");
       badge.title = s.description || "";
       row.appendChild(badge);
       list.appendChild(row);
@@ -483,7 +484,7 @@
         label.textContent = `${lang} · ${pct}%`;
         chip.appendChild(logo);
         chip.appendChild(label);
-        chip.title = `${n} files`;
+        chip.title = i18n("set.index.files_n", { n });
         langsHost.appendChild(chip);
       }
       langsHost.classList.toggle("hidden", entries.length === 0);
@@ -492,13 +493,14 @@
     const hint = el("indexStatusHint");
     if (hint) {
       if (!g.available) {
-        hint.textContent = "CKG store not available — start core first.";
+        hint.textContent = i18n("set.index.no_ckg");
       } else {
         const miss = g.missing_embeddings || 0;
+        const dbPath = g.db_path || ".orchestra/ckg.db";
         hint.textContent =
           miss > 0
-            ? `${miss} symbols need embedding — press “Run embed” · ${g.db_path || ".orchestra/ckg.db"}`
-            : `Graph ready · ${g.db_path || ".orchestra/ckg.db"}`;
+            ? i18n("set.index.need_embed", { n: miss, path: dbPath })
+            : i18n("set.index.graph_ready", { path: dbPath });
       }
     }
     const embedHint = el("indexEmbedHint");
@@ -507,11 +509,11 @@
       const model = String(emb.model || "").trim();
       const provider = String(emb.provider || "").trim();
       if (!model) {
-        embedHint.textContent = "No embedding model selected — pick one in General, then press Run embed.";
+        embedHint.textContent = i18n("set.index.no_embed_model");
       } else {
         embedHint.textContent = provider
-          ? `Embedding model: ${model} · via ${provider}`
-          : `Embedding model: ${model}`;
+          ? i18n("set.index.embed_model_via", { model, provider })
+          : i18n("set.index.embed_model", { model });
       }
     }
   }
@@ -575,18 +577,19 @@
     const enabled = /** @type {HTMLInputElement | null} */ (el("mcpEnabled"));
     if (enabled) enabled.checked = !Boolean(s.disabled);
     const title = el("mcpCfgTitle");
-    if (title) title.textContent = `Configure ${s.name || "server"}`;
+    if (title)
+      title.textContent = i18n("set.mcp.configure_named", { name: s.name || i18n("set.mcp.server") });
     const sub = el("mcpCfgSub");
     if (sub) {
       const n = Number(s.tool_count) || (Array.isArray(s.tools) ? s.tools.length : 0);
       sub.textContent = s.disabled
-        ? "Off"
+        ? i18n("set.mcp.off")
         : n > 0
-          ? `${n} tool${n === 1 ? "" : "s"}`
-          : s.status || "Installed";
+          ? i18n(n === 1 ? "set.mcp.tool_one" : "set.mcp.tool_n", { n })
+          : s.status || i18n("set.mcp.installed");
     }
     const srcLabel = el("mcpCfgSourceLabel");
-    if (srcLabel) srcLabel.textContent = "Command";
+    if (srcLabel) srcLabel.textContent = i18n("set.mcp.command");
     const srcMeta = el("mcpCfgSourceMeta");
     if (srcMeta) {
       srcMeta.textContent = Array.isArray(s.command) ? s.command.join(" ") : s.command || "—";
@@ -609,13 +612,13 @@
     const enabled = /** @type {HTMLInputElement | null} */ (el("mcpEnabled"));
     if (enabled) enabled.checked = true;
     const title = el("mcpCfgTitle");
-    if (title) title.textContent = "Configure custom server";
+    if (title) title.textContent = i18n("set.mcp.configure_custom");
     const sub = el("mcpCfgSub");
-    if (sub) sub.textContent = "New server";
+    if (sub) sub.textContent = i18n("set.mcp.new_server");
     const srcLabel = el("mcpCfgSourceLabel");
-    if (srcLabel) srcLabel.textContent = "Custom";
+    if (srcLabel) srcLabel.textContent = i18n("set.mcp.custom");
     const srcMeta = el("mcpCfgSourceMeta");
-    if (srcMeta) srcMeta.textContent = "Enter command below";
+    if (srcMeta) srcMeta.textContent = i18n("set.mcp.enter_command");
     const out = el("mcpTestOut");
     if (out) out.textContent = "";
     renderMcpToolsList(null);
@@ -641,14 +644,14 @@
   /** @param {any} s */
   function mcpStatusLabel(s) {
     if (!s) return "";
-    if (s.disabled) return "Off";
-    if (s.status === "error") return s.error || "Error";
+    if (s.disabled) return i18n("set.mcp.off");
+    if (s.status === "error") return s.error || i18n("set.mcp.error");
     const n = Number(s.tool_count) || 0;
     if (s.status === "running" || n > 0) {
-      return n === 1 ? "1 tool" : `${n} tools`;
+      return i18n(n === 1 ? "set.mcp.tool_one" : "set.mcp.tool_n", { n });
     }
-    if (s.status === "stopped") return "Stopped";
-    return s.status || "Installed";
+    if (s.status === "stopped") return i18n("set.mcp.stopped");
+    return s.status || i18n("set.mcp.installed");
   }
 
   /**
@@ -687,18 +690,19 @@
         ? s.tools
         : allowed.slice();
     if (mcpToolsLoading) {
-      if (hint) hint.textContent = "Loading tools…";
+      if (hint) hint.textContent = i18n("set.mcp.loading_tools");
       return;
     }
     if (!tools.length) {
       if (hint) {
-        hint.textContent = s?.disabled
-          ? "Turn the server on to load tools."
-          : "No tools discovered yet — use Reload after save.";
+        hint.textContent = i18n(s?.disabled ? "set.mcp.turn_on" : "set.mcp.no_tools");
       }
       return;
     }
-    if (hint) hint.textContent = `${tools.length} tool${tools.length === 1 ? "" : "s"}`;
+    if (hint)
+      hint.textContent = i18n(tools.length === 1 ? "set.mcp.tool_one" : "set.mcp.tool_n", {
+        n: tools.length,
+      });
     tools.forEach((name) => {
       const row = document.createElement("div");
       row.className = "mcp-tool-row";
@@ -730,7 +734,7 @@
     renderMcpToolsList(findInstalledMcp(payload.name) || payload);
     if (showStatus) {
       const out = el("mcpTestOut");
-      if (out) out.textContent = "Reloading tools…";
+      if (out) out.textContent = i18n("set.mcp.reloading");
     }
     vscode.postMessage({ type: "testMCP", ...payload });
   }
@@ -747,7 +751,7 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "mcp-cat" + (mcpCatalogCategory === cat ? " active" : "");
-      btn.textContent = `${cat} (${count})`;
+      btn.textContent = `${i18n("set.mcp.cat." + cat.toLowerCase())} (${count})`;
       btn.addEventListener("click", () => {
         mcpCatalogCategory = cat;
         mcpCatalogPage = 0;
@@ -761,20 +765,21 @@
     const status = el("mcpCatalogStatus");
     if (!status) return;
     if (mcpCatalogBusy && !(mcpCatalog.entries || []).length) {
-      status.textContent = "Loading MCP Registry…";
+      status.textContent = i18n("set.mcp.registry_loading");
       return;
     }
-    const src =
+    const src = i18n(
       mcpCatalogSource === "registry"
-        ? "Official MCP Registry"
+        ? "set.mcp.src_registry"
         : mcpCatalogSource === "mixed"
-          ? "Featured + Official MCP Registry"
-          : "Local featured catalog";
+          ? "set.mcp.src_mixed"
+          : "set.mcp.src_local"
+    );
     let text = src;
     const n = (mcpCatalog.entries || []).length;
-    if (n) text += ` · ${n} loaded`;
-    if (mcpCatalogPrefetching) text += " · loading more…";
-    if (mcpCatalogFilter.trim()) text += ` · search “${mcpCatalogFilter.trim()}”`;
+    if (n) text += i18n("set.mcp.loaded_n", { n });
+    if (mcpCatalogPrefetching) text += i18n("set.mcp.loading_more");
+    if (mcpCatalogFilter.trim()) text += i18n("set.mcp.search_note", { q: mcpCatalogFilter.trim() });
     if (mcpCatalogError) text += ` · ${mcpCatalogError}`;
     status.textContent = text;
   }
@@ -823,10 +828,8 @@
       const empty = document.createElement("div");
       empty.className = "hint";
       empty.textContent = mcpCatalogBusy
-        ? "Loading…"
-        : mcpCatalogFilter.trim()
-          ? "No MCP servers match this search"
-          : "No MCP servers in catalog";
+        ? i18n("set.mcp.empty_loading")
+        : i18n(mcpCatalogFilter.trim() ? "set.mcp.empty_search" : "set.mcp.empty_catalog");
       list.appendChild(empty);
       return;
     }
@@ -864,7 +867,11 @@
       const kind = document.createElement("span");
       kind.className = "mcp-card-cat";
       kind.textContent =
-        entry.installable === false ? "remote" : entry.source === "local" ? "featured" : "stdio";
+        entry.installable === false
+          ? i18n("set.mcp.kind_remote")
+          : entry.source === "local"
+            ? i18n("set.mcp.kind_featured")
+            : "stdio";
       head.appendChild(kind);
       card.appendChild(head);
 
@@ -879,15 +886,15 @@
         const badge = document.createElement("span");
         badge.className = "badge " + (installed.status || "");
         badge.textContent = installed.disabled
-          ? "Off"
+          ? i18n("set.mcp.off")
           : Number(installed.tool_count) > 0
-            ? `${installed.tool_count} tools`
-            : installed.status || "installed";
+            ? i18n("set.mcp.tool_n", { n: installed.tool_count })
+            : installed.status || i18n("set.mcp.installed");
         actions.appendChild(badge);
         const cfg = document.createElement("button");
         cfg.type = "button";
         cfg.className = "secondary";
-        cfg.textContent = "Configure";
+        cfg.textContent = i18n("set.mcp.configure");
         cfg.addEventListener("click", () => {
           fillMcpForm(installed);
           setMcpTab("installed");
@@ -896,14 +903,14 @@
       } else if (entry.installable === false || !entry.command) {
         const badge = document.createElement("span");
         badge.className = "badge";
-        badge.textContent = "remote only";
-        badge.title = "Orchestra currently installs stdio MCP servers";
+        badge.textContent = i18n("set.mcp.remote_only");
+        badge.title = i18n("set.mcp.remote_only_title");
         actions.appendChild(badge);
       } else {
         const install = document.createElement("button");
         install.type = "button";
         install.className = "secondary";
-        install.textContent = entry.envRequired ? "Install…" : "Install";
+        install.textContent = i18n(entry.envRequired ? "set.mcp.install_env" : "set.mcp.install");
         install.addEventListener("click", () => installCatalogEntry(entry));
         actions.appendChild(install);
       }
@@ -911,7 +918,7 @@
         const link = document.createElement("button");
         link.type = "button";
         link.className = "secondary";
-        link.textContent = "Docs";
+        link.textContent = i18n("set.mcp.docs");
         link.addEventListener("click", () => {
           vscode.postMessage({ type: "openExternal", url: entry.homepage });
         });
@@ -926,7 +933,7 @@
   function installCatalogEntry(entry) {
     if (entry.installable === false || !entry.command) {
       const out = el("mcpTestOut");
-      if (out) out.textContent = "This registry entry is remote-only — stdio install not available yet.";
+      if (out) out.textContent = i18n("set.mcp.remote_not_supported");
       setMcpTab("installed");
       openMcpConfigure(true);
       return;
@@ -937,12 +944,12 @@
     const out = el("mcpTestOut");
     if (form.envRequired) {
       if (out) {
-        out.textContent = `Fill required env for ${form.title || form.name}, then Done.`;
+        out.textContent = i18n("set.mcp.fill_env", { name: form.title || form.name });
       }
       area("mcpEnv")?.focus();
       return;
     }
-    if (out) out.textContent = `Installing ${form.name}…`;
+    if (out) out.textContent = i18n("set.mcp.installing", { name: form.name });
     showError("");
     vscode.postMessage({
       type: "upsertMCP",
@@ -970,7 +977,7 @@
     if (!mcpServers.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = "No MCP servers installed — browse the catalog to add some";
+      empty.textContent = i18n("set.mcp.none_installed");
       list.appendChild(empty);
     } else {
       const selectedName = (input("mcpName")?.value || "").trim().toLowerCase();
@@ -1001,8 +1008,8 @@
         const del = document.createElement("button");
         del.type = "button";
         del.className = "mcp-row-delete";
-        del.title = "Remove server";
-        del.setAttribute("aria-label", `Remove ${s.name}`);
+        del.title = i18n("set.mcp.remove_server");
+        del.setAttribute("aria-label", i18n("set.mcp.remove_named", { name: s.name }));
         del.textContent = "×";
         del.addEventListener("click", (ev) => {
           ev.preventDefault();
@@ -1018,7 +1025,7 @@
 
         const toggle = document.createElement("label");
         toggle.className = "mcp-switch";
-        toggle.title = s.disabled ? "Enable" : "Disable";
+        toggle.title = i18n(s.disabled ? "set.mcp.enable" : "set.mcp.disable");
         const box = document.createElement("input");
         box.type = "checkbox";
         box.checked = !Boolean(s.disabled);
@@ -1107,7 +1114,7 @@
   el("mcpAddCustom")?.addEventListener("click", () => {
     clearMcpForm();
     const out = el("mcpTestOut");
-    if (out) out.textContent = "Enter a custom command, then Done.";
+    if (out) out.textContent = i18n("set.mcp.enter_command_done");
     input("mcpName")?.focus();
   });
 

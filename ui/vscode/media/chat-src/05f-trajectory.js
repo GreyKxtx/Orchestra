@@ -162,7 +162,7 @@
           target.output += str(d.chunk);
           touch(target, ms, live);
         } else {
-          s.items.push({ kind: "other", key: s.key + "/exec:" + s.items.length, label: "shell output", startMs: ms, endMs: ms, live, output: str(d.chunk), seq });
+          s.items.push({ kind: "other", key: s.key + "/exec:" + s.items.length, label: i18n("traj.shell_output"), startMs: ms, endMs: ms, live, output: str(d.chunk), seq });
         }
         s.lastText = null;
         continue;
@@ -461,17 +461,19 @@
     trajRowsCache = rows;
     trajectoryRowsEl.innerHTML = "";
     if (trajError && rows.length === 0) {
-      trajectorySummary.textContent = "Trajectory unavailable: " + trajError;
+      trajectorySummary.textContent = i18n("traj.unavailable", { detail: trajError });
       clearTrajChrome();
       return;
     }
     if (trajRecorded === false && rows.length === 0) {
-      trajectorySummary.textContent = "No trajectory was recorded for this session — it predates the log.";
+      trajectorySummary.textContent = i18n("traj.not_recorded");
       clearTrajChrome();
       return;
     }
     if (rows.length === 0) {
-      trajectorySummary.textContent = trajRecorded === null ? "Loading trajectory…" : "Nothing has happened in this session yet.";
+      trajectorySummary.textContent = i18n(
+        trajRecorded === null ? "traj.loading" : "traj.empty"
+      );
       clearTrajChrome();
       return;
     }
@@ -483,13 +485,16 @@
     }
     const q = trajQuery.trim().toLowerCase();
     const shown = q ? rows.filter((r) => trajRowMatches(r, q)) : rows;
-    trajectorySummary.textContent =
-      turns + " turn" + (turns === 1 ? "" : "s") + " · " + rows.length + " rows" +
-      (liveCount ? " · " + liveCount + " live" : "") +
-      (q ? " · " + shown.length + " matching" : "") +
-      // These rows survived a failed re-read (see replaceTrajectory). Say so:
-      // they are what the pane saw live, not what the core has on disk.
-      (trajError ? " · could not refresh: " + trajError : "");
+    const summaryBits = [
+      i18n(turns === 1 ? "traj.turns_one" : "traj.turns_n", { n: turns }),
+      i18n("traj.rows_n", { n: rows.length }),
+    ];
+    if (liveCount) summaryBits.push(i18n("traj.live_n", { n: liveCount }));
+    if (q) summaryBits.push(i18n("traj.matching_n", { n: shown.length }));
+    // These rows survived a failed re-read (see replaceTrajectory). Say so:
+    // they are what the pane saw live, not what the core has on disk.
+    if (trajError) summaryBits.push(i18n("traj.refresh_failed", { detail: trajError }));
+    trajectorySummary.textContent = summaryBits.join(" · ");
     renderTrajTimeline(rows);
     const frag = document.createDocumentFragment();
     for (const r of shown) frag.appendChild(renderTrajRow(r));
@@ -649,22 +654,22 @@
       val.textContent = String(v);
       dl.append(key, val);
     };
-    fact("kind", row.kind);
-    fact("label", row.label);
-    fact("outcome", row.outcome);
-    fact("offset", row.offsetMs === undefined ? "" : "+" + formatToolDuration(row.offsetMs));
-    fact("duration", row.durationMs === undefined ? "" : formatToolDuration(row.durationMs));
-    fact("tokens in", row.tokensIn);
-    fact("tokens out", row.tokensOut);
-    fact("live", row.live ? "yes" : "");
-    fact("event", ev && ev.type ? ev.type + (ev.data && ev.data.type ? " · " + ev.data.type : "") : "");
-    fact("seq", row.seq);
+    fact(i18n("traj.fact.kind"), row.kind);
+    fact(i18n("traj.fact.label"), row.label);
+    fact(i18n("traj.fact.outcome"), row.outcome);
+    fact(i18n("traj.fact.offset"), row.offsetMs === undefined ? "" : "+" + formatToolDuration(row.offsetMs));
+    fact(i18n("traj.fact.duration"), row.durationMs === undefined ? "" : formatToolDuration(row.durationMs));
+    fact(i18n("traj.fact.tokens_in"), row.tokensIn);
+    fact(i18n("traj.fact.tokens_out"), row.tokensOut);
+    fact(i18n("traj.fact.live"), row.live ? i18n("traj.fact.yes") : "");
+    fact(i18n("traj.fact.event"), ev && ev.type ? ev.type + (ev.data && ev.data.type ? " · " + ev.data.type : "") : "");
+    fact(i18n("traj.fact.seq"), row.seq);
     trajPanelBodyEl.appendChild(dl);
     const hasDiff = ev && ev.data && ev.data.data && Array.isArray(ev.data.data.diff) && ev.data.data.diff.length > 0;
     if (!row.input && !row.output && !hasDiff) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "This row records that the event happened; it carries no payload.";
+      note.textContent = i18n("traj.no_payload");
       trajPanelBodyEl.appendChild(note);
     }
   }
@@ -698,12 +703,12 @@
       trajPanelPre("arguments", text);
     }
     if (row.output) {
-      trajPanelPre("result", row.output);
+      trajPanelPre(i18n("traj.result"), row.output);
     }
     if (!row.input && !row.output) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "Nothing to preview for this row.";
+      note.textContent = i18n("traj.no_preview");
       trajPanelBodyEl.appendChild(note);
     }
   }
@@ -722,7 +727,7 @@
     const open = document.createElement("button");
     open.type = "button";
     open.className = "traj-diff-open";
-    open.textContent = "Open full diff";
+    open.textContent = i18n("traj.open_full_diff");
     open.addEventListener("click", () => showDiffViewer(path, before, after, ""));
     head.append(name, count, open);
     trajPanelBodyEl.appendChild(head);
@@ -731,7 +736,7 @@
     if (lineCount > TRAJ_DIFF_LINE_BUDGET) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "The file is too large to align inline (" + lineCount + " lines) — open the full diff.";
+      note.textContent = i18n("traj.too_large", { n: lineCount });
       trajPanelBodyEl.appendChild(note);
       return;
     }
@@ -747,7 +752,7 @@
     if (!block.childNodes || block.childNodes.length === 0) {
       const note = document.createElement("p");
       note.className = "traj-panel-note";
-      note.textContent = "No line changed in this file.";
+      note.textContent = i18n("traj.no_line_changed");
       trajPanelBodyEl.appendChild(note);
       return;
     }
@@ -757,12 +762,12 @@
   /** @param {TrajRow} row @param {any} ev */
   function renderTrajRaw(row, ev) {
     if (ev) {
-      trajPanelPre("recorded event", JSON.stringify(ev, null, 2));
+      trajPanelPre(i18n("traj.recorded_event"), JSON.stringify(ev, null, 2));
       return;
     }
     // A live row has no envelope yet: it arrived as a forwarded notification
     // with no seq or time_ms, so the row itself is the whole truth.
-    trajPanelPre("row (live — not yet read back from the log)", JSON.stringify(row, null, 2));
+    trajPanelPre(i18n("traj.live_row"), JSON.stringify(row, null, 2));
   }
 
   /**

@@ -76,8 +76,8 @@
     btn.className = "rail-session-del";
     btn.dataset.projectId = projectId;
     btn.dataset.sessionId = sessionId;
-    btn.title = "Delete this chat";
-    btn.setAttribute("aria-label", "Delete this chat");
+    btn.title = i18n("rail.delete_chat");
+    btn.setAttribute("aria-label", i18n("rail.delete_chat"));
     btn.textContent = "×";
     let armed = 0;
     btn.addEventListener("click", (e) => {
@@ -86,14 +86,14 @@
       if (!armed) {
         armed = 1;
         btn.classList.add("armed");
-        btn.textContent = "Delete?";
-        btn.title = "Click again to delete this chat for good";
+        btn.textContent = i18n("rail.delete_confirm");
+        btn.title = i18n("rail.delete_confirm_title");
         setTimeout(() => {
           if (!armed) return;
           armed = 0;
           btn.classList.remove("armed");
           btn.textContent = "×";
-          btn.title = "Delete this chat";
+          btn.title = i18n("rail.delete_chat");
         }, 4000);
         return;
       }
@@ -116,7 +116,7 @@
     text.className = "rail-section-label";
     text.textContent = label;
     sec.appendChild(text);
-    sec.appendChild(railAddButton("add-project", "Add a workspace folder"));
+    sec.appendChild(railAddButton("add-project", i18n("rail.add_workspace")));
     return sec;
   }
 
@@ -130,8 +130,8 @@
     const box = document.createElement("input");
     box.type = "search";
     box.className = "rail-session-search";
-    box.placeholder = "Search chats";
-    box.setAttribute("aria-label", "Search this workspace's chats");
+    box.placeholder = i18n("rail.search_chats");
+    box.setAttribute("aria-label", i18n("rail.search_aria"));
     if (sessionSearch.projectId === projectId) {
       box.value = sessionSearch.query;
     }
@@ -294,7 +294,7 @@
     chip.dataset.state = row.state;
     chip.dataset.status = row.status;
     chip.dataset.active = row.active ? "true" : "false";
-    chip.title = row.path + (row.status === "asking" ? " — waiting for you" : "");
+    chip.title = row.path + (row.status === "asking" ? i18n("rail.waiting") : "");
     chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
     if (railOpeningId && row.id === railOpeningId) {
       chip.dataset.opening = "true";
@@ -339,7 +339,7 @@
         render: (had) => {
           const badge = railNode(had, "span", "project-count");
           badge.textContent = String(count);
-          badge.title = count === 1 ? "1 chat" : count + " chats";
+          badge.title = i18n(count === 1 ? "rail.chats_one" : "rail.chats_n", { n: count });
           return badge;
         },
       });
@@ -386,7 +386,7 @@
           key: "no-hits",
           render: (had) => {
             const empty = railNode(had, "div", "rail-sessions-empty");
-            empty.textContent = `No chat mentions “${sessionSearch.query}”`;
+            empty.textContent = i18n("rail.no_match", { q: sessionSearch.query });
             return empty;
           },
         });
@@ -418,7 +418,12 @@
     // it anyway is the difference between "where am I" and an empty sidebar.
     const openIsListed = listed.some((s) => s.id === openSessionId);
     if (row.active && openSessionId && !openIsListed) {
-      const info = { id: openSessionId, label: "New session", age: "now", tooltip: openSessionId };
+      const info = {
+        id: openSessionId,
+        label: i18n("rail.new_session_label"),
+        age: i18n("rail.now"),
+        tooltip: openSessionId,
+      };
       entries.push({ key: "new", render: (had) => railSessionButton(row.id, info, true, had) });
     }
     if (listed.length === 0 && !(row.active && openSessionId)) {
@@ -426,7 +431,7 @@
         key: "empty",
         render: (had) => {
           const empty = railNode(had, "div", "rail-sessions-empty");
-          empty.textContent = "No sessions yet";
+          empty.textContent = i18n("rail.no_sessions");
           return empty;
         },
       });
@@ -470,7 +475,7 @@
           if (row.active) {
             parts.push({
               key: "add",
-              render: (h) => h || railAddButton("new-session", "New session in this workspace", row.id),
+              render: (h) => h || railAddButton("new-session", i18n("rail.new_session"), row.id),
             });
           }
           reconcileByKey(head, parts);
@@ -529,7 +534,7 @@
     }
     for (const row of ordered) {
       if (!row.active && hasActive && !otherLabelDone) {
-        entries.push(railHeadingEntry("Other workspaces"));
+        entries.push(railHeadingEntry(i18n("rail.other_workspaces")));
         otherLabelDone = true;
       }
       entries.push({ key: "group:" + row.id, render: (had) => railProjectGroup(row, had) });
@@ -589,7 +594,7 @@
       .slice(0, 16)
       .map((s) => ({
         id: s.id,
-        title: (s.title || "New chat").trim() || "New chat",
+        title: (s.title || i18n("chrome.new_chat")).trim() || i18n("chrome.new_chat"),
         model: s.model,
         msg_count: s.msg_count,
       }));
@@ -598,7 +603,7 @@
     // has no row until the user says something. Lead with it anyway.
     const shown = openSessionId && !hiddenTabsFor(currentProjectId || "").has(openSessionId);
     if (shown && !tabs.some((t) => t.id === openSessionId)) {
-      tabs.unshift({ id: openSessionId, title: "New chat" });
+      tabs.unshift({ id: openSessionId, title: i18n("chrome.new_chat") });
     }
     toRenderer({ type: "sessionTabs", activeId: openSessionId, tabs });
   }
@@ -645,7 +650,7 @@
     }
     const conn = connFor(projectId);
     if (!conn || !conn.isOpen()) {
-      toRenderer({ type: "error", message: "The workspace is not open, so its chats cannot be deleted." });
+      toRenderer({ type: "error", message: i18n("rail.delete_no_workspace") });
       return;
     }
     try {
@@ -653,7 +658,7 @@
     } catch (err) {
       toRenderer({
         type: "error",
-        message: "Could not delete the chat: " + String((err && err.message) || err),
+        message: i18n("rail.delete_failed", { detail: String((err && err.message) || err) }),
       });
       return;
     }

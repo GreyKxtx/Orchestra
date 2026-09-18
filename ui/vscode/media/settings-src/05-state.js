@@ -2,7 +2,7 @@
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "error") {
-      showError(msg.message || "error");
+      showError(msg.message || i18n("set.error"));
       return;
     }
     if (msg.type === "modelPicked" && input("model") && msg.model) {
@@ -14,9 +14,13 @@
       mcpToolsLoading = false;
       const out = el("mcpTestOut");
       if (out) {
+        const found = (r.tools || []).length;
         out.textContent = r.ok
-          ? `OK (${r.elapsed}): ${(r.tools || []).length} tool${(r.tools || []).length === 1 ? "" : "s"}`
-          : `Failed: ${r.error || "unknown"}`;
+          ? i18n(found === 1 ? "set.mcp.test_ok_one" : "set.mcp.test_ok_n", {
+              elapsed: r.elapsed,
+              n: found,
+            })
+          : i18n("set.mcp.test_failed", { detail: r.error || i18n("set.mcp.unknown") });
       }
       if (r.ok && Array.isArray(r.tools)) {
         mcpDraftTools = r.tools.slice();
@@ -29,7 +33,7 @@
         const sub = el("mcpCfgSub");
         if (sub && mcpConfigureOpen) {
           const n = mcpDraftTools.length;
-          sub.textContent = n === 1 ? "1 tool" : `${n} tools`;
+          sub.textContent = i18n(n === 1 ? "set.mcp.tool_one" : "set.mcp.tool_n", { n });
         }
       } else {
         renderMcpToolsList(findInstalledMcp(input("mcpName")?.value || ""));
@@ -69,7 +73,7 @@
     }
     if (msg.type === "indexBusy") {
       const out = el("indexActionOut");
-      if (out) out.textContent = msg.busy ? msg.message || "Working…" : "";
+      if (out) out.textContent = msg.busy ? msg.message || i18n("turn.working") : "";
       return;
     }
     if (msg.type === "indexActionResult") {
@@ -77,17 +81,27 @@
       if (out) {
         if (msg.action === "embed" && msg.result) {
           const r = msg.result;
-          out.textContent = `Embed: +${r.embedded} (${r.total} total, ${r.remaining} remaining, ${r.elapsed})`;
+          out.textContent = i18n("set.index.embed_result", {
+            embedded: r.embedded,
+            total: r.total,
+            remaining: r.remaining,
+            elapsed: r.elapsed,
+          });
         } else if (msg.action === "rebuild" && msg.graph) {
           const g = msg.graph;
-          out.textContent = `Graph: ${g.files} files, ${g.nodes} nodes, ${g.edges} edges`;
+          out.textContent = i18n("set.index.graph_result", {
+            files: g.files,
+            nodes: g.nodes,
+            edges: g.edges,
+          });
         }
       }
       return;
     }
     if (msg.type === "modelsBusy") {
       const status = el("modelsStatus");
-      if (status) status.textContent = msg.busy ? msg.message || "Loading models…" : status.textContent;
+      if (status)
+        status.textContent = msg.busy ? msg.message || i18n("set.models.loading") : status.textContent;
       return;
     }
     if (msg.type === "providerCatalog") {
@@ -182,5 +196,26 @@
     }
     showError("");
   }
+
+  /**
+   * Redraw the parts of the panel that are built in JS rather than written in
+   * the markup. applyStaticI18n() covers the markup; these lists were painted
+   * with the previous language and would otherwise sit there until the next
+   * state push.
+   */
+  function repaintTranslatedPanels() {
+    renderProviders();
+    renderModels();
+    renderAgents();
+    renderMcp();
+    renderSkills();
+    renderMcpCatalog();
+    if (orchestraConfig) renderOrchestra();
+  }
+
+  // The panel is a document of its own and loads its script at the end of the
+  // body, so the markup is here: translate it before the first paint rather
+  // than waiting for the host's first state message.
+  applyUiLanguage();
 
   vscode.postMessage({ type: "ready" });

@@ -38,7 +38,7 @@
     if (entry && entry.state !== "closed") {
       const close = document.createElement("button");
       close.type = "button";
-      close.textContent = "Close project";
+      close.textContent = i18n("rail.close_project");
       close.addEventListener("click", () => {
         railMenu.hidden = true;
         void closeProject(projectId);
@@ -47,7 +47,7 @@
     }
     const forget = document.createElement("button");
     forget.type = "button";
-    forget.textContent = "Remove from list";
+    forget.textContent = i18n("rail.forget_project");
     forget.addEventListener("click", () => {
       railMenu.hidden = true;
       void forgetProject(projectId);
@@ -264,7 +264,7 @@
     if (railResizer) {
       railResizer.dataset.collapsed = collapsed ? "true" : "false";
       if (railResizer.setAttribute) {
-        railResizer.setAttribute("aria-label", collapsed ? "Show sidebar" : "Sidebar width");
+        railResizer.setAttribute("aria-label", i18n(collapsed ? "rail.show" : "rail.width"));
       }
     }
     try {

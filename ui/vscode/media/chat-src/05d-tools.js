@@ -382,12 +382,12 @@
       if (used > 0) {
         conv = Math.max(conv, used - fixedSum);
       }
-      rows.push({ key: "conversation", label: "Conversation", tokens: Math.max(0, conv) });
+      rows.push({ key: "conversation", label: i18n("ctx.row.conversation"), tokens: Math.max(0, conv) });
     } else if (used > 0) {
-      rows.push({ key: "conversation", label: "Prompt context", tokens: used });
+      rows.push({ key: "conversation", label: i18n("ctx.row.prompt"), tokens: used });
     }
     if (ctxState.completion > 0) {
-      rows.push({ key: "completion", label: "Completion", tokens: ctxState.completion });
+      rows.push({ key: "completion", label: i18n("ctx.row.completion"), tokens: ctxState.completion });
     }
     return rows;
   }
@@ -416,7 +416,7 @@
       const total = Math.max(limit, 1);
       const segs = rows.slice();
       if (ctxState.maxResponse > 0) {
-        segs.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
+        segs.push({ key: "reserved", label: i18n("ctx.row.reserved"), tokens: ctxState.maxResponse });
       }
       segs.forEach((r) => {
         if (r.tokens <= 0) return;
@@ -431,7 +431,7 @@
     if (ctxRows) {
       ctxRows.innerHTML = "";
       const items = rows.slice();
-      items.push({ key: "reserved", label: "Reserved for reply", tokens: ctxState.maxResponse });
+      items.push({ key: "reserved", label: i18n("ctx.row.reserved"), tokens: ctxState.maxResponse });
       items.forEach((item) => {
         if (item.tokens <= 0 && item.key !== "reserved") return;
         const row = document.createElement("div");

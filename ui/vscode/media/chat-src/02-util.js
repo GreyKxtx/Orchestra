@@ -47,7 +47,7 @@
   }
 
   function truncateTabTitle(title) {
-    const t = (title || "New chat").trim() || "New chat";
+    const t = (title || i18n("chrome.new_chat")).trim() || i18n("chrome.new_chat");
     return t.length > 22 ? t.slice(0, 20) + "…" : t;
   }
 
@@ -62,7 +62,7 @@
     if (list.length === 0) {
       const empty = document.createElement("div");
       empty.className = "session-tabs-empty";
-      empty.textContent = "New chat";
+      empty.textContent = i18n("chrome.new_chat");
       sessionTabsEl.appendChild(empty);
       return;
     }
@@ -91,7 +91,7 @@
       close.className = "session-tab-close";
       close.setAttribute("data-close-session", s.id);
       close.setAttribute("role", "button");
-      close.setAttribute("aria-label", "Close session");
+      close.setAttribute("aria-label", i18n("tab.close"));
       close.textContent = "×";
 
       tab.appendChild(icon);

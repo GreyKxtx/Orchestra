@@ -29,6 +29,8 @@ const outDir = path.join(root, "static");
 const frameDir = path.join(webDir, "settings");
 const order = [
   [srcDir, "00-header.txt"],
+  // The same catalogue the chat page reads; see ui/vscode/scripts/bundle-settings.mjs.
+  [mediaDir, "i18n.js"],
   [frameDir, "frame.js"],
   [srcDir, "01-core.js"],
   [srcDir, "01b-provider-ui.js"],
@@ -103,33 +105,33 @@ const appearanceNav =
   '<span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" ' +
   'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11"/><path d="M8 2.5a5.5 5.5 0 010 11" fill="currentColor" ' +
-  'stroke="none"/></svg></span>Appearance</button>\n';
+  'stroke="none"/></svg></span><span data-i18n="set.nav.appearance">Appearance</span></button>\n';
 
 const appearancePanel = `
       <section id="sec-appearance" class="panel">
-        <h1>Appearance</h1>
-        <p class="sub">How this page looks. Stored in this browser only.</p>
-        <div class="theme-choices" role="radiogroup" aria-label="Theme">
+        <h1 data-i18n="set.nav.appearance">Appearance</h1>
+        <p class="sub" data-i18n="set.appear.sub">How this page looks. Stored in this browser only.</p>
+        <div class="theme-choices" role="radiogroup" data-i18n-aria-label="set.appear.theme_aria" aria-label="Theme">
           <button type="button" class="theme-choice" data-theme-choice="system" role="radio" aria-checked="true">
-            <span class="theme-choice-name">Follow the system</span>
-            <span class="theme-choice-hint">Whatever your OS is set to</span>
+            <span class="theme-choice-name" data-i18n="set.appear.system">Follow the system</span>
+            <span class="theme-choice-hint" data-i18n="set.appear.system_hint">Whatever your OS is set to</span>
           </button>
           <button type="button" class="theme-choice" data-theme-choice="light" role="radio" aria-checked="false">
-            <span class="theme-choice-name">Light</span>
-            <span class="theme-choice-hint">Always the light palette</span>
+            <span class="theme-choice-name" data-i18n="set.appear.light">Light</span>
+            <span class="theme-choice-hint" data-i18n="set.appear.light_hint">Always the light palette</span>
           </button>
           <button type="button" class="theme-choice" data-theme-choice="dark" role="radio" aria-checked="false">
-            <span class="theme-choice-name">Dark</span>
-            <span class="theme-choice-hint">Always the dark palette</span>
+            <span class="theme-choice-name" data-i18n="set.appear.dark">Dark</span>
+            <span class="theme-choice-hint" data-i18n="set.appear.dark_hint">Always the dark palette</span>
           </button>
         </div>
         <div class="section-divider"></div>
-        <h2>Interface scale</h2>
-        <p class="sub">How large everything is drawn. The automatic setting reads the window's
+        <h2 data-i18n="set.appear.scale">Interface scale</h2>
+        <p class="sub" data-i18n="set.appear.scale_sub">How large everything is drawn. The automatic setting reads the window's
         width, which cannot know your monitor's physical size — set it yourself if the guess
         is wrong for your screen.</p>
-        <div class="scale-choices" role="radiogroup" aria-label="Interface scale">
-          <button type="button" class="scale-choice" data-scale-choice="auto" role="radio" aria-checked="true">Automatic</button>
+        <div class="scale-choices" role="radiogroup" data-i18n-aria-label="set.appear.scale" aria-label="Interface scale">
+          <button type="button" class="scale-choice" data-scale-choice="auto" role="radio" aria-checked="true" data-i18n="set.appear.auto">Automatic</button>
           <button type="button" class="scale-choice" data-scale-choice="100" role="radio" aria-checked="false">100%</button>
           <button type="button" class="scale-choice" data-scale-choice="110" role="radio" aria-checked="false">110%</button>
           <button type="button" class="scale-choice" data-scale-choice="125" role="radio" aria-checked="false">125%</button>
@@ -152,7 +154,7 @@ let pageBody = body.replace(navAnchor, appearanceNav + navAnchor);
 // belongs to one window and one folder, so it says nothing.
 const workspaceHead =
   '        <div class="nav-workspace">\n' +
-  '          <span class="nav-workspace-label">Workspace</span>\n' +
+  '          <span class="nav-workspace-label" data-i18n="set.workspace">Workspace</span>\n' +
   '          <span id="navWorkspaceName" class="nav-workspace-name">—</span>\n' +
   "        </div>\n";
 const shellAnchor = '        <div class="nav-items">';

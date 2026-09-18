@@ -10,23 +10,23 @@
     if (!overlay || !overlayTitle || !overlayBody || !overlayActions) return;
     const isLSP = request.kind === "lsp.install" || request.tool === "lsp.install";
     overlayTitle.textContent = isLSP
-      ? "Install language server?"
-      : `Allow ${request.tool || "tool"}?`;
-    const extra = isLSP ? "Install the language server for this workspace, or skip." : "";
+      ? i18n("perm.install_lsp")
+      : i18n("perm.allow_tool", { tool: request.tool || i18n("perm.tool") });
+    const extra = isLSP ? i18n("perm.install_extra") : "";
     overlayBody.textContent = [request.description, request.reason, extra]
       .filter(Boolean)
       .join("\n\n");
     overlayActions.innerHTML = "";
     const buttons = isLSP
       ? [
-          { label: "Skip", approved: false },
-          { label: "Install once", approved: true },
-          { label: "Install always", approved: true, always: true },
+          { label: i18n("perm.skip"), approved: false },
+          { label: i18n("perm.install_once"), approved: true },
+          { label: i18n("perm.install_always"), approved: true, always: true },
         ]
       : [
-          { label: "Deny", approved: false },
-          { label: "Allow once", approved: true },
-          { label: "Allow always", approved: true, always: true },
+          { label: i18n("perm.deny"), approved: false },
+          { label: i18n("perm.allow_once"), approved: true },
+          { label: i18n("perm.allow_always"), approved: true, always: true },
         ];
     buttons.forEach((btn) => {
       const el = document.createElement("button");
@@ -63,7 +63,10 @@
       hideOverlay();
       return;
     }
-    overlayTitle.textContent = `Question ${questionState.index + 1}/${questionState.questions.length}`;
+    overlayTitle.textContent = i18n("question.step", {
+      n: questionState.index + 1,
+      total: questionState.questions.length,
+    });
     overlayBody.textContent = q.question || "";
     overlayOptions.innerHTML = "";
     overlayActions.innerHTML = "";
@@ -86,7 +89,7 @@
       const next = document.createElement("button");
       next.type = "button";
       next.className = "pill primary";
-      next.textContent = "Next";
+      next.textContent = i18n("question.next");
       next.addEventListener("click", () => {
         questionState.answers.push(overlayInput?.value || "");
         questionState.index += 1;

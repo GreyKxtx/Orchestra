@@ -7,6 +7,12 @@ npm run bundle:webview   # rebuild chat.bundle.js + settings.bundle.js
 npm run compile          # bundle + tsc
 ```
 
+The language catalogue is **not** here: `media/i18n.js` is bundled ahead of
+these fragments and shared with the settings panel, which is its own bundle and
+its own scope. Every string the user reads goes through `i18n(key)`, and static
+markup carries `data-i18n*` — in `../../src/chat/panel.ts` for the webview and
+in `ui/web/index.src.html` for the browser, which hold the same markup.
+
 | File | ~lines | Role |
 |------|--------|------|
 | `01-dom-state.js` | 200 | DOM refs + shared state |

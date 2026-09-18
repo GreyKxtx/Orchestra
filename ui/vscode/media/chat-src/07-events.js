@@ -7,7 +7,7 @@
       case "status": {
         const st = msg.status || "";
         if (st === "error") {
-          setChromeHint(msg.detail || "connection error", true);
+          setChromeHint(msg.detail || i18n("conn.error"), true);
         } else if (st === "connecting") {
           busyStatusText = msg.detail || i18n("conn.connecting");
           setChromeHint(msg.detail || i18n("conn.connecting"), false);
@@ -37,7 +37,7 @@
           turnCostAccum = 0;
         }
         activeSessionId = msg.sessionId || activeSessionId;
-        updateActiveTabTitle(msg.title || "New chat");
+        updateActiveTabTitle(msg.title || i18n("chrome.new_chat"));
         setModelLabel(msg.model || "");
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
@@ -60,7 +60,7 @@
         if (sessions.length === 0) {
           const empty = document.createElement("div");
           empty.className = "menu-section";
-          empty.textContent = "No saved sessions";
+          empty.textContent = i18n("session.none");
           sessionMenuList.appendChild(empty);
           break;
         }
@@ -121,7 +121,7 @@
           const del = document.createElement("span");
           del.className = "session-row-del";
           del.setAttribute("data-delete-session", s.id);
-          del.title = "Delete chat";
+          del.title = i18n("session.delete");
           del.textContent = "✕";
           row.appendChild(del);
 
@@ -175,8 +175,13 @@
         applyStaticI18n();
         initModeMenu();
         initAccessMenu();
+        initEffortMenu();
         syncModeUi();
         syncAccessUi();
+        syncEffortUi();
+        // The context popover is built from labels, not from markup, so it
+        // keeps the old language until something recomputes it.
+        renderContextUi();
         if (!busy) {
           busyStatusText = i18n("turn.working");
         }
@@ -260,7 +265,7 @@
           const moreBtn = document.createElement("button");
           moreBtn.type = "button";
           moreBtn.className = "history-more";
-          moreBtn.textContent = `Show ${hidden.length} older messages`;
+          moreBtn.textContent = i18n("msg.show_older", { n: hidden.length });
           moreBtn.addEventListener("click", () => {
             moreBtn.remove();
             const frag = document.createDocumentFragment();
@@ -314,7 +319,7 @@
       case "delta":
       case "deltaSync": {
         if (busy) {
-          busyStatusText = "Writing…";
+          busyStatusText = i18n("turn.writing");
           updateBusyUi();
         }
         const bubble = ensureAssistant();
@@ -512,7 +517,7 @@
         assistantBubble = null;
         resetTurnState();
         if (!msg.ok) {
-          setChromeHint("turn failed", true);
+          setChromeHint(i18n("turn.failed"), true);
         }
         break;
       case "filesPicked": {

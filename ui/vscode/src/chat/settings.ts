@@ -4,6 +4,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { CoreSession } from "../coreSession";
 import { resolveBinaryPath, resolveProjectRoot } from "../coreSession";
+import { UI_LANGUAGES, type UiLang } from "../i18n";
 import {
   enrichFeaturedVersions,
   fetchMcpRegistryCatalog,
@@ -29,6 +30,18 @@ function loadMcpCatalogFile(extensionUri: vscode.Uri): McpCatalogFile {
     // fall through
   }
   return { version: 1, entries: [] };
+}
+
+/**
+ * The language the panel should speak, as the panel wants it: a language id,
+ * or "" for "follow the environment". The panel is a webview, so its
+ * navigator.language is the editor's display language — which is exactly what
+ * `auto` means, and why this hands the empty string over rather than resolving
+ * it here.
+ */
+function settingsLanguage(): string {
+  const raw = vscode.workspace.getConfiguration("orchestra").get<string>("language") || "auto";
+  return raw === "auto" ? "" : raw;
 }
 
 /**
@@ -99,7 +112,7 @@ export class SettingsView {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="${styleUri}" />
-  <script nonce="${nonce}">window.__ORCH_ICON_BASE=${JSON.stringify(String(iconBaseUri).replace(/\/?$/, "/"))};window.__ORCH_ICON_V=${JSON.stringify(v)};window.__ORCH_MCP_CATALOG=${JSON.stringify(localCatalog)};</script>
+  <script nonce="${nonce}">window.__ORCH_ICON_BASE=${JSON.stringify(String(iconBaseUri).replace(/\/?$/, "/"))};window.__ORCH_ICON_V=${JSON.stringify(v)};window.__ORCH_MCP_CATALOG=${JSON.stringify(localCatalog)};window.__ORCH_LANG=${JSON.stringify(settingsLanguage())};</script>
   <title>Orchestra Settings</title>
 </head>
 <body>
@@ -334,11 +347,23 @@ export class SettingsView {
       "fetchMcpRegistry",
       "openExternal",
       "backToChat",
+      "setLanguage",
     ]);
     if (!t || !settingsTypes.has(t)) {
       return false;
     }
     if (t === "backToChat") {
+      return true;
+    }
+    if (t === "setLanguage") {
+      // The panel translated itself already; this makes the choice stick and
+      // lets the chat window hear about it through the configuration change.
+      // Global, not workspace: a language is about the reader, not the project.
+      const raw = String(msg.lang || "");
+      const lang = UI_LANGUAGES.includes(raw as UiLang) ? raw : "auto";
+      await vscode.workspace
+        .getConfiguration("orchestra")
+        .update("language", lang, vscode.ConfigurationTarget.Global);
       return true;
     }
 

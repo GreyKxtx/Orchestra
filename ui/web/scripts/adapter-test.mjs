@@ -745,6 +745,37 @@ test("the host tells the renderer which language to speak", async () => {
   );
 });
 
+// The picker lives in the settings panel, which is a different document from
+// the chat. A change there has to reach both — the renderer in this page and
+// the panel itself — or the window ends up speaking two languages at once,
+// which is the exact thing the whole catalogue exists to stop.
+test("a language chosen in the settings panel reaches the chat and the panel", async () => {
+  const b = await handshake(loadBundle());
+  const posted = attachSettingsFrame(b);
+  b.inbound.length = 0;
+  posted.length = 0;
+
+  b.postFromFrame("settings-frame", { type: "setLanguage", lang: "ru" });
+  await tick();
+
+  const told = b.inbound.filter((m) => m.type === "uiLang");
+  assert.equal(told.length, 1, "the renderer was not told about the change");
+  assert.equal(told[0].lang, "ru");
+
+  const echoed = posted.filter((m) => m.type === "language");
+  assert.equal(echoed.length, 1, "the panel was not told what was stored");
+  assert.equal(echoed[0].lang, "ru");
+
+  // And it landed: the renderer redrew a menu it had already built.
+  const heads = walk(b.elementById("access-menu")).filter(
+    (n) => String(n.className || "") === "menu-section"
+  );
+  assert.ok(
+    heads.some((h) => h.textContent === "Доступ"),
+    `expected the menu in Russian, got: ${heads.map((h) => h.textContent).join(", ")}`
+  );
+});
+
 // A socket drops for reasons that have nothing to do with the core: a laptop
 // sleeping, a network switching, a proxy timing out an idle connection. The
 // core is a separate process and the session is on disk, so both outlive the

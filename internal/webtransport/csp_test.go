@@ -32,7 +32,10 @@ func TestStatic_ServesAContentSecurityPolicy(t *testing.T) {
 		"default-src 'none'",
 		"script-src 'self'",
 		"style-src 'self'",
-		"frame-ancestors 'none'",
+		// 'self', not 'none': the chat page frames our own settings document.
+		// What this is here to refuse is a page on another origin framing us,
+		// and 'self' refuses exactly that.
+		"frame-ancestors 'self'",
 	} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("CSP is missing %q: %s", want, csp)
@@ -45,6 +48,33 @@ func TestStatic_ServesAContentSecurityPolicy(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+}
+
+// The settings panel is a second document of ours, shown in an iframe. Under
+// default-src 'none' a frame needs frame-src to say so, and a blocked frame is
+// a console line rather than an error the page can catch — the gear opened an
+// empty dialog and nothing anywhere said why. The test is conditional on the
+// markup so that removing the iframe does not leave a rule nobody needs.
+func TestStatic_PolicyAllowsTheSettingsFrame(t *testing.T) {
+	page := filepath.Join("..", "..", "ui", "web", "static", "index.html")
+	b, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	if !strings.Contains(string(b), "<iframe") {
+		t.Skip("the page frames nothing, so frame-src is not needed")
+	}
+	// Both halves, because each one alone still blocks the frame — and the
+	// second failure only appeared once the first was fixed.
+	for _, want := range []string{"frame-src 'self'", "frame-ancestors 'self'"} {
+		if !strings.Contains(staticCSP, want) {
+			t.Errorf(
+				"index.html has an <iframe> but the policy has no %s; the frame is blocked "+
+					"with nothing on screen to say so: %s",
+				want, staticCSP,
+			)
+		}
 	}
 }
 

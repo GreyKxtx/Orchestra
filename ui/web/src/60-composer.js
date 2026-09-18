@@ -142,7 +142,7 @@
 
   async function pickAttachments() {
     if (!composerConn()) {
-      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      toRenderer({ type: "systemNote", text: i18n("web.no_workspace") });
       return;
     }
     const t = window.__TAURI__;
@@ -152,7 +152,7 @@
         picked = await t.dialog.open({
           multiple: true,
           directory: false,
-          title: "Attach files",
+          title: i18n("composer.attach"),
           defaultPath: workspaceRootNow() || undefined,
         });
       } catch (err) {
@@ -368,7 +368,9 @@
       const base = String((llm && llm.api_base) || "").replace(/^https?:\/\//, "");
       return {
         key: "",
-        name: base ? "Configured endpoint · " + base : "Configured endpoint",
+        name: base
+          ? i18n("web.configured_endpoint_base", { base })
+          : i18n("web.configured_endpoint"),
         active: true,
         ready: true,
         models: list,
@@ -434,22 +436,9 @@
 
   /* ---- slash commands ---------------------------------------------------- */
 
-  const SLASH_HELP = [
-    "Slash commands:",
-    "/clear — new chat",
-    "/compact [hint] — compress LLM context",
-    "/search text — find text across saved chats",
-    "/sessions — open the list of chats",
-    "/model — open the model menu",
-    "/workflows — list this workspace's workflows",
-    "/workflow name [args] — run one",
-    "/settings — Orchestra settings",
-    "/<command> args — run one of this workspace's own commands",
-    "Rewind: hover a user message → ↩ Rewind",
-    "Branch: hover a user message → ⑂ Branch",
-    "Delete a chat: hover it in the sidebar → ×",
-    "@file — mention files in composer",
-  ].join("\n");
+  // A function, not a constant: the language can change while the page is up,
+  // and /help must answer in the language the reader has chosen now.
+  const slashHelp = () => i18n("web.slash_help");
 
   /** What "/" already means, so a workspace command of the same name is not
    * offered twice — the same rule the editor's skillSlashNames applies. */
@@ -511,7 +500,7 @@
           "compact"
         );
         if (r) {
-          toRenderer({ type: "systemNote", text: "Context compacted." });
+          toRenderer({ type: "systemNote", text: i18n("web.compacted") });
         }
         return;
       }
@@ -528,7 +517,7 @@
           btn.click();
           return;
         }
-        toRenderer({ type: "systemNote", text: "Switch chats from the tabs in the title bar." });
+        toRenderer({ type: "systemNote", text: i18n("web.switch_tabs") });
         return;
       }
       case "/model": {
@@ -537,14 +526,14 @@
           pill.click();
           return;
         }
-        toRenderer({ type: "systemNote", text: "Use the model pill in the composer to change model." });
+        toRenderer({ type: "systemNote", text: i18n("web.use_model_pill") });
         return;
       }
       case "/settings":
         showRailSettings(true, "general");
         return;
       case "/help":
-        toRenderer({ type: "systemNote", text: SLASH_HELP });
+        toRenderer({ type: "systemNote", text: slashHelp() });
         return;
       case "/rewind":
         toRenderer({
@@ -618,7 +607,7 @@
     const q = String(query || "").trim();
     if (!q) {
       showSessionSearch("");
-      toRenderer({ type: "systemNote", text: "/search text — find text across this workspace's chats." });
+      toRenderer({ type: "systemNote", text: i18n("web.search_usage") });
       return;
     }
     const conn = composerConn();
@@ -649,7 +638,7 @@
     if (rows.length === 0) {
       toRenderer({
         type: "systemNote",
-        text: "No workflows in this workspace. They live in .orchestra/workflows.",
+        text: i18n("web.no_workflows"),
       });
       return;
     }
@@ -657,9 +646,9 @@
       const name = String((w && w.name) || "").trim();
       const desc = String((w && w.description) || "").trim();
       const stages = Array.isArray(w && w.stages) ? w.stages.length : 0;
-      return `/workflow ${name} — ${desc || "(no description)"} · ${stages} stage(s)`;
+      return `/workflow ${name} — ${desc || i18n("web.no_description")} · ${i18n("web.stages_n", { n: stages })}`;
     });
-    toRenderer({ type: "systemNote", text: ["Workflows:", ...lines].join("\n") });
+    toRenderer({ type: "systemNote", text: [i18n("web.workflows_head"), ...lines].join("\n") });
   }
 
   /**
@@ -678,10 +667,10 @@
     const args = space === -1 ? "" : raw.slice(space + 1).trim();
     const conn = composerConn();
     if (!conn) {
-      toRenderer({ type: "systemNote", text: "No workspace is open." });
+      toRenderer({ type: "systemNote", text: i18n("web.no_workspace") });
       return;
     }
-    toRenderer({ type: "systemNote", text: `Running workflow "${name}"…` });
+    toRenderer({ type: "systemNote", text: i18n("web.running_workflow", { name }) });
     try {
       // Workflows run stage by stage against the model, so this waits for as
       // long as the run takes; the socket call carries no deadline of its own.
@@ -865,14 +854,13 @@
       // so the bar stayed on screen after the user had applied or discarded.
       toRenderer({ type: "pendingCleared" });
     }
-    const what = only.length === 1 ? only[0] : "Changes";
     toRenderer({
       type: "systemNote",
       text: only.length
-        ? `${what} ${apply ? "applied" : "discarded"}.`
-        : apply
-          ? "Changes applied."
-          : "Changes discarded.",
+        ? i18n(apply ? "web.file_applied" : "web.file_discarded", {
+            path: only.length === 1 ? only[0] : only.length + " files",
+          })
+        : i18n(apply ? "web.changes_applied" : "web.changes_discarded"),
     });
   }
 

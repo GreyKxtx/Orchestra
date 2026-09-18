@@ -285,7 +285,7 @@
       reasoningDetails.className = "reasoning-trace trace-details";
       const sum = document.createElement("summary");
       sum.className = "trace-summary";
-      sum.textContent = "Thought briefly";
+      sum.textContent = i18n("reason.brief");
       reasoningBody = document.createElement("pre");
       reasoningBody.className = "trace-body reasoning-body";
       reasoningDetails.appendChild(sum);
@@ -311,7 +311,7 @@
     const sum = reasoningDetails.querySelector(".trace-summary");
     if (sum) {
       const sec = reasoningStarted ? Math.round((Date.now() - reasoningStarted) / 1000) : 0;
-      sum.textContent = sec >= 2 ? `Thought for ${sec}s` : "Thought briefly";
+      sum.textContent = sec >= 2 ? i18n("reason.for", { n: sec }) : i18n("reason.brief");
     }
     reasoningDetails.open = false;
   }
@@ -436,10 +436,9 @@
     if (displayRows.length === 0) {
       const hint = document.createElement("div");
       hint.className = "diff-empty-hint";
-      hint.textContent =
-        (before || "") === (after || "")
-          ? "No line changes detected"
-          : "Diff preview unavailable";
+      hint.textContent = i18n(
+        (before || "") === (after || "") ? "diff.no_changes" : "diff.unavailable"
+      );
       container.appendChild(hint);
       return;
     }

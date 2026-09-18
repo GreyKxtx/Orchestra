@@ -42,7 +42,7 @@
       const rm = document.createElement("button");
       rm.type = "button";
       rm.className = "queue-cancel";
-      rm.setAttribute("aria-label", "Remove from queue");
+      rm.setAttribute("aria-label", i18n("queue.remove"));
       rm.textContent = "×";
       rm.addEventListener("click", () => {
         host.postMessage({ type: "cancelQueuedSend", id: item.id });
@@ -75,7 +75,7 @@
     if (!typingIndicatorEl) {
       typingIndicatorEl = document.createElement("div");
       typingIndicatorEl.className = "msg typing-indicator";
-      typingIndicatorEl.setAttribute("aria-label", "Assistant is working");
+      typingIndicatorEl.setAttribute("aria-label", i18n("typing.aria"));
       typingIndicatorEl.innerHTML =
         '<span class="typing-dots" aria-hidden="true">' +
         '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>' +
@@ -232,11 +232,11 @@
       if (mode === "mention") {
         const head = document.createElement("div");
         head.className = "menu-section palette-head";
-        head.textContent = "Files";
+        head.textContent = i18n("palette.files");
         paletteMenu.appendChild(head);
         const empty = document.createElement("div");
         empty.className = "palette-empty";
-        empty.textContent = "No files found";
+        empty.textContent = i18n("palette.no_files");
         paletteMenu.appendChild(empty);
         paletteMenu.classList.remove("hidden");
         return;
@@ -247,7 +247,7 @@
     if (mode === "mention") {
       const head = document.createElement("div");
       head.className = "menu-section palette-head";
-      head.textContent = "Files";
+      head.textContent = i18n("palette.files");
       paletteMenu.appendChild(head);
     }
     items.slice(0, 12).forEach((item, i) => {
@@ -255,7 +255,10 @@
       btn.type = "button";
       btn.className = "menu-item palette-item" + (i === 0 ? " selected" : "");
       if (mode === "slash") {
-        btn.innerHTML = `<span class="palette-cmd">${item.cmd}</span><span class="palette-desc">${item.desc || ""}</span>`;
+        // Built-ins carry a catalogue key; skills carry their own description,
+        // which is whatever the skill's own file says and is not translated.
+        const desc = item.descKey ? i18n(item.descKey) : item.desc || "";
+        btn.innerHTML = `<span class="palette-cmd">${item.cmd}</span><span class="palette-desc">${escapeHtml(desc)}</span>`;
       } else {
         const kind = item.kind || "binary";
         const thumb =

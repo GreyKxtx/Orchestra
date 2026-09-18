@@ -127,7 +127,7 @@
     graphBtn.setAttribute("role", "tab");
     graphBtn.setAttribute("aria-selected", "false");
     // A fixed string, none of it from data.
-    graphBtn.innerHTML = GRAPH_ICON + "Graph";
+    graphBtn.innerHTML = GRAPH_ICON + escapeHtml(i18n("graph.title"));
     graphBtn.addEventListener("click", () => showGraphView());
     graphBtn.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft" && graphTrajectoryBtn && graphTrajectoryBtn.click) {
@@ -145,7 +145,7 @@
     graphPane = document.createElement("div");
     graphPane.className = "graph-pane";
     graphPane.setAttribute("role", "tabpanel");
-    graphPane.setAttribute("aria-label", "Project graph");
+    graphPane.setAttribute("aria-label", i18n("graph.pane_aria"));
 
     const toolbar = document.createElement("div");
     toolbar.className = "graph-toolbar";
@@ -154,30 +154,32 @@
 
     const depth = document.createElement("span");
     depth.className = "graph-depth";
-    const less = graphToolButton("−", "One level of nesting less", () => stepGraphDepth(-1));
+    const less = graphToolButton("−", "", "graph.depth_less", () => stepGraphDepth(-1));
     graphDepthOutEl = document.createElement("span");
     graphDepthOutEl.className = "graph-depth-value";
-    const more = graphToolButton("+", "One level of nesting more", () => stepGraphDepth(1));
+    const more = graphToolButton("+", "", "graph.depth_more", () => stepGraphDepth(1));
     depth.append(less, graphDepthOutEl, more);
 
-    graphFilesBtn = graphToolButton("Files", "Draw the files, not only the folders", () => {
+    graphFilesBtn = graphToolButton("", "graph.files", "graph.files_title", () => {
       graphShowFiles = !graphShowFiles;
       layoutGraph(true);
       renderGraphSide();
       scheduleGraphDraw();
     });
-    graphLinksBtn = graphToolButton("Links", "Draw the calls between files", () => {
+    graphLinksBtn = graphToolButton("", "graph.links", "graph.links_title", () => {
       graphShowLinks = !graphShowLinks;
       syncGraphControls();
       scheduleGraphDraw();
     });
-    const fit = graphToolButton("Fit", "Fit the whole graph in view", () => {
+    const fit = graphToolButton("", "graph.fit", "graph.fit_title", () => {
       if (graphLayout) {
         graphLayout.fitPending = true;
         scheduleGraphDraw();
       }
     });
-    const refresh = graphToolButton("Refresh", "Read the graph again", () => void loadGraph(true));
+    const refresh = graphToolButton("", "graph.refresh", "graph.refresh_title", () =>
+      void loadGraph(true)
+    );
     toolbar.append(graphStatsEl, depth, graphFilesBtn, graphLinksBtn, fit, refresh);
 
     const body = document.createElement("div");
@@ -219,12 +221,23 @@
   }
 
   /** @param {string} label @param {string} title @param {() => void} onClick */
-  function graphToolButton(label, title, onClick) {
+  /**
+   * One toolbar button. It carries its catalogue keys as data-i18n attributes
+   * so a language change can repaint it with applyStaticI18n, the same way the
+   * markup in the page is repainted — the toolbar is built once, on first open.
+   * @param {string} label a literal glyph, or "" when labelKey supplies the text
+   * @param {string} labelKey @param {string} titleKey @param {() => void} onClick
+   */
+  function graphToolButton(label, labelKey, titleKey, onClick) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "graph-tool";
-    b.textContent = label;
-    b.title = title;
+    b.textContent = labelKey ? i18n(labelKey) : label;
+    if (labelKey) {
+      b.setAttribute("data-i18n", labelKey);
+    }
+    b.title = i18n(titleKey);
+    b.setAttribute("data-i18n-title", titleKey);
     b.addEventListener("click", onClick);
     return b;
   }
@@ -265,23 +278,43 @@
     scheduleGraphDraw();
   }
 
+  /**
+   * Relabel what was built once, when the language changes. The view's chrome
+   * is created on first open and never rebuilt, so without this the segment
+   * and its tool buttons keep whichever language was in force back then.
+   */
+  function relabelGraphChrome() {
+    if (!graphBtn) {
+      return;
+    }
+    graphBtn.innerHTML = GRAPH_ICON + escapeHtml(i18n("graph.title"));
+    if (graphPane) {
+      graphPane.setAttribute("aria-label", i18n("graph.pane_aria"));
+      applyStaticI18n(graphPane);
+    }
+    // After applyStaticI18n, which would otherwise undo the state-dependent
+    // titles the two toggles carry.
+    syncGraphControls();
+    renderGraphSide();
+  }
+
   function syncGraphControls() {
     if (graphDepthOutEl) {
       const max = graphTree ? graphTree.maxDepth : graphDepth;
-      graphDepthOutEl.textContent = "levels " + graphDepth + "/" + max;
-      graphDepthOutEl.title = "How many levels of nesting the rings go out to";
+      graphDepthOutEl.textContent = i18n("graph.levels", { n: graphDepth, max });
+      graphDepthOutEl.title = i18n("graph.levels_title");
     }
     if (graphFilesBtn) {
       graphFilesBtn.classList.toggle("on", graphShowFiles);
-      graphFilesBtn.title = graphShowFiles
-        ? "Draw folders only, with the calls between them summed up"
-        : "Draw every file, not only the folders";
+      graphFilesBtn.title = i18n(
+        graphShowFiles ? "graph.files_on_title" : "graph.files_off_title"
+      );
     }
     if (graphLinksBtn) {
       graphLinksBtn.classList.toggle("on", graphShowLinks);
-      graphLinksBtn.title = graphShowLinks
-        ? "Leave out the calls between files, keeping the nesting"
-        : "Draw the calls between files again";
+      graphLinksBtn.title = i18n(
+        graphShowLinks ? "graph.links_on_title" : "graph.links_off_title"
+      );
     }
     if (graphStatsEl && graphLayout) {
       const folders = graphLayout.nodes.filter((n) => n.group === "folder").length;
@@ -289,8 +322,9 @@
       const drawn = graphLayout.relationsDrawn;
       const total = graphLayout.relationsTotal;
       graphStatsEl.textContent =
-        folders + " folders · " + files + " files · " +
-        (drawn < total ? "the " + drawn + " heaviest of " + total + " links" : drawn + " links");
+        drawn < total
+          ? i18n("graph.stats_heaviest", { folders, files, drawn, total })
+          : i18n("graph.stats_links", { folders, files, n: drawn });
     }
   }
 
@@ -309,7 +343,7 @@
       graphData = null;
       graphTree = null;
       graphLayout = null;
-      setGraphHint(pendingOpen() ? "The workspace is still opening…" : "No workspace is open.");
+      setGraphHint(i18n(pendingOpen() ? "web.opening" : "web.no_workspace"));
       if (graphStatsEl) graphStatsEl.textContent = "";
       renderGraphSide();
       return;
@@ -321,7 +355,7 @@
       return;
     }
     graphLoading = true;
-    setGraphHint("Reading the project graph…");
+    setGraphHint(i18n("graph.reading"));
     try {
       const r = (await conn.send("index.graph", { level: GRAPH_LEVEL })) || {};
       if (projectId !== currentProjectId) {
@@ -348,7 +382,9 @@
       scheduleGraphDraw();
     } catch (err) {
       if (projectId === currentProjectId) {
-        setGraphHint("Could not read the graph: " + String((err && err.message) || err));
+        setGraphHint(
+          i18n("graph.read_failed", { detail: String((err && err.message) || err) })
+        );
       }
     } finally {
       graphLoading = false;
@@ -879,16 +915,29 @@
     title.textContent = node.name;
     const path = document.createElement("div");
     path.className = "graph-card-path";
-    path.textContent = node.id || "(workspace root)";
+    path.textContent = node.id || i18n("graph.workspace_root");
     graphCardEl.append(title, path);
     const rows = [];
     if (node.group === "file") {
-      rows.push(["file", node.symbols ? node.symbols + " symbols" : ""]);
+      rows.push([
+        i18n("graph.row.file"),
+        node.symbols ? i18n("graph.symbols_n", { n: node.symbols }) : "",
+      ]);
     } else {
-      rows.push([node.group === "root" ? "workspace" : "folder", node.files + " files"]);
-      if (node.folded) rows.push(["folded in", node.folded + " files deeper"]);
+      rows.push([
+        i18n(node.group === "root" ? "graph.row.workspace" : "graph.row.folder"),
+        i18n("graph.files_n", { n: node.files }),
+      ]);
+      if (node.folded) {
+        rows.push([i18n("graph.row.folded_in"), i18n("graph.files_deeper", { n: node.folded })]);
+      }
     }
-    if (node.outW || node.inW) rows.push(["links", node.outW + " out · " + node.inW + " in"]);
+    if (node.outW || node.inW) {
+      rows.push([
+        i18n("graph.row.links"),
+        i18n("graph.row.out_in", { out: node.outW, in: node.inW }),
+      ]);
+    }
     for (const [k, v] of rows) {
       if (!v) continue;
       const row = document.createElement("div");
@@ -1076,20 +1125,31 @@
       const folders = nodes.filter((n) => n.group === "folder").length;
       const files = nodes.filter((n) => n.group === "file").length;
       const relations = (graphData.links || []).filter((l) => l.relation !== "in_folder").length;
-      const index = graphSection(graphSideEl, "What is indexed");
-      graphReadout(index, "files", stats.files || files);
-      graphReadout(index, "folders", folders);
-      graphReadout(index, "symbols", stats.nodes || 0);
-      graphReadout(index, "functions", stats.funcs || 0);
-      graphReadout(index, "types", stats.types || 0);
-      graphReadout(index, "tests", stats.tests || 0);
-      graphReadout(index, "packages", stats.packages || 0);
-      graphReadout(index, "relations", stats.edges || 0);
-      graphReadout(index, "file links", relations);
+      const index = graphSection(graphSideEl, i18n("graph.section.indexed"));
+      graphReadout(index, i18n("graph.ro.files"), stats.files || files);
+      graphReadout(index, i18n("graph.ro.folders"), folders);
+      graphReadout(index, i18n("graph.ro.symbols"), stats.nodes || 0);
+      graphReadout(index, i18n("graph.ro.functions"), stats.funcs || 0);
+      graphReadout(index, i18n("graph.ro.types"), stats.types || 0);
+      graphReadout(index, i18n("graph.ro.tests"), stats.tests || 0);
+      graphReadout(index, i18n("graph.ro.packages"), stats.packages || 0);
+      graphReadout(index, i18n("graph.ro.relations"), stats.edges || 0);
+      graphReadout(index, i18n("graph.ro.file_links"), relations);
       if (stats.embeddings) {
-        graphReadout(index, "embeddings", stats.embeddings + (stats.missing_embeddings ? " (+" + stats.missing_embeddings + " missing)" : ""));
+        graphReadout(
+          index,
+          i18n("graph.ro.embeddings"),
+          stats.embeddings +
+            (stats.missing_embeddings
+              ? i18n("graph.ro.missing", { n: stats.missing_embeddings })
+              : "")
+        );
       }
-      graphReadout(index, "nesting", graphTree ? graphTree.maxDepth + " levels" : "—");
+      graphReadout(
+        index,
+        i18n("graph.ro.nesting"),
+        graphTree ? i18n("graph.ro.levels_n", { n: graphTree.maxDepth }) : "—"
+      );
 
       // What the files are made of: the graph's own languages when it has
       // them, the extensions of the file nodes otherwise.
@@ -1106,7 +1166,7 @@
       }
       const sorted = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
       if (sorted.length) {
-        const block = graphSection(graphSideEl, "File types");
+        const block = graphSection(graphSideEl, i18n("graph.section.file_types"));
         for (const [name, count] of sorted) {
           const row = graphReadout(block, name, count, "graph-ro-lang");
           const dot = document.createElement("i");
@@ -1123,7 +1183,7 @@
           .sort((a, b) => b.inW + b.outW - (a.inW + a.outW))
           .slice(0, 6);
         if (hubs.length) {
-          const block = graphSection(graphSideEl, "Most connected");
+          const block = graphSection(graphSideEl, i18n("graph.section.most_connected"));
           for (const h of hubs) graphNeighbourRow(block, h.id, h.inW + h.outW);
         }
       }
@@ -1169,44 +1229,49 @@
   function renderGraphSelection(parent) {
     const node = graphLayout && graphSelectedId ? graphLayout.byId.get(graphSelectedId) : null;
     if (!node) {
-      const empty = graphSection(parent, "Selection");
-      graphEl(empty, "graph-empty", "Click a node to see what is inside it and what it is wired to.");
+      const empty = graphSection(parent, i18n("graph.section.selection"));
+      graphEl(empty, "graph-empty", i18n("graph.select_hint"));
       return;
     }
-    const block = graphSection(parent, node.group === "file" ? "File" : "Folder");
+    const block = graphSection(
+      parent,
+      i18n(node.group === "file" ? "graph.section.file" : "graph.section.folder")
+    );
     graphEl(block, "graph-head-name", node.name);
-    graphEl(block, "graph-head-path", node.id || "(workspace root)");
+    graphEl(block, "graph-head-path", node.id || i18n("graph.workspace_root"));
     if (node.group === "file") {
-      graphReadout(block, "symbols", node.symbols);
+      graphReadout(block, i18n("graph.ro.symbols"), node.symbols);
       const ext = graphExtOf(node.id);
-      if (ext) graphReadout(block, "type", ext);
+      if (ext) graphReadout(block, i18n("graph.ro.type"), ext);
     } else {
-      graphReadout(block, "files", node.files);
-      graphReadout(block, "symbols", node.symbols);
-      if (node.folded) graphReadout(block, "folded away", node.folded + " files");
+      graphReadout(block, i18n("graph.ro.files"), node.files);
+      graphReadout(block, i18n("graph.ro.symbols"), node.symbols);
+      if (node.folded) {
+        graphReadout(block, i18n("graph.ro.folded_away"), i18n("graph.files_n", { n: node.folded }));
+      }
     }
-    graphReadout(block, "links out", node.outW);
-    graphReadout(block, "links in", node.inW);
+    graphReadout(block, i18n("graph.ro.links_out"), node.outW);
+    graphReadout(block, i18n("graph.ro.links_in"), node.inW);
 
     // For a file the functions come first — that is what the person opened it
     // for; its neighbours follow.
     if (node.group === "file") renderGraphFunctions(parent, node);
     const neighbours = [...node.neighbours.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
     if (neighbours.length) {
-      const nb = graphSection(parent, "Wired to");
+      const nb = graphSection(parent, i18n("graph.section.wired_to"));
       for (const [id, w] of neighbours) graphNeighbourRow(nb, id, w);
     }
   }
 
   /** @param {any} parent @param {any} node */
   function renderGraphFunctions(parent, node) {
-    const fns = graphSection(parent, "Inside this file");
+    const fns = graphSection(parent, i18n("graph.section.inside"));
     if (!graphOutline || graphOutline.path !== node.id) {
-      graphEl(fns, "graph-empty", "Reading…");
+      graphEl(fns, "graph-empty", i18n("graph.reading_short"));
       return;
     }
     if (graphOutline.loading) {
-      graphEl(fns, "graph-empty", "Reading…");
+      graphEl(fns, "graph-empty", i18n("graph.reading_short"));
       return;
     }
     if (graphOutline.error) {
@@ -1216,10 +1281,14 @@
     const res = graphOutline.result || {};
     const symbols = Array.isArray(res.symbols) ? res.symbols : [];
     if (res.lines) {
-      graphReadout(fns, "lines", res.lines);
+      graphReadout(fns, i18n("graph.ro.lines"), res.lines);
     }
     if (!symbols.length) {
-      graphEl(fns, "graph-empty", res.available ? "No symbols indexed in this file." : "This file is not in the index.");
+      graphEl(
+        fns,
+        "graph-empty",
+        i18n(res.available ? "graph.no_symbols" : "graph.not_indexed")
+      );
       return;
     }
     symbols.forEach((sym, i) => {

@@ -1,6 +1,6 @@
   function orchProviderOptions() {
     const ready = providers.filter((p) => p.ready || p.configured || p.active);
-    const opts = [{ key: "", label: "Main (global llm)" }];
+    const opts = [{ key: "", label: i18n("set.prov.main_global") }];
     ready.forEach((p) => opts.push({ key: p.key, label: p.name || p.key }));
     return opts;
   }
@@ -23,7 +23,7 @@
   function renderOrchPickChips(models, host) {
     host.innerHTML = "";
     if (!models.length) {
-      host.textContent = "Pick models…";
+      host.textContent = i18n("set.orch.pick_models");
       host.classList.remove("has-models");
       return;
     }
@@ -44,6 +44,20 @@
     });
   }
 
+  /**
+   * A role's name for the reader. The core sends one, in English; the
+   * catalogue has the same six roles and answers in the chosen language. A
+   * role the core adds later is not in the catalogue, so its own label stands.
+   * @param {any} role
+   */
+  function orchRoleName(role) {
+    const key = role && role.key;
+    if (key && ORCH_ROLE_INFO_KEYS.indexOf(key) >= 0) {
+      return i18n("orch.role." + key);
+    }
+    return (role && (role.label || role.key)) || "";
+  }
+
   function orchRoleByKey(key) {
     const roles = (orchestraConfig && orchestraConfig.roles) || [];
     return roles.find((r) => r.key === key);
@@ -57,43 +71,26 @@
     return defaults[role && role.key] || "";
   }
 
-  /** Per-role hover help: what the role does + model examples (spec §1–2). */
-  const ORCH_ROLE_INFO = {
-    planner: {
-      title: "L5 · Orchestrator",
-      desc: "Reads the PRD, plans epics, splits work into WorkOrders and coordinates every department. Never edits code itself. Use your strongest reasoning model — it drives the whole run.",
-      example: "e.g. Claude Sonnet / Opus, GPT-5, DeepSeek-R1",
-    },
-    lead: {
-      title: "L4 · Department Leads",
-      desc: "Product & Documentation leads: write PRD.md, user stories, L1 conventions and decompose work for workers. Needs solid reasoning, but cheaper than L5.",
-      example: "e.g. Claude Sonnet, GPT-5 mini, Qwen3-235B · empty = uses the Orchestrator model",
-    },
-    complex: {
-      title: "L3 · Worker (complex)",
-      desc: "Big multi-file WorkOrders: new features, cross-module refactors, tricky bug fixes. Strongest of the worker tiers.",
-      example: "e.g. Qwen3-Coder-32B, DeepSeek-V3, Claude Haiku",
-    },
-    focused: {
-      title: "L3 · Worker (focused)",
-      desc: "Default tier: standard single-scope tasks — one function / file / test per WorkOrder. Most of the work runs here.",
-      example: "e.g. Qwen2.5-Coder-14B/32B, Codestral",
-    },
-    micro: {
-      title: "L1 · Worker (micro)",
-      desc: "Mechanical micro-edits: renames, comments, config tweaks, tiny fixes. Pick the cheapest / fastest model — quality demands are minimal.",
-      example: "e.g. Qwen2.5-Coder-7B, Llama-3.1-8B, local LM Studio model",
-    },
-    embed: {
-      title: "Embeddings",
-      desc: "Vector model for semantic_search and Index → Run embed. Must support POST /v1/embeddings — a chat model will fail. Uses the same provider credentials as Orchestra (OpenRouter, LM Studio, …).",
-      example: "e.g. openai/text-embedding-3-small, nomic-embed-text, bge-m3",
-    },
-  };
+  /**
+   * Per-role hover help: what the role does + model examples (spec §1–2).
+   * The text itself lives in media/i18n.js under set.role.<key>.*; this is the
+   * set of roles that have help, in the order the catalogue carries them.
+   */
+  const ORCH_ROLE_INFO_KEYS = ["planner", "lead", "complex", "focused", "micro", "embed"];
+
+  /** @param {string} key */
+  function orchRoleInfo(key) {
+    if (!key || ORCH_ROLE_INFO_KEYS.indexOf(key) < 0) return null;
+    return {
+      title: i18n("set.role." + key + ".title"),
+      desc: i18n("set.role." + key + ".desc"),
+      example: i18n("set.role." + key + ".example"),
+    };
+  }
 
   /** @param {any} role @returns {HTMLElement | null} */
   function buildOrchInfoIcon(role) {
-    const info = ORCH_ROLE_INFO[role && role.key];
+    const info = orchRoleInfo(role && role.key);
     if (!info) return null;
     const wrap = document.createElement("span");
     wrap.className = "orch-info";
@@ -219,12 +216,12 @@
         const badge = document.createElement("span");
         badge.className = "orch-tier orch-tier-" + tier.toLowerCase();
         badge.textContent = tier;
-        badge.title = "Orchestra tier " + tier + " (см. orchestra-routing §1)";
+        badge.title = i18n("set.orch.tier_title", { tier });
         title.appendChild(badge);
       }
       const name = document.createElement("span");
       name.className = "orch-role-name";
-      name.textContent = role.label || role.key;
+      name.textContent = orchRoleName(role);
       title.appendChild(name);
       const infoIcon = buildOrchInfoIcon(role);
       if (infoIcon) title.appendChild(infoIcon);
@@ -240,9 +237,7 @@
       pick.className = "orch-pick" + (models.length ? " has-models" : "");
       pick.title = models.length
         ? models.map((m, i) => `${i + 1}. ${m}`).join("\n")
-        : role.key === "embed"
-          ? "Pick an embedding model"
-          : "Pick up to 3 models (failover order)";
+        : i18n(role.key === "embed" ? "set.orch.pick_embed" : "set.orch.pick_up_to_3");
       const pickInner = document.createElement("span");
       pickInner.className = "orch-pick-inner";
       renderOrchPickChips(models, pickInner);
@@ -277,7 +272,12 @@
       slot.className = "orch-slot" + (orchModalSelection[i] ? " filled" : "");
       const label = document.createElement("span");
       label.className = "orch-slot-label";
-      label.textContent = role && role.key === "embed" ? "Embedding model" : ORCH_SLOT_LABELS[i] || `Slot ${i + 1}`;
+      label.textContent =
+        role && role.key === "embed"
+          ? i18n("set.orch.slot.embed")
+          : ORCH_SLOT_LABEL_KEYS[i]
+            ? i18n(ORCH_SLOT_LABEL_KEYS[i])
+            : i18n("set.orch.slot.n", { n: i + 1 });
       slot.appendChild(label);
       const val = document.createElement("span");
       val.className = "orch-slot-val";
@@ -289,12 +289,12 @@
     const hint = el("orchModalHint");
     if (hint) {
       if (role && role.key === "embed") {
-        hint.textContent = "Pick one embedding model (text-embedding-…, nomic, bge). Chat models fail on /v1/embeddings.";
+        hint.textContent = i18n("set.orch.hint_embed");
       } else {
         hint.textContent =
           orchModalSelection.length >= max
-            ? "Maximum 3 models — click a selected row to remove"
-            : `Select up to ${max} models in failover order (primary first)`;
+            ? i18n("set.orch.hint_max")
+            : i18n("set.orch.hint_select", { max });
       }
     }
   }
@@ -327,7 +327,7 @@
       contextFilter.classList.toggle("hidden", roleKey === "embed");
     }
     const title = el("orchModalTitle");
-    if (title) title.textContent = `Models · ${role.label || roleKey}`;
+    if (title) title.textContent = i18n("set.orch.modal_title_role", { role: orchRoleName(role) });
     renderOrchModalSlots();
     renderOrchModalList();
     el("orchModelModal")?.classList.remove("hidden");
@@ -343,7 +343,7 @@
     if (!p || !p.models || !p.models.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = p?.models_error || "Configure provider & refresh models first";
+      empty.textContent = p?.models_error || i18n("set.orch.no_models");
       list.appendChild(empty);
       return;
     }
@@ -361,7 +361,7 @@
     if (!models.length) {
       const empty = document.createElement("div");
       empty.className = "hint orch-filter-empty";
-      empty.textContent = "No models match the selected name and context window.";
+      empty.textContent = i18n("set.orch.filter_empty");
       list.appendChild(empty);
       return;
     }

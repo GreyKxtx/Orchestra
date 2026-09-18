@@ -55,32 +55,48 @@ Drop beside a Russian hint about Accept/Reject.
 
 Graphical clients are therefore **translated, not assigned a language**:
 
-- **The catalogue for the chat renderer** is `ui/vscode/media/chat-src/00a-i18n.js`
-  (shared by the VS Code webview and the browser page — one renderer, one
-  catalogue). Every string the user reads goes through `i18n(key, vars)`.
-  It is deliberately not called `t`: `t` is a local variable in a dozen
-  functions across those fragments, and a shadowed lookup fails silently.
+- **The catalogue for every webview** is `ui/vscode/media/i18n.js`. It sits
+  outside both `chat-src/` and `settings-src/` because four bundles include
+  it — the chat renderer and the settings panel, each on both hosts — so one
+  catalogue serves all of them and a string that moves between the chat window
+  and the settings panel keeps its key. Every string the user reads goes
+  through `i18n(key, vars)`. It is deliberately not called `t`: `t` is a local
+  variable in a dozen functions across those fragments, and a shadowed lookup
+  fails silently.
 - **The catalogue for the extension host** is `ui/vscode/src/i18n.ts`, for the
   notices the host itself writes into the transcript. It shares the key space
   with the renderer, so a string moved between the two keeps its key.
 - **English is the fallback.** A key missing from another language renders in
   English, so a half-finished translation degrades to a readable screen rather
   than to `notice.session_busy`.
-- **Choosing the language.** VS Code: `orchestra.language` (`auto` | `en` |
-  `ru`), where `auto` follows the editor's own display language. Browser and
-  desktop: `localStorage["orchestra.lang"]`, defaulting to the browser's
-  language. The host sends the answer to the renderer as a `uiLang` message,
-  which redraws the menus already on screen.
-- **Markup** carries `data-i18n`, `data-i18n-title`, `data-i18n-placeholder`
-  or `data-i18n-aria-label` instead of literal text.
+- **Choosing the language.** The picker lives in the settings panel, under
+  General, and writes through to whichever store the host keeps: VS Code's
+  `orchestra.language` (`auto` | `en` | `ru`), where `auto` follows the
+  editor's own display language, or `localStorage["orchestra.lang"]` in the
+  browser and the desktop window, defaulting to the browser's language.
+- **Telling the other documents.** A window is two or three documents, not
+  one, so a change has to travel: in VS Code the panel writes the setting and
+  the chat window picks it up through `onDidChangeConfiguration`; on the web
+  the page stores it and posts `uiLang` to the renderer and `language` into
+  the settings iframe. Each document then redraws what is already on screen —
+  a language change that only affected the *next* menu was the bug worth
+  avoiding here.
+- **Markup** carries `data-i18n`, `data-i18n-html` (for the few strings with a
+  `<code>` or `<em>` in them), `data-i18n-title`, `data-i18n-placeholder` or
+  `data-i18n-aria-label` instead of literal text. `ui/vscode/scripts/check-webview.mjs`
+  and `ui/web/scripts/check-web.mjs` both check every key in the markup against
+  the catalogue: a mistyped key is not an error anywhere — `i18n()` returns the
+  key, and the screen quietly reads `set.mcp.done` where it should say "Done".
 
-**Adding a language** is one more object in each catalogue plus one more value
-in the `orchestra.language` enum. Nothing else changes.
+**Adding a language** is one more object in `I18N_CATALOGUE`, one more entry in
+`UI_LANGUAGES`, one more object in `ui/vscode/src/i18n.ts`, and one more value
+in the `orchestra.language` enum. The picker builds itself from `UI_LANGUAGES`.
 
 Unchanged by this revision: the CLI and the TUI stay Russian, and everything
 the model reads stays English. Neither goes through these catalogues.
 
-**Not yet translated**, and honest about it: the settings panel
-(`ui/vscode/media/settings-src/`, its own bundle and scope) and the browser's
-project sidebar. Both are English today, so nothing there is *mixed* — they
-simply do not follow a language choice yet.
+**What is deliberately not translated**: text that belongs to something else
+and only passes through — model ids and provider names from a remote catalog,
+a skill's own description from its file, role labels the core sends, and error
+detail quoted from the core or a provider. Translating those would be lying
+about what the machine actually said.
