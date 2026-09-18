@@ -2,6 +2,8 @@ package fs
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/patch/applier"
@@ -43,6 +45,20 @@ func (c *Client) isDryRun() bool {
 		return false
 	}
 	return c.Overlay.DryRun
+}
+
+// fileKnown reports whether relSlash exists as far as this client can see:
+// on disk, or staged in the dry-run overlay.
+func (c *Client) fileKnown(relSlash string) bool {
+	if c.Overlay != nil {
+		if c.Overlay.fileExistsOnDisk(relSlash) {
+			return true
+		}
+		_, _, staged := c.Overlay.stagedContent(relSlash)
+		return staged
+	}
+	_, err := os.Stat(filepath.Join(c.Root, filepath.FromSlash(relSlash)))
+	return err == nil
 }
 
 // gateSyntax rejects content that does not parse, when the AST gate is on.

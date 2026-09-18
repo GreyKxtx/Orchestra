@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/lsp"
@@ -118,6 +119,34 @@ func TestFSWrite_NoCondition_ReturnsError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when overwriting without file_hash")
+	}
+}
+
+// A file_hash for a file that is not there is a create dressed as an
+// overwrite. Live on the 27B (plan_orders_two_files) the model pasted the hash
+// of the file it had just read into a write of a new plan file, was told
+// "file hash mismatch", and sent the same write five times. The answer has to
+// say that the file does not exist and what to send instead.
+func TestFSWrite_HashForAMissingFile_SaysItIsMissing(t *testing.T) {
+	r, root := newWriteRunner(t)
+
+	_, err := r.FSWrite(context.Background(), tools.FSWriteRequest{
+		Path:     ".orchestra/plans/plan.md",
+		Content:  "# Plan\n",
+		FileHash: "sha256:5a57371f510e3fc29b93142b57de22ab9a086e68da000000000000000000000000",
+	})
+	if err == nil {
+		t.Fatal("a write with a file_hash for a missing file must not succeed silently")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "does not exist") || !strings.Contains(msg, "must_not_exist") {
+		t.Fatalf("the error must say the file is missing and name must_not_exist, got: %v", err)
+	}
+	if strings.Contains(msg, "hash mismatch") {
+		t.Fatalf("the error must not read as a stale-content failure, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".orchestra", "plans", "plan.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("nothing must be written on a refused create (stat err=%v)", statErr)
 	}
 }
 

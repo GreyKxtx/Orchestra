@@ -35,6 +35,18 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 		return nil, protocol.NewError(protocol.InvalidLLMOutput,
 			"fs.write requires file_hash (for overwrite) or must_not_exist=true (for create)", nil)
 	}
+	// A file_hash for a file that does not exist is a create dressed as an
+	// overwrite — the model has just read some other file and pasted its hash,
+	// as the tool description told it to for overwrites. Answering "file hash
+	// mismatch" is true and useless: the 27B repeated the same write five
+	// times on plan_orders_two_files (2026-09-18) and never learned that the
+	// file was simply not there. Say so, and say what to send instead.
+	if !req.MustNotExist && fileHash != "" && !c.fileKnown(relSlash) {
+		return nil, protocol.NewError(protocol.NotFound,
+			"fs.write: "+relSlash+" does not exist, so there is no version for file_hash to match — "+
+				"to create it pass must_not_exist=true and no file_hash; file_hash is for overwriting a file you have read",
+			map[string]any{"path": relSlash})
+	}
 
 	if c.isDryRun() && c.Overlay != nil {
 		if req.MustNotExist && c.Overlay.fileExistsOnDisk(relSlash) {
