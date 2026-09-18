@@ -59,6 +59,25 @@ if (fs.existsSync(chatBundle)) {
   }
 }
 
+// The settings bundle is generated from settings-src/ the same way and was
+// only parse-checked above, so an edit to a fragment that was never rebundled
+// passed this script. It happened to be caught by ui/web/scripts/check-web.mjs,
+// which regenerates the *web's* settings bundle from the same sources — but
+// that is a side effect of another surface's check, not this one doing its job,
+// and this is the script the VSIX publish workflow runs.
+const settingsBundle = path.join(root, "media", "settings.bundle.js");
+if (fs.existsSync(settingsBundle)) {
+  const eol = (s) => s.replace(/\r\n/g, "\n");
+  const before = eol(fs.readFileSync(settingsBundle, "utf8"));
+  execFileSync(process.execPath, [path.join(__dirname, "bundle-settings.mjs")], { stdio: "pipe" });
+  const after = eol(fs.readFileSync(settingsBundle, "utf8"));
+  if (before !== after) {
+    fail("media/settings.bundle.js was stale — it has now been regenerated, commit it");
+  } else {
+    console.log("ok   media/settings.bundle.js is current");
+  }
+}
+
 // 3. Pure helpers.
 //
 // The fragments are one shared IIFE scope with no exports, so a helper is

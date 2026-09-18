@@ -494,6 +494,36 @@ test("a composer send becomes session.message", async () => {
   assert.equal(msg.params.allow_browser, undefined, "the browser is off unless the composer's switch is on");
 });
 
+// The cost chip runs a live per-step estimate and replaces it with the core's
+// own accounting when the turn ends. This host awaited session.message and
+// threw the result away, so the estimate was never corrected, the end-of-turn
+// cost line never appeared, and the session total stayed at zero however long
+// the conversation ran.
+test("the turn's real cost reaches the renderer when the turn ends", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+
+  dispatch(b, {
+    type: "send",
+    text: "hello",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: true,
+    files: [],
+  });
+  answer(b, "session.message", {
+    usage: { prompt_tokens: 1200, completion_tokens: 80, cost_usd: 0.0031 },
+    session_cost_usd: 0.0124,
+  });
+  await tick();
+
+  const msg = b.inbound.find((m) => m.type === "turnUsage");
+  assert.ok(msg, "the turn ended and the renderer was never told what it cost");
+  assert.equal(msg.usage.cost_usd, 0.0031);
+  assert.equal(msg.sessionCost, 0.0124, "the session total has to come from the core, not from adding up estimates");
+});
+
 // The access menu offers "Ask — Shell с подтверждением; правки через
 // Accept/Reject" and "Auto — запись файлов сразу на диск". This host wrote
 // either way, so Ask promised a review that never happened: the one control a

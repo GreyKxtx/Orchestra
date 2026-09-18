@@ -6542,8 +6542,9 @@
     // turnComplete's contract is `{ ok: boolean }`, and the renderer treats a
     // missing `ok` as failure — so this must report the truth, not a constant.
     let failed = false;
+    let turnResult = null;
     try {
-      await turn.done;
+      turnResult = await turn.done;
     } catch (err) {
       failed = true;
       if (projectId === currentProjectId) {
@@ -6564,6 +6565,20 @@
       // the background is exactly as worth keeping.
       void saveAssistantTurn(projectId, conn, sessionId);
       if (projectId === currentProjectId) {
+        // What the turn actually cost, from the core's own accounting. The
+        // renderer runs a live estimate per step and replaces it with this
+        // when the turn ends (07-events.js, turnUsage). This host awaited the
+        // result and threw it away, so the estimate was never corrected, the
+        // end-of-turn cost line never appeared, and the session total stayed
+        // at zero however long the conversation ran.
+        if (turnResult && turnResult.usage) {
+          toRenderer({
+            type: "turnUsage",
+            usage: turnResult.usage,
+            sessionCost:
+              typeof turnResult.session_cost_usd === "number" ? turnResult.session_cost_usd : undefined,
+          });
+        }
         toRenderer({ type: "turnInFlight", inFlight: false });
         toRenderer({ type: "turnComplete", ok: !failed });
         // The log is complete once session.message has returned — the core
