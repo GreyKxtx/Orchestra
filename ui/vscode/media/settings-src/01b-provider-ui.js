@@ -93,7 +93,7 @@
     btnLabel.className = "prov-dropdown-label";
     const btnChevron = document.createElement("span");
     btnChevron.className = "prov-dropdown-chevron";
-    btnChevron.textContent = "▾";
+    btnChevron.innerHTML = orchIconMarkup("chevron-down", { size: "sm" });
 
     btn.appendChild(btnIcon);
     btn.appendChild(btnLabel);

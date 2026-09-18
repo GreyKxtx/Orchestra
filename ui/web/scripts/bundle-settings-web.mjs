@@ -31,6 +31,7 @@ const order = [
   [srcDir, "00-header.txt"],
   // The same catalogue the chat page reads; see ui/vscode/scripts/bundle-settings.mjs.
   [mediaDir, "i18n.js"],
+  [mediaDir, "icons.js"],
   [frameDir, "frame.js"],
   [srcDir, "01-core.js"],
   [srcDir, "01b-provider-ui.js"],
@@ -102,7 +103,7 @@ const body = fs
 // only the three choices need a handler, and they get one here.
 const appearanceNav =
   '          <button type="button" class="nav-item" data-section="appearance">' +
-  '<span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" ' +
+  '<span class="nav-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.17" ' +
   'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11"/><path d="M8 2.5a5.5 5.5 0 010 11" fill="currentColor" ' +
   'stroke="none"/></svg></span><span data-i18n="set.nav.appearance">Appearance</span></button>\n';

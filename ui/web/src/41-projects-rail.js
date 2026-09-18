@@ -36,10 +36,10 @@
     }
   }
 
-  /* The plus, drawn once. A literal — no value from the core reaches it. */
-  const PLUS_SVG =
-    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
-    '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+  /* The plus, from the one icon set — see media/icons.js. It used to be
+     hand-drawn here at 13px and stroke 2.4, beside 15px/2 and 18px/2.2
+     copies elsewhere on the same screen. */
+  const PLUS_SVG = orchIconMarkup("plus", { size: "sm" });
 
   /**
    * The one affordance for adding: it sits on the heading of the group it

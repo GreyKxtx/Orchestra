@@ -13,6 +13,13 @@ its own scope. Every string the user reads goes through `i18n(key)`, and static
 markup carries `data-i18n*` — in `../../src/chat/panel.ts` for the webview and
 in `ui/web/index.src.html` for the browser, which hold the same markup.
 
+Neither is the icon set: `media/icons.js` is bundled beside the catalogue and
+shared the same way. Every icon is `orchIconMarkup(name)` — never a Unicode
+glyph, which is drawn by whichever font on the machine carries it and so
+arrives at a different weight on every surface. The grid, the three sizes and
+what is deliberately *not* an icon are in `docs/ui-design-system.md`; both
+check scripts fail on a name the set does not know.
+
 | File | ~lines | Role |
 |------|--------|------|
 | `01-dom-state.js` | 200 | DOM refs + shared state |

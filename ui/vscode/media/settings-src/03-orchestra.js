@@ -381,7 +381,6 @@
       } else {
         const dot = document.createElement("span");
         dot.className = "orch-row-dot";
-        dot.textContent = "○";
         row.appendChild(dot);
       }
       const name = document.createElement("span");

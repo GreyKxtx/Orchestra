@@ -256,7 +256,7 @@
       const chevron = document.createElement("span");
       chevron.className = "agent-tools-cat-chevron";
       chevron.setAttribute("aria-hidden", "true");
-      chevron.textContent = shouldOpen ? "▾" : "▸";
+      chevron.innerHTML = orchIconMarkup(shouldOpen ? "chevron-down" : "chevron-right", { size: "sm" });
       expand.appendChild(chevron);
       const title = document.createElement("span");
       title.className = "agent-tools-cat-title";
@@ -274,12 +274,12 @@
             const btn = other.querySelector(".agent-tools-cat-expand");
             const chev = other.querySelector(".agent-tools-cat-chevron");
             if (btn) btn.setAttribute("aria-expanded", "false");
-            if (chev) chev.textContent = "▸";
+            if (chev) chev.innerHTML = orchIconMarkup("chevron-right", { size: "sm" });
           });
         }
         const open = section.classList.toggle("collapsed") === false;
         expand.setAttribute("aria-expanded", open ? "true" : "false");
-        chevron.textContent = open ? "▾" : "▸";
+        chevron.innerHTML = orchIconMarkup(open ? "chevron-down" : "chevron-right", { size: "sm" });
       });
       head.appendChild(expand);
 
@@ -430,7 +430,7 @@
     const raw = String(language || "").trim();
     const key = raw.toLowerCase().replace(/[^a-z0-9+#]/g, "");
     if (key === "go" || key === "golang") return { key: "go", mark: "GO" };
-    if (key === "tsx" || key === "jsx") return { key: "react", mark: "⚛" };
+    if (key === "tsx" || key === "jsx") return { key: "react", mark: "Re" };
     if (key === "typescript" || key === "ts") return { key: "typescript", mark: "TS" };
     if (key === "javascript" || key === "js") return { key: "javascript", mark: "JS" };
     if (key === "python" || key === "py") return { key: "python", mark: "Py" };

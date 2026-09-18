@@ -12,6 +12,13 @@ webviews on both hosts. Every string the user reads goes through `i18n(key)`,
 and static markup in `media/settings-body.html` carries `data-i18n*` instead of
 literal text.
 
+Neither is the icon set: `media/icons.js` is bundled beside the catalogue and
+shared the same way. Every icon is `orchIconMarkup(name)` — never a Unicode
+glyph, which is drawn by whichever font on the machine carries it and so
+arrives at a different weight on every surface. The grid, the three sizes and
+what is deliberately *not* an icon are in `docs/ui-design-system.md`; both
+check scripts fail on a name the set does not know.
+
 | File | Role |
 |------|------|
 | `01-core.js` | helpers, nav, the language picker |

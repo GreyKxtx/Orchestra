@@ -18,6 +18,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { catalogueKeys, markupKeys } from "./i18n-keys.mjs";
+import { iconNames, iconCallSites, iconTableEntries, strayIconSvgs } from "./icon-names.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -199,6 +200,62 @@ if (typeof formatToolDuration !== "function") {
     );
   } else {
     console.log(`ok   ${used} data-i18n keys, all in the catalogue (${known.size} keys)`);
+  }
+}
+
+// 6. Every icon the code asks for exists, and no icon is drawn by hand.
+//
+// orchIconMarkup returns "" for a name it does not know, so a typo is an
+// empty slot on a toolbar with nothing logged anywhere. And an <svg> written
+// by hand looks right on its own and only reads as wrong beside the set —
+// which is the whole reason the set exists (see media/icons.js).
+{
+  const known = iconNames(path.join(root, "media"));
+  if (known.size === 0) {
+    fail("no icons could be read out of media/icons.js");
+  }
+  const srcFiles = fs
+    .readdirSync(path.join(root, "media", "chat-src"))
+    .filter((n) => n.endsWith(".js"))
+    .map((n) => path.join(root, "media", "chat-src", n))
+    .concat(
+      fs
+        .readdirSync(path.join(root, "media", "settings-src"))
+        .filter((n) => n.endsWith(".js"))
+        .map((n) => path.join(root, "media", "settings-src", n))
+    );
+  let used = 0;
+  const unknown = [];
+  for (const file of srcFiles) {
+    for (const { name, line } of iconCallSites(file)) {
+      used++;
+      if (!known.has(name)) unknown.push(`${path.relative(root, file)}:${line} ${name}`);
+    }
+  }
+  // The mode and access tables name their icons in a field, not in a call.
+  const tableFile = path.join(root, "media", "chat-src", "01-dom-state.js");
+  for (const { name, line } of iconTableEntries(tableFile)) {
+    used++;
+    if (!known.has(name)) unknown.push(`${path.relative(root, tableFile)}:${line} ${name}`);
+  }
+  if (unknown.length > 0) {
+    fail(
+      `${unknown.length} icon name(s) are not in media/icons.js — each one renders as ` +
+        `nothing at all: ${unknown.join(", ")}`
+    );
+  } else {
+    console.log(`ok   ${used} icon names, all in the set (${known.size} icons)`);
+  }
+
+  const stray = strayIconSvgs(path.join(root, "src", "chat", "panel.ts"));
+  if (stray.length > 0) {
+    fail(
+      `${stray.length} hand-drawn <svg> in src/chat/panel.ts — use a media/icons.js ` +
+        `drawing at stroke 1.75 on the 24 grid: ` +
+        stray.map((x) => `panel.ts:${x.line}`).join(", ")
+    );
+  } else {
+    console.log("ok   every <svg> in panel.ts is one of the set's");
   }
 }
 

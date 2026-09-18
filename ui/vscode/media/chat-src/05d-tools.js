@@ -1,3 +1,12 @@
+  /**
+   * The family a tool belongs to. Everything downstream — the icon, the
+   * heading, the CSS accent — hangs off this one answer, so a tool missing
+   * here is a step that renders as a nameless dot.
+   *
+   * The families below cover `internal/tools/registry.go` as it stands; the
+   * prefix rules at the end are what keep a newly registered `git.*` or
+   * `mcp:*` tool recognised without another edit here.
+   */
   function toolKind(name) {
     const n = (name || "").toLowerCase();
     if (["read", "fs.read"].includes(n)) return "read";
@@ -7,31 +16,65 @@
     if (["glob"].includes(n)) return "glob";
     if (["symbols", "code.symbols"].includes(n)) return "symbols";
     if (["bash", "exec.run", "exec"].includes(n)) return "exec";
-    if (["todowrite", "task", "task_spawn"].includes(n)) return "task";
+    if (["task", "task_spawn", "task_wait", "task_cancel", "task_result"].includes(n)) return "task";
+    if (["todowrite", "todoread"].includes(n)) return "todo";
+    if (["explore"].includes(n)) return "explore";
+    if (["diff.preview"].includes(n)) return "diff";
+    if (["fs.delete"].includes(n)) return "trash";
+    if (["fs.rename"].includes(n)) return "rename";
+    if (["webfetch", "websearch"].includes(n)) return "web";
+    if (["memory_write"].includes(n)) return "memory";
+    if (["question"].includes(n)) return "question";
+    if (["skill_invoke"].includes(n)) return "skill";
+    if (["plan_exit", "plan_enter"].includes(n)) return "plan";
+    if (["runtime_query"].includes(n)) return "runtime";
+    // Families, so a tool added to one of them needs nothing here.
+    if (n.startsWith("git.") || n.startsWith("gh.")) return "git";
+    if (n.startsWith("lsp.")) return "lsp";
+    if (n.startsWith("mcp:")) return "mcp";
+    if (n.startsWith("browser.") || n.startsWith("browser_")) return "web";
     return "other";
   }
 
+  /**
+   * The icon NAME (see media/icons.js) for a tool — never a glyph. Every
+   * family has one, the fallback included: a step with no icon is a step
+   * the reader cannot tell apart from its neighbours at a glance, which is
+   * the whole job of this column.
+   */
+  const TOOL_ICON_BY_KIND = {
+    read: "read",
+    list: "list",
+    write: "write",
+    search: "search",
+    glob: "glob",
+    symbols: "symbols",
+    exec: "exec",
+    task: "task",
+    todo: "todo",
+    explore: "explore",
+    diff: "diff",
+    trash: "trash",
+    rename: "write",
+    web: "web",
+    memory: "memory",
+    question: "question",
+    skill: "skill",
+    plan: "mode-plan",
+    runtime: "lsp",
+    git: "git",
+    lsp: "lsp",
+    mcp: "mcp",
+    other: "tool",
+  };
+
   function toolIcon(name) {
-    switch (toolKind(name)) {
-      case "read":
-        return "→";
-      case "list":
-        return "≡";
-      case "write":
-        return "←";
-      case "search":
-        return "✱";
-      case "glob":
-        return "✦";
-      case "symbols":
-        return "◈";
-      case "exec":
-        return "$";
-      case "task":
-        return "▣";
-      default:
-        return "•";
-    }
+    return TOOL_ICON_BY_KIND[toolKind(name)] || "tool";
+  }
+
+  /** The icon as markup, at the size a tool row uses. */
+  function toolIconMarkup(name) {
+    return orchIconMarkup(toolIcon(name), { size: "md" });
   }
 
   function toolDisplayName(name) {
@@ -53,8 +96,22 @@
       case "task":
         return "Task";
       default:
+        // The raw name. `git.log`, `lsp.references` and `mcp:ctx7:query-docs`
+        // say more about the step than any word this function could invent
+        // for them, and they are the names the docs and the CLI use.
         return name || "Tool";
     }
+  }
+
+  /**
+   * Whether a finished tool's result is a failure. The core reports tool
+   * errors as the result text rather than out of band, so this is the only
+   * signal a renderer has — keep it in one place so the head, the accent
+   * and the subagent tree all agree on what failed.
+   */
+  function toolResultIsError(content) {
+    const s = String(content || "").trimStart().toLowerCase();
+    return s.startsWith("error") || s.startsWith('{"error"') || s.startsWith('{"ok":false');
   }
 
   function parseToolArgs(raw) {
@@ -147,6 +204,177 @@
     return Math.floor(totalSec / 60) + "m " + String(totalSec % 60).padStart(2, "0") + "s";
   }
 
+  /* ---- a tool's result, made readable ------------------------------ *
+   * Tool results arrive as one string. Most are JSON, and most of those
+   * are the core's `{"output": "…"}` envelope wrapping text that was never
+   * JSON to begin with — so printed raw, the thing a reader wants is
+   * behind a layer of escaped newlines and quotes. These four functions
+   * unwrap that, pretty-print what is genuinely structured, and keep the
+   * unmodified original one click away.
+   * ------------------------------------------------------------------ */
+
+  /** Lines shown before the body asks to be expanded. */
+  const TOOL_BODY_PREVIEW_LINES = 24;
+  /** The ceiling even an expanded body will not go past, in lines. */
+  const TOOL_BODY_MAX_LINES = 5000;
+
+  /** The full, unmodified result text of a block, kept out of the DOM. */
+  const toolFullContent = new WeakMap();
+
+  /**
+   * What to actually show for a result string.
+   * @param {string} raw
+   * @returns {{ text: string; kind: "json" | "text"; unwrapped: boolean }}
+   */
+  function toolResultView(raw) {
+    const s = String(raw == null ? "" : raw);
+    const trimmed = s.trim();
+    if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+      return { text: s, kind: "text", unwrapped: false };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return { text: s, kind: "text", unwrapped: false };
+    }
+    // The core's single-field envelope. Its payload is text — command
+    // output, a file listing, a log — and reading it as text is the whole
+    // point of unwrapping it.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const keys = Object.keys(parsed);
+      if (keys.length === 1 && typeof parsed[keys[0]] === "string" && ["output", "text", "content", "result", "stdout"].includes(keys[0])) {
+        return { text: parsed[keys[0]], kind: "text", unwrapped: true };
+      }
+    }
+    return { text: JSON.stringify(parsed, null, 2), kind: "json", unwrapped: false };
+  }
+
+  /**
+   * Colour a pretty-printed JSON document. A tokeniser rather than a
+   * parser: it runs over text this renderer produced with
+   * JSON.stringify, so the grammar it has to survive is only ever that.
+   * Everything is escaped before a span goes near it.
+   */
+  function highlightJson(text) {
+    return escapeHtml(text).replace(
+      /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+      (m, str, colon, lit, num) => {
+        if (str) {
+          return colon
+            ? `<span class="jkey">${str}</span>${colon}`
+            : `<span class="jstr">${str}</span>`;
+        }
+        if (lit) return `<span class="jlit">${lit}</span>`;
+        if (num) return `<span class="jnum">${num}</span>`;
+        return m;
+      }
+    );
+  }
+
+  /** "12 lines · 3.4 KB", the label that tells you what you are not seeing. */
+  function toolBodyMeta(lineCount, byteLength) {
+    const kb = byteLength / 1024;
+    const size = kb >= 1 ? `${kb >= 10 ? Math.round(kb) : kb.toFixed(1)} KB` : `${byteLength} B`;
+    return `${i18n("tool.body.lines", { n: lineCount })} · ${size}`;
+  }
+
+  /**
+   * Paint a tool block's body from the result kept in toolFullContent,
+   * honouring the block's own two switches: pretty vs raw, and folded vs
+   * whole. Called on completion and again on every click that flips one.
+   */
+  function renderToolBody(block) {
+    const body = block?.querySelector?.(".tool-body");
+    if (!body) return;
+    const pre = body.querySelector(".tool-body-pre");
+    const metaEl = body.querySelector(".tool-body-meta");
+    const moreBtn = body.querySelector(".tool-body-more");
+    const fmtBtn = body.querySelector('[data-body-action="format"]');
+    if (!pre) return;
+
+    const full = toolFullContent.get(block) || "";
+    const raw = block.dataset.bodyFormat === "raw";
+    // Parsed once. A tool result can be a megabyte of JSON, and this runs
+    // again on every fold, unfold and format flip.
+    const formatted = toolResultView(full);
+    const view = raw ? { text: full, kind: "text", unwrapped: false } : formatted;
+    const lines = view.text.split("\n");
+    const expanded = block.dataset.bodyExpanded === "1";
+    const capped = lines.length > TOOL_BODY_MAX_LINES;
+    const shown = expanded
+      ? lines.slice(0, TOOL_BODY_MAX_LINES)
+      : lines.slice(0, TOOL_BODY_PREVIEW_LINES);
+    const text = shown.join("\n");
+
+    if (view.kind === "json") {
+      pre.innerHTML = highlightJson(text);
+    } else {
+      pre.textContent = text;
+    }
+    pre.classList.toggle("is-json", view.kind === "json");
+
+    if (metaEl) metaEl.textContent = toolBodyMeta(lines.length, full.length);
+    if (fmtBtn) {
+      // Offered only when there is a second way to read the same bytes.
+      fmtBtn.hidden = !(formatted.kind === "json" || formatted.unwrapped);
+      fmtBtn.textContent = raw ? i18n("tool.body.pretty") : i18n("tool.body.raw");
+    }
+    if (moreBtn) {
+      const hidden = lines.length - shown.length;
+      if (hidden > 0) {
+        moreBtn.hidden = false;
+        moreBtn.textContent = i18n("tool.body.show_all", { n: lines.length });
+      } else if (expanded && lines.length > TOOL_BODY_PREVIEW_LINES) {
+        moreBtn.hidden = false;
+        moreBtn.textContent = capped ? i18n("tool.body.capped", { n: TOOL_BODY_MAX_LINES }) : i18n("tool.body.collapse");
+        moreBtn.disabled = capped;
+      } else {
+        moreBtn.hidden = true;
+      }
+    }
+  }
+
+  /** Hand a finished tool's result to the body and paint it. */
+  function setToolBodyContent(block, content) {
+    if (!block) return;
+    toolFullContent.set(block, String(content == null ? "" : content));
+    renderToolBody(block);
+  }
+
+  /**
+   * Copy the whole result — the original bytes, not the prettified view,
+   * because what gets pasted into a shell or an issue has to be what the
+   * tool actually returned.
+   */
+  function copyToolBody(block, btn) {
+    const full = toolFullContent.get(block) || "";
+    const done = (ok) => {
+      if (!btn) return;
+      btn.textContent = i18n(ok ? "tool.body.copied" : "tool.body.copy_failed");
+      setTimeout(() => {
+        btn.textContent = i18n("tool.body.copy");
+      }, 1400);
+    };
+    try {
+      navigator.clipboard.writeText(full).then(
+        () => done(true),
+        () => done(false)
+      );
+    } catch {
+      done(false);
+    }
+  }
+
+  /** Append streamed exec output to what the body already holds. */
+  function appendToolBodyContent(block, chunk) {
+    if (!block) return;
+    toolFullContent.set(block, (toolFullContent.get(block) || "") + String(chunk || ""));
+    // Live output is watched, not skimmed: keep it whole as it arrives.
+    block.dataset.bodyExpanded = "1";
+    renderToolBody(block);
+  }
+
   function updateToolHead(block, name, argsRaw, content, running) {
     const head = block.querySelector(".tool-head");
     if (!head) return;
@@ -167,7 +395,18 @@
     if (filePath) {
       block.dataset.filePath = filePath;
     }
-    if (icon) icon.textContent = running ? toolIcon(name) : "✓";
+    // The icon states WHICH tool ran and never stops doing so. It used to be
+    // replaced by a check mark on completion, which left every finished step
+    // — the overwhelming majority of what is on screen — with no mark of its
+    // own kind at all. Success needs no badge once the spinner is gone;
+    // failure does, and gets one.
+    if (icon && icon.dataset.iconFor !== name) {
+      icon.innerHTML = toolIconMarkup(name);
+      icon.dataset.iconFor = name || "";
+    }
+    if (!running) {
+      block.classList.toggle("tool-failed", toolResultIsError(content));
+    }
     if (label) label.textContent = toolPreviewLine(name, argsRaw, content);
     if (sub) {
       sub.textContent = filePath && filePath.includes("/") ? filePath : "";

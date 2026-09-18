@@ -64,13 +64,8 @@
     return Boolean(graphApp && graphApp.dataset && graphApp.dataset.view === "graph");
   }
 
-  const GRAPH_ICON =
-    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
-    '<circle cx="6" cy="18" r="2.4" stroke="currentColor" stroke-width="2"/>' +
-    '<circle cx="12" cy="6" r="2.4" stroke="currentColor" stroke-width="2"/>' +
-    '<circle cx="18" cy="18" r="2.4" stroke="currentColor" stroke-width="2"/>' +
-    '<path d="M7.4 16 10.6 8.2M13.4 8.2l3.2 7.8M8.4 18h7.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
-    "</svg>";
+  /* The Graph segment's icon, at the size the other two segments use. */
+  const GRAPH_ICON = orchIconMarkup("graph", { size: "md" });
 
   /** One colour per language, so a ring of files says what it is made of. */
   const GRAPH_LANG_COLORS = {

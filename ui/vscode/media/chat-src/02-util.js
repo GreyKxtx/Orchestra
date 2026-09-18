@@ -174,7 +174,7 @@
       btn.dataset.access = m.id;
       btn.title = i18n(m.hintKey);
       btn.innerHTML =
-        `<span class="mi access-icon access-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>` +
+        `<span class="mi access-icon access-${escapeAttr(m.id)}">${orchIconMarkup(m.icon, { size: "sm" })}</span>` +
         `<span class="access-item-text"><span class="access-item-label">${escapeAttr(m.label)}</span>` +
         `<span class="access-item-hint">${escapeAttr(i18n(m.hintKey))}</span></span>`;
       accessMenu.appendChild(btn);
@@ -193,7 +193,7 @@
     browserRow.title =
       i18n("access.browser.hint");
     browserRow.innerHTML =
-      `<span class="menu-row-label"><span class="mi" aria-hidden="true">◎</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
+      `<span class="menu-row-label"><span class="mi" aria-hidden="true">${orchIconMarkup("access-browser", { size: "sm" })}</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
       `<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="${escapeAttr(i18n("access.browser.label"))}"></button>`;
     accessMenu.appendChild(browserRow);
   }
@@ -205,7 +205,7 @@
     }
     const icon = document.getElementById("access-icon");
     if (icon) {
-      icon.textContent = m.icon;
+      icon.innerHTML = orchIconMarkup(m.icon, { size: "sm" });
       icon.className = `ico access-icon access-${m.id}`;
     }
     if (accessBtn) {

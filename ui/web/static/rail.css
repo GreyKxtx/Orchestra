@@ -291,11 +291,11 @@ body {
 }
 
 .project-chip {
-  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
+  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
 }
 
 .rail-session {
-  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
+  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
 }
 
 /* On the open workspace the row is a small-caps heading, so its folder drops
@@ -545,10 +545,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: var(--ctl-h-lg);
+  height: var(--ctl-h-lg);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -599,10 +599,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: var(--ctl-h-lg);
+  height: var(--ctl-h-lg);
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -667,18 +667,30 @@ body {
 /* ---- the open workspace, named in the chat's header --------------------- */
 /* Written beside the logo by paintChromeProject. Small caps rather than a
    title: it is a label saying where you are, not a heading. */
+/* The workspace, read as the first step of a breadcrumb rather than as a
+   section heading. It used to be an 11.5px/700 uppercase eyebrow with wide
+   tracking, sitting against a 13px/450 sentence-case chat tab behind a full
+   vertical rule — two type treatments and a divider in the space of four
+   words, which is what made the strip read as parts rather than a line. It
+   takes the tab's own size and weight now and stays quiet by colour. */
 .chrome-project {
-  padding-right: 12px;
-  border-right: 1px solid var(--border);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
+  padding: 0 10px 0 12px;
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: -0.01em;
+  color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
+  max-width: 200px;
+}
+
+/* The separator is the breadcrumb's, not a panel edge: a slash on the
+   baseline, quieter than the names on either side of it. */
+.chrome-project::after {
+  content: "/";
+  margin-left: 10px;
+  color: var(--border);
 }
 
 .chrome-project[hidden] {

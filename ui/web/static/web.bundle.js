@@ -47,6 +47,16 @@
       "turn.queued": " · {n} queued",
       "turn.tasks_done": "✓ Tasks done",
 
+      "tool.body.lines": "{n} lines",
+      "tool.body.copy": "Copy",
+      "tool.body.copied": "Copied",
+      "tool.body.copy_failed": "Copy failed",
+      "tool.body.raw": "Raw",
+      "tool.body.pretty": "Formatted",
+      "tool.body.show_all": "Show all {n} lines",
+      "tool.body.collapse": "Collapse",
+      "tool.body.capped": "First {n} lines — the rest is too long to show",
+
       "diff.loading": "Loading diff preview…",
       "diff.more_lines": "… {n} more changed lines",
       "diff.open_file": "Open file (Shift+click: side-by-side diff)",
@@ -705,6 +715,16 @@
       "turn.running_tools": "Выполняю инструменты…",
       "turn.queued": " · {n} в очереди",
       "turn.tasks_done": "✓ Задачи выполнены",
+
+      "tool.body.lines": "строк: {n}",
+      "tool.body.copy": "Копировать",
+      "tool.body.copied": "Скопировано",
+      "tool.body.copy_failed": "Не скопировалось",
+      "tool.body.raw": "Как есть",
+      "tool.body.pretty": "Форматированно",
+      "tool.body.show_all": "Показать все {n} строк",
+      "tool.body.collapse": "Свернуть",
+      "tool.body.capped": "Первые {n} строк — остальное слишком длинное",
 
       "diff.loading": "Готовлю показ изменений…",
       "diff.more_lines": "… ещё {n} изменённых строк",
@@ -1443,6 +1463,169 @@
       }
     }
   }
+  /* ------------------------------------------------------------------ *
+   * Icons — one set for every graphical surface.
+   *
+   * It sits beside i18n.js, outside chat-src/ and settings-src/, for the
+   * same reason: four bundles (chat webview, settings webview, web page,
+   * settings iframe) and one source, so an icon that moves between panels
+   * keeps its name and its drawing.
+   *
+   * WHY THIS FILE EXISTS. Before it, an icon was whichever Unicode glyph
+   * looked closest — 32 distinct ones across 96 places: ∞ ◎ ◌ ▣ ≡ ⌕ ◇ ⌁
+   * ◫ □ ▾ → ← ✱ ✦ ◈ $ ▣ ◉ ⏳ ⋯. A glyph is drawn by whichever font on the
+   * machine happens to carry it, so each arrived at a different optical
+   * weight, a different cap height and a different baseline; ⌁ and ◫ fall
+   * out of the UI font entirely on Windows. Side by side in one toolbar
+   * they read as a pile of unrelated marks rather than one control strip,
+   * which is exactly the complaint this file answers.
+   *
+   * THE GRID. Every path is drawn on a 24×24 box, stroked (never filled)
+   * with currentColor at 1.75 units, round caps and joins. That is the one
+   * rule to keep: a new icon drawn at another weight is visible instantly
+   * next to its neighbours, which is the whole point of having a grid.
+   *
+   * SIZES. Three, and only three, chosen by role — see --icon-* in
+   * chat.css. 14px sits inside a pill's text, 16px is a standalone control,
+   * 18px is a chrome-strip button. Anything else is a new size nobody asked
+   * for.
+   *
+   * WHAT IS NOT AN ICON. Typographic marks stay text: the − and + of diff
+   * stats, the ↩ of a keyboard hint, the → of an "a → b" label. Those are
+   * read as characters in a sentence, not as marks on a button.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Path data, keyed by name. The value is the inner markup of the <svg>:
+   * whatever `orchIconMarkup` should wrap. Keep entries alphabetical inside
+   * their group so a duplicate is easy to spot.
+   * @type {Record<string, string>}
+   */
+  const ORCH_ICON_PATHS = {
+    /* --- tools: what a step did -------------------------------------- */
+    // read: a page with its corner turned.
+    read: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+    // list: a folder, because `ls` is asking a directory what it holds.
+    list: '<path d="M3 8a2 2 0 0 1 2-2h3.4l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    write: '<path d="M4 20h4L19.2 8.8a2.1 2.1 0 0 0-3-3L5 17z"/><path d="M14.5 6.5l3 3"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2"/>',
+    // glob: an asterisk — the wildcard itself, which is what a glob is.
+    glob: '<path d="M12 5v14"/><path d="M6.2 8.5l11.6 7"/><path d="M17.8 8.5l-11.6 7"/>',
+    // symbols: braces, the universal mark for "the shape of the code".
+    symbols:
+      '<path d="M9 4c-2 0-2 3-2 4s0 4-2 4c2 0 2 3 2 4s0 4 2 4"/><path d="M15 4c2 0 2 3 2 4s0 4 2 4c-2 0-2 3-2 4s0 4-2 4"/>',
+    exec: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7.5 9.5l3 2.5-3 2.5"/><path d="M13 15h3.5"/>',
+    task: '<path d="M12 3l9 4.8-9 4.8-9-4.8z"/><path d="M3 12.4l9 4.8 9-4.8"/>',
+    git: '<circle cx="6.5" cy="5.5" r="2.2"/><circle cx="6.5" cy="18.5" r="2.2"/><circle cx="17.5" cy="7.5" r="2.2"/><path d="M6.5 7.7v8.6"/><path d="M17.5 9.7v.8a4 4 0 0 1-4 4H9.5"/>',
+    web: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13.5 13.5 0 0 1 0 18a13.5 13.5 0 0 1 0-18z"/>',
+    mcp: '<path d="M9 3v5"/><path d="M15 3v5"/><path d="M6 8h12v2.5a6 6 0 0 1-12 0z"/><path d="M12 16.5V21"/>',
+    lsp: '<circle cx="12" cy="12" r="8.5"/><path d="M12 1.5v3.5"/><path d="M12 19v3.5"/><path d="M1.5 12H5"/><path d="M19 12h3.5"/><circle cx="12" cy="12" r="2.5"/>',
+    todo: '<path d="M3.5 6.5l1.8 1.8 3-3"/><path d="M3.5 16l1.8 1.8 3-3"/><path d="M12 7h8.5"/><path d="M12 16.5h8.5"/>',
+    question: '<path d="M4 5.5h16v10.5H9.5L4 20.5z"/><path d="M12 12.5v-.4c0-1.1 1.6-1.3 1.6-2.6A1.6 1.6 0 0 0 10.5 9"/>',
+    memory: '<path d="M6.5 3.5h11v17l-5.5-3.8-5.5 3.8z"/>',
+    skill: '<path d="M11 3l1.7 4.3L17 9l-4.3 1.7L11 15l-1.7-4.3L5 9l4.3-1.7z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"/>',
+    trash: '<path d="M4 6.5h16"/><path d="M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l.9 13h9.2l.9-13"/>',
+    diff: '<path d="M4 8h11"/><path d="M12 5l3 3-3 3"/><path d="M20 16H9"/><path d="M12 13l-3 3 3 3"/>',
+    explore: '<circle cx="12" cy="12" r="9"/><path d="M15.8 8.2l-2 5.6-5.6 2 2-5.6z"/>',
+    // The fallback. A dot inside a ring reads as "a step happened" without
+    // claiming to say which kind — better than a wrong icon.
+    tool: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.6"/>',
+
+    /* --- status ------------------------------------------------------ */
+    // A checklist's three states, drawn as one shape so the column of them
+    // lines up: the box is the same box whatever is inside it.
+    box: '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/>',
+    "box-check": '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+    "box-cross": '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/><path d="M9 9l6 6"/><path d="M15 9l-6 6"/>',
+    "box-active": '<rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    cross: '<path d="M6.5 6.5l11 11"/><path d="M17.5 6.5l-11 11"/>',
+    close: '<path d="M6.5 6.5l11 11"/><path d="M17.5 6.5l-11 11"/>',
+    running: '<circle cx="12" cy="12" r="8.5"/><path d="M12 6.5V12l3.5 2"/>',
+    waiting: '<circle cx="12" cy="12" r="8.5"/><path d="M8 12h8"/>',
+
+    /* --- modes: the composer's left-hand pills ----------------------- */
+    "mode-agent":
+      '<path d="M7 8.5a3.5 3.5 0 1 0 0 7c3.5 0 6-7 10-7a3.5 3.5 0 1 1 0 7c-4 0-6.5-7-10-7z"/>',
+    "mode-orchestra": '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/>',
+    "mode-build": '<rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><path d="M9 12h6"/>',
+    "mode-plan": '<path d="M5 7h14"/><path d="M5 12h14"/><path d="M5 17h9"/>',
+    "mode-explore": '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2"/>',
+    "mode-ask": '<path d="M12 3.5l8.5 8.5L12 20.5 3.5 12z"/>',
+    "mode-debug": '<path d="M13.5 3L5.5 13.5H11L10.5 21l8-10.5H13z"/>',
+    "mode-architecture": '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M12 5v14"/>',
+
+    /* --- access ------------------------------------------------------ */
+    // Ask: a ring left open, so the state reads as "waits for you".
+    "access-ask": '<circle cx="12" cy="12" r="8.5" stroke-dasharray="3 3"/>',
+    "access-auto": '<path d="M8 5.5l11 6.5-11 6.5z"/>',
+    "access-browser": '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5a12.5 12.5 0 0 1 0 17a12.5 12.5 0 0 1 0-17z"/>',
+
+    /* --- chrome and composer controls -------------------------------- */
+    chat: '<path d="M20.5 11.5a8.5 8.5 0 0 1-8.5 8.5H3.5l2.6-2.6a8.5 8.5 0 1 1 14.4-5.9z"/><path d="M8.5 10.5h7"/><path d="M8.5 14h4.5"/>',
+    trajectory: '<path d="M4 19V5"/><path d="M4 19h16"/><path d="M8.5 16v-4"/><path d="M12.5 16V8"/><path d="M16.5 16v-2.5"/>',
+    graph: '<circle cx="12" cy="5.5" r="2.5"/><circle cx="5.5" cy="18" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M10.2 7.3L7.3 15.8"/><path d="M13.8 7.3l2.9 8.5"/>',
+    gear: '<circle cx="12" cy="12" r="3.2"/><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2-1.2-2-3.5-2.3 1a7.9 7.9 0 0 0-1.7-1L15 3h-4l-.4 2.3a7.9 7.9 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.5 2.3-1a7.9 7.9 0 0 0 1.7 1L11 21h4l.4-2.3a7.9 7.9 0 0 0 1.7-1l2.3 1 2-3.5z"/>',
+    plus: '<path d="M12 5.5v13"/><path d="M5.5 12h13"/>',
+    history: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.4 2"/>',
+    attach: '<path d="M14.5 6.5l-6.4 6.4a2.6 2.6 0 0 0 3.7 3.7l6.7-6.7a4.3 4.3 0 0 0-6.1-6.1l-6.7 6.7a6 6 0 0 0 8.5 8.5l4.3-4.3"/>',
+    send: '<path d="M12 19.5V5"/><path d="M6 11l6-6 6 6"/>',
+    stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
+    bolt: '<path d="M13.5 3L5.5 13.5H11L10.5 21l8-10.5H13z"/>',
+    "chevron-down": '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
+    "chevron-up": '<path d="M6.5 14.5L12 9l5.5 5.5"/>',
+    "chevron-right": '<path d="M9.5 6.5l5.5 5.5-5.5 5.5"/>',
+    folder: '<path d="M3 8a2 2 0 0 1 2-2h3.4l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>',
+    expand: '<path d="M8.5 4.5H4.5v4"/><path d="M15.5 19.5h4v-4"/><path d="M19.5 8.5v-4h-4"/><path d="M4.5 15.5v4h4"/>',
+    collapse: '<path d="M4.5 8.5h4v-4"/><path d="M19.5 15.5h-4v4"/><path d="M15.5 4.5v4h4"/><path d="M8.5 19.5v-4h-4"/>',
+  };
+
+  /**
+   * The rendered size of an icon, by role. Three values, deliberately:
+   * inside a pill's own text, on a standalone control, on a chrome button.
+   */
+  const ORCH_ICON_SIZES = { sm: 14, md: 16, lg: 18 };
+
+  /**
+   * Markup for one icon.
+   * @param {string} name a key of ORCH_ICON_PATHS
+   * @param {{ size?: number | "sm" | "md" | "lg"; cls?: string }} [opts]
+   * @returns {string} an <svg> element, or "" when the name is unknown
+   */
+  function orchIconMarkup(name, opts) {
+    const body = ORCH_ICON_PATHS[name];
+    if (!body) return "";
+    const o = opts || {};
+    const raw = o.size == null ? "md" : o.size;
+    const px = typeof raw === "number" ? raw : ORCH_ICON_SIZES[raw] || ORCH_ICON_SIZES.md;
+    const cls = o.cls ? ` ${o.cls}` : "";
+    return (
+      `<svg class="oi${cls}" width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" ` +
+      `stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" ` +
+      `aria-hidden="true">${body}</svg>`
+    );
+  }
+
+  /**
+   * The same icon as a detached element, for the call sites that build DOM
+   * rather than strings. Parsing our own constant markup is safe — the
+   * paths above are the only thing that ever reaches innerHTML here.
+   * @param {string} name @param {{ size?: number | "sm" | "md" | "lg"; cls?: string }} [opts]
+   * @returns {SVGElement | null}
+   */
+  function orchIconEl(name, opts) {
+    const markup = orchIconMarkup(name, opts);
+    if (!markup) return null;
+    const holder = document.createElement("div");
+    holder.innerHTML = markup;
+    return /** @type {SVGElement | null} */ (holder.firstElementChild);
+  }
+
+  /** True when an icon by that name exists — for call sites that fall back. */
+  function orchHasIcon(name) {
+    return Object.prototype.hasOwnProperty.call(ORCH_ICON_PATHS, name);
+  }
   // The web host. Supplies the three methods the shared renderer fragments
   // reach for (see 01-dom-state.js's `host`), backed by a WebSocket instead of
   // the VS Code API. Everything the renderer knows about its host is here and
@@ -1655,18 +1838,22 @@
   /* host is supplied by ui/web/src/00-web-prelude.js */
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
+  /* `icon` is a NAME in media/icons.js, never a character. A Unicode glyph
+     is drawn by whichever font on the machine carries it, so eight modes
+     picked from eight blocks arrived at eight different weights — and ⌁
+     and ◫ fall out of the UI font on Windows entirely. */
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
 
   /** @type {ModeOpt[]} — must match TUI `agentModes` / docs/modes.md top-level modes */
   const MODES = [
-    { id: "build", label: "Build", icon: "▣", mode: "build" },
-    { id: "plan", label: "Plan", icon: "≡", mode: "plan" },
-    { id: "explore", label: "Explore", icon: "⌕", mode: "explore" },
-    { id: "ask", label: "Ask", icon: "◇", mode: "ask" },
-    { id: "debug", label: "Debug", icon: "⌁", mode: "debug" },
-    { id: "architecture", label: "Architecture", icon: "◫", mode: "architecture" },
-    { id: "agent", label: "Agent", icon: "∞", mode: "agent" },
-    { id: "orchestra", label: "Orchestra", icon: "◎", mode: "orchestra" },
+    { id: "build", label: "Build", icon: "mode-build", mode: "build" },
+    { id: "plan", label: "Plan", icon: "mode-plan", mode: "plan" },
+    { id: "explore", label: "Explore", icon: "mode-explore", mode: "explore" },
+    { id: "ask", label: "Ask", icon: "mode-ask", mode: "ask" },
+    { id: "debug", label: "Debug", icon: "mode-debug", mode: "debug" },
+    { id: "architecture", label: "Architecture", icon: "mode-architecture", mode: "architecture" },
+    { id: "agent", label: "Agent", icon: "mode-agent", mode: "agent" },
+    { id: "orchestra", label: "Orchestra", icon: "mode-orchestra", mode: "orchestra" },
   ];
 
   /** @type {{ label: string; ids: string[] }[]} */
@@ -1683,13 +1870,13 @@
       id: "ask",
       label: "Ask",
       hintKey: "access.ask.hint",
-      icon: "◌",
+      icon: "access-ask",
     },
     {
       id: "auto",
       label: "Auto",
       hintKey: "access.auto.hint",
-      icon: "▶",
+      icon: "access-auto",
     },
   ];
 
@@ -2096,7 +2283,7 @@
       btn.dataset.access = m.id;
       btn.title = i18n(m.hintKey);
       btn.innerHTML =
-        `<span class="mi access-icon access-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>` +
+        `<span class="mi access-icon access-${escapeAttr(m.id)}">${orchIconMarkup(m.icon, { size: "sm" })}</span>` +
         `<span class="access-item-text"><span class="access-item-label">${escapeAttr(m.label)}</span>` +
         `<span class="access-item-hint">${escapeAttr(i18n(m.hintKey))}</span></span>`;
       accessMenu.appendChild(btn);
@@ -2115,7 +2302,7 @@
     browserRow.title =
       i18n("access.browser.hint");
     browserRow.innerHTML =
-      `<span class="menu-row-label"><span class="mi" aria-hidden="true">◎</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
+      `<span class="menu-row-label"><span class="mi" aria-hidden="true">${orchIconMarkup("access-browser", { size: "sm" })}</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
       `<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="${escapeAttr(i18n("access.browser.label"))}"></button>`;
     accessMenu.appendChild(browserRow);
   }
@@ -2127,7 +2314,7 @@
     }
     const icon = document.getElementById("access-icon");
     if (icon) {
-      icon.textContent = m.icon;
+      icon.innerHTML = orchIconMarkup(m.icon, { size: "sm" });
       icon.className = `ico access-icon access-${m.id}`;
     }
     if (accessBtn) {
@@ -4019,14 +4206,14 @@
     const spinning = Boolean(inProg && busy);
 
     if (todosChipGlyph) {
-      todosChipGlyph.textContent = inProg ? "◉" : "□";
+      todosChipGlyph.innerHTML = orchIconMarkup(inProg ? "box-active" : "box", { size: "sm" });
       todosChipGlyph.classList.toggle("spinning", spinning);
     }
     if (todosChipSummary) {
       todosChipSummary.textContent = `${done}/${total} · ${focusLabel}`;
     }
     if (todosChipChev) {
-      todosChipChev.textContent = todosExpanded ? "▴" : "▾";
+      todosChipChev.innerHTML = orchIconMarkup(todosExpanded ? "chevron-up" : "chevron-down", { size: "sm" });
     }
     if (todosChip) {
       todosChip.setAttribute("aria-expanded", todosExpanded ? "true" : "false");
@@ -4050,7 +4237,7 @@
       row.setAttribute("role", "listitem");
       const glyph = document.createElement("span");
       glyph.className = "todo-glyph" + (t.status === "in_progress" && busy ? " spinning" : "");
-      glyph.textContent = todoGlyph(t.status);
+      glyph.innerHTML = orchIconMarkup(todoGlyph(t.status), { size: "sm" });
       const text = document.createElement("span");
       text.className = "todo-text";
       text.textContent = t.content || t.id;
@@ -4073,13 +4260,23 @@
     return s;
   }
 
+  /** The icon NAME for a checklist row's state — see media/icons.js. */
   function todoGlyph(status) {
     const s = normalizeTodoStatus(status);
-    if (s === "done") return "✓";
-    if (s === "cancelled") return "×";
-    if (s === "in_progress") return "◉";
-    return "□";
+    if (s === "done") return "box-check";
+    if (s === "cancelled") return "box-cross";
+    if (s === "in_progress") return "box-active";
+    return "box";
   }
+  /**
+   * The family a tool belongs to. Everything downstream — the icon, the
+   * heading, the CSS accent — hangs off this one answer, so a tool missing
+   * here is a step that renders as a nameless dot.
+   *
+   * The families below cover `internal/tools/registry.go` as it stands; the
+   * prefix rules at the end are what keep a newly registered `git.*` or
+   * `mcp:*` tool recognised without another edit here.
+   */
   function toolKind(name) {
     const n = (name || "").toLowerCase();
     if (["read", "fs.read"].includes(n)) return "read";
@@ -4089,31 +4286,65 @@
     if (["glob"].includes(n)) return "glob";
     if (["symbols", "code.symbols"].includes(n)) return "symbols";
     if (["bash", "exec.run", "exec"].includes(n)) return "exec";
-    if (["todowrite", "task", "task_spawn"].includes(n)) return "task";
+    if (["task", "task_spawn", "task_wait", "task_cancel", "task_result"].includes(n)) return "task";
+    if (["todowrite", "todoread"].includes(n)) return "todo";
+    if (["explore"].includes(n)) return "explore";
+    if (["diff.preview"].includes(n)) return "diff";
+    if (["fs.delete"].includes(n)) return "trash";
+    if (["fs.rename"].includes(n)) return "rename";
+    if (["webfetch", "websearch"].includes(n)) return "web";
+    if (["memory_write"].includes(n)) return "memory";
+    if (["question"].includes(n)) return "question";
+    if (["skill_invoke"].includes(n)) return "skill";
+    if (["plan_exit", "plan_enter"].includes(n)) return "plan";
+    if (["runtime_query"].includes(n)) return "runtime";
+    // Families, so a tool added to one of them needs nothing here.
+    if (n.startsWith("git.") || n.startsWith("gh.")) return "git";
+    if (n.startsWith("lsp.")) return "lsp";
+    if (n.startsWith("mcp:")) return "mcp";
+    if (n.startsWith("browser.") || n.startsWith("browser_")) return "web";
     return "other";
   }
 
+  /**
+   * The icon NAME (see media/icons.js) for a tool — never a glyph. Every
+   * family has one, the fallback included: a step with no icon is a step
+   * the reader cannot tell apart from its neighbours at a glance, which is
+   * the whole job of this column.
+   */
+  const TOOL_ICON_BY_KIND = {
+    read: "read",
+    list: "list",
+    write: "write",
+    search: "search",
+    glob: "glob",
+    symbols: "symbols",
+    exec: "exec",
+    task: "task",
+    todo: "todo",
+    explore: "explore",
+    diff: "diff",
+    trash: "trash",
+    rename: "write",
+    web: "web",
+    memory: "memory",
+    question: "question",
+    skill: "skill",
+    plan: "mode-plan",
+    runtime: "lsp",
+    git: "git",
+    lsp: "lsp",
+    mcp: "mcp",
+    other: "tool",
+  };
+
   function toolIcon(name) {
-    switch (toolKind(name)) {
-      case "read":
-        return "→";
-      case "list":
-        return "≡";
-      case "write":
-        return "←";
-      case "search":
-        return "✱";
-      case "glob":
-        return "✦";
-      case "symbols":
-        return "◈";
-      case "exec":
-        return "$";
-      case "task":
-        return "▣";
-      default:
-        return "•";
-    }
+    return TOOL_ICON_BY_KIND[toolKind(name)] || "tool";
+  }
+
+  /** The icon as markup, at the size a tool row uses. */
+  function toolIconMarkup(name) {
+    return orchIconMarkup(toolIcon(name), { size: "md" });
   }
 
   function toolDisplayName(name) {
@@ -4135,8 +4366,22 @@
       case "task":
         return "Task";
       default:
+        // The raw name. `git.log`, `lsp.references` and `mcp:ctx7:query-docs`
+        // say more about the step than any word this function could invent
+        // for them, and they are the names the docs and the CLI use.
         return name || "Tool";
     }
+  }
+
+  /**
+   * Whether a finished tool's result is a failure. The core reports tool
+   * errors as the result text rather than out of band, so this is the only
+   * signal a renderer has — keep it in one place so the head, the accent
+   * and the subagent tree all agree on what failed.
+   */
+  function toolResultIsError(content) {
+    const s = String(content || "").trimStart().toLowerCase();
+    return s.startsWith("error") || s.startsWith('{"error"') || s.startsWith('{"ok":false');
   }
 
   function parseToolArgs(raw) {
@@ -4229,6 +4474,177 @@
     return Math.floor(totalSec / 60) + "m " + String(totalSec % 60).padStart(2, "0") + "s";
   }
 
+  /* ---- a tool's result, made readable ------------------------------ *
+   * Tool results arrive as one string. Most are JSON, and most of those
+   * are the core's `{"output": "…"}` envelope wrapping text that was never
+   * JSON to begin with — so printed raw, the thing a reader wants is
+   * behind a layer of escaped newlines and quotes. These four functions
+   * unwrap that, pretty-print what is genuinely structured, and keep the
+   * unmodified original one click away.
+   * ------------------------------------------------------------------ */
+
+  /** Lines shown before the body asks to be expanded. */
+  const TOOL_BODY_PREVIEW_LINES = 24;
+  /** The ceiling even an expanded body will not go past, in lines. */
+  const TOOL_BODY_MAX_LINES = 5000;
+
+  /** The full, unmodified result text of a block, kept out of the DOM. */
+  const toolFullContent = new WeakMap();
+
+  /**
+   * What to actually show for a result string.
+   * @param {string} raw
+   * @returns {{ text: string; kind: "json" | "text"; unwrapped: boolean }}
+   */
+  function toolResultView(raw) {
+    const s = String(raw == null ? "" : raw);
+    const trimmed = s.trim();
+    if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+      return { text: s, kind: "text", unwrapped: false };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return { text: s, kind: "text", unwrapped: false };
+    }
+    // The core's single-field envelope. Its payload is text — command
+    // output, a file listing, a log — and reading it as text is the whole
+    // point of unwrapping it.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const keys = Object.keys(parsed);
+      if (keys.length === 1 && typeof parsed[keys[0]] === "string" && ["output", "text", "content", "result", "stdout"].includes(keys[0])) {
+        return { text: parsed[keys[0]], kind: "text", unwrapped: true };
+      }
+    }
+    return { text: JSON.stringify(parsed, null, 2), kind: "json", unwrapped: false };
+  }
+
+  /**
+   * Colour a pretty-printed JSON document. A tokeniser rather than a
+   * parser: it runs over text this renderer produced with
+   * JSON.stringify, so the grammar it has to survive is only ever that.
+   * Everything is escaped before a span goes near it.
+   */
+  function highlightJson(text) {
+    return escapeHtml(text).replace(
+      /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+      (m, str, colon, lit, num) => {
+        if (str) {
+          return colon
+            ? `<span class="jkey">${str}</span>${colon}`
+            : `<span class="jstr">${str}</span>`;
+        }
+        if (lit) return `<span class="jlit">${lit}</span>`;
+        if (num) return `<span class="jnum">${num}</span>`;
+        return m;
+      }
+    );
+  }
+
+  /** "12 lines · 3.4 KB", the label that tells you what you are not seeing. */
+  function toolBodyMeta(lineCount, byteLength) {
+    const kb = byteLength / 1024;
+    const size = kb >= 1 ? `${kb >= 10 ? Math.round(kb) : kb.toFixed(1)} KB` : `${byteLength} B`;
+    return `${i18n("tool.body.lines", { n: lineCount })} · ${size}`;
+  }
+
+  /**
+   * Paint a tool block's body from the result kept in toolFullContent,
+   * honouring the block's own two switches: pretty vs raw, and folded vs
+   * whole. Called on completion and again on every click that flips one.
+   */
+  function renderToolBody(block) {
+    const body = block?.querySelector?.(".tool-body");
+    if (!body) return;
+    const pre = body.querySelector(".tool-body-pre");
+    const metaEl = body.querySelector(".tool-body-meta");
+    const moreBtn = body.querySelector(".tool-body-more");
+    const fmtBtn = body.querySelector('[data-body-action="format"]');
+    if (!pre) return;
+
+    const full = toolFullContent.get(block) || "";
+    const raw = block.dataset.bodyFormat === "raw";
+    // Parsed once. A tool result can be a megabyte of JSON, and this runs
+    // again on every fold, unfold and format flip.
+    const formatted = toolResultView(full);
+    const view = raw ? { text: full, kind: "text", unwrapped: false } : formatted;
+    const lines = view.text.split("\n");
+    const expanded = block.dataset.bodyExpanded === "1";
+    const capped = lines.length > TOOL_BODY_MAX_LINES;
+    const shown = expanded
+      ? lines.slice(0, TOOL_BODY_MAX_LINES)
+      : lines.slice(0, TOOL_BODY_PREVIEW_LINES);
+    const text = shown.join("\n");
+
+    if (view.kind === "json") {
+      pre.innerHTML = highlightJson(text);
+    } else {
+      pre.textContent = text;
+    }
+    pre.classList.toggle("is-json", view.kind === "json");
+
+    if (metaEl) metaEl.textContent = toolBodyMeta(lines.length, full.length);
+    if (fmtBtn) {
+      // Offered only when there is a second way to read the same bytes.
+      fmtBtn.hidden = !(formatted.kind === "json" || formatted.unwrapped);
+      fmtBtn.textContent = raw ? i18n("tool.body.pretty") : i18n("tool.body.raw");
+    }
+    if (moreBtn) {
+      const hidden = lines.length - shown.length;
+      if (hidden > 0) {
+        moreBtn.hidden = false;
+        moreBtn.textContent = i18n("tool.body.show_all", { n: lines.length });
+      } else if (expanded && lines.length > TOOL_BODY_PREVIEW_LINES) {
+        moreBtn.hidden = false;
+        moreBtn.textContent = capped ? i18n("tool.body.capped", { n: TOOL_BODY_MAX_LINES }) : i18n("tool.body.collapse");
+        moreBtn.disabled = capped;
+      } else {
+        moreBtn.hidden = true;
+      }
+    }
+  }
+
+  /** Hand a finished tool's result to the body and paint it. */
+  function setToolBodyContent(block, content) {
+    if (!block) return;
+    toolFullContent.set(block, String(content == null ? "" : content));
+    renderToolBody(block);
+  }
+
+  /**
+   * Copy the whole result — the original bytes, not the prettified view,
+   * because what gets pasted into a shell or an issue has to be what the
+   * tool actually returned.
+   */
+  function copyToolBody(block, btn) {
+    const full = toolFullContent.get(block) || "";
+    const done = (ok) => {
+      if (!btn) return;
+      btn.textContent = i18n(ok ? "tool.body.copied" : "tool.body.copy_failed");
+      setTimeout(() => {
+        btn.textContent = i18n("tool.body.copy");
+      }, 1400);
+    };
+    try {
+      navigator.clipboard.writeText(full).then(
+        () => done(true),
+        () => done(false)
+      );
+    } catch {
+      done(false);
+    }
+  }
+
+  /** Append streamed exec output to what the body already holds. */
+  function appendToolBodyContent(block, chunk) {
+    if (!block) return;
+    toolFullContent.set(block, (toolFullContent.get(block) || "") + String(chunk || ""));
+    // Live output is watched, not skimmed: keep it whole as it arrives.
+    block.dataset.bodyExpanded = "1";
+    renderToolBody(block);
+  }
+
   function updateToolHead(block, name, argsRaw, content, running) {
     const head = block.querySelector(".tool-head");
     if (!head) return;
@@ -4249,7 +4665,18 @@
     if (filePath) {
       block.dataset.filePath = filePath;
     }
-    if (icon) icon.textContent = running ? toolIcon(name) : "✓";
+    // The icon states WHICH tool ran and never stops doing so. It used to be
+    // replaced by a check mark on completion, which left every finished step
+    // — the overwhelming majority of what is on screen — with no mark of its
+    // own kind at all. Success needs no badge once the spinner is gone;
+    // failure does, and gets one.
+    if (icon && icon.dataset.iconFor !== name) {
+      icon.innerHTML = toolIconMarkup(name);
+      icon.dataset.iconFor = name || "";
+    }
+    if (!running) {
+      block.classList.toggle("tool-failed", toolResultIsError(content));
+    }
     if (label) label.textContent = toolPreviewLine(name, argsRaw, content);
     if (sub) {
       sub.textContent = filePath && filePath.includes("/") ? filePath : "";
@@ -4919,17 +5346,29 @@
       head.type = "button";
       head.className = "tool-head";
       head.innerHTML =
-        `<span class="tool-icon">${toolIcon(msg.toolName)}</span>` +
+        `<span class="tool-icon" data-icon-for="${escapeAttr(msg.toolName || "")}">${toolIconMarkup(msg.toolName)}</span>` +
         `<span class="tool-label">${escapeAttr(toolDisplayName(msg.toolName))}</span>` +
         `<span class="tool-sub"></span>` +
         `<span class="tool-dur"></span>` +
         `<span class="tool-stats"></span>` +
         `<span class="tool-spinner"></span>` +
-        (kind === "write" ? "" : `<span class="tool-chev">▾</span>`);
+        (kind === "write" ? "" : `<span class="tool-chev">${orchIconMarkup("chevron-down", { size: "sm" })}</span>`);
       let body = null;
       if (kind !== "write") {
-        body = document.createElement("pre");
+        // A wrapper, not the <pre> itself: the result needs a strip of its
+        // own (how much there is, how to read it, how to copy it) and a
+        // footer that unfolds the rest. The <pre> is one child of it.
+        body = document.createElement("div");
         body.className = "tool-body hidden";
+        body.innerHTML =
+          `<div class="tool-body-bar">` +
+          `<span class="tool-body-meta"></span>` +
+          `<span class="tool-body-acts">` +
+          `<button type="button" class="tool-body-btn" data-body-action="format" hidden></button>` +
+          `<button type="button" class="tool-body-btn" data-body-action="copy" data-i18n="tool.body.copy">${escapeAttr(i18n("tool.body.copy"))}</button>` +
+          `</span></div>` +
+          `<pre class="tool-body-pre"></pre>` +
+          `<button type="button" class="tool-body-more" data-body-action="expand" hidden></button>`;
         head.addEventListener("click", (e) => {
           const stats = e.target.closest?.(".tool-stats");
           const fp = block.dataset.filePath || "";
@@ -4942,6 +5381,25 @@
           }
           body.classList.toggle("hidden");
           head.classList.toggle("open");
+        });
+        // The body's own controls. Delegated from the wrapper so the three
+        // buttons need no separate bookkeeping, and stopped here so a click
+        // inside the result never reaches the head and folds it shut.
+        body.addEventListener("click", (e) => {
+          const btn = e.target.closest?.("[data-body-action]");
+          if (!btn) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const action = btn.dataset.bodyAction;
+          if (action === "format") {
+            block.dataset.bodyFormat = block.dataset.bodyFormat === "raw" ? "pretty" : "raw";
+          } else if (action === "expand") {
+            block.dataset.bodyExpanded = block.dataset.bodyExpanded === "1" ? "0" : "1";
+          } else if (action === "copy") {
+            copyToolBody(block, btn);
+            return;
+          }
+          renderToolBody(block);
         });
       } else {
         bindWriteToolHead(block, head);
@@ -5008,7 +5466,10 @@
       if (head && kind !== "write") head.classList.remove("open");
 
       if (body && msg.content && kind !== "write") {
-        body.textContent = msg.content.length > 8000 ? msg.content.slice(0, 8000) + "\n…" : msg.content;
+        // The whole result, not a slice of it. It used to be cut at 8000
+        // characters with an ellipsis and no way back to the rest; the
+        // body now folds instead, and unfolds on request.
+        setToolBodyContent(block, msg.content);
         body.classList.add("hidden");
       }
 
@@ -5050,7 +5511,7 @@
     if (!body) return;
     body.classList.remove("hidden");
     if (head) head.classList.add("open");
-    body.textContent = (body.textContent || "") + chunk;
+    appendToolBodyContent(block, chunk);
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
   // ---- Trajectory view ------------------------------------------------------
@@ -5941,7 +6402,7 @@
         btn.dataset.id = m.id;
         btn.title = m.mode;
         btn.innerHTML =
-          `<span class="mi mode-icon mode-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>${escapeAttr(m.label)}`;
+          `<span class="mi mode-icon mode-${escapeAttr(m.id)}">${orchIconMarkup(m.icon, { size: "sm" })}</span>${escapeAttr(m.label)}`;
         modeMenu.appendChild(btn);
       });
     });
@@ -5954,7 +6415,7 @@
     }
     const icon = document.getElementById("mode-icon");
     if (icon) {
-      icon.textContent = m.icon;
+      icon.innerHTML = orchIconMarkup(m.icon, { size: "sm" });
       icon.className = `ico mode-icon mode-${m.id}`;
     }
     if (modeBtn) {
@@ -6970,7 +7431,7 @@
           del.className = "session-row-del";
           del.setAttribute("data-delete-session", s.id);
           del.title = i18n("session.delete");
-          del.textContent = "✕";
+          del.innerHTML = orchIconMarkup("close", { size: "sm" });
           row.appendChild(del);
 
           sessionMenuList.appendChild(row);
@@ -9685,10 +10146,10 @@
     }
   }
 
-  /* The plus, drawn once. A literal — no value from the core reaches it. */
-  const PLUS_SVG =
-    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
-    '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+  /* The plus, from the one icon set — see media/icons.js. It used to be
+     hand-drawn here at 13px and stroke 2.4, beside 15px/2 and 18px/2.2
+     copies elsewhere on the same screen. */
+  const PLUS_SVG = orchIconMarkup("plus", { size: "sm" });
 
   /**
    * The one affordance for adding: it sits on the heading of the group it
@@ -13111,13 +13572,8 @@
     return Boolean(graphApp && graphApp.dataset && graphApp.dataset.view === "graph");
   }
 
-  const GRAPH_ICON =
-    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
-    '<circle cx="6" cy="18" r="2.4" stroke="currentColor" stroke-width="2"/>' +
-    '<circle cx="12" cy="6" r="2.4" stroke="currentColor" stroke-width="2"/>' +
-    '<circle cx="18" cy="18" r="2.4" stroke="currentColor" stroke-width="2"/>' +
-    '<path d="M7.4 16 10.6 8.2M13.4 8.2l3.2 7.8M8.4 18h7.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
-    "</svg>";
+  /* The Graph segment's icon, at the size the other two segments use. */
+  const GRAPH_ICON = orchIconMarkup("graph", { size: "md" });
 
   /** One colour per language, so a ring of files says what it is made of. */
   const GRAPH_LANG_COLORS = {

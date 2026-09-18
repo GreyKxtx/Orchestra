@@ -1,5 +1,18 @@
 :root {
   color-scheme: dark;
+  /* The same control scale as chat.css. This panel is a separate document
+     with its own palette, so the scale has to be restated here — keep the
+     values identical: the two surfaces sit one click apart. */
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 18px;
+  --ctl-h-xs: 22px;
+  --ctl-h-sm: 26px;
+  --ctl-h-md: 28px;
+  --ctl-h-lg: 32px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
   /* Layered dark palette shared with the chat webview (not pure black). */
   --bg: #181818;
   --fg: #e6e6e9;
@@ -649,10 +662,18 @@ button.danger:hover {
   white-space: nowrap;
 }
 
+/* Every icon in this panel is one <svg class="oi"> from media/icons.js,
+   drawn on a 24 grid at stroke 1.75 — see that file for why. */
+.oi {
+  display: block;
+  flex: 0 0 auto;
+}
+
 .prov-dropdown-chevron {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
   color: var(--muted);
-  font-size: 11px;
   line-height: 1;
 }
 
@@ -966,9 +987,11 @@ button.danger:hover {
 }
 
 .agent-tools-cat-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--muted);
-  font-size: 11px;
-  width: 12px;
+  width: var(--icon-sm);
   flex-shrink: 0;
 }
 
@@ -1480,12 +1503,41 @@ button.danger:hover {
   background: var(--surface);
 }
 
+/* The disclosure marker is drawn here, not left to the engine: the native
+   one is a filled triangle from the platform's own glyph store, at whatever
+   size and weight that platform picked — the one mark on this panel that
+   could not follow the icon set. This is the set's chevron, as a mask so it
+   takes the summary's colour. */
 .adv summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  list-style: none;
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
   transition: color 0.12s ease;
+}
+
+.adv summary::-webkit-details-marker {
+  display: none;
+}
+
+.adv summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  background-color: currentColor;
+  transition: transform 0.15s ease;
+  --chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6.5l5.5 5.5-5.5 5.5'/%3E%3C/svg%3E");
+  -webkit-mask: var(--chev) center / contain no-repeat;
+  mask: var(--chev) center / contain no-repeat;
+}
+
+.adv[open] summary::before {
+  transform: rotate(90deg);
 }
 
 .adv summary:hover {
@@ -1960,13 +2012,22 @@ button.danger:hover {
   font-family: inherit;
 }
 
+/* The "no model here" marker. Drawn by this rule rather than set as a ○,
+   which arrived at a different size in every font that carries it. */
 .orch-row-dot {
   flex: 0 0 18px;
   width: 18px;
-  text-align: center;
-  color: var(--muted);
+  height: 18px;
+  position: relative;
   opacity: 0.5;
-  font-size: 12px;
+}
+
+.orch-row-dot::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
 }
 
 .orch-row-name {

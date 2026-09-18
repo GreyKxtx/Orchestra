@@ -1,18 +1,22 @@
   const host = acquireVsCodeApi();
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
+  /* `icon` is a NAME in media/icons.js, never a character. A Unicode glyph
+     is drawn by whichever font on the machine carries it, so eight modes
+     picked from eight blocks arrived at eight different weights — and ⌁
+     and ◫ fall out of the UI font on Windows entirely. */
   /** @typedef {{ id: string; label: string; profile: string }} EffortOpt */
 
   /** @type {ModeOpt[]} — must match TUI `agentModes` / docs/modes.md top-level modes */
   const MODES = [
-    { id: "build", label: "Build", icon: "▣", mode: "build" },
-    { id: "plan", label: "Plan", icon: "≡", mode: "plan" },
-    { id: "explore", label: "Explore", icon: "⌕", mode: "explore" },
-    { id: "ask", label: "Ask", icon: "◇", mode: "ask" },
-    { id: "debug", label: "Debug", icon: "⌁", mode: "debug" },
-    { id: "architecture", label: "Architecture", icon: "◫", mode: "architecture" },
-    { id: "agent", label: "Agent", icon: "∞", mode: "agent" },
-    { id: "orchestra", label: "Orchestra", icon: "◎", mode: "orchestra" },
+    { id: "build", label: "Build", icon: "mode-build", mode: "build" },
+    { id: "plan", label: "Plan", icon: "mode-plan", mode: "plan" },
+    { id: "explore", label: "Explore", icon: "mode-explore", mode: "explore" },
+    { id: "ask", label: "Ask", icon: "mode-ask", mode: "ask" },
+    { id: "debug", label: "Debug", icon: "mode-debug", mode: "debug" },
+    { id: "architecture", label: "Architecture", icon: "mode-architecture", mode: "architecture" },
+    { id: "agent", label: "Agent", icon: "mode-agent", mode: "agent" },
+    { id: "orchestra", label: "Orchestra", icon: "mode-orchestra", mode: "orchestra" },
   ];
 
   /** @type {{ label: string; ids: string[] }[]} */
@@ -29,13 +33,13 @@
       id: "ask",
       label: "Ask",
       hintKey: "access.ask.hint",
-      icon: "◌",
+      icon: "access-ask",
     },
     {
       id: "auto",
       label: "Auto",
       hintKey: "access.auto.hint",
-      icon: "▶",
+      icon: "access-auto",
     },
   ];
 

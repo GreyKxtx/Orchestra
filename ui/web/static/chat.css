@@ -1,8 +1,9 @@
 /* Geist ships with the extension and is served from the same origin as this
    stylesheet, so the UI looks the same offline and in both hosts. The paths are
    relative to this file: media/fonts/ in the webview, static/fonts/ on the web
-   (bundle-web.mjs copies the directory). Symbol glyphs used as icons (∞ ◇ ⌕ ◫)
-   fall outside these subsets and resolve from the fallback stack. */
+   (bundle-web.mjs copies the directory). Icons are SVG from media/icons.js,
+   never glyphs, so nothing in this UI depends on a font carrying a symbol
+   block — which is what the subsets below deliberately leave out. */
 @font-face {
   font-family: "Geist Variable";
   font-style: normal;
@@ -102,6 +103,43 @@
      declaration in the large-screen block at the end of this file rather
      than four that can drift apart. */
   --content-max: 880px;
+
+  /* ---- the control scale ------------------------------------------------
+     Three icon sizes, four control heights, three radii. Nothing else.
+
+     This exists because the chrome had none: a single header row carried
+     icons at 14, 15, 16, 18 and 22px, drawn on two different grids at four
+     stroke weights, half of them Unicode glyphs rendered by whichever font
+     on the machine happened to carry them — beside controls 22, 26, 28 and
+     32px tall. Every one of those choices was defensible alone; together
+     they are what made the strip read as a pile of parts rather than one
+     row, which is the complaint this scale answers.
+
+     Pixels, deliberately: `zoom` on this same :root scales all of them
+     together, so the proportions tuned here survive every zoom level. A new
+     value is a decision to argue for, not a default — reach for the nearest
+     existing one first. */
+  --icon-sm: 14px; /* inside a control, beside its own label */
+  --icon-md: 16px; /* a standalone control; a tool row */
+  --icon-lg: 18px; /* a chrome-strip button */
+
+  --ctl-h-xs: 22px; /* a chip inside another control */
+  --ctl-h-sm: 26px; /* composer pills, view segments */
+  --ctl-h-md: 28px; /* the composer's own icon buttons */
+  --ctl-h-lg: 32px; /* chrome-strip buttons */
+
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+
+  /* Pretty-printed JSON in a tool result. Four roles, tuned against
+     --surface rather than against the editor's own token colours: this is a
+     result being skimmed, not code being edited. */
+  --json-key: #86adf7;
+  --json-str: #9ece6a;
+  --json-num: #ff9e64;
+  --json-lit: #bb9af7;
+
   /* How large the whole interface is drawn. Every size in this file is a
      literal pixel, so one zoom on the root scales all of them together and
      keeps the proportions tuned below exactly. The ladder at the end of this
@@ -167,6 +205,11 @@
     --lightbox-scrim: rgba(0, 0, 0, 0.82);
     --overlay-scrim: rgba(0, 0, 0, 0.35);
     --ok-fg: #15803d;
+    /* JSON in a tool result, on the light ground. */
+    --json-key: #1d4ed8;
+    --json-str: #15803d;
+    --json-num: #b45309;
+    --json-lit: #7c3aed;
     --ok-bg: rgba(21, 128, 61, 0.10);
     --ok-border: rgba(21, 128, 61, 0.35);
     --warn-fg: #a16207;
@@ -241,6 +284,11 @@ body.vscode-high-contrast-light {
   --lightbox-scrim: rgba(0, 0, 0, 0.82);
   --overlay-scrim: rgba(0, 0, 0, 0.35);
   --ok-fg: #15803d;
+  /* JSON in a tool result, on the light ground. */
+  --json-key: #1d4ed8;
+  --json-str: #15803d;
+  --json-num: #b45309;
+  --json-lit: #7c3aed;
   --ok-bg: rgba(21, 128, 61, 0.10);
   --ok-border: rgba(21, 128, 61, 0.35);
   --warn-fg: #a16207;
@@ -491,6 +539,17 @@ body.vscode-high-contrast-light .chrome-logo {
   background: var(--active-wash);
 }
 
+/* ---- icons ---------------------------------------------------------------
+   Every icon on every surface is one <svg class="oi"> from media/icons.js,
+   drawn on a 24 grid at stroke 1.75, sized by the --icon-* scale. The rule
+   here is only what they all need: never shrink in a flex row, and sit on
+   the text baseline box rather than the line box, so a 16px icon beside a
+   12px label does not push the row taller than the control. */
+.oi {
+  display: block;
+  flex: 0 0 auto;
+}
+
 .chrome-actions {
   display: flex;
   align-items: center;
@@ -504,11 +563,11 @@ body.vscode-high-contrast-light .chrome-logo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--ctl-h-lg);
+  height: var(--ctl-h-lg);
   margin: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -523,8 +582,8 @@ body.vscode-high-contrast-light .chrome-logo {
 
 .chrome-action svg {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: var(--icon-lg);
+  height: var(--icon-lg);
   flex-shrink: 0;
 }
 
@@ -802,14 +861,24 @@ body.vscode-high-contrast-light .chrome-logo {
   display: none;
 }
 
+/* The set's chevron as a mask, not a ▾: the glyph was drawn by whichever
+   font carried it, at 10px, which put a different mark here from the one on
+   every tool row just below. It rotates rather than swapping shapes. */
 .trace-summary::after {
-  content: "▾";
-  font-size: 10px;
+  content: "";
+  flex: 0 0 auto;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  background-color: currentColor;
   opacity: 0.7;
+  transition: transform 0.15s ease;
+  --chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 9.5l5.5 5.5 5.5-5.5'/%3E%3C/svg%3E");
+  -webkit-mask: var(--chev) center / contain no-repeat;
+  mask: var(--chev) center / contain no-repeat;
 }
 
 .trace-details[open] > .trace-summary::after {
-  content: "▴";
+  transform: rotate(180deg);
 }
 
 .trace-body,
@@ -851,11 +920,21 @@ body.vscode-high-contrast-light .chrome-logo {
   color: color-mix(in srgb, var(--fg) 80%, var(--muted));
 }
 
+/* Inside the turn's trace a row has no card of its own, so its result gets
+   one: indented under the row and boxed, which is what separates it from the
+   rows below. The height cap belongs to the <pre> — capping this wrapper
+   instead, with the block set to overflow: visible above, drew the result
+   straight over the next three rows. */
 .tool-trace-list .tool-body {
-  margin-left: 22px;
+  margin: 2px 0 8px 22px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.tool-trace-list .tool-body-pre {
   max-height: 200px;
-  border-top: none;
-  padding: 4px 0 8px;
 }
 
 .tool-trace-list .file-change-card {
@@ -974,15 +1053,15 @@ body.vscode-high-contrast-light .chrome-logo {
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
+  gap: 6px;
+  height: var(--ctl-h-sm);
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--pill-border);
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   user-select: none;
@@ -1000,15 +1079,23 @@ body.vscode-high-contrast-light .chrome-logo {
   border-color: var(--pill-border);
 }
 
+/* The chevron used to be a ▾ at font-size 7px, which no font draws as a
+   chevron at that size — on screen it was a stray dot beside a 12px label.
+   It is the icon set's chevron now, at the set's smallest size. */
 .pill .chev {
-  opacity: 0.4;
-  font-size: 7px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.45;
   margin-left: 1px;
 }
 
 .pill .ico {
-  opacity: 0.7;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  opacity: 0.8;
   line-height: 1;
 }
 
@@ -1022,9 +1109,12 @@ body.vscode-high-contrast-light .chrome-logo {
   white-space: nowrap;
 }
 
+/* The three controls at the composer's right edge — the context ring, the
+   paperclip and Send — are one box size. They were 22, 28 and 28, which is
+   what made the ring read as a stray dot rather than a control. */
 .icon-btn {
-  width: 28px;
-  height: 28px;
+  width: var(--ctl-h-md);
+  height: var(--ctl-h-md);
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -1172,8 +1262,8 @@ body.vscode-high-contrast-light .chrome-logo {
 }
 
 .context-btn {
-  width: 22px;
-  height: 22px;
+  width: var(--ctl-h-md);
+  height: var(--ctl-h-md);
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -1191,8 +1281,8 @@ body.vscode-high-contrast-light .chrome-logo {
 }
 
 .context-ring-fill {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   border-radius: 50%;
   background: conic-gradient(
     var(--ctx-color, var(--tool-fg)) calc(var(--ctx-pct, 0) * 1%),
@@ -1461,10 +1551,10 @@ body.vscode-high-contrast-light .chrome-logo {
 }
 
 #send {
-  width: 28px;
-  height: 28px;
+  width: var(--ctl-h-md);
+  height: var(--ctl-h-md);
   border: none;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: var(--send-bg);
   color: var(--send-fg);
   cursor: pointer;
@@ -1500,8 +1590,8 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 #send svg {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-md);
+  height: var(--icon-md);
   display: block;
 }
 
@@ -1578,10 +1668,12 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .menu-item .mi {
-  width: 14px;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   flex: 0 0 auto;
-  font-size: 11px;
 }
 
 .menu-item .mi:not(.mode-icon) {
@@ -1776,8 +1868,15 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   color: inherit;
 }
 
+/* The mark is `hidden` unless the fast profile is on, and a display of its
+   own would beat that attribute — so state the hidden case too. */
+.effort-fast-mark[hidden] {
+  display: none;
+}
+
 .effort-fast-mark {
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
   line-height: 1;
   color: var(--fg);
   opacity: 0.92;
@@ -1861,8 +1960,8 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   opacity: 1;
 }
 
@@ -1935,11 +2034,13 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 
 .session-row-del {
   flex: 0 0 auto;
-  width: 16px;
-  text-align: center;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--muted);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   opacity: 0;
   transition: opacity 0.12s ease;
 }
@@ -3300,9 +3401,12 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 
 .todos-chip-glyph {
   flex: 0 0 auto;
-  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
   color: var(--mode-accent);
-  font-size: 11px;
 }
 
 .todos-chip-glyph.spinning {
@@ -3320,7 +3424,8 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 
 .todos-chip-chev {
   flex: 0 0 auto;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
   color: var(--muted);
   opacity: 0.85;
 }
@@ -3662,11 +3767,18 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   transform: rotate(180deg);
 }
 
+/* The icon says WHICH tool ran, at every stage of the row's life — running,
+   done or failed. It is not a status light: the spinner and the border carry
+   the state, and replacing the icon with a check mark (which is what this
+   used to do on completion) leaves the finished rows — nearly everything on
+   screen — with nothing that tells them apart. */
 .tool-icon {
   flex: 0 0 auto;
-  width: 16px;
-  text-align: center;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-md);
+  height: var(--icon-md);
   color: var(--muted);
 }
 
@@ -3676,6 +3788,14 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 
 .tool-block.done .tool-icon {
   color: var(--ok-fg);
+}
+
+.tool-block.tool-failed .tool-icon {
+  color: var(--error-fg);
+}
+
+.tool-block.tool-failed {
+  border-color: color-mix(in srgb, var(--error-fg) 35%, var(--border));
 }
 
 .tool-label {
@@ -3756,26 +3876,139 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .tool-chev {
+  flex: 0 0 auto;
+  display: inline-flex;
   color: var(--muted);
-  font-size: 10px;
+  opacity: 0.7;
   transition: transform 0.15s;
 }
 
+/* ---- a tool's result ------------------------------------------------------
+   Three parts: a strip saying how much there is and how to read it, the
+   result itself, and a footer that unfolds the rest. The body used to be a
+   bare <pre> holding a slice of the string with no way back to the whole. */
 .tool-body {
   margin: 0;
-  padding: 8px 10px;
-  max-height: 240px;
-  overflow: auto;
-  font-size: 11px;
-  font-family: ui-monospace, monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
   border-top: 1px solid var(--border);
   color: var(--fg-dim);
 }
 
 .tool-body.hidden {
   display: none;
+}
+
+.tool-body-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--well-bg);
+}
+
+.tool-body-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-body-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.tool-body-btn {
+  height: var(--ctl-h-xs);
+  padding: 0 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.tool-body-btn:hover {
+  color: var(--fg);
+  background: var(--pill-hover);
+}
+
+.tool-body-pre {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+
+/* Unfolded, the result is the thing being read rather than glanced at, so it
+   gets the room for that — and structured output stops wrapping, because a
+   wrapped JSON line loses the indentation that made it readable. */
+.tool-block[data-body-expanded="1"] .tool-body-pre {
+  max-height: 60vh;
+}
+
+.tool-body-pre.is-json {
+  white-space: pre;
+  word-break: normal;
+}
+
+.tool-body-pre .jkey {
+  color: var(--json-key, #7dd3fc);
+}
+
+.tool-body-pre .jstr {
+  color: var(--json-str, #a5d6a7);
+}
+
+.tool-body-pre .jnum {
+  color: var(--json-num, #f0b67f);
+}
+
+.tool-body-pre .jlit {
+  color: var(--json-lit, #c792ea);
+}
+
+/* Hidden when there is nothing left to unfold, so the `hidden` attribute has
+   to outrank this rule's own display. */
+.tool-body-more[hidden] {
+  display: none;
+}
+
+.tool-body-more {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--tool-fg);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-body-more:hover:not(:disabled) {
+  background: var(--pill-hover);
+}
+
+.tool-body-more:disabled {
+  color: var(--muted);
+  cursor: default;
 }
 
 .tool-diags {
@@ -4156,10 +4389,10 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: var(--ctl-h-sm);
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -4177,9 +4410,11 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   color: var(--fg-dim);
   background: var(--hover-wash);
 }
+/* Selected by ground and colour, not by weight: bumping the label to 600
+   re-measured the text, so the whole switch changed width on every switch
+   and nudged the icon buttons beside it. */
 .view-segment[aria-selected="true"] {
   color: var(--fg);
-  font-weight: 600;
   border-color: var(--border);
   background: var(--surface-2);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -4486,10 +4721,10 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: var(--ctl-h-xs);
+  height: var(--ctl-h-xs);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted-2);
   cursor: pointer;

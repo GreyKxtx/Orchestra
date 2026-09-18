@@ -43,6 +43,16 @@
       "turn.queued": " · {n} queued",
       "turn.tasks_done": "✓ Tasks done",
 
+      "tool.body.lines": "{n} lines",
+      "tool.body.copy": "Copy",
+      "tool.body.copied": "Copied",
+      "tool.body.copy_failed": "Copy failed",
+      "tool.body.raw": "Raw",
+      "tool.body.pretty": "Formatted",
+      "tool.body.show_all": "Show all {n} lines",
+      "tool.body.collapse": "Collapse",
+      "tool.body.capped": "First {n} lines — the rest is too long to show",
+
       "diff.loading": "Loading diff preview…",
       "diff.more_lines": "… {n} more changed lines",
       "diff.open_file": "Open file (Shift+click: side-by-side diff)",
@@ -701,6 +711,16 @@
       "turn.running_tools": "Выполняю инструменты…",
       "turn.queued": " · {n} в очереди",
       "turn.tasks_done": "✓ Задачи выполнены",
+
+      "tool.body.lines": "строк: {n}",
+      "tool.body.copy": "Копировать",
+      "tool.body.copied": "Скопировано",
+      "tool.body.copy_failed": "Не скопировалось",
+      "tool.body.raw": "Как есть",
+      "tool.body.pretty": "Форматированно",
+      "tool.body.show_all": "Показать все {n} строк",
+      "tool.body.collapse": "Свернуть",
+      "tool.body.capped": "Первые {n} строк — остальное слишком длинное",
 
       "diff.loading": "Готовлю показ изменений…",
       "diff.more_lines": "… ещё {n} изменённых строк",

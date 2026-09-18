@@ -23,6 +23,7 @@ const outDir = path.join(root, "static");
 const order = [
   [sharedDir, "00-header.txt"],
   [mediaDir, "i18n.js"],
+  [mediaDir, "icons.js"],
   [webDir, "00-web-prelude.js"],
   [sharedDir, "01-dom-state.js"],
   [sharedDir, "02-util.js"],

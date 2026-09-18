@@ -16,6 +16,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { catalogueKeys, markupKeys } from "../../vscode/scripts/i18n-keys.mjs";
+import { iconNames, iconCallSites, strayIconSvgs } from "../../vscode/scripts/icon-names.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -238,6 +239,50 @@ if (fs.existsSync(bundle)) {
     );
   } else {
     console.log(`ok   ${used} data-i18n keys on the pages, all in the catalogue`);
+  }
+}
+
+// 7. The icon set, on this side of the fence.
+//
+// Same two silent failures as the webview check: a name the set does not know
+// draws nothing, and an <svg> written by hand only reads as wrong beside its
+// neighbours. The page checked here is the GENERATED one, so a drawing that
+// slipped into index.src.html is caught where it is actually served.
+{
+  const mediaDir = path.join(repo, "ui", "vscode", "media");
+  const known = iconNames(mediaDir);
+  const srcFiles = fs
+    .readdirSync(path.join(root, "src"))
+    .filter((n) => n.endsWith(".js"))
+    .map((n) => path.join(root, "src", n))
+    .concat([path.join(root, "src", "settings", "frame.js")].filter((f) => fs.existsSync(f)));
+  let used = 0;
+  const unknown = [];
+  for (const file of srcFiles) {
+    for (const { name, line } of iconCallSites(file)) {
+      used++;
+      if (!known.has(name)) unknown.push(`${path.relative(root, file)}:${line} ${name}`);
+    }
+  }
+  if (unknown.length > 0) {
+    fail(
+      `${unknown.length} icon name(s) are not in media/icons.js — each one renders as ` +
+        `nothing at all: ${unknown.join(", ")}`
+    );
+  } else {
+    console.log(`ok   ${used} icon names in the web sources, all in the set (${known.size} icons)`);
+  }
+
+  const page = path.join(root, "static", "index.html");
+  const stray = strayIconSvgs(page);
+  if (stray.length > 0) {
+    fail(
+      `${stray.length} hand-drawn <svg> in the served page — fix them in index.src.html ` +
+        `and use a media/icons.js drawing at stroke 1.75 on the 24 grid: ` +
+        stray.map((x) => `index.html:${x.line}`).join(", ")
+    );
+  } else {
+    console.log("ok   every <svg> on the served page is one of the set's");
   }
 }
 

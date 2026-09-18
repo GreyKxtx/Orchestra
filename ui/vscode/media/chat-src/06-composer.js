@@ -20,7 +20,7 @@
         btn.dataset.id = m.id;
         btn.title = m.mode;
         btn.innerHTML =
-          `<span class="mi mode-icon mode-${escapeAttr(m.id)}">${escapeAttr(m.icon)}</span>${escapeAttr(m.label)}`;
+          `<span class="mi mode-icon mode-${escapeAttr(m.id)}">${orchIconMarkup(m.icon, { size: "sm" })}</span>${escapeAttr(m.label)}`;
         modeMenu.appendChild(btn);
       });
     });
@@ -33,7 +33,7 @@
     }
     const icon = document.getElementById("mode-icon");
     if (icon) {
-      icon.textContent = m.icon;
+      icon.innerHTML = orchIconMarkup(m.icon, { size: "sm" });
       icon.className = `ico mode-icon mode-${m.id}`;
     }
     if (modeBtn) {

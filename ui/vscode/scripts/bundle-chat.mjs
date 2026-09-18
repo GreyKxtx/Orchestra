@@ -8,11 +8,13 @@ const srcDir = path.join(root, "media", "chat-src");
 const mediaDir = path.join(root, "media");
 const outFile = path.join(root, "media", "chat.bundle.js");
 
-// media/i18n.js sits outside chat-src because the settings panel is a second
-// bundle with a second scope and the same catalogue — one file, four bundles.
+// media/i18n.js and media/icons.js sit outside chat-src because the settings
+// panel is a second bundle with a second scope and the same catalogue and the
+// same icon set — one file each, four bundles.
 const order = [
   [srcDir, "00-header.txt"],
   [mediaDir, "i18n.js"],
+  [mediaDir, "icons.js"],
   [srcDir, "01-dom-state.js"],
   [srcDir, "02-util.js"],
   [srcDir, "03-markdown.js"],
@@ -37,7 +39,7 @@ for (const [dir, name] of order) {
 }
 
 const banner =
-  "/* AUTO-GENERATED — do not edit. Sources: media/i18n.js + media/chat-src/*.js  →  npm run bundle:webview */\n";
+  "/* AUTO-GENERATED — do not edit. Sources: media/i18n.js + media/icons.js + media/chat-src/*.js  →  npm run bundle:webview */\n";
 const parts = order.map(([dir, name]) =>
   fs.readFileSync(path.join(dir, name), "utf8").replace(/\s+$/, "")
 );

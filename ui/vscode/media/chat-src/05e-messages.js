@@ -213,17 +213,29 @@
       head.type = "button";
       head.className = "tool-head";
       head.innerHTML =
-        `<span class="tool-icon">${toolIcon(msg.toolName)}</span>` +
+        `<span class="tool-icon" data-icon-for="${escapeAttr(msg.toolName || "")}">${toolIconMarkup(msg.toolName)}</span>` +
         `<span class="tool-label">${escapeAttr(toolDisplayName(msg.toolName))}</span>` +
         `<span class="tool-sub"></span>` +
         `<span class="tool-dur"></span>` +
         `<span class="tool-stats"></span>` +
         `<span class="tool-spinner"></span>` +
-        (kind === "write" ? "" : `<span class="tool-chev">▾</span>`);
+        (kind === "write" ? "" : `<span class="tool-chev">${orchIconMarkup("chevron-down", { size: "sm" })}</span>`);
       let body = null;
       if (kind !== "write") {
-        body = document.createElement("pre");
+        // A wrapper, not the <pre> itself: the result needs a strip of its
+        // own (how much there is, how to read it, how to copy it) and a
+        // footer that unfolds the rest. The <pre> is one child of it.
+        body = document.createElement("div");
         body.className = "tool-body hidden";
+        body.innerHTML =
+          `<div class="tool-body-bar">` +
+          `<span class="tool-body-meta"></span>` +
+          `<span class="tool-body-acts">` +
+          `<button type="button" class="tool-body-btn" data-body-action="format" hidden></button>` +
+          `<button type="button" class="tool-body-btn" data-body-action="copy" data-i18n="tool.body.copy">${escapeAttr(i18n("tool.body.copy"))}</button>` +
+          `</span></div>` +
+          `<pre class="tool-body-pre"></pre>` +
+          `<button type="button" class="tool-body-more" data-body-action="expand" hidden></button>`;
         head.addEventListener("click", (e) => {
           const stats = e.target.closest?.(".tool-stats");
           const fp = block.dataset.filePath || "";
@@ -236,6 +248,25 @@
           }
           body.classList.toggle("hidden");
           head.classList.toggle("open");
+        });
+        // The body's own controls. Delegated from the wrapper so the three
+        // buttons need no separate bookkeeping, and stopped here so a click
+        // inside the result never reaches the head and folds it shut.
+        body.addEventListener("click", (e) => {
+          const btn = e.target.closest?.("[data-body-action]");
+          if (!btn) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const action = btn.dataset.bodyAction;
+          if (action === "format") {
+            block.dataset.bodyFormat = block.dataset.bodyFormat === "raw" ? "pretty" : "raw";
+          } else if (action === "expand") {
+            block.dataset.bodyExpanded = block.dataset.bodyExpanded === "1" ? "0" : "1";
+          } else if (action === "copy") {
+            copyToolBody(block, btn);
+            return;
+          }
+          renderToolBody(block);
         });
       } else {
         bindWriteToolHead(block, head);
@@ -302,7 +333,10 @@
       if (head && kind !== "write") head.classList.remove("open");
 
       if (body && msg.content && kind !== "write") {
-        body.textContent = msg.content.length > 8000 ? msg.content.slice(0, 8000) + "\n…" : msg.content;
+        // The whole result, not a slice of it. It used to be cut at 8000
+        // characters with an ellipsis and no way back to the rest; the
+        // body now folds instead, and unfolds on request.
+        setToolBodyContent(block, msg.content);
         body.classList.add("hidden");
       }
 
@@ -344,6 +378,6 @@
     if (!body) return;
     body.classList.remove("hidden");
     if (head) head.classList.add("open");
-    body.textContent = (body.textContent || "") + chunk;
+    appendToolBodyContent(block, chunk);
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
   }

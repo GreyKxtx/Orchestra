@@ -14,6 +14,7 @@ const outFile = path.join(root, "media", "settings.bundle.js");
 const order = [
   [srcDir, "00-header.txt"],
   [mediaDir, "i18n.js"],
+  [mediaDir, "icons.js"],
   [srcDir, "01-core.js"],
   [srcDir, "01c-provider-logos.js"],
   [srcDir, "01b-provider-ui.js"],
@@ -33,7 +34,7 @@ for (const [dir, name] of order) {
 }
 
 const banner =
-  "/* AUTO-GENERATED — do not edit. Sources: media/i18n.js + media/settings-src/*.js  →  npm run bundle:webview */\n";
+  "/* AUTO-GENERATED — do not edit. Sources: media/i18n.js + media/icons.js + media/settings-src/*.js  →  npm run bundle:webview */\n";
 const parts = order.map(([dir, name]) =>
   fs.readFileSync(path.join(dir, name), "utf8").replace(/\s+$/, "")
 );

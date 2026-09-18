@@ -383,14 +383,14 @@
     const spinning = Boolean(inProg && busy);
 
     if (todosChipGlyph) {
-      todosChipGlyph.textContent = inProg ? "◉" : "□";
+      todosChipGlyph.innerHTML = orchIconMarkup(inProg ? "box-active" : "box", { size: "sm" });
       todosChipGlyph.classList.toggle("spinning", spinning);
     }
     if (todosChipSummary) {
       todosChipSummary.textContent = `${done}/${total} · ${focusLabel}`;
     }
     if (todosChipChev) {
-      todosChipChev.textContent = todosExpanded ? "▴" : "▾";
+      todosChipChev.innerHTML = orchIconMarkup(todosExpanded ? "chevron-up" : "chevron-down", { size: "sm" });
     }
     if (todosChip) {
       todosChip.setAttribute("aria-expanded", todosExpanded ? "true" : "false");
@@ -414,7 +414,7 @@
       row.setAttribute("role", "listitem");
       const glyph = document.createElement("span");
       glyph.className = "todo-glyph" + (t.status === "in_progress" && busy ? " spinning" : "");
-      glyph.textContent = todoGlyph(t.status);
+      glyph.innerHTML = orchIconMarkup(todoGlyph(t.status), { size: "sm" });
       const text = document.createElement("span");
       text.className = "todo-text";
       text.textContent = t.content || t.id;
@@ -437,10 +437,11 @@
     return s;
   }
 
+  /** The icon NAME for a checklist row's state — see media/icons.js. */
   function todoGlyph(status) {
     const s = normalizeTodoStatus(status);
-    if (s === "done") return "✓";
-    if (s === "cancelled") return "×";
-    if (s === "in_progress") return "◉";
-    return "□";
+    if (s === "done") return "box-check";
+    if (s === "cancelled") return "box-cross";
+    if (s === "in_progress") return "box-active";
+    return "box";
   }

@@ -122,7 +122,7 @@
           del.className = "session-row-del";
           del.setAttribute("data-delete-session", s.id);
           del.title = i18n("session.delete");
-          del.textContent = "✕";
+          del.innerHTML = orchIconMarkup("close", { size: "sm" });
           row.appendChild(del);
 
           sessionMenuList.appendChild(row);
