@@ -87,6 +87,10 @@ fs.copyFileSync(path.join(root, "index.src.html"), path.join(outDir, "index.html
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "chat.css"), path.join(outDir, "chat.css"));
 fs.copyFileSync(path.join(repo, "ui", "vscode", "media", "logo.png"), path.join(outDir, "logo.png"));
 fs.copyFileSync(path.join(root, "rail.css"), path.join(outDir, "rail.css"));
+// Both pages load this one before anything else; see the file for why it is
+// not inline. Copied by this bundler and by bundle-settings-web.mjs, so either
+// one run on its own still produces a page that can boot.
+fs.copyFileSync(path.join(root, "theme-boot.js"), path.join(outDir, "theme-boot.js"));
 // Built by ui/desktop/scripts/build-icons.mjs from the same mark the app icon
 // uses. Without it the page asks for /favicon.ico and takes a 404 on every
 // load — visible in the desktop window's console, which is where it was found.

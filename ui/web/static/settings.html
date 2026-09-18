@@ -8,20 +8,10 @@
        :root and restyles the panel into this app's shell. See the file. -->
   <link rel="stylesheet" href="settings-theme.css" />
   <title>Orchestra Settings</title>
-  <script>
-    // Stamped before the first paint, as the chat page does, or the panel
-    // flashes the other theme on every open. The parent keeps the value.
-    (function () {
-      try {
-        var saved = localStorage.getItem("orchestra.theme");
-        if (saved === "light" || saved === "dark") {
-          document.documentElement.setAttribute("data-theme", saved);
-        }
-      } catch (e) {
-        // Storage can throw outright in a locked-down browser.
-      }
-    })();
-  </script>
+  <!-- Stamped before the first paint, as the chat page does, or the panel
+       flashes the other theme on every open. A file, not an inline block: the
+       page is served under a CSP with script-src 'self'. -->
+  <script src="theme-boot.js"></script>
 </head>
 <body>
   <div id="layout">

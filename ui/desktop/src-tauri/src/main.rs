@@ -140,10 +140,18 @@ fn boot(app: AppHandle) {
     // and this thread calls `fatal()` after receiving it.
     let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
     let handle = app.clone();
+    // capabilities/core-page.json grants the page a notification and a folder
+    // picker on `http://127.0.0.1:*` — the port is chosen at runtime, so the
+    // grant cannot name it. This pins the window to the origin the core just
+    // announced, so the grant only ever reaches that page: no other loopback
+    // port, and nothing outside the machine, can be navigated to and inherit
+    // it. Links in chat carry target="_blank" and do not navigate this window.
+    let allowed_origin = url.origin();
     let dispatched = app.run_on_main_thread(move || {
         let built = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
             .title("Orchestra")
             .inner_size(1200.0, 800.0)
+            .on_navigation(move |to| to.origin() == allowed_origin)
             .build();
         if let Ok(window) = &built {
             // The window is the only thing a user can close. Tauri does

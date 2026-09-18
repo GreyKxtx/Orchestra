@@ -3043,7 +3043,14 @@
         if (item.tokens <= 0 && item.key !== "reserved") return;
         const row = document.createElement("div");
         row.className = "ctx-row";
-        row.innerHTML = `<span class="ctx-swatch" style="background:${CTX_COLORS[item.key] || "#888888"}"></span><span class="ctx-row-label">${item.label}</span><span class="ctx-row-val">${formatTok(item.tokens)}</span>`;
+        row.innerHTML = `<span class="ctx-swatch"></span><span class="ctx-row-label">${item.label}</span><span class="ctx-row-val">${formatTok(item.tokens)}</span>`;
+        // The colour goes on through the CSSOM, never a style attribute in the
+        // markup: both hosts serve this page under a CSP without
+        // 'unsafe-inline', which drops one and left every swatch unpainted.
+        const swatch = row.querySelector(".ctx-swatch");
+        if (swatch) {
+          swatch.style.background = CTX_COLORS[item.key] || "#888888";
+        }
         ctxRows.appendChild(row);
       });
     }

@@ -179,20 +179,10 @@ const page = `<!DOCTYPE html>
        :root and restyles the panel into this app's shell. See the file. -->
   <link rel="stylesheet" href="settings-theme.css" />
   <title>Orchestra Settings</title>
-  <script>
-    // Stamped before the first paint, as the chat page does, or the panel
-    // flashes the other theme on every open. The parent keeps the value.
-    (function () {
-      try {
-        var saved = localStorage.getItem("orchestra.theme");
-        if (saved === "light" || saved === "dark") {
-          document.documentElement.setAttribute("data-theme", saved);
-        }
-      } catch (e) {
-        // Storage can throw outright in a locked-down browser.
-      }
-    })();
-  </script>
+  <!-- Stamped before the first paint, as the chat page does, or the panel
+       flashes the other theme on every open. A file, not an inline block: the
+       page is served under a CSP with script-src 'self'. -->
+  <script src="theme-boot.js"></script>
 </head>
 <body>
   ${pageBody}
@@ -210,6 +200,9 @@ fs.writeFileSync(path.join(outDir, "settings.html"), page);
 // same markup as the rest of the app. See ui/web/settings-theme.css.
 fs.copyFileSync(path.join(mediaDir, "settings.css"), path.join(outDir, "settings.css"));
 fs.copyFileSync(path.join(root, "settings-theme.css"), path.join(outDir, "settings-theme.css"));
+// The head above loads it; bundle-web.mjs copies it too, so either bundler run
+// on its own still produces a page that can boot.
+fs.copyFileSync(path.join(root, "theme-boot.js"), path.join(outDir, "theme-boot.js"));
 
 const catalog = path.join(mediaDir, "mcp-catalog.json");
 if (fs.existsSync(catalog)) {

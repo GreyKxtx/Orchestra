@@ -7,27 +7,9 @@
   <link rel="stylesheet" href="chat.css" />
   <link rel="stylesheet" href="rail.css" />
   <title>Orchestra</title>
-  <script>
-    // Stamped before the first paint, or the page flashes the other theme on
-    // every load. Web-only: the VS Code webview follows the editor instead.
-    (function () {
-      try {
-        var saved = localStorage.getItem("orchestra.theme");
-        if (saved === "light" || saved === "dark") {
-          document.documentElement.setAttribute("data-theme", saved);
-        }
-        // Same reason, and more visible: the scale changes every measurement
-        // on the page, so applying it after the first paint reflows the lot.
-        var scale = localStorage.getItem("orchestra.scale");
-        if (/^(100|110|125|150|175|200)$/.test(scale || "")) {
-          document.documentElement.setAttribute("data-scale", scale);
-        }
-      } catch (e) {
-        // Storage can throw outright in a locked-down browser; the system
-        // preference is a fine answer when it does.
-      }
-    })();
-  </script>
+  <!-- Theme and scale, stamped before the first paint. A file, not an inline
+       block: the page is served under a CSP with script-src 'self'. -->
+  <script src="theme-boot.js"></script>
 </head>
 <body>
   <nav id="project-rail" class="project-rail" aria-label="Projects and sessions">

@@ -318,6 +318,7 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 	if opts.Assets != nil {
 		files := http.FileServer(http.FS(opts.Assets))
 		mux.Handle("/", requireToken(token, func(w http.ResponseWriter, r *http.Request) {
+			setStaticSecurityHeaders(w)
 			// A valid token in the query means "this is the first load": hand
 			// over the cookie and bounce to the same path without it, so the
 			// credential leaves the address bar and the history.
@@ -387,6 +388,42 @@ func requireSameOrigin(next http.HandlerFunc) http.HandlerFunc {
 // requireToken accepts the same two forms core --http accepts
 // (protocol/jsonrpc/http.go:142-153), plus ?token= for the WebSocket handshake:
 // the browser WebSocket API cannot set request headers.
+// staticCSP is the policy served with the pages. It is the same shape the VS
+// Code webview is built with (ui/vscode/src/chat/panel.ts), so the one renderer
+// both hosts share cannot rely on something only one of them allows.
+//
+// Why it matters on a loopback port: the chat renders markdown the model wrote,
+// about files the model read. A repository can therefore put text on this page.
+// script-src 'self' means nothing that arrives that way can execute, and
+// default-src 'none' means it cannot phone anywhere either. The token on the
+// cookie decides who may open the page; this decides what the page may do once
+// it is open.
+//
+//   - no 'unsafe-inline' anywhere: both the theme bootstrap and every colour
+//     the renderer paints go through a file or the CSSOM, never a style="" or
+//     an inline <script>
+//   - connect-src 'self' covers the WebSocket to this same origin (CSP 3)
+//   - img-src allows data:, which is how an attached image previews
+const staticCSP = "default-src 'none'; " +
+	"script-src 'self'; " +
+	"style-src 'self'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self'; " +
+	"connect-src 'self'; " +
+	"base-uri 'none'; " +
+	"form-action 'none'; " +
+	"frame-ancestors 'none'"
+
+// setStaticSecurityHeaders stamps the policy on every asset response. It is set
+// on all of them, not just the HTML, because a stylesheet or a script fetched
+// directly is a document too when a browser is talked into navigating to it.
+func setStaticSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", staticCSP)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+}
+
 func requireToken(token string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !authorized(r, token) {
