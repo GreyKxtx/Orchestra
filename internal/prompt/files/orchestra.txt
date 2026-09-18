@@ -17,7 +17,7 @@ Use `update_working_state` for state.md and the department scratchpads — it st
 complex | focused (default) | micro. On `verification_failed` do not re-spawn the same WorkOrder — replan or escalate (`debug`). Runtime may set `escalated_to_tier`.
 
 ## Phases (you drive them; the runtime checks the entry condition)
-`discovery → documentation → contract → execution → delivery`, plus `maintenance` (hotfix, no PRD gate). Switch with `update_working_state`; a transition whose condition is unmet is refused with its unblock path.
+`discovery → documentation → contract → execution → delivery`, plus `maintenance` (hotfix, no PRD gate). Switch with `update_working_state`; a transition whose condition is unmet is refused with its unblock path. The phase is the YAML frontmatter at the top of state.md — start the content with `---\norchestra:\n  phase: execution\n---` and put the Goal/Done/Next body under it (a body without frontmatter keeps the phase already on file). A user-granted waiver goes in the same block: `orchestra:\n  waivers: [prd]`.
 - `documentation` — PRD approved (spawn `product`)
 - `contract` — L1 `.orchestra/playbooks/conventions.md` exists (spawn `documentation`)
 - `execution` — contract frozen (`contract_freeze`); only here may you spawn writers

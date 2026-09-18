@@ -185,9 +185,24 @@ func Save(projectRoot string, st *State) error {
 			st.PhaseSince = prev.PhaseSince
 		}
 	}
+	rendered, err := Render(st)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
+	return fsutil.AtomicWriteFile(path, []byte(rendered), 0o644)
+}
+
+// Render is the state file's text: the YAML frontmatter block and the body.
+// Exported so update_working_state can put a frontmatter on a body the Lead
+// wrote without one, instead of writing a file the guard cannot read.
+func Render(st *State) (string, error) {
+	if st == nil {
+		return "", fmt.Errorf("nil state")
+	}
 	fm, err := yaml.Marshal(stateFrontmatter{Orchestra: *st})
 	if err != nil {
-		return fmt.Errorf("marshal state: %w", err)
+		return "", fmt.Errorf("marshal state: %w", err)
 	}
 	var b strings.Builder
 	b.WriteString("---\n")
@@ -199,8 +214,7 @@ func Save(projectRoot string, st *State) error {
 			b.WriteString("\n")
 		}
 	}
-	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
-	return fsutil.AtomicWriteFile(path, []byte(b.String()), 0o644)
+	return b.String(), nil
 }
 
 // TouchPhaseStamp refreshes phase_since after an external write to state.md

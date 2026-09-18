@@ -100,9 +100,34 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 	// Phase stamp (spec §4.5): remember the pre-write phase so the runtime
 	// can refresh phase_since when the orchestrator switches phases.
 	var prevPhase orchestrastate.Phase
+	frontmatterAdded := false
 	if relPath == plan.OrchestraStateRelPath {
-		if prev, found, err := orchestrastate.Load(a.tools.WorkspaceRoot()); err == nil && found {
-			prevPhase = prev.Phase
+		var prev *orchestrastate.State
+		if p, found, err := orchestrastate.Load(a.tools.WorkspaceRoot()); err == nil && found {
+			prev = p
+			prevPhase = p.Phase
+		}
+		// The Lead writes this file as prose — Goal, Done, Next — and the
+		// phase guard reads it as a document with a YAML frontmatter. When the
+		// body arrives without one, the guard would fail closed on the very
+		// next spawn ("missing YAML frontmatter"), and the Lead, which has no
+		// way to see the file's shape, spent its steps rewriting state.md by
+		// hand (27B, orchestra runs of 2026-09-18, twice). So the runtime keeps
+		// the frontmatter it has — the phase the Lead last declared — and puts
+		// the new body under it; a fresh session gets one with the phase
+		// unset, which the reply says how to fill.
+		if _, perr := orchestrastate.ParseContent(content); perr != nil {
+			st := orchestrastate.State{}
+			if prev != nil {
+				st = *prev
+			}
+			st.Body = content + "\n"
+			rendered, rerr := orchestrastate.Render(&st)
+			if rerr != nil {
+				return nil, fmt.Errorf("update_working_state: %w", rerr)
+			}
+			content = strings.TrimSpace(rendered)
+			frontmatterAdded = true
 		}
 		// Transition gate (spec §4.2). Evaluated before the write, so a
 		// refused transition leaves the state file as it was: the Lead cannot
@@ -121,6 +146,16 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 		"path":    relPath,
 		"written": len(content),
 		"status":  "ok",
+	}
+	if frontmatterAdded {
+		phase := string(prevPhase)
+		if phase == "" {
+			phase = "unset"
+		}
+		respFields["frontmatter"] = "kept: orchestra.phase=" + phase
+		respFields["note"] = "the content had no YAML frontmatter, so the runtime kept the existing one. " +
+			"To declare a phase, start the content with:\n---\norchestra:\n  phase: execution\n---\n" +
+			"(phases: discovery, documentation, contract, execution, delivery, maintenance; waivers: orchestra.waivers: [prd])"
 	}
 	// Context budget (spec §6.4): oversized state.md gets its older head
 	// archived deterministically; the model keeps only the active tail.

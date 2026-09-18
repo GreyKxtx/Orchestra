@@ -13,6 +13,8 @@ func ToolUpdateWorkingState() llm.ToolDef {
 			Name: "update_working_state",
 			Description: "Replace the orchestra Lead scratchpad (.orchestra/state.md). Use to track Goal/Done/Next/Notes across long tasks. " +
 				"Not shown to the user directly — keeps your planning context compact. Full markdown body replaces the file. " +
+				"The session phase lives in a YAML frontmatter at the top: start the content with '---\\norchestra:\\n  phase: execution\\n---' to declare one; " +
+				"content without a frontmatter keeps the phase already on file. " +
 				"Pass dept (e.g. frontend@web) to maintain a department-instance scratchpad at .orchestra/depts/{instance}.md instead.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
