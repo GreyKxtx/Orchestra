@@ -106,6 +106,31 @@ func TestWriteAtomic_RefusesAFragmentOfTheFileAsTheWholeFile(t *testing.T) {
 	}
 }
 
+// The fourth shape, live on the 27B (edit_in_large_file, 2026-09-18): the
+// model changed MaxRetries with edit, then rewrote the 308-line file as the
+// eight lines the edit result's changed_region had shown it — with the
+// package clause missing. Not empty, no ellipsis, and not verbatim either,
+// because of that dropped line. Every line it wrote was already in the file.
+func TestWriteAtomic_RefusesAFragmentWithALineDropped(t *testing.T) {
+	head := "// Package limits defines tuning constants for the request pipeline.\npackage limits\n\n" +
+		"// Tuning constants for the request pipeline.\nconst (\n\tMaxRetries    = 10\n\tMaxIdleConns  = 64\n\tQueueDepth    = 128\n)\n"
+	var b strings.Builder
+	b.WriteString(head)
+	for i := 0; i < 100; i++ {
+		b.WriteString("\nfunc step(n int) int {\n\treturn n\n}\n")
+	}
+	root, hash := guardWorkspace(t, "limits.go", b.String())
+
+	fragment := strings.Replace(head, "package limits\n", "", 1)
+	_, err := resolveWriteAtomic(root, writeAtomicPatch("limits.go", fragment, hash))
+	if err == nil {
+		t.Fatal("rewriting a 300-line file as its first eight lines minus one must be refused")
+	}
+	if !strings.Contains(err.Error(), "limits.go") || !strings.Contains(err.Error(), "edit") {
+		t.Errorf("the refusal must name the file and point at edit, got: %v", err)
+	}
+}
+
 // The guard must not get in the way of legitimate work.
 func TestWriteAtomic_AllowsRealRewrites(t *testing.T) {
 	const body = "package main\n\nfunc Timeout() int {\n\treturn 30\n}\n"

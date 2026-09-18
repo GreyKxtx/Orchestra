@@ -67,7 +67,51 @@ func DestructiveWriteReason(existing, replacement string) string {
 			itoa(len(existing)) + " bytes replaced by " + itoa(len(replacement)) +
 			") — a whole-file write must carry the complete new file; to change one part use edit"
 	}
+	// The fourth shape (27B, edit_in_large_file, 2026-09-18): after a correct
+	// edit the model rewrote the 308-line file as the eight lines it had seen
+	// in the edit result's changed_region — the top of the file with one line
+	// (the package clause) dropped. Not verbatim, so the check above let it
+	// through; 300 lines of work gone. A drastic shrink whose lines nearly all
+	// already stand in the file is the same mistake with a typo in it.
+	if known, total := linesAlreadyInFile(existing, trimmed); total >= fragmentMinLines &&
+		known*100 >= total*fragmentKnownPct {
+		return "the content is " + itoa(total) + " lines of which " + itoa(known) +
+			" already stand in the file it would replace (" + itoa(len(existing)) +
+			" bytes replaced by " + itoa(len(replacement)) +
+			") — a whole-file write must carry the complete new file; to change one part use edit"
+	}
 	return ""
+}
+
+const (
+	// fragmentMinLines is how many non-blank lines a replacement needs before
+	// the line-overlap test means anything; two lines match by accident.
+	fragmentMinLines = 3
+	// fragmentKnownPct is the share of the replacement's lines that must
+	// already be in the file for it to read as a fragment rather than a rewrite.
+	fragmentKnownPct = 80
+)
+
+// linesAlreadyInFile counts the replacement's non-blank lines (trimmed) and
+// how many of them occur, trimmed, as whole lines of existing.
+func linesAlreadyInFile(existing, replacement string) (known, total int) {
+	have := make(map[string]struct{})
+	for _, l := range strings.Split(existing, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			have[t] = struct{}{}
+		}
+	}
+	for _, l := range strings.Split(replacement, "\n") {
+		t := strings.TrimSpace(l)
+		if t == "" {
+			continue
+		}
+		total++
+		if _, ok := have[t]; ok {
+			known++
+		}
+	}
+	return known, total
 }
 
 // checkNotDestructive refuses a write_atomic that would erase a file's
