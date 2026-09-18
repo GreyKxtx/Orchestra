@@ -1,3 +1,8 @@
+/* `hidden` means hidden. See the same rule at the top of chat.css. */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   color-scheme: dark;
   /* The same control scale as chat.css. This panel is a separate document
@@ -16,6 +21,10 @@
   /* Layered dark palette shared with the chat webview (not pure black). */
   --bg: #181818;
   --fg: #e6e6e9;
+  /* Used by `code` and the index stat labels. It was missing, which made
+     a color-mix() against it invalid and dropped the whole declaration
+     wherever the host did not supply the name itself. */
+  --fg-dim: #b3b3b8;
   --muted: #8e919c;
   --border: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.17);
@@ -26,12 +35,15 @@
   --hover: rgba(255, 255, 255, 0.055);
   --selected: rgba(255, 255, 255, 0.09);
   --menu: #202020;
-  /* Single accent: Orchestra violet (matches chat --mode-accent). */
-  --accent: #bb9af7;
-  --accent-dim: rgba(187, 154, 247, 0.13);
-  --accent-border: rgba(187, 154, 247, 0.42);
-  --accent-ring: rgba(187, 154, 247, 0.28);
-  --focus: #bb9af7;
+  /* The secondary colour, neutral rather than a hue: the filled control on
+     each screen reads as the one thing to press without shouting. Derived
+     from --accent so the three washes follow it — they were rgba() literals
+     of the violet, which is why changing the accent used to change nothing. */
+  --accent: #ececec;
+  --accent-dim: color-mix(in srgb, var(--accent) 13%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus: var(--accent);
   --warn: #d4a017;
   --err: #f48771;
   --nav: rgba(24, 24, 24, 0.8);
@@ -45,7 +57,7 @@
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 *::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -267,7 +279,7 @@ html {
 
 .nav-item:hover { color: var(--fg); background: var(--hover); }
 .nav-item.active {
-  color: #fff;
+  color: var(--fg);
   background: var(--selected);
   border-color: var(--border-strong);
   font-weight: 600;
@@ -323,9 +335,10 @@ h2.section-title {
   letter-spacing: 0;
 }
 
+/* #ccc on the light theme's #ededef code chip: grey on grey. */
 code {
   font-size: 11px;
-  color: #ccc;
+  color: var(--fg-dim);
 }
 
 label {
@@ -465,7 +478,7 @@ button:hover {
 }
 
 button.primary:hover {
-  background: rgba(187, 154, 247, 0.22);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   border-color: var(--accent);
 }
 
@@ -1405,17 +1418,22 @@ button.danger:hover {
   display: block;
 }
 
+/* The number was #fff, a literal. On a light ground that is white text on a
+   near-white card — invisible, and nothing in either host's theme could
+   reach it. Every colour in this file goes through a token for that reason. */
 .stat-val {
   display: block;
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--fg);
 }
 
+/* Same fault, quieter: the mix pulled toward #d9d9de, a near-white grey, so
+   on light this was a pale tint of the stat's hue on a pale card. */
 .stat-lbl {
   display: block;
-  font-size: 9px;
-  color: color-mix(in srgb, var(--stat-color) 58%, #d9d9de);
+  font-size: 9.5px;
+  color: color-mix(in srgb, var(--stat-color) 45%, var(--fg-dim));
   margin-top: 4px;
   text-transform: uppercase;
   letter-spacing: 0.04em;

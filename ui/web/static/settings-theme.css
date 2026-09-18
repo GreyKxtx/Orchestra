@@ -49,11 +49,16 @@
   --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
   --modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   --scrim: rgba(0, 0, 0, 0.55);
-  --accent: #bb9af7;
+  /* The secondary colour is neutral: near-white on the dark ground,
+     near-black on the light one — the same filled control the chat's Send
+     button already is. It was a violet, which made the one filled button on
+     each settings screen the loudest thing on it. The hue lives in exactly
+     these four lines, so putting it back is a four-line change. */
+  --accent: #ececec;
   --accent-dim: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent-border: color-mix(in srgb, var(--accent) 45%, var(--border));
   --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
-  --focus: #bb9af7;
+  --focus: #ececec;
   /* Text on the one filled control — the same pairing the sidebar's
      new-session button uses. */
   --on-accent: #17131f;
@@ -89,8 +94,8 @@
     --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
     --modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
     --scrim: rgba(0, 0, 0, 0.35);
-    --accent: #7c3aed;
-    --focus: #7c3aed;
+    --accent: #18181b;
+    --focus: #18181b;
     --on-accent: #ffffff;
     --warn: #a16207;
     --err: #c2410c;
@@ -119,8 +124,8 @@
   --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
   --modal-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
   --scrim: rgba(0, 0, 0, 0.35);
-  --accent: #7c3aed;
-  --focus: #7c3aed;
+  --accent: #18181b;
+  --focus: #18181b;
   --on-accent: #ffffff;
   --warn: #a16207;
   --err: #c2410c;

@@ -122,3 +122,35 @@ func TestStatic_BundlesBuildNoInlineStyleAttributes(t *testing.T) {
 		}
 	}
 }
+
+// The page, the bundle and the stylesheet are embedded in the binary and
+// change with it, under names that never change. With no caching header at
+// all a browser invents its own freshness, and one talking to a fixed port
+// does: after an upgrade it kept painting the previous build's stylesheet,
+// which is invisible — the app looks like the change simply was not made.
+func TestStatic_AssetsAreRevalidated(t *testing.T) {
+	base := startAssetServer(t)
+
+	// The token goes in a header, not the query: with ?token= the page answers
+	// 302 (it sets the cookie and drops the token from the URL), and a test
+	// that walks past anything other than 200 checks nothing at all — which is
+	// exactly what the first version of this test did.
+	req, err := http.NewRequest(http.MethodGet, base+"/", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("X-Orchestra-Token", "secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("page status = %d, want 200 — the assertion below would be vacuous", resp.StatusCode)
+	}
+	cc := resp.Header.Get("Cache-Control")
+	if !strings.Contains(cc, "no-cache") && !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q, want it to force revalidation", cc)
+	}
+}

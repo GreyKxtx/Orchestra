@@ -432,6 +432,14 @@ func setStaticSecurityHeaders(w http.ResponseWriter) {
 	h.Set("Content-Security-Policy", staticCSP)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
+	// These assets are embedded in the binary and change with it, under names
+	// that never change (web.bundle.js, chat.css). With no header at all a
+	// browser is free to invent its own freshness, and one served at a fixed
+	// port does: after an upgrade it kept painting the previous build's
+	// stylesheet — which cost an hour of looking at screenshots that could
+	// not have shown the fix. "no-cache" still lets it keep the bytes; it
+	// just has to ask first, which on loopback is free.
+	h.Set("Cache-Control", "no-cache")
 }
 
 func requireToken(token string, next http.HandlerFunc) http.HandlerFunc {

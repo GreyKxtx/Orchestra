@@ -554,6 +554,16 @@ body {
   cursor: pointer;
 }
 
+/* The icon grows with the button. Both were literals before: the button took
+   the control scale and the gear kept the 16px baked into its markup, so on a
+   wide window a 34px button held a 16px gear — which is what made it read as
+   too small for the screen it was on. */
+.rail-settings svg,
+.rail-modal-close svg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+}
+
 .rail-settings:hover,
 .rail-settings[aria-expanded="true"] {
   background: var(--surface);

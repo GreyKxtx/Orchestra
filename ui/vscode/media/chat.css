@@ -24,6 +24,15 @@
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
 }
 
+/* `hidden` means hidden. Every rule below that gives an element a display of
+   its own would otherwise outrank the attribute, and three did: the composer's
+   Orchestra pill (meant to appear only in Orchestra mode, so it sat in the
+   toolbar in every mode, cluttering it), the effort pill's fast mark, and the
+   tool body's show-all. This is the guard, not three more patches. */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   /* The dark ground is a grey, not a black. At #0a0a0b the transcript sat in
      a hole: every surface above it had to be lifted far enough to be seen,
@@ -64,6 +73,7 @@
   --code-bg: rgba(255, 255, 255, 0.07);
   --code-block-bg: rgba(255, 255, 255, 0.03);
   --well-bg: #121214;
+  --seg-active-bg: #26262b;
   --card-bg: #141414;
   --track-bg: #3a3a3a;
   --toggle-bg: #444444;
@@ -177,7 +187,7 @@
     --pill-border: #dcdce0;
     --menu-bg: #ffffff;
     --menu-hover: rgba(0, 0, 0, 0.05);
-    --menu-selected: rgba(0, 0, 0, 0.08);
+    --menu-selected: rgba(0, 0, 0, 0.055);
     --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
     --send-bg: #18181b;
     --send-fg: #fafafa;
@@ -193,7 +203,8 @@
     --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
     --code-bg: rgba(0, 0, 0, 0.05);
     --code-block-bg: rgba(0, 0, 0, 0.035);
-    --well-bg: #ececee;
+    --well-bg: #e4e4e8;
+    --seg-active-bg: #ffffff;
     --card-bg: #fbfbfc;
     --track-bg: #d8d8dc;
     --toggle-bg: #c9c9cf;
@@ -256,7 +267,7 @@ body.vscode-high-contrast-light {
   --pill-border: #dcdce0;
   --menu-bg: #ffffff;
   --menu-hover: rgba(0, 0, 0, 0.05);
-  --menu-selected: rgba(0, 0, 0, 0.08);
+  --menu-selected: rgba(0, 0, 0, 0.055);
   --menu-shadow: 0 6px 28px rgba(0, 0, 0, 0.14);
   --send-bg: #18181b;
   --send-fg: #fafafa;
@@ -272,7 +283,8 @@ body.vscode-high-contrast-light {
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
   --code-bg: rgba(0, 0, 0, 0.05);
   --code-block-bg: rgba(0, 0, 0, 0.035);
-  --well-bg: #ececee;
+  --well-bg: #e4e4e8;
+  --seg-active-bg: #ffffff;
   --card-bg: #fbfbfc;
   --track-bg: #d8d8dc;
   --toggle-bg: #c9c9cf;
@@ -491,8 +503,8 @@ body.vscode-high-contrast-light .chrome-logo {
 
 .session-tab.active {
   color: var(--fg);
-  border-color: var(--border-soft);
-  background: var(--active-wash);
+  border-color: var(--border);
+  background: var(--seg-active-bg);
 }
 
 .session-tab-icon {
@@ -1600,16 +1612,19 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   color: transparent;
 }
 
+/* The stop square takes the button's own foreground, not the mode accent: it
+   sits inside a filled control, so a second colour there made the busy state
+   the loudest thing on the screen rather than a mark on one button. */
 #send.is-busy::after {
   content: "";
   position: absolute;
-  inset: 7px;
+  inset: 8px;
   border-radius: 2px;
-  background: var(--mode-accent);
+  background: var(--send-fg);
 }
 
 #send.is-busy:hover::after {
-  background: color-mix(in srgb, var(--mode-accent) 85%, var(--fg));
+  opacity: 0.85;
 }
 
 .menu {
@@ -1658,9 +1673,15 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   background: var(--menu-hover);
 }
 
+/* A chosen row is marked by a bar, not only by a wash. The mode and effort
+   menus already did this in their own hue; the access and model menus had the
+   wash alone, and on the light theme an 8% black band on a white menu reads as
+   a grey slab rather than a selection. The per-mode rules further down are
+   more specific, so they still colour their own bar. */
 .menu-item.selected {
   background: var(--menu-selected);
   color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--fg);
 }
 
 .menu-item .check {
@@ -1866,12 +1887,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 
 #effort-btn[data-effort] #effort-label {
   color: inherit;
-}
-
-/* The mark is `hidden` unless the fast profile is on, and a display of its
-   own would beat that attribute — so state the hidden case too. */
-.effort-fast-mark[hidden] {
-  display: none;
 }
 
 .effort-fast-mark {
@@ -3982,12 +3997,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   color: var(--json-lit, #c792ea);
 }
 
-/* Hidden when there is nothing left to unfold, so the `hidden` attribute has
-   to outrank this rule's own display. */
-.tool-body-more[hidden] {
-  display: none;
-}
-
 .tool-body-more {
   display: block;
   width: 100%;
@@ -4416,14 +4425,15 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .view-segment[aria-selected="true"] {
   color: var(--fg);
   border-color: var(--border);
-  background: var(--surface-2);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  background: var(--seg-active-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
-/* The chosen view's icon takes the mode accent — the one place on the strip
-   that says which of the two you are in without being read. */
+/* The chosen view's icon simply goes to full strength in the text colour. It
+   used to take the mode accent, which put a coloured mark on the one control
+   that has nothing to do with which mode you are in. */
 .view-segment[aria-selected="true"] svg {
   opacity: 1;
-  color: var(--mode-accent);
+  color: inherit;
 }
 .view-segment:focus-visible {
   outline: 2px solid var(--fg-dim);
@@ -4901,6 +4911,13 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 @media (min-width: 1280px) {
   :root {
     --content-max: 900px;
+    --icon-sm: 15px;
+    --icon-md: 17px;
+    --icon-lg: 20px;
+    --ctl-h-xs: 24px;
+    --ctl-h-sm: 28px;
+    --ctl-h-md: 30px;
+    --ctl-h-lg: 34px;
   }
   #messages {
     padding: 20px 18px 10px;
@@ -4924,15 +4941,30 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
     min-height: 54px;
     font-size: 14.5px;
   }
+  /* One step up the whole scale, not a handful of named controls. It used to
+     grow the composer's pills and buttons and nothing else, so on a wide
+     window the chat input was large while the chrome strip, the sidebar's
+     gear and the menus stayed at their base size — which is what made the
+     gear read as too small for the screen it was on. */
   .pill {
-    height: 28px;
     padding: 0 10px;
     font-size: 12.5px;
   }
-  #send,
-  .icon-btn {
-    width: 30px;
-    height: 30px;
+  .menu-item {
+    font-size: 12.5px;
+    padding: 6px 9px;
+  }
+  .menu {
+    min-width: 186px;
+  }
+  .view-segment {
+    font-size: 13.5px;
+  }
+  .session-tab {
+    font-size: 13.5px;
+  }
+  .tool-label {
+    font-size: 12.5px;
   }
 }
 
