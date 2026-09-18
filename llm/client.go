@@ -887,17 +887,9 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompleteRequest) (*Comp
 	return DrainStreamEvents(ch)
 }
 
-// completeOnce performs a single non-streaming chat completion HTTP exchange.
-func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req CompleteRequest, maxTok int) (*CompleteResponse, error) {
-	jsonData, err := c.buildChatBody(req, maxTok, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	requestBytes := len(jsonData)
-	requestPreview := string(jsonData) // Will be sanitized in logger
-
-	// Extract message roles for logging
+// messageRolesFor summarises a request's messages for the log: one token per
+// message, with tool-call counts and tool-result ids where they apply.
+func messageRolesFor(req CompleteRequest) []string {
 	messageRoles := make([]string, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		roleStr := string(msg.Role)
@@ -909,10 +901,22 @@ func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req Complet
 		}
 		messageRoles = append(messageRoles, roleStr)
 	}
+	return messageRoles
+}
+
+// completeOnce performs a single non-streaming chat completion HTTP exchange.
+func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req CompleteRequest, maxTok int) (*CompleteResponse, error) {
+	jsonData, err := c.buildChatBody(req, maxTok, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	requestBytes := len(jsonData)
+	requestPreview := string(jsonData) // Will be sanitized in logger
 
 	startTime := time.Now()
 	if c.logger != nil {
-		c.logger.LogRequest(url, c.model, int(c.client.Timeout.Seconds()), requestBytes, len(req.Tools), len(req.Messages), messageRoles, requestPreview)
+		c.logger.LogRequest(url, c.model, int(c.client.Timeout.Seconds()), requestBytes, len(req.Tools), len(req.Messages), messageRolesFor(req), requestPreview)
 	}
 
 	reqHTTP, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -1086,6 +1090,17 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 		return nil, fmt.Errorf("failed to marshal stream request: %w", err)
 	}
 
+	// Every agent call goes through here — Complete is CompleteStream plus a
+	// drain — and until this was added none of them was logged: llm_log.jsonl
+	// carried tool calls and results, never what the model was asked or what
+	// it answered. Reading an eval failure meant guessing at the model's
+	// words from the tools it reached for. The non-streaming path has logged
+	// both since the file existed; this puts the stream on the same footing.
+	startTime := time.Now()
+	if c.logger != nil {
+		c.logger.LogRequest(url, c.model, int(c.streamClient.Timeout.Seconds()), len(jsonData), len(req.Tools), len(req.Messages), messageRolesFor(req), string(jsonData))
+	}
+
 	// Derived context lets the watchdog abort a stalled body read: cancelling
 	// it forces the HTTP transport to close the connection, which unblocks
 	// the scanner inside ParseSSEStream.
@@ -1107,12 +1122,18 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
 		cancelStream()
+		if c.logger != nil {
+			c.logger.LogError(0, err.Error(), time.Since(startTime).Milliseconds())
+		}
 		return nil, fmt.Errorf("failed to send stream request: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		cancelStream()
+		if c.logger != nil {
+			c.logger.LogError(resp.StatusCode, string(body), time.Since(startTime).Milliseconds())
+		}
 		return nil, formatAPIError(resp.StatusCode, string(body))
 	}
 
@@ -1151,6 +1172,20 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 						nameMapper.RestoreResponse(ev.Response)
 					}
 				}
+				if c.logger != nil {
+					switch ev.Kind {
+					case StreamEventDone:
+						// The assembled answer, as the agent will see it: text
+						// and tool calls with their arguments. Usage rides along
+						// so a step's cost can be read next to its words.
+						preview := streamResponsePreview(ev.Response)
+						c.logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
+					case StreamEventError:
+						if ev.Err != nil {
+							c.logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
+						}
+					}
+				}
 				out <- ev
 			case <-timer.C:
 				// Force the transport to close the connection, then drain the
@@ -1158,13 +1193,35 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 				cancelStream()
 				for range raw {
 				}
-				out <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf(
-					"stream stalled: no data from server for %s (connection to vLLM/tunnel lost?)", stall)}
+				stallErr := fmt.Errorf(
+					"stream stalled: no data from server for %s (connection to vLLM/tunnel lost?)", stall)
+				if c.logger != nil {
+					c.logger.LogError(0, stallErr.Error(), time.Since(startTime).Milliseconds())
+				}
+				out <- StreamEvent{Kind: StreamEventError, Err: stallErr}
 				return
 			}
 		}
 	}()
 	return out, nil
+}
+
+// streamResponsePreview renders a streamed answer for the log: the message
+// (content and tool calls) plus usage when the server sent it. JSON, like the
+// non-streaming path's raw body, so the two read the same way.
+func streamResponsePreview(resp *CompleteResponse) string {
+	if resp == nil {
+		return ""
+	}
+	view := map[string]any{"message": resp.Message}
+	if resp.Usage != nil {
+		view["usage"] = resp.Usage
+	}
+	b, err := json.Marshal(view)
+	if err != nil {
+		return resp.Message.Content
+	}
+	return string(b)
 }
 
 // effectiveStreamStallTimeout scales the idle-SSE watchdog with llm.timeout_s.
