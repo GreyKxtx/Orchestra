@@ -12,8 +12,6 @@
   let known = [];
   /** Each project's sessions, as last listed. @type {Map<string, Array<any>>} */
   const sessionsByProject = new Map();
-  /** Projects the user folded away by hand. @type {Set<string>} */
-  const collapsedProjects = new Set();
   /**
    * The live search over saved chats. hits=null means "not searching", so the
    * sidebar draws the ordinary list; an empty array means "searched and found

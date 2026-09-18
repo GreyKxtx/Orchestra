@@ -62,10 +62,13 @@
     railMenu.hidden = false;
   }
 
-  const railEl = document.getElementById("project-rail-list");
+  // The whole <nav>: the tiles live on the strip and the chats in the pane,
+  // and one handler covers both.
+  const railEl = document.getElementById("project-rail");
   if (railEl && railEl.addEventListener) {
     railEl.addEventListener("click", (ev) => {
-      // The two add buttons, which renderProjects writes onto group headings.
+      // The two add buttons: the strip's (static markup) and the pane heading's
+      // (written by renderProjects). Same attribute, same handler.
       // First, because they sit inside a heading that is itself clickable.
       const add = ev.target && ev.target.closest ? ev.target.closest("[data-rail-action]") : null;
       if (add) {
@@ -87,17 +90,13 @@
       }
       const projectId = chip.dataset.projectId || "";
       if (projectId === currentProjectId) {
-        // Switching to the project already on screen does nothing, so the
-        // header's job there is to fold its session list away.
-        if (collapsedProjects.has(projectId)) {
-          collapsedProjects.delete(projectId);
-        } else {
-          collapsedProjects.add(projectId);
+        // Already on screen. The one useful thing the click can do is bring
+        // the chats back if the sidebar was folded to the strip.
+        if (railCollapsed()) {
+          applyRail(0, false);
         }
-        renderProjects();
         return;
       }
-      collapsedProjects.delete(projectId);
       void switchProject(projectId);
     });
     railEl.addEventListener("contextmenu", (ev) => {
@@ -218,8 +217,8 @@
   // and back. Both are remembered, because a width you have to set again on
   // every launch is not a width you have set.
 
-  /** Narrower than this and a workspace name has nowhere to go. */
-  const RAIL_MIN = 200;
+  /** Narrower than this and, past the 60px strip, a chat title has nowhere to go. */
+  const RAIL_MIN = 236;
   /** Wider than this and the sidebar is competing with the transcript. */
   const RAIL_MAX = 520;
   /** Dragged below this, the sidebar folds rather than becoming unusable. */

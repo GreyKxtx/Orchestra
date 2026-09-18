@@ -42,9 +42,9 @@
   const PLUS_SVG = orchIconMarkup("plus", { size: "sm" });
 
   /**
-   * The one affordance for adding: it sits on the heading of the group it
-   * adds to — a session under the workspace it belongs to, a workspace under
-   * the list of workspaces — so neither needs a bar of its own.
+   * The button that starts a session, on the pane's heading. (The one that
+   * adds a workspace is static markup at the foot of the strip; both reach
+   * the same delegated handler through data-rail-action.)
    * @param {string} action "new-session" | "add-project"
    * @param {string} label
    * @param {string} [projectId]
@@ -101,23 +101,6 @@
       void deleteSession(projectId, sessionId);
     });
     return btn;
-  }
-
-  /**
-   * The workspaces heading, which always carries the add button — including
-   * when there is nothing under it yet, which is exactly when a new user
-   * needs it.
-   * @param {string} label @returns {HTMLElement}
-   */
-  function railSectionHeading(label) {
-    const sec = document.createElement("div");
-    sec.className = "rail-section";
-    const text = document.createElement("span");
-    text.className = "rail-section-label";
-    text.textContent = label;
-    sec.appendChild(text);
-    sec.appendChild(railAddButton("add-project", i18n("rail.add_workspace")));
-    return sec;
   }
 
   /**
@@ -223,11 +206,6 @@
     return node;
   }
 
-  /** The key carries the label, so a reused heading always reads correctly. */
-  function railHeadingEntry(label) {
-    return { key: "heading:" + label, render: (had) => had || railSectionHeading(label) };
-  }
-
   /**
    * One chat row: the button that opens it and the one that throws it away.
    * `snippet`, present only on a search result, is the matching line.
@@ -286,15 +264,47 @@
     return item;
   }
 
-  /** @param {any} row @param {boolean} collapsed @param {any} existing */
-  function railProjectChip(row, collapsed, existing) {
+  /**
+   * A stable hue per workspace, from its PATH. Three folders all called `ws`
+   * are three different projects, and the name alone cannot tell them apart;
+   * the path can, and a colour derived from it does so at a glance.
+   * @param {string} path @returns {number} 0..359
+   */
+  function projectHue(path) {
+    let h = 0;
+    const str = String(path || "");
+    for (let i = 0; i < str.length; i++) {
+      h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    }
+    return h % 360;
+  }
+
+  /** The one character on a tile: the first letter or digit of the name. */
+  function projectGlyph(name) {
+    const m = String(name || "").trim().match(/[\p{L}\p{N}]/u);
+    return m ? m[0].toUpperCase() : "?";
+  }
+
+  /**
+   * One workspace on the strip: a tile carrying its initial, tinted by its
+   * path, with the state badge on its corner and the active marker on its
+   * edge. It keeps the .project-chip class and its data attributes: every
+   * listener in 42-projects-chrome.js and every test is bound to those.
+   * @param {any} row @param {any} existing
+   */
+  function railProjectChip(row, existing) {
     const chip = railNode(existing, "button", "project-chip");
     chip.type = "button";
+    chip.setAttribute("role", "tab");
     chip.dataset.projectId = row.id;
     chip.dataset.state = row.state;
     chip.dataset.status = row.status;
     chip.dataset.active = row.active ? "true" : "false";
-    chip.title = row.path + (row.status === "asking" ? i18n("rail.waiting") : "");
+    chip.setAttribute("aria-selected", row.active ? "true" : "false");
+    // The tile shows one letter, so the tooltip carries what it cannot: the
+    // name, the path, and whether the project is waiting for an answer.
+    chip.title =
+      (row.name || "?") + "\n" + (row.path || "") + (row.status === "asking" ? i18n("rail.waiting") : "");
     chip.setAttribute("aria-label", row.name + " (" + row.status + ")");
     if (railOpeningId && row.id === railOpeningId) {
       chip.dataset.opening = "true";
@@ -303,49 +313,25 @@
       // again; it used to go away with the node that carried it.
       delete chip.dataset.opening;
     }
-    chip.setAttribute("aria-expanded", collapsed ? "false" : "true");
-
-    // How many chats the workspace holds. The server counts them off disk,
-    // which is the only way a workspace whose core is closed can have a
-    // number at all; the open one prefers its live list, so starting a
-    // session bumps the count straight away instead of at the next poll.
-    const listedNow = sessionsByProject.get(row.id);
-    const count = row.active && listedNow ? listedNow.length : row.sessions;
-
-    const parts = [
-      {
-        // Drawn in CSS: an inline SVG here would need createElementNS, which
-        // the adapter tests' document stub does not have, and it is decoration.
-        key: "chevron",
-        render: (had) => {
-          const c = railNode(had, "span", "project-chevron");
-          c.setAttribute("aria-hidden", "true");
-          return c;
-        },
-      },
-      {
-        key: "name",
-        render: (had) => {
-          const n = railNode(had, "span", "project-name");
-          // textContent, not innerHTML: the name is a folder name off disk.
-          n.textContent = row.name || "?";
-          return n;
-        },
-      },
-    ];
-    if (typeof count === "number" && count >= 0) {
-      parts.push({
-        key: "count",
-        render: (had) => {
-          const badge = railNode(had, "span", "project-count");
-          badge.textContent = String(count);
-          badge.title = i18n(count === 1 ? "rail.chats_one" : "rail.chats_n", { n: count });
-          return badge;
-        },
-      });
+    // Through the CSSOM, never a style attribute in markup: both hosts serve
+    // this page under a CSP without 'unsafe-inline'. The stub document the
+    // adapter tests run in has no setProperty, hence the guard.
+    if (chip.style && chip.style.setProperty) {
+      chip.style.setProperty("--project-hue", String(projectHue(row.path)));
     }
-    parts.push({ key: "dot", render: (had) => railNode(had, "span", "project-dot") });
-    reconcileByKey(chip, parts);
+    reconcileByKey(chip, [
+      {
+        key: "glyph",
+        render: (had) => {
+          const g = railNode(had, "span", "project-glyph");
+          g.setAttribute("aria-hidden", "true");
+          // textContent: the name is a folder name off disk.
+          g.textContent = projectGlyph(row.name);
+          return g;
+        },
+      },
+      { key: "dot", render: (had) => railNode(had, "span", "project-dot") },
+    ]);
     return chip;
   }
 
@@ -453,38 +439,84 @@
     return sessions;
   }
 
-  /** One workspace: its header, and the chats under it. */
-  function railProjectGroup(row, existing) {
-    // Only the project on screen has a session list — the core is asked for
-    // one per connection — so every other group stays folded, and its header
-    // switches to it rather than expanding an empty list.
-    const collapsed = row.active ? collapsedProjects.has(row.id) : true;
-    const group = railNode(existing, "div", "project-group");
-    group.dataset.projectId = row.id;
-    group.dataset.active = row.active ? "true" : "false";
-    group.dataset.collapsed = collapsed ? "true" : "false";
-    reconcileByKey(group, [
+  /**
+   * The pane's heading: which workspace these chats belong to, in full — the
+   * name, the path, how many there are — and the button that starts one. The
+   * tile on the strip can only show a letter; this is where the rest goes.
+   * @param {any} row @param {any} existing
+   */
+  function railPaneHead(row, existing) {
+    const head = railNode(existing, "div", "rail-pane-head");
+    // The open workspace prefers its live list, so starting a session bumps
+    // the count straight away instead of at the next poll.
+    const listedNow = sessionsByProject.get(row.id);
+    const count = listedNow ? listedNow.length : row.sessions;
+    const titleParts = [
       {
-        key: "head",
-        render: (had) => {
-          // The header is a row, not just the chip: the open workspace carries
-          // the button that starts a session in it. A <button> cannot nest
-          // inside another, so the two are siblings.
-          const head = railNode(had, "div", "project-head");
-          const parts = [{ key: "chip", render: (h) => railProjectChip(row, collapsed, h) }];
-          if (row.active) {
-            parts.push({
-              key: "add",
-              render: (h) => h || railAddButton("new-session", i18n("rail.new_session"), row.id),
-            });
-          }
-          reconcileByKey(head, parts);
-          return head;
+        key: "name",
+        render: (h) => {
+          const t = railNode(h, "span", "rail-pane-title");
+          // textContent: a folder name off disk.
+          t.textContent = row.name || "?";
+          return t;
         },
       },
-      { key: "sessions", render: (had) => railProjectSessions(row, had) },
+    ];
+    if (typeof count === "number" && count >= 0) {
+      titleParts.push({
+        key: "count",
+        render: (h) => {
+          const c = railNode(h, "span", "rail-pane-count");
+          c.textContent = i18n(count === 1 ? "rail.chats_one" : "rail.chats_n", { n: count });
+          return c;
+        },
+      });
+    }
+    reconcileByKey(head, [
+      {
+        key: "titles",
+        render: (had) => {
+          const box = railNode(had, "div", "rail-pane-titles");
+          reconcileByKey(box, [
+            {
+              key: "title-row",
+              render: (h) => {
+                const r = railNode(h, "div", "rail-pane-title-row");
+                reconcileByKey(r, titleParts);
+                return r;
+              },
+            },
+            {
+              key: "path",
+              render: (h) => {
+                // The box runs right-to-left so the ellipsis eats the START
+                // of a long path; the text inside is isolated back to LTR so
+                // the path itself still reads the right way round.
+                const pth = railNode(h, "div", "rail-pane-path");
+                pth.title = row.path || "";
+                reconcileByKey(pth, [
+                  {
+                    key: "text",
+                    render: (hh) => {
+                      const t = railNode(hh, "span", "rail-pane-path-text");
+                      t.textContent = row.path || "";
+                      return t;
+                    },
+                  },
+                ]);
+                return pth;
+              },
+            },
+          ]);
+          return box;
+        },
+      },
+      {
+        key: "add",
+        render: (had) => had || railAddButton("new-session", i18n("rail.new_session"), row.id),
+      },
     ]);
-    return group;
+    return head;
   }
 
   /**
@@ -515,35 +547,36 @@
 
     paintChromeProject();
 
+    // The strip: one tile per workspace, in the registry's own order.
+    const strip = document.getElementById("project-strip");
+    if (strip) {
+      reconcileByKey(
+        strip,
+        rows.map((row) => ({ key: "chip:" + row.id, render: (had) => railProjectChip(row, had) }))
+      );
+    }
+
+    // The pane: the open workspace's chats under a heading that names it.
+    // Only the project on screen has a session list — the core is asked for
+    // one per connection — which is why there is one pane and not a tree.
     const list = document.getElementById("project-rail-list");
     if (!list) {
       return;
     }
-    // The open project heads the list, its sessions under it; everything else
-    // follows under one label. The renderer message above keeps the original
-    // order — its consumers and tests were written against it.
-    const ordered = rows.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
-    const hasActive = rows.some((r) => r.active);
+    const activeRow = rows.find((r) => r.active) || null;
     const entries = [];
-    let otherLabelDone = false;
-    // With nothing open there is no "other" to be other than, so the heading
-    // is simply the list's own, at the top where a heading belongs.
-    if (!hasActive) {
-      entries.push(railHeadingEntry("Workspaces"));
-      otherLabelDone = true;
-    }
-    for (const row of ordered) {
-      if (!row.active && hasActive && !otherLabelDone) {
-        entries.push(railHeadingEntry(i18n("rail.other_workspaces")));
-        otherLabelDone = true;
-      }
-      entries.push({ key: "group:" + row.id, render: (had) => railProjectGroup(row, had) });
-    }
-    // The inline heading is only written when other workspaces follow it. When
-    // none do — one workspace open, or none at all on a first run — the
-    // heading still has to appear, because it carries the only way to add one.
-    if (!otherLabelDone) {
-      entries.push(railHeadingEntry("Workspaces"));
+    if (activeRow) {
+      entries.push({ key: "head", render: (had) => railPaneHead(activeRow, had) });
+      entries.push({ key: "sessions", render: (had) => railProjectSessions(activeRow, had) });
+    } else {
+      entries.push({
+        key: "none",
+        render: (had) => {
+          const empty = railNode(had, "div", "rail-pane-none");
+          empty.textContent = i18n("rail.pick_project");
+          return empty;
+        },
+      });
     }
     reconcileByKey(list, entries);
     pushSessionTabs();
@@ -688,8 +721,8 @@
   /**
    * Put this workspace's chats in front of the user. On the web that is the
    * sidebar — the header's "all sessions" button is hidden here, because the
-   * rail is where the list lives — so unfold the rail, open the workspace's
-   * group and scroll to the chat on screen. Answers false where there is no
+   * rail is where the list lives — so unfold the rail and scroll to the chat
+   * on screen. Answers false where there is no
    * rail (the editor's webview), so the caller can fall back to the button.
    */
   function revealSessionList() {
@@ -700,7 +733,6 @@
     if (railCollapsed()) {
       applyRail(0, false);
     }
-    collapsedProjects.delete(currentProjectId);
     renderProjects();
     const active = list.querySelector ? list.querySelector('.rail-session[data-active="true"]') : null;
     if (active && active.scrollIntoView) {

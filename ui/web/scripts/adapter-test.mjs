@@ -3326,7 +3326,8 @@ test("a status flip elsewhere leaves the focused chip focused, and the same node
   await handshakeFor(b, "A");
   await openBackground(b, "B");
 
-  const list = b.elementById("project-rail-list");
+  // The tiles live on the strip, which is their own element in the stub document.
+  const list = b.elementById("project-strip");
   const chipB = byClass(list, "project-chip").find((c) => c.dataset.projectId === "B");
   assert.ok(chipB, `no chip for B; the rail holds ${byClass(list, "project-chip").length} chips`);
   chipB.focus();

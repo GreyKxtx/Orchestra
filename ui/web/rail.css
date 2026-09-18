@@ -7,7 +7,13 @@
   /* The sidebar's width, dragged by the handle on its edge and remembered in
      localStorage. A custom property so the handle can set one number and the
      column, the media query below and the collapsed state all follow it. */
-  --rail-w: 296px;
+  --rail-w: 300px;
+  /* The strip of workspace tiles down the sidebar's left edge, and the tile
+     itself. The gutter is what centres a tile in the strip; the active marker
+     sits in it. */
+  --rail-strip-w: 60px;
+  --rail-tile: 38px;
+  --rail-tile-gutter: 11px;
   --rail-dot: rgba(255, 255, 255, 0.075);
   /* The start screen's own dots: a wider pitch than the sidebar's, because
      this is a whole window rather than a column, and quiet enough to be
@@ -53,7 +59,7 @@ body {
   flex: 0 0 var(--rail-w);
   width: var(--rail-w);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   /* A dot grid, quiet enough to read as texture rather than content: it
      separates the navigator from the transcript without another border. */
   background-color: var(--rail-bg);
@@ -64,44 +70,82 @@ body {
   overflow: hidden;
 }
 
-/* ---- brand ------------------------------------------------------------- */
+/* ---- the strip --------------------------------------------------------- */
+/* The sidebar is two columns. The STRIP on the left is the list of
+   workspaces: one tile per project with its state on the tile — the point of
+   this sidebar is seeing, without switching, which project is working and
+   which is waiting for you. The PANE beside it is the chats of the one on
+   screen, under a heading that says which one that is.
 
-/* The brand row carries the gear, the sidebar's one standing control now
-   that both add buttons live on their group headings. */
+   Before this, both lived in one flat list: the open project was a small-caps
+   heading, the rest were folder rows with unlabelled numbers, three folders
+   called `ws` were three identical lines, and two "+" buttons meant two
+   different things. Readable to whoever wrote it, and to nobody else. */
+.rail-strip {
+  flex: 0 0 var(--rail-strip-w);
+  width: var(--rail-strip-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 10px;
+  border-right: 1px solid var(--border);
+}
+
 .rail-brand {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 0 0 auto;
-  padding: 16px 12px 12px 18px;
+  justify-content: center;
+  width: var(--rail-tile);
+  height: var(--rail-tile);
+  margin-bottom: 4px;
   color: var(--fg);
 }
 
 .rail-mark {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
 }
 
-.rail-wordmark {
+.project-strip {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
 }
 
-.rail-word {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.project-strip::-webkit-scrollbar {
+  display: none;
+}
+
+/* The gear and the add button close the strip, at the tile's own size. */
+.rail-strip .rail-settings {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.rail-strip-add {
+  flex: 0 0 auto;
+  width: var(--rail-tile);
+  height: var(--rail-tile);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted-2);
+}
+
+.rail-strip-add:hover {
+  border-style: solid;
   color: var(--fg);
-}
-
-.rail-word-sub {
-  font-size: 18px;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  color: var(--muted);
+  background: var(--surface);
 }
 
 /* ---- adding ------------------------------------------------------------ */
@@ -134,151 +178,182 @@ body {
   outline-offset: -2px;
 }
 
-/* ---- the project / session tree ---------------------------------------- */
+/* ---- the pane ---------------------------------------------------------- */
 
-.project-rail-list {
+.rail-pane {
   flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 6px 10px 14px;
+  padding: 12px 10px 14px;
 }
 
-/* The workspace heading and its add button are one row; the heading itself
-   keeps the full width it had, so nothing about clicking it changes. */
-.project-head {
+/* Which workspace these chats belong to, in full: the tile can only show a
+   letter, so the name, the count and the path go here. */
+.rail-pane-head {
   display: flex;
-  align-items: center;
-  gap: 2px;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 2px 10px 6px;
 }
 
-.project-head .project-chip {
+.rail-pane-titles {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-/* Quiet until the workspace is pointed at — the row is a heading first. */
-.project-group[data-active="true"] .project-head .rail-add {
-  opacity: 0.55;
-}
-
-.project-head:hover .rail-add,
-.project-head .rail-add:focus-visible {
-  opacity: 1;
-}
-
-.project-group + .project-group {
-  margin-top: 1px;
-}
-
-/* The workspaces heading, written by renderProjects between the open
-   project's sessions and the rest — or on its own when there are none, since
-   it carries the only way to add one. */
-/* No right padding: the add button's edge then lines up with the one on the
-   workspace heading above it, which has none either. */
-.rail-section {
+.rail-pane-title-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  padding: 14px 0 6px 8px;
-}
-
-.rail-section-label {
-  flex: 1 1 auto;
   min-width: 0;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted-2);
 }
 
-/* The header keeps the .project-chip class: every existing listener in
-   40-projects.js (click, contextmenu, Shift+F10) is bound to it. */
-.project-chip {
-  position: relative;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.project-chip:hover {
-  background: var(--surface);
-}
-
-.project-chip:hover .project-name {
-  color: var(--fg-dim);
-}
-
-/* Flat rows, no carets: a folded project switches to itself rather than
-   expanding, and the open one is a heading. The element stays in the DOM
-   for aria-expanded's sake. */
-.project-chevron {
-  display: none;
-}
-
-.project-group[data-collapsed="true"] .project-sessions {
-  display: none;
-}
-
-.project-name {
-  flex: 1 1 auto;
+.rail-pane-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
 }
 
-/* The project on screen is the heading of the sessions under it, and reads
-   as one: a small caps label, its sessions flush below. */
-.project-group[data-active="true"] .project-chip {
-  padding: 8px 8px 6px;
-  border-radius: 6px;
-}
-
-.project-group[data-active="true"] .project-chip:hover {
-  background: transparent;
-}
-
-.project-group[data-active="true"] .project-name {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.rail-pane-count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted-2);
 }
 
-.project-group[data-active="true"] .project-chip:hover .project-name {
-  color: var(--muted);
+/* The path, ellipsised from the START: the end of a path is the part that
+   tells folders apart. The box runs right-to-left for that; the text inside
+   is isolated back to left-to-right so it still reads the right way round. */
+.rail-pane-path {
+  margin-top: 2px;
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted-2);
 }
 
-/* "Close project" and "Remove from list" are reachable by keyboard via
-   Shift+F10 / the ContextMenu key (40-projects.js); a focused header needs a
-   visible outline for that path to be usable at all. */
+.rail-pane-path-text {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.rail-pane-head .rail-add {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+/* No workspace on screen: the strip still lists them, the pane says so. */
+.rail-pane-none {
+  padding: 8px 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted-2);
+}
+
+/* ---- a workspace tile ---------------------------------------------------- */
+/* A square with the workspace's initial, tinted by a hue derived from its
+   path (set through the CSSOM by renderProjects), so two folders both called
+   `ws` are two different colours. State sits on the corner as a badge whose
+   SHAPE differs per state; the one on screen is marked on the strip's edge. */
+.project-chip {
+  --project-tint: hsl(var(--project-hue, 220) 48% 66%);
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rail-tile);
+  height: var(--rail-tile);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--project-tint) 16%, var(--surface));
+  color: var(--project-tint);
+  font: inherit;
+  cursor: pointer;
+  transition: border-radius 0.15s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.project-chip:hover {
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--project-tint) 26%, var(--surface));
+}
+
+.project-chip[data-active="true"] {
+  border-radius: 9px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--project-tint) 38%, var(--surface-2));
+}
+
+/* The marker: a bar on the strip's edge beside the tile on screen. */
+.project-chip[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--rail-tile-gutter));
+  top: 22%;
+  height: 56%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--fg);
+}
+
+/* In the list but not open: the tile is there to click, quietly. */
+.project-chip[data-state="closed"] {
+  opacity: 0.55;
+}
+
+.project-chip[data-state="closed"]:hover {
+  opacity: 0.85;
+}
+
 .project-chip:focus-visible {
   outline: 2px solid var(--fg-dim);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 
-/* ---- row icons --------------------------------------------------------- */
-/* A folder for a workspace, a bubble for a session: two shapes, so the eye
-   sorts the two kinds of row before reading either. Drawn as a mask filled
-   with currentColor — they then follow the row's own colour through hover,
-   the active state and both themes, and renderProjects stays free of
-   createElementNS, which the adapter tests' document stub does not have. */
+.project-glyph {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  user-select: none;
+}
 
-.project-chip::before,
+/* On the light ground the same hue has to be darker to read against white. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .project-chip {
+    --project-tint: hsl(var(--project-hue, 220) 50% 44%);
+  }
+}
+
+:root[data-theme="light"] .project-chip {
+  --project-tint: hsl(var(--project-hue, 220) 50% 44%);
+}
+
+/* ---- the chat row's icon -------------------------------------------------- */
+/* A bubble, drawn as a mask filled with currentColor so it follows the row's
+   own colour through hover, the active state and both themes — and so that
+   renderProjects stays free of createElementNS, which the adapter tests'
+   document stub does not have. */
 .rail-session::before {
   content: "";
   flex: 0 0 auto;
@@ -288,67 +363,37 @@ body {
   -webkit-mask: var(--row-icon) center / contain no-repeat;
   mask: var(--row-icon) center / contain no-repeat;
   opacity: 0.8;
-}
-
-.project-chip {
-  --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
-}
-
-.rail-session {
   --row-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/svg%3E");
 }
 
-/* On the open workspace the row is a small-caps heading, so its folder drops
-   to the label's own size rather than towering over it. */
-.project-group[data-active="true"] .project-chip::before {
-  width: 12px;
-  height: 12px;
-  opacity: 0.7;
-}
-
-/* How many chats are in the workspace. Quiet — it is a fact about the row,
-   not a thing to act on — and lining up on tabular digits so a column of
-   them reads down the list. */
-.project-count {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted-2);
-}
-
-.project-chip:hover .project-count {
-  color: var(--muted);
-}
-
-.project-group[data-active="true"] .project-count {
-  font-size: 10.5px;
-  font-weight: 600;
-}
-
-/* State is carried by a dot whose SHAPE differs per state, so the tree stays
+/* ---- the state badge on a tile -------------------------------------------- */
+/* Only the two states that ask for attention get a badge: working, and
+   waiting for you. An open, idle workspace is simply a tile at full strength;
+   a closed one is dimmed (above). The shapes differ, so the strip stays
    readable without colour vision. */
 .project-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: none;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
+  border: 2px solid var(--rail-bg);
   background: transparent;
 }
 
-.project-chip[data-status="idle"] .project-dot {
-  background: var(--ok-fg);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok-fg) 16%, transparent);
-}
-
 .project-chip[data-status="working"] .project-dot {
+  display: block;
   background: var(--warn-fg);
   animation: project-pulse 1.2s ease-in-out infinite;
 }
 
 .project-chip[data-status="asking"] .project-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
   background: var(--error-fg);
 }
 
@@ -670,7 +715,7 @@ body {
 /* The type is sized for a wide window already; only the column widens. */
 @media (min-width: 1500px) {
   :root {
-    --rail-w: 320px;
+    --rail-w: 330px;
   }
 }
 
@@ -710,24 +755,22 @@ body {
 /* ---- a workspace whose core is starting -------------------------------- */
 /* The click landed; the core takes a moment. Without this the sidebar sat
    exactly as it was and the switch read as a click that did nothing. */
-.project-chip[data-opening="true"] .project-count,
+.project-chip[data-opening="true"] .project-glyph {
+  opacity: 0.3;
+}
+
 .project-chip[data-opening="true"] .project-dot {
   display: none;
 }
 
 .project-chip[data-opening="true"]::after {
   content: "";
-  flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
+  position: absolute;
+  inset: 11px;
   border: 2px solid color-mix(in srgb, var(--fg) 18%, transparent);
-  border-top-color: var(--mode-accent);
+  border-top-color: var(--fg);
   border-radius: 50%;
   animation: start-spin 720ms linear infinite;
-}
-
-.project-chip[data-opening="true"] .project-name {
-  color: var(--fg-dim);
 }
 
 /* ---- the sidebar's edge ------------------------------------------------ */

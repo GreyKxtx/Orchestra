@@ -57,9 +57,9 @@ Three, chosen by role. They are `--icon-*` in `chat.css` and restated in
 - **Brand marks are not icons**: the Orchestra logo (`.rail-mark`,
   `.start-mark`) and GitHub's own mark are filled, on their own grids. A
   button that says GitHub shows GitHub, not a drawing of a branch.
-- **Two drawings that cannot be SVG elements** — the sidebar's row markers and
-  the two disclosure markers — are CSS masks. They carry the same path data at
-  the same 1.75 weight; see `.project-chip::before` in `rail.css` and
+- **Two drawings that cannot be SVG elements** — the sidebar's chat-row bubble
+  and the two disclosure markers — are CSS masks. They carry the same path data
+  at the same 1.75 weight; see `.rail-session::before` in `rail.css` and
   `.trace-summary::after` in `chat.css`.
 - **The settings panel's own drawings** (nav items, index stats) still live on
   16 and 20 grids. They are not on the 24 grid, but they are at the same
@@ -125,7 +125,45 @@ Two rules that came out of specific bugs, both worth keeping:
 
 ---
 
-## 4. What guards this
+## 4. The sidebar
+
+Two columns, web and desktop only (`ui/web/src/41-projects-rail.js`,
+`ui/web/rail.css`).
+
+**The strip** on the left is the list of workspaces: one 38px tile per
+project, carrying the project's initial, tinted by a hue hashed from its
+**path** — so three folders all called `ws` are three different colours. State
+sits on the tile's corner as a badge whose shape differs per state (a pulsing
+dot for working, a square for waiting-for-you); an open idle project is simply
+a tile at full strength, a closed one is dimmed. The one on screen is marked
+by a bar on the strip's edge. The add-workspace button and the gear close the
+strip.
+
+**The pane** beside it is the chats of the project on screen, under a heading
+that says which project that is in full — name, chat count, and the path
+ellipsised from the *start* (the end of a path is the part that tells folders
+apart).
+
+This is the layout the multi-project spec described
+(`docs/superpowers/specs/2026-09-09-multi-project-window-design.md`: "a
+vertical rail, one icon per project, five states"). The first implementation
+had drifted into one flat list where the open project was a small-caps
+heading, the rest were folder rows with unlabelled numbers, and two "+"
+buttons meant two different things — the owner's verdict on it was "unclear".
+The point of the sidebar is seeing, without switching, which project is
+working and which is waiting; a strip of tiles shows that in a glance, a list
+of folder names does not.
+
+Two seams the tests and the handlers hang on, so keep them: every tile is a
+`.project-chip` with `data-project-id / data-status / data-active`, and every
+click on the sidebar is delegated from the `<nav id="project-rail">` — the
+tiles live in `#project-strip`, the chats in `#project-rail-list`.
+
+Not done yet: folding the sidebar hides the strip along with the pane. The
+useful fold is the Discord one — pane away, strip stays — because the strip is
+exactly what you want while the chats are out of the way.
+
+## 5. What guards this
 
 Both bundle checks, so a regression fails the same run that produces it:
 
