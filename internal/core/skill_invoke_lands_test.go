@@ -52,6 +52,10 @@ type skillScriptLLM struct {
 	parentCalls   int
 	childCalls    int
 	parentPatched bool
+	// What the parent read back from skill_invoke: the tool message in its
+	// second request. This is the whole of what the parent knows about the
+	// child's work, so the test reads it too.
+	parentSaw string
 }
 
 func (s *skillScriptLLM) Plan(context.Context, string) (string, error) { return "{}", nil }
@@ -101,6 +105,12 @@ func (s *skillScriptLLM) Complete(_ context.Context, req llm.CompleteRequest) (*
 		s.parentCalls++
 		if s.parentCalls == 1 {
 			return toolCall("skill_invoke", `{"skill":"bumper","task":"raise retryLimit to 5"}`), nil
+		}
+		for i := len(req.Messages) - 1; i >= 0; i-- {
+			if req.Messages[i].Role == llm.RoleTool {
+				s.parentSaw = req.Messages[i].Content
+				break
+			}
 		}
 		// The parent never edits: whatever is on disk afterwards is the child's.
 		return finalText("the bumper skill raised retryLimit"), nil
@@ -161,5 +171,24 @@ func TestSkillInvoke_TheChildsEditReachesTheFile(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "retryLimit = 5") {
 		t.Errorf("the child's edit never reached the file:\n%s", body)
+	}
+
+	// The parent has to be TOLD the edit happened. The child works through
+	// edit and closes with prose, so it produces no final.patches; the report
+	// used to say "completed with 0 patch(es)" for exactly this run, and a
+	// real parent (the 27B, live) read that as "nothing happened" and invoked
+	// the skill again — eight times, each bump compounding the last.
+	saw := client.parentSaw
+	if saw == "" {
+		t.Fatal("the parent's second request carried no tool message from skill_invoke")
+	}
+	if strings.Contains(saw, "0 patch(es)") {
+		t.Errorf("skill_invoke reported no work to the parent after the child edited the file:\n%s", saw)
+	}
+	if !strings.Contains(saw, "limits.go") {
+		t.Errorf("skill_invoke's report does not name the file the child edited:\n%s", saw)
+	}
+	if !strings.Contains(saw, "raised retryLimit to 5") {
+		t.Errorf("skill_invoke's report does not carry the child's closing words:\n%s", saw)
 	}
 }
