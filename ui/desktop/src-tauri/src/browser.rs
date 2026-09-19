@@ -403,6 +403,18 @@ pub fn browser_pick(app: AppHandle, on: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// The tools keep their settings in their own page's storage, and one of
+/// them — a picture of the page beside the panels, for driving a phone from a
+/// desktop — comes on by default whenever the target is a remote one, which
+/// ours is. Here the page is right there to the left, so the picture is only
+/// the width it costs. Written before the tools boot, and only if the user
+/// has not answered for themselves.
+const NO_SCREENCAST: &str = concat!(
+    "try { for (const key of ['screencast-enabled', 'screencastEnabled']) ",
+    "{ if (localStorage.getItem(key) === null) localStorage.setItem(key, 'false'); } ",
+    "} catch (e) {}"
+);
+
 /// The page's own developer tools — elements, console, network, sources, the
 /// lot — docked over `rect`, which is a pane of the app's own page. Not the
 /// window WebView2 opens by itself: their frontend is a page like any other,
@@ -457,7 +469,8 @@ pub fn browser_devtools(app: AppHandle, rect: Rect, on: bool) -> Result<(), Stri
     // environment, which is also what lets this page speak to that one.
     let builder = WebviewBuilder::new(DEVTOOLS, WebviewUrl::External(parsed))
         .data_directory(panel_profile(&app))
-        .additional_browser_args(&panel_args());
+        .additional_browser_args(&panel_args())
+        .initialization_script(NO_SCREENCAST);
     window
         .add_child(builder, rect.position(), rect.size())
         .map_err(|e| e.to_string())?;
