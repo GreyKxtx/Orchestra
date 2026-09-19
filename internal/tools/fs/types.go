@@ -1,6 +1,9 @@
 package fs
 
 import (
+	"bytes"
+	"encoding/json"
+
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/ops"
@@ -164,10 +167,34 @@ type ASTRenameResponse struct {
 
 type SearchTextRequest struct {
 	Query       string            `json:"query"`
-	Paths       []string          `json:"paths,omitempty"`
+	Paths       PathList          `json:"paths,omitempty"`
 	MaxMatches  int               `json:"max_matches,omitempty"`
-	ExcludeDirs []string          `json:"exclude_dirs,omitempty"`
+	ExcludeDirs PathList          `json:"exclude_dirs,omitempty"`
 	Options     SearchTextOptions `json:"options,omitempty"`
+}
+
+// PathList is a list of paths that also accepts a single bare string. Small
+// models write `"paths": "internal/api"` for a one-element list often enough
+// that the strict form cost a whole grep in the first site-sandbox run
+// (2026-09-18); the answer to one path is the same either way.
+type PathList []string
+
+func (p *PathList) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) > 0 && b[0] == '"' {
+		var one string
+		if err := json.Unmarshal(b, &one); err != nil {
+			return err
+		}
+		*p = PathList{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return err
+	}
+	*p = many
+	return nil
 }
 
 type SearchTextOptions struct {
