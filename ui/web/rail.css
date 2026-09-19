@@ -1914,6 +1914,9 @@ body[data-rail-drag="true"] {
   flex: 1 1 auto;
   min-height: 0;
   background: var(--bg);
+  /* While a menu is open over it, the page leaves its picture here. */
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
 }
 
 .browser-url {

@@ -188,100 +188,34 @@
     return Math.round(Math.min(Math.max(want || BROWSER_DOCK_W, BROWSER_DOCK_MIN), most));
   }
 
-  // The developer tools painted in this app's colours. Theirs are Chromium's
-  // design tokens, ours are the ones every other view here is drawn from, and
-  // this list is the whole of the translation: colour only. Their type, their
-  // icons and the arrangement of their panels stay as they are — those are not
-  // tokens, and following them would mean following them again at every
-  // update of the browser.
-  const BROWSER_DOCK_TOKENS = [
-    ["--sys-color-cdt-base-container", "--bg"],
-    ["--sys-color-cdt-base", "--bg"],
-    ["--sys-color-base", "--surface"],
-    ["--sys-color-base-container", "--bg"],
-    ["--sys-color-base-container-elevated", "--surface-2"],
-    ["--sys-color-header-container", "--surface"],
-    ["--sys-color-neutral-container", "--surface-2"],
-    ["--sys-color-omnibox-container", "--surface"],
-    ["--sys-color-on-base", "--fg"],
-    ["--sys-color-on-base-divider", "--border"],
-    ["--sys-color-divider-on-tonal-container", "--border"],
-    ["--sys-color-divider-prominent", "--border"],
-    ["--sys-color-neutral-bright", "--muted"],
-    ["--sys-color-on-surface-secondary", "--fg-dim"],
-    ["--sys-color-on-surface-light", "--muted"],
-    ["--sys-color-on-surface-light-graphics", "--muted-2"],
-    ["--sys-color-inverse-surface", "--fg"],
-    ["--sys-color-inverse-on-surface", "--bg"],
-    ["--sys-color-surface", "--bg"],
-    ["--sys-color-surface1", "--surface"],
-    ["--sys-color-surface2", "--surface-2"],
-    ["--sys-color-surface3", "--surface-2"],
-    ["--sys-color-surface4", "--surface-2"],
-    ["--sys-color-surface5", "--surface-2"],
-    ["--sys-color-on-surface", "--fg"],
-    ["--sys-color-on-surface-subtle", "--fg-dim"],
-    ["--sys-color-token-subtle", "--muted"],
-    ["--sys-color-primary", "--mode-accent"],
-    ["--sys-color-primary-bright", "--mode-accent"],
-    ["--sys-color-tonal-container", "--seg-active-bg"],
-    ["--sys-color-on-tonal-container", "--fg"],
-    ["--sys-color-outline", "--border"],
-    ["--sys-color-neutral-outline", "--border"],
-    ["--sys-color-divider", "--border-soft"],
-    ["--sys-color-state-hover-on-subtle", "--hover-wash"],
-    ["--sys-color-state-hover-on-prominent", "--hover-wash"],
-    ["--sys-color-state-ripple-neutral-on-subtle", "--active-wash"],
-    // Edge lays its own Fluent tokens over Chromium's, and draws the tab strip,
-    // the toolbars and the debugger's section headers from these.
-    ["--neutral-layer-l1", "--surface-2"],
-    ["--neutral-layer-l2", "--surface"],
-    ["--neutral-layer-l3", "--surface"],
-    ["--neutral-layer-l4", "--bg"],
-    ["--neutral-fill-rest", "--surface-2"],
-    ["--neutral-fill-rest-l1", "--surface-2"],
-    ["--neutral-fill-rest-l2", "--surface"],
-    ["--neutral-fill-hover", "--pill-hover"],
-    ["--neutral-fill-active", "--active-wash"],
-    ["--neutral-fill-selected", "--seg-active-bg"],
-    ["--neutral-fill-stealth-hover", "--hover-wash"],
-    ["--neutral-fill-stealth-active", "--active-wash"],
-    ["--neutral-fill-stealth-selected", "--seg-active-bg"],
-    ["--neutral-foreground-rest", "--fg"],
-    ["--neutral-foreground-hover", "--fg"],
-    ["--neutral-foreground-active", "--fg"],
-    ["--neutral-foreground-hint", "--muted"],
-    ["--neutral-foreground-hint-selected", "--fg-dim"],
-    ["--neutral-outline-rest", "--border"],
-    ["--neutral-outline-hover", "--muted"],
-    ["--neutral-outline-active", "--muted"],
-    ["--neutral-focus", "--mode-accent"],
-    ["--accent-fill-rest", "--mode-accent"],
-    ["--accent-fill-hover", "--mode-accent"],
-    ["--accent-fill-active", "--mode-accent"],
-    ["--accent-fill-selected", "--mode-accent"],
-    ["--accent-foreground-rest", "--mode-accent"],
-    ["--accent-foreground-hover", "--mode-accent"],
-    ["--accent-foreground-active", "--mode-accent"],
-    ["--tabbed-pane-tab-selected-fill", "--bg"],
-    ["--tabbed-pane-tab-hover-fill", "--hover-wash"],
-    ["--tabbed-pane-highlight", "--mode-accent"],
+  // The developer tools painted in this app's colours: the palette every other
+  // view here is drawn from, measured off this page and handed to the painter
+  // that runs inside the tools (ui/desktop/devtools-paint.js). It reads every
+  // colour they define and restates it in these — a grey as our grey of the
+  // same depth, the browser's blue as our accent. Colour only: their type,
+  // their icons and the arrangement of their panels stay as they are.
+  const BROWSER_PALETTE = [
+    ["bg", "--bg"],
+    ["surface", "--surface"],
+    ["surface2", "--surface-2"],
+    ["border", "--border"],
+    ["muted2", "--muted-2"],
+    ["muted", "--muted"],
+    ["fgDim", "--fg-dim"],
+    ["fg", "--fg"],
+    ["accent", "--mode-accent"],
   ];
 
-  /**
-   * This app's palette in the tools' own names. Every declaration is
-   * `!important`: their stylesheet is an adopted one, and those cascade after
-   * anything a page adds, so a plain declaration of ours loses to it.
-   */
-  function browserDockStyle() {
-    if (typeof window.getComputedStyle !== "function") return "";
+  /** This app's colours as this page has them right now, as JSON. */
+  function browserDockPalette() {
+    if (typeof window.getComputedStyle !== "function") return "{}";
     const computed = window.getComputedStyle(document.documentElement);
-    const rules = [];
-    for (const [theirs, ours] of BROWSER_DOCK_TOKENS) {
+    const out = {};
+    for (const [name, ours] of BROWSER_PALETTE) {
       const value = (computed.getPropertyValue(ours) || "").trim();
-      if (value) rules.push(`${theirs}:${value} !important;`);
+      if (value) out[name] = value;
     }
-    return rules.length ? `:root{${rules.join("")}}` : "";
+    return JSON.stringify(out);
   }
 
   /** Light or dark, as this window has it — the ground those colours expect. */
@@ -414,9 +348,10 @@
    * own F12 speaks, which is where the screenshot and the Clear items come
    * from — WebView2 has no other API for them.
    * @param {string} method @param {any} [params]
+   * @param {boolean} [quiet] a failure nobody asked about is not reported
    * @returns {Promise<any>} undefined when the call failed
    */
-  async function browserCdp(method, params) {
+  async function browserCdp(method, params, quiet) {
     const t = browserBridge();
     if (!t) return undefined;
     try {
@@ -426,9 +361,11 @@
       });
       return raw ? JSON.parse(String(raw)) : {};
     } catch (err) {
-      const text = `[error] browser: ${String((err && err.message) || err)}`;
-      browserStatus(text);
-      toRenderer({ type: "systemNote", text });
+      if (!quiet) {
+        const text = `[error] browser: ${String((err && err.message) || err)}`;
+        browserStatus(text);
+        toRenderer({ type: "systemNote", text });
+      }
       return undefined;
     }
   }
@@ -469,18 +406,89 @@
     };
   }
 
-  /** True while a menu or the bar's list is open over the stage. */
-  function browserPopupShowing() {
-    if (browserSuggestEl && !browserSuggestEl.hidden) return true;
-    return browserPopups.some((p) => p.menu && !p.menu.hidden);
+  /** The rectangles of every menu and list open over this view right now. */
+  function browserPopupRects() {
+    const out = [];
+    const add = (el) => {
+      if (el && !el.hidden && el.getBoundingClientRect) out.push(el.getBoundingClientRect());
+    };
+    add(browserSuggestEl);
+    for (const p of browserPopups) add(p.menu);
+    return out;
+  }
+
+  /** True when an open popup lies over `el`: that pane has to step aside. */
+  function browserPopupsOver(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    return browserPopupRects().some((p) =>
+      p.width > 0 && p.height > 0
+      && p.left < r.right && p.right > r.left && p.top < r.bottom && p.bottom > r.top);
+  }
+
+  /** Whether `el`, once shown, would lie over the page — measured unseen. */
+  function browserWouldCover(el) {
+    if (!el || !el.style) return false;
+    const hidden = el.hidden;
+    el.hidden = false;
+    el.style.visibility = "hidden";
+    const over = browserPopupsOver(browserStage);
+    el.style.visibility = "";
+    el.hidden = hidden;
+    return over;
+  }
+
+  /** @type {Promise<void> | null} */ let browserCovering = null;
+  let browserUncoverTimer = 0;
+
+  /**
+   * A picture of the page for the time a menu is open over it. The page is an
+   * OS view over this one and nothing drawn here can appear on top of it, so
+   * while a menu lies over it the view steps aside — and this is what stands
+   * in its place: the page as it was a moment ago, not a hole. Taken before
+   * the view goes, so there is nothing to see in between.
+   */
+  function browserCover() {
+    if (!browserOpened || !browserStage || !browserStage.style) return Promise.resolve();
+    if (browserUncoverTimer) {
+      clearTimeout(browserUncoverTimer);
+      browserUncoverTimer = 0;
+    }
+    if (browserStage.style.backgroundImage) return Promise.resolve();
+    if (browserCovering) return browserCovering;
+    browserCovering = browserCdp(
+      "Page.captureScreenshot",
+      { format: "jpeg", quality: 80, captureBeyondViewport: false },
+      true
+    ).then((answer) => {
+      browserCovering = null;
+      const data = answer && answer.data;
+      if (data && browserStage && browserStage.style) {
+        browserStage.style.backgroundImage = `url(data:image/jpeg;base64,${data})`;
+      }
+    });
+    return browserCovering;
+  }
+
+  /** The page is back; the picture can go, once the view has had a frame. */
+  function browserUncover() {
+    if (!browserStage || !browserStage.style || !browserStage.style.backgroundImage) return;
+    if (browserUncoverTimer) return;
+    browserUncoverTimer = setTimeout(() => {
+      browserUncoverTimer = 0;
+      if (browserStage && !browserPopupsOver(browserStage)) {
+        browserStage.style.backgroundImage = "";
+      }
+    }, 300);
   }
 
   /**
    * Keep the two webviews over their panes — the page over the stage, the
-   * developer tools over the dock — or out of sight while the view is not up
-   * and while a popup is open: they are OS views over this page, so nothing
-   * drawn here can appear on top of them. A menu takes the page away for as
-   * long as it is open, and gives it back untouched.
+   * developer tools over the dock — or out of sight while the view is not up,
+   * and while a popup lies over one of them: they are OS views over this
+   * page, so nothing drawn here can appear on top of them. A menu takes only
+   * the pane it covers away, for as long as it is open, and the page leaves
+   * its picture behind (browserCover) so nothing seems to vanish.
    *
    * Measured on the next frame, never in the same breath as the change that
    * prompted it: a rectangle read before the layout has run is the old one,
@@ -494,15 +502,18 @@
       browserPlaceQueued = false;
       // The line may have been dragged, or the window resized under it.
       if (browserDockOpen) setBrowserDockWidth(browserDockW, browserBodyRoom());
-      const showing = browserViewActive() && !browserPopupShowing();
+      const up = browserViewActive();
+      const pageShowing = up && !browserPopupsOver(browserStage);
+      const dockShowing = up && browserDockOpen && !browserPopupsOver(browserDockEl);
       void browserInvoke("browser_bounds", {
-        rect: showing ? browserRect() : BROWSER_NOWHERE,
+        rect: pageShowing ? browserRect() : BROWSER_NOWHERE,
       });
+      if (pageShowing) browserUncover();
       void browserInvoke("browser_devtools", {
-        on: showing && browserDockOpen,
-        rect: showing && browserDockOpen ? browserDockRect() : BROWSER_NOWHERE,
+        on: dockShowing,
+        rect: dockShowing ? browserDockRect() : BROWSER_NOWHERE,
         theme: browserDockTheme(),
-        css: browserDockStyle(),
+        palette: browserDockPalette(),
       });
     });
   }
@@ -911,7 +922,9 @@
   }
 
   /** @param {any} menu the one to show, or null to close them all @param {boolean} on */
-  function browserOpenPopup(menu, on) {
+  async function browserOpenPopup(menu, on) {
+    // Opening over the page: its picture is taken before it is covered.
+    if (menu && on && browserWouldCover(menu)) await browserCover();
     for (const p of browserPopups) {
       const show = p.menu === menu && on;
       p.menu.hidden = !show;
@@ -991,11 +1004,22 @@
     for (const row of browserSuggested) browserSuggestEl.appendChild(browserSuggestRow(row));
     browserSuggestAt = -1;
     const was = !browserSuggestEl.hidden;
-    browserSuggestEl.hidden = browserSuggested.length === 0;
-    if (browserUrlEl.setAttribute) {
-      browserUrlEl.setAttribute("aria-expanded", browserSuggested.length ? "true" : "false");
+    const show = browserSuggested.length > 0;
+    const reveal = () => {
+      browserSuggestEl.hidden = !show;
+      if (browserUrlEl.setAttribute) {
+        browserUrlEl.setAttribute("aria-expanded", show ? "true" : "false");
+      }
+      if (was !== show) placeBrowser();
+    };
+    // Opening over the page: its picture is taken before it is covered.
+    if (show && !was && browserWouldCover(browserSuggestEl)) {
+      void browserCover().then(() => {
+        if (browserSuggested.length) reveal();
+      });
+      return;
     }
-    if (was !== !browserSuggestEl.hidden) placeBrowser();
+    reveal();
   }
 
   /** @param {number} step */

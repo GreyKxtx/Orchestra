@@ -403,11 +403,14 @@ pub fn browser_pick(app: AppHandle, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// The element the panel's colours are written into, and the function that
-/// writes them. Named so a second call replaces the first rather than piling
-/// stylesheets up.
-const STYLE_ID: &str = "orchestra-palette";
+/// The painter the tools are given (`ui/desktop/devtools-paint.js`), and the
+/// name it answers to. It reads every colour the tools define as a custom
+/// property and restates it in the app's palette: a neutral becomes the
+/// neutral of the same depth, the browser's blue becomes the accent, and the
+/// colours that carry meaning — errors, diffs, syntax — are left alone.
+const PAINT_JS: &str = include_str!("../../devtools-paint.js");
 const PAINT: &str = "__orchestraPaint";
+const PALETTE_KEY: &str = "orchestra-palette";
 
 /// What the tools are told before they boot, all of it their own page's.
 ///
@@ -415,31 +418,27 @@ const PAINT: &str = "__orchestraPaint";
 /// a profile that has not seen this version — and since the panel's port, and
 /// so its origin, is chosen afresh at every launch, that is every launch. The
 /// one key names only that tab; the tools fill their other tabs in around it.
+/// The screencast — a picture of the page beside the panels, for driving a
+/// phone from a desktop — which is on by default whenever the target is a
+/// remote one, as ours is; the page is right there to the left. And the light
+/// or dark they start in, which is the app's, so the colours land on the
+/// ground they were mixed for. The last two only where the user has not
+/// answered for themselves: their own click, in the session it is made,
+/// stands.
 ///
-/// Then the screencast — a picture of the page beside the
-/// panels, for driving a phone from a desktop — is on by default whenever the
-/// target is a remote one, which ours is; here the page is right there to the
-/// left, so the picture would only be the width it costs. And the light or
-/// dark they start in, which is the app's, so the colours below land on the
-/// ground they were mixed for. Both only where the user has not answered for
-/// themselves: their own click, in the session it is made, stands.
+/// Then the painter, and the first paint: `palette` is the app's colours as
+/// the page measured them, JSON, and the painter keeps the last one it was
+/// given, so a page that comes back from a reload comes back wearing it.
 ///
-/// Then the colours. `css` names their own tokens with this app's values, and
-/// every declaration in it carries `!important` — their stylesheet is an
-/// adopted one, and those cascade after anything this page adds, so a plain
-/// declaration loses. It reaches only colour; the type, the icons and the
-/// arrangement of the panels are Chromium's, and chasing those would be
-/// signing up to chase them again at every update.
-///
-/// Both settings and stylesheet are data from the page, so both are encoded
-/// rather than pasted: a palette cannot become a statement.
-fn devtools_boot(theme: &str, css: &str) -> String {
+/// Settings and palette are data from the page, so both are encoded rather
+/// than pasted: a palette cannot become a statement.
+fn devtools_boot(theme: &str, palette: &str) -> String {
     // Their settings are JSON in storage, so a string setting is stored with
     // its quotes — the value is encoded once to store it, and again to be a
     // literal in this script.
     let stored = serde_json::to_string(theme).unwrap_or_else(|_| "\"dark\"".into());
     let theme = serde_json::to_string(&stored).unwrap_or_else(|_| "\"\\\"dark\\\"\"".into());
-    let css = serde_json::to_string(css).unwrap_or_else(|_| "\"\"".into());
+    let palette = serde_json::to_string(palette).unwrap_or_else(|_| "\"\"".into());
     format!(
         "try {{
            for (const key of ['screencast-enabled', 'screencastEnabled']) {{
@@ -452,23 +451,9 @@ fn devtools_boot(theme: &str, css: &str) -> String {
            tabs.welcome = false;
            localStorage.setItem('closeable-tabs', JSON.stringify(tabs));
          }} catch (e) {{}}
-         globalThis.{PAINT} = (css) => {{
-           try {{ localStorage.setItem('{STYLE_ID}', css); }} catch (e) {{}}
-           const put = () => {{
-             if (!document.head) return false;
-             let el = document.getElementById('{STYLE_ID}');
-             if (!el) {{
-               el = document.createElement('style');
-               el.id = '{STYLE_ID}';
-               document.head.appendChild(el);
-             }}
-             el.textContent = css;
-             return true;
-           }};
-           if (!put()) document.addEventListener('DOMContentLoaded', put);
-         }};
-         let start = {css};
-         try {{ start = localStorage.getItem('{STYLE_ID}') ?? start; }} catch (e) {{}}
+{PAINT_JS}
+         let start = {palette};
+         try {{ start = localStorage.getItem('{PALETTE_KEY}') ?? start; }} catch (e) {{}}
          globalThis.{PAINT}(start);
 "
     )
@@ -503,7 +488,7 @@ pub fn browser_devtools(
     rect: Rect,
     on: bool,
     theme: String,
-    css: String,
+    palette: String,
 ) -> Result<(), String> {
     if !on {
         if let Some(webview) = app.get_webview(DEVTOOLS) {
@@ -549,10 +534,10 @@ pub fn browser_devtools(
             // carries the palette of the day it was built.
             painted.clear();
         }
-        if *painted != css {
-            let call = serde_json::to_string(&css).unwrap_or_else(|_| "''".into());
+        if *painted != palette {
+            let call = serde_json::to_string(&palette).unwrap_or_else(|_| "''".into());
             let _ = webview.eval(format!("globalThis.{PAINT} && globalThis.{PAINT}({call})"));
-            painted.clone_from(&css);
+            painted.clone_from(&palette);
         }
         // The colours are painted first, so the page that comes back from the
         // reload comes back wearing them.
@@ -575,12 +560,12 @@ pub fn browser_devtools(
     let builder = WebviewBuilder::new(DEVTOOLS, WebviewUrl::External(parsed))
         .data_directory(panel_profile(&app))
         .additional_browser_args(&panel_args())
-        .initialization_script(devtools_boot(&theme, &css));
+        .initialization_script(devtools_boot(&theme, &palette));
     window
         .add_child(builder, rect.position(), rect.size())
         .map_err(|e| e.to_string())?;
     *attached = target;
-    painted.clone_from(&css);
+    painted.clone_from(&palette);
     themed.clone_from(&theme);
     Ok(())
 }
@@ -895,22 +880,20 @@ mod tests {
     // script the tools boot with, never words of it.
     #[test]
     fn the_palette_reaches_the_tools_as_data() {
-        let script = devtools_boot(
-            "light",
-            ":root{--sys-color-base:#fff \"'</script> !important;}",
-        );
+        let script = devtools_boot("light", "{\"bg\":\"#fff\",\"x\":\"'</script>\"}");
         assert!(
             script.contains("localStorage.setItem(key, \"\\\"light\\\"\")"),
             "a string setting is stored with its own quotes: {script}"
         );
         assert!(
-            script.contains("#fff \\\"'"),
-            "a quote in the palette is escaped, not the end of the literal: {script}"
+            script.contains("let start = \"{\\\"bg\\\""),
+            "the palette is a string literal, its quotes escaped: {script}"
         );
-        assert_eq!(
-            script.matches("__orchestraPaint").count(),
-            2,
-            "the painter is defined once and called once"
+        assert!(
+            script
+                .trim_end()
+                .ends_with("globalThis.__orchestraPaint(start);"),
+            "the boot ends by painting: {script}"
         );
     }
 

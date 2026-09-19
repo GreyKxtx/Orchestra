@@ -123,6 +123,8 @@ jobs:
 
       - name: Browser picker tests
         run: node ui/desktop/scripts/picker-test.mjs
+      - name: Devtools painter tests
+        run: node ui/desktop/scripts/paint-test.mjs
 
   desktop:
     strategy:
