@@ -38,17 +38,8 @@
   /** @type {any} */ let browserSuggestEl = null;
   /** @type {any} */ let browserDockEl = null;
   /** @type {any} */ let browserDockBtn = null;
-  /** @type {any} */ let browserTreeEl = null;
-  /** @type {any} */ let browserStylesEl = null;
-  /** @type {any} */ let browserLogEl = null;
-  /** @type {any} */ let browserEvalEl = null;
-  /** @type {any} */ let browserTabBtns = {};
   let browserDockOpen = false;
-  let browserDockTab = "elements";
-  let browserLogTimer = 0;
-  /** @type {Map<string, any>} */ const browserTreeData = new Map();
-  /** @type {Set<string>} */ const browserExpanded = new Set([""]);
-  /** @type {number[] | null} */ let browserSelected = null;
+  let browserPlaceQueued = false;
   /** @type {any[]} */ let browserSuggested = [];
   let browserSuggestAt = -1;
   /** @type {any} */ let browserStatusEl = null;
@@ -322,6 +313,21 @@
     };
   }
 
+  /** The dock's rectangle, in the same physical pixels as the stage's. */
+  function browserDockRect() {
+    if (!browserDockEl || browserDockEl.hidden || !browserDockEl.getBoundingClientRect) {
+      return BROWSER_NOWHERE;
+    }
+    const r = browserDockEl.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    return {
+      x: Math.round(r.left * dpr),
+      y: Math.round(r.top * dpr),
+      width: Math.round(r.width * dpr),
+      height: Math.round(r.height * dpr),
+    };
+  }
+
   /** True while a menu or the bar's list is open over the stage. */
   function browserPopupShowing() {
     if (browserSuggestEl && !browserSuggestEl.hidden) return true;
@@ -329,15 +335,31 @@
   }
 
   /**
-   * Keep the webview over the stage — or out of sight while the view is not
-   * up, and while a popup is open: the webview is an OS view over this page,
-   * so nothing drawn here can appear on top of it. A menu takes the page
-   * away for as long as it is open, and gives it back untouched.
+   * Keep the two webviews over their panes — the page over the stage, the
+   * developer tools over the dock — or out of sight while the view is not up
+   * and while a popup is open: they are OS views over this page, so nothing
+   * drawn here can appear on top of them. A menu takes the page away for as
+   * long as it is open, and gives it back untouched.
+   *
+   * Measured on the next frame, never in the same breath as the change that
+   * prompted it: a rectangle read before the layout has run is the old one,
+   * which is how the page kept the width the dock had just given back.
    */
   function placeBrowser() {
-    if (!browserOpened) return;
-    const rect = browserViewActive() && !browserPopupShowing() ? browserRect() : BROWSER_NOWHERE;
-    void browserInvoke("browser_bounds", { rect });
+    if (!browserOpened || browserPlaceQueued) return;
+    browserPlaceQueued = true;
+    const soon = typeof requestAnimationFrame === "function" ? requestAnimationFrame : setTimeout;
+    soon(() => {
+      browserPlaceQueued = false;
+      const showing = browserViewActive() && !browserPopupShowing();
+      void browserInvoke("browser_bounds", {
+        rect: showing ? browserRect() : BROWSER_NOWHERE,
+      });
+      void browserInvoke("browser_devtools", {
+        on: showing && browserDockOpen,
+        rect: showing && browserDockOpen ? browserDockRect() : BROWSER_NOWHERE,
+      });
+    });
   }
 
   async function openBrowserAt(url) {
@@ -393,20 +415,6 @@
     });
     browserStatus(said);
     toRenderer({ type: "systemNote", text: said });
-  }
-
-  /** Open the tree down to a node and select it. */
-  async function revealNode(path) {
-    browserExpanded.add("");
-    for (let i = 0; i < path.length; i++) {
-      const key = pathKey(path.slice(0, i));
-      browserExpanded.add(key);
-      if (!browserTreeData.has(key)) await fetchTree(path.slice(0, i));
-    }
-    const parent = browserTreeData.get(pathKey(path.slice(0, -1)));
-    const node = parent && (parent.kids || []).find((k) => pathKey(k.path) === pathKey(path));
-    if (node) await selectNode(node);
-    else drawTree();
   }
 
   /** UTF-8 text as base64, which is what attachments.store takes. */
@@ -476,223 +484,22 @@
 
   /* ---- the inspector ------------------------------------------------------ */
   //
-  // What F12 gives, beside the page rather than in a window of its own: the
-  // DOM tree, what applies to the selected node, and the page's console. The
-  // panel is another webview and cannot hold a node, so a node is named by
-  // its path — the child index at each step down from <html> — and the tree
-  // is asked for one level at a time (ui/desktop/picker.js).
-
-  /** @param {number[]} path */
-  function pathKey(path) {
-    return (path || []).join(".");
-  }
-
-  /** @param {number[]} path */
-  async function fetchTree(path) {
-    const data = await browserEval(
-      `window.__orchPick ? __orchPick.tree(${JSON.stringify(path || [])}) : null`
-    );
-    if (data) browserTreeData.set(pathKey(path), data);
-    return data;
-  }
-
-  /** One row per visible node, parents before children. */
-  function treeRows(node, depth, out) {
-    out.push({ node, depth });
-    const key = pathKey(node.path);
-    if (!browserExpanded.has(key)) return out;
-    const data = browserTreeData.get(key);
-    for (const kid of (data && data.kids) || []) treeRows(kid, depth + 1, out);
-    if (data && data.more) out.push({ more: data.more, depth: depth + 1 });
-    return out;
-  }
-
-  /** `div#main.card` — how a row names its node. */
-  function nodeLabel(node) {
-    let text = node.tag;
-    if (node.id) text += `#${node.id}`;
-    for (const c of node.cls || []) text += `.${c}`;
-    return text;
-  }
-
-  function drawTree() {
-    if (!browserTreeEl) return;
-    while (browserTreeEl.firstChild) browserTreeEl.removeChild(browserTreeEl.firstChild);
-    const root = browserTreeData.get("");
-    if (!root) return;
-    const selected = browserSelected ? pathKey(browserSelected) : null;
-    for (const row of treeRows(root, 0, [])) {
-      const line = document.createElement("div");
-      line.className = "browser-node";
-      line.style.paddingLeft = `${6 + row.depth * 12}px`;
-      if (row.more) {
-        line.textContent = i18n("browser.more_nodes", { n: String(row.more) });
-        line.className = "browser-node browser-node-more";
-        browserTreeEl.appendChild(line);
-        continue;
-      }
-      const node = row.node;
-      const key = pathKey(node.path);
-      const twisty = document.createElement("span");
-      twisty.className = "browser-twisty";
-      twisty.textContent = node.n ? (browserExpanded.has(key) ? "▾" : "▸") : "";
-      twisty.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        void toggleNode(node);
-      });
-      const name = document.createElement("span");
-      name.className = "browser-node-name";
-      name.textContent = nodeLabel(node);
-      line.append(twisty, name);
-      if (node.text) {
-        const text = document.createElement("span");
-        text.className = "browser-node-text";
-        text.textContent = node.text;
-        line.appendChild(text);
-      }
-      if (selected === key) line.classList.add("is-selected");
-      line.addEventListener("click", () => void selectNode(node));
-      browserTreeEl.appendChild(line);
-    }
-  }
-
-  /** @param {any} node */
-  async function toggleNode(node) {
-    const key = pathKey(node.path);
-    if (browserExpanded.has(key)) {
-      browserExpanded.delete(key);
-      drawTree();
-      return;
-    }
-    browserExpanded.add(key);
-    if (!browserTreeData.has(key)) await fetchTree(node.path);
-    drawTree();
-  }
-
-  /** @param {any} node */
-  async function selectNode(node) {
-    browserSelected = node.path;
-    drawTree();
-    void browserEval(
-      `window.__orchPick ? __orchPick.highlight(${JSON.stringify(node.path)}) : null`
-    );
-    const detail = await browserEval(
-      `window.__orchPick ? __orchPick.detail(${JSON.stringify(node.path)}) : null`
-    );
-    drawStyles(detail);
-  }
-
-  /** What applies to the selected node, and a way to hand it to the model. */
-  function drawStyles(detail) {
-    if (!browserStylesEl) return;
-    while (browserStylesEl.firstChild) browserStylesEl.removeChild(browserStylesEl.firstChild);
-    if (!detail) return;
-    const attach = document.createElement("button");
-    attach.type = "button";
-    attach.className = "browser-menu-item browser-attach";
-    attach.textContent = i18n("browser.attach_node");
-    attach.setAttribute("data-i18n", "browser.attach_node");
-    attach.addEventListener("click", () => void attachPick(detail));
-    const body = document.createElement("pre");
-    body.className = "browser-styles-body";
-    body.textContent = pickMarkdown(detail);
-    browserStylesEl.append(attach, body);
-  }
-
-  /** Open the inspector on the tree's root, or refresh what it shows. */
-  async function loadTree() {
-    browserTreeData.clear();
-    await fetchTree([]);
-    // <html> is worth expanding for the user: its children are <head> and
-    // <body>, and nobody wants to click twice to see a page.
-    browserExpanded.clear();
-    browserExpanded.add("");
-    const root = browserTreeData.get("");
-    const body = root && (root.kids || []).find((k) => k.tag === "body");
-    if (body) {
-      browserExpanded.add(pathKey(body.path));
-      await fetchTree(body.path);
-    }
-    drawTree();
-  }
-
-  /* ---- the console, inside the inspector ---------------------------------- */
-
-  /** @param {string} level @param {string} text */
-  function browserLogLine(level, text) {
-    if (!browserLogEl) return;
-    const line = document.createElement("div");
-    line.className = `browser-log-line browser-log-${level}`;
-    line.textContent = text;
-    browserLogEl.appendChild(line);
-    while (browserLogEl.childNodes.length > 500) {
-      browserLogEl.removeChild(browserLogEl.firstChild);
-    }
-    browserLogEl.scrollTop = browserLogEl.scrollHeight;
-  }
-
-  /** Everything the page has logged since the last look. */
-  async function browserDrainLog() {
-    if (!browserDockOpen || !browserOpened) return;
-    const rows = await browserEval("window.__orchPick ? __orchPick.drainLog() : []");
-    if (!Array.isArray(rows)) return;
-    for (const row of rows) {
-      browserLogLine(String((row && row.level) || "log"), String((row && row.text) || ""));
-    }
-  }
-
-  /** @param {string} code */
-  async function browserRunInPage(code) {
-    const source = String(code || "").trim();
-    if (!source) return;
-    browserLogLine("in", `› ${source}`);
-    // eval, because that is what a console is. It is wrapped so a throw comes
-    // back as a line rather than as nothing: the shell's callback drops
-    // exceptions on Windows.
-    const wrapped =
-      "(function(){try{var __r=(0,eval)(" +
-      JSON.stringify(source) +
-      ");return window.__orchPick?__orchPick.fmt(__r):String(__r)}" +
-      "catch(e){return 'Uncaught '+String(e)}})()";
-    const answer = await browserEval(wrapped);
-    if (answer !== undefined) browserLogLine("out", String(answer));
-    void browserDrainLog();
-  }
-
-  /* ---- opening and closing it --------------------------------------------- */
-
-  /** @param {string} tab */
-  function showDockTab(tab) {
-    browserDockTab = tab;
-    for (const name of ["elements", "console"]) {
-      const on = name === tab;
-      const pane = browserDockEl && browserDockEl.querySelector(`.browser-pane-${name}`);
-      if (pane) pane.hidden = !on;
-      const btn = browserTabBtns[name];
-      if (btn && btn.setAttribute) btn.setAttribute("aria-selected", on ? "true" : "false");
-    }
-    if (tab === "console" && browserEvalEl && browserEvalEl.focus) browserEvalEl.focus();
-  }
+  // The browser's own developer tools — elements with the live DOM, console,
+  // network, sources — docked beside the page instead of opening in the
+  // window WebView2 puts them in.
+  //
+  // They are a page like any other: the browser process the panel runs in
+  // serves their frontend, so the shell shows it in a webview of ours over
+  // the dock's rectangle (browser_devtools). That process listens for the
+  // devtools protocol on a loopback port, which is why the panel has a
+  // profile of its own — the port drives every page of its environment, and
+  // the page holding this app's capabilities is not in it.
 
   function browserDockToggle() {
     browserDockOpen = !browserDockOpen;
     if (browserDockEl) browserDockEl.hidden = !browserDockOpen;
     if (browserDockBtn) {
       browserDockBtn.setAttribute("aria-pressed", browserDockOpen ? "true" : "false");
-    }
-    if (browserLogTimer) {
-      clearInterval(browserLogTimer);
-      browserLogTimer = 0;
-    }
-    if (browserDockOpen) {
-      // The page cannot call us — a page we do not control is handed no
-      // bridge — so what it logged is collected by asking, while anyone is
-      // looking.
-      browserLogTimer = setInterval(() => void browserDrainLog(), 700);
-      void browserDrainLog();
-      if (browserOpened) void loadTree();
-    } else {
-      void browserEval("window.__orchPick ? __orchPick.unhighlight() : null");
     }
     placeBrowser();
   }
@@ -785,7 +592,6 @@
       browserMenuItem("browser.shot", () => void browserShot(null)),
       browserMenuItem("browser.shot_area", () => void browserShotArea()),
       browserMenuSeparator(),
-      browserMenuItem("browser.devtools", () => void browserInvoke("browser_devtools", {})),
       browserMenuItem("browser.hard_reload", () => {
         void browserCdp("Page.reload", { ignoreCache: true });
       }),
@@ -1182,58 +988,12 @@
     browserStage = document.createElement("div");
     browserStage.className = "browser-stage";
 
-    // The inspector sits beside the page, not over it: the page is an OS view
-    // of its own, and the stage shrinks to make room.
+    // The inspector sits beside the page, not over it: both are OS views of
+    // their own, and the stage shrinks to make room.
     browserDockEl = document.createElement("div");
     browserDockEl.className = "browser-dock";
     browserDockEl.hidden = true;
     browserDockEl.style.flexBasis = `${BROWSER_DOCK_W}px`;
-
-    const tabs = document.createElement("div");
-    tabs.className = "browser-tabs";
-    tabs.setAttribute("role", "tablist");
-    for (const [name, key] of [["elements", "browser.tab_elements"], ["console", "browser.tab_console"]]) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "browser-tab";
-      b.setAttribute("role", "tab");
-      b.textContent = i18n(key);
-      b.setAttribute("data-i18n", key);
-      b.addEventListener("click", () => showDockTab(name));
-      browserTabBtns[name] = b;
-      tabs.appendChild(b);
-    }
-    const refresh = browserToolButton("reload", "browser.tree_reload", () => void loadTree());
-    tabs.appendChild(refresh);
-
-    const elementsPane = document.createElement("div");
-    elementsPane.className = "browser-dock-pane browser-pane-elements";
-    browserTreeEl = document.createElement("div");
-    browserTreeEl.className = "browser-tree";
-    browserStylesEl = document.createElement("div");
-    browserStylesEl.className = "browser-styles";
-    elementsPane.append(browserTreeEl, browserStylesEl);
-
-    const consolePane = document.createElement("div");
-    consolePane.className = "browser-dock-pane browser-pane-console";
-    consolePane.hidden = true;
-    browserLogEl = document.createElement("div");
-    browserLogEl.className = "browser-log";
-    browserEvalEl = document.createElement("input");
-    browserEvalEl.type = "text";
-    browserEvalEl.className = "browser-eval";
-    browserEvalEl.placeholder = i18n("browser.eval_hint");
-    browserEvalEl.setAttribute("data-i18n-placeholder", "browser.eval_hint");
-    browserEvalEl.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter") return;
-      ev.preventDefault();
-      const code = browserEvalEl.value;
-      browserEvalEl.value = "";
-      void browserRunInPage(code);
-    });
-    consolePane.append(browserLogEl, browserEvalEl);
-
-    browserDockEl.append(tabs, elementsPane, consolePane);
 
     const body = document.createElement("div");
     body.className = "browser-body";
@@ -1328,8 +1088,6 @@
         }
         if (!parsed || parsed.error) return;
         await attachPick(parsed);
-        // A pick is also where the inspector should be looking.
-        if (browserDockOpen && Array.isArray(parsed.path)) void revealNode(parsed.path);
       });
 
       // The bar follows the page, unless the user is typing in it.
@@ -1339,8 +1097,6 @@
         if (String(url).startsWith("about:")) return;
         browserUrlEl.value = String(url);
         rememberBrowserUrl(String(url));
-        // A new page is a new tree; the old one names nodes that are gone.
-        if (browserDockOpen) setTimeout(() => void loadTree(), 600);
       });
     }
   })();

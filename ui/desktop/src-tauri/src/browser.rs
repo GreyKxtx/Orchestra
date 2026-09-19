@@ -19,9 +19,12 @@
 //! `add_child` waits for the main thread to build the webview: the two
 //! together froze the app.
 
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -30,6 +33,10 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Url, We
 
 /// The panel's webview label.
 pub const LABEL: &str = "browser";
+
+/// The devtools webview's label: the browser's own developer tools, docked
+/// beside the page rather than opened in a window of their own.
+pub const DEVTOOLS: &str = "browser-devtools";
 
 /// The window that owns the chat, and so the one a pick is delivered to.
 const MAIN: &str = "main";
@@ -104,18 +111,132 @@ impl Rect {
     }
 }
 
-/// The browser arguments every webview of this app is built with. WebView2
-/// runs one browser process per user-data folder and refuses a second
-/// environment there with different arguments, so the panel has to be built
-/// with exactly the main window's — or its controller never comes up and the
-/// stage stays dark. `ORCH_DEBUG_PORT=<port>` adds remote debugging on
-/// loopback, which is how a script drives the shell and looks at the result;
+/// The browser arguments the app's own window is built with. WebView2 runs
+/// one browser process per user-data folder and refuses a second environment
+/// there with different arguments, so every webview sharing a folder has to
+/// be built with the same ones. `ORCH_DEBUG_PORT=<port>` adds remote
+/// debugging, which is how a script drives the shell and looks at the result;
 /// the first flag restates wry's own default, which setting this would drop.
 pub fn browser_args() -> Option<String> {
     let port = std::env::var("ORCH_DEBUG_PORT").ok()?;
-    Some(format!(
-        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port}"
-    ))
+    Some(format!("{DEFAULT_ARGS} --remote-debugging-port={port}"))
+}
+
+const DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+/// The port the panel's own browser process listens on for the devtools
+/// protocol. Chosen once, by asking the system for a free one.
+///
+/// This is what makes the real developer tools possible: their frontend is
+/// served by that same process, so it can be shown in a webview of ours
+/// instead of the window WebView2 opens on its own. It is also why the panel
+/// gets a profile of its own below — a debugging port drives every page in
+/// its environment, and the page with the app's capabilities must not be one
+/// of them. What is reachable here is the site the user is browsing, and
+/// only from this machine.
+fn panel_port() -> u16 {
+    static PORT: OnceLock<u16> = OnceLock::new();
+    *PORT.get_or_init(|| {
+        TcpListener::bind("127.0.0.1:0")
+            .ok()
+            .and_then(|l| l.local_addr().ok())
+            .map(|a| a.port())
+            .unwrap_or(0)
+    })
+}
+
+/// The panel's own WebView2 profile, beside the app's data. Separate from the
+/// app's: it carries the cookies and the cache of whatever is browsed, and it
+/// is the environment the debugging port above belongs to.
+fn panel_profile(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("orchestra"))
+        .join("browser-profile")
+}
+
+/// The arguments the panel and its devtools are both built with — identical,
+/// or WebView2 refuses the second one.
+///
+/// `--remote-allow-origins` is what lets the developer tools attach at all:
+/// their frontend is served from the debugging port, so its WebSocket carries
+/// an `Origin`, and the protocol server answers 403 to any origin it was not
+/// told about. The one named here is that same server's own address.
+fn panel_args() -> String {
+    let port = panel_port();
+    format!(
+        "{DEFAULT_ARGS} --remote-debugging-port={port} --remote-allow-origins=http://127.0.0.1:{port}"
+    )
+}
+
+/// Asks the panel's browser process which pages it is hosting, and returns
+/// the one that is the browsed page: its own devtools are a page too.
+fn devtools_target(port: u16) -> Result<String, String> {
+    let at = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut socket = TcpStream::connect_timeout(&at, ANSWER_WITHIN)
+        .map_err(|e| format!("the panel's devtools are not listening: {e}"))?;
+    let _ = socket.set_read_timeout(Some(ANSWER_WITHIN));
+    // CRLF, spelled out: this server closes on a request with bare newlines.
+    socket
+        .write_all(CRLF_REQUEST.as_bytes())
+        .map_err(|e| e.to_string())?;
+    // The devtools' own HTTP server holds the connection open whatever the
+    // request asked for, so the answer is read until its body is as long as
+    // its Content-Length says — never until end of stream.
+    let mut answer = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match socket.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => answer.extend_from_slice(&chunk[..n]),
+            Err(e) => return Err(format!("the devtools answer was cut short: {e}")),
+        }
+        if let Some((head, body)) = split_http(&answer) {
+            if content_length(head).is_some_and(|want| body.len() >= want) {
+                break;
+            }
+        }
+    }
+    let (_, body) = split_http(&answer).ok_or_else(|| {
+        format!(
+            "the devtools answer had no body: port {port}, {} byte(s): {}",
+            answer.len(),
+            String::from_utf8_lossy(&answer[..answer.len().min(120)])
+        )
+    })?;
+    let text = std::str::from_utf8(body).map_err(|e| e.to_string())?;
+    let targets: Vec<serde_json::Value> =
+        serde_json::from_str(text.trim()).map_err(|e| format!("unreadable target list: {e}"))?;
+    targets
+        .iter()
+        .find(|t| {
+            t.get("type").and_then(|v| v.as_str()) == Some("page")
+                && !t
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .contains("/devtools/")
+        })
+        .and_then(|t| t.get("id").and_then(|v| v.as_str()))
+        .map(|id| id.to_string())
+        .ok_or_else(|| "the panel has no page to inspect".to_string())
+}
+
+/// The one request this module makes, with the line endings HTTP insists on.
+const CRLF_REQUEST: &str =
+    "GET /json/list HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+
+/// An HTTP answer split at its blank line.
+fn split_http(answer: &[u8]) -> Option<(&str, &[u8])> {
+    let at = answer.windows(4).position(|w| w == b"\r\n\r\n")?;
+    Some((std::str::from_utf8(&answer[..at]).ok()?, &answer[at + 4..]))
+}
+
+fn content_length(head: &str) -> Option<usize> {
+    head.lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split(':').nth(1))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 /// Only http(s) reaches the panel: a `file://` or `javascript:` address typed
@@ -165,7 +286,9 @@ pub fn browser_open(app: AppHandle, url: String, rect: Rect) -> Result<(), Strin
     // core's origin, it must reach any site the user types. It is granted no
     // capability, so the page it shows can invoke nothing.
     let handle = app.clone();
-    let mut builder = WebviewBuilder::new(LABEL, WebviewUrl::External(target))
+    let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(target))
+        .data_directory(panel_profile(&app))
+        .additional_browser_args(&panel_args())
         .initialization_script(PICKER_JS)
         .on_navigation(move |url| {
             if !may_navigate(url) {
@@ -180,9 +303,6 @@ pub fn browser_open(app: AppHandle, url: String, rect: Rect) -> Result<(), Strin
             );
             true
         });
-    if let Some(args) = browser_args() {
-        builder = builder.additional_browser_args(&args);
-    }
     window
         .add_child(builder, rect.position(), rect.size())
         .map(|_| ())
@@ -214,8 +334,10 @@ pub fn browser_hide(app: AppHandle) {
     if let Ok(mut armed) = app.state::<PickerState>().0.lock() {
         *armed = false;
     }
-    if let Some(webview) = app.get_webview(LABEL) {
-        let _ = webview.hide();
+    for label in [LABEL, DEVTOOLS] {
+        if let Some(webview) = app.get_webview(label) {
+            let _ = webview.hide();
+        }
     }
 }
 
@@ -225,8 +347,10 @@ pub fn browser_close(app: AppHandle) {
     if let Ok(mut armed) = app.state::<PickerState>().0.lock() {
         *armed = false;
     }
-    if let Some(webview) = app.get_webview(LABEL) {
-        let _ = webview.close();
+    for label in [LABEL, DEVTOOLS] {
+        if let Some(webview) = app.get_webview(label) {
+            let _ = webview.close();
+        }
     }
 }
 
@@ -279,19 +403,65 @@ pub fn browser_pick(app: AppHandle, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// The page's own developer tools — elements, console, network, the lot —
-/// which WebView2 opens in a window of their own. Open when closed, closed
-/// when open.
+/// The page's own developer tools — elements, console, network, sources, the
+/// lot — docked over `rect`, which is a pane of the app's own page. Not the
+/// window WebView2 opens by itself: their frontend is a page like any other,
+/// served by the browser process the panel runs in, so it is shown in a
+/// webview of ours beside the site.
 #[tauri::command(async)]
-pub fn browser_devtools(app: AppHandle) -> Result<(), String> {
-    let webview = app
-        .get_webview(LABEL)
-        .ok_or_else(|| "the browser panel is not open".to_string())?;
-    if webview.is_devtools_open() {
-        webview.close_devtools();
-    } else {
-        webview.open_devtools();
+pub fn browser_devtools(app: AppHandle, rect: Rect, on: bool) -> Result<(), String> {
+    if !on {
+        if let Some(webview) = app.get_webview(DEVTOOLS) {
+            let _ = webview.hide();
+        }
+        return Ok(());
     }
+    if app.get_webview(LABEL).is_none() {
+        return Err("the browser panel is not open".into());
+    }
+    // One caller at a time past here. Placement runs on every layout change,
+    // so two calls can arrive while the first is still building its webview,
+    // and the second would find none and build it again. Whoever holds this
+    // also holds the page these tools are attached to.
+    static ATTACHED: Mutex<String> = Mutex::new(String::new());
+    let mut attached = ATTACHED.lock().map_err(|_| "devtools state poisoned")?;
+
+    let port = panel_port();
+    let target = devtools_target(port)?;
+    // Elements first: it is the page's own DOM, which is what this panel is
+    // for. Everything else is a tab away.
+    let url = format!(
+        "http://127.0.0.1:{port}/devtools/inspector.html\
+         ?ws=127.0.0.1:{port}/devtools/page/{target}&panel=elements"
+    );
+    let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
+
+    if let Some(webview) = app.get_webview(DEVTOOLS) {
+        // A page the user browsed to is a new target, and the tools attached
+        // to the old one only say the connection closed.
+        if *attached != target {
+            webview.navigate(parsed).map_err(|e| e.to_string())?;
+            *attached = target;
+        }
+        let _ = webview.set_bounds(tauri::Rect {
+            position: rect.position().into(),
+            size: rect.size().into(),
+        });
+        return webview.show().map_err(|e| e.to_string());
+    }
+
+    let window = app
+        .get_window(MAIN)
+        .ok_or_else(|| "the main window is gone".to_string())?;
+    // The same profile and the same arguments as the panel: one WebView2
+    // environment, which is also what lets this page speak to that one.
+    let builder = WebviewBuilder::new(DEVTOOLS, WebviewUrl::External(parsed))
+        .data_directory(panel_profile(&app))
+        .additional_browser_args(&panel_args());
+    window
+        .add_child(builder, rect.position(), rect.size())
+        .map_err(|e| e.to_string())?;
+    *attached = target;
     Ok(())
 }
 
