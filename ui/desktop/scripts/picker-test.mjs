@@ -52,6 +52,15 @@ function el(tag, opts = {}) {
     child.parentElement = null;
   };
   node.style = { cssText: "" };
+  // The tree's rows carry a leaf's text, and the picker reads it the way a
+  // real node gives it.
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return node.childNodes
+        .map((c) => (c.nodeType === 3 ? c.nodeValue : c.textContent || ""))
+        .join("");
+    },
+  });
   for (const child of opts.children || []) node.appendChild(child);
   for (const t of opts.text ? [opts.text] : []) node.childNodes.push({ nodeType: 3, nodeValue: t });
   return node;
@@ -200,6 +209,45 @@ test("arm, click, take: one payload, then nothing", () => {
   assert.deepEqual(payload.box, { x: 10, y: 20, w: 100, h: 40 });
 
   assert.equal(pick.take(), "idle", "a payload is handed over once");
+});
+
+test("the tree is one level at a time, and a node is named by its path", () => {
+  const deep = el("em", { text: "deep" });
+  const span = el("span", { class: "label", children: [deep] });
+  const p1 = el("p", { id: "first", children: [span] });
+  const p2 = el("p", { text: "second" });
+  const body = el("body", { children: [p1, p2] });
+  const head = el("head");
+  const root = el("html", { children: [head, body] });
+  const { pick } = load({ root });
+
+  // The root, with its children described but not their children.
+  const top = pick.tree([]);
+  assert.equal(top.tag, "html");
+  assert.deepEqual(Array.from(top.kids).map((k) => k.tag), ["head", "body"]);
+  assert.deepEqual(Array.from(top.kids[1].path), [1]);
+  assert.equal(top.kids[1].n, 2, "children are counted, not described");
+
+  // One step down: the path names the node, no reference crosses over.
+  const inBody = pick.tree([1]);
+  assert.deepEqual(Array.from(inBody.kids).map((k) => k.tag), ["p", "p"]);
+  assert.equal(inBody.kids[0].id, "first");
+  assert.deepEqual(Array.from(inBody.kids[0].cls), []);
+  // A leaf carries its text; a node with children does not.
+  assert.equal(inBody.kids[1].text, "second");
+  assert.equal(inBody.kids[0].text, "");
+
+  // The same path, back from an element — this is what a pick carries so the
+  // tree can open on what was clicked.
+  assert.deepEqual(Array.from(pick.pathOf(span)), [1, 0, 0]);
+  assert.deepEqual(Array.from(pick.pathOf(root)), []);
+  assert.equal(pick.tree([9, 9]), null, "a path that names nothing is not an error");
+
+  // detail() is what the eyedropper would have produced for that node.
+  const detail = pick.detail([1, 0, 0]);
+  assert.equal(detail.tag, "span");
+  assert.deepEqual(Array.from(detail.path), [1, 0, 0]);
+  assert.match(detail.markup, /class="label"/);
 });
 
 test("the page keeps its own console, and each line is handed over once", () => {

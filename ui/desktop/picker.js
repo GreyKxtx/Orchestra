@@ -151,12 +151,110 @@
     return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
   }
 
+  /* ---- the tree the panel draws ----------------------------------------- */
+  //
+  // The panel lives in another webview and cannot hold a node, so a node is
+  // named by its path: the child index at each step down from <html>. Every
+  // answer here is data, never a reference, and the panel asks for one level
+  // at a time — a page with ten thousand nodes must not be serialized whole.
+
+  var MAX_KIDS = 300; // children described in one answer
+  var MAX_ROW_TEXT = 80;
+
+  function nodeAt(path) {
+    var doc = globalThis.document;
+    var el = doc && doc.documentElement;
+    var steps = path || [];
+    for (var i = 0; i < steps.length && el; i++) {
+      var kids = el.children || [];
+      el = kids[steps[i]];
+    }
+    return isEl(el) ? el : null;
+  }
+
+  // Where an element sits, as the panel names it.
+  function pathOf(el) {
+    var doc = globalThis.document;
+    var root = doc && doc.documentElement;
+    var path = [];
+    var cur = el;
+    while (isEl(cur) && cur !== root) {
+      var parent = cur.parentElement;
+      if (!parent) return [];
+      var kids = parent.children || [];
+      var at = -1;
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i] === cur) { at = i; break; }
+      }
+      if (at < 0) return [];
+      path.unshift(at);
+      cur = parent;
+    }
+    return path;
+  }
+
+  // One row of the tree: enough to draw it, and nothing more.
+  function brief(el, path) {
+    var kids = el.children || [];
+    var text = "";
+    if (!kids.length) {
+      text = String(el.textContent == null ? "" : el.textContent).replace(/\s+/g, " ").trim();
+      if (text.length > MAX_ROW_TEXT) text = text.slice(0, MAX_ROW_TEXT) + "…";
+    }
+    return {
+      path: path,
+      tag: el.tagName.toLowerCase(),
+      id: el.id || "",
+      cls: classesOf(el).slice(0, 3),
+      n: kids.length,
+      text: text,
+    };
+  }
+
+  // One node and its children, one level deep.
+  function tree(path) {
+    var el = nodeAt(path);
+    if (!el) return null;
+    var out = brief(el, path || []);
+    out.kids = [];
+    var kids = el.children || [];
+    for (var i = 0; i < kids.length && i < MAX_KIDS; i++) {
+      out.kids.push(brief(kids[i], (path || []).concat([i])));
+    }
+    out.more = Math.max(0, kids.length - MAX_KIDS);
+    return out;
+  }
+
+  // Everything F12 shows for one node: its markup and the rules that apply.
+  function detail(path) {
+    var el = nodeAt(path);
+    return el ? payloadFor(el) : null;
+  }
+
+  // The panel points at a node; the page draws the same box the picker does.
+  function highlight(path) {
+    var el = nodeAt(path);
+    if (!el) return "gone";
+    ensureOverlay();
+    moveOverlay(el);
+    if (el.scrollIntoView) {
+      try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) { el.scrollIntoView(); }
+    }
+    return "shown";
+  }
+
+  function unhighlight() {
+    if (!armed) hideOverlay();
+    return "hidden";
+  }
+
   function payloadFor(el) {
     var doc = el.ownerDocument || globalThis.document;
     return {
       url: (globalThis.location && globalThis.location.href) || "",
       title: (doc && doc.title) || "",
       tag: el.tagName.toLowerCase(),
+      path: pathOf(el),
       selector: selectorFor(el),
       markup: markup(el, MAX_DEPTH, ""),
       css: appliedRules(el),
@@ -462,6 +560,11 @@
     isArmed: function () { return armed; },
     fmt: fmt,
     drainLog: drainLog,
+    tree: tree,
+    detail: detail,
+    highlight: highlight,
+    unhighlight: unhighlight,
+    pathOf: pathOf,
     armArea: armArea,
     takeArea: takeArea,
     _internals: { selectorFor: selectorFor, markup: markup, appliedRules: appliedRules, payloadFor: payloadFor },
