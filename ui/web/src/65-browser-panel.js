@@ -188,6 +188,62 @@
     return Math.round(Math.min(Math.max(want || BROWSER_DOCK_W, BROWSER_DOCK_MIN), most));
   }
 
+  // The developer tools painted in this app's colours. Theirs are Chromium's
+  // design tokens, ours are the ones every other view here is drawn from, and
+  // this list is the whole of the translation: colour only. Their type, their
+  // icons and the arrangement of their panels stay as they are — those are not
+  // tokens, and following them would mean following them again at every
+  // update of the browser.
+  const BROWSER_DOCK_TOKENS = [
+    ["--sys-color-cdt-base-container", "--bg"],
+    ["--sys-color-cdt-base", "--bg"],
+    ["--sys-color-base", "--surface"],
+    ["--sys-color-surface", "--bg"],
+    ["--sys-color-surface1", "--surface"],
+    ["--sys-color-surface2", "--surface-2"],
+    ["--sys-color-surface3", "--surface-2"],
+    ["--sys-color-surface4", "--surface-2"],
+    ["--sys-color-surface5", "--surface-2"],
+    ["--sys-color-on-surface", "--fg"],
+    ["--sys-color-on-surface-subtle", "--fg-dim"],
+    ["--sys-color-token-subtle", "--muted"],
+    ["--sys-color-primary", "--mode-accent"],
+    ["--sys-color-primary-bright", "--mode-accent"],
+    ["--sys-color-tonal-container", "--seg-active-bg"],
+    ["--sys-color-on-tonal-container", "--fg"],
+    ["--sys-color-outline", "--border"],
+    ["--sys-color-neutral-outline", "--border"],
+    ["--sys-color-divider", "--border-soft"],
+    ["--sys-color-state-hover-on-subtle", "--hover-wash"],
+    ["--sys-color-state-hover-on-prominent", "--hover-wash"],
+    ["--sys-color-state-ripple-neutral-on-subtle", "--active-wash"],
+  ];
+
+  /**
+   * This app's palette in the tools' own names. Every declaration is
+   * `!important`: their stylesheet is an adopted one, and those cascade after
+   * anything a page adds, so a plain declaration of ours loses to it.
+   */
+  function browserDockStyle() {
+    if (typeof window.getComputedStyle !== "function") return "";
+    const computed = window.getComputedStyle(document.documentElement);
+    const rules = [];
+    for (const [theirs, ours] of BROWSER_DOCK_TOKENS) {
+      const value = (computed.getPropertyValue(ours) || "").trim();
+      if (value) rules.push(`${theirs}:${value} !important;`);
+    }
+    return rules.length ? `:root{${rules.join("")}}` : "";
+  }
+
+  /** Light or dark, as this window has it — the ground those colours expect. */
+  function browserDockTheme() {
+    const chosen = document.documentElement.getAttribute("data-theme");
+    if (chosen === "light" || chosen === "dark") return chosen;
+    const light = typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-color-scheme: light)").matches;
+    return light ? "light" : "dark";
+  }
+
   /** What the page and the tools share, the line between them set aside. */
   function browserBodyRoom() {
     const body = browserDockEl && browserDockEl.parentNode;
@@ -396,6 +452,8 @@
       void browserInvoke("browser_devtools", {
         on: showing && browserDockOpen,
         rect: showing && browserDockOpen ? browserDockRect() : BROWSER_NOWHERE,
+        theme: browserDockTheme(),
+        css: browserDockStyle(),
       });
     });
   }
@@ -1096,6 +1154,21 @@
       new ResizeObserver(() => placeBrowser()).observe(browserStage);
     }
     window.addEventListener("resize", () => placeBrowser());
+    // The tools are painted in this app's colours, so they follow a change of
+    // theme — the one on the root element, and the system's own where the
+    // user has left that to the system.
+    if (typeof MutationObserver === "function" && document.documentElement) {
+      new MutationObserver(() => placeBrowser()).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+    }
+    if (typeof window.matchMedia === "function") {
+      const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+      if (scheme && scheme.addEventListener) {
+        scheme.addEventListener("change", () => placeBrowser());
+      }
+    }
   }
 
   function showBrowserView() {
