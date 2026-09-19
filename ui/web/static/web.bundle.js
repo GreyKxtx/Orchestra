@@ -143,6 +143,7 @@
       "browser.pick": "Pick an element on the page",
       "browser.url_hint": "Address or search",
       "browser.links": "Saved links",
+      "browser.suggest_search": "{engine}: {q}",
       "browser.links_empty": "Nothing saved yet",
       "browser.link_save": "Save this page",
       "browser.link_saved": "Saved",
@@ -851,6 +852,7 @@
       "browser.pick": "Выбрать элемент на странице",
       "browser.url_hint": "Адрес или поиск",
       "browser.links": "Сохранённые ссылки",
+      "browser.suggest_search": "{engine}: {q}",
       "browser.links_empty": "Пока ничего не сохранено",
       "browser.link_save": "Сохранить эту страницу",
       "browser.link_saved": "Сохранено",
@@ -13619,6 +13621,9 @@
   /** @type {any} */ let browserMenuEl = null;
   /** @type {any} */ let browserLinksBtn = null;
   /** @type {any} */ let browserLinksEl = null;
+  /** @type {any} */ let browserSuggestEl = null;
+  /** @type {any[]} */ let browserSuggested = [];
+  let browserSuggestAt = -1;
   /** @type {any} */ let browserStatusEl = null;
   /** @type {any} */ let browserConsoleEl = null;
   /** @type {any} */ let browserLogEl = null;
@@ -13643,6 +13648,10 @@
 
   /** Past this many saved links the oldest drops off. */
   const MAX_LINKS = 60;
+
+  /** How much of where the user has been the bar remembers, and offers. */
+  const MAX_HISTORY = 200;
+  const MAX_SUGGEST = 8;
 
   /** Zoom steps, the ones a browser's menu offers. */
   const BROWSER_ZOOMS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -13707,10 +13716,58 @@
     return [{ url, title }].concat(rows.filter((r) => r.url !== url)).slice(0, MAX_LINKS);
   }
 
-  // The two pieces of this view worth testing without a browser
+  /**
+   * What the bar offers for what has been typed so far: the saved links
+   * first, because they were kept on purpose, then where the user has been.
+   * An empty query offers the most recent of each, which is what a bar that
+   * has just been clicked into should show.
+   * @param {string} typed @param {any[]} links @param {any[]} history
+   * @param {number} [limit]
+   */
+  function browserSuggest(typed, links, history, limit) {
+    const q = String(typed || "").trim().toLowerCase();
+    const cap = limit || MAX_SUGGEST;
+    const out = [];
+    const seen = {};
+    const take = (rows, kind) => {
+      for (const row of Array.isArray(rows) ? rows : []) {
+        if (out.length >= cap) return;
+        const url = String((row && row.url) || "");
+        if (!url || seen[url]) continue;
+        const title = String((row && row.title) || "");
+        if (q && url.toLowerCase().indexOf(q) < 0 && title.toLowerCase().indexOf(q) < 0) continue;
+        seen[url] = true;
+        out.push({ url, title: title || url, kind });
+      }
+    };
+    take(links, "link");
+    take(history, "history");
+    return out;
+  }
+
+  // The three pieces of this view worth testing without a browser
   // (ui/web/scripts/adapter-test.mjs reads them off the global).
   globalThis.__orchBrowserAddress = browserAddress;
   globalThis.__orchBrowserLinks = browserLinksWith;
+  globalThis.__orchBrowserSuggest = browserSuggest;
+
+  /** @returns {any[]} */
+  function browserHistory() {
+    try {
+      const rows = JSON.parse(browserPref("orchestra.browser.history", "[]"));
+      return Array.isArray(rows) ? rows.filter((r) => r && r.url) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /** Where the panel has just been. Same shape as a saved link, no title. */
+  function rememberBrowserUrl(url) {
+    const address = String(url || "");
+    if (!address || address.indexOf("about:") === 0) return;
+    const rows = browserLinksWith(browserHistory(), { url: address }).slice(0, MAX_HISTORY);
+    setBrowserPref("orchestra.browser.history", JSON.stringify(rows));
+  }
 
   /** @returns {any[]} */
   function browserLinks() {
@@ -13850,6 +13907,7 @@
     if (await browserInvoke("browser_open", { url: address, rect: browserRect() })) {
       browserOpened = true;
       browserStatus("");
+      rememberBrowserUrl(address);
     }
   }
 
@@ -14233,6 +14291,84 @@
 
   function browserClosePopups() {
     browserOpenPopup(null, false);
+    hideBrowserSuggest();
+  }
+
+  /* ---- what the bar offers ---------------------------------------------- */
+
+  function hideBrowserSuggest() {
+    browserSuggested = [];
+    browserSuggestAt = -1;
+    if (browserSuggestEl) browserSuggestEl.hidden = true;
+    if (browserUrlEl && browserUrlEl.setAttribute) {
+      browserUrlEl.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  /** Which row is under the keyboard right now. */
+  function markBrowserSuggest() {
+    if (!browserSuggestEl || !browserSuggestEl.childNodes) return;
+    const rows = browserSuggestEl.childNodes;
+    for (let i = 0; i < rows.length; i++) {
+      const on = i === browserSuggestAt;
+      if (rows[i].setAttribute) rows[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+  }
+
+  /** @param {{url: string, title: string}} row */
+  function browserSuggestRow(row) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "browser-menu-item browser-suggest-row";
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", "false");
+    const title = document.createElement("span");
+    title.className = "browser-suggest-title";
+    title.textContent = row.title;
+    b.appendChild(title);
+    if (row.url !== row.title) {
+      const url = document.createElement("span");
+      url.className = "browser-suggest-url";
+      url.textContent = row.url;
+      b.appendChild(url);
+    }
+    // mousedown, not click: the bar must not lose focus before we are told.
+    b.addEventListener("mousedown", (ev) => {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      hideBrowserSuggest();
+      void openBrowserAt(row.url);
+    });
+    return b;
+  }
+
+  /** The list under the bar, rebuilt for what has been typed so far. */
+  function drawBrowserSuggest() {
+    if (!browserSuggestEl || !browserUrlEl) return;
+    const typed = String(browserUrlEl.value || "");
+    const rows = browserSuggest(typed, browserLinks(), browserHistory());
+    // What the bar would do with the text itself, offered first when that is
+    // a search rather than an address.
+    const engine = browserEngine();
+    const asSearch = typed.trim() && browserAddress(typed).indexOf(engine.search) === 0
+      ? [{ url: browserAddress(typed), title: i18n("browser.suggest_search", { q: typed.trim(), engine: engine.name }) }]
+      : [];
+    browserSuggested = asSearch.concat(rows).slice(0, MAX_SUGGEST + 1);
+    while (browserSuggestEl.firstChild) browserSuggestEl.removeChild(browserSuggestEl.firstChild);
+    for (const row of browserSuggested) browserSuggestEl.appendChild(browserSuggestRow(row));
+    browserSuggestAt = -1;
+    browserSuggestEl.hidden = browserSuggested.length === 0;
+    if (browserUrlEl.setAttribute) {
+      browserUrlEl.setAttribute("aria-expanded", browserSuggested.length ? "true" : "false");
+    }
+  }
+
+  /** @param {number} step */
+  function moveBrowserSuggest(step) {
+    if (!browserSuggested.length) return;
+    const last = browserSuggested.length - 1;
+    browserSuggestAt =
+      browserSuggestAt + step < -1 ? last : browserSuggestAt + step > last ? -1 : browserSuggestAt + step;
+    markBrowserSuggest();
   }
 
   /* ---- the links menu --------------------------------------------------- */
@@ -14339,18 +14475,42 @@
     toolbar.appendChild(linksWrap);
     browserPopup(linksWrap, browserLinksBtn, browserLinksEl, () => drawBrowserLinks());
 
+    const urlWrap = document.createElement("div");
+    urlWrap.className = "browser-url-wrap";
     browserUrlEl = document.createElement("input");
     browserUrlEl.type = "text";
     browserUrlEl.className = "browser-url";
     browserUrlEl.placeholder = i18n("browser.url_hint");
     browserUrlEl.setAttribute("data-i18n-placeholder", "browser.url_hint");
+    browserUrlEl.setAttribute("role", "combobox");
+    browserUrlEl.setAttribute("aria-expanded", "false");
+    browserUrlEl.setAttribute("aria-autocomplete", "list");
     browserUrlEl.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
         ev.preventDefault();
-        void openBrowserAt(browserUrlEl.value);
+        if (browserSuggestEl && browserSuggestEl.hidden) drawBrowserSuggest();
+        else moveBrowserSuggest(ev.key === "ArrowDown" ? 1 : -1);
+        return;
       }
+      if (ev.key === "Escape") {
+        hideBrowserSuggest();
+        return;
+      }
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      const chosen = browserSuggested[browserSuggestAt];
+      hideBrowserSuggest();
+      void openBrowserAt(chosen ? chosen.url : browserUrlEl.value);
     });
-    toolbar.appendChild(browserUrlEl);
+    browserUrlEl.addEventListener("input", () => drawBrowserSuggest());
+    browserUrlEl.addEventListener("focus", () => drawBrowserSuggest());
+    browserUrlEl.addEventListener("blur", () => setTimeout(() => hideBrowserSuggest(), 120));
+    browserSuggestEl = document.createElement("div");
+    browserSuggestEl.className = "browser-menu browser-suggest";
+    browserSuggestEl.setAttribute("role", "listbox");
+    browserSuggestEl.hidden = true;
+    urlWrap.append(browserUrlEl, browserSuggestEl);
+    toolbar.appendChild(urlWrap);
 
     browserStatusEl = document.createElement("span");
     browserStatusEl.className = "browser-status";
@@ -14502,6 +14662,7 @@
         if (!url || !browserUrlEl || document.activeElement === browserUrlEl) return;
         if (String(url).startsWith("about:")) return;
         browserUrlEl.value = String(url);
+        rememberBrowserUrl(String(url));
       });
     }
   })();

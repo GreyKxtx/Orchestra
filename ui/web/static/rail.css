@@ -2029,6 +2029,50 @@ body[data-rail-drag="true"] {
   font-size: 12px;
 }
 
+/* What the bar offers while it is being typed into: the saved links and
+   where the panel has been, under the bar itself. */
+.browser-url-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+.browser-suggest {
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.browser-suggest-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.browser-suggest-row[aria-selected="true"] {
+  background: var(--pill-bg);
+}
+
+.browser-suggest-title {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-suggest-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* The saved links open under their own button, on the left of the bar. */
 .browser-menu-left {
   left: 0;

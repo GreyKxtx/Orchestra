@@ -532,6 +532,49 @@ test("a saved link goes to the front, once, and the list stays bounded", () => {
   assert.equal(many[0].url, "https://x.example/69");
 });
 
+// The bar offers what was saved on purpose before where the user merely
+// went, and an empty bar offers the most recent of both.
+test("the address bar offers saved links first, then history", () => {
+  const b = loadBundle();
+  const suggest = b.globalFn("__orchBrowserSuggest");
+  assert.equal(typeof suggest, "function", "65-browser-panel.js must export it for this test");
+
+  const links = [{ url: "https://technical.city/ru/cpu", title: "CPU comparison" }];
+  const history = [
+    { url: "https://technical.city/ru/cpu", title: "" },
+    { url: "http://localhost:5173/settings", title: "" },
+    { url: "https://go.dev/doc/", title: "" },
+  ];
+
+  // Nothing typed: everything, saved links first and no address twice.
+  const all = JSON.parse(JSON.stringify(suggest("", links, history)));
+  assert.deepEqual(all.map((r) => r.url), [
+    "https://technical.city/ru/cpu",
+    "http://localhost:5173/settings",
+    "https://go.dev/doc/",
+  ]);
+  assert.equal(all[0].kind, "link");
+  assert.equal(all[1].kind, "history");
+
+  // Typed: matched on the address or on the title, either case.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(suggest("LOCALHOST", links, history))).map((r) => r.url),
+    ["http://localhost:5173/settings"]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(suggest("comparison", links, history))).map((r) => r.url),
+    ["https://technical.city/ru/cpu"]
+  );
+  assert.equal(suggest("nothing like this", links, history).length, 0);
+
+  // A row with no title is offered by its address, and the list is bounded.
+  assert.equal(suggest("go.dev", links, history)[0].title, "https://go.dev/doc/");
+  const many = [];
+  for (let i = 0; i < 40; i++) many.push({ url: `https://x.example/${i}` });
+  assert.equal(suggest("", [], many).length, 8);
+  assert.equal(suggest("", [], many, 3).length, 3);
+});
+
 test("a composer send becomes session.message", async () => {
   const b = await handshake(loadBundle());
   b.sent.length = 0;

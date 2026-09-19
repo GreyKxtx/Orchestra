@@ -18,6 +18,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Saved links** — a bookmark menu beside the reload button: the page open now is kept with one
   click and comes back with another. Newest first, one row per address, at most 60, in this
   browser's own storage beside the theme and the language.
+- **The bar offers what it knows** — typing into the address bar drops a list under it: the saved
+  links first, because they were kept on purpose, then where the panel has been (the last 200
+  addresses). Arrows walk it, Enter takes the highlighted row or the typed text, and a query that
+  is not an address is offered as a search with the chosen engine.
 - **Every command is `async`** — a plain Tauri command runs on the main thread and creating a webview waits for that same thread, so the first version deadlocked the window on open.
 
 ### Fixed — one parallel step is one step for the breaker; children log their tools (2026-09)
