@@ -16,6 +16,7 @@ fn main() {
             "browser_cdp",
             "browser_external",
             "browser_installed",
+            "browser_devtools",
         ]),
     ))
     .expect("failed to run tauri-build");

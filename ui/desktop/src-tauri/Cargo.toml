@@ -19,8 +19,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # unstable: Window::add_child, which puts the browser panel inside the main
-# window as a view of the app rather than a second window.
-tauri = { version = "2", features = ["unstable"] }
+# window as a view of the app rather than a second window. devtools: the
+# panel's F12, which a debug build has anyway and a release build must ask for.
+tauri = { version = "2", features = ["unstable", "devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }

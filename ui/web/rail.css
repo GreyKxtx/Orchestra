@@ -2112,60 +2112,6 @@ body[data-rail-drag="true"] {
   background: var(--pill-bg);
 }
 
-/* The console drawer. It takes its room from the stage, and the webview is
-   moved up to what is left — the two never overlap. */
-.browser-console {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  height: 220px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.browser-log {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: 6px 10px;
-  font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace;
-}
-
-.browser-log-line {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.browser-log-warn {
-  color: #e0b341;
-}
-
-.browser-log-error {
-  color: #e3796f;
-}
-
-.browser-log-in {
-  color: var(--muted);
-}
-
-.browser-log-out {
-  color: var(--accent, #8b8cff);
-}
-
-.browser-eval {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border: none;
-  border-top: 1px solid var(--border-soft);
-  background: transparent;
-  color: var(--fg, #e6e6e6);
-  font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace;
-}
-
-.browser-eval:focus-visible {
-  outline: 1px solid var(--accent, #8b8cff);
-  outline-offset: -1px;
-}
-
 /* Errors and the picker's prompts, said where the user is looking: the
    transcript is hidden in this view. */
 .browser-status {

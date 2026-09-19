@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::webview::WebviewBuilder;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl};
 
 /// The panel's webview label.
 pub const LABEL: &str = "browser";
@@ -71,8 +71,9 @@ struct UrlEvent {
     url: String,
 }
 
-/// The pane's rectangle in the page's own CSS pixels. Logical units, so the
-/// webview lands in the same place whatever the display's scaling.
+/// The pane's rectangle in physical pixels: the page multiplies what it
+/// measures by its devicePixelRatio, so the display's scaling and the app's
+/// own zoom are both already in the numbers, and this side converts nothing.
 #[derive(serde::Deserialize, Clone, Copy)]
 pub struct Rect {
     x: f64,
@@ -88,13 +89,33 @@ impl Rect {
         self.width >= 1.0 && self.height >= 1.0
     }
 
-    fn position(&self) -> LogicalPosition<f64> {
-        LogicalPosition::new(self.x.max(0.0), self.y.max(0.0))
+    fn position(&self) -> PhysicalPosition<i32> {
+        PhysicalPosition::new(
+            self.x.max(0.0).round() as i32,
+            self.y.max(0.0).round() as i32,
+        )
     }
 
-    fn size(&self) -> LogicalSize<f64> {
-        LogicalSize::new(self.width.max(1.0), self.height.max(1.0))
+    fn size(&self) -> PhysicalSize<u32> {
+        PhysicalSize::new(
+            self.width.max(1.0).round() as u32,
+            self.height.max(1.0).round() as u32,
+        )
     }
+}
+
+/// The browser arguments every webview of this app is built with. WebView2
+/// runs one browser process per user-data folder and refuses a second
+/// environment there with different arguments, so the panel has to be built
+/// with exactly the main window's — or its controller never comes up and the
+/// stage stays dark. `ORCH_DEBUG_PORT=<port>` adds remote debugging on
+/// loopback, which is how a script drives the shell and looks at the result;
+/// the first flag restates wry's own default, which setting this would drop.
+pub fn browser_args() -> Option<String> {
+    let port = std::env::var("ORCH_DEBUG_PORT").ok()?;
+    Some(format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port}"
+    ))
 }
 
 /// Only http(s) reaches the panel: a `file://` or `javascript:` address typed
@@ -144,7 +165,7 @@ pub fn browser_open(app: AppHandle, url: String, rect: Rect) -> Result<(), Strin
     // core's origin, it must reach any site the user types. It is granted no
     // capability, so the page it shows can invoke nothing.
     let handle = app.clone();
-    let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(target))
+    let mut builder = WebviewBuilder::new(LABEL, WebviewUrl::External(target))
         .initialization_script(PICKER_JS)
         .on_navigation(move |url| {
             if !may_navigate(url) {
@@ -159,6 +180,9 @@ pub fn browser_open(app: AppHandle, url: String, rect: Rect) -> Result<(), Strin
             );
             true
         });
+    if let Some(args) = browser_args() {
+        builder = builder.additional_browser_args(&args);
+    }
     window
         .add_child(builder, rect.position(), rect.size())
         .map(|_| ())
@@ -252,6 +276,22 @@ pub fn browser_pick(app: AppHandle, on: bool) -> Result<(), String> {
 
     let app = app.clone();
     std::thread::spawn(move || poll_until_picked(app, state));
+    Ok(())
+}
+
+/// The page's own developer tools — elements, console, network, the lot —
+/// which WebView2 opens in a window of their own. Open when closed, closed
+/// when open.
+#[tauri::command(async)]
+pub fn browser_devtools(app: AppHandle) -> Result<(), String> {
+    let webview = app
+        .get_webview(LABEL)
+        .ok_or_else(|| "the browser panel is not open".to_string())?;
+    if webview.is_devtools_open() {
+        webview.close_devtools();
+    } else {
+        webview.open_devtools();
+    }
     Ok(())
 }
 
@@ -570,8 +610,8 @@ mod tests {
             height: 600.0,
         };
         assert!(shown.is_visible());
-        assert_eq!(shown.position().x, 12.0);
-        assert_eq!(shown.size().height, 600.0);
+        assert_eq!(shown.position().x, 12);
+        assert_eq!(shown.size().height, 600);
 
         let hidden = Rect {
             x: 0.0,
@@ -587,8 +627,8 @@ mod tests {
             width: 10.0,
             height: 10.0,
         };
-        assert_eq!(off.position().x, 0.0);
-        assert_eq!(off.position().y, 0.0);
+        assert_eq!(off.position().x, 0);
+        assert_eq!(off.position().y, 0);
     }
 
     #[test]

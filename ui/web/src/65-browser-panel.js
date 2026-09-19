@@ -31,7 +31,6 @@
   /** @type {any} */ let browserStage = null;
   /** @type {any} */ let browserUrlEl = null;
   /** @type {any} */ let browserPickBtn = null;
-  /** @type {any} */ let browserConsoleBtn = null;
   /** @type {any} */ let browserMenuBtn = null;
   /** @type {any} */ let browserMenuEl = null;
   /** @type {any} */ let browserLinksBtn = null;
@@ -40,16 +39,11 @@
   /** @type {any[]} */ let browserSuggested = [];
   let browserSuggestAt = -1;
   /** @type {any} */ let browserStatusEl = null;
-  /** @type {any} */ let browserConsoleEl = null;
-  /** @type {any} */ let browserLogEl = null;
-  /** @type {any} */ let browserEvalEl = null;
   /** @type {any} */ let browserZoomEl = null;
   /** @type {any} */ let browserEngineEl = null;
   /** @type {any} */ let browserAppEl = null;
   let browserOpened = false;
   let browserPickArmed = false;
-  let browserConsoleOpen = false;
-  let browserLogTimer = 0;
   let browserZoom = 1;
   /** @type {any[]} */ let browserInstalled = [];
 
@@ -291,24 +285,42 @@
     }
   }
 
-  /** The stage's rectangle in CSS pixels — where the webview has to sit. */
+  const BROWSER_NOWHERE = { x: 0, y: 0, width: 0, height: 0 };
+
+  /**
+   * The stage's rectangle in physical pixels — where the webview has to sit.
+   * Physical, not CSS: the display's scaling and the app's own zoom both
+   * change what a CSS pixel is, and devicePixelRatio carries them both.
+   */
   function browserRect() {
     if (!browserStage || !browserStage.getBoundingClientRect) {
-      return { x: 0, y: 0, width: 0, height: 0 };
+      return BROWSER_NOWHERE;
     }
     const r = browserStage.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
     return {
-      x: Math.round(r.left),
-      y: Math.round(r.top),
-      width: Math.round(r.width),
-      height: Math.round(r.height),
+      x: Math.round(r.left * dpr),
+      y: Math.round(r.top * dpr),
+      width: Math.round(r.width * dpr),
+      height: Math.round(r.height * dpr),
     };
   }
 
-  /** Keep the webview over the stage, or out of sight when the view is not up. */
+  /** True while a menu or the bar's list is open over the stage. */
+  function browserPopupShowing() {
+    if (browserSuggestEl && !browserSuggestEl.hidden) return true;
+    return browserPopups.some((p) => p.menu && !p.menu.hidden);
+  }
+
+  /**
+   * Keep the webview over the stage — or out of sight while the view is not
+   * up, and while a popup is open: the webview is an OS view over this page,
+   * so nothing drawn here can appear on top of it. A menu takes the page
+   * away for as long as it is open, and gives it back untouched.
+   */
   function placeBrowser() {
     if (!browserOpened) return;
-    const rect = browserViewActive() ? browserRect() : { x: 0, y: 0, width: 0, height: 0 };
+    const rect = browserViewActive() && !browserPopupShowing() ? browserRect() : BROWSER_NOWHERE;
     void browserInvoke("browser_bounds", { rect });
   }
 
@@ -413,69 +425,6 @@
       }
     }
     browserStatus("");
-  }
-
-  /* ---- the console -------------------------------------------------------- */
-
-  /** @param {string} level @param {string} text */
-  function browserLogLine(level, text) {
-    if (!browserLogEl) return;
-    const line = document.createElement("div");
-    line.className = `browser-log-line browser-log-${level}`;
-    line.textContent = text;
-    browserLogEl.appendChild(line);
-    while (browserLogEl.childNodes.length > 500) {
-      browserLogEl.removeChild(browserLogEl.firstChild);
-    }
-    browserLogEl.scrollTop = browserLogEl.scrollHeight;
-  }
-
-  /** Everything the page has logged since the last look. */
-  async function browserDrainLog() {
-    if (!browserConsoleOpen || !browserOpened) return;
-    const rows = await browserEval("window.__orchPick ? __orchPick.drainLog() : []");
-    if (!Array.isArray(rows)) return;
-    for (const row of rows) {
-      browserLogLine(String((row && row.level) || "log"), String((row && row.text) || ""));
-    }
-  }
-
-  function browserConsoleToggle() {
-    browserConsoleOpen = !browserConsoleOpen;
-    if (browserConsoleEl) browserConsoleEl.hidden = !browserConsoleOpen;
-    if (browserConsoleBtn) {
-      browserConsoleBtn.setAttribute("aria-pressed", browserConsoleOpen ? "true" : "false");
-    }
-    if (browserLogTimer) {
-      clearInterval(browserLogTimer);
-      browserLogTimer = 0;
-    }
-    if (browserConsoleOpen) {
-      // The page cannot call us — a page we do not control is handed no bridge
-      // — so what it logged is collected by asking, while anyone is looking.
-      browserLogTimer = setInterval(() => void browserDrainLog(), 700);
-      void browserDrainLog();
-      if (browserEvalEl && browserEvalEl.focus) browserEvalEl.focus();
-    }
-    placeBrowser();
-  }
-
-  /** @param {string} code */
-  async function browserRunInPage(code) {
-    const source = String(code || "").trim();
-    if (!source) return;
-    browserLogLine("in", `› ${source}`);
-    // eval, because that is what a console is. It is wrapped so a throw comes
-    // back as a line rather than as nothing: the shell's callback drops
-    // exceptions on Windows.
-    const wrapped =
-      "(function(){try{var __r=(0,eval)(" +
-      JSON.stringify(source) +
-      ");return window.__orchPick?__orchPick.fmt(__r):String(__r)}" +
-      "catch(e){return 'Uncaught '+String(e)}})()";
-    const answer = await browserEval(wrapped);
-    if (answer !== undefined) browserLogLine("out", String(answer));
-    void browserDrainLog();
   }
 
   /* ---- the menu ----------------------------------------------------------- */
@@ -702,6 +651,7 @@
       p.btn.setAttribute("aria-expanded", show ? "true" : "false");
       if (show && p.onOpen) p.onOpen();
     }
+    placeBrowser();
   }
 
   function browserClosePopups() {
@@ -714,10 +664,12 @@
   function hideBrowserSuggest() {
     browserSuggested = [];
     browserSuggestAt = -1;
+    const was = browserSuggestEl && !browserSuggestEl.hidden;
     if (browserSuggestEl) browserSuggestEl.hidden = true;
     if (browserUrlEl && browserUrlEl.setAttribute) {
       browserUrlEl.setAttribute("aria-expanded", "false");
     }
+    if (was) placeBrowser();
   }
 
   /** Which row is under the keyboard right now. */
@@ -771,10 +723,12 @@
     while (browserSuggestEl.firstChild) browserSuggestEl.removeChild(browserSuggestEl.firstChild);
     for (const row of browserSuggested) browserSuggestEl.appendChild(browserSuggestRow(row));
     browserSuggestAt = -1;
+    const was = !browserSuggestEl.hidden;
     browserSuggestEl.hidden = browserSuggested.length === 0;
     if (browserUrlEl.setAttribute) {
       browserUrlEl.setAttribute("aria-expanded", browserSuggested.length ? "true" : "false");
     }
+    if (was !== !browserSuggestEl.hidden) placeBrowser();
   }
 
   /** @param {number} step */
@@ -920,6 +874,14 @@
     browserUrlEl.addEventListener("input", () => drawBrowserSuggest());
     browserUrlEl.addEventListener("focus", () => drawBrowserSuggest());
     browserUrlEl.addEventListener("blur", () => setTimeout(() => hideBrowserSuggest(), 120));
+    // A click anywhere else closes the list too — blur alone is not enough
+    // when focus never arrived, and the list hides the page while it is up.
+    document.addEventListener("click", (ev) => {
+      if (!browserSuggestEl || browserSuggestEl.hidden) return;
+      const target = ev && ev.target;
+      if (urlWrap.contains && target && urlWrap.contains(target)) return;
+      hideBrowserSuggest();
+    });
     browserSuggestEl = document.createElement("div");
     browserSuggestEl.className = "browser-menu browser-suggest";
     browserSuggestEl.setAttribute("role", "listbox");
@@ -934,9 +896,12 @@
 
     browserPickBtn = browserToolButton("pick", "browser.pick", () => void toggleBrowserPick());
     toolbar.appendChild(browserPickBtn);
-    browserConsoleBtn = browserToolButton("terminal", "browser.console", () => browserConsoleToggle());
-    browserConsoleBtn.setAttribute("aria-pressed", "false");
-    toolbar.appendChild(browserConsoleBtn);
+    // The page's own developer tools, in their own window: elements, console,
+    // network, everything F12 gives — a drawer of ours would only be a lesser
+    // copy of them.
+    toolbar.appendChild(
+      browserToolButton("terminal", "browser.console", () => void browserInvoke("browser_devtools", {}))
+    );
 
     const menuWrap = document.createElement("div");
     menuWrap.className = "browser-menu-wrap";
@@ -949,26 +914,7 @@
     browserStage = document.createElement("div");
     browserStage.className = "browser-stage";
 
-    browserConsoleEl = document.createElement("div");
-    browserConsoleEl.className = "browser-console";
-    browserConsoleEl.hidden = true;
-    browserLogEl = document.createElement("div");
-    browserLogEl.className = "browser-log";
-    browserEvalEl = document.createElement("input");
-    browserEvalEl.type = "text";
-    browserEvalEl.className = "browser-eval";
-    browserEvalEl.placeholder = i18n("browser.eval_hint");
-    browserEvalEl.setAttribute("data-i18n-placeholder", "browser.eval_hint");
-    browserEvalEl.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter") return;
-      ev.preventDefault();
-      const code = browserEvalEl.value;
-      browserEvalEl.value = "";
-      void browserRunInPage(code);
-    });
-    browserConsoleEl.append(browserLogEl, browserEvalEl);
-
-    browserPane.append(toolbar, browserStage, browserConsoleEl);
+    browserPane.append(toolbar, browserStage);
     if (browserTrajectoryPane && browserTrajectoryPane.parentNode === browserApp && browserApp.insertBefore) {
       browserApp.insertBefore(browserPane, browserTrajectoryPane.nextSibling);
     } else {

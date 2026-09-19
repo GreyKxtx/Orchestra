@@ -21,6 +21,7 @@
     "allow-browser-zoom",
     "allow-browser-cdp",
     "allow-browser-external",
-    "allow-browser-installed"
+    "allow-browser-installed",
+    "allow-browser-devtools"
   ]
 }

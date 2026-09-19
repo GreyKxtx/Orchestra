@@ -41,6 +41,7 @@ fn main() {
             browser::browser_cdp,
             browser::browser_external,
             browser::browser_installed,
+            browser::browser_devtools,
         ])
         .setup(|app| {
             // Everything that may block — the folder picker, waiting for the
@@ -162,11 +163,27 @@ fn boot(app: AppHandle) {
     // it. Links in chat carry target="_blank" and do not navigate this window.
     let allowed_origin = url.origin();
     let dispatched = app.run_on_main_thread(move || {
-        let built = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
+        let mut builder = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
             .title("Orchestra")
             .inner_size(1200.0, 800.0)
-            .on_navigation(move |to| to.origin() == allowed_origin)
-            .build();
+            .on_navigation(move |to| to.origin() == allowed_origin);
+        // ORCH_DEBUG_PORT=<port> opens WebView2's remote debugging on loopback,
+        // so a script can drive the shell the way a person would (click the
+        // Browser tab, type an address) and look at the result — the one way
+        // to check the panel's layout without a hand on the mouse. The same
+        // arguments reach the browser panel (browser::browser_args), which
+        // WebView2 insists on. Windows only: that is where the flag exists.
+        if let Some(args) = browser::browser_args() {
+            #[cfg(windows)]
+            {
+                builder = builder.additional_browser_args(&args);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = args;
+            }
+        }
+        let built = builder.build();
         if let Ok(window) = &built {
             // The window is the only thing a user can close. Tauri does
             // not exit on its own once it closes — the dialog plugin
