@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use orchestra_desktop::{boot, sidecar};
+use orchestra_desktop::{boot, browser, sidecar};
 use sidecar::Sidecar;
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -28,6 +28,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(CoreSlot(Mutex::new(None)))
+        .manage(browser::PickerState::default())
+        .invoke_handler(tauri::generate_handler![
+            browser::browser_open,
+            browser::browser_close,
+            browser::browser_navigate,
+            browser::browser_pick,
+        ])
         .setup(|app| {
             // Everything that may block — the folder picker, waiting for the
             // announce — runs off the main thread: the dialog plugin's blocking

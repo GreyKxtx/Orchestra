@@ -1879,3 +1879,48 @@ body[data-rail-drag="true"] {
     transition: none;
   }
 }
+
+/* ---- the browser panel's address row ------------------------------------- */
+/* Desktop only: 65-browser-panel.js removes the row in a plain browser, where
+   there is no panel to drive. */
+
+.browser-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 6px;
+}
+
+.browser-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #33343a);
+  border-radius: 6px;
+  background: var(--surface, #1b1c20);
+  color: var(--fg, #e6e6e6);
+  font: inherit;
+  font-size: 12px;
+}
+
+.browser-url:focus-visible {
+  outline: 1px solid var(--accent, #8b8cff);
+  outline-offset: -1px;
+}
+
+.browser-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #33343a);
+  border-radius: 6px;
+  background: var(--surface, #1b1c20);
+  color: var(--fg, #e6e6e6);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.browser-go:hover {
+  background: var(--surface-hover, #24252b);
+}
