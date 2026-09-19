@@ -38,7 +38,10 @@
   /** @type {any} */ let browserSuggestEl = null;
   /** @type {any} */ let browserDockEl = null;
   /** @type {any} */ let browserDockBtn = null;
+  /** @type {any} */ let browserSplitEl = null;
   let browserDockOpen = false;
+  let browserDockW = 0;
+  let browserDragging = false;
   let browserPlaceQueued = false;
   /** @type {any[]} */ let browserSuggested = [];
   let browserSuggestAt = -1;
@@ -62,8 +65,12 @@
   /** Past this many saved links the oldest drops off. */
   const MAX_LINKS = 60;
 
-  /** How wide the inspector sits beside the page. */
+  /** How wide the inspector sits beside the page until the user drags it. */
   const BROWSER_DOCK_W = 400;
+
+  /** What each side keeps whatever the line is dragged to. */
+  const BROWSER_DOCK_MIN = 260;
+  const BROWSER_STAGE_MIN = 320;
 
   /** How much of where the user has been the bar remembers, and offers. */
   const MAX_HISTORY = 200;
@@ -166,6 +173,35 @@
   globalThis.__orchBrowserAddress = browserAddress;
   globalThis.__orchBrowserLinks = browserLinksWith;
   globalThis.__orchBrowserSuggest = browserSuggest;
+  globalThis.__orchBrowserDockFit = browserDockFit;
+
+  /**
+   * The width the dock takes when asked for `want` out of `room`: its own
+   * minimum, and never so much that the page has nothing left to show. A
+   * window too narrow for both keeps the dock at its minimum and lets the
+   * page have the rest, however little that is.
+   *
+   * @param {number} want @param {number} room
+   */
+  function browserDockFit(want, room) {
+    const most = Math.max(BROWSER_DOCK_MIN, room - BROWSER_STAGE_MIN);
+    return Math.round(Math.min(Math.max(want || BROWSER_DOCK_W, BROWSER_DOCK_MIN), most));
+  }
+
+  /** What the page and the tools share, the line between them set aside. */
+  function browserBodyRoom() {
+    const body = browserDockEl && browserDockEl.parentNode;
+    if (!body || !body.getBoundingClientRect) return 0;
+    const line = browserSplitEl && browserSplitEl.offsetWidth ? browserSplitEl.offsetWidth : 0;
+    return body.getBoundingClientRect().width - line;
+  }
+
+  /** Put the dock at `want` css pixels of `room`, and answer with what it took. */
+  function setBrowserDockWidth(want, room) {
+    browserDockW = browserDockFit(want, room);
+    if (browserDockEl) browserDockEl.style.flexBasis = `${browserDockW}px`;
+    return browserDockW;
+  }
 
   /** @returns {any[]} */
   function browserHistory() {
@@ -351,7 +387,9 @@
     const soon = typeof requestAnimationFrame === "function" ? requestAnimationFrame : setTimeout;
     soon(() => {
       browserPlaceQueued = false;
-      const showing = browserViewActive() && !browserPopupShowing();
+      // The line may have been dragged, or the window resized under it.
+      if (browserDockOpen) setBrowserDockWidth(browserDockW, browserBodyRoom());
+      const showing = browserViewActive() && !browserPopupShowing() && !browserDragging;
       void browserInvoke("browser_bounds", {
         rect: showing ? browserRect() : BROWSER_NOWHERE,
       });
@@ -495,9 +533,45 @@
   // profile of its own — the port drives every page of its environment, and
   // the page holding this app's capabilities is not in it.
 
+  /**
+   * Drag the line between the page and the tools. Both panes are views of the
+   * operating system laid over this one and they take the mouse with them, so
+   * they step aside for the drag and come back either side of where the line
+   * was let go.
+   *
+   * @param {any} handle
+   */
+  function browserDragSplit(handle) {
+    let from = 0;
+    let width = 0;
+    const move = (e) => {
+      if (!browserDragging) return;
+      setBrowserDockWidth(width + (from - e.clientX), browserBodyRoom());
+    };
+    const stop = () => {
+      if (!browserDragging) return;
+      browserDragging = false;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      setBrowserPref("orchestra.browser.dock", String(browserDockW));
+      placeBrowser();
+    };
+    handle.addEventListener("pointerdown", (e) => {
+      if (browserDragging) return;
+      browserDragging = true;
+      from = e.clientX;
+      width = browserDockW;
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop);
+      placeBrowser();
+      if (e.preventDefault) e.preventDefault();
+    });
+  }
+
   function browserDockToggle() {
     browserDockOpen = !browserDockOpen;
     if (browserDockEl) browserDockEl.hidden = !browserDockOpen;
+    if (browserSplitEl) browserSplitEl.hidden = !browserDockOpen;
     if (browserDockBtn) {
       browserDockBtn.setAttribute("aria-pressed", browserDockOpen ? "true" : "false");
     }
@@ -993,11 +1067,17 @@
     browserDockEl = document.createElement("div");
     browserDockEl.className = "browser-dock";
     browserDockEl.hidden = true;
-    browserDockEl.style.flexBasis = `${BROWSER_DOCK_W}px`;
+    browserDockW = Number(browserPref("orchestra.browser.dock", "")) || BROWSER_DOCK_W;
+    browserDockEl.style.flexBasis = `${browserDockW}px`;
+
+    browserSplitEl = document.createElement("div");
+    browserSplitEl.className = "browser-split";
+    browserSplitEl.hidden = true;
+    browserDragSplit(browserSplitEl);
 
     const body = document.createElement("div");
     body.className = "browser-body";
-    body.append(browserStage, browserDockEl);
+    body.append(browserStage, browserSplitEl, browserDockEl);
 
     browserPane.append(toolbar, body);
     if (browserTrajectoryPane && browserTrajectoryPane.parentNode === browserApp && browserApp.insertBefore) {

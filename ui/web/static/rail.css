@@ -2124,7 +2124,21 @@ body[data-rail-drag="true"] {
 .browser-dock {
   flex: 0 0 auto;
   min-width: 0;
-  border-left: 1px solid var(--border-soft);
+}
+
+/* The line between the page and the tools, dragged to share the width. It is
+   all this page has left between the two panes — both are views of the
+   operating system laid over it — so it is the only thing here the mouse can
+   still reach. */
+.browser-split {
+  flex: 0 0 auto;
+  width: 6px;
+  background: var(--border-soft);
+  cursor: col-resize;
+}
+
+.browser-split:hover {
+  background: var(--accent, #8b8cff);
 }
 
 /* Errors and the picker's prompts, said where the user is looking: the

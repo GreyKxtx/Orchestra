@@ -575,6 +575,24 @@ test("the address bar offers saved links first, then history", () => {
   assert.equal(suggest("", [], many, 3).length, 3);
 });
 
+// The line between the page and the developer tools is dragged to share the
+// width, and neither side may be squeezed out of existence.
+test("the dock takes what it is dragged to, within what leaves the page a page", () => {
+  const b = loadBundle();
+  const fit = b.globalFn("__orchBrowserDockFit");
+  assert.equal(typeof fit, "function", "65-browser-panel.js must export it for this test");
+
+  assert.equal(fit(500, 1400), 500, "what the drag asked for");
+  assert.equal(fit(120, 1400), 260, "the dock keeps its minimum");
+  assert.equal(fit(1300, 1400), 1080, "the page keeps 320 of the 1400");
+  assert.equal(fit(0, 1400), 400, "no width yet is the default");
+
+  // A window too narrow for both: the dock stays usable and the page takes
+  // what is left, rather than the pair collapsing to nothing.
+  assert.equal(fit(400, 500), 260);
+  assert.equal(fit(400, 200), 260);
+});
+
 test("a composer send becomes session.message", async () => {
   const b = await handshake(loadBundle());
   b.sent.length = 0;
