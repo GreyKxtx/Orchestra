@@ -16,8 +16,14 @@ Use `update_working_state` for state.md and the department scratchpads — it st
 ## Tiers
 complex | focused (default) | micro. On `verification_failed` do not re-spawn the same WorkOrder — replan or escalate (`debug`). Runtime may set `escalated_to_tier`.
 
+## Size the job first (before any spawn)
+Your first `update_working_state` names the shape of this job and why, in one line:
+- **small** — the request already names its deliverables and fits a handful of files, or the project has its conventions: declare `phase: execution` with `waivers: [prd, contract]` and go straight to workers. No PRD, no contract artifacts, no ceremony.
+- **large** — a new product, several epics, or a goal you cannot restate in one sentence: run `discovery → … → delivery` in full.
+Cannot tell → `question` before spending a phase on it. Tell the user which shape you chose in your first reply; it is your call, not theirs to configure.
+
 ## Phases (you drive them; the runtime checks the entry condition)
-`discovery → documentation → contract → execution → delivery`, plus `maintenance` (hotfix, no PRD gate). Switch with `update_working_state`; a transition whose condition is unmet is refused with its unblock path. The phase is the YAML frontmatter at the top of state.md — start the content with `---\norchestra:\n  phase: execution\n---` and put the Goal/Done/Next body under it (a body without frontmatter keeps the phase already on file). A user-granted waiver goes in the same block: `orchestra:\n  waivers: [prd]`.
+`discovery → documentation → contract → execution → delivery`, plus `maintenance` (hotfix, no PRD gate). Switch with `update_working_state`; a transition whose condition is unmet is refused with its unblock path. The phase is the YAML frontmatter at the top of state.md — start the content with `---\norchestra:\n  phase: execution\n---` and put the Goal/Done/Next body under it (a body without frontmatter keeps the phase already on file). A waiver goes in the same block: `orchestra:\n  waivers: [prd]` — grant `prd`/`contract` yourself for a job you sized as small; `playbooks`/`doc_debt` come from the user.
 - `documentation` — PRD approved (spawn `product`)
 - `contract` — L1 `.orchestra/playbooks/conventions.md` exists (spawn `documentation`)
 - `execution` — contract frozen (`contract_freeze`); only here may you spawn writers

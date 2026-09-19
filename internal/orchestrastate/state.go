@@ -347,11 +347,11 @@ func GuardSpawn(projectRoot, enforcement, subagentType string) error {
 	}
 	if (st.Phase == PhaseDiscovery || !prdApproved(projectRoot, st)) && !st.HasWaiver(WaiverPRD) {
 		return fmt.Errorf("runtime_guard: PRD status != approved (phase=%s); "+
-			"unblock: spawn product | phase=maintenance | user waiver 'prd' in %s", phaseLabel(st.Phase), StateFileRel)
+			"unblock: spawn product | phase=maintenance | waiver 'prd' in %s", phaseLabel(st.Phase), StateFileRel)
 	}
 	if st.Phase == PhaseContract && !st.HasWaiver(WaiverContract) {
 		return fmt.Errorf("runtime_guard: contract not frozen; "+
-			"unblock: complete Domain_Model+NFR+OpenAPI v0 + contract_freeze | user waiver 'contract' in %s", StateFileRel)
+			"unblock: complete Domain_Model+NFR+OpenAPI v0 + contract_freeze | waiver 'contract' in %s", StateFileRel)
 	}
 	if st.Phase == PhaseContract && st.HasWaiver(WaiverContract) {
 		return nil
@@ -403,7 +403,7 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 			return nil
 		}
 		return fmt.Errorf("runtime_guard: documentation needs an approved PRD (prd_status=%s); "+
-			"unblock: spawn product | phase=maintenance | user waiver 'prd' in %s",
+			"unblock: spawn product | phase=maintenance | waiver 'prd' in %s",
 			prdStatusLabel(next), StateFileRel)
 
 	case PhaseContract:
@@ -426,7 +426,7 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 			return nil
 		}
 		return fmt.Errorf("runtime_guard: execution needs a frozen contract (no contract epoch recorded); "+
-			"unblock: complete Domain_Model+NFR+OpenAPI v0 + contract_freeze | user waiver 'contract' in %s",
+			"unblock: complete Domain_Model+NFR+OpenAPI v0 + contract_freeze | waiver 'contract' in %s",
 			StateFileRel)
 
 	case PhaseDelivery:
@@ -480,7 +480,7 @@ func GuardWorkOrderContract(projectRoot, enforcement string, refs []contract.Ref
 	}
 	if st.Phase == PhaseExecution && len(refs) == 0 && !st.HasWaiver(WaiverContract) {
 		return fmt.Errorf("runtime_guard: WorkOrder without contract_refs is invalid in execution once the contract is frozen; " +
-			"unblock: Lead regenerates the WorkOrder with contract_refs from EPOCH.yaml | phase=maintenance | user waiver 'contract'")
+			"unblock: Lead regenerates the WorkOrder with contract_refs from EPOCH.yaml | phase=maintenance | waiver 'contract'")
 	}
 	if err := contract.VerifyRefs(projectRoot, refs); err != nil {
 		return fmt.Errorf("runtime_guard: %w", err)

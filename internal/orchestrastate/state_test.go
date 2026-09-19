@@ -223,3 +223,35 @@ func TestPRDApprovedFromPRDFile(t *testing.T) {
 		t.Fatalf("PRD.md approval must unblock worker, got %v", err)
 	}
 }
+
+// The Lead decides how much ceremony a job gets — the prompt's "size the job
+// first" step. The small shape it is told to declare has to actually pass
+// every guard on the way to a worker, or the advice is a trap: 25 of the 51
+// minutes of the first site-sandbox run went to ceremony for a 640-line brief.
+func TestQuickShape_ExecutionWithWaiversAdmitsAWorker(t *testing.T) {
+	root := t.TempDir()
+	st := &State{Phase: PhaseExecution, Waivers: []string{WaiverPRD, WaiverContract}}
+
+	if err := GuardPhaseTransition(root, EnforcementStrict, PhaseDiscovery, PhaseExecution, st); err != nil {
+		t.Fatalf("declaring execution with a contract waiver must be allowed: %v", err)
+	}
+	if err := Save(root, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := GuardSpawn(root, EnforcementStrict, "worker"); err != nil {
+		t.Fatalf("no PRD and no frozen contract, but both waived: %v", err)
+	}
+	if err := GuardWorkOrderContract(root, EnforcementStrict, nil); err != nil {
+		t.Fatalf("a WorkOrder with no contract_refs must pass under the contract waiver: %v", err)
+	}
+
+	// Without the waivers the same phase is refused, so the waivers are what
+	// carries it, not a hole in the guard.
+	bare := t.TempDir()
+	if err := Save(bare, &State{Phase: PhaseExecution}); err != nil {
+		t.Fatal(err)
+	}
+	if err := GuardSpawn(bare, EnforcementStrict, "worker"); err == nil {
+		t.Fatal("execution without an approved PRD or a waiver must still be refused")
+	}
+}
