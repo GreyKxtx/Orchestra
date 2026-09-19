@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Fixed — one parallel step is one step for the breaker; children log their tools (2026-09)
+
+- **A parallel tool batch moves the consecutive-error counter once** — `CircuitBreaker.RecordToolErrorBatch`. Every failed call in a batch used to count as a separate consecutive error, so a Lead that read nine files in one step to see which existed yet (six NotFound) tripped the limit of six on that single step and the run stopped. Each failure is still classified into the log; a batch with any success resets the counter, as a serial success does.
+- **`acceptance_checks[]` accepts bare command strings** — `AcceptanceCheck.UnmarshalJSON`; a string is a command expected to exit 0. The prompt lists the field without a shape and a 27B Lead wrote `["go build ./..."]`, which refused two whole WorkOrders.
+- **Children write tool_call / tool_result to llm_log.jsonl** — `tasks.ChildAgentConfig.AgentLogger`, set by `apply` and core. A worker's LLM requests were logged and nothing it did with the answers.
+- **Nested-directory instructions are not the root's twice** — `Runner.discoverInstructions` only credits a directory with a file that is in it; `LazyOrchestraFile` walks up on its own, so a read under `internal/api/` injected the root ORCHESTRA.md under a label naming a file that did not exist, then again under its own.
+
 ### Fixed — a 27B Lead can keep its workers alive and its history sendable (2026-09)
 
 - **`agent.child_timeout_s` (default 600)** — the child lifetime and the sync `task` wait when the model omits `timeout_ms` were hard-coded to 120 s. A worker on a local 27B model spends 20-100 s per step, so every worker that read two files before writing one was cancelled mid-write and the Lead respawned it into the same wall: eight children lost in one 50-minute run. `agent.Options.ChildTimeoutMS` carries the value; the `task` / `task_spawn` schemas and `task.txt` say ten minutes.

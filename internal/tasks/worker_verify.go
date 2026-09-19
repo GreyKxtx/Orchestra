@@ -630,6 +630,7 @@ func (r *TaskRunner) runInlineLLMVerifier(
 		ToolDigestBytes:        r.child.ToolDigestBytes,
 		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
 		LLMStepTimeout:         r.child.LLMStepTimeout,
+		AgentLogger:            r.child.AgentLogger,
 		CustomTools:            childToolsForSubagent("verifier", r.child.Caps),
 		Mode:                   agent.ModeVerifier,
 		IsChild:                true,

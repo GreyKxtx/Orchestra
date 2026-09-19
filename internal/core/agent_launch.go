@@ -645,6 +645,7 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 	out.TierEscalation = tierEscalationSettings(c.cfg.Orchestra.TierEscalation)
 	out.LLMStepTimeout = time.Duration(c.cfg.LLM.TimeoutS) * time.Second
 	out.MaxStepsCap = c.cfg.Agent.ResolvedChildMaxSteps()
+	out.AgentLogger = logger
 	if c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm {
 		out.Caps.Web = true
 	}

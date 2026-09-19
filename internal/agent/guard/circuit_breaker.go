@@ -312,6 +312,20 @@ func (cb *CircuitBreaker) recordToolError(toolName string) *protocol.Error {
 	return nil
 }
 
+// RecordToolErrorBatch records the failed calls of one parallel batch: every
+// failure is classified (so llm_log.jsonl still shows each one) but the
+// consecutive-error counter moves once, because the batch is one step of the
+// model's. Six missing files read in one step are one failed step, not six.
+func (cb *CircuitBreaker) RecordToolErrorBatch(toolNames []string) *protocol.Error {
+	if cb == nil || len(toolNames) == 0 {
+		return nil
+	}
+	for _, name := range toolNames {
+		cb.emitClassified(ErrorKindToolError, RecordMeta{ToolName: name})
+	}
+	return cb.recordToolError(toolNames[0])
+}
+
 // ResetToolErrors resets the consecutive tool error counter after a successful tool call.
 func (cb *CircuitBreaker) ResetToolErrors() {
 	cb.consecutiveToolErrs = 0

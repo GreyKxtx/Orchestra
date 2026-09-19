@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -39,6 +40,30 @@ type AcceptanceCheck struct {
 	Cmd          string `json:"cmd"`
 	ExpectExit   int    `json:"expect_exit,omitempty"`
 	ExpectStdout string `json:"expect_stdout,omitempty"`
+}
+
+// UnmarshalJSON accepts the object form and a bare command string. The Lead
+// prompt lists acceptance_checks[] without a shape, and a 27B Lead wrote
+// `["go build ./...", "go test ./..."]` — two whole WorkOrders were refused
+// with "cannot unmarshal string into Go struct field" for it (2026-09-18). A
+// string is a command expected to exit 0.
+func (c *AcceptanceCheck) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) > 0 && b[0] == '"' {
+		var cmd string
+		if err := json.Unmarshal(b, &cmd); err != nil {
+			return err
+		}
+		*c = AcceptanceCheck{Cmd: cmd}
+		return nil
+	}
+	type plain AcceptanceCheck
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*c = AcceptanceCheck(p)
+	return nil
 }
 
 // ValidateWorkOrder checks a parsed WorkOrder; returns error when intent is missing.

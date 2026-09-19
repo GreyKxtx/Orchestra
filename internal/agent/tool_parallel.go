@@ -356,7 +356,8 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	a.markParallelExploreSatisfied(calls, denied, errored)
 
 	if cb != nil {
-		anyErr := false
+		anyOK := false
+		var failed []string
 		var readOnlyHints []string
 		for i, call := range calls {
 			switch {
@@ -365,11 +366,9 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 					return history, cbErr
 				}
 			case errored[i]:
-				anyErr = true
-				if cbErr := cb.RecordToolError(call.Name); cbErr != nil {
-					return history, cbErr
-				}
+				failed = append(failed, call.Name)
 			default:
+				anyOK = true
 				if dedupExemptTool(call.Name) {
 					if hint := cb.RecordReadOnlyCall(call.Name, call.Input); hint != "" {
 						readOnlyHints = append(readOnlyHints, hint)
@@ -380,8 +379,20 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				cb.ResetDeniedForTool(call.Name)
 			}
 		}
-		if !anyErr && len(calls) > 0 {
+		// A batch is one step of the model's, so it moves the consecutive-error
+		// counter by at most one, the way one serial call would. Counting every
+		// failed call in the batch let a single step trip the breaker: a Lead
+		// that read nine files in parallel to see which of them existed yet got
+		// six NotFound answers and the run was stopped for "repeatedly failing
+		// tool calls" — after one such step. A batch with any success resets the
+		// counter, as a serial success would.
+		switch {
+		case anyOK:
 			cb.ResetToolErrors()
+		case len(failed) > 0:
+			if cbErr := cb.RecordToolErrorBatch(failed); cbErr != nil {
+				return history, cbErr
+			}
 		}
 		for _, hint := range readOnlyHints {
 			history = append(history, llm.Message{Role: llm.RoleUser, Content: hint})

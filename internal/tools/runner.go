@@ -508,8 +508,17 @@ func (r *Runner) discoverInstructions(dir string) string {
 			text, foundFile := r.memoryStore().LazyOrchestraFile(dir)
 			if text != "" {
 				candidate := filepath.Join(dir, foundFile)
-				rel, _ := filepath.Rel(root, candidate)
-				parts = append(parts, "Instructions from "+filepath.ToSlash(rel)+":\n"+text)
+				// LazyOrchestraFile walks up to the root itself, so for a
+				// directory with no file of its own it hands back an
+				// ancestor's text. This loop walks up too, so that text was
+				// injected twice — once under a label naming a file that does
+				// not exist ("Instructions from internal/api/ORCHESTRA.md") and
+				// once under its real name. Only the directory's own file
+				// belongs at this level.
+				if _, statErr := os.Stat(candidate); statErr == nil {
+					rel, _ := filepath.Rel(root, candidate)
+					parts = append(parts, "Instructions from "+filepath.ToSlash(rel)+":\n"+text)
+				}
 			}
 		}
 

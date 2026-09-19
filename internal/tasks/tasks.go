@@ -138,6 +138,10 @@ type ChildAgentConfig struct {
 	LLMStepTimeout time.Duration
 	// MaxStepsCap clamps child MaxSteps (default 12). Parent may request less.
 	MaxStepsCap int
+	// AgentLogger writes the children's tool_call / tool_result events to
+	// llm_log.jsonl. Without it a worker's writes were invisible: the log
+	// showed the child's LLM requests and nothing it did with the answers.
+	AgentLogger *llm.Logger
 	// OnChildEvent, when set, receives streaming events from child agents (E2E metrics).
 	OnChildEvent func(agent.AgentEvent)
 	// ChildEventSink builds a per-task OnEvent handler with child scope metadata.
@@ -582,6 +586,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		ToolDigestBytes:        r.child.ToolDigestBytes,
 		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
 		LLMStepTimeout:         r.child.LLMStepTimeout,
+		AgentLogger:            r.child.AgentLogger,
 
 		CompactionClient:        r.child.CompactionClient,
 		CompactionContextTokens: r.child.CompactionContextTokens,

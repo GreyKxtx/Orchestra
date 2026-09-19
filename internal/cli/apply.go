@@ -649,6 +649,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			HistoryPruneKeepRecent:        cfg.Agent.ResolvedHistoryPruneKeepRecent(),
 			LLMStepTimeout:                time.Duration(cfg.LLM.TimeoutS) * time.Second,
 			MaxStepsCap:                   cfg.Agent.ResolvedChildMaxSteps(),
+			AgentLogger:                   agentLogger,
 			CompactionClient:              taskCompactionClient,
 			CompactionContextTokens:       taskCompactionCtxTokens,
 			UsageTracker:                  usageTracker,
