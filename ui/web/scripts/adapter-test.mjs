@@ -499,6 +499,39 @@ test("the address bar tells an address from a search", () => {
   assert.equal(address("", search), "");
 });
 
+// Saved links live in this browser's storage, so the list itself is the
+// whole feature: newest first, one row per address, bounded.
+test("a saved link goes to the front, once, and the list stays bounded", () => {
+  const b = loadBundle();
+  const save = b.globalFn("__orchBrowserLinks");
+  assert.equal(typeof save, "function", "65-browser-panel.js must export it for this test");
+
+  const one = save([], { url: "https://a.example/x", title: "A" });
+  assert.deepEqual(JSON.parse(JSON.stringify(one)), [{ url: "https://a.example/x", title: "A" }]);
+
+  // Saving the same address again moves it up rather than doubling it, and
+  // the new title wins.
+  const two = save(save(one, { url: "https://b.example/", title: "B" }), {
+    url: "https://a.example/x",
+    title: "A again",
+  });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(two)).map((r) => r.url),
+    ["https://a.example/x", "https://b.example/"]
+  );
+  assert.equal(two[0].title, "A again");
+
+  // A page with no title is listed by its address, and an empty one is not
+  // saved at all.
+  assert.equal(save([], { url: "https://c.example/" })[0].title, "https://c.example/");
+  assert.equal(save(one, { url: "   " }).length, 1);
+
+  let many = [];
+  for (let i = 0; i < 70; i++) many = save(many, { url: `https://x.example/${i}` });
+  assert.equal(many.length, 60, "the oldest drop off");
+  assert.equal(many[0].url, "https://x.example/69");
+});
+
 test("a composer send becomes session.message", async () => {
   const b = await handshake(loadBundle());
   b.sent.length = 0;

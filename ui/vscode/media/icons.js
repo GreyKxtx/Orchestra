@@ -111,6 +111,7 @@
     "arrow-right": '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
     reload: '<path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/>',
     pick: '<rect x="4" y="4" width="10" height="10" rx="1.5"/><path d="M12 12l7.5 2.8-3.3 1.4-1.4 3.3z"/>',
+    bookmark: '<path d="M6.5 4.5h11v15l-5.5-4-5.5 4z"/>',
     terminal: '<path d="M5.5 7.5l4 4.5-4 4.5"/><path d="M12.5 16.5h6"/>',
     dots: '<path d="M5.5 12h.01"/><path d="M12 12h.01"/><path d="M18.5 12h.01"/>',
     "chevron-down": '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',

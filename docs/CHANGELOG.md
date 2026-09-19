@@ -15,6 +15,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **The address bar is a search box** — anything that is not somewhere to go is looked up with the chosen engine (Google, Bing, DuckDuckGo, Yandex). `localhost:5173` is a host and a port, not a scheme; covered by a test.
 - **A console** — the page's own `console.*` and its unhandled errors, collected in the page and drained into a drawer while it is open, plus a line to run JavaScript on the page. The site's own console still runs.
 - **A ⋯ menu** — screenshot of the page or of a dragged area (both land in the composer as PNG), reload past the cache, copy the address, open the page in one of the machine's own browsers (read out of the registry), zoom, the two choices above, and clearing cookies, cache or the site's data. WebView2 has no API for most of these: they are devtools-protocol calls (`browser_cdp`). Clearing the whole profile is deliberately not offered — the panel shares its WebView2 profile with the chat window, and it would take the app's own theme, language and these choices with it.
+- **Saved links** — a bookmark menu beside the reload button: the page open now is kept with one
+  click and comes back with another. Newest first, one row per address, at most 60, in this
+  browser's own storage beside the theme and the language.
 - **Every command is `async`** — a plain Tauri command runs on the main thread and creating a webview waits for that same thread, so the first version deadlocked the window on open.
 
 ### Fixed — one parallel step is one step for the breaker; children log their tools (2026-09)

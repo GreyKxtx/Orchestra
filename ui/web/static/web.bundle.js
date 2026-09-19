@@ -142,6 +142,11 @@
       "browser.reload": "Reload",
       "browser.pick": "Pick an element on the page",
       "browser.url_hint": "Address or search",
+      "browser.links": "Saved links",
+      "browser.links_empty": "Nothing saved yet",
+      "browser.link_save": "Save this page",
+      "browser.link_saved": "Saved",
+      "browser.link_forget": "Forget this link",
       "browser.console": "Console",
       "browser.more": "More",
       "browser.shot": "Take screenshot",
@@ -845,6 +850,11 @@
       "browser.reload": "Обновить",
       "browser.pick": "Выбрать элемент на странице",
       "browser.url_hint": "Адрес или поиск",
+      "browser.links": "Сохранённые ссылки",
+      "browser.links_empty": "Пока ничего не сохранено",
+      "browser.link_save": "Сохранить эту страницу",
+      "browser.link_saved": "Сохранено",
+      "browser.link_forget": "Убрать ссылку",
       "browser.console": "Консоль",
       "browser.more": "Ещё",
       "browser.shot": "Снимок страницы",
@@ -1642,6 +1652,7 @@
     "arrow-right": '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
     reload: '<path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/>',
     pick: '<rect x="4" y="4" width="10" height="10" rx="1.5"/><path d="M12 12l7.5 2.8-3.3 1.4-1.4 3.3z"/>',
+    bookmark: '<path d="M6.5 4.5h11v15l-5.5-4-5.5 4z"/>',
     terminal: '<path d="M5.5 7.5l4 4.5-4 4.5"/><path d="M12.5 16.5h6"/>',
     dots: '<path d="M5.5 12h.01"/><path d="M12 12h.01"/><path d="M18.5 12h.01"/>',
     "chevron-down": '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
@@ -13606,6 +13617,8 @@
   /** @type {any} */ let browserConsoleBtn = null;
   /** @type {any} */ let browserMenuBtn = null;
   /** @type {any} */ let browserMenuEl = null;
+  /** @type {any} */ let browserLinksBtn = null;
+  /** @type {any} */ let browserLinksEl = null;
   /** @type {any} */ let browserStatusEl = null;
   /** @type {any} */ let browserConsoleEl = null;
   /** @type {any} */ let browserLogEl = null;
@@ -13627,6 +13640,9 @@
     { id: "duckduckgo", name: "DuckDuckGo", search: "https://duckduckgo.com/?q=" },
     { id: "yandex", name: "Yandex", search: "https://yandex.ru/search/?text=" },
   ];
+
+  /** Past this many saved links the oldest drops off. */
+  const MAX_LINKS = 60;
 
   /** Zoom steps, the ones a browser's menu offers. */
   const BROWSER_ZOOMS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -13678,9 +13694,53 @@
     return (search || browserEngine().search) + encodeURIComponent(s);
   }
 
-  // The one piece of this view worth testing without a browser
-  // (ui/web/scripts/adapter-test.mjs reads it off the global).
+  /**
+   * The saved links after one more: newest first, one row per address, and
+   * bounded, because this lives in the browser's own storage.
+   * @param {any[]} list @param {{url: string, title?: string}} entry
+   */
+  function browserLinksWith(list, entry) {
+    const rows = Array.isArray(list) ? list.filter((r) => r && r.url) : [];
+    const url = String((entry && entry.url) || "").trim();
+    if (!url) return rows.slice(0, MAX_LINKS);
+    const title = String((entry && entry.title) || "").trim() || url;
+    return [{ url, title }].concat(rows.filter((r) => r.url !== url)).slice(0, MAX_LINKS);
+  }
+
+  // The two pieces of this view worth testing without a browser
+  // (ui/web/scripts/adapter-test.mjs reads them off the global).
   globalThis.__orchBrowserAddress = browserAddress;
+  globalThis.__orchBrowserLinks = browserLinksWith;
+
+  /** @returns {any[]} */
+  function browserLinks() {
+    try {
+      const rows = JSON.parse(browserPref("orchestra.browser.links", "[]"));
+      return Array.isArray(rows) ? rows.filter((r) => r && r.url) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /** @param {any[]} rows */
+  function setBrowserLinks(rows) {
+    setBrowserPref("orchestra.browser.links", JSON.stringify(rows));
+    drawBrowserLinks();
+  }
+
+  /** The page open right now, as a link worth keeping. */
+  async function saveBrowserLink() {
+    const answer = await browserEval("[String(location.href), String(document.title || '')]");
+    const url = Array.isArray(answer) ? String(answer[0] || "") : "";
+    if (!url || url.startsWith("about:")) return;
+    setBrowserLinks(browserLinksWith(browserLinks(), { url, title: String(answer[1] || "") }));
+    browserStatus(i18n("browser.link_saved"));
+  }
+
+  /** @param {string} url */
+  function forgetBrowserLink(url) {
+    setBrowserLinks(browserLinks().filter((r) => r.url !== url));
+  }
 
   /** The Tauri bridge, or null when the page is not running in the shell. */
   function browserBridge() {
@@ -13955,7 +14015,7 @@
     b.textContent = i18n(labelKey);
     b.setAttribute("data-i18n", labelKey);
     b.addEventListener("click", () => {
-      browserMenuOpen(false);
+      browserClosePopups();
       onClick();
     });
     return b;
@@ -14139,10 +14199,83 @@
     browserAppEl.value = browserInstalled.some((b) => b.exe === chosen) ? chosen : "";
   }
 
-  function browserMenuOpen(on) {
-    if (!browserMenuEl) return;
-    browserMenuEl.hidden = !on;
-    if (browserMenuBtn) browserMenuBtn.setAttribute("aria-expanded", on ? "true" : "false");
+  /* ---- the toolbar's popups ------------------------------------------- */
+
+  /** @type {any[]} */ const browserPopups = [];
+
+  /**
+   * A popup under a toolbar button. One is open at a time, and a click
+   * anywhere else closes it.
+   * @param {any} wrap @param {any} btn @param {any} menu @param {() => void} [onOpen]
+   */
+  function browserPopup(wrap, btn, menu, onOpen) {
+    btn.setAttribute("aria-haspopup", "menu");
+    btn.setAttribute("aria-expanded", "false");
+    browserPopups.push({ wrap, btn, menu, onOpen });
+    btn.addEventListener("click", () => browserOpenPopup(menu, Boolean(menu.hidden)));
+    document.addEventListener("click", (ev) => {
+      if (menu.hidden) return;
+      const target = ev && ev.target;
+      if (wrap.contains && target && wrap.contains(target)) return;
+      browserOpenPopup(menu, false);
+    });
+  }
+
+  /** @param {any} menu the one to show, or null to close them all @param {boolean} on */
+  function browserOpenPopup(menu, on) {
+    for (const p of browserPopups) {
+      const show = p.menu === menu && on;
+      p.menu.hidden = !show;
+      p.btn.setAttribute("aria-expanded", show ? "true" : "false");
+      if (show && p.onOpen) p.onOpen();
+    }
+  }
+
+  function browserClosePopups() {
+    browserOpenPopup(null, false);
+  }
+
+  /* ---- the links menu --------------------------------------------------- */
+
+  /** The saved links, drawn fresh: they change while the menu is closed. */
+  function drawBrowserLinks() {
+    if (!browserLinksEl) return;
+    while (browserLinksEl.firstChild) browserLinksEl.removeChild(browserLinksEl.firstChild);
+    browserLinksEl.appendChild(browserMenuItem("browser.link_save", () => void saveBrowserLink()));
+    browserLinksEl.appendChild(browserMenuSeparator());
+    const rows = browserLinks();
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "browser-menu-row browser-menu-label";
+      empty.textContent = i18n("browser.links_empty");
+      empty.setAttribute("data-i18n", "browser.links_empty");
+      browserLinksEl.appendChild(empty);
+      return;
+    }
+    for (const row of rows) {
+      const line = document.createElement("div");
+      line.className = "browser-link-row";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "browser-menu-item browser-link";
+      open.textContent = String(row.title || row.url);
+      open.title = String(row.url);
+      open.addEventListener("click", () => {
+        browserClosePopups();
+        void openBrowserAt(String(row.url));
+      });
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "browser-link-x";
+      drop.textContent = "×";
+      drop.title = i18n("browser.link_forget");
+      drop.setAttribute("aria-label", i18n("browser.link_forget"));
+      drop.setAttribute("data-i18n-title", "browser.link_forget");
+      drop.setAttribute("data-i18n-aria-label", "browser.link_forget");
+      drop.addEventListener("click", () => forgetBrowserLink(String(row.url)));
+      line.append(open, drop);
+      browserLinksEl.appendChild(line);
+    }
   }
 
   /* ---- the view ----------------------------------------------------------- */
@@ -14194,6 +14327,18 @@
       browserToolButton("reload", "browser.reload", () => void browserInvoke("browser_navigate", { action: "reload" }))
     );
 
+    // The pages worth coming back to, beside the button that reloads this one.
+    const linksWrap = document.createElement("div");
+    linksWrap.className = "browser-menu-wrap";
+    browserLinksBtn = browserToolButton("bookmark", "browser.links", () => {});
+    browserLinksEl = document.createElement("div");
+    browserLinksEl.className = "browser-menu browser-menu-left";
+    browserLinksEl.setAttribute("role", "menu");
+    browserLinksEl.hidden = true;
+    linksWrap.append(browserLinksBtn, browserLinksEl);
+    toolbar.appendChild(linksWrap);
+    browserPopup(linksWrap, browserLinksBtn, browserLinksEl, () => drawBrowserLinks());
+
     browserUrlEl = document.createElement("input");
     browserUrlEl.type = "text";
     browserUrlEl.className = "browser-url";
@@ -14220,14 +14365,11 @@
 
     const menuWrap = document.createElement("div");
     menuWrap.className = "browser-menu-wrap";
-    browserMenuBtn = browserToolButton("dots", "browser.more", () => {
-      browserMenuOpen(Boolean(browserMenuEl && browserMenuEl.hidden));
-    });
-    browserMenuBtn.setAttribute("aria-haspopup", "menu");
-    browserMenuBtn.setAttribute("aria-expanded", "false");
+    browserMenuBtn = browserToolButton("dots", "browser.more", () => {});
     browserMenuEl = buildBrowserMenu();
     menuWrap.append(browserMenuBtn, browserMenuEl);
     toolbar.appendChild(menuWrap);
+    browserPopup(menuWrap, browserMenuBtn, browserMenuEl);
 
     browserStage = document.createElement("div");
     browserStage.className = "browser-stage";
@@ -14268,12 +14410,6 @@
       new ResizeObserver(() => placeBrowser()).observe(browserStage);
     }
     window.addEventListener("resize", () => placeBrowser());
-    document.addEventListener("click", (ev) => {
-      if (!browserMenuEl || browserMenuEl.hidden) return;
-      const t = ev && ev.target;
-      if (menuWrap.contains && t && menuWrap.contains(t)) return;
-      browserMenuOpen(false);
-    });
   }
 
   function showBrowserView() {
@@ -14298,7 +14434,7 @@
     }
     // Left the view: the webview goes out of sight but stays loaded, so
     // coming back does not reload the page under it.
-    browserMenuOpen(false);
+    browserClosePopups();
     if (browserOpened) {
       browserPickArmed = false;
       syncBrowserPickButton();

@@ -2029,6 +2029,45 @@ body[data-rail-drag="true"] {
   font-size: 12px;
 }
 
+/* The saved links open under their own button, on the left of the bar. */
+.browser-menu-left {
+  left: 0;
+  right: auto;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.browser-link-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.browser-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-link-x {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.browser-link-x:hover {
+  color: var(--fg);
+  background: var(--pill-bg);
+}
+
 /* The console drawer. It takes its room from the stage, and the webview is
    moved up to what is left — the two never overlap. */
 .browser-console {
