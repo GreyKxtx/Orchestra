@@ -411,7 +411,12 @@ const PAINT: &str = "__orchestraPaint";
 
 /// What the tools are told before they boot, all of it their own page's.
 ///
-/// Two settings first. The screencast — a picture of the page beside the
+/// Three settings first. Edge's welcome tab, which opens beside the panels on
+/// a profile that has not seen this version — and since the panel's port, and
+/// so its origin, is chosen afresh at every launch, that is every launch. The
+/// one key names only that tab; the tools fill their other tabs in around it.
+///
+/// Then the screencast — a picture of the page beside the
 /// panels, for driving a phone from a desktop — is on by default whenever the
 /// target is a remote one, which ours is; here the page is right there to the
 /// left, so the picture would only be the width it costs. And the light or
@@ -443,6 +448,9 @@ fn devtools_boot(theme: &str, css: &str) -> String {
            for (const key of ['ui-theme', 'uiTheme']) {{
              if (localStorage.getItem(key) === null) localStorage.setItem(key, {theme});
            }}
+           const tabs = JSON.parse(localStorage.getItem('closeable-tabs') || '{{}}');
+           tabs.welcome = false;
+           localStorage.setItem('closeable-tabs', JSON.stringify(tabs));
          }} catch (e) {{}}
          globalThis.{PAINT} = (css) => {{
            try {{ localStorage.setItem('{STYLE_ID}', css); }} catch (e) {{}}
