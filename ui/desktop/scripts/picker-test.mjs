@@ -60,6 +60,13 @@ function el(tag, opts = {}) {
 /** Load the picker over a fake document; returns the picker and the listeners. */
 function load({ root, sheets = [], uniqueIds = [], title = "Page" } = {}) {
   const listeners = {};
+  // The picker wraps the page's console at load, so the fake page has one.
+  const logged = [];
+  const console = {
+    log: (...a) => logged.push(["log", ...a]),
+    warn: (...a) => logged.push(["warn", ...a]),
+    error: (...a) => logged.push(["error", ...a]),
+  };
   const document = {
     title,
     documentElement: root,
@@ -74,17 +81,19 @@ function load({ root, sheets = [], uniqueIds = [], title = "Page" } = {}) {
   };
   const sandbox = {
     document,
+    console,
     location: { href: "https://example.com/pricing" },
     Math,
     JSON,
     String,
     Object,
     Array,
+    Error,
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
-  return { pick: sandbox.__ORCH_PICK_ALIAS || sandbox.__orchPick, listeners, document };
+  return { pick: sandbox.__ORCH_PICK_ALIAS || sandbox.__orchPick, listeners, document, console, logged };
 }
 
 function fire(listeners, type, ev) {
@@ -191,6 +200,44 @@ test("arm, click, take: one payload, then nothing", () => {
   assert.deepEqual(payload.box, { x: 10, y: 20, w: 100, h: 40 });
 
   assert.equal(pick.take(), "idle", "a payload is handed over once");
+});
+
+test("the page keeps its own console, and each line is handed over once", () => {
+  const { pick, console: page, logged } = load({ root: el("html") });
+
+  page.log("hello", { a: 1 });
+  page.warn("careful");
+  // The page's own console still ran: a site that logs to itself is unchanged.
+  assert.deepEqual(Array.from(logged[0]), ["log", "hello", { a: 1 }]);
+
+  const rows = Array.from(pick.drainLog());
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].level, "log");
+  assert.equal(rows[0].text, 'hello {"a":1}');
+  assert.equal(rows[1].level, "warn");
+  assert.equal(Array.from(pick.drainLog()).length, 0, "drained lines are not repeated");
+});
+
+test("an area is dragged in page coordinates, and handed over once", () => {
+  const { pick, listeners } = load({ root: el("html") });
+  const drag = { preventDefault: () => {}, stopPropagation: () => {} };
+
+  assert.equal(pick.takeArea(), "idle");
+  pick.armArea();
+  assert.equal(pick.takeArea(), "", "nothing yet while the user is dragging");
+
+  fire(listeners, "mousedown", { ...drag, clientX: 10, clientY: 20 });
+  fire(listeners, "mousemove", { ...drag, clientX: 110, clientY: 90 });
+  fire(listeners, "mouseup", { ...drag, clientX: 110, clientY: 90 });
+
+  assert.deepEqual({ ...pick.takeArea() }, { x: 10, y: 20, w: 100, h: 70 });
+  assert.equal(pick.takeArea(), "idle", "a rectangle is handed over once");
+
+  // A click with no drag in it is not a rectangle.
+  pick.armArea();
+  fire(listeners, "mousedown", { ...drag, clientX: 40, clientY: 40 });
+  fire(listeners, "mouseup", { ...drag, clientX: 41, clientY: 41 });
+  assert.equal(pick.takeArea(), "idle");
 });
 
 test("Escape cancels without a payload, and the overlay is not pickable", () => {

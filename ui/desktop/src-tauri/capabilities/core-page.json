@@ -12,8 +12,15 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-browser-open",
+    "allow-browser-bounds",
+    "allow-browser-hide",
     "allow-browser-close",
     "allow-browser-navigate",
-    "allow-browser-pick"
+    "allow-browser-pick",
+    "allow-browser-eval",
+    "allow-browser-zoom",
+    "allow-browser-cdp",
+    "allow-browser-external",
+    "allow-browser-installed"
   ]
 }

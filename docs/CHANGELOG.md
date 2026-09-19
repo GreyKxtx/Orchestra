@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — the Browser view, with an element picker and a console (2026-09)
+
+- **A fourth segment beside Chat, Trajectory and Graph** (`ui/web/src/65-browser-panel.js`, `ui/desktop/src-tauri/src/browser.rs`) — a real browser inside the desktop app. The page draws the chrome and leaves a stage empty; what fills it is a child webview the shell keeps over that rectangle (`Window::add_child`, tauri's `unstable` feature). Not an iframe: the sites worth inspecting refuse to be framed. Leaving the view hides the webview rather than closing it, so coming back does not reload the page.
+- **The eyedropper** (`ui/desktop/picker.js`) — armed from the toolbar, it highlights what the mouse is over and turns a click into an attachment in the composer: the element's markup and the CSS rules that apply to it, which is what F12 shows. The injected script is handed no token, no core address and no IPC bridge — it shares a world with the page's own scripts, so arming is an `eval` and collecting is a poll, and what comes back is text the user still sends by hand.
+- **The address bar is a search box** — anything that is not somewhere to go is looked up with the chosen engine (Google, Bing, DuckDuckGo, Yandex). `localhost:5173` is a host and a port, not a scheme; covered by a test.
+- **A console** — the page's own `console.*` and its unhandled errors, collected in the page and drained into a drawer while it is open, plus a line to run JavaScript on the page. The site's own console still runs.
+- **A ⋯ menu** — screenshot of the page or of a dragged area (both land in the composer as PNG), reload past the cache, copy the address, open the page in one of the machine's own browsers (read out of the registry), zoom, the two choices above, and clearing cookies, cache or the site's data. WebView2 has no API for most of these: they are devtools-protocol calls (`browser_cdp`). Clearing the whole profile is deliberately not offered — the panel shares its WebView2 profile with the chat window, and it would take the app's own theme, language and these choices with it.
+- **Every command is `async`** — a plain Tauri command runs on the main thread and creating a webview waits for that same thread, so the first version deadlocked the window on open.
+
 ### Fixed — one parallel step is one step for the breaker; children log their tools (2026-09)
 
 - **A parallel tool batch moves the consecutive-error counter once** — `CircuitBreaker.RecordToolErrorBatch`. Every failed call in a batch used to count as a separate consecutive error, so a Lead that read nine files in one step to see which existed yet (six NotFound) tripped the limit of six on that single step and the run stopped. Each failure is still classified into the log; a batch with any success resets the counter, as a serial success does.

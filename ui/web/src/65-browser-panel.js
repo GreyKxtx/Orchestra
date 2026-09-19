@@ -1,19 +1,227 @@
-  /* ---- the browser panel and its element picker --------------------------- */
+  // ---- the Browser view -----------------------------------------------------
   //
-  // Desktop only: the panel is a second Tauri webview (ui/desktop/src-tauri/
-  // src/browser.rs) with the picker injected into every page it opens. This
-  // side is the chrome — an address, Go, and the eyedropper — plus the one
-  // thing the feature exists for: turning a picked element into an attachment
-  // on the next message.
+  // A fourth segment beside Chat, Trajectory and Graph: a real browser, and an
+  // eyedropper that drops what you click into the chat as an attachment — the
+  // markup and the CSS that F12 would show for that element, so the model can
+  // find the component in the repository and change it.
   //
-  // In a plain browser there is no panel, so the button removes itself rather
-  // than offering something that cannot work.
+  // The page itself draws only the chrome: a toolbar, an empty stage and a
+  // console drawer. What fills the stage is a webview of its own
+  // (ui/desktop/src-tauri/src/browser.rs), an OS view laid over this one: no
+  // iframe, because the sites worth inspecting refuse to be framed. The
+  // stage's rectangle is measured here and handed to Rust, which keeps the
+  // webview over it.
+  //
+  // Everything the toolbar cannot do by itself goes through two commands:
+  // `browser_eval` runs a line in the page, and `browser_cdp` calls the
+  // devtools protocol WebView2 already speaks — which is where the screenshot,
+  // the hard reload and the two Clear items come from.
+  //
+  // Desktop only. In a plain browser there is no panel, so the segment is
+  // never built rather than offering something that cannot work.
+
+  const browserApp = document.getElementById("app");
+  const browserSwitchEl = document.getElementById("view-switch");
+  const browserChatBtn = document.getElementById("view-chat-btn");
+  const browserTrajectoryBtn = document.getElementById("view-trajectory-btn");
+  const browserTrajectoryPane = document.getElementById("trajectory");
+
+  /** @type {any} */ let browserBtn = null;
+  /** @type {any} */ let browserPane = null;
+  /** @type {any} */ let browserStage = null;
+  /** @type {any} */ let browserUrlEl = null;
+  /** @type {any} */ let browserPickBtn = null;
+  /** @type {any} */ let browserConsoleBtn = null;
+  /** @type {any} */ let browserMenuBtn = null;
+  /** @type {any} */ let browserMenuEl = null;
+  /** @type {any} */ let browserStatusEl = null;
+  /** @type {any} */ let browserConsoleEl = null;
+  /** @type {any} */ let browserLogEl = null;
+  /** @type {any} */ let browserEvalEl = null;
+  /** @type {any} */ let browserZoomEl = null;
+  /** @type {any} */ let browserEngineEl = null;
+  /** @type {any} */ let browserAppEl = null;
+  let browserOpened = false;
+  let browserPickArmed = false;
+  let browserConsoleOpen = false;
+  let browserLogTimer = 0;
+  let browserZoom = 1;
+  /** @type {any[]} */ let browserInstalled = [];
+
+  /** The search engines the address bar falls back to when the text is not a URL. */
+  const BROWSER_ENGINES = [
+    { id: "google", name: "Google", search: "https://www.google.com/search?q=" },
+    { id: "bing", name: "Bing", search: "https://www.bing.com/search?q=" },
+    { id: "duckduckgo", name: "DuckDuckGo", search: "https://duckduckgo.com/?q=" },
+    { id: "yandex", name: "Yandex", search: "https://yandex.ru/search/?text=" },
+  ];
+
+  /** Zoom steps, the ones a browser's menu offers. */
+  const BROWSER_ZOOMS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+  /* ---- what the user chose ------------------------------------------------ */
+  //
+  // Beside the theme, the scale and the language: choices about this page, kept
+  // in this browser rather than in the project's config, because they say how
+  // the user likes to work and not what the project is.
+
+  /** @param {string} key @param {string} fallback */
+  function browserPref(key, fallback) {
+    try {
+      return (window.localStorage && window.localStorage.getItem(key)) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  /** @param {string} key @param {string} value */
+  function setBrowserPref(key, value) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(key, value);
+    } catch (e) {
+      // A page without storage still works; the choice just does not survive.
+    }
+  }
+
+  function browserEngine() {
+    const id = browserPref("orchestra.browser.engine", "google");
+    return BROWSER_ENGINES.find((e) => e.id === id) || BROWSER_ENGINES[0];
+  }
+
+  /**
+   * What the address bar means. A scheme, a host with a dot, localhost or an
+   * address is somewhere to go; anything else is something to look up.
+   * @param {string} raw @param {string} [search] the engine's query prefix
+   * @returns {string}
+   */
+  function browserAddress(raw, search) {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    // A scheme only where an authority follows it: "localhost:5173" is a host
+    // and a port, not a scheme.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
+    if (/^(localhost|\[[0-9a-f:]+\])(:\d+)?([/?#]|$)/i.test(s)) return `http://${s}`;
+    if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?([/?#]|$)/.test(s)) return `http://${s}`;
+    if (!/\s/.test(s) && /^[^\s/@]+\.[a-z]{2,}(:\d+)?([/?#]|$)/i.test(s)) return `https://${s}`;
+    return (search || browserEngine().search) + encodeURIComponent(s);
+  }
+
+  // The one piece of this view worth testing without a browser
+  // (ui/web/scripts/adapter-test.mjs reads it off the global).
+  globalThis.__orchBrowserAddress = browserAddress;
 
   /** The Tauri bridge, or null when the page is not running in the shell. */
-  function tauriBridge() {
+  function browserBridge() {
     const t = window.__TAURI__;
     return t && t.core && typeof t.core.invoke === "function" ? t : null;
   }
+
+  function browserViewActive() {
+    return Boolean(browserApp && browserApp.dataset && browserApp.dataset.view === "browser");
+  }
+
+  /** A line in the toolbar — the transcript is hidden while this view is up. */
+  function browserStatus(text) {
+    if (!browserStatusEl) return;
+    browserStatusEl.textContent = text;
+    browserStatusEl.title = text;
+    browserStatusEl.hidden = !text;
+  }
+
+  /** One command, with whatever went wrong said where the user is looking. */
+  async function browserInvoke(command, args) {
+    const t = browserBridge();
+    if (!t) return false;
+    try {
+      await t.core.invoke(command, args || {});
+      return true;
+    } catch (err) {
+      const text = `[error] browser: ${String((err && err.message) || err)}`;
+      browserStatus(text);
+      toRenderer({ type: "systemNote", text });
+      return false;
+    }
+  }
+
+  /**
+   * One line of JavaScript in the page, and what it evaluated to. The shell
+   * hands back the result JSON encoded; a page that never answers times out
+   * there rather than here.
+   * @param {string} js
+   * @returns {Promise<any>} undefined when the panel could not answer
+   */
+  async function browserEval(js) {
+    const t = browserBridge();
+    if (!t) return undefined;
+    try {
+      const raw = await t.core.invoke("browser_eval", { js });
+      return JSON.parse(String(raw));
+    } catch (err) {
+      const text = `[error] browser: ${String((err && err.message) || err)}`;
+      browserStatus(text);
+      return undefined;
+    }
+  }
+
+  /**
+   * One devtools-protocol call on the panel. The same protocol the browser's
+   * own F12 speaks, which is where the screenshot and the Clear items come
+   * from — WebView2 has no other API for them.
+   * @param {string} method @param {any} [params]
+   * @returns {Promise<any>} undefined when the call failed
+   */
+  async function browserCdp(method, params) {
+    const t = browserBridge();
+    if (!t) return undefined;
+    try {
+      const raw = await t.core.invoke("browser_cdp", {
+        method,
+        params: JSON.stringify(params || {}),
+      });
+      return raw ? JSON.parse(String(raw)) : {};
+    } catch (err) {
+      const text = `[error] browser: ${String((err && err.message) || err)}`;
+      browserStatus(text);
+      toRenderer({ type: "systemNote", text });
+      return undefined;
+    }
+  }
+
+  /** The stage's rectangle in CSS pixels — where the webview has to sit. */
+  function browserRect() {
+    if (!browserStage || !browserStage.getBoundingClientRect) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+    const r = browserStage.getBoundingClientRect();
+    return {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    };
+  }
+
+  /** Keep the webview over the stage, or out of sight when the view is not up. */
+  function placeBrowser() {
+    if (!browserOpened) return;
+    const rect = browserViewActive() ? browserRect() : { x: 0, y: 0, width: 0, height: 0 };
+    void browserInvoke("browser_bounds", { rect });
+  }
+
+  async function openBrowserAt(url) {
+    const address = browserAddress(url);
+    if (!address) {
+      if (browserUrlEl && browserUrlEl.focus) browserUrlEl.focus();
+      return;
+    }
+    if (browserUrlEl) browserUrlEl.value = address;
+    if (await browserInvoke("browser_open", { url: address, rect: browserRect() })) {
+      browserOpened = true;
+      browserStatus("");
+    }
+  }
+
+  /* ---- what a pick becomes ------------------------------------------------ */
 
   /**
    * One picked element as the markdown that goes into the conversation: what
@@ -38,7 +246,7 @@
   }
 
   /** UTF-8 text as base64, which is what attachments.store takes. */
-  function base64Utf8(text) {
+  function browserBase64(text) {
     const bytes = new TextEncoder().encode(text);
     let binary = "";
     for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -51,77 +259,512 @@
     return `picked-${tag || "element"}-${stamp}.md`;
   }
 
-  (function initBrowserPanel() {
-    const openBtn = document.getElementById("browser-btn");
-    const bar = document.getElementById("browser-bar");
-    const urlInput = /** @type {HTMLInputElement|null} */ (document.getElementById("browser-url"));
-    const goBtn = document.getElementById("browser-go");
-    const pickBtn = document.getElementById("browser-pick");
-    if (!openBtn || !bar || !urlInput || !goBtn || !pickBtn) {
+  /* ---- screenshots -------------------------------------------------------- */
+
+  /**
+   * The page, or a part of it, as a PNG in the composer. The devtools protocol
+   * returns it already base64 encoded, which is what attachments.store takes,
+   * so nothing is decoded on the way.
+   * @param {{x: number, y: number, w: number, h: number} | null} [clip]
+   */
+  async function browserShot(clip) {
+    if (!browserOpened) return;
+    const params = { format: "png", captureBeyondViewport: false };
+    if (clip) {
+      params.clip = { x: clip.x, y: clip.y, width: clip.w, height: clip.h, scale: 1 };
+    }
+    browserStatus(i18n("browser.shooting"));
+    const answer = await browserCdp("Page.captureScreenshot", params);
+    const data = answer && answer.data;
+    if (!data) {
+      browserStatus(i18n("browser.shot_failed"));
       return;
     }
-    const t = tauriBridge();
-    if (!t) {
-      openBtn.remove();
-      bar.remove();
-      return;
-    }
-    openBtn.hidden = false;
+    const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+    const name = `page-${stamp}.png`;
+    await storeAttachmentBytes({ name, mime: "image/png", dataBase64: String(data) });
+    const said = i18n("browser.shot_taken", { name });
+    browserStatus(said);
+    toRenderer({ type: "systemNote", text: said });
+  }
 
-    let opened = false;
-
-    function note(key, vars) {
-      toRenderer({ type: "systemNote", text: i18n(key, vars) });
-    }
-
-    async function invoke(command, args) {
-      try {
-        await t.core.invoke(command, args || {});
-        return true;
-      } catch (err) {
-        toRenderer({
-          type: "systemNote",
-          text: `[error] browser: ${String((err && err.message) || err)}`,
-        });
-        return false;
-      }
-    }
-
-    async function openPanel() {
-      const url = urlInput.value.trim();
-      if (!url) {
-        urlInput.focus();
+  /** Drag a rectangle over the page, then shoot exactly that. */
+  async function browserShotArea() {
+    if (!browserOpened) return;
+    if ((await browserEval("window.__orchPick && __orchPick.armArea()")) === undefined) return;
+    browserStatus(i18n("browser.area_hint"));
+    const started = Date.now();
+    while (Date.now() - started < 60000) {
+      await new Promise((done) => setTimeout(done, 250));
+      const answer = await browserEval("window.__orchPick ? __orchPick.takeArea() : 'idle'");
+      if (answer === undefined || answer === "idle") {
+        browserStatus("");
         return;
       }
-      opened = await invoke("browser_open", { url });
+      if (answer && typeof answer === "object") {
+        browserStatus("");
+        await browserShot(answer);
+        return;
+      }
     }
+    browserStatus("");
+  }
 
-    openBtn.addEventListener("click", () => {
-      bar.hidden = !bar.hidden;
-      if (!bar.hidden) urlInput.focus();
+  /* ---- the console -------------------------------------------------------- */
+
+  /** @param {string} level @param {string} text */
+  function browserLogLine(level, text) {
+    if (!browserLogEl) return;
+    const line = document.createElement("div");
+    line.className = `browser-log-line browser-log-${level}`;
+    line.textContent = text;
+    browserLogEl.appendChild(line);
+    while (browserLogEl.childNodes.length > 500) {
+      browserLogEl.removeChild(browserLogEl.firstChild);
+    }
+    browserLogEl.scrollTop = browserLogEl.scrollHeight;
+  }
+
+  /** Everything the page has logged since the last look. */
+  async function browserDrainLog() {
+    if (!browserConsoleOpen || !browserOpened) return;
+    const rows = await browserEval("window.__orchPick ? __orchPick.drainLog() : []");
+    if (!Array.isArray(rows)) return;
+    for (const row of rows) {
+      browserLogLine(String((row && row.level) || "log"), String((row && row.text) || ""));
+    }
+  }
+
+  function browserConsoleToggle() {
+    browserConsoleOpen = !browserConsoleOpen;
+    if (browserConsoleEl) browserConsoleEl.hidden = !browserConsoleOpen;
+    if (browserConsoleBtn) {
+      browserConsoleBtn.setAttribute("aria-pressed", browserConsoleOpen ? "true" : "false");
+    }
+    if (browserLogTimer) {
+      clearInterval(browserLogTimer);
+      browserLogTimer = 0;
+    }
+    if (browserConsoleOpen) {
+      // The page cannot call us — a page we do not control is handed no bridge
+      // — so what it logged is collected by asking, while anyone is looking.
+      browserLogTimer = setInterval(() => void browserDrainLog(), 700);
+      void browserDrainLog();
+      if (browserEvalEl && browserEvalEl.focus) browserEvalEl.focus();
+    }
+    placeBrowser();
+  }
+
+  /** @param {string} code */
+  async function browserRunInPage(code) {
+    const source = String(code || "").trim();
+    if (!source) return;
+    browserLogLine("in", `› ${source}`);
+    // eval, because that is what a console is. It is wrapped so a throw comes
+    // back as a line rather than as nothing: the shell's callback drops
+    // exceptions on Windows.
+    const wrapped =
+      "(function(){try{var __r=(0,eval)(" +
+      JSON.stringify(source) +
+      ");return window.__orchPick?__orchPick.fmt(__r):String(__r)}" +
+      "catch(e){return 'Uncaught '+String(e)}})()";
+    const answer = await browserEval(wrapped);
+    if (answer !== undefined) browserLogLine("out", String(answer));
+    void browserDrainLog();
+  }
+
+  /* ---- the menu ----------------------------------------------------------- */
+
+  /** @param {string} labelKey @param {() => void} onClick */
+  function browserMenuItem(labelKey, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "browser-menu-item";
+    b.textContent = i18n(labelKey);
+    b.setAttribute("data-i18n", labelKey);
+    b.addEventListener("click", () => {
+      browserMenuOpen(false);
+      onClick();
     });
-    goBtn.addEventListener("click", () => void openPanel());
-    urlInput.addEventListener("keydown", (ev) => {
+    return b;
+  }
+
+  function browserMenuSeparator() {
+    const hr = document.createElement("div");
+    hr.className = "browser-menu-sep";
+    return hr;
+  }
+
+  /** A labelled row for the two choices and the zoom. */
+  function browserMenuRow(labelKey) {
+    const row = document.createElement("div");
+    row.className = "browser-menu-row";
+    const label = document.createElement("span");
+    label.className = "browser-menu-label";
+    label.textContent = i18n(labelKey);
+    label.setAttribute("data-i18n", labelKey);
+    row.appendChild(label);
+    return row;
+  }
+
+  function browserSetZoom(scale) {
+    browserZoom = Math.min(3, Math.max(0.25, scale));
+    if (browserZoomEl) browserZoomEl.textContent = `${Math.round(browserZoom * 100)}%`;
+    void browserInvoke("browser_zoom", { scale: browserZoom });
+  }
+
+  /** @param {number} step -1 or 1 */
+  function browserStepZoom(step) {
+    const i = BROWSER_ZOOMS.findIndex((z) => Math.abs(z - browserZoom) < 0.001);
+    const from = i < 0 ? BROWSER_ZOOMS.indexOf(1) : i;
+    const next = BROWSER_ZOOMS[Math.min(BROWSER_ZOOMS.length - 1, Math.max(0, from + step))];
+    browserSetZoom(next);
+  }
+
+  async function browserCopyUrl() {
+    const url = await browserEval("String(location.href)");
+    if (typeof url !== "string" || !url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      browserStatus(i18n("browser.copied"));
+    } catch (e) {
+      browserStatus(url);
+    }
+  }
+
+  /** The chosen browser, or the system's own when nothing is chosen. */
+  async function browserOpenExternal() {
+    const url = (await browserEval("String(location.href)")) || (browserUrlEl && browserUrlEl.value);
+    const address = browserAddress(String(url || ""));
+    if (!address) return;
+    const exe = browserPref("orchestra.browser.exe", "");
+    if (await browserInvoke("browser_external", { url: address, exe })) {
+      browserStatus(i18n("browser.opened_outside"));
+    }
+  }
+
+  /** Everything the page being viewed has stored, and nothing of ours. */
+  async function browserClearSite() {
+    const origin = await browserEval("String(location.origin)");
+    if (typeof origin !== "string" || !origin || origin === "null") return;
+    await browserCdp("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
+    browserStatus(i18n("browser.cleared"));
+  }
+
+  function buildBrowserMenu() {
+    const menu = document.createElement("div");
+    menu.className = "browser-menu";
+    menu.setAttribute("role", "menu");
+    menu.hidden = true;
+
+    menu.append(
+      browserMenuItem("browser.shot", () => void browserShot(null)),
+      browserMenuItem("browser.shot_area", () => void browserShotArea()),
+      browserMenuSeparator(),
+      browserMenuItem("browser.hard_reload", () => {
+        void browserCdp("Page.reload", { ignoreCache: true });
+      }),
+      browserMenuItem("browser.copy_url", () => void browserCopyUrl()),
+      browserMenuItem("browser.open_outside", () => void browserOpenExternal()),
+      browserMenuSeparator()
+    );
+
+    // Zoom, the row every browser's menu has.
+    const zoom = browserMenuRow("browser.zoom");
+    const minus = document.createElement("button");
+    minus.type = "button";
+    minus.className = "browser-menu-step";
+    minus.textContent = "−";
+    minus.addEventListener("click", () => browserStepZoom(-1));
+    browserZoomEl = document.createElement("span");
+    browserZoomEl.className = "browser-menu-value";
+    browserZoomEl.textContent = "100%";
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "browser-menu-step";
+    plus.textContent = "+";
+    plus.addEventListener("click", () => browserStepZoom(1));
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "browser-menu-step";
+    reset.textContent = "↺";
+    reset.title = i18n("browser.zoom_reset");
+    reset.setAttribute("data-i18n-title", "browser.zoom_reset");
+    reset.addEventListener("click", () => browserSetZoom(1));
+    zoom.append(minus, browserZoomEl, plus, reset);
+    menu.appendChild(zoom);
+
+    // Which engine the bar searches with.
+    const engine = browserMenuRow("browser.engine");
+    browserEngineEl = document.createElement("select");
+    browserEngineEl.className = "browser-menu-select";
+    for (const e of BROWSER_ENGINES) {
+      const opt = document.createElement("option");
+      opt.value = e.id;
+      opt.textContent = e.name;
+      browserEngineEl.appendChild(opt);
+    }
+    browserEngineEl.value = browserEngine().id;
+    browserEngineEl.addEventListener("change", () => {
+      setBrowserPref("orchestra.browser.engine", browserEngineEl.value);
+    });
+    engine.appendChild(browserEngineEl);
+    menu.appendChild(engine);
+
+    // Which browser "open outside" means. The panel itself is always the one
+    // the system embeds — Windows lets an app embed WebView2 and nothing else
+    // — so the choice is about where a page leaves for, not what draws it.
+    const app = browserMenuRow("browser.app");
+    browserAppEl = document.createElement("select");
+    browserAppEl.className = "browser-menu-select";
+    browserAppEl.addEventListener("change", () => {
+      setBrowserPref("orchestra.browser.exe", browserAppEl.value);
+    });
+    app.appendChild(browserAppEl);
+    menu.appendChild(app);
+    fillBrowserApps();
+
+    menu.append(
+      browserMenuSeparator(),
+      browserMenuItem("browser.clear_cookies", () => {
+        void browserCdp("Network.clearBrowserCookies", {});
+        browserStatus(i18n("browser.cleared"));
+      }),
+      browserMenuItem("browser.clear_cache", () => {
+        void browserCdp("Network.clearBrowserCache", {});
+        browserStatus(i18n("browser.cleared"));
+      }),
+      // The site's own storage, not the profile's: the panel shares a
+      // WebView2 profile with this page, and clearing all of it would throw
+      // away the app's own theme, language and these very choices.
+      browserMenuItem("browser.clear_site", () => void browserClearSite())
+    );
+    return menu;
+  }
+
+  /** The browsers the machine has, asked for once. */
+  async function fillBrowserApps() {
+    const t = browserBridge();
+    if (!t || !browserAppEl) return;
+    try {
+      browserInstalled = (await t.core.invoke("browser_installed", {})) || [];
+    } catch (e) {
+      browserInstalled = [];
+    }
+    while (browserAppEl.firstChild) browserAppEl.removeChild(browserAppEl.firstChild);
+    const first = document.createElement("option");
+    first.value = "";
+    first.textContent = i18n("browser.app_default");
+    first.setAttribute("data-i18n", "browser.app_default");
+    browserAppEl.appendChild(first);
+    for (const b of browserInstalled) {
+      const opt = document.createElement("option");
+      opt.value = String(b.exe || "");
+      opt.textContent = String(b.name || b.exe || "");
+      browserAppEl.appendChild(opt);
+    }
+    const chosen = browserPref("orchestra.browser.exe", "");
+    browserAppEl.value = browserInstalled.some((b) => b.exe === chosen) ? chosen : "";
+  }
+
+  function browserMenuOpen(on) {
+    if (!browserMenuEl) return;
+    browserMenuEl.hidden = !on;
+    if (browserMenuBtn) browserMenuBtn.setAttribute("aria-expanded", on ? "true" : "false");
+  }
+
+  /* ---- the view ----------------------------------------------------------- */
+
+  /**
+   * One icon button of the toolbar, in the composer's own button style.
+   * @param {string} icon a name in media/icons.js
+   * @param {string} titleKey @param {() => void} onClick
+   */
+  function browserToolButton(icon, titleKey, onClick) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "icon-btn browser-tool";
+    // A fixed string, none of it from data.
+    b.innerHTML = orchIconMarkup(icon, { size: "md" });
+    b.title = i18n(titleKey);
+    b.setAttribute("aria-label", i18n(titleKey));
+    b.setAttribute("data-i18n-title", titleKey);
+    b.setAttribute("data-i18n-aria-label", titleKey);
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function ensureBrowserView() {
+    if (browserBtn || !browserApp || !browserSwitchEl || !browserSwitchEl.appendChild) {
+      return;
+    }
+    browserBtn = document.createElement("button");
+    browserBtn.type = "button";
+    browserBtn.className = "view-segment";
+    browserBtn.setAttribute("role", "tab");
+    browserBtn.setAttribute("aria-selected", "false");
+    // A fixed string, none of it from data.
+    browserBtn.innerHTML = orchIconMarkup("access-browser", { size: "md" }) + escapeHtml(i18n("browser.title"));
+    browserBtn.addEventListener("click", () => showBrowserView());
+    browserSwitchEl.appendChild(browserBtn);
+
+    browserPane = document.createElement("div");
+    browserPane.className = "browser-pane";
+    browserPane.setAttribute("role", "tabpanel");
+    browserPane.setAttribute("aria-label", i18n("browser.pane_aria"));
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "browser-toolbar";
+
+    toolbar.append(
+      browserToolButton("arrow-left", "browser.back", () => void browserInvoke("browser_navigate", { action: "back" })),
+      browserToolButton("arrow-right", "browser.forward", () => void browserInvoke("browser_navigate", { action: "forward" })),
+      browserToolButton("reload", "browser.reload", () => void browserInvoke("browser_navigate", { action: "reload" }))
+    );
+
+    browserUrlEl = document.createElement("input");
+    browserUrlEl.type = "text";
+    browserUrlEl.className = "browser-url";
+    browserUrlEl.placeholder = i18n("browser.url_hint");
+    browserUrlEl.setAttribute("data-i18n-placeholder", "browser.url_hint");
+    browserUrlEl.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         ev.preventDefault();
-        void openPanel();
+        void openBrowserAt(browserUrlEl.value);
       }
     });
-    pickBtn.addEventListener("click", async () => {
-      if (!opened) {
-        await openPanel();
-        if (!opened) return;
-      }
-      if (await invoke("browser_pick", { on: true })) {
-        note("browser.picking");
-      }
+    toolbar.appendChild(browserUrlEl);
+
+    browserStatusEl = document.createElement("span");
+    browserStatusEl.className = "browser-status";
+    browserStatusEl.hidden = true;
+    toolbar.appendChild(browserStatusEl);
+
+    browserPickBtn = browserToolButton("pick", "browser.pick", () => void toggleBrowserPick());
+    toolbar.appendChild(browserPickBtn);
+    browserConsoleBtn = browserToolButton("terminal", "browser.console", () => browserConsoleToggle());
+    browserConsoleBtn.setAttribute("aria-pressed", "false");
+    toolbar.appendChild(browserConsoleBtn);
+
+    const menuWrap = document.createElement("div");
+    menuWrap.className = "browser-menu-wrap";
+    browserMenuBtn = browserToolButton("dots", "browser.more", () => {
+      browserMenuOpen(Boolean(browserMenuEl && browserMenuEl.hidden));
     });
+    browserMenuBtn.setAttribute("aria-haspopup", "menu");
+    browserMenuBtn.setAttribute("aria-expanded", "false");
+    browserMenuEl = buildBrowserMenu();
+    menuWrap.append(browserMenuBtn, browserMenuEl);
+    toolbar.appendChild(menuWrap);
+
+    browserStage = document.createElement("div");
+    browserStage.className = "browser-stage";
+
+    browserConsoleEl = document.createElement("div");
+    browserConsoleEl.className = "browser-console";
+    browserConsoleEl.hidden = true;
+    browserLogEl = document.createElement("div");
+    browserLogEl.className = "browser-log";
+    browserEvalEl = document.createElement("input");
+    browserEvalEl.type = "text";
+    browserEvalEl.className = "browser-eval";
+    browserEvalEl.placeholder = i18n("browser.eval_hint");
+    browserEvalEl.setAttribute("data-i18n-placeholder", "browser.eval_hint");
+    browserEvalEl.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      const code = browserEvalEl.value;
+      browserEvalEl.value = "";
+      void browserRunInPage(code);
+    });
+    browserConsoleEl.append(browserLogEl, browserEvalEl);
+
+    browserPane.append(toolbar, browserStage, browserConsoleEl);
+    if (browserTrajectoryPane && browserTrajectoryPane.parentNode === browserApp && browserApp.insertBefore) {
+      browserApp.insertBefore(browserPane, browserTrajectoryPane.nextSibling);
+    } else {
+      browserApp.appendChild(browserPane);
+    }
+
+    if (typeof MutationObserver === "function" && browserApp.dataset) {
+      new MutationObserver(() => syncBrowserSegment()).observe(browserApp, {
+        attributes: true,
+        attributeFilter: ["data-view"],
+      });
+    }
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => placeBrowser()).observe(browserStage);
+    }
+    window.addEventListener("resize", () => placeBrowser());
+    document.addEventListener("click", (ev) => {
+      if (!browserMenuEl || browserMenuEl.hidden) return;
+      const t = ev && ev.target;
+      if (menuWrap.contains && t && menuWrap.contains(t)) return;
+      browserMenuOpen(false);
+    });
+  }
+
+  function showBrowserView() {
+    ensureBrowserView();
+    if (!browserApp || !browserApp.dataset) return;
+    browserApp.dataset.view = "browser";
+    syncBrowserSegment();
+  }
+
+  /** One selected segment, whichever side stamped the view. */
+  function syncBrowserSegment() {
+    const active = browserViewActive();
+    if (browserBtn && browserBtn.setAttribute) {
+      browserBtn.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    if (active) {
+      for (const b of [browserChatBtn, browserTrajectoryBtn]) {
+        if (b && b.setAttribute) b.setAttribute("aria-selected", "false");
+      }
+      placeBrowser();
+      return;
+    }
+    // Left the view: the webview goes out of sight but stays loaded, so
+    // coming back does not reload the page under it.
+    browserMenuOpen(false);
+    if (browserOpened) {
+      browserPickArmed = false;
+      syncBrowserPickButton();
+      void browserInvoke("browser_hide", {});
+    }
+  }
+
+  function syncBrowserPickButton() {
+    if (!browserPickBtn || !browserPickBtn.setAttribute) return;
+    browserPickBtn.setAttribute("aria-pressed", browserPickArmed ? "true" : "false");
+  }
+
+  async function toggleBrowserPick() {
+    if (!browserOpened) {
+      await openBrowserAt(browserUrlEl && browserUrlEl.value);
+      if (!browserOpened) return;
+    }
+    const next = !browserPickArmed;
+    if (!(await browserInvoke("browser_pick", { on: next }))) return;
+    browserPickArmed = next;
+    syncBrowserPickButton();
+    browserStatus(next ? i18n("browser.picking") : "");
+  }
+
+  (function initBrowserPanel() {
+    const t = browserBridge();
+    if (!t || !browserApp || !browserSwitchEl) {
+      return;
+    }
+    ensureBrowserView();
 
     // The pick arrives as text from a page we do not control: it becomes an
     // attachment the user still has to send, and is never read as a command.
     if (t.event && typeof t.event.listen === "function") {
       void t.event.listen("orchestra://pick", async (ev) => {
         const raw = ev && ev.payload && ev.payload.payload;
+        browserPickArmed = false;
+        syncBrowserPickButton();
         if (!raw) return;
         let parsed;
         try {
@@ -134,13 +777,23 @@
         await storeAttachmentBytes({
           name,
           mime: "text/markdown",
-          dataBase64: base64Utf8(pickMarkdown(parsed)),
+          dataBase64: browserBase64(pickMarkdown(parsed)),
         });
-        note("browser.picked", {
+        const said = i18n("browser.picked", {
           tag: String(parsed.tag || "element"),
           url: String(parsed.url || ""),
           name,
         });
+        browserStatus(said);
+        toRenderer({ type: "systemNote", text: said });
+      });
+
+      // The bar follows the page, unless the user is typing in it.
+      void t.event.listen("orchestra://browser-url", (ev) => {
+        const url = ev && ev.payload && ev.payload.url;
+        if (!url || !browserUrlEl || document.activeElement === browserUrlEl) return;
+        if (String(url).startsWith("about:")) return;
+        browserUrlEl.value = String(url);
       });
     }
   })();

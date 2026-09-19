@@ -1880,24 +1880,50 @@ body[data-rail-drag="true"] {
   }
 }
 
-/* ---- the browser panel's address row ------------------------------------- */
-/* Desktop only: 65-browser-panel.js removes the row in a plain browser, where
-   there is no panel to drive. */
+/* ---- the Browser view (web only; ui/web/src/65-browser-panel.js builds it) ──
+   A fourth pane beside the transcript, the trajectory and the graph. The page
+   draws the chrome and leaves .browser-stage empty: what fills it is a webview
+   of its own, an OS view the shell lays over this one, so nothing here may
+   paint on top of that rectangle. */
+#app[data-view="browser"] #messages,
+#app[data-view="browser"] #trajectory,
+#app[data-view="browser"] #composer-wrap {
+  display: none;
+}
 
-.browser-bar {
+.browser-pane {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+#app[data-view="browser"] .browser-pane {
   display: flex;
-  gap: 6px;
+}
+
+.browser-toolbar {
+  display: flex;
   align-items: center;
-  margin: 0 0 6px;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.browser-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg);
 }
 
 .browser-url {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--border, #33343a);
+  margin: 0 6px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: var(--surface, #1b1c20);
+  background: var(--pill-bg);
   color: var(--fg, #e6e6e6);
   font: inherit;
   font-size: 12px;
@@ -1908,19 +1934,164 @@ body[data-rail-drag="true"] {
   outline-offset: -1px;
 }
 
-.browser-go {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+/* The toolbar's controls are the composer's icon buttons; the picker
+   inverts while it is armed. */
+.browser-tool {
+  flex: 0 0 auto;
+}
+
+.browser-tool[aria-pressed="true"] {
+  color: var(--bg);
+  background: var(--fg);
+}
+
+/* The ⋯ menu: the panel's own settings, where a browser keeps them. */
+.browser-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.browser-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 260px;
+  padding: 6px;
   border: 1px solid var(--border, #33343a);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--surface, #1b1c20);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.browser-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
   color: var(--fg, #e6e6e6);
-  font-size: 12px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
   cursor: pointer;
 }
 
-.browser-go:hover {
-  background: var(--surface-hover, #24252b);
+.browser-menu-item:hover {
+  background: var(--pill-bg);
+}
+
+.browser-menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-soft);
+}
+
+.browser-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.browser-menu-label {
+  flex: 1 1 auto;
+  color: var(--muted);
+}
+
+.browser-menu-step {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border, #33343a);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg, #e6e6e6);
+  font: inherit;
+  cursor: pointer;
+}
+
+.browser-menu-value {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.browser-menu-select {
+  max-width: 150px;
+  padding: 3px 6px;
+  border: 1px solid var(--border, #33343a);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg, #e6e6e6);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* The console drawer. It takes its room from the stage, and the webview is
+   moved up to what is left — the two never overlap. */
+.browser-console {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: 220px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.browser-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 10px;
+  font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace;
+}
+
+.browser-log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.browser-log-warn {
+  color: #e0b341;
+}
+
+.browser-log-error {
+  color: #e3796f;
+}
+
+.browser-log-in {
+  color: var(--muted);
+}
+
+.browser-log-out {
+  color: var(--accent, #8b8cff);
+}
+
+.browser-eval {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--fg, #e6e6e6);
+  font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace;
+}
+
+.browser-eval:focus-visible {
+  outline: 1px solid var(--accent, #8b8cff);
+  outline-offset: -1px;
+}
+
+/* Errors and the picker's prompts, said where the user is looking: the
+   transcript is hidden in this view. */
+.browser-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
 }

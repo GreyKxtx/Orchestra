@@ -275,11 +275,195 @@
     }
   }
 
+  /* ---- the console tap -------------------------------------------------- */
+  //
+  // The page cannot reach us, so what it logs is kept here until the panel
+  // asks. A ring buffer: a page in a loop must not grow this without bound.
+
+  var MAX_LOGS = 300;
+  var MAX_LOG_TEXT = 2000;
+  var logs = [];
+
+  // Any value as one short line, which is all a console row is.
+  function fmt(v) {
+    try {
+      if (typeof v === "string") return v.length > MAX_LOG_TEXT ? v.slice(0, MAX_LOG_TEXT) + "…" : v;
+      if (v === undefined) return "undefined";
+      if (v === null) return "null";
+      if (typeof v === "function") return "function " + (v.name || "");
+      if (typeof v !== "object") return String(v);
+      if (v instanceof Error) return String(v.name || "Error") + ": " + String(v.message || "");
+      if (isEl(v)) return "<" + v.tagName.toLowerCase() + ">";
+      var out = JSON.stringify(v);
+      if (out === undefined) return String(v);
+      return out.length > MAX_LOG_TEXT ? out.slice(0, MAX_LOG_TEXT) + "…" : out;
+    } catch (e) {
+      try { return String(v); } catch (e2) { return "[unprintable]"; }
+    }
+  }
+
+  function pushLog(level, args) {
+    var parts = [];
+    for (var i = 0; i < args.length; i++) parts.push(fmt(args[i]));
+    logs.push({ level: level, text: parts.join(" ") });
+    if (logs.length > MAX_LOGS) logs.splice(0, logs.length - MAX_LOGS);
+  }
+
+  // The page keeps its own console: every call still reaches it, so a site
+  // that reads its own logs is not changed by being watched.
+  function tapConsole() {
+    var c = globalThis.console;
+    if (!c || c.__orchTapped) return;
+    var levels = ["log", "info", "warn", "error", "debug"];
+    for (var i = 0; i < levels.length; i++) {
+      (function (level) {
+        var original = c[level];
+        if (typeof original !== "function") return;
+        c[level] = function () {
+          try { pushLog(level, arguments); } catch (e) { /* a log is never worth a throw */ }
+          return original.apply(c, arguments);
+        };
+      })(levels[i]);
+    }
+    c.__orchTapped = true;
+    if (typeof globalThis.addEventListener === "function") {
+      globalThis.addEventListener("error", function (ev) {
+        pushLog("error", [(ev && (ev.message || ev.error)) || "error"]);
+      });
+      globalThis.addEventListener("unhandledrejection", function (ev) {
+        pushLog("error", ["Unhandled rejection: " + fmt(ev && ev.reason)]);
+      });
+    }
+  }
+
+  // Handed over once, like take(): the panel has drawn them.
+  function drainLog() {
+    var out = logs;
+    logs = [];
+    return out;
+  }
+
+  /* ---- the area to shoot ------------------------------------------------ */
+  //
+  // Same idea as the picker, a rectangle instead of an element: the panel
+  // arms it, the user drags, and the rectangle is collected by asking. Page
+  // coordinates, because that is what the screenshot's clip takes.
+
+  var areaArmed = false;
+  var areaFrom = null;
+  var areaRect = null;
+  var areaBox = null;
+
+  function ensureAreaBox() {
+    var doc = globalThis.document;
+    if (!doc || !doc.createElement) return;
+    if (!areaBox) {
+      areaBox = doc.createElement("div");
+      areaBox.setAttribute("data-orch-pick", "area");
+      areaBox.style.cssText = "position:fixed;z-index:2147483647;pointer-events:none;border:1px dashed #4c8bf5;background:rgba(76,139,245,.10)";
+    }
+    var host = doc.body || doc.documentElement;
+    if (host && host.appendChild && areaBox.parentNode !== host) host.appendChild(areaBox);
+    areaBox.style.width = "0px";
+    areaBox.style.height = "0px";
+  }
+
+  function drawArea(a, b) {
+    if (!areaBox) return;
+    areaBox.style.left = Math.min(a.x, b.x) + "px";
+    areaBox.style.top = Math.min(a.y, b.y) + "px";
+    areaBox.style.width = Math.abs(a.x - b.x) + "px";
+    areaBox.style.height = Math.abs(a.y - b.y) + "px";
+  }
+
+  function pointOf(ev) {
+    return { x: (ev && ev.clientX) || 0, y: (ev && ev.clientY) || 0 };
+  }
+
+  function onAreaDown(ev) {
+    if (!areaArmed) return;
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    areaFrom = pointOf(ev);
+    drawArea(areaFrom, areaFrom);
+  }
+
+  function onAreaMove(ev) {
+    if (!areaArmed || !areaFrom) return;
+    drawArea(areaFrom, pointOf(ev));
+  }
+
+  function onAreaUp(ev) {
+    if (!areaArmed || !areaFrom) return;
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    var to = pointOf(ev);
+    var w = Math.abs(areaFrom.x - to.x);
+    var h = Math.abs(areaFrom.y - to.y);
+    var sx = globalThis.scrollX || 0;
+    var sy = globalThis.scrollY || 0;
+    if (w >= 4 && h >= 4) {
+      areaRect = { x: Math.min(areaFrom.x, to.x) + sx, y: Math.min(areaFrom.y, to.y) + sy, w: w, h: h };
+    }
+    disarmArea();
+  }
+
+  function onAreaKey(ev) {
+    if (areaArmed && ev && (ev.key === "Escape" || ev.keyCode === 27)) disarmArea();
+  }
+
+  function listenArea(on) {
+    var doc = globalThis.document;
+    if (!doc || !doc.addEventListener) return;
+    var fn = on ? "addEventListener" : "removeEventListener";
+    doc[fn]("mousedown", onAreaDown, true);
+    doc[fn]("mousemove", onAreaMove, true);
+    doc[fn]("mouseup", onAreaUp, true);
+    doc[fn]("keydown", onAreaKey, true);
+  }
+
+  function armArea() {
+    if (areaArmed) return "armed";
+    disarm();
+    areaArmed = true;
+    areaFrom = null;
+    areaRect = null;
+    ensureAreaBox();
+    listenArea(true);
+    return "armed";
+  }
+
+  function disarmArea() {
+    if (!areaArmed) return "idle";
+    areaArmed = false;
+    areaFrom = null;
+    listenArea(false);
+    if (areaBox && areaBox.parentNode) areaBox.parentNode.removeChild(areaBox);
+    return "idle";
+  }
+
+  // "" while the user is still dragging, "idle" once it is over with nothing
+  // to show, otherwise the rectangle — handed over once.
+  function takeArea() {
+    if (areaRect) {
+      var out = areaRect;
+      areaRect = null;
+      return out;
+    }
+    return areaArmed ? "" : "idle";
+  }
+
+  tapConsole();
+
   globalThis.__orchPick = {
     arm: arm,
     disarm: disarm,
     take: take,
     isArmed: function () { return armed; },
+    fmt: fmt,
+    drainLog: drainLog,
+    armArea: armArea,
+    takeArea: takeArea,
     _internals: { selectorFor: selectorFor, markup: markup, appliedRules: appliedRules, payloadFor: payloadFor },
   };
 })();

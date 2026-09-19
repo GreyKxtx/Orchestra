@@ -18,11 +18,22 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# unstable: Window::add_child, which puts the browser panel inside the main
+# window as a view of the app rather than a second window.
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# The browser panel's menu. WebView2 has no API of its own for a screenshot,
+# a reload that ignores the cache, or clearing a site's data: they are
+# devtools-protocol calls, and this is the interface for them. winreg reads
+# the key Windows registers every installed browser under.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+winreg = "0.55"
 
 [profile.release]
 strip = true

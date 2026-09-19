@@ -31,9 +31,16 @@ fn main() {
         .manage(browser::PickerState::default())
         .invoke_handler(tauri::generate_handler![
             browser::browser_open,
+            browser::browser_bounds,
+            browser::browser_hide,
             browser::browser_close,
             browser::browser_navigate,
             browser::browser_pick,
+            browser::browser_eval,
+            browser::browser_zoom,
+            browser::browser_cdp,
+            browser::browser_external,
+            browser::browser_installed,
         ])
         .setup(|app| {
             // Everything that may block — the folder picker, waiting for the

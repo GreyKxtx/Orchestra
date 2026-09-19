@@ -386,6 +386,8 @@ export function loadBundle(opts = {}) {
     get socketURL() {
       return socket ? socket.url : "";
     },
+    /** A helper the bundle deliberately leaves on the global for a test. */
+    globalFn: (name) => sandbox[name],
     /** The stub element for an id, if the bundle has looked it up. */
     elementById: (id) => elementsById.get(id) || null,
     /** Whatever last had focus() called on it — the rail must not lose it. */
@@ -474,6 +476,27 @@ test("connecting handshakes and starts a session", async () => {
 
   await tick();
   assert.ok(answer(b, "session.start", { session_id: "s-1", restored: false }));
+});
+
+// The browser panel's address bar is a search box too, the way every
+// browser's is: what is not somewhere to go is something to look up.
+test("the address bar tells an address from a search", () => {
+  const b = loadBundle();
+  const address = b.globalFn("__orchBrowserAddress");
+  assert.equal(typeof address, "function", "65-browser-panel.js must export it for this test");
+
+  // Somewhere to go.
+  assert.equal(address("https://technical.city/ru/cpu"), "https://technical.city/ru/cpu");
+  assert.equal(address("  example.com/pricing "), "https://example.com/pricing");
+  assert.equal(address("localhost:5173"), "http://localhost:5173");
+  assert.equal(address("127.0.0.1:8080/health"), "http://127.0.0.1:8080/health");
+
+  // Something to look up — including the thing that looks like a host but
+  // cannot be one, and the query that happens to contain a dot.
+  const search = "https://example.org/find?q=";
+  assert.equal(address("how to center a div", search), search + encodeURIComponent("how to center a div"));
+  assert.equal(address("node.js streams tutorial", search), search + encodeURIComponent("node.js streams tutorial"));
+  assert.equal(address("", search), "");
 });
 
 test("a composer send becomes session.message", async () => {
