@@ -232,6 +232,40 @@
     ["--sys-color-state-hover-on-subtle", "--hover-wash"],
     ["--sys-color-state-hover-on-prominent", "--hover-wash"],
     ["--sys-color-state-ripple-neutral-on-subtle", "--active-wash"],
+    // Edge lays its own Fluent tokens over Chromium's, and draws the tab strip,
+    // the toolbars and the debugger's section headers from these.
+    ["--neutral-layer-l1", "--surface-2"],
+    ["--neutral-layer-l2", "--surface"],
+    ["--neutral-layer-l3", "--surface"],
+    ["--neutral-layer-l4", "--bg"],
+    ["--neutral-fill-rest", "--surface-2"],
+    ["--neutral-fill-rest-l1", "--surface-2"],
+    ["--neutral-fill-rest-l2", "--surface"],
+    ["--neutral-fill-hover", "--pill-hover"],
+    ["--neutral-fill-active", "--active-wash"],
+    ["--neutral-fill-selected", "--seg-active-bg"],
+    ["--neutral-fill-stealth-hover", "--hover-wash"],
+    ["--neutral-fill-stealth-active", "--active-wash"],
+    ["--neutral-fill-stealth-selected", "--seg-active-bg"],
+    ["--neutral-foreground-rest", "--fg"],
+    ["--neutral-foreground-hover", "--fg"],
+    ["--neutral-foreground-active", "--fg"],
+    ["--neutral-foreground-hint", "--muted"],
+    ["--neutral-foreground-hint-selected", "--fg-dim"],
+    ["--neutral-outline-rest", "--border"],
+    ["--neutral-outline-hover", "--muted"],
+    ["--neutral-outline-active", "--muted"],
+    ["--neutral-focus", "--mode-accent"],
+    ["--accent-fill-rest", "--mode-accent"],
+    ["--accent-fill-hover", "--mode-accent"],
+    ["--accent-fill-active", "--mode-accent"],
+    ["--accent-fill-selected", "--mode-accent"],
+    ["--accent-foreground-rest", "--mode-accent"],
+    ["--accent-foreground-hover", "--mode-accent"],
+    ["--accent-foreground-active", "--mode-accent"],
+    ["--tabbed-pane-tab-selected-fill", "--bg"],
+    ["--tabbed-pane-tab-hover-fill", "--hover-wash"],
+    ["--tabbed-pane-highlight", "--mode-accent"],
   ];
 
   /**
@@ -460,7 +494,7 @@
       browserPlaceQueued = false;
       // The line may have been dragged, or the window resized under it.
       if (browserDockOpen) setBrowserDockWidth(browserDockW, browserBodyRoom());
-      const showing = browserViewActive() && !browserPopupShowing() && !browserDragging;
+      const showing = browserViewActive() && !browserPopupShowing();
       void browserInvoke("browser_bounds", {
         rect: showing ? browserRect() : BROWSER_NOWHERE,
       });
@@ -607,10 +641,12 @@
   // the page holding this app's capabilities is not in it.
 
   /**
-   * Drag the line between the page and the tools. Both panes are views of the
-   * operating system laid over this one and they take the mouse with them, so
-   * they step aside for the drag and come back either side of where the line
-   * was let go.
+   * Drag the line between the page and the tools. Both panes follow the line
+   * as it moves — they are views of the operating system laid over this one,
+   * and the pointer is captured on the press, so the moves keep arriving here
+   * while the cursor runs ahead over them. The drag ends on the release, and
+   * on anything that would eat the release: a cancelled pointer, the window
+   * losing focus.
    *
    * @param {any} handle
    */
@@ -620,12 +656,15 @@
     const move = (e) => {
       if (!browserDragging) return;
       setBrowserDockWidth(width + (from - e.clientX), browserBodyRoom());
+      placeBrowser();
     };
     const stop = () => {
       if (!browserDragging) return;
       browserDragging = false;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
       setBrowserPref("orchestra.browser.dock", String(browserDockW));
       placeBrowser();
     };
@@ -634,9 +673,13 @@
       browserDragging = true;
       from = e.clientX;
       width = browserDockW;
+      if (handle.setPointerCapture && e.pointerId !== undefined) {
+        try { handle.setPointerCapture(e.pointerId); } catch (err) { /* a mouse that is gone */ }
+      }
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", stop);
-      placeBrowser();
+      window.addEventListener("pointercancel", stop);
+      window.addEventListener("blur", stop);
       if (e.preventDefault) e.preventDefault();
     });
   }
