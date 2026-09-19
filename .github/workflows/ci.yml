@@ -121,6 +121,9 @@ jobs:
       - name: Web UI adapter tests
         run: node ui/web/scripts/adapter-test.mjs
 
+      - name: Browser picker tests
+        run: node ui/desktop/scripts/picker-test.mjs
+
   desktop:
     strategy:
       fail-fast: false
