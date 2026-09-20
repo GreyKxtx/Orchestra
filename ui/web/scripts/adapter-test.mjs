@@ -1172,7 +1172,7 @@ test("browser/call is always answered, and a host with no panel refuses", async 
   assert.ok(reply, "no reply for srv-9 — the browser tool would hang");
   assert.match(
     String(reply.result.error || ""),
-    /browser view is not open/,
+    /no browser view/,
     `a host without a browser view says so, got ${JSON.stringify(reply.result)}`
   );
   assert.ok(!b.inbound.some((m) => m.type === "permissionRequest" || m.type === "questionAsk"),

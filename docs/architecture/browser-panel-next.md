@@ -23,9 +23,23 @@ And one path that matters more than its size: a picked element reaches the
 chat as an attachment (`PICK_EVENT` → the composer). There is a route from
 what the user is looking at to what the agent is told.
 
+## Built since this was written
+
+The first item below landed (ProtocolVersion 21), and with it the third:
+`browser.*` act on the panel under three separate permissions — look, act,
+run script — and navigating to the page already open reloads it past the
+cache, which is the edit-and-look loop.
+
+The route taken was not the one sketched below. An MCP server in the shell
+would have been reachable whenever the shell was running; a server-initiated
+request (`browser/call`) on the connection that asked for the turn is
+reachable only while that turn is being served, which is the property worth
+having. The sections are kept as written, wrong route and all: the reasoning
+that led somewhere better is more use later than a tidied record.
+
 ## Worth doing first
 
-**The agent sees the page the user is on.** Today `browser.*` (10 tools,
+**The agent sees the page the user is on.** *(done)* Today `browser.*` (10 tools,
 `--allow-browser`) spawns `npx @playwright/mcp` — a separate browser, its own
 profile, Node required, headless by default (`internal/browser/client.go`).
 The panel is a browser the user is already looking at, already logged in,
@@ -52,7 +66,7 @@ common question a person asks about a page answers itself before it is typed.
 Cost: small, all of it in the view. Risk: an attached console may carry tokens
 that were logged; it should be shown before it is sent, not after.
 
-**Edit → reload → look.** Point the panel at the project's own dev server,
+**Edit → reload → look.** *(done)* Point the panel at the project's own dev server,
 and after the agent writes a file: hard reload (already in the ⋯ menu),
 screenshot (already `browserShot`), attach. A loop that closes without a hand
 on the mouse, which is what UI work has been missing here. Cost: small —

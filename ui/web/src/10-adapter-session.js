@@ -757,7 +757,7 @@
             allow_browser: true,
             ...(msg.allowBrowserDrive === true ? { allow_browser_drive: true } : {}),
             ...(msg.allowBrowserEval === true ? { allow_browser_eval: true } : {}),
-            ...(browserPanelOpen() ? { browser_panel: true } : {}),
+            ...(browserPanelAvailable() ? { browser_panel: true } : {}),
           }
         : {}),
       profile: msg.profile || "",

@@ -1252,6 +1252,13 @@ Ops, and what each answers with:
 | `screenshot` | `{full_page}` | `{image}` — base64 PNG | `allow_browser` |
 | `wait` | `{url, selector, text, timeout_ms}` | `{found, result}` | `allow_browser` |
 | `navigate` | `{url}` | `{result}` | `allow_browser_drive` |
+
+`navigate` is the one op that does not need a page already open — it is how
+the first one arrives — and a client may bring its browser view up to serve
+it, so that what is driven is also what is seen. Asked for the page already
+open, it reloads past the cache: that is the edit-and-look loop, and a reload
+that honoured the cache would show what was already on screen. It answers once
+the page reports itself loaded, so a screenshot taken next is of the page.
 | `click` | `{ref}` or `{element}` (a selector) | `{result}` | `allow_browser_drive` |
 | `type` | `{ref\|element, text}` | `{result}` | `allow_browser_drive` |
 | `fill` | `{fields: [{ref\|element, value}]}` | `{filled}` | `allow_browser_drive` |

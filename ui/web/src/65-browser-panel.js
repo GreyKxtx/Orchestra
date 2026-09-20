@@ -553,7 +553,16 @@
   /** Ref → backendNodeId for the last snapshot: what a later click addresses. */
   /** @type {Map<string, number>} */ const browserSnapRefs = new Map();
 
-  /** True when there is a page for the agent to look at. */
+  /**
+   * True when this host has a browser view at all — which is what the turn's
+   * `browser_panel` claims. Not the same as having a page: navigating is how
+   * the first page arrives, so it must be reachable before there is one.
+   */
+  function browserPanelAvailable() {
+    return Boolean(browserBridge());
+  }
+
+  /** True when there is a page loaded for the agent to look at or act in. */
   function browserPanelOpen() {
     return Boolean(browserOpened && browserBridge());
   }
@@ -768,13 +777,52 @@
     return { result: `chose ${value}` };
   }
 
-  /** @param {any} params */
+  /**
+   * Open a page — or, when it is the page already open, read it again past
+   * the cache. That second case is the one that matters here: a file was
+   * edited, the server rebuilt, and what a plain navigation would show is
+   * what was already shown.
+   *
+   * Either way this waits for the page to finish loading before answering,
+   * so a screenshot taken on the next line is of the page and not of the
+   * white it was about to paint over.
+   *
+   * @param {any} params
+   */
   async function browserPanelNavigate(params) {
     const url = String((params && params.url) || "");
     if (!url) throw new Error("url is required");
-    await openBrowserAt(url);
+    // Bring the view up on the way: the agent driving a browser nobody can
+    // see is the thing every switch here exists to prevent.
+    showBrowserView();
+    const before = browserOpened ? await browserPanelStatus() : { url: "" };
+    const again = Boolean(before.url) && (before.url === url || browserAddress(url) === before.url);
     browserSnapRefs.clear();
-    return { result: `opened ${url}` };
+    if (again) {
+      await browserCdp("Page.reload", { ignoreCache: true }, true);
+    } else {
+      await openBrowserAt(url);
+    }
+    const loaded = await browserPanelSettled();
+    const after = await browserPanelStatus();
+    return {
+      result: `${again ? "reloaded" : "opened"} ${after.url}${loaded ? "" : " (still loading)"}`,
+    };
+  }
+
+  /** Wait for the page to say it has finished loading. Bounded: a page that
+   *  streams for ever must not hold the turn. */
+  async function browserPanelSettled() {
+    const until = Date.now() + 15000;
+    for (;;) {
+      const answer = await browserCdp("Runtime.evaluate", {
+        expression: "document.readyState === 'complete'",
+        returnByValue: true,
+      }, true);
+      if (answer && answer.result && answer.result.value === true) return true;
+      if (Date.now() > until) return false;
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
   /**
@@ -849,8 +897,14 @@
     if (BROWSER_DRIVE_OPS.has(op) && !browserAgentMay.drive) {
       return { error: "this turn may look at the browser panel but not act in it" };
     }
-    if (!browserPanelOpen()) {
-      return { error: "the browser view is not open — open it and load a page first" };
+    // Navigating is how a first page arrives, so it needs the view, not a
+    // page. Everything else needs something already loaded to act on.
+    if (op === "navigate" ? !browserPanelAvailable() : !browserPanelOpen()) {
+      return {
+        error: browserPanelAvailable()
+          ? "the browser panel has no page yet — browser.navigate to one first"
+          : "this host has no browser view",
+      };
     }
     browserAgentBusy(BROWSER_DRIVE_OPS.has(op) || op === "eval" ? "driving" : "reading");
     try {
