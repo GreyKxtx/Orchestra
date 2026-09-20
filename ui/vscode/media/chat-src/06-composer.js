@@ -324,6 +324,8 @@
       apply: false,
       allowExec: accessId === "auto",
       allowBrowser: browserOn,
+      allowBrowserDrive: browserDriveOn,
+      allowBrowserEval: browserEvalOn,
       files: files.map((f) => ({
         name: f.name,
         path: f.path,
@@ -638,6 +640,27 @@
     e.stopPropagation();
     if (/** @type {HTMLElement} */ (e.target).closest("#browser-toggle")) {
       browserOn = !browserOn;
+      // Nothing below survives the browser being off.
+      if (!browserOn) {
+        browserDriveOn = false;
+        browserEvalOn = false;
+      }
+      syncAccessUi();
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-drive-toggle")) {
+      browserDriveOn = !browserDriveOn;
+      if (browserDriveOn) browserOn = true;
+      else browserEvalOn = false;
+      syncAccessUi();
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-eval-toggle")) {
+      browserEvalOn = !browserEvalOn;
+      if (browserEvalOn) {
+        browserOn = true;
+        browserDriveOn = true;
+      }
       syncAccessUi();
       return;
     }

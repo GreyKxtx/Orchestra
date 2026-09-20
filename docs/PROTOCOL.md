@@ -1245,16 +1245,34 @@ Expected response (`result`) — the op's own result object:
 
 Ops, and what each answers with:
 
-| `op` | params | result | level |
+| `op` | params | result | needs |
 |---|---|---|---|
-| `status` | — | `{open, url, title}` | read |
-| `snapshot` | — | `{snapshot}` — the page's accessibility tree as text, each line addressable by its `[ref]` | read |
-| `screenshot` | `{full_page}` | `{image}` — base64 PNG | read |
+| `status` | — | `{open, url, title}` | `allow_browser` |
+| `snapshot` | — | `{snapshot}` — the page's accessibility tree as text, each line addressable by its `[ref]` | `allow_browser` |
+| `screenshot` | `{full_page}` | `{image}` — base64 PNG | `allow_browser` |
+| `wait` | `{url, selector, text, timeout_ms}` | `{found, result}` | `allow_browser` |
+| `navigate` | `{url}` | `{result}` | `allow_browser_drive` |
+| `click` | `{ref}` or `{element}` (a selector) | `{result}` | `allow_browser_drive` |
+| `type` | `{ref\|element, text}` | `{result}` | `allow_browser_drive` |
+| `fill` | `{fields: [{ref\|element, value}]}` | `{filled}` | `allow_browser_drive` |
+| `select` | `{ref\|element, value}` | `{result}` | `allow_browser_drive` |
+| `eval` | `{expression}` | `{result}` — JSON of the value | `allow_browser_eval` |
+
+Three levels, because they are three different acts against the person's own
+session: looking at the page, acting in it, and running the model's own script
+in it. Each is a separate parameter on the turn, and `allow_browser_eval` is
+not implied by `allow_browser_drive`. `wait` only watches — the conditions
+cross as data and the client checks them with a script of its own — so it
+needs no more than looking does. `browser.close` is refused against a panel:
+the view is the person's window, not a tab the tools opened.
+
+They gate the panel alone. A browser the core starts for itself is empty and
+ours, and `allow_browser` has always meant all ten tools against it.
 
 A client whose browser view is closed answers with an error, and the model is
 told so: this is a normal answer, not a protocol failure. The same is true of
-a person revoking the permission mid-turn — the next op is refused, and the
-turn continues without it.
+an op above what the turn was granted — the client checks that itself, as well
+as the core, because it is the side that owns the browser.
 
 The refs in a `snapshot` are the client's own and mean nothing to the browser
 the core starts: a turn uses one browser or the other, never both.

@@ -196,6 +196,22 @@
       `<span class="menu-row-label"><span class="mi" aria-hidden="true">${orchIconMarkup("access-browser", { size: "sm" })}</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
       `<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="${escapeAttr(i18n("access.browser.label"))}"></button>`;
     accessMenu.appendChild(browserRow);
+    // Two more, each a step further into the person's own browser. A child
+    // switched on switches its parents on: nobody means "act in the page but
+    // do not look at it".
+    for (const level of [
+      { id: "browser-drive-toggle", key: "access.browser.drive" },
+      { id: "browser-eval-toggle", key: "access.browser.eval" },
+    ]) {
+      const row = document.createElement("div");
+      row.className = "menu-row menu-row-browser menu-row-browser-level";
+      row.title = i18n(`${level.key}.hint`);
+      row.innerHTML =
+        `<span class="menu-row-label">${escapeAttr(i18n(`${level.key}.label`))}</span>` +
+        `<button type="button" id="${level.id}" class="toggle" role="switch" aria-checked="false" ` +
+        `aria-label="${escapeAttr(i18n(`${level.key}.label`))}"></button>`;
+      accessMenu.appendChild(row);
+    }
   }
 
   function syncAccessUi() {
@@ -216,17 +232,22 @@
       const id = el.getAttribute("data-access");
       el.classList.toggle("selected", id === accessId);
     });
-    const browserToggle = document.getElementById("browser-toggle");
-    if (browserToggle) {
-      browserToggle.classList.toggle("on", browserOn);
-      browserToggle.setAttribute("aria-checked", browserOn ? "true" : "false");
+    for (const [id, on] of [
+      ["browser-toggle", browserOn],
+      ["browser-drive-toggle", browserDriveOn],
+      ["browser-eval-toggle", browserEvalOn],
+    ]) {
+      const toggle = document.getElementById(id);
+      if (!toggle) continue;
+      toggle.classList.toggle("on", on);
+      toggle.setAttribute("aria-checked", on ? "true" : "false");
     }
     if (accessBtn) {
       accessBtn.title = browserOn
         ? i18n("access.browser.on", { hint: i18n(m.hintKey) })
         : i18n(m.hintKey);
     }
-    host.setState({ ...(host.getState() || {}), accessId, browserOn });
+    host.setState({ ...(host.getState() || {}), accessId, browserOn, browserDrive: browserDriveOn, browserEval: browserEvalOn });
   }
 
   function statsHtml(stats) {

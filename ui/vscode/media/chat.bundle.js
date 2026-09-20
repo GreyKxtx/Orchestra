@@ -39,8 +39,14 @@
       "access.tools.section": "Tools",
       "access.browser.label": "Browser",
       "access.browser.hint":
-        "The agent may open pages, click and type in a browser (Playwright). Not available under Fast.",
+        "The agent may look at the page: its elements and a screenshot. With the Browser view open that is your page, with your session; otherwise one it starts for itself. Not available under Fast.",
       "access.browser.on": "{hint} · browser on",
+      "access.browser.drive.label": "…and act in it",
+      "access.browser.drive.hint":
+        "Click, type, fill forms and open other addresses in the Browser view. The view shows when the agent is doing it.",
+      "access.browser.eval.label": "…and run script in it",
+      "access.browser.eval.hint":
+        "Run the agent's own JavaScript in the page, with your session. Stronger than everything else together — off unless you turn it on for this.",
 
       "turn.working": "Working…",
       "turn.running_tools": "Running tools…",
@@ -135,6 +141,46 @@
       "queue.aria": "Queued messages",
       "composer.placeholder": "Message, @ for files, / for commands…",
       "composer.attach": "Attach files",
+      "browser.title": "Browser",
+      "browser.pane_aria": "Browser panel",
+      "browser.back": "Back",
+      "browser.forward": "Forward",
+      "browser.reload": "Reload",
+      "browser.pick": "Pick an element on the page",
+      "browser.url_hint": "Address or search",
+      "browser.links": "Saved links",
+      "browser.suggest_search": "{engine}: {q}",
+      "browser.links_empty": "Nothing saved yet",
+      "browser.link_save": "Save this page",
+      "browser.link_saved": "Saved",
+      "browser.link_forget": "Forget this link",
+      "browser.agent_reading": "The agent is looking at this page",
+      "browser.agent_driving": "The agent is acting on this page",
+      "browser.console": "Developer tools",
+      "browser.eval_hint": "Run JavaScript on the page",
+      "browser.more": "More",
+      "browser.shot": "Take screenshot",
+      "browser.shot_area": "Capture area",
+      "browser.shooting": "Taking the screenshot…",
+      "browser.shot_taken": "Screenshot attached as {name}",
+      "browser.shot_failed": "The page gave no screenshot",
+      "browser.area_hint": "Drag a rectangle over the page. Escape cancels.",
+      "browser.hard_reload": "Hard reload",
+      "browser.copy_url": "Copy current URL",
+      "browser.copied": "Address copied",
+      "browser.open_outside": "Open in a browser",
+      "browser.opened_outside": "Opened outside",
+      "browser.zoom": "Zoom",
+      "browser.zoom_reset": "Back to 100%",
+      "browser.engine": "Search with",
+      "browser.app": "Open links in",
+      "browser.app_default": "The system's browser",
+      "browser.clear_cookies": "Clear cookies",
+      "browser.clear_cache": "Clear cache",
+      "browser.clear_site": "Clear this site's data",
+      "browser.cleared": "Cleared",
+      "browser.picking": "Click an element in the browser panel. Escape cancels.",
+      "browser.picked": "Picked {tag} from {url} — attached as {name}",
       "composer.send": "Send",
       "composer.orchestra_title": "Orchestra roles & tiers",
       "cost.aria": "Spend and balance",
@@ -709,8 +755,14 @@
       "access.tools.section": "Инструменты",
       "access.browser.label": "Браузер",
       "access.browser.hint":
-        "Агент может открывать страницы, нажимать и вводить текст в браузере (Playwright). Не действует при Fast.",
+        "Агент может смотреть на страницу: её элементы и снимок. Когда открыта вкладка «Браузер» — это ваша страница с вашей сессией, иначе он поднимет свою. Не действует при Fast.",
       "access.browser.on": "{hint} · браузер включён",
+      "access.browser.drive.label": "…и действовать в ней",
+      "access.browser.drive.hint":
+        "Нажимать, вводить текст, заполнять формы и открывать другие адреса во вкладке «Браузер». Вкладка показывает, когда это делает агент.",
+      "access.browser.eval.label": "…и выполнять скрипт",
+      "access.browser.eval.hint":
+        "Выполнять собственный JavaScript агента на странице, с вашей сессией. Сильнее всего остального вместе взятого — выключено, пока не включите отдельно.",
 
       "turn.working": "Работаю…",
       "turn.running_tools": "Выполняю инструменты…",
@@ -806,6 +858,46 @@
       "queue.aria": "Сообщения в очереди",
       "composer.placeholder": "Сообщение, @ — файлы, / — команды…",
       "composer.attach": "Прикрепить файлы",
+      "browser.title": "Браузер",
+      "browser.pane_aria": "Панель браузера",
+      "browser.back": "Назад",
+      "browser.forward": "Вперёд",
+      "browser.reload": "Обновить",
+      "browser.pick": "Выбрать элемент на странице",
+      "browser.url_hint": "Адрес или поиск",
+      "browser.links": "Сохранённые ссылки",
+      "browser.suggest_search": "{engine}: {q}",
+      "browser.links_empty": "Пока ничего не сохранено",
+      "browser.link_save": "Сохранить эту страницу",
+      "browser.link_saved": "Сохранено",
+      "browser.link_forget": "Убрать ссылку",
+      "browser.agent_reading": "Агент смотрит на эту страницу",
+      "browser.agent_driving": "Агент действует на этой странице",
+      "browser.console": "Инструменты разработчика",
+      "browser.eval_hint": "Выполнить JavaScript на странице",
+      "browser.more": "Ещё",
+      "browser.shot": "Снимок страницы",
+      "browser.shot_area": "Снимок области",
+      "browser.shooting": "Снимаю…",
+      "browser.shot_taken": "Снимок вложен как {name}",
+      "browser.shot_failed": "Страница не отдала снимок",
+      "browser.area_hint": "Выделите прямоугольник на странице. Escape отменяет.",
+      "browser.hard_reload": "Перезагрузить без кеша",
+      "browser.copy_url": "Скопировать адрес",
+      "browser.copied": "Адрес скопирован",
+      "browser.open_outside": "Открыть в браузере",
+      "browser.opened_outside": "Открыто во внешнем браузере",
+      "browser.zoom": "Масштаб",
+      "browser.zoom_reset": "Вернуть 100%",
+      "browser.engine": "Искать через",
+      "browser.app": "Открывать ссылки в",
+      "browser.app_default": "Браузер системы",
+      "browser.clear_cookies": "Очистить cookie",
+      "browser.clear_cache": "Очистить кеш",
+      "browser.clear_site": "Очистить данные сайта",
+      "browser.cleared": "Очищено",
+      "browser.picking": "Кликните элемент в панели браузера. Escape отменяет.",
+      "browser.picked": "Взят {tag} со страницы {url} — вложен как {name}",
       "composer.send": "Отправить",
       "composer.orchestra_title": "Роли и уровни Orchestra",
       "cost.aria": "Расходы и баланс",
@@ -1574,6 +1666,13 @@
     send: '<path d="M12 19.5V5"/><path d="M6 11l6-6 6 6"/>',
     stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
     bolt: '<path d="M13.5 3L5.5 13.5H11L10.5 21l8-10.5H13z"/>',
+    "arrow-left": '<path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/>',
+    "arrow-right": '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
+    reload: '<path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/>',
+    pick: '<rect x="4" y="4" width="10" height="10" rx="1.5"/><path d="M12 12l7.5 2.8-3.3 1.4-1.4 3.3z"/>',
+    bookmark: '<path d="M6.5 4.5h11v15l-5.5-4-5.5 4z"/>',
+    terminal: '<path d="M5.5 7.5l4 4.5-4 4.5"/><path d="M12.5 16.5h6"/>',
+    dots: '<path d="M5.5 12h.01"/><path d="M12 12h.01"/><path d="M18.5 12h.01"/>',
     "chevron-down": '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
     "chevron-up": '<path d="M6.5 14.5L12 9l5.5 5.5"/>',
     "chevron-right": '<path d="M9.5 6.5l5.5 5.5-5.5 5.5"/>',
@@ -1848,6 +1947,9 @@
       : "ask";
   // Browser tools for the turn (allow_browser). Off until the user turns it on.
   let browserOn = saved.browserOn === true;
+  // Acting in the page, and running script in it: each asked for on its own.
+  let browserDriveOn = saved.browserDrive === true;
+  let browserEvalOn = saved.browserEval === true;
   let assistantBubble = null;
   /** @type {HTMLElement | null} */
   let assistantTurn = null;
@@ -2098,6 +2200,22 @@
       `<span class="menu-row-label"><span class="mi" aria-hidden="true">${orchIconMarkup("access-browser", { size: "sm" })}</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
       `<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="${escapeAttr(i18n("access.browser.label"))}"></button>`;
     accessMenu.appendChild(browserRow);
+    // Two more, each a step further into the person's own browser. A child
+    // switched on switches its parents on: nobody means "act in the page but
+    // do not look at it".
+    for (const level of [
+      { id: "browser-drive-toggle", key: "access.browser.drive" },
+      { id: "browser-eval-toggle", key: "access.browser.eval" },
+    ]) {
+      const row = document.createElement("div");
+      row.className = "menu-row menu-row-browser menu-row-browser-level";
+      row.title = i18n(`${level.key}.hint`);
+      row.innerHTML =
+        `<span class="menu-row-label">${escapeAttr(i18n(`${level.key}.label`))}</span>` +
+        `<button type="button" id="${level.id}" class="toggle" role="switch" aria-checked="false" ` +
+        `aria-label="${escapeAttr(i18n(`${level.key}.label`))}"></button>`;
+      accessMenu.appendChild(row);
+    }
   }
 
   function syncAccessUi() {
@@ -2118,17 +2236,22 @@
       const id = el.getAttribute("data-access");
       el.classList.toggle("selected", id === accessId);
     });
-    const browserToggle = document.getElementById("browser-toggle");
-    if (browserToggle) {
-      browserToggle.classList.toggle("on", browserOn);
-      browserToggle.setAttribute("aria-checked", browserOn ? "true" : "false");
+    for (const [id, on] of [
+      ["browser-toggle", browserOn],
+      ["browser-drive-toggle", browserDriveOn],
+      ["browser-eval-toggle", browserEvalOn],
+    ]) {
+      const toggle = document.getElementById(id);
+      if (!toggle) continue;
+      toggle.classList.toggle("on", on);
+      toggle.setAttribute("aria-checked", on ? "true" : "false");
     }
     if (accessBtn) {
       accessBtn.title = browserOn
         ? i18n("access.browser.on", { hint: i18n(m.hintKey) })
         : i18n(m.hintKey);
     }
-    host.setState({ ...(host.getState() || {}), accessId, browserOn });
+    host.setState({ ...(host.getState() || {}), accessId, browserOn, browserDrive: browserDriveOn, browserEval: browserEvalOn });
   }
 
   function statsHtml(stats) {
@@ -6499,6 +6622,8 @@
       apply: false,
       allowExec: accessId === "auto",
       allowBrowser: browserOn,
+      allowBrowserDrive: browserDriveOn,
+      allowBrowserEval: browserEvalOn,
       files: files.map((f) => ({
         name: f.name,
         path: f.path,
@@ -6813,6 +6938,27 @@
     e.stopPropagation();
     if (/** @type {HTMLElement} */ (e.target).closest("#browser-toggle")) {
       browserOn = !browserOn;
+      // Nothing below survives the browser being off.
+      if (!browserOn) {
+        browserDriveOn = false;
+        browserEvalOn = false;
+      }
+      syncAccessUi();
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-drive-toggle")) {
+      browserDriveOn = !browserDriveOn;
+      if (browserDriveOn) browserOn = true;
+      else browserEvalOn = false;
+      syncAccessUi();
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-eval-toggle")) {
+      browserEvalOn = !browserEvalOn;
+      if (browserEvalOn) {
+        browserOn = true;
+        browserDriveOn = true;
+      }
       syncAccessUi();
       return;
     }

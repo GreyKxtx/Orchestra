@@ -252,6 +252,17 @@ type SessionMessageParams struct {
 	// Ignored without allow_browser, and by a client that never answers
 	// "browser/call". (ProtocolVersion 21.)
 	BrowserPanel bool `json:"browser_panel,omitempty"`
+	// AllowBrowserDrive lets those tools act on the panel rather than only
+	// read it: navigate, click, type, fill, select. Off by default, because
+	// looking at the page a person has open and pressing things on it are
+	// different acts against their session. Panel only — a browser the core
+	// starts for itself is empty and ours. (ProtocolVersion 21.)
+	AllowBrowserDrive bool `json:"allow_browser_drive,omitempty"`
+	// AllowBrowserEval lets browser.eval run the model's own script in the
+	// panel. Its own switch, off even when driving: arbitrary code with the
+	// person's cookies is stronger than every other op together.
+	// (ProtocolVersion 21.)
+	AllowBrowserEval bool `json:"allow_browser_eval,omitempty"`
 
 	MaxSteps          int `json:"max_steps,omitempty"`
 	MaxInvalidRetries int `json:"max_invalid_retries,omitempty"`

@@ -76,11 +76,11 @@ func (h *RPCHandler) questionAskerForRun() *rpcQuestionAsker {
 // the client saying it has a browser view open and this turn may use it
 // instead of starting one; without it, nothing changes and browser.* reaches
 // the Playwright server as before.
-func (h *RPCHandler) browserPanelCtx(ctx context.Context, wanted bool) context.Context {
+func (h *RPCHandler) browserPanelCtx(ctx context.Context, wanted bool, may web.PanelPermits) context.Context {
 	if !wanted || h == nil || h.requester == nil || h.browserPanel == nil {
 		return ctx
 	}
-	return web.WithPanel(ctx, h.browserPanel)
+	return web.WithPanel(ctx, h.browserPanel, may)
 }
 
 func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -134,7 +134,10 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
 			p.QuestionAsker = h.questionAskerForRun()
 		}
-		return h.core.AgentRun(h.browserPanelCtx(ctx, p.BrowserPanel), p)
+		return h.core.AgentRun(h.browserPanelCtx(ctx, p.BrowserPanel, web.PanelPermits{
+			Drive: p.AllowBrowserDrive,
+			Eval:  p.AllowBrowserEval,
+		}), p)
 
 	case "tool.call":
 		var p ToolCallParams
@@ -206,7 +209,10 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
 			p.QuestionAsker = h.questionAskerForRun()
 		}
-		return h.core.SessionMessage(h.browserPanelCtx(ctx, p.BrowserPanel), p)
+		return h.core.SessionMessage(h.browserPanelCtx(ctx, p.BrowserPanel, web.PanelPermits{
+			Drive: p.AllowBrowserDrive,
+			Eval:  p.AllowBrowserEval,
+		}), p)
 
 	case "session.history":
 		var p SessionHistoryParams

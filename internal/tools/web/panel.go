@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // Panel is the browser the person is looking at — the desktop shell's own
@@ -33,13 +35,32 @@ type Panel interface {
 // travels with the turn that is entitled to it and expires with it.
 type panelKey struct{}
 
+// PanelPermits is what this turn may ask the panel to do. Reading is the
+// permission to have the panel at all; the other two are asked for separately,
+// because they are different acts against the person's own session.
+//
+// They gate the panel only. A browser the core starts for itself is empty and
+// ours, and `--allow-browser` has always meant all ten tools against it;
+// narrowing that would be churn without a risk behind it.
+type PanelPermits struct {
+	// Drive permits navigate, click, type, fill, select, close — acts that
+	// change what the person's browser is showing or doing.
+	Drive bool
+	// Eval permits running the model's own script in the page. Stronger than
+	// all the rest together: it is arbitrary code with the person's cookies,
+	// so it is asked for on its own and off by default even when driving.
+	Eval bool
+}
+
+type permitsKey struct{}
+
 // WithPanel returns ctx carrying p. The core does this when the turn was asked
 // for with the client's own browser and that client offers one.
-func WithPanel(ctx context.Context, p Panel) context.Context {
+func WithPanel(ctx context.Context, p Panel, may PanelPermits) context.Context {
 	if p == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, panelKey{}, p)
+	return context.WithValue(context.WithValue(ctx, panelKey{}, p), permitsKey{}, may)
 }
 
 // PanelFrom returns the panel this turn may use, or nil. Nil is the ordinary
@@ -50,6 +71,25 @@ func PanelFrom(ctx context.Context) Panel {
 	}
 	p, _ := ctx.Value(panelKey{}).(Panel)
 	return p
+}
+
+// PanelMay reports what this turn may ask of the panel. The zero value —
+// read only — is what a turn gets when nothing granted more.
+func PanelMay(ctx context.Context) PanelPermits {
+	if ctx == nil {
+		return PanelPermits{}
+	}
+	may, _ := ctx.Value(permitsKey{}).(PanelPermits)
+	return may
+}
+
+// errPanelDenied is the answer to an op this turn was not given. It names the
+// switch, because the model cannot grant it and the person can.
+func errPanelDenied(op, switchName string) error {
+	return protocol.NewError(protocol.ExecDenied,
+		"the browser panel refused "+op+": this turn may look at the page but not "+
+			switchName+". Ask the person to turn that on in the composer's access menu.",
+		map[string]any{"op": op})
 }
 
 // panelResult decodes one op's answer into v.

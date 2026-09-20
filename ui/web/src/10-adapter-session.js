@@ -719,6 +719,12 @@
     // and sends synchronously, so the id handed back and the id in the wire
     // frame are provably the same value.
     const conn = connFor(projectId);
+    // What this turn may do to our own browser, remembered on this side too:
+    // the core checks it, and so does the window that owns the browser.
+    browserAgentSet({
+      drive: msg.allowBrowser === true && msg.allowBrowserDrive === true,
+      eval: msg.allowBrowser === true && msg.allowBrowserEval === true,
+    });
     const turn = conn.sendCancellable("session.message", {
       session_id: sessionId,
       content: msg.text || "",
@@ -747,7 +753,12 @@
       // With a browser view of our own open, those tools act on it — the page
       // the person is looking at — instead of on one the core starts.
       ...(msg.allowBrowser === true
-        ? { allow_browser: true, ...(browserPanelOpen() ? { browser_panel: true } : {}) }
+        ? {
+            allow_browser: true,
+            ...(msg.allowBrowserDrive === true ? { allow_browser_drive: true } : {}),
+            ...(msg.allowBrowserEval === true ? { allow_browser_eval: true } : {}),
+            ...(browserPanelOpen() ? { browser_panel: true } : {}),
+          }
         : {}),
       profile: msg.profile || "",
       ...(attachments.length ? { attachments } : {}),

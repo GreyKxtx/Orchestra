@@ -95,11 +95,23 @@ type BrowserNavigateResponse struct {
 }
 
 func BrowserNavigate(ctx context.Context, cfg Config, req BrowserNavigateRequest) (*BrowserNavigateResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
 	}
 	if strings.TrimSpace(req.URL) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "url is required", nil)
+	}
+	if p := PanelFrom(ctx); p != nil {
+		if !PanelMay(ctx).Drive {
+			return nil, errPanelDenied("browser.navigate", "take it to another page")
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		if err := panelCall(ctx, p, "navigate", map[string]any{"url": req.URL}, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserNavigateResponse{Result: out.Result}, nil
 	}
 	// The server's navigation already waits for the load event, which covers
 	// "load" and "domcontentloaded"; "networkidle" is waited for here.
@@ -197,11 +209,24 @@ type BrowserClickResponse struct {
 }
 
 func BrowserClick(ctx context.Context, cfg Config, req BrowserClickRequest) (*BrowserClickResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
 	}
 	if req.Element == "" && req.Ref == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "element or ref is required", nil)
+	}
+	if p := PanelFrom(ctx); p != nil {
+		if !PanelMay(ctx).Drive {
+			return nil, errPanelDenied("browser.click", "click in it")
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		args := map[string]any{"ref": req.Ref, "element": req.Element}
+		if err := panelCall(ctx, p, "click", args, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserClickResponse{Result: out.Result}, nil
 	}
 	args := map[string]any{}
 	setTarget(args, req.Element, req.Ref)
@@ -226,7 +251,7 @@ type BrowserTypeResponse struct {
 }
 
 func BrowserType(ctx context.Context, cfg Config, req BrowserTypeRequest) (*BrowserTypeResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
 	}
 	if req.Text == "" {
@@ -234,6 +259,19 @@ func BrowserType(ctx context.Context, cfg Config, req BrowserTypeRequest) (*Brow
 	}
 	if req.Element == "" && req.Ref == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "element or ref is required", nil)
+	}
+	if p := PanelFrom(ctx); p != nil {
+		if !PanelMay(ctx).Drive {
+			return nil, errPanelDenied("browser.type", "type into it")
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		args := map[string]any{"ref": req.Ref, "element": req.Element, "text": req.Text}
+		if err := panelCall(ctx, p, "type", args, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserTypeResponse{Result: out.Result}, nil
 	}
 	// The server fills the field, replacing what it held, so Clear is what
 	// happens either way.
@@ -263,11 +301,31 @@ type BrowserFillResponse struct {
 }
 
 func BrowserFill(ctx context.Context, cfg Config, req BrowserFillRequest) (*BrowserFillResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
 	}
 	if len(req.Fields) == 0 {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "fields array is required and must not be empty", nil)
+	}
+	if p := PanelFrom(ctx); p != nil {
+		if !PanelMay(ctx).Drive {
+			return nil, errPanelDenied("browser.fill", "fill its forms")
+		}
+		fields := make([]map[string]any, 0, len(req.Fields))
+		for _, f := range req.Fields {
+			if f.Element == "" && f.Ref == "" {
+				return nil, protocol.NewError(protocol.InvalidLLMOutput,
+					"each field requires element or ref", nil)
+			}
+			fields = append(fields, map[string]any{"ref": f.Ref, "element": f.Element, "value": f.Value})
+		}
+		var out struct {
+			Filled int `json:"filled"`
+		}
+		if err := panelCall(ctx, p, "fill", map[string]any{"fields": fields}, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserFillResponse{Filled: out.Filled}, nil
 	}
 	mcpFields := make([]map[string]any, 0, len(req.Fields))
 	for _, f := range req.Fields {
@@ -301,7 +359,7 @@ type BrowserSelectResponse struct {
 }
 
 func BrowserSelect(ctx context.Context, cfg Config, req BrowserSelectRequest) (*BrowserSelectResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
 	}
 	if req.Element == "" && req.Ref == "" {
@@ -309,6 +367,19 @@ func BrowserSelect(ctx context.Context, cfg Config, req BrowserSelectRequest) (*
 	}
 	if req.Value == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "value is required", nil)
+	}
+	if p := PanelFrom(ctx); p != nil {
+		if !PanelMay(ctx).Drive {
+			return nil, errPanelDenied("browser.select", "choose in it")
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		args := map[string]any{"ref": req.Ref, "element": req.Element, "value": req.Value}
+		if err := panelCall(ctx, p, "select", args, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserSelectResponse{Result: out.Result}, nil
 	}
 	args := map[string]any{"values": []string{req.Value}}
 	setTarget(args, req.Element, req.Ref)
@@ -330,8 +401,26 @@ type BrowserEvalResponse struct {
 }
 
 func BrowserEval(ctx context.Context, cfg Config, req BrowserEvalRequest) (*BrowserEvalResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
+	}
+	if p := PanelFrom(ctx); p != nil {
+		// The one op with its own switch: arbitrary script with the person's
+		// cookies is stronger than every other op together, so driving does
+		// not carry it.
+		if !PanelMay(ctx).Eval {
+			return nil, errPanelDenied("browser.eval", "run script in it")
+		}
+		if strings.TrimSpace(req.Expression) == "" {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "expression is required", nil)
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		if err := panelCall(ctx, p, "eval", map[string]any{"expression": req.Expression}, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserEvalResponse{Result: out.Result}, nil
 	}
 	if !cfg.AllowBrowserEval {
 		return nil, protocol.NewError(protocol.ExecDenied,
@@ -364,7 +453,7 @@ type BrowserWaitResponse struct {
 }
 
 func BrowserWait(ctx context.Context, cfg Config, req BrowserWaitRequest) (*BrowserWaitResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
 	}
 	if req.URL == "" && req.Selector == "" && req.Text == "" {
@@ -374,6 +463,26 @@ func BrowserWait(ctx context.Context, cfg Config, req BrowserWaitRequest) (*Brow
 	timeout := defaultWaitTimeout
 	if req.TimeoutMS > 0 {
 		timeout = min(time.Duration(req.TimeoutMS)*time.Millisecond, maxWaitTimeout)
+	}
+	if p := PanelFrom(ctx); p != nil {
+		// Waiting only watches, so it needs no more than looking does — the
+		// conditions cross as data and the page checks them with a script of
+		// ours, never the model's.
+		var out struct {
+			Result string `json:"result"`
+			Found  bool   `json:"found"`
+		}
+		args := map[string]any{
+			"url": req.URL, "selector": req.Selector, "text": req.Text,
+			"timeout_ms": timeout.Milliseconds(),
+		}
+		if err := panelCall(ctx, p, "wait", args, &out); err != nil {
+			return nil, err
+		}
+		if !out.Found {
+			return nil, protocol.NewError(protocol.ExecTimeout, out.Result, nil)
+		}
+		return &BrowserWaitResponse{Result: out.Result}, nil
 	}
 	// The server waits only for text or a fixed time, so every condition is
 	// checked by asking the page; all given conditions must hold.
@@ -409,8 +518,16 @@ type BrowserCloseResponse struct {
 }
 
 func BrowserClose(ctx context.Context, cfg Config, req BrowserCloseRequest) (*BrowserCloseResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
+	}
+	if PanelFrom(ctx) != nil {
+		// The panel is a view of the person's window, not a tab this opened.
+		// Closing it is theirs to do, and a model that thinks it is tidying up
+		// would be taking the page out from under them.
+		return nil, protocol.NewError(protocol.ExecDenied,
+			"the browser panel belongs to the person and is not closed by a tool: "+
+				"leave it open, or navigate somewhere else", nil)
 	}
 	_, err := cfg.Browser.Call(ctx, "browser_close", map[string]any{})
 	if err != nil {

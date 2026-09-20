@@ -1910,6 +1910,17 @@ body[data-rail-drag="true"] {
   border-bottom: 1px solid var(--border-soft);
 }
 
+/* While the agent is at this page, the pane says so: an accent edge around
+   the stage and a line in the toolbar. Nothing it does here is invisible. */
+.browser-pane[data-agent] .browser-stage {
+  outline: 2px solid var(--mode-accent, #bb9af7);
+  outline-offset: -2px;
+}
+
+.browser-pane[data-agent="driving"] .browser-stage {
+  outline-style: dashed;
+}
+
 .browser-stage {
   flex: 1 1 auto;
   min-height: 0;

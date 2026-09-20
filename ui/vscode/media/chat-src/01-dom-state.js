@@ -218,6 +218,9 @@
       : "ask";
   // Browser tools for the turn (allow_browser). Off until the user turns it on.
   let browserOn = saved.browserOn === true;
+  // Acting in the page, and running script in it: each asked for on its own.
+  let browserDriveOn = saved.browserDrive === true;
+  let browserEvalOn = saved.browserEval === true;
   let assistantBubble = null;
   /** @type {HTMLElement | null} */
   let assistantTurn = null;

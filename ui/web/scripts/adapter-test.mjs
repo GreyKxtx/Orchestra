@@ -1179,6 +1179,37 @@ test("browser/call is always answered, and a host with no panel refuses", async 
     "this request raises no overlay");
 });
 
+// The window that owns the browser refuses an op above what the person
+// granted, whatever the core asks for. The core checks the same thing; this
+// is the half that cannot be talked out of it.
+test("the window refuses an op the turn was not granted", async () => {
+  const b = await handshake(loadBundle());
+  // A turn sent with looking allowed and nothing else.
+  dispatch(b, {
+    type: "send",
+    text: "what is on the page",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: false,
+    allowBrowser: true,
+    files: [],
+  });
+
+  for (const [op, refusal] of [
+    ["click", /not act in it/],
+    ["type", /not act in it/],
+    ["navigate", /not act in it/],
+    ["eval", /not run script/],
+  ]) {
+    b.deliver({ jsonrpc: "2.0", id: `no-${op}`, method: "browser/call", params: { op, params: {} } });
+    await new Promise((r) => setTimeout(r, 0));
+    const reply = b.sent.find((m) => m.id === `no-${op}`);
+    assert.ok(reply, `no reply for ${op}`);
+    assert.match(String(reply.result.error || ""), refusal, `${op} was not refused as expected`);
+  }
+});
+
 // And it never claims one it does not have: browser_panel is what tells the
 // core to route browser.* through this window, so a plain browser must not
 // send it.

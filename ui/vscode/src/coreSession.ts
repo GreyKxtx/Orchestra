@@ -1248,6 +1248,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       profile?: string;
       allowExec?: boolean;
       allowBrowser?: boolean;
+      allowBrowserDrive?: boolean;
+      allowBrowserEval?: boolean;
       attachments?: Array<{
         name: string;
         path?: string;
@@ -1292,6 +1294,12 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       };
       if (options?.allowBrowser) {
         params.allow_browser = true;
+        if (options?.allowBrowserDrive) {
+          params.allow_browser_drive = true;
+        }
+        if (options?.allowBrowserEval) {
+          params.allow_browser_eval = true;
+        }
       }
       if (options?.mode && options.mode.trim() !== "") {
         params.mode = options.mode.trim();

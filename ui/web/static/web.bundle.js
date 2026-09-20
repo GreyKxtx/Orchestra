@@ -39,8 +39,14 @@
       "access.tools.section": "Tools",
       "access.browser.label": "Browser",
       "access.browser.hint":
-        "The agent may open pages, click and type in a browser (Playwright). Not available under Fast.",
+        "The agent may look at the page: its elements and a screenshot. With the Browser view open that is your page, with your session; otherwise one it starts for itself. Not available under Fast.",
       "access.browser.on": "{hint} · browser on",
+      "access.browser.drive.label": "…and act in it",
+      "access.browser.drive.hint":
+        "Click, type, fill forms and open other addresses in the Browser view. The view shows when the agent is doing it.",
+      "access.browser.eval.label": "…and run script in it",
+      "access.browser.eval.hint":
+        "Run the agent's own JavaScript in the page, with your session. Stronger than everything else together — off unless you turn it on for this.",
 
       "turn.working": "Working…",
       "turn.running_tools": "Running tools…",
@@ -148,6 +154,8 @@
       "browser.link_save": "Save this page",
       "browser.link_saved": "Saved",
       "browser.link_forget": "Forget this link",
+      "browser.agent_reading": "The agent is looking at this page",
+      "browser.agent_driving": "The agent is acting on this page",
       "browser.console": "Developer tools",
       "browser.eval_hint": "Run JavaScript on the page",
       "browser.more": "More",
@@ -747,8 +755,14 @@
       "access.tools.section": "Инструменты",
       "access.browser.label": "Браузер",
       "access.browser.hint":
-        "Агент может открывать страницы, нажимать и вводить текст в браузере (Playwright). Не действует при Fast.",
+        "Агент может смотреть на страницу: её элементы и снимок. Когда открыта вкладка «Браузер» — это ваша страница с вашей сессией, иначе он поднимет свою. Не действует при Fast.",
       "access.browser.on": "{hint} · браузер включён",
+      "access.browser.drive.label": "…и действовать в ней",
+      "access.browser.drive.hint":
+        "Нажимать, вводить текст, заполнять формы и открывать другие адреса во вкладке «Браузер». Вкладка показывает, когда это делает агент.",
+      "access.browser.eval.label": "…и выполнять скрипт",
+      "access.browser.eval.hint":
+        "Выполнять собственный JavaScript агента на странице, с вашей сессией. Сильнее всего остального вместе взятого — выключено, пока не включите отдельно.",
 
       "turn.working": "Работаю…",
       "turn.running_tools": "Выполняю инструменты…",
@@ -857,6 +871,8 @@
       "browser.link_save": "Сохранить эту страницу",
       "browser.link_saved": "Сохранено",
       "browser.link_forget": "Убрать ссылку",
+      "browser.agent_reading": "Агент смотрит на эту страницу",
+      "browser.agent_driving": "Агент действует на этой странице",
       "browser.console": "Инструменты разработчика",
       "browser.eval_hint": "Выполнить JavaScript на странице",
       "browser.more": "Ещё",
@@ -2140,6 +2156,9 @@
       : "ask";
   // Browser tools for the turn (allow_browser). Off until the user turns it on.
   let browserOn = saved.browserOn === true;
+  // Acting in the page, and running script in it: each asked for on its own.
+  let browserDriveOn = saved.browserDrive === true;
+  let browserEvalOn = saved.browserEval === true;
   let assistantBubble = null;
   /** @type {HTMLElement | null} */
   let assistantTurn = null;
@@ -2390,6 +2409,22 @@
       `<span class="menu-row-label"><span class="mi" aria-hidden="true">${orchIconMarkup("access-browser", { size: "sm" })}</span>${escapeAttr(i18n("access.browser.label"))}</span>` +
       `<button type="button" id="browser-toggle" class="toggle" role="switch" aria-checked="false" aria-label="${escapeAttr(i18n("access.browser.label"))}"></button>`;
     accessMenu.appendChild(browserRow);
+    // Two more, each a step further into the person's own browser. A child
+    // switched on switches its parents on: nobody means "act in the page but
+    // do not look at it".
+    for (const level of [
+      { id: "browser-drive-toggle", key: "access.browser.drive" },
+      { id: "browser-eval-toggle", key: "access.browser.eval" },
+    ]) {
+      const row = document.createElement("div");
+      row.className = "menu-row menu-row-browser menu-row-browser-level";
+      row.title = i18n(`${level.key}.hint`);
+      row.innerHTML =
+        `<span class="menu-row-label">${escapeAttr(i18n(`${level.key}.label`))}</span>` +
+        `<button type="button" id="${level.id}" class="toggle" role="switch" aria-checked="false" ` +
+        `aria-label="${escapeAttr(i18n(`${level.key}.label`))}"></button>`;
+      accessMenu.appendChild(row);
+    }
   }
 
   function syncAccessUi() {
@@ -2410,17 +2445,22 @@
       const id = el.getAttribute("data-access");
       el.classList.toggle("selected", id === accessId);
     });
-    const browserToggle = document.getElementById("browser-toggle");
-    if (browserToggle) {
-      browserToggle.classList.toggle("on", browserOn);
-      browserToggle.setAttribute("aria-checked", browserOn ? "true" : "false");
+    for (const [id, on] of [
+      ["browser-toggle", browserOn],
+      ["browser-drive-toggle", browserDriveOn],
+      ["browser-eval-toggle", browserEvalOn],
+    ]) {
+      const toggle = document.getElementById(id);
+      if (!toggle) continue;
+      toggle.classList.toggle("on", on);
+      toggle.setAttribute("aria-checked", on ? "true" : "false");
     }
     if (accessBtn) {
       accessBtn.title = browserOn
         ? i18n("access.browser.on", { hint: i18n(m.hintKey) })
         : i18n(m.hintKey);
     }
-    host.setState({ ...(host.getState() || {}), accessId, browserOn });
+    host.setState({ ...(host.getState() || {}), accessId, browserOn, browserDrive: browserDriveOn, browserEval: browserEvalOn });
   }
 
   function statsHtml(stats) {
@@ -6791,6 +6831,8 @@
       apply: false,
       allowExec: accessId === "auto",
       allowBrowser: browserOn,
+      allowBrowserDrive: browserDriveOn,
+      allowBrowserEval: browserEvalOn,
       files: files.map((f) => ({
         name: f.name,
         path: f.path,
@@ -7105,6 +7147,27 @@
     e.stopPropagation();
     if (/** @type {HTMLElement} */ (e.target).closest("#browser-toggle")) {
       browserOn = !browserOn;
+      // Nothing below survives the browser being off.
+      if (!browserOn) {
+        browserDriveOn = false;
+        browserEvalOn = false;
+      }
+      syncAccessUi();
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-drive-toggle")) {
+      browserDriveOn = !browserDriveOn;
+      if (browserDriveOn) browserOn = true;
+      else browserEvalOn = false;
+      syncAccessUi();
+      return;
+    }
+    if (/** @type {HTMLElement} */ (e.target).closest("#browser-eval-toggle")) {
+      browserEvalOn = !browserEvalOn;
+      if (browserEvalOn) {
+        browserOn = true;
+        browserDriveOn = true;
+      }
       syncAccessUi();
       return;
     }
@@ -8734,6 +8797,12 @@
     // and sends synchronously, so the id handed back and the id in the wire
     // frame are provably the same value.
     const conn = connFor(projectId);
+    // What this turn may do to our own browser, remembered on this side too:
+    // the core checks it, and so does the window that owns the browser.
+    browserAgentSet({
+      drive: msg.allowBrowser === true && msg.allowBrowserDrive === true,
+      eval: msg.allowBrowser === true && msg.allowBrowserEval === true,
+    });
     const turn = conn.sendCancellable("session.message", {
       session_id: sessionId,
       content: msg.text || "",
@@ -8762,7 +8831,12 @@
       // With a browser view of our own open, those tools act on it — the page
       // the person is looking at — instead of on one the core starts.
       ...(msg.allowBrowser === true
-        ? { allow_browser: true, ...(browserPanelOpen() ? { browser_panel: true } : {}) }
+        ? {
+            allow_browser: true,
+            ...(msg.allowBrowserDrive === true ? { allow_browser_drive: true } : {}),
+            ...(msg.allowBrowserEval === true ? { allow_browser_eval: true } : {}),
+            ...(browserPanelOpen() ? { browser_panel: true } : {}),
+          }
         : {}),
       profile: msg.profile || "",
       ...(attachments.length ? { attachments } : {}),
@@ -13777,6 +13851,7 @@
   // The agent's side of the panel, so it can be exercised in a real window
   // without a model in the loop.
   globalThis.__orchBrowserPanelOp = (op, params) => browserPanelOp(op, params);
+  globalThis.__orchBrowserAgentSet = (may) => browserAgentSet(may);
 
   /**
    * The width the dock takes when asked for `want` out of `room`: its own
@@ -14242,15 +14317,216 @@
     return { image: String(data) };
   }
 
+  /** What this turn's sender allowed. Read is implied by having a panel. */
+  let browserAgentMay = { drive: false, eval: false };
+
   /**
-   * One op from the core. Read-only for now: what the page is, what is on it,
-   * what it looks like.
+   * Remember what the turn being sent was allowed to do, so this side can
+   * refuse an op above it. The core checks the same thing; this is the half
+   * that cannot be talked out of it, because it is the half that owns the
+   * browser.
+   * @param {{drive?: boolean, eval?: boolean}} may
+   */
+  function browserAgentSet(may) {
+    browserAgentMay = { drive: Boolean(may && may.drive), eval: Boolean(may && may.eval) };
+  }
+
+  /** Say in the toolbar what is being done to the page, and by whom. */
+  function browserAgentBusy(what) {
+    if (browserPane && browserPane.dataset) {
+      if (what) browserPane.dataset.agent = what;
+      else delete browserPane.dataset.agent;
+    }
+    if (what) browserStatus(i18n(what === "driving" ? "browser.agent_driving" : "browser.agent_reading"));
+    else browserStatus("");
+  }
+
+  /** The node a ref or a selector names, as a remote object. */
+  async function browserTarget(params) {
+    const ref = String((params && params.ref) || "");
+    if (ref) {
+      const backendNodeId = browserSnapRefs.get(ref);
+      if (!backendNodeId) {
+        throw new Error(`no element ${ref} on this page — take a snapshot first`);
+      }
+      const node = await browserCdp("DOM.resolveNode", { backendNodeId }, true);
+      const objectId = node && node.object && node.object.objectId;
+      if (!objectId) throw new Error(`${ref} is no longer on the page — take a snapshot again`);
+      return objectId;
+    }
+    const selector = String((params && params.element) || "");
+    if (!selector) throw new Error("ref or element is required");
+    // The selector is the model's, the script around it is ours.
+    const found = await browserCdp("Runtime.evaluate", {
+      expression: `document.querySelector(${JSON.stringify(selector)})`,
+    }, true);
+    const objectId = found && found.result && found.result.objectId;
+    if (!objectId) throw new Error(`nothing on the page matches ${selector}`);
+    return objectId;
+  }
+
+  /** Run a function of ours on that node, and answer with what it returned. */
+  async function browserOnNode(objectId, fn, args) {
+    const answer = await browserCdp("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: fn,
+      arguments: (args || []).map((value) => ({ value })),
+      returnByValue: true,
+      awaitPromise: true,
+    }, true);
+    if (answer && answer.exceptionDetails) {
+      throw new Error(String(answer.exceptionDetails.text || "the page refused"));
+    }
+    return answer && answer.result ? answer.result.value : undefined;
+  }
+
+  /**
+   * A real click where the element is, not element.click(): a page that
+   * listens for a press, a hover or a focus gets what it is listening for.
+   * An element with no box — hidden, or scrolled out of a clipped container —
+   * falls back to the DOM call, which is better than refusing.
+   */
+  async function browserPanelClick(params) {
+    const objectId = await browserTarget(params);
+    await browserOnNode(objectId, "function () { this.scrollIntoView({block: 'center', inline: 'center'}); }");
+    const box = await browserCdp("DOM.getBoxModel", { objectId }, true);
+    const quad = box && box.model && box.model.content;
+    if (!quad || quad.length < 8) {
+      await browserOnNode(objectId, "function () { this.click(); }");
+      return { result: "clicked (no box on the page, so through the DOM)" };
+    }
+    const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
+    const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
+    const at = { x, y, button: "left", clickCount: 1 };
+    await browserCdp("Input.dispatchMouseEvent", { type: "mouseMoved", ...at }, true);
+    await browserCdp("Input.dispatchMouseEvent", { type: "mousePressed", ...at }, true);
+    await browserCdp("Input.dispatchMouseEvent", { type: "mouseReleased", ...at }, true);
+    return { result: `clicked at ${Math.round(x)},${Math.round(y)}` };
+  }
+
+  /** Put text in a field: focus it, take what was there, then type. */
+  async function browserPanelType(params) {
+    const objectId = await browserTarget(params);
+    await browserOnNode(objectId, "function () { this.scrollIntoView({block: 'center'}); this.focus(); " +
+      "if (this.select) this.select(); }");
+    const text = String((params && params.text) || "");
+    await browserCdp("Input.insertText", { text }, true);
+    // Frameworks listen for input, and insertText alone does not always reach
+    // the ones that watch the property rather than the event.
+    await browserOnNode(objectId, "function () { this.dispatchEvent(new Event('input', {bubbles: true})); " +
+      "this.dispatchEvent(new Event('change', {bubbles: true})); }");
+    return { result: `typed ${text.length} character(s)` };
+  }
+
+  /** @param {any} params */
+  async function browserPanelFill(params) {
+    const fields = (params && params.fields) || [];
+    let filled = 0;
+    for (const field of fields) {
+      await browserPanelType({ ref: field.ref, element: field.element, text: String(field.value || "") });
+      filled++;
+    }
+    return { filled };
+  }
+
+  /** @param {any} params */
+  async function browserPanelSelect(params) {
+    const objectId = await browserTarget(params);
+    const value = String((params && params.value) || "");
+    const done = await browserOnNode(objectId, "function (want) { " +
+      "const option = Array.from(this.options || []).find((o) => o.value === want || o.text === want); " +
+      "if (!option) return false; this.value = option.value; " +
+      "this.dispatchEvent(new Event('input', {bubbles: true})); " +
+      "this.dispatchEvent(new Event('change', {bubbles: true})); return true; }", [value]);
+    if (!done) throw new Error(`no option ${value} in that list`);
+    return { result: `chose ${value}` };
+  }
+
+  /** @param {any} params */
+  async function browserPanelNavigate(params) {
+    const url = String((params && params.url) || "");
+    if (!url) throw new Error("url is required");
+    await openBrowserAt(url);
+    browserSnapRefs.clear();
+    return { result: `opened ${url}` };
+  }
+
+  /**
+   * Watch for a condition the core described. The conditions are data; the
+   * script that checks them is ours, which is why this needs no more
+   * permission than looking does.
+   * @param {any} params
+   */
+  async function browserPanelWait(params) {
+    const cond = {
+      url: String((params && params.url) || ""),
+      selector: String((params && params.selector) || ""),
+      text: String((params && params.text) || ""),
+    };
+    const limit = Number((params && params.timeout_ms) || 5000);
+    const until = Date.now() + Math.max(500, Math.min(limit, 120000));
+    const check = `(() => { const c = ${JSON.stringify(cond)};` +
+      " if (c.url && !location.href.includes(c.url)) return false;" +
+      " if (c.selector && !document.querySelector(c.selector)) return false;" +
+      " if (c.text && !(document.body && document.body.innerText.includes(c.text))) return false;" +
+      " return true; })()";
+    const said = [
+      cond.url ? `a URL containing "${cond.url}"` : "",
+      cond.selector ? `an element matching "${cond.selector}"` : "",
+      cond.text ? `the text "${cond.text}"` : "",
+    ].filter(Boolean).join(" and ");
+    for (;;) {
+      const answer = await browserCdp("Runtime.evaluate", { expression: check, returnByValue: true }, true);
+      if (answer && answer.result && answer.result.value === true) {
+        return { found: true, result: `found ${said}` };
+      }
+      if (Date.now() > until) {
+        return { found: false, result: `waited and ${said} did not happen` };
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
+  /** @param {any} params */
+  async function browserPanelEval(params) {
+    const expression = String((params && params.expression) || "");
+    if (!expression) throw new Error("expression is required");
+    const answer = await browserCdp("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    }, true);
+    if (answer && answer.exceptionDetails) {
+      throw new Error(String(answer.exceptionDetails.text || "the script threw"));
+    }
+    const value = answer && answer.result ? answer.result.value : undefined;
+    return { result: value === undefined ? "undefined" : JSON.stringify(value) };
+  }
+
+  /** Which ops each switch buys. Everything unlisted only looks. */
+  const BROWSER_DRIVE_OPS = new Set(["navigate", "click", "type", "fill", "select"]);
+
+  /**
+   * One op from the core.
    * @param {string} op @param {any} params
    */
   async function browserPanelOp(op, params) {
+    // What the turn was granted comes first, before whether there is a panel:
+    // a permission is a property of the turn and does not change under it,
+    // while a view can be opened mid-turn — and answering "open the view"
+    // to an op that would still be refused afterwards sends the model after
+    // the wrong thing. The core checks the same; this is the half that owns
+    // the browser, and so the half that cannot be talked out of it.
+    if (op === "eval" && !browserAgentMay.eval) {
+      return { error: "this turn may not run script in the browser panel" };
+    }
+    if (BROWSER_DRIVE_OPS.has(op) && !browserAgentMay.drive) {
+      return { error: "this turn may look at the browser panel but not act in it" };
+    }
     if (!browserPanelOpen()) {
       return { error: "the browser view is not open — open it and load a page first" };
     }
+    browserAgentBusy(BROWSER_DRIVE_OPS.has(op) || op === "eval" ? "driving" : "reading");
     try {
       switch (op) {
         case "status":
@@ -14259,11 +14535,27 @@
           return await browserPanelSnapshot();
         case "screenshot":
           return await browserPanelScreenshot(params);
+        case "wait":
+          return await browserPanelWait(params);
+        case "navigate":
+          return await browserPanelNavigate(params);
+        case "click":
+          return await browserPanelClick(params);
+        case "type":
+          return await browserPanelType(params);
+        case "fill":
+          return await browserPanelFill(params);
+        case "select":
+          return await browserPanelSelect(params);
+        case "eval":
+          return await browserPanelEval(params);
         default:
           return { error: `the browser panel has no op "${op}"` };
       }
     } catch (err) {
       return { error: String((err && err.message) || err) };
+    } finally {
+      browserAgentBusy("");
     }
   }
 

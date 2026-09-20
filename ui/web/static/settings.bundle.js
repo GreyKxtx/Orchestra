@@ -39,8 +39,14 @@
       "access.tools.section": "Tools",
       "access.browser.label": "Browser",
       "access.browser.hint":
-        "The agent may open pages, click and type in a browser (Playwright). Not available under Fast.",
+        "The agent may look at the page: its elements and a screenshot. With the Browser view open that is your page, with your session; otherwise one it starts for itself. Not available under Fast.",
       "access.browser.on": "{hint} · browser on",
+      "access.browser.drive.label": "…and act in it",
+      "access.browser.drive.hint":
+        "Click, type, fill forms and open other addresses in the Browser view. The view shows when the agent is doing it.",
+      "access.browser.eval.label": "…and run script in it",
+      "access.browser.eval.hint":
+        "Run the agent's own JavaScript in the page, with your session. Stronger than everything else together — off unless you turn it on for this.",
 
       "turn.working": "Working…",
       "turn.running_tools": "Running tools…",
@@ -148,6 +154,8 @@
       "browser.link_save": "Save this page",
       "browser.link_saved": "Saved",
       "browser.link_forget": "Forget this link",
+      "browser.agent_reading": "The agent is looking at this page",
+      "browser.agent_driving": "The agent is acting on this page",
       "browser.console": "Developer tools",
       "browser.eval_hint": "Run JavaScript on the page",
       "browser.more": "More",
@@ -747,8 +755,14 @@
       "access.tools.section": "Инструменты",
       "access.browser.label": "Браузер",
       "access.browser.hint":
-        "Агент может открывать страницы, нажимать и вводить текст в браузере (Playwright). Не действует при Fast.",
+        "Агент может смотреть на страницу: её элементы и снимок. Когда открыта вкладка «Браузер» — это ваша страница с вашей сессией, иначе он поднимет свою. Не действует при Fast.",
       "access.browser.on": "{hint} · браузер включён",
+      "access.browser.drive.label": "…и действовать в ней",
+      "access.browser.drive.hint":
+        "Нажимать, вводить текст, заполнять формы и открывать другие адреса во вкладке «Браузер». Вкладка показывает, когда это делает агент.",
+      "access.browser.eval.label": "…и выполнять скрипт",
+      "access.browser.eval.hint":
+        "Выполнять собственный JavaScript агента на странице, с вашей сессией. Сильнее всего остального вместе взятого — выключено, пока не включите отдельно.",
 
       "turn.working": "Работаю…",
       "turn.running_tools": "Выполняю инструменты…",
@@ -857,6 +871,8 @@
       "browser.link_save": "Сохранить эту страницу",
       "browser.link_saved": "Сохранено",
       "browser.link_forget": "Убрать ссылку",
+      "browser.agent_reading": "Агент смотрит на эту страницу",
+      "browser.agent_driving": "Агент действует на этой странице",
       "browser.console": "Инструменты разработчика",
       "browser.eval_hint": "Выполнить JavaScript на странице",
       "browser.more": "Ещё",
