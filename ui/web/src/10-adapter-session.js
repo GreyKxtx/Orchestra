@@ -744,7 +744,11 @@
       backup: true,
       allow_exec: Boolean(msg.allowExec),
       // The composer's browser switch (access menu): browser.* for this turn.
-      ...(msg.allowBrowser === true ? { allow_browser: true } : {}),
+      // With a browser view of our own open, those tools act on it — the page
+      // the person is looking at — instead of on one the core starts.
+      ...(msg.allowBrowser === true
+        ? { allow_browser: true, ...(browserPanelOpen() ? { browser_panel: true } : {}) }
+        : {}),
       profile: msg.profile || "",
       ...(attachments.length ? { attachments } : {}),
     });

@@ -48,7 +48,12 @@ const (
 	// v20: session.discard_pending takes paths[] and answers with
 	//      remaining_ops[], mirroring session.apply_pending — rejecting one
 	//      file of a turn no longer means rejecting all of them.
-	ProtocolVersion = 20
+	// v21: agent.run and session.message take browser_panel — the turn's
+	//      browser.* act on the browser view the client itself has open,
+	//      through the new server-initiated request "browser/call", instead
+	//      of on a browser the core starts. A client that does not answer
+	//      that request must not send the flag.
+	ProtocolVersion = 21
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

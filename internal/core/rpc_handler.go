@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/tools/web"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -27,6 +28,9 @@ type RPCHandler struct {
 	// callers holding the same instance, and the collision that matters is
 	// between two different sources, so there is exactly one.
 	questionAsker *rpcQuestionAsker
+	// browserPanel is this connection's own browser — the desktop shell's
+	// Browser view. One per connection, because it is that window's.
+	browserPanel *rpcBrowserPanel
 }
 
 func NewRPCHandler(c *Core) *RPCHandler {
@@ -46,6 +50,7 @@ func (h *RPCHandler) SetNotifier(n Notifier) {
 func (h *RPCHandler) SetRequester(fn func(ctx context.Context, method string, params any, result any) error) {
 	h.requester = fn
 	h.questionAsker = &rpcQuestionAsker{requestFn: fn}
+	h.browserPanel = &rpcBrowserPanel{requestFn: fn}
 	if h.core != nil && h.core.mcpHost != nil {
 		h.core.mcpHost.bind(&rpcPermissionRequester{requestFn: fn}, h.questionAsker)
 	}
@@ -64,6 +69,18 @@ func (h *RPCHandler) questionAskerForRun() *rpcQuestionAsker {
 		return nil
 	}
 	return h.questionAsker
+}
+
+// browserPanelCtx returns ctx carrying this connection's browser when the
+// turn asked for it and there is a client to answer. `browser_panel: true` is
+// the client saying it has a browser view open and this turn may use it
+// instead of starting one; without it, nothing changes and browser.* reaches
+// the Playwright server as before.
+func (h *RPCHandler) browserPanelCtx(ctx context.Context, wanted bool) context.Context {
+	if !wanted || h == nil || h.requester == nil || h.browserPanel == nil {
+		return ctx
+	}
+	return web.WithPanel(ctx, h.browserPanel)
 }
 
 func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -117,7 +134,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
 			p.QuestionAsker = h.questionAskerForRun()
 		}
-		return h.core.AgentRun(ctx, p)
+		return h.core.AgentRun(h.browserPanelCtx(ctx, p.BrowserPanel), p)
 
 	case "tool.call":
 		var p ToolCallParams
@@ -189,7 +206,7 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 			p.PermissionRequester = &rpcPermissionRequester{requestFn: h.requester}
 			p.QuestionAsker = h.questionAskerForRun()
 		}
-		return h.core.SessionMessage(ctx, p)
+		return h.core.SessionMessage(h.browserPanelCtx(ctx, p.BrowserPanel), p)
 
 	case "session.history":
 		var p SessionHistoryParams

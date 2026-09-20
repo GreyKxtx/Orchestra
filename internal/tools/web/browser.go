@@ -22,6 +22,12 @@ func errNoBrowser() error {
 		"browser tools require --allow-browser flag", nil)
 }
 
+// noBrowser is true when this turn has neither browser: no panel offered by
+// the client, and no Playwright server configured.
+func noBrowser(ctx context.Context, cfg Config) bool {
+	return PanelFrom(ctx) == nil && cfg.Browser == nil
+}
+
 // setTarget addresses an element: the snapshot ref when there is one, otherwise
 // the element string, which the server resolves as a selector.
 func setTarget(args map[string]any, element, ref string) {
@@ -121,8 +127,19 @@ type BrowserSnapshotResponse struct {
 }
 
 func BrowserSnapshot(ctx context.Context, cfg Config, req BrowserSnapshotRequest) (*BrowserSnapshotResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
+	}
+	// The client's own browser first: it is the page the person is looking at,
+	// which is what they mean by "the page" when they ask about one.
+	if p := PanelFrom(ctx); p != nil {
+		var out struct {
+			Snapshot string `json:"snapshot"`
+		}
+		if err := panelCall(ctx, p, "snapshot", nil, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserSnapshotResponse{Snapshot: out.Snapshot}, nil
 	}
 	res, err := cfg.Browser.Call(ctx, "browser_snapshot", map[string]any{})
 	if err != nil {
@@ -142,8 +159,17 @@ type BrowserScreenshotResponse struct {
 }
 
 func BrowserScreenshot(ctx context.Context, cfg Config, req BrowserScreenshotRequest) (*BrowserScreenshotResponse, error) {
-	if cfg.Browser == nil {
+	if noBrowser(ctx, cfg) {
 		return nil, errNoBrowser()
+	}
+	if p := PanelFrom(ctx); p != nil {
+		var out struct {
+			Image string `json:"image"`
+		}
+		if err := panelCall(ctx, p, "screenshot", map[string]any{"full_page": req.FullPage}, &out); err != nil {
+			return nil, err
+		}
+		return &BrowserScreenshotResponse{Image: out.Image}, nil
 	}
 	res, err := cfg.Browser.Call(ctx, "browser_take_screenshot", map[string]any{
 		"fullPage": req.FullPage,

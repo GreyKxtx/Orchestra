@@ -1155,6 +1155,52 @@ test("question/ask round trips answers", async () => {
   assert.deepEqual(reply.result.answers, ["A"]);
 });
 
+// The browser panel is the one server request nobody is asked about: the
+// permission was given when the turn was sent. What must never happen is
+// silence — an unanswered id is a tool that waits for the rest of the turn.
+test("browser/call is always answered, and a host with no panel refuses", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    id: "srv-9",
+    method: "browser/call",
+    params: { op: "status", params: {} },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+
+  const reply = b.sent.find((m) => m.id === "srv-9");
+  assert.ok(reply, "no reply for srv-9 — the browser tool would hang");
+  assert.match(
+    String(reply.result.error || ""),
+    /browser view is not open/,
+    `a host without a browser view says so, got ${JSON.stringify(reply.result)}`
+  );
+  assert.ok(!b.inbound.some((m) => m.type === "permissionRequest" || m.type === "questionAsk"),
+    "this request raises no overlay");
+});
+
+// And it never claims one it does not have: browser_panel is what tells the
+// core to route browser.* through this window, so a plain browser must not
+// send it.
+test("a host with no browser view does not offer one in session.message", async () => {
+  const b = await handshake(loadBundle());
+  b.sent.length = 0;
+  dispatch(b, {
+    type: "send",
+    text: "look at the page",
+    mode: "build",
+    profile: "",
+    apply: false,
+    allowExec: false,
+    allowBrowser: true,
+    files: [],
+  });
+  const msg = b.sent.find((m) => m.method === "session.message");
+  assert.ok(msg, "no session.message was sent");
+  assert.equal(msg.params.allow_browser, true, "the switch still asks for browser tools");
+  assert.equal(msg.params.browser_panel, undefined, "…but not for a panel this host has not got");
+});
+
 test("a permission reply with no outstanding request is dropped, not misrouted", async () => {
   const b = await ready(loadBundle());
   dispatch(b, { type: "permissionReply", approved: true, always: false });

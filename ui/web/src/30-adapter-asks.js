@@ -57,6 +57,17 @@
         };
         st.status = "asking";
         break;
+      case "browser/call": {
+        // The turn's browser.* tools, acting on the browser view this window
+        // has open. No overlay and no waiting on the person: the permission
+        // was given when the turn was sent, and the panel answers or refuses.
+        const conn = connFor(projectId);
+        const p = msg.params || {};
+        void browserPanelOp(String(p.op || ""), p.params || {})
+          .then((result) => conn.reply(msg.id, result || {}))
+          .catch((err) => conn.reply(msg.id, { error: String((err && err.message) || err) }));
+        return;
+      }
       default:
         // An unknown server request must still be answered, or the core waits.
         connFor(projectId).reply(msg.id, { error: "unsupported" });

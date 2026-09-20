@@ -32,6 +32,12 @@ type AgentRunParams struct {
 	AllowExec bool `json:"allow_exec,omitempty"`
 	// AllowBrowser gives the turn browser.* tools (ProtocolVersion 19).
 	AllowBrowser bool `json:"allow_browser,omitempty"`
+	// BrowserPanel says the client has a browser view of its own open and
+	// this turn may use it: browser.* then act on the page the person is
+	// looking at, through the client, instead of on a browser started here.
+	// Ignored without allow_browser, and by a client that never answers
+	// "browser/call". (ProtocolVersion 21.)
+	BrowserPanel bool `json:"browser_panel,omitempty"`
 	Debug        bool `json:"debug,omitempty"`
 
 	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).

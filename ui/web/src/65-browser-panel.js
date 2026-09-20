@@ -174,6 +174,9 @@
   globalThis.__orchBrowserLinks = browserLinksWith;
   globalThis.__orchBrowserSuggest = browserSuggest;
   globalThis.__orchBrowserDockFit = browserDockFit;
+  // The agent's side of the panel, so it can be exercised in a real window
+  // without a model in the loop.
+  globalThis.__orchBrowserPanelOp = (op, params) => browserPanelOp(op, params);
 
   /**
    * The width the dock takes when asked for `want` out of `room`: its own
@@ -529,6 +532,138 @@
       browserOpened = true;
       browserStatus("");
       rememberBrowserUrl(address);
+    }
+  }
+
+  /* ---- what the agent is allowed to see ---------------------------------- */
+  //
+  // The core asks over "browser/call" (docs/PROTOCOL.md) and this answers. It
+  // is the person's own browser on the other end of that request, which is the
+  // whole point — the page they are looking at, with their session — and also
+  // the whole risk, so the answer to an op that is not permitted, or a view
+  // that is not open, is a refusal rather than an exception.
+  //
+  // Every op's result is a plain object; `{ error }` is how a refusal reads on
+  // the wire, because the client's reply channel carries results only.
+
+  /** How many lines of a page the model is shown before the rest is counted. */
+  const BROWSER_SNAP_LINES = 300;
+
+  /** Ref → backendNodeId for the last snapshot: what a later click addresses. */
+  /** @type {Map<string, number>} */ const browserSnapRefs = new Map();
+
+  /** True when there is a page for the agent to look at. */
+  function browserPanelOpen() {
+    return Boolean(browserOpened && browserBridge());
+  }
+
+  /** The page's own answer about itself — our script, never the model's. */
+  async function browserPanelStatus() {
+    const answer = await browserCdp("Runtime.evaluate", {
+      expression: "JSON.stringify({url: location.href, title: document.title})",
+      returnByValue: true,
+    }, true);
+    const value = answer && answer.result && answer.result.value;
+    let said = {};
+    try {
+      said = value ? JSON.parse(String(value)) : {};
+    } catch (e) {
+      said = {};
+    }
+    return {
+      open: true,
+      url: String(said.url || (browserUrlEl && browserUrlEl.value) || ""),
+      title: String(said.title || ""),
+    };
+  }
+
+  /**
+   * The page as the tools see it: its accessibility tree, flattened to lines a
+   * model can read and address. A ref is this panel's own — it names a node of
+   * this page in this snapshot, and means nothing to any other browser.
+   */
+  async function browserPanelSnapshot() {
+    await browserCdp("Accessibility.enable", {}, true);
+    const answer = await browserCdp("Accessibility.getFullAXTree", {}, true);
+    const nodes = (answer && answer.nodes) || [];
+    if (!nodes.length) return { error: "the page did not answer with a tree" };
+
+    const byId = new Map();
+    for (const node of nodes) byId.set(String(node.nodeId), node);
+    browserSnapRefs.clear();
+
+    const lines = [];
+    let more = 0;
+    let at = 0;
+    // What the tree says twice is not worth a line: the box a run of text is
+    // laid out in, and the text of a thing that already shows its own name.
+    // A model paying by the token should be given the page, not its geometry.
+    const SKIP = new Set(["InlineTextBox", "LineBreak", "RootWebArea", "generic", "none", ""]);
+    const walk = (node, depth, said) => {
+      if (!node) return;
+      const role = (node.role && node.role.value) || "";
+      const name = String((node.name && node.name.value) || "").replace(/\s+/g, " ").trim();
+      let show = !node.ignored && !SKIP.has(role)
+        && (name || role === "textbox" || role === "img" || role === "checkbox");
+      if (show && role === "StaticText" && name && said.indexOf(name) >= 0) show = false;
+      if (show) {
+        if (lines.length < BROWSER_SNAP_LINES) {
+          const ref = `a${++at}`;
+          if (typeof node.backendDOMNodeId === "number") {
+            browserSnapRefs.set(ref, node.backendDOMNodeId);
+          }
+          const pad = "  ".repeat(Math.min(depth, 8));
+          const shown = name ? ` "${name.slice(0, 120)}"` : "";
+          lines.push(`[${ref}] ${pad}${role}${shown}`);
+        } else {
+          more++;
+        }
+      }
+      for (const kid of node.childIds || []) {
+        walk(byId.get(String(kid)), show ? depth + 1 : depth, show && name ? name : said);
+      }
+    };
+    walk(nodes[0], 0, "");
+    if (more) lines.push(`… ${more} more node(s) not shown`);
+
+    const status = await browserPanelStatus();
+    const head = `page ${status.url}${status.title ? ` — "${status.title}"` : ""}`;
+    return { snapshot: [head].concat(lines).join("\n") };
+  }
+
+  /** @param {any} params */
+  async function browserPanelScreenshot(params) {
+    const answer = await browserCdp("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: Boolean(params && params.full_page),
+    }, true);
+    const data = answer && answer.data;
+    if (!data) return { error: "the page did not answer with an image" };
+    return { image: String(data) };
+  }
+
+  /**
+   * One op from the core. Read-only for now: what the page is, what is on it,
+   * what it looks like.
+   * @param {string} op @param {any} params
+   */
+  async function browserPanelOp(op, params) {
+    if (!browserPanelOpen()) {
+      return { error: "the browser view is not open — open it and load a page first" };
+    }
+    try {
+      switch (op) {
+        case "status":
+          return await browserPanelStatus();
+        case "snapshot":
+          return await browserPanelSnapshot();
+        case "screenshot":
+          return await browserPanelScreenshot(params);
+        default:
+          return { error: `the browser panel has no op "${op}"` };
+      }
+    } catch (err) {
+      return { error: String((err && err.message) || err) };
     }
   }
 

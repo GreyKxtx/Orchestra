@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — the agent can look at the page you are on (2026-09)
+
+- **`browser.*` act on the Browser view, not on a browser of their own** (ProtocolVersion 21). Until now those ten tools started `npx @playwright/mcp` — a second browser, its own profile, nothing signed in. A turn sent with `browser_panel: true` gets the panel instead: the page the person is actually looking at, with their session. The core reaches it through a server-initiated request (`browser/call`) on the connection that asked for the turn, which is the same rail `question/ask` and `permission/request` ride. Deliberately not an MCP server in the shell and not the devtools port straight from the core: either would let a model drive a logged-in browser with no window open to show what it was doing.
+- **What the model is shown** — `snapshot` is the page's accessibility tree, flattened to one line per element with a `[ref]` to address it by, with the text a run is laid out in and the labels a node already carries dropped: Google's home page is 34 lines rather than hundreds. `screenshot` is the page as a PNG. Read-only this far; a ref belongs to the panel that made it and means nothing to any other browser.
+- **A refusal is an answer.** The view being closed, or consent taken back mid-turn, comes back as the tool's error with the reason in it — never as silence, which would be a tool waiting for the rest of the turn.
+
 ### Added — the Browser view, with an element picker and a console (2026-09)
 
 - **A fourth segment beside Chat, Trajectory and Graph** (`ui/web/src/65-browser-panel.js`, `ui/desktop/src-tauri/src/browser.rs`) — a real browser inside the desktop app. The page draws the chrome and leaves a stage empty; what fills it is a child webview the shell keeps over that rectangle (`Window::add_child`, tauri's `unstable` feature). Not an iframe: the sites worth inspecting refuse to be framed. Leaving the view hides the webview rather than closing it, so coming back does not reload the page.

@@ -1223,6 +1223,42 @@ TUI shows a blocking modal; CLI `apply --mode plan` uses stdin when TTY.
 
 Also used for MCP elicitation (after the `mcp.elicitation` consent above): the server's `requestedSchema` becomes one question per property in schema order — enums and booleans arrive with `options` (`yes`/`no` for booleans), strings and numbers as free text; the server's message is prepended to the first question. A schema with no properties is a single confirmation with options `ok`/`decline`. Answers are sent back verbatim; the core coerces them (a typed `2` against options means the second option, `да`/`yes` is `true`) before replying to the server. Empty `answers` is reported to the server as `cancel`; a required field left blank as `decline`.
 
+### `browser/call`
+
+The turn's `browser.*` tools acting on the browser the **client** has open,
+rather than on one the core starts. Sent only when that turn's params carried
+`browser_panel: true` (ProtocolVersion 21), which only a client that answers
+this request may send.
+
+Params:
+
+```json
+{"op": "snapshot", "params": {}}
+```
+
+Expected response (`result`) — the op's own result object:
+
+```json
+{"snapshot": "page https://example.com/ — \"Example Domain\"
+[a1] heading \"Example Domain\""}
+```
+
+Ops, and what each answers with:
+
+| `op` | params | result | level |
+|---|---|---|---|
+| `status` | — | `{open, url, title}` | read |
+| `snapshot` | — | `{snapshot}` — the page's accessibility tree as text, each line addressable by its `[ref]` | read |
+| `screenshot` | `{full_page}` | `{image}` — base64 PNG | read |
+
+A client whose browser view is closed answers with an error, and the model is
+told so: this is a normal answer, not a protocol failure. The same is true of
+a person revoking the permission mid-turn — the next op is refused, and the
+turn continues without it.
+
+The refs in a `snapshot` are the client's own and mean nothing to the browser
+the core starts: a turn uses one browser or the other, never both.
+
 ---
 
 Если хочется расширять контракт — меняем `protocol.ProtocolVersion` и обновляем этот документ вместе с тестами.
