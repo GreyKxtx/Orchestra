@@ -418,7 +418,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		return serialToolOutcome{}, nil
 	}
 
-	if a.opts.SubtaskRunner != nil && (name == "task" || name == "task_spawn" || name == "task_wait" || name == "task_cancel") {
+	if a.opts.SubtaskRunner != nil && (name == "task" || name == "task_spawn" || name == "task_wait" || name == "task_cancel" || IsAgencyTool(name)) {
 		// In-process tools bypass tools.Runner, so mirror its llm_log entries
 		// here — otherwise failed spawns leave no trace in .orchestra logs.
 		if a.opts.AgentLogger != nil {

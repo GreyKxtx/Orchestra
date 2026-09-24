@@ -198,6 +198,7 @@ var mutatingTools = map[string]bool{
 	"lsp.rename": true,
 	"plan_exit":  true,
 	"task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true, "task": true,
+	"send_message": true, "agent_post": true, "task_board": true,
 	"question":  true,
 	"fs.delete": true, "fs.rename": true, "ast_rename": true,
 	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
@@ -318,6 +319,8 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 		return listToolsProduct(hasQuestionAsker)
 	case "documentation":
 		return listToolsDocs(hasQuestionAsker)
+	case "scout":
+		return listToolsScout()
 	case "agent":
 		// Mode agent is resolved to build|plan|explore|ask before tool listing;
 		// if still seen here, treat as build.
@@ -468,6 +471,9 @@ var orchestraLeadToolNames = map[string]bool{
 	"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true, "question": true,
 	"memory_read": true, "memory_search": true, "lesson_promote": true, "playbook_promote": true,
 	"contract_freeze": true, "update_working_state": true,
+	// Agency tools, present only when the agency is on for the turn (the
+	// agent appends them; see agent.withAgencyTools).
+	"send_message": true, "agent_post": true, "task_board": true,
 }
 
 // FilterOrchestraLeadTools keeps only the Orchestra Lead allowlist. Unknown
@@ -628,6 +634,21 @@ func listToolsDocs(hasQuestionAsker bool) []llm.ToolDef {
 	if hasQuestionAsker {
 		out = append(out, session.ToolQuestion())
 	}
+	return applyParallelFlags(out)
+}
+
+// listToolsScout is the Market Scout (spec §2.1, stage 0): web research on
+// competitors and the market, plus repository reads for a brownfield product.
+// Web tools are always listed, as for Product — the runtime web consent still
+// decides whether a call goes out, and the prompt tells the scout to mark
+// claims it could not source as assumptions. No writes, no spawn.
+func listToolsScout() []llm.ToolDef {
+	out := []llm.ToolDef{
+		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
+		fs.ToolSearchText(), nav.ToolRepoMap(),
+		task.ToolTaskResult(),
+	}
+	out = appendWebTools(out)
 	return applyParallelFlags(out)
 }
 

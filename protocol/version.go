@@ -80,7 +80,13 @@ const (
 	//      promote suggestion fields for UI.
 	// v15: symbols answers start_line/start_col/end_line/end_col, 1-based like
 	//      read and the lsp.* tools, instead of a 0-based ops `range`.
-	ToolsVersion = 15
+	// v16: the agency — send_message, agent_post, task_board (offered when
+	//      agency: is on for the turn); task / task_spawn take dept and
+	//      depends_on (task_spawn also key), WorkOrder JSON takes depends_on;
+	//      task_wait takes task_ids[] and answers {results[], integration};
+	//      subagent_type accepts scout and custom agents from agents:;
+	//      children delegate along agency.flows down to agency.max_depth.
+	ToolsVersion = 16
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

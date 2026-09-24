@@ -257,6 +257,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			}
 		}
 
+		// Notes other agents left for this one since its last step (agency
+		// agent_post). Here, before the step, the history holds no half
+		// finished tool exchange for the note to split.
+		history = a.drainAgencyInbox(history)
+
 		// Inject a step-limit warning as a synthetic assistant message once at 2/3 of MaxSteps.
 		if !maxStepsReminderSent && steps*3 >= a.opts.MaxSteps*2 {
 			maxStepsReminderSent = true

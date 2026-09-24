@@ -284,7 +284,8 @@ const (
 // in any phase. Every entry is either read-only against the workspace or has
 // its writes confined to the artifacts a phase exists to produce:
 //
-//	explore, ask, verifier   — no write/edit tool at all
+//	explore, ask, verifier,
+//	scout                    — no write/edit tool at all
 //	architecture             — writes confined to plans, the L2 playbook and specs
 //	product                  — writes confined to .orchestra/product/ (and the PRD
 //	                           gate's own unblock path is "spawn product")
@@ -303,6 +304,7 @@ var nonExecutingSubagents = map[string]bool{
 	"explore":       true,
 	"ask":           true,
 	"verifier":      true,
+	"scout":         true,
 	"architecture":  true,
 	"product":       true,
 	"documentation": true,

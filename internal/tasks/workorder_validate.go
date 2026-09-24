@@ -32,6 +32,12 @@ type WorkOrder struct {
 	// AcceptanceChecks are machine-executable acceptance criteria
 	// (spec §5.4, ADR-4). Executed by the runtime, never self-assessed.
 	AcceptanceChecks []AcceptanceCheck `json:"acceptance_checks,omitempty"`
+
+	// DependsOn names the WorkOrders (by task_id) or tasks that must finish
+	// successfully before this one starts. The runtime holds the worker
+	// until then and hands it their results; a failed dependency fails it
+	// with blocked_reason dependency_unmet instead of running it blind.
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 
 // AcceptanceCheck is one runnable acceptance probe. Execution follows the

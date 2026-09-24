@@ -39,6 +39,9 @@ func (a *Agent) contextBreakdownFixed() []ctxCategory {
 		if len(parts.skills) > 0 {
 			cats = append(cats, ctxCategory{Key: "skills", Label: "Skills", Tokens: len(parts.skills) / bpt})
 		}
+		if len(parts.agents) > 0 {
+			cats = append(cats, ctxCategory{Key: "agents", Label: "Agents", Tokens: len(parts.agents) / bpt})
+		}
 		a.ctxBreakdownFixed = cats
 	})
 	return a.ctxBreakdownFixed

@@ -90,6 +90,9 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	if strings.EqualFold(a.opts.Profile, ProfileFast) && len(a.opts.CustomTools) == 0 {
 		base = filterFastProfileTools(base)
 	}
+	// Agency tools (send_message, agent_post, task_board) and the narrowed
+	// subagent_type enum, when the runner reports the agency on.
+	base = a.withAgencyTools(base)
 	// Mode lists and ExtraTools can overlap (e.g. orchestra mode ships repo_map
 	// and core's ExtraTools appends it again). Strict providers (Anthropic)
 	// reject requests with duplicate tool names, so keep the first occurrence.
@@ -187,6 +190,7 @@ type systemPromptParts struct {
 	memory  string // injected project memory (rules)
 	catalog string // live tool catalog block
 	skills  string // <available_skills> advertisement
+	agents  string // <available_agents> advertisement (agency on)
 }
 
 func (a *Agent) buildSystemPromptParts() systemPromptParts {
@@ -285,6 +289,8 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	if a.opts.Mode != ModeOrchestra {
 		p.skills = a.skillsAdvertisement()
 	}
+	// 7: who this agent is in the agency and whom it can reach.
+	p.agents = a.agencyAdvertisement()
 	return p
 }
 
@@ -296,6 +302,7 @@ func (a *Agent) buildSystemPrompt() string {
 	}
 	prompt += p.catalog
 	prompt += p.skills
+	prompt += p.agents
 	// Always substitute: architecture.txt carries {{PLAN_PATH}} too, and mode
 	// architecture with no explicit PlanPath used to ship the raw placeholder
 	// to the model while its reminder showed the resolved path.

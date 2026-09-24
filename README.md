@@ -71,7 +71,7 @@ Check the install:
 ```bash
 orchestra version
 # orchestra vnext (a1b2c3d)
-# protocol 20 · ops 1 · tools 15
+# protocol 21 · ops 1 · tools 16
 
 orchestra version --check   # compare against the latest GitHub release
 ```

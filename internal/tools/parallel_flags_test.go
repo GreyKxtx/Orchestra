@@ -28,6 +28,9 @@ func TestParallelFlags_AllBuiltinsClassified(t *testing.T) {
 	}
 	maximal = append(maximal, ToolSemanticSearch())
 	maximal = append(maximal, ToolSkillInvoke([]string{"sample"}))
+	// Agency tools are appended by the agent layer when the agency is on for
+	// the turn; no static mode list carries them.
+	maximal = append(maximal, ToolSendMessage(), ToolAgentPost(), ToolTaskBoard())
 	// Orchestra Lead no longer advertises these, but custom agents / architecture
 	// surfaces still resolve them via allToolDefsMap.
 	maximal = append(maximal, session.ToolContractFreeze(), session.ToolUpdateWorkingState())

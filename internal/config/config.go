@@ -345,6 +345,29 @@ type AgentDefinition struct {
 	// When set, the agent uses that provider's full LLMConfig (api_base, api_key, etc.)
 	// instead of the global llm: config. Model (above) still overrides the provider model.
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+	// Description says what the agent is for. The Orchestrator and every agent
+	// that may delegate to it see it in <available_agents>; without it they
+	// only have the name to go on.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Base is the built-in role whose protocol the agent follows when another
+	// agent delegates to it: its write scope, its prompt, its task_result
+	// contract (architecture for a department Lead, worker for an
+	// implementer, explore or scout for research). Default general.
+	Base string `yaml:"base,omitempty" json:"base,omitempty"`
+	// Tier picks the model from orchestra.tiers / orchestra_routing.yaml when
+	// Provider and Model are both unset (e.g. lead, complex, micro, L4).
+	Tier string `yaml:"tier,omitempty" json:"tier,omitempty"`
+	// MaxSteps caps the agent's loop as a subagent (still clamped by
+	// agent.child_max_steps).
+	MaxSteps int `yaml:"max_steps,omitempty" json:"max_steps,omitempty"`
+}
+
+// ResolvedBase returns the built-in role the agent runs as when delegated to.
+func (a AgentDefinition) ResolvedBase() string {
+	if b := strings.ToLower(strings.TrimSpace(a.Base)); b != "" {
+		return b
+	}
+	return "general"
 }
 
 // ModeKind classifies how a built-in agent mode may be started.
@@ -385,6 +408,7 @@ var builtInAgentModes = map[string]ModeKind{
 	"verifier":      ModeKindChildOnly,
 	"product":       ModeKindChildOnly,
 	"documentation": ModeKindChildOnly,
+	"scout":         ModeKindChildOnly,
 	"compaction":    ModeKindInternal,
 	"title":         ModeKindInternal,
 	"summary":       ModeKindInternal,
@@ -542,6 +566,9 @@ type ProjectConfig struct {
 	AutoRouter AutoRouterConfig `yaml:"auto_router,omitempty"`
 	// Orchestra configures Lead + worker tiers for mode=orchestra.
 	Orchestra OrchestraConfig `yaml:"orchestra,omitempty"`
+	// Agency configures agents as an organisation: delegation and message
+	// flows, nesting depth, concurrency — see AgencyConfig.
+	Agency AgencyConfig `yaml:"agency,omitempty"`
 	// Providers is an optional map of named LLM provider configurations.
 	// Use in agents: via provider: <name> or with --provider <name> CLI flag.
 	Providers map[string]LLMConfig `yaml:"providers,omitempty"`
@@ -1202,6 +1229,9 @@ func (c *ProjectConfig) Validate() error {
 	if err := c.validateOrchestra(); err != nil {
 		return err
 	}
+	if err := c.validateAgency(); err != nil {
+		return err
+	}
 	if err := c.validateAutoRouter(); err != nil {
 		return err
 	}
@@ -1494,6 +1524,12 @@ func (c *ProjectConfig) validateAgents() error {
 			if _, ok := c.Providers[a.Provider]; !ok {
 				return fmt.Errorf("agent %q: provider %q not defined in providers", a.Name, a.Provider)
 			}
+		}
+		if b := strings.TrimSpace(a.Base); b != "" && !IsSpawnableRole(b) {
+			return fmt.Errorf("agents[%d] (%q): base %q is not a role that can run as a subagent (explore, ask, debug, architecture, general, worker, verifier, product, documentation, scout)", i, a.Name, b)
+		}
+		if a.MaxSteps < 0 {
+			return fmt.Errorf("agents[%d] (%q): max_steps must be >= 0", i, a.Name)
 		}
 	}
 	return nil

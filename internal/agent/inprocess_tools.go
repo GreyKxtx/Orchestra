@@ -89,16 +89,18 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 	switch name {
 	case "task":
 		var req struct {
-			Description  string `json:"description"`
-			Prompt       string `json:"prompt"`
-			Goal         string `json:"goal"`
-			SubagentType string `json:"subagent_type"`
-			TaskType     string `json:"task_type"`
-			Tier         string `json:"tier"`
-			Provider     string `json:"provider"`
-			Model        string `json:"model"`
-			MaxSteps     int    `json:"max_steps"`
-			TimeoutMS    int    `json:"timeout_ms"`
+			Description  string   `json:"description"`
+			Prompt       string   `json:"prompt"`
+			Goal         string   `json:"goal"`
+			SubagentType string   `json:"subagent_type"`
+			TaskType     string   `json:"task_type"`
+			Tier         string   `json:"tier"`
+			Provider     string   `json:"provider"`
+			Model        string   `json:"model"`
+			MaxSteps     int      `json:"max_steps"`
+			TimeoutMS    int      `json:"timeout_ms"`
+			Dept         string   `json:"dept"`
+			DependsOn    []string `json:"depends_on"`
 		}
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("task: invalid input: %w", err)
@@ -130,6 +132,8 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			MaxSteps:         req.MaxSteps,
 			TimeoutMS:        timeoutMS,
 			ParentToolCallID: parentToolCallID,
+			Dept:             strings.TrimSpace(req.Dept),
+			DependsOn:        req.DependsOn,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("task: spawn: %w", err)
@@ -171,6 +175,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			Model        string            `json:"model"`
 			MaxSteps     int               `json:"max_steps"`
 			TimeoutMS    int               `json:"timeout_ms"`
+			Dept         string            `json:"dept"`
+			Key          string            `json:"key"`
+			DependsOn    []string          `json:"depends_on"`
 		}
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("task.spawn: invalid input: %w", err)
@@ -200,8 +207,14 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			if !strings.EqualFold(subagentType, "worker") {
 				return nil, fmt.Errorf("task.spawn: workorders[] is worker-only (got subagent_type=%q)", subagentType)
 			}
-			taskIDs := make([]string, 0, len(req.WorkOrders))
-			for i, wo := range req.WorkOrders {
+			order, cycleErr := orderBatchWorkOrders(req.WorkOrders)
+			if cycleErr != nil {
+				return nil, fmt.Errorf("task.spawn: %w", cycleErr)
+			}
+			taskIDs := make([]string, len(req.WorkOrders))
+			var spawned []string
+			for _, i := range order {
+				wo := req.WorkOrders[i]
 				taskID, err := a.opts.SubtaskRunner.Spawn(ctx, SubtaskSpawnRequest{
 					Goal:             strings.TrimSpace(string(wo)),
 					SubagentType:     subagentType,
@@ -212,11 +225,13 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 					MaxSteps:         req.MaxSteps,
 					TimeoutMS:        timeoutMS,
 					ParentToolCallID: parentToolCallID,
+					Dept:             strings.TrimSpace(req.Dept),
 				})
 				if err != nil {
-					return nil, fmt.Errorf("task.spawn: workorders[%d]: %w (already spawned: %s)", i, err, strings.Join(taskIDs, ", "))
+					return nil, fmt.Errorf("task.spawn: workorders[%d]: %w (already spawned: %s)", i, err, strings.Join(spawned, ", "))
 				}
-				taskIDs = append(taskIDs, taskID)
+				taskIDs[i] = taskID
+				spawned = append(spawned, taskID)
 			}
 			resp, _ := json.Marshal(map[string]any{"task_ids": taskIDs, "status": "spawned"})
 			return resp, nil
@@ -235,6 +250,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			MaxSteps:         req.MaxSteps,
 			TimeoutMS:        timeoutMS,
 			ParentToolCallID: parentToolCallID,
+			Dept:             strings.TrimSpace(req.Dept),
+			Key:              strings.TrimSpace(req.Key),
+			DependsOn:        req.DependsOn,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("task.spawn: %w", err)
@@ -244,11 +262,15 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 
 	case "task_wait":
 		var req struct {
-			TaskID    string `json:"task_id"`
-			TimeoutMS int    `json:"timeout_ms"`
+			TaskID    string   `json:"task_id"`
+			TaskIDs   []string `json:"task_ids"`
+			TimeoutMS int      `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("task.wait: invalid input: %w", err)
+		}
+		if len(req.TaskIDs) > 0 {
+			return a.handleTaskWaitMany(ctx, req.TaskIDs, req.TimeoutMS)
 		}
 		if strings.TrimSpace(req.TaskID) == "" {
 			return nil, fmt.Errorf("task.wait: task_id is required")
@@ -279,6 +301,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		}
 		resp, _ := json.Marshal(map[string]any{"task_id": req.TaskID, "status": "cancelled"})
 		return resp, nil
+
+	case "send_message", "agent_post", "task_board":
+		return a.handleAgencyTool(ctx, name, parentToolCallID, input)
 
 	default:
 		return nil, fmt.Errorf("unknown task tool: %s", name)

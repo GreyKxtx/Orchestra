@@ -83,6 +83,21 @@ func workerTaskResultSuccess(raw string) bool {
 	return false
 }
 
+// workerOutcomeSucceeded reads a worker result after the runtime has wrapped
+// it. workerTaskResultSuccess reads the worker's own answer, and to it
+// "verified_success" is an unknown status — so every consumer of the final
+// result that used it (doc debt among them) saw a verified worker as failed.
+func workerOutcomeSucceeded(raw string) bool {
+	st, _ := ParseWorkerTaskResult(raw)
+	switch st {
+	case "verified_success":
+		return true
+	case "verification_failed", "llm_verification_failed", "needs_review", "no_changes", "no_result":
+		return false
+	}
+	return workerTaskResultSuccess(raw)
+}
+
 // CollectEditedPaths returns unique relative paths touched by edit/write in history.
 func CollectEditedPaths(hist []llm.Message, primaryPath string) []string {
 	seen := make(map[string]struct{})

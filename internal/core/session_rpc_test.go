@@ -31,8 +31,8 @@ func TestInitialize_CurrentToolsVersionHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}
-	if protocol.ToolsVersion != 15 {
-		t.Fatalf("protocol.ToolsVersion = %d, want 15", protocol.ToolsVersion)
+	if protocol.ToolsVersion != 16 {
+		t.Fatalf("protocol.ToolsVersion = %d, want 16", protocol.ToolsVersion)
 	}
 
 	params, err := json.Marshal(InitializeParams{
