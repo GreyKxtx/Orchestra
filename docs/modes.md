@@ -137,7 +137,9 @@ orchestra:
   max_worker_retries: 3
 ```
 
-**Инструменты (строго 16):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans|state.md|depts`), `update_working_state`, `contract_freeze`, `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
+**Инструменты (16 + 3 агентства):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans|state.md|depts`), `update_working_state`, `contract_freeze`, `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`; при включённом агентстве (по умолчанию в этом режиме) — ещё `send_message`, `agent_post`, `task_board`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
+
+**Агентство:** Lead'ы отделов (`architecture` + `dept`) сами запускают Scout'ов и Worker'ов, отделы пишут друг другу, `batch_workorders[]` Lead'а раздаёт рантайм — [agency.md](./agency.md).
 
 Список — `orchestraLeadToolNames` в `internal/tools/registry.go`; `update_working_state` и `contract_freeze` доступны только Lead по построению (остальные режимы получают отказ в `internal/agent`).
 
@@ -146,6 +148,16 @@ orchestra:
 **Маршрутизация по tiers (L1–L5, Fab 5):** [architecture/orchestra-routing.md](./architecture/orchestra-routing.md).
 
 **Чем режим отличается от обычных подагентов** (что даёт роль ребёнка, что — режим родителя, что — машина состояний, и что не проверяется): [architecture/orchestra-vs-subagents.md](./architecture/orchestra-vs-subagents.md).
+
+---
+
+### `scout` — Market Scout (child only)
+
+**Назначение:** этап 0 (discovery): что уже существует — конкуренты, альтернативы, цены, отзывы. Запускает Product Lead (flow `product > scout`) или Dept Lead. Возвращает JSON: `competitors[]` с источниками, `gaps`, `risks`, `assumptions` (всё, что не подтверждено источником).
+
+**Инструменты:** `ls`, `read`, `glob`, `grep`, `repo_map`, `webfetch`, `websearch` (фактический вызов — по web-согласию хода), `task_result`. Записи и спавна нет; фазовый гейт не блокирует (не пишет).
+
+**Промпт:** `scout.txt`.
 
 ---
 

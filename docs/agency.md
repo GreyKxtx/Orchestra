@@ -1,0 +1,207 @@
+# Агентство: агенты разговаривают и раздают работу
+
+Режим `orchestra` задуман как организация: Orchestrator ведёт фазы, отделы
+(Product, Documentation, Design, Frontend, Backend, Security, QA, Platform)
+работают через своих Lead'ов, Lead'ы запускают Scout'ов и Worker'ов, отделы
+обмениваются артефактами и запросами на изменение контракта
+([orchestra-routing.md](architecture/orchestra-routing.md) §2–§5). До этого
+изменения рантайм давал только одно звено: родитель → ребёнок, ребёнок не мог
+никого запустить и ни с кем не мог говорить. Секция `agency:` превращает схему
+из спецификации в работающий механизм.
+
+Идеи взяты у [agency-swarm](https://github.com/VRSEN/agency-swarm): направленные
+`communication_flows`, `send_message` как разговор, а не разовая задача,
+custom-агенты с ролями. Отличия — там, где agency-swarm оставляет дыры:
+у нас есть предел глубины, отказ от сообщения тому, кто ждёт тебя (дедлок),
+бюджет сообщений, лимит параллельности, фазовый гейт по базовой роли, и
+Orchestrator остаётся хабом (spec §2.2: «relay — код, не LLM»).
+
+## Что это даёт
+
+| Возможность | Как |
+| --- | --- |
+| Lead отдела запускает своих Scout'ов и Worker'ов | `task` / `task_spawn` у ребёнка — по `agency.flows`, до `agency.max_depth` |
+| Раздача WorkOrder'ов без Orchestrator'а | `batch_workorders[]` в `task_result` Lead'а — рантайм спавнит воркеров сам |
+| Разговор с отделом, который помнит прошлое | `send_message{to: "backend", message}` — переписка пары хранится на диске |
+| Асинхронные заметки между отделами | `agent_post{to, kind, message}` — живому агенту на следующем шаге, остальным во входящие |
+| Порядок работ | `depends_on[]` — задача ждёт зависимостей и получает их результаты |
+| Видимость распределения | `task_board` — все задачи хода со статусами |
+| Проверка, что куски собираются вместе | `task_wait{task_ids}` → `integration` (build + тесты объединения правок) |
+| Свои агенты как подагенты | `agents:` с `base`, `description`, `tier` — запускаются по имени |
+| Сбор информации о конкурентах | роль `scout` — веб-исследование с источниками, её запускает Product Lead |
+
+## Конфигурация
+
+```yaml
+agency:
+  # enabled: true        # по умолчанию: включено в mode=orchestra и в любом режиме, если заданы flows
+  flows:                 # кто кому может поручать работу и писать (send_message)
+    - frontend > backend           # фронтенд может спросить бэкенд
+    - backend > qa
+    - "* > explore"                # любой может запустить поиск по коду
+  # default_flows: true  # добавить рёбра из спецификации (см. ниже)
+  # max_depth: 2         # Orchestrator(0) → Lead(1) → Worker(2); 1..4
+  # max_parallel: 4      # одновременно работающих агентов НА КАЖДОМ уровне; <0 = без лимита
+  # max_messages: 64     # send_message + agent_post за ход; <0 = без лимита
+  # threads: true        # хранить переписку пар в .orchestra/agency/threads/
+  # relay_workorders: true  # рантайм раздаёт batch_workorders[] Lead'ов
+
+agents:
+  - name: billing-lead
+    base: architecture           # роль, по протоколу которой работает агент
+    description: "Lead отдела биллинга: OpenAPI счетов, схема платежей"
+    system_prompt: "Ты отвечаешь за сервис биллинга. Деньги — целые центы."
+    tier: lead                   # модель из orchestra.tiers / orchestra_routing.yaml
+    # tools: [read, grep, explore, write]   # иначе — инструменты base-роли
+```
+
+### Адреса
+
+У каждого агента есть адрес: `orchestrator` у корня, экземпляр отдела
+(`backend`, `frontend@web`), если его запустили с `dept`, иначе имя
+custom-агента или роль. Адрес — это то, кому пишут `send_message` и
+`agent_post`, и то, что показывает `task_board`.
+
+### Flows
+
+- `a > b` — `a` может запустить `b` (`task`, `task_spawn`) и разговаривать с ним
+  (`send_message`). Цепочка `a > b > c` добавляет `a > b` и `b > c`.
+- Имя слева или справа — роль (`architecture`), custom-агент, тип отдела
+  (`frontend`) или экземпляр (`frontend@web`); `frontend` совпадает с любым
+  `frontend@…`. `*` слева — любой агент.
+- **Корень — хаб**: Orchestrator может поручить работу и написать любому агенту
+  без рёбер. Flows задают связи ниже него.
+- Custom-агент наследует рёбра своей `base`-роли.
+
+Рёбра спецификации (`default_flows: true`):
+
+| Кто | Кого запускает |
+| --- | --- |
+| `product` | `scout`, `explore` |
+| `documentation` | `explore` |
+| `architecture` (Dept Lead) | `explore`, `scout`, `worker`, `verifier` |
+| `debug` | `explore`, `worker` |
+
+`worker`, `explore`, `scout`, `verifier` никого не запускают.
+
+## Инструменты
+
+### `send_message{to, message, role?, timeout_ms?}`
+
+Разговор. Получатель запускается как ребёнок отправителя; его ответ
+возвращается результатом. Переписка пары (только сами сообщения, без
+tool-вызовов получателя) хранится в
+`.orchestra/agency/threads/<от>__<кому>.json` — следующее сообщение
+продолжает прошлое, в том числе в следующем ходе. Хранятся последние
+12 сообщений и не больше 16 КБ.
+
+- Отдел (`backend`) отвечает своим Lead'ом (`role` по умолчанию `architecture`).
+- Воркеру писать нельзя — он работает по WorkOrder: `task_spawn`.
+- Нельзя писать тому, кто ждёт тебя (цепочка вызовов): это дедлок.
+
+### `agent_post{to, kind, message, artifact?}`
+
+Заметка без ожидания. `kind`: `note`, `question`, `contract_change_request`,
+`finding`, `handoff`. Если получатель сейчас работает — заметка придёт ему
+блоком `<agent_messages>` перед следующим шагом. Если нет — ляжет в
+`.orchestra/agency/inbox/<адрес>.json` и будет вручена при следующем запуске
+агента с этим адресом (заметка отделу `frontend` достаётся `frontend@web`).
+`contract_change_request` требует `artifact` и копируется Orchestrator'у —
+решение о контракте за хабом (spec §3.6, §5.3). Flows для заметок не нужны:
+их ретранслирует рантайм.
+
+### `task_board`
+
+Все задачи хода: агент, роль, родитель, глубина, статус
+(`queued | waiting_deps | running | done | failed | error | timeout | cancelled`),
+зависимости, время.
+
+### `depends_on`, `dept`, `key`
+
+- `task` / `task_spawn` принимают `dept` — отдел, на который работает ребёнок:
+  его scratchpad (`.orchestra/depts/<dept>.md`) передаётся Lead'у, WorkOrder'ы
+  без `context.scratchpad` получают его по умолчанию. Воркеры Lead'а по
+  умолчанию работают на отдел Lead'а.
+- `depends_on[]` — `task_id` задач хода или их ключи (`key`, у WorkOrder — его
+  `task_id`). Задача ждёт завершения зависимостей и получает их результаты
+  блоком `<upstream_results>`. Упавшая зависимость — и задача завершается с
+  `blocked_reason: dependency_unmet`, не запускаясь. Зависимость должна быть
+  зарегистрирована раньше зависящей — поэтому граф без циклов; внутри
+  `workorders[]` рантайм сам упорядочивает пачку, цикл отклоняется целиком.
+
+### `task_wait{task_ids[]}`
+
+Ждёт несколько задач под одним дедлайном и отвечает `{results[], integration}`.
+`integration` появляется, когда два и более воркера изменили файлы: те же
+проверки, что у воркера (LSP, `go build`, затронутые тесты, `tsc`), но по
+объединению правок. Каждый воркер проверялся отдельно; это единственная
+проверка, что куски собираются вместе.
+
+## Раздача WorkOrder'ов (spec §3.7, §5.6)
+
+Lead возвращает в `task_result` JSON с `batch_workorders[]`. Рантайм:
+
+1. упорядочивает пачку по `depends_on`;
+2. спавнит воркеров **от имени Lead'а** (его flows, его отдел) — фазовый гейт,
+   эпоха контракта, brief gate и disjoint `target_files` действуют как обычно;
+3. отдаёт их **родителю Lead'а**: тот собирает результаты `task_wait{task_ids}`;
+4. заменяет `batch_workorders[]` в результате Lead'а кратким списком
+   (`key`, `intent`, `target_files`, `task_id` или `rejected`) и добавляет
+   `relayed: {task_ids, rejected, next}`.
+
+Воркеры переживают завершение Lead'а и останавливаются ожиданием родителя,
+отменой или концом хода.
+
+## Проверка в dry-run
+
+Ход в core всегда идёт в dry-run: правки лежат в staging overlay до
+применения. Раньше поэтому `go build` и тесты воркеров пропускались, и
+проверку делал только LSP. Теперь сборка идёт через `go build -overlay` —
+компилятор видит staged-содержимое, диск не трогается. Затронутые тесты
+(`go test -overlay`) запускают код, который написала модель, поэтому требуют
+того же согласия, что `bash` (`--allow-exec` / `exec.confirm: false`); без него
+они помечаются пропущенными. `tsc` не умеет overlay и в dry-run пропускается.
+Если staged `go.mod` / `go.sum` / `go.work` — сборка пропускается (overlay не
+подменяет файлы модуля).
+
+## Гарантии и пределы
+
+- **Глубина**: `max_depth` (по умолчанию 2). На пределе у агента нет ни
+  `task`, ни `send_message`.
+- **Дедлок**: сообщение предку в цепочке вызовов отклоняется.
+- **Болтовня**: `max_messages` на ход.
+- **Параллельность**: `max_parallel` на каждом уровне отдельно — Lead, ждущий
+  своих воркеров, держит свой слот и не отнимает слоты у них.
+- **Владение**: ребёнок ждёт и отменяет только свои задачи.
+- **Фазовый гейт**: custom-агент проверяется по своей `base`-роли.
+- **Конец хода**: `TaskRunner.Close` останавливает всех детей, которых никто не
+  дождался.
+
+Чего пока нет:
+
+- Параллельные воркеры делят одно рабочее дерево и один overlay; изоляции по
+  файлам нет, кроме disjoint `target_files` (для полной изоляции —
+  `orchestra worktree`).
+- Переписка и входящие — уровня проекта, а не сессии.
+- Интеграционная проверка фронтенда в dry-run невозможна (нет overlay у `tsc`).
+
+## События для UI
+
+`agent/event` (см. [PROTOCOL.md](PROTOCOL.md)): `child_started` с `agent`,
+`depth`, `parent_agent`, `parent_task_id`; `agent_message`
+(`send | reply | post`); `workorders_relayed`; `integration_verify`;
+`child_queued` с причиной `max_parallel`.
+
+## Код
+
+| Что | Где |
+| --- | --- |
+| Конфиг, flows, роли | `internal/config/agency.go` |
+| Адреса, flows, инструменты ребёнка | `internal/tasks/agency.go` |
+| Сообщения, входящие, переписка, board, wait-many | `internal/tasks/agency_runner.go` |
+| Раздача `batch_workorders[]` | `internal/tasks/batch_relay.go` |
+| Проверка объединения правок | `internal/tasks/integration_verify.go` |
+| Сборка через overlay | `internal/tasks/worker_verify.go` (`verifyStagedGo`) |
+| Инструменты и блок `<available_agents>` в агенте | `internal/agent/agency.go` |
+| Схемы инструментов | `internal/tools/task/registry.go` |
+| Роль Scout | `internal/prompt/files/scout.txt` |

@@ -36,6 +36,7 @@
 | Reasoning Stream | Парсинг `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 через LM Studio); автоматическое заворачивание в `<think>…</think>` для `ReasoningSplitter`; SSE-tap по env-флагу `ORCH_STREAM_DEBUG` | ✅ |
 | TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy-indicator в статус-баре, mouse wheel scroll, "Thinking:" блок с `┃` бордером, render-cache invalidation на Ctrl+T, mode-aware accent colors | ✅ |
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
+| Agency | Lead'ы отделов сами запускают scout'ов и worker'ов по `agency.flows`; `send_message` — разговоры, которые помнят прошлое, `agent_post` — заметки между отделами, `batch_workorders[]` раздаёт рантайм, `depends_on`, `max_parallel` на уровень, `task_board`, общая проверка правок нескольких воркеров (в dry-run — `go build -overlay`), custom `agents:` как подагенты, `scout` для анализа конкурентов — [docs/agency.md](docs/agency.md) | ✅ |
 | Orchestra Lead surface | Strict allowlist **14 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
 | CKG v5 | Multi-hop explore (`depth`/`direction`), subgraph cap 1500 tokens, protocol **ToolsVersion 14** | ✅ |
 | Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote`; single-agent turns that repeat the same anti-pattern 3× on one file offer a human `[y/n]` rule suggestion for `ORCHESTRA.md` | ✅ |

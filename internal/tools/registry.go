@@ -316,7 +316,7 @@ func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAs
 	case "verifier":
 		return listToolsVerifier(caps)
 	case "product":
-		return listToolsProduct(hasQuestionAsker)
+		return listToolsProduct(hasSubtasks, hasQuestionAsker)
 	case "documentation":
 		return listToolsDocs(hasQuestionAsker)
 	case "scout":
@@ -604,8 +604,10 @@ func listToolsVerifier(caps Capabilities) []llm.ToolDef {
 // repository reads for brownfield context, writes limited to .orchestra/product/
 // (enforced by agent.checkProductEditScope), websearch/webfetch always listed —
 // product discovery needs market research; runtime web consent still applies.
-// No exec, no git-mutating tools, no nested spawn.
-func listToolsProduct(hasQuestionAsker bool) []llm.ToolDef {
+// No exec, no git-mutating tools. Spawn tools only with subtasks — as a
+// child that is the agency's product > scout edge (tasks adds them), so its
+// scouts can research competitors in parallel.
+func listToolsProduct(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
 	out := []llm.ToolDef{
 		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
 		fs.ToolSearchText(), nav.ToolRepoMap(),
@@ -613,6 +615,9 @@ func listToolsProduct(hasQuestionAsker bool) []llm.ToolDef {
 		task.ToolTaskResult(),
 	}
 	out = appendWebTools(out)
+	if hasSubtasks {
+		out = appendSubtaskTools(out)
+	}
 	if hasQuestionAsker {
 		out = append(out, session.ToolQuestion())
 	}

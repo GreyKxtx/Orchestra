@@ -148,9 +148,12 @@
 |-----|-----------|--------|------------|
 | `todowrite` | `todo.write` | ✅ | Обновить чеклист (rich prompt; `completed`→`done`) |
 | `todoread` | `todo.read` | ✅ | Прочитать чеклист |
-| `task` | — | ✅ | Синхронный subagent (spawn+wait); `subagent_type`: explore/general |
-| `task_spawn` | `task.spawn` | ✅ | Async: создать дочерний агент |
-| `task_wait` | `task.wait` | ✅ | Async: дождаться результата |
+| `task` | — | ✅ | Синхронный subagent (spawn+wait); `subagent_type`: роль (explore/scout/architecture/worker/…) или custom-агент; `dept`, `depends_on[]` |
+| `task_spawn` | `task.spawn` | ✅ | Async: создать дочерний агент; `workorders[]` (пачка, упорядочивается по `depends_on`), `dept`, `key`, `depends_on[]` |
+| `task_wait` | `task.wait` | ✅ | Async: дождаться результата; `task_ids[]` → `{results[], integration}` — общая проверка правок нескольких воркеров |
+| `send_message` | — | ✅ | Агентство: разговор с отделом/агентом, переписка пары сохраняется ([agency.md](agency.md)) |
+| `agent_post` | — | ✅ | Агентство: заметка без ожидания (`note/question/contract_change_request/finding/handoff`) |
+| `task_board` | — | ✅ | Агентство: все задачи хода со статусами и зависимостями |
 | `task_cancel` | `task.cancel` | ✅ | Async: отменить задачу |
 | `task_result` | `task.result` | ✅ | Вернуть результат родительскому агенту (subagent path) |
 | `skill_invoke` | `skill_invoke` | ✅ | Синхронный вызов скилла как child-agent с его prompt/tools/model/provider |

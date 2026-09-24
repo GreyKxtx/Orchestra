@@ -117,7 +117,7 @@ func quoteJSON(s string) string {
 func runVerifiedWorker(t *testing.T, client *verdictScriptLLM) (result string, root string) {
 	t.Helper()
 	root = t.TempDir()
-	const before = "package main\n\n// Width is the frame width in pixels.\nfunc Width() int {\n\treturn 640\n}\n"
+	const before = "package width\n\n// Width is the frame width in pixels.\nfunc Width() int {\n\treturn 640\n}\n"
 	if err := os.WriteFile(filepath.Join(root, "width.go"), []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}

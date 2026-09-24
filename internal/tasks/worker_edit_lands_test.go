@@ -84,7 +84,7 @@ func (e *editingChildLLM) Complete(ctx context.Context, req llm.CompleteRequest)
 func TestWorker_AnEditByAChildReachesTheWorkspace(t *testing.T) {
 	root := t.TempDir()
 	widthPath := filepath.Join(root, "width.go")
-	const before = "package main\n\n// Width is the frame width in pixels.\nfunc Width() int {\n\treturn 640\n}\n"
+	const before = "package width\n\n// Width is the frame width in pixels.\nfunc Width() int {\n\treturn 640\n}\n"
 	if err := os.WriteFile(widthPath, []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func (r *refusedChildLLM) Complete(ctx context.Context, req llm.CompleteRequest)
 // that way with both target files untouched at the end.
 func TestWorker_AClaimOfSuccessWithNothingAppliedIsNotReportedAsVerified(t *testing.T) {
 	root := t.TempDir()
-	const before = "package main\n\nfunc Width() int {\n\treturn 640\n}\n"
+	const before = "package width\n\nfunc Width() int {\n\treturn 640\n}\n"
 	if err := os.WriteFile(filepath.Join(root, "width.go"), []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
