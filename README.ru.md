@@ -16,7 +16,7 @@
 | Streaming | SSE-стриминг, накопитель tool-call чанков | ✅ |
 | Grammar | Structured output, retry/circuit-breaker, prompt families | ✅ |
 | Session | История диалога, todo-лист, `agent.run` по JSON-RPC | ✅ |
-| Subagents | `task.spawn/wait/cancel`, дочерние агенты с read-only инструментами | ✅ |
+| Subagents | `task.spawn/wait/cancel`; дети `explore`/`ask`/`verifier` только читают, `worker` пишет только в `target_files` своего WorkOrder | ✅ |
 | Hooks | Pre/post-tool shell-хуки, `TOOL_DENIED` при ненулевом коде | ✅ |
 | Memory | `~/.orchestra/ORCHESTRA.md` → `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
 | MCP | JSON-RPC 2.0 stdio MCP-клиент, мульти-сервер менеджер | ✅ |
@@ -519,7 +519,7 @@ orchestra web
 
 ## Требования
 
-- Go 1.22+
+- Go 1.25+
 - LLM API: OpenAI-совместимый провайдер (LM Studio, vLLM, OpenAI, Anthropic…)
 
 ## Лицензия

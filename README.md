@@ -16,7 +16,7 @@ Primary transport: **JSON-RPC 2.0 over stdio** (LSP-style); the CLI sits on top 
 | Streaming | SSE streaming, tool-call chunk accumulator | ✅ |
 | Grammar | Structured output, retry/circuit-breaker, prompt families | ✅ |
 | Session | Conversation history, todo list, `agent.run` over JSON-RPC | ✅ |
-| Subagents | `task.spawn/wait/cancel`, child agents with read-only tools | ✅ |
+| Subagents | `task.spawn/wait/cancel`; `explore`/`ask`/`verifier` children are read-only, `worker` writes only its WorkOrder `target_files` | ✅ |
 | Hooks | Pre/post-tool shell hooks, `TOOL_DENIED` on nonzero exit | ✅ |
 | Memory | `~/.orchestra/ORCHESTRA.md` → `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
 | MCP | JSON-RPC 2.0 stdio MCP client, multi-server manager | ✅ |
@@ -524,7 +524,7 @@ Installers and auto-update are not built yet.
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.25+
 - LLM API: an OpenAI-compatible provider (LM Studio, vLLM, OpenAI, Anthropic…)
 
 ## License
