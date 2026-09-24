@@ -392,7 +392,16 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 		}
 		res, err := r.Wait(ctx, e.id, 0)
 		if err != nil {
-			res = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: err.Error()}
+			// Collected by a concurrent wait between the check above and
+			// this one: the stored result is still the answer.
+			r.mu.Lock()
+			stored := e.result
+			r.mu.Unlock()
+			if stored != nil {
+				res = stored
+			} else {
+				res = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: err.Error()}
+			}
 		}
 		out.Results[i] = res
 	}
@@ -517,7 +526,10 @@ func (r *TaskRunner) post(from agentScope, req agent.AgentPostRequest) (*agent.A
 	if to == "" || (!config.ValidAgencyName(to) && !taskIDRe.MatchString(to)) {
 		return nil, fmt.Errorf("agent_post: %q is not an agent address or task_id", req.To)
 	}
-	if to == from.address {
+	// Posting to your own address is how a worker reaches its siblings in
+	// the department (delivery skips the sender); only the root and a task
+	// addressing itself by ID are talking to themselves.
+	if (from.depth == 0 && to == config.AgencyRootName) || (from.taskID != "" && to == from.taskID) {
 		return nil, fmt.Errorf("agent_post: you are %s", to)
 	}
 	kind := strings.ToLower(strings.TrimSpace(req.Kind))
@@ -722,6 +734,9 @@ func (r *TaskRunner) threadPath(from, to string) string {
 }
 
 func (r *TaskRunner) loadThread(from, to string) []llmMessage {
+	if !config.ValidAgencyName(from) || !config.ValidAgencyName(to) {
+		return nil
+	}
 	r.storeMu.Lock()
 	defer r.storeMu.Unlock()
 	var f threadFile
@@ -732,6 +747,9 @@ func (r *TaskRunner) loadThread(from, to string) []llmMessage {
 }
 
 func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage) error {
+	if !config.ValidAgencyName(from) || !config.ValidAgencyName(to) {
+		return fmt.Errorf("invalid thread address %q → %q", from, to)
+	}
 	r.storeMu.Lock()
 	defer r.storeMu.Unlock()
 	return writeJSONFile(r.threadPath(from, to), threadFile{

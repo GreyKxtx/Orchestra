@@ -759,3 +759,75 @@ func TestAgencyFromConfig(t *testing.T) {
 		t.Fatalf("explicit flows turn the agency on in any mode: %+v", s)
 	}
 }
+
+// agents: are subagents in any mode: with the agency off (a build turn) the
+// root may still start them by name, and its enum must list them.
+func TestAgency_CustomAgentsWithTheAgencyOff(t *testing.T) {
+	m := &scriptLLM{reply: func(llm.CompleteRequest) llm.Message { return finish("reviewed") }}
+	r, _ := newAgencyRunner(t, m, ChildAgentConfig{
+		Agents: []AgentProfile{{Name: "reviewer", Base: "verifier", Description: "strict review"}},
+	})
+	info := r.AgencyInfo()
+	if info.Enabled {
+		t.Fatal("agency must stay off")
+	}
+	var names []string
+	for _, c := range info.Delegates {
+		names = append(names, c.Name)
+	}
+	if !strings.Contains(strings.Join(names, ","), "reviewer") {
+		t.Fatalf("root delegates must include custom agents: %v", names)
+	}
+	res := spawnAndWait(t, r, agent.SubtaskSpawnRequest{Goal: "REVIEW-GOAL", SubagentType: "reviewer"})
+	if res.Status != "done" {
+		t.Fatalf("custom agent with the agency off: %+v", res)
+	}
+	if toolNames(m.requests("REVIEW-GOAL")[0])["write"] {
+		t.Fatal("reviewer runs as its base (verifier): no write")
+	}
+}
+
+// A scout sent out by the backend Lead is not the backend department: it
+// must not inherit the address, and so must not read notes left for the
+// Lead. The Lead's workers do inherit it.
+func TestAgency_OnlyWorkersInheritTheLeadsDepartment(t *testing.T) {
+	m := &scriptLLM{reply: func(llm.CompleteRequest) llm.Message { return finish(`{"status":"success"}`) }}
+	r, _ := newAgencyRunner(t, m, ChildAgentConfig{Agency: agencyOn()})
+	lead := &scopedRunner{r: r, s: rootScope().child("backend", "architecture", "architecture", "task_lead")}
+	lead.s.dept = "backend"
+	if _, err := r.Post(context.Background(), agent.AgentPostRequest{To: "backend", Message: "FOR-THE-LEAD"}); err != nil {
+		t.Fatal(err)
+	}
+
+	spawnAndWait(t, lead, agent.SubtaskSpawnRequest{Goal: "SCOUT-X", SubagentType: "scout"})
+	spawnAndWait(t, lead, agent.SubtaskSpawnRequest{Goal: `{"intent":"WORKER-X","target_files":["x.go"]}`, SubagentType: "worker"})
+
+	board := r.Board()
+	if board[0].Agent != "scout" || board[1].Agent != "backend" {
+		t.Fatalf("scout keeps its role address, the worker takes the department's: %+v", board)
+	}
+	for _, marker := range []string{"SCOUT-X", "WORKER-X"} {
+		if strings.Contains(conversation(m.requests(marker)[0]), "FOR-THE-LEAD") {
+			t.Fatalf("%s consumed a note left for the Lead", marker)
+		}
+	}
+}
+
+func TestAgency_WorkerPostsReachSiblingsNotItself(t *testing.T) {
+	m := &scriptLLM{reply: func(llm.CompleteRequest) llm.Message { return finish("ok") }}
+	r, _ := newAgencyRunner(t, m, ChildAgentConfig{Agency: agencyOn()})
+	worker := &scopedRunner{r: r, s: rootScope().child("backend", "worker", "worker", "task_w1")}
+	receipt, err := worker.Post(context.Background(), agent.AgentPostRequest{To: "backend", Message: "renamed Sum to Add"})
+	if err != nil {
+		t.Fatalf("a worker posting to its department must be allowed: %v", err)
+	}
+	if receipt.Delivered != "inbox" {
+		t.Fatalf("no sibling running → inbox, got %+v", receipt)
+	}
+	if _, err := worker.Post(context.Background(), agent.AgentPostRequest{To: "task_w1", Message: "x"}); err == nil {
+		t.Fatal("posting to your own task id is talking to yourself")
+	}
+	if _, err := r.Post(context.Background(), agent.AgentPostRequest{To: "orchestrator", Message: "x"}); err == nil {
+		t.Fatal("the root posting to itself must be refused")
+	}
+}

@@ -178,6 +178,11 @@ func (r *TaskRunner) resolveTarget(subagentType, dept string) (spawnTarget, erro
 		}
 		t.address = d
 	}
+	// The address names inbox and thread files; a legacy free-form type
+	// ("Refactor/Helper") keeps working as a mode but answers as "agent".
+	if !config.ValidAgencyName(t.address) {
+		t.address = "agent"
+	}
 	return t, nil
 }
 
@@ -244,6 +249,16 @@ func (r *TaskRunner) reachableNames(from agentScope) []string {
 func (r *TaskRunner) agencyInfo(s agentScope) agent.AgencyInfo {
 	info := agent.AgencyInfo{Enabled: r.child.Agency.Enabled, Self: s.address, Depth: s.depth}
 	if !info.Enabled {
+		// Off, the root still delegates to custom agents by name (agents:
+		// in a build-mode turn); only its subagent_type enum needs them.
+		if s.depth == 0 && len(r.child.Agents) > 0 {
+			for _, role := range builtInRoleOrder {
+				info.Delegates = append(info.Delegates, agent.AgentCard{Name: role, Role: role, Description: builtInRoleCards[role], BuiltIn: true})
+			}
+			for _, p := range r.child.Agents {
+				info.Delegates = append(info.Delegates, agent.AgentCard{Name: p.Name, Role: p.Base, Description: p.Description})
+			}
+		}
 		return info
 	}
 	if s.depth > 0 && s.depth+1 > r.child.Agency.MaxDepth {

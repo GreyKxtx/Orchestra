@@ -207,3 +207,28 @@ func TestOrchestraLeadStep1BudgetWithAgency(t *testing.T) {
 type noopAsker struct{}
 
 func (noopAsker) Ask(context.Context, []tools.QuestionItem) ([]string, error) { return nil, nil }
+
+// With the agency off, custom agents still widen the subagent_type enum and
+// are named in the prompt; nothing else of the agency appears.
+func TestAgency_OffStillNamesCustomAgents(t *testing.T) {
+	fake := &fakeAgency{info: AgencyInfo{
+		Enabled: false,
+		Delegates: []AgentCard{
+			{Name: "explore", Role: "explore", BuiltIn: true},
+			{Name: "reviewer", Role: "verifier", Description: "strict review"},
+		},
+	}}
+	ag, _ := newTestAgent(t, &toolCallSequenceLLM{}, Options{Mode: ModeBuild, SubtaskRunner: fake})
+	defs := ag.buildToolDefs()
+	task, ok := toolByName(defs, "task")
+	if !ok || !strings.Contains(string(task.Function.Parameters), `"reviewer"`) {
+		t.Fatalf("task enum must include custom agents: %s", task.Function.Parameters)
+	}
+	if _, ok := toolByName(defs, "send_message"); ok {
+		t.Fatal("agency off: no send_message")
+	}
+	sys := ag.buildSystemPrompt()
+	if !strings.Contains(sys, "- reviewer (verifier) — strict review") || strings.Contains(sys, "agent_post") {
+		t.Fatalf("prompt must name the custom agent and nothing of the agency:\n%s", sys)
+	}
+}

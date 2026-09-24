@@ -343,15 +343,18 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	r.mu.Unlock()
 
 	r.applyTaskTypeRoute(&req)
-	// A Lead's workers work for the Lead's department unless told otherwise:
-	// its scratchpad, playbook and lessons are theirs too.
 	dept := strings.TrimSpace(req.Dept)
-	if dept == "" && from.dept != "" {
-		dept = from.dept
-	}
 	target, err := r.resolveTarget(req.SubagentType, dept)
 	if err != nil {
 		return "", err
+	}
+	// A Lead's workers work for the Lead's department unless told otherwise:
+	// its scratchpad, playbook and lessons are theirs too. Only workers — a
+	// scout the Lead sends out is not the department, and must not answer to
+	// its address or read its inbox.
+	if dept == "" && from.dept != "" && strings.EqualFold(target.role, "worker") {
+		dept = from.dept
+		target.address = dept
 	}
 	verb := extra.verb
 	if verb == "" {
@@ -831,10 +834,13 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if upstream != "" {
 		childGoal = upstream + "\n\n" + childGoal
 	}
-	if notes := r.takeInbox(scope.address); len(notes) > 0 {
-		childGoal = agent.FormatAgentMessages(notes, agencyInboxInjectMaxBytes) + "\n\n" + childGoal
-	}
+	// A department's inbox and scratchpad are its Lead's: workers share the
+	// address to hear each other live, but must not consume the notes left
+	// for the Lead.
 	if mode != agent.ModeWorker {
+		if notes := r.takeInbox(scope.address); len(notes) > 0 {
+			childGoal = agent.FormatAgentMessages(notes, agencyInboxInjectMaxBytes) + "\n\n" + childGoal
+		}
 		if sp := loadDeptScratchpadForLead(r.toolRunner.WorkspaceRoot(), scope.dept); sp != "" {
 			childGoal = sp + "\n\n" + childGoal
 		}
@@ -861,8 +867,14 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		hist, res, runErr = ag.Run(ctx, append([]llm.Message(nil), history...), childGoal)
 	}
 	// Notes that arrived after the child's last step would be lost with it;
-	// they go to its inbox for the next agent at this address.
-	r.flushLiveInbox(taskID, scope.address)
+	// they go to its inbox for the next agent at this address. A worker's
+	// leftovers are sibling chatter about a batch that is over — dropped
+	// rather than handed to the department's next Lead.
+	if mode != agent.ModeWorker {
+		r.flushLiveInbox(taskID, scope.address)
+	} else {
+		r.drainTaskInbox(taskID)
+	}
 	status := "done"
 	errMsg := ""
 	if runErr != nil {

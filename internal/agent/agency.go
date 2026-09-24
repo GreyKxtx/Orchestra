@@ -152,10 +152,14 @@ func (a *Agent) agencyRunner() (AgencyRunner, AgencyInfo, bool) {
 // may actually delegate to — an enum wider than the flows is a list of
 // refusals waiting to happen.
 func (a *Agent) withAgencyTools(base []llm.ToolDef) []llm.ToolDef {
-	_, info, ok := a.agencyRunner()
-	if !ok {
+	if a == nil || a.opts.SubtaskRunner == nil {
 		return base
 	}
+	ar, isAgency := a.opts.SubtaskRunner.(AgencyRunner)
+	if !isAgency {
+		return base
+	}
+	info := ar.AgencyInfo()
 	if len(info.Delegates) > 0 {
 		names := make([]string, 0, len(info.Delegates))
 		for _, c := range info.Delegates {
@@ -167,6 +171,9 @@ func (a *Agent) withAgencyTools(base []llm.ToolDef) []llm.ToolDef {
 				base[i] = tools.WithSubagentEnum(base[i], names)
 			}
 		}
+	}
+	if !info.Enabled {
+		return base
 	}
 	if len(info.Contacts) > 0 {
 		base = append(base, tools.ToolSendMessage())
@@ -182,9 +189,33 @@ func (a *Agent) withAgencyTools(base []llm.ToolDef) []llm.ToolDef {
 // whom it can reach. Kept short — the Orchestrator's step-1 budget is 8k
 // tokens and every agent line costs on every step.
 func (a *Agent) agencyAdvertisement() string {
-	_, info, ok := a.agencyRunner()
-	if !ok {
+	if a == nil || a.opts.SubtaskRunner == nil {
 		return ""
+	}
+	ar, isAgency := a.opts.SubtaskRunner.(AgencyRunner)
+	if !isAgency {
+		return ""
+	}
+	info := ar.AgencyInfo()
+	if !info.Enabled {
+		// The agency is off but agents: exist: name them, so the model knows
+		// what the extra subagent_type values are for.
+		var custom []AgentCard
+		for _, c := range info.Delegates {
+			if !c.BuiltIn {
+				custom = append(custom, c)
+			}
+		}
+		if len(custom) == 0 {
+			return ""
+		}
+		var b strings.Builder
+		b.WriteString("\n\n<available_agents>\nCustom agents (task / task_spawn subagent_type):\n")
+		for _, c := range custom {
+			writeAgentCard(&b, c)
+		}
+		b.WriteString("</available_agents>")
+		return b.String()
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n\n<available_agents self=%q depth=%d>\n", info.Self, info.Depth)
