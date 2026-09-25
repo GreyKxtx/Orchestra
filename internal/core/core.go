@@ -49,6 +49,9 @@ type Core struct {
 
 	validator *schema.Validator
 	tools     *tools.Runner
+	// warm tracks the background LSP warmups: Close cancels them and waits,
+	// so none is still reading the runner — or os.Stderr — after it.
+	warm warmups
 	// runMu serialises every RPC entry point that mutates shared Runner state
 	// (SetDryRun, ClearStaged, staged-overlay writes). Without this, two
 	// concurrent agent.run / session.message / workflow.run / skill.invoke /
@@ -248,7 +251,70 @@ func (c *Core) WarmupLSP(ctx context.Context) {
 	if c == nil || c.tools == nil {
 		return
 	}
-	go c.tools.WarmupLSP(ctx)
+	tr := c.tools
+	c.warm.start(ctx, tr.WarmupLSP)
+}
+
+// warmups are background jobs a core started and must stop before it
+// closes. They were bare goroutines: Close returned with a warmup still
+// running against the runner it had just closed, still writing to the
+// os.Stderr its caller was about to restore (a data race under -race).
+type warmups struct {
+	mu      sync.Mutex
+	wg      sync.WaitGroup
+	seq     int
+	running map[int]context.CancelFunc
+	closed  bool
+}
+
+func (w *warmups) start(ctx context.Context, job func(context.Context)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	if w.running == nil {
+		w.running = map[int]context.CancelFunc{}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	w.seq++
+	id := w.seq
+	w.running[id] = cancel
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		defer func() {
+			cancel()
+			w.mu.Lock()
+			delete(w.running, id)
+			w.mu.Unlock()
+		}()
+		job(ctx)
+	}()
+}
+
+// warmupStopTimeout bounds how long Close waits for a warmup that does not
+// heed its cancelled context (an installer blind to ctx).
+const warmupStopTimeout = 10 * time.Second
+
+// stop cancels every warmup and waits for them, up to warmupStopTimeout.
+func (w *warmups) stop() {
+	w.mu.Lock()
+	w.closed = true
+	for _, cancel := range w.running {
+		cancel()
+	}
+	w.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(warmupStopTimeout):
+		fmt.Fprintf(os.Stderr, "core: lsp warmup did not stop within %s; closing anyway\n", warmupStopTimeout)
+	}
 }
 
 func (c *Core) Health() protocol.Health {

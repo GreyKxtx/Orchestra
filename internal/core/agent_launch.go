@@ -183,7 +183,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// Warmup is best-effort and must not block the agent loop on npm/go install.
 	if c.tools != nil {
 		c.tools.SetLSPInstallConsent(spec.PermissionRequester)
-		go c.tools.WarmupLSP(context.Background())
+		c.WarmupLSP(context.Background())
 	}
 
 	profileName, err := resolveProfileName(c.cfg, spec.Profile)
