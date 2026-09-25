@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -280,9 +281,11 @@ const (
 	EnforcementPromptOnly = "prompt_only"
 )
 
-// nonExecutingSubagents is the closed allowlist of child types that may spawn
-// in any phase. Every entry is either read-only against the workspace or has
-// its writes confined to the artifacts a phase exists to produce:
+// isExecuting reports whether the subagent can mutate production files and is
+// therefore phase-gated. The child types that may spawn in any phase are the
+// spawnable roles whose writes stay out of production code
+// (!roles.Spec.WritesCode): read-only against the workspace, or confined to
+// the artifacts a phase exists to produce —
 //
 //	explore, ask, verifier,
 //	scout                    — no write/edit tool at all
@@ -293,32 +296,23 @@ const (
 //
 // Anything else mutates production files and is phase-gated.
 //
-// The list is an allowlist rather than a "gate the writers" denylist because
-// the denylist form was open at both ends. It named only "worker", so general
-// and debug children — both carrying write, edit and (general) delete/rename —
+// It is an allowlist rather than a "gate the writers" denylist because the
+// denylist form was open at both ends. It named only "worker", so general and
+// debug children — both carrying write, edit and (general) delete/rename —
 // walked through the gate untouched; and an unrecognised subagent_type falls
 // through tools.ListToolsForMode's default arm to the full build surface, so a
 // typo or a custom agent name bypassed the phase machine entirely. Invariant
 // #7 is fail-closed spawn: an unknown child type is gated, not waved through.
-var nonExecutingSubagents = map[string]bool{
-	"explore":       true,
-	"ask":           true,
-	"verifier":      true,
-	"scout":         true,
-	"architecture":  true,
-	"product":       true,
-	"documentation": true,
-}
-
-// isExecuting reports whether the subagent can mutate production files and is
-// therefore phase-gated. An empty type defaults to explore (see
-// tasks.childToolsForSubagent), which is read-only.
+//
+// An empty type defaults to explore (see tasks.childToolsForSubagent), which
+// is read-only.
 func isExecuting(subagentType string) bool {
 	t := strings.ToLower(strings.TrimSpace(subagentType))
 	if t == "" {
 		return false
 	}
-	return !nonExecutingSubagents[t]
+	spec, ok := roles.Lookup(t)
+	return !ok || !spec.Spawnable || spec.WritesCode()
 }
 
 // GuardSpawn is the fail-closed phase gate evaluated before spawning a child.
@@ -591,18 +585,17 @@ func phaseLabel(p Phase) string {
 }
 
 // subagentLabel names the blocked child in a guard message. An unrecognised
-// type is gated on purpose (see nonExecutingSubagents), and the message says
+// type is gated on purpose (see isExecuting), and the message says
 // so — otherwise a typo reads as an unexplained refusal.
 func subagentLabel(subagentType string) string {
 	t := strings.ToLower(strings.TrimSpace(subagentType))
-	switch t {
-	case "":
+	if t == "" {
 		return "child"
-	case "worker", "general", "debug":
-		return t
-	default:
-		return fmt.Sprintf("%q (unknown child type, gated as a writer)", t)
 	}
+	if spec, ok := roles.Lookup(t); ok && spec.Spawnable {
+		return t
+	}
+	return fmt.Sprintf("%q (unknown child type, gated as a writer)", t)
 }
 
 // prdApproved checks state frontmatter first, then the PRD.md frontmatter

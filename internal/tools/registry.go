@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/internal/tools/git"
@@ -116,36 +117,13 @@ func appendCapabilityTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
 // agent.computeToolDefs, NOT here. M5 in architecture audit collapsed
 // the parameter list from three bools to a Capabilities struct.
 func ListTools(caps Capabilities) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(),
-		fs.ToolFSRead(),
-		fs.ToolFSGlob(),
-		fs.ToolFSWrite(),
-		fs.ToolFSEdit(),
-		fs.ToolFSDelete(),
-		fs.ToolFSRename(),
-		fs.ToolASTRename(),
-		fs.ToolSearchText(),
-		nav.ToolCodeSymbols(),
-		nav.ToolExploreCodebase(),
-		nav.ToolRepoMap(),
-		fs.ToolDiffPreview(),
-		session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(),
-		session.ToolTodoRead(),
-		session.ToolMemoryWrite(),
-		session.ToolMemoryRead(),
-		session.ToolMemorySearch(),
-		toolslsp.ToolLSPDefinition(),
-		toolslsp.ToolLSPReferences(),
-		toolslsp.ToolLSPHover(),
-		toolslsp.ToolLSPDiagnostics(),
-		toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(),
-		git.ToolGitLog(),
-		git.ToolGitDiff(),
-		git.ToolGitWorktreeList(),
-	}
+	out := defs(
+		"ls", "read", "glob", "write", "edit", "fs.delete", "fs.rename", "ast_rename",
+		"grep", "symbols", "explore", "repo_map", "diff.preview", "runtime_query",
+		"todowrite", "todoread", "memory_write", "memory_read", "memory_search",
+		"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics", "lsp.rename",
+		"git.status", "git.log", "git.diff", "git.worktree.list",
+	)
 	out = appendCapabilityTools(out, caps)
 	out = appendRepoMutatingTools(out, caps)
 	return applyParallelFlags(out)
@@ -211,15 +189,7 @@ func ListToolsWithSubtasks(caps Capabilities) []llm.ToolDef {
 // ListToolsForChild returns a restricted read-only tool set for child agents plus task.result.
 // Child agents cannot write files, run commands, or spawn further subtasks.
 func ListToolsForChild() []llm.ToolDef {
-	return applyParallelFlags([]llm.ToolDef{
-		fs.ToolFSList(),
-		fs.ToolFSRead(),
-		fs.ToolFSGlob(),
-		fs.ToolSearchText(),
-		nav.ToolCodeSymbols(),
-		fs.ToolDiffPreview(),
-		task.ToolTaskResult(),
-	})
+	return applyParallelFlags(defs("ls", "read", "glob", "grep", "symbols", "diff.preview", "task_result"))
 }
 
 // ListToolsForInvestigator returns the Investigator tool set: read-only tools + task.result + runtime.query.
@@ -228,164 +198,32 @@ func ListToolsForInvestigator() []llm.ToolDef {
 	return applyParallelFlags(append(ListToolsForChild(), session.ToolRuntimeQuery()))
 }
 
-// ListToolsForMode returns tools for the given agent mode.
-// hasSubtasks enables task.spawn/wait/cancel; hasQuestionAsker enables question tool.
+// ListToolsForMode returns the tools of a mode's roles.Spec: its named tools,
+// then the groups it takes — exec, web and browser with their consent, the git
+// mutators, delegation when the turn has a subtask runner (hasSubtasks), and
+// question when it can ask the user (hasQuestionAsker). An unknown mode (a
+// custom agent's name) gets build's list.
 func ListToolsForMode(mode string, caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	switch mode {
-	case "plan":
-		return listToolsPlan(hasSubtasks, hasQuestionAsker)
-	case "explore":
-		return listToolsExplore()
-	case "ask":
-		return listToolsAsk(hasQuestionAsker)
-	case "debug":
-		return listToolsDebug(caps, hasSubtasks, hasQuestionAsker)
-	case "architecture":
-		return listToolsArchitecture(hasSubtasks, hasQuestionAsker)
-	case "general":
-		return listToolsGeneral(caps, hasSubtasks)
-	case "orchestra":
-		return listToolsOrchestra(hasSubtasks, hasQuestionAsker)
-	case "worker":
-		return listToolsWorker(caps)
-	case "verifier":
-		return listToolsVerifier(caps)
-	case "product":
-		return listToolsProduct(hasSubtasks, hasQuestionAsker)
-	case "documentation":
-		return listToolsDocs(hasQuestionAsker)
-	case "scout":
-		return listToolsScout()
-	case "agent":
-		// Mode agent is resolved to build|plan|explore|ask before tool listing;
-		// if still seen here, treat as build.
-		return listToolsBuild(caps, hasSubtasks, hasQuestionAsker)
-	case "compaction", "title", "summary":
-		return []llm.ToolDef{} // pure LLM output, no tools needed
-	default: // "build" or ""
-		return listToolsBuild(caps, hasSubtasks, hasQuestionAsker)
+	spec, ok := roles.Lookup(mode)
+	if !ok {
+		spec, _ = roles.Lookup("build")
 	}
-}
-
-func listToolsBuild(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
+	t := spec.Tools
+	out := defs(t.Names...)
+	if t.Caps {
+		out = appendCapabilityTools(out, caps)
 	}
-	out = appendCapabilityTools(out, caps)
-	out = appendRepoMutatingTools(out, caps)
-	if hasSubtasks {
+	if t.RepoMutating {
+		out = appendRepoMutatingTools(out, caps)
+	}
+	if t.Subtasks && hasSubtasks {
 		out = appendSubtaskTools(out)
 	}
-	if hasQuestionAsker {
+	if t.Question && hasQuestionAsker {
 		out = append(out, session.ToolQuestion())
 	}
-	return applyParallelFlags(out)
-}
-
-func listToolsPlan(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	// fs.write is kept so the model can write .orchestra/plan.md — enforced at runtime.
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		// lsp.rename excluded: plan mode is read-only.
-	}
-	if hasSubtasks {
-		out = appendSubtaskTools(out)
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(out)
-}
-
-func listToolsExplore() []llm.ToolDef {
-	return applyParallelFlags([]llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		// lsp.rename excluded: explore mode is read-only.
-		// task_result is appended for child explore via childToolsForSubagent.
-	})
-}
-
-// listToolsAsk is Q&A read-only (stricter than explore: includes question when available).
-func listToolsAsk(hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		// repo_map is the cheapest answer to "what is this project?" — one
-		// call, a per-file outline under a byte budget. Without it the only
-		// way to orient in a read-only mode was to read files one by one,
-		// which is how a small context window gets spent on nothing.
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(out)
-}
-
-// listToolsArchitecture is design-only: plan md writes + research + optional research spawn.
-func listToolsArchitecture(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(), task.ToolPlanExit(),
-		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
-		session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
-	}
-	if hasSubtasks {
-		out = appendSubtaskTools(out)
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(out)
-}
-
-// listToolsDebug is root-cause focused: full read/write + LSP + optional worker/explore spawn.
-func listToolsDebug(caps Capabilities, hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoWrite(), session.ToolTodoRead(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
-	}
-	out = appendCapabilityTools(out, caps)
-	out = appendRepoMutatingTools(out, caps)
-	if hasSubtasks {
-		out = appendSubtaskTools(out)
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(out)
-}
-
-// listToolsGeneral returns tools for the "general" multi-step execution subagent.
-// It has full read+write access and reports results via task_result.
-// todowrite is intentionally excluded — general agents track progress internally.
-func listToolsGeneral(caps Capabilities, hasSubtasks bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(), fs.ToolFSDelete(), fs.ToolFSRename(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(), session.ToolRuntimeQuery(),
-		session.ToolTodoRead(), session.ToolMemoryWrite(), session.ToolMemoryRead(), session.ToolMemorySearch(), task.ToolTaskResult(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(), toolslsp.ToolLSPRename(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(), git.ToolGitWorktreeList(),
-	}
-	out = appendCapabilityTools(out, caps)
-	out = appendRepoMutatingTools(out, caps)
-	if hasSubtasks {
-		out = appendSubtaskTools(out)
+	if t.Lead {
+		out = FilterOrchestraLeadTools(out)
 	}
 	return applyParallelFlags(out)
 }
@@ -488,105 +326,6 @@ func stripDesc(v any) {
 			stripDesc(child)
 		}
 	}
-}
-
-// listToolsOrchestra is the Lead planner surface: read-only research, plan
-// write, memory/promote, and delegation. No edit/LSP/bash/task_result.
-func listToolsOrchestra(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSRead(), fs.ToolSearchText(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolFSWrite(),
-		session.ToolMemoryRead(), session.ToolMemorySearch(),
-		session.ToolLessonPromote(), session.ToolPlaybookPromote(),
-		session.ToolUpdateWorkingState(), session.ToolContractFreeze(),
-	}
-	if hasSubtasks {
-		out = appendSubtaskTools(out)
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(FilterOrchestraLeadTools(out))
-}
-
-// listToolsVerifier is goal-backward verification: read-only + diagnostics + optional bash.
-func listToolsVerifier(caps Capabilities) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-		git.ToolGitStatus(), git.ToolGitDiff(),
-	}
-	out = appendCapabilityTools(out, caps)
-	return applyParallelFlags(out)
-}
-
-// listToolsProduct is the Product Lead surface (spec §3.2, routing matrix §7.1):
-// repository reads for brownfield context, writes limited to .orchestra/product/
-// (enforced by agent.checkProductEditScope), websearch/webfetch always listed —
-// product discovery needs market research; runtime web consent still applies.
-// No exec, no git-mutating tools. Spawn tools only with subtasks — as a
-// child that is the agency's product > scout edge (tasks adds them), so its
-// scouts can research competitors in parallel.
-func listToolsProduct(hasSubtasks, hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolRepoMap(),
-		session.ToolTodoWrite(), session.ToolTodoRead(),
-		task.ToolTaskResult(),
-	}
-	out = appendWebTools(out)
-	if hasSubtasks {
-		out = appendSubtaskTools(out)
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(out)
-}
-
-// listToolsDocs is the Docs Lead surface (spec §2.3.2, routing matrix §7.1):
-// full repository reads for stack detect and brownfield docs, writes limited
-// to conventions.md / .orchestra/docs/ / docs/ (enforced by
-// agent.checkDocsEditScope). No web, no exec, no git mutators, no spawn.
-func listToolsDocs(hasQuestionAsker bool) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(),
-		session.ToolTodoWrite(), session.ToolTodoRead(),
-		task.ToolTaskResult(),
-		git.ToolGitStatus(), git.ToolGitLog(), git.ToolGitDiff(),
-	}
-	if hasQuestionAsker {
-		out = append(out, session.ToolQuestion())
-	}
-	return applyParallelFlags(out)
-}
-
-// listToolsScout is the Market Scout (spec §2.1, stage 0): web research on
-// competitors and the market, plus repository reads for a brownfield product.
-// Web tools are always listed, as for Product — the runtime web consent still
-// decides whether a call goes out, and the prompt tells the scout to mark
-// claims it could not source as assumptions. No writes, no spawn.
-func listToolsScout() []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(),
-		fs.ToolSearchText(), nav.ToolRepoMap(),
-		task.ToolTaskResult(),
-	}
-	out = appendWebTools(out)
-	return applyParallelFlags(out)
-}
-
-// listToolsWorker is the atomic implementer: edit/write + LSP, no nested spawn.
-func listToolsWorker(caps Capabilities) []llm.ToolDef {
-	out := []llm.ToolDef{
-		fs.ToolFSList(), fs.ToolFSRead(), fs.ToolFSGlob(), fs.ToolFSWrite(), fs.ToolFSEdit(),
-		fs.ToolSearchText(), nav.ToolCodeSymbols(), nav.ToolExploreCodebase(), nav.ToolRepoMap(), fs.ToolDiffPreview(),
-		task.ToolTaskResult(),
-		toolslsp.ToolLSPDefinition(), toolslsp.ToolLSPReferences(), toolslsp.ToolLSPHover(), toolslsp.ToolLSPDiagnostics(),
-	}
-	out = appendCapabilityTools(out, caps)
-	return applyParallelFlags(out)
 }
 
 // IsRegisteredTool reports whether name is a built-in tool, whichever modes

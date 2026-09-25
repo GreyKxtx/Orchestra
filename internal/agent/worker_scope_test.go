@@ -24,7 +24,7 @@ func TestWorkerPathInEditScope(t *testing.T) {
 }
 
 func TestCheckProductEditScope(t *testing.T) {
-	a := &Agent{opts: Options{Mode: ModeProduct}}
+	a := &Agent{opts: Options{Mode: Mode("product")}}
 
 	// Reads are unrestricted (brownfield context).
 	if err := a.checkProductEditScope("read", []byte(`{"path":"internal/core/core.go"}`)); err != nil {

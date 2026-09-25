@@ -12,6 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/decisions"
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/playbooks"
+	"github.com/orchestra/orchestra/internal/roles"
 )
 
 // L2 playbook narrowing floor (spec §6.1, checklist 14b): a Dept Lead may only
@@ -21,7 +22,7 @@ import (
 // the playbook frontmatter must already be approved in decisions.md (the
 // runtime writes approvals there via the Question Barrier / waiver flow).
 func (a *Agent) checkDeptPlaybookNarrowing(input json.RawMessage) error {
-	if a == nil || a.opts.Mode != ModeArchitecture {
+	if a == nil || a.modeSpec().Write != roles.WriteDeptLead {
 		return nil
 	}
 	var req struct {
@@ -98,7 +99,10 @@ func parseAcceptedRisks(body string) []string {
 // overlay (.orchestra/playbooks/local/{dept}.md). Edits to an already-approved
 // file are allowed without repeating the ref in the patch.
 func (a *Agent) checkLocalPlaybookOverlayGate(name string, input json.RawMessage) error {
-	if a == nil || (a.opts.Mode != ModeArchitecture && a.opts.Mode != ModeOrchestra) {
+	if a == nil {
+		return nil
+	}
+	if w := a.modeSpec().Write; w != roles.WriteDeptLead && w != roles.WriteOrchestraLead {
 		return nil
 	}
 	if name != "write" && name != "edit" {

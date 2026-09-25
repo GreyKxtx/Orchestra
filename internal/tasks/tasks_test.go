@@ -275,8 +275,8 @@ func TestModeForSubagent(t *testing.T) {
 		"general":       agent.ModeGeneral,
 		"worker":        agent.ModeWorker,
 		"verifier":      agent.ModeVerifier,
-		"product":       agent.ModeProduct,
-		"documentation": agent.ModeDocs,
+		"product":       agent.Mode("product"),
+		"documentation": agent.Mode("documentation"),
 	}
 	for in, want := range cases {
 		if got := modeForSubagent(in); got != want {

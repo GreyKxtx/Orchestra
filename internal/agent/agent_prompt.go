@@ -74,7 +74,8 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	if !a.opts.IsChild {
 		base = withoutTool(base, "task_result")
 	}
-	if a.opts.Mode != ModeOrchestra && a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {
+	// A skill may change files, so a mode that only reads is not offered one.
+	if a.opts.Mode != ModeOrchestra && !a.modeSpec().ReadOnly() && a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {
 		names := make([]string, len(a.opts.Skills))
 		for i, s := range a.opts.Skills {
 			names[i] = s.Name

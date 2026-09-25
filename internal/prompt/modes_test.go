@@ -3,19 +3,19 @@ package prompt
 import (
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/roles"
 )
 
-// Primary agent modes must resolve to a non-empty embedded system prompt.
-func TestAllPrimaryModesHaveSystemPrompt(t *testing.T) {
-	modes := []string{
-		"build", "plan", "explore", "ask", "debug", "architecture",
-		"general", "orchestra", "worker", "verifier",
-		"compaction", "title", "summary",
-	}
-	for _, mode := range modes {
-		got := BuildSystemPromptForMode(mode, "default")
-		if strings.TrimSpace(got) == "" {
-			t.Fatalf("mode %q: empty system prompt", mode)
+// Every mode in the registry has its own prompt file: a Spec naming a file
+// that does not exist would run the mode on build's prompt without a word.
+func TestEveryModeHasItsPromptFile(t *testing.T) {
+	for _, spec := range roles.All() {
+		if loadPromptFile(spec.Prompt+".txt") == "" {
+			t.Errorf("mode %q: prompt file %s.txt is missing or empty", spec.Name, spec.Prompt)
+		}
+		if strings.TrimSpace(BuildSystemPromptForMode(spec.Name, "default")) == "" {
+			t.Errorf("mode %q: empty system prompt", spec.Name)
 		}
 	}
 }

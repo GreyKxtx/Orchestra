@@ -65,7 +65,7 @@ func TestEveryRegisteredToolIsReachable(t *testing.T) {
 			offered[d.Function.Name] = true
 		}
 	}
-	for _, mode := range promptModes {
+	for _, mode := range promptModes() {
 		add(ListToolsForMode(mode, caps, true, true))
 	}
 	// agent_prompt.go reaches these two directly, not through a mode.

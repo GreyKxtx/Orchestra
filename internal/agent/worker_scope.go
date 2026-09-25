@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/roles"
 )
 
 func normalizeWorkerEditPath(p string) string {
@@ -29,14 +31,14 @@ func workerPathInEditScope(path string, allowed []string) bool {
 	return false
 }
 
-// productScopePrefix is the only writable location in ModeProduct
+// productScopePrefix is the only writable location in product mode
 // (spec §7.1: Product subagent — «только .orchestra/product/*»).
 const productScopePrefix = ".orchestra/product/"
 
 // checkProductEditScope denies edit/write outside .orchestra/product/ for the
 // Product Lead subagent. Reads stay unrestricted (brownfield context).
 func (a *Agent) checkProductEditScope(name string, input json.RawMessage) error {
-	if a == nil || a.opts.Mode != ModeProduct {
+	if a == nil || a.modeSpec().Write != roles.WriteProduct {
 		return nil
 	}
 	if name != "edit" && name != "write" {
@@ -68,7 +70,7 @@ const (
 // checkDocsEditScope denies edit/write outside the Docs Lead surface for the
 // documentation subagent. Reads stay unrestricted.
 func (a *Agent) checkDocsEditScope(name string, input json.RawMessage) error {
-	if a == nil || a.opts.Mode != ModeDocs {
+	if a == nil || a.modeSpec().Write != roles.WriteDocs {
 		return nil
 	}
 	if name != "edit" && name != "write" {
@@ -97,7 +99,7 @@ func (a *Agent) checkDocsEditScope(name string, input json.RawMessage) error {
 
 // checkWorkerEditScope denies edit/write outside WorkOrder target paths.
 func (a *Agent) checkWorkerEditScope(name string, input json.RawMessage) error {
-	if a == nil || a.opts.Mode != ModeWorker {
+	if a == nil || a.modeSpec().Write != roles.WriteTargets {
 		return nil
 	}
 	if name != "edit" && name != "write" {

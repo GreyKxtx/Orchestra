@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/roles"
 )
 
 // AgencyConfig is the `agency:` section: agents as an organisation rather
@@ -120,18 +122,16 @@ func ParseAgencyFlows(lines []string) ([]AgencyFlow, error) {
 // DefaultAgencyFlows are the spec's delegation edges (orchestra-routing §2.1:
 // "Dept Lead L4 → Scout L2 (read-only) → Workers L3 / L1"; stage 0 "Product
 // Lead + Market Scout"). Custom agents inherit the edges of their base.
+//
+// The edges are each role's roles.Spec.CanSpawn.
 func DefaultAgencyFlows() []AgencyFlow {
-	return []AgencyFlow{
-		{From: "product", To: "scout"},
-		{From: "product", To: "explore"},
-		{From: "documentation", To: "explore"},
-		{From: "architecture", To: "explore"},
-		{From: "architecture", To: "scout"},
-		{From: "architecture", To: "worker"},
-		{From: "architecture", To: "verifier"},
-		{From: "debug", To: "explore"},
-		{From: "debug", To: "worker"},
+	var out []AgencyFlow
+	for _, spec := range roles.All() {
+		for _, to := range spec.CanSpawn {
+			out = append(out, AgencyFlow{From: spec.Name, To: to})
+		}
 	}
+	return out
 }
 
 // ResolvedEnabled reports whether the agency layer is active for a turn in
@@ -195,18 +195,11 @@ func (a AgencyConfig) ResolvedRelayWorkOrders() bool {
 	return a.RelayWorkOrders == nil || *a.RelayWorkOrders
 }
 
-// spawnableRoles are the built-in modes a parent may start as a child: every
-// top-level mode that has a child protocol plus the child-only roles. build,
-// plan, agent and orchestra are user-facing entry points, not subagents.
-var spawnableRoles = map[string]bool{
-	"explore": true, "ask": true, "debug": true, "architecture": true,
-	"general": true, "worker": true, "verifier": true, "product": true,
-	"documentation": true, "scout": true,
-}
-
-// IsSpawnableRole reports whether name is a built-in role that can run as a subagent.
+// IsSpawnableRole reports whether name is a built-in role that can run as a
+// subagent (roles.Spec.Spawnable). build, plan, agent and orchestra are
+// user-facing entry points, not subagents.
 func IsSpawnableRole(name string) bool {
-	return spawnableRoles[strings.ToLower(strings.TrimSpace(name))]
+	return roles.IsSpawnable(strings.ToLower(strings.TrimSpace(name)))
 }
 
 // validateAgency checks agency: against the agents it may name.
@@ -245,7 +238,7 @@ func (c *ProjectConfig) checkAgencyName(name string, left bool) error {
 	if IsSpawnableRole(name) || c.FindAgent(name) != nil {
 		return nil
 	}
-	if _, reserved := builtInAgentModes[name]; reserved {
+	if IsBuiltInMode(name) {
 		return fmt.Errorf("agency.flows: %q is a top-level mode, not an agent that can be delegated to or messaged", name)
 	}
 	return nil

@@ -3,7 +3,7 @@ package agent
 import "testing"
 
 func TestCheckDocsEditScope(t *testing.T) {
-	a := &Agent{opts: Options{Mode: ModeDocs}}
+	a := &Agent{opts: Options{Mode: Mode("documentation")}}
 
 	// Reads are unrestricted.
 	if err := a.checkDocsEditScope("read", []byte(`{"path":"internal/core/core.go"}`)); err != nil {

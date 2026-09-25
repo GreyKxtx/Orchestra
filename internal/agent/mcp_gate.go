@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -20,15 +21,16 @@ func isMCPToolName(name string) bool {
 }
 
 // modeOffersWritingMCPTools reports whether mode may be offered MCP tools that
-// can change things. These are the modes whose job is changing the project with
-// no path scope; plan, architecture, product and documentation write only
-// their own documents, and the rest only read.
+// can change things: the modes whose job is changing the project with no path
+// scope beyond a WorkOrder's (roles.Spec.WritesCode). Plan, architecture,
+// product and documentation write only their own documents, and the rest only
+// read. A custom agent's mode is not in the registry and gets none.
 func modeOffersWritingMCPTools(mode Mode) bool {
-	switch mode {
-	case "", ModeBuild, ModeAgent, ModeDebug, ModeGeneral, ModeWorker:
+	if mode == "" {
 		return true
 	}
-	return false
+	spec, ok := roles.Lookup(string(mode))
+	return ok && spec.WritesCode()
 }
 
 // withoutWritingMCPTools drops the MCP tools not marked read-only.

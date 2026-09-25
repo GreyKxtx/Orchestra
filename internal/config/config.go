@@ -13,6 +13,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/internal/llmauth"
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/toolspec"
 	llmpkg "github.com/orchestra/orchestra/llm"
 	"gopkg.in/yaml.v3"
@@ -383,49 +384,22 @@ func (a AgentDefinition) ResolvedBase() string {
 	return "general"
 }
 
-// ModeKind classifies how a built-in agent mode may be started.
-type ModeKind int
+// ModeKind classifies how a built-in agent mode may be started. The modes
+// themselves are internal/roles' registry; these names keep config's API.
+type ModeKind = roles.Kind
 
 const (
 	// ModeKindTopLevel can be requested by the user (CLI --mode, RPC agent.run)
 	// and can also be spawned as a subagent.
-	ModeKindTopLevel ModeKind = iota
+	ModeKindTopLevel = roles.TopLevel
 	// ModeKindChildOnly is a subagent role with its own protocol (task_result,
 	// WorkOrder, scoped writes). Starting one top-level skips the contract that
 	// gives it its input, so the CLI and RPC refuse it.
-	ModeKindChildOnly
+	ModeKindChildOnly = roles.ChildOnly
 	// ModeKindInternal is driven by the runtime itself (history compaction,
 	// title, summary) and never selected by a user.
-	ModeKindInternal
+	ModeKindInternal = roles.Internal
 )
-
-// builtInAgentModes is the single registry of reserved mode names.
-//
-// It backs three questions that used to be answered by separate hardcoded
-// lists: is this name reserved against custom agents / skills, may the user
-// start this mode, and does agent.IsKnownMode recognise it. `product` and
-// `documentation` were missing here while existing as real modes with their
-// own tool sets and write scopes — so a custom agent or skill could take
-// those names and shadow them.
-var builtInAgentModes = map[string]ModeKind{
-	"build":         ModeKindTopLevel,
-	"plan":          ModeKindTopLevel,
-	"explore":       ModeKindTopLevel,
-	"general":       ModeKindTopLevel,
-	"ask":           ModeKindTopLevel,
-	"debug":         ModeKindTopLevel,
-	"architecture":  ModeKindTopLevel,
-	"agent":         ModeKindTopLevel,
-	"orchestra":     ModeKindTopLevel,
-	"worker":        ModeKindChildOnly,
-	"verifier":      ModeKindChildOnly,
-	"product":       ModeKindChildOnly,
-	"documentation": ModeKindChildOnly,
-	"scout":         ModeKindChildOnly,
-	"compaction":    ModeKindInternal,
-	"title":         ModeKindInternal,
-	"summary":       ModeKindInternal,
-}
 
 // ValidAgentTool reports whether name is a valid short tool name usable
 // in AgentDefinition.Tools or in a skill's tools: list. The names come from
@@ -1467,7 +1441,7 @@ func (c *ProjectConfig) validateAutoRouter() error {
 // Reserved means "a custom agent or skill may not take this name" — it covers
 // child-only and internal modes too.
 func IsBuiltInMode(name string) bool {
-	_, ok := builtInAgentModes[name]
+	_, ok := roles.Lookup(name)
 	return ok
 }
 
@@ -1493,22 +1467,22 @@ func (c *ProjectConfig) CheckSkillNameFree(name string) error {
 
 // BuiltInModeKind returns the mode's kind and whether it is built in at all.
 func BuiltInModeKind(name string) (ModeKind, bool) {
-	k, ok := builtInAgentModes[name]
-	return k, ok
+	spec, ok := roles.Lookup(name)
+	return spec.Kind, ok
 }
 
 // IsUserSelectableMode reports whether the user may start this mode directly
 // (CLI --mode, RPC agent.run). Child-only and internal modes are not.
 func IsUserSelectableMode(name string) bool {
-	k, ok := builtInAgentModes[name]
+	k, ok := BuiltInModeKind(name)
 	return ok && k == ModeKindTopLevel
 }
 
 // BuiltInModeNames returns reserved agent mode names (sorted).
 func BuiltInModeNames() []string {
-	out := make([]string, 0, len(builtInAgentModes))
-	for name := range builtInAgentModes {
-		out = append(out, name)
+	var out []string
+	for _, spec := range roles.All() {
+		out = append(out, spec.Name)
 	}
 	sort.Strings(out)
 	return out
@@ -1516,10 +1490,10 @@ func BuiltInModeNames() []string {
 
 // UserSelectableModeNames returns the modes a user may start directly (sorted).
 func UserSelectableModeNames() []string {
-	out := make([]string, 0, len(builtInAgentModes))
-	for name, k := range builtInAgentModes {
-		if k == ModeKindTopLevel {
-			out = append(out, name)
+	var out []string
+	for _, spec := range roles.All() {
+		if spec.Kind == ModeKindTopLevel {
+			out = append(out, spec.Name)
 		}
 	}
 	sort.Strings(out)
