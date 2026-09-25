@@ -23,7 +23,7 @@ import { RpcClient } from "./rpc/client";
 import { t } from "./i18n";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 22;
+const PROTOCOL_VERSION = 23;
 const OPS_VERSION = 1;
 export const TOOLS_VERSION = 18;
 

@@ -260,6 +260,29 @@ func WithLayer(ctx context.Context, layer *fs.Overlay) context.Context {
 	return fs.WithOverlay(ctx, layer)
 }
 
+// StagedSnapshot returns the turn's staged files for a checkpoint.
+func (r *Runner) StagedSnapshot() []fs.StagedSnapshot {
+	if r.fsTools == nil {
+		return nil
+	}
+	return r.fsTools.Overlay.SnapshotStaged()
+}
+
+// RestoreStaged stages a checkpoint's files in the turn's overlay and shows
+// them to the language server, as staging them in the run did.
+func (r *Runner) RestoreStaged(files []fs.StagedSnapshot) {
+	if r.fsTools == nil {
+		return
+	}
+	r.fsTools.Overlay.RestoreStaged(files)
+	if r.lspManager == nil || r.lspManager.IsEmpty() {
+		return
+	}
+	for _, f := range files {
+		_ = r.lspManager.SyncStaged(context.Background(), f.Path, f.Content)
+	}
+}
+
 func (r *Runner) ClearStaged() {
 	if r.fsTools != nil && r.fsTools.Overlay != nil {
 		r.fsTools.Overlay.ClearStaged()

@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `22`
+- **`protocol.ProtocolVersion`**: `23`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `17`
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v23** (2026-09-25): `agent.run` принимает `resume` — `run_id` хода или `"last"` — и продолжает ход, который его core не довёл до конца (крах, `kill -9`), с его checkpoint'а (`.orchestra/runs/<run_id>.checkpoint.json`). Ответ `agent.run` содержит `run_id`. Подробности — в описании `agent.run` ниже.
 - **v22** (2026-09-25): доверие к рабочей области. Новые методы `workspace.trust_status` и `workspace.trust` (`{revoke?: bool}`) — см. ниже. Настройки проекта, которые действуют на машину (MCP-серверы из `.orchestra.yml` и `.mcp.json`, `hooks`, `lsp.servers`, `exec.confirm` / `exec.allow` / `exec.env_passthrough`, `web.confirm`, правила `permissions` с `action: allow`, блоки `auth`, а также endpoint проекта, куда ушёл бы ключ пользователя — `${VAR}` или ключ из `~/.orchestra/config.yml`), вступают в силу только в доверенной рабочей области; до этого core их не применяет и пишет в stderr, что проигнорировано. `session.start` отклоняет `session_id`, который не является простым именем (буквы, цифры, `.`, `_`, `-`), с `InvalidParams`.
 - **v21** (2026-09-20): `agent.run` и `session.message` принимают `browser_panel` — `browser.*` хода действуют на браузерную панель, которую открыл сам клиент, через server-initiated запрос `browser/call`, а не на браузер, запущенный core. Клиент, который не отвечает на этот запрос, не должен передавать флаг.
 - **v20** (2026-09-18): `session.discard_pending` принимает `paths[]` и отвечает `remaining_ops[]` — ровно так же, как `session.apply_pending`. До этого отклонить один плохой файл хода было нельзя: отклонялся весь ход целиком. Пустой `paths` — прежнее «отклонить всё».
@@ -579,6 +580,7 @@ Response `result`:
 - `patch_path` (string, optional) — путь для `.patch` при `apply_output=patch` (иначе `apply.patch_dir` / `.orchestra/patches/orchestra-<ts>.patch`).
 - `profile` (string, optional) — adaptive preset `fast` | `precision` (см. `docs/architecture/tui-pipeline.md` §9).
 - `attachments` (array, optional) — файлы/изображения для multimodal хода. Элемент: `{ "path": "...", "kind": "image"|"file", "mime": "...", "name": "..." }`. `kind=image` требует `llm.multimodal: true` и vision-модель.
+- `resume` (string, optional; v23+) — продолжить ход, который не завершился, с его checkpoint'а: `run_id` или `"last"` (последний ход, который можно продолжить). Checkpoint пишется атомарно после каждого шага агента верхнего уровня и при каждом изменении графа задач. В нём история агента, staged-правки хода с версией диска, от которой они сделаны, и граф задач. При resume ход работает со своими `query`, `mode`, `profile`, `apply`, `apply_output` и лимитами из checkpoint'а, а согласие (`allow_exec`, `allow_web`, `allow_browser`) берётся только из этого запроса: checkpoint — файл в проекте. Staged-правки возвращаются. Завершённые задачи сохраняют результат и повторно не запускаются. Прерванные задачи стартуют заново под теми же id, если их запустил агент верхнего уровня и этот id есть в его истории или если их спавнер завершился. Прерванные задачи прерванного спавнера не перезапускаются: спавнер запустит их сам. Агент получает `<resume_notice>` со списком того, что вернулось. Ход, который уже завершился, продолжить нельзя (`InvalidParams`). `session.message` пока так не умеет: сессия сохраняет историю после каждого шага, а граф задач и staging — нет.
 
 > **Skills:** CLI также принимает `--skill <name>`, который загружает file-based agent definition из `<project>/.orchestra/skills/<name>.md`. Скилл резолвится в синтетический `AgentDefinition` и идёт через тот же путь `--mode`, поэтому JSON-RPC surface не меняется — это CLI-side loader поверх существующего `AgentOptions`. См. `docs/skills.md`.
 
@@ -590,6 +592,7 @@ Response `result`:
 
 Response `result`:
 
+- `run_id` (string; v23+) — имя хода: его лог `.orchestra/runs/<run_id>.events.jsonl` и checkpoint для `resume`
 - `steps` (int)
 - `applied` (bool)
 - `patches` (optional)

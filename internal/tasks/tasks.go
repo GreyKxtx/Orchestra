@@ -116,6 +116,10 @@ type ChildAgentConfig struct {
 	RouteTaskType           TaskTypeRouter
 	GuardSpawn              SpawnGuard
 	GuardContractRefs       ContractRefsGuard
+	// OnGraphChange is called after a task is started or finishes, so the
+	// turn's checkpoint follows its graph (checkpoint.go). Nil: nobody keeps
+	// one.
+	OnGraphChange func()
 	// QuestionAsker enables the runtime Question Barrier (spec §4.3):
 	// open_questions[] from task_result are relayed to the user without an
 	// orchestrator turn. Nil = barrier off (e.g. core stdio mode).
@@ -260,6 +264,9 @@ type taskEntry struct {
 	// layer is where the task writes (tools.Runner.ForkLayer): nil outside a
 	// dry run. Its view is what the task's contract is checked against.
 	layer *fs.Overlay
+	// spawned is what the task was started with, so a checkpoint can start
+	// it again (checkpoint.go).
+	spawned spawnInputs
 
 	// Agency bookkeeping, guarded by TaskRunner.mu.
 	key          string       // name for depends_on (WorkOrder task_id)
@@ -360,6 +367,9 @@ type spawnExtra struct {
 	// and cancel it — in place of the spawner. The batch relay spawns as the
 	// Lead (its flows, its department) on behalf of the Lead's parent.
 	owner *agentScope
+	// id restarts a task a crash interrupted under the id its spawner knows
+	// (checkpoint.go). Empty: a new id.
+	id string
 }
 
 func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.SubtaskSpawnRequest, extra spawnExtra) (string, error) {
@@ -370,7 +380,11 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	}
 	r.seq++
 	taskID := fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000)
+	if extra.id != "" {
+		taskID = extra.id
+	}
 	r.mu.Unlock()
+	spawned := spawnInputs{req: req, from: from, extra: extra}
 
 	r.applyTaskTypeRoute(&req)
 	dept := strings.TrimSpace(req.Dept)
@@ -494,13 +508,14 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		role:         target.role,
 		parent:       from.address,
 		parentTaskID: from.taskID,
-		spawner:      from.taskID,
 		depth:        from.depth + 1,
 		goal:         firstLine(req.Goal, 120),
 		status:       "queued",
 		started:      time.Now(),
 		worker:       isWorker,
 		fingerprint:  taskFingerprint(target.address, req.Goal),
+		spawner:      from.taskID,
+		spawned:      spawned,
 	}
 	if extra.owner != nil {
 		entry.parent = extra.owner.address
@@ -561,6 +576,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		r.byKey[keyOf(from.taskID, key)] = entry
 	}
 	r.mu.Unlock()
+	r.graphChanged()
 
 	childScope := from.child(target.address, target.role, target.name, taskID)
 	childScope.dept = dept

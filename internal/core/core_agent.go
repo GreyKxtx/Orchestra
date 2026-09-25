@@ -10,6 +10,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/app"
+	"github.com/orchestra/orchestra/internal/checkpoint"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
@@ -79,6 +80,13 @@ type AgentRunParams struct {
 	// Attachments are optional files/images for multimodal turns.
 	Attachments []MessageAttachment `json:"attachments,omitempty"`
 
+	// Resume continues a run its core did not finish — a crash, a kill — from
+	// its checkpoint: a run_id, or "last" for the most recent one that can
+	// be resumed. The run's query, mode and apply are the checkpoint's; the
+	// request gives only the consent (allow_exec, allow_web, browser).
+	// (ProtocolVersion 23.)
+	Resume string `json:"resume,omitempty"`
+
 	// The fields below are for a core run in-process (`orchestra apply`) and
 	// never cross the wire.
 
@@ -93,6 +101,10 @@ type AgentRunParams struct {
 }
 
 type AgentRunResult struct {
+	// RunID names the run: its log (.orchestra/runs/<run_id>.events.jsonl)
+	// and its checkpoint, which agent.run resume takes. (ProtocolVersion 23.)
+	RunID string `json:"run_id,omitempty"`
+
 	Steps   int  `json:"steps"`
 	Applied bool `json:"applied"`
 
@@ -154,6 +166,21 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
 	}
+	// A resumed run is the run its checkpoint recorded: its query, mode and
+	// apply. The request brings only the consent (checkpoint.go).
+	var resumed *checkpoint.Checkpoint
+	if ref := strings.TrimSpace(params.Resume); ref != "" {
+		cp, err := c.loadResumable(ref)
+		if err != nil {
+			return nil, err
+		}
+		var rp resumableParams
+		if err := json.Unmarshal(cp.Params, &rp); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, fmt.Sprintf("resume %q: %v", cp.RunID, err), nil)
+		}
+		params = rp.applyTo(params)
+		resumed = cp
+	}
 	if strings.TrimSpace(params.Query) == "" && len(params.Attachments) == 0 {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "query is empty", nil)
 	}
@@ -186,6 +213,21 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
+	runID := NewTurnID()
+	if resumed != nil {
+		runID = resumed.RunID
+	} else {
+		checkpoint.Prune(c.workspaceRoot, checkpoint.MaxKeep-1)
+	}
+	ck := newTurnCheckpoint(c.workspaceRoot, runID, resumableParams{
+		Query: agentQuery, Mode: params.Mode, Profile: params.Profile,
+		Apply: params.Apply, Backup: params.Backup, ApplyOutput: params.ApplyOutput, PatchPath: params.PatchPath,
+		MaxSteps: params.MaxSteps, MaxInvalidRetries: params.MaxInvalidRetries, MaxPromptBytes: params.MaxPromptBytes,
+	}, c.tools)
+	if resumed != nil {
+		ck.resumeFrom(resumed)
+	}
+
 	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:                params.Mode,
 		Profile:             params.Profile,
@@ -204,16 +246,22 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		RecordRun:           true,
 		OnEvent:             params.OnEvent,
 		OnAgentEvent:        params.OnAgentEvent,
-		EventEnvelope:       EventEnvelope{TurnID: NewTurnID()},
+		EventEnvelope:       EventEnvelope{TurnID: runID},
 		PermissionRequester: params.PermissionRequester,
 		QuestionAsker:       params.QuestionAsker,
 		Attachments:         params.Attachments,
 		UserImages:          imageParts,
 		Multimodal:          len(imageParts) > 0,
+		OnGraphChange:       ck.graphChanged,
 	})
 	if err != nil {
 		return nil, err
 	}
+	// The mode the router chose is the run's: a resumed run does not route
+	// again.
+	ck.setMode(launch.EffectiveMode)
+	ck.setTasks(launch.TaskRunner)
+	launch.Opts.OnStepHistory = ck.stepHistory
 
 	// Semantic dry-run pipeline: edit/write always go through staging + LSP
 	// during the turn. params.Apply controls commit-to-disk at end of turn,
@@ -238,17 +286,23 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	}
 
 	ctx = launch.RunContext(ctx)
-	outHistory, res, err := ag.Run(ctx, nil, agentQuery)
-	if err != nil {
-		return nil, err
+	var history []llm.Message
+	if resumed != nil {
+		history = restoreRun(ctx, resumed, c.tools, launch.TaskRunner)
 	}
-	_, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
+	ck.save()
+	outHistory, res, err := ag.Run(ctx, history, agentQuery)
+	if err == nil {
+		_, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
+	}
+	ck.finish(err)
 	if err != nil {
 		return nil, err
 	}
 	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
 
 	result := &AgentRunResult{
+		RunID:         runID,
 		Steps:         res.Steps,
 		Applied:       res.Applied,
 		Patches:       res.Patches,

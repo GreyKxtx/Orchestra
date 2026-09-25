@@ -203,3 +203,26 @@ func TestLayer_ReadFileIsTheTasksView(t *testing.T) {
 		t.Errorf("a missing file is ErrNotExist: %v", err)
 	}
 }
+
+// A checkpoint's staged files come back as they were, disk version included:
+// the final op still guards against the version the edit was made from.
+func TestOverlay_SnapshotRestore(t *testing.T) {
+	turn, root := layerRoot(t)
+	stage(t, turn, "a.go", "edited\n")
+	stage(t, turn, "new.go", "fresh\n")
+	snap := turn.SnapshotStaged()
+	if len(snap) != 2 || snap[0].Path != "a.go" || snap[0].DiskHash != cache.ComputeSHA256([]byte("disk\n")) || !snap[1].IsNew {
+		t.Fatalf("snapshot: %+v", snap)
+	}
+
+	fresh := NewOverlay(root, OverlayOptions{DryRun: true})
+	fresh.RestoreStaged(snap)
+	if content(fresh, "a.go") != "edited\n" || content(fresh, "new.go") != "fresh\n" {
+		t.Fatal("restored content")
+	}
+	for _, op := range fresh.StagedOps() {
+		if op.Path == "a.go" && op.WriteAtomic.Conditions.FileHash != cache.ComputeSHA256([]byte("disk\n")) {
+			t.Errorf("the restored op guards against the disk version the edit was made from: %+v", op.WriteAtomic.Conditions)
+		}
+	}
+}

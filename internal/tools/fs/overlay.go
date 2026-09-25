@@ -542,3 +542,47 @@ func writeAtomicPatchRefusal(p patches.Patch, current string) string {
 	}
 	return ""
 }
+
+// StagedSnapshot is one staged file as a checkpoint keeps it: the content,
+// and the disk version it was made against, which the final apply checks.
+type StagedSnapshot struct {
+	Path     string
+	Content  string
+	DiskHash string
+	IsNew    bool
+}
+
+// SnapshotStaged returns the overlay's own staged files, sorted by path — not
+// its tasks' layers: an uncommitted layer dies with its task.
+func (o *Overlay) SnapshotStaged() []StagedSnapshot {
+	if o == nil {
+		return nil
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	out := make([]StagedSnapshot, 0, len(o.staged))
+	for p, sf := range o.staged {
+		out = append(out, StagedSnapshot{Path: p, Content: sf.content, DiskHash: sf.diskHash, IsNew: sf.isNew})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// RestoreStaged stages files as a checkpoint recorded them. Each keeps the
+// disk version it was made against: a file changed on disk since then fails
+// the final apply as stale, as it would have in the run that staged it.
+func (o *Overlay) RestoreStaged(files []StagedSnapshot) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, f := range files {
+		o.staged[f.Path] = &stagedFile{
+			content:  f.Content,
+			hash:     cache.ComputeSHA256([]byte(f.Content)),
+			diskHash: f.DiskHash,
+			isNew:    f.IsNew,
+		}
+	}
+}
