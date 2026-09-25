@@ -14,6 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	"github.com/orchestra/orchestra/internal/permission"
 	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
@@ -101,7 +102,13 @@ type agentLaunch struct {
 // and llm_log lines of the turn carry its turn_id as run_id, and its subagent
 // tasks add their own identity to it (tasks.ChildAgentConfig.RunID).
 func (l *agentLaunch) RunContext(ctx context.Context) context.Context {
-	if l == nil || l.EventEnvelope.TurnID == "" {
+	if l == nil {
+		return ctx
+	}
+	// Consent prompts raised under the turn — an exec.run, a language server
+	// to install — go to this turn's client.
+	ctx = permission.WithRequester(ctx, l.Opts.PermissionRequester)
+	if l.EventEnvelope.TurnID == "" {
 		return ctx
 	}
 	return llm.WithTrace(ctx, llm.Trace{RunID: l.EventEnvelope.TurnID})
@@ -180,11 +187,10 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		return nil, protocol.NewError(protocol.ExecFailed, "core config is nil", nil)
 	}
 
-	// Wire TUI/CLI consent into LSP auto-provision for this turn.
-	// Warmup is best-effort and must not block the agent loop on npm/go install.
+	// LSP auto-provision for this turn asks this turn's client. Warmup is
+	// best-effort and must not block the agent loop on npm/go install.
 	if c.tools != nil {
-		c.tools.SetLSPInstallConsent(spec.PermissionRequester)
-		c.WarmupLSP(context.Background())
+		c.WarmupLSP(permission.WithRequester(context.Background(), spec.PermissionRequester))
 	}
 
 	profileName, err := resolveProfileName(c.cfg, spec.Profile)

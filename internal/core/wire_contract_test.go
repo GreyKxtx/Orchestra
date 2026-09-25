@@ -3,12 +3,8 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
@@ -167,38 +163,8 @@ func TestInitialize_OpsVersionStillMustMatch(t *testing.T) {
 // wire.Methods is what initialize advertises as capabilities. This reads the
 // handler's switch so the list cannot drift from what the core answers.
 func TestRPCHandler_ServesExactlyTheWireMethods(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "rpc_handler.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	served := map[string]bool{}
-	for _, d := range f.Decls {
-		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "Handle" || fn.Recv == nil {
-			continue
-		}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			cc, ok := n.(*ast.CaseClause)
-			if !ok {
-				return true
-			}
-			for _, e := range cc.List {
-				if lit, ok := e.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					name, err := strconv.Unquote(lit.Value)
-					if err == nil {
-						served[name] = true
-					}
-				}
-			}
-			return true
-		})
-	}
-	if len(served) == 0 {
-		t.Fatal("found no case labels in RPCHandler.Handle")
-	}
 	var got []string
-	for m := range served {
+	for m := range rpcMethods {
 		got = append(got, m)
 	}
 	sort.Strings(got)

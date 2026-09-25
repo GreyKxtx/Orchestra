@@ -42,7 +42,7 @@ func TestManager_WarmupStartAfterCloseDoesNotSpawn(t *testing.T) {
 	entry := m.servers[0] // captured before Close, as a lazy tool call would hold it
 	m.Close()
 	m.WarmupStart(context.Background())
-	if err := m.ensureClient(entry); err == nil {
+	if err := m.ensureClient(context.Background(), entry); err == nil {
 		t.Fatal("ensureClient after Close returned nil error; want a closed error")
 	}
 	if n := spawned.Load(); n != 0 {

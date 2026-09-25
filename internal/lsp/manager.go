@@ -148,7 +148,6 @@ type Manager struct {
 	// concurrent readers need no lock.
 	closed      atomic.Bool
 	autoInstall string // ask | true | false (mutable when user picks Always)
-	consent     permission.Requester
 	installing  atomic.Bool
 
 	ensureSyncBudget time.Duration // see LSPConfig.EnsureSyncBudgetMS
@@ -176,14 +175,6 @@ type InstallProgress struct {
 type ensureJob struct {
 	done chan struct{}
 	err  error
-}
-
-// SetInstallConsent wires interactive consent for lsp.auto_install=ask.
-func (m *Manager) SetInstallConsent(r permission.Requester) {
-	if m == nil {
-		return
-	}
-	m.consent = r
 }
 
 // SetAutoInstall updates the in-memory auto-install policy (session).
@@ -352,11 +343,16 @@ func (m *Manager) tryEnsureAndResolve(ctx context.Context, cfg LSPServerConfig, 
 	case "false":
 		return provision.Result{}, resolveErr
 	case "ask":
-		if m.consent == nil {
+		// The consent is the caller's: the turn behind ctx carries the client
+		// that answers for it (permission.WithRequester). It used to be set
+		// on the manager by whichever turn started last, so a prompt raised
+		// by one session's tool call could reach another session's client.
+		consent := permission.RequesterFrom(ctx)
+		if consent == nil {
 			return provision.Result{}, fmt.Errorf("%w (no interactive consent; set lsp.auto_install: true or run orchestra lsp ensure %s)", resolveErr, entry.Language)
 		}
 		desc := fmt.Sprintf("Установить %s (%s) в ~/.orchestra/lsp?\n%s", entry.ID, entry.Version, entry.InstallHint)
-		resp, perr := m.consent.RequestPermission(ctx, permission.Request{
+		resp, perr := consent.RequestPermission(ctx, permission.Request{
 			Tool:        "lsp.install",
 			Kind:        "lsp.install",
 			Description: desc,
@@ -581,7 +577,7 @@ func (m *Manager) WarmupStart(ctx context.Context) {
 		if s == nil || s.cfg.Disabled {
 			continue
 		}
-		if err := m.ensureClient(s); err != nil {
+		if err := m.ensureClient(ctx, s); err != nil {
 			fmt.Fprintf(os.Stderr, "lsp: warmup start %q: %v\n", s.cfg.Language, err)
 		}
 	}
@@ -630,7 +626,7 @@ func dispatchNotifications(c *Client, diags *DiagnosticsCache) {
 // considered unsupported for the rest of the session. H6 in audit ledger.
 const maxLSPRestarts = 3
 
-func (m *Manager) serverForPath(relPath string) (*serverEntry, error) {
+func (m *Manager) serverForPath(ctx context.Context, relPath string) (*serverEntry, error) {
 	if m.IsEmpty() {
 		return nil, fmt.Errorf("lsp: no servers configured (add lsp.servers to .orchestra.yml)")
 	}
@@ -639,7 +635,7 @@ func (m *Manager) serverForPath(relPath string) (*serverEntry, error) {
 		if !s.exts[ext] {
 			continue
 		}
-		if err := m.ensureClient(s); err != nil {
+		if err := m.ensureClient(ctx, s); err != nil {
 			return nil, err
 		}
 		return s, nil
@@ -650,7 +646,7 @@ func (m *Manager) serverForPath(relPath string) (*serverEntry, error) {
 // ensureClient starts or revives the LSP client for s. Serializes concurrent
 // start attempts per entry. TTL shutdown sets client=nil without bumping
 // restartCount; unexpected death increments restartCount (H6).
-func (m *Manager) ensureClient(s *serverEntry) error {
+func (m *Manager) ensureClient(ctx context.Context, s *serverEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -671,7 +667,10 @@ func (m *Manager) ensureClient(s *serverEntry) error {
 	}
 
 	rootURI := PathToURI(m.workspaceRoot)
-	startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// The start outlives the call that needed the server, but a server it
+	// has to install first asks the caller's client.
+	startCtx, cancel := context.WithTimeout(
+		permission.WithRequester(context.Background(), permission.RequesterFrom(ctx)), 30*time.Second)
 	fresh, err := m.startServer(s, rootURI, startCtx)
 	cancel()
 	if err != nil {
@@ -899,7 +898,7 @@ func (m *Manager) readLineText(relPath string, line int) string {
 
 // Definition returns the definition location(s) of the symbol at pos.
 func (m *Manager) Definition(ctx context.Context, relPath string, pos ToolPosition) ([]ToolLocation, error) {
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return nil, err
 	}
@@ -925,7 +924,7 @@ func (m *Manager) Definition(ctx context.Context, relPath string, pos ToolPositi
 
 // References returns all references to the symbol at pos.
 func (m *Manager) References(ctx context.Context, relPath string, pos ToolPosition, includeDecl bool) ([]ToolLocation, error) {
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +954,7 @@ func (m *Manager) References(ctx context.Context, relPath string, pos ToolPositi
 
 // Hover returns hover text for the symbol at pos.
 func (m *Manager) Hover(ctx context.Context, relPath string, pos ToolPosition) (string, error) {
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return "", err
 	}
@@ -981,7 +980,7 @@ func (m *Manager) Hover(ctx context.Context, relPath string, pos ToolPosition) (
 // GetDiagnostics returns current diagnostics for relPath.
 // Waits briefly for the initial diagnostics push if none are cached.
 func (m *Manager) GetDiagnostics(ctx context.Context, relPath string) ([]ToolDiagnostic, error) {
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1003,7 +1002,7 @@ func (m *Manager) GetDiagnostics(ctx context.Context, relPath string) ([]ToolDia
 // Rename returns proposed edits for renaming the symbol at pos to newName.
 // The edits are returned as ProposedEdit slices; the agent applies them via fs.edit/fs.write.
 func (m *Manager) Rename(ctx context.Context, relPath string, pos ToolPosition, newName string) ([]ProposedEdit, error) {
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1034,7 +1033,7 @@ func (m *Manager) Rename(ctx context.Context, relPath string, pos ToolPosition, 
 // DocumentSymbols returns the outline symbols for relPath via textDocument/documentSymbol.
 // Returns nil (not an error) if no server handles the file or the server returns nothing.
 func (m *Manager) DocumentSymbols(ctx context.Context, relPath string) ([]ToolSymbol, error) {
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1062,7 +1061,7 @@ func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error
 	if m == nil || m.IsEmpty() {
 		return nil
 	}
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return err
 	}
@@ -1171,7 +1170,7 @@ func (m *Manager) SyncAndDiagnose(ctx context.Context, relPath, content string) 
 		fmt.Fprintf(os.Stderr, "lsp: SyncAndDiagnose: %v\n", err)
 		return nil
 	}
-	s, err := m.serverForPath(relPath)
+	s, err := m.serverForPath(ctx, relPath)
 	if err != nil {
 		return nil
 	}
