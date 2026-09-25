@@ -714,7 +714,10 @@ type jsonSchemaSpec struct {
 // matching mapper (newToolNameMapper) restores them in the response path.
 func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream bool) ([]byte, error) {
 	mapper := newToolNameMapper(req.Tools)
-	msgs := req.Messages
+	// Anthropic thinking blocks (a history from before a fallback, a resumed
+	// session) are not this dialect's: an unknown message field is a 400
+	// on strict servers.
+	msgs := WithoutThinking(req.Messages)
 	if c.promptCacheMarkersEnabled() {
 		msgs = markGatewayPromptCache(msgs)
 	}

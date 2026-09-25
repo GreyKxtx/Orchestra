@@ -22,6 +22,34 @@ type toolCallAccumulator struct {
 	usage   *TokenUsage // populated from the final SSE chunk if the provider sent stream_options.include_usage
 	// stopReason is the provider's finish/stop reason, as sent.
 	stopReason string
+	// thinking are the answer's thinking blocks, in order, by the
+	// provider's block index.
+	thinking      []ThinkingBlock
+	thinkingIndex map[int]int
+}
+
+// StartThinking opens a thinking block (or, with redacted set, records a
+// redacted_thinking block whole) at the provider's block index.
+func (a *toolCallAccumulator) StartThinking(blockIndex int, text, signature, redacted string) {
+	if a.thinkingIndex == nil {
+		a.thinkingIndex = map[int]int{}
+	}
+	a.thinkingIndex[blockIndex] = len(a.thinking)
+	a.thinking = append(a.thinking, ThinkingBlock{Text: text, Signature: signature, Redacted: redacted})
+}
+
+// AppendThinking adds a thinking_delta or signature_delta to the block at
+// blockIndex, opening it when its start was not seen.
+func (a *toolCallAccumulator) AppendThinking(blockIndex int, text, signature string) {
+	i, ok := a.thinkingIndex[blockIndex]
+	if !ok {
+		a.StartThinking(blockIndex, "", "", "")
+		i = a.thinkingIndex[blockIndex]
+	}
+	a.thinking[i].Text += text
+	if signature != "" {
+		a.thinking[i].Signature += signature
+	}
 }
 
 func newToolCallAccumulator() *toolCallAccumulator {
@@ -82,6 +110,9 @@ func (a *toolCallAccumulator) BuildResponse() *CompleteResponse {
 				Arguments: ToolArguments([]byte(args)),
 			},
 		})
+	}
+	if len(a.thinking) > 0 {
+		msg.Thinking = append([]ThinkingBlock(nil), a.thinking...)
 	}
 	return &CompleteResponse{Message: msg, Usage: a.usage, StopReason: NormalizeStopReason(a.stopReason)}
 }

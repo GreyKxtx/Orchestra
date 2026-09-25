@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,8 +24,10 @@ type AnthropicClient struct {
 	baseURL      string
 	client       *http.Client
 	streamClient *http.Client
-	// thinking is the resolved extended-thinking block, nil when off.
+	// thinking is the resolved thinking block, nil when not asked for.
 	thinking *anthropicThinking
+	// output carries the effort level for adaptive thinking.
+	output *anthropicOutputConfig
 	// requestTimeout is llm.timeout_s; it scales the stall watchdog.
 	requestTimeout time.Duration
 }
@@ -43,17 +46,34 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
+	adaptive := anthropicAdaptiveThinking(cfg.Model)
+	if cfg.MaxTokens <= 0 && adaptive {
+		// These models think by default, and max_tokens caps thinking and
+		// answer together: 4096 cut them off mid-answer.
+		maxTokens = anthropicAdaptiveMaxTokens
+	}
 	var thinking *anthropicThinking
+	var output *anthropicOutputConfig
 	if r := resolveReasoning(cfg.Reasoning, cfg.Model); r != nil {
-		budget := r.budget()
-		thinking = &anthropicThinking{Type: "enabled", BudgetTokens: budget}
-		// max_tokens must leave room for the answer on top of the thinking
-		// budget; Anthropic rejects the request otherwise. Grow it rather
-		// than shrink the budget the user asked for.
-		if maxTokens <= budget {
-			maxTokens = budget + cfg.MaxTokens
-			if cfg.MaxTokens <= 0 {
-				maxTokens = budget + 4096
+		if adaptive {
+			// 4.7 and later reject {type:"enabled"} with a 400, and 4.6
+			// deprecates it: depth is the effort level, and the thinking
+			// is shown (display defaults to "omitted" on the newest).
+			thinking = &anthropicThinking{Type: "adaptive", Display: "summarized"}
+			if e := anthropicEffort(r); e != "" {
+				output = &anthropicOutputConfig{Effort: e}
+			}
+		} else {
+			budget := r.budget()
+			thinking = &anthropicThinking{Type: "enabled", BudgetTokens: budget}
+			// max_tokens must leave room for the answer on top of the thinking
+			// budget; Anthropic rejects the request otherwise. Grow it rather
+			// than shrink the budget the user asked for.
+			if maxTokens <= budget {
+				maxTokens = budget + cfg.MaxTokens
+				if cfg.MaxTokens <= 0 {
+					maxTokens = budget + 4096
+				}
 			}
 		}
 	}
@@ -63,6 +83,7 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 		model:          cfg.Model,
 		maxTokens:      maxTokens,
 		thinking:       thinking,
+		output:         output,
 		baseURL:        base,
 		client:         &http.Client{Timeout: timeout},
 		streamClient:   &http.Client{Timeout: 0}, // per-request ctx controls stream lifetime
@@ -90,14 +111,31 @@ type anthropicMessage struct {
 }
 
 type anthropicBlock struct {
-	Type         string                 `json:"type"`
-	Text         string                 `json:"text,omitempty"`
-	ID           string                 `json:"id,omitempty"`
-	Name         string                 `json:"name,omitempty"`
-	Input        json.RawMessage        `json:"input,omitempty"`
-	ToolUseID    string                 `json:"tool_use_id,omitempty"`
-	Content      string                 `json:"content,omitempty"` // tool_result text
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	// Content is a tool_result's: its text, or its blocks when it carries
+	// an image.
+	Content any `json:"content,omitempty"`
+	// Thinking is a thinking block's text. A pointer: the field must be sent
+	// even when empty, as it is for a model that hides its thinking.
+	Thinking  *string `json:"thinking,omitempty"`
+	Signature string  `json:"signature,omitempty"`
+	// Data is a redacted_thinking block's.
+	Data         string                 `json:"data,omitempty"`
+	Source       *anthropicImageSource  `json:"source,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+// anthropicImageSource is an image block's source: inline base64 or a URL.
+type anthropicImageSource struct {
+	Type      string `json:"type"` // "base64" | "url"
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
 }
 
 type anthropicTool struct {
@@ -158,6 +196,7 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 		Messages:  msgs,
 		Tools:     tools,
 		Thinking:  c.thinking,
+		Output:    c.output,
 		Stream:    true,
 	}
 
@@ -267,19 +306,29 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 		case RoleSystem:
 			sysBlocks = append(sysBlocks, msg.Content)
 		case RoleUser:
+			// Parts are the message when it has them — images, and with
+			// --image the query's own text. Reading Content alone dropped
+			// both (LLM-7).
+			var content any = msg.Content
+			if len(msg.Parts) > 0 {
+				content = partsToAnthropic(msg.Parts)
+			}
 			// The agent appends a volatile block (working state, todos) as its
 			// own user message after the tool results. Anthropic requires
 			// alternating roles, so fold it into the preceding user message.
 			if len(out) > 0 && out[len(out)-1].Role == "user" {
 				out[len(out)-1].Content = append(
 					userContentBlocks(out[len(out)-1].Content),
-					anthropicBlock{Type: "text", Text: msg.Content},
+					userContentBlocks(content)...,
 				)
 				continue
 			}
-			out = append(out, anthropicMessage{Role: "user", Content: msg.Content})
+			out = append(out, anthropicMessage{Role: "user", Content: content})
 		case RoleAssistant:
-			var blocks []anthropicBlock
+			// Thinking first, as the model produced it: within a tool-use
+			// turn the API wants the blocks back unmodified, in order,
+			// before the tool_use they led to (LLM-6).
+			blocks := thinkingToAnthropic(msg.Thinking)
 			if msg.Content != "" {
 				blocks = append(blocks, anthropicBlock{Type: "text", Text: msg.Content})
 			}
@@ -305,7 +354,12 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 			block := anthropicBlock{
 				Type:      "tool_result",
 				ToolUseID: msg.ToolCallID,
-				Content:   msg.Content,
+			}
+			switch {
+			case len(msg.Parts) > 0:
+				block.Content = partsToAnthropic(msg.Parts)
+			case msg.Content != "":
+				block.Content = msg.Content
 			}
 			if len(out) > 0 && out[len(out)-1].Role == "user" {
 				out[len(out)-1].Content = append(userContentBlocks(out[len(out)-1].Content), block)
@@ -380,6 +434,65 @@ func userContentBlocks(content any) []anthropicBlock {
 	}
 }
 
+// thinkingToAnthropic renders a message's thinking blocks for the wire.
+func thinkingToAnthropic(in []ThinkingBlock) []anthropicBlock {
+	out := make([]anthropicBlock, 0, len(in))
+	for _, t := range in {
+		if t.Redacted != "" {
+			out = append(out, anthropicBlock{Type: "redacted_thinking", Data: t.Redacted})
+			continue
+		}
+		text := t.Text
+		out = append(out, anthropicBlock{Type: "thinking", Thinking: &text, Signature: t.Signature})
+	}
+	return out
+}
+
+// partsToAnthropic renders multimodal parts as text and image blocks.
+func partsToAnthropic(parts []ContentPart) []anthropicBlock {
+	out := make([]anthropicBlock, 0, len(parts))
+	for _, p := range parts {
+		switch p.Kind {
+		case PartText:
+			b := anthropicBlock{Type: "text", Text: p.Text}
+			if p.CacheControl {
+				b.CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+			}
+			out = append(out, b)
+		case PartImage:
+			if src := anthropicImage(p); src != nil {
+				out = append(out, anthropicBlock{Type: "image", Source: src})
+			}
+		}
+	}
+	return out
+}
+
+// anthropicImage is an image part's source: its bytes as base64, a data: URI
+// unpacked the same way, or a remote URL.
+func anthropicImage(p ContentPart) *anthropicImageSource {
+	if len(p.ImageData) > 0 {
+		mime := p.ImageMIME
+		if mime == "" {
+			mime = "image/png"
+		}
+		return &anthropicImageSource{Type: "base64", MediaType: mime, Data: base64.StdEncoding.EncodeToString(p.ImageData)}
+	}
+	u := strings.TrimSpace(p.ImageURL)
+	if rest, ok := strings.CutPrefix(u, "data:"); ok {
+		meta, data, found := strings.Cut(rest, ",")
+		mime, isB64 := strings.CutSuffix(meta, ";base64")
+		if !found || !isB64 || mime == "" {
+			return nil
+		}
+		return &anthropicImageSource{Type: "base64", MediaType: mime, Data: data}
+	}
+	if u == "" {
+		return nil
+	}
+	return &anthropicImageSource{Type: "url", URL: u}
+}
+
 // markToolsCacheBreakpoint caches the tool schemas, which are identical on
 // every step of an agent run and are several KB of prompt.
 func markToolsCacheBreakpoint(tools []anthropicTool) {
@@ -409,9 +522,13 @@ func markPrefixCacheBreakpoint(msgs []anthropicMessage) {
 			blocks = arr
 		}
 	}
-	if len(blocks) == 0 {
+	// Thinking blocks cannot carry cache_control: mark the last other one.
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if t := blocks[i].Type; t == "thinking" || t == "redacted_thinking" {
+			continue
+		}
+		blocks[i].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+		m.Content = blocks
 		return
 	}
-	blocks[len(blocks)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
-	m.Content = blocks
 }
