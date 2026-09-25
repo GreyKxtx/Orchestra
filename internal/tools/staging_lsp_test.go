@@ -180,3 +180,58 @@ func TestStaging_LSP_DidChangeOnSecondStage(t *testing.T) {
 		t.Errorf("last change: got %q, want %q", got[len(got)-1], second)
 	}
 }
+
+// ClearStaged used to drop the overlay and leave the language server with
+// the draft it was shown: diagnostics and navigation for the file kept
+// answering from an edit that no longer existed (DATA-8). The documents are
+// closed, so the server reads the disk again.
+func TestStaging_LSP_ClearStagedClosesTheDocuments(t *testing.T) {
+	r, srv := newDryRunRunnerWithMockLSP(t)
+	path := "main.go"
+	if err := os.WriteFile(filepath.Join(r.workspaceRoot, path), []byte("package main\n\nfunc Old() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	opened := make(chan struct{}, 1)
+	srv.SetHandler("textDocument/didOpen", func(json.RawMessage) (json.RawMessage, error) {
+		select {
+		case opened <- struct{}{}:
+		default:
+		}
+		return json.RawMessage(`null`), nil
+	})
+	closed := make(chan string, 1)
+	srv.SetHandler("textDocument/didClose", func(params json.RawMessage) (json.RawMessage, error) {
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+		}
+		_ = json.Unmarshal(params, &p)
+		closed <- p.TextDocument.URI
+		return json.RawMessage(`null`), nil
+	})
+	if _, err := r.FSWrite(context.Background(), FSWriteRequest{
+		Path: path, Content: "package main\n\nfunc Staged() {}\n",
+		FileHash: cache.ComputeSHA256([]byte("package main\n\nfunc Old() {}\n")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-opened:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the staged write never reached the server")
+	}
+
+	r.ClearStaged()
+	select {
+	case uri := <-closed:
+		if want := lsp.PathToURI(filepath.Join(r.workspaceRoot, path)); uri != want {
+			t.Fatalf("closed %s, want %s", uri, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ClearStaged left the document open in the server")
+	}
+	if r.HasStagedChanges() {
+		t.Fatal("the overlay is not cleared")
+	}
+}
