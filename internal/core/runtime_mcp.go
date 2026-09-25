@@ -8,94 +8,8 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/mcp"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// MCPServerParams is the JSON shape for one MCP server (upsert / test).
-type MCPServerParams struct {
-	Name         string            `json:"name"`
-	Command      []string          `json:"command"`
-	Env          map[string]string `json:"env,omitempty"`
-	Disabled     bool              `json:"disabled,omitempty"`
-	CallTimeoutS int               `json:"call_timeout_s,omitempty"`
-	AllowedTools []string          `json:"allowed_tools,omitempty"`
-}
-
-// MCPListParams is reserved.
-type MCPListParams struct{}
-
-// MCPServerView is one row in mcp.list.
-type MCPServerView struct {
-	Name         string            `json:"name"`
-	Command      []string          `json:"command"`
-	Env          map[string]string `json:"env,omitempty"`
-	Disabled     bool              `json:"disabled"`
-	CallTimeoutS int               `json:"call_timeout_s,omitempty"`
-	AllowedTools []string          `json:"allowed_tools,omitempty"`
-	Status       string            `json:"status"` // running | disabled | error | stopped
-	ToolCount    int               `json:"tool_count"`
-	Tools        []string          `json:"tools,omitempty"` // discovered tool names (for settings toggles)
-	Error        string            `json:"error,omitempty"`
-}
-
-// MCPListResult is returned by mcp.list.
-type MCPListResult struct {
-	Servers []MCPServerView `json:"servers"`
-}
-
-// MCPUpsertParams adds or replaces a server by name.
-type MCPUpsertParams struct {
-	Server  MCPServerParams `json:"server"`
-	Persist *bool           `json:"persist,omitempty"` // default true
-}
-
-// MCPUpsertResult is returned after upsert + hot reload.
-type MCPUpsertResult struct {
-	Servers   []MCPServerView `json:"servers"`
-	Persisted bool            `json:"persisted"`
-	Warnings  []string        `json:"warnings,omitempty"`
-}
-
-// MCPDeleteParams removes a server by name.
-type MCPDeleteParams struct {
-	Name    string `json:"name"`
-	Persist *bool  `json:"persist,omitempty"`
-}
-
-// MCPDeleteResult mirrors list after delete.
-type MCPDeleteResult struct {
-	Servers   []MCPServerView `json:"servers"`
-	Persisted bool            `json:"persisted"`
-	Warnings  []string        `json:"warnings,omitempty"`
-}
-
-// MCPSetDisabledParams toggles disabled.
-type MCPSetDisabledParams struct {
-	Name     string `json:"name"`
-	Disabled bool   `json:"disabled"`
-	Persist  *bool  `json:"persist,omitempty"`
-}
-
-// MCPSetDisabledResult mirrors list after toggle.
-type MCPSetDisabledResult struct {
-	Servers   []MCPServerView `json:"servers"`
-	Persisted bool            `json:"persisted"`
-	Warnings  []string        `json:"warnings,omitempty"`
-}
-
-// MCPTestParams probes a server config (or named cfg entry) without persisting.
-type MCPTestParams struct {
-	Name   string           `json:"name,omitempty"`   // use existing cfg entry
-	Server *MCPServerParams `json:"server,omitempty"` // or ad-hoc config
-}
-
-// MCPTestResult lists tools from a temporary connection.
-type MCPTestResult struct {
-	OK      bool     `json:"ok"`
-	Name    string   `json:"name"`
-	Tools   []string `json:"tools,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	Elapsed string   `json:"elapsed,omitempty"`
-}
 
 // ReplaceMCP hot-swaps the MCP manager and rebinds tools.Runner. Caller must
 // hold runMu and cfgMu (mcp.list readers see mcpManager under cfgMu.RLock).
@@ -436,3 +350,20 @@ func (c *Core) MCPTest(ctx context.Context, params MCPTestParams) (*MCPTestResul
 		Elapsed: time.Since(start).Round(time.Millisecond).String(),
 	}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	MCPDeleteParams      = wire.MCPDeleteParams
+	MCPDeleteResult      = wire.MCPDeleteResult
+	MCPListParams        = wire.MCPListParams
+	MCPListResult        = wire.MCPListResult
+	MCPServerParams      = wire.MCPServerParams
+	MCPServerView        = wire.MCPServerView
+	MCPSetDisabledParams = wire.MCPSetDisabledParams
+	MCPSetDisabledResult = wire.MCPSetDisabledResult
+	MCPTestParams        = wire.MCPTestParams
+	MCPTestResult        = wire.MCPTestResult
+	MCPUpsertParams      = wire.MCPUpsertParams
+	MCPUpsertResult      = wire.MCPUpsertResult
+)

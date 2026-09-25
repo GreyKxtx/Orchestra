@@ -10,22 +10,10 @@ import (
 	"github.com/orchestra/orchestra/internal/stageinvoke"
 	"github.com/orchestra/orchestra/internal/workflow"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // --- workflow.list ---
-
-type WorkflowListParams struct{}
-
-type WorkflowListResult struct {
-	Workflows []WorkflowSummary `json:"workflows"`
-}
-
-type WorkflowSummary struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Stages      []string `json:"stages"`
-	Source      string   `json:"source,omitempty"`
-}
 
 func (c *Core) WorkflowList(_ WorkflowListParams) (*WorkflowListResult, error) {
 	if c == nil {
@@ -70,23 +58,6 @@ type WorkflowRunParams struct {
 	// PermissionRequester, if non-nil, gates exec.run interactively. Set
 	// programmatically by the RPC handler.
 	PermissionRequester PermissionRequester `json:"-"`
-}
-
-type WorkflowRunResult struct {
-	Name          string            `json:"name"`
-	Outputs       map[string]string `json:"outputs"`
-	FinalStage    string            `json:"final_stage,omitempty"`
-	FailureReason string            `json:"failure_reason,omitempty"`
-	Stages        []StageRecord     `json:"stages"`
-	DurationMS    int64             `json:"duration_ms"`
-}
-
-type StageRecord struct {
-	StageID  string `json:"stage_id"`
-	Attempt  int    `json:"attempt"`
-	Marker   string `json:"marker,omitempty"`
-	Action   string `json:"action"`
-	OutputKB int    `json:"output_kb"`
 }
 
 func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*WorkflowRunResult, error) {
@@ -239,3 +210,13 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 	}
 	return out, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	StageRecord        = wire.StageRecord
+	WorkflowListParams = wire.WorkflowListParams
+	WorkflowListResult = wire.WorkflowListResult
+	WorkflowRunResult  = wire.WorkflowRunResult
+	WorkflowSummary    = wire.WorkflowSummary
+)

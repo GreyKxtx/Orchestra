@@ -5,10 +5,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// AgentsListParams is reserved.
-type AgentsListParams struct{}
 
 // AgentsListResult lists custom agents and built-in mode names.
 type AgentsListResult struct {
@@ -45,12 +43,6 @@ type AgentsUpsertParams struct {
 type AgentsUpsertResult struct {
 	Agents    []config.AgentDefinition `json:"agents"`
 	Persisted bool                     `json:"persisted"`
-}
-
-// AgentsDeleteParams removes a custom agent by name.
-type AgentsDeleteParams struct {
-	Name    string `json:"name"`
-	Persist *bool  `json:"persist,omitempty"`
 }
 
 // AgentsDeleteResult is returned after delete.
@@ -156,3 +148,10 @@ func (c *Core) AgentsDelete(params AgentsDeleteParams) (*AgentsDeleteResult, err
 		Persisted: persisted,
 	}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	AgentsDeleteParams = wire.AgentsDeleteParams
+	AgentsListParams   = wire.AgentsListParams
+)

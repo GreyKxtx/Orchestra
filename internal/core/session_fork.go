@@ -5,19 +5,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-type SessionForkParams struct {
-	SessionID      string `json:"session_id"`
-	UIMessageIndex int    `json:"ui_message_index"` // exclusive; must point at role=user
-}
-
-type SessionForkResult struct {
-	SessionID       string `json:"session_id"` // the new branch
-	ParentID        string `json:"parent_id"`
-	UIMessages      int    `json:"ui_messages"`
-	HistoryMessages int    `json:"history_messages"`
-}
 
 // SessionFork copies a session's history up to (but not including) a user
 // checkpoint into a new session, leaving the original untouched. This is the
@@ -84,3 +73,10 @@ func (c *Core) SessionFork(params SessionForkParams) (*SessionForkResult, error)
 		HistoryMessages: len(branch.History),
 	}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	SessionForkParams = wire.SessionForkParams
+	SessionForkResult = wire.SessionForkResult
+)

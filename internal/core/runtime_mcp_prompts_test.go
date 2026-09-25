@@ -93,7 +93,7 @@ func TestMCPPromptList_ShipsTheRenderedCommandAndHint(t *testing.T) {
 	// shape: two implementations of the same formatting drift.
 	cmd := MCPPromptCommand{Server: "linear", Name: "triage", Description: "Triage",
 		Arguments: []MCPPromptArgView{{Name: "id", Required: true}}}
-	cmd.fill()
+	cmd.Fill()
 	if cmd.Slash != "/mcp:linear:triage" {
 		t.Errorf("Slash = %q", cmd.Slash)
 	}

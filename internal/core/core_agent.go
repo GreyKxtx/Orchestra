@@ -19,6 +19,7 @@ import (
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 type AgentRunParams struct {
@@ -144,23 +145,9 @@ type AgentRunResult struct {
 	RoutedFrom string `json:"routed_from,omitempty"`
 }
 
-// UsageSnapshot is the totals view of one run's token consumption, returned
-// over JSON-RPC so the caller (CLI) can display a summary without re-reading
-// usage.jsonl.
-type UsageSnapshot struct {
-	Calls            int     `json:"calls"`
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	TotalTokens      int     `json:"total_tokens"`
-	CostUSD          float64 `json:"cost_usd,omitempty"`
-	// CachedPromptTokens / CacheWriteTokens are the prompt-cache split the
-	// provider reported, summed over the turn. Zero for local models.
-	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
-	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
-	// Entries is the per-(provider, model) breakdown — in orchestra mode each
-	// tier model gets its own row, so the caller can show what each cost.
-	Entries []usage.Entry `json:"entries,omitempty"`
-}
+// UsageSnapshot is the turn's token spend as agent.run and session.message
+// answer it: the wire's Usage (protocol/wire).
+type UsageSnapshot = wire.Usage
 
 func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunResult, error) {
 	if c == nil {
@@ -397,13 +384,30 @@ func usageSnapshotFrom(t *usage.Tracker) *UsageSnapshot {
 		CostUSD:            sum.CostUSD,
 		CachedPromptTokens: sum.CachedPromptTokens,
 		CacheWriteTokens:   sum.CacheWriteTokens,
-		Entries:            t.Snapshot(),
+		Entries:            usageEntries(t.Snapshot()),
 	}
 }
 
-type ToolCallParams struct {
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
+// usageEntries puts the tracker's per-(provider, model) rows on the wire.
+func usageEntries(in []usage.Entry) []wire.UsageEntry {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]wire.UsageEntry, len(in))
+	for i, e := range in {
+		out[i] = wire.UsageEntry{
+			Provider:           e.Provider,
+			Model:              e.Model,
+			Calls:              e.Calls,
+			PromptTokens:       e.PromptTokens,
+			CompletionTokens:   e.CompletionTokens,
+			TotalTokens:        e.TotalTokens,
+			CostUSD:            e.CostUSD,
+			CachedPromptTokens: e.CachedPromptTokens,
+			CacheWriteTokens:   e.CacheWriteTokens,
+		}
+	}
+	return out
 }
 
 func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMessage, error) {
@@ -594,3 +598,9 @@ func (c *Core) validateTurnMode(mode string) error {
 	}
 	return nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	ToolCallParams = wire.ToolCallParams
+)

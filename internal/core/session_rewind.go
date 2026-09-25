@@ -6,18 +6,8 @@ import (
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-type SessionRewindParams struct {
-	SessionID      string `json:"session_id"`
-	UIMessageIndex int    `json:"ui_message_index"` // inclusive; must point at role=user
-}
-
-type SessionRewindResult struct {
-	SessionID       string `json:"session_id"`
-	UIMessages      int    `json:"ui_messages"`
-	HistoryMessages int    `json:"history_messages"`
-}
 
 // SessionRewind truncates UI projection and LLM history to a user-message checkpoint.
 func (c *Core) SessionRewind(params SessionRewindParams) (*SessionRewindResult, error) {
@@ -130,3 +120,10 @@ func truncateTurnStartsForUIPrefix(turnStarts []int, ui []sessionfile.UIMessage)
 	}
 	return turnStarts[:userTarget]
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	SessionRewindParams = wire.SessionRewindParams
+	SessionRewindResult = wire.SessionRewindResult
+)

@@ -8,17 +8,11 @@ import (
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // RuleSuggestionPayload mirrors agent.RuleSuggestion on the wire.
-type RuleSuggestionPayload struct {
-	Dept     string `json:"dept"`
-	File     string `json:"file"`
-	Count    int    `json:"count"`
-	Verify   string `json:"verify,omitempty"`
-	RuleLine string `json:"rule_line"`
-	Text     string `json:"text"`
-}
+type RuleSuggestionPayload = wire.RuleSuggestion
 
 // ruleSuggestionPayload converts a turn's RuleSuggestion (or nil) into its
 // wire form.
@@ -33,18 +27,6 @@ func ruleSuggestionPayload(s *agent.RuleSuggestion) *RuleSuggestionPayload {
 }
 
 // --- lesson.rule_respond ---
-
-type RuleSuggestionRespondParams struct {
-	Accept   bool   `json:"accept"`
-	Dept     string `json:"dept"`
-	File     string `json:"file"`
-	Verify   string `json:"verify"`
-	RuleLine string `json:"rule_line"`
-}
-
-type RuleSuggestionRespondResult struct {
-	Applied bool `json:"applied"`
-}
 
 // RuleSuggestionRespond is the human's answer to a RuleSuggestion: accept
 // appends RuleLine to the project's instructions file (whichever file
@@ -85,3 +67,10 @@ func appendProjectInstructionsLine(root, line string) error {
 	_, err = f.WriteString("\n- " + line + "\n")
 	return err
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	RuleSuggestionRespondParams = wire.RuleSuggestionRespondParams
+	RuleSuggestionRespondResult = wire.RuleSuggestionRespondResult
+)

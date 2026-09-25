@@ -317,12 +317,8 @@ func (c *Client) SessionUISync(ctx context.Context, sessionID, title, model stri
 	return c.rpc.Call(ctx, "session.ui_sync", params, &res)
 }
 
-// SessionRewindResult mirrors core.SessionRewindResult.
-type SessionRewindResult struct {
-	SessionID       string `json:"session_id"`
-	UIMessages      int    `json:"ui_messages"`
-	HistoryMessages int    `json:"history_messages"`
-}
+// SessionRewindResult is the wire's (protocol/wire).
+type SessionRewindResult = wire.SessionRewindResult
 
 // SessionRewind truncates UI projection and LLM history to a user checkpoint.
 func (c *Client) SessionRewind(ctx context.Context, sessionID string, uiMessageIndex int) (*SessionRewindResult, error) {
@@ -337,13 +333,8 @@ func (c *Client) SessionRewind(ctx context.Context, sessionID string, uiMessageI
 	return &res, nil
 }
 
-// SessionForkResult mirrors core.SessionForkResult.
-type SessionForkResult struct {
-	SessionID       string `json:"session_id"`
-	ParentID        string `json:"parent_id"`
-	UIMessages      int    `json:"ui_messages"`
-	HistoryMessages int    `json:"history_messages"`
-}
+// SessionForkResult is the wire's (protocol/wire).
+type SessionForkResult = wire.SessionForkResult
 
 // SessionFork branches a session at a user checkpoint, leaving the original intact.
 func (c *Client) SessionFork(ctx context.Context, sessionID string, uiMessageIndex int) (*SessionForkResult, error) {
@@ -449,14 +440,8 @@ func (c *Client) AgentRun(ctx context.Context, query, mode string, opts AgentRun
 	return err
 }
 
-// WorkflowSummary is a lightweight view of a workflow returned by
-// workflow.list. Mirrors core.WorkflowSummary.
-type WorkflowSummary struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Stages      []string `json:"stages"`
-	Source      string   `json:"source,omitempty"`
-}
+// WorkflowSummary is the wire's (protocol/wire).
+type WorkflowSummary = wire.WorkflowSummary
 
 // WorkflowList calls workflow.list on the core and returns the list.
 func (c *Client) WorkflowList(ctx context.Context) ([]WorkflowSummary, error) {
@@ -477,14 +462,8 @@ type WorkflowRunOptions struct {
 	AllowBrowser bool
 }
 
-// WorkflowRunResult mirrors core.WorkflowRunResult.
-type WorkflowRunResult struct {
-	Name          string            `json:"name"`
-	Outputs       map[string]string `json:"outputs"`
-	FinalStage    string            `json:"final_stage,omitempty"`
-	FailureReason string            `json:"failure_reason,omitempty"`
-	DurationMS    int64             `json:"duration_ms"`
-}
+// WorkflowRunResult is the wire's (protocol/wire).
+type WorkflowRunResult = wire.WorkflowRunResult
 
 // WorkflowRun invokes workflow.run on the core. Streaming stage events
 // arrive via Events() (EventWorkflowStageStart / EventWorkflowStageDone).
@@ -504,16 +483,8 @@ func (c *Client) WorkflowRun(ctx context.Context, name, arguments string, opts W
 	return &res, nil
 }
 
-// SkillSummary mirrors core.SkillSummary.
-type SkillSummary struct {
-	Name              string   `json:"name"`
-	Description       string   `json:"description"`
-	Tools             []string `json:"tools,omitempty"`
-	Provider          string   `json:"provider,omitempty"`
-	Model             string   `json:"model,omitempty"`
-	CompletionMarkers []string `json:"completion_markers,omitempty"`
-	Origin            string   `json:"origin,omitempty"`
-}
+// SkillSummary is the wire's (protocol/wire).
+type SkillSummary = wire.SkillSummary
 
 // SkillList calls skill.list on the core and returns the list.
 func (c *Client) SkillList(ctx context.Context) ([]SkillSummary, error) {
@@ -533,13 +504,8 @@ type SkillInvokeOptions struct {
 	AllowBrowser bool
 }
 
-// SkillInvokeResult mirrors core.SkillInvokeResult.
-type SkillInvokeResult struct {
-	Skill  string `json:"skill"`
-	Output string `json:"output"`
-	Marker string `json:"marker,omitempty"`
-	Steps  int    `json:"steps"`
-}
+// SkillInvokeResult is the wire's (protocol/wire).
+type SkillInvokeResult = wire.SkillInvokeResult
 
 // SkillInvoke calls skill.invoke on the core.
 func (c *Client) SkillInvoke(ctx context.Context, name, arguments string, opts SkillInvokeOptions) (*SkillInvokeResult, error) {
@@ -992,12 +958,8 @@ func (c *Client) QueryLSPStatusDetail(ctx context.Context) (status string, perce
 	return st, 0, "", nil
 }
 
-// SessionCompactResult mirrors core.SessionCompactResult.
-type SessionCompactResult struct {
-	SessionID  string `json:"session_id"`
-	BeforeMsgs int    `json:"before_msgs"`
-	AfterMsgs  int    `json:"after_msgs"`
-}
+// SessionCompactResult is the wire's (protocol/wire).
+type SessionCompactResult = wire.SessionCompactResult
 
 // SessionCompact forces LLM history compaction for the session.
 func (c *Client) SessionCompact(ctx context.Context, sessionID, query string) (*SessionCompactResult, error) {
@@ -1015,22 +977,8 @@ func (c *Client) SessionCompact(ctx context.Context, sessionID, query string) (*
 	return &res, nil
 }
 
-// MCPPromptCommand is one MCP server prompt offered as a slash command.
-type MCPPromptCommand struct {
-	Server      string `json:"server"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Arguments   []struct {
-		Name        string `json:"name"`
-		Description string `json:"description,omitempty"`
-		Required    bool   `json:"required,omitempty"`
-	} `json:"arguments,omitempty"`
-
-	// Slash and Hint are rendered by the core so every surface shows the
-	// same row.
-	Slash string `json:"slash,omitempty"`
-	Hint  string `json:"hint,omitempty"`
-}
+// MCPPromptCommand is the wire's (protocol/wire).
+type MCPPromptCommand = wire.MCPPromptCommand
 
 // MCPPromptList asks the core which prompts the running MCP servers offer.
 func (c *Client) MCPPromptList(ctx context.Context) ([]MCPPromptCommand, error) {

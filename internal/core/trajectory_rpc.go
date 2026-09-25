@@ -7,12 +7,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/trajectory"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// SessionTrajectoryParams selects the session whose log to read.
-type SessionTrajectoryParams struct {
-	SessionID string `json:"session_id"`
-}
 
 // SessionTrajectoryResult carries a session's recorded events.
 //
@@ -95,3 +91,9 @@ func sessionHasNothingToRecordLocked(sess *coresession.Session) bool {
 	}
 	return (len(sess.History) == 0 && len(sess.UIMessages()) == 0) || sess.IsBusy()
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	SessionTrajectoryParams = wire.SessionTrajectoryParams
+)

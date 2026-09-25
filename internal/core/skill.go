@@ -12,25 +12,10 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // --- skill.list ---
-
-type SkillListParams struct{}
-
-type SkillListResult struct {
-	Skills []SkillSummary `json:"skills"`
-}
-
-type SkillSummary struct {
-	Name              string   `json:"name"`
-	Description       string   `json:"description"`
-	Tools             []string `json:"tools,omitempty"`
-	Provider          string   `json:"provider,omitempty"`
-	Model             string   `json:"model,omitempty"`
-	CompletionMarkers []string `json:"completion_markers,omitempty"`
-	Origin            string   `json:"origin,omitempty"`
-}
 
 func (c *Core) SkillList(_ SkillListParams) (*SkillListResult, error) {
 	if c == nil {
@@ -70,13 +55,6 @@ type SkillInvokeParams struct {
 
 	// PermissionRequester, if non-nil, gates exec.run interactively.
 	PermissionRequester PermissionRequester `json:"-"`
-}
-
-type SkillInvokeResult struct {
-	Skill  string `json:"skill"`
-	Output string `json:"output"`
-	Marker string `json:"marker,omitempty"`
-	Steps  int    `json:"steps"`
 }
 
 func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*SkillInvokeResult, error) {
@@ -236,3 +214,12 @@ func detectSkillMarker(output string, markers []string) string {
 	}
 	return ""
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	SkillInvokeResult = wire.SkillInvokeResult
+	SkillListParams   = wire.SkillListParams
+	SkillListResult   = wire.SkillListResult
+	SkillSummary      = wire.SkillSummary
+)

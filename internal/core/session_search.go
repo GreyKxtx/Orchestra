@@ -3,14 +3,8 @@ package core
 import (
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-type SessionSearchParams struct {
-	Query       string `json:"query"`
-	Insensitive bool   `json:"insensitive,omitempty"`
-	IncludeAll  bool   `json:"include_all,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-}
 
 type SessionSearchResult struct {
 	Hits []sessionfile.Hit `json:"hits"`
@@ -33,3 +27,9 @@ func (c *Core) SessionSearch(params SessionSearchParams) (*SessionSearchResult, 
 	}
 	return &SessionSearchResult{Hits: hits}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	SessionSearchParams = wire.SessionSearchParams
+)

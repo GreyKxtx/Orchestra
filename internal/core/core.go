@@ -516,12 +516,6 @@ type OpsApplyParams struct {
 	Backup bool        `json:"backup"`
 }
 
-// OpsApplyResult reports the result of applying pending ops.
-type OpsApplyResult struct {
-	Applied      bool     `json:"applied"`
-	ChangedFiles []string `json:"changed_files"`
-}
-
 // OpsApply applies a list of internal ops against the workspace.
 // It is intended for TUI "confirm apply" flows: the client received the ops
 // via a pending_ops event, user confirmed, and now sends them back to apply.
@@ -562,3 +556,9 @@ func samePath(a, b string) bool {
 	}
 	return a == b
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	OpsApplyResult = wire.OpsApplyResult
+)
