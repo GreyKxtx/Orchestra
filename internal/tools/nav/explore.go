@@ -46,6 +46,12 @@ func (c *Client) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest
 
 // FetchCKGContext returns a <ckg_context> block for step-1 prompt injection:
 // ranked FQNs plus a depth-1 neighborhood, capped at ~1500 tokens.
+//
+// It answers from the graph as it is and refreshes it in the background.
+// Every agent run — every child of a fan-out too — used to refresh here
+// synchronously under the graph's write lock: a scan per run, and the
+// children serialized on it (DATA-3). A symbol the tree gained since the
+// last pass shows up on the next run; explore refreshes before it answers.
 func (c *Client) FetchCKGContext(ctx context.Context, query string) string {
 	snap, unlock := c.ckgSnap()
 	defer unlock()
@@ -53,9 +59,8 @@ func (c *Client) FetchCKGContext(ctx context.Context, query string) string {
 		return ""
 	}
 	orch := ckg.NewOrchestratorWithIgnores(snap.Store, c.Root, c.ExcludeDirs)
-	if err := orch.UpdateGraph(ctx); err != nil {
-		return ""
-	}
+	// The turn's ctx ends with the turn; the pass it started should not.
+	orch.RefreshInBackground(context.WithoutCancel(ctx))
 	nodes, err := snap.Store.FindRelevantNodes(ctx, query, 12)
 	if err != nil || len(nodes) == 0 {
 		return ""

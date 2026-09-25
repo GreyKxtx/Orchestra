@@ -99,11 +99,48 @@ func (s *Scanner) isIgnored(path string) bool {
 	return false
 }
 
+// ScanResult is what one walk of the workspace found.
+type ScanResult struct {
+	// ToParse are new or modified files; ToDelete files the graph has that
+	// the tree no longer does.
+	ToParse  []string
+	ToDelete []string
+	// Stamps is every indexable file on disk with the hash the graph should
+	// hold for it.
+	Stamps map[string]FileStamp
+	// Restamp are unchanged files whose stored stamp is stale (a touch, a row
+	// from before stamps existed): the pass records the new stamp so the next
+	// walk does not hash them again.
+	Restamp map[string]FileStamp
+	// Hashed is how many files had to be read: their stamp was unknown or had
+	// changed. An unchanged tree hashes nothing.
+	Hashed int
+}
+
 // Scan performs an incremental scan of the workspace.
 // Returns a list of file paths that need parsing (new or modified)
 // and a list of file paths that should be deleted from the DB.
 func (s *Scanner) Scan(ctx context.Context) (toParse []string, toDelete []string, err error) {
-	currentFiles := make(map[string]string) // normalized rel path -> hash
+	res, err := s.ScanChanges(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return res.ToParse, res.ToDelete, nil
+}
+
+// ScanChanges walks the workspace and compares it with the graph. A file
+// whose mtime and size match its stored stamp is taken as unchanged without
+// being read; every pass used to hash every file (DATA-3).
+//
+// It reads the store without locking it: the orchestrator holds the graph
+// lock it needs around the call (the read lock for a refresh, the write
+// lock for the warmup, which reserves it up front).
+func (s *Scanner) ScanChanges(ctx context.Context) (*ScanResult, error) {
+	known, err := s.store.fileStampsUnlocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res := &ScanResult{Stamps: make(map[string]FileStamp, len(known)), Restamp: map[string]FileStamp{}}
 
 	err = filepath.Walk(s.root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -127,47 +164,50 @@ func (s *Scanner) Scan(ctx context.Context) (toParse []string, toDelete []string
 			return nil
 		}
 
-		hash, hashErr := hashFile(path)
-		if hashErr != nil {
-			return nil
-		}
-
 		rel, relErr := filepath.Rel(s.root, path)
 		if relErr != nil {
 			return nil
 		}
-
 		normalizedPath := filepath.ToSlash(rel)
-		currentFiles[normalizedPath] = hash
+
+		stamp := FileStamp{MTimeNS: info.ModTime().UnixNano(), Size: info.Size()}
+		old, seen := known[normalizedPath]
+		if seen && old.MTimeNS != 0 && old.MTimeNS == stamp.MTimeNS && old.Size == stamp.Size {
+			stamp.Hash = old.Hash
+		} else {
+			hash, hashErr := hashFile(path)
+			if hashErr != nil {
+				return nil
+			}
+			res.Hashed++
+			stamp.Hash = hash
+			if seen && old.Hash == hash {
+				res.Restamp[normalizedPath] = stamp
+			}
+		}
+		res.Stamps[normalizedPath] = stamp
 		return nil
 	})
-
 	if err != nil {
-		return nil, nil, err
-	}
-
-	// Compare with DB state
-	dbFiles, err := s.store.GetAllFiles(ctx)
-	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Find new and modified files
-	for path, hash := range currentFiles {
-		dbHash, exists := dbFiles[path]
-		if !exists || dbHash != hash {
-			toParse = append(toParse, path)
+	for path, stamp := range res.Stamps {
+		old, exists := known[path]
+		if !exists || old.Hash != stamp.Hash {
+			res.ToParse = append(res.ToParse, path)
 		}
 	}
 
 	// Find deleted files
-	for path := range dbFiles {
-		if _, exists := currentFiles[path]; !exists {
-			toDelete = append(toDelete, path)
+	for path := range known {
+		if _, exists := res.Stamps[path]; !exists {
+			res.ToDelete = append(res.ToDelete, path)
 		}
 	}
 
-	return toParse, toDelete, nil
+	return res, nil
 }
 
 func hashFile(path string) (string, error) {

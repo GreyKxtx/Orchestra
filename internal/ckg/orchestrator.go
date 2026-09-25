@@ -2,8 +2,10 @@ package ckg
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Orchestrator ties together the Store, Scanner, and Parser to keep the
@@ -46,19 +48,22 @@ func (o *Orchestrator) modulePathFor(ext string) string {
 
 // UpdateGraph runs an incremental scan and parses any changed files,
 // updating the database transactionally.
+//
+// Refreshes are serialized with each other (refreshMu). The walk and the
+// parsing run without the graph's write lock; readers are held out only
+// while the changed files are written and relinked, and not at all on an
+// unchanged tree (DATA-3: every explore and every child agent used to wait
+// for a full scan under the lock).
 func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 	if o == nil || o.store == nil {
 		return nil
 	}
-	// Multiple entry points can refresh the same store (warmup, status,
-	// rebuild, explore). Serialize them so the UI never observes a partial
-	// file/language distribution.
-	o.store.indexMu.Lock()
-	defer o.store.indexMu.Unlock()
-	return o.updateGraph(ctx)
+	o.store.refreshMu.Lock()
+	defer o.store.refreshMu.Unlock()
+	return o.updateGraph(ctx, false)
 }
 
-// UpdateGraphAsync reserves the store update lock before returning, then runs
+// UpdateGraphAsync reserves the store's locks before returning, then runs
 // the scan in a goroutine. Reserving synchronously closes the race where a
 // status request could read stale/partial counters before warmup starts.
 func (o *Orchestrator) UpdateGraphAsync(ctx context.Context) <-chan error {
@@ -68,28 +73,67 @@ func (o *Orchestrator) UpdateGraphAsync(ctx context.Context) <-chan error {
 		close(done)
 		return done
 	}
+	o.store.refreshMu.Lock()
 	o.store.indexMu.Lock()
 	go func() {
+		defer o.store.refreshMu.Unlock()
 		defer o.store.indexMu.Unlock()
 		defer close(done)
-		done <- o.updateGraph(ctx)
+		done <- o.updateGraph(ctx, true)
 	}()
 	return done
 }
 
-func (o *Orchestrator) updateGraph(ctx context.Context) error {
-	toParse, toDelete, err := o.scanner.Scan(ctx)
+// RefreshInBackground starts UpdateGraph in a goroutine unless a background
+// pass is already running, and returns at once: the caller reads the graph
+// as it is now. Step-1 context is fetched this way — once per agent run,
+// children included — so a run no longer pays a scan before its first step.
+func (o *Orchestrator) RefreshInBackground(ctx context.Context) {
+	if o == nil || o.store == nil {
+		return
+	}
+	if !o.store.refreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer o.store.refreshing.Store(false)
+		_ = o.UpdateGraph(ctx)
+	}()
+}
+
+// parsedFile is one changed file, parsed before the write lock is taken.
+type parsedFile struct {
+	rel     string
+	stamp   FileStamp
+	lang    string
+	module  string
+	pkgName string
+	nodes   []Node
+	edges   []Edge
+}
+
+// updateGraph is one pass. Called with refreshMu held; with locked, the
+// caller holds indexMu for the whole pass (the warmup does, so index.status
+// never reads a half-built graph), otherwise it is taken for the writes only.
+func (o *Orchestrator) updateGraph(ctx context.Context, locked bool) error {
+	start := time.Now()
+	var st RefreshStats
+
+	if !locked {
+		o.store.indexMu.RLock()
+	}
+	changes, err := o.scanner.ScanChanges(ctx)
+	if !locked {
+		o.store.indexMu.RUnlock()
+	}
 	if err != nil {
 		return err
 	}
+	st.Seen = len(changes.Stamps)
+	st.Hashed = changes.Hashed
 
-	for _, relPath := range toDelete {
-		if err := o.store.DeleteFile(ctx, relPath); err != nil {
-			return err
-		}
-	}
-
-	for _, relPath := range toParse {
+	var parsed []parsedFile
+	for _, relPath := range changes.ToParse {
 		absPath := filepath.Join(o.root, filepath.FromSlash(relPath))
 		ext := strings.ToLower(filepath.Ext(absPath))
 		mp := o.modulePathFor(ext)
@@ -98,19 +142,74 @@ func (o *Orchestrator) updateGraph(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-
-		hash, err := hashFile(absPath)
+		// The stamp is of the content that was parsed: a file that changes
+		// between the walk and here is stamped anew and parsed again next pass.
+		stamp, err := stampFile(absPath)
 		if err != nil {
 			continue
 		}
-
-		lang := LanguageFromExt(ext)
-		if err := o.store.SaveFileNodes(ctx, relPath, hash, lang, mp, pkgName, nodes, edges); err != nil {
-			return err
-		}
+		parsed = append(parsed, parsedFile{
+			rel: relPath, stamp: stamp, lang: LanguageFromExt(ext), module: mp, pkgName: pkgName,
+			nodes: nodes, edges: edges,
+		})
 	}
 
-	// Always relink after the pass — including a single-file incremental
-	// update — so new calls from B attach to already-indexed nodes in A.
-	return o.store.RelinkUnresolvedEdges(ctx)
+	if len(parsed) == 0 && len(changes.ToDelete) == 0 && len(changes.Restamp) == 0 {
+		st.Elapsed = time.Since(start)
+		o.store.setLastRefresh(st)
+		return nil
+	}
+
+	lockedAt := time.Now()
+	if !locked {
+		o.store.indexMu.Lock()
+		defer o.store.indexMu.Unlock()
+	}
+	if o.store.db == nil {
+		return errStoreClosed
+	}
+	defer func() {
+		st.Locked = time.Since(lockedAt)
+		st.Elapsed = time.Since(start)
+		o.store.setLastRefresh(st)
+	}()
+
+	for _, relPath := range changes.ToDelete {
+		if err := o.store.DeleteFile(ctx, relPath); err != nil {
+			return err
+		}
+		st.Deleted++
+	}
+
+	var inserted []Node
+	for _, f := range parsed {
+		if err := o.store.SaveFileNodesStamped(ctx, f.rel, f.stamp, f.lang, f.module, f.pkgName, f.nodes, f.edges); err != nil {
+			return err
+		}
+		st.Parsed++
+		inserted = append(inserted, f.nodes...)
+	}
+	if err := o.store.restampFiles(ctx, changes.Restamp); err != nil {
+		return err
+	}
+
+	// Relink after the pass — including a single-file incremental update —
+	// so old calls to a symbol this pass (re)indexed attach to it. Only the
+	// edges that name one of the inserted nodes are looked at.
+	candidates, relinked, err := o.store.RelinkEdgesTo(ctx, inserted)
+	st.Candidates, st.Relinked = candidates, relinked
+	return err
+}
+
+// stampFile hashes the file and records the mtime and size it had.
+func stampFile(absPath string) (FileStamp, error) {
+	hash, err := hashFile(absPath)
+	if err != nil {
+		return FileStamp{}, err
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return FileStamp{}, err
+	}
+	return FileStamp{Hash: hash, MTimeNS: info.ModTime().UnixNano(), Size: info.Size()}, nil
 }
