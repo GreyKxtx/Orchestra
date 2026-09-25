@@ -105,12 +105,26 @@ func NormalizeLLMWithDefs(v *schema.Validator, resp *llm.CompleteResponse, defs 
 	// Loose final: {"patches":[...]} without schema validator or when validator
 	// rejects AgentStep wrapper (common with thinking models).
 	if strings.Contains(jsonStr, `"patches"`) {
-		var ps patches.PatchSet
-		if err := json.Unmarshal([]byte(jsonStr), &ps); err == nil {
+		var loose struct {
+			patches.PatchSet
+			// The AgentStep wrapper, {"type":"final","final":{"patches":…}}.
+			// Read as a bare PatchSet it has no patches: a wrapped final the
+			// schema refused became a final with none, and the model's edits
+			// were dropped without a word (LLM-13).
+			Final *patches.PatchSet `json:"final"`
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &loose); err == nil {
+			// A patch without a file_hash is taken here on purpose: the final
+			// guard (run_final.go) refuses one that restates an edit already
+			// made, and applies one after an edit that failed.
+			list := loose.Patches
+			if len(list) == 0 && loose.Final != nil {
+				list = loose.Final.Patches
+			}
 			step := Step{
 				Type: StepFinal,
 				Final: &Final{
-					Patches: ps.Patches,
+					Patches: list,
 				},
 			}
 			return &step, jsonStr, nil

@@ -41,6 +41,16 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 			}
 			currentContent = b
 		}
+		// A file_hash names the version the model read. The disk path's
+		// applier checks it; the staging path ignored it (LLM-13) and
+		// edited whatever the file had become since.
+		if want := strings.TrimSpace(req.FileHash); want != "" {
+			if have := cache.ComputeSHA256(currentContent); have != want {
+				return nil, protocol.NewError(protocol.StaleContent, "file changed since it was read (file_hash mismatch): read it again", map[string]any{
+					"path": relSlash, "expected_hash": want, "current_hash": have,
+				})
+			}
+		}
 		newContent, err := c.applyEditSearchReplace(ctx, relSlash, currentContent, req.Search, req.Replace, req.TargetSymbol)
 		if err != nil {
 			return nil, err
