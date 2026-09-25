@@ -58,12 +58,14 @@ type Core struct {
 	warm      warmups
 	closeOnce sync.Once
 	closeErr  error
-	// runMu serialises every RPC entry point that mutates shared Runner state
-	// (SetDryRun, ClearStaged, staged-overlay writes). Without this, two
-	// concurrent agent.run / session.message / workflow.run / skill.invoke /
-	// ops.apply / session.apply_pending calls race over the dry-run flag and
-	// can leak staged ops between requests.
-	runMu    sync.Mutex
+	// runMu is held shared by every turn (session.message, agent.run,
+	// workflow.run, skill.invoke, an apply) and exclusively by whatever
+	// changes the core's shared state under them: the config, the model, the
+	// MCP servers, the index. Turns of different sessions run at once — each
+	// stages into a tools.Turn of its own, so there is no shared flag or
+	// overlay left to serialise on (ARCH-5); a session's own turns are
+	// serialised by the session.
+	runMu    sync.RWMutex
 	sessions *coresession.Manager
 	// housekeeping runs at most every housekeepEvery, on session.start.
 	houseMu      sync.Mutex
@@ -531,8 +533,8 @@ func (c *Core) OpsApply(ctx context.Context, p OpsApplyParams) (*OpsApplyResult,
 		DryRun: false,
 		Backup: p.Backup,
 	}
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
 	resp, err := c.tools.FSApplyOps(ctx, req)
 	if err != nil {
 		return nil, err

@@ -39,7 +39,7 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 		caps := tools.Capabilities{
 			// A preview turn in core refuses every command; offering bash
 			// there only buys refusals until the breaker ends the turn.
-			Exec:    (staticExec || a.opts.PermissionRequester != nil) && !a.tools.ExecRefusedByDryRun(),
+			Exec:    (staticExec || a.opts.PermissionRequester != nil) && !a.tools.ExecRefusedByDryRunIn(a.runCtx),
 			Web:     a.opts.AllowWeb,
 			Browser: a.opts.AllowBrowser,
 		}

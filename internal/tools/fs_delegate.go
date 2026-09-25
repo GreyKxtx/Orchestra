@@ -161,18 +161,34 @@ func (r *Runner) ASTRename(ctx context.Context, req ASTRenameRequest) (*ASTRenam
 	return r.fsClient().ASTRename(ctx, req)
 }
 
+// EffectiveContent is the language servers' view of relPath: the content
+// staged for it in any live turn — the default turn first — else the disk.
+// Two turns staging one file show the server the first one's draft; the
+// server holds one version of each document either way.
 func (r *Runner) EffectiveContent(relPath string) (string, bool) {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return "", false
+	for _, t := range r.liveTurns() {
+		if content, ok := t.EffectiveContent(relPath); ok {
+			return content, true
+		}
 	}
-	return r.fsTools.Overlay.EffectiveContent(relPath)
+	return "", false
 }
 
+// ListStagedPaths is every path staged in any live turn, for the language
+// servers: those documents stay open when the rest are evicted.
 func (r *Runner) ListStagedPaths() []string {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return nil
+	seen := map[string]struct{}{}
+	var out []string
+	for _, t := range r.liveTurns() {
+		for _, p := range t.ListStagedPaths() {
+			if _, dup := seen[p]; dup {
+				continue
+			}
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
 	}
-	return r.fsTools.Overlay.ListStagedPaths()
+	return out
 }
 
 // overlayAt is the overlay the agent behind ctx stages into: its task's layer
@@ -181,10 +197,10 @@ func (r *Runner) overlayAt(ctx context.Context) *fs.Overlay {
 	if l := fs.OverlayFrom(ctx); l != nil {
 		return l
 	}
-	if r.fsTools == nil {
+	if r == nil || r.turn == nil {
 		return nil
 	}
-	return r.fsTools.Overlay
+	return r.turn.overlay
 }
 
 // StagedOps returns the ops staged by the agent behind ctx: a task's own, or
@@ -260,65 +276,31 @@ func WithLayer(ctx context.Context, layer *fs.Overlay) context.Context {
 	return fs.WithOverlay(ctx, layer)
 }
 
-// StagedSnapshot returns the turn's staged files for a checkpoint.
+// StagedSnapshot returns the default turn's staged files for a checkpoint.
 func (r *Runner) StagedSnapshot() []fs.StagedSnapshot {
-	if r.fsTools == nil {
-		return nil
-	}
-	return r.fsTools.Overlay.SnapshotStaged()
+	return r.turn.StagedSnapshot()
 }
 
-// RestoreStaged stages a checkpoint's files in the turn's overlay and shows
-// them to the language server, as staging them in the run did.
+// RestoreStaged stages a checkpoint's files in the default turn's overlay.
 func (r *Runner) RestoreStaged(files []fs.StagedSnapshot) {
-	if r.fsTools == nil {
-		return
-	}
-	r.fsTools.Overlay.RestoreStaged(files)
-	if r.lspManager == nil || r.lspManager.IsEmpty() {
-		return
-	}
-	for _, f := range files {
-		_ = r.lspManager.SyncStaged(context.Background(), f.Path, f.Content)
-	}
+	r.turn.RestoreStaged(files)
 }
 
-// ClearStaged drops the turn's staged edits, and closes their documents in
-// the language servers: they were opened with the staged content, and a
-// server that kept them would answer from a draft that no longer exists
-// (DATA-8). The file is what the disk says again.
+// ClearStaged drops the default turn's staged edits (see Turn.ClearStaged).
 func (r *Runner) ClearStaged() {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return
-	}
-	paths := r.fsTools.Overlay.ListStagedPaths()
-	r.fsTools.Overlay.ClearStaged()
-	if len(paths) == 0 || r.lspManager == nil || r.lspManager.IsEmpty() {
-		return
-	}
-	ctx := context.Background()
-	for _, p := range paths {
-		r.lspManager.DidClose(ctx, p)
-	}
+	r.turn.ClearStaged()
 }
 
-// UnstagePath removes one path from the dry-run staging overlay after a successful disk commit.
+// UnstagePath removes one path from the default turn's overlay after a
+// successful disk commit.
 func (r *Runner) UnstagePath(path string) {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return
-	}
 	rel := strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
-	if rel == "" {
-		return
-	}
-	r.fsTools.Overlay.UnstagePath(rel)
+	r.turn.UnstagePath(rel)
 }
 
+// HasStagedChanges reports whether the default turn has staged edits.
 func (r *Runner) HasStagedChanges() bool {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return false
-	}
-	return r.fsTools.Overlay.HasStagedChanges()
+	return r.turn.HasStagedChanges()
 }
 
 func (r *Runner) CommitStagedPath(ctx context.Context, path string, backup bool) (*FSApplyOpsResponse, error) {

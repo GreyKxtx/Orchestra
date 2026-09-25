@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/stageinvoke"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/workflow"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/wire"
@@ -126,26 +128,13 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 		CompactionContextTokens: wfCompactionCtxTokens,
 	})
 
-	// Serialise against any concurrent agent.run / skill.invoke / ops.apply
-	// that would otherwise race on the shared Runner's dry-run flag / staged
-	// ops. Also wire params.Apply into runner-level staging so workflow
-	// stages honour the dry-run/apply contract.
-	//
-	// Restore the prior dry-run flag on exit: WorkflowRun's Apply selection
-	// is per-call, not a long-lived mode change. Without restore, a direct
-	// tool.call right after a dry-run workflow would be spuriously blocked.
-	c.runMu.Lock()
-	prevDry := c.tools.DryRun()
-	c.tools.SetDryRun(true)
-	c.tools.ClearStaged()
-	c.tools.SetAllowExecDespiteDryRun(params.Apply)
-	c.tools.SetCommitsToDisk(params.Apply)
-	defer func() {
-		c.tools.SetAllowExecDespiteDryRun(false)
-		c.tools.SetCommitsToDisk(false)
-		c.tools.SetDryRun(prevDry)
-		c.runMu.Unlock()
-	}()
+	// The workflow's own turn: its stages stage there, and params.Apply
+	// decides whether they commit. runMu is held shared.
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
+	turn := c.tools.NewTurn(tools.TurnOptions{DryRun: true, Apply: params.Apply, Memory: memory.ConfigFrom(c.cfg.Memory)})
+	defer turn.Close()
+	ctx = tools.WithTurn(ctx, turn)
 
 	markersFor := func(skillName string) []string {
 		s := skills.Find(discoveredSkills, skillName)

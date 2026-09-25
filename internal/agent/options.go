@@ -603,6 +603,11 @@ type Agent struct {
 	// Cleared after the reminder is injected so it fires at most once.
 	justSwitchedFromPlan bool
 
+	// runCtx is the context Run was given: the turn the agent's tools run in
+	// (tools.WithTurn), for the calls made outside a step — the tool list,
+	// the auto memory note.
+	runCtx context.Context
+
 	// toolDefsCache memoises buildToolDefs result. Inputs (opts.Mode,
 	// AllowExec/Web/Browser, SubtaskRunner, QuestionAsker, Skills,
 	// ExtraTools, CustomTools) are fixed at agent construction time, so

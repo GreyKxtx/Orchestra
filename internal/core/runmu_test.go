@@ -38,20 +38,19 @@ func (g *gateLLM) Complete(ctx context.Context, _ llm.CompleteRequest) (*llm.Com
 
 func (g *gateLLM) Plan(_ context.Context, _ string) (string, error) { return "{}", nil }
 
-// TestRunMu_SessionMessageBlocksOpsApply verifies session.message holds runMu
-// for the whole turn so concurrent ops.apply cannot interleave staging setup.
-func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
+// TestRunMu_OpsApplyRunsDuringATurn: a turn holds runMu shared, so an
+// ops.apply — like a turn of another session — runs while it is in flight.
+// It used to wait for the whole turn: every session of a core queued behind
+// the slowest model (ARCH-5). What still waits is a change to the core's
+// shared state, see TestRunMu_ConfigRefreshWaitsForTheTurn.
+func TestRunMu_OpsApplyRunsDuringATurn(t *testing.T) {
 	root := t.TempDir()
 	release := make(chan struct{})
 	entered := make(chan struct{})
 	_, h := setupInitializedCore(t, root, &gateLLM{release: release, entered: entered})
-	// A failed wait must not leave the turn blocked on the gate, holding
-	// runMu, while cleanup closes the core under the ops.apply behind it.
 	var releaseOnce sync.Once
 	open := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(open)
-	// Waits that only matter when the test fails are generous: -race on a
-	// Windows runner is slow, and 2s was not always enough there.
 	const slow = 20 * time.Second
 
 	startP, _ := json.Marshal(SessionStartParams{})
@@ -61,16 +60,12 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 	}
 	sessionID := startRes.(*SessionStartResult).SessionID
 
-	msgP, _ := json.Marshal(SessionMessageParams{
-		SessionID: sessionID,
-		Content:   "hello",
-	})
+	msgP, _ := json.Marshal(SessionMessageParams{SessionID: sessionID, Content: "hello"})
 	msgDone := make(chan error, 1)
 	go func() {
 		_, err := h.Handle(context.Background(), "session.message", msgP)
 		msgDone <- err
 	}()
-
 	select {
 	case <-entered:
 	case <-time.After(slow):
@@ -83,19 +78,10 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 		_, _ = h.Handle(context.Background(), "ops.apply", applyP)
 		close(applyDone)
 	}()
-
-	deadline := time.After(300 * time.Millisecond)
 	select {
-	case <-deadline:
-		select {
-		case <-applyDone:
-			t.Fatal("ops.apply finished while session.message still held runMu")
-		default:
-		}
-	case err := <-msgDone:
-		t.Fatalf("session.message returned early: %v", err)
 	case <-applyDone:
-		t.Fatal("ops.apply finished while session.message still held runMu")
+	case <-time.After(slow):
+		t.Fatal("ops.apply waited on a session's turn")
 	}
 
 	open()
@@ -107,12 +93,57 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 	case <-time.After(slow):
 		t.Fatal("session.message did not complete")
 	}
+}
 
-	select {
-	case <-applyDone:
-	case <-time.After(slow):
-		t.Fatal("ops.apply should complete after session.message releases runMu")
+// TestRunMu_ConfigRefreshWaitsForTheTurn: what changes the core's shared
+// state takes runMu exclusively, so it still waits for the turns in flight
+// — swapping the model or the config under a running agent would race it.
+func TestRunMu_ConfigRefreshWaitsForTheTurn(t *testing.T) {
+	root := t.TempDir()
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	c, h := setupInitializedCore(t, root, &gateLLM{release: release, entered: entered})
+	var releaseOnce sync.Once
+	open := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(open)
+	const slow = 20 * time.Second
+
+	startP, _ := json.Marshal(SessionStartParams{})
+	startRes, err := h.Handle(context.Background(), "session.start", startP)
+	if err != nil {
+		t.Fatal(err)
 	}
+	sessionID := startRes.(*SessionStartResult).SessionID
+	msgP, _ := json.Marshal(SessionMessageParams{SessionID: sessionID, Content: "hello"})
+	msgDone := make(chan error, 1)
+	go func() {
+		_, err := h.Handle(context.Background(), "session.message", msgP)
+		msgDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(slow):
+		t.Fatal("session.message did not reach LLM Complete")
+	}
+
+	// The exclusive lock is not available while the turn runs.
+	if c.runMu.TryLock() {
+		c.runMu.Unlock()
+		t.Fatal("the core's exclusive lock was free during a turn: a config swap could race the agent")
+	}
+	open()
+	select {
+	case err := <-msgDone:
+		if err != nil {
+			t.Fatalf("session.message: %v", err)
+		}
+	case <-time.After(slow):
+		t.Fatal("session.message did not complete")
+	}
+	if !c.runMu.TryLock() {
+		t.Fatal("the exclusive lock is still held after the turn")
+	}
+	c.runMu.Unlock()
 }
 
 // TestReadOnlyListsRespondDuringTurn: agents.list and mcp.list are read-only

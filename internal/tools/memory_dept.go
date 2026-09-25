@@ -17,7 +17,7 @@ func (r *Runner) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*Memo
 		scope = "project"
 	}
 	if lessons.IsDeptScope(scope) {
-		if err := r.consumeDeptLessonWrite(); err != nil {
+		if err := r.TurnAt(ctx).consumeDeptLessonWrite(); err != nil {
 			return nil, err
 		}
 		dept := lessons.NormalizeDept(scope)
@@ -31,5 +31,5 @@ func (r *Runner) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*Memo
 		}
 		return &MemoryWriteResponse{Path: rel, Written: len(clipped), Scope: dept}, nil
 	}
-	return r.sessionClient().MemoryWrite(ctx, req)
+	return r.sessionClientAt(ctx).MemoryWrite(ctx, req)
 }

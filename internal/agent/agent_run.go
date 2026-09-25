@@ -57,7 +57,8 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.finalsWhileTasksRun = 0
 	a.llmInfraErr = nil
 	a.contextPressureWarned = false
-	a.tools.ResetDeptLessonBudget()
+	a.runCtx = ctx
+	a.tools.ResetDeptLessonBudget(ctx)
 	a.initWorkingState(userQuery)
 	defer a.persistWorkingTurnDigest()
 	// Named returns: recordTurnLesson runs after result is fully built by

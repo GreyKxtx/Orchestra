@@ -215,13 +215,15 @@
 
 Отступления от плана фазы: `tools.CompactSchemasForSmallContext` оставлен намеренно — решение слать полные схемы принято по замеру и может быть пересмотрено; `seenInstructionDirs` уже ограничен 256 агентами (LRU), сброс по концу прогона не делался; `CLAUDE.md` про `-race` на Windows к этому моменту уже был верен.
 
+**ARCH-5 закрыт 2026-09-25** (остаток фазы 4, та же ветка). Состояние хода вынесено из общего `tools.Runner` в объект `tools.Turn` — staging overlay, флаги dry-run / apply / allow-exec, memory-контекст сессии, бюджет dept-уроков — который едет в контексте (`tools.WithTurn`); `Runner.TurnAt(ctx)` даёт default-turn тем вызовам, у которых своего нет (прямой путь CLI, `tool.call`). У каждой сессии свой Turn (`Session.Turn`, закрывается вместе с сессией), `agent.run` / `workflow.run` / `skill.invoke` получают свежий; чекпоинт пишет staged-правки своего Turn'а; `session.apply_pending` и `discard_pending` работают с правками своей сессии; языковые серверы видят staged-документы всех живых Turn'ов. `Core.runMu` — RWMutex: ходы держат его shared, изменения общего состояния ядра (конфиг, модель, MCP-серверы, индекс) — эксклюзивно. Приёмка: ход второй сессии завершается, пока первая ждёт модель (мутация обратно в эксклюзивный лок валит тест); staged-правки сессии переживают ход другой сессии и её apply_pending; `ops.apply` не стоит за чужим ходом. Коммит `4faaebd`.
+
 **Осталось по плану (остатки фаз 4–8):**
 - 4.2: `TaskRunner` как адаптер над `Graph`, `StallDetector`; 4.5: типизированная шина артефактов; 4.6: OTel-экспорт и resume для `session.message` (сессия сохраняет историю после шагов, но не граф задач и staging);
 - ORC-8 (воркер с goal в прозе без проверок scope; `bash` мимо слоёв), ORC-12 (остаток: `acceptance_checks` и `tsc` в dry-run);
 - LLM-11 (остаток: `bash` и CKG видят диск, а не staging), LLM-13 (остаток: см. выше), кеш как отдельный слой (фаза 5);
 - 6: типы с `ops.AnyOp` / `patches.Patch` / config / session / CKG в `internal/core` (см. выше); TUI по-прежнему объявляет `SessionGetResult` (несёт `sessionfile.UIMessage`);
 - 7: fsnotify вместо фонового прохода по запросу; `didChange` при смене хеша диска под открытым LSP-документом;
-- ARCH-5…ARCH-7 (`Runtime` на ход вместо состояния в `tools.Runner`, god-объекты, один запускатель дочерних агентов);
+- ARCH-6, ARCH-7 (god-объекты; один запускатель дочерних агентов); остаток ARCH-5 — `applyMu` применителя всё ещё один на процесс (backup-файлы), `SetLSPInstallConsent` на runner'е;
 - 8: 45 недостижимых функций остаются как тестовые сиды; `CompactSchemasForSmallContext` — по замеру; сброс `seenInstructionDirs` по концу прогона;
 - `pipeline` как пресет workflow (пока оставлен: у него стабильный флаг `--pipeline`);
 - UI доверия в клиентах.

@@ -444,7 +444,13 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = fmt.Errorf("--image: configured LLM is not marked multimodal in .orchestra.yml (set llm.multimodal: true after switching to a VL model)")
 			return retErr
 		}
-		out, err := runApplyInProcess(cmd.Context(), cfg, core.AgentRunParams{
+		// cmd.Context is nil when the command runs outside cobra's Execute
+		// (tests call runApply directly).
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		out, err := runApplyInProcess(ctx, cfg, core.AgentRunParams{
 			Query:             query,
 			Apply:             !dryRun,
 			Backup:            backup,

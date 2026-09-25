@@ -63,16 +63,16 @@ type turnCheckpoint struct {
 	mu     sync.Mutex
 	root   string
 	cp     checkpoint.Checkpoint
-	tools  *tools.Runner
+	turn   *tools.Turn
 	tasks  *tasks.TaskRunner
 	warned bool
 }
 
-func newTurnCheckpoint(root, runID string, params resumableParams, tr *tools.Runner) *turnCheckpoint {
+func newTurnCheckpoint(root, runID string, params resumableParams, turn *tools.Turn) *turnCheckpoint {
 	raw, _ := json.Marshal(params)
 	return &turnCheckpoint{
-		root:  root,
-		tools: tr,
+		root: root,
+		turn: turn,
 		cp: checkpoint.Checkpoint{
 			RunID:       runID,
 			ProjectRoot: root,
@@ -151,7 +151,7 @@ func (k *turnCheckpoint) finish(runErr error) {
 }
 
 func (k *turnCheckpoint) saveLocked() {
-	k.cp.Staged = stagedToCheckpoint(k.tools.StagedSnapshot())
+	k.cp.Staged = stagedToCheckpoint(k.turn.StagedSnapshot())
 	if k.tasks != nil {
 		if raw, err := json.Marshal(k.tasks.Records()); err == nil {
 			k.cp.Tasks = raw
@@ -204,8 +204,8 @@ func (c *Core) loadResumable(ref string) (*checkpoint.Checkpoint, error) {
 // restoreRun puts a checkpoint back: the staged edits into the turn's
 // overlay, the task graph into the runner. It returns the history the agent
 // goes on from, with a note that says what came back.
-func restoreRun(ctx context.Context, cp *checkpoint.Checkpoint, tr *tools.Runner, runner *tasks.TaskRunner) []llm.Message {
-	tr.RestoreStaged(stagedFromCheckpoint(cp.Staged))
+func restoreRun(ctx context.Context, cp *checkpoint.Checkpoint, turn *tools.Turn, runner *tasks.TaskRunner) []llm.Message {
+	turn.RestoreStaged(stagedFromCheckpoint(cp.Staged))
 	var records []tasks.TaskRecord
 	if len(cp.Tasks) > 0 {
 		_ = json.Unmarshal(cp.Tasks, &records)

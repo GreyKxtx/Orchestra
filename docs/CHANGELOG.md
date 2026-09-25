@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — sessions run at once (2026-09)
+
+- **A turn's state is the turn's.** The core's one `tools.Runner` held the dry-run flag, the staging overlay and the session memory context, so every turn of every session took one mutex for its whole length: a second session waited on the first one's model, and its turn wiped the first one's staged edits. Each session now has a `tools.Turn` of its own — its overlay, its flags, its memory — carried in the context; `agent.run`, `workflow.run` and `skill.invoke` get a fresh one. Two sessions' turns run at the same time; `session.apply_pending` and `session.discard_pending` act on that session's edits alone. A change to the core's shared state (the model, the config, the MCP servers, the index) still waits for the turns in flight. `ops.apply` no longer queues behind a running turn either.
+
 ### Changed — less to carry (2026-09)
 
 - **What nothing reaches is gone.** 126 functions no code path reached, four shim files, the v0.3 file cache (`patch/cache`; `patch/fsutil` keeps its two hash helpers), `--no-daemon`, `cli/metrics.go` and the `plan_enter` stub are removed. What remains unreachable is test infrastructure. The docs name the packages that exist.
