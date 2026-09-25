@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -94,7 +95,7 @@ func lockStale(info *TurnLockInfo) bool {
 // CheckTurnLock returns the current lock (nil when absent) and whether it is
 // stale (holder dead / too old) and can be reclaimed.
 func CheckTurnLock(workspaceRoot, id string) (info *TurnLockInfo, stale bool) {
-	if workspaceRoot == "" || id == "" {
+	if workspaceRoot == "" || !sessionfile.ValidID(id) {
 		return nil, false
 	}
 	info = readTurnLock(workspaceRoot, id)
@@ -123,6 +124,9 @@ func ClearStaleTurnLock(workspaceRoot, id string) bool {
 func AcquireTurnLock(workspaceRoot, id string) (release func(), err error) {
 	if workspaceRoot == "" || id == "" {
 		return func() {}, nil
+	}
+	if err := sessionfile.CheckID(id); err != nil {
+		return nil, err
 	}
 	if existing := readTurnLock(workspaceRoot, id); existing != nil && !lockStale(existing) {
 		return nil, &TurnActiveError{PID: existing.PID}

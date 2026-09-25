@@ -47,6 +47,10 @@ func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, err
 	var s *coresession.Session
 	var restored bool
 	if id != "" {
+		if !sessionfile.ValidID(id) {
+			return nil, protocol.NewError(protocol.InvalidParams,
+				"session_id may contain only letters, digits, '.', '_' and '-'", map[string]any{"session_id": id})
+		}
 		var err error
 		s, err = c.sessions.LoadOrCreate(c.workspaceRoot, id)
 		if err != nil {

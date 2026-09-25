@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 // splitPersistedDigests extracts digest bodies from a .turns.md file, oldest first.
@@ -23,7 +25,7 @@ func turnDigestPath(workspaceRoot, sessionID string) string {
 }
 
 func loadTurnDigests(workspaceRoot, sessionID string) []string {
-	if strings.TrimSpace(sessionID) == "" {
+	if !sessionfile.ValidID(strings.TrimSpace(sessionID)) {
 		return nil
 	}
 	data, err := os.ReadFile(turnDigestPath(workspaceRoot, sessionID))

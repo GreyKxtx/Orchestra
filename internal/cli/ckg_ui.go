@@ -34,7 +34,9 @@ var ckgUiCmd = &cobra.Command{
 			log.Printf("Warning: failed to update graph: %v", err)
 		}
 
-		return ckg.StartUIServer(store, absRoot, port)
+		// Loopback only, and the printed URL carries a fresh token: the UI
+		// serves the project's source.
+		return ckg.StartUIServer(store, absRoot, port, mustToken())
 	},
 }
 

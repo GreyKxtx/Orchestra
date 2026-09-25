@@ -3,11 +3,13 @@ package memory
 import (
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/lessons"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // FallbackNames lists the project-instruction filenames Orchestra reads, in
@@ -322,8 +324,11 @@ func (s *Store) readByPath(path string, maxBytes int) (content, layer string, er
 		layer = layerOrchestra
 		content = s.sliceLayer(layerOrchestra, maxBytes)
 	case strings.HasPrefix(path, ".orchestra/memory/"):
+		abs, pathErr := s.memoryFilePath(path)
+		if pathErr != nil {
+			return "", "", pathErr
+		}
 		if strings.HasPrefix(path, lessons.RelDir+"/") {
-			abs := filepath.Join(s.workspaceRoot, filepath.FromSlash(path))
 			data, readErr := os.ReadFile(abs)
 			if readErr != nil {
 				return "", layerLessons, readErr
@@ -335,7 +340,6 @@ func (s *Store) readByPath(path string, maxBytes int) (content, layer string, er
 			}
 			break
 		}
-		abs := filepath.Join(s.workspaceRoot, filepath.FromSlash(path))
 		data, readErr := os.ReadFile(abs)
 		if readErr != nil {
 			return "", layerRepo, readErr
@@ -353,3 +357,43 @@ func (s *Store) readByPath(path string, maxBytes int) (content, layer string, er
 	}
 	return content, layer, nil
 }
+
+// memoryFilePath resolves a workspace-relative path that names a file under
+// .orchestra/memory/ and refuses one that leaves that directory. The prefix
+// used to be checked on the raw string while filepath.Join resolved "..", so
+// ".orchestra/memory/../../../<anything>" read any file on disk into the
+// model's context — past the workspace containment and the credential-file
+// refusal every other tool goes through.
+func (s *Store) memoryFilePath(rel string) (string, error) {
+	if s.workspaceRoot == "" {
+		return "", fmt.Errorf("memory store has no workspace")
+	}
+	if pathpkg.Clean(rel) != rel || strings.Contains("/"+rel+"/", "/../") ||
+		!strings.HasPrefix(rel, memoryRelDir+"/") {
+		return "", fmt.Errorf("path not in memory store: %s", rel)
+	}
+	abs, _, err := fsutil.ResolveInWorkspace(s.workspaceRoot, rel)
+	if err != nil {
+		return "", fmt.Errorf("path not in memory store: %w", err)
+	}
+	if _, err := os.Lstat(abs); err != nil {
+		return "", err
+	}
+	// Symlinks inside the memory directory must not lead out of it.
+	memDir := filepath.Join(s.workspaceRoot, filepath.FromSlash(memoryRelDir))
+	realDir, realAbs := memDir, abs
+	if r, err := filepath.EvalSymlinks(memDir); err == nil {
+		realDir = r
+	}
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		realAbs = r
+	}
+	inside, err := filepath.Rel(realDir, realAbs)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) || filepath.IsAbs(inside) {
+		return "", fmt.Errorf("path not in memory store: %s", rel)
+	}
+	return abs, nil
+}
+
+// memoryRelDir is the workspace-relative directory memory_read may read from.
+const memoryRelDir = ".orchestra/memory"
