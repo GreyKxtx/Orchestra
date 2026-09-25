@@ -63,6 +63,25 @@ type AgentConfig struct {
 	// ChildTimeoutS is the child lifetime / sync wait used when the model
 	// omits timeout_ms on task / task_spawn (default 600 s).
 	ChildTimeoutS int `yaml:"child_timeout_s,omitempty"`
+	// TurnBudget caps what one turn's tree of subagents may spend.
+	TurnBudget TurnBudgetConfig `yaml:"turn_budget,omitempty"`
+}
+
+// TurnBudgetConfig caps one turn's tree of subagents as a whole: how many
+// tasks it starts, how many tokens they spend, how long it runs. Each child
+// has its own step and time limits, but nothing bounded the tree: a Lead
+// could respawn the same failing WorkOrder until the user noticed. Zero means
+// the default; a negative value turns a limit off.
+type TurnBudgetConfig struct {
+	// MaxTasks is how many subagent tasks a turn may start (default 64).
+	MaxTasks int `yaml:"max_tasks,omitempty"`
+	// MaxTokens caps the tokens the turn has spent (root and children) past
+	// which no new task starts (default: no cap — prices differ too much for
+	// one number to fit).
+	MaxTokens int `yaml:"max_tokens,omitempty"`
+	// MaxWallS is how long, from its first task, a turn's tree may run;
+	// tasks still running then are cancelled (default 7200 s).
+	MaxWallS int `yaml:"max_wall_s,omitempty"`
 }
 
 // ApplyOutputDisk writes changes to the workspace (subject to --apply / dry-run).

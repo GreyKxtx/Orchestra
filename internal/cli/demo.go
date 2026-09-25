@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/spf13/cobra"
 )
 

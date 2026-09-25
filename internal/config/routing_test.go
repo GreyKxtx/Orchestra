@@ -139,8 +139,7 @@ func TestRoutingMapLegacy(t *testing.T) {
 		}
 	}
 	// Built-in defaults apply when the file omits legacy_map.
-	var empty *OrchestraRouting
-	empty = &OrchestraRouting{}
+	empty := &OrchestraRouting{}
 	if got := empty.MapLegacy("planner"); got != "L5" {
 		t.Errorf("default MapLegacy(planner) = %q, want L5", got)
 	}

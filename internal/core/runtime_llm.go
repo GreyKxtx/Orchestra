@@ -260,18 +260,18 @@ type RuntimeGetLLMParams struct{}
 
 // RuntimeGetLLMResult exposes current LLM connection settings (key masked).
 type RuntimeGetLLMResult struct {
-	Provider       string  `json:"provider"`
-	APIBase        string  `json:"api_base"`
-	Model          string  `json:"model"`
-	APIKeySet      bool    `json:"api_key_set"`
-	APIKeyHint     string  `json:"api_key_hint,omitempty"`
-	Temperature    float32 `json:"temperature"`
-	MaxTokens      int     `json:"max_tokens"`
-	TimeoutS       int     `json:"timeout_s"`
-	PromptFamily   string  `json:"prompt_family,omitempty"`
-	Multimodal     bool    `json:"multimodal"`
-	NumCtx         int     `json:"num_ctx,omitempty"`
-	ContextTokens  int     `json:"context_tokens,omitempty"`
+	Provider      string  `json:"provider"`
+	APIBase       string  `json:"api_base"`
+	Model         string  `json:"model"`
+	APIKeySet     bool    `json:"api_key_set"`
+	APIKeyHint    string  `json:"api_key_hint,omitempty"`
+	Temperature   float32 `json:"temperature"`
+	MaxTokens     int     `json:"max_tokens"`
+	TimeoutS      int     `json:"timeout_s"`
+	PromptFamily  string  `json:"prompt_family,omitempty"`
+	Multimodal    bool    `json:"multimodal"`
+	NumCtx        int     `json:"num_ctx,omitempty"`
+	ContextTokens int     `json:"context_tokens,omitempty"`
 }
 
 // RuntimeConfigureLLMParams updates connection fields. Empty api_key leaves the existing key.
@@ -284,7 +284,7 @@ type RuntimeConfigureLLMParams struct {
 	MaxTokens    *int     `json:"max_tokens,omitempty"`
 	TimeoutS     *int     `json:"timeout_s,omitempty"`
 	PromptFamily *string  `json:"prompt_family,omitempty"`
-	Multimodal     *bool    `json:"multimodal,omitempty"`
+	Multimodal   *bool    `json:"multimodal,omitempty"`
 	Persist      *bool    `json:"persist,omitempty"` // default true
 }
 

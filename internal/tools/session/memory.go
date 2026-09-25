@@ -8,6 +8,7 @@ import (
 	"github.com/orchestra/orchestra/internal/embed"
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
+	"github.com/orchestra/orchestra/llm"
 )
 
 type MemoryWriteRequest struct {
@@ -61,13 +62,12 @@ func (c *Client) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*Memo
 	if c == nil {
 		return nil, fmt.Errorf("session client is nil")
 	}
-	_ = ctx
 	store := c.memoryStore()
 	scope := strings.TrimSpace(req.Scope)
 	if scope == "" {
 		scope = "project"
 	}
-	res, err := store.AppendEntry(scope, memory.NormalizeEntryType(req.Type), req.Content)
+	res, err := store.AppendEntryFrom(scope, memory.NormalizeEntryType(req.Type), req.Content, memorySource(llm.TraceFrom(ctx)))
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +75,24 @@ func (c *Client) MemoryWrite(ctx context.Context, req MemoryWriteRequest) (*Memo
 		Path: res.Path, Written: res.Written, Scope: scope,
 		Type: res.Type, Replaced: res.Replaced,
 	}, nil
+}
+
+// memorySource names who is writing a memory entry: the subagent task, or the
+// main agent, and the run. Memory is injected into every later prompt, so a
+// note has to stay traceable to the run and agent that wrote it — a subagent
+// that read a hostile page could otherwise plant instructions for good.
+func memorySource(t llm.Trace) string {
+	who := "main agent"
+	if t.TaskID != "" {
+		who = t.TaskID
+	}
+	if t.RunID == "" {
+		if t.TaskID == "" {
+			return ""
+		}
+		return who
+	}
+	return who + ", run " + t.RunID
 }
 
 func (c *Client) MemoryRead(ctx context.Context, req MemoryReadRequest) (*MemoryReadResponse, error) {

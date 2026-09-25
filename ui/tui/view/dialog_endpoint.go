@@ -182,8 +182,7 @@ func (d *EndpointDialog) Render(screenW, screenH int) string {
 		return s
 	}
 
-	sub := "API key + base URL"
-	hint := "Tab: URL ↔ Key · Enter далее · Esc назад"
+	var sub, hint string
 	if d.urlEditable {
 		sub = "OpenAI-compatible base URL + API key (ключ опционален)"
 		switch d.provider.Key {

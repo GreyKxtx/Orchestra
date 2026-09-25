@@ -1,6 +1,7 @@
 package ckg
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -24,8 +25,8 @@ func ValidateSyntax(relPath string, content []byte) error {
 	defer parser.Close()
 	parser.SetLanguage(lang)
 
-	tree := parser.Parse(nil, content)
-	if tree == nil {
+	tree, err := parser.ParseCtx(context.Background(), nil, content)
+	if err != nil || tree == nil {
 		return nil
 	}
 	defer tree.Close()

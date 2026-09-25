@@ -120,15 +120,6 @@ func normalizeExplorePath(p string) string {
 	return p
 }
 
-// Legacy aliases used by tests.
-func (a *Agent) resetWorkerExploreGate() { a.resetExploreFirstGate() }
-
-func (a *Agent) markWorkerExploreSatisfied(name string) { a.markExploreFirstSatisfied(name) }
-
-func (a *Agent) checkWorkerExploreFirstGate(name string, history []llm.Message) error {
-	return a.checkExploreFirstGate(name, history)
-}
-
 // markParallelExploreSatisfied opens the gate for a batch of read-only calls.
 //
 // The serial path marks the gate per successful tool, but every tool the gate

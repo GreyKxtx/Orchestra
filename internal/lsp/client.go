@@ -469,7 +469,7 @@ func (c *Client) readLoop() {
 				// Default for unknown methods stays `null` (we don't
 				// implement workspace/applyEdit, window/showMessageRequest,
 				// etc. yet — those servers fall back gracefully).
-				var result json.RawMessage = json.RawMessage(`null`)
+				result := json.RawMessage(`null`)
 				if msg.Method == "workspace/configuration" {
 					// Return one null per requested item — gopls / tsserver
 					// both accept this as "no client-side config".

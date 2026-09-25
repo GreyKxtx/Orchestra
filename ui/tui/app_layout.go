@@ -144,7 +144,7 @@ func (a *App) layout() {
 		} else {
 			a.stickyTasksTopY = -1
 		}
-		a.inputRowY = a.inputBoxTopY + 1 // skip pad-top
+		a.inputRowY = a.inputBoxTopY + 1  // skip pad-top
 		a.inputColX = chatSidePad + 1 + 2 // border + pad-left
 		a.chatTopY = chatVerticalPad
 		a.statusBarRowY = a.height - 1

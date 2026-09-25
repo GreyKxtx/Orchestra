@@ -102,6 +102,13 @@ func Append(projectRoot string, e Entry) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("lessons mkdir: %w", err)
 	}
+	// Parallel workers of one department write the same file: the duplicate
+	// check, the append and the trim are one step under its lock.
+	unlock, err := fsutil.LockFile(path + ".lock")
+	if err != nil {
+		return fmt.Errorf("lessons lock: %w", err)
+	}
+	defer unlock()
 	if dup, err := isDuplicate(path, body); err != nil {
 		return err
 	} else if dup {
@@ -297,7 +304,6 @@ func FormatLeadInject(projectRoot string) string {
 		if len(chunk) > remaining {
 			b.WriteString(chunk[:remaining])
 			truncated = true
-			remaining = 0
 			break
 		}
 		b.WriteString(chunk)

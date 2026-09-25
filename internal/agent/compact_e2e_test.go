@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // stepLLM scripts a sequence of agent steps and counts compaction calls so we

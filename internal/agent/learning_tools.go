@@ -60,8 +60,8 @@ func (a *Agent) handlePlaybookPromote(ctx context.Context, input json.RawMessage
 		return nil, fmt.Errorf("playbook_promote is available only to Dept Lead (architecture) or Orchestra Lead")
 	}
 	var req struct {
-		Dept          string `json:"dept"`
-		PromotionRef  string `json:"promotion_ref"`
+		Dept         string `json:"dept"`
+		PromotionRef string `json:"promotion_ref"`
 	}
 	if err := json.Unmarshal(input, &req); err != nil {
 		return nil, fmt.Errorf("playbook_promote: invalid input: %w", err)

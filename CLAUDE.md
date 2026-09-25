@@ -30,7 +30,16 @@ go test ./tests/e2e_real_llm -v -run TestRealLLMMinimalFlow -count=1
 # Optional overrides: ORCH_E2E_LLM_API_BASE, ORCH_E2E_LLM_API_KEY, ORCH_E2E_LLM_MODEL
 ```
 
-There is no linter beyond `go vet`. CI (`.github/workflows/ci.yml`) runs vet + tests on Linux (with `-race`) and Windows (without `-race`) — keep both green.
+Lint (all four modules; linters and exclusions in `.golangci.yml`):
+
+```bash
+gofmt -l $(git ls-files '*.go')                                # must print nothing
+golangci-lint run ./... ./llm/... ./patch/... ./protocol/...   # v2.5: unused, staticcheck, ineffassign
+go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./... ./llm/... ./patch/... ./protocol/...
+go test ./tests/importrules/... -count=1                       # layering rules
+```
+
+CI (`.github/workflows/ci.yml`) runs vet + tests (with `-race`) on Linux and Windows, plus gofmt, golangci-lint and govulncheck on Linux — keep all of them green.
 
 ## Runtime / CLI
 

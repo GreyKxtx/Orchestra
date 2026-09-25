@@ -60,7 +60,6 @@ func TestNormalizeDept(t *testing.T) {
 
 func TestTrimFileKeepsTail(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "x.md")
 	for i := 0; i < maxStoredEntries+5; i++ {
 		if err := Append(root, Entry{
 			Dept: "eng",
@@ -71,7 +70,7 @@ func TestTrimFileKeepsTail(t *testing.T) {
 		}
 	}
 	// Append writes to eng.md via NormalizeDept("eng") -> eng
-	path = filepath.Join(root, filepath.FromSlash(RelDir), "eng.md")
+	path := filepath.Join(root, filepath.FromSlash(RelDir), "eng.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

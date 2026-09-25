@@ -148,7 +148,7 @@ orchestra llm-ping
 orchestra search "function main"
 
 # Запуск eval-задач (нужен работающий LLM)
-orchestra eval                          # tests/eval/tasks/ по умолчанию
+orchestra eval                          # internal/eval/tasks/ по умолчанию
 orchestra eval path/to/tasks/           # своя директория
 ```
 

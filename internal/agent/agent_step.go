@@ -42,7 +42,7 @@ func latestUserQueryIs(msgs []llm.Message, queryBlock string) bool {
 
 func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Message, stepNum int) (*Step, string, *llm.CompleteResponse, error) {
 	toolDefs := a.buildToolDefs()
-	systemPrompt := a.buildSystemPrompt()
+	systemPrompt := a.turnSystemPrompt()
 	snap := promptpkg.BuildUserInfoSnapshot(a.tools.WorkspaceRoot())
 	userContext := promptpkg.BuildUserContext(snap, tools.ToolNames(toolDefs))
 	queryBlock := promptpkg.UserQueryBlock(userQuery)
@@ -81,6 +81,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	}
 	if reminder := a.modeReminder(); reminder != "" {
 		volatileParts = append(volatileParts, reminder)
+	}
+	if block := a.lessonsUpdate(); block != "" {
+		volatileParts = append(volatileParts, block)
 	}
 	volatileBlock := strings.Join(volatileParts, "\n\n")
 

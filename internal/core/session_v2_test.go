@@ -4,13 +4,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core/session"
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestSessionStart_ReopenByID(t *testing.T) {

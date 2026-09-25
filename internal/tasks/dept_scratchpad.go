@@ -43,6 +43,14 @@ func deptScratchpadRelPath(wo *WorkOrder) string {
 // dept scratchpad, creating the file on first write. Best-effort: errors are
 // returned for logging but must not fail the worker task.
 func appendDeptScratchpadDone(workspaceRoot, relPath, line string) error {
+	return appendDeptScratchpadEntry(workspaceRoot, relPath, line, true)
+}
+
+// appendDeptScratchpadEntry records a worker outcome: under `## Done`, ticked,
+// when it succeeded; under `## Not done`, unticked, when it did not. Every
+// outcome used to go to Done as "- [x]", so a Lead reading its department's
+// scratchpad took failed WorkOrders for finished ones (audit §3.4).
+func appendDeptScratchpadEntry(workspaceRoot, relPath, line string, done bool) error {
 	line = strings.TrimSpace(line)
 	if line == "" || relPath == "" {
 		return nil
@@ -60,25 +68,29 @@ func appendDeptScratchpadDone(workspaceRoot, relPath, line string) error {
 	} else {
 		return err
 	}
-	updated := insertUnderDoneSection(content, "- [x] "+line)
+	var updated string
+	if done {
+		updated = insertUnderSection(content, "## Done", "- [x] "+line)
+	} else {
+		updated = insertUnderSection(content, "## Not done", "- [ ] "+line)
+	}
 	return fsutil.AtomicWriteFile(abs, []byte(strings.TrimRight(updated, "\n")+"\n"), 0o644)
 }
 
-// insertUnderDoneSection appends line at the end of the `## Done` section,
+// insertUnderSection appends line at the end of section (a "## " heading),
 // creating the section when missing.
-func insertUnderDoneSection(content, line string) string {
+func insertUnderSection(content, section, line string) string {
 	content = strings.TrimRight(content, "\n")
-	const marker = "## Done"
-	idx := strings.Index(content, marker)
+	idx := strings.Index(content, section)
 	if idx < 0 {
-		return content + "\n\n" + marker + "\n" + line + "\n"
+		return content + "\n\n" + section + "\n" + line + "\n"
 	}
-	after := content[idx+len(marker):]
+	after := content[idx+len(section):]
 	nextRel := strings.Index(after, "\n## ")
 	if nextRel < 0 {
 		return content + "\n" + line + "\n"
 	}
-	insertAt := idx + len(marker) + nextRel
+	insertAt := idx + len(section) + nextRel
 	return content[:insertAt] + "\n" + line + content[insertAt:]
 }
 
@@ -99,7 +111,8 @@ func (r *TaskRunner) recordWorkerToDeptScratchpad(wo *WorkOrder, resultText, sta
 	if wo != nil && strings.TrimSpace(wo.TaskID) != "" {
 		line = wo.TaskID + ": " + line
 	}
-	_ = appendDeptScratchpadDone(r.toolRunner.WorkspaceRoot(), rel, line)
+	done := status == "done" && workerOutcomeSucceeded(resultText)
+	_ = appendDeptScratchpadEntry(r.toolRunner.WorkspaceRoot(), rel, line, done)
 }
 
 const workerDeptSummaryMaxBytes = 300

@@ -162,10 +162,6 @@ func (p *policyRetryLLM) Complete(ctx context.Context, req llm.CompleteRequest) 
 				strings.Contains(m.Content, `"denied"`) {
 				hasDeniedTool = true
 			}
-			// Also check for successful tool results
-			if strings.Contains(m.Content, `"entries"`) || strings.Contains(m.Content, `"content"`) {
-				// Tool succeeded (fs.read returns content, fs.list returns entries)
-			}
 		}
 	}
 

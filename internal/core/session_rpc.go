@@ -15,16 +15,18 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
+	"github.com/orchestra/orchestra/internal/memory"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/sessionfile"
-	"github.com/orchestra/orchestra/internal/tools"
 )
+
 // ── Session API ──────────────────────────────────────────────────────────────
 
 type SessionStartParams struct {
@@ -481,7 +483,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 	defer launch.Close()
-	c.tools.SetMemoryContext(params.SessionID, c.cfg.Memory.Resolve())
+	c.tools.SetMemoryContext(params.SessionID, memory.ConfigFrom(c.cfg.Memory))
 
 	// Persist todos as soon as todowrite succeeds so a crash / cancel mid-turn
 	// (or reopen before SessionMessage returns) does not lose the checklist.
@@ -522,6 +524,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 
+	turnCtx = launch.RunContext(turnCtx)
 	outHistory, res, err := ag.Run(turnCtx, inHistory, agentQuery)
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
@@ -1149,7 +1152,7 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 		goal = "Summarize the session so far"
 	}
 	before := len(hist)
-	compacted, cerr := ag.CompactNow(ctx, goal, hist)
+	compacted, cerr := ag.CompactNow(launch.RunContext(ctx), goal, hist)
 	if cerr != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, cerr.Error(), nil)
 	}

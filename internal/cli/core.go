@@ -12,8 +12,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/patch/fsutil"
-	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/spf13/cobra"
 )
 
@@ -155,7 +155,6 @@ func mustToken() string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
-
 
 // cleanupStaleDiscovery removes the discovery file at discPath if the process
 // that wrote it is dead. Shared by `core --http` (.orchestra/core.http.json)

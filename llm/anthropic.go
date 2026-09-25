@@ -69,16 +69,8 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 
 // ── Anthropic wire types ──────────────────────────────────────────────────────
 
-type anthropicRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	System    any                `json:"system,omitempty"` // string OR []anthropicSystemBlock
-	Messages  []anthropicMessage `json:"messages"`
-	Tools     []anthropicTool    `json:"tools,omitempty"`
-}
-
 // anthropicSystemBlock is used when prompt caching is enabled.
-// Pass as []anthropicSystemBlock to System to attach cache_control.
+// CompleteStream sends a slice of them as "system" to attach cache_control.
 type anthropicSystemBlock struct {
 	Type         string                 `json:"type"` // "text"
 	Text         string                 `json:"text"`

@@ -60,6 +60,18 @@ func (a *Agent) finalWithRunningTasks(ctx context.Context) (llm.Message, bool) {
 	if err != nil {
 		body = "error: " + err.Error()
 	}
+	// task_wait no longer cancels what outlives its timeout, so the final
+	// does it: the turn is ending, and a task left running would keep
+	// editing after it.
+	var cancelled []string
+	for _, e := range a.unfinishedTasks() {
+		if a.opts.SubtaskRunner.Cancel(ctx, e.TaskID) == nil {
+			cancelled = append(cancelled, e.TaskID)
+		}
+	}
+	if len(cancelled) > 0 {
+		body += fmt.Sprintf("\nStill running after the wait, and cancelled: %s.", strings.Join(cancelled, ", "))
+	}
 	return llm.Message{Role: llm.RoleUser, Content: fmt.Sprintf(
 		"You tried to finish while these tasks ran:\n%sThe runtime waited for them; their results follow. Take them into account, then finish.\n%s",
 		list.String(), body)}, true

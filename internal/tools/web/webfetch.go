@@ -18,12 +18,12 @@ import (
 
 // Config holds web/browser tool runtime settings.
 type Config struct {
-	FetchTimeout    time.Duration
-	MaxContentBytes int
-	Search          config.WebSearchConfig
-	TavilyEndpoint  string
-	BraveEndpoint   string
-	Browser         *browser.Client
+	FetchTimeout     time.Duration
+	MaxContentBytes  int
+	Search           config.WebSearchConfig
+	TavilyEndpoint   string
+	BraveEndpoint    string
+	Browser          *browser.Client
 	AllowBrowserEval bool
 
 	// blockIP overrides isBlockedIP. Tests only: every local test server is on
@@ -280,4 +280,3 @@ func min512(n int) int {
 	}
 	return n
 }
-

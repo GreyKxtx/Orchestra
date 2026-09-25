@@ -148,7 +148,7 @@ orchestra llm-ping
 orchestra search "function main"
 
 # Run eval tasks (needs a working LLM)
-orchestra eval                          # tests/eval/tasks/ by default
+orchestra eval                          # internal/eval/tasks/ by default
 orchestra eval path/to/tasks/           # a custom directory
 ```
 

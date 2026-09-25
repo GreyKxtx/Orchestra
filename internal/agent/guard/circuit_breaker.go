@@ -16,13 +16,13 @@ import (
 type ErrorKind int
 
 const (
-	ErrorKindNone ErrorKind = iota
-	ErrorKindDenied           // tool_denied — blocked by policy
-	ErrorKindToolError        // tool_failed — tool returned an error
-	ErrorKindFinalFailed      // legacy alias for resolve_failed
-	ErrorKindInvalid          // validation_error — invalid JSON/schema output
-	ErrorKindResolveFailed    // resolve_failed — staged patch resolve failed
-	ErrorKindApplyRecoverable // apply_recoverable — StaleContent / AmbiguousMatch
+	ErrorKindNone             ErrorKind = iota
+	ErrorKindDenied                     // tool_denied — blocked by policy
+	ErrorKindToolError                  // tool_failed — tool returned an error
+	ErrorKindFinalFailed                // legacy alias for resolve_failed
+	ErrorKindInvalid                    // validation_error — invalid JSON/schema output
+	ErrorKindResolveFailed              // resolve_failed — staged patch resolve failed
+	ErrorKindApplyRecoverable           // apply_recoverable — StaleContent / AmbiguousMatch
 )
 
 // CircuitBreaker tracks per-kind failure counters and opens (trips) when any
@@ -272,11 +272,11 @@ func (cb *CircuitBreaker) recordDenied(toolName string) *protocol.Error {
 		// "denied tool" alone says neither which tool nor what to change.
 		return protocol.NewError(protocol.InvalidLLMOutput,
 			"the model kept calling «"+toolName+"» after it was refused — stopping the turn", map[string]any{
-			"tool":        toolName,
-			"count":       cb.deniedPerTool[toolName],
-			"max_repeats": cb.maxDenied,
-			"kind":        ErrorKindDenied.String(),
-		})
+				"tool":        toolName,
+				"count":       cb.deniedPerTool[toolName],
+				"max_repeats": cb.maxDenied,
+				"kind":        ErrorKindDenied.String(),
+			})
 	}
 	return nil
 }

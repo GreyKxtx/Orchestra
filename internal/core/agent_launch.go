@@ -32,6 +32,9 @@ type agentLaunchSpec struct {
 	Profile   string
 	PlanPath  string
 	SessionID string
+	// RecordRun keeps a trajectory for a turn with no session: agent.run's
+	// log goes to .orchestra/runs/<turn_id>.events.jsonl.
+	RecordRun bool
 	Query     string // user turn text; used by mode=agent auto-router
 
 	Apply        bool
@@ -72,9 +75,10 @@ type agentLaunch struct {
 	RouteConfidence float64
 	EventEnvelope   EventEnvelope
 
-	// Trajectory records this turn's notifications. Nil when there is no
-	// session to record against, or when the log could not be opened;
-	// Close is safe either way.
+	// Trajectory records this turn's notifications: in the session's log, or
+	// for a one-shot agent.run in .orchestra/runs/<turn_id>.events.jsonl. Nil
+	// when there is nothing to record against, or when the log could not be
+	// opened; Close is safe either way.
 	Trajectory *trajectory.Writer
 
 	// turnStartedAt is when the boundary was recorded, so Close can say how
@@ -82,6 +86,16 @@ type agentLaunch struct {
 	// of whatever events happened to bracket it.
 	turnStartedAt time.Time
 	sessionID     string
+}
+
+// RunContext returns ctx attributed to this turn (llm.Trace): the model calls
+// and llm_log lines of the turn carry its turn_id as run_id, and its subagent
+// tasks add their own identity to it (tasks.ChildAgentConfig.RunID).
+func (l *agentLaunch) RunContext(ctx context.Context) context.Context {
+	if l == nil || l.EventEnvelope.TurnID == "" {
+		return ctx
+	}
+	return llm.WithTrace(ctx, llm.Trace{RunID: l.EventEnvelope.TurnID})
 }
 
 // Close releases what the launch holds open, and records where the turn ended.
@@ -171,8 +185,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// One answer for the turn, its subagents and its skills.
 	allowBrowser := spec.AllowBrowser && agent.ProfileAllowsBrowser(profileName)
 
-	var respFmt *llm.ResponseFormat
-	respFmt = agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
+	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
 
 	maxSteps := spec.MaxSteps
 	if maxSteps <= 0 {
@@ -193,16 +206,24 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	if env.TurnID == "" {
 		env.TurnID = NewTurnID()
 	}
+	// The mode router below calls the model on the turn's behalf.
+	ctx = llm.WithTrace(ctx, llm.Trace{RunID: env.TurnID})
 
 	// One tee for every consumer of spec.OnEvent below. There are four, and
 	// wrapping them individually would drop whichever one a later change adds.
 	var tw *trajectory.Writer
-	if spec.SessionID != "" {
-		w, err := trajectory.NewWriter(c.workspaceRoot, spec.SessionID)
+	if spec.SessionID != "" || spec.RecordRun {
+		var w *trajectory.Writer
+		var err error
+		if spec.SessionID != "" {
+			w, err = trajectory.NewWriter(c.workspaceRoot, spec.SessionID)
+		} else {
+			w, err = trajectory.NewRunWriter(c.workspaceRoot, env.TurnID)
+		}
 		if err != nil {
 			// Observability must never block work: carry on with no recorder
 			// rather than failing the turn.
-			fmt.Fprintf(os.Stderr, "core: session %s trajectory recording disabled: %v\n", spec.SessionID, err)
+			fmt.Fprintf(os.Stderr, "core: turn %s trajectory recording disabled: %v\n", env.TurnID, err)
 		} else {
 			tw = w
 			spec.OnEvent = teeToTrajectory(spec.OnEvent, tw)
@@ -242,9 +263,13 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// skills and its subagents all take it from here.
 	allowWeb := c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm
 
-	var agentLogger *llm.Logger
+	// The agent's own lines (tool calls, results, classifications) go to
+	// llm_log.jsonl whatever the provider. Only the OpenAI-compatible client
+	// carries a logger of its own; the others used to leave the turn with no
+	// log at all.
+	agentLogger := llm.NewLogger(c.workspaceRoot)
 	if c.llmClient != nil {
-		if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
+		if oc, ok := llm.AsOpenAIClient(c.llmClient); ok && oc.GetLogger() != nil {
 			agentLogger = oc.GetLogger()
 		}
 	}
@@ -305,6 +330,8 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
 	childCfg.Agency, childCfg.Agents = tasks.AgencyFromConfig(c.cfg, effectiveMode)
+	childCfg.RunID = env.TurnID
+	childCfg.Budget = tasks.BudgetFromConfig(c.cfg.Agent.TurnBudget)
 	// Subagents get the browser when the turn has it; the agent refuses
 	// browser.* to any run without it, children included.
 	childCfg.Caps.Browser = allowBrowser

@@ -98,7 +98,13 @@ const (
 	//      exec.allow judges every command a shell line starts; bash runs
 	//      without secret-looking environment variables (exec.env_passthrough
 	//      keeps named ones); a top-level final waits for the turn's tasks.
-	ToolsVersion = 17
+	// v18: task_wait's timeout bounds the wait, not the task: a task still
+	//      running then comes back as status still_running and keeps running
+	//      (the synchronous task tool still cancels a child it stops waiting
+	//      for); task_wait on an already collected task returns its result;
+	//      agent.turn_budget caps a turn's tasks, tokens and wall clock; an
+	//      identical task is refused while one runs, and after failing twice.
+	ToolsVersion = 18
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"

@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // maybeContinueBuildAfterPlan delegates to agent.ContinueBuildAfterPlan.

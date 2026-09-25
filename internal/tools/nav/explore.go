@@ -10,8 +10,8 @@ import (
 
 type ExploreCodebaseRequest struct {
 	SymbolName string `json:"symbol_name"`
-	Depth      int    `json:"depth,omitempty"`      // 1..4, default 2
-	Direction  string `json:"direction,omitempty"`  // downstream|upstream|both
+	Depth      int    `json:"depth,omitempty"`     // 1..4, default 2
+	Direction  string `json:"direction,omitempty"` // downstream|upstream|both
 }
 
 type ExploreCodebaseResponse struct {

@@ -109,11 +109,26 @@
 | LLM-3, LLM-4, LLM-5, LLM-15 | Статус ошибок Anthropic, `overloaded`, `prompt is too long`; окно и промпт больше не перепутаны; регистр имён MCP сохраняется; prefill только без инструментов; напоминание о лимите шагов — user-сообщение | `e306884` |
 | SEC-1, SEC-2, SEC-9 | Workspace trust: опасный срез конфига действует только после `orchestra trust` или `workspace.trust`; ключ пользователя не уходит на endpoint проекта; правка среза снова требует доверия. Protocol v22, tools v17 | `6532c86` |
 
-**Осталось по плану (фазы 1–8):**
-- ORC-1 (изоляция правок воркеров) и ORC-4…ORC-7, ORC-9…ORC-12;
-- SEC-8 (spotlighting результатов инструментов, провенанс памяти);
+**Фаза 1 выполнена 2026-09-25**, та же ветка. Все три критерия приёмки закрыты тестами:
+- `TestRunJournal_RebuildsTheDelegationTree` восстанавливает дерево делегирования (корень → general → explore) и строки `llm_log` каждого агента только из файлов прогона на mock-LLM;
+- `TestAppend_ConcurrentWritersLoseNothing` и `TestAppend_ConcurrentProcessesLoseNothing`: 30 из 30 фактов, в одном процессе и в нескольких; без лока тест теряет факты;
+- `TestAgent_SystemPromptStableWhenMemoryChangesMidRun`: префикс промпта стабилен в session-режиме при записи в память посреди хода; на старом коде падал.
+
+| Находки | Что сделано | Коммит |
+|---|---|---|
+| ARCH-12 (gofmt), ARCH-9 | Дерево отформатировано; в CI gofmt, golangci-lint (unused, staticcheck, ineffassign) и govulncheck. Находки линтера исправлены, среди них два дефекта: `Core.Health` на nil-`Core` и typed-nil из `mcp.startServer`. Рёбра ARCH-9 убраны и закреплены правилами импортов: `config → memory`, `contract → tools/exec`, бинарник → `tests/eval` | `2eae17c`, `89aa01e` |
+| — (govulncheck) | 40 достижимых уязвимостей: 34 в stdlib go1.25.0 и 6 в `x/net`, `x/text`, `goldmark`. Toolchain go1.25.14, зависимости обновлены | `09524be` |
+| §3.4, наблюдаемость | `llm.Trace` (`run_id`, `task_id`, `parent_task_id`, `depth`) на каждой строке `llm_log` через контекст; журнал логов агента не зависит от провайдера; trajectory для `agent.run` в `.orchestra/runs/`; `child_done` с глубиной и родителем, ровно один на задачу | `59e861b` |
+| ORC-10, ORC-11 | `agent.turn_budget` (задачи, токены, wall-clock на дерево); отказ на копию работающей задачи и на третью попытку дважды упавшей; `task_wait` по таймауту возвращает `still_running`, а не убивает ребёнка; ожидание собранной задачи не даёт «not found». Tools v18 | `b3c3a9c` |
+| DATA-1, DATA-4, SEC-8 (провенанс) | `fsutil.LockFile` (flock / LockFileEx); запись памяти и уроков целиком под локом и атомарная; в заголовке записи памяти указано, кто её оставил; `AtomicWriteFile` не теряет цель и не меняет права чужих каталогов | `a457e0c` |
+| DATA-2 | System prompt собирается один раз за ход; уроки нового отдела приходят в волатильном хвосте | `64f095e` |
+| §3.4 (потери контекста) | Компактор понимает `WaitManyResult`; сжатый результат воркера сохраняет `blocked_reason`, проваленные проверки и эскалацию и помечает обрезку; провалы записываются в «Not done»; невлезшие заметки доставляются на следующем шаге; обрезка inbox, тредов и хвостов подсчитывается; вложенные `ORCHESTRA.md` получает каждый агент хода | `47e58d8` |
+
+**Осталось по плану (фазы 2–8):**
+- ORC-1 (изоляция правок воркеров) и ORC-4…ORC-7, ORC-9, ORC-12;
+- SEC-8 (spotlighting результатов инструментов);
 - LLM-6 и LLM-7 (thinking и мультимодальность Anthropic), LLM-8…LLM-14, LLM-16;
-- DATA-*, ARCH-*;
+- DATA-3, DATA-5…DATA-11, ARCH-1…ARCH-8, ARCH-10…ARCH-12 (кроме gofmt);
 - UI доверия в клиентах.
 
 ---

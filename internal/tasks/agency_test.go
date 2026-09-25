@@ -884,3 +884,63 @@ func TestSpawnAfterCloseIsRefused(t *testing.T) {
 		t.Fatalf("spawn after Close = %v, want ErrRunnerClosed", err)
 	}
 }
+
+// A task cancelled before it ran — here while queued for a slot — still
+// closes with child_done. It used to end silently: the UI kept it "running"
+// forever and the event log had a node that never ended.
+func TestChildDone_EveryTaskEndsOnceEvenIfItNeverRan(t *testing.T) {
+	mock := &gatedWorkerLLM{release: make(chan struct{})}
+	settings := agencyOn()
+	settings.MaxParallel = 1
+	var mu sync.Mutex
+	var events []map[string]any
+	r, _ := newAgencyRunner(t, mock, ChildAgentConfig{
+		Agency: settings,
+		NotifyAgentEvent: func(p map[string]any) {
+			mu.Lock()
+			events = append(events, p)
+			mu.Unlock()
+		},
+	})
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(mock.release)
+		}
+	})
+
+	running, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "one", SubagentType: "general", MaxSteps: 2, TimeoutMS: 30_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForCalls(t, mock, 1)
+	queued, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "two", SubagentType: "general", MaxSteps: 2, TimeoutMS: 30_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Cancel(context.Background(), queued); err != nil {
+		t.Fatal(err)
+	}
+	close(mock.release)
+	released = true
+	if _, err := r.WaitMany(context.Background(), []string{running, queued}, 30_000); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	done := map[string]int{}
+	for _, ev := range events {
+		if ev["type"] != "child_done" {
+			continue
+		}
+		id, _ := ev["task_id"].(string)
+		done[id]++
+		if ev["depth"] != 1 {
+			t.Errorf("child_done for %s must carry its depth: %v", id, ev)
+		}
+	}
+	if done[running] != 1 || done[queued] != 1 {
+		t.Fatalf("each task must end with exactly one child_done: %v (running %s, queued %s)", done, running, queued)
+	}
+}

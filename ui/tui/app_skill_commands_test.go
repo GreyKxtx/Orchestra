@@ -15,9 +15,9 @@ func TestParseSkillSlashCommand(t *testing.T) {
 	}{
 		{"/refactor-go clean up foo.go", "refactor-go", "clean up foo.go", true},
 		{"  /refactor-go  clean up  ", "refactor-go", "clean up", true},
-		{"/review", "", "", false},               // skill.invoke requires arguments
-		{"/unknown-skill do it", "", "", false},   // not a loaded skill
-		{"/help do it", "", "", false},            // "help" is a built-in, never a skill route
+		{"/review", "", "", false},              // skill.invoke requires arguments
+		{"/unknown-skill do it", "", "", false}, // not a loaded skill
+		{"/help do it", "", "", false},          // "help" is a built-in, never a skill route
 		{"just a message", "", "", false},
 		{"", "", "", false},
 	}

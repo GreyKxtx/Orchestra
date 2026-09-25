@@ -32,14 +32,14 @@ type Client interface {
 
 // OpenAIClient is an OpenAI-compatible LLM client
 type OpenAIClient struct {
-	baseURL string
+	baseURL     string
 	apiKey      string
 	tokenSource func() (string, error)
 	// azure is non-nil for an Azure OpenAI endpoint, which needs a
 	// deployment-scoped URL and the api-key header instead of a bearer.
 	azure *AzureConfig
 	// reasoning is the configured thinking dial, nil when unset.
-	reasoning *ReasoningConfig
+	reasoning     *ReasoningConfig
 	model         string
 	provider      string
 	wantMaxTokens int // user-configured; may exceed safe cap until context is known
@@ -47,9 +47,9 @@ type OpenAIClient struct {
 	contextTokens int // server / num_ctx window; 0 = unknown
 	// promptCal learns bytes-per-token from the usage this endpoint reports,
 	// so the pre-send size guard stops refusing prompts that actually fit.
-	promptCal promptCalibration
-	temperature   float32
-	toolChoice    string // resolved: auto | omit | none | required
+	promptCal   promptCalibration
+	temperature float32
+	toolChoice  string // resolved: auto | omit | none | required
 	// toolChoiceImplicit is true when cfg.ToolChoice was left blank and
 	// resolveToolChoice fell through to its provider-based guess. An implicit
 	// "omit" is the single biggest cause of "the model just ignores my
@@ -721,32 +721,6 @@ type jsonSchemaSpec struct {
 	Strict bool            `json:"strict"`
 }
 
-// chatCompletionResponse represents OpenAI chat completion response.
-// The inner messageWithReasoning type captures the reasoning_content field
-// that reasoning models (qwen3.6-27b, deepseek-r1) return alongside content.
-type chatCompletionResponse struct {
-	Choices []struct {
-		Message struct {
-			Message
-			ReasoningContent string `json:"reasoning_content,omitempty"`
-		} `json:"message"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-		// PromptTokensDetails.CachedTokens is the prompt-cache hit reported by
-		// OpenAI, DeepSeek and compatible gateways.
-		PromptTokensDetails struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details,omitempty"`
-		Cost float64 `json:"cost"` // OpenRouter: credits (USD) for this completion
-	} `json:"usage,omitempty"`
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 // buildChatBody assembles the wire JSON for one chat completion request.
 // Tool names invalid on strict providers (Anthropic requires ^[a-zA-Z0-9_-]{1,128}$;
 // MCP tools are canonically "mcp:server:tool") are renamed on the wire; the
@@ -906,102 +880,6 @@ func messageRolesFor(req CompleteRequest) []string {
 	return messageRoles
 }
 
-// completeOnce performs a single non-streaming chat completion HTTP exchange.
-func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req CompleteRequest, maxTok int) (*CompleteResponse, error) {
-	jsonData, err := c.buildChatBody(req, maxTok, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	requestBytes := len(jsonData)
-	requestPreview := string(jsonData) // Will be sanitized in logger
-
-	startTime := time.Now()
-	if c.logger != nil {
-		c.logger.LogRequest(url, c.model, int(c.client.Timeout.Seconds()), requestBytes, len(req.Tools), len(req.Messages), messageRolesFor(req), requestPreview)
-	}
-
-	reqHTTP, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	reqHTTP.Header.Set("Content-Type", "application/json")
-	if err := c.setAuthHeader(reqHTTP.Header); err != nil {
-		return nil, err
-	}
-	setNgrokBypass(reqHTTP, c.baseURL)
-
-	resp, err := c.client.Do(reqHTTP)
-	duration := time.Since(startTime)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.LogError(0, err.Error(), duration.Milliseconds())
-		}
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.LogError(resp.StatusCode, fmt.Sprintf("failed to read response: %v", err), duration.Milliseconds())
-		}
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	responseBytes := len(body)
-	responsePreview := string(body)
-
-	if resp.StatusCode != http.StatusOK {
-		if c.logger != nil {
-			c.logger.LogError(resp.StatusCode, responsePreview, duration.Milliseconds())
-		}
-		return nil, formatAPIError(resp.StatusCode, string(body))
-	}
-
-	if c.logger != nil {
-		c.logger.LogResponse(responseBytes, duration.Milliseconds(), responsePreview)
-	}
-
-	var apiResp chatCompletionResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if apiResp.Error.Message != "" {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error.Message)
-	}
-
-	if len(apiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
-	}
-
-	choice := apiResp.Choices[0]
-	msg := choice.Message.Message
-	// Fold reasoning_content into content when the model returns blank content alongside
-	// its thinking (qwen3.6-27b in LM Studio, deepseek-r1, etc.). Only fold when
-	// there are no tool_calls — if the model is calling a tool, blank content is normal.
-	if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(choice.Message.ReasoningContent) != "" && len(msg.ToolCalls) == 0 {
-		msg.Content = strings.TrimSpace(choice.Message.ReasoningContent)
-	}
-	out := &CompleteResponse{Message: msg}
-	newToolNameMapper(req.Tools).RestoreResponse(out)
-	if apiResp.Usage != nil {
-		// What the prompt really cost, fed back so the pre-send size guard
-		// measures instead of guessing (see prompt_calibration.go).
-		c.observePromptUsage(estimateRequestBytes(req), apiResp.Usage.PromptTokens)
-		out.Usage = &TokenUsage{
-			PromptTokens:       apiResp.Usage.PromptTokens,
-			CompletionTokens:   apiResp.Usage.CompletionTokens,
-			CachedPromptTokens: apiResp.Usage.PromptTokensDetails.CachedTokens,
-			TotalTokens:        apiResp.Usage.TotalTokens,
-			CostUSD:            apiResp.Usage.Cost,
-		}
-	}
-	return out, nil
-}
-
 // reportsCost reports whether the endpoint returns real cost in the usage
 // object when asked (currently OpenRouter only).
 func (c *OpenAIClient) reportsCost() bool {
@@ -1068,9 +946,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 			if fixed, ok := c.fixMaxTokensFromError(err.Error()); ok {
 				ctxFixed = true
 				maxTok = fixed
-				if c.logger != nil {
-					c.logger.LogError(400, fmt.Sprintf("context overflow — retrying stream with max_tokens=%d", fixed), 0)
-				}
+				c.logger.For(ctx).LogError(400, fmt.Sprintf("context overflow — retrying stream with max_tokens=%d", fixed), 0)
 				continue
 			}
 		}
@@ -1096,11 +972,12 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	// drain — and until this was added none of them was logged: llm_log.jsonl
 	// carried tool calls and results, never what the model was asked or what
 	// it answered. Reading an eval failure meant guessing at the model's
-	// words from the tools it reached for. The non-streaming path has logged
-	// both since the file existed; this puts the stream on the same footing.
+	// words from the tools it reached for.
 	startTime := time.Now()
-	if c.logger != nil {
-		c.logger.LogRequest(url, c.model, int(c.streamClient.Timeout.Seconds()), len(jsonData), len(req.Tools), len(req.Messages), messageRolesFor(req), string(jsonData))
+	// Attributed to the run and task in ctx: parallel agents share c.logger.
+	logger := c.logger.For(ctx)
+	if logger != nil {
+		logger.LogRequest(url, c.model, int(c.streamClient.Timeout.Seconds()), len(jsonData), len(req.Tools), len(req.Messages), messageRolesFor(req), string(jsonData))
 	}
 
 	// Derived context lets the watchdog abort a stalled body read: cancelling
@@ -1124,8 +1001,8 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
 		cancelStream()
-		if c.logger != nil {
-			c.logger.LogError(0, err.Error(), time.Since(startTime).Milliseconds())
+		if logger != nil {
+			logger.LogError(0, err.Error(), time.Since(startTime).Milliseconds())
 		}
 		return nil, fmt.Errorf("failed to send stream request: %w", err)
 	}
@@ -1133,8 +1010,8 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		cancelStream()
-		if c.logger != nil {
-			c.logger.LogError(resp.StatusCode, string(body), time.Since(startTime).Milliseconds())
+		if logger != nil {
+			logger.LogError(resp.StatusCode, string(body), time.Since(startTime).Milliseconds())
 		}
 		return nil, formatAPIError(resp.StatusCode, string(body))
 	}
@@ -1174,17 +1051,17 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 						nameMapper.RestoreResponse(ev.Response)
 					}
 				}
-				if c.logger != nil {
+				if logger != nil {
 					switch ev.Kind {
 					case StreamEventDone:
 						// The assembled answer, as the agent will see it: text
 						// and tool calls with their arguments. Usage rides along
 						// so a step's cost can be read next to its words.
 						preview := streamResponsePreview(ev.Response)
-						c.logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
+						logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
 					case StreamEventError:
 						if ev.Err != nil {
-							c.logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
+							logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
 						}
 					}
 				}
@@ -1197,8 +1074,8 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 				}
 				stallErr := fmt.Errorf(
 					"stream stalled: no data from server for %s (connection to vLLM/tunnel lost?)", stall)
-				if c.logger != nil {
-					c.logger.LogError(0, stallErr.Error(), time.Since(startTime).Milliseconds())
+				if logger != nil {
+					logger.LogError(0, stallErr.Error(), time.Since(startTime).Milliseconds())
 				}
 				out <- StreamEvent{Kind: StreamEventError, Err: stallErr}
 				return

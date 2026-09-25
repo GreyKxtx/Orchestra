@@ -12,6 +12,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/cache"
@@ -21,7 +22,6 @@ import (
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/mcp"
-	"github.com/orchestra/orchestra/internal/tasks"
 )
 
 type Core struct {
@@ -164,7 +164,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		llmClient = llm.BuildClient(cfg.LLM, cfg.LLMRegistry(), llm.NewLogger(rootAbs))
 	}
 
-	tr.SetMemoryContext("", cfg.Memory.Resolve())
+	tr.SetMemoryContext("", memory.ConfigFrom(cfg.Memory))
 
 	c := &Core{
 		workspaceRoot:     rootAbs,
@@ -244,14 +244,17 @@ func (c *Core) Health() protocol.Health {
 		ProtocolVersion: protocol.ProtocolVersion,
 		OpsVersion:      protocol.OpsVersion,
 		ToolsVersion:    protocol.ToolsVersion,
-		WorkspaceRoot:   c.workspaceRoot,
-		ProjectID:       c.projectID,
 	}
-	if c != nil && c.cfg != nil {
+	if c == nil {
+		return h
+	}
+	h.WorkspaceRoot = c.workspaceRoot
+	h.ProjectID = c.projectID
+	if c.cfg != nil {
 		h.Model = c.cfg.LLM.Model
 		h.Provider = c.cfg.LLM.Provider
 	}
-	if c != nil && c.tools != nil {
+	if c.tools != nil {
 		h.LSPStatus = c.tools.LSPStatus()
 		if p := c.tools.LSPInstallProgress(); p != nil {
 			h.LSPInstallProgress = &protocol.LSPInstallProgress{
@@ -450,31 +453,4 @@ func samePath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
-}
-
-func childAgentConfig(cfg *config.ProjectConfig, maxPromptBytes int, usage agent.UsageRecorder) tasks.ChildAgentConfig {
-	// Deprecated wrapper — prefer Core.buildChildAgentConfig for resolvers.
-	out := tasks.ChildAgentConfig{
-		MaxPromptBytes: maxPromptBytes,
-		UsageTracker:   usage,
-	}
-	if cfg == nil {
-		return out
-	}
-	out.CompactThresholdPct = cfg.EffectiveCompactThresholdPct()
-	out.ModelContextTokens = int(cfg.EffectiveNumCtx())
-	out.CompletionMaxTokens = cfg.LLM.MaxTokens
-	out.ToolDigestBytes = cfg.Agent.ResolvedToolDigestBytes()
-	out.HistoryPruneKeepRecent = cfg.Agent.ResolvedHistoryPruneKeepRecent()
-	out.ProviderLabel = providerLabelOf(cfg)
-	out.ModelLabel = cfg.LLM.Model
-	out.MaxWorkerRetries = cfg.Orchestra.ResolvedMaxWorkerRetries()
-	enabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
-	out.WorkerVerifyEnabled = &enabled
-	out.MaxWorkerVerifyRetries = cfg.Orchestra.ResolvedMaxWorkerVerifyRetries()
-	llmVerify := cfg.Orchestra.ResolvedWorkerLLMVerifyEnabled()
-	out.WorkerLLMVerifyEnabled = &llmVerify
-	out.LLMStepTimeout = time.Duration(cfg.LLM.TimeoutS) * time.Second
-	out.MaxStepsCap = cfg.Agent.ResolvedChildMaxSteps()
-	return out
 }

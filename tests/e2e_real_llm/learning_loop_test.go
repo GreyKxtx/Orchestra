@@ -12,8 +12,8 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
-	toolsession "github.com/orchestra/orchestra/internal/tools/session"
 	"github.com/orchestra/orchestra/internal/tools"
+	toolsession "github.com/orchestra/orchestra/internal/tools/session"
 )
 
 // TestLearningLoop_DeptMemoryTools verifies dept lessons write/read/search without LLM.

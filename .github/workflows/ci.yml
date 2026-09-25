@@ -61,6 +61,57 @@ jobs:
       - name: Test (race)
         run: go test -race ./... ./protocol/... ./patch/... ./llm/...
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download modules
+        run: go work sync
+
+      # One pass brought the whole tree in line (listed in
+      # .git-blame-ignore-revs); this keeps it there.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt -w these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # Linters and exclusions: .golangci.yml.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          args: ./... ./llm/... ./patch/... ./protocol/...
+
+  # Known vulnerabilities in the code paths the binary actually reaches, in
+  # dependencies and in the Go standard library it is built with.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download modules
+        run: go work sync
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./... ./llm/... ./patch/... ./protocol/...
+
   test-windows:
     runs-on: windows-latest
     env:

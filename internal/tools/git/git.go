@@ -20,6 +20,7 @@ type Client struct {
 func NewClient(workspaceRoot string) *Client {
 	return &Client{root: workspaceRoot}
 }
+
 const gitOutputLimit = 256 * 1024 // 256 KB
 
 // runGit runs a git command in the workspace root.
@@ -526,4 +527,3 @@ func parseBranchFromStatusLine(bl string) string {
 	}
 	return bl
 }
-

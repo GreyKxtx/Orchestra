@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,12 +10,51 @@ import (
 	"time"
 )
 
+// Trace names the run and the task a log line belongs to.
+//
+// One turn runs its agents concurrently on a shared Logger — the root, the
+// subagents it starts, their workers — so without it llm_log.jsonl interleaves
+// them into one stream nobody can take apart. With it every line says whose it
+// is, and the delegation tree is rebuilt from task_id and parent_task_id.
+type Trace struct {
+	// RunID is the turn: agent.run's or session.message's turn_id.
+	RunID string `json:"run_id,omitempty"`
+	// TaskID is the subagent task that wrote the line; empty for the root.
+	TaskID string `json:"task_id,omitempty"`
+	// ParentTaskID is the task that started TaskID; empty when the root did.
+	ParentTaskID string `json:"parent_task_id,omitempty"`
+	// Depth is 0 for the root, 1 for its children, and so on.
+	Depth int `json:"depth,omitempty"`
+}
+
+type traceKey struct{}
+
+// WithTrace returns ctx carrying t. Whoever starts a run or a task sets it;
+// everything logged under that ctx is attributed to it.
+func WithTrace(ctx context.Context, t Trace) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, traceKey{}, t)
+}
+
+// TraceFrom returns the trace ctx carries, or the zero Trace.
+func TraceFrom(ctx context.Context) Trace {
+	if ctx == nil {
+		return Trace{}
+	}
+	t, _ := ctx.Value(traceKey{}).(Trace)
+	return t
+}
+
 // LLMLogEntry represents a single log entry in llm_log.jsonl.
 // Events: "llm_request", "llm_response", "llm_error", "tool_call", "tool_result",
 // "step.classified", "memory.note", "memory.inject".
 type LLMLogEntry struct {
-	TSUnix          int64    `json:"ts_unix"`
-	Event           string   `json:"event"`
+	TSUnix int64  `json:"ts_unix"`
+	Event  string `json:"event"`
+	// Trace attributes the line to a run and a task (see Trace).
+	Trace
 	URL             string   `json:"url,omitempty"`
 	Model           string   `json:"model,omitempty"`
 	TimeoutS        int      `json:"timeout_s,omitempty"`
@@ -60,6 +100,32 @@ type Logger struct {
 	projectRoot string
 	logPath     string
 	errorPath   string
+	// trace is stamped on every line this logger writes; see With and For.
+	trace Trace
+}
+
+// With returns a logger that stamps t on every line it writes. It shares the
+// file and its lock with l; nil stays nil.
+func (l *Logger) With(t Trace) *Logger {
+	if l == nil {
+		return nil
+	}
+	c := *l
+	c.trace = t
+	return &c
+}
+
+// For returns a logger attributed to the trace ctx carries, or l itself when
+// ctx carries none.
+func (l *Logger) For(ctx context.Context) *Logger {
+	if l == nil {
+		return nil
+	}
+	t := TraceFrom(ctx)
+	if t == (Trace{}) {
+		return l
+	}
+	return l.With(t)
 }
 
 // NewLogger creates a new LLM logger
@@ -254,6 +320,9 @@ func (l *Logger) appendLog(entry LLMLogEntry) {
 		return // Best-effort, don't fail on logging errors
 	}
 
+	if entry.Trace == (Trace{}) {
+		entry.Trace = l.trace
+	}
 	// Marshal before taking the lock; a single write keeps each JSONL line atomic.
 	data, err := json.Marshal(entry)
 	if err != nil {

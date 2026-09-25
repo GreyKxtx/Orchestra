@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 )
+
 // normalizeOpsJSON normalizes common LLM mistakes in ops JSON:
 // - "type" field → "op" field (if "op" is missing)
 func normalizeOpsJSON(input json.RawMessage) json.RawMessage {

@@ -27,42 +27,42 @@ var WithExecOutputCallback = exec.WithOutputCallback
 
 // Git types (backward compat).
 type (
-	GitStatusRequest    = git.GitStatusRequest
-	GitStatusResponse   = git.GitStatusResponse
-	GitLogRequest       = git.GitLogRequest
-	GitLogResponse      = git.GitLogResponse
-	GitDiffRequest      = git.GitDiffRequest
-	GitDiffResponse     = git.GitDiffResponse
-	GitCommitRequest    = git.GitCommitRequest
-	GitCommitResponse   = git.GitCommitResponse
-	GitBranchRequest    = git.GitBranchRequest
-	GitBranchResponse   = git.GitBranchResponse
-	GitCheckoutRequest  = git.GitCheckoutRequest
-	GitCheckoutResponse = git.GitCheckoutResponse
-	GitPushRequest      = git.GitPushRequest
-	GitPushResponse     = git.GitPushResponse
-	GitWorktreeListRequest   = git.GitWorktreeListRequest
-	GitWorktreeListResponse  = git.GitWorktreeListResponse
-	GitWorktreeAddRequest    = git.GitWorktreeAddRequest
-	GitWorktreeAddResponse   = git.GitWorktreeAddResponse
-	GitWorktreeRemoveRequest = git.GitWorktreeRemoveRequest
+	GitStatusRequest          = git.GitStatusRequest
+	GitStatusResponse         = git.GitStatusResponse
+	GitLogRequest             = git.GitLogRequest
+	GitLogResponse            = git.GitLogResponse
+	GitDiffRequest            = git.GitDiffRequest
+	GitDiffResponse           = git.GitDiffResponse
+	GitCommitRequest          = git.GitCommitRequest
+	GitCommitResponse         = git.GitCommitResponse
+	GitBranchRequest          = git.GitBranchRequest
+	GitBranchResponse         = git.GitBranchResponse
+	GitCheckoutRequest        = git.GitCheckoutRequest
+	GitCheckoutResponse       = git.GitCheckoutResponse
+	GitPushRequest            = git.GitPushRequest
+	GitPushResponse           = git.GitPushResponse
+	GitWorktreeListRequest    = git.GitWorktreeListRequest
+	GitWorktreeListResponse   = git.GitWorktreeListResponse
+	GitWorktreeAddRequest     = git.GitWorktreeAddRequest
+	GitWorktreeAddResponse    = git.GitWorktreeAddResponse
+	GitWorktreeRemoveRequest  = git.GitWorktreeRemoveRequest
 	GitWorktreeRemoveResponse = git.GitWorktreeRemoveResponse
-	GitWorktreePruneRequest  = git.GitWorktreePruneRequest
-	GitWorktreePruneResponse = git.GitWorktreePruneResponse
-	GHPRListRequest     = git.GHPRListRequest
-	GHPRListResponse    = git.GHPRListResponse
-	GHPRListItem        = git.GHPRListItem
-	GHPRCreateRequest   = git.GHPRCreateRequest
-	GHPRCreateResponse  = git.GHPRCreateResponse
-	GHPRViewRequest     = git.GHPRViewRequest
-	GHPRViewResponse    = git.GHPRViewResponse
-	GHPRComment         = git.GHPRComment
-	GHIssueListRequest  = git.GHIssueListRequest
-	GHIssueListResponse = git.GHIssueListResponse
-	GHIssueListItem     = git.GHIssueListItem
-	GHIssueViewRequest  = git.GHIssueViewRequest
-	GHIssueViewResponse = git.GHIssueViewResponse
-	GHIssueComment      = git.GHIssueComment
+	GitWorktreePruneRequest   = git.GitWorktreePruneRequest
+	GitWorktreePruneResponse  = git.GitWorktreePruneResponse
+	GHPRListRequest           = git.GHPRListRequest
+	GHPRListResponse          = git.GHPRListResponse
+	GHPRListItem              = git.GHPRListItem
+	GHPRCreateRequest         = git.GHPRCreateRequest
+	GHPRCreateResponse        = git.GHPRCreateResponse
+	GHPRViewRequest           = git.GHPRViewRequest
+	GHPRViewResponse          = git.GHPRViewResponse
+	GHPRComment               = git.GHPRComment
+	GHIssueListRequest        = git.GHIssueListRequest
+	GHIssueListResponse       = git.GHIssueListResponse
+	GHIssueListItem           = git.GHIssueListItem
+	GHIssueViewRequest        = git.GHIssueViewRequest
+	GHIssueViewResponse       = git.GHIssueViewResponse
+	GHIssueComment            = git.GHIssueComment
 )
 
 // FS types (backward compat).
@@ -99,18 +99,18 @@ var ToolASTRename = fs.ToolASTRename
 
 // Nav types (backward compat).
 type (
-	CodeSymbolsRequest     = nav.CodeSymbolsRequest
-	CodeSymbolsResponse    = nav.CodeSymbolsResponse
-	Symbol                 = nav.Symbol
-	ExploreCodebaseRequest = nav.ExploreCodebaseRequest
+	CodeSymbolsRequest      = nav.CodeSymbolsRequest
+	CodeSymbolsResponse     = nav.CodeSymbolsResponse
+	Symbol                  = nav.Symbol
+	ExploreCodebaseRequest  = nav.ExploreCodebaseRequest
 	ExploreCodebaseResponse = nav.ExploreCodebaseResponse
-	SemanticSearchRequest  = nav.SemanticSearchRequest
-	SemanticSearchHit      = nav.SemanticSearchHit
-	SemanticSearchResponse = nav.SemanticSearchResponse
-	RepoMapRequest         = nav.RepoMapRequest
-	RepoMapResponse        = nav.RepoMapResponse
-	CKGIndexView           = nav.CKGIndexView
-	CKGEmbedResult         = nav.CKGEmbedResult
+	SemanticSearchRequest   = nav.SemanticSearchRequest
+	SemanticSearchHit       = nav.SemanticSearchHit
+	SemanticSearchResponse  = nav.SemanticSearchResponse
+	RepoMapRequest          = nav.RepoMapRequest
+	RepoMapResponse         = nav.RepoMapResponse
+	CKGIndexView            = nav.CKGIndexView
+	CKGEmbedResult          = nav.CKGEmbedResult
 	// CKGGraphData is the graph index.graph answers with (Runner.CKGGraph).
 	CKGGraphData = ckg.GraphData
 	// CKGFileOutline is one file's symbols (Runner.CKGFileOutline).

@@ -8,8 +8,8 @@ import (
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/patches"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/resolver"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteResponse, error) {

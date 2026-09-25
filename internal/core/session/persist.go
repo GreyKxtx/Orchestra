@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // Snapshot serialises the session to .orchestra/sessions/<id>.json atomically.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // AtomicWriteFile writes data to path atomically: temp file in the same
@@ -21,10 +22,12 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	// Best-effort: lock down .orchestra/ directory on Unix. No-op when
-	// dir is something other than .orchestra/ but cheap enough to keep
-	// in the generic helper.
-	_ = os.Chmod(dir, 0700)
+	// Best-effort: keep Orchestra's own artifact directory private on Unix.
+	// Only that directory: this helper writes elsewhere too, and it used to
+	// chmod 0700 whatever directory the file happened to be in (DATA-4).
+	if filepath.Base(dir) == ".orchestra" {
+		_ = os.Chmod(dir, 0700)
+	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -49,21 +52,37 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err == nil {
-		_ = os.Chmod(path, perm)
-		syncDir(dir)
-		return nil
+	// os.Rename replaces an existing target on every platform (MoveFileEx
+	// with MOVEFILE_REPLACE_EXISTING on Windows). When it fails there, it is
+	// usually a moment's sharing violation — an antivirus scan, a reader
+	// holding the file — so it is retried before anything else.
+	var renameErr error
+	for attempt := 0; attempt < renameAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * renameBackoff)
+		}
+		if renameErr = os.Rename(tmpName, path); renameErr == nil {
+			_ = os.Chmod(path, perm)
+			syncDir(dir)
+			return nil
+		}
 	}
-	// Windows: os.Rename fails if destination exists. Try remove + rename.
-	_ = os.Remove(path)
-	if err := os.Rename(tmpName, path); err != nil {
+	// The old fallback removed the target and renamed again: when that second
+	// rename failed too, the target and the temp file were both gone (DATA-4,
+	// the bug H9 fixed in the applier). Overwriting in place is not atomic
+	// for readers, but the target never goes missing.
+	if err := os.WriteFile(path, data, perm); err != nil {
 		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to rename temp file: %w", err)
+		return fmt.Errorf("failed to replace %s (rename: %v): %w", path, renameErr, err)
 	}
-	_ = os.Chmod(path, perm)
-	syncDir(dir)
+	_ = os.Remove(tmpName)
 	return nil
 }
+
+const (
+	renameAttempts = 5
+	renameBackoff  = 20 * time.Millisecond
+)
 
 // syncDir fsyncs the directory so the rename itself survives a power loss
 // (POSIX: directory metadata is not flushed by the file's own fsync).

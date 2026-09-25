@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestApply_FromPlan_DryRun_And_Apply(t *testing.T) {

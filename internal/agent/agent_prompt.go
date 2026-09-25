@@ -191,6 +191,45 @@ type systemPromptParts struct {
 	catalog string // live tool catalog block
 	skills  string // <available_skills> advertisement
 	agents  string // <available_agents> advertisement (agency on)
+
+	// lessonsDept is the department whose episodic lessons memory carries;
+	// withLessons says the mode gets them at all. The department follows the
+	// files the turn works on, which change mid-turn: see lessonsUpdate.
+	lessonsDept string
+	withLessons bool
+}
+
+// turnSystemPromptParts returns the current Run's system prompt, built on its
+// first step and kept for the rest of it (DATA-2).
+//
+// It used to be rebuilt on every step, re-reading project and session memory
+// and lessons. A memory_write mid-turn — the model's own, or the session
+// auto-note after an explore — changed the system message, and a provider's
+// prompt cache matches a prefix: every later step missed, re-paid the whole
+// transcript and, on Anthropic, a cache write on top. What changes mid-turn
+// reaches the model some other way: what it wrote is in its history, and a
+// change of department brings that department's lessons in the volatile
+// tail after the history (lessonsUpdate).
+func (a *Agent) turnSystemPromptParts() systemPromptParts {
+	if a.turnPrompt == nil {
+		p := a.buildSystemPromptParts()
+		a.turnPrompt = &p
+	}
+	return *a.turnPrompt
+}
+
+// lessonsUpdate returns the lessons of the department the turn's files now
+// point at, when that is not the department the system prompt was built with.
+func (a *Agent) lessonsUpdate() string {
+	p := a.turnSystemPromptParts()
+	if !p.withLessons {
+		return ""
+	}
+	dept := lessons.InferDeptFromFiles(a.working.ActiveFiles())
+	if dept == p.lessonsDept {
+		return ""
+	}
+	return lessons.FormatInject(a.tools.WorkspaceRoot(), dept)
 }
 
 func (a *Agent) buildSystemPromptParts() systemPromptParts {
@@ -244,6 +283,7 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	// Lead gets the cross-dept catalog below.
 	if !IsChildOnlyMode(a.opts.Mode) && a.opts.Mode != ModeOrchestra && !a.opts.SkipMemoryInject {
 		dept := lessons.InferDeptFromFiles(a.working.ActiveFiles())
+		p.withLessons, p.lessonsDept = true, dept
 		if s := lessons.FormatInject(a.tools.WorkspaceRoot(), dept); s != "" {
 			if p.memory != "" {
 				p.memory += "\n\n" + s
@@ -295,7 +335,16 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 }
 
 func (a *Agent) buildSystemPrompt() string {
-	p := a.buildSystemPromptParts()
+	return a.assembleSystemPrompt(a.buildSystemPromptParts())
+}
+
+// turnSystemPrompt is buildSystemPrompt built once per Run: what each step
+// sends (see turnSystemPromptParts).
+func (a *Agent) turnSystemPrompt() string {
+	return a.assembleSystemPrompt(a.turnSystemPromptParts())
+}
+
+func (a *Agent) assembleSystemPrompt(p systemPromptParts) string {
 	prompt := p.base
 	if p.memory != "" {
 		prompt += "\n\n" + p.memory

@@ -7,23 +7,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 const ambiguousMatchMaxRate = 0.10
 
 type scopedEditCase struct {
-	name         string
-	fileContent  string
-	relPath      string
-	symbol       string
-	lineStart    int
-	lineEnd      int
-	search       string
-	replace      string
-	expectAmbig  bool
+	name        string
+	fileContent string
+	relPath     string
+	symbol      string
+	lineStart   int
+	lineEnd     int
+	search      string
+	replace     string
+	expectAmbig bool
 }
 
 // TestEval_AmbiguousMatchRate_WithTargetSymbol measures AmbiguousMatch rate when
@@ -32,39 +32,39 @@ type scopedEditCase struct {
 func TestEval_AmbiguousMatchRate_WithTargetSymbol(t *testing.T) {
 	cases := []scopedEditCase{
 		{
-			name: "duplicate if-err scoped to A",
+			name:        "duplicate if-err scoped to A",
 			fileContent: "package main\n\nfunc A() {\n\tif err != nil {}\n}\n\nfunc B() {\n\tif err != nil {}\n}\n",
-			relPath: "dup.go", symbol: "A", lineStart: 3, lineEnd: 5,
+			relPath:     "dup.go", symbol: "A", lineStart: 3, lineEnd: 5,
 			search: "if err != nil {}", replace: "if err != nil { return err }",
 		},
 		{
-			name: "duplicate if-err scoped to B",
+			name:        "duplicate if-err scoped to B",
 			fileContent: "package main\n\nfunc A() {\n\tif err != nil {}\n}\n\nfunc B() {\n\tif err != nil {}\n}\n",
-			relPath: "dup2.go", symbol: "B", lineStart: 7, lineEnd: 9,
+			relPath:     "dup2.go", symbol: "B", lineStart: 7, lineEnd: 9,
 			search: "if err != nil {}", replace: "if err != nil { return err }",
 		},
 		{
-			name: "return stmt scoped to add",
+			name:        "return stmt scoped to add",
 			fileContent: "package main\n\nfunc add(a, b int) int {\n\treturn a + b\n}\n\nfunc sub(a, b int) int {\n\treturn a - b\n}\n",
-			relPath: "math.go", symbol: "add", lineStart: 3, lineEnd: 5,
+			relPath:     "math.go", symbol: "add", lineStart: 3, lineEnd: 5,
 			search: "return a + b", replace: "return a + b + 1",
 		},
 		{
-			name: "return stmt scoped to sub",
+			name:        "return stmt scoped to sub",
 			fileContent: "package main\n\nfunc add(a, b int) int {\n\treturn a + b\n}\n\nfunc sub(a, b int) int {\n\treturn a - b\n}\n",
-			relPath: "math2.go", symbol: "sub", lineStart: 7, lineEnd: 9,
+			relPath:     "math2.go", symbol: "sub", lineStart: 7, lineEnd: 9,
 			search: "return a - b", replace: "return a - b - 1",
 		},
 		{
-			name: "assignment scoped to Handler",
+			name:        "assignment scoped to Handler",
 			fileContent: "package main\n\nfunc Handler() {\n\tx := 1\n\tx = 2\n}\n\nfunc Other() {\n\tx := 1\n\tx = 2\n}\n",
-			relPath: "handler.go", symbol: "Handler", lineStart: 3, lineEnd: 6,
+			relPath:     "handler.go", symbol: "Handler", lineStart: 3, lineEnd: 6,
 			search: "x = 2", replace: "x = 3",
 		},
 		{
-			name: "duplicate inside scope still ambiguous",
+			name:        "duplicate inside scope still ambiguous",
 			fileContent: "package main\n\nfunc X() {\n\ta()\n\ta()\n}\n",
-			relPath: "inner.go", symbol: "X", lineStart: 3, lineEnd: 6,
+			relPath:     "inner.go", symbol: "X", lineStart: 3, lineEnd: 6,
 			search: "a()", replace: "b()",
 			expectAmbig: true,
 		},

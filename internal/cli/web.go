@@ -108,7 +108,7 @@ type webRunConfig struct {
 	Token     string // "" = generated
 	NoOpen    bool
 	Debug     bool
-	Init      bool   // initialise Workspace when it has no .orchestra.yml
+	Init      bool // initialise Workspace when it has no .orchestra.yml
 	// NoProject starts the server with nothing open. The remembered list is
 	// still served, so the UI can show its start screen and open one on a
 	// click. Workspace is then only used to place the discovery file.

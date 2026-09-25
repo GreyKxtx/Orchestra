@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
@@ -29,6 +30,8 @@ var (
 	_ agent.SubtaskRunner = (*scopedRunner)(nil)
 	_ agent.AgencyRunner  = (*scopedRunner)(nil)
 	_ agent.AgencyRunner  = (*TaskRunner)(nil)
+	_ agent.SubtaskPoller = (*TaskRunner)(nil)
+	_ agent.SubtaskPoller = (*scopedRunner)(nil)
 )
 
 func (sr *scopedRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (string, error) {
@@ -40,6 +43,13 @@ func (sr *scopedRunner) Wait(ctx context.Context, taskID string, timeoutMS int) 
 		return nil, err
 	}
 	return sr.r.Wait(ctx, taskID, timeoutMS)
+}
+
+func (sr *scopedRunner) Poll(ctx context.Context, taskID string, timeoutMS int) (*agent.SubtaskResult, error) {
+	if err := sr.r.checkOwner(sr.s, taskID); err != nil {
+		return nil, err
+	}
+	return sr.r.Poll(ctx, taskID, timeoutMS)
 }
 
 func (sr *scopedRunner) Cancel(ctx context.Context, taskID string) error {
@@ -370,30 +380,25 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 		}
 	}
 	r.mu.Unlock()
+	// One deadline for the whole set. A task still running when it passes is
+	// reported still_running and keeps running, like a single task_wait: the
+	// deadline used to cancel every task it caught (audit ORC-11).
+	var deadline time.Time
 	if timeoutMS > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
-		defer cancel()
+		deadline = time.Now().Add(time.Duration(timeoutMS) * time.Millisecond)
 	}
 	out := &agent.WaitManyResult{Results: make([]*agent.SubtaskResult, len(ids))}
+	var finished []*taskEntry
 	for i, e := range entries {
-		r.mu.Lock()
-		_, registered := r.tasks[e.id]
-		r.mu.Unlock()
-		if !registered {
-			// Already collected by an earlier wait: its result is kept.
-			r.mu.Lock()
-			res := e.result
-			r.mu.Unlock()
-			if res == nil {
-				res = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: "task produced no result"}
-			}
-			out.Results[i] = res
-			continue
+		wait := 0
+		if !deadline.IsZero() {
+			// At least a millisecond: a task that is already done is
+			// collected even when the deadline has passed.
+			wait = max(int(time.Until(deadline).Milliseconds()), 1)
 		}
-		res, err := r.Wait(ctx, e.id, 0)
+		res, err := r.wait(ctx, e.id, wait, false)
 		if err != nil {
-			// Collected by a concurrent wait between the check above and
+			// Collected by a concurrent wait between the lookup above and
 			// this one: the stored result is still the answer.
 			r.mu.Lock()
 			stored := e.result
@@ -405,8 +410,15 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 			}
 		}
 		out.Results[i] = res
+		if res.Status != "still_running" {
+			finished = append(finished, e)
+		}
 	}
-	out.Integration = r.integrationVerify(ctx, entries)
+	// Built and tested together only when every task of the set is done:
+	// half a set's edits prove nothing about the whole.
+	if len(finished) == len(entries) {
+		out.Integration = r.integrationVerify(ctx, entries)
+	}
 	return out, nil
 }
 
@@ -470,10 +482,18 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	}
 
 	var history []llmMessage
+	dropped := 0
 	if r.child.Agency.Threads {
-		history = r.loadThread(from.address, to)
+		history, dropped = r.loadThread(from.address, to)
 	}
-	goal := fmt.Sprintf("Message from %s:\n\n%s", from.address, msg)
+	message := fmt.Sprintf("Message from %s:\n\n%s", from.address, msg)
+	goal := message
+	if dropped > 0 {
+		// The recipient sees the last exchanges as history; say that there
+		// were more, or it takes the trimmed thread for the whole of it.
+		goal = fmt.Sprintf("(Your conversation with %s is longer: its %d earliest exchanges were trimmed; the last %d are above.)\n\n",
+			from.address, dropped, len(history)/2) + goal
+	}
 	timeoutMS := req.TimeoutMS
 	if timeoutMS <= 0 {
 		timeoutMS = DefaultTaskTimeoutMS
@@ -495,10 +515,11 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	}
 	reply := &agent.AgentMessageReply{To: to, TaskID: id, Status: res.Status, Reply: res.Result, Error: res.Error}
 	if res.Status == "done" && r.child.Agency.Threads {
-		history = append(history, llmMessage{Role: "user", Content: goal}, llmMessage{Role: "assistant", Content: res.Result})
-		history = trimThread(history)
+		history = append(history, llmMessage{Role: "user", Content: message}, llmMessage{Role: "assistant", Content: res.Result})
+		var trimmed int
+		history, trimmed = trimThread(history)
 		reply.Turns = len(history) / 2
-		if err := r.saveThread(from.address, to, history); err != nil {
+		if err := r.saveThread(from.address, to, history, dropped+trimmed); err != nil {
 			reply.Summary = "conversation not saved: " + err.Error()
 		}
 	}
@@ -657,6 +678,9 @@ const agencyInboxInjectMaxBytes = 6000
 
 type inboxFile struct {
 	Messages []agent.InboxMessage `json:"messages"`
+	// Dropped counts the notes the inbox let go of when it was full; the
+	// recipient is told, instead of reading a cut inbox as a complete one.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 func (r *TaskRunner) agencyPath(parts ...string) string {
@@ -679,6 +703,7 @@ func (r *TaskRunner) appendInbox(address string, m agent.InboxMessage) error {
 	f.Messages = append(f.Messages, m)
 	if over := len(f.Messages) - inboxMaxMessages; over > 0 {
 		f.Messages = f.Messages[over:]
+		f.Dropped += over
 	}
 	return writeJSONFile(path, f)
 }
@@ -702,6 +727,13 @@ func (r *TaskRunner) takeInbox(address string) []agent.InboxMessage {
 		if err := readJSONFile(path, &f); err != nil {
 			continue
 		}
+		if f.Dropped > 0 {
+			out = append(out, agent.InboxMessage{
+				From:    "runtime",
+				Kind:    "note",
+				Message: fmt.Sprintf("%d older notes to %s were dropped: an inbox keeps the latest %d.", f.Dropped, n, inboxMaxMessages),
+			})
+		}
 		out = append(out, f.Messages...)
 		_ = os.Remove(path)
 	}
@@ -721,6 +753,8 @@ type threadFile struct {
 	To       string       `json:"to"`
 	Updated  string       `json:"updated"`
 	Messages []llmMessage `json:"messages"`
+	// Dropped counts the earlier exchanges trimThread let go of.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 // Thread bounds: the last few exchanges, and never more than a slice of a
@@ -734,20 +768,20 @@ func (r *TaskRunner) threadPath(from, to string) string {
 	return r.agencyPath("threads", from+"__"+to+".json")
 }
 
-func (r *TaskRunner) loadThread(from, to string) []llmMessage {
+func (r *TaskRunner) loadThread(from, to string) (msgs []llmMessage, dropped int) {
 	if !config.ValidAgencyName(from) || !config.ValidAgencyName(to) {
-		return nil
+		return nil, 0
 	}
 	r.storeMu.Lock()
 	defer r.storeMu.Unlock()
 	var f threadFile
 	if err := readJSONFile(r.threadPath(from, to), &f); err != nil {
-		return nil
+		return nil, 0
 	}
-	return f.Messages
+	return f.Messages, f.Dropped
 }
 
-func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage) error {
+func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage, dropped int) error {
 	if !config.ValidAgencyName(from) || !config.ValidAgencyName(to) {
 		return fmt.Errorf("invalid thread address %q → %q", from, to)
 	}
@@ -758,12 +792,13 @@ func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage) error {
 		To:       to,
 		Updated:  time.Now().UTC().Format(time.RFC3339),
 		Messages: msgs,
+		Dropped:  dropped,
 	})
 }
 
 // trimThread drops the oldest exchanges (user+assistant pairs) until the
-// thread fits both bounds.
-func trimThread(msgs []llmMessage) []llmMessage {
+// thread fits both bounds, and says how many it dropped.
+func trimThread(msgs []llmMessage) ([]llmMessage, int) {
 	size := func(ms []llmMessage) int {
 		n := 0
 		for _, m := range ms {
@@ -771,10 +806,12 @@ func trimThread(msgs []llmMessage) []llmMessage {
 		}
 		return n
 	}
+	dropped := 0
 	for len(msgs) > 2 && (len(msgs) > threadMaxMessages || size(msgs) > threadMaxBytes) {
 		msgs = msgs[2:]
+		dropped++
 	}
-	return msgs
+	return msgs, dropped
 }
 
 func readJSONFile(path string, v any) error {
@@ -867,7 +904,11 @@ func loadDeptScratchpadForLead(root, dept string) string {
 		return ""
 	}
 	if len(text) > deptScratchpadLeadMaxBytes {
-		text = "…" + text[len(text)-deptScratchpadLeadMaxBytes:]
+		cut := len(text) - deptScratchpadLeadMaxBytes
+		for cut < len(text) && !utf8.RuneStart(text[cut]) {
+			cut++
+		}
+		text = fmt.Sprintf("…(%d earlier bytes not shown; read %s/%s.md)\n", cut, agent.DeptScratchpadDir, dept) + text[cut:]
 	}
 	return fmt.Sprintf("<dept_scratchpad dept=%q>\n%s\n</dept_scratchpad>", dept, text)
 }

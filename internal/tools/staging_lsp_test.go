@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/lsp/lsptest"
+	"github.com/orchestra/orchestra/patch/cache"
 )
 
 func newDryRunRunnerWithMockLSP(t *testing.T) (*Runner, *lsptest.Server) {

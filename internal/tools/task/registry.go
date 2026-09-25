@@ -94,7 +94,7 @@ func ToolTaskWait() llm.ToolDef {
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task_wait",
-			Description: "Wait for a child task to finish and collect its result. task_ids[] waits for several; when two or more were workers that changed files, their edits are also built and tested together (integration).",
+			Description: "Wait for a child task to finish and collect its result. task_ids[] waits for several; when two or more were workers that changed files, their edits are also built and tested together (integration). timeout_ms bounds the wait, not the task: a task still running then comes back as status still_running and keeps running — wait again later or task_cancel it.",
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,

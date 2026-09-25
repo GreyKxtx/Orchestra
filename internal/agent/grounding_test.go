@@ -62,14 +62,14 @@ func TestUnknownWorkspacePaths_CatchesAnInventedTree(t *testing.T) {
 func TestUnknownWorkspacePaths_LeavesInnocentTextAlone(t *testing.T) {
 	root := groundingFixture(t)
 	cases := map[string]string{
-		"a URL":                  "See https://example.com/docs/getting-started for details.",
-		"a Go import path":       "It imports github.com/orchestra/orchestra/internal/agent for the loop.",
-		"an absolute path":       "Logs go to /var/log/orchestra.log on Linux.",
-		"a Windows path":         `The config lives at C:\Users\me\.orchestra.yml`,
-		"a bare command":         "Run orchestra apply --apply to write the changes.",
-		"a file that exists":     "The entry point is internal/agent/agent.go.",
+		"a URL":                   "See https://example.com/docs/getting-started for details.",
+		"a Go import path":        "It imports github.com/orchestra/orchestra/internal/agent for the loop.",
+		"an absolute path":        "Logs go to /var/log/orchestra.log on Linux.",
+		"a Windows path":          `The config lives at C:\Users\me\.orchestra.yml`,
+		"a bare command":          "Run orchestra apply --apply to write the changes.",
+		"a file that exists":      "The entry point is internal/agent/agent.go.",
 		"a file under a real dir": "Artifacts land in .orchestra/plan.json after a run.",
-		"fenced example code":    "```\nmkdir pkg/newthing\n```",
+		"fenced example code":     "```\nmkdir pkg/newthing\n```",
 		// Seen live: a correct description of a web page was sent back once
 		// for naming "combobox/dropdown" as a path.
 		"two words joined by a slash": "3. **Plan** - a combobox/dropdown with three options: Free, Pro, Team",

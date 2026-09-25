@@ -8,42 +8,42 @@ import (
 )
 
 type (
-	WebFetchRequest  = web.WebFetchRequest
-	WebFetchResponse = web.WebFetchResponse
-	WebSearchRequest = web.WebSearchRequest
-	WebSearchResponse = web.WebSearchResponse
-	WebSearchResult  = web.WebSearchResult
-	BrowserNavigateRequest   = web.BrowserNavigateRequest
-	BrowserNavigateResponse  = web.BrowserNavigateResponse
-	BrowserSnapshotRequest   = web.BrowserSnapshotRequest
-	BrowserSnapshotResponse  = web.BrowserSnapshotResponse
-	BrowserScreenshotRequest = web.BrowserScreenshotRequest
+	WebFetchRequest           = web.WebFetchRequest
+	WebFetchResponse          = web.WebFetchResponse
+	WebSearchRequest          = web.WebSearchRequest
+	WebSearchResponse         = web.WebSearchResponse
+	WebSearchResult           = web.WebSearchResult
+	BrowserNavigateRequest    = web.BrowserNavigateRequest
+	BrowserNavigateResponse   = web.BrowserNavigateResponse
+	BrowserSnapshotRequest    = web.BrowserSnapshotRequest
+	BrowserSnapshotResponse   = web.BrowserSnapshotResponse
+	BrowserScreenshotRequest  = web.BrowserScreenshotRequest
 	BrowserScreenshotResponse = web.BrowserScreenshotResponse
-	BrowserClickRequest      = web.BrowserClickRequest
-	BrowserClickResponse     = web.BrowserClickResponse
-	BrowserTypeRequest       = web.BrowserTypeRequest
-	BrowserTypeResponse      = web.BrowserTypeResponse
-	BrowserFillRequest       = web.BrowserFillRequest
-	BrowserFillResponse      = web.BrowserFillResponse
-	BrowserFillField         = web.BrowserFillField
-	BrowserSelectRequest     = web.BrowserSelectRequest
-	BrowserSelectResponse    = web.BrowserSelectResponse
-	BrowserEvalRequest       = web.BrowserEvalRequest
-	BrowserEvalResponse      = web.BrowserEvalResponse
-	BrowserWaitRequest       = web.BrowserWaitRequest
-	BrowserWaitResponse      = web.BrowserWaitResponse
-	BrowserCloseRequest      = web.BrowserCloseRequest
-	BrowserCloseResponse     = web.BrowserCloseResponse
-	LSPDefinitionRequest   = toolslsp.LSPDefinitionRequest
-	LSPDefinitionResponse  = toolslsp.LSPDefinitionResponse
-	LSPReferencesRequest   = toolslsp.LSPReferencesRequest
-	LSPReferencesResponse  = toolslsp.LSPReferencesResponse
-	LSPHoverRequest        = toolslsp.LSPHoverRequest
-	LSPHoverResponse       = toolslsp.LSPHoverResponse
-	LSPDiagnosticsRequest  = toolslsp.LSPDiagnosticsRequest
-	LSPDiagnosticsResponse = toolslsp.LSPDiagnosticsResponse
-	LSPRenameRequest       = toolslsp.LSPRenameRequest
-	LSPRenameResponse      = toolslsp.LSPRenameResponse
+	BrowserClickRequest       = web.BrowserClickRequest
+	BrowserClickResponse      = web.BrowserClickResponse
+	BrowserTypeRequest        = web.BrowserTypeRequest
+	BrowserTypeResponse       = web.BrowserTypeResponse
+	BrowserFillRequest        = web.BrowserFillRequest
+	BrowserFillResponse       = web.BrowserFillResponse
+	BrowserFillField          = web.BrowserFillField
+	BrowserSelectRequest      = web.BrowserSelectRequest
+	BrowserSelectResponse     = web.BrowserSelectResponse
+	BrowserEvalRequest        = web.BrowserEvalRequest
+	BrowserEvalResponse       = web.BrowserEvalResponse
+	BrowserWaitRequest        = web.BrowserWaitRequest
+	BrowserWaitResponse       = web.BrowserWaitResponse
+	BrowserCloseRequest       = web.BrowserCloseRequest
+	BrowserCloseResponse      = web.BrowserCloseResponse
+	LSPDefinitionRequest      = toolslsp.LSPDefinitionRequest
+	LSPDefinitionResponse     = toolslsp.LSPDefinitionResponse
+	LSPReferencesRequest      = toolslsp.LSPReferencesRequest
+	LSPReferencesResponse     = toolslsp.LSPReferencesResponse
+	LSPHoverRequest           = toolslsp.LSPHoverRequest
+	LSPHoverResponse          = toolslsp.LSPHoverResponse
+	LSPDiagnosticsRequest     = toolslsp.LSPDiagnosticsRequest
+	LSPDiagnosticsResponse    = toolslsp.LSPDiagnosticsResponse
+	LSPRenameRequest          = toolslsp.LSPRenameRequest
+	LSPRenameResponse         = toolslsp.LSPRenameResponse
 )
 
 func (r *Runner) webConfig() web.Config {

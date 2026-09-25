@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 const (
@@ -48,6 +50,11 @@ func BumpAntiPatternSignal(projectRoot, dept, key string) int {
 		return 0
 	}
 	path := filepath.Join(dir, dept+".log")
+	unlock, err := fsutil.LockFile(path + ".lock")
+	if err != nil {
+		return 0
+	}
+	defer unlock()
 	line := time.Now().UTC().Format(time.RFC3339) + "|" + key + "\n"
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {

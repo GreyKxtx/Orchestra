@@ -258,7 +258,7 @@ func BuildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 		var filePath, lang string
 		if err := fileRows.Scan(&id, &filePath, &lang); err == nil {
 			fileIDtoPath[id] = filePath
-			
+
 			// Skip testdata and vendor from graph visualization
 			if strings.HasPrefix(filePath, "testdata") || strings.HasPrefix(filePath, "vendor") {
 				continue
@@ -328,9 +328,9 @@ func BuildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 			fqnToGlobalId[fqn] = globalID
 
 			meta := map[string]any{
-				"Имя":   shortName,
-				"FQN":   fqn,
-				"Файл":  filePath,
+				"Имя":    shortName,
+				"FQN":    fqn,
+				"Файл":   filePath,
 				"Строки": fmt.Sprintf("%d-%d", start, end),
 			}
 

@@ -4,6 +4,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools/toolschema"
 	"github.com/orchestra/orchestra/llm"
 )
+
 func ToolGitStatus() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/mcpauth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/orchestra/orchestra/internal/mcpauth"
 )
 
 // Remote MCP servers speak Streamable HTTP rather than stdio. The protocol

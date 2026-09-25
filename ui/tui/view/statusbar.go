@@ -40,19 +40,19 @@ func (s *StatusBar) SetActiveTool(name, path string) {
 	s.activeTool = name
 	s.activePath = path
 }
-func (s *StatusBar) SetWidth(w int)            { s.width = w }
-func (s *StatusBar) SetAgentBusy(busy bool)    { s.agentBusy = busy }
-func (s *StatusBar) AdvanceSpin()              { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
-func (s *StatusBar) SetModel(_ string)         {} // model shown in input box row
-func (s *StatusBar) SetProject(p string)       { s.project = p }
-func (s *StatusBar) SetPhase(p string)         { s.phase = p }
-func (s *StatusBar) SetProfile(p string)       { s.profile = p }
+func (s *StatusBar) SetWidth(w int)         { s.width = w }
+func (s *StatusBar) SetAgentBusy(busy bool) { s.agentBusy = busy }
+func (s *StatusBar) AdvanceSpin()           { s.spinFrame = (s.spinFrame + 1) % len(SpinnerFrames) }
+func (s *StatusBar) SetModel(_ string)      {} // model shown in input box row
+func (s *StatusBar) SetProject(p string)    { s.project = p }
+func (s *StatusBar) SetPhase(p string)      { s.phase = p }
+func (s *StatusBar) SetProfile(p string)    { s.profile = p }
 func (s *StatusBar) SetLSPStatus(st string) { s.lspStatus = st }
 func (s *StatusBar) SetLSPProgress(percent int, id string) {
 	s.lspPercent = percent
 	s.lspHint = id
 }
-func (s *StatusBar) SetModelCtx(n int) { s.modelCtx = n }
+func (s *StatusBar) SetModelCtx(n int)         { s.modelCtx = n }
 func (s *StatusBar) SetShowCost(v bool)        { s.showCost = v }
 func (s *StatusBar) SetTokens(used, max int)   { s.tokensUsed = used; s.tokensMax = max }
 func (s *StatusBar) SetTokensEstimated(v bool) { s.tokensEst = v }

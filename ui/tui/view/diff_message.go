@@ -102,7 +102,7 @@ func renderDiffSummary(files []FileDiffView, width int, header, pathStyle, addSt
 	for i, fd := range files {
 		add, rem := countDiffStats(fd.Before, fd.After)
 		name := shortDiffPath(fd.Path, DiffSummaryPathMax)
-		prefix := "Diff "
+		var prefix string
 		if i == 0 {
 			prefix = header.Render("Diff ")
 		} else {

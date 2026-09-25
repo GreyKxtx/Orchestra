@@ -23,9 +23,9 @@ func TestIsDeptLeadWritablePath(t *testing.T) {
 		".orchestra/playbooks/conventions.md", // L1 — Docs Lead only
 		".orchestra/playbooks/sub/deep.md",    // no nesting
 		".orchestra/playbooks/local/nested/x.md",
-		".orchestra/playbooks/frontend.txt",   // .md only
-		".orchestra/state.md",                 // orchestrator only
-		".orchestra/depts/frontend.md",        // scratchpad via update_working_state
+		".orchestra/playbooks/frontend.txt", // .md only
+		".orchestra/state.md",               // orchestrator only
+		".orchestra/depts/frontend.md",      // scratchpad via update_working_state
 		".orchestra/contract/Domain_Model.md",
 		"internal/core/core.go",
 	}

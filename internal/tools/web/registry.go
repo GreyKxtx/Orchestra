@@ -46,7 +46,7 @@ func ToolBrowserNavigate() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name:        "browser.navigate",
+			Name: "browser.navigate",
 			Description: "Open a URL in the browser and wait for the page to load. " +
 				"Navigating to the page already open reloads it — past the cache when the " +
 				"browser is the app's own panel — which is how to see an edit take effect: " +

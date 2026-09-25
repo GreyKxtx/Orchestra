@@ -443,6 +443,6 @@ func TestServer_RequestRoundTrip(t *testing.T) {
 	}
 
 	// Close the server's read pipe to stop the serve loop cleanly.
-	_ = cToS.Close()  // signals EOF to server's reader (sFromC)
-	_ = sToC.Close()  // clean up server's write end
+	_ = cToS.Close() // signals EOF to server's reader (sFromC)
+	_ = sToC.Close() // clean up server's write end
 }

@@ -73,7 +73,7 @@ func TestSaveEmbeddings_SkipsMismatchedDim(t *testing.T) {
 	s := newTestStore(t)
 	idA, idR := seedNodes(t, s)
 	err := s.SaveEmbeddings(context.Background(), "m", []EmbeddingItem{
-		{NodeID: idA, Vector: []float32{1, 2, 3}},   // sets dim=3
+		{NodeID: idA, Vector: []float32{1, 2, 3}},    // sets dim=3
 		{NodeID: idR, Vector: []float32{1, 2, 3, 4}}, // skipped
 	})
 	if err != nil {

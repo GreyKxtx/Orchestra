@@ -49,7 +49,7 @@ type AgentRunParams struct {
 	// person's cookies is stronger than every other op together.
 	// (ProtocolVersion 21.)
 	AllowBrowserEval bool `json:"allow_browser_eval,omitempty"`
-	Debug        bool `json:"debug,omitempty"`
+	Debug            bool `json:"debug,omitempty"`
 
 	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
 	Mode string `json:"mode,omitempty"`
@@ -186,6 +186,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		MaxPromptBytes:      params.MaxPromptBytes,
 		AutoSessionMemory:   false,
 		UsageLabel:          "agent.run",
+		RecordRun:           true,
 		OnEvent:             params.OnEvent,
 		EventEnvelope:       EventEnvelope{TurnID: NewTurnID()},
 		PermissionRequester: params.PermissionRequester,
@@ -220,13 +221,12 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
-	var outHistory []llm.Message
-	var res *agent.Result
-	outHistory, res, err = ag.Run(ctx, nil, agentQuery)
+	ctx = launch.RunContext(ctx)
+	outHistory, res, err := ag.Run(ctx, nil, agentQuery)
 	if err != nil {
 		return nil, err
 	}
-	outHistory, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
+	_, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	if err != nil {
 		return nil, err
 	}

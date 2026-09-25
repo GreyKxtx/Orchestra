@@ -29,13 +29,13 @@ func TestEntryTypeOf(t *testing.T) {
 	cases := map[string]string{
 		"*2026-09-05T10:00:00Z* [feedback]\n\nDo not reformat files you did not edit.": TypeFeedback,
 		"*2026-09-05T10:00:00Z* [user]\n\nPrefers Russian.":                            TypeUser,
-		"*2026-09-05T10:00:00Z* [reference]\n\nDesign doc: docs/x.md":                   TypeReference,
-		"*2026-09-05T10:00:00Z* [project]\n\nBuild runs via make.":                      TypeProject,
+		"*2026-09-05T10:00:00Z* [reference]\n\nDesign doc: docs/x.md":                  TypeReference,
+		"*2026-09-05T10:00:00Z* [project]\n\nBuild runs via make.":                     TypeProject,
 		// Written before types existed — still a project fact, not a parse error.
 		"*2026-09-05T10:00:00Z*\n\nBuild runs via make.": TypeProject,
 		// A [pin] marker is orthogonal and must not be read as a type.
 		"*2026-09-05T10:00:00Z* [feedback]\n\n[pin] Always run gofmt.": TypeFeedback,
-		"[pin] Always run gofmt.":                                     TypeProject,
+		"[pin] Always run gofmt.":                                      TypeProject,
 	}
 	for entry, want := range cases {
 		if got := EntryTypeOf(entry); got != want {

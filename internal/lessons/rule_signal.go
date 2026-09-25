@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // RuleSuggestThreshold is how many times the same anti-pattern must repeat
@@ -46,6 +48,11 @@ func BumpRuleSignal(projectRoot, dept, key string) int {
 		return 0
 	}
 	path := filepath.Join(dir, dept+".log")
+	unlock, err := fsutil.LockFile(path + ".lock")
+	if err != nil {
+		return 0
+	}
+	defer unlock()
 	line := time.Now().UTC().Format(time.RFC3339) + "|" + key + "\n"
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -69,6 +76,11 @@ func ClearRuleSignal(projectRoot, dept, key string) {
 		return
 	}
 	path := filepath.Join(projectRoot, filepath.FromSlash(ruleSignalsRelDir), NormalizeDept(dept)+".log")
+	unlock, err := fsutil.LockFile(path + ".lock")
+	if err != nil {
+		return
+	}
+	defer unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -89,7 +101,7 @@ func ClearRuleSignal(projectRoot, dept, key string) {
 	if len(kept) > 0 {
 		out = strings.Join(kept, "\n") + "\n"
 	}
-	_ = os.WriteFile(path, []byte(out), 0o644)
+	_ = fsutil.AtomicWriteFile(path, []byte(out), 0o644)
 }
 
 // FormatRuleSuggestion is the human-facing chat prompt offering to turn a

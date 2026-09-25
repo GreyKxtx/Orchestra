@@ -13,13 +13,13 @@ type richStub struct {
 	images []MCPImage
 }
 
-func (r *richStub) ServerName() string                { return "stub" }
-func (r *richStub) Tools() []MCPTool                  { return nil }
-func (r *richStub) AllToolNames() []string            { return nil }
-func (r *richStub) SetAllowedTools(names []string)    {}
-func (r *richStub) IsDead() bool                      { return false }
-func (r *richStub) StderrTail() string                { return "" }
-func (r *richStub) Close() error                      { return nil }
+func (r *richStub) ServerName() string             { return "stub" }
+func (r *richStub) Tools() []MCPTool               { return nil }
+func (r *richStub) AllToolNames() []string         { return nil }
+func (r *richStub) SetAllowedTools(names []string) {}
+func (r *richStub) IsDead() bool                   { return false }
+func (r *richStub) StderrTail() string             { return "" }
+func (r *richStub) Close() error                   { return nil }
 func (r *richStub) Call(ctx context.Context, tool string, args json.RawMessage) (string, error) {
 	return r.text, nil
 }

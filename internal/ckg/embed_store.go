@@ -16,9 +16,9 @@ type EmbeddingItem struct {
 
 // EmbeddedNode is a search hit returned by SearchSimilar.
 type EmbeddedNode struct {
-	Node   Node
-	Path   string
-	Score  float32 // cosine similarity, [-1, 1]
+	Node  Node
+	Path  string
+	Score float32 // cosine similarity, [-1, 1]
 }
 
 // MissingEmbedding describes a node that has no embedding for the

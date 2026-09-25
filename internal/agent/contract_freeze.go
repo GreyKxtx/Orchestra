@@ -31,7 +31,7 @@ func (a *Agent) handleContractFreeze(ctx context.Context) ([]byte, error) {
 			strings.Join(issues, "\n- "))
 	}
 	if a.opts.AllowExec {
-		if findings := contract.SpectralLint(ctx, root); findings != "" {
+		if findings := spectralLint(ctx, root); findings != "" {
 			return nil, fmt.Errorf("spectral lint failed on %s:\n%s", contract.ArtifactOpenAPI, findings)
 		}
 	}

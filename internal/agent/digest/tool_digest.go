@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-const defaultToolDigestBytes = 16 * 1024
-
 // toolDigester shrinks a single tool's raw output for history.
 type toolDigester func(input json.RawMessage, raw []byte, budget int) string
 

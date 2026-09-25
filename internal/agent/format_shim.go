@@ -32,10 +32,6 @@ func extractLSPErrors(out json.RawMessage) string {
 	return agentformat.ExtractLSPErrors(out)
 }
 
-func formatErr(err error) string {
-	return agentformat.ErrString(err)
-}
-
 func compactJSON(raw json.RawMessage) string {
 	return agentformat.CompactJSON(raw)
 }

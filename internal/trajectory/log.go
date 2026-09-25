@@ -46,7 +46,12 @@ func NewWriter(workspaceRoot, sessionID string) (*Writer, error) {
 	if err := sessionfile.CheckID(sessionID); err != nil {
 		return nil, err
 	}
-	p := Path(workspaceRoot, sessionID)
+	return openWriter(Path(workspaceRoot, sessionID))
+}
+
+// openWriter opens the log at p for appending, repairing a torn tail and
+// continuing its sequence.
+func openWriter(p string) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return nil, fmt.Errorf("trajectory: mkdir: %w", err)
 	}
@@ -179,7 +184,11 @@ func Read(workspaceRoot, sessionID string) (events []Event, recorded bool, err e
 	if err := sessionfile.CheckID(sessionID); err != nil {
 		return nil, false, err
 	}
-	p := Path(workspaceRoot, sessionID)
+	return readFile(Path(workspaceRoot, sessionID))
+}
+
+// readFile reads the log at p; recorded is false when it does not exist.
+func readFile(p string) (events []Event, recorded bool, err error) {
 	f, err := os.Open(p)
 	if err != nil {
 		if os.IsNotExist(err) {

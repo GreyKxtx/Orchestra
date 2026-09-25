@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/resolver"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func TestApplySearchReplaceWithScope_UniqueInFunction(t *testing.T) {

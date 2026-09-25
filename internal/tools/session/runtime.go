@@ -83,14 +83,14 @@ func (c *Client) RuntimeQuery(ctx context.Context, req RuntimeQueryRequest) (*Ru
 	var spans []RuntimeSpanResult
 	for rows.Next() {
 		var (
-			spanID, name                                    string
-			parentSpanID, service, status                   sql.NullString
-			durationMS                                      sql.NullInt64
-			startedAt                                       sql.NullTime
-			codeFile, codeFunc, resolveStatus, errorMsg     sql.NullString
-			codeLineno                                      sql.NullInt64
-			attrsRaw                                        sql.NullString
-			nodeFQN, nodeKind                               sql.NullString
+			spanID, name                                string
+			parentSpanID, service, status               sql.NullString
+			durationMS                                  sql.NullInt64
+			startedAt                                   sql.NullTime
+			codeFile, codeFunc, resolveStatus, errorMsg sql.NullString
+			codeLineno                                  sql.NullInt64
+			attrsRaw                                    sql.NullString
+			nodeFQN, nodeKind                           sql.NullString
 		)
 		err := rows.Scan(
 			&spanID, &parentSpanID, &name, &service,

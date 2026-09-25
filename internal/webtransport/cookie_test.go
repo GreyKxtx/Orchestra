@@ -15,9 +15,9 @@ func startAssetServer(t *testing.T) string {
 	t.Cleanup(cancel)
 
 	base, stop, err := Serve(ctx, Options{
-		Token:  "secret",
-		Health: map[string]any{"status": "ok"},
-		Assets: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<h1>hi</h1>")}},
+		Token:      "secret",
+		Health:     map[string]any{"status": "ok"},
+		Assets:     fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<h1>hi</h1>")}},
 		NewHandler: func() (jsonrpc.Handler, func(*jsonrpc.Server)) { return nil, nil },
 	})
 	if err != nil {

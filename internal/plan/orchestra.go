@@ -33,9 +33,9 @@ func IsOrchestraLeadWritablePath(path, assignedPlan string) bool {
 // Dept Lead (architecture subagent) L2 surface (spec §6.1): per-dept
 // playbooks and epic specs. conventions.md (L1) stays with the Docs Lead.
 const (
-	OrchestraPlaybooksRelDir   = ".orchestra/playbooks/"
-	OrchestraConventionsRel    = ".orchestra/playbooks/conventions.md"
-	OrchestraSpecsRelDir       = ".orchestra/specs/"
+	OrchestraPlaybooksRelDir = ".orchestra/playbooks/"
+	OrchestraConventionsRel  = ".orchestra/playbooks/conventions.md"
+	OrchestraSpecsRelDir     = ".orchestra/specs/"
 )
 
 // IsDeptLeadWritablePath reports paths an architecture-mode Dept Lead may

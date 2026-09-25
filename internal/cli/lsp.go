@@ -176,12 +176,7 @@ func printLSPStatus(w io.Writer, cfg *config.ProjectConfig, doctor bool) error {
 	// Effective = yaml ∪ detect (same merge runtime uses).
 	cfgSpecs := make([]provision.ServerSpec, 0, len(configured))
 	for _, s := range configured {
-		cfgSpecs = append(cfgSpecs, provision.ServerSpec{
-			Language:   s.Language,
-			Extensions: s.Extensions,
-			Command:    s.Command,
-			Disabled:   s.Disabled,
-		})
+		cfgSpecs = append(cfgSpecs, provision.ServerSpec(s))
 	}
 	merged := provision.MergeServersForWorkspace(cfgSpecs, cwd)
 	fmt.Fprintln(w, "Effective (runtime merge):")
@@ -191,12 +186,7 @@ func printLSPStatus(w io.Writer, cfg *config.ProjectConfig, doctor bool) error {
 	} else {
 		eff := make([]provision.ConfiguredServer, 0, len(merged))
 		for _, s := range merged {
-			eff = append(eff, provision.ConfiguredServer{
-				Language:   s.Language,
-				Extensions: s.Extensions,
-				Command:    s.Command,
-				Disabled:   s.Disabled,
-			})
+			eff = append(eff, provision.ConfiguredServer(s))
 		}
 		for _, st := range provision.InspectConfigured(eff) {
 			printServerStatus(w, st, doctor)

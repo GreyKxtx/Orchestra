@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/patch/patches"
 )
 
 func TestParseVerdict_JSON(t *testing.T) {
@@ -207,12 +207,12 @@ func TestFormatRuntimeEvidence_WithSpans(t *testing.T) {
 		Service: "api",
 		Spans: []tools.RuntimeSpanResult{
 			{
-				Status:    "ERROR",
-				Name:      "handler.Create",
-				NodeFQN:   "github.com/foo/bar.Create",
-				NodeKind:  "func",
-				ErrorMsg:  "nil pointer dereference",
-				CodeFile:  "handler.go",
+				Status:     "ERROR",
+				Name:       "handler.Create",
+				NodeFQN:    "github.com/foo/bar.Create",
+				NodeKind:   "func",
+				ErrorMsg:   "nil pointer dereference",
+				CodeFile:   "handler.go",
 				CodeLineno: 42,
 			},
 			{

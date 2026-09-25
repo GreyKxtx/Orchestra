@@ -278,7 +278,11 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		if strings.TrimSpace(req.TaskID) == "" {
 			return nil, fmt.Errorf("task.wait: task_id is required")
 		}
-		result, err := a.opts.SubtaskRunner.Wait(ctx, req.TaskID, req.TimeoutMS)
+		wait := a.opts.SubtaskRunner.Wait
+		if p, ok := a.opts.SubtaskRunner.(SubtaskPoller); ok {
+			wait = p.Poll
+		}
+		result, err := wait(ctx, req.TaskID, req.TimeoutMS)
 		if err != nil {
 			return nil, fmt.Errorf("task.wait: %w", err)
 		}

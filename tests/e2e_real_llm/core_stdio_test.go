@@ -31,14 +31,14 @@ type rpcEnvelope struct {
 }
 
 type coreRPCClient struct {
-	t       *testing.T
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	reader  *bufio.Reader
-	nextID  int
-	mu      sync.Mutex
-	events  []rpcEnvelope
-	cancel  context.CancelFunc
+	t      *testing.T
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	reader *bufio.Reader
+	nextID int
+	mu     sync.Mutex
+	events []rpcEnvelope
+	cancel context.CancelFunc
 }
 
 func startCoreRPC(t *testing.T, projectRoot string) *coreRPCClient {
@@ -154,17 +154,15 @@ func (c *coreRPCClient) call(method string, params any) json.RawMessage {
 		c.t.Fatal(err)
 	}
 	c.writeFrame(body)
-	for {
-		resp := c.readFrame()
-		var gotID int
-		if err := json.Unmarshal(resp.ID, &gotID); err != nil || gotID != id {
-			c.t.Fatalf("unexpected response id=%s want=%d method=%s", string(resp.ID), id, method)
-		}
-		if resp.Error != nil {
-			c.t.Fatalf("rpc %s error: %s", method, resp.Error.Message)
-		}
-		return resp.Result
+	resp := c.readFrame()
+	var gotID int
+	if err := json.Unmarshal(resp.ID, &gotID); err != nil || gotID != id {
+		c.t.Fatalf("unexpected response id=%s want=%d method=%s", string(resp.ID), id, method)
 	}
+	if resp.Error != nil {
+		c.t.Fatalf("rpc %s error: %s", method, resp.Error.Message)
+	}
+	return resp.Result
 }
 
 func (c *coreRPCClient) drainAgentEvents() []rpcEnvelope {
@@ -245,17 +243,15 @@ func (c *coreRPCClient) sessionMessageWithAttachments(sessionID, content string,
 		return err
 	}
 	c.writeFrame(body)
-	for {
-		resp := c.readFrame()
-		var gotID int
-		if err := json.Unmarshal(resp.ID, &gotID); err != nil || gotID != id {
-			c.t.Fatalf("unexpected response id=%s want=%d method=session.message", string(resp.ID), id)
-		}
-		if resp.Error != nil {
-			return fmt.Errorf("%s", resp.Error.Message)
-		}
-		return nil
+	resp := c.readFrame()
+	var gotID int
+	if err := json.Unmarshal(resp.ID, &gotID); err != nil || gotID != id {
+		c.t.Fatalf("unexpected response id=%s want=%d method=session.message", string(resp.ID), id)
 	}
+	if resp.Error != nil {
+		return fmt.Errorf("%s", resp.Error.Message)
+	}
+	return nil
 }
 
 func (c *coreRPCClient) sessionHistoryLen(sessionID string) int {

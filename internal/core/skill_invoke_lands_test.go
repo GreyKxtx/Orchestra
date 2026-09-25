@@ -48,10 +48,9 @@ var hashPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
 // skillScriptLLM answers as the parent or as the skill child, telling them
 // apart by the tool list: only the parent is offered skill_invoke.
 type skillScriptLLM struct {
-	mu            sync.Mutex
-	parentCalls   int
-	childCalls    int
-	parentPatched bool
+	mu          sync.Mutex
+	parentCalls int
+	childCalls  int
 	// What the parent read back from skill_invoke: the tool message in its
 	// second request. This is the whole of what the parent knows about the
 	// child's work, so the test reads it too.

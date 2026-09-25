@@ -8,9 +8,9 @@ import (
 
 func TestParseMCPPromptCommand(t *testing.T) {
 	cases := []struct {
-		in                   string
-		server, name, args   string
-		ok                   bool
+		in                 string
+		server, name, args string
+		ok                 bool
 	}{
 		{"/mcp:linear:triage", "linear", "triage", "", true},
 		{"/mcp:linear:triage ENG-1", "linear", "triage", "ENG-1", true},
@@ -18,12 +18,12 @@ func TestParseMCPPromptCommand(t *testing.T) {
 		{"  /mcp:linear:triage  ENG-1  ", "linear", "triage", "ENG-1", true},
 
 		// Not prompt commands.
-		{"/mcp", "", "", "", false},           // the built-in server dialog
-		{"/mcp:linear", "", "", "", false},    // no prompt name
+		{"/mcp", "", "", "", false},        // the built-in server dialog
+		{"/mcp:linear", "", "", "", false}, // no prompt name
 		{"/model", "", "", "", false},
 		{"just a message", "", "", "", false},
-		{"/mcp::triage", "", "", "", false},   // empty server
-		{"/mcp:linear:", "", "", "", false},   // empty prompt name
+		{"/mcp::triage", "", "", "", false}, // empty server
+		{"/mcp:linear:", "", "", "", false}, // empty prompt name
 	}
 	for _, tc := range cases {
 		server, name, args, ok := parseMCPPromptCommand(tc.in)

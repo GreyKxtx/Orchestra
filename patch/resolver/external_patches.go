@@ -14,8 +14,8 @@ import (
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/relpath"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // ResolveExternalPatches converts External Patch objects into Internal Ops v1.
@@ -819,9 +819,7 @@ func blockAnchorFind(haystack, needle string) (start, end, matches int) {
 
 func splitBlockLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	if strings.HasSuffix(s, "\n") {
-		s = strings.TrimSuffix(s, "\n")
-	}
+	s = strings.TrimSuffix(s, "\n")
 	if s == "" {
 		return nil
 	}

@@ -59,23 +59,23 @@ type UIAttachment struct {
 
 // UIMessage is the persisted projection of one chat viewport message.
 type UIMessage struct {
-	Role              string        `json:"role"`
-	Text              string        `json:"text,omitempty"`
+	Role              string         `json:"role"`
+	Text              string         `json:"text,omitempty"`
 	Attachments       []UIAttachment `json:"attachments,omitempty"`
-	ToolBlocks        []UIToolBlock `json:"tool_blocks,omitempty"`
-	Segments          []UISegment   `json:"segments,omitempty"`
-	Reasoning         string        `json:"reasoning,omitempty"`
-	Notices           []UINotice    `json:"notices,omitempty"`
-	SystemKind        string        `json:"system_kind,omitempty"`
-	DiffFiles         []UIDiffFile  `json:"diff_files,omitempty"`
-	DiffExpanded      bool          `json:"diff_expanded,omitempty"`
-	ToolsExpanded     bool          `json:"tools_expanded,omitempty"`
-	ReasoningExpanded bool          `json:"reasoning_expanded,omitempty"`
-	StartedAt         time.Time     `json:"started_at,omitempty"`
-	DurationMS        int64         `json:"duration_ms,omitempty"`
-	TokensIn          int           `json:"tokens_in,omitempty"`
-	TokensOut         int           `json:"tokens_out,omitempty"`
-	PromptCtx         int           `json:"prompt_ctx,omitempty"` // last step prompt size for ctx bar
-	Mode              string        `json:"mode,omitempty"`
-	Model             string        `json:"model,omitempty"`
+	ToolBlocks        []UIToolBlock  `json:"tool_blocks,omitempty"`
+	Segments          []UISegment    `json:"segments,omitempty"`
+	Reasoning         string         `json:"reasoning,omitempty"`
+	Notices           []UINotice     `json:"notices,omitempty"`
+	SystemKind        string         `json:"system_kind,omitempty"`
+	DiffFiles         []UIDiffFile   `json:"diff_files,omitempty"`
+	DiffExpanded      bool           `json:"diff_expanded,omitempty"`
+	ToolsExpanded     bool           `json:"tools_expanded,omitempty"`
+	ReasoningExpanded bool           `json:"reasoning_expanded,omitempty"`
+	StartedAt         time.Time      `json:"started_at,omitempty"`
+	DurationMS        int64          `json:"duration_ms,omitempty"`
+	TokensIn          int            `json:"tokens_in,omitempty"`
+	TokensOut         int            `json:"tokens_out,omitempty"`
+	PromptCtx         int            `json:"prompt_ctx,omitempty"` // last step prompt size for ctx bar
+	Mode              string         `json:"mode,omitempty"`
+	Model             string         `json:"model,omitempty"`
 }

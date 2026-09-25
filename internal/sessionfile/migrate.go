@@ -55,14 +55,14 @@ func ParseSnapshot(data []byte, fileID string) (*Snapshot, error) {
 
 func migrateV1(data []byte, fileID string) (*Snapshot, error) {
 	var v1 struct {
-		Version      int              `json:"version"`
-		ID           string           `json:"id"`
-		History      []llm.Message    `json:"history"`
-		CreatedAt    time.Time        `json:"created_at"`
-		LastActivity time.Time        `json:"last_activity"`
-		PendingOps   []ops.AnyOp           `json:"pending_ops,omitempty"`
-		Todos        []TodoItem            `json:"todos,omitempty"`
-		PlanPath     string           `json:"plan_path,omitempty"`
+		Version      int           `json:"version"`
+		ID           string        `json:"id"`
+		History      []llm.Message `json:"history"`
+		CreatedAt    time.Time     `json:"created_at"`
+		LastActivity time.Time     `json:"last_activity"`
+		PendingOps   []ops.AnyOp   `json:"pending_ops,omitempty"`
+		Todos        []TodoItem    `json:"todos,omitempty"`
+		PlanPath     string        `json:"plan_path,omitempty"`
 	}
 	if err := json.Unmarshal(data, &v1); err != nil {
 		return nil, fmt.Errorf("sessionfile: migrate v1: %w", err)
@@ -129,26 +129,26 @@ func migrateV0(data []byte, fileID string) (*Snapshot, error) {
 // v0Msg accepts both legacy capitalized keys (state.Message without json tags)
 // and lowercase variants.
 type v0Msg struct {
-	Role       string        `json:"Role"`
-	RoleLo     string        `json:"role"`
-	Text       string        `json:"Text"`
-	TextLo     string        `json:"text"`
-	ToolBlocks []v0ToolBlock `json:"ToolBlocks"`
-	ToolLo     []v0ToolBlock `json:"tool_blocks"`
-	Reasoning  string        `json:"Reasoning"`
-	ReasonLo   string        `json:"reasoning"`
-	StartedAt  time.Time     `json:"StartedAt"`
-	StartedLo  time.Time     `json:"started_at"`
-	DurationNS int64         `json:"Duration"`
-	DurMS      int64         `json:"duration_ms"`
-	TokensIn   int           `json:"TokensIn"`
-	TokensInLo int           `json:"tokens_in"`
-	TokensOut  int           `json:"TokensOut"`
-	TokensOutLo int          `json:"tokens_out"`
-	Mode       string        `json:"Mode"`
-	ModeLo     string        `json:"mode"`
-	Model      string        `json:"Model"`
-	ModelLo    string        `json:"model"`
+	Role        string        `json:"Role"`
+	RoleLo      string        `json:"role"`
+	Text        string        `json:"Text"`
+	TextLo      string        `json:"text"`
+	ToolBlocks  []v0ToolBlock `json:"ToolBlocks"`
+	ToolLo      []v0ToolBlock `json:"tool_blocks"`
+	Reasoning   string        `json:"Reasoning"`
+	ReasonLo    string        `json:"reasoning"`
+	StartedAt   time.Time     `json:"StartedAt"`
+	StartedLo   time.Time     `json:"started_at"`
+	DurationNS  int64         `json:"Duration"`
+	DurMS       int64         `json:"duration_ms"`
+	TokensIn    int           `json:"TokensIn"`
+	TokensInLo  int           `json:"tokens_in"`
+	TokensOut   int           `json:"TokensOut"`
+	TokensOutLo int           `json:"tokens_out"`
+	Mode        string        `json:"Mode"`
+	ModeLo      string        `json:"mode"`
+	Model       string        `json:"Model"`
+	ModelLo     string        `json:"model"`
 }
 
 type v0ToolBlock struct {

@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // ResolvedToolDigestBytes returns max raw tool output kept in history (0 = disabled).
 func (a AgentConfig) ResolvedToolDigestBytes() int {
@@ -64,6 +67,42 @@ func (a AgentConfig) ResolvedChildTimeoutMS() int {
 // (eight children lost in one 50-minute run, 2026-09-18). Ten minutes is a
 // lifetime, not a target; the Lead still passes timeout_ms to shorten it.
 const DefaultChildTimeoutS = 600
+
+// Turn budget defaults (agent.turn_budget).
+const (
+	DefaultTurnMaxTasks = 64
+	DefaultTurnMaxWallS = 7200
+)
+
+// ResolvedMaxTasks returns the per-turn task cap; 0 means no cap.
+func (b TurnBudgetConfig) ResolvedMaxTasks() int {
+	switch {
+	case b.MaxTasks < 0:
+		return 0
+	case b.MaxTasks == 0:
+		return DefaultTurnMaxTasks
+	}
+	return b.MaxTasks
+}
+
+// ResolvedMaxTokens returns the per-turn token cap; 0 means no cap.
+func (b TurnBudgetConfig) ResolvedMaxTokens() int {
+	if b.MaxTokens < 0 {
+		return 0
+	}
+	return b.MaxTokens
+}
+
+// ResolvedMaxWall returns how long a turn's tree may run; 0 means no cap.
+func (b TurnBudgetConfig) ResolvedMaxWall() time.Duration {
+	switch {
+	case b.MaxWallS < 0:
+		return 0
+	case b.MaxWallS == 0:
+		return DefaultTurnMaxWallS * time.Second
+	}
+	return time.Duration(b.MaxWallS) * time.Second
+}
 
 // ResolvedBytesPerContextToken returns the estimate calibration (default 4).
 func (a AgentConfig) ResolvedBytesPerContextToken() int {

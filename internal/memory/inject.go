@@ -65,11 +65,6 @@ type injectScope struct {
 // fullScope reaches every layer — eager inject and memory_read layer=all.
 func fullScope() injectScope { return injectScope{global: true, repoFiles: true} }
 
-func (s *Store) buildInjectContent(maxBytes int) string {
-	content, _ := s.buildInjectContentReport(maxBytes)
-	return content
-}
-
 func (s *Store) buildInjectContentReport(maxBytes int) (string, []layerStat) {
 	switch s.cfg.Mode {
 	case ModeLazy:

@@ -3,9 +3,9 @@ package agent
 import (
 	"context"
 
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 const planApprovedQuery = "The plan has been approved. Execute the plan."

@@ -35,6 +35,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 }
 
 func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string) (outHistory []llm.Message, result *Result, err error) {
+	a.opts.AgentLogger = a.baseLogger.For(ctx)
+	a.turnPrompt = nil
 	userQuery = strings.TrimSpace(userQuery)
 	if userQuery == "" {
 		return nil, nil, fmt.Errorf("user query is empty")
@@ -80,7 +82,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// Once per Run, not per step: discoverInstructions dedupes by directory for
 	// the life of the runner, so recomputing it on step 2 returns nothing and
 	// the rules would drop out of the prompt mid-turn.
-	a.queryInstructions = a.tools.InstructionsForQuery(userQuery)
+	a.queryInstructions = a.tools.InstructionsForQuery(ctx, userQuery)
 
 	if history == nil {
 		history = make([]llm.Message, 0, 32)
@@ -239,10 +241,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 						historyRewritten = true
 						a.recordCompactMetrics(before, after, true)
 						// Forgive one repeat, do not forget them all: on a small
-					// window compaction runs every few steps, and clearing the
-					// counters reset the doom-loop guard faster than it could
-					// trip.
-					cb.ForgiveReadOnlyCallsAfterCompaction()
+						// window compaction runs every few steps, and clearing the
+						// counters reset the doom-loop guard faster than it could
+						// trip.
+						cb.ForgiveReadOnlyCallsAfterCompaction()
 						if a.opts.OnEvent != nil {
 							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
 								Kind:    llm.StreamEventRecoverableError,

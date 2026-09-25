@@ -12,15 +12,15 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
+	evalharness "github.com/orchestra/orchestra/internal/eval"
 	"github.com/orchestra/orchestra/llm"
-	evalharness "github.com/orchestra/orchestra/tests/eval"
 	"github.com/spf13/cobra"
 )
 
 var evalCmd = &cobra.Command{
 	Use:   "eval [tasks-dir]",
 	Short: "Run eval tasks against the configured LLM",
-	Long:  "Loads YAML task definitions from tasks-dir (default: tests/eval/tasks), runs each against the agent, and reports pass/fail.",
+	Long:  "Loads YAML task definitions from tasks-dir (default: internal/eval/tasks), runs each against the agent, and reports pass/fail.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runEval,
 }
@@ -105,7 +105,7 @@ func selectTasks(tasks []evalharness.Task, only []string) ([]evalharness.Task, e
 }
 
 func runEval(cmd *cobra.Command, args []string) error {
-	tasksDir := "tests/eval/tasks"
+	tasksDir := "internal/eval/tasks"
 	if len(args) > 0 {
 		tasksDir = args[0]
 	}

@@ -58,6 +58,14 @@ type SubtaskRunner interface {
 	Cancel(ctx context.Context, taskID string) error
 }
 
+// SubtaskPoller is a SubtaskRunner whose waits can time out without giving up
+// on the task. task_wait uses it: a task still running at the timeout comes
+// back as status still_running and keeps running. Wait, which the
+// synchronous task tool uses, cancels a task it stops waiting for.
+type SubtaskPoller interface {
+	Poll(ctx context.Context, taskID string, timeoutMS int) (*SubtaskResult, error)
+}
+
 // SubtaskSpawnRequest is the request for spawning a child agent task.
 type SubtaskSpawnRequest struct {
 	Goal         string
@@ -563,8 +571,17 @@ type Agent struct {
 	validator      *schema.Validator
 	tools          *tools.Runner
 	opts           Options
-	todos          []tools.TodoItem // current turn's working todo list
-	ckgContext     string           // pre-fetched CKG nodes block, empty if unavailable
+	// baseLogger is opts.AgentLogger as constructed. Each Run attributes it
+	// to the run and task its ctx carries (llm.Trace) and puts the result in
+	// opts.AgentLogger, so every line the turn writes says whose it is.
+	baseLogger *llm.Logger
+	// turnPrompt is this Run's system prompt parts (turnSystemPromptParts).
+	turnPrompt *systemPromptParts
+	// inboxCarry holds agency notes that did not fit in the last step's
+	// message; drainAgencyInbox delivers them first on the next.
+	inboxCarry []InboxMessage
+	todos      []tools.TodoItem // current turn's working todo list
+	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
 	// queryInstructions is the nested ORCHESTRA.md text for the directories the
 	// turn's query references (@-mentions and attachments). Computed once per
 	// Run, not per step: discoverInstructions dedupes by directory for the life
@@ -683,6 +700,7 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		validator:            v,
 		tools:                toolRunner,
 		opts:                 opts,
+		baseLogger:           opts.AgentLogger,
 		justSwitchedFromPlan: opts.JustSwitchedFromPlan,
 		diags:                newDiagTracker(),
 	}, nil

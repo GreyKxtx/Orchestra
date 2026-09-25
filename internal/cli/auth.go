@@ -23,8 +23,7 @@ var authListCmd = &cobra.Command{
 }
 
 var (
-	authSetKeyProvider string
-	authSetKeyValue    string
+	authSetKeyValue string
 )
 
 var authSetKeyCmd = &cobra.Command{

@@ -12,8 +12,8 @@ import (
 
 	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/ops"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/relpath"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 // applyMu serialises all in-process apply runs so concurrent ApplyAnyOps

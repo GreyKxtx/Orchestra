@@ -150,7 +150,7 @@ func TestCheckPermissions(t *testing.T) {
 			wantMatched: false,
 		},
 		{
-			name:        "wildcard deny overrides everything with no pattern",
+			name: "wildcard deny overrides everything with no pattern",
 			rules: []config.PermissionRule{
 				deny("*", ""),
 			},
