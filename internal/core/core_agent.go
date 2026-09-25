@@ -469,21 +469,27 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 
 // Close releases resources held by Core (tools.Runner, MCP manager).
 // Safe to call multiple times.
+//
+// The runner is closed, not nil-ed: an RPC already past its checks (an
+// ops.apply waiting on runMu) reads c.tools without a lock, and Close
+// setting it to nil under it was both a data race and a nil dereference
+// that took the process down. A closed runner is inert.
 func (c *Core) Close() error {
-	c.warm.stop()
-	if c.limitsCancel != nil {
-		c.limitsCancel()
-	}
-	if c.mcpManager != nil {
-		c.mcpManager.Close()
-	}
-	if c.tools != nil {
-		if err := c.tools.Close(); err != nil {
-			return fmt.Errorf("close tools runner: %w", err)
+	c.closeOnce.Do(func() {
+		c.warm.stop()
+		if c.limitsCancel != nil {
+			c.limitsCancel()
 		}
-		c.tools = nil
-	}
-	return nil
+		if c.mcpManager != nil {
+			c.mcpManager.Close()
+		}
+		if c.tools != nil {
+			if err := c.tools.Close(); err != nil {
+				c.closeErr = fmt.Errorf("close tools runner: %w", err)
+			}
+		}
+	})
+	return c.closeErr
 }
 
 // mcpToolDefs returns MCP tool definitions if a manager is active.

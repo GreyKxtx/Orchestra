@@ -44,3 +44,20 @@ func TestWarmups_StopCancelsAndWaits(t *testing.T) {
 		t.Fatal("a warmup started after stop must not run")
 	}
 }
+
+// An RPC already on its way when the core closes — an ops.apply waiting on
+// runMu behind a turn — used to find c.tools set to nil by Close and crash
+// the process with a nil dereference (test-windows on PR #9). The runner is
+// closed, not removed: the late call gets an answer.
+func TestClose_ALateRPCDoesNotCrash(t *testing.T) {
+	c, _ := setupInitializedCore(t, t.TempDir(), &gateLLM{release: make(chan struct{})})
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.OpsApply(context.Background(), OpsApplyParams{}); err != nil {
+		t.Logf("a late ops.apply may fail, but not crash: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("a second Close: %v", err)
+	}
+}

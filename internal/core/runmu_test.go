@@ -45,6 +45,14 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{})
 	_, h := setupInitializedCore(t, root, &gateLLM{release: release, entered: entered})
+	// A failed wait must not leave the turn blocked on the gate, holding
+	// runMu, while cleanup closes the core under the ops.apply behind it.
+	var releaseOnce sync.Once
+	open := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(open)
+	// Waits that only matter when the test fails are generous: -race on a
+	// Windows runner is slow, and 2s was not always enough there.
+	const slow = 20 * time.Second
 
 	startP, _ := json.Marshal(SessionStartParams{})
 	startRes, err := h.Handle(context.Background(), "session.start", startP)
@@ -65,7 +73,7 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(slow):
 		t.Fatal("session.message did not reach LLM Complete")
 	}
 
@@ -90,19 +98,19 @@ func TestRunMu_SessionMessageBlocksOpsApply(t *testing.T) {
 		t.Fatal("ops.apply finished while session.message still held runMu")
 	}
 
-	close(release)
+	open()
 	select {
 	case err := <-msgDone:
 		if err != nil {
 			t.Fatalf("session.message: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(slow):
 		t.Fatal("session.message did not complete")
 	}
 
 	select {
 	case <-applyDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(slow):
 		t.Fatal("ops.apply should complete after session.message releases runMu")
 	}
 }

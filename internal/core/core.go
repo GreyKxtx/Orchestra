@@ -51,7 +51,9 @@ type Core struct {
 	tools     *tools.Runner
 	// warm tracks the background LSP warmups: Close cancels them and waits,
 	// so none is still reading the runner — or os.Stderr — after it.
-	warm warmups
+	warm      warmups
+	closeOnce sync.Once
+	closeErr  error
 	// runMu serialises every RPC entry point that mutates shared Runner state
 	// (SetDryRun, ClearStaged, staged-overlay writes). Without this, two
 	// concurrent agent.run / session.message / workflow.run / skill.invoke /
