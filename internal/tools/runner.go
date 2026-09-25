@@ -62,12 +62,14 @@ type Runner struct {
 	// discovery; see instructionSeen).
 	seenInstructionDirs instructionSeen
 
-	memoryCfg memory.Config
-	sessionID string
-
-	// deptLessonMu guards deptLessonWrites (memory_write with dept scope → lessons).
-	deptLessonMu     sync.Mutex
-	deptLessonWrites int
+	// turn is the runner's default turn: the state a call carries when its
+	// context names no turn of its own (the CLI's direct path, tool.call).
+	// turns are the ones started with NewTurn and not yet closed, for the
+	// language servers' view of what is staged (see Turn).
+	turn    *Turn
+	turnsMu sync.Mutex
+	turns   map[*Turn]struct{}
+	astGate bool
 
 	// Web fetch settings.
 	webFetchTimeout    time.Duration
@@ -89,13 +91,10 @@ type Runner struct {
 	browserClient    *browser.Client
 	allowBrowserEval bool
 
-	// Dry-run staging: when dryRun=true, FSWrite/FSEdit accumulate changes in overlay
-	// instead of writing to disk. FSRead serves staged content back to the model.
-	dryRun                 bool
-	dryRunMu               sync.RWMutex
-	blockExecInDryRun      bool
-	allowExecDespiteDryRun bool
-	fsTools                *fs.Client
+	// blockExecInDryRun refuses commands in a turn that previews (the core);
+	// the per-turn flags live on Turn.
+	blockExecInDryRun bool
+	fsTools           *fs.Client
 
 	// forceDiagnosticsForTest is appended to every write/edit diagnostic response.
 	// Only used in tests — nil in production.
@@ -243,47 +242,38 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		lspAutoInstall:          lspCfg.EffectiveAutoInstall(),
 		browserClient:           browserCli,
 		allowBrowserEval:        opts.Browser.AllowEval,
-		dryRun:                  opts.DryRun,
 		blockExecInDryRun:       opts.BlockExecInDryRun,
 		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
 		forceDiagnosticsHook:    opts.ForceDiagnosticsHook,
-		memoryCfg:               memory.DefaultConfig(),
+		astGate:                 !opts.DisableASTGate,
+		turns:                   map[*Turn]struct{}{},
 	}
 	r.initFSClient(rootAbs, exclude, opts.DryRun, !opts.DisableASTGate)
+	r.turn = newTurn(r, r.fsTools.Overlay, TurnOptions{DryRun: opts.DryRun, Memory: memory.DefaultConfig()})
 	if lspMgr != nil {
 		lspMgr.SetContentProvider(r)
 	}
 	return r, nil
 }
 
-// DryRun reports the current staging-mode flag. Cheap (RLock); callers that
-// need to save / restore the flag across a one-shot pin (e.g. SkillInvoke)
-// read it before SetDryRun and restore it before unlocking.
+// DryRun reports the default turn's staging flag.
 func (r *Runner) DryRun() bool {
-	r.dryRunMu.RLock()
-	defer r.dryRunMu.RUnlock()
-	return r.dryRun
+	return r.turn.DryRun()
 }
 
-// SetDryRun enables or disables staging mode. Disabling clears all staged state.
+// SetDryRun enables or disables staging on the default turn. Disabling
+// clears its staged state.
 func (r *Runner) SetDryRun(v bool) {
-	r.dryRunMu.Lock()
-	r.dryRun = v
-	r.dryRunMu.Unlock()
-	if r.fsTools != nil && r.fsTools.Overlay != nil {
-		r.fsTools.Overlay.SetDryRun(v)
-	}
+	r.turn.SetDryRun(v)
 }
 
-// SetAllowExecDespiteDryRun lets exec.run proceed while file tools stay in the
-// staging overlay.
+// SetAllowExecDespiteDryRun lets exec.run proceed on the default turn while
+// file tools stay in the staging overlay.
 func (r *Runner) SetAllowExecDespiteDryRun(v bool) {
 	if r == nil {
 		return
 	}
-	r.dryRunMu.Lock()
-	defer r.dryRunMu.Unlock()
-	r.allowExecDespiteDryRun = v
+	r.turn.SetAllowExecDespiteDryRun(v)
 }
 
 // convertLSPConfig translates config.LSPConfig to lsp.LSPConfig and merges
@@ -559,13 +549,13 @@ func (r *Runner) Close() error {
 // SetMCPCaller registers an MCP manager for routing mcp:* tool calls.
 func (r *Runner) SetMCPCaller(caller MCPCaller) { r.mcpCaller = caller }
 
-func (r *Runner) memoryStore() *memory.Store {
+// memoryStoreAt is the memory store of the turn behind ctx.
+func (r *Runner) memoryStoreAt(ctx context.Context) *memory.Store {
 	if r == nil {
 		return memory.NewStore("", "", memory.DefaultConfig())
 	}
-	cfg := r.memoryCfg
-	cfg.Normalize()
-	return memory.NewStore(r.workspaceRoot, r.sessionID, cfg)
+	t := r.TurnAt(ctx)
+	return memory.NewStore(r.workspaceRoot, t.SessionID(), t.MemoryConfig())
 }
 
 // discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
@@ -583,7 +573,7 @@ func (r *Runner) discoverInstructions(ctx context.Context, dir string) string {
 		}
 
 		if r.seenInstructionDirs.firstTime(who, dir) {
-			text, foundFile := r.memoryStore().LazyOrchestraFile(dir)
+			text, foundFile := r.memoryStoreAt(ctx).LazyOrchestraFile(dir)
 			if text != "" {
 				candidate := filepath.Join(dir, foundFile)
 				// LazyOrchestraFile walks up to the root itself, so for a
@@ -629,29 +619,13 @@ func (r *Runner) extraTestDiagnostics(content string) []lsp.ToolDiagnostic {
 	return out
 }
 
-const maxDeptLessonWritesPerRun = 3
-
-// ResetDeptLessonBudget clears the per-run cap for memory_write dept scopes.
-func (r *Runner) ResetDeptLessonBudget() {
+// ResetDeptLessonBudget clears the per-run cap on memory_write dept scopes
+// for the turn behind ctx.
+func (r *Runner) ResetDeptLessonBudget(ctx context.Context) {
 	if r == nil {
 		return
 	}
-	r.deptLessonMu.Lock()
-	r.deptLessonWrites = 0
-	r.deptLessonMu.Unlock()
-}
-
-func (r *Runner) consumeDeptLessonWrite() error {
-	if r == nil {
-		return fmt.Errorf("runner is nil")
-	}
-	r.deptLessonMu.Lock()
-	defer r.deptLessonMu.Unlock()
-	if r.deptLessonWrites >= maxDeptLessonWritesPerRun {
-		return fmt.Errorf("dept lesson budget exhausted (max %d memory_write calls with dept scope per agent run)", maxDeptLessonWritesPerRun)
-	}
-	r.deptLessonWrites++
-	return nil
+	r.TurnAt(ctx).resetDeptLessonBudget()
 }
 
 // SetCommitsToDisk records whether this run applies its changes, so the
@@ -659,8 +633,8 @@ func (r *Runner) consumeDeptLessonWrite() error {
 // format has no op for — can tell a real run from a preview. Set from the same
 // Apply flag that drives SetAllowExecDespiteDryRun and the per-tool commit.
 func (r *Runner) SetCommitsToDisk(v bool) {
-	if r == nil || r.fsTools == nil {
+	if r == nil {
 		return
 	}
-	r.fsTools.Overlay.SetCommitsToDisk(v)
+	r.turn.SetCommitsToDisk(v)
 }

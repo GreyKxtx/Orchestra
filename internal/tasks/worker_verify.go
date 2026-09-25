@@ -160,7 +160,7 @@ func VerifyWorkerOutcome(ctx context.Context, runner *tools.Runner, paths []stri
 	for _, p := range paths {
 		record(verifyWorkerLSP(ctx, runner, p))
 	}
-	if runner != nil && !runner.DryRun() {
+	if runner != nil && !runner.TurnAt(ctx).DryRun() {
 		root := runner.WorkspaceRoot()
 		for _, pkg := range goBuildPackages(paths) {
 			record(verifyWorkerGoBuild(ctx, root, pkg, ""))
@@ -963,7 +963,7 @@ func (r *TaskRunner) runWorkerRounds(
 		if report.Passed {
 			// Acceptance checks run only after green deterministic checks:
 			// no point probing behavior of code that does not compile.
-			acResults := runAcceptanceChecks(ctx, r.toolRunner.WorkspaceRoot(), acChecks, r.child.Caps.Exec, r.toolRunner.DryRun())
+			acResults := runAcceptanceChecks(ctx, r.toolRunner.WorkspaceRoot(), acChecks, r.child.Caps.Exec, r.toolRunner.TurnAt(ctx).DryRun())
 			report.Checks = append(report.Checks, acResults...)
 			acRan, acGreen := acceptanceOutcome(acResults)
 			if !acGreen {

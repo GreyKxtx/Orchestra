@@ -465,17 +465,15 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		cancel()
 	}()
 
-	// Same staging contract as AgentRun: serialise shared Runner mutations
-	// (SetDryRun, ClearStaged, staged overlay writes) for the whole turn.
-	// Tools stage write/edit; params.Apply commits at end and unlocks bash.
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
-	c.tools.SetDryRun(true)
-	c.tools.ClearStaged()
-	c.tools.SetAllowExecDespiteDryRun(params.Apply)
-	defer c.tools.SetAllowExecDespiteDryRun(false)
-	c.tools.SetCommitsToDisk(params.Apply)
-	defer c.tools.SetCommitsToDisk(false)
+	// Same staging contract as AgentRun, on this session's own turn: tools
+	// stage write/edit there; params.Apply commits at end and unlocks bash.
+	// runMu is held shared — turns of different sessions run at once, and
+	// only a change to the core's shared state waits for them.
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
+	turn := sess.Turn(c.tools)
+	turn.Begin(params.Apply, params.SessionID, memory.ConfigFrom(c.cfg.Memory))
+	defer turn.End()
 
 	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:                params.Mode,
@@ -506,7 +504,6 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 	defer launch.Close()
-	c.tools.SetMemoryContext(params.SessionID, memory.ConfigFrom(c.cfg.Memory))
 
 	// Persist todos as soon as todowrite succeeds so a crash / cancel mid-turn
 	// (or reopen before SessionMessage returns) does not lose the checklist.
@@ -547,7 +544,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 
-	turnCtx = launch.RunContext(turnCtx)
+	turnCtx = launch.RunContext(tools.WithTurn(turnCtx, turn))
 	outHistory, res, err := ag.Run(turnCtx, inHistory, agentQuery)
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
@@ -827,8 +824,9 @@ func (c *Core) SessionDiscardPending(params SessionDiscardPendingParams) (*Sessi
 		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
 	}
 
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
+	turn := sess.Turn(c.tools)
 
 	sess.Lock()
 	// With no Paths this returns (everything, nil) — the reject-all behaviour.
@@ -837,17 +835,17 @@ func (c *Core) SessionDiscardPending(params SessionDiscardPendingParams) (*Sessi
 	sess.Unlock()
 
 	hadStaging := false
-	if c.tools != nil {
+	if turn != nil {
 		if len(params.Paths) > 0 {
 			// Drop only the named files from the overlay; the others stay
 			// staged so a later apply still has them.
-			for _, p := range filterStagedPaths(c.tools.ListStagedPaths(), params.Paths) {
+			for _, p := range filterStagedPaths(turn.ListStagedPaths(), params.Paths) {
 				hadStaging = true
-				c.tools.UnstagePath(p)
+				turn.UnstagePath(p)
 			}
 		} else {
-			hadStaging = c.tools.HasStagedChanges()
-			c.tools.ClearStaged()
+			hadStaging = turn.HasStagedChanges()
+			turn.ClearStaged()
 		}
 	}
 
@@ -877,12 +875,15 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 	allPending := sess.CopyPending()
 	sess.Unlock()
 
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
+	turn := sess.Turn(c.tools)
 
-	// Live staging overlay is authoritative during an in-flight dry-run turn.
-	if c.tools != nil && c.tools.HasStagedChanges() {
-		return c.sessionApplyFromStaging(ctx, sess, params, allPending)
+	// The session's staging overlay is authoritative while it holds the
+	// turn's edits; the pending ops in the snapshot are the fallback after a
+	// core restart.
+	if turn.HasStagedChanges() {
+		return c.sessionApplyFromStaging(ctx, sess, turn, params, allPending)
 	}
 
 	pendingOps, remaining := filterPendingOpsByPaths(allPending, params.Paths)
@@ -914,11 +915,11 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 	sess.Unlock()
 
 	if len(remaining) == 0 {
-		c.tools.ClearStaged()
+		turn.ClearStaged()
 	} else {
 		for _, op := range pendingOps {
 			if p := strings.TrimSpace(op.Path); p != "" {
-				c.tools.UnstagePath(p)
+				turn.UnstagePath(p)
 			}
 		}
 	}
@@ -933,10 +934,12 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 func (c *Core) sessionApplyFromStaging(
 	ctx context.Context,
 	sess *coresession.Session,
+	turn *tools.Turn,
 	params SessionApplyPendingParams,
 	allPending []ops.AnyOp,
 ) (*SessionApplyPendingResult, error) {
-	paths := c.tools.ListStagedPaths()
+	ctx = tools.WithTurn(ctx, turn)
+	paths := turn.ListStagedPaths()
 	if len(params.Paths) > 0 {
 		paths = filterStagedPaths(paths, params.Paths)
 	}

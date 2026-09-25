@@ -8,6 +8,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -153,20 +154,13 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		return nil, fmt.Errorf("skill %q: %w", params.Name, err)
 	}
 
-	// Serialise against concurrent agent.run / workflow.run / ops.apply so a
-	// neighbour cannot flip the shared Runner's dry-run flag mid-skill.
-	// skill.invoke is always dry-run (it has no Apply parameter): pin the flag
-	// to dryRun=true for the duration of this call, then restore the previous
-	// value so a subsequent direct `tool.call(bash)` doesn't get spuriously
-	// blocked by stale state from a one-off skill.invoke.
-	c.runMu.Lock()
-	prevDry := c.tools.DryRun()
-	c.tools.SetDryRun(true)
-	c.tools.ClearStaged()
-	defer func() {
-		c.tools.SetDryRun(prevDry)
-		c.runMu.Unlock()
-	}()
+	// skill.invoke is always a preview (it has no Apply parameter), on a
+	// turn of its own. runMu is held shared.
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
+	turn := c.tools.NewTurn(tools.TurnOptions{DryRun: true, Memory: memory.ConfigFrom(c.cfg.Memory)})
+	defer turn.Close()
+	ctx = tools.WithTurn(ctx, turn)
 
 	// The command's own body is the instruction (it is the system prompt), but
 	// the agent still needs a user turn to answer; a command run with nothing

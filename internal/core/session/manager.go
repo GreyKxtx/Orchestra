@@ -44,11 +44,14 @@ func (m *Manager) Get(id string) (*Session, error) {
 	return s, nil
 }
 
-// Delete removes a session by ID. No-op if the session doesn't exist.
+// Delete removes a session by ID and closes its turn. No-op if the session
+// doesn't exist.
 func (m *Manager) Delete(id string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	s := m.sessions[id]
 	delete(m.sessions, id)
+	m.mu.Unlock()
+	s.CloseTurn()
 }
 
 // IDs returns the ids of the sessions held in memory.
@@ -68,9 +71,8 @@ func (m *Manager) IDs() []string {
 // to hold every session it ever touched (DATA-11). Returns how many left.
 func (m *Manager) EvictIdle(maxIdle time.Duration) int {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	cutoff := time.Now().Add(-maxIdle)
-	n := 0
+	var evicted []*Session
 	for id, s := range m.sessions {
 		// A session whose lock is held is in use right now.
 		if !s.mu.TryLock() {
@@ -80,8 +82,12 @@ func (m *Manager) EvictIdle(maxIdle time.Duration) int {
 		s.mu.Unlock()
 		if idle {
 			delete(m.sessions, id)
-			n++
+			evicted = append(evicted, s)
 		}
 	}
-	return n
+	m.mu.Unlock()
+	for _, s := range evicted {
+		s.CloseTurn()
+	}
+	return len(evicted)
 }

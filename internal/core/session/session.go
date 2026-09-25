@@ -45,6 +45,11 @@ type Session struct {
 	parentID        string
 	forkedFromIndex int
 
+	// turn is the session's own turn state — its staging overlay and flags
+	// — made on first use by Turn. Every session used to stage into the
+	// core's one overlay (ARCH-5).
+	turn *tools.Turn
+
 	// lastSnapshotAt is the UpdatedAt of the snapshot this in-memory state
 	// was last synced with (own Snapshot() write or LoadFromDisk). Used by
 	// RefreshFromDiskIfNewer to detect writes from *other* core processes
@@ -272,4 +277,32 @@ func (s *Session) SetCostUSD(v float64) {
 		v = 0
 	}
 	s.costUSD = v
+}
+
+// Turn is the session's own turn on r: its staging overlay and its flags,
+// made on first use. Not to be called with the session locked.
+func (s *Session) Turn(r *tools.Runner) *tools.Turn {
+	if s == nil || r == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn == nil {
+		s.turn = r.NewTurn(tools.TurnOptions{DryRun: true, SessionID: s.ID})
+	}
+	return s.turn
+}
+
+// CloseTurn drops the session's turn with its staged edits; the pending ops
+// it recorded live on in the snapshot. Not to be called with the session
+// locked.
+func (s *Session) CloseTurn() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	t := s.turn
+	s.turn = nil
+	s.mu.Unlock()
+	t.Close()
 }

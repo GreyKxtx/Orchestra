@@ -73,5 +73,5 @@ func (a *Agent) maybeAutoSessionMemory(name string, input json.RawMessage, conte
 	if note == "" {
 		return
 	}
-	_ = a.tools.AppendSessionMemory(note)
+	_ = a.tools.AppendSessionMemory(a.runCtx, note)
 }

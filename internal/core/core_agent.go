@@ -12,6 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/checkpoint"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/retention"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
@@ -198,11 +199,15 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	} else {
 		checkpoint.Prune(c.workspaceRoot, checkpoint.MaxKeep-1)
 	}
+	// The run's own turn: its staging overlay, its apply flag. Closed after
+	// the launch, so children still running stop while the overlay stands.
+	turn := c.tools.NewTurn(tools.TurnOptions{DryRun: true, Apply: params.Apply, Memory: memory.ConfigFrom(c.cfg.Memory)})
+	defer turn.Close()
 	ck := newTurnCheckpoint(c.workspaceRoot, runID, resumableParams{
 		Query: agentQuery, Mode: params.Mode, Profile: params.Profile,
 		Apply: params.Apply, Backup: params.Backup, ApplyOutput: params.ApplyOutput, PatchPath: params.PatchPath,
 		MaxSteps: params.MaxSteps, MaxInvalidRetries: params.MaxInvalidRetries, MaxPromptBytes: params.MaxPromptBytes,
-	}, c.tools)
+	}, turn)
 	if resumed != nil {
 		ck.resumeFrom(resumed)
 	}
@@ -242,21 +247,14 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	ck.setTasks(launch.TaskRunner)
 	launch.Opts.OnStepHistory = ck.stepHistory
 
-	// Semantic dry-run pipeline: edit/write always go through staging + LSP
-	// during the turn. params.Apply controls commit-to-disk at end of turn,
-	// not per-tool live writes. apply:true also unlocks bash (staging would
-	// otherwise keep dryRun=true and BlockExecInDryRun would deny shell).
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
-	c.tools.SetDryRun(true)
-	c.tools.ClearStaged()
-	c.tools.SetAllowExecDespiteDryRun(params.Apply)
-	defer c.tools.SetAllowExecDespiteDryRun(false)
-	c.tools.SetCommitsToDisk(params.Apply)
-	defer c.tools.SetCommitsToDisk(false)
-	// Registered after the lock and the runner flags so it runs before them
-	// (defers are LIFO): children still running stop while this turn owns the
-	// runner, not after the next turn has taken it.
+	// Semantic dry-run pipeline: edit/write always go through the turn's
+	// staging + LSP. params.Apply controls commit-to-disk at end of turn,
+	// not per-tool live writes; apply:true also unlocks bash. runMu is held
+	// shared: only a change to the core's shared state waits for the turn.
+	c.runMu.RLock()
+	defer c.runMu.RUnlock()
+	// Registered after the turn so it runs before its Close (defers are
+	// LIFO): children still running stop while the overlay stands.
 	defer launch.Close()
 
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
@@ -264,10 +262,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
-	ctx = launch.RunContext(ctx)
+	ctx = launch.RunContext(tools.WithTurn(ctx, turn))
 	var history []llm.Message
 	if resumed != nil {
-		history = restoreRun(ctx, resumed, c.tools, launch.TaskRunner)
+		history = restoreRun(ctx, resumed, turn, launch.TaskRunner)
 	}
 	ck.save()
 	outHistory, res, err := ag.Run(ctx, history, agentQuery)

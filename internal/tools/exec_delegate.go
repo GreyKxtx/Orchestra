@@ -15,7 +15,7 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 	if r == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
 	}
-	if err := r.execBlockedInDryRun(req.Command); err != nil {
+	if err := r.execBlockedInDryRun(ctx, req.Command); err != nil {
 		return nil, err
 	}
 	req.Env = r.execEnv()
@@ -31,8 +31,8 @@ func (r *Runner) execEnv() []string {
 // execBlockedInDryRun is the one "no side effects in a dry-run preview" check
 // for every way a command can start. It used to live inline in ExecRun only,
 // so run_in_background=true ran any command the same preview refused.
-func (r *Runner) execBlockedInDryRun(command string) error {
-	if r.ExecRefusedByDryRun() {
+func (r *Runner) execBlockedInDryRun(ctx context.Context, command string) error {
+	if r.ExecRefusedByDryRunIn(ctx) {
 		// Read by the model, which can neither press keys nor change how the
 		// turn was started — so it says what to do instead.
 		return protocol.NewError(protocol.ExecFailed,
@@ -43,23 +43,30 @@ func (r *Runner) execBlockedInDryRun(command string) error {
 	return nil
 }
 
-// ExecRefusedByDryRun reports whether every command is refused right now: a
-// dry-run preview on a Runner that blocks exec there (core), not unlocked by
-// apply. The agent uses it to leave bash out of a turn that could never run it.
+// ExecRefusedByDryRun reports whether every command is refused on the
+// default turn: a dry-run preview on a Runner that blocks exec there (core),
+// not unlocked by apply.
 func (r *Runner) ExecRefusedByDryRun() bool {
 	if r == nil {
 		return false
 	}
-	r.dryRunMu.RLock()
-	defer r.dryRunMu.RUnlock()
-	return r.dryRun && r.blockExecInDryRun && !r.allowExecDespiteDryRun
+	return r.turn.ExecRefused()
+}
+
+// ExecRefusedByDryRunIn is ExecRefusedByDryRun for the turn behind ctx. The
+// agent uses it to leave bash out of a turn that could never run it.
+func (r *Runner) ExecRefusedByDryRunIn(ctx context.Context) bool {
+	if r == nil {
+		return false
+	}
+	return r.TurnAt(ctx).ExecRefused()
 }
 
 func (r *Runner) ExecBashBackground(ctx context.Context, req ExecRunRequest) (*ExecBashBackgroundResponse, error) {
 	if r == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "runner is nil", nil)
 	}
-	if err := r.execBlockedInDryRun(req.Command); err != nil {
+	if err := r.execBlockedInDryRun(ctx, req.Command); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(req.Command) == "" {
