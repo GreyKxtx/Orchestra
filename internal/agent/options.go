@@ -577,6 +577,9 @@ type Agent struct {
 	baseLogger *llm.Logger
 	// turnPrompt is this Run's system prompt parts (turnSystemPromptParts).
 	turnPrompt *systemPromptParts
+	// inboxCarry holds agency notes that did not fit in the last step's
+	// message; drainAgencyInbox delivers them first on the next.
+	inboxCarry []InboxMessage
 	todos      []tools.TodoItem // current turn's working todo list
 	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
 	// queryInstructions is the nested ORCHESTRA.md text for the directories the

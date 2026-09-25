@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -84,7 +85,7 @@ func TestInstructionsForQuery_LoadsRulesOfMentionedDirs(t *testing.T) {
 	}
 
 	r := testMemoryRunner(t, root)
-	got := r.InstructionsForQuery("what does @pkg/auth/token.go do?")
+	got := r.InstructionsForQuery(context.Background(), "what does @pkg/auth/token.go do?")
 
 	if !strings.Contains(got, "AUTH PACKAGE RULES") {
 		t.Fatalf("mentioned package's rules were not loaded: %q", got)
@@ -109,10 +110,10 @@ func TestInstructionsForQuery_SharesTheSeenSetWithFsRead(t *testing.T) {
 	}
 
 	r := testMemoryRunner(t, root)
-	if got := r.InstructionsForQuery("@pkg/auth/token.go"); !strings.Contains(got, "AUTH PACKAGE RULES") {
+	if got := r.InstructionsForQuery(context.Background(), "@pkg/auth/token.go"); !strings.Contains(got, "AUTH PACKAGE RULES") {
 		t.Fatalf("first pass did not load the rules: %q", got)
 	}
-	if got := r.discoverInstructions(sub); got != "" {
+	if got := r.discoverInstructions(context.Background(), sub); got != "" {
 		t.Errorf("the same directory was offered twice in one turn: %q", got)
 	}
 }
@@ -124,7 +125,7 @@ func TestInstructionsForQuery_EmptyWithoutRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := testMemoryRunner(t, root)
-	if got := r.InstructionsForQuery("just a question"); got != "" {
+	if got := r.InstructionsForQuery(context.Background(), "just a question"); got != "" {
 		t.Errorf("a query with no refs produced %q", got)
 	}
 }
@@ -143,7 +144,7 @@ func TestInstructionsForQuery_IgnoresRefsOutsideTheWorkspace(t *testing.T) {
 	}
 
 	r := testMemoryRunner(t, root)
-	if got := r.InstructionsForQuery("look at @../ORCHESTRA.md"); strings.Contains(got, "SECRET RULES") {
+	if got := r.InstructionsForQuery(context.Background(), "look at @../ORCHESTRA.md"); strings.Contains(got, "SECRET RULES") {
 		t.Fatalf("a ref outside the workspace was followed: %q", got)
 	}
 }
@@ -165,7 +166,7 @@ func TestInstructionsForQuery_DirectoryMentionLoadsThatDirectory(t *testing.T) {
 
 	for _, q := range []string{"look at @pkg/auth", "look at @pkg/auth/"} {
 		r := testMemoryRunner(t, root)
-		if got := r.InstructionsForQuery(q); !strings.Contains(got, "AUTH PACKAGE RULES") {
+		if got := r.InstructionsForQuery(context.Background(), q); !strings.Contains(got, "AUTH PACKAGE RULES") {
 			t.Errorf("%q did not load the mentioned directory's own rules: %q", q, got)
 		}
 	}

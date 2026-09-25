@@ -81,7 +81,7 @@ func (c *Client) Read(ctx context.Context, req FSReadRequest) (*FSReadResponse, 
 
 	numbered := addLineNumbers(content)
 	if c.Hooks.DiscoverInstructions != nil {
-		if reminder := c.Hooks.DiscoverInstructions(filepath.Dir(absPath)); reminder != "" {
+		if reminder := c.Hooks.DiscoverInstructions(ctx, filepath.Dir(absPath)); reminder != "" {
 			numbered = "<system-reminder>\n" + reminder + "\n</system-reminder>\n\n" + numbered
 		}
 	}

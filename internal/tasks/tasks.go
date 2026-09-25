@@ -896,7 +896,17 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// for the Lead.
 	if mode != agent.ModeWorker {
 		if notes := r.takeInbox(scope.address); len(notes) > 0 {
-			childGoal = agent.FormatAgentMessages(notes, agencyInboxInjectMaxBytes) + "\n\n" + childGoal
+			text, rest := agent.FitAgentMessages(notes, agencyInboxInjectMaxBytes)
+			childGoal = text + "\n\n" + childGoal
+			// What did not fit goes to the child's live inbox: it reads
+			// them on its first steps instead of never.
+			if len(rest) > 0 {
+				r.mu.Lock()
+				if e := r.findEntryLocked(taskID); e != nil {
+					e.inbox = append(append([]agent.InboxMessage(nil), rest...), e.inbox...)
+				}
+				r.mu.Unlock()
+			}
 		}
 		if sp := loadDeptScratchpadForLead(r.toolRunner.WorkspaceRoot(), scope.dept); sp != "" {
 			childGoal = sp + "\n\n" + childGoal

@@ -49,9 +49,10 @@ type Runner struct {
 	ckgStore    *ckg.Store
 	ckgProvider *ckg.Provider
 
-	// seenInstructionDirs tracks which directories have already had their
-	// ORCHESTRA.md injected into a tool result (lazy discovery).
-	seenInstructionDirs sync.Map
+	// seenInstructionDirs tracks, per agent of a run, which directories have
+	// already had their ORCHESTRA.md injected into a tool result (lazy
+	// discovery; see instructionSeen).
+	seenInstructionDirs instructionSeen
 
 	memoryCfg memory.Config
 	sessionID string
@@ -500,8 +501,10 @@ func (r *Runner) memoryStore() *memory.Store {
 }
 
 // discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
-// in directories not yet seen. Returns the combined text, or empty string if nothing new.
-func (r *Runner) discoverInstructions(dir string) string {
+// in directories this agent has not been given yet (the agent is the run and
+// task in ctx). Returns the combined text, or empty string if nothing new.
+func (r *Runner) discoverInstructions(ctx context.Context, dir string) string {
+	who := instructionAgentKey(ctx)
 	root := filepath.Clean(r.workspaceRoot)
 	dir = filepath.Clean(dir)
 
@@ -511,7 +514,7 @@ func (r *Runner) discoverInstructions(dir string) string {
 			break
 		}
 
-		if _, loaded := r.seenInstructionDirs.LoadOrStore(dir, struct{}{}); !loaded {
+		if r.seenInstructionDirs.firstTime(who, dir) {
 			text, foundFile := r.memoryStore().LazyOrchestraFile(dir)
 			if text != "" {
 				candidate := filepath.Join(dir, foundFile)

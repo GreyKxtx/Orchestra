@@ -82,7 +82,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	// Once per Run, not per step: discoverInstructions dedupes by directory for
 	// the life of the runner, so recomputing it on step 2 returns nothing and
 	// the rules would drop out of the prompt mid-turn.
-	a.queryInstructions = a.tools.InstructionsForQuery(userQuery)
+	a.queryInstructions = a.tools.InstructionsForQuery(ctx, userQuery)
 
 	if history == nil {
 		history = make([]llm.Message, 0, 32)

@@ -100,5 +100,5 @@ func Tail(projectRoot string, maxBytes int) string {
 	if idx := strings.Index(cut, "\n## "); idx >= 0 {
 		cut = cut[idx+1:]
 	}
-	return "…(older entries truncated; read " + FileRel + " for the full log)\n" + cut
+	return fmt.Sprintf("…(%d bytes of older entries not shown; read %s for the full log)\n", len(body)-len(cut), FileRel) + cut
 }

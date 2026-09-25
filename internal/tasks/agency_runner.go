@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
@@ -481,10 +482,18 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	}
 
 	var history []llmMessage
+	dropped := 0
 	if r.child.Agency.Threads {
-		history = r.loadThread(from.address, to)
+		history, dropped = r.loadThread(from.address, to)
 	}
-	goal := fmt.Sprintf("Message from %s:\n\n%s", from.address, msg)
+	message := fmt.Sprintf("Message from %s:\n\n%s", from.address, msg)
+	goal := message
+	if dropped > 0 {
+		// The recipient sees the last exchanges as history; say that there
+		// were more, or it takes the trimmed thread for the whole of it.
+		goal = fmt.Sprintf("(Your conversation with %s is longer: its %d earliest exchanges were trimmed; the last %d are above.)\n\n",
+			from.address, dropped, len(history)/2) + goal
+	}
 	timeoutMS := req.TimeoutMS
 	if timeoutMS <= 0 {
 		timeoutMS = DefaultTaskTimeoutMS
@@ -506,10 +515,11 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	}
 	reply := &agent.AgentMessageReply{To: to, TaskID: id, Status: res.Status, Reply: res.Result, Error: res.Error}
 	if res.Status == "done" && r.child.Agency.Threads {
-		history = append(history, llmMessage{Role: "user", Content: goal}, llmMessage{Role: "assistant", Content: res.Result})
-		history = trimThread(history)
+		history = append(history, llmMessage{Role: "user", Content: message}, llmMessage{Role: "assistant", Content: res.Result})
+		var trimmed int
+		history, trimmed = trimThread(history)
 		reply.Turns = len(history) / 2
-		if err := r.saveThread(from.address, to, history); err != nil {
+		if err := r.saveThread(from.address, to, history, dropped+trimmed); err != nil {
 			reply.Summary = "conversation not saved: " + err.Error()
 		}
 	}
@@ -668,6 +678,9 @@ const agencyInboxInjectMaxBytes = 6000
 
 type inboxFile struct {
 	Messages []agent.InboxMessage `json:"messages"`
+	// Dropped counts the notes the inbox let go of when it was full; the
+	// recipient is told, instead of reading a cut inbox as a complete one.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 func (r *TaskRunner) agencyPath(parts ...string) string {
@@ -690,6 +703,7 @@ func (r *TaskRunner) appendInbox(address string, m agent.InboxMessage) error {
 	f.Messages = append(f.Messages, m)
 	if over := len(f.Messages) - inboxMaxMessages; over > 0 {
 		f.Messages = f.Messages[over:]
+		f.Dropped += over
 	}
 	return writeJSONFile(path, f)
 }
@@ -713,6 +727,13 @@ func (r *TaskRunner) takeInbox(address string) []agent.InboxMessage {
 		if err := readJSONFile(path, &f); err != nil {
 			continue
 		}
+		if f.Dropped > 0 {
+			out = append(out, agent.InboxMessage{
+				From:    "runtime",
+				Kind:    "note",
+				Message: fmt.Sprintf("%d older notes to %s were dropped: an inbox keeps the latest %d.", f.Dropped, n, inboxMaxMessages),
+			})
+		}
 		out = append(out, f.Messages...)
 		_ = os.Remove(path)
 	}
@@ -732,6 +753,8 @@ type threadFile struct {
 	To       string       `json:"to"`
 	Updated  string       `json:"updated"`
 	Messages []llmMessage `json:"messages"`
+	// Dropped counts the earlier exchanges trimThread let go of.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 // Thread bounds: the last few exchanges, and never more than a slice of a
@@ -745,20 +768,20 @@ func (r *TaskRunner) threadPath(from, to string) string {
 	return r.agencyPath("threads", from+"__"+to+".json")
 }
 
-func (r *TaskRunner) loadThread(from, to string) []llmMessage {
+func (r *TaskRunner) loadThread(from, to string) (msgs []llmMessage, dropped int) {
 	if !config.ValidAgencyName(from) || !config.ValidAgencyName(to) {
-		return nil
+		return nil, 0
 	}
 	r.storeMu.Lock()
 	defer r.storeMu.Unlock()
 	var f threadFile
 	if err := readJSONFile(r.threadPath(from, to), &f); err != nil {
-		return nil
+		return nil, 0
 	}
-	return f.Messages
+	return f.Messages, f.Dropped
 }
 
-func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage) error {
+func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage, dropped int) error {
 	if !config.ValidAgencyName(from) || !config.ValidAgencyName(to) {
 		return fmt.Errorf("invalid thread address %q → %q", from, to)
 	}
@@ -769,12 +792,13 @@ func (r *TaskRunner) saveThread(from, to string, msgs []llmMessage) error {
 		To:       to,
 		Updated:  time.Now().UTC().Format(time.RFC3339),
 		Messages: msgs,
+		Dropped:  dropped,
 	})
 }
 
 // trimThread drops the oldest exchanges (user+assistant pairs) until the
-// thread fits both bounds.
-func trimThread(msgs []llmMessage) []llmMessage {
+// thread fits both bounds, and says how many it dropped.
+func trimThread(msgs []llmMessage) ([]llmMessage, int) {
 	size := func(ms []llmMessage) int {
 		n := 0
 		for _, m := range ms {
@@ -782,10 +806,12 @@ func trimThread(msgs []llmMessage) []llmMessage {
 		}
 		return n
 	}
+	dropped := 0
 	for len(msgs) > 2 && (len(msgs) > threadMaxMessages || size(msgs) > threadMaxBytes) {
 		msgs = msgs[2:]
+		dropped++
 	}
-	return msgs
+	return msgs, dropped
 }
 
 func readJSONFile(path string, v any) error {
@@ -878,7 +904,11 @@ func loadDeptScratchpadForLead(root, dept string) string {
 		return ""
 	}
 	if len(text) > deptScratchpadLeadMaxBytes {
-		text = "…" + text[len(text)-deptScratchpadLeadMaxBytes:]
+		cut := len(text) - deptScratchpadLeadMaxBytes
+		for cut < len(text) && !utf8.RuneStart(text[cut]) {
+			cut++
+		}
+		text = fmt.Sprintf("…(%d earlier bytes not shown; read %s/%s.md)\n", cut, agent.DeptScratchpadDir, dept) + text[cut:]
 	}
 	return fmt.Sprintf("<dept_scratchpad dept=%q>\n%s\n</dept_scratchpad>", dept, text)
 }

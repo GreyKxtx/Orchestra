@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,7 +89,7 @@ func refDir(workspaceRoot, ref string) string {
 // It reuses discoverInstructions, so the walk, the workspace bound and the
 // per-turn seen-set are shared: a directory loaded here is not offered again
 // when the model then reads the file.
-func (r *Runner) InstructionsForQuery(query string) string {
+func (r *Runner) InstructionsForQuery(ctx context.Context, query string) string {
 	if r == nil {
 		return ""
 	}
@@ -98,7 +99,7 @@ func (r *Runner) InstructionsForQuery(query string) string {
 	}
 	var parts []string
 	for _, ref := range refs {
-		if text := r.discoverInstructions(refDir(r.workspaceRoot, ref)); text != "" {
+		if text := r.discoverInstructions(ctx, refDir(r.workspaceRoot, ref)); text != "" {
 			parts = append(parts, text)
 		}
 	}

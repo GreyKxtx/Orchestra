@@ -17,7 +17,7 @@ type Hooks struct {
 	Diagnose             func(ctx context.Context, relSlash, content string) (diags []ToolDiagnostic, pending bool)
 	ExtraDiagnostics     func(content string) []ToolDiagnostic
 	GoFileRedirect       func(ctx context.Context, relSlash, hash string) string
-	DiscoverInstructions func(absDir string) string
+	DiscoverInstructions func(ctx context.Context, absDir string) string
 	SymbolLineRange      func(ctx context.Context, relPath, symbol string) (start, end int, ok bool)
 	SymbolFQNAtLine      func(ctx context.Context, relPath string, line int) string
 	OnDidClose           func(ctx context.Context, relSlash string)

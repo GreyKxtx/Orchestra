@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/internal/agent/history"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
@@ -192,6 +193,13 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 }
 
 // CompactWorkerResultForLead shrinks worker/verify JSON for Lead history.
+//
+// What the Lead decides with comes first, and survives the tightest budget
+// (280 bytes in older history): the status, why it is blocked, which checks
+// failed, where it escalated to. Path, message and the suggestion follow.
+// It used to keep only status, path and message, so a Lead reading its own
+// history could no longer tell which checks had failed or why a worker was
+// blocked (audit §3.4). A result cut to fit says so, and by how much.
 func CompactWorkerResultForLead(raw string, maxBytes int) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -201,28 +209,95 @@ func CompactWorkerResultForLead(raw string, maxBytes int) string {
 		maxBytes = workerLeadResultMaxBytes
 	}
 	if !json.Valid([]byte(raw)) {
-		if len(raw) <= maxBytes {
-			return raw
-		}
-		return raw[:maxBytes] + "..."
+		return clipWithMarker(raw, maxBytes)
 	}
 	var m map[string]any
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return raw
 	}
 	status, _ := m["status"].(string)
-	path := extractWorkerPath(m)
 	line := fmt.Sprintf("worker %s", strings.TrimSpace(status))
-	if path != "" {
+	if br := workerField(m, "blocked_reason"); br != "" {
+		line += " blocked_reason=" + br
+	}
+	if failed := failedWorkerChecks(m); len(failed) > 0 {
+		line += " failed=[" + strings.Join(failed, ", ") + "]"
+	}
+	if tier := workerField(m, "escalated_to_tier"); tier != "" {
+		line += " escalated_to=" + tier
+	}
+	if path := extractWorkerPath(m); path != "" {
 		line += " path=" + path
 	}
 	if msg := extractWorkerMessage(m); msg != "" {
 		line += " — " + msg
 	}
-	if len(line) > maxBytes {
-		line = line[:maxBytes] + "..."
+	if s := workerField(m, "suggestion_for_lead"); s != "" {
+		line += " | next: " + s
 	}
-	return line
+	return clipWithMarker(line, maxBytes)
+}
+
+// workerField reads a string field of a worker result, at the top level or
+// inside worker_result.
+func workerField(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	if wr, ok := m["worker_result"].(map[string]any); ok {
+		if v, ok := wr[key].(string); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// failedWorkerChecks names the verification checks that failed.
+func failedWorkerChecks(m map[string]any) []string {
+	v, ok := m["verification"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	checks, _ := v["checks"].([]any)
+	var out []string
+	for _, c := range checks {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if okv, _ := cm["ok"].(bool); okv {
+			continue
+		}
+		if skip, _ := cm["skip"].(bool); skip {
+			continue
+		}
+		name, _ := cm["name"].(string)
+		if p, _ := cm["path"].(string); p != "" {
+			name += "(" + p + ")"
+		}
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// clipWithMarker cuts s to max bytes on a rune boundary, and when it cuts,
+// says how much it dropped: a result that ends mid-word without a mark reads
+// as a complete one.
+func clipWithMarker(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	marker := fmt.Sprintf(" …[+%d bytes truncated]", len(s)-max)
+	keep := max - len(marker)
+	if keep < 0 {
+		keep = 0
+	}
+	for keep > 0 && !utf8.RuneStart(s[keep]) {
+		keep--
+	}
+	return s[:keep] + fmt.Sprintf(" …[+%d bytes truncated]", len(s)-keep)
 }
 
 func extractWorkerPath(m map[string]any) string {
@@ -281,25 +356,51 @@ func appendWorkerSummaryToScratchpad(root, summaryLine string) error {
 	} else {
 		return err
 	}
-	line := "- [x] " + summaryLine
-	updated := appendScratchpadDoneLine(content, line)
+	// Done holds what a worker reported done. A failed or blocked one goes
+	// under Not done, unticked: recording it as "- [x]" in Done told the
+	// Lead's next read of its scratchpad that the work was finished.
+	var updated string
+	if workerSummarySucceeded(summaryLine) {
+		updated = appendScratchpadDoneLine(content, "- [x] "+summaryLine)
+	} else {
+		updated = appendScratchpadSectionLine(content, "## Not done", "- [ ] "+summaryLine)
+	}
 	return fsutil.AtomicWriteFile(path, []byte(strings.TrimRight(updated, "\n")+"\n"), 0o644)
 }
 
-func appendScratchpadDoneLine(content, line string) string {
-	content = strings.TrimRight(content, "\n")
-	marker := "## Done"
-	idx := strings.Index(content, marker)
-	if idx < 0 {
-		return content + "\n\n## Done\n" + line + "\n"
+// workerSummarySucceeded reads the status CompactWorkerResultForLead put at
+// the front of summaryLine ("worker <status> …").
+func workerSummarySucceeded(summaryLine string) bool {
+	fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(summaryLine), "worker "))
+	if len(fields) == 0 {
+		return false
 	}
-	after := content[idx+len(marker):]
+	switch strings.ToLower(fields[0]) {
+	case "verified_success", "success", "ok", "done":
+		return true
+	}
+	return false
+}
+
+// appendScratchpadSectionLine appends line at the end of section (a "## "
+// heading), creating the section when missing.
+func appendScratchpadSectionLine(content, section, line string) string {
+	content = strings.TrimRight(content, "\n")
+	idx := strings.Index(content, section)
+	if idx < 0 {
+		return content + "\n\n" + section + "\n" + line + "\n"
+	}
+	after := content[idx+len(section):]
 	nextRel := strings.Index(after, "\n## ")
 	if nextRel < 0 {
 		return content + "\n" + line + "\n"
 	}
-	insertAt := idx + len(marker) + nextRel
+	insertAt := idx + len(section) + nextRel
 	return content[:insertAt] + "\n" + line + content[insertAt:]
+}
+
+func appendScratchpadDoneLine(content, line string) string {
+	return appendScratchpadSectionLine(content, "## Done", line)
 }
 
 func looksLikeWorkerResult(raw string) bool {
@@ -363,11 +464,47 @@ func orchestraCompactTaskToolOutput(raw string) string {
 	if json.Unmarshal([]byte(raw), &m) != nil {
 		return ""
 	}
+	if results, ok := m["results"].([]any); ok {
+		return compactWaitManyOutput(m, results)
+	}
 	res, _ := m["result"].(string)
 	if res == "" || !looksLikeWorkerResult(res) {
 		return ""
 	}
 	m["result"] = CompactWorkerResultForLead(res, orchestraWorkerHistoryCompactBytes)
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// compactWaitManyOutput shrinks task_wait{task_ids}' answer — {results[],
+// integration} — result by result. Nothing here knew that shape: the whole
+// answer, every worker's status and the integration verdict included, used
+// to collapse into the literal "worker " (audit §3.4).
+func compactWaitManyOutput(m map[string]any, results []any) string {
+	for _, r := range results {
+		rm, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		if res, _ := rm["result"].(string); res != "" && looksLikeWorkerResult(res) {
+			rm["result"] = CompactWorkerResultForLead(res, orchestraWorkerHistoryCompactBytes)
+		}
+	}
+	if integ, ok := m["integration"].(map[string]any); ok {
+		kept := map[string]any{}
+		for _, k := range []string{"status", "workers", "files"} {
+			if v, ok := integ[k]; ok {
+				kept[k] = v
+			}
+		}
+		if sum, _ := integ["summary"].(string); sum != "" {
+			kept["summary"] = clipWithMarker(sum, orchestraWorkerHistoryCompactBytes)
+		}
+		m["integration"] = kept
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return ""
