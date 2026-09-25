@@ -56,15 +56,22 @@ func appendDeptScratchpadEntry(workspaceRoot, relPath, line string, done bool) e
 		return nil
 	}
 	abs := filepath.Join(workspaceRoot, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	// A department's workers finish in parallel: the append is a
+	// read-modify-write under the file's lock, or entries are lost.
+	unlock, err := fsutil.LockFile(abs + ".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	var content string
 	if b, err := os.ReadFile(abs); err == nil {
 		content = string(b)
 	} else if os.IsNotExist(err) {
 		instance := strings.TrimSuffix(filepath.Base(abs), ".md")
 		content = "# Dept scratchpad — " + instance + "\n\n## Done\n"
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return err
-		}
 	} else {
 		return err
 	}

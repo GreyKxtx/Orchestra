@@ -168,10 +168,90 @@ func splitFrontmatter(content string) (front, body string, ok bool) {
 	return front, body, true
 }
 
-// Save writes the state file atomically (temp → fsync → rename).
+// Lock takes the state file's lock for a writer that edits state.md as text
+// (the worker summaries appended to its body). Release it when done.
+func Lock(projectRoot string) (unlock func(), err error) {
+	return lockState(projectRoot)
+}
+
+// lockState takes the state file's lock, across processes (two cores on one
+// project are two processes). Every writer of state.md holds it.
+func lockState(projectRoot string) (func(), error) {
+	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	return fsutil.LockFile(path + ".lock")
+}
+
+// Update is the way to change state.md in place: under the file's lock it
+// re-reads the state, lets fn change it and writes it back atomically. fn does
+// not run, and found is false, when there is no state file. An error from fn
+// leaves the file as it was.
+//
+// The runtime used to Load, do its work and Save the copy it had loaded. When
+// the work was a question to the user (the Question Barrier, the blocked
+// escalation) it held that copy for minutes, and a phase change, doc debt or
+// a waiver written meanwhile was lost to the stale write (ORC-4). Ask first,
+// then Update.
+func Update(projectRoot string, fn func(*State) error) (found bool, err error) {
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	st, found, err := Load(projectRoot)
+	if err != nil || !found {
+		return found, err
+	}
+	if err := fn(st); err != nil {
+		return true, err
+	}
+	return true, saveLocked(projectRoot, st)
+}
+
+// Save writes the state file atomically (temp → fsync → rename), under the
+// file's lock. A caller that changes a state it loaded earlier should use
+// Update instead, or it writes back whatever changed in between.
+//
 // It also maintains phase_since (spec §4.5): when the phase differs from the
 // on-disk state (or the stamp is missing), the timestamp is refreshed.
 func Save(projectRoot string, st *State) error {
+	if st == nil {
+		return fmt.Errorf("nil state")
+	}
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return saveLocked(projectRoot, st)
+}
+
+// Rewrite replaces state.md with a document an agent wrote
+// (update_working_state). Under the file's lock, fn gets the state now on disk
+// (nil when there is none or it does not parse) and returns the text to
+// write: the runtime-owned fields it keeps, and the phase guard it runs, see
+// the same state the write replaces. An error from fn writes nothing.
+func Rewrite(projectRoot string, fn func(prev *State) (string, error)) error {
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	prev, found, err := Load(projectRoot)
+	if err != nil || !found {
+		prev = nil
+	}
+	content, err := fn(prev)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
+	return fsutil.AtomicWriteFile(path, []byte(content), 0o644)
+}
+
+func saveLocked(projectRoot string, st *State) error {
 	if st == nil {
 		return fmt.Errorf("nil state")
 	}
@@ -222,15 +302,13 @@ func Render(st *State) (string, error) {
 // (the orchestrator edits the file via update_working_state, bypassing Save).
 // prevPhase is the phase before the write ("" when the file did not exist).
 func TouchPhaseStamp(projectRoot string, prevPhase Phase) error {
-	st, found, err := Load(projectRoot)
-	if err != nil || !found {
-		return err
-	}
-	if st.PhaseSince == "" || st.Phase != prevPhase {
-		st.PhaseSince = time.Now().UTC().Format(time.RFC3339)
-		return Save(projectRoot, st)
-	}
-	return nil
+	_, err := Update(projectRoot, func(st *State) error {
+		if st.PhaseSince == "" || st.Phase != prevPhase {
+			st.PhaseSince = time.Now().UTC().Format(time.RFC3339)
+		}
+		return nil
+	})
+	return err
 }
 
 // PhaseTimeouts carries the resolved orchestra.phase_timeouts values in
@@ -500,6 +578,11 @@ func ArchiveOverflow(projectRoot string, maxBytes int) (string, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultStateMaxBytes
 	}
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -548,7 +631,7 @@ func ArchiveOverflow(projectRoot string, maxBytes int) (string, error) {
 	rel := ArchiveDirRel + "/" + filepath.Base(archPath)
 	st.Body = "> Older content archived to " + rel + "\n\n" + strings.TrimLeft(tail, "\n")
 	st.StateBytes = len(st.Body)
-	if err := Save(projectRoot, st); err != nil {
+	if err := saveLocked(projectRoot, st); err != nil {
 		return "", err
 	}
 	return rel, nil
@@ -561,20 +644,16 @@ func AddDocDebt(projectRoot, docPath string) error {
 	if docPath == "" {
 		return nil
 	}
-	st, found, err := Load(projectRoot)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-	for _, p := range st.DocDebt {
-		if p == docPath {
-			return nil
+	_, err := Update(projectRoot, func(st *State) error {
+		for _, p := range st.DocDebt {
+			if p == docPath {
+				return nil
+			}
 		}
-	}
-	st.DocDebt = append(st.DocDebt, docPath)
-	return Save(projectRoot, st)
+		st.DocDebt = append(st.DocDebt, docPath)
+		return nil
+	})
+	return err
 }
 
 func phaseLabel(p Phase) string {

@@ -59,10 +59,10 @@ func (a *Agent) handleContractFreeze(ctx context.Context) ([]byte, error) {
 	}
 
 	// Mirror the epoch into state.md so the phase machine and TUI see it.
-	if st, found, stErr := orchestrastate.Load(root); stErr == nil && found {
+	_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
 		st.ContractEpoch = e.Epoch
-		_ = orchestrastate.Save(root, st)
-	}
+		return nil
+	})
 	if decisions.Adopted(root) {
 		_ = decisions.Append(root, []decisions.Entry{{
 			Kind:     "decision",

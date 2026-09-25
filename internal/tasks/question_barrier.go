@@ -98,8 +98,12 @@ func (r *TaskRunner) relayOpenQuestions(ctx context.Context, taskResult string) 
 		return taskResult
 	}
 
-	st.ClarificationRounds++
-	_ = orchestrastate.Save(root, st)
+	// Counted on the state as it is now: the answer took as long as the user
+	// took, and a copy loaded before asking would write back a stale phase.
+	_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
+		st.ClarificationRounds++
+		return nil
+	})
 
 	entries := make([]decisions.Entry, 0, len(qs))
 	answerObjs := make([]map[string]string, 0, len(qs))
