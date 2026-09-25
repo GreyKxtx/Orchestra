@@ -2,7 +2,9 @@
 
 Режим задаётся флагом `--mode` команды `apply`, параметром `mode` в `agent.run` / `session.message` через JSON-RPC. Переключение **plan → build** внутри сессии — через `plan_exit` (core выполняет второй прогон автоматически при одобрении).
 
-Источник правды: `internal/agent/agent.go` (константы `Mode*`), `internal/tools/registry.go` (`ListToolsForMode`), `internal/prompt/files/*.txt` (промпты).
+Источник правды: `internal/roles/roles.go` — одна запись `roles.Spec` на режим: вид (top-level, child-only, internal), инструменты, политика записи, кого режим запускает, карточка и модель ребёнка. Промпты — `internal/prompt/files/*.txt`. Метаданные инструментов (параллельность, согласие, allowlist Lead'а) — `internal/toolspec`.
+
+**Новый режим** — запись в `roles.go` и файл промпта. Конфиг, список инструментов, область записи, enum `subagent_type`, карточки `<available_agents>`, рёбра агентства по умолчанию и фазовый гейт берут всё из записи (`TestASpecOnlyModeLivesInTwoFiles`). Код нужен, только если у режима своё поведение, которого нет в полях `Spec`.
 
 ---
 
@@ -141,7 +143,7 @@ orchestra:
 
 **Агентство:** Lead'ы отделов (`architecture` + `dept`) сами запускают Scout'ов и Worker'ов, отделы пишут друг другу, `batch_workorders[]` Lead'а раздаёт рантайм — [agency.md](./agency.md).
 
-Список — `orchestraLeadToolNames` в `internal/tools/registry.go`; `update_working_state` и `contract_freeze` доступны только Lead по построению (остальные режимы получают отказ в `internal/agent`).
+Список — инструменты с `Lead: true` в `internal/toolspec`; `update_working_state` и `contract_freeze` доступны только Lead по построению (остальные режимы получают отказ в `internal/agent`).
 
 **Промпт:** `orchestra.txt`. TUI: `/orchestra` — настройки planner/tiers; badge `orchestra · lead`. Tab: `… → agent → orchestra`.
 

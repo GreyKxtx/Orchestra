@@ -26,7 +26,7 @@
 
 ## Режимы
 
-16 режимов в `internal/config/config.go` (`builtInAgentModes`). Эвал трогает **девять**.
+16 режимов в `internal/config/config.go` (сейчас — реестр `internal/roles`). Эвал трогает **девять**.
 
 ### Верхнеуровневые — пользователь может запросить
 

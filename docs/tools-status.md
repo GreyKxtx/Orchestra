@@ -1,6 +1,6 @@
 # Инструменты и команды Orchestra — статус реализации
 
-> Источник истины: `internal/tools/registry.go` (`ListTools`/`ListToolsWithSubtasks`/`ListToolsForMode`). Этот документ — человекочитаемая сводка.
+> Источник истины: `internal/toolspec` (что за инструмент: параллельность, согласие, Lead, in-process), `internal/roles` (какие инструменты у режима) и `internal/tools/registry.go` (определения). Этот документ — человекочитаемая сводка.
 
 ## CLI-команды
 
