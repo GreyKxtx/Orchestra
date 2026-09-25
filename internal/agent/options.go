@@ -646,6 +646,9 @@ type Agent struct {
 	// finalsWhileTasksRun counts finals refused this turn because tasks ran
 	// (final_tasks.go): the first is sent back, the second waits for them.
 	finalsWhileTasksRun int
+	// prefillSent records whether the last request carried AssistantPrefill,
+	// so only such a response gets it merged back.
+	prefillSent bool
 
 	// llmInfraErr is set when an LLM call fails at connect (unreachable).
 	// Compaction must not issue another LLM request after this.

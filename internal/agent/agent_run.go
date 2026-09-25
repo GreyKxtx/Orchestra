@@ -6,7 +6,6 @@ import (
 	"runtime/debug"
 	"strings"
 
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/protocol"
 
@@ -263,12 +262,14 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		// finished tool exchange for the note to split.
 		history = a.drainAgencyInbox(history)
 
-		// Inject a step-limit warning as a synthetic assistant message once at 2/3 of MaxSteps.
+		// Inject a step-limit warning once at 2/3 of MaxSteps. As a user
+		// message: an assistant one here could end the request, which recent
+		// Claude models reject, and read to the model as its own words.
 		if !maxStepsReminderSent && steps*3 >= a.opts.MaxSteps*2 {
 			maxStepsReminderSent = true
 			history = append(history, llm.Message{
-				Role:    llm.RoleAssistant,
-				Content: promptpkg.MaxStepsReminder,
+				Role:    llm.RoleUser,
+				Content: a.maxStepsReminder(),
 			})
 		}
 

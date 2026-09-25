@@ -181,7 +181,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			stepCtx, cancel = context.WithTimeout(ctx, a.opts.LLMStepTimeout)
 		}
 		llmReq := llm.CompleteRequest{
-			Messages:       a.messagesWithAssistantPrefill(messages),
+			Messages:       a.messagesWithAssistantPrefill(messages, len(toolDefs) > 0),
 			Tools:          toolDefs,
 			ResponseFormat: a.opts.ResponseFormat,
 		}

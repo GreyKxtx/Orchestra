@@ -23,6 +23,12 @@ func NormalizeToolName(name string) string {
 	if name == "" {
 		return ""
 	}
+	// MCP tools keep their case: servers name them as they like
+	// (mcp:GitHub:getIssue), and the manager matches server and tool names
+	// exactly, so a lowercased name was "not found".
+	if len(name) > 4 && strings.EqualFold(name[:4], "mcp:") {
+		return "mcp:" + name[4:]
+	}
 	key := strings.ToLower(name)
 	if canon, ok := toolNameAliases[key]; ok {
 		return canon

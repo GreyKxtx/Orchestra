@@ -554,6 +554,8 @@ func IsTransientLLMError(err error) bool {
 		"gateway timeout", "tls handshake timeout", "no such host",
 		"i/o timeout", "server closed idle connection",
 		"timeout awaiting response headers",
+		// Anthropic reports these as stream events, with no status code.
+		"overloaded", "rate_limit", "rate limit", "too many requests",
 	} {
 		if strings.Contains(s, marker) {
 			return true
