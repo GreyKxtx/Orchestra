@@ -11,18 +11,11 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/autorouter"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/git"
-	"github.com/orchestra/orchestra/internal/hooks"
-	"github.com/orchestra/orchestra/internal/mcp"
-	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/internal/pipeline"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
-	"github.com/orchestra/orchestra/internal/skills"
-	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
@@ -329,30 +322,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = err
 			return retErr
 		}
-		if out.Usage != nil {
-			// Child already wrote its own usage.jsonl record; just surface the
-			// totals to the user. Parent tracker stays empty so finalizeUsage
-			// is a no-op.
-			base := fmt.Sprintf("tokens: %d in + %d out = %d (%d call%s)",
-				out.Usage.PromptTokens, out.Usage.CompletionTokens,
-				out.Usage.TotalTokens, out.Usage.Calls, pluralS(out.Usage.Calls))
-			if out.Usage.CostUSD > 0 {
-				base = fmt.Sprintf("%s | $%.4f", base, out.Usage.CostUSD)
-			}
-			fmt.Fprintf(os.Stderr, "[usage] %s\n", base)
-		}
-		steps = out.Steps
-		plan = planArtifact{
-			ProtocolVersion: protocol.ProtocolVersion,
-			OpsVersion:      protocol.OpsVersion,
-			ToolsVersion:    protocol.ToolsVersion,
-			Query:           query,
-			GeneratedAtUnix: time.Now().Unix(),
-			Patches:         out.Patches,
-			Ops:             out.Ops,
-		}
-		applyResp = out.ApplyResponse
-		corePatchPath = out.PatchPath
+		steps, plan, applyResp, corePatchPath = takeCoreResult(query, out)
 
 	} else if pipelineMode {
 		// --- Mode: multi-agent pipeline (Investigator → Coder → Critic) ---
@@ -465,167 +435,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		applyResp = pipeRes.ApplyResponse
 
 	} else {
-		// --- Mode: direct (agent + tools) ---
+		// --- Mode: direct: the core, in this process ---
 		mode = "direct"
-
-		// LLM client: use test client if set, otherwise create real client.
-		var llmClient llm.Client
-		if getTestLLMClient() != nil {
-			llmClient = getTestLLMClient()
-		} else {
-			logger := llm.NewLogger(cfg.ProjectRoot)
-			llmClient = llm.NewClient(cfg.LLM)
-			if oc, ok := llm.AsOpenAIClient(llmClient); ok {
-				oc.SetLogger(logger)
-			}
-			llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
-			llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
-		}
-
-		validator, err := schema.NewValidator()
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, dryRun, allowBrowserEffective))
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		defer runner.Close()
-
-		// Wire MCP servers if configured.
-		var mcpExtraTools []llm.ToolDef
-		if len(cfg.MCP.Servers) > 0 {
-			mcpMgr, mcpErrs := mcp.NewManager(cmd.Context(), cfg.MCP, cwd, applyMCPHooks(llmClient, cfg.LLM.Model))
-			for _, e := range mcpErrs {
-				fmt.Fprintf(os.Stderr, "orchestra: mcp startup warning: %v\n", e)
-			}
-			if !mcpMgr.IsEmpty() {
-				runner.SetMCPCaller(mcpMgr)
-				mcpExtraTools = mcpMgr.ListToolDefs()
-				defer mcpMgr.Close()
-			}
-		}
-
-		// Expose semantic_search only when an embedding model is configured.
-		// The tool short-circuits with a clear error if the CKG index is empty;
-		// gating just by config keeps the model from "discovering" it on every
-		// run that doesn't have embeddings set up.
-		if cfg.ResolvedEmbed().Model != "" {
-			mcpExtraTools = append(mcpExtraTools, tools.ToolSemanticSearch())
-		}
-		mcpExtraTools = append(mcpExtraTools, tools.ToolRepoMap())
-
-		respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
-
-		var agentLogger *llm.Logger
-		if openAIClient, ok := llm.AsOpenAIClient(llmClient); ok {
-			agentLogger = openAIClient.GetLogger()
-		}
-
-		requestedMode := agentMode
-		if strings.EqualFold(agentMode, string(agent.ModeAgent)) {
-			routerClient := llmClient
-			if getTestLLMClient() == nil && cfg.AutoRouter.ResolvedEnabled() {
-				prov := strings.TrimSpace(cfg.AutoRouter.Provider)
-				model := strings.TrimSpace(cfg.AutoRouter.Model)
-				if prov == "" {
-					prov = strings.TrimSpace(cfg.LLM.Router.FastProvider)
-				}
-				if prov == "" && model == "" {
-					if _, ok := cfg.FindProvider("fast"); ok {
-						prov = "fast"
-					}
-				}
-				if prov != "" || model != "" {
-					if c, err := namedLLMClient(cfg, prov, model, agentLogger); err == nil {
-						routerClient = c
-					}
-				}
-			}
-			dec := autorouter.Classify(cmd.Context(), routerClient, query)
-			agentMode = dec.Mode
-			fmt.Fprintf(os.Stderr, "[auto_router] agent → %s (%.0f%%) %s\n", dec.Mode, dec.Confidence*100, dec.Reason)
-			if mode, kept := agent.ModeForRoutedTurn(agentMode, allowBrowserEffective && agent.ProfileAllowsBrowser(profileName)); kept {
-				fmt.Fprintf(os.Stderr, "[auto_router] --allow-browser is on and %s mode has no browser tools: staying in agent mode\n", agentMode)
-				agentMode = mode
-			}
-		}
-
-		if strings.EqualFold(agentMode, string(agent.ModeOrchestra)) && getTestLLMClient() == nil {
-			p := strings.TrimSpace(cfg.Orchestra.Planner.Provider)
-			m := strings.TrimSpace(cfg.Orchestra.Planner.Model)
-			if p == "" && m == "" {
-				if role, ok := cfg.Routing.ResolveRole("L5"); ok {
-					p = strings.TrimSpace(role.Provider)
-					m = strings.TrimSpace(role.Model)
-				}
-			}
-			if p != "" || m != "" {
-				if c, err := namedLLMClient(cfg, p, m, agentLogger); err == nil {
-					llmClient = c
-					fmt.Fprintf(os.Stderr, "[orchestra] planner %s / %s\n", p, m)
-				}
-			}
-		}
-		_ = requestedMode
-
-		// Custom agent override: look up agentMode in agents: config block.
-		var systemPromptOverride string
-		var customAgentTools []llm.ToolDef
-		if agentMode != "" {
-			if def := cfg.FindAgent(agentMode); def != nil {
-				systemPromptOverride = def.SystemPrompt
-				if def.Provider != "" && getTestLLMClient() == nil {
-					if provCfg, ok := cfg.FindProvider(def.Provider); ok {
-						if def.Model != "" {
-							provCfg.Model = def.Model
-						}
-						newClient := llm.NewClient(provCfg)
-						if oc, ok2 := llm.AsOpenAIClient(newClient); ok2 && agentLogger != nil {
-							oc.SetLogger(agentLogger)
-						}
-						llmClient = newClient
-					} else {
-						retErr = fmt.Errorf("agent %q: provider %q not found in providers: section", agentMode, def.Provider)
-						return retErr
-					}
-				} else if def.Model != "" && getTestLLMClient() == nil {
-					overrideCfg := cfg.LLM
-					overrideCfg.Model = def.Model
-					newClient := llm.NewClient(overrideCfg)
-					if oc, ok := llm.AsOpenAIClient(newClient); ok && agentLogger != nil {
-						oc.SetLogger(agentLogger)
-					}
-					llmClient = newClient
-				}
-				if def.Tools != nil {
-					var resolveErr error
-					customAgentTools, resolveErr = tools.ResolveToolNamesWithPolicy(def.Tools, tools.Capabilities{
-						Exec:    allowExecEffective,
-						Web:     allowWebEffective,
-						Browser: allowBrowserEffective,
-					})
-					if resolveErr != nil {
-						retErr = resolveErr
-						return retErr
-					}
-					// C7 in audit ledger: opt-in MCP for custom agents. When
-					// the agent declares `mcp:*` or `*` in its tools list it
-					// gets the live MCP tool definitions appended; otherwise
-					// MCP stays out (agent.Options.ExtraTools is ignored when
-					// CustomTools is set, so this is the only injection point).
-					for _, name := range def.Tools {
-						if name == "mcp:*" || name == "*" {
-							customAgentTools = append(customAgentTools, mcpExtraTools...)
-							break
-						}
-					}
-				}
-			}
-		}
-
 		imageParts, err := loadImageParts(applyImages)
 		if err != nil {
 			retErr = err
@@ -635,211 +446,30 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			retErr = fmt.Errorf("--image: configured LLM is not marked multimodal in .orchestra.yml (set llm.multimodal: true after switching to a VL model)")
 			return retErr
 		}
-
-		// Children compact their own history; hand them the cheap model too.
-		taskCompactionClient, taskCompactionCtxTokens := compactionClientFor(cfg, agentLogger)
-
-		workerVerifyEnabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
-		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
-		agency, agencyProfiles := tasks.AgencyFromConfig(cfg, agentMode)
-		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
-			Budget:                        tasks.BudgetFromConfig(cfg.Agent.TurnBudget),
-			Agency:                        agency,
-			Agents:                        agencyProfiles,
-			MaxPromptBytes:                cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:           cfg.EffectiveCompactThresholdPct(),
-			ModelContextTokens:            int(cfg.EffectiveNumCtx()),
-			CompletionMaxTokens:           cfg.LLM.MaxTokens,
-			ToolDigestBytes:               cfg.Agent.ResolvedToolDigestBytes(),
-			HistoryPruneKeepRecent:        cfg.Agent.ResolvedHistoryPruneKeepRecent(),
-			LLMStepTimeout:                time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			MaxStepsCap:                   cfg.Agent.ResolvedChildMaxSteps(),
-			AgentLogger:                   agentLogger,
-			CompactionClient:              taskCompactionClient,
-			CompactionContextTokens:       taskCompactionCtxTokens,
-			UsageTracker:                  usageTracker,
-			ProviderLabel:                 providerLabelFor(cfg, applyProvider),
-			ModelLabel:                    cfg.LLM.Model,
-			MaxWorkerRetries:              cfg.Orchestra.ResolvedMaxWorkerRetries(),
-			MaxWorkerVerifyRetries:        cfg.Orchestra.ResolvedMaxWorkerVerifyRetries(),
-			WorkerVerifyEnabled:           &workerVerifyEnabled,
-			WorkerVerifyAffectedTests:     cfg.Orchestra.WorkerVerifyAffectedTests,
-			WorkerVerifyFrontendTypecheck: cfg.Orchestra.WorkerVerifyFrontendTypecheck,
-			QuestionAsker:                 cliQuestionAsker,
-			MaxClarificationRounds:        cfg.Orchestra.ResolvedMaxClarificationRounds(),
-			RelayViaLLM:                   cfg.Orchestra.ResolvedRelayViaLLM(),
-			PhaseTimeouts: orchestrastate.PhaseTimeouts{
-				DiscoveryS:       cfg.Orchestra.PhaseTimeouts.ResolvedDiscoveryS(),
-				ContractS:        cfg.Orchestra.PhaseTimeouts.ResolvedContractS(),
-				LeadBriefS:       cfg.Orchestra.PhaseTimeouts.ResolvedLeadBriefS(),
-				BlockedEscalateS: cfg.Orchestra.PhaseTimeouts.ResolvedBlockedEscalateS(),
-			},
-			TierEscalation: tasks.TierEscalationSettings{
-				Enabled:                  cfg.Orchestra.TierEscalation.ResolvedEnabled(),
-				FailuresBeforeEscalation: cfg.Orchestra.TierEscalation.ResolvedFailuresBeforeEscalation(),
-				MaxEscalatedRetries:      cfg.Orchestra.TierEscalation.ResolvedMaxEscalatedRetries(),
-				EscalationTier:           cfg.Orchestra.TierEscalation.ResolvedEscalationTier(),
-			},
-			Caps: tools.Capabilities{
-				Exec:    allowExecEffective,
-				Web:     allowWebEffective,
-				Browser: allowBrowserEffective,
-			},
-			ResolveClient: func(provider, model string) (llm.Client, string, string, error) {
-				if getTestLLMClient() != nil {
-					return llmClient, provider, model, nil
-				}
-				c, err := namedLLMClient(cfg, provider, model, agentLogger)
-				if err != nil {
-					return nil, "", "", err
-				}
-				pl, ml := provider, model
-				if pl == "" {
-					pl = providerLabelFor(cfg, applyProvider)
-				}
-				if ml == "" {
-					ml = cfg.LLM.Model
-				}
-				return c, pl, ml, nil
-			},
-			ResolveTier: func(tier string) (provider, model string, ok bool) {
-				return cfg.ResolveTierBinding(tier)
-			},
-			GuardSpawn: func(subagentType string) error {
-				return orchestrastate.GuardSpawn(cfg.ProjectRoot, cfg.Orchestra.ResolvedPhaseEnforcement(), subagentType)
-			},
-			GuardContractRefs: func(refs []contract.Ref) error {
-				return orchestrastate.GuardWorkOrderContract(cfg.ProjectRoot, cfg.Orchestra.ResolvedPhaseEnforcement(), refs)
-			},
-			RouteTaskType: func(taskType string) (tasks.TaskTypeRoute, bool) {
-				rule, ok := cfg.Routing.Route(taskType)
-				if !ok {
-					return tasks.TaskTypeRoute{}, false
-				}
-				route := tasks.TaskTypeRoute{
-					SubagentType: rule.SubagentType,
-					Tier:         rule.Tier,
-				}
-				if role, found := cfg.Routing.ResolveRole(rule.RequiredTier); found {
-					route.Provider = strings.TrimSpace(role.Provider)
-					route.Model = strings.TrimSpace(role.Model)
-				}
-				return route, true
-			},
+		out, err := runApplyInProcess(cmd.Context(), cfg, core.AgentRunParams{
+			Query:             query,
+			Apply:             !dryRun,
+			Backup:            backup,
+			MaxSteps:          cfg.Agent.MaxSteps,
+			MaxInvalidRetries: cfg.Agent.MaxInvalidRetries,
+			MaxPromptBytes:    cfg.EffectiveMaxPromptBytes(),
+			AllowExec:         allowExecEffective,
+			AllowWeb:          allowWebEffective,
+			AllowBrowser:      allowBrowserEffective,
+			Debug:             debugMode,
+			Mode:              agentMode,
+			ApplyOutput:       applyOutput,
+			PatchPath:         patchOutPath,
+			Profile:           profileName,
+			QuestionAsker:     buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0),
+			OnAgentEvent:      buildCLIRenderer(),
+			UserImages:        imageParts,
 		})
-		// Before runner.Close (deferred earlier, so it runs later): children
-		// still writing under .orchestra/ must stop first.
-		defer taskRunner.Close()
-		var hooksRunner agent.HooksRunner
-		if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
-			hooksRunner = hr
-		}
-
-		// Discover skills once; expose skill_invoke when any are present.
-		// Skipped silently on error so a malformed skill file doesn't kill
-		// regular apply flow — the error will resurface on `orchestra skills list`.
-		discoveredSkills, _ := skills.DiscoverCached(cfg.ProjectRoot)
-		discoveredRefs, _ := skills.DiscoverRefs(cfg.ProjectRoot)
-		var skillRunner agent.SkillRunner
-		var skillSpecsList []agent.SkillSpec
-		if len(discoveredSkills) > 0 {
-			skillRunner = newCLISkillRunner(cfg, discoveredSkills, discoveredRefs, llmClient, validator, runner, agentLogger, cfg.Agent.MaxSteps, allowExecEffective, allowWebEffective, allowBrowserEffective)
-			skillSpecsList = skillSpecs(discoveredSkills)
-		}
-
-		agOpts := agent.Options{
-			UsageTracker:         usageTracker,
-			ProviderLabel:        providerLabelFor(cfg, applyProvider),
-			ModelLabel:           cfg.LLM.Model,
-			MaxSteps:             cfg.Agent.MaxSteps,
-			MaxInvalidRetries:    cfg.Agent.MaxInvalidRetries,
-			MaxDeniedToolRepeats: cfg.Agent.MaxDeniedRepeats,
-			MaxToolErrorRepeats:  cfg.Agent.MaxToolErrors,
-			MaxFinalFailures:     cfg.Agent.MaxFinalFailures,
-			MaxPromptBytes:       cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:  cfg.EffectiveCompactThresholdPct(),
-			ModelContextTokens:   int(cfg.EffectiveNumCtx()),
-			CompletionMaxTokens:  cfg.LLM.MaxTokens,
-			LLMStepTimeout:       time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			Apply:                !dryRun,
-			Backup:               backup,
-			AllowExec:            allowExecEffective,
-			AllowWeb:             allowWebEffective,
-			AllowBrowser:         allowBrowserEffective,
-			PermissionRules:      cfg.Permissions.Rules,
-			Debug:                debugMode,
-			ResponseFormat:       respFmt,
-			PromptFamily:         promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
-			Mode:                 agent.Mode(agentMode),
-			SystemPromptOverride: systemPromptOverride,
-			CustomTools:          customAgentTools,
-			ExtraTools:           mcpExtraTools,
-			QuestionAsker:        cliQuestionAsker,
-			HumanGates:           cfg.Orchestra.RequiredGates(),
-			StateMaxBytes:        cfg.Orchestra.ResolvedStateMaxBytes(),
-			PhaseEnforcement:     cfg.Orchestra.ResolvedPhaseEnforcement(),
-			OnEvent:              buildCLIRenderer(),
-			AgentLogger:          agentLogger,
-			SubtaskRunner:        taskRunner,
-			ChildTimeoutMS:       cfg.Agent.ResolvedChildTimeoutMS(),
-			Skills:               skillSpecsList,
-			SkillRunner:          skillRunner,
-			HooksRunner:          hooksRunner,
-			UserImages:           imageParts,
-			MultimodalLLM:        cfg.LLM.Multimodal,
-		}
-		agent.ApplyHistoryConfig(&agOpts, cfg)
-		if c, ctxTok := compactionClientFor(cfg, agentLogger); c != nil {
-			agOpts.CompactionClient = c
-			agOpts.CompactionContextTokens = ctxTok
-		}
-		// Profile overlays defaults; named agents: (CustomTools / SystemPromptOverride /
-		// provider) already applied above and take precedence for those fields.
-		if err := agent.ApplyProfile(&agOpts, profileName, true); err != nil {
-			retErr = err
-			return retErr
-		}
-		agent.FillRetryLimits(&agOpts, agOpts.ProviderLabel)
-		// llm.timeout_s always wins — profiles must not shrink the step budget.
-		if t := time.Duration(cfg.LLM.TimeoutS) * time.Second; t > 0 {
-			agOpts.LLMStepTimeout = t
-		}
-		// Restore custom-agent tool/prompt overrides if profile filtered tools.
-		if systemPromptOverride != "" {
-			agOpts.SystemPromptOverride = systemPromptOverride
-		}
-		if customAgentTools != nil {
-			agOpts.CustomTools = customAgentTools
-		}
-
-		ag, err := agent.New(llmClient, validator, runner, agOpts)
 		if err != nil {
 			retErr = err
 			return retErr
 		}
-
-		var hist []llm.Message
-		hist, res, err := ag.Run(cmd.Context(), nil, query)
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		_, res, err = agent.ContinueBuildAfterPlan(cmd.Context(), llmClient, validator, runner, agOpts, hist, res)
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		steps = res.Steps
-		plan = planArtifact{
-			ProtocolVersion: protocol.ProtocolVersion,
-			OpsVersion:      protocol.OpsVersion,
-			ToolsVersion:    protocol.ToolsVersion,
-			Query:           query,
-			GeneratedAtUnix: time.Now().Unix(),
-			Patches:         res.Patches,
-			Ops:             res.Ops,
-		}
-		applyResp = res.ApplyResponse
+		steps, plan, applyResp, corePatchPath = takeCoreResult(query, out)
 	}
 
 	changed := []string(nil)
@@ -895,6 +525,68 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	}
 
 	return nil
+}
+
+// runApplyInProcess runs an apply turn through a core in this process: the
+// same launch agent.run gets over RPC — options, subagents, skills, hooks,
+// MCP, the run journal — with the terminal as its client.
+//
+// The direct path used to build all of that itself, and it had drifted from
+// the core's: it lost exec.allow / exec.deny, the worker LLM verifier and
+// BytesPerContextToken, and resolved clients and tools its own way (ARCH-1).
+func runApplyInProcess(ctx context.Context, cfg *config.ProjectConfig, params core.AgentRunParams) (*core.AgentRunResult, error) {
+	c, err := core.New(cfg.ProjectRoot, core.Options{
+		Config:       cfg,
+		LLMClient:    getTestLLMClient(),
+		Debug:        debugMode,
+		ExecInDryRun: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	// Without a terminal there is nobody to ask: MCP sampling is refused and
+	// elicitation declined, which is the intended non-interactive behaviour.
+	if isTTY() {
+		c.BindInteractive(&terminalConsent{in: os.Stdin, out: os.Stderr}, &tools.StdinQuestionAsker{})
+	}
+	params.OnEvent = printModeRoute
+	return c.AgentRun(ctx, params)
+}
+
+// printModeRoute tells the terminal where mode=agent sent the turn.
+func printModeRoute(method string, params any) {
+	m, ok := params.(map[string]any)
+	if method != "agent/event" || !ok || m["type"] != "mode_route" {
+		return
+	}
+	data, _ := m["data"].(map[string]any)
+	conf, _ := data["confidence"].(float64)
+	fmt.Fprintf(os.Stderr, "[auto_router] agent → %v (%.0f%%) %v\n", data["to"], conf*100, data["reason"])
+}
+
+// takeCoreResult turns a core run's result into what apply records and
+// prints. The core wrote its own usage record; the totals are shown here.
+func takeCoreResult(query string, out *core.AgentRunResult) (int, planArtifact, *tools.FSApplyOpsResponse, string) {
+	if out.Usage != nil {
+		base := fmt.Sprintf("tokens: %d in + %d out = %d (%d call%s)",
+			out.Usage.PromptTokens, out.Usage.CompletionTokens,
+			out.Usage.TotalTokens, out.Usage.Calls, pluralS(out.Usage.Calls))
+		if out.Usage.CostUSD > 0 {
+			base = fmt.Sprintf("%s | $%.4f", base, out.Usage.CostUSD)
+		}
+		fmt.Fprintf(os.Stderr, "[usage] %s\n", base)
+	}
+	plan := planArtifact{
+		ProtocolVersion: protocol.ProtocolVersion,
+		OpsVersion:      protocol.OpsVersion,
+		ToolsVersion:    protocol.ToolsVersion,
+		Query:           query,
+		GeneratedAtUnix: time.Now().Unix(),
+		Patches:         out.Patches,
+		Ops:             out.Ops,
+	}
+	return out.Steps, plan, out.ApplyResponse, out.PatchPath
 }
 
 func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string, allowExec bool, dryRun bool, backup bool, applyOutput, patchPath, profile string) (*core.AgentRunResult, error) {

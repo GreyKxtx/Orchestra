@@ -37,9 +37,12 @@ type agentLaunchSpec struct {
 	RecordRun bool
 	Query     string // user turn text; used by mode=agent auto-router
 
-	Apply        bool
-	Backup       bool
-	AllowExec    bool
+	Apply     bool
+	Backup    bool
+	AllowExec bool
+	// AllowWeb is web consent for this turn beside web.confirm: false (a run
+	// in-process: --allow-web).
+	AllowWeb     bool
 	AllowBrowser bool
 	Debug        bool
 
@@ -52,7 +55,10 @@ type agentLaunchSpec struct {
 	AutoSessionMemory bool // false for one-shot agent.run; config-resolved for sessions
 	UsageLabel        string
 
-	OnEvent             func(method string, params any)
+	OnEvent func(method string, params any)
+	// OnAgentEvent receives the top-level agent's events as they are (a run
+	// in-process renders them), beside the notifications OnEvent gets.
+	OnAgentEvent        func(agent.AgentEvent)
 	EventEnvelope       EventEnvelope
 	PermissionRequester PermissionRequester
 	QuestionAsker       tools.QuestionAsker
@@ -254,14 +260,25 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	if spec.OnEvent != nil {
 		onEvent = buildAgentOnEvent(spec.OnEvent, env)
 	}
+	if direct := spec.OnAgentEvent; direct != nil {
+		if notify := onEvent; notify != nil {
+			onEvent = func(ev agent.AgentEvent) {
+				direct(ev)
+				notify(ev)
+			}
+		} else {
+			onEvent = direct
+		}
+	}
 
 	allowExec := spec.AllowExec
 	if c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
 		allowExec = true
 	}
-	// web.confirm: false is the only web consent core has; the turn, its
-	// skills and its subagents all take it from here.
-	allowWeb := c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm
+	// Web consent is web.confirm: false, or the consent a run in-process was
+	// started with; the turn, its skills and its subagents all take it from
+	// here.
+	allowWeb := spec.AllowWeb || (c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm)
 
 	// The agent's own lines (tool calls, results, classifications) go to
 	// llm_log.jsonl whatever the provider. Only the OpenAI-compatible client
@@ -307,7 +324,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		}
 	}
 
-	customOpts, err := c.resolveCustomAgentOpts(effectiveMode, agentLogger)
+	customOpts, err := c.resolveCustomAgentOpts(effectiveMode, tools.Capabilities{Exec: allowExec, Web: allowWeb, Browser: allowBrowser}, agentLogger)
 	if err != nil {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
 	}
@@ -332,9 +349,10 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	childCfg.Agency, childCfg.Agents = tasks.AgencyFromConfig(c.cfg, effectiveMode)
 	childCfg.RunID = env.TurnID
 	childCfg.Budget = tasks.BudgetFromConfig(c.cfg.Agent.TurnBudget)
-	// Subagents get the browser when the turn has it; the agent refuses
-	// browser.* to any run without it, children included.
+	// Subagents get the browser and the web when the turn has them; the agent
+	// refuses browser.* to any run without it, children included.
 	childCfg.Caps.Browser = allowBrowser
+	childCfg.Caps.Web = allowWeb
 	// Question Barrier (spec §4.3) shares the interactive channel with the
 	// question tool; nil (core stdio mode) keeps the barrier off.
 	childCfg.QuestionAsker = spec.QuestionAsker

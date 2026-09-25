@@ -77,6 +77,18 @@ type AgentRunParams struct {
 
 	// Attachments are optional files/images for multimodal turns.
 	Attachments []MessageAttachment `json:"attachments,omitempty"`
+
+	// The fields below are for a core run in-process (`orchestra apply`) and
+	// never cross the wire.
+
+	// AllowWeb is web consent given for this run (--allow-web). Over RPC the
+	// only web consent is web.confirm: false in the config.
+	AllowWeb bool `json:"-"`
+	// OnAgentEvent receives the turn's own agent events as they are, beside
+	// the notifications OnEvent gets: the terminal renders these.
+	OnAgentEvent func(agent.AgentEvent) `json:"-"`
+	// UserImages are images already loaded for the turn (--image).
+	UserImages []llm.ContentPart `json:"-"`
 }
 
 type AgentRunResult struct {
@@ -152,6 +164,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if err != nil {
 		return nil, err
 	}
+	imageParts = append(imageParts, params.UserImages...)
 	agentQuery := resolveTurnQuery(params.Query, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
 	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
 	if params.Mode != "" {
@@ -179,6 +192,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,
+		AllowWeb:            params.AllowWeb,
 		AllowBrowser:        params.AllowBrowser,
 		Debug:               params.Debug || c.debug,
 		MaxSteps:            params.MaxSteps,
@@ -188,6 +202,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		UsageLabel:          "agent.run",
 		RecordRun:           true,
 		OnEvent:             params.OnEvent,
+		OnAgentEvent:        params.OnAgentEvent,
 		EventEnvelope:       EventEnvelope{TurnID: NewTurnID()},
 		PermissionRequester: params.PermissionRequester,
 		QuestionAsker:       params.QuestionAsker,
@@ -453,7 +468,10 @@ type customAgentOpts struct {
 //
 // MCP tools are appended to customTools automatically so custom agents get the
 // same MCP access as standard modes.
-func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (customAgentOpts, error) {
+// resolveCustomAgentOpts applies an agents: entry named by mode: its prompt,
+// its model, and its tools — those the turn's consent (caps) allows; a tool it
+// names and may not use is left off the list rather than offered and refused.
+func (c *Core) resolveCustomAgentOpts(mode string, caps tools.Capabilities, agentLogger *llm.Logger) (customAgentOpts, error) {
 	result := customAgentOpts{llmClient: c.llmClient}
 	if c.cfg == nil || mode == "" {
 		return result, nil
@@ -493,22 +511,23 @@ func (c *Core) resolveCustomAgentOpts(mode string, agentLogger *llm.Logger) (cus
 	}
 
 	if def.Tools != nil {
-		defs, err := tools.ResolveToolNames(def.Tools)
-		if err == nil {
-			// C7 in audit ledger: only inject MCP tools when the custom agent
-			// explicitly opts in via the `mcp:*` wildcard in its tools list.
-			// Previously every MCP tool was appended unconditionally, so a
-			// restricted "reviewer" agent declared as `[read, grep]` got the
-			// whole MCP surface regardless. Opt-in semantics make the tool
-			// list an actual allowlist.
-			for _, name := range def.Tools {
-				if name == "mcp:*" || name == "*" {
-					defs = append(defs, c.mcpToolDefs()...)
-					break
-				}
-			}
-			result.customTools = defs
+		defs, err := tools.ResolveToolNamesWithPolicy(def.Tools, caps)
+		if err != nil {
+			return result, fmt.Errorf("agent %q: %w", def.Name, err)
 		}
+		// C7 in audit ledger: only inject MCP tools when the custom agent
+		// explicitly opts in via the `mcp:*` wildcard in its tools list.
+		// Previously every MCP tool was appended unconditionally, so a
+		// restricted "reviewer" agent declared as `[read, grep]` got the
+		// whole MCP surface regardless. Opt-in semantics make the tool
+		// list an actual allowlist.
+		for _, name := range def.Tools {
+			if name == "mcp:*" || name == "*" {
+				defs = append(defs, c.mcpToolDefs()...)
+				break
+			}
+		}
+		result.customTools = defs
 	}
 
 	return result, nil

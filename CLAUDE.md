@@ -77,7 +77,7 @@ orchestra trust [--status|--revoke]          # trust this workspace's machine-le
 **Agent loop** (`internal/agent/agent.go`, `Agent.Run`): system+user prompt → call `llm.Complete` with OpenAI-style tool defs (`internal/tools/registry.go`) → handle either `tool_call` (execute via `tools.Runner.Call`, append assistant+tool messages to history, loop) or `final` (resolve patches → `tools.FSApplyOps` with dry-run flag). Recoverable errors (`StaleContent`, `AmbiguousMatch`) feed compact hints back into history and the loop continues. Hard caps: `MaxSteps` (default 24), `MaxInvalidRetries` (3), `MaxFinalFailures` (6), `MaxDeniedToolRepeats` (2), `MaxToolErrorRepeats` (6), `LLMStepTimeout` (per step). `truncateMessages` keeps assistant+tool pairs together when shrinking history.
 
 **Three execution modes for `apply`**, all defined in `internal/cli/apply.go::runApply`:
-1. `direct` — agent runs in-process against the local `tools.Runner`.
+1. `direct` — runs a `core.Core` in the same process (`runApplyInProcess` → `Core.AgentRun`): the same launch `agent.run` gets over RPC, with the terminal as client (`core.Options{Config, ExecInDryRun}`, `AgentRunParams.AllowWeb/OnAgentEvent/UserImages`). Do not build `agent.Options` in the CLI.
 2. `via-core` (`--via-core`) — spawns `orchestra core` as a subprocess and drives it via `protocol/jsonrpc` (`initialize` → `agent.run`). Use this when isolation matters; real-LLM E2E tests use it.
 3. `from-plan` (`--from-plan`) — no LLM call; loads a saved `plan.json` and replays its `ops` through the same applier. Critical for deterministic re-application and for the stale-content E2E tests.
 
