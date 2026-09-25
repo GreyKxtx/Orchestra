@@ -803,11 +803,7 @@ func (r *TaskRunner) runInlineLLMVerifier(
 	if r.child.OnChildEvent != nil {
 		opts.OnEvent = r.child.OnChildEvent
 	}
-	ag, err := agent.New(client, r.validator, r.toolRunner, opts)
-	if err != nil {
-		return "", err
-	}
-	_, res, runErr := ag.Run(ctx, nil, prompt)
+	_, res, runErr := r.launchChild(ctx, client, opts, nil, prompt)
 	if runErr != nil {
 		return "", runErr
 	}
@@ -919,11 +915,7 @@ func (r *TaskRunner) runWorkerRounds(
 		if round > 0 && verifyFail != "" {
 			runGoal = childGoal + formatWorkerVerifyRetryPrompt(verifyFail)
 		}
-		ag, err := agent.New(client, r.validator, r.toolRunner, opts)
-		if err != nil {
-			return nil, nil, err
-		}
-		hist, res, runErr = ag.Run(ctx, nil, runGoal)
+		hist, res, runErr = r.launchChild(ctx, client, opts, nil, runGoal)
 		if runErr != nil {
 			return hist, res, runErr
 		}

@@ -95,6 +95,51 @@ func TestAgentOptionsAreBuiltOnlyInApp(t *testing.T) {
 	}
 }
 
+// Every child agent is built and run by app.RunChild — the task runner, the
+// skills, the workflow stages and the pipeline's stages all go through it —
+// so a child gets its layer, the commit-or-drop of its edits, the containment
+// of a panic and its lifecycle events from one place (ARCH-7). The core
+// builds the turn, the top-level agent, and nothing else may build one.
+func TestChildAgentsAreBuiltOnlyInApp(t *testing.T) {
+	root := repoRoot(t)
+	allowed := map[string]bool{
+		"internal/app/child.go":        true,
+		"internal/core/core_agent.go":  true,
+		"internal/core/session_rpc.go": true,
+	}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "testdata", "dist", "out":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if allowed[rel] {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "agent.New(") {
+			t.Errorf("%s builds an agent; a child goes through app.RunChild", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The composition root sits below everything that launches an agent: core,
 // the CLI, the task runner, skills, workflow stages and the pipeline all call
 // it, so it may import none of them.

@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/internal/app"
-	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
+	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/wire"
 )
@@ -82,19 +79,9 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	if err := c.cfg.CheckSkillNameFree(s.Name); err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
-	for _, t := range s.Tools {
-		if !config.ValidAgentTool(t) {
-			return nil, fmt.Errorf("skill %q: invalid tool name %q", params.Name, t)
-		}
-	}
-
 	refs, err := skills.DiscoverRefs(c.workspaceRoot)
 	if err != nil {
 		return nil, fmt.Errorf("discover refs: %w", err)
-	}
-	systemPrompt, err := skills.PrepareBody(s.Body, params.Arguments, refs)
-	if err != nil {
-		return nil, fmt.Errorf("skill %q: %w", params.Name, err)
 	}
 
 	allowExec := params.AllowExec
@@ -102,57 +89,25 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 		allowExec = true
 	}
 
-	var childTools []llm.ToolDef
-	if len(s.Tools) > 0 {
-		resolved, err := tools.ResolveToolNamesWithPolicy(s.Tools, tools.Capabilities{
-			Exec:    allowExec,
-			Web:     params.AllowWeb,
-			Browser: params.AllowBrowser,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("skill %q: resolve tools: %w", params.Name, err)
-		}
-		// Empty after policy filter → skill is unusable as configured. Fail
-		// loud rather than starve the agent. See stageinvoke.Invoke for the
-		// same guard on the workflow path.
-		if len(resolved) == 0 {
-			return nil, fmt.Errorf("skill %q: every tool in `tools: %v` is disabled by current policy "+
-				"(allow_exec=%v allow_web=%v allow_browser=%v)",
-				params.Name, s.Tools, allowExec, params.AllowWeb, params.AllowBrowser)
-		}
-		childTools = resolved
-	} else {
-		childTools = tools.ListToolsForChild()
-	}
-
-	childClient := c.llmClient
-	if (s.Provider != "" || s.Model != "") && c.cfg != nil && !c.llmClientInjected {
-		client, _, err := app.ClientFor(c.cfg, s.Provider, s.Model, nil)
-		if err != nil {
-			return nil, fmt.Errorf("skill %q: %w", params.Name, err)
-		}
-		childClient = client
-	}
-
-	// The project's budgets, breakers, step timeout (llm.timeout_s bounds each
-	// model step, as on every other run path) and permission rules.
-	settings := app.SettingsFrom(c.cfg)
-	agOpts := app.ChildOptions(&settings, func(o *agent.Options) {
-		if o.MaxSteps <= 0 {
-			o.MaxSteps = 24
-		}
-		o.AllowExec = allowExec
-		o.AllowWeb = params.AllowWeb
-		o.AllowBrowser = params.AllowBrowser
-		o.CustomTools = childTools
-		o.SystemPromptOverride = systemPrompt
-		o.PermissionRequester = convertPermissionRequester(params.PermissionRequester)
-		agent.ApplyHistoryConfig(o, c.cfg)
+	// The same runner skill_invoke goes through inside a turn: one door, one
+	// set of budgets, tools and rules. The client sees the skill as a child of
+	// this call — its start, its stream, its end.
+	events := childEventsFor(params.OnEvent, EventEnvelope{TurnID: NewTurnID()})
+	runner := skillrun.New(skillrun.Config{
+		Cfg:                 c.cfg,
+		Skills:              ss,
+		Refs:                refs,
+		Client:              c.llmClient,
+		FixedClient:         c.llmClientInjected,
+		Validator:           c.validator,
+		Runner:              c.tools,
+		MaxSteps:            c.cfg.Agent.MaxSteps,
+		AllowExec:           allowExec,
+		AllowWeb:            params.AllowWeb,
+		AllowBrowser:        params.AllowBrowser,
+		PermissionRequester: convertPermissionRequester(params.PermissionRequester),
+		Events:              events,
 	})
-	ag, err := agent.New(childClient, c.validator, c.tools, agOpts)
-	if err != nil {
-		return nil, fmt.Errorf("skill %q: %w", params.Name, err)
-	}
 
 	// skill.invoke is always a preview (it has no Apply parameter), on a
 	// turn of its own. runMu is held shared.
@@ -162,32 +117,14 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	defer turn.Close()
 	ctx = tools.WithTurn(ctx, turn)
 
-	// The command's own body is the instruction (it is the system prompt), but
-	// the agent still needs a user turn to answer; a command run with nothing
-	// after its name gets one that says what was asked.
-	query := strings.TrimSpace(params.Arguments)
-	if query == "" {
-		query = "Run the /" + params.Name + " command."
+	res, err := runner.Run(ctx, params.Name, params.Arguments)
+	if err != nil {
+		return nil, err
 	}
-	history, res, runErr := ag.Run(ctx, nil, query)
-	if runErr != nil {
-		return nil, fmt.Errorf("skill %q: %w", params.Name, runErr)
-	}
-
 	out := &SkillInvokeResult{
-		Skill: params.Name,
-		Steps: res.Steps,
-	}
-	switch {
-	case res.SubtaskResult != "":
-		out.Output = res.SubtaskResult
-	default:
-		for i := len(history) - 1; i >= 0; i-- {
-			if history[i].Role == llm.RoleAssistant && strings.TrimSpace(history[i].Content) != "" {
-				out.Output = history[i].Content
-				break
-			}
-		}
+		Skill:  params.Name,
+		Steps:  res.Steps,
+		Output: res.Text,
 	}
 	out.Marker = detectSkillMarker(out.Output, s.CompletionMarkers)
 	return out, nil

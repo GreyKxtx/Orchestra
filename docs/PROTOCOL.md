@@ -1079,6 +1079,8 @@ Response `result`:
 - `apply` (bool, optional, default false) — when true, stages write to disk; otherwise they run dry-run with the staging overlay.
 - `allow_exec` / `allow_web` / `allow_browser` (bool, optional) — per-call policy that filters the tool list each stage may invoke.
 
+Each stage runs as a child of the call, on a layer of its own that commits into the workflow's turn when the stage succeeds and is dropped when it fails. Beside `workflow/stage_start` / `workflow/stage_done`, the client receives the child's `agent/event` stream: `child_started` (`subagent_type: "stage:<skill>"`), its step events scoped to the child, and `child_done`.
+
 Errors:
 
 - `NotFound` (-32012) — workflow or one of its stages' skills is unknown.
@@ -1119,14 +1121,19 @@ Response `result`:
 
 ### `skill.invoke`
 
-Runs a single skill end-to-end as one child agent turn. Always dry-run
-(stages write to the in-memory overlay). Useful for one-shot subtasks
-without spinning up a full workflow.
+Runs a single skill end-to-end as one child agent turn — the same runner
+the `skill_invoke` tool uses inside a turn. Always dry-run (the child writes
+to the in-memory overlay). Useful for one-shot subtasks without spinning up a
+full workflow. The client sees the skill as a child: `child_started`
+(`subagent_type: "skill:<name>"`), its step events scoped to the child,
+`child_done`.
 
 `params`:
 
 - `name` (string, required)
 - `arguments` (string, optional) — то, что человек набрал после имени команды; подставляется в `$ARGUMENTS`. Пустое значение допустимо: файл команды несёт свои инструкции сам.
+
+`output` — ответ ребёнка: его `task_result`, иначе его заключительные слова (final-конверт разворачивается до `summary`).
 - `allow_exec` / `allow_web` / `allow_browser` (bool, optional)
 
 Errors: `NotFound` (-32012), `InvalidParams` (-32602).

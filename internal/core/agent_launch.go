@@ -424,10 +424,22 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 			if discovered, err := skills.DiscoverCached(c.workspaceRoot); err == nil && len(discovered) > 0 {
 				refs, _ := skills.DiscoverRefs(c.workspaceRoot)
 				o.Skills = skillrun.Specs(discovered)
-				o.SkillRunner = skillrun.New(
-					c.cfg, discovered, refs, customOpts.llmClient, c.validator, c.tools, agentLogger,
-					c.cfg.Agent.MaxSteps, allowExec, allowWeb, allowBrowser,
-				)
+				o.SkillRunner = skillrun.New(skillrun.Config{
+					Cfg:                 c.cfg,
+					Skills:              discovered,
+					Refs:                refs,
+					Client:              customOpts.llmClient,
+					FixedClient:         c.llmClientInjected,
+					Validator:           c.validator,
+					Runner:              c.tools,
+					AgentLogger:         agentLogger,
+					MaxSteps:            c.cfg.Agent.MaxSteps,
+					AllowExec:           allowExec,
+					AllowWeb:            allowWeb,
+					AllowBrowser:        allowBrowser,
+					PermissionRequester: convertPermissionRequester(spec.PermissionRequester),
+					Events:              app.ChildEvents{Notify: childCfg.NotifyAgentEvent, Stream: childCfg.ChildEventSink},
+				})
 			}
 		}
 		if cc, ctxTok := c.compactionClientWithContext(agentLogger); cc != nil {
