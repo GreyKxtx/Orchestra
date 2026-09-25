@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/roles"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 //go:embed files/*.txt
@@ -157,13 +158,8 @@ func WriteSystemOverride(workspaceRoot, content string) error {
 		}
 		return nil
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, []byte(trimmed+"\n"), 0o644); err != nil {
-		return fmt.Errorf("write temp system.txt: %w", err)
-	}
-	if err := os.Rename(tmp, p); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename system.txt: %w", err)
+	if err := fsutil.AtomicWriteFile(p, []byte(trimmed+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write system.txt: %w", err)
 	}
 	return nil
 }

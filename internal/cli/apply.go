@@ -224,7 +224,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 
 	defer func() {
 		// Always write artifacts once we know projectRoot.
-		_ = writeApplyArtifacts(cfg.ProjectRoot, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr)
+		if err := writeApplyArtifacts(cfg.ProjectRoot, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr); err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] %v\n", err)
+			if retErr == nil {
+				retErr = err
+			}
+		}
 		finalizeUsage(usageTracker, cfg)
 		if retErr != nil {
 			if pe, ok := protocol.AsError(retErr); ok {
@@ -706,6 +711,14 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	diffPath := filepath.Join(baseDir, "diff.txt")
 	runPath := filepath.Join(baseDir, "last_run.jsonl")
 	resultPath := filepath.Join(baseDir, "last_result.json")
+	// plan.json is the artifact --from-plan replays, so its write is the one
+	// that fails the command; the diff, the result and the run log are for
+	// reading and only warn (ARCH-11: every write here used to be ignored).
+	warn := func(what string, err error) {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] %s not written: %v\n", what, err)
+		}
+	}
 
 	if plan.ProtocolVersion == 0 {
 		plan.ProtocolVersion = protocol.ProtocolVersion
@@ -723,7 +736,9 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	planJSON, err := json.MarshalIndent(plan, "", "  ")
 	if err == nil {
 		planJSON = append(planJSON, '\n')
-		_ = fsutil.AtomicWriteFile(planPath, planJSON, 0600)
+		if err := fsutil.AtomicWriteFile(planPath, planJSON, 0600); err != nil {
+			return fmt.Errorf("plan.json not written: %w", err)
+		}
 	}
 
 	// Build a human-readable diff file (best-effort).
@@ -746,7 +761,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 			diffText.WriteString("\n")
 		}
 	}
-	_ = fsutil.AtomicWriteFile(diffPath, []byte(diffText.String()), 0600)
+	warn("diff.txt", fsutil.AtomicWriteFile(diffPath, []byte(diffText.String()), 0600))
 
 	changed := []string(nil)
 	if applyResp != nil {
@@ -772,7 +787,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	}
 	if b, err := json.MarshalIndent(lr, "", "  "); err == nil {
 		b = append(b, '\n')
-		_ = fsutil.AtomicWriteFile(resultPath, b, 0600)
+		warn("last_result.json", fsutil.AtomicWriteFile(resultPath, b, 0600))
 	}
 
 	// last_run.jsonl (always, minimal event log).
@@ -816,7 +831,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 		jsonl.Write(b)
 		jsonl.WriteByte('\n')
 	}
-	_ = fsutil.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600)
+	warn("last_run.jsonl", fsutil.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600))
 
 	return nil
 }

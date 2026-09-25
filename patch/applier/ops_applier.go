@@ -726,7 +726,6 @@ func isWithinRoot(rootAbs, targetAbs string) bool {
 
 func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string) error {
 	dir := filepath.Dir(path)
-	base := filepath.Base(path)
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
@@ -740,61 +739,12 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string
 		}
 	}
 
-	tmp, err := os.CreateTemp(dir, base+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Best-effort atomic replace.
-	// Note: on Unix this is atomic within the same directory; on Windows replace is best-effort.
-	if err := os.Rename(tmpName, path); err == nil {
-		// L5 in audit ledger: os.Chmod on Windows only flips the read-only
-		// bit (everything else is ignored). Patch authors who care about
-		// exact perms need a POSIX host — documented as a known limitation.
-		_ = os.Chmod(path, perm)
-		// M10 in audit ledger: fsync the parent directory so the rename's
-		// metadata change is durable across a power loss on POSIX. No-op
-		// on Windows.
-		_ = syncDir(dir)
-		return nil
-	}
-
-	// H9 in audit ledger: the previous fallback was `os.Remove(path) +
-	// os.Rename(tmp, path)`, which deletes the target before the second
-	// rename — if THAT rename also fails (cross-device, locked handle on
-	// Windows, FS full), the original file is permanently gone. Safer:
-	// re-write the contents directly to the target via os.WriteFile. Not
-	// atomic with respect to readers, but the target is never absent
-	// between the two ops — concurrent readers see either the old bytes
-	// or the new bytes, never ENOENT. Backup (.orchestra.bak) was already
-	// written earlier in ApplyAnyOps for any pre-existing file, so a
-	// crash here is recoverable from .bak.
-	if err := os.WriteFile(path, data, perm); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename failed and direct overwrite also failed: %w", err)
-	}
-	_ = os.Remove(tmpName) // best-effort cleanup of the orphan temp
-	_ = os.Chmod(path, perm)
-	return nil
+	// The write itself is the one every Orchestra artifact uses: temp file
+	// in the same directory, fsync, rename with a retry for Windows sharing
+	// violations, and an in-place overwrite as the last resort so the target
+	// never goes missing (H9). Backup (.orchestra.bak) was already written
+	// in ApplyAnyOps for any pre-existing file.
+	return fsutil.AtomicWriteFile(path, data, perm)
 }
 
 func staleContentErr(path string, op ops.ReplaceRangeOp, actualHash string, reason string) error {

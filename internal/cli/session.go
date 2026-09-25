@@ -10,6 +10,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/sessionstore"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -154,7 +155,7 @@ func runSessionExport(cmd *cobra.Command, args []string) error {
 		_, err = os.Stdout.Write(data)
 		return err
 	}
-	if err := os.WriteFile(outPath, data, 0o600); err != nil {
+	if err := fsutil.AtomicWriteFile(outPath, data, 0o600); err != nil {
 		return fmt.Errorf("write export: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Exported session %q → %s (%d bytes)\n", id, outPath, len(data))

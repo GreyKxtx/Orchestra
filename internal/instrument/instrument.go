@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // Result describes what was done for one language.
@@ -277,9 +279,5 @@ func runInstall(dir, cmd string, args []string) (string, error) {
 }
 
 func atomicWrite(path string, data []byte) error {
-	tmp := path + ".orchestra.tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fsutil.AtomicWriteFile(path, data, 0o644)
 }

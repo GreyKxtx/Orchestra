@@ -193,7 +193,9 @@ func Subtract(a, b int) int {
 	var retErr error
 
 	defer func() {
-		_ = writeApplyArtifacts(tmpDir, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr)
+		if err := writeApplyArtifacts(tmpDir, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr); err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] %v\n", err)
+		}
 	}()
 
 	runner, err := tools.NewRunner(tmpDir, tools.RunnerOptions{
