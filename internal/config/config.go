@@ -102,6 +102,27 @@ type ApplyConfig struct {
 	PatchDir string `yaml:"patch_dir,omitempty"`
 }
 
+// Retention defaults: how many session snapshots and exported patches are
+// kept when retention: says nothing.
+const (
+	DefaultRetentionSessions = 200
+	DefaultRetentionPatches  = 50
+)
+
+// RetentionConfig bounds what .orchestra keeps (DATA-11). 0 means the
+// default; -1 lifts that bound.
+type RetentionConfig struct {
+	// Sessions is how many session snapshots .orchestra/sessions keeps,
+	// newest first (default 200).
+	Sessions int `yaml:"sessions,omitempty"`
+	// SessionMaxAgeDays removes sessions not touched for this many days
+	// (default 0: no age bound).
+	SessionMaxAgeDays int `yaml:"session_max_age_days,omitempty"`
+	// Patches is how many exported .patch files apply.patch_dir keeps
+	// (default 50).
+	Patches int `yaml:"patches,omitempty"`
+}
+
 // LimitsConfig contains context/IO limits (vNext).
 type LimitsConfig struct {
 	ContextKB       int   `yaml:"context_kb"`
@@ -508,6 +529,7 @@ type ProjectConfig struct {
 	LLM          LLMConfig         `yaml:"llm"`
 	Agent        AgentConfig       `yaml:"agent"`
 	Apply        ApplyConfig       `yaml:"apply,omitempty"`
+	Retention    RetentionConfig   `yaml:"retention,omitempty"`
 	Exec         ExecConfig        `yaml:"exec"`
 	Hooks        HooksConfig       `yaml:"hooks"`
 	MCP          MCPConfig         `yaml:"mcp"`
@@ -1135,6 +1157,12 @@ func (c *ProjectConfig) applyDefaults() {
 	}
 	if c.Apply.PatchDir == "" {
 		c.Apply.PatchDir = ".orchestra/patches"
+	}
+	if c.Retention.Sessions == 0 {
+		c.Retention.Sessions = DefaultRetentionSessions
+	}
+	if c.Retention.Patches == 0 {
+		c.Retention.Patches = DefaultRetentionPatches
 	}
 }
 

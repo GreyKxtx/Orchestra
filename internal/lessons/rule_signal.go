@@ -60,6 +60,7 @@ func BumpRuleSignal(projectRoot, dept, key string) int {
 	}
 	_, _ = f.WriteString(line)
 	_ = f.Close()
+	trimSignalLog(path)
 	return countSignalKey(path, key)
 }
 

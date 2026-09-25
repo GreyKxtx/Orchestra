@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/llm"
@@ -157,5 +158,37 @@ func TestManager_ConcurrentIsolation(t *testing.T) {
 		if len(h) != 1 {
 			t.Fatalf("session %s: expected 1 message, got %d", s.ID, len(h))
 		}
+	}
+}
+
+// EvictIdle drops the sessions idle past the limit and keeps the ones in a
+// turn or recently used; a dropped session comes back from its snapshot.
+func TestManager_EvictIdle_DropsIdleKeepsBusyAndRecent(t *testing.T) {
+	m := session.NewManager()
+	idle := m.CreateWithID("idle")
+	idle.LastActivity = time.Now().Add(-2 * time.Hour)
+	busy := m.CreateWithID("busy")
+	busy.LastActivity = time.Now().Add(-2 * time.Hour)
+	busy.Lock()
+	busy.SetCancel(func() {})
+	busy.Unlock()
+	recent := m.CreateWithID("recent")
+
+	if n := m.EvictIdle(time.Hour); n != 1 {
+		t.Fatalf("evicted %d, want 1", n)
+	}
+	if _, err := m.Get("idle"); err == nil {
+		t.Fatal("the idle session is still in memory")
+	}
+	if _, err := m.Get("busy"); err != nil {
+		t.Fatal("the busy session was evicted mid-turn")
+	}
+	if _, err := m.Get("recent"); err != nil {
+		t.Fatal("the recent session was evicted")
+	}
+	_ = recent
+	ids := m.IDs()
+	if len(ids) != 2 {
+		t.Fatalf("IDs = %v", ids)
 	}
 }

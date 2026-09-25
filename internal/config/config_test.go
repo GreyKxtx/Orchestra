@@ -712,3 +712,20 @@ func TestCompactThresholdRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyDefaults_Retention(t *testing.T) {
+	cfg := &ProjectConfig{}
+	cfg.applyDefaults()
+	if cfg.Retention.Sessions != DefaultRetentionSessions || cfg.Retention.Patches != DefaultRetentionPatches {
+		t.Fatalf("retention defaults = %+v", cfg.Retention)
+	}
+	if cfg.Retention.SessionMaxAgeDays != 0 {
+		t.Fatalf("session_max_age_days must default to no bound, got %d", cfg.Retention.SessionMaxAgeDays)
+	}
+	// -1 lifts a bound and survives the defaults.
+	cfg = &ProjectConfig{Retention: RetentionConfig{Sessions: -1, Patches: 7}}
+	cfg.applyDefaults()
+	if cfg.Retention.Sessions != -1 || cfg.Retention.Patches != 7 {
+		t.Fatalf("explicit retention overwritten: %+v", cfg.Retention)
+	}
+}

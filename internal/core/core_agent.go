@@ -12,6 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/checkpoint"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/retention"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
 	"github.com/orchestra/orchestra/llm"
@@ -324,6 +325,15 @@ func (c *Core) writeAgentPatch(explicit string, res *agent.Result) (string, erro
 	}
 	if err := applier.WriteUnifiedPatch(path, diffs); err != nil {
 		return "", err
+	}
+	// The export directory keeps the newest cfg.retention.patches files; an
+	// explicit path is the caller's and its directory is left alone.
+	if strings.TrimSpace(explicit) == "" {
+		keep := config.DefaultRetentionPatches
+		if c.cfg != nil {
+			keep = c.cfg.Retention.Patches
+		}
+		retention.PruneFiles(filepath.Dir(path), ".patch", keep)
 	}
 	return path, nil
 }

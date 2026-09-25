@@ -58,7 +58,48 @@ func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, err
 		"restored":       restored,
 		"workspace_root": c.workspaceRoot,
 	})
+	c.housekeep()
 	return &SessionStartResult{SessionID: s.ID, Restored: restored}, nil
+}
+
+const (
+	// housekeepEvery is the least time between two housekeeping passes.
+	housekeepEvery = 10 * time.Minute
+	// sessionIdleUnload is how long a session sits untouched in memory
+	// before it is dropped to its snapshot.
+	sessionIdleUnload = 30 * time.Minute
+)
+
+// housekeep bounds what a core holds and what the project keeps (DATA-11):
+// idle sessions leave memory, and the snapshot store is pruned to
+// retention.sessions / retention.session_max_age_days. It runs on
+// session.start, at most every housekeepEvery; the sessions this core holds
+// are never pruned, so a session just started is safe.
+func (c *Core) housekeep() {
+	c.houseMu.Lock()
+	if time.Since(c.lastHouse) < housekeepEvery {
+		c.houseMu.Unlock()
+		return
+	}
+	c.lastHouse = time.Now()
+	c.houseMu.Unlock()
+
+	c.sessions.EvictIdle(sessionIdleUnload)
+	keep, maxAge := config.DefaultRetentionSessions, time.Duration(0)
+	if c.cfg != nil {
+		keep = c.cfg.Retention.Sessions
+		maxAge = time.Duration(c.cfg.Retention.SessionMaxAgeDays) * 24 * time.Hour
+	}
+	protect := map[string]bool{}
+	for _, id := range c.sessions.IDs() {
+		protect[id] = true
+	}
+	removed, err := sessionfile.Prune(c.workspaceRoot, keep, maxAge, protect)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "core: session retention: %v\n", err)
+	} else if len(removed) > 0 {
+		fmt.Fprintf(os.Stderr, "core: session retention removed %d old session(s)\n", len(removed))
+	}
 }
 
 // sessionLooksRestoredLocked reports whether a loaded session carries any

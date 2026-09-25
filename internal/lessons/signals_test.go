@@ -1,6 +1,11 @@
 package lessons
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestBumpAntiPatternSignal(t *testing.T) {
 	root := t.TempDir()
@@ -30,4 +35,31 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// A signal log is trimmed to its tail past the cap: the count that matters
+// is recent repeats, and the file was appended forever.
+func TestBumpAntiPatternSignal_TrimsTheLogToItsTail(t *testing.T) {
+	oldMax, oldKeep := maxSignalLines, keepSignalLines
+	maxSignalLines, keepSignalLines = 5, 3
+	t.Cleanup(func() { maxSignalLines, keepSignalLines = oldMax, oldKeep })
+	root := t.TempDir()
+	for i := 0; i < 6; i++ {
+		BumpAntiPatternSignal(root, "frontend", "k"+string(rune('a'+i)))
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".orchestra", "memory", "lessons", "signals", "frontend.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("log has %d lines after the trim, want 3:\n%s", len(lines), data)
+	}
+	if !strings.HasSuffix(lines[2], "|kf") || !strings.HasSuffix(lines[0], "|kd") {
+		t.Fatalf("the newest lines must be the ones kept:\n%s", data)
+	}
+	// The trimmed-away key no longer counts as a repeat.
+	if got := BumpAntiPatternSignal(root, "frontend", "ka"); got != 1 {
+		t.Fatalf("count of a trimmed key = %d, want 1", got)
+	}
 }

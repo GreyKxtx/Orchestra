@@ -18,6 +18,29 @@ const (
 	signalsRelDir = ".orchestra/memory/lessons/signals"
 )
 
+// A signal log keeps its last keepSignalLines lines once it passes
+// maxSignalLines: what counts is recent repeats, and the file was appended
+// forever and read whole on every bump (DATA-11).
+var (
+	maxSignalLines  = 2000
+	keepSignalLines = 1000
+)
+
+// trimSignalLog rewrites the log at path to its tail once it is past
+// maxSignalLines lines. Caller holds the log's lock.
+func trimSignalLog(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) <= maxSignalLines {
+		return
+	}
+	kept := lines[len(lines)-keepSignalLines:]
+	_ = fsutil.AtomicWriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
+}
+
 // AntiPatternKey normalizes verify/task text for repeat counting.
 func AntiPatternKey(verify, task string) string {
 	key := strings.TrimSpace(verify)
@@ -62,6 +85,7 @@ func BumpAntiPatternSignal(projectRoot, dept, key string) int {
 	}
 	_, _ = f.WriteString(line)
 	_ = f.Close()
+	trimSignalLog(path)
 	return countSignalKey(path, key)
 }
 

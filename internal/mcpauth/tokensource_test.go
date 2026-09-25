@@ -113,7 +113,7 @@ func TestPersistingTokenSource_KeepsOldRefreshTokenWhenResponseOmitsIt(t *testin
 		t.Fatal(err)
 	}
 
-	ts := newPersistingTokenSource("linear", stubTokenSource{tok: &oauth2.Token{AccessToken: "new"}}, last)
+	ts := newPersistingTokenSource("linear", func(Token) oauth2.TokenSource { return stubTokenSource{tok: &oauth2.Token{AccessToken: "new"}} }, last)
 	if _, err := ts.Token(); err != nil {
 		t.Fatal(err)
 	}

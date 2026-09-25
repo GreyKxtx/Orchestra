@@ -29,7 +29,7 @@ func IsOrchestraLeadWritablePath(path, assignedPlan string) bool {
 // runtimeOwnedFiles and runtimeOwnedDirs are the runtime's own records under
 // .orchestra/ (lower case, see IsRuntimeOwnedPath).
 var (
-	runtimeOwnedFiles = []string{OrchestraStateRelPath, ".orchestra/decisions.md", ".orchestra/contract/epoch.yaml"}
+	runtimeOwnedFiles = []string{OrchestraStateRelPath, ".orchestra/decisions.md", ".orchestra/decisions.archive.md", ".orchestra/contract/epoch.yaml"}
 	runtimeOwnedDirs  = []string{strings.TrimSuffix(OrchestraDeptsRelDir, "/"), ".orchestra/agency"}
 )
 

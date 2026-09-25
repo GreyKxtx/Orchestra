@@ -192,13 +192,8 @@ func TokenSourceFor(ctx context.Context, name string, oc llm.OAuthConfig) (func(
 	}
 
 	conf := oauth2Config(oc, "")
-	base := conf.TokenSource(ctx, &oauth2.Token{
-		AccessToken:  tok.AccessToken,
-		TokenType:    tok.TokenType,
-		RefreshToken: tok.RefreshToken,
-		Expiry:       tok.Expiry,
-	})
-	ts := authstore.NewPersistingTokenSource(Namespace, name, base, tok)
+	newBase := func(t authstore.Token) oauth2.TokenSource { return conf.TokenSource(ctx, t.OAuth2Token()) }
+	ts := authstore.NewPersistingTokenSource(Namespace, name, newBase, tok)
 	return func() (string, error) {
 		t, err := ts.Token()
 		if err != nil {

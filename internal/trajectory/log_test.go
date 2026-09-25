@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 func TestAppendAndRead_RoundTripsWithContiguousSeq(t *testing.T) {
@@ -350,5 +352,192 @@ func TestAppend_AFailedWriteDoesNotReissueItsSequenceNumber(t *testing.T) {
 	}
 	if events[1].Seq <= events[0].Seq {
 		t.Errorf("sequence went backwards: %d then %d", events[0].Seq, events[1].Seq)
+	}
+}
+
+func setMaxLogBytes(t *testing.T, n int64) {
+	t.Helper()
+	old := maxLogBytes
+	maxLogBytes = n
+	t.Cleanup(func() { maxLogBytes = old })
+}
+
+// Past the cap the log rotates: the current file becomes <name>.1 and a new
+// one starts. Read returns both generations, in order, with the sequence
+// unbroken; a session's log no longer grows without bound (DATA-9).
+func TestAppend_RotatesPastTheCapAndReadReturnsEveryGeneration(t *testing.T) {
+	setMaxLogBytes(t, 1200) // ~100 bytes an event: one rotation in 20 events
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if err := w.Append("agent/event", map[string]any{"n": i, "pad": "0123456789abcdef"}); err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(Path(root, "s1") + ".1"); err != nil {
+		t.Fatalf("no rotated generation: %v", err)
+	}
+	if st, _ := os.Stat(Path(root, "s1")); st.Size() > 1200 {
+		t.Fatalf("current log is %d bytes, past the cap", st.Size())
+	}
+	events, recorded, err := Read(root, "s1")
+	if err != nil || !recorded {
+		t.Fatalf("Read: %v, recorded=%v", err, recorded)
+	}
+	// Two generations hold every event here; the sequence runs unbroken
+	// across the rotation and ends at the last one written.
+	if len(events) != 20 {
+		t.Fatalf("len(events) = %d, want 20 across both generations", len(events))
+	}
+	for i, ev := range events {
+		if ev.Seq != int64(i+1) {
+			t.Fatalf("events[%d].Seq = %d, want %d", i, ev.Seq, i+1)
+		}
+	}
+}
+
+// A writer opened on a log that just rotated continues the sequence from the
+// older generation rather than restarting at 1.
+func TestNewWriter_ContinuesTheSequenceFromTheRotatedGeneration(t *testing.T) {
+	setMaxLogBytes(t, 150) // every append past the first rotates
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		if err := w.Append("agent/event", map[string]any{"n": i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = w.Close()
+	w2, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w2.Append("agent/event", nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = w2.Close()
+	events, _, err := Read(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int64]bool{}
+	var last int64
+	for _, ev := range events {
+		if seen[ev.Seq] {
+			t.Fatalf("seq %d issued twice", ev.Seq)
+		}
+		seen[ev.Seq] = true
+		if ev.Seq > last {
+			last = ev.Seq
+		}
+	}
+	if last != 5 {
+		t.Fatalf("last seq = %d, want 5", last)
+	}
+}
+
+// A payload past MaxEventBytes is recorded as a marker, not dropped and not
+// written whole: the log stays readable line by line.
+func TestAppend_AnOversizedPayloadIsRecordedAsTruncated(t *testing.T) {
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := make([]byte, MaxEventBytes+1)
+	for i := range big {
+		big[i] = 'x'
+	}
+	if err := w.Append("agent/event", map[string]any{"content": string(big)}); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	events, _, err := Read(root, "s1")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("Read: %v, %d events", err, len(events))
+	}
+	var marker struct {
+		Truncated bool `json:"truncated"`
+		Bytes     int  `json:"bytes"`
+	}
+	if err := json.Unmarshal(events[0].Data, &marker); err != nil || !marker.Truncated || marker.Bytes <= MaxEventBytes {
+		t.Fatalf("data = %.80s… (%v), want a truncation marker", events[0].Data, err)
+	}
+}
+
+// One line longer than any buffer must not end recording for the session:
+// NewWriter re-reads the log for its sequence, and a bufio.Scanner stopped
+// there for good, so every later turn of that session went unrecorded.
+func TestNewWriter_AnOverlongLineDoesNotStopTheLog(t *testing.T) {
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Append("agent/event", map[string]any{"n": 1}); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	f, err := os.OpenFile(Path(root, "s1"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	junk := make([]byte, 9<<20)
+	for i := range junk {
+		junk[i] = 'j'
+	}
+	if _, err := f.Write(append(junk, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	w2, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatalf("NewWriter after a 9 MB line: %v", err)
+	}
+	if err := w2.Append("agent/event", map[string]any{"n": 2}); err != nil {
+		t.Fatal(err)
+	}
+	_ = w2.Close()
+	events, _, err := Read(root, "s1")
+	if err != nil {
+		t.Fatalf("Read after a 9 MB line: %v", err)
+	}
+	if len(events) != 2 || events[1].Seq != 2 {
+		t.Fatalf("events = %+v, want the two real ones with seq 1, 2", events)
+	}
+}
+
+// Deleting a session takes the rotated generation with it.
+func TestRotatedGeneration_IsDeletedWithTheSession(t *testing.T) {
+	setMaxLogBytes(t, 150)
+	root := t.TempDir()
+	w, err := NewWriter(root, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		_ = w.Append("agent/event", map[string]any{"n": i})
+	}
+	_ = w.Close()
+	if _, err := os.Stat(Path(root, "s1") + ".1"); err != nil {
+		t.Fatalf("no rotated generation: %v", err)
+	}
+	if err := sessionfile.Delete(root, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{Path(root, "s1"), Path(root, "s1") + ".1"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived the session's deletion", p)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
 )
@@ -48,4 +49,39 @@ func (m *Manager) Delete(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.sessions, id)
+}
+
+// IDs returns the ids of the sessions held in memory.
+func (m *Manager) IDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		out = append(out, id)
+	}
+	return out
+}
+
+// EvictIdle drops from memory the sessions that have been idle for longer
+// than maxIdle and are not in a turn: their snapshot is on disk, and the
+// next GetOrLoad brings them back. A long-lived core (TUI, extension) used
+// to hold every session it ever touched (DATA-11). Returns how many left.
+func (m *Manager) EvictIdle(maxIdle time.Duration) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := time.Now().Add(-maxIdle)
+	n := 0
+	for id, s := range m.sessions {
+		// A session whose lock is held is in use right now.
+		if !s.mu.TryLock() {
+			continue
+		}
+		idle := s.cancelFn == nil && s.LastActivity.Before(cutoff)
+		s.mu.Unlock()
+		if idle {
+			delete(m.sessions, id)
+			n++
+		}
+	}
+	return n
 }

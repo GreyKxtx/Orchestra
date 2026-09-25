@@ -18,6 +18,7 @@ import (
 	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/pipeline"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/retention"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
@@ -492,6 +493,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			if err := applier.WriteUnifiedPatch(resolvedPatch, diffs); err != nil {
 				retErr = fmt.Errorf("write patch: %w", err)
 				return retErr
+			}
+			// apply.patch_dir keeps the newest retention.patches files; a
+			// --output-patch path of the user's own is left alone.
+			if patchOutPath == "" {
+				retention.PruneFiles(filepath.Dir(resolvedPatch), ".patch", cfg.Retention.Patches)
 			}
 		}
 		fmt.Printf("Patch mode: workspace untouched\n")
