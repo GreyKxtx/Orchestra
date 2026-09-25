@@ -163,6 +163,9 @@ fn boot(app: AppHandle) {
     // it. Links in chat carry target="_blank" and do not navigate this window.
     let allowed_origin = url.origin();
     let dispatched = app.run_on_main_thread(move || {
+        // Reassigned only under cfg(windows) below; elsewhere the `mut` is
+        // unused and `clippy -D warnings` refuses it.
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut builder = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
             .title("Orchestra")
             .inner_size(1200.0, 800.0)
