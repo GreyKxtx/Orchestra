@@ -19,6 +19,7 @@ import (
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
+	"github.com/orchestra/orchestra/protocol/wire"
 
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/mcp"
@@ -31,6 +32,9 @@ type Core struct {
 	initMu        sync.Mutex
 	initialized   bool
 	initParams    *InitializeParams
+	// protocolVersion is the one initialize negotiated: the newest both
+	// sides speak.
+	protocolVersion int
 
 	cfg        *config.ProjectConfig
 	configPath string
@@ -324,8 +328,11 @@ func (c *Core) Health() protocol.Health {
 		Status:          "ok",
 		CoreVersion:     protocol.CoreVersion,
 		ProtocolVersion: protocol.ProtocolVersion,
-		OpsVersion:      protocol.OpsVersion,
-		ToolsVersion:    protocol.ToolsVersion,
+		// MinProtocolVersion lets a client see before initialize whether
+		// the two ranges meet, and which version to ask for.
+		MinProtocolVersion: protocol.MinProtocolVersion,
+		OpsVersion:         protocol.OpsVersion,
+		ToolsVersion:       protocol.ToolsVersion,
 	}
 	if c == nil {
 		return h
@@ -350,18 +357,10 @@ func (c *Core) Health() protocol.Health {
 	return h
 }
 
-type InitializeParams struct {
-	ProjectRoot     string `json:"project_root"`
-	ProjectID       string `json:"project_id"`
-	ProtocolVersion int    `json:"protocol_version"`
-	OpsVersion      int    `json:"ops_version,omitempty"`
-	ToolsVersion    int    `json:"tools_version,omitempty"`
-}
-
-type InitializeResult struct {
-	Status string          `json:"status"`
-	Health protocol.Health `json:"health"`
-}
+// InitializeParams and InitializeResult are the wire's (protocol/wire):
+// the handshake is part of the contract, not of this package.
+type InitializeParams = wire.InitializeParams
+type InitializeResult = wire.InitializeResult
 
 func (c *Core) Initialize(params InitializeParams) (*InitializeResult, error) {
 	if c == nil {
@@ -380,14 +379,16 @@ func (c *Core) Initialize(params InitializeParams) (*InitializeResult, error) {
 		})
 	}
 
-	// Canonicalize optional version fields so initialize stays idempotent even if the
-	// client omits ops/tools versions on subsequent calls.
+	// Canonicalize optional fields so initialize stays idempotent even if the
+	// client omits them on subsequent calls: the range a client before v24
+	// names is its one version, and ops/tools default to the core's.
 	canonical := InitializeParams{
-		ProjectRoot:     rootAbs,
-		ProjectID:       strings.TrimSpace(params.ProjectID),
-		ProtocolVersion: params.ProtocolVersion,
-		OpsVersion:      params.OpsVersion,
-		ToolsVersion:    params.ToolsVersion,
+		ProjectRoot:        rootAbs,
+		ProjectID:          strings.TrimSpace(params.ProjectID),
+		ProtocolVersion:    params.ProtocolVersion,
+		MinProtocolVersion: params.ClientRange().Min,
+		OpsVersion:         params.OpsVersion,
+		ToolsVersion:       params.ToolsVersion,
 	}
 	if canonical.OpsVersion == 0 {
 		canonical.OpsVersion = protocol.OpsVersion
@@ -404,7 +405,7 @@ func (c *Core) Initialize(params InitializeParams) (*InitializeResult, error) {
 	// - different params => AlreadyInitialized (or ProtocolMismatch per spec)
 	if c.initialized {
 		if c.initParams != nil && sameInitializeParams(*c.initParams, canonical) {
-			return &InitializeResult{Status: "ok", Health: c.Health()}, nil
+			return c.initializeResult(), nil
 		}
 		return nil, protocol.NewError(protocol.AlreadyInitialized, "core already initialized with different parameters", map[string]any{
 			"expected": c.initParams,
@@ -412,11 +413,19 @@ func (c *Core) Initialize(params InitializeParams) (*InitializeResult, error) {
 		})
 	}
 
-	// First-time initialize: enforce handshake constraints.
-	if canonical.ProtocolVersion != protocol.ProtocolVersion {
+	// First-time initialize: the handshake. The protocol version is the
+	// newest both ranges contain (ProtocolVersion 24); before that the number
+	// had to match exactly, so a client and a core from different releases
+	// could not connect at all.
+	negotiated, ok := wire.Negotiate(canonical.ClientRange(), wire.CoreRange())
+	if !ok {
 		return nil, protocol.NewError(protocol.ProtocolMismatch, "protocol_version mismatch", map[string]any{
-			"client": canonical.ProtocolVersion,
-			"core":   protocol.ProtocolVersion,
+			"client":     canonical.ProtocolVersion,
+			"core":       protocol.ProtocolVersion,
+			"client_min": canonical.MinProtocolVersion,
+			"client_max": canonical.ProtocolVersion,
+			"core_min":   protocol.MinProtocolVersion,
+			"core_max":   protocol.ProtocolVersion,
 		})
 	}
 	if canonical.OpsVersion != protocol.OpsVersion {
@@ -425,12 +434,10 @@ func (c *Core) Initialize(params InitializeParams) (*InitializeResult, error) {
 			"core":   protocol.OpsVersion,
 		})
 	}
-	if canonical.ToolsVersion != protocol.ToolsVersion {
-		return nil, protocol.NewError(protocol.ProtocolMismatch, "tools_version mismatch", map[string]any{
-			"client": canonical.ToolsVersion,
-			"core":   protocol.ToolsVersion,
-		})
-	}
+	// tools_version is informational: it moves with tools the client never
+	// calls, and it used to keep an extension one commit behind the core
+	// from connecting. The answer carries the core's, for a client that
+	// needs a particular tool.
 	if !samePath(rootAbs, c.workspaceRoot) {
 		return nil, protocol.NewError(protocol.ProtocolMismatch, "project_root mismatch", map[string]any{
 			"client": rootAbs,
@@ -449,13 +456,35 @@ func (c *Core) Initialize(params InitializeParams) (*InitializeResult, error) {
 
 	c.initialized = true
 	c.initParams = &canonical
+	c.protocolVersion = negotiated
 
-	return &InitializeResult{
-		Status: "ok",
-		Health: c.Health(),
-	}, nil
+	return c.initializeResult(), nil
 }
 
+// initializeResult is the handshake's answer: the negotiated version, the
+// core's tools version and what it serves. Called with initMu held.
+func (c *Core) initializeResult() *InitializeResult {
+	return &InitializeResult{
+		Status:          "ok",
+		ProtocolVersion: c.protocolVersion,
+		ToolsVersion:    protocol.ToolsVersion,
+		Capabilities:    wire.CoreCapabilities(),
+		Health:          c.Health(),
+	}
+}
+
+// ProtocolVersion is the version initialize negotiated, 0 before it.
+func (c *Core) ProtocolVersion() int {
+	if c == nil {
+		return 0
+	}
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	return c.protocolVersion
+}
+
+// sameInitializeParams says whether b asks for what a already got. The
+// tools version is not compared: it is informational.
 func sameInitializeParams(a, b InitializeParams) bool {
 	if !samePath(a.ProjectRoot, b.ProjectRoot) {
 		return false
@@ -463,13 +492,10 @@ func sameInitializeParams(a, b InitializeParams) bool {
 	if strings.TrimSpace(a.ProjectID) != strings.TrimSpace(b.ProjectID) {
 		return false
 	}
-	if a.ProtocolVersion != b.ProtocolVersion {
+	if a.ProtocolVersion != b.ProtocolVersion || a.MinProtocolVersion != b.MinProtocolVersion {
 		return false
 	}
 	if a.OpsVersion != b.OpsVersion {
-		return false
-	}
-	if a.ToolsVersion != b.ToolsVersion {
 		return false
 	}
 	return true

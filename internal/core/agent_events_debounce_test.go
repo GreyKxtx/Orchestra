@@ -7,6 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // waitForEvents blocks until at least n events have been delivered, or fails.
@@ -17,7 +18,7 @@ import (
 // machine. Polling with a deadline far larger than the timer keeps the
 // assertion — the flush does happen, and it coalesces — while removing the
 // dependence on how fast the machine is.
-func waitForEvents(t *testing.T, mu *sync.Mutex, got *[]map[string]any, n int) {
+func waitForEvents(t *testing.T, mu *sync.Mutex, got *[]wire.AgentEvent, n int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -38,10 +39,10 @@ func TestBuildAgentOnEvent_DebouncesMessageDelta(t *testing.T) {
 	t.Setenv("ORCH_STREAM_DEBOUNCE_MS", "25")
 
 	var mu sync.Mutex
-	var got []map[string]any
+	var got []wire.AgentEvent
 	notify := func(_ string, params any) {
 		mu.Lock()
-		got = append(got, params.(map[string]any))
+		got = append(got, params.(wire.AgentEvent))
 		mu.Unlock()
 	}
 	onEvent := buildAgentOnEvent(notify, EventEnvelope{TurnID: "t1"})
@@ -63,8 +64,8 @@ func TestBuildAgentOnEvent_DebouncesMessageDelta(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d notifications, want 1 batched", len(got))
 	}
-	if got[0]["content"] != "hello" {
-		t.Fatalf("content=%q", got[0]["content"])
+	if got[0].Content != "hello" {
+		t.Fatalf("content=%q", got[0].Content)
 	}
 }
 
@@ -72,10 +73,10 @@ func TestBuildAgentOnEvent_DebounceFlushesOnToolBoundary(t *testing.T) {
 	t.Setenv("ORCH_STREAM_DEBOUNCE_MS", "500")
 
 	var mu sync.Mutex
-	var got []map[string]any
+	var got []wire.AgentEvent
 	onEvent := buildAgentOnEvent(func(_ string, params any) {
 		mu.Lock()
-		got = append(got, params.(map[string]any))
+		got = append(got, params.(wire.AgentEvent))
 		mu.Unlock()
 	}, EventEnvelope{TurnID: "t1"})
 
@@ -91,10 +92,10 @@ func TestBuildAgentOnEvent_DebounceFlushesOnToolBoundary(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d notifications, want 2 (flushed delta + tool start)", len(got))
 	}
-	if got[0]["type"] != "message_delta" || got[0]["content"] != "x" {
+	if got[0].Type != "message_delta" || got[0].Content != "x" {
 		t.Fatalf("first=%+v", got[0])
 	}
-	if got[1]["type"] != "tool_call_start" {
+	if got[1].Type != "tool_call_start" {
 		t.Fatalf("second=%+v", got[1])
 	}
 }
@@ -103,10 +104,10 @@ func TestBuildAgentOnEvent_DebounceSeparateReasoning(t *testing.T) {
 	t.Setenv("ORCH_STREAM_DEBOUNCE_MS", "25")
 
 	var mu sync.Mutex
-	var got []map[string]any
+	var got []wire.AgentEvent
 	onEvent := buildAgentOnEvent(func(_ string, params any) {
 		mu.Lock()
-		got = append(got, params.(map[string]any))
+		got = append(got, params.(wire.AgentEvent))
 		mu.Unlock()
 	}, EventEnvelope{TurnID: "t1"})
 
@@ -126,7 +127,7 @@ func TestBuildAgentOnEvent_DebounceSeparateReasoning(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(got) != 1 || got[0]["type"] != "reasoning_delta" || got[0]["content"] != "ab" {
+	if len(got) != 1 || got[0].Type != "reasoning_delta" || got[0].Content != "ab" {
 		t.Fatalf("got %+v", got)
 	}
 }

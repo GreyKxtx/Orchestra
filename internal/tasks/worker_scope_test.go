@@ -9,6 +9,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/protocol/schema"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 func TestSpawn_OverlappingHandlerWaitsForLock(t *testing.T) {
@@ -23,16 +24,12 @@ func TestSpawn_OverlappingHandlerWaitsForLock(t *testing.T) {
 	}
 	verifyOff := false
 	var mu sync.Mutex
-	var events []map[string]any
+	var events []wire.AgentEvent
 	r := New(mock, v, tr, ChildAgentConfig{
 		WorkerVerifyEnabled: &verifyOff,
-		NotifyAgentEvent: func(params map[string]any) {
-			cp := make(map[string]any, len(params))
-			for k, val := range params {
-				cp[k] = val
-			}
+		NotifyAgentEvent: func(params wire.AgentEvent) {
 			mu.Lock()
-			events = append(events, cp)
+			events = append(events, params)
 			mu.Unlock()
 		},
 	})
@@ -65,7 +62,7 @@ func TestSpawn_OverlappingHandlerWaitsForLock(t *testing.T) {
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		for _, ev := range events {
-			if ev["type"] == "child_queued" && ev["task_id"] == idB {
+			if ev.Type == wire.EventChildQueued && ev.TaskID == idB {
 				queued = true
 			}
 		}

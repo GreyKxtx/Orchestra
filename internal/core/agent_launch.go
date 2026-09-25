@@ -22,6 +22,7 @@ import (
 	"github.com/orchestra/orchestra/internal/usage"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // agentLaunchSpec is the shared input for building agent.Options from Core config.
@@ -309,16 +310,15 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 			effectiveMode = mode
 		}
 		if spec.OnEvent != nil {
-			spec.OnEvent("agent/event", mergeEventEnvelope(map[string]any{
-				"step": 0,
-				"type": "mode_route",
-				"data": map[string]any{
-					"from":       string(agent.ModeAgent),
-					"to":         effectiveMode,
-					"reason":     routeReason,
-					"confidence": routeConfidence,
+			spec.OnEvent(wire.NotifyAgentEvent, env.stamp(wire.AgentEvent{
+				Type: wire.EventModeRoute,
+				Data: wire.ModeRoute{
+					From:       string(agent.ModeAgent),
+					To:         effectiveMode,
+					Reason:     routeReason,
+					Confidence: routeConfidence,
 				},
-			}, env))
+			}, nil))
 		}
 	}
 
@@ -359,11 +359,8 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	childCfg.QuestionAsker = spec.QuestionAsker
 	childCfg.OnGraphChange = spec.OnGraphChange
 	if spec.OnEvent != nil {
-		childCfg.NotifyAgentEvent = func(params map[string]any) {
-			if _, ok := params["task_id"]; ok {
-				params["scope"] = "child"
-			}
-			spec.OnEvent("agent/event", mergeEventEnvelope(params, env))
+		childCfg.NotifyAgentEvent = func(ev wire.AgentEvent) {
+			spec.OnEvent(wire.NotifyAgentEvent, env.stamp(ev, nil))
 		}
 		childCfg.ChildEventSink = func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent) {
 			meta := &ChildScopeMeta{

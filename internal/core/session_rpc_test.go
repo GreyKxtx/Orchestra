@@ -50,43 +50,6 @@ func TestInitialize_CurrentToolsVersionHandshake(t *testing.T) {
 	}
 }
 
-func TestInitialize_PreviousToolsVersionMismatch(t *testing.T) {
-	root := t.TempDir()
-	cfg := config.DefaultConfig(root)
-	if err := config.Save(filepath.Join(root, ".orchestra.yml"), cfg); err != nil {
-		t.Fatalf("Save config: %v", err)
-	}
-	c, err := New(root, Options{})
-	if err != nil {
-		t.Fatalf("New core: %v", err)
-	}
-	t.Cleanup(func() { _ = c.Close() })
-	h := NewRPCHandler(c)
-
-	projectID, err := cache.ComputeProjectID(root)
-	if err != nil {
-		t.Fatalf("ComputeProjectID: %v", err)
-	}
-	params, err := json.Marshal(InitializeParams{
-		ProjectRoot:     root,
-		ProjectID:       projectID,
-		ProtocolVersion: protocol.ProtocolVersion,
-		OpsVersion:      protocol.OpsVersion,
-		ToolsVersion:    protocol.ToolsVersion - 1,
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	_, err = h.Handle(context.Background(), "initialize", params)
-	if err == nil {
-		t.Fatalf("expected ProtocolMismatch for tools_version=%d", protocol.ToolsVersion-1)
-	}
-	pe, ok := protocol.AsError(err)
-	if !ok || pe.Code != protocol.ProtocolMismatch {
-		t.Fatalf("want ProtocolMismatch, got %v", err)
-	}
-}
-
 // TestSessionClose_DoesNotReportSuccessWhenTheSnapshotSurvives pins Fix B:
 // SessionClose must not report success when the on-disk snapshot could not
 // actually be removed.

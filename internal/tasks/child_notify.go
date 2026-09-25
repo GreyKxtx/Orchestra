@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // PromoteHintsFromTaskResult extracts learning promote suggestions from task_result JSON.
@@ -22,31 +23,19 @@ func (r *TaskRunner) notifyChildDone(e *taskEntry, parentToolCallID, subagentTyp
 	if result == nil {
 		result = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: "task ended without a result"}
 	}
-	params := map[string]any{
-		"type":                "child_done",
-		"task_id":             e.id,
-		"parent_tool_call_id": parentToolCallID,
-		"subagent_type":       subagentType,
-		"status":              result.Status,
-		"depth":               e.depth,
+	ev := wire.AgentEvent{
+		Type:             wire.EventChildDone,
+		TaskID:           e.id,
+		ParentToolCallID: parentToolCallID,
+		ParentTaskID:     e.parentTaskID,
+		SubagentType:     subagentType,
+		Status:           result.Status,
+		Depth:            e.depth,
+		Error:            result.Error,
+		Content:          truncateChildSummary(result.Result),
 	}
-	if e.parentTaskID != "" {
-		params["parent_task_id"] = e.parentTaskID
-	}
-	if result.Error != "" {
-		params["error"] = result.Error
-	}
-	if summary := truncateChildSummary(result.Result); summary != "" {
-		params["content"] = summary
-	}
-	lesson, playbook := PromoteHintsFromTaskResult(result.Result)
-	if lesson != "" {
-		params["lesson_promote_suggestion"] = lesson
-	}
-	if playbook != "" {
-		params["playbook_promote_suggestion"] = playbook
-	}
-	r.child.NotifyAgentEvent(params)
+	ev.LessonPromoteSuggestion, ev.PlaybookPromoteSuggestion = PromoteHintsFromTaskResult(result.Result)
+	r.child.NotifyAgentEvent(ev)
 }
 
 func truncateChildSummary(s string) string {

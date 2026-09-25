@@ -22,9 +22,15 @@ import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjectio
 import { RpcClient } from "./rpc/client";
 import { t } from "./i18n";
 
-/** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 23;
+/**
+ * Must match protocol/version.go: the protocol versions this extension
+ * speaks, newest and oldest. initialize picks the newest both sides have,
+ * so an extension and a core one release apart still connect.
+ */
+const PROTOCOL_VERSION = 24;
+const MIN_PROTOCOL_VERSION = 23;
 const OPS_VERSION = 1;
+/** The tools this extension was written against; informational to the core. */
 export const TOOLS_VERSION = 18;
 
 /** session.message can run a long agent turn (orchestrated multi-department runs). */
@@ -1675,15 +1681,21 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       const preHealth = (await client.request("core.health", {}, 10_000)) as {
         project_id?: string;
         protocol_version?: number;
+        min_protocol_version?: number;
       };
-      if (
-        typeof preHealth.protocol_version === "number" &&
-        preHealth.protocol_version !== PROTOCOL_VERSION
-      ) {
+      // The version to speak: the newest in both ranges. A core before v24
+      // reports no min_protocol_version and speaks its one version exactly,
+      // so asking for that version is what connects to it.
+      const coreMax =
+        typeof preHealth.protocol_version === "number" ? preHealth.protocol_version : PROTOCOL_VERSION;
+      const coreMin =
+        typeof preHealth.min_protocol_version === "number" ? preHealth.min_protocol_version : coreMax;
+      const protocolVersion = Math.min(PROTOCOL_VERSION, coreMax);
+      if (protocolVersion < MIN_PROTOCOL_VERSION || protocolVersion < coreMin) {
         throw new Error(
-          `protocol_version mismatch: extension=${PROTOCOL_VERSION}, core=${preHealth.protocol_version}. ` +
-            `Whichever is older is the one to update — the extension's constant lives in ` +
-            `src/coreSession.ts, the core's in protocol/version.go. Both must move together.`
+          `protocol_version mismatch: extension speaks ${MIN_PROTOCOL_VERSION}..${PROTOCOL_VERSION}, ` +
+            `core ${coreMin}..${coreMax}. Whichever is older is the one to update — the extension's ` +
+            `constants live in src/coreSession.ts, the core's in protocol/version.go.`
         );
       }
       const projectId =
@@ -1696,7 +1708,8 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
       const initResult = await client.request(
         "initialize",
         {
-          protocol_version: PROTOCOL_VERSION,
+          protocol_version: protocolVersion,
+          min_protocol_version: MIN_PROTOCOL_VERSION,
           ops_version: OPS_VERSION,
           tools_version: TOOLS_VERSION,
           project_root: workspaceRoot,

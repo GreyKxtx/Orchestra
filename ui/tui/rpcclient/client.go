@@ -3,6 +3,7 @@ package rpcclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // Config configures the spawn + initialize handshake.
@@ -24,6 +26,10 @@ type Config struct {
 
 // Client wraps a running `orchestra core` subprocess.
 type Client struct {
+	// protocolVersion and capabilities are what the handshake settled on.
+	protocolVersion int
+	capabilities    wire.Capabilities
+
 	cfg Config
 
 	cmd    *exec.Cmd
@@ -129,30 +135,87 @@ func Spawn(ctx context.Context, cfg Config) (*Client, error) {
 	c.rpc.SetRequestHandler(c.handleRequest)
 
 	c.send(Event{Kind: EventConnecting})
-	initParams := map[string]any{
-		"project_root":     cfg.WorkspaceRoot,
-		"project_id":       cfg.ProjectID,
-		"protocol_version": protocol.ProtocolVersion,
-		"ops_version":      protocol.OpsVersion,
-		"tools_version":    protocol.ToolsVersion,
-	}
-	var initResult struct {
-		Health struct {
-			LSPStatus string `json:"lsp_status"`
-		} `json:"health"`
-	}
-	if err := c.rpc.Call(ctx, "initialize", initParams, &initResult); err != nil {
+	initResult, initErr := c.initialize(ctx, wire.InitializeParams{
+		ProjectRoot:        cfg.WorkspaceRoot,
+		ProjectID:          cfg.ProjectID,
+		ProtocolVersion:    protocol.ProtocolVersion,
+		MinProtocolVersion: protocol.MinProtocolVersion,
+		OpsVersion:         protocol.OpsVersion,
+		ToolsVersion:       protocol.ToolsVersion,
+	})
+	if initErr != nil {
 		// Handshake failure: nothing valuable is running yet — hard-kill so
 		// a broken core cannot linger in the background.
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
 		_ = c.Close()
-		return nil, fmt.Errorf("rpcclient: initialize: %w", err)
+		return nil, fmt.Errorf("rpcclient: initialize: %w", initErr)
 	}
+	c.protocolVersion = initResult.ProtocolVersion
+	c.capabilities = initResult.Capabilities
 	c.send(Event{Kind: EventInitialized, LSPStatus: initResult.Health.LSPStatus})
 
 	return c, nil
+}
+
+// initialize runs the handshake, asking for the range this client speaks.
+// A core before ProtocolVersion 24 compares the version exactly and names
+// its own in the refusal; when this client speaks that version too, it asks
+// for exactly it, so the TUI of one release drives the core of the previous.
+func (c *Client) initialize(ctx context.Context, params wire.InitializeParams) (wire.InitializeResult, error) {
+	var res wire.InitializeResult
+	err := c.rpc.Call(ctx, wire.MethodInitialize, params, &res)
+	if v, ok := olderCoreVersion(err); ok {
+		params.ProtocolVersion, params.MinProtocolVersion = v, 0
+		res = wire.InitializeResult{}
+		err = c.rpc.Call(ctx, wire.MethodInitialize, params, &res)
+	}
+	if err == nil && res.ProtocolVersion == 0 {
+		// A core before v24 does not say which version it took: the one asked for.
+		res.ProtocolVersion = params.ProtocolVersion
+	}
+	return res, err
+}
+
+// olderCoreVersion reads the refusal of a core that checks the protocol
+// version exactly: its data names the core's version. ok is true when that
+// version is one this client still speaks.
+func olderCoreVersion(err error) (v int, ok bool) {
+	var re *jsonrpc.RPCError
+	if !errors.As(err, &re) || re.Code != protocol.ProtocolMismatch.RPCCode() {
+		return 0, false
+	}
+	data, _ := re.Data.(map[string]any)
+	switch n := data["core"].(type) {
+	case float64: // JSON numbers decode as float64
+		v = int(n)
+	case int:
+		v = n
+	default:
+		return 0, false
+	}
+	if v >= protocol.ProtocolVersion || v < protocol.MinProtocolVersion {
+		return 0, false
+	}
+	return v, true
+}
+
+// ProtocolVersion is the version the handshake settled on.
+func (c *Client) ProtocolVersion() int {
+	if c == nil {
+		return 0
+	}
+	return c.protocolVersion
+}
+
+// Capabilities is what the core said it serves. Empty for a core before
+// ProtocolVersion 24.
+func (c *Client) Capabilities() wire.Capabilities {
+	if c == nil {
+		return wire.Capabilities{}
+	}
+	return c.capabilities
 }
 
 // Events returns the channel of streaming events.
@@ -687,27 +750,7 @@ func (c *Client) handleWorkflowStage(kind EventKind, params json.RawMessage) {
 }
 
 func (c *Client) handleAgentEvent(params json.RawMessage) {
-	var p struct {
-		Step                      int             `json:"step"`
-		Type                      string          `json:"type"`
-		SessionID                 string          `json:"session_id"`
-		TurnID                    string          `json:"turn_id"`
-		Content                   string          `json:"content"`
-		Error                     string          `json:"error"`
-		ToolCallID                string          `json:"tool_call_id"`
-		ToolCallName              string          `json:"tool_call_name"`
-		ArgsDelta                 string          `json:"args_delta"`
-		Data                      json.RawMessage `json:"data"`
-		Diagnostics               json.RawMessage `json:"diagnostics"`
-		TaskID                    string          `json:"task_id"`
-		SubagentType              string          `json:"subagent_type"`
-		Status                    string          `json:"status"`
-		Scope                     string          `json:"scope"`
-		WaitingFor                []string        `json:"waiting_for"`
-		Reason                    string          `json:"reason"`
-		LessonPromoteSuggestion   string          `json:"lesson_promote_suggestion"`
-		PlaybookPromoteSuggestion string          `json:"playbook_promote_suggestion"`
-	}
+	var p wire.AgentEvent
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
@@ -720,6 +763,7 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 		ToolCallID:                p.ToolCallID,
 		ToolCallName:              p.ToolCallName,
 		ArgsDelta:                 p.ArgsDelta,
+		Diagnostics:               p.Diagnostics,
 		TaskID:                    p.TaskID,
 		SubagentType:              p.SubagentType,
 		ChildStatus:               p.Status,
@@ -729,57 +773,42 @@ func (c *Client) handleAgentEvent(params json.RawMessage) {
 		LessonPromoteSuggestion:   strings.TrimSpace(p.LessonPromoteSuggestion),
 		PlaybookPromoteSuggestion: strings.TrimSpace(p.PlaybookPromoteSuggestion),
 	}
-	if EventKind(p.Type) == EventPendingOps && len(p.Data) > 0 {
+	switch ev.Kind {
+	case EventPendingOps:
 		var payload PendingOpsPayload
-		if err := json.Unmarshal(p.Data, &payload); err == nil {
+		if err := p.DecodeData(&payload); err == nil {
 			ev.PendingOps = &payload
 		}
-	}
-	if (EventKind(p.Type) == EventStepUsage || EventKind(p.Type) == EventContextEstimate) && len(p.Data) > 0 {
+	case EventStepUsage, EventContextEstimate:
 		var usage UsageTurnPayload
-		if err := json.Unmarshal(p.Data, &usage); err == nil {
+		if err := p.DecodeData(&usage); err == nil {
 			ev.Usage = &usage
 		}
-	}
-	if EventKind(p.Type) == EventModeRoute && len(p.Data) > 0 {
+	case EventModeRoute:
 		var route ModeRoutePayload
-		if err := json.Unmarshal(p.Data, &route); err == nil {
+		if err := p.DecodeData(&route); err == nil {
 			ev.ModeRoute = &route
 		}
-	}
-	if EventKind(p.Type) == EventError || EventKind(p.Type) == EventChildDone {
-		errMsg := strings.TrimSpace(p.Error)
-		if errMsg == "" {
-			errMsg = strings.TrimSpace(p.Content)
+	case EventError:
+		ev.Err = strings.TrimSpace(p.Error)
+		if ev.Err == "" {
+			ev.Err = strings.TrimSpace(p.Content)
 		}
-		if EventKind(p.Type) == EventError {
-			ev.Err = errMsg
-		} else if strings.TrimSpace(p.Error) != "" {
-			ev.Err = strings.TrimSpace(p.Error)
-		}
-	}
-	if EventKind(p.Type) == EventTodosUpdated && strings.TrimSpace(p.Content) != "" {
-		var items []TodoItem
-		if err := json.Unmarshal([]byte(p.Content), &items); err == nil {
-			ev.Todos = items
-		}
-	}
-	if len(p.Diagnostics) > 0 && string(p.Diagnostics) != "null" {
-		var diags []ToolDiagnosticPayload
-		if err := json.Unmarshal(p.Diagnostics, &diags); err == nil {
-			ev.Diagnostics = diags
+	case EventChildDone:
+		ev.Err = strings.TrimSpace(p.Error)
+	case EventTodosUpdated:
+		if strings.TrimSpace(p.Content) != "" {
+			var items []TodoItem
+			if err := json.Unmarshal([]byte(p.Content), &items); err == nil {
+				ev.Todos = items
+			}
 		}
 	}
 	c.send(ev)
 }
 
 func (c *Client) handleExecOutput(params json.RawMessage) {
-	var p struct {
-		Step      int    `json:"step"`
-		Chunk     string `json:"chunk"`
-		SessionID string `json:"session_id"`
-		TurnID    string `json:"turn_id"`
-	}
+	var p wire.ExecOutputChunk
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}

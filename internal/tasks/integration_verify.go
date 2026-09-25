@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // IntegrationReport is the verdict on several workers' edits taken together.
@@ -59,12 +61,12 @@ func (r *TaskRunner) integrationVerify(ctx context.Context, entries []*taskEntry
 		}
 	}
 	if r.child.NotifyAgentEvent != nil {
-		r.child.NotifyAgentEvent(map[string]any{
-			"type":    "integration_verify",
-			"status":  out.Status,
-			"workers": workers,
-			"files":   len(files),
-			"summary": out.Summary,
+		r.child.NotifyAgentEvent(wire.AgentEvent{
+			Type:    wire.EventIntegrationVerify,
+			Status:  out.Status,
+			Workers: workers,
+			Files:   len(files),
+			Summary: out.Summary,
 		})
 	}
 	raw, err := json.Marshal(out)

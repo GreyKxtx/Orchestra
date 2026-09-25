@@ -1,6 +1,8 @@
 // Package rpcclient is the TUI's connection to orchestra core via JSON-RPC stdio.
 package rpcclient
 
+import "github.com/orchestra/orchestra/protocol/wire"
+
 // EventKind is a TUI-friendly enumeration of event types streamed from the core.
 // Mirrors agent/event "type" field plus our own connection events.
 type EventKind string
@@ -48,14 +50,7 @@ const (
 )
 
 // WorkflowStagePayload carries the data for workflow/stage_start / stage_done.
-type WorkflowStagePayload struct {
-	Name     string `json:"name"`
-	StageID  string `json:"stage_id"`
-	Attempt  int    `json:"attempt"`
-	Marker   string `json:"marker,omitempty"`
-	Action   string `json:"action,omitempty"`
-	OutputKB int    `json:"output_kb,omitempty"`
-}
+type WorkflowStagePayload = wire.WorkflowStage
 
 // Event is a TUI-side representation of a streaming event.
 type Event struct {
@@ -92,80 +87,34 @@ type Event struct {
 	Err                       string                    // only set on connection/agent error events
 }
 
+// The payloads below are the wire's (protocol/wire): the TUI used to
+// declare its own copies of each, by hand, beside the VS Code extension's
+// and the web's.
+
 // ModeRoutePayload is emitted when mode=agent classifies the turn.
-type ModeRoutePayload struct {
-	From       string  `json:"from"`
-	To         string  `json:"to"`
-	Reason     string  `json:"reason,omitempty"`
-	Confidence float64 `json:"confidence,omitempty"`
-}
+type ModeRoutePayload = wire.ModeRoute
 
-// UsageTurnPayload mirrors core.UsageSnapshot from session.message / agent.run.
-type UsageTurnPayload struct {
-	PromptTokens     int     `json:"prompt_tokens"`
-	CompletionTokens int     `json:"completion_tokens"`
-	TotalTokens      int     `json:"total_tokens"`
-	CostUSD          float64 `json:"cost_usd,omitempty"`
-	Source           string  `json:"source,omitempty"` // "estimate" when agent-side heuristic
-	// CachedPromptTokens is the part of PromptTokens the provider served from
-	// its prompt cache; CacheWriteTokens is what it charged to populate it.
-	CachedPromptTokens int `json:"cached_prompt_tokens,omitempty"`
-	CacheWriteTokens   int `json:"cache_write_tokens,omitempty"`
-}
+// UsageTurnPayload is token spend: a step's, an estimate's, or the turn's.
+type UsageTurnPayload = wire.Usage
 
-// MemoryNotePayload mirrors core.MemoryNoteStatus: what the end-of-turn
-// memory writer did. Outcome is written | skipped | failed; Source is
-// model | digest; Detail is the note when written, the reason otherwise.
-type MemoryNotePayload struct {
-	Outcome string `json:"outcome"`
-	Source  string `json:"source,omitempty"`
-	Detail  string `json:"detail,omitempty"`
-}
+// MemoryNotePayload says what the end-of-turn memory writer did.
+type MemoryNotePayload = wire.MemoryNote
 
-// RuleSuggestion mirrors core.RuleSuggestionPayload: a human-facing offer to
-// turn a repeated anti-pattern into a project instruction. Text is the
-// chat-facing prompt; RuleLine is the exact line lesson.rule_respond appends
-// to ORCHESTRA.md on accept.
-type RuleSuggestion struct {
-	Dept     string `json:"dept"`
-	File     string `json:"file"`
-	Count    int    `json:"count"`
-	Verify   string `json:"verify,omitempty"`
-	RuleLine string `json:"rule_line"`
-	Text     string `json:"text"`
-}
+// RuleSuggestion is a human-facing offer to turn a repeated anti-pattern
+// into a project instruction.
+type RuleSuggestion = wire.RuleSuggestion
 
-// TodoItem mirrors tools.TodoItem from session.message / todowrite.
-type TodoItem struct {
-	ID      string `json:"id"`
-	Content string `json:"content"`
-	Status  string `json:"status"`
-}
+// TodoItem is one row of the model's checklist.
+type TodoItem = wire.TodoItem
 
-// ToolDiagnosticPayload mirrors lsp.ToolDiagnostic in tool JSON responses.
-type ToolDiagnosticPayload struct {
-	StartLine int    `json:"start_line"`
-	StartCol  int    `json:"start_col"`
-	EndLine   int    `json:"end_line,omitempty"`
-	EndCol    int    `json:"end_col,omitempty"`
-	Severity  string `json:"severity"`
-	Source    string `json:"source,omitempty"`
-	Message   string `json:"message"`
-}
+// ToolDiagnosticPayload is one LSP diagnostic in a tool's answer.
+type ToolDiagnosticPayload = wire.ToolDiagnostic
 
-// PendingOpsPayload mirrors the data sub-object in the pending_ops event.
-type PendingOpsPayload struct {
-	Ops     []map[string]any `json:"ops"`
-	Diff    []FileDiff       `json:"diff"`
-	Applied bool             `json:"applied"`
-}
+// PendingOpsPayload is the data of the pending_ops event.
+type PendingOpsPayload = wire.PendingOps
 
-// FileDiff matches applier.FileDiff shape from the protocol.
-type FileDiff struct {
-	Path   string `json:"path"`
-	Before string `json:"before"`
-	After  string `json:"after"`
-}
+// FileDiff is a file's content before and after a turn's edits.
+type FileDiff = wire.FileDiff
 
 // PermissionRequestPayload carries a consent request (shell or lsp.install).
 type PermissionRequestPayload struct {
@@ -177,7 +126,4 @@ type PermissionRequestPayload struct {
 }
 
 // QuestionItemPayload is one question in a question/ask server request.
-type QuestionItemPayload struct {
-	Question string   `json:"question"`
-	Options  []string `json:"options,omitempty"`
-}
+type QuestionItemPayload = wire.QuestionItem

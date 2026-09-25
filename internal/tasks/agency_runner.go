@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/fsutil"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // scopedRunner is a child's view of the TaskRunner: the same registry, slots
@@ -372,11 +373,11 @@ func (r *TaskRunner) acquireSlot(ctx context.Context, e *taskEntry, parentToolCa
 	default:
 	}
 	if r.child.NotifyAgentEvent != nil {
-		r.child.NotifyAgentEvent(map[string]any{
-			"type":                "child_queued",
-			"task_id":             e.id,
-			"parent_tool_call_id": parentToolCallID,
-			"reason":              fmt.Sprintf("%d agents already running at depth %d (agency.max_parallel)", n, e.depth),
+		r.child.NotifyAgentEvent(wire.AgentEvent{
+			Type:             wire.EventChildQueued,
+			TaskID:           e.id,
+			ParentToolCallID: parentToolCallID,
+			Reason:           fmt.Sprintf("%d agents already running at depth %d (agency.max_parallel)", n, e.depth),
 		})
 	}
 	select {
@@ -712,18 +713,15 @@ func (r *TaskRunner) emitAgentMessage(channel, from, to, kind, content, taskID s
 	if r.child.NotifyAgentEvent == nil {
 		return
 	}
-	ev := map[string]any{
-		"type":    "agent_message",
-		"channel": channel, // send | reply | post
-		"from":    from,
-		"to":      to,
-		"kind":    kind,
-		"content": clip(content, 600),
-	}
-	if taskID != "" {
-		ev["task_id"] = taskID
-	}
-	r.child.NotifyAgentEvent(ev)
+	r.child.NotifyAgentEvent(wire.AgentEvent{
+		Type:    wire.EventAgentMessage,
+		Channel: channel, // send | reply | post
+		From:    from,
+		To:      to,
+		Kind:    kind,
+		Content: clip(content, 600),
+		TaskID:  taskID,
+	})
 }
 
 // ── persistent inbox & threads ───────────────────────────────────────────────
