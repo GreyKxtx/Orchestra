@@ -49,7 +49,8 @@ go vet ./... ./protocol/... ./patch/... ./llm/...
 |--------|------|
 | TUI | `ui/tui/` → spawns `orchestra core`, `session.*` |
 | VS Code | `ui/vscode/` → TypeScript webview + `CoreSession` |
-| Desktop | `ui/desktop/` — placeholder only |
+| Web | `ui/web/` — the browser client `orchestra web` serves (WebSocket JSON-RPC, `internal/webtransport`); its chat renderer is shared with the extension |
+| Desktop | `ui/desktop/` — Tauri (Rust) shell that starts `orchestra web` as a sidecar and shows the same `ui/web` page |
 
 ## Removed (do not reintroduce)
 
