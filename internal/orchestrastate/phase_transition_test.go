@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // The Lead drives the session by writing state.md, and that write was
@@ -95,7 +96,7 @@ func TestPhaseTransitionMatrix(t *testing.T) {
 			}
 			next := tc.state
 			next.Phase = tc.to
-			err := GuardPhaseTransition(root, EnforcementStrict, tc.from, tc.to, &next)
+			err := GuardPhaseTransition(root, wsview.Disk(root), EnforcementStrict, tc.from, tc.to, &next)
 			if tc.wantBlocked {
 				if err == nil {
 					t.Fatalf("%s → %s: expected a refusal", tc.from, tc.to)
@@ -121,7 +122,7 @@ func TestPhaseTransitionPromptOnlyNeverBlocks(t *testing.T) {
 	next := State{Phase: PhaseExecution, DocDebt: []string{"docs/api.md"}}
 	for _, to := range []Phase{PhaseDocumentation, PhaseContract, PhaseExecution, PhaseDelivery} {
 		next.Phase = to
-		if err := GuardPhaseTransition(root, EnforcementPromptOnly, PhaseDiscovery, to, &next); err != nil {
+		if err := GuardPhaseTransition(root, wsview.Disk(root), EnforcementPromptOnly, PhaseDiscovery, to, &next); err != nil {
 			t.Errorf("prompt_only blocked %s: %v", to, err)
 		}
 	}
@@ -134,7 +135,7 @@ func TestPhaseTransitionPromptOnlyNeverBlocks(t *testing.T) {
 func TestPhaseTransitionReadsTheIncomingDocument(t *testing.T) {
 	root := t.TempDir()
 	next := State{Phase: PhaseDocumentation, PRDStatus: "approved"}
-	if err := GuardPhaseTransition(root, EnforcementStrict, PhaseDiscovery, PhaseDocumentation, &next); err != nil {
+	if err := GuardPhaseTransition(root, wsview.Disk(root), EnforcementStrict, PhaseDiscovery, PhaseDocumentation, &next); err != nil {
 		t.Fatalf("approving the PRD in the same write must satisfy the gate: %v", err)
 	}
 }

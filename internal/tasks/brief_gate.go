@@ -2,13 +2,13 @@ package tasks
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // Brief completeness gate (spec §6.2, checklist 15): a Lead must not spawn
@@ -48,13 +48,15 @@ func deptType(instance string) string {
 
 // checkBriefCompleteness is the runtime gate evaluated at worker spawn.
 // Fail-closed once the playbook opts in; inactive in maintenance and under
-// the user waiver `brief_completeness`.
-func checkBriefCompleteness(projectRoot string, wo *WorkOrder) error {
+// the user waiver `brief_completeness`. The playbook and the brief are read
+// through v, the spawner's view: a Lead stages the brief it writes, and its
+// workers are relayed in the same turn (ORC-6).
+func checkBriefCompleteness(projectRoot string, v wsview.View, wo *WorkOrder) error {
 	instance := workOrderDeptInstance(wo)
 	if instance == "" {
 		return nil
 	}
-	required, playbookRel := briefRequiredFields(projectRoot, instance)
+	required, playbookRel := briefRequiredFields(v, instance)
 	if len(required) == 0 {
 		return nil
 	}
@@ -64,7 +66,7 @@ func checkBriefCompleteness(projectRoot string, wo *WorkOrder) error {
 			return nil
 		}
 	}
-	briefRel, briefBody := findBrief(projectRoot, instance)
+	briefRel, briefBody := findBrief(v, instance)
 	if briefRel == "" {
 		return fmt.Errorf("runtime_guard: brief_completeness — %s declares brief_required_fields but no Implementation Brief found under %s/%s/; "+
 			"unblock: Lead writes the brief (brief.md) | user waiver 'brief_completeness'",
@@ -86,10 +88,10 @@ func checkBriefCompleteness(projectRoot string, wo *WorkOrder) error {
 
 // briefRequiredFields reads brief_required_fields from the instance playbook,
 // falling back to the dept-type playbook (frontend@web.md → frontend.md).
-func briefRequiredFields(projectRoot, instance string) (fields []string, playbookRel string) {
+func briefRequiredFields(v wsview.View, instance string) (fields []string, playbookRel string) {
 	for _, name := range playbookCandidates(instance) {
 		rel := playbooksRelDir + "/" + name + ".md"
-		data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(rel)))
+		data, err := v.ReadFile(rel)
 		if err != nil {
 			continue
 		}
@@ -134,11 +136,11 @@ func parseBriefRequiredFields(body string) []string {
 
 // findBrief locates the Implementation Brief for an instance:
 // .orchestra/specs/{instance}/brief.md, then the dept-type variants.
-func findBrief(projectRoot, instance string) (rel, body string) {
+func findBrief(v wsview.View, instance string) (rel, body string) {
 	for _, dir := range playbookCandidates(instance) {
 		for _, name := range []string{"brief.md", "implementation_brief.md"} {
 			r := specsRelDir + "/" + dir + "/" + name
-			data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(r)))
+			data, err := v.ReadFile(r)
 			if err == nil {
 				return r, string(data)
 			}

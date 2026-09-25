@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/patch/cache"
 )
 
@@ -75,6 +77,19 @@ func (o *Overlay) Fork() *Overlay {
 		parent:        o,
 		base:          make(map[string]string),
 	}
+}
+
+// Owner is the overlay o's changes go to when it commits: its parent, or the
+// first one up that has not itself merged. Nil for a turn's overlay.
+func (o *Overlay) Owner() *Overlay {
+	if o == nil {
+		return nil
+	}
+	p := o.parent
+	for p != nil && p.stateOf() == layerMerged {
+		p = p.parent
+	}
+	return p
 }
 
 // IsLayer reports whether o is a task layer rather than a turn's overlay.
@@ -159,6 +174,16 @@ func (o *Overlay) Discard() []string {
 // else on disk. ok is false when the file exists in neither.
 func (o *Overlay) CurrentContent(relSlash string) (string, bool) {
 	return o.currentContent(nil, relSlash)
+}
+
+// ReadFile is relSlash as o sees it, for the runtime's checks (wsview.View):
+// staged in o or an owner, else on disk.
+func (o *Overlay) ReadFile(relSlash string) ([]byte, error) {
+	c, ok := o.currentContent(nil, wsview.Clean(relSlash))
+	if !ok {
+		return nil, fmt.Errorf("%s: %w", relSlash, iofs.ErrNotExist)
+	}
+	return []byte(c), nil
 }
 
 func (o *Overlay) discardLocked() {

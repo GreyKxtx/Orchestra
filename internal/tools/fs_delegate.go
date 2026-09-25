@@ -8,6 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools/fs"
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 )
@@ -210,6 +211,21 @@ func (r *Runner) ApplyPatchesToStaged(ctx context.Context, patchList []patches.P
 // (its owner). Nil outside a dry run: writes then go to disk.
 func (r *Runner) ForkLayer(ctx context.Context) *fs.Overlay {
 	return r.overlayAt(ctx).Fork()
+}
+
+// View is the project as the agent behind ctx sees it — its task's layer, or
+// the turn's overlay, over the disk — for the runtime's checks.
+func (r *Runner) View(ctx context.Context) wsview.View {
+	if o := r.overlayAt(ctx); o != nil {
+		return o
+	}
+	return wsview.Disk(r.WorkspaceRoot())
+}
+
+// InLayer reports whether ctx belongs to a task that writes into its own
+// layer: its changes become its owner's only when it commits.
+func InLayer(ctx context.Context) bool {
+	return fs.OverlayFrom(ctx).IsLayer()
 }
 
 // LayerContext is a context carrying ctx's task layer and nothing else, for

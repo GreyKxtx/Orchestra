@@ -366,7 +366,7 @@ func TestApplyTaskTypeRoute(t *testing.T) {
 
 func TestSpawnGuardBlocksWorker(t *testing.T) {
 	r := newTestTaskRunner(t)
-	r.child.GuardSpawn = func(subagentType string) error {
+	r.child.GuardSpawn = func(_ context.Context, subagentType string) error {
 		if strings.EqualFold(subagentType, "worker") {
 			return fmt.Errorf("runtime_guard: PRD status != approved; unblock: spawn product")
 		}
@@ -391,7 +391,7 @@ func TestSpawnGuardBlocksWorker(t *testing.T) {
 func TestContractRefsGuardBlocksWorkerSpawn(t *testing.T) {
 	r := newTestTaskRunner(t)
 	var gotRefs []contract.Ref
-	r.child.GuardContractRefs = func(refs []contract.Ref) error {
+	r.child.GuardContractRefs = func(_ context.Context, refs []contract.Ref) error {
 		gotRefs = refs
 		if len(refs) > 0 && refs[0].SHA256 == "stale" {
 			return fmt.Errorf("runtime_guard: stale_contract: NFR.md hash mismatch; unblock: Lead regenerates the WorkOrder")

@@ -111,6 +111,7 @@ orchestra trust [--status|--revoke]          # trust this workspace's machine-le
 - `apply` is dry-run unless `--apply` (or `agent.run` `apply: true`); on write, backup to `*.orchestra.bak` by default.
 - `exec.run` requires explicit consent — `--allow-exec` on the CLI, or `exec.confirm: false` in config; the JSON-RPC handler also blocks it when `cfg.Exec.Confirm` is true.
 - Top-level JSON-RPC arrays (batch) are *not* supported — return `-32600` with `id: null`. `id: null` is a request, not a notification.
+- `.orchestra/` runtime records (`state.md`, `depts/`, `decisions.md`, `contract/EPOCH.yaml`, `agency/`) change only through their own tools; model file tools and `final.patches` refuse them in every mode (`plan.IsRuntimeOwnedPath`). Runtime checks (spawn/phase/brief gates, `contract_freeze`, `contract_refs`) read through `tools.Runner.View(ctx)` — the task's layer over the turn's overlay over disk — never straight from disk.
 - Workspace trust (`internal/config/trust.go`, `docs/security.md`): a project's machine-level settings (MCP servers, hooks, lsp.servers, exec/web consent, allow rules, auth commands, an endpoint that would receive the user's key) apply only once the workspace is trusted (`orchestra trust`, `workspace.trust`). Never read them around `config.Load`. A mode's tool list is enforced at dispatch, and `final.patches` meet the same write rules as `write`.
 
 ## Test seams worth knowing

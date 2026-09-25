@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/contract"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func setupContractEpoch(t *testing.T, root string) string {
@@ -18,7 +19,7 @@ func setupContractEpoch(t *testing.T, root string) string {
 	if err := os.WriteFile(p, []byte("## Latency\np95 < 200ms\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contract.UpdateArtifact(root, contract.ArtifactNFR, "orchestrator"); err != nil {
+	if _, err := contract.UpdateArtifact(root, wsview.Disk(root), contract.ArtifactNFR, "orchestrator"); err != nil {
 		t.Fatalf("UpdateArtifact: %v", err)
 	}
 	e, _, err := contract.Load(root)
@@ -30,7 +31,8 @@ func setupContractEpoch(t *testing.T, root string) string {
 
 func TestGuardWorkOrderContract(t *testing.T) {
 	t.Run("inactive without state file", func(t *testing.T) {
-		if err := GuardWorkOrderContract(t.TempDir(), EnforcementStrict, nil); err != nil {
+		empty := t.TempDir()
+		if err := GuardWorkOrderContract(empty, wsview.Disk(empty), EnforcementStrict, nil); err != nil {
 			t.Fatalf("no state file must disable the guard: %v", err)
 		}
 	})
@@ -41,7 +43,7 @@ func TestGuardWorkOrderContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		setupContractEpoch(t, root)
-		if err := GuardWorkOrderContract(root, EnforcementPromptOnly, nil); err != nil {
+		if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementPromptOnly, nil); err != nil {
 			t.Fatalf("prompt_only must disable the guard: %v", err)
 		}
 	})
@@ -51,7 +53,7 @@ func TestGuardWorkOrderContract(t *testing.T) {
 		if err := Save(root, &State{Phase: PhaseExecution}); err != nil {
 			t.Fatal(err)
 		}
-		if err := GuardWorkOrderContract(root, EnforcementStrict, nil); err != nil {
+		if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, nil); err != nil {
 			t.Fatalf("no EPOCH + no refs must pass: %v", err)
 		}
 	})
@@ -61,7 +63,7 @@ func TestGuardWorkOrderContract(t *testing.T) {
 		if err := Save(root, &State{Phase: PhaseExecution}); err != nil {
 			t.Fatal(err)
 		}
-		err := GuardWorkOrderContract(root, EnforcementStrict, []contract.Ref{{Path: contract.ArtifactNFR, SHA256: "aa"}})
+		err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, []contract.Ref{{Path: contract.ArtifactNFR, SHA256: "aa"}})
 		if err == nil || !strings.Contains(err.Error(), "unblock") {
 			t.Fatalf("refs without EPOCH must fail with unblock path: %v", err)
 		}
@@ -73,7 +75,7 @@ func TestGuardWorkOrderContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		setupContractEpoch(t, root)
-		err := GuardWorkOrderContract(root, EnforcementStrict, nil)
+		err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, nil)
 		if err == nil || !strings.Contains(err.Error(), "contract_refs") {
 			t.Fatalf("empty refs in execution must fail: %v", err)
 		}
@@ -85,10 +87,10 @@ func TestGuardWorkOrderContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		good := setupContractEpoch(t, root)
-		if err := GuardWorkOrderContract(root, EnforcementStrict, []contract.Ref{{Path: contract.ArtifactNFR, SHA256: good}}); err != nil {
+		if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, []contract.Ref{{Path: contract.ArtifactNFR, SHA256: good}}); err != nil {
 			t.Fatalf("valid refs must pass: %v", err)
 		}
-		err := GuardWorkOrderContract(root, EnforcementStrict, []contract.Ref{{Path: contract.ArtifactNFR, SHA256: "deadbeef"}})
+		err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, []contract.Ref{{Path: contract.ArtifactNFR, SHA256: "deadbeef"}})
 		if err == nil || !strings.Contains(err.Error(), "stale_contract") {
 			t.Fatalf("stale refs must fail with stale_contract: %v", err)
 		}
@@ -100,7 +102,7 @@ func TestGuardWorkOrderContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		setupContractEpoch(t, root)
-		if err := GuardWorkOrderContract(root, EnforcementStrict, nil); err != nil {
+		if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, nil); err != nil {
 			t.Fatalf("maintenance must bypass contract guard: %v", err)
 		}
 	})

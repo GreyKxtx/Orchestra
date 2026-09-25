@@ -2,6 +2,7 @@ package fs
 
 import (
 	"errors"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -179,5 +180,26 @@ func TestLayer_NoLayerOutsideADryRun(t *testing.T) {
 	o := NewOverlay(t.TempDir(), OverlayOptions{DryRun: false})
 	if o.Fork() != nil {
 		t.Fatal("writes go to disk outside a dry run; there is nothing to layer")
+	}
+}
+
+// ReadFile is the view the runtime's checks get: a task's own changes over
+// its owner's over the disk, and ErrNotExist for a file in none of them.
+func TestLayer_ReadFileIsTheTasksView(t *testing.T) {
+	turn, _ := layerRoot(t)
+	task := turn.Fork()
+	stage(t, turn, "brief.md", "turn\n")
+	stage(t, task, "a.go", "task\n")
+	for path, want := range map[string]string{"a.go": "task\n", "./brief.md": "turn\n"} {
+		got, err := task.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Errorf("task reads %s = %q, %v; want %q", path, got, err, want)
+		}
+	}
+	if got, _ := turn.ReadFile("a.go"); string(got) != "disk\n" {
+		t.Errorf("the owner does not see the task's change: %q", got)
+	}
+	if _, err := task.ReadFile("missing.md"); !errors.Is(err, iofs.ErrNotExist) {
+		t.Errorf("a missing file is ErrNotExist: %v", err)
 	}
 }

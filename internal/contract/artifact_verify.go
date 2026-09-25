@@ -3,11 +3,11 @@ package contract
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // Built-in Artifact Verify (spec §5.4, ADR-4): machine checks that gate the
@@ -25,14 +25,13 @@ const (
 // RequiredArtifacts is the stage-2.5 freeze set.
 var RequiredArtifacts = []string{ArtifactDomainModel, ArtifactNFR, ArtifactOpenAPI, ArtifactUITokens}
 
-// VerifyArtifacts runs the built-in checks over .orchestra/contract/ and
-// returns the list of issues (empty = green, freeze may proceed).
-func VerifyArtifacts(projectRoot string) []string {
+// VerifyArtifacts runs the built-in checks over .orchestra/contract/ as v
+// sees it and returns the list of issues (empty = green, freeze may proceed).
+func VerifyArtifacts(v wsview.View) []string {
 	var issues []string
-	profile := ProjectProfile(projectRoot)
-	dir := filepath.Join(projectRoot, filepath.FromSlash(DirRel))
+	profile := ProjectProfile(v)
 	for _, name := range RequiredArtifacts {
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		data, err := v.ReadFile(DirRel + "/" + name)
 		if err != nil {
 			issues = append(issues, fmt.Sprintf("%s: missing (%v)", name, err))
 			continue
@@ -152,7 +151,9 @@ func checkUITokens(data []byte) string {
 }
 
 // DefaultOwners is the spec §5.3 artifact ownership map used by the initial
-// freeze when no explicit owners are supplied.
+// freeze when no explicit owners are supplied. An owner is a department type
+// (a Dept Lead of backend@api owns what backend owns) or "orchestrator", the
+// Orchestra Lead; it is also who may write the artifact.
 var DefaultOwners = map[string]string{
 	ArtifactDomainModel: "backend",
 	ArtifactNFR:         "orchestrator",
@@ -160,19 +161,31 @@ var DefaultOwners = map[string]string{
 	ArtifactUITokens:    "design",
 }
 
-// FreezeAll hashes every required artifact into EPOCH.yaml (initial freeze,
-// stage 2.5). Fails if Artifact Verify is red — the gate is fail-closed.
-func FreezeAll(projectRoot string, owners map[string]string) (*Epoch, error) {
-	if issues := VerifyArtifacts(projectRoot); len(issues) > 0 {
+// FreezeAll hashes every required artifact, as v sees it, into EPOCH.yaml
+// (initial freeze, stage 2.5). Fails if Artifact Verify is red — the gate is
+// fail-closed.
+func FreezeAll(projectRoot string, v wsview.View, owners map[string]string) (*Epoch, error) {
+	if issues := VerifyArtifacts(v); len(issues) > 0 {
 		return nil, fmt.Errorf("artifact verify failed:\n  %s", strings.Join(issues, "\n  "))
 	}
 	var e *Epoch
 	var err error
 	for _, name := range RequiredArtifacts {
-		e, err = UpdateArtifact(projectRoot, name, owners[name])
+		e, err = UpdateArtifact(projectRoot, v, name, owners[name])
 		if err != nil {
 			return nil, err
 		}
 	}
 	return e, nil
+}
+
+// OwnerOrchestrator is the Orchestra Lead as an artifact owner.
+const OwnerOrchestrator = "orchestrator"
+
+// OwnedBy reports whether owner — a department type or OwnerOrchestrator —
+// owns the artifact at rel, and so may write it.
+func OwnedBy(rel, owner string) bool {
+	name, ok := ArtifactFileName(rel)
+	owner = strings.TrimSpace(owner)
+	return ok && owner != "" && DefaultOwners[name] == owner
 }

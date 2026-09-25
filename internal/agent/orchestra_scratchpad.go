@@ -72,7 +72,7 @@ func (a *Agent) guardStateTransition(prevPhase orchestrastate.Phase, content str
 		return nil
 	}
 	return orchestrastate.GuardPhaseTransition(
-		a.tools.WorkspaceRoot(), a.opts.PhaseEnforcement, prevPhase, next.Phase, next)
+		a.tools.WorkspaceRoot(), a.tools.View(a.staging()), a.opts.PhaseEnforcement, prevPhase, next.Phase, next)
 }
 
 func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage, error) {

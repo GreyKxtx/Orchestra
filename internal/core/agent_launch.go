@@ -663,11 +663,13 @@ func (c *Core) buildChildAgentConfig(maxPromptBytes int, usage agent.UsageRecord
 	out.ResolveTier = func(tier string) (provider, model string, ok bool) {
 		return c.cfg.ResolveTierBinding(tier)
 	}
-	out.GuardSpawn = func(subagentType string) error {
-		return orchestrastate.GuardSpawn(c.cfg.ProjectRoot, c.cfg.Orchestra.ResolvedPhaseEnforcement(), subagentType)
+	// The guards read the project as the agent behind ctx sees it: what the
+	// Leads wrote is staged in this turn, not on disk yet (ORC-6).
+	out.GuardSpawn = func(ctx context.Context, subagentType string) error {
+		return orchestrastate.GuardSpawn(c.cfg.ProjectRoot, c.tools.View(ctx), c.cfg.Orchestra.ResolvedPhaseEnforcement(), subagentType)
 	}
-	out.GuardContractRefs = func(refs []contract.Ref) error {
-		return orchestrastate.GuardWorkOrderContract(c.cfg.ProjectRoot, c.cfg.Orchestra.ResolvedPhaseEnforcement(), refs)
+	out.GuardContractRefs = func(ctx context.Context, refs []contract.Ref) error {
+		return orchestrastate.GuardWorkOrderContract(c.cfg.ProjectRoot, c.tools.View(ctx), c.cfg.Orchestra.ResolvedPhaseEnforcement(), refs)
 	}
 	out.RouteTaskType = func(taskType string) (tasks.TaskTypeRoute, bool) {
 		rule, ok := c.cfg.Routing.Route(taskType)

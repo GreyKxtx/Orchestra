@@ -77,13 +77,15 @@ func (t TierEscalationSettings) tierName() string {
 
 // SpawnGuard is the fail-closed phase gate evaluated before a child starts
 // (orchestrastate.GuardSpawn wired by core/CLI). A non-nil error blocks the
-// spawn; the error text must contain an unblock path.
-type SpawnGuard func(subagentType string) error
+// spawn; the error text must contain an unblock path. ctx is the spawner's:
+// the guard reads the project as the spawner sees it (tools.Runner.View).
+type SpawnGuard func(ctx context.Context, subagentType string) error
 
 // ContractRefsGuard is the Contract Epoch gate (spec §5.3, wired to
 // orchestrastate.GuardWorkOrderContract): verifies a worker WorkOrder's
-// contract_refs against EPOCH.yaml at spawn and again on success.
-type ContractRefsGuard func(refs []contract.Ref) error
+// contract_refs at spawn, against the spawner's view, and again on success
+// and on every contract change, against the worker's own.
+type ContractRefsGuard func(ctx context.Context, refs []contract.Ref) error
 
 // ChildAgentConfig holds history/memory settings propagated to child agents.
 type ChildAgentConfig struct {
@@ -248,6 +250,9 @@ type taskEntry struct {
 	// contractRefs pins the running worker to contract artifact versions;
 	// used by InvalidateStaleContractTasks on epoch change (spec §5.3).
 	contractRefs []contract.Ref
+	// layer is where the task writes (tools.Runner.ForkLayer): nil outside a
+	// dry run. Its view is what the task's contract is checked against.
+	layer *fs.Overlay
 
 	// Agency bookkeeping, guarded by TaskRunner.mu.
 	key          string       // name for depends_on (WorkOrder task_id)
@@ -409,7 +414,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		if agent.ReadOnlyRole(guardRole) && target.changesFiles() {
 			guardRole = "general"
 		}
-		if err := r.child.GuardSpawn(guardRole); err != nil {
+		if err := r.child.GuardSpawn(ctx, guardRole); err != nil {
 			return "", err
 		}
 	}
@@ -428,13 +433,13 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 				return "", err
 			}
 			if r.child.GuardContractRefs != nil {
-				if err := r.child.GuardContractRefs(wo.ContractRefs); err != nil {
+				if err := r.child.GuardContractRefs(ctx, wo.ContractRefs); err != nil {
 					return "", err
 				}
 			}
 			// Brief completeness gate (spec §6.2): active only when the
 			// dept playbook opted in via brief_required_fields.
-			if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), wo); err != nil {
+			if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), r.toolRunner.View(ctx), wo); err != nil {
 				return "", err
 			}
 			editPaths = normalizeEditPathSet(EditScopePaths(wo))
@@ -511,6 +516,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	// waiting on dependencies sees what they committed.
 	layer := r.toolRunner.ForkLayer(parent)
 	taskCtx = tools.WithLayer(taskCtx, layer)
+	entry.layer = layer
 
 	// Disjoint check (spec §5.6): collect running worker tasks whose edit
 	// scope intersects ours. Registration and conflict collection happen
@@ -802,6 +808,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		o.CompactionContextTokens = r.child.CompactionContextTokens
 		o.CustomTools = childTools
 		o.Mode = mode
+		o.Dept = scope.dept
 		o.UsageTracker = r.child.UsageTracker
 		// Children run on their own tier model, which may be a different
 		// family from the parent's; ChildOptions takes the prompt family from
@@ -863,7 +870,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if mode == agent.ModeWorker {
 		childGoal = exploreFirstWorkerPolicy(workOrder) + "\n\n" + childGoal
 	}
-	if conv := loadProjectConventions(r.toolRunner.WorkspaceRoot(), mode); conv != "" {
+	if conv := loadProjectConventions(r.toolRunner.View(ctx), mode); conv != "" {
 		childGoal = conv + "\n\n" + childGoal
 	}
 	if dec := loadDecisionLog(r.toolRunner.WorkspaceRoot(), mode); dec != "" {
@@ -872,7 +879,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if les := loadDeptLessons(r.toolRunner.WorkspaceRoot(), mode, workOrder); les != "" {
 		childGoal = les + "\n\n" + childGoal
 	}
-	if pb := loadDeptPlaybook(r.toolRunner.WorkspaceRoot(), mode, workOrder); pb != "" {
+	if pb := loadDeptPlaybook(r.toolRunner.View(ctx), mode, workOrder); pb != "" {
 		childGoal = pb + "\n\n" + childGoal
 	}
 	// Agency context, outermost first in reading order: who the child is,
@@ -958,7 +965,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// to its owner now, before anything it relays (a Lead's WorkOrders) starts
 	// on top of them.
 	if mode != agent.ModeWorker {
-		if err := commitLayer(ctx); err != nil {
+		if err := r.commitLayer(ctx); err != nil {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
 		}
 	}
@@ -992,7 +999,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// changed while the worker ran; a stale result must not reach the Lead
 	// as success, and its edits are dropped with its layer.
 	if mode == agent.ModeWorker && workOrder != nil && r.child.GuardContractRefs != nil {
-		if err := r.child.GuardContractRefs(workOrder.ContractRefs); err != nil {
+		if err := r.child.GuardContractRefs(ctx, workOrder.ContractRefs); err != nil {
 			msg := "stale_contract: contract changed during execution — result discarded, Lead must regenerate the WorkOrder; " + err.Error()
 			r.recordWorkerToDeptScratchpad(workOrder, "", "stale_contract", err.Error())
 			out := &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
@@ -1008,7 +1015,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// A worker's edits reach its owner only when it verified: a failed,
 	// blocked or unverified worker's layer is dropped (ORC-1).
 	if mode == agent.ModeWorker && workerOutcomeSucceeded(taskResult) {
-		if err := commitLayer(ctx); err != nil {
+		if err := r.commitLayer(ctx); err != nil {
 			msg := err.Error() + " — the worker's edits were discarded; re-plan the WorkOrder against the current files"
 			r.recordWorkerToDeptScratchpad(workOrder, "", "error", msg)
 			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
@@ -1034,20 +1041,53 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 
 // commitLayer merges the layer of the task behind ctx into its owner's. A
 // conflict — a file another task committed a change to since this one first
-// wrote it — is the task's error, and its layer is dropped.
-func commitLayer(ctx context.Context) error {
+// wrote it — is the task's error, and its layer is dropped. So is a task
+// that was cancelled on the way: its contract went stale, or its spawner
+// ended, and what it did goes with it.
+func (r *TaskRunner) commitLayer(ctx context.Context) error {
 	layer := fs.OverlayFrom(ctx)
 	if layer == nil {
 		return nil
 	}
-	if _, err := layer.Commit(); err != nil {
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("not committed: %w", cause)
+	}
+	paths, err := layer.Commit()
+	if err != nil {
 		var conflict *fs.MergeConflict
 		if errors.As(err, &conflict) {
 			return fmt.Errorf("merge_conflict: %w", err)
 		}
 		return err
 	}
+	r.afterContractCommit(ctx, layer, paths)
 	return nil
+}
+
+// afterContractCommit is the epoch hook for a task's commit (spec §5.3). An
+// owner's change to a contract artifact is written in its task's layer, and
+// becomes the contract when that layer commits into the turn: the runtime
+// records it in EPOCH.yaml then. Every commit of an artifact, into the turn
+// or into a Lead's layer, cancels the running workers that now see a version
+// their WorkOrder was not written against — their layers go with them.
+func (r *TaskRunner) afterContractCommit(ctx context.Context, layer *fs.Overlay, paths []string) {
+	touched := false
+	for _, p := range paths {
+		if _, ok := contract.ArtifactFileName(p); ok {
+			touched = true
+			break
+		}
+	}
+	if !touched {
+		return
+	}
+	if !layer.Owner().IsLayer() {
+		root := r.toolRunner.WorkspaceRoot()
+		if _, err := contract.Refresh(root, r.toolRunner.View(ctx), paths); err != nil {
+			fmt.Fprintf(os.Stderr, "tasks: contract epoch update after commit: %v\n", err)
+		}
+	}
+	r.InvalidateStaleContractTasks(ctx)
 }
 
 // classifyChildRunErr maps a child run error to a SubtaskResult status,
@@ -1190,11 +1230,12 @@ func (r *TaskRunner) abandon(entry *taskEntry, why error) *agent.SubtaskResult {
 	return &agent.SubtaskResult{TaskID: taskID, Status: "cancelled", Error: why.Error()}
 }
 
-// Cancel aborts a running task.
 // InvalidateStaleContractTasks cancels running worker tasks whose
-// contract_refs no longer match EPOCH.yaml — the spec §5.3 "смена epoch →
-// task_cancel + drop staged patches" rule. Staged patches live in the child's
-// dry-run overlay, so cancellation discards them without touching disk.
+// contract_refs no longer match the contract they see — the spec §5.3 "смена
+// epoch → task_cancel + drop staged patches" rule. Each worker is checked
+// against its own view, so a change still in its owner's layer cancels only
+// the workers under that owner. A cancelled worker does not commit: its
+// layer, and every edit in it, is dropped when it ends.
 // Returns the cancelled task IDs (sorted, for deterministic logs).
 func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 	if r == nil || r.child.GuardContractRefs == nil {
@@ -1203,6 +1244,7 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 	type candidate struct {
 		id     string
 		refs   []contract.Ref
+		layer  *fs.Overlay
 		cancel context.CancelCauseFunc
 	}
 	r.mu.Lock()
@@ -1216,13 +1258,13 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 			continue
 		default:
 		}
-		cands = append(cands, candidate{id: id, refs: e.contractRefs, cancel: e.cancel})
+		cands = append(cands, candidate{id: id, refs: e.contractRefs, layer: e.layer, cancel: e.cancel})
 	}
 	r.mu.Unlock()
 
 	var cancelled []string
 	for _, c := range cands {
-		if err := r.child.GuardContractRefs(c.refs); err != nil {
+		if err := r.child.GuardContractRefs(tools.WithLayer(context.Background(), c.layer), c.refs); err != nil {
 			c.cancel(ErrCauseStaleContract)
 			cancelled = append(cancelled, c.id)
 		}
@@ -1231,6 +1273,7 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 	return cancelled
 }
 
+// Cancel aborts a running task.
 func (r *TaskRunner) Cancel(_ context.Context, taskID string) error {
 	r.mu.Lock()
 	entry, ok := r.tasks[taskID]

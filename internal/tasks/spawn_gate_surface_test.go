@@ -5,6 +5,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // The phase gate (orchestrastate.GuardSpawn) and the child tool surface
@@ -80,7 +81,7 @@ func TestPhaseGateCoversEveryChildThatCanWrite(t *testing.T) {
 		t.Run(label, func(t *testing.T) {
 			canWrite := childCanWriteProductionFiles(t, subagentType)
 			scoped := scopedWriters[subagentType]
-			err := orchestrastate.GuardSpawn(root, orchestrastate.EnforcementStrict, subagentType)
+			err := orchestrastate.GuardSpawn(root, wsview.Disk(root), orchestrastate.EnforcementStrict, subagentType)
 			gated := err != nil
 
 			switch {
@@ -102,7 +103,7 @@ func TestPhaseGateCoversEveryChildThatCanWrite(t *testing.T) {
 func TestPhaseGateBlocksWritersOtherThanWorker(t *testing.T) {
 	root := discoveryWorkspace(t)
 	for _, subagentType := range []string{"debug", "general", "my-custom-agent"} {
-		if err := orchestrastate.GuardSpawn(root, orchestrastate.EnforcementStrict, subagentType); err == nil {
+		if err := orchestrastate.GuardSpawn(root, wsview.Disk(root), orchestrastate.EnforcementStrict, subagentType); err == nil {
 			t.Errorf("%s spawned in phase=discovery; it holds write and edit", subagentType)
 		}
 	}
@@ -113,14 +114,14 @@ func TestPhaseGateBlocksWritersOtherThanWorker(t *testing.T) {
 func TestPhaseGateStaysInactiveWithoutOrchestration(t *testing.T) {
 	plain := t.TempDir()
 	for _, subagentType := range everySubagentType {
-		if err := orchestrastate.GuardSpawn(plain, orchestrastate.EnforcementStrict, subagentType); err != nil {
+		if err := orchestrastate.GuardSpawn(plain, wsview.Disk(plain), orchestrastate.EnforcementStrict, subagentType); err != nil {
 			t.Errorf("no state file, yet %q was blocked: %v", subagentType, err)
 		}
 	}
 
 	root := discoveryWorkspace(t)
 	for _, subagentType := range everySubagentType {
-		if err := orchestrastate.GuardSpawn(root, orchestrastate.EnforcementPromptOnly, subagentType); err != nil {
+		if err := orchestrastate.GuardSpawn(root, wsview.Disk(root), orchestrastate.EnforcementPromptOnly, subagentType); err != nil {
 			t.Errorf("prompt_only, yet %q was blocked: %v", subagentType, err)
 		}
 	}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,8 +18,27 @@ const spectralTimeout = 90 * time.Second
 //   - ""            — lint green, or toolchain unavailable (built-in checks
 //     from VerifyArtifacts remain the fail-closed floor);
 //   - non-empty     — lint findings that must block the freeze.
-func spectralLint(ctx context.Context, projectRoot string) string {
-	target := filepath.ToSlash(filepath.Join(contract.DirRel, contract.ArtifactOpenAPI))
+//
+// The document is the version the freeze hashes, which may be staged and not
+// on disk yet: it is linted from a copy under .orchestra/tmp.
+func spectralLint(ctx context.Context, projectRoot string, doc []byte) string {
+	tmpRoot := filepath.Join(projectRoot, ".orchestra", "tmp")
+	if err := os.MkdirAll(tmpRoot, 0o755); err != nil {
+		return ""
+	}
+	dir, err := os.MkdirTemp(tmpRoot, "contract-lint-")
+	if err != nil {
+		return ""
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, contract.ArtifactOpenAPI), doc, 0o644); err != nil {
+		return ""
+	}
+	target, err := filepath.Rel(projectRoot, filepath.Join(dir, contract.ArtifactOpenAPI))
+	if err != nil {
+		return ""
+	}
+	target = filepath.ToSlash(target)
 	resp, err := exec.Run(ctx, projectRoot, spectralTimeout, 32*1024, exec.RunRequest{
 		Command:   "npx",
 		Args:      []string{"--no-install", "@stoplight/spectral-cli", "lint", "--fail-severity", "error", target},

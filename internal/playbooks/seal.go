@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/orchestra/orchestra/internal/lessons"
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -18,7 +19,7 @@ func TrySealAllPendingOverlays(projectRoot string) []string {
 	if projectRoot == "" {
 		return nil
 	}
-	log := readDecisionLog(projectRoot)
+	log := readDecisionLog(wsview.Disk(projectRoot))
 	dir := filepath.Join(projectRoot, filepath.FromSlash(LocalRelDir))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -153,7 +154,7 @@ func DeptsNeedingPromoteHint(projectRoot string) []string {
 	if err != nil {
 		return nil
 	}
-	log := readDecisionLog(projectRoot)
+	log := readDecisionLog(wsview.Disk(projectRoot))
 	var out []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
@@ -185,7 +186,7 @@ func NeedsPlaybookPromoteHint(projectRoot, dept, localBody, decisionLog string) 
 	if section == "" {
 		return false
 	}
-	l2, _ := readFirstPlaybook(projectRoot, dept)
+	l2, _ := readFirstPlaybook(wsview.Disk(projectRoot), dept)
 	if l2 == "" {
 		return true
 	}

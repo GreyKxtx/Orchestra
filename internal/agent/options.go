@@ -424,6 +424,11 @@ type Options struct {
 	// Empty = no path restriction (legacy / free-form goals).
 	WorkerEditPaths []string
 
+	// Dept is the department instance a task works for (backend,
+	// frontend@web). A Dept Lead may write the contract artifacts its
+	// department owns (contract.DefaultOwners).
+	Dept string
+
 	Debug  bool
 	Logger *log.Logger
 

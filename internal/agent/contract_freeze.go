@@ -25,13 +25,18 @@ func (a *Agent) handleContractFreeze(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("contract_freeze is available only to the Orchestra Lead")
 	}
 	root := a.tools.WorkspaceRoot()
+	// The artifacts are checked and hashed as the Lead sees them: the owners
+	// who wrote them staged what they wrote, and the disk has it only once
+	// the turn applies (ORC-6).
+	view := a.tools.View(ctx)
 
-	if issues := contract.VerifyArtifacts(root); len(issues) > 0 {
+	if issues := contract.VerifyArtifacts(view); len(issues) > 0 {
 		return nil, fmt.Errorf("artifact_verify failed — fix the artifacts and call contract_freeze again:\n- %s",
 			strings.Join(issues, "\n- "))
 	}
 	if a.opts.AllowExec {
-		if findings := spectralLint(ctx, root); findings != "" {
+		doc, _ := view.ReadFile(contract.DirRel + "/" + contract.ArtifactOpenAPI)
+		if findings := spectralLint(ctx, root, doc); findings != "" {
 			return nil, fmt.Errorf("spectral lint failed on %s:\n%s", contract.ArtifactOpenAPI, findings)
 		}
 	}
@@ -53,10 +58,13 @@ func (a *Agent) handleContractFreeze(ctx context.Context) ([]byte, error) {
 		}
 	}
 
-	e, err := contract.FreezeAll(root, contract.DefaultOwners)
+	e, err := contract.FreezeAll(root, view, contract.DefaultOwners)
 	if err != nil {
 		return nil, err
 	}
+	// A freeze over a contract that moved is an epoch change: the workers
+	// running on the old version stop, and their edits go (spec §5.3).
+	cancelled := a.invalidateStaleContractTasks(ctx)
 
 	// Mirror the epoch into state.md so the phase machine and TUI see it.
 	_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
@@ -71,12 +79,16 @@ func (a *Agent) handleContractFreeze(ctx context.Context) ([]byte, error) {
 		}})
 	}
 
-	resp, _ := json.Marshal(map[string]any{
+	out := map[string]any{
 		"status":     "frozen",
 		"epoch":      e.Epoch,
 		"epoch_file": contract.EpochFileRel,
 		"artifacts":  e.Artifacts,
 		"next":       "set phase: execution in .orchestra/state.md and spawn department Leads; every WorkOrder must carry contract_refs with these hashes",
-	})
+	}
+	if len(cancelled) > 0 {
+		out["cancelled_stale_workers"] = cancelled
+	}
+	resp, _ := json.Marshal(out)
 	return resp, nil
 }

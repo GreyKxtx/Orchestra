@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func writePRD(t *testing.T, root, frontmatter string) {
@@ -21,15 +23,15 @@ func writePRD(t *testing.T, root, frontmatter string) {
 
 func TestProjectProfile(t *testing.T) {
 	root := t.TempDir()
-	if got := ProjectProfile(root); got != ProfileDefault {
+	if got := ProjectProfile(wsview.Disk(root)); got != ProfileDefault {
 		t.Fatalf("missing PRD → default, got %q", got)
 	}
 	writePRD(t, root, "status: approved\nproject_profile: Enterprise\n")
-	if got := ProjectProfile(root); got != ProfileEnterprise {
+	if got := ProjectProfile(wsview.Disk(root)); got != ProfileEnterprise {
 		t.Fatalf("profile = %q, want enterprise", got)
 	}
 	writePRD(t, root, "status: approved\n")
-	if got := ProjectProfile(root); got != ProfileDefault {
+	if got := ProjectProfile(wsview.Disk(root)); got != ProfileDefault {
 		t.Fatalf("missing key → default, got %q", got)
 	}
 }
@@ -59,20 +61,20 @@ func TestVerifyArtifacts_EnterpriseNFR(t *testing.T) {
 	writeContractArtifacts(t, root, plainNFR)
 
 	// default profile: plain NFR passes.
-	if issues := VerifyArtifacts(root); len(issues) != 0 {
+	if issues := VerifyArtifacts(wsview.Disk(root)); len(issues) != 0 {
 		t.Fatalf("default profile must pass: %v", issues)
 	}
 
 	// enterprise: compliance + data residency sections required.
 	writePRD(t, root, "status: approved\nproject_profile: enterprise\n")
-	issues := VerifyArtifacts(root)
+	issues := VerifyArtifacts(wsview.Disk(root))
 	if len(issues) != 1 || !strings.Contains(issues[0], "compliance") || !strings.Contains(issues[0], "data residency") {
 		t.Fatalf("enterprise must demand compliance sections, got %v", issues)
 	}
 
 	entNFR := "# NFR\n\n## Latency\np95 < 200ms\n\n## Compliance\nSOC2 type II\n\n## Data residency\nEU only\n"
 	writeContractArtifacts(t, root, entNFR)
-	if issues := VerifyArtifacts(root); len(issues) != 0 {
+	if issues := VerifyArtifacts(wsview.Disk(root)); len(issues) != 0 {
 		t.Fatalf("enterprise NFR with sections must pass: %v", issues)
 	}
 }

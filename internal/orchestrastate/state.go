@@ -14,6 +14,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/roles"
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -399,7 +400,11 @@ func isExecuting(subagentType string) bool {
 //
 // The guard is inactive when phase_enforcement is prompt_only or when the
 // state file does not exist (pre-vNext projects and plain agent mode).
-func GuardSpawn(projectRoot, enforcement, subagentType string) error {
+//
+// v is the project as the spawner sees it: the PRD it checks may be staged in
+// this turn, not yet on disk (ORC-6). state.md itself is the runtime's and
+// is read from disk.
+func GuardSpawn(projectRoot string, v wsview.View, enforcement, subagentType string) error {
 	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
 		return nil
 	}
@@ -419,7 +424,7 @@ func GuardSpawn(projectRoot, enforcement, subagentType string) error {
 	if !isExecuting(subagentType) {
 		return nil
 	}
-	if (st.Phase == PhaseDiscovery || !prdApproved(projectRoot, st)) && !st.HasWaiver(WaiverPRD) {
+	if (st.Phase == PhaseDiscovery || !prdApproved(v, st)) && !st.HasWaiver(WaiverPRD) {
 		return fmt.Errorf("runtime_guard: PRD status != approved (phase=%s); "+
 			"unblock: spawn product | phase=maintenance | waiver 'prd' in %s", phaseLabel(st.Phase), StateFileRel)
 	}
@@ -458,8 +463,9 @@ const ConventionsFileRel = ".orchestra/playbooks/conventions.md"
 //
 // Every refusal names an unblock path (spec §5.2). Inactive under prompt_only,
 // and on the first write of a state file (no prior phase) so bootstrapping a
-// session is never blocked.
-func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next *State) error {
+// session is never blocked. The PRD and the conventions are read through v,
+// the Lead's view: the agents that write them stage what they write.
+func GuardPhaseTransition(projectRoot string, v wsview.View, enforcement string, from, to Phase, next *State) error {
 	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
 		return nil
 	}
@@ -473,7 +479,7 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 		return nil
 
 	case PhaseDocumentation:
-		if prdApproved(projectRoot, next) || next.HasWaiver(WaiverPRD) {
+		if prdApproved(v, next) || next.HasWaiver(WaiverPRD) {
 			return nil
 		}
 		return fmt.Errorf("runtime_guard: documentation needs an approved PRD (prd_status=%s); "+
@@ -481,7 +487,7 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 			prdStatusLabel(next), StateFileRel)
 
 	case PhaseContract:
-		if fileExists(projectRoot, ConventionsFileRel) || next.HasWaiver(WaiverPlaybooks) {
+		if wsview.Exists(v, ConventionsFileRel) || next.HasWaiver(WaiverPlaybooks) {
 			return nil
 		}
 		return fmt.Errorf("runtime_guard: contract needs L1 conventions (%s missing); "+
@@ -514,11 +520,6 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 	return nil
 }
 
-func fileExists(projectRoot, rel string) bool {
-	st, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(rel)))
-	return err == nil && !st.IsDir()
-}
-
 func prdStatusLabel(st *State) string {
 	if st == nil || strings.TrimSpace(st.PRDStatus) == "" {
 		return "unset"
@@ -527,10 +528,11 @@ func prdStatusLabel(st *State) string {
 }
 
 // GuardWorkOrderContract is the Contract Epoch gate (spec §5.3) evaluated for
-// worker WorkOrders at spawn and re-evaluated on success. Inactive when
+// worker WorkOrders at spawn and re-evaluated on success, against the
+// contract v shows — the worker's, or its spawner's at spawn. Inactive when
 // enforcement is prompt_only, the state file is absent, the phase is
 // maintenance, or the contract layer is not adopted (no EPOCH.yaml and no refs).
-func GuardWorkOrderContract(projectRoot, enforcement string, refs []contract.Ref) error {
+func GuardWorkOrderContract(projectRoot string, v wsview.View, enforcement string, refs []contract.Ref) error {
 	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
 		return nil
 	}
@@ -556,7 +558,7 @@ func GuardWorkOrderContract(projectRoot, enforcement string, refs []contract.Ref
 		return fmt.Errorf("runtime_guard: WorkOrder without contract_refs is invalid in execution once the contract is frozen; " +
 			"unblock: Lead regenerates the WorkOrder with contract_refs from EPOCH.yaml | phase=maintenance | waiver 'contract'")
 	}
-	if err := contract.VerifyRefs(projectRoot, refs); err != nil {
+	if err := contract.VerifyRefs(projectRoot, v, refs); err != nil {
 		return fmt.Errorf("runtime_guard: %w", err)
 	}
 	return nil
@@ -678,12 +680,12 @@ func subagentLabel(subagentType string) string {
 }
 
 // prdApproved checks state frontmatter first, then the PRD.md frontmatter
-// (status: approved) as fallback.
-func prdApproved(projectRoot string, st *State) bool {
+// (status: approved), as v sees it, as fallback.
+func prdApproved(v wsview.View, st *State) bool {
 	if st != nil && strings.EqualFold(strings.TrimSpace(st.PRDStatus), "approved") {
 		return true
 	}
-	data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(PRDFileRel)))
+	data, err := v.ReadFile(PRDFileRel)
 	if err != nil {
 		return false
 	}

@@ -91,7 +91,7 @@
 
 **Назначение:** границы модулей, потоки, риски; план в `.orchestra/plans/*.md`. Tab + `subagent_type`.
 
-**Инструменты:** как `plan` + research spawn (`task`) + `plan_exit`; write только в plan-пути.
+**Инструменты:** как `plan` + research spawn (`task`) + `plan_exit`; write только в plan-пути. Как Dept Lead (`dept`) — ещё свой L2 playbook, `.orchestra/specs/**` и контрактные артефакты своего отдела (`backend` — `Domain_Model.md`, `OpenAPI.v0.yaml`; `design` — `UI_Tokens.skeleton.json`).
 
 **Промпт:** `architecture.txt` (`{{PLAN_PATH}}`).
 
@@ -139,7 +139,7 @@ orchestra:
   max_worker_retries: 3
 ```
 
-**Инструменты (16 + 3 агентства):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans|state.md|depts`), `update_working_state`, `contract_freeze`, `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`; при включённом агентстве (по умолчанию в этом режиме) — ещё `send_message`, `agent_post`, `task_board`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
+**Инструменты (16 + 3 агентства):** `task`, `task_spawn`, `task_wait`, `task_cancel`, `question`, `read`, `grep`, `explore`, `repo_map`, `write` (только `.orchestra/plans/*.md` и свой артефакт `.orchestra/contract/NFR.md`; `state.md` и `depts/` — через `update_working_state`), `update_working_state`, `contract_freeze`, `memory_read`, `memory_search`, `lesson_promote`, `playbook_promote`; при включённом агентстве (по умолчанию в этом режиме) — ещё `send_message`, `agent_post`, `task_board`. Нет `edit` / `lsp_*` / `bash` / `task_result`. Step-1 prompt ≤ 8k tokens.
 
 **Агентство:** Lead'ы отделов (`architecture` + `dept`) сами запускают Scout'ов и Worker'ов, отделы пишут друг другу, `batch_workorders[]` Lead'а раздаёт рантайм — [agency.md](./agency.md).
 
