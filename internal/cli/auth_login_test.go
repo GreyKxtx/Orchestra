@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/orchestra/orchestra/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,11 @@ func chdirWithConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".orchestra.yml"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The test's config is the user's own: trusted, so its auth and endpoint
+	// settings apply.
+	if _, err := config.TrustWorkspace(filepath.Join(dir, ".orchestra.yml")); err != nil {
 		t.Fatal(err)
 	}
 	wd, err := os.Getwd()

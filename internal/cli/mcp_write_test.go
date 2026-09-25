@@ -125,6 +125,9 @@ func appendToOrchestraYML(t *testing.T, dir, extra string) {
 	if err := os.WriteFile(filepath.Join(dir, ".orchestra.yml"), []byte(base+extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := config.TrustWorkspace(filepath.Join(dir, ".orchestra.yml")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func execMCP(t *testing.T, args ...string) (string, error) {

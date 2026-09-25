@@ -107,6 +107,10 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 	// stderr only: stdout carries the JSON-RPC framing.
 	cfg.FprintWarnings(os.Stderr)
+	if st := cfg.Trust(); len(st.Ignored) > 0 {
+		fmt.Fprintf(os.Stderr, "orchestra: this workspace is not trusted — ignoring %s. "+
+			"Trust it with `orchestra trust` or the workspace.trust method.\n", strings.Join(st.Ignored, ", "))
+	}
 
 	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {

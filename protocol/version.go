@@ -53,7 +53,13 @@ const (
 	//      through the new server-initiated request "browser/call", instead
 	//      of on a browser the core starts. A client that does not answer
 	//      that request must not send the flag.
-	ProtocolVersion = 21
+	// v22: workspace trust — workspace.trust_status and workspace.trust
+	//      (revoke?: bool). A workspace's own machine-level settings (MCP
+	//      servers, hooks, lsp.servers, exec/web consent, permission allow
+	//      rules, auth commands, a project endpoint that would receive the
+	//      user's key) take effect only once trusted. session.start refuses a
+	//      session_id that is not a plain name (InvalidParams).
+	ProtocolVersion = 22
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1
@@ -86,7 +92,13 @@ const (
 	//      task_wait takes task_ids[] and answers {results[], integration};
 	//      subagent_type accepts scout and custom agents from agents:;
 	//      children delegate along agency.flows down to agency.max_depth.
-	ToolsVersion = 16
+	// v17: a tool the mode did not offer is refused; final.patches meet the
+	//      write rules of the mode (none for modes without write); plan,
+	//      architecture and ask at the top level delegate to readers only;
+	//      exec.allow judges every command a shell line starts; bash runs
+	//      without secret-looking environment variables (exec.env_passthrough
+	//      keeps named ones); a top-level final waits for the turn's tasks.
+	ToolsVersion = 17
 
 	// CoreVersion is a human-friendly build/version string.
 	CoreVersion = "vnext"
