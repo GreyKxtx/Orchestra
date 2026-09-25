@@ -6,6 +6,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // EventEnvelope tags streaming notifications with session/turn context for
@@ -27,33 +28,24 @@ func NewTurnID() string {
 	return sessionfile.NewID()
 }
 
-func mergeEventEnvelope(base map[string]any, env EventEnvelope) map[string]any {
-	if env.TurnID != "" {
-		base["turn_id"] = env.TurnID
+// stamp puts the turn's envelope on ev, and the child's scope when the
+// event is a subagent's: either child, or the task ev already names.
+func (env EventEnvelope) stamp(ev wire.AgentEvent, child *ChildScopeMeta) wire.AgentEvent {
+	ev.TurnID = env.TurnID
+	ev.SessionID = env.SessionID
+	if child != nil && child.TaskID != "" {
+		ev.TaskID = child.TaskID
+		if child.ParentToolCallID != "" {
+			ev.ParentToolCallID = child.ParentToolCallID
+		}
+		if child.SubagentType != "" {
+			ev.SubagentType = child.SubagentType
+		}
 	}
-	if env.SessionID != "" {
-		base["session_id"] = env.SessionID
+	if ev.TaskID != "" {
+		ev.Scope = "child"
 	}
-	return base
-}
-
-func mergeChildScope(base map[string]any, child *ChildScopeMeta) map[string]any {
-	if child == nil || child.TaskID == "" {
-		return base
-	}
-	base["scope"] = "child"
-	base["task_id"] = child.TaskID
-	if child.ParentToolCallID != "" {
-		base["parent_tool_call_id"] = child.ParentToolCallID
-	}
-	if child.SubagentType != "" {
-		base["subagent_type"] = child.SubagentType
-	}
-	return base
-}
-
-func mergeAgentEvent(base map[string]any, env EventEnvelope, child *ChildScopeMeta) map[string]any {
-	return mergeChildScope(mergeEventEnvelope(base, env), child)
+	return ev
 }
 
 // buildAgentOnEvent translates agent.AgentEvent to JSON-RPC notifications.
@@ -70,62 +62,65 @@ func buildAgentOnEventWithChild(notify func(method string, params any), env Even
 	return wrapStreamDebounce(emit)
 }
 
+// emitAgentStreamEvent sends ev as the wire's AgentEvent (or ExecOutputChunk).
+// The payloads the agent carries as JSON text — pending ops, usage — go out
+// typed; one that does not parse goes out as the text it was.
 func emitAgentStreamEvent(notify func(method string, params any), env EventEnvelope, child *ChildScopeMeta, ev agent.AgentEvent) {
 	if ev.Stream.Kind == llm.StreamEventExecOutput {
-		notify("exec/output_chunk", mergeAgentEvent(map[string]any{
-			"step":  ev.Step,
-			"chunk": ev.Stream.Content,
-		}, env, child))
+		chunk := wire.ExecOutputChunk{
+			Step:      ev.Step,
+			Chunk:     ev.Stream.Content,
+			SessionID: env.SessionID,
+			TurnID:    env.TurnID,
+		}
+		if child != nil && child.TaskID != "" {
+			chunk.Scope = "child"
+			chunk.TaskID = child.TaskID
+			chunk.ParentToolCallID = child.ParentToolCallID
+			chunk.SubagentType = child.SubagentType
+		}
+		notify(wire.NotifyExecOutputChunk, chunk)
 		return
 	}
-	if ev.Stream.Kind == llm.StreamEventPendingOps {
-		var data any
-		if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
-			notify("agent/event", mergeAgentEvent(map[string]any{
-				"step": ev.Step,
-				"type": "pending_ops",
-				"data": data,
-			}, env, child))
+	out := wire.AgentEvent{Step: ev.Step, Type: string(ev.Stream.Kind)}
+	switch ev.Stream.Kind {
+	case llm.StreamEventPendingOps:
+		var ops wire.PendingOps
+		if err := json.Unmarshal([]byte(ev.Stream.Content), &ops); err == nil {
+			out.Data = ops
+			notify(wire.NotifyAgentEvent, env.stamp(out, child))
 			return
 		}
-	}
-	if ev.Stream.Kind == llm.StreamEventError {
-		msg := ""
+	case llm.StreamEventStepUsage, llm.StreamEventContextEstimate:
+		var usage wire.Usage
+		if err := json.Unmarshal([]byte(ev.Stream.Content), &usage); err == nil {
+			out.Data = usage
+			notify(wire.NotifyAgentEvent, env.stamp(out, child))
+			return
+		}
+	case llm.StreamEventError:
 		if ev.Stream.Err != nil {
-			msg = ev.Stream.Err.Error()
+			out.Content = ev.Stream.Err.Error()
+			out.Error = out.Content
 		}
-		notify("agent/event", mergeAgentEvent(map[string]any{
-			"step":    ev.Step,
-			"type":    string(ev.Stream.Kind),
-			"content": msg,
-			"error":   msg,
-		}, env, child))
+		notify(wire.NotifyAgentEvent, env.stamp(out, child))
 		return
-	}
-	if ev.Stream.Kind == llm.StreamEventStepUsage || ev.Stream.Kind == llm.StreamEventContextEstimate {
-		var data any
-		if err := json.Unmarshal([]byte(ev.Stream.Content), &data); err == nil {
-			notify("agent/event", mergeAgentEvent(map[string]any{
-				"step": ev.Step,
-				"type": string(ev.Stream.Kind),
-				"data": data,
-			}, env, child))
-			return
-		}
 	}
 	// StreamEventDone used to be translated into a step_usage notification
 	// here, with the payload rebuilt field by field. The agent now emits a
 	// proper StreamEventStepUsage on the streaming path too (see
 	// Agent.emitStepUsage), so this synthesis would only duplicate it — and
 	// duplicate it lossily, since it never learned about the cache counters.
-	notify("agent/event", mergeAgentEvent(map[string]any{
-		"step":            ev.Step,
-		"type":            string(ev.Stream.Kind),
-		"content":         ev.Stream.Content,
-		"tool_call_id":    ev.Stream.ToolCallID,
-		"tool_call_name":  ev.Stream.ToolCallName,
-		"tool_call_index": ev.Stream.ToolCallIndex,
-		"args_delta":      ev.Stream.ArgsDelta,
-		"diagnostics":     json.RawMessage(ev.Stream.Diagnostics),
-	}, env, child))
+	out.Content = ev.Stream.Content
+	out.ToolCallID = ev.Stream.ToolCallID
+	out.ToolCallName = ev.Stream.ToolCallName
+	out.ToolCallIndex = ev.Stream.ToolCallIndex
+	out.ArgsDelta = ev.Stream.ArgsDelta
+	if len(ev.Stream.Diagnostics) > 0 {
+		var diags []wire.ToolDiagnostic
+		if err := json.Unmarshal(ev.Stream.Diagnostics, &diags); err == nil {
+			out.Diagnostics = diags
+		}
+	}
+	notify(wire.NotifyAgentEvent, env.stamp(out, child))
 }

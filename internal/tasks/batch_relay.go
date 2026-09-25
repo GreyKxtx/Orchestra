@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // batchRelayMax caps the WorkOrders one Lead result can fan out — the same
@@ -81,11 +82,11 @@ func (r *TaskRunner) relayBatchWorkOrders(ctx context.Context, lead agentScope, 
 		summary[i]["task_id"] = id
 	}
 	if r.child.NotifyAgentEvent != nil {
-		r.child.NotifyAgentEvent(map[string]any{
-			"type":     "workorders_relayed",
-			"agent":    lead.address,
-			"task_ids": ids,
-			"rejected": len(rejected),
+		r.child.NotifyAgentEvent(wire.AgentEvent{
+			Type:     wire.EventWorkordersRelayed,
+			Agent:    lead.address,
+			TaskIDs:  ids,
+			Rejected: len(rejected),
 		})
 	}
 	relayed := map[string]any{"task_ids": ids}

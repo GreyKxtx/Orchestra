@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // scriptLLM answers every child from one function, keyed on what the child
@@ -893,10 +894,10 @@ func TestChildDone_EveryTaskEndsOnceEvenIfItNeverRan(t *testing.T) {
 	settings := agencyOn()
 	settings.MaxParallel = 1
 	var mu sync.Mutex
-	var events []map[string]any
+	var events []wire.AgentEvent
 	r, _ := newAgencyRunner(t, mock, ChildAgentConfig{
 		Agency: settings,
-		NotifyAgentEvent: func(p map[string]any) {
+		NotifyAgentEvent: func(p wire.AgentEvent) {
 			mu.Lock()
 			events = append(events, p)
 			mu.Unlock()
@@ -931,12 +932,12 @@ func TestChildDone_EveryTaskEndsOnceEvenIfItNeverRan(t *testing.T) {
 	defer mu.Unlock()
 	done := map[string]int{}
 	for _, ev := range events {
-		if ev["type"] != "child_done" {
+		if ev.Type != wire.EventChildDone {
 			continue
 		}
-		id, _ := ev["task_id"].(string)
+		id := ev.TaskID
 		done[id]++
-		if ev["depth"] != 1 {
+		if ev.Depth != 1 {
 			t.Errorf("child_done for %s must carry its depth: %v", id, ev)
 		}
 	}

@@ -606,11 +606,12 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 	}
 	var initRes core.InitializeResult
 	if err := rpc.Call(cmd.Context(), "initialize", core.InitializeParams{
-		ProjectRoot:     cfg.ProjectRoot,
-		ProjectID:       projectID,
-		ProtocolVersion: protocol.ProtocolVersion,
-		OpsVersion:      protocol.OpsVersion,
-		ToolsVersion:    protocol.ToolsVersion,
+		ProjectRoot:        cfg.ProjectRoot,
+		ProjectID:          projectID,
+		ProtocolVersion:    protocol.ProtocolVersion,
+		MinProtocolVersion: protocol.MinProtocolVersion,
+		OpsVersion:         protocol.OpsVersion,
+		ToolsVersion:       protocol.ToolsVersion,
 	}, &initRes); err != nil {
 		return nil, err
 	}

@@ -7,13 +7,8 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// WorkspaceTrustParams is the workspace.trust request. Revoke forgets the
-// workspace instead of trusting it.
-type WorkspaceTrustParams struct {
-	Revoke bool `json:"revoke,omitempty"`
-}
 
 // WorkspaceTrustResult is the workspace's trust state (config.WorkspaceTrust)
 // plus the warnings of restarting its MCP servers after a change.
@@ -77,3 +72,9 @@ func (c *Core) WorkspaceTrust(ctx context.Context, p WorkspaceTrustParams) (*Wor
 	c.noteConfigMTime()
 	return &WorkspaceTrustResult{WorkspaceTrust: fresh.Trust(), Warnings: warnings}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	WorkspaceTrustParams = wire.WorkspaceTrustParams
+)

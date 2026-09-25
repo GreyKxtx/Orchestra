@@ -5,59 +5,64 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/protocol"
 )
 
-// The VS Code extension pins its own copy of the protocol version and throws
-// on any mismatch with core.health *before* initialize
-// (ui/vscode/src/coreSession.ts). Nothing else compares the two, which is how
-// the extension came to sit at 14 against a core at 15 — unable to connect at
-// all, with an error message blaming orchestra.exe. This test is the guard
-// that was missing.
-func TestVSCodeExtensionPinsCurrentProtocolVersion(t *testing.T) {
-	// Only the TypeScript source is checked: ui/vscode/out/ is untracked local
-	// build output, absent in a fresh clone and in CI, so a test that read it
-	// would fail everywhere the extension has not been compiled.
-	rel := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
+// pinnedConstant reads `NAME = <number>` from a TypeScript source.
+func pinnedConstant(t *testing.T, rel, name string) int {
+	t.Helper()
 	data, err := os.ReadFile(rel)
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}
-	m := regexp.MustCompile(`PROTOCOL_VERSION\s*=\s*(\d+)`).FindSubmatch(data)
+	m := regexp.MustCompile(`\b` + name + `\s*=\s*(\d+)`).FindSubmatch(data)
 	if m == nil {
-		t.Fatalf("%s: no PROTOCOL_VERSION assignment found", rel)
+		t.Fatalf("%s: no %s assignment found", rel, name)
 	}
 	got, err := strconv.Atoi(string(m[1]))
 	if err != nil {
-		t.Fatalf("%s: PROTOCOL_VERSION is not a number: %v", rel, err)
+		t.Fatalf("%s: %s is not a number: %v", rel, name, err)
 	}
-	if got != protocol.ProtocolVersion {
-		t.Errorf("%s pins PROTOCOL_VERSION = %d, core is %d — the extension "+
-			"refuses to connect on mismatch, so these must move together",
-			rel, got, protocol.ProtocolVersion)
-	}
+	return got
 }
 
-// The extension sends its TOOLS_VERSION in initialize, and core refuses a
-// mismatch — the same failure as the protocol pin above, for the other number.
-func TestVSCodeExtensionPinsCurrentToolsVersion(t *testing.T) {
-	rel := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
-	data, err := os.ReadFile(rel)
+// The VS Code extension used to pin its own copy of the protocol version
+// and throw on any mismatch with core.health *before* initialize. Nothing
+// compared the two copies, which is how the extension came to sit at 14
+// against a core at 15 — unable to connect at all, with an error message
+// blaming orchestra.exe. Its versions now come from the contract generated
+// out of protocol/wire (ui/vscode/src/protocol/wire.generated.ts), which
+// protocol/wire's own test keeps current. This checks the extension takes
+// them from there and pins no copy of its own.
+//
+// Only the TypeScript source is checked: ui/vscode/out/ is untracked local
+// build output, absent in a fresh clone and in CI.
+func TestVSCodeExtensionTakesVersionsFromTheGeneratedContract(t *testing.T) {
+	session := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
+	data, err := os.ReadFile(session)
 	if err != nil {
-		t.Fatalf("read %s: %v", rel, err)
+		t.Fatalf("read %s: %v", session, err)
 	}
-	m := regexp.MustCompile(`TOOLS_VERSION\s*=\s*(\d+)`).FindSubmatch(data)
-	if m == nil {
-		t.Fatalf("%s: no TOOLS_VERSION assignment found", rel)
+	src := string(data)
+	if !strings.Contains(src, `from "./protocol/wire.generated"`) {
+		t.Errorf("%s does not import its protocol versions from ./protocol/wire.generated", session)
 	}
-	got, err := strconv.Atoi(string(m[1]))
-	if err != nil {
-		t.Fatalf("%s: TOOLS_VERSION is not a number: %v", rel, err)
+	if m := regexp.MustCompile(`(?m)^\s*(?:export\s+)?const\s+(MIN_)?PROTOCOL_VERSION\s*=`).FindString(src); m != "" {
+		t.Errorf("%s pins a copy of the protocol version by hand (%q); it comes from the generated contract", session, strings.TrimSpace(m))
 	}
-	if got != protocol.ToolsVersion {
-		t.Errorf("%s pins TOOLS_VERSION = %d, core is %d — initialize fails on "+
-			"mismatch, so these must move together", rel, got, protocol.ToolsVersion)
+
+	generated := filepath.Join("..", "..", "ui", "vscode", "src", "protocol", "wire.generated.ts")
+	for name, want := range map[string]int{
+		"PROTOCOL_VERSION":     protocol.ProtocolVersion,
+		"MIN_PROTOCOL_VERSION": protocol.MinProtocolVersion,
+		"OPS_VERSION":          protocol.OpsVersion,
+		"TOOLS_VERSION":        protocol.ToolsVersion,
+	} {
+		if got := pinnedConstant(t, generated, name); got != want {
+			t.Errorf("%s: %s = %d, core is %d — run: go generate ./protocol/wire/...", generated, name, got, want)
+		}
 	}
 }

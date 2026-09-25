@@ -1,0 +1,3056 @@
+{
+  "$defs": {
+    "AgentEvent": {
+      "description": "AgentEvent is the params of an agent/event notification: one thing that\nhappened in a turn, as the client draws it. Type says which fields mean\nsomething; the rest are absent.",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "args_delta": {
+          "type": "string"
+        },
+        "channel": {
+          "description": "agent_message: Channel is send | reply | post.",
+          "type": "string"
+        },
+        "content": {
+          "description": "Content is the text of a delta, a tool's result, a child's goal\n(child_started) or summary (child_done), an agent message; the JSON\nchecklist for todos_updated.",
+          "type": "string"
+        },
+        "data": {
+          "description": "Data is the payload of pending_ops (PendingOps), step_usage and\ncontext_estimate (Usage) and mode_route (ModeRoute). DecodeData reads\nit on the client side."
+        },
+        "depth": {
+          "description": "Depth, Agent and ParentAgent place the child in the delegation tree.",
+          "type": "integer"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ToolDiagnostic"
+          },
+          "type": "array"
+        },
+        "error": {
+          "type": "string"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "from": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "lesson_promote_suggestion": {
+          "description": "Promote suggestions a child's task_result carried (child_done).",
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "parent_agent": {
+          "type": "string"
+        },
+        "parent_task_id": {
+          "type": "string"
+        },
+        "parent_tool_call_id": {
+          "type": "string"
+        },
+        "playbook_promote_suggestion": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rejected": {
+          "type": "integer"
+        },
+        "scope": {
+          "description": "Child scope: Scope is \"child\" on every event a subagent emits and on\nthe child_* events, with the task and its parent.",
+          "type": "string"
+        },
+        "session_id": {
+          "description": "SessionID is set for session.message turns; TurnID for every turn.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Status is the child's result status on child_done, the verdict on\nintegration_verify.",
+          "type": "string"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "subagent_type": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "task_ids": {
+          "description": "workorders_relayed: the tasks spawned and how many orders were refused.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tier": {
+          "description": "Tier and Model are the child's, on child_started.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "description": "Tool calls: tool_call_start carries the name and id; tool_call_delta\nthe next piece of the arguments; tool_call_completed the result in\nContent and the diagnostics an edit produced. ToolCallIndex tells\nparallel calls of one step apart when a model sends no ids.",
+          "type": "string"
+        },
+        "tool_call_index": {
+          "type": "integer"
+        },
+        "tool_call_name": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "waiting_for": {
+          "description": "WaitingFor and Reason say why a child_queued task waits.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "workers": {
+          "description": "integration_verify: what was checked and the one-line summary.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "step",
+        "type",
+        "content",
+        "tool_call_index"
+      ],
+      "type": "object"
+    },
+    "AgentsDeleteParams": {
+      "description": "AgentsDeleteParams removes a custom agent by name.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "persist": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "AgentsListParams": {
+      "description": "AgentsListParams is reserved.",
+      "properties": {},
+      "type": "object"
+    },
+    "AttachmentsStoreParams": {
+      "description": "AttachmentsStoreParams carries a file's bytes from a client that has no\nfilesystem of its own — a browser, or the desktop shell's web view — to be\nkept under the workspace, where a turn can refer to it. The editor's host\ndoes this itself (ui/vscode/src/chat/panel.ts, \"attachBytes\"): this is the\nsame thing for hosts whose only reach into the workspace is the core.",
+      "properties": {
+        "data_base64": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "data_base64"
+      ],
+      "type": "object"
+    },
+    "AttachmentsStoreResult": {
+      "description": "AttachmentsStoreResult is the stored file as a message attachment: the\nsame fields the renderer's file chips and session.message carry.",
+      "properties": {
+        "ext": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "image | file",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Path is absolute; Rel is workspace-relative with forward slashes.",
+          "type": "string"
+        },
+        "rel": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "rel",
+        "kind",
+        "size"
+      ],
+      "type": "object"
+    },
+    "BrowserCall": {
+      "description": "BrowserCall is the params of browser/call: a browser.* op for the\nclient's own browser view. The client answers with the op's result, or\n{\"error\": reason} when it refuses.",
+      "properties": {
+        "op": {
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "params"
+      ],
+      "type": "object"
+    },
+    "CKGView": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "db_path": {
+          "type": "string"
+        },
+        "edges": {
+          "type": "integer"
+        },
+        "embeddings": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "funcs": {
+          "type": "integer"
+        },
+        "langs": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "missing_embeddings": {
+          "type": "integer"
+        },
+        "nodes": {
+          "type": "integer"
+        },
+        "packages": {
+          "type": "integer"
+        },
+        "tests": {
+          "type": "integer"
+        },
+        "types": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "available",
+        "files",
+        "nodes",
+        "edges",
+        "embeddings",
+        "missing_embeddings",
+        "funcs",
+        "types",
+        "packages",
+        "tests"
+      ],
+      "type": "object"
+    },
+    "Capabilities": {
+      "description": "Capabilities names what a core serves.",
+      "properties": {
+        "methods": {
+          "description": "Methods the core answers.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notifications": {
+          "description": "Notifications the core sends.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requests": {
+          "description": "Requests the core makes of the client, which the client must answer.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "methods",
+        "notifications",
+        "requests"
+      ],
+      "type": "object"
+    },
+    "ContextBreakdown": {
+      "description": "ContextBreakdown is one category of a prompt-context estimate.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "ExecOutputChunk": {
+      "description": "ExecOutputChunk is the params of exec/output_chunk: a piece of a running\ncommand's output.",
+      "properties": {
+        "chunk": {
+          "type": "string"
+        },
+        "parent_tool_call_id": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "Child scope, as on AgentEvent, when a subagent's command is running.",
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "subagent_type": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step",
+        "chunk"
+      ],
+      "type": "object"
+    },
+    "FileDiff": {
+      "description": "FileDiff is a file's content before and after a turn's edits.",
+      "properties": {
+        "after": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "before",
+        "after"
+      ],
+      "type": "object"
+    },
+    "Health": {
+      "description": "Health is returned by core.health (and /health in HTTP mode).",
+      "properties": {
+        "core_version": {
+          "type": "string"
+        },
+        "lsp_install_progress": {
+          "$ref": "#/$defs/LSPInstallProgress",
+          "description": "LSPInstallProgress is set while a language server is being provisioned."
+        },
+        "lsp_status": {
+          "description": "off | idle | installing | active",
+          "type": "string"
+        },
+        "min_protocol_version": {
+          "description": "MinProtocolVersion is the oldest protocol version the core speaks\n(ProtocolVersion 24); absent from a core before that.",
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "ops_version": {
+          "type": "integer"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "protocol_version": {
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tools_version": {
+          "type": "integer"
+        },
+        "workspace_root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "core_version",
+        "protocol_version",
+        "ops_version",
+        "tools_version"
+      ],
+      "type": "object"
+    },
+    "IndexConfigureParams": {
+      "description": "IndexConfigureParams updates scope + embed settings in .orchestra.yml.",
+      "properties": {
+        "context_limit_kb": {
+          "type": "integer"
+        },
+        "embed_api_base": {
+          "type": "string"
+        },
+        "embed_api_key": {
+          "type": "string"
+        },
+        "embed_batch_size": {
+          "type": "integer"
+        },
+        "embed_model": {
+          "type": "string"
+        },
+        "embed_timeout_s": {
+          "type": "integer"
+        },
+        "exclude_dirs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "limits_context_kb": {
+          "type": "integer"
+        },
+        "limits_max_bytes_per_file": {
+          "type": "integer"
+        },
+        "limits_max_files": {
+          "type": "integer"
+        },
+        "persist": {
+          "type": "boolean"
+        },
+        "semantic_auto_explore": {
+          "type": "boolean"
+        },
+        "semantic_auto_explore_top_k": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "IndexEmbedParams": {
+      "description": "IndexEmbedParams runs vector indexing for CKG nodes.",
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "rebuild": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "IndexEmbedResult": {
+      "description": "IndexEmbedResult summarizes the embed pass.",
+      "properties": {
+        "elapsed": {
+          "type": "string"
+        },
+        "embedded": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "remaining": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "embedded",
+        "total",
+        "remaining",
+        "elapsed"
+      ],
+      "type": "object"
+    },
+    "IndexGraphParams": {
+      "description": "IndexGraphParams selects the granularity of index.graph: \"file\" (default)\n— folders, files and weighted file-to-file relations, what the Graph view\ndraws — or \"symbol\", every indexed symbol with its relations.",
+      "properties": {
+        "level": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "IndexOutlineParams": {
+      "description": "IndexOutlineParams asks for one file's symbols, by workspace-relative path\nwith forward slashes — the id of a file node in index.graph.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "preview": {
+          "description": "Preview off returns the symbol list without reading the file.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "IndexRebuildParams": {
+      "description": "IndexRebuildParams triggers a synchronous CKG rescan.",
+      "properties": {},
+      "type": "object"
+    },
+    "IndexRebuildResult": {
+      "description": "IndexRebuildResult reports post-rebuild stats.",
+      "properties": {
+        "graph": {
+          "$ref": "#/$defs/CKGView"
+        }
+      },
+      "required": [
+        "graph"
+      ],
+      "type": "object"
+    },
+    "IndexStatusParams": {
+      "description": "IndexStatusParams is empty (reserved).",
+      "properties": {},
+      "type": "object"
+    },
+    "InitializeParams": {
+      "description": "InitializeParams is the first request of a connection.\n\nSince ProtocolVersion 24 the client names the range of protocol versions\nit speaks and the core answers with the newest both sides have. Before\nthat the number had to match exactly, so a client and a core from\ndifferent releases could not connect at all — and tools_version, which\nmoves with tools the client never calls, was checked the same way.",
+      "properties": {
+        "min_protocol_version": {
+          "description": "MinProtocolVersion is the oldest it still speaks. Zero means\nProtocolVersion alone, which is what a client before v24 sends.",
+          "type": "integer"
+        },
+        "ops_version": {
+          "description": "OpsVersion must match the core's when given: internal ops are what\nreaches the disk.",
+          "type": "integer"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "project_root": {
+          "type": "string"
+        },
+        "protocol_version": {
+          "description": "ProtocolVersion is the newest protocol version the client speaks.",
+          "type": "integer"
+        },
+        "tools_version": {
+          "description": "ToolsVersion is informational: the core records it and answers with\nits own. A client that needs a particular tool checks the answer.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_root",
+        "project_id",
+        "protocol_version"
+      ],
+      "type": "object"
+    },
+    "InitializeResult": {
+      "description": "InitializeResult answers initialize.",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities",
+          "description": "Capabilities is what this core serves, by name, so a client asks for\nthe feature it needs instead of comparing version numbers."
+        },
+        "health": {
+          "$ref": "#/$defs/Health"
+        },
+        "protocol_version": {
+          "description": "ProtocolVersion is the version both sides speak from here on: the\nnewest in both ranges (ProtocolVersion 24).",
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tools_version": {
+          "description": "ToolsVersion is the core's.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "protocol_version",
+        "tools_version",
+        "capabilities",
+        "health"
+      ],
+      "type": "object"
+    },
+    "LSPInstallProgress": {
+      "description": "LSPInstallProgress is download/install status for the TUI status bar.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "percent": {
+          "type": "integer"
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "percent"
+      ],
+      "type": "object"
+    },
+    "MCPDeleteParams": {
+      "description": "MCPDeleteParams removes a server by name.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "persist": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "MCPDeleteResult": {
+      "description": "MCPDeleteResult mirrors list after delete.",
+      "properties": {
+        "persisted": {
+          "type": "boolean"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/MCPServerView"
+          },
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers",
+        "persisted"
+      ],
+      "type": "object"
+    },
+    "MCPListParams": {
+      "description": "MCPListParams is reserved.",
+      "properties": {},
+      "type": "object"
+    },
+    "MCPListResult": {
+      "description": "MCPListResult is returned by mcp.list.",
+      "properties": {
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/MCPServerView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers"
+      ],
+      "type": "object"
+    },
+    "MCPPromptArgView": {
+      "description": "MCPPromptArgView is one argument an MCP prompt accepts.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "MCPPromptCommand": {
+      "description": "MCPPromptCommand is one MCP prompt as a slash command a person can run.\n\nAn MCP prompt is the server's own recipe, meant for a human to pick — not\nfor the model to call. So it belongs in the command palette next to /model\nand /skill, not in the tool list.",
+      "properties": {
+        "arguments": {
+          "items": {
+            "$ref": "#/$defs/MCPPromptArgView"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "slash": {
+          "description": "Slash and Hint are the rendered palette row. They travel over the wire\nso the TUI and the VS Code panel do not each re-derive the formatting\nand drift apart.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "name"
+      ],
+      "type": "object"
+    },
+    "MCPPromptGetParams": {
+      "description": "MCPPromptGetParams names the prompt to render. Args is the raw text typed\nafter the command; the core maps it onto the prompt's declared arguments.",
+      "properties": {
+        "args": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "name"
+      ],
+      "type": "object"
+    },
+    "MCPPromptGetResult": {
+      "description": "MCPPromptGetResult carries the text to send as the user's turn.",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "MCPPromptListParams": {
+      "description": "MCPPromptListParams is reserved.",
+      "properties": {},
+      "type": "object"
+    },
+    "MCPPromptListResult": {
+      "description": "MCPPromptListResult is returned by mcp.prompts.",
+      "properties": {
+        "prompts": {
+          "items": {
+            "$ref": "#/$defs/MCPPromptCommand"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "prompts"
+      ],
+      "type": "object"
+    },
+    "MCPServerParams": {
+      "description": "MCPServerParams is the JSON shape for one MCP server (upsert / test).",
+      "properties": {
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "call_timeout_s": {
+          "type": "integer"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "command"
+      ],
+      "type": "object"
+    },
+    "MCPServerView": {
+      "description": "MCPServerView is one row in mcp.list.",
+      "properties": {
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "call_timeout_s": {
+          "type": "integer"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "error": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "description": "running | disabled | error | stopped",
+          "type": "string"
+        },
+        "tool_count": {
+          "type": "integer"
+        },
+        "tools": {
+          "description": "discovered tool names (for settings toggles)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "command",
+        "disabled",
+        "status",
+        "tool_count"
+      ],
+      "type": "object"
+    },
+    "MCPSetDisabledParams": {
+      "description": "MCPSetDisabledParams toggles disabled.",
+      "properties": {
+        "disabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "persist": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "disabled"
+      ],
+      "type": "object"
+    },
+    "MCPSetDisabledResult": {
+      "description": "MCPSetDisabledResult mirrors list after toggle.",
+      "properties": {
+        "persisted": {
+          "type": "boolean"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/MCPServerView"
+          },
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers",
+        "persisted"
+      ],
+      "type": "object"
+    },
+    "MCPTestParams": {
+      "description": "MCPTestParams probes a server config (or named cfg entry) without persisting.",
+      "properties": {
+        "name": {
+          "description": "use existing cfg entry",
+          "type": "string"
+        },
+        "server": {
+          "$ref": "#/$defs/MCPServerParams",
+          "description": "or ad-hoc config"
+        }
+      },
+      "type": "object"
+    },
+    "MCPTestResult": {
+      "description": "MCPTestResult lists tools from a temporary connection.",
+      "properties": {
+        "elapsed": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ok",
+        "name"
+      ],
+      "type": "object"
+    },
+    "MCPUpsertParams": {
+      "description": "MCPUpsertParams adds or replaces a server by name.",
+      "properties": {
+        "persist": {
+          "description": "default true",
+          "type": "boolean"
+        },
+        "server": {
+          "$ref": "#/$defs/MCPServerParams"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "MCPUpsertResult": {
+      "description": "MCPUpsertResult is returned after upsert + hot reload.",
+      "properties": {
+        "persisted": {
+          "type": "boolean"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/MCPServerView"
+          },
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers",
+        "persisted"
+      ],
+      "type": "object"
+    },
+    "MemoryNote": {
+      "description": "MemoryNote says what the end-of-turn memory writer did. Outcome is\nwritten | skipped | failed; Source is model | digest; Detail is the note\nwhen written, the reason otherwise.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "ModeRoute": {
+      "description": "ModeRoute is the Data of a mode_route event.",
+      "properties": {
+        "confidence": {
+          "type": "number"
+        },
+        "from": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "OpsApplyResult": {
+      "description": "OpsApplyResult reports the result of applying pending ops.",
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "changed_files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "applied",
+        "changed_files"
+      ],
+      "type": "object"
+    },
+    "PendingOps": {
+      "description": "PendingOps is the Data of a pending_ops event: the internal ops a turn\nstaged (or applied, when Applied), with a before/after diff per file.\nOps are patch/ops objects (type, path, …), which the client sends back\nas they are to session.apply_pending; the protocol module does not\ndecode them.",
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "diff": {
+          "items": {
+            "$ref": "#/$defs/FileDiff"
+          },
+          "type": "array"
+        },
+        "ops": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ops",
+        "diff",
+        "applied"
+      ],
+      "type": "object"
+    },
+    "PermissionDecision": {
+      "description": "PermissionDecision answers permission/request. Always asks the core to\nremember the decision for the session.",
+      "properties": {
+        "always": {
+          "type": "boolean"
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approved"
+      ],
+      "type": "object"
+    },
+    "PermissionRequest": {
+      "description": "PermissionRequest is the params of permission/request. Kind is \"\" or\n\"exec\" for a shell command, \"lsp.install\" for a language server.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "description"
+      ],
+      "type": "object"
+    },
+    "QuestionAnswers": {
+      "description": "QuestionAnswers answers question/ask, one answer per question.",
+      "properties": {
+        "answers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "answers"
+      ],
+      "type": "object"
+    },
+    "QuestionAsk": {
+      "description": "QuestionAsk is the params of question/ask.",
+      "properties": {
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/QuestionItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "questions"
+      ],
+      "type": "object"
+    },
+    "QuestionItem": {
+      "description": "QuestionItem is one question for the person.",
+      "properties": {
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "RuleSuggestion": {
+      "description": "RuleSuggestion offers the person a project rule for a repeated\nanti-pattern. Text is the chat-facing prompt; RuleLine is the exact line\nlesson.rule_respond appends to ORCHESTRA.md on accept.",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "dept": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "rule_line": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "verify": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dept",
+        "file",
+        "count",
+        "rule_line",
+        "text"
+      ],
+      "type": "object"
+    },
+    "RuleSuggestionRespondParams": {
+      "properties": {
+        "accept": {
+          "type": "boolean"
+        },
+        "dept": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "rule_line": {
+          "type": "string"
+        },
+        "verify": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accept",
+        "dept",
+        "file",
+        "verify",
+        "rule_line"
+      ],
+      "type": "object"
+    },
+    "RuleSuggestionRespondResult": {
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "applied"
+      ],
+      "type": "object"
+    },
+    "RuntimeConfigureLLMParams": {
+      "description": "RuntimeConfigureLLMParams updates connection fields. Empty api_key leaves the existing key.",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "multimodal": {
+          "type": "boolean"
+        },
+        "persist": {
+          "description": "default true",
+          "type": "boolean"
+        },
+        "prompt_family": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "timeout_s": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeConfigureLLMResult": {
+      "description": "RuntimeConfigureLLMResult mirrors set_model-ish outcome after configure.",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "api_key_set": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "persisted": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "api_base",
+        "model",
+        "persisted",
+        "api_key_set"
+      ],
+      "type": "object"
+    },
+    "RuntimeConfigureOrchestraParams": {
+      "description": "RuntimeConfigureOrchestraParams writes orchestra planner/tiers to .orchestra.yml.",
+      "properties": {
+        "default_tier": {
+          "type": "string"
+        },
+        "max_worker_retries": {
+          "type": "integer"
+        },
+        "max_worker_verify_retries": {
+          "type": "integer"
+        },
+        "persist": {
+          "type": "boolean"
+        },
+        "provider_patches": {
+          "items": {
+            "$ref": "#/$defs/RuntimeConfigureOrchestraProviderPatch"
+          },
+          "type": "array"
+        },
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/RuntimeOrchestraRole"
+          },
+          "type": "array"
+        },
+        "worker_llm_verify_enabled": {
+          "type": "boolean"
+        },
+        "worker_verify_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "roles"
+      ],
+      "type": "object"
+    },
+    "RuntimeConfigureOrchestraProviderPatch": {
+      "description": "RuntimeConfigureOrchestraProviderPatch updates one named provider snapshot.",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "RuntimeConfigureOrchestraResult": {
+      "description": "RuntimeConfigureOrchestraResult confirms save.",
+      "properties": {
+        "saved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "saved"
+      ],
+      "type": "object"
+    },
+    "RuntimeCreditsParams": {
+      "description": "RuntimeCreditsParams selects which provider's balance to query.\nEmpty Provider uses the primary llm config.",
+      "properties": {
+        "provider": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeCreditsResult": {
+      "description": "RuntimeCreditsResult is returned by runtime.credits. Supported=false means\nthe provider has no balance API we know (local servers, plain OpenAI base).",
+      "properties": {
+        "balance": {
+          "type": "number"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "total_credits": {
+          "type": "number"
+        },
+        "total_usage": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "provider",
+        "supported"
+      ],
+      "type": "object"
+    },
+    "RuntimeGetLLMParams": {
+      "description": "RuntimeGetLLMParams is empty for now (reserved).",
+      "properties": {},
+      "type": "object"
+    },
+    "RuntimeGetLLMResult": {
+      "description": "RuntimeGetLLMResult exposes current LLM connection settings (key masked).",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "api_key_hint": {
+          "type": "string"
+        },
+        "api_key_set": {
+          "type": "boolean"
+        },
+        "context_tokens": {
+          "type": "integer"
+        },
+        "max_tokens": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "multimodal": {
+          "type": "boolean"
+        },
+        "num_ctx": {
+          "type": "integer"
+        },
+        "prompt_family": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "timeout_s": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider",
+        "api_base",
+        "model",
+        "api_key_set",
+        "temperature",
+        "max_tokens",
+        "timeout_s",
+        "multimodal"
+      ],
+      "type": "object"
+    },
+    "RuntimeGetOrchestraParams": {
+      "description": "RuntimeGetOrchestraParams is empty — reads current .orchestra.yml orchestra block.",
+      "properties": {},
+      "type": "object"
+    },
+    "RuntimeGetOrchestraResult": {
+      "description": "RuntimeGetOrchestraResult exposes orchestra planner/tiers for settings UI.",
+      "properties": {
+        "default_tier": {
+          "type": "string"
+        },
+        "fast_provider": {
+          "type": "string"
+        },
+        "main_model": {
+          "type": "string"
+        },
+        "main_provider": {
+          "type": "string"
+        },
+        "max_worker_retries": {
+          "type": "integer"
+        },
+        "max_worker_verify_retries": {
+          "type": "integer"
+        },
+        "named": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RuntimeOrchestraNamedProvider"
+          },
+          "type": "object"
+        },
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/RuntimeOrchestraRole"
+          },
+          "type": "array"
+        },
+        "worker_llm_verify_enabled": {
+          "type": "boolean"
+        },
+        "worker_verify_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "roles",
+        "default_tier",
+        "max_worker_retries",
+        "worker_verify_enabled",
+        "max_worker_verify_retries",
+        "worker_llm_verify_enabled",
+        "main_provider",
+        "main_model"
+      ],
+      "type": "object"
+    },
+    "RuntimeGetSystemPromptParams": {
+      "description": "RuntimeGetSystemPromptParams is reserved.",
+      "properties": {},
+      "type": "object"
+    },
+    "RuntimeGetSystemPromptResult": {
+      "description": "RuntimeGetSystemPromptResult exposes .orchestra/system.txt + prompt_family.",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "has_override": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "prompt_family": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "has_override",
+        "prompt_family",
+        "path"
+      ],
+      "type": "object"
+    },
+    "RuntimeListModelsParams": {
+      "description": "RuntimeListModelsParams selects which credential set to use for /models.",
+      "properties": {
+        "provider": {
+          "description": "empty → current llm config",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeListModelsResult": {
+      "description": "RuntimeListModelsResult is returned by runtime.list_models.",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "current": {
+          "type": "string"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/RuntimeModelEntry"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "models",
+        "provider",
+        "api_base",
+        "current"
+      ],
+      "type": "object"
+    },
+    "RuntimeListProvidersParams": {
+      "description": "RuntimeListProvidersParams lists catalog + named providers.",
+      "properties": {
+        "include_secrets": {
+          "description": "IncludeSecrets returns api_key in entries (settings UI only — local trusted client).",
+          "type": "boolean"
+        },
+        "probe": {
+          "description": "Probe fetches /models for each configured (ready) provider. Default false.",
+          "type": "boolean"
+        },
+        "probe_key": {
+          "description": "ProbeKey limits probe to one provider key (catalog or named).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeListProvidersResult": {
+      "description": "RuntimeListProvidersResult is returned by runtime.list_providers.",
+      "properties": {
+        "active_model": {
+          "type": "string"
+        },
+        "active_provider": {
+          "type": "string"
+        },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/RuntimeProviderEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "providers",
+        "active_provider",
+        "active_model"
+      ],
+      "type": "object"
+    },
+    "RuntimeModelEntry": {
+      "description": "RuntimeModelEntry is one remote model id.",
+      "properties": {
+        "context_tokens": {
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "owned_by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "RuntimeOrchestraNamedProvider": {
+      "description": "RuntimeOrchestraNamedProvider is a named providers: entry snapshot for UI.",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "api_key_set": {
+          "type": "boolean"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "needs_key": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "key",
+        "api_key_set",
+        "needs_key",
+        "configured"
+      ],
+      "type": "object"
+    },
+    "RuntimeOrchestraRole": {
+      "description": "RuntimeOrchestraRole is one editable orchestra role row.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "tier": {
+          "description": "canonical L1–L5 tier (spec §1.4 / legacy_map)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ],
+      "type": "object"
+    },
+    "RuntimeProviderEntry": {
+      "description": "RuntimeProviderEntry is one selectable provider in settings UI.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "api_base": {
+          "type": "string"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "api_key_set": {
+          "type": "boolean"
+        },
+        "category": {
+          "type": "string"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "current_model": {
+          "type": "string"
+        },
+        "custom": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "model_count": {
+          "type": "integer"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/RuntimeModelEntry"
+          },
+          "type": "array"
+        },
+        "models_error": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "named": {
+          "type": "boolean"
+        },
+        "needs_key": {
+          "type": "boolean"
+        },
+        "ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "category",
+        "api_base",
+        "active",
+        "ready",
+        "configured",
+        "api_key_set",
+        "needs_key",
+        "named",
+        "custom",
+        "model_count"
+      ],
+      "type": "object"
+    },
+    "RuntimeSetModelParams": {
+      "description": "RuntimeSetModelParams switches the active LLM model for this core process.\nOptionally persists to .orchestra.yml (default persist=true).",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "persist": {
+          "description": "Persist writes llm.model (and provider mirror) to disk. nil → true.",
+          "type": "boolean"
+        },
+        "provider": {
+          "description": "named providers: key; empty keeps current",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "RuntimeSetModelResult": {
+      "description": "RuntimeSetModelResult is returned by runtime.set_model.",
+      "properties": {
+        "api_base": {
+          "type": "string"
+        },
+        "context_tokens": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "persisted": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "provider",
+        "api_base",
+        "persisted"
+      ],
+      "type": "object"
+    },
+    "RuntimeSetSystemPromptParams": {
+      "description": "RuntimeSetSystemPromptParams writes or clears the system override.",
+      "properties": {
+        "clear": {
+          "description": "force delete override",
+          "type": "boolean"
+        },
+        "content": {
+          "description": "nil = leave file; \"\" = clear",
+          "type": "string"
+        },
+        "persist": {
+          "description": "persist prompt_family to yaml; default true",
+          "type": "boolean"
+        },
+        "prompt_family": {
+          "description": "set llm.prompt_family when non-nil",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeSetSystemPromptResult": {
+      "description": "RuntimeSetSystemPromptResult confirms write.",
+      "properties": {
+        "has_override": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "persisted": {
+          "type": "boolean"
+        },
+        "prompt_family": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "has_override",
+        "prompt_family",
+        "persisted",
+        "path"
+      ],
+      "type": "object"
+    },
+    "SessionApplyPendingParams": {
+      "properties": {
+        "backup": {
+          "type": "boolean"
+        },
+        "paths": {
+          "description": "optional: apply only ops whose path matches one of these (workspace-relative)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionCancelParams": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionCloseParams": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionCompactParams": {
+      "properties": {
+        "query": {
+          "description": "optional goal hint for the summary",
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionCompactResult": {
+      "properties": {
+        "after_bytes": {
+          "type": "integer"
+        },
+        "after_msgs": {
+          "type": "integer"
+        },
+        "before_bytes": {
+          "type": "integer"
+        },
+        "before_msgs": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "before_msgs",
+        "after_msgs"
+      ],
+      "type": "object"
+    },
+    "SessionDiscardPendingParams": {
+      "properties": {
+        "paths": {
+          "description": "optional: discard only ops whose path matches one of these (workspace-relative)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionForkParams": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "ui_message_index": {
+          "description": "exclusive; must point at role=user",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "ui_message_index"
+      ],
+      "type": "object"
+    },
+    "SessionForkResult": {
+      "properties": {
+        "history_messages": {
+          "type": "integer"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "description": "the new branch",
+          "type": "string"
+        },
+        "ui_messages": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "parent_id",
+        "ui_messages",
+        "history_messages"
+      ],
+      "type": "object"
+    },
+    "SessionGetParams": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionHistoryParams": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionListParams": {
+      "properties": {},
+      "type": "object"
+    },
+    "SessionRewindParams": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "ui_message_index": {
+          "description": "inclusive; must point at role=user",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "ui_message_index"
+      ],
+      "type": "object"
+    },
+    "SessionRewindResult": {
+      "properties": {
+        "history_messages": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "ui_messages": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "ui_messages",
+        "history_messages"
+      ],
+      "type": "object"
+    },
+    "SessionSearchParams": {
+      "properties": {
+        "include_all": {
+          "type": "boolean"
+        },
+        "insensitive": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "SessionStartParams": {
+      "properties": {
+        "session_id": {
+          "description": "SessionID optionally reopens an existing on-disk session (v2 snapshot).\nWhen empty, core allocates a new sortable id.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SessionStartResult": {
+      "properties": {
+        "restored": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionTrajectoryParams": {
+      "description": "SessionTrajectoryParams selects the session whose log to read.",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "SessionUISyncResult": {
+      "properties": {
+        "saved": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "saved"
+      ],
+      "type": "object"
+    },
+    "Signature": {
+      "description": "Signature names a method's params and result types on the wire. An empty\nname means the method has none (core.health takes no params) or that the\ntype stays in internal/core because it carries a type of the patch module\n(ops.AnyOp, patches.Patch), of the config, of the session snapshot or of\nthe code graph; docs/PROTOCOL.md describes those.",
+      "properties": {
+        "Method": {
+          "type": "string"
+        },
+        "Params": {
+          "type": "string"
+        },
+        "Result": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "Method",
+        "Params",
+        "Result"
+      ],
+      "type": "object"
+    },
+    "SkillInvokeResult": {
+      "properties": {
+        "marker": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "skill": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "skill",
+        "output",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "SkillListParams": {
+      "properties": {},
+      "type": "object"
+    },
+    "SkillListResult": {
+      "properties": {
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/SkillSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "skills"
+      ],
+      "type": "object"
+    },
+    "SkillSummary": {
+      "properties": {
+        "completion_markers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "type": "object"
+    },
+    "StageRecord": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "marker": {
+          "type": "string"
+        },
+        "output_kb": {
+          "type": "integer"
+        },
+        "stage_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage_id",
+        "attempt",
+        "action",
+        "output_kb"
+      ],
+      "type": "object"
+    },
+    "TodoItem": {
+      "description": "TodoItem is one row of the model's checklist.",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ToolCallParams": {
+      "properties": {
+        "input": {},
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "input"
+      ],
+      "type": "object"
+    },
+    "ToolDiagnostic": {
+      "description": "ToolDiagnostic is one LSP diagnostic an edit produced, 1-based.",
+      "properties": {
+        "end_col": {
+          "type": "integer"
+        },
+        "end_line": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "start_col": {
+          "type": "integer"
+        },
+        "start_line": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_line",
+        "start_col",
+        "severity",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Usage": {
+      "description": "Usage is token spend: the Data of step_usage (one LLM call, measured by\nthe provider) and context_estimate (a byte-derived estimate of the next\nprompt, Source \"estimate\", with its Breakdown), and the turn's total in\nagent.run and session.message results. The estimate and the measurement\nmust never be summed or substituted for one another.",
+      "properties": {
+        "breakdown": {
+          "description": "Breakdown is the per-category split of an estimate.",
+          "items": {
+            "$ref": "#/$defs/ContextBreakdown"
+          },
+          "type": "array"
+        },
+        "cache_write_tokens": {
+          "type": "integer"
+        },
+        "cached_prompt_tokens": {
+          "description": "CachedPromptTokens is the part of PromptTokens the provider served\nfrom its prompt cache; CacheWriteTokens is what it charged to fill it.",
+          "type": "integer"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "entries": {
+          "description": "Entries is the per-(provider, model) split of a turn.",
+          "items": {
+            "$ref": "#/$defs/UsageEntry"
+          },
+          "type": "array"
+        },
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "total_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "type": "object"
+    },
+    "UsageEntry": {
+      "description": "UsageEntry is one (provider, model) row of a turn's spend.",
+      "properties": {
+        "cache_write_tokens": {
+          "type": "integer"
+        },
+        "cached_prompt_tokens": {
+          "type": "integer"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "total_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens"
+      ],
+      "type": "object"
+    },
+    "VersionRange": {
+      "description": "VersionRange is the protocol versions one side speaks, inclusive.",
+      "properties": {
+        "Max": {
+          "type": "integer"
+        },
+        "Min": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "Min",
+        "Max"
+      ],
+      "type": "object"
+    },
+    "WorkflowListParams": {
+      "properties": {},
+      "type": "object"
+    },
+    "WorkflowListResult": {
+      "properties": {
+        "workflows": {
+          "items": {
+            "$ref": "#/$defs/WorkflowSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "workflows"
+      ],
+      "type": "object"
+    },
+    "WorkflowRunResult": {
+      "properties": {
+        "duration_ms": {
+          "type": "integer"
+        },
+        "failure_reason": {
+          "type": "string"
+        },
+        "final_stage": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "outputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/StageRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "outputs",
+        "stages",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    "WorkflowStage": {
+      "description": "WorkflowStage is the params of workflow/stage_start and workflow/stage_done.",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "marker": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "output_kb": {
+          "type": "integer"
+        },
+        "stage_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "stage_id",
+        "attempt"
+      ],
+      "type": "object"
+    },
+    "WorkflowSummary": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "stages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "stages"
+      ],
+      "type": "object"
+    },
+    "WorkspaceTrustParams": {
+      "description": "WorkspaceTrustParams is the workspace.trust request. Revoke forgets the\nworkspace instead of trusting it.",
+      "properties": {
+        "revoke": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Generated from protocol/wire (go generate ./protocol/wire/...). The client↔core JSON-RPC contract: methods, notifications, requests, and the shape of every params, result and event.",
+  "title": "Orchestra wire contract, protocol v24",
+  "x-orchestra": {
+    "event_types": [
+      "message_delta",
+      "reasoning_delta",
+      "tool_call_start",
+      "tool_call_delta",
+      "tool_call_completed",
+      "step_done",
+      "pending_ops",
+      "recoverable_error",
+      "done",
+      "error",
+      "todos_updated",
+      "step_usage",
+      "context_estimate",
+      "mode_route",
+      "child_started",
+      "child_queued",
+      "child_done",
+      "agent_message",
+      "workorders_relayed",
+      "integration_verify"
+    ],
+    "methods": [
+      "$/cancelRequest",
+      "agent.run",
+      "agents.delete",
+      "agents.list",
+      "agents.upsert",
+      "attachments.store",
+      "core.health",
+      "index.configure",
+      "index.embed",
+      "index.graph",
+      "index.outline",
+      "index.rebuild",
+      "index.status",
+      "initialize",
+      "lesson.rule_respond",
+      "mcp.delete",
+      "mcp.list",
+      "mcp.prompt.get",
+      "mcp.prompts",
+      "mcp.set_disabled",
+      "mcp.test",
+      "mcp.upsert",
+      "ops.apply",
+      "runtime.configure_llm",
+      "runtime.configure_orchestra",
+      "runtime.credits",
+      "runtime.get_llm",
+      "runtime.get_orchestra",
+      "runtime.get_system_prompt",
+      "runtime.list_models",
+      "runtime.list_providers",
+      "runtime.set_model",
+      "runtime.set_system_prompt",
+      "session.apply_pending",
+      "session.cancel",
+      "session.close",
+      "session.compact",
+      "session.discard_pending",
+      "session.fork",
+      "session.get",
+      "session.history",
+      "session.list",
+      "session.message",
+      "session.rewind",
+      "session.search",
+      "session.start",
+      "session.trajectory",
+      "session.ui_sync",
+      "skill.invoke",
+      "skill.list",
+      "tool.call",
+      "workflow.list",
+      "workflow.run",
+      "workspace.trust",
+      "workspace.trust_status"
+    ],
+    "min_protocol_version": 23,
+    "notifications": [
+      "agent/event",
+      "exec/output_chunk",
+      "workflow/stage_done",
+      "workflow/stage_start"
+    ],
+    "ops_version": 1,
+    "protocol_version": 24,
+    "requests": [
+      "browser/call",
+      "permission/request",
+      "question/ask"
+    ],
+    "signatures": {
+      "agent.run": {},
+      "agents.delete": {
+        "params": {
+          "$ref": "#/$defs/AgentsDeleteParams"
+        }
+      },
+      "agents.list": {
+        "params": {
+          "$ref": "#/$defs/AgentsListParams"
+        }
+      },
+      "agents.upsert": {},
+      "attachments.store": {
+        "params": {
+          "$ref": "#/$defs/AttachmentsStoreParams"
+        },
+        "result": {
+          "$ref": "#/$defs/AttachmentsStoreResult"
+        }
+      },
+      "core.health": {
+        "result": {
+          "$ref": "#/$defs/Health"
+        }
+      },
+      "index.configure": {
+        "params": {
+          "$ref": "#/$defs/IndexConfigureParams"
+        }
+      },
+      "index.embed": {
+        "params": {
+          "$ref": "#/$defs/IndexEmbedParams"
+        },
+        "result": {
+          "$ref": "#/$defs/IndexEmbedResult"
+        }
+      },
+      "index.graph": {
+        "params": {
+          "$ref": "#/$defs/IndexGraphParams"
+        }
+      },
+      "index.outline": {
+        "params": {
+          "$ref": "#/$defs/IndexOutlineParams"
+        }
+      },
+      "index.rebuild": {
+        "params": {
+          "$ref": "#/$defs/IndexRebuildParams"
+        },
+        "result": {
+          "$ref": "#/$defs/IndexRebuildResult"
+        }
+      },
+      "index.status": {
+        "params": {
+          "$ref": "#/$defs/IndexStatusParams"
+        }
+      },
+      "initialize": {
+        "params": {
+          "$ref": "#/$defs/InitializeParams"
+        },
+        "result": {
+          "$ref": "#/$defs/InitializeResult"
+        }
+      },
+      "lesson.rule_respond": {
+        "params": {
+          "$ref": "#/$defs/RuleSuggestionRespondParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuleSuggestionRespondResult"
+        }
+      },
+      "mcp.delete": {
+        "params": {
+          "$ref": "#/$defs/MCPDeleteParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPDeleteResult"
+        }
+      },
+      "mcp.list": {
+        "params": {
+          "$ref": "#/$defs/MCPListParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPListResult"
+        }
+      },
+      "mcp.prompt.get": {
+        "params": {
+          "$ref": "#/$defs/MCPPromptGetParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPPromptGetResult"
+        }
+      },
+      "mcp.prompts": {
+        "params": {
+          "$ref": "#/$defs/MCPPromptListParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPPromptListResult"
+        }
+      },
+      "mcp.set_disabled": {
+        "params": {
+          "$ref": "#/$defs/MCPSetDisabledParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPSetDisabledResult"
+        }
+      },
+      "mcp.test": {
+        "params": {
+          "$ref": "#/$defs/MCPTestParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPTestResult"
+        }
+      },
+      "mcp.upsert": {
+        "params": {
+          "$ref": "#/$defs/MCPUpsertParams"
+        },
+        "result": {
+          "$ref": "#/$defs/MCPUpsertResult"
+        }
+      },
+      "ops.apply": {
+        "result": {
+          "$ref": "#/$defs/OpsApplyResult"
+        }
+      },
+      "runtime.configure_llm": {
+        "params": {
+          "$ref": "#/$defs/RuntimeConfigureLLMParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeConfigureLLMResult"
+        }
+      },
+      "runtime.configure_orchestra": {
+        "params": {
+          "$ref": "#/$defs/RuntimeConfigureOrchestraParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeConfigureOrchestraResult"
+        }
+      },
+      "runtime.credits": {
+        "params": {
+          "$ref": "#/$defs/RuntimeCreditsParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeCreditsResult"
+        }
+      },
+      "runtime.get_llm": {
+        "params": {
+          "$ref": "#/$defs/RuntimeGetLLMParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeGetLLMResult"
+        }
+      },
+      "runtime.get_orchestra": {
+        "params": {
+          "$ref": "#/$defs/RuntimeGetOrchestraParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeGetOrchestraResult"
+        }
+      },
+      "runtime.get_system_prompt": {
+        "params": {
+          "$ref": "#/$defs/RuntimeGetSystemPromptParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeGetSystemPromptResult"
+        }
+      },
+      "runtime.list_models": {
+        "params": {
+          "$ref": "#/$defs/RuntimeListModelsParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeListModelsResult"
+        }
+      },
+      "runtime.list_providers": {
+        "params": {
+          "$ref": "#/$defs/RuntimeListProvidersParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeListProvidersResult"
+        }
+      },
+      "runtime.set_model": {
+        "params": {
+          "$ref": "#/$defs/RuntimeSetModelParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeSetModelResult"
+        }
+      },
+      "runtime.set_system_prompt": {
+        "params": {
+          "$ref": "#/$defs/RuntimeSetSystemPromptParams"
+        },
+        "result": {
+          "$ref": "#/$defs/RuntimeSetSystemPromptResult"
+        }
+      },
+      "session.apply_pending": {
+        "params": {
+          "$ref": "#/$defs/SessionApplyPendingParams"
+        }
+      },
+      "session.cancel": {
+        "params": {
+          "$ref": "#/$defs/SessionCancelParams"
+        }
+      },
+      "session.close": {
+        "params": {
+          "$ref": "#/$defs/SessionCloseParams"
+        }
+      },
+      "session.compact": {
+        "params": {
+          "$ref": "#/$defs/SessionCompactParams"
+        },
+        "result": {
+          "$ref": "#/$defs/SessionCompactResult"
+        }
+      },
+      "session.discard_pending": {
+        "params": {
+          "$ref": "#/$defs/SessionDiscardPendingParams"
+        }
+      },
+      "session.fork": {
+        "params": {
+          "$ref": "#/$defs/SessionForkParams"
+        },
+        "result": {
+          "$ref": "#/$defs/SessionForkResult"
+        }
+      },
+      "session.get": {
+        "params": {
+          "$ref": "#/$defs/SessionGetParams"
+        }
+      },
+      "session.history": {
+        "params": {
+          "$ref": "#/$defs/SessionHistoryParams"
+        }
+      },
+      "session.list": {
+        "params": {
+          "$ref": "#/$defs/SessionListParams"
+        }
+      },
+      "session.message": {},
+      "session.rewind": {
+        "params": {
+          "$ref": "#/$defs/SessionRewindParams"
+        },
+        "result": {
+          "$ref": "#/$defs/SessionRewindResult"
+        }
+      },
+      "session.search": {
+        "params": {
+          "$ref": "#/$defs/SessionSearchParams"
+        }
+      },
+      "session.start": {
+        "params": {
+          "$ref": "#/$defs/SessionStartParams"
+        },
+        "result": {
+          "$ref": "#/$defs/SessionStartResult"
+        }
+      },
+      "session.trajectory": {
+        "params": {
+          "$ref": "#/$defs/SessionTrajectoryParams"
+        }
+      },
+      "session.ui_sync": {
+        "result": {
+          "$ref": "#/$defs/SessionUISyncResult"
+        }
+      },
+      "skill.invoke": {
+        "result": {
+          "$ref": "#/$defs/SkillInvokeResult"
+        }
+      },
+      "skill.list": {
+        "params": {
+          "$ref": "#/$defs/SkillListParams"
+        },
+        "result": {
+          "$ref": "#/$defs/SkillListResult"
+        }
+      },
+      "tool.call": {
+        "params": {
+          "$ref": "#/$defs/ToolCallParams"
+        }
+      },
+      "workflow.list": {
+        "params": {
+          "$ref": "#/$defs/WorkflowListParams"
+        },
+        "result": {
+          "$ref": "#/$defs/WorkflowListResult"
+        }
+      },
+      "workflow.run": {
+        "result": {
+          "$ref": "#/$defs/WorkflowRunResult"
+        }
+      },
+      "workspace.trust": {
+        "params": {
+          "$ref": "#/$defs/WorkspaceTrustParams"
+        }
+      },
+      "workspace.trust_status": {}
+    },
+    "tools_version": 18
+  }
+}

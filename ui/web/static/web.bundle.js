@@ -1936,6 +1936,108 @@
       host.postMessage(ev.data.payload);
     }
   });
+  // AUTO-GENERATED from protocol/wire — do not edit.
+  // Regenerate: go generate ./protocol/wire/...  (a Go test fails while this file is stale)
+  //
+  // The versions and names of the client↔core contract, for the web adapter.
+  // A fragment of the web bundle: ui/web/scripts/bundle-web.mjs puts it right
+  // after the prelude, so every later fragment sees WIRE.
+  const WIRE = Object.freeze({
+    PROTOCOL_VERSION: 24,
+    MIN_PROTOCOL_VERSION: 23,
+    OPS_VERSION: 1,
+    TOOLS_VERSION: 18,
+    METHODS: Object.freeze([
+      "$/cancelRequest",
+      "agent.run",
+      "agents.delete",
+      "agents.list",
+      "agents.upsert",
+      "attachments.store",
+      "core.health",
+      "index.configure",
+      "index.embed",
+      "index.graph",
+      "index.outline",
+      "index.rebuild",
+      "index.status",
+      "initialize",
+      "lesson.rule_respond",
+      "mcp.delete",
+      "mcp.list",
+      "mcp.prompt.get",
+      "mcp.prompts",
+      "mcp.set_disabled",
+      "mcp.test",
+      "mcp.upsert",
+      "ops.apply",
+      "runtime.configure_llm",
+      "runtime.configure_orchestra",
+      "runtime.credits",
+      "runtime.get_llm",
+      "runtime.get_orchestra",
+      "runtime.get_system_prompt",
+      "runtime.list_models",
+      "runtime.list_providers",
+      "runtime.set_model",
+      "runtime.set_system_prompt",
+      "session.apply_pending",
+      "session.cancel",
+      "session.close",
+      "session.compact",
+      "session.discard_pending",
+      "session.fork",
+      "session.get",
+      "session.history",
+      "session.list",
+      "session.message",
+      "session.rewind",
+      "session.search",
+      "session.start",
+      "session.trajectory",
+      "session.ui_sync",
+      "skill.invoke",
+      "skill.list",
+      "tool.call",
+      "workflow.list",
+      "workflow.run",
+      "workspace.trust",
+      "workspace.trust_status",
+    ]),
+    NOTIFICATIONS: Object.freeze([
+      "agent/event",
+      "exec/output_chunk",
+      "workflow/stage_done",
+      "workflow/stage_start",
+    ]),
+    REQUESTS: Object.freeze([
+      "browser/call",
+      "permission/request",
+      "question/ask",
+    ]),
+    EVENT_TYPES: Object.freeze([
+      "message_delta",
+      "reasoning_delta",
+      "tool_call_start",
+      "tool_call_delta",
+      "tool_call_completed",
+      "step_done",
+      "pending_ops",
+      "recoverable_error",
+      "done",
+      "error",
+      "todos_updated",
+      "step_usage",
+      "context_estimate",
+      "mode_route",
+      "child_started",
+      "child_queued",
+      "child_done",
+      "agent_message",
+      "workorders_relayed",
+      "integration_verify",
+    ]),
+  });
   /* host is supplied by ui/web/src/00-web-prelude.js */
 
   /** @typedef {{ id: string; label: string; icon: string; mode: string }} ModeOpt */
@@ -8390,12 +8492,36 @@
       // — and it is where project_root and project_id come from.
       const health = await conn.send("core.health", {});
       st.workspaceRoot = health.workspace_root || "";
+      // The version to speak: the newest in both ranges. WIRE is this page's
+      // own range, generated from protocol/wire; the page used to echo
+      // whatever core.health reported, which made the check mean nothing. A
+      // core before v24 reports no min_protocol_version and speaks its one
+      // version exactly, so asking for that version is what connects to it.
+      const coreMax =
+        typeof health.protocol_version === "number" ? health.protocol_version : WIRE.PROTOCOL_VERSION;
+      const coreMin =
+        typeof health.min_protocol_version === "number" ? health.min_protocol_version : coreMax;
+      const protocolVersion = Math.min(WIRE.PROTOCOL_VERSION, coreMax);
+      if (protocolVersion < WIRE.MIN_PROTOCOL_VERSION || protocolVersion < coreMin) {
+        throw new Error(
+          "protocol_version mismatch: this page speaks " +
+            WIRE.MIN_PROTOCOL_VERSION +
+            ".." +
+            WIRE.PROTOCOL_VERSION +
+            ", the core " +
+            coreMin +
+            ".." +
+            coreMax +
+            " — the page and the core come from different builds"
+        );
+      }
       await conn.send("initialize", {
         project_root: st.workspaceRoot,
         project_id: health.project_id || "",
-        protocol_version: health.protocol_version,
-        ops_version: health.ops_version,
-        tools_version: health.tools_version,
+        protocol_version: protocolVersion,
+        min_protocol_version: WIRE.MIN_PROTOCOL_VERSION,
+        ops_version: WIRE.OPS_VERSION,
+        tools_version: WIRE.TOOLS_VERSION,
       });
       // A remembered id means this is a reconnect, not a first connection:
       // reopen the conversation that was on screen instead of silently

@@ -10,6 +10,7 @@ import (
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // minHistoryForLLMSummary is the point below which a turn has not accumulated
@@ -19,14 +20,7 @@ const minHistoryForLLMSummary = 4
 
 // MemoryNoteStatus is what the end-of-turn memory writer did, returned to the
 // client on session.message and mirrored into llm_log.jsonl as memory.note.
-type MemoryNoteStatus struct {
-	// Outcome: written | skipped | failed.
-	Outcome string `json:"outcome"`
-	// Source: model | digest — where the note text came from. Empty on a skip.
-	Source string `json:"source,omitempty"`
-	// Detail: the note itself when written, the reason otherwise.
-	Detail string `json:"detail,omitempty"`
-}
+type MemoryNoteStatus = wire.MemoryNote
 
 // maybeAutoSummaryMemory writes a note about the finished turn to project
 // memory when agent.auto_summary_memory is enabled, and reports what it did.

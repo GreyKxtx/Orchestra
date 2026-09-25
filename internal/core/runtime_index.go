@@ -11,10 +11,8 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// IndexStatusParams is empty (reserved).
-type IndexStatusParams struct{}
 
 // IndexStatusResult exposes CKG graph stats and index-related config.
 type IndexStatusResult struct {
@@ -25,21 +23,6 @@ type IndexStatusResult struct {
 	Embed          config.EmbedConfig  `json:"embed"`
 	Graph          toolsCKGView        `json:"graph"`
 	GraphUIPort    int                 `json:"graph_ui_port"`
-}
-
-type toolsCKGView struct {
-	Available         bool           `json:"available"`
-	DBPath            string         `json:"db_path,omitempty"`
-	Files             int            `json:"files"`
-	Nodes             int            `json:"nodes"`
-	Edges             int            `json:"edges"`
-	Embeddings        int            `json:"embeddings"`
-	MissingEmbeddings int            `json:"missing_embeddings"`
-	Funcs             int            `json:"funcs"`
-	Types             int            `json:"types"`
-	Packages          int            `json:"packages"`
-	Tests             int            `json:"tests"`
-	Langs             map[string]int `json:"langs,omitempty"`
 }
 
 // ckgViewToRPC maps the tools-layer CKG snapshot onto the RPC view.
@@ -60,23 +43,6 @@ func ckgViewToRPC(view tools.CKGIndexView) toolsCKGView {
 	}
 }
 
-// IndexConfigureParams updates scope + embed settings in .orchestra.yml.
-type IndexConfigureParams struct {
-	ExcludeDirs             []string `json:"exclude_dirs,omitempty"`
-	ContextLimitKB          *int     `json:"context_limit_kb,omitempty"`
-	LimitsContextKB         *int     `json:"limits_context_kb,omitempty"`
-	LimitsMaxFiles          *int     `json:"limits_max_files,omitempty"`
-	LimitsMaxBytesPerFile   *int64   `json:"limits_max_bytes_per_file,omitempty"`
-	EmbedAPIBase            string   `json:"embed_api_base,omitempty"`
-	EmbedAPIKey             string   `json:"embed_api_key,omitempty"`
-	EmbedModel              string   `json:"embed_model,omitempty"`
-	EmbedBatchSize          *int     `json:"embed_batch_size,omitempty"`
-	EmbedTimeoutS           *int     `json:"embed_timeout_s,omitempty"`
-	SemanticAutoExplore     *bool    `json:"semantic_auto_explore,omitempty"`
-	SemanticAutoExploreTopK *int     `json:"semantic_auto_explore_top_k,omitempty"`
-	Persist                 *bool    `json:"persist,omitempty"`
-}
-
 // IndexConfigureResult mirrors saved index settings.
 type IndexConfigureResult struct {
 	ExcludeDirs    []string            `json:"exclude_dirs"`
@@ -84,36 +50,6 @@ type IndexConfigureResult struct {
 	Limits         config.LimitsConfig `json:"limits"`
 	Embed          config.EmbedConfig  `json:"embed"`
 	Persisted      bool                `json:"persisted"`
-}
-
-// IndexRebuildParams triggers a synchronous CKG rescan.
-type IndexRebuildParams struct{}
-
-// IndexRebuildResult reports post-rebuild stats.
-type IndexRebuildResult struct {
-	Graph toolsCKGView `json:"graph"`
-}
-
-// IndexEmbedParams runs vector indexing for CKG nodes.
-type IndexEmbedParams struct {
-	Rebuild *bool `json:"rebuild,omitempty"`
-	Limit   int   `json:"limit,omitempty"`
-}
-
-// IndexEmbedResult summarizes the embed pass.
-type IndexEmbedResult struct {
-	Model     string `json:"model"`
-	Embedded  int    `json:"embedded"`
-	Total     int    `json:"total"`
-	Remaining int    `json:"remaining"`
-	Elapsed   string `json:"elapsed"`
-}
-
-// IndexGraphParams selects the granularity of index.graph: "file" (default)
-// — folders, files and weighted file-to-file relations, what the Graph view
-// draws — or "symbol", every indexed symbol with its relations.
-type IndexGraphParams struct {
-	Level string `json:"level,omitempty"`
 }
 
 // IndexGraphResult is the graph as the UI draws it. Available is false when
@@ -126,14 +62,6 @@ type IndexGraphResult struct {
 	Nodes     []ckg.GraphNode `json:"nodes"`
 	Links     []ckg.GraphLink `json:"links"`
 	Stats     toolsCKGView    `json:"stats"`
-}
-
-// IndexOutlineParams asks for one file's symbols, by workspace-relative path
-// with forward slashes — the id of a file node in index.graph.
-type IndexOutlineParams struct {
-	Path string `json:"path"`
-	// Preview off returns the symbol list without reading the file.
-	Preview *bool `json:"preview,omitempty"`
 }
 
 // IndexOutlineSymbol is a symbol plus the first lines of its source, which is
@@ -434,3 +362,17 @@ func (c *Core) IndexEmbed(ctx context.Context, params IndexEmbedParams) (*IndexE
 		Elapsed:   res.Elapsed,
 	}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	IndexConfigureParams = wire.IndexConfigureParams
+	IndexEmbedParams     = wire.IndexEmbedParams
+	IndexEmbedResult     = wire.IndexEmbedResult
+	IndexGraphParams     = wire.IndexGraphParams
+	IndexOutlineParams   = wire.IndexOutlineParams
+	IndexRebuildParams   = wire.IndexRebuildParams
+	IndexRebuildResult   = wire.IndexRebuildResult
+	IndexStatusParams    = wire.IndexStatusParams
+	toolsCKGView         = wire.CKGView
+)

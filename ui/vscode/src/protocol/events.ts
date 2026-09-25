@@ -1,62 +1,35 @@
 /**
- * Mirrors ui/tui/rpcclient EventKind / agent/event envelope (docs/PROTOCOL.md).
+ * The wire contract as the extension consumes it. The shapes come from
+ * ./wire.generated — generated from protocol/wire, the one definition the
+ * core, the TUI, this extension and the web share (docs/PROTOCOL.md). This
+ * file names the few the extension normalises before use, and the
+ * extension's own webview messages.
  */
+import type {
+  AgentEvent,
+  AgentEventType as WireAgentEventType,
+  ExecOutputChunk,
+  MemoryNote,
+  TodoItem,
+  ToolDiagnostic,
+  WorkflowStage,
+} from "./wire.generated";
 
-export type AgentEventType =
-  | "message_delta"
-  | "reasoning_delta"
-  | "tool_call_start"
-  | "tool_call_delta"
-  | "tool_call_completed"
-  | "step_done"
-  | "pending_ops"
-  | "recoverable_error"
-  | "done"
-  | "error"
-  | string;
+/** A wire event type, or one this build does not know yet. */
+export type AgentEventType = WireAgentEventType | (string & {});
 
-export interface AgentEventParams {
-  step?: number;
+/**
+ * An agent/event as normalizeAgentEvent hands it on: the wire's AgentEvent
+ * with every field optional but `type`, because the parse tolerates a core
+ * that omits any of them.
+ */
+export type AgentEventParams = Partial<Omit<AgentEvent, "type">> & {
   type: AgentEventType;
-  content?: string;
-  data?: unknown;
-  session_id?: string;
-  turn_id?: string;
-  tool_call_id?: string;
-  tool_call_name?: string;
-  tool_call_index?: number;
-  args_delta?: string;
-  diagnostics?: ToolDiagnosticPayload[];
-  /** "child" when emitted by a subagent; omitted for parent agent. */
-  scope?: string;
-  task_id?: string;
-  parent_tool_call_id?: string;
-  subagent_type?: string;
-  /** Worker tier band (complex|focused|micro) for child_started events. */
-  tier?: string;
-  /** Resolved model label for child_started events. */
-  model?: string;
-  status?: string;
-  error?: string;
-  lesson_promote_suggestion?: string;
-  playbook_promote_suggestion?: string;
-}
+};
 
-export interface ToolDiagnosticPayload {
-  start_line: number;
-  start_col: number;
-  end_line?: number;
-  end_col?: number;
-  severity: string;
-  source?: string;
-  message: string;
-}
+export type ToolDiagnosticPayload = ToolDiagnostic;
 
-export interface TodoItemPayload {
-  id: string;
-  content: string;
-  status: string;
-}
+export type TodoItemPayload = TodoItem;
 
 export interface StepUsagePayload {
   prompt_tokens?: number;
@@ -105,12 +78,8 @@ export interface TurnUsagePayload {
   entries?: UsageModelEntry[];
 }
 
-/** What the end-of-turn memory writer did, from session.message (core.MemoryNoteStatus). */
-export interface MemoryNotePayload {
-  outcome: string;
-  source?: string;
-  detail?: string;
-}
+/** What the end-of-turn memory writer did, from session.message. */
+export type MemoryNotePayload = MemoryNote;
 
 export interface ContextInfoPayload {
   contextLimit?: number;
@@ -126,21 +95,9 @@ export interface ContextBreakdownItem {
   color?: string;
 }
 
-export interface WorkflowStagePayload {
-  name: string;
-  stage_id: string;
-  attempt: number;
-  marker?: string;
-  action?: string;
-  output_kb?: number;
-}
+export type WorkflowStagePayload = WorkflowStage;
 
-export interface ExecChunkPayload {
-  step: number;
-  chunk: string;
-  session_id?: string;
-  turn_id?: string;
-}
+export type ExecChunkPayload = ExecOutputChunk;
 
 export type ConnectionStatus =
   | "idle"

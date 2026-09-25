@@ -22,6 +22,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // ChildClientResolver builds an LLM client for a child from optional provider/model overrides.
@@ -167,8 +168,9 @@ type ChildAgentConfig struct {
 	// ChildEventSink builds a per-task OnEvent handler with child scope metadata.
 	// Preferred over OnChildEvent in production core wiring.
 	ChildEventSink func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent)
-	// NotifyAgentEvent emits arbitrary agent/event payloads (child lifecycle).
-	NotifyAgentEvent func(params map[string]any)
+	// NotifyAgentEvent emits the runtime's own agent/event notifications:
+	// the child lifecycle, agent messages, relayed work orders.
+	NotifyAgentEvent func(ev wire.AgentEvent)
 	// Agency is the resolved agency: section (AgencyFromConfig): who may
 	// delegate to or message whom, nesting depth, concurrency, budgets. The
 	// zero value keeps the one-level runner (no nested spawn, no messages)
@@ -707,12 +709,12 @@ func (r *TaskRunner) notifyQueued(taskID, parentToolCallID string, conflicts []*
 	for _, c := range conflicts {
 		ids = append(ids, c.id)
 	}
-	r.child.NotifyAgentEvent(map[string]any{
-		"type":                "child_queued",
-		"task_id":             taskID,
-		"parent_tool_call_id": parentToolCallID,
-		"waiting_for":         ids,
-		"reason":              "overlapping target_files; serialized per spec §5.6",
+	r.child.NotifyAgentEvent(wire.AgentEvent{
+		Type:             wire.EventChildQueued,
+		TaskID:           taskID,
+		ParentToolCallID: parentToolCallID,
+		WaitingFor:       ids,
+		Reason:           "overlapping target_files; serialized per spec §5.6",
 	})
 }
 
@@ -894,22 +896,20 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		if eventTier == "" && childTier(subagentType) == roles.TierLead {
 			eventTier = "lead" // L4 badge in UI even without explicit spawn tier
 		}
-		ev := map[string]any{
-			"type":                "child_started",
-			"task_id":             taskID,
-			"parent_tool_call_id": req.ParentToolCallID,
-			"subagent_type":       target.name,
-			"tier":                eventTier,
-			"model":               modelLabel,
-			"content":             req.Goal,
-			"agent":               scope.address,
-			"depth":               scope.depth,
+		ev := wire.AgentEvent{
+			Type:             wire.EventChildStarted,
+			TaskID:           taskID,
+			ParentToolCallID: req.ParentToolCallID,
+			SubagentType:     target.name,
+			Tier:             eventTier,
+			Model:            modelLabel,
+			Content:          req.Goal,
+			Agent:            scope.address,
+			Depth:            scope.depth,
+			ParentTaskID:     scope.parentTaskID,
 		}
 		if len(scope.chain) > 1 {
-			ev["parent_agent"] = scope.chain[len(scope.chain)-2]
-		}
-		if scope.parentTaskID != "" {
-			ev["parent_task_id"] = scope.parentTaskID
+			ev.ParentAgent = scope.chain[len(scope.chain)-2]
 		}
 		r.child.NotifyAgentEvent(ev)
 	}

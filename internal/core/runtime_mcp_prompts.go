@@ -6,88 +6,8 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// MCPPromptArgView is one argument an MCP prompt accepts.
-type MCPPromptArgView struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-}
-
-// MCPPromptCommand is one MCP prompt as a slash command a person can run.
-//
-// An MCP prompt is the server's own recipe, meant for a human to pick — not
-// for the model to call. So it belongs in the command palette next to /model
-// and /skill, not in the tool list.
-type MCPPromptCommand struct {
-	Server      string             `json:"server"`
-	Name        string             `json:"name"`
-	Description string             `json:"description,omitempty"`
-	Arguments   []MCPPromptArgView `json:"arguments,omitempty"`
-
-	// Slash and Hint are the rendered palette row. They travel over the wire
-	// so the TUI and the VS Code panel do not each re-derive the formatting
-	// and drift apart.
-	Slash string `json:"slash,omitempty"`
-	Hint  string `json:"hint,omitempty"`
-}
-
-// fill computes the rendered fields.
-func (c *MCPPromptCommand) fill() {
-	c.Slash = c.Command()
-	c.Hint = c.Describe()
-}
-
-// Command returns the slash form. The server is part of the name because two
-// servers may well offer a prompt called "review".
-func (c MCPPromptCommand) Command() string {
-	return "/mcp:" + c.Server + ":" + c.Name
-}
-
-// Describe is the palette's right-hand column: the server's description plus
-// the argument shape, so the user can see what to type without running it.
-// Required arguments are <angled>, optional ones [square].
-func (c MCPPromptCommand) Describe() string {
-	var args []string
-	for _, a := range c.Arguments {
-		if a.Required {
-			args = append(args, "<"+a.Name+">")
-		} else {
-			args = append(args, "["+a.Name+"]")
-		}
-	}
-	desc := strings.TrimSpace(c.Description)
-	if len(args) == 0 {
-		return desc
-	}
-	shape := strings.Join(args, " ")
-	if desc == "" {
-		return shape
-	}
-	return desc + " — " + shape
-}
-
-// MCPPromptListParams is reserved.
-type MCPPromptListParams struct{}
-
-// MCPPromptListResult is returned by mcp.prompts.
-type MCPPromptListResult struct {
-	Prompts []MCPPromptCommand `json:"prompts"`
-}
-
-// MCPPromptGetParams names the prompt to render. Args is the raw text typed
-// after the command; the core maps it onto the prompt's declared arguments.
-type MCPPromptGetParams struct {
-	Server string `json:"server"`
-	Name   string `json:"name"`
-	Args   string `json:"args,omitempty"`
-}
-
-// MCPPromptGetResult carries the text to send as the user's turn.
-type MCPPromptGetResult struct {
-	Text string `json:"text"`
-}
 
 // MCPPromptList returns every prompt offered by the running servers. No MCP
 // servers is an empty list, not an error: the palette asks unconditionally.
@@ -103,7 +23,7 @@ func (c *Core) MCPPromptList(ctx context.Context, _ MCPPromptListParams) (*MCPPr
 				Name: a.Name, Description: a.Description, Required: a.Required,
 			})
 		}
-		cmd.fill()
+		cmd.Fill()
 		res.Prompts = append(res.Prompts, cmd)
 	}
 	return res, nil
@@ -175,3 +95,14 @@ func parsePromptArgs(spec []MCPPromptArgView, raw string) (map[string]string, er
 	}
 	return out, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	MCPPromptArgView    = wire.MCPPromptArgView
+	MCPPromptCommand    = wire.MCPPromptCommand
+	MCPPromptGetParams  = wire.MCPPromptGetParams
+	MCPPromptGetResult  = wire.MCPPromptGetResult
+	MCPPromptListParams = wire.MCPPromptListParams
+	MCPPromptListResult = wire.MCPPromptListResult
+)

@@ -5,34 +5,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// RuntimeGetSystemPromptParams is reserved.
-type RuntimeGetSystemPromptParams struct{}
-
-// RuntimeGetSystemPromptResult exposes .orchestra/system.txt + prompt_family.
-type RuntimeGetSystemPromptResult struct {
-	Content      string `json:"content"`
-	HasOverride  bool   `json:"has_override"`
-	PromptFamily string `json:"prompt_family"`
-	Path         string `json:"path"`
-}
-
-// RuntimeSetSystemPromptParams writes or clears the system override.
-type RuntimeSetSystemPromptParams struct {
-	Content      *string `json:"content,omitempty"`       // nil = leave file; "" = clear
-	Clear        bool    `json:"clear,omitempty"`         // force delete override
-	PromptFamily *string `json:"prompt_family,omitempty"` // set llm.prompt_family when non-nil
-	Persist      *bool   `json:"persist,omitempty"`       // persist prompt_family to yaml; default true
-}
-
-// RuntimeSetSystemPromptResult confirms write.
-type RuntimeSetSystemPromptResult struct {
-	HasOverride  bool   `json:"has_override"`
-	PromptFamily string `json:"prompt_family"`
-	Persisted    bool   `json:"persisted"`
-	Path         string `json:"path"`
-}
 
 // RuntimeGetSystemPrompt returns the workspace system override text.
 func (c *Core) RuntimeGetSystemPrompt(_ RuntimeGetSystemPromptParams) (*RuntimeGetSystemPromptResult, error) {
@@ -86,3 +60,12 @@ func (c *Core) RuntimeSetSystemPrompt(params RuntimeSetSystemPromptParams) (*Run
 		Path:         prompt.SystemOverridePath(c.workspaceRoot),
 	}, nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	RuntimeGetSystemPromptParams = wire.RuntimeGetSystemPromptParams
+	RuntimeGetSystemPromptResult = wire.RuntimeGetSystemPromptResult
+	RuntimeSetSystemPromptParams = wire.RuntimeSetSystemPromptParams
+	RuntimeSetSystemPromptResult = wire.RuntimeSetSystemPromptResult
+)

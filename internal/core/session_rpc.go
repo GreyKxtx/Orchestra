@@ -25,20 +25,10 @@ import (
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
 
 // ── Session API ──────────────────────────────────────────────────────────────
-
-type SessionStartParams struct {
-	// SessionID optionally reopens an existing on-disk session (v2 snapshot).
-	// When empty, core allocates a new sortable id.
-	SessionID string `json:"session_id,omitempty"`
-}
-
-type SessionStartResult struct {
-	SessionID string `json:"session_id"`
-	Restored  bool   `json:"restored,omitempty"`
-}
 
 // SessionStart creates or reopens a session and returns its canonical id.
 func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, error) {
@@ -97,10 +87,6 @@ func persistSessionTodos(workspaceRoot string, sess *coresession.Session, payloa
 		fmt.Fprintf(os.Stderr, "core: session %s mid-turn todo snapshot failed: %v\n", sess.ID, snapErr)
 	}
 	sess.Unlock()
-}
-
-type SessionGetParams struct {
-	SessionID string `json:"session_id"`
 }
 
 type SessionGetResult struct {
@@ -179,8 +165,6 @@ func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
 	}, nil
 }
 
-type SessionListParams struct{}
-
 type SessionListResult struct {
 	Sessions []sessionfile.Meta `json:"sessions"`
 }
@@ -206,11 +190,6 @@ type SessionUISyncParams struct {
 	Model      string                  `json:"model,omitempty"`
 	UIMessages []sessionfile.UIMessage `json:"ui_messages"`
 	CostUSD    float64                 `json:"cost_usd,omitempty"`
-}
-
-type SessionUISyncResult struct {
-	SessionID string `json:"session_id"`
-	Saved     bool   `json:"saved"`
 }
 
 // SessionUISync persists the TUI chat projection into the unified v2 snapshot.
@@ -779,21 +758,10 @@ func (c *Core) persistSessionTurn(
 	}
 }
 
-type SessionApplyPendingParams struct {
-	SessionID string   `json:"session_id"`
-	Backup    bool     `json:"backup,omitempty"`
-	Paths     []string `json:"paths,omitempty"` // optional: apply only ops whose path matches one of these (workspace-relative)
-}
-
 type SessionApplyPendingResult struct {
 	Applied       bool                      `json:"applied"`
 	ApplyResponse *tools.FSApplyOpsResponse `json:"apply_response,omitempty"`
 	RemainingOps  []ops.AnyOp               `json:"remaining_ops,omitempty"`
-}
-
-type SessionDiscardPendingParams struct {
-	SessionID string   `json:"session_id"`
-	Paths     []string `json:"paths,omitempty"` // optional: discard only ops whose path matches one of these (workspace-relative)
 }
 
 type SessionDiscardPendingResult struct {
@@ -1077,10 +1045,6 @@ func pendingPathsEqual(a, b string) bool {
 	return baseA != "" && baseA == baseB
 }
 
-type SessionHistoryParams struct {
-	SessionID string `json:"session_id"`
-}
-
 type SessionHistoryResult struct {
 	SessionID string        `json:"session_id"`
 	Messages  []llm.Message `json:"messages"`
@@ -1100,19 +1064,6 @@ func (c *Core) SessionHistory(params SessionHistoryParams) (*SessionHistoryResul
 	msgs := sess.CopyHistory()
 	sess.Unlock()
 	return &SessionHistoryResult{SessionID: params.SessionID, Messages: msgs}, nil
-}
-
-type SessionCompactParams struct {
-	SessionID string `json:"session_id"`
-	Query     string `json:"query,omitempty"` // optional goal hint for the summary
-}
-
-type SessionCompactResult struct {
-	SessionID   string `json:"session_id"`
-	BeforeMsgs  int    `json:"before_msgs"`
-	AfterMsgs   int    `json:"after_msgs"`
-	BeforeBytes int    `json:"before_bytes,omitempty"`
-	AfterBytes  int    `json:"after_bytes,omitempty"`
 }
 
 // SessionCompact forces ModeCompaction on the session LLM history and persists
@@ -1170,10 +1121,6 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 	}, nil
 }
 
-type SessionCancelParams struct {
-	SessionID string `json:"session_id"`
-}
-
 // SessionCancel cancels the currently running turn in a session (no-op if idle).
 func (c *Core) SessionCancel(params SessionCancelParams) error {
 	if c == nil {
@@ -1185,10 +1132,6 @@ func (c *Core) SessionCancel(params SessionCancelParams) error {
 	}
 	sess.Cancel()
 	return nil
-}
-
-type SessionCloseParams struct {
-	SessionID string `json:"session_id"`
 }
 
 // SessionClose cancels any running turn and removes the session.
@@ -1233,3 +1176,20 @@ func (c *Core) SessionClose(params SessionCloseParams) error {
 	}
 	return nil
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	SessionApplyPendingParams   = wire.SessionApplyPendingParams
+	SessionCancelParams         = wire.SessionCancelParams
+	SessionCloseParams          = wire.SessionCloseParams
+	SessionCompactParams        = wire.SessionCompactParams
+	SessionCompactResult        = wire.SessionCompactResult
+	SessionDiscardPendingParams = wire.SessionDiscardPendingParams
+	SessionGetParams            = wire.SessionGetParams
+	SessionHistoryParams        = wire.SessionHistoryParams
+	SessionListParams           = wire.SessionListParams
+	SessionStartParams          = wire.SessionStartParams
+	SessionStartResult          = wire.SessionStartResult
+	SessionUISyncResult         = wire.SessionUISyncResult
+)

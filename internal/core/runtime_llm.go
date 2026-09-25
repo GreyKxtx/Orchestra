@@ -8,45 +8,8 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/wire"
 )
-
-// RuntimeSetModelParams switches the active LLM model for this core process.
-// Optionally persists to .orchestra.yml (default persist=true).
-type RuntimeSetModelParams struct {
-	Model    string `json:"model"`
-	Provider string `json:"provider,omitempty"` // named providers: key; empty keeps current
-	// Persist writes llm.model (and provider mirror) to disk. nil → true.
-	Persist *bool `json:"persist,omitempty"`
-}
-
-// RuntimeSetModelResult is returned by runtime.set_model.
-type RuntimeSetModelResult struct {
-	Model         string `json:"model"`
-	Provider      string `json:"provider"`
-	APIBase       string `json:"api_base"`
-	Persisted     bool   `json:"persisted"`
-	ContextTokens int    `json:"context_tokens,omitempty"`
-}
-
-// RuntimeListModelsParams selects which credential set to use for /models.
-type RuntimeListModelsParams struct {
-	Provider string `json:"provider,omitempty"` // empty → current llm config
-}
-
-// RuntimeModelEntry is one remote model id.
-type RuntimeModelEntry struct {
-	ID            string `json:"id"`
-	OwnedBy       string `json:"owned_by,omitempty"`
-	ContextTokens int    `json:"context_tokens,omitempty"`
-}
-
-// RuntimeListModelsResult is returned by runtime.list_models.
-type RuntimeListModelsResult struct {
-	Models   []RuntimeModelEntry `json:"models"`
-	Provider string              `json:"provider"`
-	APIBase  string              `json:"api_base"`
-	Current  string              `json:"current"`
-}
 
 // RuntimeSetModel hot-swaps the in-process LLM client (unless injected for tests)
 // and optionally persists the choice like TUI /model.
@@ -199,22 +162,6 @@ func (c *Core) RuntimeListModels(ctx context.Context, params RuntimeListModelsPa
 	}, nil
 }
 
-// RuntimeCreditsParams selects which provider's balance to query.
-// Empty Provider uses the primary llm config.
-type RuntimeCreditsParams struct {
-	Provider string `json:"provider,omitempty"`
-}
-
-// RuntimeCreditsResult is returned by runtime.credits. Supported=false means
-// the provider has no balance API we know (local servers, plain OpenAI base).
-type RuntimeCreditsResult struct {
-	Provider     string  `json:"provider"`
-	Supported    bool    `json:"supported"`
-	TotalCredits float64 `json:"total_credits,omitempty"`
-	TotalUsage   float64 `json:"total_usage,omitempty"`
-	Balance      float64 `json:"balance,omitempty"`
-}
-
 // RuntimeCredits queries the provider's credits/balance endpoint (OpenRouter).
 func (c *Core) RuntimeCredits(ctx context.Context, params RuntimeCreditsParams) (*RuntimeCreditsResult, error) {
 	if c == nil || c.cfg == nil {
@@ -251,48 +198,6 @@ func (c *Core) RuntimeCredits(ctx context.Context, params RuntimeCreditsParams) 
 	out.TotalUsage = credits.TotalUsage
 	out.Balance = credits.Balance()
 	return out, nil
-}
-
-// RuntimeGetLLMParams is empty for now (reserved).
-type RuntimeGetLLMParams struct{}
-
-// RuntimeGetLLMResult exposes current LLM connection settings (key masked).
-type RuntimeGetLLMResult struct {
-	Provider      string  `json:"provider"`
-	APIBase       string  `json:"api_base"`
-	Model         string  `json:"model"`
-	APIKeySet     bool    `json:"api_key_set"`
-	APIKeyHint    string  `json:"api_key_hint,omitempty"`
-	Temperature   float32 `json:"temperature"`
-	MaxTokens     int     `json:"max_tokens"`
-	TimeoutS      int     `json:"timeout_s"`
-	PromptFamily  string  `json:"prompt_family,omitempty"`
-	Multimodal    bool    `json:"multimodal"`
-	NumCtx        int     `json:"num_ctx,omitempty"`
-	ContextTokens int     `json:"context_tokens,omitempty"`
-}
-
-// RuntimeConfigureLLMParams updates connection fields. Empty api_key leaves the existing key.
-type RuntimeConfigureLLMParams struct {
-	Provider     string   `json:"provider,omitempty"`
-	APIBase      string   `json:"api_base,omitempty"`
-	APIKey       string   `json:"api_key,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Temperature  *float32 `json:"temperature,omitempty"`
-	MaxTokens    *int     `json:"max_tokens,omitempty"`
-	TimeoutS     *int     `json:"timeout_s,omitempty"`
-	PromptFamily *string  `json:"prompt_family,omitempty"`
-	Multimodal   *bool    `json:"multimodal,omitempty"`
-	Persist      *bool    `json:"persist,omitempty"` // default true
-}
-
-// RuntimeConfigureLLMResult mirrors set_model-ish outcome after configure.
-type RuntimeConfigureLLMResult struct {
-	Provider  string `json:"provider"`
-	APIBase   string `json:"api_base"`
-	Model     string `json:"model"`
-	Persisted bool   `json:"persisted"`
-	APIKeySet bool   `json:"api_key_set"`
 }
 
 // RuntimeGetLLM returns the active LLM config (secrets masked).
@@ -532,3 +437,19 @@ func (c *Core) configFilePath() string {
 	}
 	return filepath.Join(c.workspaceRoot, ".orchestra.yml")
 }
+
+// The wire types of this file live in protocol/wire (ARCH-4); the aliases
+// keep the package's names.
+type (
+	RuntimeConfigureLLMParams = wire.RuntimeConfigureLLMParams
+	RuntimeConfigureLLMResult = wire.RuntimeConfigureLLMResult
+	RuntimeCreditsParams      = wire.RuntimeCreditsParams
+	RuntimeCreditsResult      = wire.RuntimeCreditsResult
+	RuntimeGetLLMParams       = wire.RuntimeGetLLMParams
+	RuntimeGetLLMResult       = wire.RuntimeGetLLMResult
+	RuntimeListModelsParams   = wire.RuntimeListModelsParams
+	RuntimeListModelsResult   = wire.RuntimeListModelsResult
+	RuntimeModelEntry         = wire.RuntimeModelEntry
+	RuntimeSetModelParams     = wire.RuntimeSetModelParams
+	RuntimeSetModelResult     = wire.RuntimeSetModelResult
+)

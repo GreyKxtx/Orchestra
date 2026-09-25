@@ -63,7 +63,18 @@ const (
 	//      its core did not finish from the run's checkpoint
 	//      (.orchestra/runs/<run_id>.checkpoint.json); the result carries
 	//      run_id.
-	ProtocolVersion = 23
+	// v24: initialize takes min_protocol_version and answers with the
+	//      negotiated protocol_version and the core's capabilities (the
+	//      methods, notifications and requests it serves); tools_version is
+	//      informational; core.health carries min_protocol_version. The
+	//      contract itself — every params, result and event — is protocol/wire.
+	ProtocolVersion = 24
+
+	// MinProtocolVersion is the oldest protocol version this core still
+	// speaks. initialize picks the newest version both sides speak, so a
+	// client and a core one release apart still connect. The window is one
+	// version: when ProtocolVersion moves, this moves with it.
+	MinProtocolVersion = 23
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1
@@ -119,8 +130,11 @@ type Health struct {
 	Status          string `json:"status"`
 	CoreVersion     string `json:"core_version"`
 	ProtocolVersion int    `json:"protocol_version"`
-	OpsVersion      int    `json:"ops_version"`
-	ToolsVersion    int    `json:"tools_version"`
+	// MinProtocolVersion is the oldest protocol version the core speaks
+	// (ProtocolVersion 24); absent from a core before that.
+	MinProtocolVersion int `json:"min_protocol_version,omitempty"`
+	OpsVersion         int `json:"ops_version"`
+	ToolsVersion       int `json:"tools_version"`
 
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`

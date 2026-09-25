@@ -25,6 +25,7 @@ const order = [
   [mediaDir, "i18n.js"],
   [mediaDir, "icons.js"],
   [webDir, "00-web-prelude.js"],
+  [webDir, "01-wire.generated.js"],
   [sharedDir, "01-dom-state.js"],
   [sharedDir, "02-util.js"],
   [sharedDir, "03-markdown.js"],
