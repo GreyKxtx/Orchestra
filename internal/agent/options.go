@@ -83,6 +83,10 @@ type SubtaskSpawnRequest struct {
 	// DependsOn lists task_ids or keys of this turn that must finish
 	// successfully before the child starts; their results are handed to it.
 	DependsOn []string
+	// ReadOnlyChildren is set by a spawner that promised not to change files
+	// (plan, architecture and ask at the top level): the runner refuses a
+	// child whose role can, whatever subagent_type or task_type routed to it.
+	ReadOnlyChildren bool
 }
 
 // SkillSpec is a thin summary of a discovered skill, used for system-prompt

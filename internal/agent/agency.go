@@ -147,6 +147,25 @@ func (a *Agent) agencyRunner() (AgencyRunner, AgencyInfo, bool) {
 	return ar, info, true
 }
 
+// visibleAgencyInfo is the runner's view narrowed to what this agent may
+// start: a turn that promised not to change files (readOnlyChildren) is not
+// offered the roles that do. The runner refuses them anyway; the enum and the
+// <available_agents> block just stop advertising them.
+func (a *Agent) visibleAgencyInfo(ar AgencyRunner) AgencyInfo {
+	info := ar.AgencyInfo()
+	if !a.readOnlyChildren() || len(info.Delegates) == 0 {
+		return info
+	}
+	kept := make([]AgentCard, 0, len(info.Delegates))
+	for _, c := range info.Delegates {
+		if ReadOnlyRole(c.Role) {
+			kept = append(kept, c)
+		}
+	}
+	info.Delegates = kept
+	return info
+}
+
 // withAgencyTools adds send_message / agent_post / task_board to base and
 // narrows the subagent_type enum of task / task_spawn to the agents this one
 // may actually delegate to — an enum wider than the flows is a list of
@@ -159,7 +178,7 @@ func (a *Agent) withAgencyTools(base []llm.ToolDef) []llm.ToolDef {
 	if !isAgency {
 		return base
 	}
-	info := ar.AgencyInfo()
+	info := a.visibleAgencyInfo(ar)
 	if len(info.Delegates) > 0 {
 		names := make([]string, 0, len(info.Delegates))
 		for _, c := range info.Delegates {
@@ -196,7 +215,7 @@ func (a *Agent) agencyAdvertisement() string {
 	if !isAgency {
 		return ""
 	}
-	info := ar.AgencyInfo()
+	info := a.visibleAgencyInfo(ar)
 	if !info.Enabled {
 		// The agency is off but agents: exist: name them, so the model knows
 		// what the extra subagent_type values are for.

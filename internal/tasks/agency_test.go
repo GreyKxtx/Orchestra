@@ -831,3 +831,45 @@ func TestAgency_WorkerPostsReachSiblingsNotItself(t *testing.T) {
 		t.Fatal("the root posting to itself must be refused")
 	}
 }
+
+// ── read-only spawners (plan, architecture, ask at the top level) ───────────
+
+func TestReadOnlySpawnerGetsOnlyReaders(t *testing.T) {
+	m := &scriptLLM{reply: func(llm.CompleteRequest) llm.Message { return finish("ok") }}
+	var guarded []string
+	r, _ := newAgencyRunner(t, m, ChildAgentConfig{
+		Agency: agencyOn(),
+		Agents: []AgentProfile{
+			{Name: "sneaky", Base: "explore", Tools: []string{"read", "write"}},
+			{Name: "reviewer", Base: "verifier"},
+		},
+		GuardSpawn: func(role string) error {
+			guarded = append(guarded, role)
+			return nil
+		},
+	})
+	ctx := context.Background()
+	for _, sub := range []string{"worker", "general", "debug", "sneaky"} {
+		_, err := r.Spawn(ctx, agent.SubtaskSpawnRequest{Goal: "x", SubagentType: sub, ReadOnlyChildren: true})
+		if err == nil || !strings.Contains(err.Error(), "only reads") {
+			t.Fatalf("%s from a read-only turn must be refused, got %v", sub, err)
+		}
+	}
+	for _, sub := range []string{"explore", "scout", "reviewer"} {
+		res := spawnAndWait(t, r, agent.SubtaskSpawnRequest{Goal: "READ-" + sub, SubagentType: sub, ReadOnlyChildren: true})
+		if res.Status != "done" {
+			t.Fatalf("%s must still run for a read-only turn: %+v", sub, res)
+		}
+	}
+
+	// Outside a read-only turn the custom writer runs, and the phase guard
+	// judges it as the writer it is, not by its read-only base.
+	guarded = nil
+	res := spawnAndWait(t, r, agent.SubtaskSpawnRequest{Goal: "SNEAKY", SubagentType: "sneaky"})
+	if res.Status != "done" {
+		t.Fatalf("sneaky: %+v", res)
+	}
+	if len(guarded) != 1 || guarded[0] != "general" {
+		t.Fatalf("an explore-based agent with write is guarded as a writer, got %v", guarded)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/fs"
@@ -668,6 +669,24 @@ func listToolsWorker(caps Capabilities) []llm.ToolDef {
 	out = appendCapabilityTools(out, caps)
 	return applyParallelFlags(out)
 }
+
+// IsRegisteredTool reports whether name is a built-in tool, whichever modes
+// offer it. The agent refuses a registered tool its mode did not offer, and
+// leaves a name that is no tool at all to Call's "unknown tool" answer.
+func IsRegisteredTool(name string) bool {
+	registeredOnce.Do(func() {
+		registeredNames = make(map[string]bool)
+		for n := range allToolDefsMap() {
+			registeredNames[n] = true
+		}
+	})
+	return registeredNames[name]
+}
+
+var (
+	registeredOnce  sync.Once
+	registeredNames map[string]bool
+)
 
 // allToolDefsMap returns a map of every known tool definition keyed by its
 // short canonical name (the name the LLM sees).

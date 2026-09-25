@@ -159,6 +159,33 @@ func (r *TaskRunner) findProfile(name string) *AgentProfile {
 	return nil
 }
 
+// fileChangingTools are the tools through which a child changes the
+// workspace or starts one that does.
+var fileChangingTools = map[string]bool{
+	"write": true, "edit": true, "fs.delete": true, "fs.rename": true,
+	"ast_rename": true, "lsp.rename": true, "bash": true,
+	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
+	"git.worktree.add": true, "git.worktree.remove": true, "git.worktree.prune": true,
+	"gh.pr.create": true, "skill_invoke": true, "task": true, "task_spawn": true,
+}
+
+// changesFiles reports whether a child of this target can change files: its
+// role writes, or the tool list its custom agent was given does.
+func (t spawnTarget) changesFiles() bool {
+	if !agent.ReadOnlyRole(t.role) {
+		return true
+	}
+	if t.profile == nil {
+		return false
+	}
+	for _, n := range t.profile.Tools {
+		if fileChangingTools[n] {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveTarget maps a subagent_type (and optional dept) to the role the child
 // runs as and the address it answers to. An unknown type keeps the legacy
 // meaning (a mode name, gated as a writer by the phase guard).

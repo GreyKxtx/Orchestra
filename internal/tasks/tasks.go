@@ -363,6 +363,10 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	if err := r.checkReach(from, target, verb); err != nil {
 		return "", err
 	}
+	if req.ReadOnlyChildren && target.changesFiles() {
+		return "", fmt.Errorf("%s: %s can change files, and this turn only reads (plan, architecture and ask modes); delegate to explore, scout, ask or verifier, and describe the change in your answer",
+			from.address, target.address)
+	}
 	if p := target.profile; p != nil {
 		if strings.TrimSpace(req.Provider) == "" && strings.TrimSpace(req.Model) == "" && strings.TrimSpace(req.Tier) == "" {
 			req.Provider, req.Model, req.Tier = p.Provider, p.Model, p.Tier
@@ -382,7 +386,13 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	}
 
 	if r.child.GuardSpawn != nil {
-		if err := r.child.GuardSpawn(target.role); err != nil {
+		// The phase guard judges by role. A custom agent on a read-only base
+		// that was given write tools is a writer, whatever its base says.
+		guardRole := target.role
+		if agent.ReadOnlyRole(guardRole) && target.changesFiles() {
+			guardRole = "general"
+		}
+		if err := r.child.GuardSpawn(guardRole); err != nil {
 			return "", err
 		}
 	}

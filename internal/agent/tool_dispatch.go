@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 )
@@ -157,6 +156,9 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	refusal := a.browserCallRefusal(name)
 	if refusal == nil {
 		refusal = a.mcpModeRefusal(name)
+	}
+	if refusal == nil {
+		refusal = a.offeredToolRefusal(name)
 	}
 	if refusal != nil {
 		toolResult := a.deniedToolResult(name, tc.Input, refusal.Error())
@@ -685,15 +687,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 		allowed := false
 		if json.Unmarshal(tc.Input, &pathReq) == nil {
-			switch a.opts.Mode {
-			case ModeOrchestra:
-				allowed = plan.IsOrchestraLeadWritablePath(pathReq.Path, a.effectivePlanPath())
-			case ModeArchitecture:
-				// Dept Lead surface (spec §6.1): plans + L2 playbook + specs.
-				allowed = plan.IsDeptLeadWritablePath(pathReq.Path, a.effectivePlanPath())
-			default:
-				allowed = plan.IsWritablePath(pathReq.Path, a.effectivePlanPath())
-			}
+			allowed = a.leadWritablePath(pathReq.Path)
 		}
 		if !allowed {
 			label := "plan mode"
