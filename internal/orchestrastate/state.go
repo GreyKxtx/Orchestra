@@ -307,6 +307,12 @@ func TouchPhaseStamp(projectRoot string, prevPhase Phase) error {
 		if st.PhaseSince == "" || st.Phase != prevPhase {
 			st.PhaseSince = time.Now().UTC().Format(time.RFC3339)
 		}
+		// The clarification budget is per phase (spec §4.3): a new phase
+		// asks its own questions. The counter used to run for the whole
+		// session, so discovery could spend what execution needed.
+		if prevPhase != "" && st.Phase != prevPhase {
+			st.ClarificationRounds = 0
+		}
 		return nil
 	})
 	return err

@@ -205,6 +205,11 @@ type TaskRunner struct {
 	messages int
 	// rootInbox holds notes for the top-level agent, drained on its next step.
 	rootInbox []agent.InboxMessage
+	// barrierMu puts one round of questions to the user at a time, and
+	// answered keeps this turn's answers by question, so a question two
+	// children both return is asked once (question_barrier.go).
+	barrierMu sync.Mutex
+	answered  map[string]string
 	// closed is set by Close. A spawn after it is refused: a relay or a
 	// task_spawn racing the end of the turn used to register into the fresh
 	// map Close left behind, was never cancelled, and edited the workspace
@@ -985,14 +990,21 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if subagentType == "" || subagentType == "explore" {
 		taskResult = agent.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
-	// A Dept Lead that returns batch_workorders[] hands them to the runtime
-	// (spec §3.7, §5.6): the workers are spawned, run and verified here, and
-	// the Lead's result carries their outcome up.
-	taskResult = r.relayBatchWorkOrders(ctx, scope, target, taskResult)
-
 	// Question Barrier (spec §4.3): relay open_questions[] to the user via
 	// the runtime, append answers to decisions.md, attach them to the result.
-	taskResult = r.relayOpenQuestions(ctx, taskResult)
+	// It runs before the relay below: workers used to start on the Lead's
+	// WorkOrders while its blocking questions were still open (ORC-9).
+	taskResult, held := r.relayOpenQuestions(ctx, taskResult)
+
+	// A Dept Lead that returns batch_workorders[] hands them to the runtime
+	// (spec §3.7, §5.6): the workers are spawned, run and verified here, and
+	// the Lead's result carries their outcome up. A batch written before its
+	// blocking questions were answered waits for the Lead to revise it.
+	if held {
+		taskResult = holdBatchWorkOrders(taskResult)
+	} else {
+		taskResult = r.relayBatchWorkOrders(ctx, scope, target, taskResult)
+	}
 	taskResult = r.attachPlaybookPromoteHints(taskResult, workOrder)
 
 	// Phase timeouts (spec §4.5): stale-phase advisory + blocked escalation.

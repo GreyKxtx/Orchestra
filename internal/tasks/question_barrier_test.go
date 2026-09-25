@@ -83,7 +83,7 @@ func TestRelayOpenQuestions_AsksAndRecords(t *testing.T) {
 	r := barrierRunner(t, root, ChildAgentConfig{QuestionAsker: asker})
 
 	in := `{"status":"blocked","open_questions":[{"id":"q1","dept":"backend","text":"retention?","options":["forever","24m"]}]}`
-	out := r.relayOpenQuestions(context.Background(), in)
+	out, _ := r.relayOpenQuestions(context.Background(), in)
 
 	if len(asker.asked) != 1 || len(asker.asked[0]) != 1 {
 		t.Fatalf("one barrier batch expected, got %+v", asker.asked)
@@ -122,7 +122,7 @@ func TestRelayOpenQuestions_BudgetExhausted(t *testing.T) {
 	r := barrierRunner(t, root, ChildAgentConfig{QuestionAsker: asker, MaxClarificationRounds: 2})
 
 	in := `{"status":"blocked","open_questions":[{"id":"q1","text":"tz?"}]}`
-	out := r.relayOpenQuestions(context.Background(), in)
+	out, _ := r.relayOpenQuestions(context.Background(), in)
 
 	if len(asker.asked) != 0 {
 		t.Fatal("budget exhausted → the user must not be asked")
@@ -140,7 +140,9 @@ func TestRelayOpenQuestions_BudgetExhausted(t *testing.T) {
 	}
 }
 
-// Without an orchestrated session or without an asker the barrier is a no-op.
+// Without an orchestrated session the barrier is a no-op. Without an asker
+// nobody answers, and the result says so: a barrier that is silently off
+// reads as one that answered (ORC-9).
 func TestRelayOpenQuestions_NoOpModes(t *testing.T) {
 	in := `{"status":"blocked","open_questions":[{"id":"q1","text":"tz?"}]}`
 
@@ -148,15 +150,15 @@ func TestRelayOpenQuestions_NoOpModes(t *testing.T) {
 	rootA := t.TempDir()
 	writeBarrierState(t, rootA, 0)
 	rA := barrierRunner(t, rootA, ChildAgentConfig{})
-	if out := rA.relayOpenQuestions(context.Background(), in); out != in {
-		t.Fatal("no asker → result must pass through unchanged")
+	if out, _ := rA.relayOpenQuestions(context.Background(), in); !strings.Contains(out, `"open_questions_relayed":false`) {
+		t.Fatalf("no asker → the result must say nobody answered: %s", out)
 	}
 
 	// No state.md (not an orchestra session).
 	rootB := t.TempDir()
 	asker := &scriptedAsker{answers: []string{"x"}}
 	rB := barrierRunner(t, rootB, ChildAgentConfig{QuestionAsker: asker})
-	if out := rB.relayOpenQuestions(context.Background(), in); out != in || len(asker.asked) != 0 {
+	if out, _ := rB.relayOpenQuestions(context.Background(), in); out != in || len(asker.asked) != 0 {
 		t.Fatal("no orchestrated state → barrier off")
 	}
 
@@ -164,7 +166,7 @@ func TestRelayOpenQuestions_NoOpModes(t *testing.T) {
 	rootC := t.TempDir()
 	writeBarrierState(t, rootC, 0)
 	rC := barrierRunner(t, rootC, ChildAgentConfig{QuestionAsker: asker, RelayViaLLM: true})
-	if out := rC.relayOpenQuestions(context.Background(), in); out != in {
+	if out, _ := rC.relayOpenQuestions(context.Background(), in); out != in {
 		t.Fatal("relay_via_llm → barrier off")
 	}
 }
