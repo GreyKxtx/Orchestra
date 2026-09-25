@@ -18,6 +18,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
 
+// The protocol range this page speaks, read from the generated fragment the
+// bundle carries (protocol/wire is the source; go generate keeps it current).
+const wireSrc = fs.readFileSync(path.join(root, "src", "01-wire.generated.js"), "utf8");
+const WIRE_MAX = Number(/\n\s*PROTOCOL_VERSION: (\d+)/.exec(wireSrc)[1]);
+const WIRE_MIN = Number(/\n\s*MIN_PROTOCOL_VERSION: (\d+)/.exec(wireSrc)[1]);
+
 /**
  * Evaluate the bundle in a sandbox with a scriptable socket. Returns handles
  * for driving it: `sent` are the frames the page wrote, `deliver` pushes a
@@ -442,7 +448,7 @@ async function handshake(b) {
   answer(b, "core.health", {
     workspace_root: "/w",
     project_id: "p",
-    protocol_version: 15,
+    protocol_version: WIRE_MAX,
     ops_version: 1,
     tools_version: 15,
   });
@@ -464,7 +470,7 @@ test("connecting handshakes and starts a session", async () => {
   answer(b, "core.health", {
     workspace_root: "/w",
     project_id: "p",
-    protocol_version: 15,
+    protocol_version: WIRE_MAX,
     ops_version: 1,
     tools_version: 15,
   });
@@ -476,6 +482,59 @@ test("connecting handshakes and starts a session", async () => {
 
   await tick();
   assert.ok(answer(b, "session.start", { session_id: "s-1", restored: false }));
+});
+
+test("initialize asks for the page's own protocol range, not what core.health echoed", async () => {
+  const b = loadBundle();
+  await tick();
+  b.open();
+  // A core one version ahead, whose range reaches down to this page's newest.
+  answer(b, "core.health", {
+    workspace_root: "/w",
+    project_id: "p",
+    protocol_version: WIRE_MAX + 1,
+    min_protocol_version: WIRE_MAX,
+    ops_version: 1,
+    tools_version: 99,
+  });
+  await tick();
+  const init = answer(b, "initialize", {});
+  assert.equal(init.params.protocol_version, WIRE_MAX, "the newest version both sides speak");
+  assert.equal(init.params.min_protocol_version, WIRE_MIN, "the oldest this page speaks");
+  assert.notEqual(init.params.tools_version, 99, "tools_version is the page's own, not an echo");
+});
+
+test("a core before v24 is asked for exactly its version", async () => {
+  const b = loadBundle();
+  await tick();
+  b.open();
+  answer(b, "core.health", {
+    workspace_root: "/w",
+    project_id: "p",
+    protocol_version: WIRE_MIN,
+    ops_version: 1,
+    tools_version: 15,
+  });
+  await tick();
+  const init = answer(b, "initialize", {});
+  assert.equal(init.params.protocol_version, WIRE_MIN, "an old core compares the number exactly");
+});
+
+test("a core outside the page's protocol range is refused, with both ranges", async () => {
+  const b = loadBundle();
+  await tick();
+  b.open();
+  answer(b, "core.health", {
+    workspace_root: "/w",
+    project_id: "p",
+    protocol_version: WIRE_MIN - 1,
+    ops_version: 1,
+    tools_version: 15,
+  });
+  await tick();
+  assert.ok(!b.sent.some((m) => m.method === "initialize"), "no initialize goes out");
+  const err = b.inbound.find((m) => m.type === "error");
+  assert.ok(err && /protocol_version mismatch/.test(err.message), `the renderer hears why: ${JSON.stringify(err)}`);
 });
 
 // The browser panel's address bar is a search box too, the way every
@@ -920,7 +979,7 @@ test("a dropped socket reconnects into the same chat", async () => {
   answer(b, "core.health", {
     workspace_root: "/w",
     project_id: "p",
-    protocol_version: 15,
+    protocol_version: WIRE_MAX,
     ops_version: 1,
     tools_version: 15,
   });
@@ -1273,7 +1332,7 @@ async function handshakeFor(b, projectId) {
   answerOn(b, projectId, "core.health", {
     workspace_root: "/" + projectId,
     project_id: projectId,
-    protocol_version: 15,
+    protocol_version: WIRE_MAX,
     ops_version: 1,
     tools_version: 15,
   });

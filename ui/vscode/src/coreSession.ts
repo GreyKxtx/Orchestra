@@ -19,19 +19,18 @@ import type {
   WorkflowStagePayload,
 } from "./protocol/events";
 import type { AssistantTurnProjection, RawUIMessage } from "./chat/turnProjection";
+// The protocol versions this extension speaks, newest and oldest, from the
+// contract generated out of protocol/wire. initialize picks the newest both
+// sides have, so an extension and a core one release apart still connect.
+import {
+  MIN_PROTOCOL_VERSION,
+  OPS_VERSION,
+  PROTOCOL_VERSION,
+  TOOLS_VERSION,
+} from "./protocol/wire.generated";
 import { RpcClient } from "./rpc/client";
 import { t } from "./i18n";
 
-/**
- * Must match protocol/version.go: the protocol versions this extension
- * speaks, newest and oldest. initialize picks the newest both sides have,
- * so an extension and a core one release apart still connect.
- */
-const PROTOCOL_VERSION = 24;
-const MIN_PROTOCOL_VERSION = 23;
-const OPS_VERSION = 1;
-/** The tools this extension was written against; informational to the core. */
-export const TOOLS_VERSION = 18;
 
 /** session.message can run a long agent turn (orchestrated multi-department runs). */
 const MESSAGE_TIMEOUT_MS = 60 * 60 * 1000;
@@ -1695,7 +1694,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
         throw new Error(
           `protocol_version mismatch: extension speaks ${MIN_PROTOCOL_VERSION}..${PROTOCOL_VERSION}, ` +
             `core ${coreMin}..${coreMax}. Whichever is older is the one to update — the extension's ` +
-            `constants live in src/coreSession.ts, the core's in protocol/version.go.`
+            `range is generated from protocol/wire, the core's is protocol/version.go.`
         );
       }
       const projectId =

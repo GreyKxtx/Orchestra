@@ -5,15 +5,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/protocol"
 )
 
-// pinnedConstant reads `NAME = <number>` from a TypeScript source. Only the
-// source is checked: ui/vscode/out/ is untracked local build output, absent
-// in a fresh clone and in CI, so a test that read it would fail everywhere
-// the extension has not been compiled.
+// pinnedConstant reads `NAME = <number>` from a TypeScript source.
 func pinnedConstant(t *testing.T, rel, name string) int {
 	t.Helper()
 	data, err := os.ReadFile(rel)
@@ -31,33 +29,40 @@ func pinnedConstant(t *testing.T, rel, name string) int {
 	return got
 }
 
-// The VS Code extension pins its own copy of the protocol versions and
-// checks them against core.health *before* initialize
-// (ui/vscode/src/coreSession.ts). Nothing else compares the two, which is how
-// the extension came to sit at 14 against a core at 15 — unable to connect at
-// all, with an error message blaming orchestra.exe. Since ProtocolVersion 24
-// the two sides negotiate within a range, so the extension in this tree must
-// speak the core's range: the same numbers, kept together by this test.
-func TestVSCodeExtensionPinsCurrentProtocolVersion(t *testing.T) {
-	rel := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
-	if got := pinnedConstant(t, rel, "PROTOCOL_VERSION"); got != protocol.ProtocolVersion {
-		t.Errorf("%s pins PROTOCOL_VERSION = %d, core is %d — the extension "+
-			"speaks the core's range, so these must move together",
-			rel, got, protocol.ProtocolVersion)
+// The VS Code extension used to pin its own copy of the protocol version
+// and throw on any mismatch with core.health *before* initialize. Nothing
+// compared the two copies, which is how the extension came to sit at 14
+// against a core at 15 — unable to connect at all, with an error message
+// blaming orchestra.exe. Its versions now come from the contract generated
+// out of protocol/wire (ui/vscode/src/protocol/wire.generated.ts), which
+// protocol/wire's own test keeps current. This checks the extension takes
+// them from there and pins no copy of its own.
+//
+// Only the TypeScript source is checked: ui/vscode/out/ is untracked local
+// build output, absent in a fresh clone and in CI.
+func TestVSCodeExtensionTakesVersionsFromTheGeneratedContract(t *testing.T) {
+	session := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
+	data, err := os.ReadFile(session)
+	if err != nil {
+		t.Fatalf("read %s: %v", session, err)
 	}
-	if got := pinnedConstant(t, rel, "MIN_PROTOCOL_VERSION"); got != protocol.MinProtocolVersion {
-		t.Errorf("%s pins MIN_PROTOCOL_VERSION = %d, core is %d",
-			rel, got, protocol.MinProtocolVersion)
+	src := string(data)
+	if !strings.Contains(src, `from "./protocol/wire.generated"`) {
+		t.Errorf("%s does not import its protocol versions from ./protocol/wire.generated", session)
 	}
-}
+	if m := regexp.MustCompile(`(?m)^\s*(?:export\s+)?const\s+(MIN_)?PROTOCOL_VERSION\s*=`).FindString(src); m != "" {
+		t.Errorf("%s pins a copy of the protocol version by hand (%q); it comes from the generated contract", session, strings.TrimSpace(m))
+	}
 
-// The extension sends its TOOLS_VERSION in initialize. The core no longer
-// refuses a different one (it is informational since ProtocolVersion 24),
-// but the number says which tools the extension was written against, so it
-// is kept current.
-func TestVSCodeExtensionPinsCurrentToolsVersion(t *testing.T) {
-	rel := filepath.Join("..", "..", "ui", "vscode", "src", "coreSession.ts")
-	if got := pinnedConstant(t, rel, "TOOLS_VERSION"); got != protocol.ToolsVersion {
-		t.Errorf("%s pins TOOLS_VERSION = %d, core is %d", rel, got, protocol.ToolsVersion)
+	generated := filepath.Join("..", "..", "ui", "vscode", "src", "protocol", "wire.generated.ts")
+	for name, want := range map[string]int{
+		"PROTOCOL_VERSION":     protocol.ProtocolVersion,
+		"MIN_PROTOCOL_VERSION": protocol.MinProtocolVersion,
+		"OPS_VERSION":          protocol.OpsVersion,
+		"TOOLS_VERSION":        protocol.ToolsVersion,
+	} {
+		if got := pinnedConstant(t, generated, name); got != want {
+			t.Errorf("%s: %s = %d, core is %d — run: go generate ./protocol/wire/...", generated, name, got, want)
+		}
 	}
 }

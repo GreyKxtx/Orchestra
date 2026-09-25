@@ -312,12 +312,36 @@
       // — and it is where project_root and project_id come from.
       const health = await conn.send("core.health", {});
       st.workspaceRoot = health.workspace_root || "";
+      // The version to speak: the newest in both ranges. WIRE is this page's
+      // own range, generated from protocol/wire; the page used to echo
+      // whatever core.health reported, which made the check mean nothing. A
+      // core before v24 reports no min_protocol_version and speaks its one
+      // version exactly, so asking for that version is what connects to it.
+      const coreMax =
+        typeof health.protocol_version === "number" ? health.protocol_version : WIRE.PROTOCOL_VERSION;
+      const coreMin =
+        typeof health.min_protocol_version === "number" ? health.min_protocol_version : coreMax;
+      const protocolVersion = Math.min(WIRE.PROTOCOL_VERSION, coreMax);
+      if (protocolVersion < WIRE.MIN_PROTOCOL_VERSION || protocolVersion < coreMin) {
+        throw new Error(
+          "protocol_version mismatch: this page speaks " +
+            WIRE.MIN_PROTOCOL_VERSION +
+            ".." +
+            WIRE.PROTOCOL_VERSION +
+            ", the core " +
+            coreMin +
+            ".." +
+            coreMax +
+            " — the page and the core come from different builds"
+        );
+      }
       await conn.send("initialize", {
         project_root: st.workspaceRoot,
         project_id: health.project_id || "",
-        protocol_version: health.protocol_version,
-        ops_version: health.ops_version,
-        tools_version: health.tools_version,
+        protocol_version: protocolVersion,
+        min_protocol_version: WIRE.MIN_PROTOCOL_VERSION,
+        ops_version: WIRE.OPS_VERSION,
+        tools_version: WIRE.TOOLS_VERSION,
       });
       // A remembered id means this is a reconnect, not a first connection:
       // reopen the conversation that was on screen instead of silently

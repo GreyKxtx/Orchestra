@@ -6,7 +6,10 @@
 // the web page — used to keep its own copy of these shapes, by hand, and the
 // core built its notifications as map[string]any, so nothing held the copies
 // together. This package is the one definition: Go clients import it, and
-// the core answers and notifies with its types.
+// the core answers and notifies with its types. The TypeScript for the VS
+// Code extension, the constants for the web page and a JSON Schema are
+// generated from this package's source (generate.go), and a test fails
+// while they are stale.
 //
 // It depends on nothing but the standard library and the protocol package,
 // so every module can import it.

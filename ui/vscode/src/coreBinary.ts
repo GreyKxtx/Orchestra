@@ -19,7 +19,7 @@ export function bundledCorePath(extensionPath: string): string {
  * Candidate paths in priority order (dedupe happens in resolveBinaryPath).
  * Deliberately limited to the bundled binary, the extension dev tree and the
  * workspace root — walking parent directories used to pick up random stale
- * orchestra.exe builds (→ tools_version mismatch).
+ * orchestra.exe builds (→ a core of another build).
  */
 export function coreBinaryCandidates(workspaceRoot: string, extensionPath: string): string[] {
   const exeName = coreExecutableName();
