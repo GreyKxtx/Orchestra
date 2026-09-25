@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -105,38 +106,28 @@ func (r *Runner) InvokeSkill(ctx context.Context, name, task string) (string, er
 	}
 
 	childClient := r.baseClient
-	overridden := false
-	if s.Provider != "" {
-		provCfg, ok := r.cfg.FindProvider(s.Provider)
-		if !ok {
-			return "", fmt.Errorf("skill %q: provider %q not found in providers: section", name, s.Provider)
+	if s.Provider != "" || s.Model != "" {
+		client, _, err := app.ClientFor(r.cfg, s.Provider, s.Model, r.agentLogger)
+		if err != nil {
+			return "", fmt.Errorf("skill %q: %w", name, err)
 		}
-		if s.Model != "" {
-			provCfg.Model = s.Model
-		}
-		childClient = llm.NewClient(provCfg)
-		overridden = true
-	} else if s.Model != "" {
-		overrideCfg := r.cfg.LLM
-		overrideCfg.Model = s.Model
-		childClient = llm.NewClient(overrideCfg)
-		overridden = true
-	}
-	if overridden {
-		if oc, ok := llm.AsOpenAIClient(childClient); ok && r.agentLogger != nil {
-			oc.SetLogger(r.agentLogger)
-		}
+		childClient = client
 	}
 
-	ag, err := agent.New(childClient, r.validator, r.toolRunner, agent.Options{
-		MaxSteps:             r.maxSteps,
-		AllowExec:            r.allowExec,
-		AllowWeb:             r.allowWeb,
-		AllowBrowser:         r.allowBrowser,
-		CustomTools:          childTools,
-		SystemPromptOverride: systemPrompt,
-		IsChild:              true,
-	})
+	// The project's budgets, breakers, step timeout and permission rules, as
+	// every other child gets them. A skill child used to run with none: the
+	// agent's 25-second step timeout, no prompt budget, no deny rules.
+	settings := app.SettingsFrom(r.cfg)
+	ag, err := agent.New(childClient, r.validator, r.toolRunner, app.ChildOptions(&settings, func(o *agent.Options) {
+		o.MaxSteps = r.maxSteps
+		o.AllowExec = r.allowExec
+		o.AllowWeb = r.allowWeb
+		o.AllowBrowser = r.allowBrowser
+		o.CustomTools = childTools
+		o.SystemPromptOverride = systemPrompt
+		o.AgentLogger = r.agentLogger
+		o.ModelLabel = childModel(r.cfg, s.Provider, s.Model)
+	}))
 	if err != nil {
 		return "", fmt.Errorf("skill %q: %w", name, err)
 	}
@@ -199,4 +190,21 @@ func childClosingText(hist []llm.Message) string {
 		return text
 	}
 	return ""
+}
+
+// childModel is the model a skill child runs on: its own, its provider's, or
+// the turn's. The prompt family follows it.
+func childModel(cfg *config.ProjectConfig, provider, model string) string {
+	if model != "" {
+		return model
+	}
+	if cfg == nil {
+		return ""
+	}
+	if provider != "" {
+		if p, ok := cfg.FindProvider(provider); ok {
+			return p.Model
+		}
+	}
+	return cfg.LLM.Model
 }

@@ -54,3 +54,57 @@ func TestASpecOnlyModeLivesInTwoFiles(t *testing.T) {
 		}
 	}
 }
+
+// Agents are assembled in one place. agent.Options were built by hand in
+// eleven — the CLI, the core's launch, three skill and stage launchers, the
+// task runner and its verifier, three pipeline stages — and each read the
+// config its own way until they disagreed (ARCH-1). internal/app is the
+// composition root; nothing else writes an agent.Options literal.
+func TestAgentOptionsAreBuiltOnlyInApp(t *testing.T) {
+	root := repoRoot(t)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "testdata", "dist", "out":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "internal/app/") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "agent.Options{") {
+			t.Errorf("%s builds an agent.Options literal; use app.TurnOptions or app.ChildOptions", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The composition root sits below everything that launches an agent: core,
+// the CLI, the task runner, skills, workflow stages and the pipeline all call
+// it, so it may import none of them.
+func TestAppStaysBelowItsCallers(t *testing.T) {
+	root := repoRoot(t)
+	for _, dep := range listDeps(t, root, "./internal/app") {
+		for _, caller := range []string{"core", "cli", "tasks", "skillrun", "stageinvoke", "pipeline", "workflow"} {
+			if dep == modulePath+"/internal/"+caller {
+				t.Errorf("internal/app links %s, one of its callers", dep)
+			}
+		}
+	}
+}

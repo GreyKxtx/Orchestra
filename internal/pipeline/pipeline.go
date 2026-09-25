@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -229,6 +230,50 @@ func Run(
 
 // --- stage runners ---
 
+// stageOptions builds one stage's agent: a child of the pipeline (the
+// investigator and the critic answer through task_result, which only a child
+// is offered), with the pipeline's budgets, breakers and rules, then what set
+// adds for the stage.
+//
+// The stages used to be built as top-level agents, so task_result was taken
+// out of the investigator's and critic's tool lists and refused if called:
+// the investigation never reached the coder and the critic could never
+// accept.
+func stageOptions(opts Options, stage string, set func(*agent.Options)) agent.Options {
+	return app.ChildOptions(nil, func(o *agent.Options) {
+		o.MaxInvalidRetries = opts.MaxInvalidRetries
+		o.MaxDeniedToolRepeats = opts.MaxDeniedToolRepeats
+		o.MaxToolErrorRepeats = opts.MaxToolErrorRepeats
+		o.MaxFinalFailures = opts.MaxFinalFailures
+		o.MaxPromptBytes = opts.MaxPromptBytes
+		o.CompactThresholdPct = opts.CompactThresholdPct
+		o.ModelContextTokens = opts.ModelContextTokens
+		o.CompletionMaxTokens = opts.CompletionMaxTokens
+		o.LLMStepTimeout = opts.LLMStepTimeout
+		o.CompactionClient = opts.CompactionClient
+		o.CompactionContextTokens = opts.CompactionContextTokens
+		o.PromptFamily = opts.PromptFamily
+		o.ResponseFormat = opts.ResponseFormat
+		o.Debug = opts.Debug
+		o.AgentLogger = opts.AgentLogger
+		o.PermissionRules = opts.PermissionRules
+		o.OnEvent = wrapOnEvent(stage, opts.OnEvent)
+		o.UsageTracker = opts.UsageTracker
+		o.ProviderLabel = opts.ProviderLabel
+		o.ModelLabel = opts.ModelLabel
+		set(o)
+	})
+}
+
+func firstPositive(vals ...int) int {
+	for _, v := range vals {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
 func runInvestigator(
 	ctx context.Context,
 	llmClient llm.Client,
@@ -239,32 +284,11 @@ func runInvestigator(
 	opts Options,
 ) (text string, steps int, err error) {
 	goal := buildInvestigatorGoal(query, runtimeEvidence)
-	ag, err := agent.New(llmClient, validator, toolRunner, agent.Options{
-		MaxSteps:             opts.MaxStepsInvestigator,
-		MaxInvalidRetries:    opts.MaxInvalidRetries,
-		MaxDeniedToolRepeats: opts.MaxDeniedToolRepeats,
-		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
-		MaxFinalFailures:     opts.MaxFinalFailures,
-		MaxPromptBytes:       opts.MaxPromptBytes,
-		CompactThresholdPct:  opts.CompactThresholdPct,
-		ModelContextTokens:   opts.ModelContextTokens,
-		CompletionMaxTokens:  opts.CompletionMaxTokens,
-		LLMStepTimeout:       opts.LLMStepTimeout,
-
-		CompactionClient:        opts.CompactionClient,
-		CompactionContextTokens: opts.CompactionContextTokens,
-		PromptFamily:            opts.PromptFamily,
-		ResponseFormat:          opts.ResponseFormat,
-		Debug:                   opts.Debug,
-		AgentLogger:             opts.AgentLogger,
-		PermissionRules:         opts.PermissionRules,
+	ag, err := agent.New(llmClient, validator, toolRunner, stageOptions(opts, "investigator", func(o *agent.Options) {
+		o.MaxSteps = opts.MaxStepsInvestigator
 		// Read-only + task_result + runtime for trace correlation.
-		CustomTools:   tools.ListToolsForInvestigator(),
-		OnEvent:       wrapOnEvent("investigator", opts.OnEvent),
-		UsageTracker:  opts.UsageTracker,
-		ProviderLabel: opts.ProviderLabel,
-		ModelLabel:    opts.ModelLabel,
-	})
+		o.CustomTools = tools.ListToolsForInvestigator()
+	}))
 	if err != nil {
 		return "", 0, err
 	}
@@ -283,33 +307,12 @@ func runCoder(
 	goal string,
 	opts Options,
 ) (res *agent.Result, steps int, err error) {
-	ag, err := agent.New(llmClient, validator, toolRunner, agent.Options{
-		MaxSteps:             opts.MaxStepsCoder,
-		MaxInvalidRetries:    opts.MaxInvalidRetries,
-		MaxDeniedToolRepeats: opts.MaxDeniedToolRepeats,
-		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
-		MaxFinalFailures:     opts.MaxFinalFailures,
-		MaxPromptBytes:       opts.MaxPromptBytes,
-		CompactThresholdPct:  opts.CompactThresholdPct,
-		ModelContextTokens:   opts.ModelContextTokens,
-		CompletionMaxTokens:  opts.CompletionMaxTokens,
-		LLMStepTimeout:       opts.LLMStepTimeout,
-
-		CompactionClient:        opts.CompactionClient,
-		CompactionContextTokens: opts.CompactionContextTokens,
-		PromptFamily:            opts.PromptFamily,
-		ResponseFormat:          opts.ResponseFormat,
-		Debug:                   opts.Debug,
-		AgentLogger:             opts.AgentLogger,
-		PermissionRules:         opts.PermissionRules,
+	ag, err := agent.New(llmClient, validator, toolRunner, stageOptions(opts, "coder", func(o *agent.Options) {
+		o.MaxSteps = opts.MaxStepsCoder
 		// Full build mode, always dry-run — pipeline applies at the end.
-		Apply:         false,
-		Backup:        false,
-		OnEvent:       wrapOnEvent("coder", opts.OnEvent),
-		UsageTracker:  opts.UsageTracker,
-		ProviderLabel: opts.ProviderLabel,
-		ModelLabel:    opts.ModelLabel,
-	})
+		o.Apply = false
+		o.Backup = false
+	}))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -328,32 +331,11 @@ func runCritic(
 	goal string,
 	opts Options,
 ) (accept bool, text string, steps int, err error) {
-	ag, err := agent.New(llmClient, validator, toolRunner, agent.Options{
-		MaxSteps:             opts.MaxStepsCritic,
-		MaxInvalidRetries:    opts.MaxInvalidRetries,
-		MaxDeniedToolRepeats: opts.MaxDeniedToolRepeats,
-		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
-		MaxFinalFailures:     opts.MaxFinalFailures,
-		MaxPromptBytes:       opts.MaxPromptBytes,
-		CompactThresholdPct:  opts.CompactThresholdPct,
-		ModelContextTokens:   opts.ModelContextTokens,
-		CompletionMaxTokens:  opts.CompletionMaxTokens,
-		LLMStepTimeout:       opts.LLMStepTimeout,
-
-		CompactionClient:        opts.CompactionClient,
-		CompactionContextTokens: opts.CompactionContextTokens,
-		PromptFamily:            opts.PromptFamily,
-		ResponseFormat:          opts.ResponseFormat,
-		Debug:                   opts.Debug,
-		AgentLogger:             opts.AgentLogger,
-		PermissionRules:         opts.PermissionRules,
+	ag, err := agent.New(llmClient, validator, toolRunner, stageOptions(opts, "critic", func(o *agent.Options) {
+		o.MaxSteps = opts.MaxStepsCritic
 		// Read-only + task_result; no write tools.
-		CustomTools:   tools.ListToolsForChild(),
-		OnEvent:       wrapOnEvent("critic", opts.OnEvent),
-		UsageTracker:  opts.UsageTracker,
-		ProviderLabel: opts.ProviderLabel,
-		ModelLabel:    opts.ModelLabel,
-	})
+		o.CustomTools = tools.ListToolsForChild()
+	}))
 	if err != nil {
 		return false, "", 0, err
 	}
@@ -616,16 +598,9 @@ func applyDefaults(opts *Options) {
 	if opts.MaxPromptBytes <= 0 {
 		opts.MaxPromptBytes = 64 * 1024
 	}
-	ao := agent.Options{
-		MaxInvalidRetries:    opts.MaxInvalidRetries,
-		MaxDeniedToolRepeats: opts.MaxDeniedToolRepeats,
-		MaxToolErrorRepeats:  opts.MaxToolErrorRepeats,
-		MaxFinalFailures:     opts.MaxFinalFailures,
-		ProviderLabel:        opts.ProviderLabel,
-	}
-	agent.FillRetryLimits(&ao, opts.ProviderLabel)
-	opts.MaxInvalidRetries = ao.MaxInvalidRetries
-	opts.MaxDeniedToolRepeats = ao.MaxDeniedToolRepeats
-	opts.MaxToolErrorRepeats = ao.MaxToolErrorRepeats
-	opts.MaxFinalFailures = ao.MaxFinalFailures
+	lim, fb := agent.RetryLimitsForProvider(opts.ProviderLabel), agent.FallbackRetryLimits()
+	opts.MaxInvalidRetries = firstPositive(opts.MaxInvalidRetries, lim.MaxInvalidRetries, fb.MaxInvalidRetries)
+	opts.MaxDeniedToolRepeats = firstPositive(opts.MaxDeniedToolRepeats, lim.MaxDeniedToolRepeats, fb.MaxDeniedToolRepeats)
+	opts.MaxToolErrorRepeats = firstPositive(opts.MaxToolErrorRepeats, lim.MaxToolErrorRepeats, fb.MaxToolErrorRepeats)
+	opts.MaxFinalFailures = firstPositive(opts.MaxFinalFailures, lim.MaxFinalFailures, fb.MaxFinalFailures)
 }

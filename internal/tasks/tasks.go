@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -86,6 +86,12 @@ type ContractRefsGuard func(refs []contract.Ref) error
 
 // ChildAgentConfig holds history/memory settings propagated to child agents.
 type ChildAgentConfig struct {
+	// Settings are what a child takes from .orchestra.yml: the loop's
+	// breakers, BytesPerContextToken and the permission rules. The fields
+	// below override the budgets for children. Nil leaves the agent's
+	// defaults, as in tests that build a runner by hand.
+	Settings *app.Settings
+
 	MaxPromptBytes         int
 	CompactThresholdPct    int
 	ModelContextTokens     int
@@ -772,42 +778,39 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if mode == agent.ModeWorker && maxPrompt > 48*1024 {
 		maxPrompt = 48 * 1024
 	}
-	opts := agent.Options{
-		MaxSteps:               maxSteps,
-		MaxPromptBytes:         maxPrompt,
-		CompactThresholdPct:    r.child.CompactThresholdPct,
-		ModelContextTokens:     r.child.ModelContextTokens,
-		CompletionMaxTokens:    r.child.CompletionMaxTokens,
-		ToolDigestBytes:        r.child.ToolDigestBytes,
-		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
-		LLMStepTimeout:         r.child.LLMStepTimeout,
-		AgentLogger:            r.child.AgentLogger,
-
-		CompactionClient:        r.child.CompactionClient,
-		CompactionContextTokens: r.child.CompactionContextTokens,
-		CustomTools:             childTools,
-		Mode:                    mode,
-		IsChild:                 true,
-		UsageTracker:            r.child.UsageTracker,
-		ProviderLabel:           providerLabel,
-		ModelLabel:              modelLabel,
+	opts := app.ChildOptions(r.child.Settings, func(o *agent.Options) {
+		o.MaxSteps = maxSteps
+		o.MaxPromptBytes = maxPrompt
+		o.CompactThresholdPct = r.child.CompactThresholdPct
+		o.ModelContextTokens = r.child.ModelContextTokens
+		o.CompletionMaxTokens = r.child.CompletionMaxTokens
+		o.ToolDigestBytes = r.child.ToolDigestBytes
+		o.HistoryPruneKeepRecent = r.child.HistoryPruneKeepRecent
+		o.LLMStepTimeout = r.child.LLMStepTimeout
+		o.AgentLogger = r.child.AgentLogger
+		o.CompactionClient = r.child.CompactionClient
+		o.CompactionContextTokens = r.child.CompactionContextTokens
+		o.CustomTools = childTools
+		o.Mode = mode
+		o.UsageTracker = r.child.UsageTracker
 		// Children run on their own tier model, which may be a different
-		// family from the parent's. Without this they resolved to the
-		// family-neutral prompt no matter what they were running on.
-		PromptFamily: promptpkg.ResolvePromptFamily("", modelLabel),
+		// family from the parent's; ChildOptions takes the prompt family from
+		// ModelLabel.
+		o.ProviderLabel = providerLabel
+		o.ModelLabel = modelLabel
 		// Workers: no parent dialog, no project memory inject, no session notes.
-		AutoSessionMemory: false,
-		SkipMemoryInject:  mode == agent.ModeWorker,
-		AllowExec:         r.child.Caps.Exec,
-		AllowWeb:          r.child.Caps.Web,
-		AllowBrowser:      r.child.Caps.Browser,
-	}
-	if mode == agent.ModeWorker {
-		wsOff := false
-		opts.WorkingState = &wsOff
-		opts.TurnDigestKeep = 0
-		opts.AssistantPrefill = "{"
-	}
+		o.AutoSessionMemory = false
+		o.SkipMemoryInject = mode == agent.ModeWorker
+		o.AllowExec = r.child.Caps.Exec
+		o.AllowWeb = r.child.Caps.Web
+		o.AllowBrowser = r.child.Caps.Browser
+		if mode == agent.ModeWorker {
+			wsOff := false
+			o.WorkingState = &wsOff
+			o.TurnDigestKeep = 0
+			o.AssistantPrefill = "{"
+		}
+	})
 	if r.child.OnChildEvent != nil {
 		opts.OnEvent = r.child.OnChildEvent
 	}

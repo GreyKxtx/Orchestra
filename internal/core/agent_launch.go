@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/autorouter"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
@@ -193,20 +193,19 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 
 	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
 
+	settings := app.SettingsFrom(c.cfg)
 	maxSteps := spec.MaxSteps
 	if maxSteps <= 0 {
-		maxSteps = c.cfg.Agent.MaxSteps
+		maxSteps = settings.MaxSteps
 	}
 	maxRetries := spec.MaxInvalidRetries
 	if maxRetries <= 0 {
-		maxRetries = c.cfg.Agent.MaxInvalidRetries
+		maxRetries = settings.MaxInvalidRetries
 	}
 	maxPromptBytes := spec.MaxPromptBytes
 	if maxPromptBytes <= 0 {
-		maxPromptBytes = c.cfg.EffectiveMaxPromptBytes()
+		maxPromptBytes = settings.MaxPromptBytes
 	}
-
-	promptFamily := promptpkg.ResolvePromptFamily(c.cfg.LLM.PromptFamily, c.cfg.LLM.Model)
 
 	env := spec.EventEnvelope
 	if env.TurnID == "" {
@@ -346,6 +345,9 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	}
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
+	// Subagents take the turn's breakers and permission rules: a deny rule is
+	// the project's, not the top-level agent's alone.
+	childCfg.Settings = &settings
 	childCfg.Agency, childCfg.Agents = tasks.AgencyFromConfig(c.cfg, effectiveMode)
 	childCfg.RunID = env.TurnID
 	childCfg.Budget = tasks.BudgetFromConfig(c.cfg.Agent.TurnBudget)
@@ -390,91 +392,60 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		}
 	}
 
-	opts := agent.Options{
-		MaxSteps:             maxSteps,
-		MaxInvalidRetries:    maxRetries,
-		MaxDeniedToolRepeats: c.cfg.Agent.MaxDeniedRepeats,
-		MaxToolErrorRepeats:  c.cfg.Agent.MaxToolErrors,
-		MaxFinalFailures:     c.cfg.Agent.MaxFinalFailures,
-		MaxPromptBytes:       maxPromptBytes,
-		ModelContextTokens:   int(c.cfg.EffectiveNumCtx()),
-		CompletionMaxTokens:  c.cfg.LLM.MaxTokens,
-		BytesPerContextToken: c.cfg.Agent.ResolvedBytesPerContextToken(),
-		LLMStepTimeout:       time.Duration(c.cfg.LLM.TimeoutS) * time.Second,
-		Apply:                spec.Apply,
-		Backup:               spec.Backup,
-		AllowExec:            allowExec,
-		AllowWeb:             allowWeb,
-		AllowBrowser:         allowBrowser,
-		ExecAllow:            c.cfg.Exec.Allow,
-		ExecDeny:             c.cfg.Exec.Deny,
-		PermissionRules:      c.cfg.Permissions.Rules,
-		InitialTodos:         spec.InitialTodos,
-		Debug:                spec.Debug,
-		ResponseFormat:       respFmt,
-		PromptFamily:         promptFamily,
-		Mode:                 agent.Mode(effectiveMode),
-		SystemPromptOverride: customOpts.systemPromptOverride,
-		CustomTools:          customOpts.customTools,
-		OnEvent:              onEvent,
-		AgentLogger:          agentLogger,
-		SubtaskRunner:        taskRunner,
-		ChildTimeoutMS:       c.cfg.Agent.ResolvedChildTimeoutMS(),
-		HooksRunner:          hooksRunner,
-		ExtraTools:           c.extraToolDefs(),
-		PermissionRequester:  convertPermissionRequester(spec.PermissionRequester),
-		QuestionAsker:        spec.QuestionAsker,
-		HumanGates:           c.cfg.Orchestra.RequiredGates(),
-		StateMaxBytes:        c.cfg.Orchestra.ResolvedStateMaxBytes(),
-		PhaseEnforcement:     c.cfg.Orchestra.ResolvedPhaseEnforcement(),
-		UsageTracker:         usageTracker,
-		ProviderLabel:        providerLabel,
-		ModelLabel:           modelLabel,
-		PlanPath:             planPath,
-		SessionID:            spec.SessionID,
-		AutoSessionMemory:    spec.AutoSessionMemory,
-	}
-	// Skills in TUI/core (parity with `orchestra apply`). Skip for read-only /
-	// plan-only modes so skill_invoke cannot bypass write guards via a child.
-	if skillsAllowedInMode(effectiveMode) {
-		if discovered, err := skills.DiscoverCached(c.workspaceRoot); err == nil && len(discovered) > 0 {
-			refs, _ := skills.DiscoverRefs(c.workspaceRoot)
-			opts.Skills = skillrun.Specs(discovered)
-			opts.SkillRunner = skillrun.New(
-				c.cfg, discovered, refs, customOpts.llmClient, c.validator, c.tools, agentLogger,
-				c.cfg.Agent.MaxSteps, allowExec, allowWeb, allowBrowser,
-			)
+	opts, err := app.TurnOptions(settings, profileName, func(o *agent.Options) {
+		o.MaxSteps = maxSteps
+		o.MaxInvalidRetries = maxRetries
+		o.MaxPromptBytes = maxPromptBytes
+		o.Apply = spec.Apply
+		o.Backup = spec.Backup
+		o.AllowExec = allowExec
+		o.AllowWeb = allowWeb
+		o.AllowBrowser = allowBrowser
+		o.InitialTodos = spec.InitialTodos
+		o.Debug = spec.Debug
+		o.ResponseFormat = respFmt
+		o.Mode = agent.Mode(effectiveMode)
+		o.SystemPromptOverride = customOpts.systemPromptOverride
+		o.CustomTools = customOpts.customTools
+		o.OnEvent = onEvent
+		o.AgentLogger = agentLogger
+		o.SubtaskRunner = taskRunner
+		o.HooksRunner = hooksRunner
+		o.ExtraTools = c.extraToolDefs()
+		o.PermissionRequester = convertPermissionRequester(spec.PermissionRequester)
+		o.QuestionAsker = spec.QuestionAsker
+		o.UsageTracker = usageTracker
+		o.ProviderLabel = providerLabel
+		o.ModelLabel = modelLabel
+		o.PlanPath = planPath
+		o.SessionID = spec.SessionID
+		o.AutoSessionMemory = spec.AutoSessionMemory
+		// Skills in TUI/core (parity with `orchestra apply`). Skip for
+		// read-only / plan-only modes so skill_invoke cannot bypass write
+		// guards via a child.
+		if skillsAllowedInMode(effectiveMode) {
+			if discovered, err := skills.DiscoverCached(c.workspaceRoot); err == nil && len(discovered) > 0 {
+				refs, _ := skills.DiscoverRefs(c.workspaceRoot)
+				o.Skills = skillrun.Specs(discovered)
+				o.SkillRunner = skillrun.New(
+					c.cfg, discovered, refs, customOpts.llmClient, c.validator, c.tools, agentLogger,
+					c.cfg.Agent.MaxSteps, allowExec, allowWeb, allowBrowser,
+				)
+			}
 		}
-	}
-	agent.ApplyHistoryConfig(&opts, c.cfg)
-
-	if cc, ctxTok := c.compactionClientWithContext(agentLogger); cc != nil {
-		opts.CompactionClient = cc
-		opts.CompactionContextTokens = ctxTok
-	}
-
-	// preserveNonZero=true: agent.max_steps from .orchestra.yml wins over
-	// profile presets (fast=10, precision=36). Otherwise a selected profile silently
-	// undoes max_steps: 200 and the turn "falls" after 10–36 steps.
-	if err := agent.ApplyProfile(&opts, profileName, true); err != nil {
+		if cc, ctxTok := c.compactionClientWithContext(agentLogger); cc != nil {
+			o.CompactionClient = cc
+			o.CompactionContextTokens = ctxTok
+		}
+		if len(spec.UserImages) > 0 {
+			o.UserImages = spec.UserImages
+		}
+		if spec.Multimodal || (c.cfg.LLM.Multimodal && len(spec.UserImages) > 0) {
+			o.MultimodalLLM = c.cfg.LLM.Multimodal
+		}
+	})
+	if err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
-	}
-	agent.FillRetryLimits(&opts, providerLabel)
-	// llm.timeout_s always wins over any profile/default residue.
-	if t := time.Duration(c.cfg.LLM.TimeoutS) * time.Second; t > 0 {
-		opts.LLMStepTimeout = t
-	}
-	if customOpts.systemPromptOverride != "" {
-		opts.SystemPromptOverride = customOpts.systemPromptOverride
-	}
-	if customOpts.customTools != nil {
-		opts.CustomTools = customOpts.customTools
-	}
-	if len(spec.UserImages) > 0 {
-		opts.UserImages = spec.UserImages
-	}
-	if spec.Multimodal || (c.cfg.LLM.Multimodal && len(spec.UserImages) > 0) {
-		opts.MultimodalLLM = c.cfg.LLM.Multimodal
 	}
 
 	return &agentLaunch{
@@ -613,37 +584,21 @@ func (c *Core) resolveNamedClient(provider, model string, logger *llm.Logger) (l
 	}
 	provider = strings.TrimSpace(provider)
 	model = strings.TrimSpace(model)
-	if provider != "" {
-		provCfg, ok := c.cfg.FindProvider(provider)
-		if !ok {
-			return nil, "", "", fmt.Errorf("provider %q not found in providers", provider)
-		}
-		// Fail fast with an actionable message instead of letting the request
-		// bounce off the gateway as an opaque 401 ("User not found").
-		if cat, catOK := llm.FindCatalogProvider(provider); catOK && cat.NeedsKey &&
-			strings.TrimSpace(provCfg.APIKey) == "" {
-			return nil, "", "", fmt.Errorf(
-				"provider %q has no api_key configured — add it in Settings → Providers (or providers.%s.api_key in .orchestra.yml)",
-				provider, provider,
-			)
-		}
-		if model != "" {
-			provCfg.Model = model
-		}
-		// The default client is wrapped at construction (core.go). A client
-		// resolved by name — compaction, auto-routing, every model switch from
-		// the UI — has to carry the same standby and router, or choosing a
-		// model silently drops what the config asked for.
-		return llm.BuildClient(provCfg, c.cfg.LLMRegistry(), logger), provider, provCfg.Model, nil
+	if provider == "" && model == "" {
+		return c.llmClient, providerLabelOf(c.cfg), c.cfg.LLM.Model, nil
 	}
-	if model != "" {
-		// A bare model override still runs against the main endpoint, so it
-		// keeps the main config's standby.
-		overrideCfg := c.cfg.LLM
-		overrideCfg.Model = model
-		return llm.BuildClient(overrideCfg, c.cfg.LLMRegistry(), logger), providerLabelOf(c.cfg), model, nil
+	// The default client is wrapped at construction (core.go). A client
+	// resolved by name — compaction, auto-routing, every model switch from the
+	// UI — carries the same standby and router, or choosing a model silently
+	// drops what the config asked for.
+	client, used, err := app.ClientFor(c.cfg, provider, model, logger)
+	if err != nil {
+		return nil, "", "", err
 	}
-	return c.llmClient, providerLabelOf(c.cfg), c.cfg.LLM.Model, nil
+	if provider == "" {
+		provider = providerLabelOf(c.cfg)
+	}
+	return client, provider, used.Model, nil
 }
 
 // tierEscalationSettings converts config → tasks settings (spec §5.5).

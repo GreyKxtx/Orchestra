@@ -22,11 +22,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -129,34 +128,15 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 	// concurrently by parallel cohort stages and SetLogger is a plain pointer
 	// write (data race under the race detector if called from goroutines).
 	childClient := c.Client
-	overridden := false
-	if s.Provider != "" && c.Cfg != nil {
-		provCfg, ok := c.Cfg.FindProvider(s.Provider)
-		if !ok {
-			return "", fmt.Errorf("skill %q: provider %q not found", skillName, s.Provider)
+	if (s.Provider != "" || s.Model != "") && c.Cfg != nil {
+		// A fresh client with the standby and router its config asks for
+		// (app.ClientFor), and the stage's logger set on it before anyone
+		// else holds it.
+		client, _, err := app.ClientFor(c.Cfg, s.Provider, s.Model, c.AgentLogger)
+		if err != nil {
+			return "", fmt.Errorf("skill %q: %w", skillName, err)
 		}
-		if s.Model != "" {
-			provCfg.Model = s.Model
-		}
-		childClient = llm.NewClient(provCfg)
-		overridden = true
-	} else if s.Model != "" && c.Cfg != nil {
-		over := c.Cfg.LLM
-		over.Model = s.Model
-		childClient = llm.NewClient(over)
-		overridden = true
-	}
-	if overridden {
-		if oc, ok := llm.AsOpenAIClient(childClient); ok && c.AgentLogger != nil {
-			oc.SetLogger(c.AgentLogger)
-		}
-		childClient = llm.MaybeWrapFallback(childClient, c.Cfg.LLMRegistry(), c.Cfg.LLM, c.AgentLogger)
-		// Preserve router-fallback semantics: the base shared Client passed in
-		// was already wrapped via MaybeWrapRouter by the caller (cli/workflow
-		// run-up). A fresh per-skill client built from provider/model overrides
-		// would otherwise lose that wrap, silently disabling the fast-path /
-		// fallback routing for that stage. Re-wrap so behaviour is consistent.
-		childClient = llm.MaybeWrapRouter(childClient, c.Cfg.LLMRegistry(), c.Cfg.LLM.Router)
+		childClient = client
 	}
 
 	opts := buildAgentOptions(c, childTools, systemPrompt)
@@ -188,70 +168,39 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 // buildAgentOptions assembles agent.Options from the shared config + per-skill
 // overrides. Keeping it as a free function makes it trivial to unit-test the
 // option mapping in isolation.
+//
+// Workflow stages are child agents — they end by calling task_result with the
+// marker/output the runner expects — so they are built by app.ChildOptions,
+// with the project's budgets, breakers and permission rules. Without a config
+// they fall back to 24 steps and the agent's defaults.
 func buildAgentOptions(c Config, childTools []llm.ToolDef, systemPrompt string) agent.Options {
-	maxSteps := 24
-	var (
-		maxInvalid     int
-		maxDenied      int
-		maxToolErrors  int
-		maxFinalFails  int
-		maxPromptBytes int
-		compactPct     int
-		modelCtx       int
-		completionMax  int
-		stepTimeout    time.Duration
-		promptFamily   string
-	)
-	var permRules []config.PermissionRule
+	var settings *app.Settings
 	if c.Cfg != nil {
-		if c.Cfg.Agent.MaxSteps > 0 {
-			maxSteps = c.Cfg.Agent.MaxSteps
-		}
-		maxInvalid = c.Cfg.Agent.MaxInvalidRetries
-		maxDenied = c.Cfg.Agent.MaxDeniedRepeats
-		maxToolErrors = c.Cfg.Agent.MaxToolErrors
-		maxFinalFails = c.Cfg.Agent.MaxFinalFailures
-		maxPromptBytes = c.Cfg.EffectiveMaxPromptBytes()
-		compactPct = c.Cfg.EffectiveCompactThresholdPct()
-		modelCtx = int(c.Cfg.EffectiveNumCtx())
-		completionMax = c.Cfg.LLM.MaxTokens
-		stepTimeout = time.Duration(c.Cfg.LLM.TimeoutS) * time.Second
-		permRules = c.Cfg.Permissions.Rules
-		promptFamily = promptpkg.ResolvePromptFamily(c.Cfg.LLM.PromptFamily, c.Cfg.LLM.Model)
+		s := app.SettingsFrom(c.Cfg)
+		settings = &s
 	}
-
-	// Workflow stages are child agents — they end by calling task_result with
-	// the marker/output the runner expects. Without IsChild=true, the
-	// main-agent guard rejects task_result as invalid.
-	return agent.Options{
-		IsChild:              true,
-		MaxSteps:             maxSteps,
-		MaxInvalidRetries:    maxInvalid,
-		MaxDeniedToolRepeats: maxDenied,
-		MaxToolErrorRepeats:  maxToolErrors,
-		MaxFinalFailures:     maxFinalFails,
-		MaxPromptBytes:       maxPromptBytes,
-		CompactThresholdPct:  compactPct,
-		PromptFamily:         promptFamily,
-
-		CompactionClient:        c.CompactionClient,
-		CompactionContextTokens: c.CompactionContextTokens,
-		ModelContextTokens:      modelCtx,
-		CompletionMaxTokens:     completionMax,
-		LLMStepTimeout:          stepTimeout,
-		AllowExec:               c.AllowExec,
-		AllowWeb:                c.AllowWeb,
-		AllowBrowser:            c.AllowBrowser,
-		CustomTools:             childTools,
-		SystemPromptOverride:    systemPrompt,
-		PermissionRules:         permRules,
-		AgentLogger:             c.AgentLogger,
-		HooksRunner:             c.HooksRunner,
-		UsageTracker:            c.UsageTracker,
-		ProviderLabel:           c.ProviderLabel,
-		ModelLabel:              c.ModelLabel,
-		PermissionRequester:     c.PermissionRequester,
+	return app.ChildOptions(settings, func(o *agent.Options) {
+		if o.MaxSteps <= 0 {
+			o.MaxSteps = 24
+		}
+		if settings != nil {
+			// Stages run on the turn's model, so they keep its prompt family.
+			o.PromptFamily = settings.PromptFamily
+		}
+		o.CompactionClient = c.CompactionClient
+		o.CompactionContextTokens = c.CompactionContextTokens
+		o.AllowExec = c.AllowExec
+		o.AllowWeb = c.AllowWeb
+		o.AllowBrowser = c.AllowBrowser
+		o.CustomTools = childTools
+		o.SystemPromptOverride = systemPrompt
+		o.AgentLogger = c.AgentLogger
+		o.HooksRunner = c.HooksRunner
+		o.UsageTracker = c.UsageTracker
+		o.ProviderLabel = c.ProviderLabel
+		o.ModelLabel = c.ModelLabel
+		o.PermissionRequester = c.PermissionRequester
 		// SubtaskRunner / SkillRunner intentionally nil — the workflow runner is
 		// the single source of orchestration; stages can't spawn their own.
-	}
+	})
 }

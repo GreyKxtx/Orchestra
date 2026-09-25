@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/usage"
@@ -485,29 +486,12 @@ func (c *Core) resolveCustomAgentOpts(mode string, caps tools.Capabilities, agen
 
 	// In test/DI mode (injected client), skip provider/model overrides so the
 	// test client is preserved across custom agent runs.
-	if !c.llmClientInjected {
-		if def.Provider != "" {
-			if provCfg, ok := c.cfg.FindProvider(def.Provider); ok {
-				if def.Model != "" {
-					provCfg.Model = def.Model
-				}
-				newClient := llm.NewClient(provCfg)
-				if oc, ok2 := llm.AsOpenAIClient(newClient); ok2 && agentLogger != nil {
-					oc.SetLogger(agentLogger)
-				}
-				result.llmClient = newClient
-			} else {
-				return result, fmt.Errorf("agent %q: provider %q not found in providers: section", def.Name, def.Provider)
-			}
-		} else if def.Model != "" {
-			overrideCfg := c.cfg.LLM
-			overrideCfg.Model = def.Model
-			newClient := llm.NewClient(overrideCfg)
-			if oc, ok := llm.AsOpenAIClient(newClient); ok && agentLogger != nil {
-				oc.SetLogger(agentLogger)
-			}
-			result.llmClient = newClient
+	if !c.llmClientInjected && (def.Provider != "" || def.Model != "") {
+		client, _, err := app.ClientFor(c.cfg, def.Provider, def.Model, agentLogger)
+		if err != nil {
+			return result, fmt.Errorf("agent %q: %w", def.Name, err)
 		}
+		result.llmClient = client
 	}
 
 	if def.Tools != nil {

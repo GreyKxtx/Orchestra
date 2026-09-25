@@ -12,7 +12,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/agent/guard"
-	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/llm"
@@ -746,26 +746,24 @@ func (r *TaskRunner) runInlineLLMVerifier(
 	if maxSteps <= 0 {
 		maxSteps = DefaultChildMaxSteps
 	}
-	opts := agent.Options{
-		MaxSteps:               maxSteps,
-		MaxPromptBytes:         maxPrompt,
-		CompactThresholdPct:    r.child.CompactThresholdPct,
-		ModelContextTokens:     r.child.ModelContextTokens,
-		CompletionMaxTokens:    r.child.CompletionMaxTokens,
-		ToolDigestBytes:        r.child.ToolDigestBytes,
-		HistoryPruneKeepRecent: r.child.HistoryPruneKeepRecent,
-		LLMStepTimeout:         r.child.LLMStepTimeout,
-		AgentLogger:            r.child.AgentLogger,
-		CustomTools:            childToolsForSubagent("verifier", r.child.Caps),
-		Mode:                   agent.ModeVerifier,
-		IsChild:                true,
-		UsageTracker:           r.child.UsageTracker,
-		ProviderLabel:          workerOpts.ProviderLabel,
-		ModelLabel:             workerOpts.ModelLabel,
-		PromptFamily:           promptpkg.ResolvePromptFamily("", workerOpts.ModelLabel),
-		AllowExec:              r.child.Caps.Exec,
-		SkipMemoryInject:       true,
-	}
+	opts := app.ChildOptions(r.child.Settings, func(o *agent.Options) {
+		o.MaxSteps = maxSteps
+		o.MaxPromptBytes = maxPrompt
+		o.CompactThresholdPct = r.child.CompactThresholdPct
+		o.ModelContextTokens = r.child.ModelContextTokens
+		o.CompletionMaxTokens = r.child.CompletionMaxTokens
+		o.ToolDigestBytes = r.child.ToolDigestBytes
+		o.HistoryPruneKeepRecent = r.child.HistoryPruneKeepRecent
+		o.LLMStepTimeout = r.child.LLMStepTimeout
+		o.AgentLogger = r.child.AgentLogger
+		o.CustomTools = childToolsForSubagent("verifier", r.child.Caps)
+		o.Mode = agent.ModeVerifier
+		o.UsageTracker = r.child.UsageTracker
+		o.ProviderLabel = workerOpts.ProviderLabel
+		o.ModelLabel = workerOpts.ModelLabel
+		o.AllowExec = r.child.Caps.Exec
+		o.SkipMemoryInject = true
+	})
 	if r.child.OnChildEvent != nil {
 		opts.OnEvent = r.child.OnChildEvent
 	}

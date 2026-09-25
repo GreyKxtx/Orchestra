@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/git"
@@ -332,13 +333,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		if getTestLLMClient() != nil {
 			llmClient = getTestLLMClient()
 		} else {
-			logger := llm.NewLogger(cfg.ProjectRoot)
-			llmClient = llm.NewClient(cfg.LLM)
-			if oc, ok := llm.AsOpenAIClient(llmClient); ok {
-				oc.SetLogger(logger)
+			c, _, err := app.ClientFor(cfg, "", "", llm.NewLogger(cfg.ProjectRoot))
+			if err != nil {
+				retErr = err
+				return retErr
 			}
-			llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
-			llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
+			llmClient = c
 		}
 
 		validator, err := schema.NewValidator()
@@ -839,38 +839,6 @@ func providerNames(cfg *config.ProjectConfig) string {
 	return strings.Join(names, ", ")
 }
 
-// namedLLMClient builds a client from providers: map and/or model override.
-func namedLLMClient(cfg *config.ProjectConfig, provider, model string, logger *llm.Logger) (llm.Client, error) {
-	provider = strings.TrimSpace(provider)
-	model = strings.TrimSpace(model)
-	if provider != "" {
-		provCfg, ok := cfg.FindProvider(provider)
-		if !ok {
-			return nil, fmt.Errorf("provider %q not found in providers", provider)
-		}
-		if model != "" {
-			provCfg.Model = model
-		}
-		client := llm.NewClient(provCfg)
-		if oc, ok := llm.AsOpenAIClient(client); ok && logger != nil {
-			oc.SetLogger(logger)
-		}
-		// Same rule as Core.resolveNamedClient: a named provider keeps the
-		// standby its own config asks for.
-		return llm.MaybeWrapFallback(client, cfg.LLMRegistry(), provCfg, logger), nil
-	}
-	if model != "" {
-		override := cfg.LLM
-		override.Model = model
-		client := llm.NewClient(override)
-		if oc, ok := llm.AsOpenAIClient(client); ok && logger != nil {
-			oc.SetLogger(logger)
-		}
-		return llm.MaybeWrapFallback(client, cfg.LLMRegistry(), override, logger), nil
-	}
-	return nil, fmt.Errorf("provider or model required")
-}
-
 // buildCLIRenderer returns an OnEvent callback that renders streaming events to stderr
 // when stderr or stdout is an interactive terminal. Returns nil (display only) when
 // both are piped/redirected and --stream is not set. LLM streaming still runs without
@@ -971,7 +939,7 @@ func compactionClientFor(cfg *config.ProjectConfig, logger *llm.Logger) (llm.Cli
 	if provider == "" {
 		return nil, 0
 	}
-	client, err := namedLLMClient(cfg, provider, "", logger)
+	client, _, err := app.ClientFor(cfg, provider, "", logger)
 	if err != nil || client == nil {
 		return nil, 0
 	}
