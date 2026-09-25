@@ -357,10 +357,11 @@ func (c *Core) ToolCall(ctx context.Context, params ToolCallParams) (json.RawMes
 		confirm := c.cfg.Exec.Confirm == nil || *c.cfg.Exec.Confirm
 		if confirm {
 			var execReq struct {
-				Command string `json:"command"`
+				Command string   `json:"command"`
+				Args    []string `json:"args"`
 			}
 			_ = json.Unmarshal(params.Input, &execReq)
-			if !c.cfg.Exec.IsCommandAllowed(execReq.Command) {
+			if !c.cfg.Exec.AllowsCommand(execReq.Command, execReq.Args) {
 				msg := "bash requires user consent (configure exec.allow or use --allow-exec)"
 				if len(c.cfg.Exec.Allow) > 0 {
 					msg = fmt.Sprintf("bash: command %q is not in the allowlist", execReq.Command)

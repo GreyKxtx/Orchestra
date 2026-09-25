@@ -35,6 +35,9 @@ type Runner struct {
 	// Defaults for exec.run safety contract.
 	execTimeout     time.Duration
 	execOutputLimit int // bytes, combined stdout+stderr
+	// execEnvPassthrough names secret-looking variables a command still gets
+	// (exec.env_passthrough); every other one is removed from its environment.
+	execEnvPassthrough []string
 
 	mcpCaller MCPCaller
 
@@ -99,6 +102,9 @@ type RunnerOptions struct {
 
 	ExecTimeout     time.Duration
 	ExecOutputLimit int // bytes, combined stdout+stderr
+	// ExecEnvPassthrough keeps these secret-looking variables in the
+	// environment of the commands bash runs (exec.env_passthrough).
+	ExecEnvPassthrough []string
 
 	WebFetchTimeout    time.Duration
 	WebMaxContentBytes int
@@ -214,6 +220,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		excludeDirs:             exclude,
 		execTimeout:             timeout,
 		execOutputLimit:         limit,
+		execEnvPassthrough:      opts.ExecEnvPassthrough,
 		ckgStore:                store,
 		ckgProvider:             provider,
 		webFetchTimeout:         webTimeout,

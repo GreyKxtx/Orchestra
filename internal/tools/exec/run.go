@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/internal/tools/toolpath"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -81,6 +82,7 @@ func Run(parent context.Context, workspaceRoot string, defaultTimeout time.Durat
 
 	cmd := exec.CommandContext(ctx, cmdName, argList...)
 	cmd.Dir = absDir
+	cmd.Env = commandEnv(req.Env)
 	cmd.Stdin = nil
 	_ = viaShell
 
@@ -244,4 +246,13 @@ func (w *limitedBuffer) String() string {
 		return ""
 	}
 	return w.b.String()
+}
+
+// commandEnv is env when the runner set one, else the core's environment
+// without the variables that hold secrets.
+func commandEnv(env []string) []string {
+	if env != nil {
+		return env
+	}
+	return execpolicy.ScrubEnv(os.Environ(), nil)
 }

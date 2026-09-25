@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 	"github.com/orchestra/orchestra/internal/tools/toolpath"
 	"github.com/orchestra/orchestra/protocol"
@@ -17,7 +18,14 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 	if err := r.execBlockedInDryRun(req.Command); err != nil {
 		return nil, err
 	}
+	req.Env = r.execEnv()
 	return exec.Run(ctx, r.workspaceRoot, r.execTimeout, r.execOutputLimit, req)
+}
+
+// execEnv is the environment of a command the model runs: the core's own
+// without secrets, except the ones exec.env_passthrough names.
+func (r *Runner) execEnv() []string {
+	return execpolicy.ScrubEnv(os.Environ(), r.execEnvPassthrough)
 }
 
 // execBlockedInDryRun is the one "no side effects in a dry-run preview" check
@@ -78,6 +86,7 @@ func (r *Runner) ExecBashBackground(ctx context.Context, req ExecRunRequest) (*E
 		Args:      req.Args,
 		Workdir:   absDir,
 		TimeoutMS: req.TimeoutMS,
+		Env:       r.execEnv(),
 	})
 }
 
