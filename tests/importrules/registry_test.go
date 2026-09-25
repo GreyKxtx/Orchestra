@@ -108,3 +108,45 @@ func TestAppStaysBelowItsCallers(t *testing.T) {
 		}
 	}
 }
+
+// Callers ask the client stack for a capability — llm.LoggerOf,
+// llm.ContextTokensOf, llm.DiscoverLimits — never for the concrete
+// OpenAI-compatible client (ARCH-8). Reaching for the concrete type made each
+// of those a no-op on every other provider: with provider anthropic the
+// request log stayed empty on every surface.
+func TestNoCallerReachesForTheConcreteLLMClient(t *testing.T) {
+	root := repoRoot(t)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "testdata", "dist", "out":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "llm/") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, bad := range []string{"llm.AsOpenAIClient(", "*llm.OpenAIClient)", "*llm.AnthropicClient)"} {
+			if strings.Contains(string(data), bad) {
+				t.Errorf("%s uses %s; ask the stack (llm.LoggerOf, llm.ContextTokensOf, llm.DiscoverLimits)", rel, bad)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

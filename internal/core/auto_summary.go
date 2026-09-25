@@ -77,10 +77,8 @@ func (c *Core) buildMemoryNote(ctx context.Context, sessionID string, hist []llm
 // LLM client already uses when it has one, otherwise a fresh handle on the same
 // file, so memory events land next to the llm_* events regardless of client.
 func (c *Core) turnLogger() *llm.Logger {
-	if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
-		if l := oc.GetLogger(); l != nil {
-			return l
-		}
+	if l := llm.LoggerOf(c.llmClient); l != nil {
+		return l
 	}
 	return llm.NewLogger(c.workspaceRoot)
 }

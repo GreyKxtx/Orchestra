@@ -30,7 +30,16 @@ type AnthropicClient struct {
 	output *anthropicOutputConfig
 	// requestTimeout is llm.timeout_s; it scales the stall watchdog.
 	requestTimeout time.Duration
+	// logger writes llm_log.jsonl. It was the OpenAI-compatible client's
+	// alone: with provider anthropic the log stayed empty.
+	logger *Logger
 }
+
+// SetLogger sets the request logger.
+func (c *AnthropicClient) SetLogger(logger *Logger) { c.logger = logger }
+
+// GetLogger returns the request logger, or nil.
+func (c *AnthropicClient) GetLogger() *Logger { return c.logger }
 
 // NewAnthropicClient creates an Anthropic client from config.
 func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
@@ -210,7 +219,7 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 	// all: one overloaded answer failed the step.
 	var lastErr error
 	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
-		out, err := c.streamOnce(ctx, jsonData, nameMapper)
+		out, err := c.streamOnce(ctx, req, jsonData, nameMapper)
 		if err == nil {
 			return out, nil
 		}
@@ -232,11 +241,18 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 // streamOnce sends one streaming request and relays its events, restoring
 // tool names, under the same stall watchdog as the OpenAI-compatible client:
 // a connection that stopped sending held the step until its timeout.
-func (c *AnthropicClient) streamOnce(ctx context.Context, jsonData []byte, nameMapper *toolNameMapper) (<-chan StreamEvent, error) {
+func (c *AnthropicClient) streamOnce(ctx context.Context, req CompleteRequest, jsonData []byte, nameMapper *toolNameMapper) (<-chan StreamEvent, error) {
+	url := c.baseURL + "/v1/messages"
+	startTime := time.Now()
+	// Attributed to the run and task in ctx: parallel agents share the logger.
+	logger := c.logger.For(ctx)
+	if logger != nil {
+		logger.LogRequest(url, c.model, int(c.requestTimeout.Seconds()), len(jsonData), len(req.Tools), len(req.Messages), messageRolesFor(req), string(jsonData))
+	}
 	// Cancelling streamCtx closes the connection: how the watchdog unblocks
 	// a parser stuck on a dead one.
 	streamCtx, cancelStream := context.WithCancel(ctx)
-	httpReq, err := http.NewRequestWithContext(streamCtx, "POST", c.baseURL+"/v1/messages", bytes.NewBuffer(jsonData))
+	httpReq, err := http.NewRequestWithContext(streamCtx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		cancelStream()
 		return nil, fmt.Errorf("anthropic: create stream request: %w", err)
@@ -255,12 +271,18 @@ func (c *AnthropicClient) streamOnce(ctx context.Context, jsonData []byte, nameM
 	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
 		cancelStream()
+		if logger != nil {
+			logger.LogError(0, err.Error(), time.Since(startTime).Milliseconds())
+		}
 		return nil, fmt.Errorf("anthropic: send stream request: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		cancelStream()
+		if logger != nil {
+			logger.LogError(resp.StatusCode, string(respBody), time.Since(startTime).Milliseconds())
+		}
 		var errResp anthropicResponse
 		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error.Message != "" {
 			return nil, newStatusError(resp.StatusCode, resp.Header, fmt.Sprintf("anthropic API error (status %d): %s", resp.StatusCode, errResp.Error.Message))
@@ -274,14 +296,25 @@ func (c *AnthropicClient) streamOnce(ctx context.Context, jsonData []byte, nameM
 		resp.Body.Close()
 	}
 	return relayStream(raw, stallTimeoutFor(c.requestTimeout), cancelStream, done, func(ev *StreamEvent) {
-		if nameMapper == nil {
+		if nameMapper != nil {
+			if ev.Kind == StreamEventToolCallStart {
+				ev.ToolCallName = nameMapper.Restore(ev.ToolCallName)
+			}
+			if ev.Kind == StreamEventDone {
+				nameMapper.RestoreResponse(ev.Response)
+			}
+		}
+		if logger == nil {
 			return
 		}
-		if ev.Kind == StreamEventToolCallStart {
-			ev.ToolCallName = nameMapper.Restore(ev.ToolCallName)
-		}
-		if ev.Kind == StreamEventDone {
-			nameMapper.RestoreResponse(ev.Response)
+		switch ev.Kind {
+		case StreamEventDone:
+			preview := streamResponsePreview(ev.Response)
+			logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
+		case StreamEventError:
+			if ev.Err != nil {
+				logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
+			}
 		}
 	}), nil
 }

@@ -358,10 +358,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 
 		respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
 
-		var agentLogger *llm.Logger
-		if openAIClient, ok := llm.AsOpenAIClient(llmClient); ok {
-			agentLogger = openAIClient.GetLogger()
-		}
+		agentLogger := llm.LoggerOf(llmClient)
 
 		cliRenderer := buildCLIRenderer()
 		var onPipelineEvent func(stage string, ev agent.AgentEvent)
