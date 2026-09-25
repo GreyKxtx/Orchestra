@@ -20,8 +20,6 @@ func fastRetries(t *testing.T) {
 	t.Cleanup(func() { llmRetryBackoff = prevBackoff })
 }
 
-const okChatResponse = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
-
 // writeAssistantSSE writes a minimal OpenAI-compatible SSE body for stream:true tests.
 func writeAssistantSSE(w http.ResponseWriter, content string) {
 	w.Header().Set("Content-Type", "text/event-stream")

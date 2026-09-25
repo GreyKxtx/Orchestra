@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
+	"github.com/orchestra/orchestra/internal/memory"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -482,7 +483,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 	defer launch.Close()
-	c.tools.SetMemoryContext(params.SessionID, c.cfg.Memory.Resolve())
+	c.tools.SetMemoryContext(params.SessionID, memory.ConfigFrom(c.cfg.Memory))
 
 	// Persist todos as soon as todowrite succeeds so a crash / cancel mid-turn
 	// (or reopen before SessionMessage returns) does not lose the checklist.

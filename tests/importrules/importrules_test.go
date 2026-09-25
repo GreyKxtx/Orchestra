@@ -167,3 +167,79 @@ func TestSessionfileDoesNotImportTrajectory(t *testing.T) {
 		}
 	}
 }
+
+const modulePath = "github.com/orchestra/orchestra"
+
+// listDeps returns every package pkg links, itself included.
+func listDeps(t *testing.T, root, pkg string) []string {
+	t.Helper()
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", pkg)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list -deps %s: %v", pkg, err)
+	}
+	return strings.Fields(string(out))
+}
+
+// TestConfigStaysALeaf keeps internal/config below everything that reads it.
+// It is imported nearly everywhere, so whatever it imports is linked into
+// every package, and anything that ever needs config itself becomes a cycle.
+// Memory settings are resolved in internal/memory (memory.ConfigFrom), not
+// here, for that reason.
+func TestConfigStaysALeaf(t *testing.T) {
+	root := repoRoot(t)
+	allowed := map[string]bool{
+		modulePath + "/internal/config":     true,
+		modulePath + "/internal/execpolicy": true,
+		modulePath + "/internal/authstore":  true,
+		modulePath + "/internal/llmauth":    true,
+	}
+	for _, dep := range listDeps(t, root, "./internal/config") {
+		if strings.HasPrefix(dep, modulePath+"/internal/") && !allowed[dep] {
+			t.Errorf("internal/config links %s; resolve that package's settings in the package itself", dep)
+		}
+	}
+}
+
+// TestContractDoesNotRunTools keeps the contract layer to reading and checking
+// artifacts. Running an external linter over them (spectral) is the agent's
+// business: internal/agent/contract_spectral.go.
+func TestContractDoesNotRunTools(t *testing.T) {
+	root := repoRoot(t)
+	for _, e := range listPackages(t, root, "./internal/contract/...") {
+		for _, imp := range e.Imports {
+			for _, banned := range []string{"/internal/tools", "/internal/agent", "/internal/tasks", "/internal/core"} {
+				if imp == modulePath+banned || strings.HasPrefix(imp, modulePath+banned+"/") {
+					t.Errorf("%s must not import %s", e.ImportPath, imp)
+				}
+			}
+		}
+	}
+}
+
+// TestBinaryLinksNoTestTrees keeps test harnesses and fixtures out of the
+// shipped binary. `orchestra eval` needs its harness, so the harness lives in
+// internal/eval; tests/ holds only tests.
+func TestBinaryLinksNoTestTrees(t *testing.T) {
+	root := repoRoot(t)
+	for _, dep := range listDeps(t, root, "./cmd/orchestra") {
+		if strings.HasPrefix(dep, modulePath+"/tests/") {
+			t.Errorf("cmd/orchestra links %s", dep)
+		}
+	}
+}
+
+// TestExamplesAreAssetsOnly lets the binary embed docs/examples (the templates
+// `orchestra init` writes) on the condition that the package stays data: it
+// imports nothing from the module, so documentation never grows code paths.
+func TestExamplesAreAssetsOnly(t *testing.T) {
+	root := repoRoot(t)
+	for _, e := range listPackages(t, root, "./docs/examples/...") {
+		for _, imp := range e.Imports {
+			if strings.HasPrefix(imp, modulePath+"/") {
+				t.Errorf("%s must not import %s", e.ImportPath, imp)
+			}
+		}
+	}
+}

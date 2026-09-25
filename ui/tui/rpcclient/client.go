@@ -344,9 +344,6 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 			OpenTodos:  result.OpenTodos,
 			Content:    result.StopReason,
 		})
-		if result.MaxStepsExceeded && result.StopReason == "" {
-			// keep Content for older cores
-		}
 	}
 	c.send(Event{Kind: EventAgentRunCompleted})
 	return err

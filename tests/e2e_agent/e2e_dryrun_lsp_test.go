@@ -147,9 +147,6 @@ func TestAgent_E2E_DryRun_LSPErrorFixApply(t *testing.T) {
 	if !mockLLM.sawLSPHint {
 		t.Fatal("expected LSP_ERRORS hint after bad dry-run edit")
 	}
-	if res == nil || !res.Applied {
-		// dry-run: Applied=false is expected
-	}
 	if res != nil && res.ApplyResponse == nil {
 		t.Fatal("expected dry-run ApplyResponse with staged diffs")
 	}

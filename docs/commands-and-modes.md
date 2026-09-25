@@ -151,7 +151,7 @@ content:"ping"}]`), без tool-defs. Замеряет латентность, �
 файлах). Используется для smoke-теста пайплайна патчей без LLM.
 
 ### 1.11. `orchestra eval [tasks-dir]`
-Прогон YAML-тасков из `tests/eval/tasks` против сконфигурированного LLM.
+Прогон YAML-тасков из `internal/eval/tasks` против сконфигурированного LLM.
 Каждый таск — отдельный `core.AgentRun`. Печатает таблицу `PASS/FAIL/ERROR`.
 
 | Флаг | |

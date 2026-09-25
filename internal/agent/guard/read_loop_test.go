@@ -29,7 +29,7 @@ func TestCallKey_SeesThroughFormattingOfTheSameArguments(t *testing.T) {
 		t.Fatal("two different files must not share a key")
 	}
 	// Input that is not JSON at all still has to key stably.
-	if callKey("read", []byte("not json")) != callKey("read", []byte("not json")) {
+	if a, b := callKey("read", []byte("not json")), callKey("read", []byte("not json")); a != b {
 		t.Fatal("a non-JSON input must key stably")
 	}
 }

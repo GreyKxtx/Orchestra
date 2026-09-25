@@ -380,10 +380,6 @@ func (a *App) pushModelDialog(p view.ProviderEntry) tea.Cmd {
 	return nil
 }
 
-func (a *App) loadLLMAPIKey() string {
-	return a.loadProviderAPIKey("")
-}
-
 // loadProviderAPIKey returns providers[key].api_key, or llm.api_key when key
 // matches the active provider / is empty.
 func (a *App) loadProviderAPIKey(providerKey string) string {

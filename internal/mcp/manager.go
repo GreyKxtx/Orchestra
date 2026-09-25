@@ -78,16 +78,26 @@ func startServer(ctx context.Context, cfg config.MCPServerConfig, opts StartOpti
 	opts.Inbound.AllowSampling = cfg.AllowSampling
 	opts.Inbound.AllowElicitation = cfg.AllowElicitation
 
+	// A failed start returns a nil interface, not a nil *Client inside one:
+	// callers test the client against nil.
 	if url := strings.TrimSpace(cfg.URL); url != "" {
-		return StartRemote(ctx, RemoteConfig{
+		c, err := StartRemote(ctx, RemoteConfig{
 			Name:           cfg.Name,
 			URL:            url,
 			BearerTokenEnv: cfg.BearerTokenEnv,
 			Headers:        cfg.Headers,
 			OAuth:          cfg.OAuth != nil,
 		}, opts)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
-	return Start(ctx, cfg.Name, cfg.Command, cfg.Env, opts)
+	c, err := Start(ctx, cfg.Name, cfg.Command, cfg.Env, opts)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // Hooks are the host-side seams an MCP server can reach through: the model it

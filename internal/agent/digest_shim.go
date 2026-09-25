@@ -19,11 +19,3 @@ func AutoMemoryNote(toolName string, input json.RawMessage, digestedOrRaw string
 func normalizeToolName(name string) string {
 	return digest.NormalizeToolName(name)
 }
-
-func isDigestedToolContent(content string) bool {
-	return digest.IsDigestedToolContent(content)
-}
-
-func parseStringField(input json.RawMessage, key string) string {
-	return digest.ParseStringField(input, key)
-}

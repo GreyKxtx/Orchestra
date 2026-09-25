@@ -13,7 +13,6 @@ import (
 	"github.com/orchestra/orchestra/internal/tools/nav"
 	"github.com/orchestra/orchestra/internal/tools/session"
 	"github.com/orchestra/orchestra/internal/tools/task"
-	"github.com/orchestra/orchestra/internal/tools/toolschema"
 	"github.com/orchestra/orchestra/internal/tools/toolslsp"
 	"github.com/orchestra/orchestra/internal/tools/web"
 	"github.com/orchestra/orchestra/llm"
@@ -766,8 +765,4 @@ func isWebGated(name string) bool {
 
 func isBrowserGated(name string) bool {
 	return strings.HasPrefix(name, "browser.") || strings.HasPrefix(name, "browser_")
-}
-
-func mustSchema(s string) json.RawMessage {
-	return toolschema.MustSchema(s)
 }

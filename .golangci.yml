@@ -1,0 +1,40 @@
+version: "2"
+
+# CI runs this over every module of the workspace:
+#   golangci-lint run ./... ./llm/... ./patch/... ./protocol/...
+# The set is deliberately small: checks that find defects (dead code, lost
+# assignments, staticcheck's SA/S/ST families), not taste.
+linters:
+  default: none
+  enable:
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # Off in golangci-lint's own defaults: doc and naming conventions.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # Error text here is often shown verbatim to the model or the user —
+        # "Policy violation: …", a multi-line hint for vLLM — so Go's
+        # convention for error strings does not fit it.
+        - -ST1005
+        # Quick fixes are refactoring suggestions, not defects.
+        - -QF*
+  exclusions:
+    rules:
+      # MCP sampling is deprecated upstream (SEP-2577) but still served during
+      # the deprecation window; internal/mcp keeps it on purpose.
+      - path: internal/mcp/remote_inbound
+        linters: [staticcheck]
+        text: "SA1019: .*sampling feature is deprecated"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

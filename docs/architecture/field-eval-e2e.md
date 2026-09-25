@@ -9,12 +9,12 @@
 ```powershell
 # из корня репо, с настроенным .orchestra.yml
 orchestra eval
-orchestra eval tests/eval/tasks --timeout 180
+orchestra eval internal/eval/tasks --timeout 180
 orchestra eval --model qwen2.5-coder-7b
 ```
 
-- Задачи: `tests/eval/tasks/*.yaml`
-- Harness: `tests/eval/` (checks: `file_contains`, `file_exists`, …)
+- Задачи: `internal/eval/tasks/*.yaml`
+- Harness: `internal/eval/` (checks: `file_contains`, `file_exists`, …)
 - **Не блокер релиза** — метрики собираются вручную; падение одной задачи не ломает CI.
 
 Рекомендуемый KPI-набор перед bump версии:

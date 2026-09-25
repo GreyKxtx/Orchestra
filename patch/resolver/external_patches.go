@@ -819,9 +819,7 @@ func blockAnchorFind(haystack, needle string) (start, end, matches int) {
 
 func splitBlockLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	if strings.HasSuffix(s, "\n") {
-		s = strings.TrimSuffix(s, "\n")
-	}
+	s = strings.TrimSuffix(s, "\n")
 	if s == "" {
 		return nil
 	}

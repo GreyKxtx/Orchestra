@@ -288,22 +288,6 @@ func (d *OrchestraDialog) RolesSnapshot() []OrchestraRoleDraft {
 	return append([]OrchestraRoleDraft(nil), d.roles...)
 }
 
-func (d *OrchestraDialog) cycleProvider(delta int) {
-	if len(d.opts) == 0 {
-		return
-	}
-	cur := d.roles[d.cursor].Provider
-	idx := 0
-	for i, o := range d.opts {
-		if o.Key == cur {
-			idx = i
-			break
-		}
-	}
-	idx = (idx + delta + len(d.opts)) % len(d.opts)
-	d.roles[d.cursor].Provider = d.opts[idx].Key
-}
-
 func (d *OrchestraDialog) providerLabel(key string) string {
 	for _, o := range d.opts {
 		if o.Key == key {

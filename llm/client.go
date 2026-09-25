@@ -721,32 +721,6 @@ type jsonSchemaSpec struct {
 	Strict bool            `json:"strict"`
 }
 
-// chatCompletionResponse represents OpenAI chat completion response.
-// The inner messageWithReasoning type captures the reasoning_content field
-// that reasoning models (qwen3.6-27b, deepseek-r1) return alongside content.
-type chatCompletionResponse struct {
-	Choices []struct {
-		Message struct {
-			Message
-			ReasoningContent string `json:"reasoning_content,omitempty"`
-		} `json:"message"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-		// PromptTokensDetails.CachedTokens is the prompt-cache hit reported by
-		// OpenAI, DeepSeek and compatible gateways.
-		PromptTokensDetails struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details,omitempty"`
-		Cost float64 `json:"cost"` // OpenRouter: credits (USD) for this completion
-	} `json:"usage,omitempty"`
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 // buildChatBody assembles the wire JSON for one chat completion request.
 // Tool names invalid on strict providers (Anthropic requires ^[a-zA-Z0-9_-]{1,128}$;
 // MCP tools are canonically "mcp:server:tool") are renamed on the wire; the
@@ -904,102 +878,6 @@ func messageRolesFor(req CompleteRequest) []string {
 		messageRoles = append(messageRoles, roleStr)
 	}
 	return messageRoles
-}
-
-// completeOnce performs a single non-streaming chat completion HTTP exchange.
-func (c *OpenAIClient) completeOnce(ctx context.Context, url string, req CompleteRequest, maxTok int) (*CompleteResponse, error) {
-	jsonData, err := c.buildChatBody(req, maxTok, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	requestBytes := len(jsonData)
-	requestPreview := string(jsonData) // Will be sanitized in logger
-
-	startTime := time.Now()
-	if c.logger != nil {
-		c.logger.LogRequest(url, c.model, int(c.client.Timeout.Seconds()), requestBytes, len(req.Tools), len(req.Messages), messageRolesFor(req), requestPreview)
-	}
-
-	reqHTTP, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	reqHTTP.Header.Set("Content-Type", "application/json")
-	if err := c.setAuthHeader(reqHTTP.Header); err != nil {
-		return nil, err
-	}
-	setNgrokBypass(reqHTTP, c.baseURL)
-
-	resp, err := c.client.Do(reqHTTP)
-	duration := time.Since(startTime)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.LogError(0, err.Error(), duration.Milliseconds())
-		}
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.LogError(resp.StatusCode, fmt.Sprintf("failed to read response: %v", err), duration.Milliseconds())
-		}
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	responseBytes := len(body)
-	responsePreview := string(body)
-
-	if resp.StatusCode != http.StatusOK {
-		if c.logger != nil {
-			c.logger.LogError(resp.StatusCode, responsePreview, duration.Milliseconds())
-		}
-		return nil, formatAPIError(resp.StatusCode, string(body))
-	}
-
-	if c.logger != nil {
-		c.logger.LogResponse(responseBytes, duration.Milliseconds(), responsePreview)
-	}
-
-	var apiResp chatCompletionResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if apiResp.Error.Message != "" {
-		return nil, fmt.Errorf("API error: %s", apiResp.Error.Message)
-	}
-
-	if len(apiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
-	}
-
-	choice := apiResp.Choices[0]
-	msg := choice.Message.Message
-	// Fold reasoning_content into content when the model returns blank content alongside
-	// its thinking (qwen3.6-27b in LM Studio, deepseek-r1, etc.). Only fold when
-	// there are no tool_calls — if the model is calling a tool, blank content is normal.
-	if strings.TrimSpace(msg.Content) == "" && strings.TrimSpace(choice.Message.ReasoningContent) != "" && len(msg.ToolCalls) == 0 {
-		msg.Content = strings.TrimSpace(choice.Message.ReasoningContent)
-	}
-	out := &CompleteResponse{Message: msg}
-	newToolNameMapper(req.Tools).RestoreResponse(out)
-	if apiResp.Usage != nil {
-		// What the prompt really cost, fed back so the pre-send size guard
-		// measures instead of guessing (see prompt_calibration.go).
-		c.observePromptUsage(estimateRequestBytes(req), apiResp.Usage.PromptTokens)
-		out.Usage = &TokenUsage{
-			PromptTokens:       apiResp.Usage.PromptTokens,
-			CompletionTokens:   apiResp.Usage.CompletionTokens,
-			CachedPromptTokens: apiResp.Usage.PromptTokensDetails.CachedTokens,
-			TotalTokens:        apiResp.Usage.TotalTokens,
-			CostUSD:            apiResp.Usage.Cost,
-		}
-	}
-	return out, nil
 }
 
 // reportsCost reports whether the endpoint returns real cost in the usage

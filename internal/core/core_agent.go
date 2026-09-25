@@ -220,13 +220,11 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
-	var outHistory []llm.Message
-	var res *agent.Result
-	outHistory, res, err = ag.Run(ctx, nil, agentQuery)
+	outHistory, res, err := ag.Run(ctx, nil, agentQuery)
 	if err != nil {
 		return nil, err
 	}
-	outHistory, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
+	_, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	if err != nil {
 		return nil, err
 	}

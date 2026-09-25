@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	evalharness "github.com/orchestra/orchestra/tests/eval"
+	evalharness "github.com/orchestra/orchestra/internal/eval"
 )
 
 // --task exists so that one task can be iterated on without paying for the

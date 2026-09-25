@@ -1,12 +1,16 @@
 package memory
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orchestra/orchestra/internal/config"
+)
 
 // Inject mode controls how much memory is eagerly injected into the system prompt.
 const (
-	ModeEager  = "eager"  // full tiered inject up to inject_kb (best for small local models)
-	ModeLazy   = "lazy"   // minimal header + memory_read on demand (saves context)
-	ModeHybrid = "hybrid" // ORCHESTRA + session + recent agent entries; rest via memory_read
+	ModeEager  = config.MemoryModeEager  // full tiered inject up to inject_kb (best for small local models)
+	ModeLazy   = config.MemoryModeLazy   // minimal header + memory_read on demand (saves context)
+	ModeHybrid = config.MemoryModeHybrid // ORCHESTRA + session + recent agent entries; rest via memory_read
 )
 
 // Config controls project/session/global memory behaviour.
@@ -35,6 +39,31 @@ func DefaultConfig() Config {
 		SessionEnabled: true,
 		MaxAgentKB:     128,
 	}
+}
+
+// ConfigFrom returns the normalized Config for the project's memory settings.
+func ConfigFrom(m config.MemoryConfig) Config {
+	cfg := DefaultConfig()
+	if m.InjectKB > 0 {
+		cfg.InjectKB = m.InjectKB
+	}
+	if m.LazyKB > 0 {
+		cfg.LazyKB = m.LazyKB
+	}
+	if strings.TrimSpace(m.Mode) != "" {
+		cfg.Mode = strings.TrimSpace(m.Mode)
+	}
+	if m.GlobalEnabled != nil {
+		cfg.GlobalEnabled = *m.GlobalEnabled
+	}
+	if m.SessionEnabled != nil {
+		cfg.SessionEnabled = *m.SessionEnabled
+	}
+	if m.MaxAgentKB > 0 {
+		cfg.MaxAgentKB = m.MaxAgentKB
+	}
+	cfg.Normalize()
+	return cfg
 }
 
 // Normalize fills zero values and canonicalizes mode.

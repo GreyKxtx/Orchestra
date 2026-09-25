@@ -120,11 +120,11 @@
 3. **Grammar-constrained sampling.** ✅ `ResolveResponseFormat` + auto `json_schema` для local; `supports_json_schema: false` opt-out; OpenAI client auto-detect on reject.
 4. **Шаблоны промптов per model family.** ✅ `internal/prompt/files/{mode}-{family}.txt` + `ResolvePromptFamily` (aliases: qwen/chatml/llama → local).
 5. **Деприоритизировать `unified_diff`.** ✅ build-local/gpt/gemini/kimi.
-6. **Логирование наблюдений.** ✅ `tool_call`, `tool_result`, `step.classified` в llm_log; `tests/eval.ParseLLMLog` + `orchestra eval` колонка RETRIES.
+6. **Логирование наблюдений.** ✅ `tool_call`, `tool_result`, `step.classified` в llm_log; `internal/eval.ParseLLMLog` + `orchestra eval` колонка RETRIES.
 
 ### Definition of Done
 
-- Локальная модель на 5 типовых задачах (`tests/eval/tasks/`: rename, add_func, fix_bug, add_test, refactor) — **ручной прогон** `orchestra eval` (avg invalid retries <3).
+- Локальная модель на 5 типовых задачах (`internal/eval/tasks/`: rename, add_func, fix_bug, add_test, refactor) — **ручной прогон** `orchestra eval` (avg invalid retries <3).
 - `--from-plan` детерминированно повторяет plan.json — ✅ e2e (`TestApply_FromPlan_*`).
 - Grammar-constraint сокращает invalid_retries — проверяется через `orchestra eval` + сравнение лога с/без `supports_json_schema: false`.
 - Все юнит-тесты зелёные — ✅ CI.
@@ -295,7 +295,7 @@
 
 ### Eval harness
 
-- `tests/eval/` — набор задач с ожидаемыми результатами (структура файлов, прохождение тестов).
+- `internal/eval/` — набор задач с ожидаемыми результатами (структура файлов, прохождение тестов).
 - `orchestra eval --model <name>` — прогоняет все задачи, собирает метрики (success rate, среднее число шагов, время, retry-count).
 - Это позволит осознанно выбирать модели и видеть регрессии при изменениях агента.
 

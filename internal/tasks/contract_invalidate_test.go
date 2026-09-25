@@ -72,9 +72,7 @@ func TestInvalidateStaleContractTasks(t *testing.T) {
 	}
 
 	// The ref-free worker keeps running until released.
-	select {
-	case <-time.After(100 * time.Millisecond):
-	}
+	<-time.After(100 * time.Millisecond)
 	if got := r.InvalidateStaleContractTasks(context.Background()); len(got) != 0 {
 		t.Fatalf("second pass must cancel nothing, got %v", got)
 	}

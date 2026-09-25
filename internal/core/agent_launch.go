@@ -171,8 +171,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// One answer for the turn, its subagents and its skills.
 	allowBrowser := spec.AllowBrowser && agent.ProfileAllowsBrowser(profileName)
 
-	var respFmt *llm.ResponseFormat
-	respFmt = agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
+	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
 
 	maxSteps := spec.MaxSteps
 	if maxSteps <= 0 {

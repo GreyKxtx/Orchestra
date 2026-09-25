@@ -297,7 +297,6 @@ func FormatLeadInject(projectRoot string) string {
 		if len(chunk) > remaining {
 			b.WriteString(chunk[:remaining])
 			truncated = true
-			remaining = 0
 			break
 		}
 		b.WriteString(chunk)

@@ -1,4 +1,4 @@
-package contract
+package agent
 
 import (
 	"context"
@@ -6,18 +6,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/tools/exec"
 )
 
 const spectralTimeout = 90 * time.Second
 
-// SpectralLint runs `spectral lint` over the OpenAPI artifact when the
+// spectralLint runs `spectral lint` over the OpenAPI artifact when the
 // toolchain is available (spec §5.4: openapi: spectral). Returns:
 //   - ""            — lint green, or toolchain unavailable (built-in checks
 //     from VerifyArtifacts remain the fail-closed floor);
 //   - non-empty     — lint findings that must block the freeze.
-func SpectralLint(ctx context.Context, projectRoot string) string {
-	target := filepath.ToSlash(filepath.Join(DirRel, ArtifactOpenAPI))
+func spectralLint(ctx context.Context, projectRoot string) string {
+	target := filepath.ToSlash(filepath.Join(contract.DirRel, contract.ArtifactOpenAPI))
 	resp, err := exec.Run(ctx, projectRoot, spectralTimeout, 32*1024, exec.RunRequest{
 		Command:   "npx",
 		Args:      []string{"--no-install", "@stoplight/spectral-cli", "lint", "--fail-severity", "error", target},

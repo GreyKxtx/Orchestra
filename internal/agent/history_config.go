@@ -2,6 +2,7 @@ package agent
 
 import (
 	configpkg "github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/memory"
 )
 
 // ApplyHistoryConfig fills history/memory knobs from project config.
@@ -29,5 +30,5 @@ func ApplyHistoryConfig(opts *Options, cfg *configpkg.ProjectConfig) {
 		v := cfg.Agent.ResolvedWorkingState()
 		opts.WorkingState = &v
 	}
-	opts.Memory = cfg.Memory.Resolve()
+	opts.Memory = memory.ConfigFrom(cfg.Memory)
 }

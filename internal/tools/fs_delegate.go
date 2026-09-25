@@ -224,13 +224,6 @@ func (r *Runner) CommitStagedPath(ctx context.Context, path string, backup bool)
 	return r.fsClient().CommitStagedPath(ctx, path, backup)
 }
 
-func (r *Runner) stagedContent(relSlash string) (content, hash string, ok bool) {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return "", "", false
-	}
-	return r.fsTools.Overlay.StagedContent(relSlash)
-}
-
 func (r *Runner) currentHash(relSlash string) string {
 	if r.fsTools == nil || r.fsTools.Overlay == nil {
 		return ""
