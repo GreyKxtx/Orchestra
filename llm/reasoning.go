@@ -125,9 +125,14 @@ const anthropicAdaptiveMaxTokens = 32000
 // thinking rather than {type:"enabled", budget_tokens}. Per Anthropic's model
 // matrix: 4.5 and earlier take only "enabled" ("adaptive" is a 400); 4.6
 // takes both and deprecates "enabled"; 4.7 and later reject "enabled" with a
-// 400. A model whose version cannot be read (Mythos Preview, an alias) is
-// taken as new: sending "enabled" to one is what breaks.
+// 400. A Claude id whose version cannot be read (Mythos Preview, an alias) is
+// taken as new: sending "enabled" to one is what breaks. A model that is not
+// Claude — another vendor behind an Anthropic-compatible API — keeps the
+// request it always got: those take "enabled", and a smaller max_tokens.
 func anthropicAdaptiveThinking(model string) bool {
+	if !strings.Contains(strings.ToLower(model), "claude") {
+		return false
+	}
 	major, minor, ok := claudeVersion(model)
 	if !ok {
 		return true

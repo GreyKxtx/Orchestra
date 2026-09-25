@@ -149,6 +149,10 @@ func TestAnthropicAdaptiveThinking(t *testing.T) {
 		"claude-sonnet-5":                           true,
 		"claude-fable-5-1":                          true,
 		"claude-mythos-preview":                     true,
+		// Other vendors behind Anthropic-compatible APIs keep the old request.
+		"kimi-k2-0905-preview": false,
+		"deepseek-chat":        false,
+		"MiniMax-M2":           false,
 	} {
 		if got := anthropicAdaptiveThinking(model); got != want {
 			t.Errorf("%s: adaptive=%v, want %v", model, got, want)
