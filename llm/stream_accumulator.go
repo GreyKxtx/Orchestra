@@ -20,6 +20,8 @@ type toolCallAccumulator struct {
 	calls   []*toolCallState // ordered by first-seen index
 	byIndex map[int]*toolCallState
 	usage   *TokenUsage // populated from the final SSE chunk if the provider sent stream_options.include_usage
+	// stopReason is the provider's finish/stop reason, as sent.
+	stopReason string
 }
 
 func newToolCallAccumulator() *toolCallAccumulator {
@@ -81,7 +83,7 @@ func (a *toolCallAccumulator) BuildResponse() *CompleteResponse {
 			},
 		})
 	}
-	return &CompleteResponse{Message: msg, Usage: a.usage}
+	return &CompleteResponse{Message: msg, Usage: a.usage, StopReason: NormalizeStopReason(a.stopReason)}
 }
 
 // SetUsage records the provider-reported usage block from the final SSE chunk.

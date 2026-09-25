@@ -140,6 +140,9 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 					}
 				}
 			case "message_delta":
+				if ev.Delta.StopReason != "" {
+					acc.stopReason = ev.Delta.StopReason
+				}
 				if ev.Usage != nil {
 					acc.usage = ev.Usage.toTokenUsage()
 				} else if ev.Message.Usage != nil {
@@ -158,7 +161,13 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			ch <- StreamEvent{Kind: StreamEventError, Err: err}
+			ch <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf("SSE read error: %w", err)}
+			return
+		}
+		// No message_stop: whole only if message_delta said why it stopped;
+		// otherwise the connection was cut mid-answer (LLM-8).
+		if acc.stopReason == "" {
+			ch <- StreamEvent{Kind: StreamEventError, Err: errStreamCutOff}
 			return
 		}
 		emitDone()

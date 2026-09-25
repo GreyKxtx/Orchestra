@@ -148,10 +148,12 @@ func TestParseSSEStream_NonStreamingFallback(t *testing.T) {
 
 // TestParseSSEStream_NoDONE replays a stream that ends without a [DONE] terminator
 // (some proxies strip it). The parser must synthesise a Done event from scanner EOF.
+// A proxy that strips [DONE] still passes the last chunk's finish_reason:
+// the answer is whole.
 func TestParseSSEStream_NoDONE(t *testing.T) {
 	fixture := strings.NewReader(
 		"data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n" +
-			"data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n",
+			"data: {\"choices\":[{\"delta\":{\"content\":\"world\"},\"finish_reason\":\"stop\"}]}\n",
 		// no [DONE]
 	)
 
@@ -273,5 +275,50 @@ func TestToolCallAccumulator_EmptyArgs(t *testing.T) {
 	}
 	if string(resp.Message.ToolCalls[0].Function.Arguments.Raw()) != "{}" {
 		t.Errorf("empty args: want {}, got %q", string(resp.Message.ToolCalls[0].Function.Arguments.Raw()))
+	}
+}
+
+// A stream that ends with neither [DONE] nor a finish_reason was cut off
+// mid-answer (LLM-8). It used to be returned as the model's whole answer —
+// half a sentence, or a tool call with truncated arguments. It is a
+// retryable error now.
+func TestParseSSEStream_CutOffIsAnError(t *testing.T) {
+	fixture := strings.NewReader(
+		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"write\",\"arguments\":\"{\\\"path\\\": \\\"a.go\"}}]}}]}\n",
+	)
+	events := collectEvents(ParseSSEStream(context.Background(), fixture))
+	last := events[len(events)-1]
+	if last.Kind != StreamEventError || !IsTransientLLMError(last.Err) {
+		t.Fatalf("a cut-off stream is a retryable error, got %+v", last)
+	}
+}
+
+// A server that ignores stream:true answers with one ordinary completion; its
+// words used to be dropped as a stream with no data.
+func TestParseSSEStream_PlainCompletion(t *testing.T) {
+	fixture := strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`)
+	events := collectEvents(ParseSSEStream(context.Background(), fixture))
+	last := events[len(events)-1]
+	if last.Kind != StreamEventDone || last.Response.Message.Content != "pong" || last.Response.StopReason != StopEnd || last.Response.Usage.TotalTokens != 4 {
+		t.Fatalf("plain completion: %+v", last)
+	}
+}
+
+func TestParseSSEStream_StopReason(t *testing.T) {
+	fixture := strings.NewReader(
+		"data: {\"choices\":[{\"delta\":{\"content\":\"cut\"},\"finish_reason\":\"length\"}]}\n" +
+			"data: [DONE]\n")
+	events := collectEvents(ParseSSEStream(context.Background(), fixture))
+	if last := events[len(events)-1]; last.Kind != StreamEventDone || last.Response.StopReason != StopMaxTokens {
+		t.Fatalf("finish_reason length is max_tokens: %+v", last)
+	}
+}
+
+// An error sent as a plain JSON body is the server's error, not a cut-off.
+func TestParseSSEStream_PlainError(t *testing.T) {
+	events := collectEvents(ParseSSEStream(context.Background(), strings.NewReader(`{"error":{"message":"model not loaded"}}`)))
+	last := events[len(events)-1]
+	if last.Kind != StreamEventError || !strings.Contains(last.Err.Error(), "model not loaded") {
+		t.Fatalf("plain error body: %+v", last)
 	}
 }

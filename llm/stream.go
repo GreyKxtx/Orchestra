@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -163,6 +164,56 @@ type sseChunk struct {
 	} `json:"error"`
 }
 
+// plainBodyMaxBytes bounds what is kept of a body that is not SSE.
+const plainBodyMaxBytes = 4 << 20
+
+// parsePlainCompletion reads a non-streaming chat completion — what a server
+// that ignores stream:true sends. It used to read as a stream with no data:
+// an empty answer, the model's words silently dropped.
+func parsePlainCompletion(body string) (*CompleteResponse, bool) {
+	var doc struct {
+		Choices []struct {
+			Message struct {
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &doc); err != nil || len(doc.Choices) == 0 {
+		return nil, false
+	}
+	c := doc.Choices[0]
+	acc := newToolCallAccumulator()
+	acc.AppendContent(c.Message.Content)
+	for i, tc := range c.Message.ToolCalls {
+		acc.FeedToolCall(i, tc.ID, tc.Function.Name, tc.Function.Arguments)
+	}
+	acc.stopReason = c.FinishReason
+	if c.FinishReason == "" {
+		acc.stopReason = "stop" // a whole document is a whole answer
+	}
+	if u := doc.Usage; u != nil {
+		acc.SetUsage(&TokenUsage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens})
+	}
+	return acc.BuildResponse(), true
+}
+
+// errStreamCutOff is a stream that ended with no terminal event and no
+// stop reason. IsTransientLLMError retries it ("stream ended without done").
+var errStreamCutOff = errors.New("stream ended without done: the connection closed before the model finished (no [DONE] or finish_reason)")
+
 // ParseSSEStream reads an OpenAI-compatible SSE response body and emits StreamEvents
 // on the returned buffered channel, which is closed when the stream ends.
 // body is NOT closed by this function — the caller is responsible.
@@ -186,6 +237,11 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 		// the TUI receives StreamEventReasoningDelta separately.
 		inReasoning := false
 
+		// plain keeps the body while no "data:" line has come: a server that
+		// ignores stream:true answers with one ordinary completion.
+		var plain strings.Builder
+		sawData := false
+
 		for scanner.Scan() {
 			if ctx.Err() != nil {
 				ch <- StreamEvent{Kind: StreamEventError, Err: ctx.Err()}
@@ -193,8 +249,13 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			}
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
+				if !sawData && plain.Len() < plainBodyMaxBytes {
+					plain.WriteString(line)
+					plain.WriteByte('\n')
+				}
 				continue // skip comment lines, event: lines, empty lines
 			}
+			sawData = true
 			data := strings.TrimPrefix(line, "data: ")
 			sseDebugLog(data)
 			if strings.TrimSpace(data) == "[DONE]" {
@@ -224,6 +285,9 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			}
 			if len(chunk.Choices) == 0 {
 				continue
+			}
+			if fr := chunk.Choices[0].FinishReason; fr != "" {
+				acc.stopReason = fr
 			}
 
 			delta := chunk.Choices[0].Delta
@@ -281,7 +345,27 @@ func ParseSSEStream(ctx context.Context, body io.Reader) <-chan StreamEvent {
 			ch <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf("SSE read error: %w", err)}
 			return
 		}
-		// Scanner exhausted without a [DONE] line — some proxies strip it.
+		// Scanner exhausted without a [DONE] line. Some proxies strip it, and
+		// then the last chunk still carried a finish_reason: the answer is
+		// whole. Without either, the connection was cut mid-answer, and
+		// taking what arrived as the answer (LLM-8) handed the agent a
+		// truncated tool call or half a sentence as if the model had
+		// finished. It is an error, and a retryable one.
+		if !sawData {
+			if resp, ok := parsePlainCompletion(plain.String()); ok {
+				ch <- StreamEvent{Kind: StreamEventDone, Response: resp}
+				return
+			}
+			var e sseChunk
+			if json.Unmarshal([]byte(strings.TrimSpace(plain.String())), &e) == nil && e.Error.Message != "" {
+				ch <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf("stream error: %s", e.Error.Message)}
+				return
+			}
+		}
+		if acc.stopReason == "" {
+			ch <- StreamEvent{Kind: StreamEventError, Err: errStreamCutOff}
+			return
+		}
 		if inReasoning {
 			acc.AppendContent("</think>")
 		}

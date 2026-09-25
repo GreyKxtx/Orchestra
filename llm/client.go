@@ -1096,6 +1096,9 @@ func streamResponsePreview(resp *CompleteResponse) string {
 	if resp.Usage != nil {
 		view["usage"] = resp.Usage
 	}
+	if resp.StopReason != "" {
+		view["stop_reason"] = resp.StopReason
+	}
 	b, err := json.Marshal(view)
 	if err != nil {
 		return resp.Message.Content

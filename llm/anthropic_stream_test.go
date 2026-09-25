@@ -79,3 +79,36 @@ func TestParseAnthropicSSEStream_ToolUse(t *testing.T) {
 		t.Fatalf("args=%q", got)
 	}
 }
+
+// A stream cut after a text delta — no message_delta stop reason, no
+// message_stop — is a retryable error, not the model's answer (LLM-8).
+func TestParseAnthropicSSEStream_CutOffIsAnError(t *testing.T) {
+	fixture := strings.NewReader(
+		"event: content_block_start\n" +
+			"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n" +
+			"event: content_block_delta\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"I will now\"}}\n",
+	)
+	events := collectEvents(ParseAnthropicSSEStream(context.Background(), fixture))
+	last := events[len(events)-1]
+	if last.Kind != StreamEventError || !IsTransientLLMError(last.Err) {
+		t.Fatalf("a cut-off stream is a retryable error, got %+v", last)
+	}
+}
+
+// The stop reason travels with the answer, normalised: max_tokens says the
+// answer was cut by the budget, not finished.
+func TestParseAnthropicSSEStream_StopReason(t *testing.T) {
+	fixture := strings.NewReader(
+		"event: content_block_delta\n" +
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n" +
+			"event: message_delta\n" +
+			"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"}}\n",
+		// no message_stop: the stop reason alone says the answer ended
+	)
+	events := collectEvents(ParseAnthropicSSEStream(context.Background(), fixture))
+	last := events[len(events)-1]
+	if last.Kind != StreamEventDone || last.Response.StopReason != StopMaxTokens {
+		t.Fatalf("stop reason: %+v", last)
+	}
+}

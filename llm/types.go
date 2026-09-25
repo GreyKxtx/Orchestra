@@ -402,6 +402,38 @@ type CompleteResponse struct {
 	// Usage carries token accounting reported by the provider for this turn.
 	// Nil when the provider did not return usage info (some local servers omit it).
 	Usage *TokenUsage
+	// StopReason is why the model stopped, normalised across providers
+	// (StopEnd, StopMaxTokens, StopToolUse, StopFiltered; a provider value
+	// with no equivalent is passed through). Empty when it was not reported.
+	StopReason string
+}
+
+// Stop reasons, normalised from OpenAI's finish_reason and Anthropic's
+// stop_reason.
+const (
+	StopEnd       = "end"
+	StopMaxTokens = "max_tokens"
+	StopToolUse   = "tool_use"
+	StopFiltered  = "filtered"
+)
+
+// NormalizeStopReason maps a provider's finish/stop reason to the Stop*
+// constants.
+func NormalizeStopReason(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return ""
+	case "stop", "end_turn", "stop_sequence", "eos":
+		return StopEnd
+	case "length", "max_tokens", "model_context_window_exceeded":
+		return StopMaxTokens
+	case "tool_calls", "tool_use", "function_call":
+		return StopToolUse
+	case "content_filter", "refusal", "safety":
+		return StopFiltered
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
 }
 
 // TokenUsage is provider-reported token accounting for a single completion.

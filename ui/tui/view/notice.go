@@ -34,6 +34,8 @@ func LocalizeRetryHint(msg string) string {
 		return "Неоднозначное совпадение — уточните edit или добавьте контекст"
 	case strings.Contains(msg, "open todo"):
 		return "Есть незакрытые задачи в todolist — не final; отметь done и продолжай следующий пункт"
+	case strings.Contains(msg, "LLM stream cut off mid-answer"):
+		return "Стрим модели оборвался посреди ответа — частичный ответ выше отброшен, шаг повторяется"
 	case strings.Contains(msg, "max_steps exceeded"), strings.HasPrefix(msg, "MAX_STEPS"):
 		return "Лимит шагов хода — история сохранена, напишите продолжить"
 	default:
