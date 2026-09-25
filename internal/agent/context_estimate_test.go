@@ -118,3 +118,17 @@ func TestAgentBytesPerToken_PrefersMorePessimistic(t *testing.T) {
 		t.Fatalf("configured=%d want 2", got)
 	}
 }
+
+// estimatePromptTokens approximates the next LLM prompt size from history bytes
+// plus fixed overhead (system prompt, tool defs, user shell). Emitted every
+// agent step so the TUI ctx bar stays current even when the provider omits
+// stream usage (common with LM Studio). Real usage overwrites when available.
+func estimatePromptTokens(history []llm.Message, maxPromptBytes int) int {
+	return estimatePromptTokensWithFactor(history, maxPromptBytes, bytesPerContextToken)
+}
+
+// shouldCompactHistory triggers when history bytes OR estimated/real prompt
+// tokens exceed CompactThresholdPct of the budget.
+func shouldCompactHistory(history []llm.Message, maxPromptBytes, compactPct int) bool {
+	return shouldCompactHistoryEx(history, maxPromptBytes, compactPct, 0, 0, 0, bytesPerContextToken)
+}

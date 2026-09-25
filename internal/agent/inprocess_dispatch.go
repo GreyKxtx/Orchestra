@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 )
@@ -94,9 +96,6 @@ var inProcessTools = map[string]inProcessTool{
 	}},
 	"question":  {run: (*Agent).runQuestion},
 	"plan_exit": {run: (*Agent).runPlanExit},
-	"plan_enter": {run: func(*Agent, context.Context, inProcessCall) inProcessOutcome {
-		return inProcessOutcome{reply: `{"status":"not_supported","message":"plan_enter does not switch modes; this turn stays in its current mode. Planning runs in plan mode (orchestra apply --mode plan)."}`}
-	}},
 }
 
 // inProcessHandler returns the handler for name when this run can serve it.
@@ -114,7 +113,7 @@ func (a *Agent) inProcessHandler(name string) (inProcessTool, bool) {
 // mirrored here — otherwise a delegated subtask, a checklist or a skill is
 // indistinguishable, in the log, from work the parent did inline, and the
 // eval's tool_used check, which reads these entries, could never pass.
-func (a *Agent) runInProcessTool(ctx context.Context, cb *CircuitBreaker, history *[]llm.Message, c inProcessCall, t inProcessTool, emitStepDone func(string)) (serialToolOutcome, error) {
+func (a *Agent) runInProcessTool(ctx context.Context, cb *guard.CircuitBreaker, history *[]llm.Message, c inProcessCall, t inProcessTool, emitStepDone func(string)) (serialToolOutcome, error) {
 	if a.opts.AgentLogger != nil {
 		a.opts.AgentLogger.LogToolCall(c.name, len(c.input), string(c.input))
 	}

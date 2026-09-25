@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func TestStore_RoundTrip(t *testing.T) {
@@ -171,7 +171,7 @@ func TestStore_PathForIDResolvesARememberedProject(t *testing.T) {
 	}
 
 	abs, _ := filepath.Abs(proj)
-	id, err := cache.ComputeProjectID(abs)
+	id, err := fsutil.ComputeProjectID(abs)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}

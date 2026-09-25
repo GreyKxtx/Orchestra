@@ -407,27 +407,6 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 
 // ── Response conversion: Anthropic → OpenAI ──────────────────────────────────
 
-func convertFromAnthropic(blocks []anthropicBlock) Message {
-	msg := Message{Role: RoleAssistant}
-	for _, b := range blocks {
-		switch b.Type {
-		case "text":
-			msg.Content += b.Text
-		case "tool_use":
-			args := ToolArguments(b.Input)
-			msg.ToolCalls = append(msg.ToolCalls, ToolCall{
-				ID:   b.ID,
-				Type: "function",
-				Function: ToolCallFunc{
-					Name:      b.Name,
-					Arguments: args,
-				},
-			})
-		}
-	}
-	return msg
-}
-
 // ── Tool conversion ───────────────────────────────────────────────────────────
 
 func convertTools(defs []ToolDef) []anthropicTool {

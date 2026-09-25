@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -71,10 +71,10 @@ func TestWrite_BothFilesReachDiskWithTheirContent(t *testing.T) {
 		`{"type":"tool_call","tool":{"name":"read","input":{"path":"main.go"}}}`,
 		`{"type":"tool_call","tool":{"name":"write","input":{"path":"util.go",` +
 			`"content":` + jsonString(newUtilGo) + `,` +
-			`"file_hash":` + jsonString(cache.ComputeSHA256([]byte("package main\n"))) + `}}}`,
+			`"file_hash":` + jsonString(fsutil.ComputeSHA256([]byte("package main\n"))) + `}}}`,
 		`{"type":"tool_call","tool":{"name":"write","input":{"path":"main.go",` +
 			`"content":` + jsonString(newMainGo) + `,` +
-			`"file_hash":` + jsonString(cache.ComputeSHA256([]byte("package main\n\nfunc main() {\n}\n"))) + `}}}`,
+			`"file_hash":` + jsonString(fsutil.ComputeSHA256([]byte("package main\n\nfunc main() {\n}\n"))) + `}}}`,
 		`{"patches":[]}`,
 	}}
 

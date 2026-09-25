@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 )
 
@@ -54,7 +54,7 @@ func TestRefreshPendingWriteHashes(t *testing.T) {
 	if err := os.WriteFile(path, []byte("before"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	want := cache.ComputeSHA256([]byte("before"))
+	want := fsutil.ComputeSHA256([]byte("before"))
 	wa := &ops.WriteAtomicOp{
 		Op:      ops.OpFileWriteAtomic,
 		Path:    "a.txt",

@@ -7,6 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
@@ -34,7 +38,7 @@ func formatToolDeniedJSON(name string, input json.RawMessage, reason string) str
 		"status": "denied",
 		"tool":   name,
 		"reason": reason,
-		"input":  compactJSON(input),
+		"input":  agentformat.CompactJSON(input),
 	}
 	b, err := json.Marshal(result)
 	if err != nil {
@@ -48,7 +52,7 @@ func formatToolErrorJSON(name string, input json.RawMessage, err error) string {
 	result := map[string]any{
 		"status": "error",
 		"tool":   name,
-		"input":  compactJSON(input),
+		"input":  agentformat.CompactJSON(input),
 	}
 	if pe, ok := protocol.AsError(err); ok {
 		result["code"] = string(pe.Code)
@@ -90,7 +94,7 @@ func compactErrorDetails(data any) any {
 			if tv == "" {
 				continue
 			}
-			out[k] = truncate(tv, toolErrorDetailMaxChars)
+			out[k] = agentformat.Truncate(tv, toolErrorDetailMaxChars)
 		default:
 			out[k] = v
 		}
@@ -129,7 +133,7 @@ const parallelBatchWorkerLimit = 16
 // (e.g. parallel batch of 16 denied tools blows MaxDeniedToolRepeats).
 // The caller must propagate the error out of Run, exactly like the serial
 // path does. C2 in docs/superpowers/plans/2026-05-19-post-audit-refactor.md.
-func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, history []llm.Message, calls []ToolCall, llmResp *llm.CompleteResponse, stepNum int) ([]llm.Message, *protocol.Error) {
+func (a *Agent) runParallelToolBatch(ctx context.Context, cb *guard.CircuitBreaker, history []llm.Message, calls []ToolCall, llmResp *llm.CompleteResponse, stepNum int) ([]llm.Message, *protocol.Error) {
 	// 1) Append the assistant message that requested the batch. OpenAI's
 	//    protocol requires the assistant message with tool_calls to precede
 	//    the per-tool replies; reuse the original ToolCalls slice unchanged.
@@ -163,7 +167,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	// tool the mode was not given refuses a call here exactly as it would
 	// alone. A gate that asks the user asks before anything fans out.
 	for i, call := range calls {
-		gc := a.newGateCall(normalizeToolName(call.Name), call.Input)
+		gc := a.newGateCall(digest.NormalizeToolName(call.Name), call.Input)
 		if reason := a.runToolGates(ctx, gc, history); reason != "" {
 			denied[i] = true
 			results[i] = a.deniedToolResult(gc.name, call.Input, reason)
@@ -185,7 +189,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				denied[i] = true
 				results[i] = formatToolDeniedJSON(call.Name, call.Input, hookDenialReason(dec))
 				if a.opts.OnEvent != nil {
-					_ = safeRun("OnEvent ToolCallCompleted (pre-deny)", func() {
+					_ = agentformat.SafeRun("OnEvent ToolCallCompleted (pre-deny)", func() {
 						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
 							Kind:         llm.StreamEventToolCallCompleted,
 							ToolCallID:   call.ID,
@@ -212,10 +216,10 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		dupOf[i] = -1
 	}
 	for i, tc := range calls {
-		if denied[i] || !dedupExemptTool(tc.Name) {
+		if denied[i] || !guard.DedupExemptTool(tc.Name) {
 			continue
 		}
-		key := callKey(tc.Name, tc.Input)
+		key := guard.CallKey(tc.Name, tc.Input)
 		if first, ok := firstOfKey[key]; ok {
 			dupOf[i] = first
 			continue
@@ -232,7 +236,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		if denied[i] || dupOf[i] >= 0 {
 			continue
 		}
-		if dedupExemptTool(tc.Name) && cb != nil && cb.IsReadOnlyBlocked(tc.Name, tc.Input) {
+		if guard.DedupExemptTool(tc.Name) && cb != nil && cb.IsReadOnlyBlocked(tc.Name, tc.Input) {
 			denied[i] = true
 			results[i] = "⛔ STOP. The tool «" + tc.Name + "» was called too many times with identical arguments — proceed with a different tool or final answer."
 			continue
@@ -254,7 +258,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			// are most of its turn. Diagnosing two_files needed a proxy in
 			// front of the model server to recover what these calls returned.
 			started := time.Now()
-			err := safeRunErr("parallel tool "+call.Name, func() error {
+			err := agentformat.SafeRunErr("parallel tool "+call.Name, func() error {
 				if a.opts.AgentLogger != nil {
 					a.opts.AgentLogger.LogToolCall(call.Name, len(call.Input), string(call.Input))
 				}
@@ -268,7 +272,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				}
 				results[idx] = rewrote[idx] + a.prepareToolHistoryContent(call.Name, call.Input, out)
 				if a.opts.OnEvent != nil {
-					_ = safeRun("OnEvent ToolCallCompleted", func() {
+					_ = agentformat.SafeRun("OnEvent ToolCallCompleted", func() {
 						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: toolCallCompletedStreamEvent(call.Name, call.ID, out, nil)})
 					})
 				}
@@ -281,7 +285,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				}
 				results[idx] = formatToolErrorJSON(call.Name, call.Input, err)
 				if a.opts.OnEvent != nil {
-					_ = safeRun("OnEvent ToolCallCompleted (err)", func() {
+					_ = agentformat.SafeRun("OnEvent ToolCallCompleted (err)", func() {
 						a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: toolCallCompletedStreamEvent(call.Name, call.ID, nil, err)})
 					})
 				}
@@ -307,7 +311,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 		}
 		if a.opts.OnEvent != nil {
 			name, id, content := tc.Name, tc.ID, results[i]
-			_ = safeRun("OnEvent ToolCallCompleted (dup)", func() {
+			_ = agentformat.SafeRun("OnEvent ToolCallCompleted (dup)", func() {
 				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
 					Kind:         llm.StreamEventToolCallCompleted,
 					ToolCallID:   id,
@@ -352,7 +356,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 				failed = append(failed, call.Name)
 			default:
 				anyOK = true
-				if dedupExemptTool(call.Name) {
+				if guard.DedupExemptTool(call.Name) {
 					if hint := cb.RecordReadOnlyCall(call.Name, call.Input); hint != "" {
 						readOnlyHints = append(readOnlyHints, hint)
 					}

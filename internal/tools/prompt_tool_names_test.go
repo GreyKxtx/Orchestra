@@ -29,7 +29,7 @@ func promptModes() []string {
 func checkableToolNames() []string {
 	var out []string
 	for _, spec := range toolspec.All() {
-		if !ambiguousToolNames[spec.Name] && spec.Offer != toolspec.Legacy {
+		if !ambiguousToolNames[spec.Name] {
 			out = append(out, spec.Name)
 		}
 	}

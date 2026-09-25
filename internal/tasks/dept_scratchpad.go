@@ -39,13 +39,6 @@ func deptScratchpadRelPath(wo *WorkOrder) string {
 	return raw
 }
 
-// appendDeptScratchpadDone appends a one-line entry under `## Done` of the
-// dept scratchpad, creating the file on first write. Best-effort: errors are
-// returned for logging but must not fail the worker task.
-func appendDeptScratchpadDone(workspaceRoot, relPath, line string) error {
-	return appendDeptScratchpadEntry(workspaceRoot, relPath, line, true)
-}
-
 // appendDeptScratchpadEntry records a worker outcome: under `## Done`, ticked,
 // when it succeeded; under `## Not done`, unticked, when it did not. Every
 // outcome used to go to Done as "- [x]", so a Lead reading its department's

@@ -2,11 +2,9 @@ package trajectory
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
+	"github.com/orchestra/orchestra/internal/retention"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
@@ -50,23 +48,6 @@ func ReadRun(workspaceRoot, runID string) (events []Event, recorded bool, err er
 
 // pruneRunLogs removes the oldest logs in dir so that at most keep remain.
 // Turn ids begin with their UTC timestamp, so name order is age order.
-// Best-effort: a log that cannot be removed now is removed by a later run.
 func pruneRunLogs(dir string, keep int) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	var names []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".events.jsonl") {
-			names = append(names, e.Name())
-		}
-	}
-	if len(names) <= keep {
-		return
-	}
-	sort.Strings(names)
-	for _, n := range names[:len(names)-keep] {
-		_ = os.Remove(filepath.Join(dir, n))
-	}
+	retention.PruneFiles(dir, ".events.jsonl", keep)
 }

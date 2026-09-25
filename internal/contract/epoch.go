@@ -79,15 +79,6 @@ func Save(projectRoot string, e *Epoch) error {
 	return fsutil.AtomicWriteFile(path, data, 0o644)
 }
 
-// FileSHA256 returns the hex sha256 of a file.
-func FileSHA256(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return contentSHA256(data), nil
-}
-
 func contentSHA256(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])

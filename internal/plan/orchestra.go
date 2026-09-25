@@ -29,7 +29,7 @@ func IsOrchestraLeadWritablePath(path, assignedPlan string) bool {
 // runtimeOwnedFiles and runtimeOwnedDirs are the runtime's own records under
 // .orchestra/ (lower case, see IsRuntimeOwnedPath).
 var (
-	runtimeOwnedFiles = []string{OrchestraStateRelPath, ".orchestra/decisions.md", ".orchestra/contract/epoch.yaml"}
+	runtimeOwnedFiles = []string{OrchestraStateRelPath, ".orchestra/decisions.md", ".orchestra/decisions.archive.md", ".orchestra/contract/epoch.yaml"}
 	runtimeOwnedDirs  = []string{strings.TrimSuffix(OrchestraDeptsRelDir, "/"), ".orchestra/agency"}
 )
 
@@ -103,13 +103,4 @@ func IsDeptLeadWritablePath(path, assignedPlan string) bool {
 	}
 	return strings.HasPrefix(p, OrchestraPlaybooksRelDir) && strings.HasSuffix(p, ".md") &&
 		!strings.Contains(strings.TrimPrefix(p, OrchestraPlaybooksRelDir), "/")
-}
-
-// DefaultOrchestraScratchpad is the initial template when state.md is created.
-func DefaultOrchestraScratchpad(goal string) string {
-	g := strings.TrimSpace(goal)
-	if g == "" {
-		g = "(set goal)"
-	}
-	return "## Goal\n" + g + "\n\n## Done\n\n## Next\n\n## Notes\n"
 }

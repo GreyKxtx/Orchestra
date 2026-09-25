@@ -150,3 +150,50 @@ func TestNoCallerReachesForTheConcreteLLMClient(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Every atomic write goes through patch/fsutil.AtomicWriteFile (ARCH-11):
+// there were seven temp-file-and-rename implementations, each with its own
+// idea of fsync, of Windows sharing violations and of what happens when the
+// rename fails. A production file that renames a temp file of its own is a
+// new one.
+func TestAtomicWritesGoThroughFsutil(t *testing.T) {
+	root := repoRoot(t)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor", "testdata", "dist", "out", "ui":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if rel == "patch/fsutil/atomic.go" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		src := string(data)
+		if !strings.Contains(src, "os.Rename(") {
+			return nil
+		}
+		for _, tmp := range []string{"os.CreateTemp(", `".tmp"`, `".tmp-`, ".orchestra.tmp"} {
+			if strings.Contains(src, tmp) {
+				t.Errorf("%s writes a temp file and renames it itself; use fsutil.AtomicWriteFile", rel)
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

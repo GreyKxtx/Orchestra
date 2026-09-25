@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,5 +73,85 @@ func TestSave_ConcurrentWriters(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".lock"); !os.IsNotExist(err) {
 		t.Fatalf("lock file leaked after saves: err=%v", err)
+	}
+}
+
+// UpdateFile holds the config lock across read → fn → write, so concurrent
+// edits from several writers all land, and nothing of the write is left
+// behind: no temp file, no lock.
+func TestUpdateFile_SerialisesWritersAndLeavesNothingBehind(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".orchestra.yml")
+	if err := os.WriteFile(path, []byte("project_root: .\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const writers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- UpdateFile(path, func(current []byte) ([]byte, error) {
+				time.Sleep(2 * time.Millisecond) // widen the read→write window
+				return append(current, []byte("key"+string(rune('a'+i))+": v\n")...), nil
+			})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("UpdateFile: %v", err)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < writers; i++ {
+		want := "key" + string(rune('a'+i)) + ": v\n"
+		if !strings.Contains(string(data), want) {
+			t.Errorf("writer %d's edit was lost:\n%s", i, data)
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.Name() != ".orchestra.yml" {
+			t.Errorf("left behind: %s", e.Name())
+		}
+	}
+}
+
+// A writer that holds the lock keeps UpdateFile waiting: the model command
+// used to write straight over the config while a Save was in flight.
+func TestUpdateFile_WaitsForTheLock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".orchestra.yml")
+	if err := os.WriteFile(path, []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unlock := acquireFileLock(path)
+	done := make(chan error, 1)
+	go func() {
+		done <- UpdateFile(path, func(current []byte) ([]byte, error) { return []byte("a: 2\n"), nil })
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("UpdateFile returned (%v) while the lock was held", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("UpdateFile after unlock: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("UpdateFile never proceeded after the lock was released")
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "a: 2\n" {
+		t.Fatalf("config = %q", data)
 	}
 }

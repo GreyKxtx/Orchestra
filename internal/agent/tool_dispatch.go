@@ -8,6 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/toolspec"
 	"github.com/orchestra/orchestra/llm"
@@ -17,7 +21,7 @@ import (
 // (session state, subtasks, skills, agency, plan mode) rather than
 // tools.Runner.Call.
 func isAgentInProcessTool(name string) bool {
-	return toolspec.IsInProcess(normalizeToolName(name))
+	return toolspec.IsInProcess(digest.NormalizeToolName(name))
 }
 
 // resolveToolCalls returns the tool calls for this step, preferring Step.Tools
@@ -31,7 +35,7 @@ func (a *Agent) resolveToolCalls(step *Step, llmResp *llm.CompleteResponse) []To
 		for i, tc := range step.Tools {
 			out[i] = ToolCall{
 				ID:    tc.ID,
-				Name:  normalizeToolName(tc.Name),
+				Name:  digest.NormalizeToolName(tc.Name),
 				Input: tc.Input,
 			}
 		}
@@ -39,7 +43,7 @@ func (a *Agent) resolveToolCalls(step *Step, llmResp *llm.CompleteResponse) []To
 	}
 	if step.Tool != nil {
 		tc := *step.Tool
-		tc.Name = normalizeToolName(tc.Name)
+		tc.Name = digest.NormalizeToolName(tc.Name)
 		if tc.ID == "" && llmResp != nil && len(llmResp.Message.ToolCalls) > 0 {
 			tc.ID = llmResp.Message.ToolCalls[0].ID
 		}
@@ -66,7 +70,7 @@ func allParallelSafeCalls(calls []ToolCall, defs []llm.ToolDef) bool {
 		flag[d.Function.Name] = d.ParallelSafe
 	}
 	for _, c := range calls {
-		name := normalizeToolName(c.Name)
+		name := digest.NormalizeToolName(c.Name)
 		if isAgentInProcessTool(name) || !flag[name] {
 			return false
 		}
@@ -120,8 +124,8 @@ func (a *Agent) deniedToolResult(name string, input json.RawMessage, reason stri
 // tools.Runner for the rest. Appends tool messages to history. Returns a
 // non-nil error for circuit-breaker trips; EarlyResult when the run should end
 // (task_result child, plan_exit approved).
-func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, history *[]llm.Message, tc ToolCall, steps int, emitStepDone func(string)) (serialToolOutcome, error) {
-	name := normalizeToolName(tc.Name)
+func (a *Agent) runSerialToolCall(ctx context.Context, cb *guard.CircuitBreaker, history *[]llm.Message, tc ToolCall, steps int, emitStepDone func(string)) (serialToolOutcome, error) {
+	name := digest.NormalizeToolName(tc.Name)
 	if name == "" {
 		return serialToolOutcome{}, nil
 	}
@@ -141,7 +145,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 
 // runRunnerTool runs a gated call through tools.Runner: the PreTool hooks,
 // the repeat guards, the call, and what a successful result sets off.
-func (a *Agent) runRunnerTool(ctx context.Context, cb *CircuitBreaker, history *[]llm.Message, tc ToolCall, name, toolCallID string, steps int) (serialToolOutcome, error) {
+func (a *Agent) runRunnerTool(ctx context.Context, cb *guard.CircuitBreaker, history *[]llm.Message, tc ToolCall, name, toolCallID string, steps int) (serialToolOutcome, error) {
 	callCtx := ctx
 	if name == "bash" && a.opts.OnEvent != nil {
 		capturedStep := steps
@@ -214,8 +218,8 @@ func (a *Agent) runRunnerTool(ctx context.Context, cb *CircuitBreaker, history *
 // arguments: a read-only call past its budget, or a duplicate of a mutating
 // call. blocked reports that the call was answered here; cbErr is a breaker
 // trip.
-func (a *Agent) repeatRefusal(cb *CircuitBreaker, history *[]llm.Message, tc ToolCall, name, toolCallID string, steps int) (blocked bool, cbErr error) {
-	if dedupExemptTool(name) {
+func (a *Agent) repeatRefusal(cb *guard.CircuitBreaker, history *[]llm.Message, tc ToolCall, name, toolCallID string, steps int) (blocked bool, cbErr error) {
+	if guard.DedupExemptTool(name) {
 		if cb.IsReadOnlyBlocked(name, tc.Input) {
 			stopMsg := "⛔ The tool «" + name + "» was called too many times with identical arguments — the result is already in your history. Proceed with edit/write or use different arguments."
 			a.logf("tool_call name=%s read_only_doom_blocked", name)
@@ -258,9 +262,9 @@ func (a *Agent) repeatRefusal(cb *CircuitBreaker, history *[]llm.Message, tc Too
 // afterRunnerSuccess records a successful Runner call and does what it sets
 // off: PostTool hooks, the history entry, staging and LSP feedback for a write
 // or edit, images for the multimodal model, and the repeat bookkeeping.
-func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBreaker, history *[]llm.Message, tc ToolCall, name, toolCallID string, steps int, out []byte, dur int64, hookRewrite string) {
+func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *guard.CircuitBreaker, history *[]llm.Message, tc ToolCall, name, toolCallID string, steps int, out []byte, dur int64, hookRewrite string) {
 	if a.opts.HooksRunner != nil {
-		_ = safeRunErr("PostTool hook "+name, func() error {
+		_ = agentformat.SafeRunErr("PostTool hook "+name, func() error {
 			a.opts.HooksRunner.RunPostTool(callCtx, name, out)
 			return nil
 		})
@@ -282,7 +286,7 @@ func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBrea
 	a.countMutatingTool(name)
 
 	if name == "write" || name == "edit" {
-		toolPath := extractWriteOrEditPath(tc.Input)
+		toolPath := guard.ExtractWriteOrEditPath(tc.Input)
 		// Recorded here rather than at the call site, because only a tool that
 		// got this far actually changed the file. A failed edit followed by the
 		// same change as a final patch is a legitimate recovery, and must not
@@ -295,7 +299,7 @@ func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBrea
 	}
 
 	if a.opts.MultimodalLLM && name == "browser.screenshot" {
-		if part, ok := extractScreenshotImagePart(out); ok {
+		if part, ok := agentformat.ExtractScreenshotImagePart(out); ok {
 			*history = append(*history, llm.Message{
 				Role: llm.RoleUser,
 				Parts: []llm.ContentPart{
@@ -311,7 +315,7 @@ func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBrea
 	// rather than inside the tool result: no provider accepts image content in
 	// a tool-role message, and this is already how browser.screenshot works.
 	if a.opts.MultimodalLLM && strings.HasPrefix(name, "mcp:") {
-		if imgs := extractMCPImageParts(out); len(imgs) > 0 {
+		if imgs := agentformat.ExtractMCPImageParts(out); len(imgs) > 0 {
 			parts := append([]llm.ContentPart{
 				{Kind: llm.PartText, Text: "Image(s) returned by " + name + ":"},
 			}, imgs...)
@@ -320,9 +324,9 @@ func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBrea
 	}
 
 	if name == "write" || name == "edit" {
-		if hint := extractLSPErrors(out); hint != "" {
-			path := extractWriteOrEditPath(tc.Input)
-			streak := a.diags.Observe(path, fingerprintLSPErrors(out), hint)
+		if hint := agentformat.ExtractLSPErrors(out); hint != "" {
+			path := guard.ExtractWriteOrEditPath(tc.Input)
+			streak := a.diags.Observe(path, guard.FingerprintLSPErrors(out), hint)
 			if streak >= 2 && path != "" {
 				hint = "LSP_ERRORS — your last edit on " + path + " did not change diagnostics (same error set, attempt #" + fmt.Sprint(streak) + "). Stop write/edit'ing this file and diagnose the cause via lsp.references / lsp.hover / read.\n" + hint
 			}
@@ -338,11 +342,11 @@ func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBrea
 				}})
 			}
 		} else {
-			_ = a.diags.Observe(extractWriteOrEditPath(tc.Input), "", "")
+			_ = a.diags.Observe(guard.ExtractWriteOrEditPath(tc.Input), "", "")
 		}
 	}
 
-	if dedupExemptTool(name) {
+	if guard.DedupExemptTool(name) {
 		if hint := cb.RecordReadOnlyCall(name, tc.Input); hint != "" {
 			*history = append(*history, llm.Message{Role: llm.RoleUser, Content: hint})
 		}

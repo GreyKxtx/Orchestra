@@ -25,15 +25,6 @@ func CacheRoot() (string, error) {
 	return filepath.Join(home, ".orchestra", "lsp"), nil
 }
 
-// CacheBinaryPath is ~/.orchestra/lsp/<id>/<version>/<binary>[.exe].
-func CacheBinaryPath(id, version, binaryName string) (string, error) {
-	cands, err := CacheBinaryCandidates(id, version, binaryName)
-	if err != nil {
-		return "", err
-	}
-	return cands[0], nil
-}
-
 // CacheBinaryCandidates lists possible cache paths (.exe, .cmd, bare on Windows).
 func CacheBinaryCandidates(id, version, binaryName string) ([]string, error) {
 	root, err := CacheRoot()

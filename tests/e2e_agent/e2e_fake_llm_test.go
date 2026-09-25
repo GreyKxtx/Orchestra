@@ -9,7 +9,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -41,7 +41,7 @@ func TestAgent_E2E_FakeLLM_RewritesFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello old world\n"), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte("hello old world\n"))
+	h := fsutil.ComputeSHA256([]byte("hello old world\n"))
 
 	v, err := schema.NewValidator()
 	if err != nil {

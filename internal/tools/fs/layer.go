@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/wsview"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // Task layers.
@@ -257,7 +257,7 @@ func diskHash(root, relSlash string) string {
 	if err != nil {
 		return ""
 	}
-	return cache.ComputeSHA256(b)
+	return fsutil.ComputeSHA256(b)
 }
 
 type overlayKey struct{}

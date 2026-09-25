@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // The tools' root, and the project id, must follow the config file, not the
@@ -30,7 +30,7 @@ func TestNew_ToolsRootFollowsTheConfigFileNotTheProcessCWD(t *testing.T) {
 	if got := c.tools.WorkspaceRoot(); !samePath(got, root) {
 		t.Fatalf("tools root = %q, want the project %q", got, root)
 	}
-	want, err := cache.ComputeProjectID(root)
+	want, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatal(err)
 	}

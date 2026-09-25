@@ -10,7 +10,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -75,7 +75,7 @@ func TestRPCHandler_Initialize_ThenToolCall(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
-	projectID, err := cache.ComputeProjectID(root)
+	projectID, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func setupInitializedCore(t *testing.T, root string, llmOverride llm.Client) (*C
 	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
-	projectID, err := cache.ComputeProjectID(root)
+	projectID, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestSession_MessageUpdatesHistory(t *testing.T) {
 		t.Fatalf("write a.txt: %v", err)
 	}
 
-	fileHash := cache.ComputeSHA256([]byte("hello\n"))
+	fileHash := fsutil.ComputeSHA256([]byte("hello\n"))
 	patch := `{"type":"file.search_replace","path":"a.txt","search":"hello","replace":"hello","file_hash":"` + fileHash + `"}`
 	finalResp := `{"type":"final","final":{"patches":[` + patch + `]}}`
 

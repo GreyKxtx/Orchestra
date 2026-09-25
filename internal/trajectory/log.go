@@ -2,8 +2,10 @@ package trajectory
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -22,11 +24,26 @@ func Path(workspaceRoot, sessionID string) string {
 	return filepath.Join(workspaceRoot, ".orchestra", "sessions", sessionID+".events.jsonl")
 }
 
+// MaxEventBytes caps one event's payload. A larger payload is recorded as
+// {"truncated": true, "bytes": N} in its place, so the line stays readable
+// and the log stays a log (DATA-9: one line past the reader's limit used to
+// disable recording for the session for good).
+const MaxEventBytes = 1 << 20
+
+// MaxLogBytes is where a session's log rotates: the current file becomes
+// <name>.1, replacing the previous generation, and a new one starts. Read
+// returns both generations, so a session keeps up to twice this much.
+const MaxLogBytes = 32 << 20
+
+// maxLogBytes is MaxLogBytes, overridable by tests.
+var maxLogBytes int64 = MaxLogBytes
+
 // Writer appends events to one session's log.
 type Writer struct {
 	mu   sync.Mutex
 	f    *os.File
 	seq  int64
+	size int64
 	path string
 	// tornWrite is set when a write failed and may have left a partial line.
 	// The next append starts on a fresh line so it cannot merge into it.
@@ -82,7 +99,41 @@ func openWriter(p string) (*Writer, error) {
 		_ = f.Close()
 		return nil, err
 	}
-	return &Writer{f: f, seq: last, path: p}, nil
+	// A log that just rotated is empty; its sequence went on in the older
+	// generation, and restarting it would number two events the same.
+	if older, err := lastSeq(p + ".1"); err == nil && older > last {
+		last = older
+	}
+	var size int64
+	if st, err := f.Stat(); err == nil {
+		size = st.Size()
+	}
+	return &Writer{f: f, seq: last, size: size, path: p}, nil
+}
+
+// rotate moves the current log to <path>.1, replacing the previous
+// generation, and starts a new one. Best-effort: if the rename fails the log
+// keeps growing in place, which loses nothing.
+func (w *Writer) rotate() {
+	_ = w.f.Close()
+	older := w.path + ".1"
+	_ = os.Remove(older)
+	if err := os.Rename(w.path, older); err == nil {
+		w.size = 0
+	}
+	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		// Appends fail until the next NewWriter; an *os.File that is nil
+		// answers ErrInvalid rather than panicking.
+		w.f = nil
+		return
+	}
+	w.f = f
+}
+
+// truncatedPayload stands in for a payload past MaxEventBytes.
+func truncatedPayload(n int) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"truncated":true,"bytes":%d}`, n))
 }
 
 // terminateTornTail ends the file with a newline if it does not already, so
@@ -125,6 +176,9 @@ func (w *Writer) Append(eventType string, data any) error {
 			return fmt.Errorf("trajectory: marshal payload: %w", err)
 		}
 		raw = b
+		if len(raw) > MaxEventBytes {
+			raw = truncatedPayload(len(raw))
+		}
 	}
 
 	w.mu.Lock()
@@ -150,6 +204,9 @@ func (w *Writer) Append(eventType string, data any) error {
 		// line of our own rather than merging into it.
 		buf = append([]byte{'\n'}, buf...)
 	}
+	if w.size > 0 && w.size+int64(len(buf)) > maxLogBytes {
+		w.rotate()
+	}
 	if _, err := w.f.Write(buf); err != nil {
 		// Deliberately no `w.seq--` here, unlike the marshal failure above: a
 		// failed write may have left a partial line, so reusing this number
@@ -159,6 +216,7 @@ func (w *Writer) Append(eventType string, data any) error {
 		return fmt.Errorf("trajectory: append to %s: %w", w.path, err)
 	}
 	w.tornWrite = false
+	w.size += int64(len(buf))
 	return nil
 }
 
@@ -184,7 +242,25 @@ func Read(workspaceRoot, sessionID string) (events []Event, recorded bool, err e
 	if err := sessionfile.CheckID(sessionID); err != nil {
 		return nil, false, err
 	}
-	return readFile(Path(workspaceRoot, sessionID))
+	return readGenerations(Path(workspaceRoot, sessionID))
+}
+
+// readGenerations returns the rotated generation's events, if any, followed
+// by the current file's.
+func readGenerations(p string) (events []Event, recorded bool, err error) {
+	older, recOlder, err := readFile(p + ".1")
+	if err != nil {
+		return nil, recOlder, err
+	}
+	current, recCurrent, err := readFile(p)
+	if err != nil {
+		return nil, recOlder || recCurrent, err
+	}
+	if !recOlder && !recCurrent {
+		return nil, false, nil
+	}
+	out := append([]Event{}, older...)
+	return append(out, current...), true, nil
 }
 
 // readFile reads the log at p; recorded is false when it does not exist.
@@ -199,13 +275,7 @@ func readFile(p string) (events []Event, recorded bool, err error) {
 	defer func() { _ = f.Close() }()
 
 	out := []Event{}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	err = eachLine(f, func(line []byte) {
 		var ev Event
 		if err := json.Unmarshal(line, &ev); err != nil {
 			// Any line that will not parse is skipped, wherever it sits — not
@@ -213,14 +283,34 @@ func readFile(p string) (events []Event, recorded bool, err error) {
 			// not deny a reader the rest of the log, and a log outlives the
 			// code that reads it. The cost is that a corrupt line in the middle
 			// of a file is as quiet as an expected one at the end.
-			continue
+			return
 		}
 		out = append(out, ev)
-	}
-	if err := sc.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, true, fmt.Errorf("trajectory: read %s: %w", p, err)
 	}
 	return out, true, nil
+}
+
+// eachLine calls fn with every non-empty line of r, whatever its length. A
+// bufio.Scanner stops for good at a line past its buffer, and one such line
+// — a tool result of several megabytes — used to end recording for the
+// session, since every NewWriter re-read the log (DATA-9).
+func eachLine(r io.Reader, fn func(line []byte)) error {
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadBytes('\n')
+		if line = bytes.TrimRight(line, "\r\n"); len(line) > 0 {
+			fn(line)
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func lastSeq(path string) (int64, error) {
@@ -234,18 +324,16 @@ func lastSeq(path string) (int64, error) {
 	defer func() { _ = f.Close() }()
 
 	var last int64
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for sc.Scan() {
+	err = eachLine(f, func(line []byte) {
 		var ev Event
-		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
-			continue
+		if err := json.Unmarshal(line, &ev); err != nil {
+			return
 		}
 		if ev.Seq > last {
 			last = ev.Seq
 		}
-	}
-	if err := sc.Err(); err != nil {
+	})
+	if err != nil {
 		return 0, fmt.Errorf("trajectory: scan %s: %w", path, err)
 	}
 	return last, nil

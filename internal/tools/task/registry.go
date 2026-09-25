@@ -167,17 +167,6 @@ func ToolTaskResult() llm.ToolDef {
 	}
 }
 
-func ToolPlanEnter() llm.ToolDef {
-	return llm.ToolDef{
-		Type: "function",
-		Function: llm.ToolFunctionDef{
-			Name:        "plan_enter",
-			Description: "Switch to PLAN mode (read-only). Use it to analyse a task in depth before changing anything.",
-			Parameters:  toolschema.MustSchema(`{"type":"object","additionalProperties":false,"properties":{}}`),
-		},
-	}
-}
-
 func ToolPlanExit() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",

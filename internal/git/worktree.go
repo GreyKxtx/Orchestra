@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 const worktreeRegistryVersion = 1
@@ -139,11 +141,7 @@ func saveRegistry(mainRoot string, reg *registryFile) error {
 		return err
 	}
 	data = append(data, '\n')
-	tmp := registryPath(mainRoot) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, registryPath(mainRoot))
+	return fsutil.AtomicWriteFile(registryPath(mainRoot), data, 0o644)
 }
 
 func managedNameForPath(mainRoot, absPath string) string {
@@ -407,17 +405,4 @@ func ResolveManagedWorktree(dir, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("unknown orchestra worktree %q", name)
-}
-
-// ListManaged returns orchestra registry entries (may include missing paths).
-func ListManaged(dir string) ([]registryEntry, error) {
-	mainRoot, err := MainRepoRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	reg, err := loadRegistry(mainRoot)
-	if err != nil {
-		return nil, err
-	}
-	return reg.Entries, nil
 }

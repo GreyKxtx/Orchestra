@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/toolspec"
 	"github.com/orchestra/orchestra/llm"
 )
@@ -144,7 +146,7 @@ func (a *Agent) gateTaint(ctx context.Context, c *gateCall, _ []llm.Message) str
 	if !toolspec.ActsForUser(c.name) || c.userApproved {
 		return ""
 	}
-	subject := subjectForTool(c.name, c.input)
+	subject := guard.SubjectForTool(c.name, c.input)
 	if subject == "" {
 		subject = string(c.input)
 	}

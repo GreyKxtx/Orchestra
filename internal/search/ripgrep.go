@@ -57,13 +57,6 @@ type rawEntry struct {
 	isMatch bool
 }
 
-// SearchWithRipgrep runs rg and returns Match results compatible with SearchInProject.
-// scopePaths are absolute paths to scope the search to (files or dirs).
-// Pass nil to search the entire root.
-func SearchWithRipgrep(root, query string, excludeDirs []string, opts Options, scopePaths []string) ([]Match, error) {
-	return SearchWithRipgrepContext(context.Background(), root, query, excludeDirs, opts, scopePaths)
-}
-
 // SearchWithRipgrepContext is SearchWithRipgrep under ctx: rg is killed
 // when the turn that asked is cancelled, instead of running to the end of
 // the tree for an answer nobody reads (DATA-6).

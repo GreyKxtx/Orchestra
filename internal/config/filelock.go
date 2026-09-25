@@ -1,10 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // Cross-process write lock for .orchestra.yml. Two core processes can serve
@@ -51,4 +54,30 @@ func acquireFileLock(path string) func() {
 		}
 		time.Sleep(lockRetryInterval)
 	}
+}
+
+// UpdateFile rewrites the config file at path under its lock: fn gets the
+// bytes on disk and returns the bytes to write, which land atomically. A
+// command that edits one key of .orchestra.yml (orchestra model) goes
+// through it, so it neither races a Save from another process nor leaves a
+// torn file behind (ARCH-11: it used to os.WriteFile the result straight
+// over the config).
+func UpdateFile(path string, fn func(current []byte) ([]byte, error)) error {
+	unlock := acquireFileLock(path)
+	defer unlock()
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	next, err := fn(current)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(next, current) {
+		return nil
+	}
+	if err := fsutil.AtomicWriteFile(path, next, 0o600); err != nil {
+		return fmt.Errorf("failed to replace config file: %w", err)
+	}
+	return nil
 }

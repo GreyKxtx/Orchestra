@@ -74,37 +74,12 @@ func (tp ToolPosition) ToLSP(posEncoding, lineText string) Position {
 	return Position{Line: uint32(line), Character: uint32(col)}
 }
 
-// ToolPositionFrom converts a 0-based LSP Position to a 1-based ToolPosition.
-func ToolPositionFrom(pos Position, posEncoding, lineText string) ToolPosition {
-	col := int(pos.Character)
-	if posEncoding == "utf-16" && col > 0 && lineText != "" {
-		col = utf16ToByteOffset(lineText, col)
-	}
-	return ToolPosition{Line: int(pos.Line) + 1, Col: col + 1}
-}
-
 // byteToUTF16Offset converts a byte offset in s to a UTF-16 code unit count.
 func byteToUTF16Offset(s string, byteOffset int) int {
 	if byteOffset >= len(s) {
 		return countUTF16Units(s)
 	}
 	return countUTF16Units(s[:byteOffset])
-}
-
-// utf16ToByteOffset converts a UTF-16 code unit offset to a byte offset in s.
-func utf16ToByteOffset(s string, utf16Offset int) int {
-	units := 0
-	for i, r := range s {
-		if units >= utf16Offset {
-			return i
-		}
-		if r >= 0x10000 {
-			units += 2 // surrogate pair
-		} else {
-			units++
-		}
-	}
-	return len(s)
 }
 
 // countUTF16Units counts UTF-16 code units needed to encode s.

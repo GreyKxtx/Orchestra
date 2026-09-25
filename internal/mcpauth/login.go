@@ -145,7 +145,8 @@ func Login(ctx context.Context, cfg LoginConfig) error {
 			if err := SaveToken(cfg.ServerName, stored); err != nil {
 				return nil, fmt.Errorf("save token: %w", err)
 			}
-			return newPersistingTokenSource(cfg.ServerName, oc.TokenSource(tsCtx, tok), stored), nil
+			newBase := func(t Token) oauth2.TokenSource { return oc.TokenSource(tsCtx, t.OAuth2Token()) }
+			return newPersistingTokenSource(cfg.ServerName, newBase, stored), nil
 		},
 	}
 	if cfg.ClientID != "" {

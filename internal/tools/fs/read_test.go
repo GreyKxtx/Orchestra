@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func newReadRunner(t *testing.T) (*tools.Runner, string) {
@@ -49,7 +49,7 @@ func TestFSReadHashUnchanged(t *testing.T) {
 		t.Fatalf("FSRead: %v", err)
 	}
 
-	wantHash := cache.ComputeSHA256(raw)
+	wantHash := fsutil.ComputeSHA256(raw)
 	if resp.SHA256 != wantHash {
 		t.Errorf("SHA256 mismatch:\ngot:  %s\nwant: %s", resp.SHA256, wantHash)
 	}

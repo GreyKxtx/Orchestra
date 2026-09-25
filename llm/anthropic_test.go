@@ -115,57 +115,6 @@ func TestConvertToAnthropic_ToolResultsNotGroupedAcrossAssistant(t *testing.T) {
 	}
 }
 
-func TestConvertFromAnthropic_TextOnly(t *testing.T) {
-	blocks := []anthropicBlock{
-		{Type: "text", Text: "hello there"},
-	}
-	msg := convertFromAnthropic(blocks)
-	if msg.Role != RoleAssistant {
-		t.Fatalf("expected assistant role, got %q", msg.Role)
-	}
-	if msg.Content != "hello there" {
-		t.Fatalf("expected 'hello there', got %q", msg.Content)
-	}
-	if len(msg.ToolCalls) != 0 {
-		t.Fatalf("expected no tool calls, got %d", len(msg.ToolCalls))
-	}
-}
-
-func TestConvertFromAnthropic_ToolUse(t *testing.T) {
-	args := json.RawMessage(`{"path":"x.go"}`)
-	blocks := []anthropicBlock{
-		{Type: "tool_use", ID: "call_1", Name: "read", Input: args},
-	}
-	msg := convertFromAnthropic(blocks)
-	if len(msg.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
-	}
-	tc := msg.ToolCalls[0]
-	if tc.ID != "call_1" {
-		t.Fatalf("expected id=call_1, got %q", tc.ID)
-	}
-	if tc.Function.Name != "read" {
-		t.Fatalf("expected name=fs.read, got %q", tc.Function.Name)
-	}
-	if string(tc.Function.Arguments.Raw()) != `{"path":"x.go"}` {
-		t.Fatalf("unexpected arguments: %s", tc.Function.Arguments.Raw())
-	}
-}
-
-func TestConvertFromAnthropic_TextAndToolUse(t *testing.T) {
-	blocks := []anthropicBlock{
-		{Type: "text", Text: "I'll help"},
-		{Type: "tool_use", ID: "c1", Name: "ls", Input: json.RawMessage(`{}`)},
-	}
-	msg := convertFromAnthropic(blocks)
-	if msg.Content != "I'll help" {
-		t.Fatalf("expected text content, got %q", msg.Content)
-	}
-	if len(msg.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
-	}
-}
-
 func TestConvertTools_EmptyReturnsNil(t *testing.T) {
 	if result := convertTools(nil); result != nil {
 		t.Fatalf("expected nil for nil input, got %v", result)

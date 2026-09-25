@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -936,7 +936,7 @@ func TestApply_FromPlan_StaleDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plannedHash := cache.ComputeSHA256(orig)
+	plannedHash := fsutil.ComputeSHA256(orig)
 
 	planPath := filepath.Join(proj, ".orchestra", "plan.json")
 	plan := map[string]any{
@@ -1011,7 +1011,7 @@ func TestCLI_Artifacts_PlanOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plannedHash := cache.ComputeSHA256(orig)
+	plannedHash := fsutil.ComputeSHA256(orig)
 
 	planPath := filepath.Join(proj, ".orchestra", "plan.json")
 	plan := map[string]any{
@@ -1129,7 +1129,7 @@ func TestCLI_FromPlan_Apply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plannedHash := cache.ComputeSHA256(orig)
+	plannedHash := fsutil.ComputeSHA256(orig)
 
 	planPath := filepath.Join(proj, ".orchestra", "plan.json")
 	plan := map[string]any{

@@ -214,6 +214,11 @@ apply:
   output: disk              # disk | patch
   patch_dir: .orchestra/patches
 
+retention:                  # what .orchestra keeps; -1 lifts a bound
+  sessions: 200             # newest session snapshots kept (with their event logs)
+  session_max_age_days: 0   # 0 = no age bound
+  patches: 50               # exported .patch files kept in patch_dir
+
 exec:
   confirm: true             # false = allow exec.run without --allow-exec
 
@@ -411,10 +416,10 @@ message text and `/fork` branches from a checkpoint.
 
 **Two patch layers, strictly separated:**
 
-- **External Patches** (`internal/patches`) — the flexible LLM-facing format: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Each carries the `file_hash` of the version the LLM read.
-- **Internal Ops** (`internal/ops`) — the deterministic on-disk write format: `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every op carries `conditions.file_hash`.
-- `internal/resolver` — the bridge: `ResolveExternalPatches` converts External → Internal by re-reading files and computing exact ranges.
-- `internal/applier` — writes ops; with `apply.output=patch` / `--output-patch`, emits a unified diff without touching the workspace.
+- **External Patches** (`patch/patches`) — the flexible LLM-facing format: `file.search_replace`, `file.unified_diff`, `file.write_atomic`. Each carries the `file_hash` of the version the LLM read.
+- **Internal Ops** (`patch/ops`) — the deterministic on-disk write format: `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every op carries `conditions.file_hash`.
+- `patch/resolver` — the bridge: `ResolveExternalPatches` converts External → Internal by re-reading files and computing exact ranges.
+- `patch/applier` — writes ops; with `apply.output=patch` / `--output-patch`, emits a unified diff without touching the workspace.
 
 **Agent loop** (`internal/agent/agent.go`): system prompt + history → `llm.Complete` → `tool_call` (run it, append to history, continue) or `final` (resolve patches → apply). Recoverable errors (`StaleContent`, `AmbiguousMatch`) go back into history as compact hints. `fast`/`precision` profiles — see `docs/architecture/`.
 

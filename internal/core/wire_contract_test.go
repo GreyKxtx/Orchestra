@@ -14,7 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/wire"
 )
@@ -36,7 +36,7 @@ func newHandshakeCore(t *testing.T) (h *RPCHandler, root, projectID string) {
 		t.Fatalf("New core: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	projectID, err = cache.ComputeProjectID(root)
+	projectID, err = fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}

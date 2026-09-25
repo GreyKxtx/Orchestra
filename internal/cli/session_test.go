@@ -61,8 +61,8 @@ func TestSessionExportImportCLI(t *testing.T) {
 	if err := runSessionImport(nil, []string{exportPath}); err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if !sessionfile.SessionExists(importRoot, id) {
-		t.Fatalf("session not imported")
+	if _, err := sessionfile.Load(importRoot, id); err != nil {
+		t.Fatalf("session not imported: %v", err)
 	}
 }
 

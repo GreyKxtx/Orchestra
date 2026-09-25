@@ -71,11 +71,3 @@ func CurrentStyles() *Styles {
 	stylesCached = s
 	return s
 }
-
-// InvalidateStyles forces the next CurrentStyles call to rebuild. Called by
-// theme.SetTheme so external switches are picked up automatically.
-func InvalidateStyles() {
-	stylesMu.Lock()
-	stylesCached = nil
-	stylesMu.Unlock()
-}

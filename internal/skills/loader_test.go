@@ -429,3 +429,9 @@ func TestFind(t *testing.T) {
 		t.Errorf("Find(z) = %v, want nil", got)
 	}
 }
+
+// DiscoverFrom is the legacy two-tier entry point (user + project).
+// Kept for back-compat with tests written before pack support.
+func DiscoverFrom(userDir, projectDir string) ([]*Skill, error) {
+	return DiscoverFromAll("", userDir, projectDir)
+}

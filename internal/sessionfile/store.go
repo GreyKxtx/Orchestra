@@ -88,8 +88,10 @@ func Delete(workspaceRoot, id string) error {
 		return err
 	}
 	sidecar := filepath.Join(sessionsDir(workspaceRoot), id+".events.jsonl")
-	if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("sessionfile: remove trajectory sidecar: %w", err)
+	for _, p := range []string{sidecar + ".1", sidecar} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("sessionfile: remove trajectory sidecar: %w", err)
+		}
 	}
 	if err := os.Remove(snapshotPath(workspaceRoot, id)); err != nil && !os.IsNotExist(err) {
 		return err
@@ -134,4 +136,33 @@ func ListMeta(workspaceRoot string) ([]Meta, error) {
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
 	return out, nil
+}
+
+// Prune removes the sessions past keep (newest first by UpdatedAt) and those
+// untouched for longer than maxAge, each with its trajectory sidecar. keep < 0
+// and maxAge <= 0 disable the respective bound; the ids in protect are never
+// removed — the sessions a core holds in memory. It returns the ids removed
+// (DATA-11: the store only grew).
+func Prune(workspaceRoot string, keep int, maxAge time.Duration, protect map[string]bool) ([]string, error) {
+	metas, err := ListMeta(workspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	var removed []string
+	for i, m := range metas {
+		if protect[m.ID] {
+			continue
+		}
+		tooOld := maxAge > 0 && !m.UpdatedAt.IsZero() && now.Sub(m.UpdatedAt) > maxAge
+		past := keep >= 0 && i >= keep
+		if !tooOld && !past {
+			continue
+		}
+		if err := Delete(workspaceRoot, m.ID); err != nil {
+			return removed, err
+		}
+		removed = append(removed, m.ID)
+	}
+	return removed, nil
 }

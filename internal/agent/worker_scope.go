@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/roles"
 )
 
@@ -44,7 +46,7 @@ func (a *Agent) checkProductEditScope(name string, input json.RawMessage) error 
 	if name != "edit" && name != "write" {
 		return nil
 	}
-	path := extractWriteOrEditPath(input)
+	path := guard.ExtractWriteOrEditPath(input)
 	if path == "" {
 		return nil // runner rejects pathless writes on its own
 	}
@@ -76,7 +78,7 @@ func (a *Agent) checkDocsEditScope(name string, input json.RawMessage) error {
 	if name != "edit" && name != "write" {
 		return nil
 	}
-	path := extractWriteOrEditPath(input)
+	path := guard.ExtractWriteOrEditPath(input)
 	if path == "" {
 		return nil // runner rejects pathless writes on its own
 	}
@@ -109,7 +111,7 @@ func (a *Agent) checkWorkerEditScope(name string, input json.RawMessage) error {
 	if len(allowed) == 0 {
 		return nil
 	}
-	path := extractWriteOrEditPath(input)
+	path := guard.ExtractWriteOrEditPath(input)
 	if path == "" || workerPathInEditScope(path, allowed) {
 		return nil
 	}

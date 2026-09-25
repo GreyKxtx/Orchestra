@@ -18,14 +18,6 @@ type Token = authstore.Token
 // ErrNoToken indicates no OAuth token is stored for a server.
 var ErrNoToken = authstore.ErrNoToken
 
-// tokenPath returns the on-disk path for a server's stored token. The name
-// guard lives in authstore: a server name comes from a hand-editable
-// .orchestra.yml, so it is validated there for every caller rather than
-// here for one.
-func tokenPath(serverName string) (string, error) {
-	return authstore.Path(namespace, serverName)
-}
-
 // SaveToken persists tok for serverName.
 func SaveToken(serverName string, tok Token) error {
 	return authstore.Save(namespace, serverName, tok)

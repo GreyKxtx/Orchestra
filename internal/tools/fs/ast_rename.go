@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/orchestra/orchestra/internal/astedit"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func (c *Client) ASTRename(ctx context.Context, req ASTRenameRequest) (*ASTRenameResponse, error) {
@@ -27,7 +27,7 @@ func (c *Client) ASTRename(ctx context.Context, req ASTRenameRequest) (*ASTRenam
 	if err != nil {
 		return nil, fmt.Errorf("ast_rename: read %s: %w", abs, err)
 	}
-	prevHash := cache.ComputeSHA256(src)
+	prevHash := fsutil.ComputeSHA256(src)
 
 	res, err := astedit.RenameInFile(ctx, abs, src, req.OldName, req.NewName)
 	if err != nil {

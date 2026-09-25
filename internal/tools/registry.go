@@ -104,8 +104,7 @@ func appendCapabilityTools(out []llm.ToolDef, caps Capabilities) []llm.ToolDef {
 // the surface to enumerate.
 //
 // Differs from listToolsBuild (the build-mode set) by including
-// ast_rename and repo_map. plan_enter is not advertised on any surface
-// (legacy stub only — enter plan via --mode plan / RPC mode).
+// ast_rename and repo_map.
 //
 // Other ListTools* surfaces in this file are intentionally distinct:
 //   - ListToolsWithSubtasks → ListTools + task_spawn/wait/cancel
@@ -398,13 +397,6 @@ func allToolDefsMap() map[string]llm.ToolDef {
 		m[name] = ctor()
 	}
 	return m
-}
-
-// ResolveToolNames maps short tool names to their ToolDef structs.
-// Returns an error if any name is unknown. The list of valid names is the same
-// set exposed in config.validAgentToolNames.
-func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
-	return ResolveToolNamesWithPolicy(names, Capabilities{Exec: true, Web: true, Browser: true})
 }
 
 // ResolveToolNamesWithPolicy is like ResolveToolNames but silently drops

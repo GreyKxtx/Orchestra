@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -18,7 +18,7 @@ func TestApplyOps_StrictMatch_DryRun(t *testing.T) {
 	if err := os.WriteFile(testFile, []byte(original), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte(original))
+	h := fsutil.ComputeSHA256([]byte(original))
 
 	expected := "func b() { old }"
 	repl := "func b() { new }"
@@ -39,7 +39,7 @@ func TestApplyOps_StrictMatch_DryRun(t *testing.T) {
 		},
 	}
 
-	result, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: true})
+	result, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("ApplyOps failed: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestApplyOps_StrictMatch_IgnoresFileHashMismatch(t *testing.T) {
 		},
 	}
 
-	_, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: true})
+	_, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: true})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -140,7 +140,7 @@ func TestApplyOps_Stale_StrictMiss_FuzzyFindsUnique(t *testing.T) {
 		},
 	}
 
-	result, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: true})
+	result, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("ApplyOps failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestApplyOps_FuzzyAmbiguous_ReturnsAmbiguousMatch(t *testing.T) {
 	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte(content))
+	h := fsutil.ComputeSHA256([]byte(content))
 
 	op := ops.ReplaceRangeOp{
 		Op:   ops.OpFileReplaceRange,
@@ -188,7 +188,7 @@ func TestApplyOps_FuzzyAmbiguous_ReturnsAmbiguousMatch(t *testing.T) {
 		},
 	}
 
-	_, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: true})
+	_, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: true})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -214,11 +214,11 @@ func TestApplyOps_PathTraversal_Rejected(t *testing.T) {
 		Expected:    "",
 		Replacement: "evil",
 		Conditions: ops.Conditions{
-			FileHash: cache.ComputeSHA256(nil),
+			FileHash: fsutil.ComputeSHA256(nil),
 		},
 	}
 
-	_, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: true})
+	_, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: true})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -234,7 +234,7 @@ func TestApplyOps_PathTraversal_Rejected(t *testing.T) {
 func TestApplyOps_CreateNewFile_FromEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	emptyHash := cache.ComputeSHA256(nil)
+	emptyHash := fsutil.ComputeSHA256(nil)
 	op := ops.ReplaceRangeOp{
 		Op:   ops.OpFileReplaceRange,
 		Path: "new.go",
@@ -249,7 +249,7 @@ func TestApplyOps_CreateNewFile_FromEmpty(t *testing.T) {
 		},
 	}
 
-	_, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: false})
+	_, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: false})
 	if err != nil {
 		t.Fatalf("ApplyOps failed: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestApplyOps_Stale_DoesNotWriteOrBackup(t *testing.T) {
 		t.Fatalf("write failed: %v", err)
 	}
 
-	h := cache.ComputeSHA256([]byte(original))
+	h := fsutil.ComputeSHA256([]byte(original))
 
 	// Wrong expected content -> strict fails; fuzzy disabled -> stale.
 	expected := "func b() { DOES_NOT_MATCH }"
@@ -292,7 +292,7 @@ func TestApplyOps_Stale_DoesNotWriteOrBackup(t *testing.T) {
 		},
 	}
 
-	_, err := ApplyOps(tmpDir, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: false, Backup: true, BackupSuffix: ".orchestra.bak"})
+	_, err := ApplyAnyOps(tmpDir, wrapOp(op), ApplyOptions{DryRun: false, Backup: true, BackupSuffix: ".orchestra.bak"})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -334,11 +334,11 @@ func TestApplyOps_SymlinkEscape_Rejected(t *testing.T) {
 		Expected:    "",
 		Replacement: "package main\n",
 		Conditions: ops.Conditions{
-			FileHash: cache.ComputeSHA256(nil),
+			FileHash: fsutil.ComputeSHA256(nil),
 		},
 	}
 
-	_, err := ApplyOps(root, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: false})
+	_, err := ApplyAnyOps(root, wrapOp(op), ApplyOptions{DryRun: false})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -751,7 +751,7 @@ func TestApplyOps_TOCTOU_StaleHashRejected(t *testing.T) {
 	if err := os.WriteFile(testFile, []byte(original), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte(original))
+	h := fsutil.ComputeSHA256([]byte(original))
 
 	wa := ops.WriteAtomicOp{
 		Op:         ops.OpFileWriteAtomic,
@@ -786,7 +786,7 @@ func TestApplyOps_Backup_CreatedOnSuccess(t *testing.T) {
 	if err := os.WriteFile(f, []byte(original), 0644); err != nil {
 		t.Fatal(err)
 	}
-	h := cache.ComputeSHA256([]byte(original))
+	h := fsutil.ComputeSHA256([]byte(original))
 
 	op := ops.ReplaceRangeOp{
 		Op:          ops.OpFileReplaceRange,
@@ -797,7 +797,7 @@ func TestApplyOps_Backup_CreatedOnSuccess(t *testing.T) {
 		Conditions:  ops.Conditions{FileHash: h},
 	}
 
-	_, err := ApplyOps(root, []ops.ReplaceRangeOp{op}, ApplyOptions{DryRun: false, Backup: true, BackupSuffix: ".bak"})
+	_, err := ApplyAnyOps(root, wrapOp(op), ApplyOptions{DryRun: false, Backup: true, BackupSuffix: ".bak"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -848,7 +848,7 @@ func TestApplyOps_ParallelBackups_AllFilesGetBak(t *testing.T) {
 			Op:         ops.OpFileWriteAtomic,
 			Path:       filepath.ToSlash(rel),
 			Content:    after,
-			Conditions: ops.WriteAtomicConditions{FileHash: cache.ComputeSHA256([]byte(before))},
+			Conditions: ops.WriteAtomicConditions{FileHash: fsutil.ComputeSHA256([]byte(before))},
 		}
 		anyOps = append(anyOps, ops.AnyOp{Op: ops.OpFileWriteAtomic, WriteAtomic: &wa})
 	}
@@ -878,4 +878,9 @@ func TestApplyOps_ParallelBackups_AllFilesGetBak(t *testing.T) {
 			t.Errorf("main file not updated %s: got %q", s.rel, main)
 		}
 	}
+}
+
+// wrapOp is one replace_range op in the mixed form ApplyAnyOps takes.
+func wrapOp(op ops.ReplaceRangeOp) []ops.AnyOp {
+	return []ops.AnyOp{{Op: op.Op, Path: op.Path, ReplaceRange: &op}}
 }

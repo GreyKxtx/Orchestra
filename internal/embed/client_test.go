@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -138,30 +137,5 @@ func TestHTTPClient_Embed_SendsAuthHeader(t *testing.T) {
 	}
 	if gotAuth != "Bearer sk-test" {
 		t.Errorf("auth header: %q", gotAuth)
-	}
-}
-
-func TestCosineSimilarity(t *testing.T) {
-	cases := []struct {
-		name string
-		a, b []float32
-		want float32
-		tol  float32
-	}{
-		{"identical", []float32{1, 0, 0}, []float32{1, 0, 0}, 1, 1e-6},
-		{"orthogonal", []float32{1, 0}, []float32{0, 1}, 0, 1e-6},
-		{"opposite", []float32{1, 0}, []float32{-1, 0}, -1, 1e-6},
-		{"scaled identical", []float32{2, 0}, []float32{4, 0}, 1, 1e-6},
-		{"len mismatch", []float32{1, 0}, []float32{1, 0, 0}, 0, 0},
-		{"zero vector", []float32{0, 0}, []float32{1, 0}, 0, 0},
-		{"empty", nil, nil, 0, 0},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := CosineSimilarity(tc.a, tc.b)
-			if math.Abs(float64(got-tc.want)) > float64(tc.tol) {
-				t.Errorf("got %v want %v", got, tc.want)
-			}
-		})
 	}
 }

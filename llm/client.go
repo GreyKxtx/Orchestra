@@ -47,23 +47,14 @@ type OpenAIClient struct {
 	contextTokens int // server / num_ctx window; 0 = unknown
 	// promptCal learns bytes-per-token from the usage this endpoint reports,
 	// so the pre-send size guard stops refusing prompts that actually fit.
-	promptCal   promptCalibration
-	temperature float32
-	toolChoice  string // resolved: auto | omit | none | required
-	// toolChoiceImplicit is true when cfg.ToolChoice was left blank and
-	// resolveToolChoice fell through to its provider-based guess. An implicit
-	// "omit" is the single biggest cause of "the model just ignores my
-	// tools" reports: nothing tells the model tool use is expected, and
-	// nothing in our logs says we made that call for the user. Logged once
-	// per client (see warnToolChoiceOnce) the first time a tool-bearing
-	// request actually goes out.
-	toolChoiceImplicit bool
-	toolChoiceWarned   bool
-	extraBody          map[string]any
-	client             *http.Client
-	streamClient       *http.Client  // no Timeout — relies on context cancellation for SSE connections
-	requestTimeout     time.Duration // llm.timeout_s — also scales stream stall watchdog
-	logger             *Logger
+	promptCal      promptCalibration
+	temperature    float32
+	toolChoice     string // resolved: auto | omit | none | required
+	extraBody      map[string]any
+	client         *http.Client
+	streamClient   *http.Client  // no Timeout — relies on context cancellation for SSE connections
+	requestTimeout time.Duration // llm.timeout_s — also scales stream stall watchdog
+	logger         *Logger
 
 	// supportsJSONSchema: nil = unknown (send when requested; auto-disable on reject);
 	// non-nil bool = explicit config. Mutated under supportsMu when auto-detect trips.
@@ -124,21 +115,20 @@ func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 		supportsJSON = &v
 	}
 	return &OpenAIClient{
-		baseURL:            cfg.APIBase,
-		apiKey:             cfg.APIKey,
-		tokenSource:        cfg.TokenSource,
-		azure:              azureFromConfig(cfg),
-		reasoning:          cfg.Reasoning,
-		model:              cfg.Model,
-		provider:           cfg.Provider,
-		wantMaxTokens:      want,
-		maxTokens:          effectiveMaxTokens(want, ctxLen),
-		contextTokens:      ctxLen,
-		temperature:        cfg.Temperature,
-		toolChoice:         resolveToolChoice(cfg),
-		toolChoiceImplicit: strings.TrimSpace(cfg.ToolChoice) == "",
-		extraBody:          normalizeExtraBody(cfg.Provider, cfg.Model, cfg.ExtraBody),
-		requestTimeout:     timeout,
+		baseURL:        cfg.APIBase,
+		apiKey:         cfg.APIKey,
+		tokenSource:    cfg.TokenSource,
+		azure:          azureFromConfig(cfg),
+		reasoning:      cfg.Reasoning,
+		model:          cfg.Model,
+		provider:       cfg.Provider,
+		wantMaxTokens:  want,
+		maxTokens:      effectiveMaxTokens(want, ctxLen),
+		contextTokens:  ctxLen,
+		temperature:    cfg.Temperature,
+		toolChoice:     resolveToolChoice(cfg),
+		extraBody:      normalizeExtraBody(cfg.Provider, cfg.Model, cfg.ExtraBody),
+		requestTimeout: timeout,
 		client: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -391,23 +381,6 @@ var reservedRequestKeys = map[string]bool{
 	"model": true, "messages": true, "tools": true, "tool_choice": true,
 	"max_tokens": true, "temperature": true, "stream": true, "stream_options": true,
 	"response_format": true,
-}
-
-// warnImplicitToolChoiceOnce logs a single hint the first time a tool-bearing
-// request is sent with an implicit (not user-configured) "omit" tool_choice —
-// the setting most likely to make tool calling flaky/silently-ignored on
-// self-hosted servers that DO support --enable-auto-tool-choice.
-func (c *OpenAIClient) warnImplicitToolChoiceOnce(toolCount int) {
-	if c == nil || c.toolChoiceWarned || !c.toolChoiceImplicit || c.toolChoice != "omit" || toolCount == 0 {
-		return
-	}
-	c.toolChoiceWarned = true
-	if c.logger != nil {
-		c.logger.LogError(0, fmt.Sprintf(
-			"tool_choice defaulted to \"omit\" for provider=%q model=%q (no llm.tool_choice set); "+
-				"if the model ignores tools, set llm.tool_choice: auto (requires --enable-auto-tool-choice on vLLM)",
-			c.provider, c.model), 0)
-	}
 }
 
 // resolveToolChoice picks the tool_choice wire value.

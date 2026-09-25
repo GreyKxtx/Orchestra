@@ -64,3 +64,16 @@ func TestDiscoverCached_ConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// InvalidateCache forgets the cached result for projectRoot so the next
+// DiscoverCached re-reads from disk. Pass "" to forget every project.
+// Use after a skill file is added/removed/edited.
+func InvalidateCache(projectRoot string) {
+	discoverCacheMu.Lock()
+	defer discoverCacheMu.Unlock()
+	if projectRoot == "" {
+		discoverCache = map[string]discoverResult{}
+		return
+	}
+	delete(discoverCache, projectRoot)
+}

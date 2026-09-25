@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -89,10 +91,9 @@ func (a *Agent) recoverFromOverflow(ctx context.Context, userQuery string, hist 
 	// Always enforce the hard byte target: a checkpoint that stayed too big
 	// would 400 again on the retry.
 	if target > 0 && historyBytes(out) > target {
-		out = truncateMessages(out, target)
+		out = agenthistory.TruncateMessages(out, target)
 	}
 	after := historyBytes(out)
-	a.recordCompactMetrics(before, after, after < before)
 	a.logf("context overflow recovery: history %d → %d bytes (target %d)", before, after, target)
 
 	if after >= before && before > 0 {

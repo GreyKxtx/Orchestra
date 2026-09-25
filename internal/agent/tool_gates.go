@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -105,8 +107,8 @@ func (a *Agent) gatePermissionRules(ctx context.Context, c *gateCall, _ []llm.Me
 	if len(a.opts.PermissionRules) == 0 {
 		return ""
 	}
-	subject := subjectForTool(c.name, c.input)
-	act, matched := checkPermissions(a.opts.PermissionRules, c.name, subject)
+	subject := guard.SubjectForTool(c.name, c.input)
+	act, matched := guard.CheckPermissions(a.opts.PermissionRules, c.name, subject)
 	if !matched {
 		return ""
 	}
@@ -197,7 +199,7 @@ func (a *Agent) gateHuman(ctx context.Context, c *gateCall, _ []llm.Message) str
 
 // refuseCall answers a call a gate refused: the denial goes into history and
 // the log, and counts toward the denied-repeat breaker.
-func (a *Agent) refuseCall(cb *CircuitBreaker, history *[]llm.Message, toolCallID string, c *gateCall, reason string) (serialToolOutcome, error) {
+func (a *Agent) refuseCall(cb *guard.CircuitBreaker, history *[]llm.Message, toolCallID string, c *gateCall, reason string) (serialToolOutcome, error) {
 	*history = append(*history, llm.Message{
 		Role:       llm.RoleTool,
 		ToolCallID: toolCallID,

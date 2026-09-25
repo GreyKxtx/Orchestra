@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/patch/resolver"
 )
@@ -42,7 +42,7 @@ func guardedRunner(t *testing.T, dryRun bool) (*tools.Runner, string, string) {
 		t.Fatalf("NewRunner: %v", err)
 	}
 	t.Cleanup(func() { r.Close() })
-	return r, root, cache.ComputeSHA256([]byte(guardedGo))
+	return r, root, fsutil.ComputeSHA256([]byte(guardedGo))
 }
 
 func onDisk(t *testing.T, root, name string) string {
@@ -107,7 +107,7 @@ func TestResolveExternalPatches_RefusesAWholeFileWriteThatEmptiesTheFile(t *test
 	if err := os.WriteFile(filepath.Join(root, "mathx.go"), []byte(guardedGo), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hash := cache.ComputeSHA256([]byte(guardedGo))
+	hash := fsutil.ComputeSHA256([]byte(guardedGo))
 
 	_, err := resolver.ResolveExternalPatches(root, []patches.Patch{{
 		Type:       patches.TypeFileWriteAtomic,

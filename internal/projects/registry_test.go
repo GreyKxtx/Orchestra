@@ -11,7 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // initWorkspace makes a directory the registry will accept: core.New loads
@@ -106,11 +106,15 @@ func TestRegistry_CloseFreesTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := r.Close(p.ID); err != nil {
+	c, err := r.Detach(p.ID)
+	if err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if err := c.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	if _, ok := r.Get(p.ID); ok {
-		t.Fatal("core still resolvable after Close — its CKG database and language servers leak")
+		t.Fatal("core still resolvable after Detach — its CKG database and language servers leak")
 	}
 	if n := len(r.List()); n != 0 {
 		t.Fatalf("List() = %d after close, want 0", n)
@@ -179,7 +183,7 @@ func TestRegistry_NameIsTheDirectoryName(t *testing.T) {
 	}
 }
 
-// The id lowercases the path on Windows (cache.ComputeProjectID) while the
+// The id lowercases the path on Windows (fsutil.ComputeProjectID) while the
 // filesystem is case-insensitive, so two spellings of one directory must be one
 // project — otherwise the second Open overwrites the first entry and its core
 // is never closed.
@@ -262,7 +266,7 @@ func TestClosedProject_CarriesTheIDAnOpenOneWouldHave(t *testing.T) {
 	}
 
 	abs, _ := filepath.Abs(dir)
-	want, err := cache.ComputeProjectID(abs)
+	want, err := fsutil.ComputeProjectID(abs)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}

@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — less to carry (2026-09)
+
+- **What nothing reaches is gone.** 126 functions no code path reached, four shim files, the v0.3 file cache (`patch/cache`; `patch/fsutil` keeps its two hash helpers), `--no-daemon`, `cli/metrics.go` and the `plan_enter` stub are removed. What remains unreachable is test infrastructure. The docs name the packages that exist.
+- **One atomic writer.** The applier, the worktree registry, the prompt override and the instrumenter each wrote a temp file and renamed it their own way; all of them go through `fsutil.AtomicWriteFile`, and an import-rules test keeps it so. `orchestra model` edits `.orchestra.yml` under the config's lock. A `plan.json` that could not be written is the command's error instead of a silent "Plan saved to:".
+- **Stores that stop growing.** `retention:` in `.orchestra.yml` — `sessions` (200), `session_max_age_days`, `patches` (50); `-1` lifts a bound. Session snapshots are pruned on `session.start`, sessions idle for half an hour leave the core's memory, the patch directory keeps its newest exports, `decisions.md` archives its older half past 512 KB, the lessons signal logs keep their tail. A session's event log rotates past 32 MB and a payload past 1 MB is recorded as a truncation marker; one over-long line no longer ends recording for the session.
+- **One refresh per grant.** Two Orchestra processes sharing an OAuth grant both refreshed it; with a rotating refresh token the second one got `invalid_grant` and was logged out. A refresh now takes the token file's lock and adopts the token another process already refreshed.
+
 ### Changed — the code graph keeps up without getting in the way (2026-09)
 
 - **A refresh costs what changed.** Every explore and every agent run — every child of a fan-out — refreshed the code graph under its write lock, and the refresh hashed every file and re-resolved every dangling call edge with up to three queries each: on Orchestra's own tree 3.2 s per pass on an unchanged tree, 49 s for the first index. The graph now keeps each file's mtime and size beside its hash and reads only files whose stamp moved; a pass relinks only the edges that name a symbol it inserted, in one transaction; the walk and the parsing run outside the write lock, which is taken for the writes alone; the database runs in WAL mode so the TUI, the extension and ckg-ui read while a refresh writes. Step-1 context answers from the graph as it is and refreshes it behind the answer. On this repository: empty refresh 45 ms, one changed file 169 ms, first index 41 s with readers held out for 14 s of it.

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -13,7 +15,7 @@ import (
 // what an error from a hook has always done.
 func (a *Agent) runPreToolHooks(ctx context.Context, name string, input json.RawMessage) HookDecision {
 	var dec HookDecision
-	if err := safeRunErr("PreTool hook "+name, func() error {
+	if err := agentformat.SafeRunErr("PreTool hook "+name, func() error {
 		dec = a.opts.HooksRunner.RunPreTool(ctx, name, input)
 		return nil
 	}); err != nil {
@@ -36,7 +38,7 @@ func (a *Agent) firePreCompactHook(ctx context.Context, hist []llm.Message) {
 	if err != nil {
 		return
 	}
-	_ = safeRunErr("PreCompact hook", func() error {
+	_ = agentformat.SafeRunErr("PreCompact hook", func() error {
 		if dec := a.opts.HooksRunner.RunLifecycle(ctx, "pre_compact", payload); dec.Denied {
 			a.logf("hook event=pre_compact denied_ignored reason=%s", dec.Reason)
 		}

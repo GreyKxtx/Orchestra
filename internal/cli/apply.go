@@ -18,10 +18,10 @@ import (
 	"github.com/orchestra/orchestra/internal/git"
 	"github.com/orchestra/orchestra/internal/pipeline"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/retention"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
@@ -37,7 +37,6 @@ var (
 	gitCommit           bool
 	planOnly            bool
 	fromPlan            string
-	noDaemon            bool
 	debugMode           bool
 	allowExec           bool
 	allowWeb            bool
@@ -71,7 +70,6 @@ func init() {
 	applyCmd.Flags().BoolVar(&gitCommit, "git-commit", false, "Create git commit after applying changes (requires --apply)")
 	applyCmd.Flags().BoolVar(&planOnly, "plan-only", false, "Show only plan of changes, without generating code")
 	applyCmd.Flags().StringVar(&fromPlan, "from-plan", "", "Apply from a saved plan.json without calling LLM")
-	applyCmd.Flags().BoolVar(&noDaemon, "no-daemon", false, "Deprecated (vNext agent uses tools). Kept for compatibility.")
 	applyCmd.Flags().BoolVar(&debugMode, "debug", false, "Show performance metrics and debug information")
 	applyCmd.Flags().BoolVar(&allowExec, "allow-exec", false, "Allow exec.run tool (DANGEROUS; still sandboxed with limits)")
 	applyCmd.Flags().BoolVar(&allowWeb, "allow-web", false, "Allow webfetch tool (fetches external URLs; private IPs blocked)")
@@ -227,7 +225,12 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 
 	defer func() {
 		// Always write artifacts once we know projectRoot.
-		_ = writeApplyArtifacts(cfg.ProjectRoot, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr)
+		if err := writeApplyArtifacts(cfg.ProjectRoot, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr); err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] %v\n", err)
+			if retErr == nil {
+				retErr = err
+			}
+		}
 		finalizeUsage(usageTracker, cfg)
 		if retErr != nil {
 			if pe, ok := protocol.AsError(retErr); ok {
@@ -246,11 +249,6 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			}
 			fmt.Fprintf(os.Stderr, "[orchestra] WARNING: git repo has uncommitted changes:\n%s\n\n", status)
 		}
-	}
-
-	// 2. vNext: the agent uses tools directly; no monolithic context.
-	if noDaemon {
-		fmt.Fprintln(os.Stderr, "[orchestra] NOTE: --no-daemon is deprecated in vNext")
 	}
 
 	// If exec.confirm=false in config, we can allow exec without interactive consent.
@@ -496,6 +494,11 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				retErr = fmt.Errorf("write patch: %w", err)
 				return retErr
 			}
+			// apply.patch_dir keeps the newest retention.patches files; a
+			// --output-patch path of the user's own is left alone.
+			if patchOutPath == "" {
+				retention.PruneFiles(filepath.Dir(resolvedPatch), ".patch", cfg.Retention.Patches)
+			}
 		}
 		fmt.Printf("Patch mode: workspace untouched\n")
 		fmt.Printf("Patch saved to: %s\n", resolvedPatch)
@@ -600,7 +603,7 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 
 	rpc := child.Client
 
-	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
+	projectID, err := fsutil.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -714,6 +717,14 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	diffPath := filepath.Join(baseDir, "diff.txt")
 	runPath := filepath.Join(baseDir, "last_run.jsonl")
 	resultPath := filepath.Join(baseDir, "last_result.json")
+	// plan.json is the artifact --from-plan replays, so its write is the one
+	// that fails the command; the diff, the result and the run log are for
+	// reading and only warn (ARCH-11: every write here used to be ignored).
+	warn := func(what string, err error) {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] %s not written: %v\n", what, err)
+		}
+	}
 
 	if plan.ProtocolVersion == 0 {
 		plan.ProtocolVersion = protocol.ProtocolVersion
@@ -731,7 +742,9 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	planJSON, err := json.MarshalIndent(plan, "", "  ")
 	if err == nil {
 		planJSON = append(planJSON, '\n')
-		_ = fsutil.AtomicWriteFile(planPath, planJSON, 0600)
+		if err := fsutil.AtomicWriteFile(planPath, planJSON, 0600); err != nil {
+			return fmt.Errorf("plan.json not written: %w", err)
+		}
 	}
 
 	// Build a human-readable diff file (best-effort).
@@ -754,7 +767,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 			diffText.WriteString("\n")
 		}
 	}
-	_ = fsutil.AtomicWriteFile(diffPath, []byte(diffText.String()), 0600)
+	warn("diff.txt", fsutil.AtomicWriteFile(diffPath, []byte(diffText.String()), 0600))
 
 	changed := []string(nil)
 	if applyResp != nil {
@@ -780,7 +793,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 	}
 	if b, err := json.MarshalIndent(lr, "", "  "); err == nil {
 		b = append(b, '\n')
-		_ = fsutil.AtomicWriteFile(resultPath, b, 0600)
+		warn("last_result.json", fsutil.AtomicWriteFile(resultPath, b, 0600))
 	}
 
 	// last_run.jsonl (always, minimal event log).
@@ -824,7 +837,7 @@ func writeApplyArtifacts(projectRoot string, plan planArtifact, applyResp *tools
 		jsonl.Write(b)
 		jsonl.WriteByte('\n')
 	}
-	_ = fsutil.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600)
+	warn("last_run.jsonl", fsutil.AtomicWriteFile(runPath, []byte(jsonl.String()), 0600))
 
 	return nil
 }

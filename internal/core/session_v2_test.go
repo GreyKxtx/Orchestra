@@ -9,7 +9,7 @@ import (
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -150,7 +150,7 @@ func setupSessionV2Core(t *testing.T, root string) *Core {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	projectID, err := cache.ComputeProjectID(root)
+	projectID, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatal(err)
 	}

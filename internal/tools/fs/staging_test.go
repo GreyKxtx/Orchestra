@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/patches"
 )
 
@@ -29,7 +29,7 @@ func TestStaging_NoFileCreatedOnDisk(t *testing.T) {
 	if err := os.WriteFile(p, []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	origHash := cache.ComputeSHA256([]byte("original"))
+	origHash := fsutil.ComputeSHA256([]byte("original"))
 
 	_, err := r.FSWrite(context.Background(), tools.FSWriteRequest{
 		Path:     "hello.txt",
@@ -82,7 +82,7 @@ func TestStaging_ReadAfterWrite(t *testing.T) {
 	if err := os.WriteFile(p, []byte("before"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	origHash := cache.ComputeSHA256([]byte("before"))
+	origHash := fsutil.ComputeSHA256([]byte("before"))
 
 	_, err := r.FSWrite(context.Background(), tools.FSWriteRequest{
 		Path:     "foo.txt",

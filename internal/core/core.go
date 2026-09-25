@@ -15,7 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
@@ -63,8 +63,11 @@ type Core struct {
 	// concurrent agent.run / session.message / workflow.run / skill.invoke /
 	// ops.apply / session.apply_pending calls race over the dry-run flag and
 	// can leak staged ops between requests.
-	runMu        sync.Mutex
-	sessions     *coresession.Manager
+	runMu    sync.Mutex
+	sessions *coresession.Manager
+	// housekeeping runs at most every housekeepEvery, on session.start.
+	houseMu      sync.Mutex
+	lastHouse    time.Time
 	mcpManager   *mcp.Manager
 	mcpStartErrs map[string]string // last ReplaceMCP/New failures by server name
 	// mcpHost answers the requests MCP servers make of us (sampling,
@@ -135,7 +138,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		}
 	}
 
-	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
+	projectID, err := fsutil.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}

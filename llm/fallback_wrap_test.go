@@ -45,25 +45,3 @@ func TestMaybeWrapFallback_LeavesTheClientAloneWhenItCannot(t *testing.T) {
 		})
 	}
 }
-
-func TestAsOpenAIClient_SeesThroughWrappers(t *testing.T) {
-	// Every logger attachment in core and cli type-asserts on the concrete
-	// client. Wrapping it must not silently empty llm_log.jsonl.
-	inner := NewOpenAIClient(LLMConfig{APIBase: "http://localhost:8000/v1", Model: "local"})
-	wrapped := MaybeWrapFallback(inner, fallbackRegistry(),
-		LLMConfig{APIBase: "http://localhost:8000/v1", FallbackProvider: "backup"}, nil)
-
-	got, ok := AsOpenAIClient(wrapped)
-	if !ok || got != inner {
-		t.Fatalf("AsOpenAIClient through a fallback = %v/%v, want the inner client", got, ok)
-	}
-	if got, ok := AsOpenAIClient(NewRouterClient(inner, inner, 2048)); !ok || got != inner {
-		t.Fatalf("AsOpenAIClient through a router = %v/%v", got, ok)
-	}
-	if got, ok := AsOpenAIClient(inner); !ok || got != inner {
-		t.Fatalf("AsOpenAIClient on a bare client = %v/%v", got, ok)
-	}
-	if _, ok := AsOpenAIClient(NewAnthropicClient(LLMConfig{Model: "claude-sonnet-4-5"})); ok {
-		t.Error("an Anthropic client is not an OpenAI client")
-	}
-}

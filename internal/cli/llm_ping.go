@@ -11,6 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -188,7 +189,7 @@ func savePingResult(projectRoot string, result pingResult) error {
 	}
 	resultJSON = append(resultJSON, '\n')
 
-	if err := os.WriteFile(resultPath, resultJSON, 0644); err != nil {
+	if err := fsutil.AtomicWriteFile(resultPath, resultJSON, 0644); err != nil {
 		return fmt.Errorf("failed to write result: %w", err)
 	}
 

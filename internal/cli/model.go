@@ -135,24 +135,21 @@ func extraBodyNumCtx(cfg *config.ProjectConfig) int {
 // updateModelInConfig rewrites the model and num_ctx fields in .orchestra.yml.
 func updateModelInConfig(projectRoot, model string, numCtx int) error {
 	cfgPath := filepath.Join(projectRoot, ".orchestra.yml")
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return err
-	}
-
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return err
-	}
-
-	// Walk the YAML tree and update llm.model and llm.extra_body.num_ctx.
-	updateYAMLNode(&doc, model, numCtx)
-
-	out, err := yaml.Marshal(doc.Content[0])
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(cfgPath, out, 0o600)
+	// Under the config's lock and written atomically, like every other
+	// write to .orchestra.yml: the TUI or the extension may save it at the
+	// same moment.
+	return config.UpdateFile(cfgPath, func(data []byte) ([]byte, error) {
+		var doc yaml.Node
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, err
+		}
+		if len(doc.Content) == 0 {
+			return nil, fmt.Errorf("%s is empty", cfgPath)
+		}
+		// Walk the YAML tree and update llm.model and llm.extra_body.num_ctx.
+		updateYAMLNode(&doc, model, numCtx)
+		return yaml.Marshal(doc.Content[0])
+	})
 }
 
 // updateYAMLNode walks a yaml.Node tree and patches model + num_ctx in place.

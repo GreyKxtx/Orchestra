@@ -1,8 +1,5 @@
 # Архитектура Orchestra — целевая модель (UML)
 
-> **Note (2026-08):** Some package labels in diagrams still say `internal/protocol`, `internal/llm`, etc.
-> **Authoritative current paths:** `docs/architecture/paths.md` and `docs/architecture/modules.md`.
-
 Документ фиксирует **целевой** облик Orchestra — то, к чему ведёт
 vNext-транзиция. Используется как «карта местности» для будущих фич
 (TUI, кастомные агенты, Skills, GitHub-tools, multi-provider) и как
@@ -60,10 +57,9 @@ flowchart LR
     end
 
     subgraph Process[orchestra core process]
-        RPC["JSON-RPC server<br/>internal/jsonrpc"]:::supported
+        RPC["JSON-RPC server<br/>protocol/jsonrpc"]:::supported
         Core["Core<br/>internal/core"]:::supported
         HTTPDbg["HTTP debug endpoint<br/>(--http, 127.0.0.1)"]:::debug
-        Daemon["HTTP daemon (v0.3)<br/>internal/daemon"]:::legacy
     end
 
     Filesystem[".orchestra/<br/>plan.json · diff.txt<br/>last_run.jsonl · ckg.db"]:::supported
@@ -77,7 +73,6 @@ flowchart LR
     Core --> Filesystem
 
     HTTPDbg -. "loopback + token<br/>(only with --http)" .-> Core
-    Daemon -. "search/scan cache,<br/>used by orchestra search" .-> Filesystem
 ```
 
 **Принцип:** stdio JSON-RPC — *единственный* поддерживаемый транспорт.
@@ -413,7 +408,7 @@ flowchart TB
     subgraph IO[Слой 1 — I/O & транспорт]
         direction LR
         cli["cmd/orchestra<br/>internal/cli"]
-        rpc["internal/jsonrpc"]
+        rpc["protocol/jsonrpc"]
         http["http debug / daemon"]
     end
 
@@ -428,15 +423,15 @@ flowchart TB
         agent["internal/agent"]
         tools["internal/tools"]
         prompt["internal/prompt"]
-        schema["internal/schema"]
+        schema["protocol/schema"]
     end
 
     subgraph Patches[Слой 4 — патчи и ops]
         direction LR
-        ext["internal/patches"]
-        res["internal/resolver"]
-        ops["internal/ops"]
-        apl["internal/applier"]
+        ext["patch/patches"]
+        res["patch/resolver"]
+        ops["patch/ops"]
+        apl["patch/applier"]
     end
 
     subgraph Knowledge[Слой 5 — знания о коде]
@@ -451,9 +446,9 @@ flowchart TB
         direction LR
         cfg["internal/config"]
         store["internal/store"]
-        proto["internal/protocol"]
+        proto["protocol"]
         gitp["internal/git"]
-        llmp["internal/llm"]
+        llmp["llm"]
         mcpp["internal/mcp"]
         hooks["internal/hooks"]
     end
@@ -469,12 +464,12 @@ flowchart TB
 ```
 
 **Правила:**
-1. `internal/agent` не знает про `internal/cli` и `internal/jsonrpc`.
+1. `internal/agent` не знает про `internal/cli` и `protocol/jsonrpc`.
 2. `internal/tools` не знает про `internal/agent` (только про `Runner`-API).
-3. `internal/resolver` не знает про `internal/agent`.
-4. `internal/ops` — *только* типы и валидация, никакой логики применения
+3. `patch/resolver` не знает про `internal/agent`.
+4. `patch/ops` — *только* типы и валидация, никакой логики применения
    (это в `applier`).
-5. `internal/protocol` — версии, коды ошибок, никаких зависимостей наружу.
+5. `protocol` — версии, коды ошибок, никаких зависимостей наружу.
 
 ---
 
@@ -602,7 +597,7 @@ flowchart TB
 ## 9. Стрелки версий (контракт)
 
 Изменение протокола ломает интеграции. Чтобы это было заметно — три
-независимых счётчика, в `internal/protocol/version.go`:
+независимых счётчика, в `protocol/version.go`:
 
 ```mermaid
 flowchart LR
@@ -628,12 +623,12 @@ flowchart LR
 | Agent loop | `internal/agent/agent.go` |
 | Tool registry | `internal/tools/registry.go` |
 | Modes | `agent.go::ModeBuild/Plan/Explore`, `registry.go::ListToolsForMode` |
-| External patches | `internal/patches/` |
-| Internal ops | `internal/ops/` |
-| Resolver | `internal/resolver/` |
-| Applier | `internal/applier/` |
+| External patches | `patch/patches/` |
+| Internal ops | `patch/ops/` |
+| Resolver | `patch/resolver/` |
+| Applier | `patch/applier/` |
 | Pipeline | `internal/pipeline/pipeline.go` |
 | CKG | `internal/ckg/` |
 | Runtime bridge | `ckg.IngestTrace`, `internal/cli/runtime.go` |
-| Versions | `internal/protocol/version.go` |
-| Session methods | `internal/cli/chat.go`, `core/session.go` |
+| Versions | `protocol/version.go` |
+| Session methods | `internal/core/session_rpc.go` |

@@ -145,40 +145,6 @@ func TestResolveToolNames_PreservesOrder(t *testing.T) {
 	}
 }
 
-func TestListToolsForMode_BuildNoPlanEnter(t *testing.T) {
-	for _, d := range ListToolsForMode("build", Capabilities{}, true, true) {
-		if d.Function.Name == "plan_enter" {
-			t.Fatal("build mode must not advertise plan_enter")
-		}
-	}
-}
-
-func TestListToolsForMode_NoPlanEnterInAnySurface(t *testing.T) {
-	caps := Capabilities{Exec: true, Web: true, Browser: true}
-	surfaces := [][]llm.ToolDef{
-		ListTools(caps),
-		ListToolsWithSubtasks(caps),
-		ListToolsForChild(),
-	}
-	for _, mode := range []string{"build", "plan", "explore", "general", "orchestra", "worker", "verifier", "ask", "debug"} {
-		surfaces = append(surfaces, ListToolsForMode(mode, caps, true, true))
-	}
-	for _, defs := range surfaces {
-		for _, d := range defs {
-			if d.Function.Name == "plan_enter" {
-				t.Fatal("plan_enter must not be advertised to the model")
-			}
-		}
-	}
-}
-
-func TestResolveToolNames_PlanEnterUnknown(t *testing.T) {
-	_, err := ResolveToolNames([]string{"plan_enter"})
-	if err == nil {
-		t.Fatal("plan_enter must not resolve as a known tool")
-	}
-}
-
 func TestListToolsForMode_OrchestraLeadSurface(t *testing.T) {
 	defs := ListToolsForMode("orchestra", Capabilities{Exec: true, Web: true, Browser: true}, true, true)
 	if len(defs) > 16 {
@@ -359,4 +325,11 @@ func TestChildModesHaveNoRepoMutatingTools(t *testing.T) {
 			t.Errorf("build mode lost %s", want)
 		}
 	}
+}
+
+// ResolveToolNames maps short tool names to their ToolDef structs.
+// Returns an error if any name is unknown. The list of valid names is the same
+// set exposed in config.validAgentToolNames.
+func ResolveToolNames(names []string) ([]llm.ToolDef, error) {
+	return ResolveToolNamesWithPolicy(names, Capabilities{Exec: true, Web: true, Browser: true})
 }

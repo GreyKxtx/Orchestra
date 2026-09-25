@@ -9,10 +9,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// newPersistingTokenSource wraps base so a refreshed token is written back
-// under this server's name.
-func newPersistingTokenSource(serverName string, base oauth2.TokenSource, last Token) oauth2.TokenSource {
-	return authstore.NewPersistingTokenSource(namespace, serverName, base, last)
+// newPersistingTokenSource wraps the provider's source so a refreshed token
+// is written back under this server's name.
+func newPersistingTokenSource(serverName string, newBase func(Token) oauth2.TokenSource, last Token) oauth2.TokenSource {
+	return authstore.NewPersistingTokenSource(namespace, serverName, newBase, last)
 }
 
 // TokenSourceFor returns a token source for serverName that transparently
@@ -33,11 +33,6 @@ func TokenSourceFor(ctx context.Context, serverName string) (oauth2.TokenSource,
 		ClientSecret: tok.ClientSecret,
 		Endpoint:     oauth2.Endpoint{TokenURL: tok.TokenURL},
 	}
-	base := cfg.TokenSource(ctx, &oauth2.Token{
-		AccessToken:  tok.AccessToken,
-		TokenType:    tok.TokenType,
-		RefreshToken: tok.RefreshToken,
-		Expiry:       tok.Expiry,
-	})
-	return newPersistingTokenSource(serverName, base, tok), nil
+	newBase := func(t Token) oauth2.TokenSource { return cfg.TokenSource(ctx, t.OAuth2Token()) }
+	return newPersistingTokenSource(serverName, newBase, tok), nil
 }

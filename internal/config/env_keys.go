@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // EnvFileName is the per-project file holding credentials as KEY=VALUE lines.
@@ -203,7 +205,7 @@ func UpsertEnvVar(dir, name, value string) error {
 	}
 
 	body := strings.Join(out, "\n") + "\n"
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+	if err := fsutil.AtomicWriteFile(path, []byte(body), 0600); err != nil {
 		return fmt.Errorf("write %s: %w", EnvFileName, err)
 	}
 	return nil

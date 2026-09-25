@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/ui/tui"
 )
 
@@ -41,7 +41,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot resolve own executable path: %w", err)
 	}
 
-	projectID, err := cache.ComputeProjectID(cwd)
+	projectID, err := fsutil.ComputeProjectID(cwd)
 	if err != nil {
 		return fmt.Errorf("compute project_id: %w", err)
 	}

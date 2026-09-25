@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -381,17 +380,4 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
-}
-
-// BuildAndFormat is a convenience wrapper combining Build + Format. Errors from
-// Build propagate; missing-root is returned as os.ErrNotExist.
-func BuildAndFormat(ctx context.Context, root string, opts Options, budgetBytes int) (string, error) {
-	if _, err := os.Stat(root); err != nil {
-		return "", err
-	}
-	rm, err := Build(ctx, root, opts)
-	if err != nil {
-		return "", err
-	}
-	return Format(rm, budgetBytes), nil
 }

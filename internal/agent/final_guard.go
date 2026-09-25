@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -130,7 +132,7 @@ func (a *Agent) countMutatingTool(name string) {
 	if a == nil {
 		return
 	}
-	if changesWorkspace(name) || normalizeToolName(name) == "memory_write" {
+	if changesWorkspace(name) || digest.NormalizeToolName(name) == "memory_write" {
 		a.turnMutatingTools++
 	}
 }
@@ -139,7 +141,7 @@ func (a *Agent) countMutatingTool(name string) {
 // files or the page the turn works on — progress a failed final can be
 // retried from.
 func changesWorkspace(name string) bool {
-	switch normalizeToolName(name) {
+	switch digest.NormalizeToolName(name) {
 	case "write", "edit", "fs.delete", "fs.rename", "ast_rename", "lsp.rename",
 		"browser.click", "browser.type", "browser.fill", "browser.select":
 		return true

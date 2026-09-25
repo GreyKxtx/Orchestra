@@ -112,14 +112,6 @@ func (c *Core) mcpHooks() mcp.Hooks {
 	return c.mcpHost.hooks()
 }
 
-// NewMCPHooks builds the same hooks for a caller that has its channels in hand
-// from the start — the CLI's apply, where the terminal is the client.
-func NewMCPHooks(model func() (llm.Client, string), consent permission.Requester, ask tools.QuestionAsker) mcp.Hooks {
-	h := newMCPHost(model)
-	h.bind(consent, ask)
-	return h.hooks()
-}
-
 // consent is the mcp.ConsentFunc: one permission/request per ask, unless the
 // client answered "always" for this server and kind earlier.
 func (h *mcpHost) consent(ctx context.Context, req mcp.ConsentRequest) bool {

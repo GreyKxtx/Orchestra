@@ -11,7 +11,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/lsp/lsptest"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func newDryRunRunnerWithMockLSP(t *testing.T) (*Runner, *lsptest.Server) {
@@ -68,7 +68,7 @@ func TestStaging_LSP_SyncStagedOnDryRunWrite(t *testing.T) {
 	_, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path:     path,
 		Content:  stagedContent,
-		FileHash: cache.ComputeSHA256([]byte(diskContent)),
+		FileHash: fsutil.ComputeSHA256([]byte(diskContent)),
 	})
 	if err != nil {
 		t.Fatalf("FSWrite dry-run: %v", err)
@@ -139,7 +139,7 @@ func TestStaging_LSP_DidChangeOnSecondStage(t *testing.T) {
 		return json.RawMessage(`null`), nil
 	})
 
-	hash := cache.ComputeSHA256([]byte(disk))
+	hash := fsutil.ComputeSHA256([]byte(disk))
 	if _, err := r.FSEdit(context.Background(), FSEditRequest{
 		Path:     path,
 		FileHash: hash,
@@ -212,7 +212,7 @@ func TestStaging_LSP_ClearStagedClosesTheDocuments(t *testing.T) {
 	})
 	if _, err := r.FSWrite(context.Background(), FSWriteRequest{
 		Path: path, Content: "package main\n\nfunc Staged() {}\n",
-		FileHash: cache.ComputeSHA256([]byte("package main\n\nfunc Old() {}\n")),
+		FileHash: fsutil.ComputeSHA256([]byte("package main\n\nfunc Old() {}\n")),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -234,4 +234,11 @@ func TestStaging_LSP_ClearStagedClosesTheDocuments(t *testing.T) {
 	if r.HasStagedChanges() {
 		t.Fatal("the overlay is not cleared")
 	}
+}
+
+func (r *Runner) currentHash(relSlash string) string {
+	if r.fsTools == nil || r.fsTools.Overlay == nil {
+		return ""
+	}
+	return r.fsTools.Overlay.CurrentHash(relSlash)
 }

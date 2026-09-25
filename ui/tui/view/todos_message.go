@@ -10,18 +10,14 @@ import (
 	"github.com/orchestra/orchestra/ui/tui/theme"
 )
 
-// RenderTodosChecklist renders an in-chat / sticky task list (Claude Code style):
+// RenderTodosChecklistCapped renders an in-chat / sticky task list (Claude
+// Code style), with an optional max of visible task rows (0 = unlimited);
+// extra open tasks fold into the footer count:
 //
 //   - Working…
 //     ■ current task
 //     □ pending task
 //     … +N pending, M completed
-func RenderTodosChecklist(items []state.TodoItem, width int, streaming bool, spinFrame int) string {
-	return RenderTodosChecklistCapped(items, width, streaming, spinFrame, 0)
-}
-
-// RenderTodosChecklistCapped is RenderTodosChecklist with an optional max visible
-// task rows (0 = unlimited). Extra open tasks fold into the footer count.
 func RenderTodosChecklistCapped(items []state.TodoItem, width int, streaming bool, spinFrame, maxRows int) string {
 	if len(items) == 0 {
 		return ""

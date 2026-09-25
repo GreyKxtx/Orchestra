@@ -24,12 +24,13 @@ You are a Senior Go Engineer and System Architect building "Orchestra" — a loc
 
 ## 3) Package Structure (strict)
 - cmd/orchestra/                 (entry point)
-- internal/core/agent            (Loop: Plan -> Tool -> Observe -> Resolve -> Apply)
-- internal/core/tools            (registry + sandboxing)
-- internal/core/ops              (Op types + validation + applier)
-- internal/core/rpc              (JSON-RPC server + types)
-- internal/core/search           (text search; optional parsing)
-- internal/gitutil               (optional safety net, only if requested)
+- internal/agent                 (Loop: Plan -> Tool -> Observe -> Resolve -> Apply)
+- internal/tools                 (registry + Runner + sandboxing; fs/, exec/, git/, web/, nav/, session/, task/, toolslsp/)
+- internal/core                  (Core, RPC handler, sessions, agent.run)
+- protocol/ (own module)         (versions, error codes; protocol/jsonrpc server + types, protocol/schema, protocol/wire)
+- patch/ (own module)            (patch/ops types + validation, patch/patches, patch/resolver, patch/applier, patch/fsutil atomic writes)
+- llm/ (own module)              (provider clients, middleware)
+- internal/search, internal/git  (text search; git helpers)
 
 ## 4) Operation Model (Ops v1) — REQUIRED for edits
 - External Patch (LLM output): flexible (`unified_diff`, `search_replace`, etc.)

@@ -5,12 +5,6 @@ import (
 	"strings"
 )
 
-// BuildUserPrompt builds the user-facing message content:
-// it includes the IDE snapshot and the user's query.
-func BuildUserPrompt(userQuery string, snap WorkspaceSnapshot, allowedTools []string) string {
-	return BuildUserContext(snap, allowedTools) + UserQueryBlock(userQuery) + "\n"
-}
-
 // UserQueryBlock wraps the user's query the way every prompt carries it. A
 // session keeps each turn's query in its history in this exact form, which is
 // how the agent recognises that a query is already in the transcript.
@@ -82,36 +76,4 @@ func BuildUserContext(snap WorkspaceSnapshot, allowedTools []string) string {
 	}
 
 	return b.String()
-}
-
-// BuildUserPromptWithHistory appends a bounded history tail to the base user prompt.
-// maxBytes bounds the final string length (best-effort, in bytes).
-func BuildUserPromptWithHistory(baseUserPrompt string, history []string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return baseUserPrompt + "\n"
-	}
-	header := strings.TrimRight(baseUserPrompt, "\n") + "\n\nИстория (самые свежие события в конце):\n"
-	footer := "\n\nВерни следующий шаг: либо tool call, либо финальный PatchSet JSON.\n"
-
-	budget := maxBytes - len(header) - len(footer)
-	if budget <= 0 {
-		return strings.TrimSpace(baseUserPrompt)
-	}
-
-	var selected []string
-	size := 0
-	for i := len(history) - 1; i >= 0; i-- {
-		item := history[i]
-		need := len(item) + 2
-		if size+need > budget {
-			break
-		}
-		selected = append(selected, item)
-		size += need
-	}
-	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
-		selected[i], selected[j] = selected[j], selected[i]
-	}
-
-	return header + strings.Join(selected, "\n\n") + footer
 }

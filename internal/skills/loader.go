@@ -239,12 +239,6 @@ func scanClaudeSkills(dir string) ([]*Skill, error) {
 	return out, nil
 }
 
-// DiscoverFrom is the legacy two-tier entry point (user + project).
-// Kept for back-compat with tests written before pack support.
-func DiscoverFrom(userDir, projectDir string) ([]*Skill, error) {
-	return DiscoverFromAll("", userDir, projectDir)
-}
-
 // DiscoverFromAll is the testable form. Any dir may be "" to skip it.
 // packsRoot is the parent dir; each subdir of packsRoot is treated as
 // one pack source.

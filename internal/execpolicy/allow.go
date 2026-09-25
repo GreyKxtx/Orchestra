@@ -98,17 +98,14 @@ func dangerousAssignment(name string) bool {
 		strings.HasPrefix(u, "GIT_CONFIG")
 }
 
-// Commands splits a POSIX shell line into the simple commands it runs, each
-// as its words with leading VAR=value assignments removed. It refuses — with
-// an error naming the construct — what it cannot see through: command and
+// commandsFor splits a shell line into the simple commands it runs, each as
+// its words with leading VAR=value assignments removed. It refuses — with an
+// error naming the construct — what it cannot see through: command and
 // process substitution, subshells and groups, here-documents, a command word
 // that is not literal, a dangerous assignment, and output redirection to a
 // file (only /dev/null and descriptor duplication are allowed).
-func Commands(line string) ([][]string, error) {
-	return commandsFor(line, runtime.GOOS == "windows")
-}
-
-// commandsFor lexes line the way the shell that will run it does: sh on Unix,
+//
+// It lexes line the way the shell that will run it does: sh on Unix,
 // cmd.exe on Windows, where '^' escapes, a backslash and a single quote are
 // ordinary characters, and %VAR% / !VAR! expand.
 func commandsFor(line string, windows bool) ([][]string, error) {

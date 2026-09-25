@@ -123,12 +123,3 @@ func Import(workspaceRoot string, data []byte, opts ImportOptions) (string, erro
 	}
 	return targetID, nil
 }
-
-// SessionExists reports whether a session file is present.
-func SessionExists(workspaceRoot, id string) bool {
-	if err := ValidateSessionID(id); err != nil {
-		return false
-	}
-	_, err := os.Stat(snapshotPath(workspaceRoot, id))
-	return err == nil
-}

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	"github.com/orchestra/orchestra/internal/agent/working"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -18,7 +20,7 @@ func TestHistoryBytes_CountsContent(t *testing.T) {
 		{Role: llm.RoleAssistant, Content: "world"},
 	}
 	got := historyBytes(history)
-	want := estimateMessageSize(history[0]) + estimateMessageSize(history[1])
+	want := agenthistory.EstimateMessageSize(history[0]) + agenthistory.EstimateMessageSize(history[1])
 	if got != want {
 		t.Errorf("historyBytes = %d, want %d", got, want)
 	}
@@ -40,7 +42,7 @@ func TestHistoryBytes_CountsToolCallArgs(t *testing.T) {
 		},
 	}
 	got := historyBytes(history)
-	want := estimateMessageSize(history[0])
+	want := agenthistory.EstimateMessageSize(history[0])
 	if got != want {
 		t.Errorf("historyBytes = %d, want %d", got, want)
 	}

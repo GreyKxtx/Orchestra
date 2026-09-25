@@ -157,34 +157,6 @@ func TestResolveToolChoice(t *testing.T) {
 	}
 }
 
-func TestWarnImplicitToolChoiceOnce(t *testing.T) {
-	c := NewOpenAIClient(LLMConfig{Provider: "vllm"}) // no ToolChoice set → implicit "omit"
-	if !c.toolChoiceImplicit {
-		t.Fatal("expected toolChoiceImplicit=true when cfg.ToolChoice is blank")
-	}
-	if c.toolChoice != "omit" {
-		t.Fatalf("toolChoice = %q, want omit", c.toolChoice)
-	}
-	// No tools on the request → no warning needed, flag stays false.
-	c.warnImplicitToolChoiceOnce(0)
-	if c.toolChoiceWarned {
-		t.Fatal("should not warn when the request carries no tools")
-	}
-	c.warnImplicitToolChoiceOnce(3)
-	if !c.toolChoiceWarned {
-		t.Fatal("expected warning once a tool-bearing request is sent with implicit omit")
-	}
-
-	explicit := NewOpenAIClient(LLMConfig{Provider: "vllm", ToolChoice: "omit"})
-	if explicit.toolChoiceImplicit {
-		t.Fatal("explicit ToolChoice=omit in config must not be flagged as implicit")
-	}
-	explicit.warnImplicitToolChoiceOnce(3)
-	if explicit.toolChoiceWarned {
-		t.Fatal("should not warn when the user explicitly configured omit")
-	}
-}
-
 func TestEffectiveMaxTokens(t *testing.T) {
 	if got := effectiveMaxTokens(0, 0); got != defaultMaxTokens {
 		t.Fatalf("default: got %d", got)

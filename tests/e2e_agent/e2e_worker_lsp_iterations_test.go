@@ -14,7 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -32,7 +32,7 @@ func newWorkerLSPFixLLM(initialHash string) *workerLSPFixLLM {
 	badContent := "package main\n\nfunc Foo() {}\n\nvar _ = badSymbol\n"
 	return &workerLSPFixLLM{
 		initialHash: initialHash,
-		badHash:     cache.ComputeSHA256([]byte(badContent)),
+		badHash:     fsutil.ComputeSHA256([]byte(badContent)),
 	}
 }
 
@@ -119,7 +119,7 @@ func TestWorker_E2E_LSPIterationsLeq3(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(original), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	initialHash := cache.ComputeSHA256([]byte(original))
+	initialHash := fsutil.ComputeSHA256([]byte(original))
 
 	v, err := schema.NewValidator()
 	if err != nil {

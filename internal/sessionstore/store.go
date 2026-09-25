@@ -17,9 +17,6 @@ type SessionRecord struct {
 	Messages []uimodel.Message `json:"messages"`
 }
 
-// NewID returns a sortable session id (delegates to sessionfile).
-func NewID() string { return sessionfile.NewID() }
-
 // TitleFromMessages returns a short title from chat messages.
 func TitleFromMessages(msgs []uimodel.Message) string {
 	return sessionfile.TitleFromUIMessages(uimodel.ToSessionfile(msgs))
@@ -75,16 +72,4 @@ func List(workspaceRoot string) ([]SessionMeta, error) {
 // Delete removes a session file.
 func Delete(workspaceRoot, id string) error {
 	return sessionfile.Delete(workspaceRoot, id)
-}
-
-// StateMessagesToUI converts chat messages to sessionfile projection.
-// Deprecated: use uimodel.ToSessionfile.
-func StateMessagesToUI(msgs []uimodel.Message) []sessionfile.UIMessage {
-	return uimodel.ToSessionfile(msgs)
-}
-
-// UIMessagesToState converts sessionfile projection back to chat messages.
-// Deprecated: use uimodel.FromSessionfile.
-func UIMessagesToState(msgs []sessionfile.UIMessage) []uimodel.Message {
-	return uimodel.FromSessionfile(msgs)
 }

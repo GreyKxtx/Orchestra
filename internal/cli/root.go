@@ -50,11 +50,6 @@ func getTestLLMClient() llm.Client {
 	return testLLMClient
 }
 
-// GetRootCmd returns the root command (for testing).
-func GetRootCmd() *cobra.Command {
-	return rootCmd
-}
-
 // Execute runs the CLI.
 func Execute() error {
 	return rootCmd.Execute()

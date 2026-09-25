@@ -118,52 +118,6 @@ func TestFindRelevantNodes_Limit(t *testing.T) {
 	}
 }
 
-// ---- FormatNodesForPrompt ----
-
-func TestFormatNodesForPrompt_Empty(t *testing.T) {
-	out := FormatNodesForPrompt(nil, 800)
-	if out != "" {
-		t.Errorf("expected empty string for nil nodes, got %q", out)
-	}
-}
-
-func TestFormatNodesForPrompt_Basic(t *testing.T) {
-	nodes := []Node{
-		{FQN: "ex/agent.Agent.Run", Kind: "method", LineStart: 187, LineEnd: 215},
-		{FQN: "ex/tools.Runner", Kind: "struct", LineStart: 1, LineEnd: 50},
-	}
-	out := FormatNodesForPrompt(nodes, 800)
-	if !strings.HasPrefix(out, "<ckg_context>") {
-		t.Errorf("missing <ckg_context> prefix: %q", out)
-	}
-	if !strings.HasSuffix(out, "</ckg_context>") {
-		t.Errorf("missing </ckg_context> suffix: %q", out)
-	}
-	if !strings.Contains(out, "ex/agent.Agent.Run") {
-		t.Errorf("missing FQN in output: %q", out)
-	}
-	if !strings.Contains(out, "L187-215") {
-		t.Errorf("missing line range in output: %q", out)
-	}
-}
-
-func TestFormatNodesForPrompt_ByteBudget(t *testing.T) {
-	// Very small budget forces truncation.
-	nodes := []Node{
-		{FQN: "ex/agent.Agent.Run", Kind: "method", LineStart: 187, LineEnd: 215},
-		{FQN: "ex/tools.Runner", Kind: "struct", LineStart: 1, LineEnd: 50},
-		{FQN: "ex/ckg.Store", Kind: "struct", LineStart: 1, LineEnd: 30},
-	}
-	// Budget that fits only the header+footer+first node.
-	out := FormatNodesForPrompt(nodes, 80)
-	if len(out) > 80 {
-		t.Errorf("output %d bytes exceeds budget of 80: %q", len(out), out)
-	}
-	if !strings.HasSuffix(out, "</ckg_context>") {
-		t.Errorf("output not properly closed: %q", out)
-	}
-}
-
 func TestFormatPromptContext_Depth1SubgraphAndTokenBudget(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

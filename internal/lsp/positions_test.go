@@ -67,17 +67,6 @@ func TestToolPosition_ToLSP_ClampZero(t *testing.T) {
 	}
 }
 
-func TestToolPositionFrom_UTF8(t *testing.T) {
-	pos := lsp.Position{Line: 4, Character: 9}
-	tp := lsp.ToolPositionFrom(pos, "utf-8", "some text here")
-	if tp.Line != 5 {
-		t.Errorf("line: got %d, want 5", tp.Line)
-	}
-	if tp.Col != 10 {
-		t.Errorf("col: got %d, want 10", tp.Col)
-	}
-}
-
 func TestToolPosition_UTF16_MultiByteChar(t *testing.T) {
 	// "héllo": h=1B, é=2B in UTF-8 but 1 code unit in UTF-16.
 	// Col=4 means byte offset 3 (after "hé", since é takes 2 bytes).
@@ -86,15 +75,6 @@ func TestToolPosition_UTF16_MultiByteChar(t *testing.T) {
 	// h(1 unit) + é(1 unit) = 2 units before byte offset 3.
 	if pos.Character != 2 {
 		t.Fatalf("utf-16 char: got %d, want 2", pos.Character)
-	}
-}
-
-func TestToolPositionFrom_UTF16_MultiByteChar(t *testing.T) {
-	// Reverse: UTF-16 offset 2 in "héllo" → byte offset 3 → Col=4.
-	pos := lsp.Position{Line: 0, Character: 2}
-	tp := lsp.ToolPositionFrom(pos, "utf-16", "héllo")
-	if tp.Col != 4 {
-		t.Fatalf("col: got %d, want 4", tp.Col)
 	}
 }
 

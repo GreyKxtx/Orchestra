@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/patch/applier"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -20,7 +20,7 @@ func TestResolveExternalPatches_SearchReplace_ToOps_Apply(t *testing.T) {
 	if err := os.WriteFile(abs, []byte(before), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte(before))
+	h := fsutil.ComputeSHA256([]byte(before))
 
 	ops, err := ResolveExternalPatches(root, []patches.Patch{
 		{
@@ -65,7 +65,7 @@ func TestResolveExternalPatches_SearchReplace_Ambiguous(t *testing.T) {
 			Path:     path,
 			Search:   "dup",
 			Replace:  "x",
-			FileHash: cache.ComputeSHA256([]byte(before)),
+			FileHash: fsutil.ComputeSHA256([]byte(before)),
 		},
 	})
 	if err == nil {
@@ -100,7 +100,7 @@ func TestResolveExternalPatches_UnifiedDiff_ToOps_Apply(t *testing.T) {
 			Type:     patches.TypeFileUnifiedDiff,
 			Path:     path,
 			Diff:     diff,
-			FileHash: cache.ComputeSHA256([]byte(before)),
+			FileHash: fsutil.ComputeSHA256([]byte(before)),
 		},
 	})
 	if err != nil {

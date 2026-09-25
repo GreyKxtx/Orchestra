@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
@@ -102,7 +101,7 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 		detail := map[string]any{
 			"path":     p.Path,
 			"search":   preview(p.Search, 200),
-			"fileHash": cache.ComputeSHA256(before),
+			"fileHash": fsutil.ComputeSHA256(before),
 		}
 		if hint := NearestRegionHint(before, p.Search); hint != "" {
 			detail["nearest"] = hint
@@ -271,12 +270,12 @@ func readFileOrEmpty(projectRoot, relPath string) ([]byte, string, error) {
 			return nil, "", protocol.NewError(protocol.PathTraversal, "path escapes workspace", map[string]any{"path": relPath})
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, cache.ComputeSHA256(nil), nil
+			return nil, fsutil.ComputeSHA256(nil), nil
 		}
 		return nil, "", err
 	}
 	b := []byte(info.Content)
-	return b, cache.ComputeSHA256(b), nil
+	return b, fsutil.ComputeSHA256(b), nil
 }
 
 // normalizeRelPath is a thin wrapper around relpath.Normalize kept so
@@ -1136,7 +1135,7 @@ func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) 
 	if matches == 0 {
 		detail := map[string]any{
 			"search":   preview(search, 200),
-			"fileHash": cache.ComputeSHA256(content),
+			"fileHash": fsutil.ComputeSHA256(content),
 		}
 		if hint := NearestRegionHint(content, search); hint != "" {
 			detail["nearest"] = hint

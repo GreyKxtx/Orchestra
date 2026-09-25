@@ -65,7 +65,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 orchestra trust [--status|--revoke]          # trust this workspace's machine-level settings
 ```
 
-`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, `runs/<run_id>.events.jsonl` and `runs/<run_id>.checkpoint.json` (what `agent.run resume` continues from: history, staged edits, task graph — `internal/checkpoint`), plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
+`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, `retention.*` (how many session snapshots and exported patches are kept; `-1` lifts a bound), etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, `sessions/<id>.json` with its event log `sessions/<id>.events.jsonl` (rotated past 32 MB, one older generation kept; the store is pruned to `retention.sessions` on `session.start`), `runs/<run_id>.events.jsonl` (the newest 50 kept) and `runs/<run_id>.checkpoint.json` (what `agent.run resume` continues from: history, staged edits, task graph — `internal/checkpoint`), plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
 
 ## Architecture (the bits that need multiple files to understand)
 

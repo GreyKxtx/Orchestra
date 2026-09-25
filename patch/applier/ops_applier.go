@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/relpath"
 	"github.com/orchestra/orchestra/protocol"
@@ -89,16 +89,6 @@ func (r *pathResolver) canonRel(p string) (string, error) {
 		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
 	}
 	return rp, nil
-}
-
-// ApplyOps applies Internal Ops v1 (compat wrapper for file.replace_range).
-//
-// Safety properties (per spec):
-// - Path traversal is rejected.
-// - Each op checks `expected` strictly at `range` OR uses fuzzy fallback if enabled.
-// - `conditions.file_hash` participates in stale detection (used to guard against applying to changed files).
-func ApplyOps(root string, in []ops.ReplaceRangeOp, opts ApplyOptions) (*ApplyResult, error) {
-	return ApplyAnyOps(root, ops.WrapReplaceRangeOps(in), opts)
 }
 
 // ApplyAnyOps applies a mixed set of ops (replace_range, write_atomic, mkdir_all).
@@ -288,7 +278,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 				"path": rel,
 			})
 		}
-		actualHash := cache.ComputeSHA256(fp.before)
+		actualHash := fsutil.ComputeSHA256(fp.before)
 		if strings.TrimSpace(wa.Conditions.FileHash) != "" && strings.TrimSpace(wa.Conditions.FileHash) != actualHash {
 			return nil, protocol.NewError(protocol.StaleContent, "cannot apply op: file_hash mismatch", map[string]any{
 				"path":          rel,
@@ -366,7 +356,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 					"file created between plan and apply",
 					map[string]any{"path": rel})
 			}
-			if cache.ComputeSHA256(current) != cache.ComputeSHA256(fp.before) {
+			if fsutil.ComputeSHA256(current) != fsutil.ComputeSHA256(fp.before) {
 				return nil, protocol.NewError(protocol.StaleContent,
 					"file changed between plan and apply",
 					map[string]any{"path": rel})
@@ -540,7 +530,7 @@ func writeBackupsParallel(targets []backupSpec, suffix, rootReal string) error {
 }
 
 func applyReplaceRangeOps(relPath string, before []byte, fileOps []ops.ReplaceRangeOp) ([]byte, error) {
-	baseHash := cache.ComputeSHA256(before)
+	baseHash := fsutil.ComputeSHA256(before)
 
 	// Apply from bottom to top so earlier edits don't shift later ranges.
 	sort.Slice(fileOps, func(i, j int) bool {
@@ -736,7 +726,6 @@ func isWithinRoot(rootAbs, targetAbs string) bool {
 
 func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string) error {
 	dir := filepath.Dir(path)
-	base := filepath.Base(path)
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
@@ -750,61 +739,12 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, rootReal string
 		}
 	}
 
-	tmp, err := os.CreateTemp(dir, base+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Best-effort atomic replace.
-	// Note: on Unix this is atomic within the same directory; on Windows replace is best-effort.
-	if err := os.Rename(tmpName, path); err == nil {
-		// L5 in audit ledger: os.Chmod on Windows only flips the read-only
-		// bit (everything else is ignored). Patch authors who care about
-		// exact perms need a POSIX host — documented as a known limitation.
-		_ = os.Chmod(path, perm)
-		// M10 in audit ledger: fsync the parent directory so the rename's
-		// metadata change is durable across a power loss on POSIX. No-op
-		// on Windows.
-		_ = syncDir(dir)
-		return nil
-	}
-
-	// H9 in audit ledger: the previous fallback was `os.Remove(path) +
-	// os.Rename(tmp, path)`, which deletes the target before the second
-	// rename — if THAT rename also fails (cross-device, locked handle on
-	// Windows, FS full), the original file is permanently gone. Safer:
-	// re-write the contents directly to the target via os.WriteFile. Not
-	// atomic with respect to readers, but the target is never absent
-	// between the two ops — concurrent readers see either the old bytes
-	// or the new bytes, never ENOENT. Backup (.orchestra.bak) was already
-	// written earlier in ApplyAnyOps for any pre-existing file, so a
-	// crash here is recoverable from .bak.
-	if err := os.WriteFile(path, data, perm); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename failed and direct overwrite also failed: %w", err)
-	}
-	_ = os.Remove(tmpName) // best-effort cleanup of the orphan temp
-	_ = os.Chmod(path, perm)
-	return nil
+	// The write itself is the one every Orchestra artifact uses: temp file
+	// in the same directory, fsync, rename with a retry for Windows sharing
+	// violations, and an in-place overwrite as the last resort so the target
+	// never goes missing (H9). Backup (.orchestra.bak) was already written
+	// in ApplyAnyOps for any pre-existing file.
+	return fsutil.AtomicWriteFile(path, data, perm)
 }
 
 func staleContentErr(path string, op ops.ReplaceRangeOp, actualHash string, reason string) error {

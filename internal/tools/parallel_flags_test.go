@@ -38,7 +38,7 @@ func TestParallelFlags_AllBuiltinsClassified(t *testing.T) {
 		}
 	}
 	for _, s := range toolspec.All() {
-		if !seen[s.Name] && s.Offer != toolspec.Legacy {
+		if !seen[s.Name] {
 			t.Errorf("toolspec lists %q but no surface produces it", s.Name)
 		}
 	}

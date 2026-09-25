@@ -1,6 +1,7 @@
 package decisions
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,5 +59,50 @@ func TestAdopted(t *testing.T) {
 	}
 	if !Adopted(root) {
 		t.Fatal("state.md present → adopted")
+	}
+}
+
+// Past the cap the older entries move to the archive, whole, and the log
+// keeps its header, a note and the newest entries; nothing is lost.
+func TestAppend_ArchivesOlderEntriesPastTheCap(t *testing.T) {
+	old := maxBytes
+	maxBytes = 1500
+	t.Cleanup(func() { maxBytes = old })
+	root := t.TempDir()
+	for i := 0; i < 40; i++ {
+		e := Entry{Kind: "qa", Dept: "backend", Question: fmt.Sprintf("q%02d: keep the history of this thing?", i), Answer: "yes, twenty-four months"}
+		if err := Append(root, []Entry{e}); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	log, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(FileRel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log) > maxBytes {
+		t.Fatalf("log is %d bytes, past the cap of %d", len(log), maxBytes)
+	}
+	if !strings.HasPrefix(string(log), "# Decision log") || strings.Count(string(log), archiveNote) != 1 {
+		t.Fatalf("header or note wrong:\n%s", log)
+	}
+	if !strings.Contains(string(log), "q39:") || strings.Contains(string(log), "q00:") {
+		t.Fatalf("the log must hold the newest entry and not the oldest:\n%s", log)
+	}
+	archive, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ArchiveFileRel)))
+	if err != nil {
+		t.Fatalf("no archive: %v", err)
+	}
+	if !strings.Contains(string(archive), "q00:") || !strings.HasPrefix(string(archive), "# Decision log archive") {
+		t.Fatalf("archive lacks the oldest entry or its header:\n%s", archive)
+	}
+	// Every entry is in exactly one of the two files.
+	for i := 0; i < 40; i++ {
+		q := fmt.Sprintf("Q: q%02d:", i)
+		if n := strings.Count(string(log), q) + strings.Count(string(archive), q); n != 1 {
+			t.Errorf("entry %d appears %d times across log and archive", i, n)
+		}
+	}
+	if tail := Tail(root, 400); !strings.Contains(tail, "q39:") {
+		t.Fatalf("Tail lost the newest entry: %q", tail)
 	}
 }

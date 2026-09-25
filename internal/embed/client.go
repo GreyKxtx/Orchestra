@@ -162,29 +162,3 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
-
-// CosineSimilarity returns cosine similarity in [-1, 1]. Returns 0 when
-// either vector is zero-length or dimensions differ. Vectors are assumed
-// to be non-normalised; the function does the division.
-func CosineSimilarity(a, b []float32) float32 {
-	if len(a) == 0 || len(a) != len(b) {
-		return 0
-	}
-	var dot, na, nb float32
-	for i := range a {
-		dot += a[i] * b[i]
-		na += a[i] * a[i]
-		nb += b[i] * b[i]
-	}
-	if na == 0 || nb == 0 {
-		return 0
-	}
-	// Use float64 for the sqrt+div, cast back.
-	return float32(float64(dot) / (sqrtf(na) * sqrtf(nb)))
-}
-
-func sqrtf(x float32) float64 {
-	// Local helper to avoid pulling in math at the top (and keep this
-	// file dependency-light). math.Sqrt accepts float64.
-	return _sqrt(float64(x))
-}
