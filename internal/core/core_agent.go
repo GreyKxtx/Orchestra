@@ -195,17 +195,8 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	imageParts = append(imageParts, params.UserImages...)
 	agentQuery := resolveTurnQuery(params.Query, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
 	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
-	if params.Mode != "" {
-		if kind, builtIn := config.BuiltInModeKind(params.Mode); builtIn {
-			if kind != config.ModeKindTopLevel {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput,
-					fmt.Sprintf("agent mode %q runs only as a subagent (spawned via task / task_spawn); available modes: %s",
-						params.Mode, strings.Join(config.UserSelectableModeNames(), ", ")), nil)
-			}
-		} else if c.cfg != nil && c.cfg.FindAgent(params.Mode) == nil {
-			return nil, protocol.NewError(protocol.InvalidLLMOutput,
-				fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", params.Mode), nil)
-		}
+	if err := c.validateTurnMode(params.Mode); err != nil {
+		return nil, err
 	}
 
 	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
@@ -576,4 +567,30 @@ func (c *Core) resolveCustomAgentOpts(mode string, caps tools.Capabilities, agen
 	}
 
 	return result, nil
+}
+
+// validateTurnMode refuses a mode a turn cannot run in: a subagent-only mode
+// (worker, verifier, scout, compaction…), or a name that is neither built in
+// nor an agents: entry. Empty is the default mode.
+//
+// agent.run checked this and session.message did not (LLM-10): from the TUI
+// or VS Code a worker or compaction ran as a whole turn, and a typo silently
+// became build.
+func (c *Core) validateTurnMode(mode string) error {
+	if mode == "" {
+		return nil
+	}
+	if kind, builtIn := config.BuiltInModeKind(mode); builtIn {
+		if kind != config.ModeKindTopLevel {
+			return protocol.NewError(protocol.InvalidLLMOutput,
+				fmt.Sprintf("agent mode %q runs only as a subagent (spawned via task / task_spawn); available modes: %s",
+					mode, strings.Join(config.UserSelectableModeNames(), ", ")), nil)
+		}
+		return nil
+	}
+	if c.cfg != nil && c.cfg.FindAgent(mode) == nil {
+		return protocol.NewError(protocol.InvalidLLMOutput,
+			fmt.Sprintf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", mode), nil)
+	}
+	return nil
 }
