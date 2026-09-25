@@ -85,6 +85,8 @@ orchestra trust [--status|--revoke]          # trust this workspace's machine-le
 
 **Modes and tools are data.** `internal/roles` holds one `roles.Spec` per mode (kind, prompt file, tool list, write policy, spawnability, default flows, model tier); config, the tool registry, the dispatcher, tasks and the phase gate all read it — a mode with no bespoke behaviour is its Spec plus its prompt file. `internal/toolspec` is the one table of tool metadata (parallel-safe, consent group, Lead allowlist, in-process). Both are import-free leaves so `internal/config` can validate against them.
 
+**Composition root** (`internal/app`): the only place `agent.Options` are made (`TestAgentOptionsAreBuiltOnlyInApp`). `app.SettingsFrom(cfg)` resolves the config once; `app.TurnOptions` builds a top-level turn (the core's launch; the CLI goes through the core), `app.ChildOptions` every subagent (task children, the worker verifier, skills, workflow stages, pipeline stages), `app.ClientFor` any named provider/model client with its fallback and router. New knobs go into `Settings`, not into a call site.
+
 **Tool dispatch** (`internal/agent/tool_gates.go`, `inprocess_dispatch.go`, `tool_dispatch.go`): every call, serial or in a parallel batch, passes the one `toolGates` chain (surface → explore-first → permission rules → MCP/exec/web consent → mode write scope → human gates); then the `inProcessTools` table or `tools.Runner`. Add a gate to the chain, not to a path.
 
 **Tools** (`internal/tools`): the model-facing surface is large and grows by feature flag. `ListToolsForMode` builds a mode's list from its `roles.Spec`; `ListTools`, `ListToolsWithSubtasks`, `ListToolsForChild` cover the mode-less surfaces. Full per-tool status: `docs/tools-status.md`. Headline groups:
