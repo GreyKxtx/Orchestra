@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/orchestra/orchestra/internal/contract"
+)
 
 func TestContractArtifactFileName(t *testing.T) {
 	cases := []struct {
@@ -17,9 +21,9 @@ func TestContractArtifactFileName(t *testing.T) {
 		{"", "", false},
 	}
 	for _, tc := range cases {
-		got, ok := contractArtifactFileName(tc.in)
+		got, ok := contract.ArtifactFileName(tc.in)
 		if got != tc.want || ok != tc.wantOK {
-			t.Errorf("contractArtifactFileName(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.wantOK)
+			t.Errorf("ArtifactFileName(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.wantOK)
 		}
 	}
 }

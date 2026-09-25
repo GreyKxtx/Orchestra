@@ -8,6 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools/fs"
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 )
@@ -174,25 +175,89 @@ func (r *Runner) ListStagedPaths() []string {
 	return r.fsTools.Overlay.ListStagedPaths()
 }
 
-func (r *Runner) StagedOps() []ops.AnyOp {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
+// overlayAt is the overlay the agent behind ctx stages into: its task's layer
+// (WithLayer), else the turn's.
+func (r *Runner) overlayAt(ctx context.Context) *fs.Overlay {
+	if l := fs.OverlayFrom(ctx); l != nil {
+		return l
+	}
+	if r.fsTools == nil {
 		return nil
 	}
-	return r.fsTools.Overlay.StagedOps()
+	return r.fsTools.Overlay
 }
 
-func (r *Runner) StagedFileContent() map[string]string {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return nil
-	}
-	return r.fsTools.Overlay.StagedFileContent()
+// StagedOps returns the ops staged by the agent behind ctx: a task's own, or
+// the turn's.
+func (r *Runner) StagedOps(ctx context.Context) []ops.AnyOp {
+	return r.overlayAt(ctx).StagedOps()
 }
 
-func (r *Runner) ApplyPatchesToStaged(patchList []patches.Patch) error {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
+// StagedFileContent is every staged file the agent behind ctx sees: for a task,
+// what its owners staged with its own changes on top — not its siblings'.
+func (r *Runner) StagedFileContent(ctx context.Context) map[string]string {
+	return r.overlayAt(ctx).StagedFileContent()
+}
+
+func (r *Runner) ApplyPatchesToStaged(ctx context.Context, patchList []patches.Patch) error {
+	o := r.overlayAt(ctx)
+	if o == nil {
 		return fmt.Errorf("fs overlay unavailable")
 	}
-	return r.fsTools.Overlay.ApplyPatchesToStaged(r.fsTools, patchList)
+	return o.ApplyPatchesToStaged(r.fsTools, patchList)
+}
+
+// ForkLayer gives a task its own layer over the overlay of the agent behind ctx
+// (its owner). Nil outside a dry run: writes then go to disk.
+func (r *Runner) ForkLayer(ctx context.Context) *fs.Overlay {
+	return r.overlayAt(ctx).Fork()
+}
+
+// View is the project as the agent behind ctx sees it — its task's layer, or
+// the turn's overlay, over the disk — for the runtime's checks.
+func (r *Runner) View(ctx context.Context) wsview.View {
+	if o := r.overlayAt(ctx); o != nil {
+		return o
+	}
+	return wsview.Disk(r.WorkspaceRoot())
+}
+
+// InLayer reports whether ctx belongs to a task that writes into its own
+// layer: its changes become its owner's only when it commits.
+func InLayer(ctx context.Context) bool {
+	return fs.OverlayFrom(ctx).IsLayer()
+}
+
+// LayerContext is a context carrying ctx's task layer and nothing else, for
+// staging work done outside the call's own lifetime.
+func LayerContext(ctx context.Context) context.Context {
+	return fs.WithOverlay(context.Background(), fs.OverlayFrom(ctx))
+}
+
+// DropLayer discards a task's layer and puts the language server back on the
+// owner's view of the files the task changed. The server holds one version of
+// each document, the last one written, so a discarded edit would otherwise
+// keep answering diagnostics and navigation for everyone after it.
+func (r *Runner) DropLayer(ownerCtx context.Context, layer *fs.Overlay) {
+	paths := layer.Discard()
+	if len(paths) == 0 || r.lspManager == nil || r.lspManager.IsEmpty() {
+		return
+	}
+	owner := r.overlayAt(ownerCtx)
+	ctx := context.Background()
+	for _, p := range paths {
+		if content, ok := owner.CurrentContent(p); ok {
+			_ = r.lspManager.SyncStaged(ctx, p, content)
+			continue
+		}
+		r.lspManager.DidClose(ctx, p)
+	}
+}
+
+// WithLayer attributes ctx to a task layer: tools called with it read and
+// write there.
+func WithLayer(ctx context.Context, layer *fs.Overlay) context.Context {
+	return fs.WithOverlay(ctx, layer)
 }
 
 func (r *Runner) ClearStaged() {

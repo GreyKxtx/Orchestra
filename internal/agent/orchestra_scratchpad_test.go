@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // The runtime's bookkeeping must not switch the phase machine on. It used to
@@ -23,7 +24,7 @@ func TestWorkerSummary_DoesNotCreateAStateFileTheGuardCannotParse(t *testing.T) 
 	if _, err := os.Stat(filepath.Join(root, ".orchestra", "state.md")); !os.IsNotExist(err) {
 		t.Fatalf("a worker summary created state.md in a session that had none (stat err=%v)", err)
 	}
-	if err := orchestrastate.GuardSpawn(root, orchestrastate.EnforcementStrict, "worker"); err != nil {
+	if err := orchestrastate.GuardSpawn(root, wsview.Disk(root), orchestrastate.EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("the second worker must still be allowed to spawn: %v", err)
 	}
 }

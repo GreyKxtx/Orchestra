@@ -37,6 +37,13 @@ type Overlay struct {
 
 	mu     sync.RWMutex
 	staged map[string]*stagedFile
+
+	// A task layer (layer.go) has the overlay it forked from as parent, and
+	// base holds, per file it wrote, the parent's hash at the first write:
+	// what its change was made against. Nil on a turn's overlay.
+	parent *Overlay
+	base   map[string]string
+	state  layerState
 }
 
 type stagedFile struct {
@@ -125,6 +132,11 @@ func (o *Overlay) stageFileLocked(relSlash, content, hash string) {
 		sf.hash = hash
 		return
 	}
+	if o.parent != nil {
+		if _, ok := o.base[relSlash]; !ok {
+			o.base[relSlash] = o.parent.currentHash(relSlash)
+		}
+	}
 	absPath := filepath.Join(o.root, filepath.FromSlash(relSlash))
 	diskBytes, err := os.ReadFile(absPath)
 	isNew := os.IsNotExist(err)
@@ -150,9 +162,8 @@ func (o *Overlay) mergeStagedFilesIntoList(files []FSFileMeta, listPath string, 
 	if o == nil || !o.DryRun {
 		return files
 	}
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	if len(o.staged) == 0 {
+	staged := o.effectiveStaged()
+	if len(staged) == 0 {
 		return files
 	}
 
@@ -168,7 +179,7 @@ func (o *Overlay) mergeStagedFilesIntoList(files []FSFileMeta, listPath string, 
 		byPath[f.Path] = i
 	}
 
-	for path, sf := range o.staged {
+	for path, sf := range staged {
 		if prefix != "" && !strings.HasPrefix(path, prefix) {
 			continue
 		}
@@ -195,9 +206,8 @@ func (o *Overlay) mergeStagedFilesIntoGlob(files []FSFileMeta, pattern string, i
 	if o == nil || !o.DryRun {
 		return files
 	}
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	if len(o.staged) == 0 {
+	staged := o.effectiveStaged()
+	if len(staged) == 0 {
 		return files
 	}
 
@@ -206,7 +216,7 @@ func (o *Overlay) mergeStagedFilesIntoGlob(files []FSFileMeta, pattern string, i
 		seen[f.Path] = true
 	}
 
-	for path, sf := range o.staged {
+	for path, sf := range staged {
 		if seen[path] || !matchGlobPath(pattern, path) {
 			continue
 		}
@@ -227,12 +237,17 @@ func (o *Overlay) stagedContent(relSlash string) (content, hash string, ok bool)
 		return "", "", false
 	}
 	o.mu.RLock()
-	defer o.mu.RUnlock()
 	sf, ok := o.staged[relSlash]
-	if !ok {
-		return "", "", false
+	parent := o.parent
+	if ok {
+		content, hash = sf.content, sf.hash
 	}
-	return sf.content, sf.hash, true
+	o.mu.RUnlock()
+	if ok {
+		return content, hash, true
+	}
+	// A task layer sees what its owner sees, live.
+	return parent.stagedContent(relSlash)
 }
 
 // EffectiveContent returns staged content for relPath when present.
@@ -244,16 +259,12 @@ func (o *Overlay) EffectiveContent(relPath string) (string, bool) {
 
 // ListStagedPaths returns sorted forward-slash paths in the overlay.
 func (o *Overlay) ListStagedPaths() []string {
-	if o == nil {
+	staged := o.effectiveStaged()
+	if len(staged) == 0 {
 		return nil
 	}
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	if len(o.staged) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(o.staged))
-	for p := range o.staged {
+	out := make([]string, 0, len(staged))
+	for p := range staged {
 		out = append(out, p)
 	}
 	sort.Strings(out)
@@ -358,18 +369,15 @@ func (o *Overlay) UnstagePath(relSlash string) {
 	o.unstagePath(relSlash)
 }
 
-// StagedFileContent returns path→content snapshot of the overlay.
+// StagedFileContent returns path→content snapshot of the overlay — for a task
+// layer, everything it sees staged: its owners' files with its own on top.
 func (o *Overlay) StagedFileContent() map[string]string {
-	if o == nil {
+	staged := o.effectiveStaged()
+	if len(staged) == 0 {
 		return nil
 	}
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	if len(o.staged) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(o.staged))
-	for path, sf := range o.staged {
+	out := make(map[string]string, len(staged))
+	for path, sf := range staged {
 		out[path] = sf.content
 	}
 	return out
@@ -473,6 +481,7 @@ func (o *Overlay) HasStagedChanges() bool {
 
 // CommitStagedPath writes one staged file to disk and removes it from the overlay.
 func (c *Client) CommitStagedPath(ctx context.Context, path string, backup bool) (*FSApplyOpsResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}

@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +46,7 @@ func stagedModule(t *testing.T) *tools.Runner {
 
 func stage(t *testing.T, tr *tools.Runner, path, search, replace string) {
 	t.Helper()
-	if err := tr.ApplyPatchesToStaged([]patches.Patch{{Type: patches.TypeFileSearchReplace, Path: path, Search: search, Replace: replace}}); err != nil {
+	if err := tr.ApplyPatchesToStaged(context.Background(), []patches.Patch{{Type: patches.TypeFileSearchReplace, Path: path, Search: search, Replace: replace}}); err != nil {
 		t.Fatalf("stage %s: %v", path, err)
 	}
 }
@@ -118,5 +119,32 @@ func TestVerifyStagedGo_StagedGoModIsSkipped(t *testing.T) {
 	c, _ := findCheck(report, "go_build")
 	if !c.Skip || !strings.Contains(c.Detail, "go.mod is staged") {
 		t.Fatalf("a staged go.mod cannot be overlaid; the build must be skipped, not wrong: %+v", report.Checks)
+	}
+}
+
+// A worker's build sees its own changes and what its owner has, not a
+// sibling's work in progress (ORC-12). With one overlay for the whole tree, a
+// correct worker failed on a sibling's half-done file — spending its retries
+// and an escalation — and a broken one passed when a sibling happened to fix
+// it.
+func TestVerifyStagedGo_EachTaskBuildsItsOwnLayer(t *testing.T) {
+	tr := stagedModule(t)
+	sibling := tools.WithLayer(t.Context(), tr.ForkLayer(t.Context()))
+	worker := tools.WithLayer(t.Context(), tr.ForkLayer(t.Context()))
+	stage(t, tr, "api/api.go", "// Total calls lib.", "// Total calls lib and returns the sum.")
+	if err := tr.ApplyPatchesToStaged(sibling, []patches.Patch{{Type: patches.TypeFileSearchReplace, Path: "lib/lib.go",
+		Search: "func Sum(a, b int) int { return a + b }", Replace: "func Sum(a int) int { return a }"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.ApplyPatchesToStaged(worker, []patches.Patch{{Type: patches.TypeFileSearchReplace, Path: "api/api.go",
+		Search: "func Total() int { return lib.Sum(1, 2) }", Replace: "func Total() int { return lib.Sum(2, 1) }"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if report := VerifyWorkerOutcome(worker, tr, []string{"api/api.go"}, WorkerVerifyOptions{}); !report.Passed {
+		t.Fatalf("the worker's own change builds; a sibling's unfinished break must not fail it: %+v", report.Checks)
+	}
+	if report := VerifyWorkerOutcome(sibling, tr, []string{"lib/lib.go", "api/api.go"}, WorkerVerifyOptions{}); report.Passed {
+		t.Fatal("the sibling's own break must still fail its own build")
 	}
 }

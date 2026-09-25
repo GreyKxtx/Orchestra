@@ -1,6 +1,7 @@
 package tools_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,7 @@ func TestModelView_AstRenameStagesLikeWriteInsteadOfTouchingDisk(t *testing.T) {
 	if after := readFixture(t, root, "width.go"); after != before {
 		t.Errorf("a dry-run rename wrote to disk:\n%s", after)
 	}
-	if len(r.StagedOps()) == 0 {
+	if len(r.StagedOps(context.Background())) == 0 {
 		t.Fatal("a dry-run rename reported success and staged nothing: the work exists nowhere")
 	}
 	// The model's next read must see its own rename, or it re-does it.

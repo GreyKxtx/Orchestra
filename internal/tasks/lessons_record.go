@@ -7,6 +7,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/playbooks"
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -135,7 +136,7 @@ func loadDeptLessons(root string, mode agent.Mode, wo *WorkOrder) string {
 }
 
 // loadDeptPlaybook injects L2 playbook + local overlay for worker children.
-func loadDeptPlaybook(root string, mode agent.Mode, wo *WorkOrder) string {
+func loadDeptPlaybook(v wsview.View, mode agent.Mode, wo *WorkOrder) string {
 	if mode != agent.ModeWorker || wo == nil {
 		return ""
 	}
@@ -143,5 +144,5 @@ func loadDeptPlaybook(root string, mode agent.Mode, wo *WorkOrder) string {
 	if dept == "" {
 		dept = "engineering"
 	}
-	return playbooks.FormatDeptPlaybookInject(root, dept)
+	return playbooks.FormatDeptPlaybookInject(v, dept)
 }

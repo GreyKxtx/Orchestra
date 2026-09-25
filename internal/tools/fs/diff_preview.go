@@ -12,6 +12,7 @@ import (
 )
 
 func (c *Client) Preview(ctx context.Context, req FSPreviewRequest) (*FSPreviewResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}

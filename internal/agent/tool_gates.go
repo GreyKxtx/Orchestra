@@ -20,6 +20,10 @@ type gateCall struct {
 	allowExec    bool
 	allowWeb     bool
 	mcpConsented bool
+	// userApproved is the user's yes for this very call: an allow rule that
+	// matched it, or an approval asked for it. A tainted turn needs it for
+	// calls that act for the user (gateTaint).
+	userApproved bool
 }
 
 // toolGate refuses a call by returning the reason, or lets it through with "".
@@ -34,8 +38,10 @@ type toolGate func(a *Agent, ctx context.Context, c *gateCall, history []llm.Mes
 //  3. permission rules (deny, allow — which is consent for the gates below —
 //     or ask the user);
 //  4. consent for an MCP tool that can write, for bash, for the web;
-//  5. the mode's write scope (roles.Spec.Write);
-//  6. the human gates on git.commit and git.push.
+//  5. the tainted turn: per-call approval for what acts for the user, no
+//     pinned or global memory (taint.go);
+//  6. the mode's write scope (roles.Spec.Write);
+//  7. the human gates on git.commit and git.push.
 //
 // It used to be two chains. The serial dispatcher ran its checks inline — the
 // refusal block was written out 18 times — and the parallel batch ran only the
@@ -50,6 +56,7 @@ var toolGates = []toolGate{
 	(*Agent).gateMCPConsent,
 	(*Agent).gateExecConsent,
 	(*Agent).gateWebConsent,
+	(*Agent).gateTaint,
 	(*Agent).gateWriteScope,
 	(*Agent).gateHuman,
 }
@@ -108,6 +115,7 @@ func (a *Agent) gatePermissionRules(ctx context.Context, c *gateCall, _ []llm.Me
 		return "tool call denied by permission ruleset"
 	case "allow":
 		c.allowExec, c.allowWeb, c.mcpConsented = true, true, true
+		c.userApproved = true
 	case "ask":
 		approved, err := a.requestInteractivePermission(ctx, c.name, subject, c.input)
 		if err != nil {
@@ -116,7 +124,7 @@ func (a *Agent) gatePermissionRules(ctx context.Context, c *gateCall, _ []llm.Me
 		if !approved {
 			return "tool call denied by interactive permission requester"
 		}
-		c.mcpConsented = true
+		c.mcpConsented, c.userApproved = true, true
 	}
 	return ""
 }
@@ -152,7 +160,7 @@ func (a *Agent) gateExecConsent(ctx context.Context, c *gateCall, _ []llm.Messag
 			Description: permissionText(line),
 		})
 		if err == nil && resp.Approved {
-			c.allowExec = true
+			c.allowExec, c.userApproved = true, true
 			return ""
 		}
 		if err == nil {

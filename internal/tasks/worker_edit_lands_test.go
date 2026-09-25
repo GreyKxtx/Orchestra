@@ -133,7 +133,7 @@ func TestWorker_AnEditByAChildReachesTheWorkspace(t *testing.T) {
 		t.Fatal("the child never called the model, so this test is measuring the wrong thing")
 	}
 
-	staged := tr.StagedOps()
+	staged := tr.StagedOps(context.Background())
 	onDisk, readErr := os.ReadFile(widthPath)
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -231,7 +231,7 @@ func TestWorker_AClaimOfSuccessWithNothingAppliedIsNotReportedAsVerified(t *test
 	if after, _ := os.ReadFile(filepath.Join(root, "width.go")); string(after) != before {
 		t.Fatalf("the edit was applied after all, so this is not the refused case:\n%s", after)
 	}
-	if len(tr.StagedOps()) != 0 {
+	if len(tr.StagedOps(context.Background())) != 0 {
 		t.Fatalf("something staged; this is not the refused case")
 	}
 

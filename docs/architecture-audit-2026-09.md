@@ -144,9 +144,28 @@
 | ARCH-1 (CLI ↔ core) | Прямой режим `orchestra apply` запускает `core.Core` в своём процессе: `Options.Config` и `ExecInDryRun`, а также in-process поля `AllowWeb`, `OnAgentEvent`, `UserImages` и `BindInteractive`. Из CLI ушло около 390 строк своей сборки агента. CLI терял `exec.allow`/`exec.deny`, LLM-верификатор и `BytesPerContextToken`; теперь их даёт общая сборка. Инструменты custom-агента берутся с согласием хода | `e2870bc` |
 | ARCH-1, ARCH-10, ARCH-8 (клиенты) | `internal/app`: `Settings`, `TurnOptions`, `ChildOptions`, `ClientFor`. Все дети (задачи, верификатор, навыки, стадии workflow и pipeline) собираются одной функцией. Опции хода в core побайтно совпадают со старыми. Исправлены дефекты: стадии pipeline не были детьми и теряли `task_result`, из-за чего цикл Investigator → Critic не работал; правила `permissions` не действовали на подагентов; дети навыков шли без бюджета и с 25-секундным таймаутом шага; переопределение модели навыка или custom-агента теряло fallback и router | `de18880` |
 
+**Фаза 4 выполнена частично 2026-09-25**, та же ветка. Четыре из пяти сценариев приёмки закрыты тестами:
+- правки упавшего воркера не попадают в финал: `TestLayer_FailedWorkerEditsDoNotReachTheTurn`;
+- два воркера на одном файле — конфликт при merge, а не порча: `TestLayer_TwoTasksOnOneFileConflict`, `TestLayer_ConcurrentChangeIsAConflict`;
+- смена epoch отменяет воркеров и отбрасывает их слои: `TestEpochChange_CancelsStaleWorkersAndDropsTheirLayers`. Владелец меняет `NFR.md`, коммит его слоя двигает epoch, воркер на старом хеше отменяется, его правка не доходит до хода. На старом коде хук срабатывал только у корня при `apply`;
+- модель не может выдать себе waiver: `TestWaiver_ModelCannotGrantItself`. Lead пытается перейти в delivery с непогашенным `doc_debt` тремя путями: `write` в `state.md`, `update_working_state` и `final.patches`. Все три отклонены, файл на диске не изменился.
+
+Не закрыт сценарий `kill -9` ядра → resume (шаг 4.6: журнал событий, resume после краха).
+
+Каждое исправление проверено мутацией: без него тест падает.
+
+| Находки | Что сделано | Коммит |
+|---|---|---|
+| ORC-1, ORC-12 (часть) | У каждой задачи свой слой поверх вида владельца (`fs.Overlay.Fork`). Коммит в владельца — только при успехе; упавшая, отменённая или без результата задача отбрасывает слой. Конфликт по `base`-хешу — `merge_conflict`, а не перезапись. `go build -overlay` воркера — по его слою; ошибка LSP в пакете, чья сборка по слою прошла, не валит воркера | `b8cad9a` |
+| ORC-4 | `orchestrastate.Update` / `Rewrite` / `Lock`: перечитывание, изменение и атомарная запись `state.md` под межпроцессным локом; scratchpad'ы отделов и Done-строки воркеров — под тем же локом. Барьер, эскалация, `doc_debt`, `contract_epoch` больше не теряют чужие изменения | `d02fcc1` |
+| ORC-5, ORC-6, ORC-3 (остаток) | Владельцы контракта (`contract.DefaultOwners`) пишут свои артефакты. Изменение артефакта становится контрактом, когда слой владельца коммитится в ход: epoch двигается, воркеры с устаревшими `contract_refs` отменяются. `contract_freeze` делает то же. Проверки (гейты спавна и фаз, бриф, `contract_freeze`, `contract_refs`, conventions и playbook в промпте ребёнка) читают вид задачи (`internal/wsview`, `tools.Runner.View`), а не диск. `state.md`, `depts/`, `decisions.md`, `EPOCH.yaml`, `agency/` — записи рантайма: `write`, `edit`, удаление, переименование и `final.patches` на них отклоняются в любом режиме | `4999417` |
+| ORC-7 | Ключи `depends_on` — в пространстве имён спавнера; зависимость на предка и на нестартовавшую задачу другой ветки отклоняется при спавне | `e9ab725` |
+| ORC-9 | Барьер до relay; блокирующий вопрос задерживает пачку WorkOrder'ов до ревизии Lead'ом; один раунд к пользователю за раз, повторный вопрос не задаётся; бюджет на фазу; без `QuestionAsker` результат говорит, что ответа не было | `e203076` |
+| SEC-8 | Spotlighting: результаты web, `gh.*`, браузера и MCP — в `<untrusted source="…">`. Taint хода: после недоверенного текста `bash`, `git.push`, `gh.pr.create` требуют «да» пользователя на вызов, `memory_write` не пишет pin/feedback/global. Taint передаётся через результаты детей, `send_message`, `agent_post` и `<upstream_results>` | `58aba45` |
+
 **Осталось по плану (фазы 4–8):**
-- ORC-1 (изоляция правок воркеров) и ORC-4…ORC-7, ORC-9, ORC-12;
-- SEC-8 (spotlighting результатов инструментов);
+- 4.2: `TaskRunner` как адаптер над `Graph`, `StallDetector`; 4.5: типизированная шина артефактов; 4.6: журнал событий (SQLite), resume после краха, OTel-экспорт;
+- ORC-8 (воркер с goal в прозе без проверок scope; `bash` мимо слоёв), ORC-12 (остаток: `acceptance_checks` и `tsc` в dry-run);
 - LLM-6 и LLM-7 (thinking и мультимодальность Anthropic), LLM-8…LLM-14, LLM-16;
 - DATA-3, DATA-5…DATA-11, ARCH-4…ARCH-7, ARCH-11, ARCH-12 (кроме gofmt);
 - `pipeline` как пресет workflow (пока оставлен: у него стабильный флаг `--pipeline`);

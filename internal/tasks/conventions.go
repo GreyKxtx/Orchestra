@@ -1,13 +1,12 @@
 package tasks
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/decisions"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // L1 project conventions (spec §6.1): written by the Docs Lead at stage 1,
@@ -55,11 +54,12 @@ func loadDecisionLog(root string, mode agent.Mode) string {
 
 // loadProjectConventions returns the <project_conventions> block for the
 // child prompt, or "" when the playbook does not exist or the mode is exempt.
-func loadProjectConventions(root string, mode agent.Mode) string {
+// v is the child's view: conventions written this turn are staged.
+func loadProjectConventions(v wsview.View, mode agent.Mode) string {
 	if !conventionsInjectMode(mode) {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ConventionsRelPath)))
+	b, err := v.ReadFile(ConventionsRelPath)
 	if err != nil {
 		return ""
 	}

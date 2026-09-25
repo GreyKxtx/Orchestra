@@ -72,7 +72,7 @@ func (a *Agent) guardStateTransition(prevPhase orchestrastate.Phase, content str
 		return nil
 	}
 	return orchestrastate.GuardPhaseTransition(
-		a.tools.WorkspaceRoot(), a.opts.PhaseEnforcement, prevPhase, next.Phase, next)
+		a.tools.WorkspaceRoot(), a.tools.View(a.staging()), a.opts.PhaseEnforcement, prevPhase, next.Phase, next)
 }
 
 func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage, error) {
@@ -104,57 +104,66 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 	frontmatterAdded := false
 	var runtimeOwned []string
 	if relPath == plan.OrchestraStateRelPath {
-		var prev *orchestrastate.State
-		if p, found, err := orchestrastate.Load(a.tools.WorkspaceRoot()); err == nil && found {
-			prev = p
-			prevPhase = p.Phase
-		}
-		// The Lead writes this file as prose — Goal, Done, Next — and the
-		// phase guard reads it as a document with a YAML frontmatter. When the
-		// body arrives without one, the guard would fail closed on the very
-		// next spawn ("missing YAML frontmatter"), and the Lead, which has no
-		// way to see the file's shape, spent its steps rewriting state.md by
-		// hand (27B, orchestra runs of 2026-09-18, twice). So the runtime keeps
-		// the frontmatter it has — the phase the Lead last declared — and puts
-		// the new body under it; a fresh session gets one with the phase
-		// unset, which the reply says how to fill.
-		if _, perr := orchestrastate.ParseContent(content); perr != nil {
-			st := orchestrastate.State{}
+		// Under the state file's lock: the runtime-owned fields kept and the
+		// transition judged are those of the state this write replaces, not a
+		// copy loaded before a worker's doc debt or a barrier's answer landed.
+		err := orchestrastate.Rewrite(a.tools.WorkspaceRoot(), func(prev *orchestrastate.State) (string, error) {
 			if prev != nil {
-				st = *prev
+				prevPhase = prev.Phase
 			}
-			st.Body = content + "\n"
-			rendered, rerr := orchestrastate.Render(&st)
-			if rerr != nil {
-				return nil, fmt.Errorf("update_working_state: %w", rerr)
-			}
-			content = strings.TrimSpace(rendered)
-			frontmatterAdded = true
-		}
-		// Fields the runtime or the user owns come from the file on disk,
-		// whatever the new content says; the guard below judges the result.
-		if next, perr := orchestrastate.ParseContent(content); perr == nil {
-			if changed := orchestrastate.KeepRuntimeOwned(next, prev); len(changed) > 0 {
-				rendered, rerr := orchestrastate.Render(next)
+			// The Lead writes this file as prose — Goal, Done, Next — and the
+			// phase guard reads it as a document with a YAML frontmatter. When
+			// the body arrives without one, the guard would fail closed on the
+			// very next spawn ("missing YAML frontmatter"), and the Lead, which
+			// has no way to see the file's shape, spent its steps rewriting
+			// state.md by hand (27B, orchestra runs of 2026-09-18, twice). So
+			// the runtime keeps the frontmatter it has — the phase the Lead
+			// last declared — and puts the new body under it; a fresh session
+			// gets one with the phase unset, which the reply says how to fill.
+			if _, perr := orchestrastate.ParseContent(content); perr != nil {
+				st := orchestrastate.State{}
+				if prev != nil {
+					st = *prev
+				}
+				st.Body = content + "\n"
+				rendered, rerr := orchestrastate.Render(&st)
 				if rerr != nil {
-					return nil, fmt.Errorf("update_working_state: %w", rerr)
+					return "", fmt.Errorf("update_working_state: %w", rerr)
 				}
 				content = strings.TrimSpace(rendered)
-				runtimeOwned = changed
+				frontmatterAdded = true
 			}
-		}
-		// Transition gate (spec §4.2). Evaluated before the write, so a
-		// refused transition leaves the state file as it was: the Lead cannot
-		// declare a phase whose entry condition is unmet and then act on it.
-		if err := a.guardStateTransition(prevPhase, content); err != nil {
+			// Fields the runtime or the user owns come from the file on disk,
+			// whatever the new content says; the guard below judges the result.
+			if next, perr := orchestrastate.ParseContent(content); perr == nil {
+				if changed := orchestrastate.KeepRuntimeOwned(next, prev); len(changed) > 0 {
+					rendered, rerr := orchestrastate.Render(next)
+					if rerr != nil {
+						return "", fmt.Errorf("update_working_state: %w", rerr)
+					}
+					content = strings.TrimSpace(rendered)
+					runtimeOwned = changed
+				}
+			}
+			// Transition gate (spec §4.2). Evaluated before the write, so a
+			// refused transition leaves the state file as it was: the Lead
+			// cannot declare a phase whose entry condition is unmet and then
+			// act on it.
+			if err := a.guardStateTransition(prevPhase, content); err != nil {
+				return "", err
+			}
+			return content + "\n", nil
+		})
+		if err != nil {
 			return nil, err
 		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	if err := fsutil.AtomicWriteFile(path, []byte(content+"\n"), 0o644); err != nil {
-		return nil, err
+	} else {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
+		if err := fsutil.AtomicWriteFile(path, []byte(content+"\n"), 0o644); err != nil {
+			return nil, err
+		}
 	}
 	respFields := map[string]any{
 		"path":    relPath,
@@ -337,6 +346,13 @@ func appendWorkerSummaryToScratchpad(root, summaryLine string) error {
 	if summaryLine == "" {
 		return nil
 	}
+	// Workers finish in parallel, and the runtime writes this file too: the
+	// append is a read-modify-write under the state file's lock.
+	unlock, err := orchestrastate.Lock(root)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	path := orchestraScratchpadAbs(root)
 	var content string
 	if b, err := os.ReadFile(path); err == nil {

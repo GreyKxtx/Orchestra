@@ -254,6 +254,11 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 			p.base = fs
 		}
 	}
+	// Spotlighting (SEC-8): what <untrusted> means, for an agent that can
+	// be handed some.
+	if a.readsUntrusted() {
+		p.base += "\n\n" + untrustedNotice
+	}
 	// 4: project memory (tiered, config-driven).
 	// Workers/focused children skip this - they only need the WorkOrder.
 	if !a.opts.SkipMemoryInject && a.opts.Mode != ModeWorker {

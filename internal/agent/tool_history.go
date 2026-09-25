@@ -9,6 +9,15 @@ import (
 
 // prepareToolHistoryContent optionally digests large tool output and auto-writes session memory.
 func (a *Agent) prepareToolHistoryContent(name string, input json.RawMessage, out []byte) string {
+	content := a.toolHistoryContent(name, input, out)
+	if source := untrustedSource(name, out); source != "" {
+		a.markTainted(source)
+		content = spotlight(source, content)
+	}
+	return content
+}
+
+func (a *Agent) toolHistoryContent(name string, input json.RawMessage, out []byte) string {
 	a.observeWorkingTool(name, input, out, nil)
 	if strings.HasPrefix(name, "mcp:") {
 		// The image message is built from the raw result; the history text

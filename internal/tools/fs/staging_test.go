@@ -61,7 +61,7 @@ func TestStaging_StagedOps_HasWriteAtomic(t *testing.T) {
 		t.Fatalf("FSWrite: %v", err)
 	}
 
-	ops := r.StagedOps()
+	ops := r.StagedOps(context.Background())
 	if len(ops) != 1 {
 		t.Fatalf("expected 1 staged op, got %d", len(ops))
 	}
@@ -123,7 +123,7 @@ func TestStaging_EditDryRun(t *testing.T) {
 		t.Fatalf("disk was modified: %q", string(got))
 	}
 
-	stagedOps := r.StagedOps()
+	stagedOps := r.StagedOps(context.Background())
 	if len(stagedOps) != 1 {
 		t.Fatalf("expected 1 staged op, got %d", len(stagedOps))
 	}
@@ -139,7 +139,7 @@ func TestStaging_ApplyPatchesToStaged_SearchReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := r.ApplyPatchesToStaged([]patches.Patch{{
+	err := r.ApplyPatchesToStaged(context.Background(), []patches.Patch{{
 		Type:    patches.TypeFileSearchReplace,
 		Path:    "src.go",
 		Search:  "hello",
@@ -149,7 +149,7 @@ func TestStaging_ApplyPatchesToStaged_SearchReplace(t *testing.T) {
 		t.Fatalf("ApplyPatchesToStaged: %v", err)
 	}
 
-	staged := r.StagedFileContent()
+	staged := r.StagedFileContent(context.Background())
 	content, ok := staged["src.go"]
 	if !ok {
 		t.Fatal("expected file to be staged")
@@ -165,7 +165,7 @@ func TestStaging_ApplyPatchesToStaged_SearchReplace(t *testing.T) {
 func TestStaging_ApplyPatchesToStaged_WriteAtomic(t *testing.T) {
 	r := newDryRunRunner(t)
 
-	err := r.ApplyPatchesToStaged([]patches.Patch{{
+	err := r.ApplyPatchesToStaged(context.Background(), []patches.Patch{{
 		Type:    patches.TypeFileWriteAtomic,
 		Path:    "newfile.txt",
 		Content: "brand new content",
@@ -174,7 +174,7 @@ func TestStaging_ApplyPatchesToStaged_WriteAtomic(t *testing.T) {
 		t.Fatalf("ApplyPatchesToStaged: %v", err)
 	}
 
-	staged := r.StagedFileContent()
+	staged := r.StagedFileContent(context.Background())
 	content, ok := staged["newfile.txt"]
 	if !ok {
 		t.Fatal("expected file to be staged")
@@ -194,7 +194,7 @@ func TestStaging_ApplyPatchesToStaged_StaleFileHash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := r.ApplyPatchesToStaged([]patches.Patch{{
+	err := r.ApplyPatchesToStaged(context.Background(), []patches.Patch{{
 		Type:     patches.TypeFileSearchReplace,
 		Path:     "file.txt",
 		Search:   "actual",
@@ -280,7 +280,7 @@ func TestStaging_ASTGate_RejectsInvalidGo(t *testing.T) {
 	if !strings.Contains(err.Error(), "SyntaxError") {
 		t.Fatalf("expected SyntaxError, got %v", err)
 	}
-	if len(r.StagedOps()) != 0 {
+	if len(r.StagedOps(context.Background())) != 0 {
 		t.Fatal("invalid content must not reach staging overlay")
 	}
 }
@@ -301,7 +301,7 @@ func TestStaging_ASTGate_CanDisable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gate disabled: %v", err)
 	}
-	if len(r.StagedOps()) != 1 {
+	if len(r.StagedOps(context.Background())) != 1 {
 		t.Fatal("expected staged op with gate off")
 	}
 }
@@ -311,11 +311,11 @@ func boolPtr(v bool) *bool { return &v }
 func TestStaging_ClearStaged(t *testing.T) {
 	r := newDryRunRunner(t)
 	_, _ = r.FSWrite(context.Background(), tools.FSWriteRequest{Path: "x.txt", Content: "hi", MustNotExist: true})
-	if len(r.StagedOps()) == 0 {
+	if len(r.StagedOps(context.Background())) == 0 {
 		t.Fatal("expected staged ops before clear")
 	}
 	r.ClearStaged()
-	if len(r.StagedOps()) != 0 {
+	if len(r.StagedOps(context.Background())) != 0 {
 		t.Fatal("expected empty staged ops after clear")
 	}
 }
@@ -343,7 +343,7 @@ func TestCommitStagedPath_WritesToDisk(t *testing.T) {
 	if string(b) != "on disk now" {
 		t.Fatalf("disk content: %q", b)
 	}
-	if len(r.StagedOps()) != 0 {
+	if len(r.StagedOps(context.Background())) != 0 {
 		t.Fatal("expected overlay cleared after commit")
 	}
 }

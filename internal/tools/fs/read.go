@@ -10,6 +10,7 @@ import (
 )
 
 func (c *Client) Read(ctx context.Context, req FSReadRequest) (*FSReadResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}

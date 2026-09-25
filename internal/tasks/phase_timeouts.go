@@ -70,16 +70,22 @@ func (r *TaskRunner) trackBlockedEscalation(ctx context.Context, taskResult stri
 	}
 	if !taskResultIsBlocked(taskResult) {
 		if st.BlockedSince != "" {
-			st.BlockedSince = ""
-			_ = orchestrastate.Save(root, st)
+			_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
+				st.BlockedSince = ""
+				return nil
+			})
 		}
 		return taskResult
 	}
 
 	now := time.Now().UTC()
 	if st.BlockedSince == "" {
-		st.BlockedSince = now.Format(time.RFC3339)
-		_ = orchestrastate.Save(root, st)
+		_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
+			if st.BlockedSince == "" {
+				st.BlockedSince = now.Format(time.RFC3339)
+			}
+			return nil
+		})
 		return taskResult
 	}
 	threshold := r.child.PhaseTimeouts.BlockedEscalateS
@@ -109,8 +115,12 @@ func (r *TaskRunner) trackBlockedEscalation(ctx context.Context, taskResult stri
 		Question: "blocked_escalation: " + reason,
 		Answer:   answers[0],
 	}})
-	st.BlockedSince = "" // window handled; restart on the next blockage
-	_ = orchestrastate.Save(root, st)
+	// Window handled; restart on the next blockage. Written on the state as
+	// it is now, not the copy loaded before the user was asked.
+	_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
+		st.BlockedSince = ""
+		return nil
+	})
 	return attachBarrierPayload(taskResult, map[string]any{
 		"escalation_answer": answers[0],
 		"decisions_ref":     decisions.FileRel,

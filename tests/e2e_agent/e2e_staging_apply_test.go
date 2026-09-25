@@ -32,7 +32,7 @@ func TestStagingApply_E2E_DryRunThenApply(t *testing.T) {
 		t.Fatalf("FSEdit: %v", err)
 	}
 
-	staged := tr.StagedOps()
+	staged := tr.StagedOps(context.Background())
 	if len(staged) == 0 {
 		t.Fatal("expected staged ops")
 	}

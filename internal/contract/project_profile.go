@@ -1,11 +1,11 @@
 package contract
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 // project_profile (spec §2.3, §3.5, checklist 18): a PRD frontmatter key that
@@ -26,10 +26,10 @@ const (
 	ProfileRealtime     = "realtime"
 )
 
-// ProjectProfile reads project_profile from the PRD frontmatter.
+// ProjectProfile reads project_profile from the PRD frontmatter as v sees it.
 // Missing file / frontmatter / key → "default".
-func ProjectProfile(projectRoot string) string {
-	data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(PRDFileRel)))
+func ProjectProfile(v wsview.View) string {
+	data, err := v.ReadFile(PRDFileRel)
 	if err != nil {
 		return ProfileDefault
 	}

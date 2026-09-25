@@ -8,6 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/decisions"
 	"github.com/orchestra/orchestra/internal/lessons"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 const (
@@ -20,17 +21,18 @@ const (
 
 // FormatDeptPlaybookInject returns an XML block with the dept L2 playbook and
 // optional local overlay merged for worker spawn. Empty when nothing exists.
-func FormatDeptPlaybookInject(projectRoot, dept string) string {
-	if projectRoot == "" {
+// v is the child's view: a playbook its Lead wrote this turn is staged.
+func FormatDeptPlaybookInject(v wsview.View, dept string) string {
+	if v == nil {
 		return ""
 	}
 	dept = lessons.NormalizeDept(dept)
-	base, baseRel := readFirstPlaybook(projectRoot, dept)
-	local, localRel := readLocalOverlay(projectRoot, dept)
+	base, baseRel := readFirstPlaybook(v, dept)
+	local, localRel := readLocalOverlay(v, dept)
 	if strings.TrimSpace(base) == "" && strings.TrimSpace(local) == "" {
 		return ""
 	}
-	decisionLog := readDecisionLog(projectRoot)
+	decisionLog := readDecisionLog(v)
 	localApproved := LocalOverlayApproved(local, decisionLog)
 	var b strings.Builder
 	b.WriteString("<dept_playbook")
@@ -75,7 +77,7 @@ func FormatLeadPlaybooksInject(projectRoot, activeDept string) string {
 	}
 	activeDept = strings.TrimSpace(activeDept)
 	if activeDept != "" {
-		chunk := FormatDeptPlaybookInject(projectRoot, activeDept)
+		chunk := FormatDeptPlaybookInject(wsview.Disk(projectRoot), activeDept)
 		if chunk == "" {
 			return ""
 		}
@@ -120,29 +122,27 @@ func listPlaybookDepts(root string) []string {
 	return out
 }
 
-func readFirstPlaybook(root, dept string) (body, rel string) {
+func readFirstPlaybook(v wsview.View, dept string) (body, rel string) {
 	candidates := []string{dept + ".md"}
 	if i := strings.Index(dept, "@"); i > 0 {
 		candidates = append(candidates, dept[:i]+".md")
 	}
-	dir := filepath.Join(root, ".orchestra", "playbooks")
 	for _, name := range candidates {
-		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
+		rel := ".orchestra/playbooks/" + name
+		data, err := v.ReadFile(rel)
 		if err != nil {
 			continue
 		}
 		body = strings.TrimSpace(string(data))
 		if body != "" {
-			return body, filepath.ToSlash(filepath.Join(".orchestra", "playbooks", name))
+			return body, rel
 		}
 	}
 	return "", ""
 }
 
-func readLocalOverlay(root, dept string) (body, rel string) {
-	path := filepath.Join(root, filepath.FromSlash(LocalRelDir), dept+".md")
-	data, err := os.ReadFile(path)
+func readLocalOverlay(v wsview.View, dept string) (body, rel string) {
+	data, err := v.ReadFile(LocalRelDir + "/" + dept + ".md")
 	if err != nil {
 		return "", ""
 	}
@@ -164,8 +164,8 @@ func trimInject(s string) string {
 	return s[:deptPlaybookInjectMaxBytes] + "\n...(truncated)"
 }
 
-func readDecisionLog(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(decisions.FileRel)))
+func readDecisionLog(v wsview.View) string {
+	data, err := v.ReadFile(decisions.FileRel)
 	if err != nil {
 		return ""
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/roles"
+	"github.com/orchestra/orchestra/internal/wsview"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -168,10 +169,90 @@ func splitFrontmatter(content string) (front, body string, ok bool) {
 	return front, body, true
 }
 
-// Save writes the state file atomically (temp → fsync → rename).
+// Lock takes the state file's lock for a writer that edits state.md as text
+// (the worker summaries appended to its body). Release it when done.
+func Lock(projectRoot string) (unlock func(), err error) {
+	return lockState(projectRoot)
+}
+
+// lockState takes the state file's lock, across processes (two cores on one
+// project are two processes). Every writer of state.md holds it.
+func lockState(projectRoot string) (func(), error) {
+	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	return fsutil.LockFile(path + ".lock")
+}
+
+// Update is the way to change state.md in place: under the file's lock it
+// re-reads the state, lets fn change it and writes it back atomically. fn does
+// not run, and found is false, when there is no state file. An error from fn
+// leaves the file as it was.
+//
+// The runtime used to Load, do its work and Save the copy it had loaded. When
+// the work was a question to the user (the Question Barrier, the blocked
+// escalation) it held that copy for minutes, and a phase change, doc debt or
+// a waiver written meanwhile was lost to the stale write (ORC-4). Ask first,
+// then Update.
+func Update(projectRoot string, fn func(*State) error) (found bool, err error) {
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	st, found, err := Load(projectRoot)
+	if err != nil || !found {
+		return found, err
+	}
+	if err := fn(st); err != nil {
+		return true, err
+	}
+	return true, saveLocked(projectRoot, st)
+}
+
+// Save writes the state file atomically (temp → fsync → rename), under the
+// file's lock. A caller that changes a state it loaded earlier should use
+// Update instead, or it writes back whatever changed in between.
+//
 // It also maintains phase_since (spec §4.5): when the phase differs from the
 // on-disk state (or the stamp is missing), the timestamp is refreshed.
 func Save(projectRoot string, st *State) error {
+	if st == nil {
+		return fmt.Errorf("nil state")
+	}
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return saveLocked(projectRoot, st)
+}
+
+// Rewrite replaces state.md with a document an agent wrote
+// (update_working_state). Under the file's lock, fn gets the state now on disk
+// (nil when there is none or it does not parse) and returns the text to
+// write: the runtime-owned fields it keeps, and the phase guard it runs, see
+// the same state the write replaces. An error from fn writes nothing.
+func Rewrite(projectRoot string, fn func(prev *State) (string, error)) error {
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	prev, found, err := Load(projectRoot)
+	if err != nil || !found {
+		prev = nil
+	}
+	content, err := fn(prev)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
+	return fsutil.AtomicWriteFile(path, []byte(content), 0o644)
+}
+
+func saveLocked(projectRoot string, st *State) error {
 	if st == nil {
 		return fmt.Errorf("nil state")
 	}
@@ -222,15 +303,19 @@ func Render(st *State) (string, error) {
 // (the orchestrator edits the file via update_working_state, bypassing Save).
 // prevPhase is the phase before the write ("" when the file did not exist).
 func TouchPhaseStamp(projectRoot string, prevPhase Phase) error {
-	st, found, err := Load(projectRoot)
-	if err != nil || !found {
-		return err
-	}
-	if st.PhaseSince == "" || st.Phase != prevPhase {
-		st.PhaseSince = time.Now().UTC().Format(time.RFC3339)
-		return Save(projectRoot, st)
-	}
-	return nil
+	_, err := Update(projectRoot, func(st *State) error {
+		if st.PhaseSince == "" || st.Phase != prevPhase {
+			st.PhaseSince = time.Now().UTC().Format(time.RFC3339)
+		}
+		// The clarification budget is per phase (spec §4.3): a new phase
+		// asks its own questions. The counter used to run for the whole
+		// session, so discovery could spend what execution needed.
+		if prevPhase != "" && st.Phase != prevPhase {
+			st.ClarificationRounds = 0
+		}
+		return nil
+	})
+	return err
 }
 
 // PhaseTimeouts carries the resolved orchestra.phase_timeouts values in
@@ -321,7 +406,11 @@ func isExecuting(subagentType string) bool {
 //
 // The guard is inactive when phase_enforcement is prompt_only or when the
 // state file does not exist (pre-vNext projects and plain agent mode).
-func GuardSpawn(projectRoot, enforcement, subagentType string) error {
+//
+// v is the project as the spawner sees it: the PRD it checks may be staged in
+// this turn, not yet on disk (ORC-6). state.md itself is the runtime's and
+// is read from disk.
+func GuardSpawn(projectRoot string, v wsview.View, enforcement, subagentType string) error {
 	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
 		return nil
 	}
@@ -341,7 +430,7 @@ func GuardSpawn(projectRoot, enforcement, subagentType string) error {
 	if !isExecuting(subagentType) {
 		return nil
 	}
-	if (st.Phase == PhaseDiscovery || !prdApproved(projectRoot, st)) && !st.HasWaiver(WaiverPRD) {
+	if (st.Phase == PhaseDiscovery || !prdApproved(v, st)) && !st.HasWaiver(WaiverPRD) {
 		return fmt.Errorf("runtime_guard: PRD status != approved (phase=%s); "+
 			"unblock: spawn product | phase=maintenance | waiver 'prd' in %s", phaseLabel(st.Phase), StateFileRel)
 	}
@@ -380,8 +469,9 @@ const ConventionsFileRel = ".orchestra/playbooks/conventions.md"
 //
 // Every refusal names an unblock path (spec §5.2). Inactive under prompt_only,
 // and on the first write of a state file (no prior phase) so bootstrapping a
-// session is never blocked.
-func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next *State) error {
+// session is never blocked. The PRD and the conventions are read through v,
+// the Lead's view: the agents that write them stage what they write.
+func GuardPhaseTransition(projectRoot string, v wsview.View, enforcement string, from, to Phase, next *State) error {
 	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
 		return nil
 	}
@@ -395,7 +485,7 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 		return nil
 
 	case PhaseDocumentation:
-		if prdApproved(projectRoot, next) || next.HasWaiver(WaiverPRD) {
+		if prdApproved(v, next) || next.HasWaiver(WaiverPRD) {
 			return nil
 		}
 		return fmt.Errorf("runtime_guard: documentation needs an approved PRD (prd_status=%s); "+
@@ -403,7 +493,7 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 			prdStatusLabel(next), StateFileRel)
 
 	case PhaseContract:
-		if fileExists(projectRoot, ConventionsFileRel) || next.HasWaiver(WaiverPlaybooks) {
+		if wsview.Exists(v, ConventionsFileRel) || next.HasWaiver(WaiverPlaybooks) {
 			return nil
 		}
 		return fmt.Errorf("runtime_guard: contract needs L1 conventions (%s missing); "+
@@ -436,11 +526,6 @@ func GuardPhaseTransition(projectRoot, enforcement string, from, to Phase, next 
 	return nil
 }
 
-func fileExists(projectRoot, rel string) bool {
-	st, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(rel)))
-	return err == nil && !st.IsDir()
-}
-
 func prdStatusLabel(st *State) string {
 	if st == nil || strings.TrimSpace(st.PRDStatus) == "" {
 		return "unset"
@@ -449,10 +534,11 @@ func prdStatusLabel(st *State) string {
 }
 
 // GuardWorkOrderContract is the Contract Epoch gate (spec §5.3) evaluated for
-// worker WorkOrders at spawn and re-evaluated on success. Inactive when
+// worker WorkOrders at spawn and re-evaluated on success, against the
+// contract v shows — the worker's, or its spawner's at spawn. Inactive when
 // enforcement is prompt_only, the state file is absent, the phase is
 // maintenance, or the contract layer is not adopted (no EPOCH.yaml and no refs).
-func GuardWorkOrderContract(projectRoot, enforcement string, refs []contract.Ref) error {
+func GuardWorkOrderContract(projectRoot string, v wsview.View, enforcement string, refs []contract.Ref) error {
 	if strings.EqualFold(strings.TrimSpace(enforcement), EnforcementPromptOnly) {
 		return nil
 	}
@@ -478,7 +564,7 @@ func GuardWorkOrderContract(projectRoot, enforcement string, refs []contract.Ref
 		return fmt.Errorf("runtime_guard: WorkOrder without contract_refs is invalid in execution once the contract is frozen; " +
 			"unblock: Lead regenerates the WorkOrder with contract_refs from EPOCH.yaml | phase=maintenance | waiver 'contract'")
 	}
-	if err := contract.VerifyRefs(projectRoot, refs); err != nil {
+	if err := contract.VerifyRefs(projectRoot, v, refs); err != nil {
 		return fmt.Errorf("runtime_guard: %w", err)
 	}
 	return nil
@@ -500,6 +586,11 @@ func ArchiveOverflow(projectRoot string, maxBytes int) (string, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultStateMaxBytes
 	}
+	unlock, err := lockState(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	path := filepath.Join(projectRoot, filepath.FromSlash(StateFileRel))
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -548,7 +639,7 @@ func ArchiveOverflow(projectRoot string, maxBytes int) (string, error) {
 	rel := ArchiveDirRel + "/" + filepath.Base(archPath)
 	st.Body = "> Older content archived to " + rel + "\n\n" + strings.TrimLeft(tail, "\n")
 	st.StateBytes = len(st.Body)
-	if err := Save(projectRoot, st); err != nil {
+	if err := saveLocked(projectRoot, st); err != nil {
 		return "", err
 	}
 	return rel, nil
@@ -561,20 +652,16 @@ func AddDocDebt(projectRoot, docPath string) error {
 	if docPath == "" {
 		return nil
 	}
-	st, found, err := Load(projectRoot)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-	for _, p := range st.DocDebt {
-		if p == docPath {
-			return nil
+	_, err := Update(projectRoot, func(st *State) error {
+		for _, p := range st.DocDebt {
+			if p == docPath {
+				return nil
+			}
 		}
-	}
-	st.DocDebt = append(st.DocDebt, docPath)
-	return Save(projectRoot, st)
+		st.DocDebt = append(st.DocDebt, docPath)
+		return nil
+	})
+	return err
 }
 
 func phaseLabel(p Phase) string {
@@ -599,12 +686,12 @@ func subagentLabel(subagentType string) string {
 }
 
 // prdApproved checks state frontmatter first, then the PRD.md frontmatter
-// (status: approved) as fallback.
-func prdApproved(projectRoot string, st *State) bool {
+// (status: approved), as v sees it, as fallback.
+func prdApproved(v wsview.View, st *State) bool {
 	if st != nil && strings.EqualFold(strings.TrimSpace(st.PRDStatus), "approved") {
 		return true
 	}
-	data, err := os.ReadFile(filepath.Join(projectRoot, filepath.FromSlash(PRDFileRel)))
+	data, err := v.ReadFile(PRDFileRel)
 	if err != nil {
 		return false
 	}

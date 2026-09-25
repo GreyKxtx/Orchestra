@@ -57,7 +57,7 @@ func ToolTask() llm.ToolDef {
     "max_steps": { "type": "integer", "minimum": 1, "maximum": 12 },
     "timeout_ms": { "type": "integer", "minimum": 0, "description": "Wait timeout / child lifetime (default 600000 = 10 min; local models need minutes per step)" },
     "dept": { "type": "string", "description": "Department instance the child works for (backend, frontend@web): its scratchpad, playbook and inbox" },
-    "depends_on": { "type": "array", "items": { "type": "string" }, "description": "task_ids or keys of this turn that must succeed first; their results are handed to the child" }
+    "depends_on": { "type": "array", "items": { "type": "string" }, "description": "keys of tasks you spawned, or task_ids of this turn, that must succeed first; their results are handed to the child. Not an agent waiting on you, nor another agent's task that has not started" }
   }
 }`)),
 		},
@@ -101,7 +101,7 @@ func ToolTaskSpawn() llm.ToolDef {
     "timeout_ms": { "type": "integer", "minimum": 0, "description": "Child lifetime (default 600000 = 10 min); 0 also uses the default" },
     "dept": { "type": "string", "description": "Department instance the child works for (backend, frontend@web); WorkOrders without context.scratchpad default to it" },
     "key": { "type": "string", "description": "Name for depends_on of later spawns (a WorkOrder's task_id is its key)" },
-    "depends_on": { "type": "array", "items": { "type": "string" }, "description": "task_ids or keys that must succeed before this child starts; a WorkOrder may carry its own depends_on" }
+    "depends_on": { "type": "array", "items": { "type": "string" }, "description": "keys of tasks you spawned, or task_ids, that must succeed before this child starts; a WorkOrder may carry its own depends_on" }
   }
 }`)),
 		},

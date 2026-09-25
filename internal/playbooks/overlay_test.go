@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func TestFormatDeptPlaybookInject_BaseAndLocal(t *testing.T) {
@@ -19,7 +21,7 @@ func TestFormatDeptPlaybookInject_BaseAndLocal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(LocalRelDir), "frontend@web.md"), []byte("prefer vitest"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := FormatDeptPlaybookInject(root, "frontend@web")
+	got := FormatDeptPlaybookInject(wsview.Disk(root), "frontend@web")
 	if !strings.Contains(got, "<dept_playbook") || !strings.Contains(got, "use pnpm") || !strings.Contains(got, "prefer vitest") {
 		t.Fatalf("inject = %q", got)
 	}
@@ -55,7 +57,7 @@ func TestFormatDeptPlaybookInject_ApprovedOverlayMarker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(localDir, "frontend@web.md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := FormatDeptPlaybookInject(root, "frontend@web")
+	got := FormatDeptPlaybookInject(wsview.Disk(root), "frontend@web")
 	if !strings.Contains(got, "approved via decisions.md") {
 		t.Fatalf("inject = %q", got)
 	}
@@ -70,7 +72,7 @@ func TestFormatDeptPlaybookInject_InheritsBaseDept(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(baseDir, "frontend.md"), []byte("base rules"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := FormatDeptPlaybookInject(root, "frontend@web")
+	got := FormatDeptPlaybookInject(wsview.Disk(root), "frontend@web")
 	if !strings.Contains(got, "base rules") {
 		t.Fatalf("inject = %q", got)
 	}

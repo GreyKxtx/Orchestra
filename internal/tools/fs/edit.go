@@ -13,6 +13,7 @@ import (
 )
 
 func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}

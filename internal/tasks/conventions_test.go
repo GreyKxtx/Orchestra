@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func writeConventions(t *testing.T, root, body string) {
@@ -24,7 +25,7 @@ func TestLoadProjectConventions(t *testing.T) {
 	root := t.TempDir()
 
 	// Missing file → empty for every mode.
-	if got := loadProjectConventions(root, agent.ModeArchitecture); got != "" {
+	if got := loadProjectConventions(wsview.Disk(root), agent.ModeArchitecture); got != "" {
 		t.Fatalf("missing file must yield empty, got %q", got)
 	}
 
@@ -32,7 +33,7 @@ func TestLoadProjectConventions(t *testing.T) {
 
 	// Lead-grade modes receive the block.
 	for _, m := range []agent.Mode{agent.ModeArchitecture, agent.ModeGeneral, agent.ModeDebug} {
-		got := loadProjectConventions(root, m)
+		got := loadProjectConventions(wsview.Disk(root), m)
 		if !strings.HasPrefix(got, `<project_conventions source=".orchestra/playbooks/conventions.md">`) {
 			t.Fatalf("mode %s: missing wrapper, got %q", m, got)
 		}
@@ -43,14 +44,14 @@ func TestLoadProjectConventions(t *testing.T) {
 
 	// Workers, scouts and the Docs Lead itself are exempt.
 	for _, m := range []agent.Mode{agent.ModeWorker, agent.ModeExplore, agent.ModeAsk, agent.Mode("documentation"), agent.Mode("product"), agent.ModeVerifier} {
-		if got := loadProjectConventions(root, m); got != "" {
+		if got := loadProjectConventions(wsview.Disk(root), m); got != "" {
 			t.Fatalf("mode %s must not receive conventions, got %q", m, got)
 		}
 	}
 
 	// Oversized file is truncated with a pointer to the full path.
 	writeConventions(t, root, strings.Repeat("x", conventionsInjectMaxBytes+100))
-	got := loadProjectConventions(root, agent.ModeArchitecture)
+	got := loadProjectConventions(wsview.Disk(root), agent.ModeArchitecture)
 	if !strings.Contains(got, "truncated; read .orchestra/playbooks/conventions.md") {
 		t.Fatal("expected truncation marker")
 	}

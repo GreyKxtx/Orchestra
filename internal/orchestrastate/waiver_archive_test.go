@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func TestHasWaiver(t *testing.T) {
@@ -25,11 +27,11 @@ func TestHasWaiver(t *testing.T) {
 func TestGuardSpawn_WaiverPRD(t *testing.T) {
 	root := t.TempDir()
 	writeState(t, root, "---\norchestra:\n  phase: execution\n  prd_status: draft\n---\n")
-	if err := GuardSpawn(root, EnforcementStrict, "worker"); err == nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker"); err == nil {
 		t.Fatal("draft PRD without waiver must block worker spawn")
 	}
 	writeState(t, root, "---\norchestra:\n  phase: execution\n  prd_status: draft\n  waivers: [prd]\n---\n")
-	if err := GuardSpawn(root, EnforcementStrict, "worker"); err != nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("waiver 'prd' must unblock: %v", err)
 	}
 }
@@ -37,11 +39,11 @@ func TestGuardSpawn_WaiverPRD(t *testing.T) {
 func TestGuardSpawn_WaiverContractPhase(t *testing.T) {
 	root := t.TempDir()
 	writeState(t, root, "---\norchestra:\n  phase: contract\n  prd_status: approved\n---\n")
-	if err := GuardSpawn(root, EnforcementStrict, "worker"); err == nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker"); err == nil {
 		t.Fatal("phase contract without waiver must block workers")
 	}
 	writeState(t, root, "---\norchestra:\n  phase: contract\n  prd_status: approved\n  waivers: [contract]\n---\n")
-	if err := GuardSpawn(root, EnforcementStrict, "worker"); err != nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("waiver 'contract' must unblock: %v", err)
 	}
 }
@@ -56,11 +58,11 @@ func TestGuardWorkOrderContract_Waiver(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeState(t, root, "---\norchestra:\n  phase: execution\n  prd_status: approved\n---\n")
-	if err := GuardWorkOrderContract(root, EnforcementStrict, nil); err == nil {
+	if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, nil); err == nil {
 		t.Fatal("missing contract_refs in execution must block without waiver")
 	}
 	writeState(t, root, "---\norchestra:\n  phase: execution\n  prd_status: approved\n  waivers: [contract]\n---\n")
-	if err := GuardWorkOrderContract(root, EnforcementStrict, nil); err != nil {
+	if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, nil); err != nil {
 		t.Fatalf("waiver 'contract' must bypass the refs requirement: %v", err)
 	}
 }

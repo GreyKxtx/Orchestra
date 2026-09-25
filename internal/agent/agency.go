@@ -79,6 +79,8 @@ type AgentMessageReply struct {
 	Error   string `json:"error,omitempty"`
 	Turns   int    `json:"thread_turns,omitempty"`
 	Summary string `json:"note,omitempty"`
+	// Tainted: the agent that replied read untrusted text (taint.go).
+	Tainted string `json:"tainted,omitempty"`
 }
 
 // AgentPostRequest is agent_post's input.
@@ -87,6 +89,9 @@ type AgentPostRequest struct {
 	Kind     string // note | question | contract_change_request | finding | handoff
 	Message  string
 	Artifact string // contract_change_request: the artifact the delta applies to
+	// Tainted is the untrusted source the sender read, if any: its note may
+	// carry that text (taint.go). Set by the runtime, not the model.
+	Tainted string
 }
 
 // AgentPostReceipt is what agent_post returns.
@@ -104,6 +109,8 @@ type InboxMessage struct {
 	Message  string `json:"message"`
 	Artifact string `json:"artifact,omitempty"`
 	At       string `json:"at"`
+	// Tainted: the sender had read untrusted text (taint.go).
+	Tainted string `json:"tainted,omitempty"`
 }
 
 // TaskBoardEntry is one row of task_board.
@@ -298,6 +305,13 @@ func (a *Agent) drainAgencyInbox(history []llm.Message) []llm.Message {
 		return history
 	}
 	text, rest := FitAgentMessages(msgs, agencyInboxMaxBytes)
+	// A note from an agent that read untrusted text may carry it.
+	for _, m := range msgs[:len(msgs)-len(rest)] {
+		if m.Tainted != "" {
+			a.markTainted("a note from " + m.From + " (read " + m.Tainted + ")")
+			break
+		}
+	}
 	// Notes that did not fit come next step: they were already taken out of
 	// the inbox, and cutting them used to lose them for good.
 	a.inboxCarry = rest
@@ -429,7 +443,7 @@ func (a *Agent) handleAgencyTool(ctx context.Context, name, parentToolCallID str
 		if err := json.Unmarshal(input, &req); err != nil {
 			return nil, fmt.Errorf("agent_post: invalid input: %w", err)
 		}
-		receipt, err := ar.Post(ctx, AgentPostRequest{To: req.To, Kind: req.Kind, Message: req.Message, Artifact: req.Artifact})
+		receipt, err := ar.Post(ctx, AgentPostRequest{To: req.To, Kind: req.Kind, Message: req.Message, Artifact: req.Artifact, Tainted: a.taintSource()})
 		if err != nil {
 			return nil, err
 		}

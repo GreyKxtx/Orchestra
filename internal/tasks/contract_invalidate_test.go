@@ -29,7 +29,7 @@ func TestInvalidateStaleContractTasks(t *testing.T) {
 	// Guard behavior is switchable: valid until the "epoch change".
 	stale := false
 	r := New(mock, v, tr, ChildAgentConfig{})
-	r.child.GuardContractRefs = func(refs []contract.Ref) error {
+	r.child.GuardContractRefs = func(_ context.Context, refs []contract.Ref) error {
 		if stale && len(refs) > 0 && refs[0].SHA256 == "old" {
 			return fmt.Errorf("stale_contract: hash mismatch")
 		}

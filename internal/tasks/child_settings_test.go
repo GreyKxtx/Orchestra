@@ -1,7 +1,11 @@
 package tasks
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
@@ -32,5 +36,31 @@ func TestChild_PermissionRulesReachSubagents(t *testing.T) {
 	}
 	if !strings.Contains(toolResult, "denied by permission ruleset") {
 		t.Errorf("the deny rule must reach the child, got %q", toolResult)
+	}
+}
+
+// A department's workers finish in parallel; each one's line reaches the
+// department scratchpad (ORC-4).
+func TestDeptScratchpad_ConcurrentAppendsLoseNothing(t *testing.T) {
+	root := t.TempDir()
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := appendDeptScratchpadEntry(root, ".orchestra/depts/backend.md", fmt.Sprintf("worker line %02d", i), i%2 == 0); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	data, err := os.ReadFile(filepath.Join(root, ".orchestra", "depts", "backend.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if !strings.Contains(string(data), fmt.Sprintf("worker line %02d", i)) {
+			t.Errorf("line %d lost:\n%s", i, data)
+		}
 	}
 }

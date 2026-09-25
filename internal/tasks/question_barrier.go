@@ -62,62 +62,136 @@ func parseOpenQuestions(raw string) []OpenQuestion {
 	return out
 }
 
-// relayOpenQuestions runs the barrier for one finished task. Returns the
-// (possibly augmented) task_result. No-ops when: relay via LLM is explicitly
-// requested, no interactive channel exists, the session is not orchestrated,
-// or the result carries no questions.
-func (r *TaskRunner) relayOpenQuestions(ctx context.Context, taskResult string) string {
-	if r.child.RelayViaLLM || r.child.QuestionAsker == nil {
-		return taskResult
+// relayOpenQuestions runs the barrier for one finished task. It returns the
+// (possibly augmented) task_result, and held: the result carries blocking
+// questions, so the WorkOrders it returns were written without their answers
+// and must not start (holdBatchWorkOrders). No-ops when relay via LLM is
+// explicitly requested, the session is not orchestrated, or the result
+// carries no questions.
+//
+// One round is put to the user at a time: children finishing together used
+// to ask at once, each in its own prompt. A question already answered in this
+// turn — two workers of a department hitting the same gap — is answered from
+// that answer and not asked again.
+func (r *TaskRunner) relayOpenQuestions(ctx context.Context, taskResult string) (string, bool) {
+	if r.child.RelayViaLLM {
+		return taskResult, false
 	}
 	qs := parseOpenQuestions(taskResult)
 	if len(qs) == 0 {
-		return taskResult
+		return taskResult, false
+	}
+	blocking := false
+	for _, q := range qs {
+		blocking = blocking || q.Blocking
 	}
 	root := r.toolRunner.WorkspaceRoot()
-	st, found, err := orchestrastate.Load(root)
-	if err != nil || !found {
-		return taskResult
+	if _, found, err := orchestrastate.Load(root); err != nil || !found {
+		return taskResult, false
 	}
-	if st.ClarificationRounds >= r.resolvedMaxClarificationRounds() {
-		return r.exhaustClarificationBudget(root, taskResult, qs)
+	if r.child.QuestionAsker == nil {
+		// Nobody to ask in this run. Saying so is the barrier's job too: a
+		// barrier that is silently off reads as a barrier that answered.
+		return attachBarrierPayload(taskResult, map[string]any{
+			"open_questions_relayed": false,
+			"instruction":            "no interactive channel in this run: nobody answered these questions. Ask the user with question, or proceed on assumptions[] you state.",
+		}), blocking
 	}
 
-	items := make([]tools.QuestionItem, len(qs))
+	r.barrierMu.Lock()
+	defer r.barrierMu.Unlock()
+	st, found, err := orchestrastate.Load(root)
+	if err != nil || !found {
+		return taskResult, false
+	}
+
+	answers := make([]string, len(qs))
+	var ask []tools.QuestionItem
+	var askIdx []int
 	for i, q := range qs {
+		if ans, ok := r.answered[questionKey(q.Text)]; ok {
+			answers[i] = ans
+			continue
+		}
 		text := q.Text
 		if q.Dept != "" {
 			text = "[" + q.Dept + "] " + text
 		}
-		items[i] = tools.QuestionItem{Question: text, Options: q.Options}
+		ask = append(ask, tools.QuestionItem{Question: text, Options: q.Options})
+		askIdx = append(askIdx, i)
 	}
-	answers, err := r.child.QuestionAsker.Ask(ctx, items)
-	if err != nil {
-		// The barrier must not turn an answerable result into a failure:
-		// the questions stay open in the result for the Lead to handle.
-		return taskResult
+	if len(ask) > 0 {
+		if st.ClarificationRounds >= r.resolvedMaxClarificationRounds() {
+			return r.exhaustClarificationBudget(root, taskResult, qs), false
+		}
+		got, err := r.child.QuestionAsker.Ask(ctx, ask)
+		if err != nil {
+			// The barrier must not turn an answerable result into a failure:
+			// the questions stay open in the result for the Lead to handle.
+			return taskResult, blocking
+		}
+		// Counted on the state as it is now: the answer took as long as the
+		// user took, and a copy loaded before asking would write back a stale
+		// phase.
+		_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
+			st.ClarificationRounds++
+			return nil
+		})
+		if r.answered == nil {
+			r.answered = map[string]string{}
+		}
+		for j, i := range askIdx {
+			if j < len(got) {
+				answers[i] = got[j]
+				r.answered[questionKey(qs[i].Text)] = got[j]
+			}
+		}
 	}
-
-	st.ClarificationRounds++
-	_ = orchestrastate.Save(root, st)
 
 	entries := make([]decisions.Entry, 0, len(qs))
 	answerObjs := make([]map[string]string, 0, len(qs))
 	for i, q := range qs {
-		ans := ""
-		if i < len(answers) {
-			ans = answers[i]
+		if slicesContains(askIdx, i) {
+			entries = append(entries, decisions.Entry{Kind: "qa", Dept: q.Dept, Question: q.Text, Answer: answers[i]})
 		}
-		entries = append(entries, decisions.Entry{Kind: "qa", Dept: q.Dept, Question: q.Text, Answer: ans})
-		answerObjs = append(answerObjs, map[string]string{"id": q.ID, "answer": ans})
+		answerObjs = append(answerObjs, map[string]string{"id": q.ID, "answer": answers[i]})
 	}
-	_ = decisions.Append(root, entries)
-	playbooks.TrySealAllPendingOverlays(root)
+	if len(entries) > 0 {
+		_ = decisions.Append(root, entries)
+		playbooks.TrySealAllPendingOverlays(root)
+	}
 
 	return attachBarrierPayload(taskResult, map[string]any{
 		"answers":       answerObjs,
 		"decisions_ref": decisions.FileRel,
+	}), blocking
+}
+
+// holdBatchWorkOrders keeps a Lead's batch from starting: the WorkOrders were
+// written before its blocking questions had answers. The Lead revises them
+// with the answers — the parent continues it with send_message — and the
+// revised batch is relayed then.
+func holdBatchWorkOrders(taskResult string) string {
+	if _, raws := parseBatchWorkOrders(taskResult); len(raws) == 0 {
+		return taskResult
+	}
+	return attachBarrierPayload(taskResult, map[string]any{
+		"batch_workorders_held": true,
+		"revise":                "the WorkOrders were written before the blocking questions had answers, so none was started. Continue this Lead with send_message{to: <its dept>} carrying the answers; it returns a revised batch_workorders[] that the runtime relays.",
 	})
+}
+
+func questionKey(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+func slicesContains(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // exhaustClarificationBudget records the unanswered questions as forced

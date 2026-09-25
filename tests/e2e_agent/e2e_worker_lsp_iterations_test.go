@@ -23,6 +23,9 @@ type workerLSPFixLLM struct {
 	step        int
 	initialHash string
 	badHash     string
+	// reportSuccess ends with task_result instead of a bare final, as a
+	// worker under a Lead must for its edits to land.
+	reportSuccess bool
 }
 
 func newWorkerLSPFixLLM(initialHash string) *workerLSPFixLLM {
@@ -91,6 +94,16 @@ func (l *workerLSPFixLLM) Complete(_ context.Context, req llm.CompleteRequest) (
 		}}, nil
 	default:
 		l.step++
+		if l.reportSuccess {
+			return &llm.CompleteResponse{Message: llm.Message{
+				Role: llm.RoleAssistant,
+				ToolCalls: []llm.ToolCall{{
+					ID: "call_result", Type: "function",
+					Function: llm.ToolCallFunc{Name: "task_result", Arguments: llm.ToolArguments(
+						`{"content":"{\"status\":\"success\",\"path\":\"main.go\",\"summary\":\"removed badSymbol\"}"}`)},
+				}},
+			}}, nil
+		}
 		return &llm.CompleteResponse{Message: llm.Message{
 			Role:    llm.RoleAssistant,
 			Content: `{"type":"final","final":{"patches":[]}}`,
@@ -162,7 +175,7 @@ func TestWorker_E2E_LSPIterationsLeq3(t *testing.T) {
 	if got := metrics.LSPHintCount(); got < 1 {
 		t.Fatalf("expected at least one LSP_ERRORS hint, got %d", got)
 	}
-	if len(tr.StagedOps()) == 0 {
+	if len(tr.StagedOps(context.Background())) == 0 {
 		t.Fatal("expected staged ops after worker fix")
 	}
 

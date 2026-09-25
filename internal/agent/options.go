@@ -118,6 +118,9 @@ type SubtaskResult struct {
 	Status string `json:"status"` // "done" | "cancelled" | "error"
 	Result string `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Tainted names the untrusted source the child read, if it read one:
+	// its result is then untrusted for the parent too (taint.go).
+	Tainted string `json:"tainted,omitempty"`
 }
 
 // Mode is the agent's execution-policy selector. M6 in architecture
@@ -424,6 +427,19 @@ type Options struct {
 	// Empty = no path restriction (legacy / free-form goals).
 	WorkerEditPaths []string
 
+	// Dept is the department instance a task works for (backend,
+	// frontend@web). A Dept Lead may write the contract artifacts its
+	// department owns (contract.DefaultOwners).
+	Dept string
+
+	// OnTaint is called once, the first time untrusted text enters the
+	// agent's history, with its source (taint.go). The task runner uses it to
+	// mark the child's result tainted for the parent.
+	OnTaint func(source string)
+	// Tainted is the untrusted source the agent starts with: its goal
+	// carries a tainted dependency's result or a tainted agent's note.
+	Tainted string
+
 	Debug  bool
 	Logger *log.Logger
 
@@ -564,6 +580,14 @@ type ActiveProviderReporter interface {
 }
 
 type Agent struct {
+	// stageCtx carries the run's task layer (tools.WithLayer) for the staging
+	// calls made outside a tool call: a child's staged ops and final patches
+	// are its own layer's, not the turn's.
+	stageCtx context.Context
+
+	// taint is the first untrusted source this agent read (taint.go).
+	taint taintState
+
 	llm llm.Client
 	// activeProvider is set when llm can move between providers; nil otherwise.
 	activeProvider ActiveProviderReporter
@@ -702,5 +726,6 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		baseLogger:           opts.AgentLogger,
 		justSwitchedFromPlan: opts.JustSwitchedFromPlan,
 		diags:                newDiagTracker(),
+		taint:                taintState{source: opts.Tainted},
 	}, nil
 }

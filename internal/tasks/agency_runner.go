@@ -180,10 +180,20 @@ func (r *TaskRunner) recordEdited(taskID string, paths []string) {
 	}
 }
 
-// resolveDepsLocked maps depends_on names (keys or task IDs) to registered
-// tasks. A dependency must exist before its dependent is spawned, which is
-// what keeps the dependency graph acyclic. Caller holds r.mu.
-func (r *TaskRunner) resolveDepsLocked(names []string) ([]*taskEntry, error) {
+// keyOf is where a depends_on key lives: in the namespace of the task that
+// spawned it. Keys used to be global, and a second Lead's wo-1 silently took
+// the first one's over, so each got the other's upstream_results (ORC-7).
+func keyOf(spawner, key string) string {
+	return spawner + "\x00" + key
+}
+
+// resolveDepsLocked maps depends_on names to registered tasks for a task that
+// spawner is starting. A key names a task the same spawner started; a task
+// ID names any task of the turn. A dependency must exist before its dependent
+// is spawned, which keeps the dependency graph acyclic, and must be one this
+// task can wait for without waiting for itself (dependencyRefusalLocked).
+// Caller holds r.mu.
+func (r *TaskRunner) resolveDepsLocked(spawner string, names []string) ([]*taskEntry, error) {
 	var out []*taskEntry
 	seen := map[*taskEntry]bool{}
 	for _, raw := range names {
@@ -191,12 +201,15 @@ func (r *TaskRunner) resolveDepsLocked(names []string) ([]*taskEntry, error) {
 		if n == "" {
 			continue
 		}
-		e := r.byKey[n]
+		e := r.byKey[keyOf(spawner, n)]
 		if e == nil {
 			e = r.findEntryLocked(n)
 		}
 		if e == nil {
-			return nil, fmt.Errorf("depends_on: unknown task %q — spawn it first, then the tasks that depend on it (known: %s)", n, r.knownNamesLocked())
+			return nil, fmt.Errorf("depends_on: unknown task %q — spawn it first, then the tasks that depend on it; a key names a task you started, a task_id any task of the turn (yours: %s)", n, r.knownNamesLocked(spawner))
+		}
+		if err := r.dependencyRefusalLocked(spawner, n, e); err != nil {
+			return nil, err
 		}
 		if !seen[e] {
 			seen[e] = true
@@ -206,9 +219,45 @@ func (r *TaskRunner) resolveDepsLocked(names []string) ([]*taskEntry, error) {
 	return out, nil
 }
 
-func (r *TaskRunner) knownNamesLocked() string {
+// dependencyRefusalLocked refuses a dependency the new task could wait for
+// forever:
+//   - one of its ancestors. They wait for this task to finish — a Lead for
+//     its worker, a relaying Lead for its batch — so neither ever would.
+//   - a task of another branch that has not started. It waits for a slot at
+//     its depth, which one of this task's ancestors may hold while waiting
+//     for this task, or for dependencies of its own that do (ORC-7). A task
+//     already running holds its slot and waits only for its own children; a
+//     finished one waits for nothing. A sibling cannot close such a cycle:
+//     the tasks it waits for are older than this one.
+//
+// Caller holds r.mu.
+func (r *TaskRunner) dependencyRefusalLocked(spawner, name string, dep *taskEntry) error {
+	for id := spawner; id != ""; {
+		if dep.id == id {
+			return fmt.Errorf("depends_on: %q is an ancestor of this task — it waits for this task to finish, so this task would wait forever; use its result from your own context instead", name)
+		}
+		up := r.findEntryLocked(id)
+		if up == nil {
+			break
+		}
+		id = up.spawner
+	}
+	if dep.spawner == spawner {
+		return nil
+	}
+	switch dep.status {
+	case "queued", "waiting_deps":
+		return fmt.Errorf("depends_on: %q (%s) belongs to another agent and has not started — waiting on it can deadlock the turn; depend on your own tasks, or on it once task_board shows it running or done", name, dep.address)
+	}
+	return nil
+}
+
+func (r *TaskRunner) knownNamesLocked(spawner string) string {
 	var names []string
 	for _, e := range r.all {
+		if e.spawner != spawner {
+			continue
+		}
 		n := e.key
 		if n == "" {
 			n = e.id
@@ -240,14 +289,17 @@ const upstreamResultMaxBytes = 1500
 // <upstream_results> block for the child, or a result that ends e without
 // running it: a failed dependency means the dependent would build on
 // something that is not there.
-func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (string, *agent.SubtaskResult) {
+//
+// tainted names the first dependency whose result came from untrusted text:
+// its line is marked as such, and the task starts tainted (agent/taint.go).
+func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (upstream, tainted string, _ *agent.SubtaskResult) {
 	var b strings.Builder
 	b.WriteString("<upstream_results>\nTasks this one depends on have finished:\n")
 	for _, d := range e.deps {
 		select {
 		case <-d.done:
 		case <-ctx.Done():
-			return "", &agent.SubtaskResult{TaskID: e.id, Status: "timeout", Error: "cancelled while waiting for depends_on"}
+			return "", "", &agent.SubtaskResult{TaskID: e.id, Status: "timeout", Error: "cancelled while waiting for depends_on"}
 		}
 		r.mu.Lock()
 		res := d.result
@@ -270,7 +322,7 @@ func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (string, *agen
 				"blocked_reason": "dependency_unmet",
 				"dependency":     name,
 			})
-			return "", &agent.SubtaskResult{
+			return "", "", &agent.SubtaskResult{
 				TaskID: e.id,
 				Status: "error",
 				Result: string(blocked),
@@ -283,10 +335,18 @@ func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (string, *agen
 		} else {
 			text = clip(text, upstreamResultMaxBytes)
 		}
-		fmt.Fprintf(&b, "- %s (%s): %s\n", name, addr, strings.TrimSpace(text))
+		text = strings.TrimSpace(text)
+		if res.Tainted != "" {
+			source := name + " (read " + res.Tainted + ")"
+			if tainted == "" {
+				tainted = source
+			}
+			text = agent.Spotlight(source, text)
+		}
+		fmt.Fprintf(&b, "- %s (%s): %s\n", name, addr, text)
 	}
 	b.WriteString("</upstream_results>")
-	return b.String(), nil
+	return b.String(), tainted, nil
 }
 
 // acquireSlot takes one of the per-depth concurrency slots. Per depth, not
@@ -513,7 +573,7 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	if err != nil {
 		return nil, fmt.Errorf("send_message: %w", err)
 	}
-	reply := &agent.AgentMessageReply{To: to, TaskID: id, Status: res.Status, Reply: res.Result, Error: res.Error}
+	reply := &agent.AgentMessageReply{To: to, TaskID: id, Status: res.Status, Reply: res.Result, Error: res.Error, Tainted: res.Tainted}
 	if res.Status == "done" && r.child.Agency.Threads {
 		history = append(history, llmMessage{Role: "user", Content: message}, llmMessage{Role: "assistant", Content: res.Result})
 		var trimmed int
@@ -575,7 +635,7 @@ func (r *TaskRunner) post(from agentScope, req agent.AgentPostRequest) (*agent.A
 	if err := r.takeMessage(); err != nil {
 		return nil, err
 	}
-	m := agent.InboxMessage{From: from.address, To: to, Kind: kind, Message: text, Artifact: artifact, At: time.Now().UTC().Format(time.RFC3339)}
+	m := agent.InboxMessage{From: from.address, To: to, Kind: kind, Message: text, Artifact: artifact, At: time.Now().UTC().Format(time.RFC3339), Tainted: req.Tainted}
 	receipt := &agent.AgentPostReceipt{To: to, Delivered: "live"}
 	switch {
 	case to == config.AgencyRootName:

@@ -137,6 +137,11 @@ func (a *Agent) runInProcessTool(ctx context.Context, cb *CircuitBreaker, histor
 		return serialToolOutcome{EarlyResult: res.early}, nil
 	}
 	a.observeWorkingTool(c.name, c.input, res.out, res.err)
+	// A child's result is untrusted when the child read untrusted text.
+	if source := untrustedSource(c.name, res.out); source != "" {
+		a.markTainted(source)
+		content = spotlight(source, content)
+	}
 	*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: c.id, Content: content})
 	if res.err != nil {
 		if cbErr := cb.RecordToolErrorDetail(c.name, res.err); cbErr != nil {

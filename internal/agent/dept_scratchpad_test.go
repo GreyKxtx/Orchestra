@@ -9,6 +9,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func TestDeptScratchpadRelPath_Agent(t *testing.T) {
@@ -108,7 +109,7 @@ func TestUpdateWorkingState_BodyWithoutFrontmatterKeepsThePhase(t *testing.T) {
 	if !strings.Contains(string(out), "phase: execution") || !strings.Contains(string(out), "frontmatter") {
 		t.Fatalf("the reply must show the Lead how to declare a phase, got: %s", out)
 	}
-	if err := orchestrastate.GuardSpawn(root, orchestrastate.EnforcementStrict, "explore"); err != nil {
+	if err := orchestrastate.GuardSpawn(root, wsview.Disk(root), orchestrastate.EnforcementStrict, "explore"); err != nil {
 		t.Fatalf("a read-only child must still spawn: %v", err)
 	}
 
@@ -129,7 +130,7 @@ func TestUpdateWorkingState_BodyWithoutFrontmatterKeepsThePhase(t *testing.T) {
 	if !strings.Contains(st.Body, "step one") {
 		t.Fatalf("the new body was not written:\n%s", st.Body)
 	}
-	if err := orchestrastate.GuardSpawn(root, orchestrastate.EnforcementStrict, "worker"); err != nil {
+	if err := orchestrastate.GuardSpawn(root, wsview.Disk(root), orchestrastate.EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("maintenance must still admit a worker after the body-only write: %v", err)
 	}
 }

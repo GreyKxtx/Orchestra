@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/wsview"
 )
 
 func writeState(t *testing.T, root, content string) {
@@ -160,7 +162,7 @@ func TestGuardSpawnMatrix(t *testing.T) {
 			if err := Save(root, &State{Phase: tc.phase, PRDStatus: tc.prdStatus}); err != nil {
 				t.Fatalf("Save: %v", err)
 			}
-			err := GuardSpawn(root, EnforcementStrict, tc.subagent)
+			err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, tc.subagent)
 			if tc.wantBlocked {
 				if err == nil {
 					t.Fatal("expected guard block")
@@ -179,7 +181,8 @@ func TestGuardSpawnMatrix(t *testing.T) {
 }
 
 func TestGuardSpawnInactiveWithoutStateFile(t *testing.T) {
-	if err := GuardSpawn(t.TempDir(), EnforcementStrict, "worker"); err != nil {
+	empty := t.TempDir()
+	if err := GuardSpawn(empty, wsview.Disk(empty), EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("no state file must disable the guard, got %v", err)
 	}
 }
@@ -189,7 +192,7 @@ func TestGuardSpawnPromptOnly(t *testing.T) {
 	if err := Save(root, &State{Phase: PhaseDiscovery}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := GuardSpawn(root, EnforcementPromptOnly, "worker"); err != nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementPromptOnly, "worker"); err != nil {
 		t.Fatalf("prompt_only must disable the guard, got %v", err)
 	}
 }
@@ -197,7 +200,7 @@ func TestGuardSpawnPromptOnly(t *testing.T) {
 func TestGuardSpawnCorruptStateFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	writeState(t, root, "no frontmatter here")
-	err := GuardSpawn(root, EnforcementStrict, "worker")
+	err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker")
 	if err == nil {
 		t.Fatal("corrupt state must fail closed")
 	}
@@ -219,7 +222,7 @@ func TestPRDApprovedFromPRDFile(t *testing.T) {
 	if err := os.WriteFile(prdPath, []byte("---\nstatus: approved\n---\n# PRD\n"), 0o644); err != nil {
 		t.Fatalf("write PRD: %v", err)
 	}
-	if err := GuardSpawn(root, EnforcementStrict, "worker"); err != nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("PRD.md approval must unblock worker, got %v", err)
 	}
 }
@@ -232,16 +235,16 @@ func TestQuickShape_ExecutionWithWaiversAdmitsAWorker(t *testing.T) {
 	root := t.TempDir()
 	st := &State{Phase: PhaseExecution, Waivers: []string{WaiverPRD, WaiverContract}}
 
-	if err := GuardPhaseTransition(root, EnforcementStrict, PhaseDiscovery, PhaseExecution, st); err != nil {
+	if err := GuardPhaseTransition(root, wsview.Disk(root), EnforcementStrict, PhaseDiscovery, PhaseExecution, st); err != nil {
 		t.Fatalf("declaring execution with a contract waiver must be allowed: %v", err)
 	}
 	if err := Save(root, st); err != nil {
 		t.Fatal(err)
 	}
-	if err := GuardSpawn(root, EnforcementStrict, "worker"); err != nil {
+	if err := GuardSpawn(root, wsview.Disk(root), EnforcementStrict, "worker"); err != nil {
 		t.Fatalf("no PRD and no frozen contract, but both waived: %v", err)
 	}
-	if err := GuardWorkOrderContract(root, EnforcementStrict, nil); err != nil {
+	if err := GuardWorkOrderContract(root, wsview.Disk(root), EnforcementStrict, nil); err != nil {
 		t.Fatalf("a WorkOrder with no contract_refs must pass under the contract waiver: %v", err)
 	}
 
@@ -251,7 +254,7 @@ func TestQuickShape_ExecutionWithWaiversAdmitsAWorker(t *testing.T) {
 	if err := Save(bare, &State{Phase: PhaseExecution}); err != nil {
 		t.Fatal(err)
 	}
-	if err := GuardSpawn(bare, EnforcementStrict, "worker"); err == nil {
+	if err := GuardSpawn(bare, wsview.Disk(bare), EnforcementStrict, "worker"); err == nil {
 		t.Fatal("execution without an approved PRD or a waiver must still be refused")
 	}
 }

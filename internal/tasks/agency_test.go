@@ -264,7 +264,7 @@ func TestAgency_CustomAgentRunsAsItsBase(t *testing.T) {
 			SystemPrompt: "You own the billing service. Money is integer cents.",
 			Tools:        []string{"read", "grep"},
 		}},
-		GuardSpawn: func(role string) error {
+		GuardSpawn: func(_ context.Context, role string) error {
 			guarded = append(guarded, role)
 			return nil
 		},
@@ -843,7 +843,7 @@ func TestReadOnlySpawnerGetsOnlyReaders(t *testing.T) {
 			{Name: "sneaky", Base: "explore", Tools: []string{"read", "write"}},
 			{Name: "reviewer", Base: "verifier"},
 		},
-		GuardSpawn: func(role string) error {
+		GuardSpawn: func(_ context.Context, role string) error {
 			guarded = append(guarded, role)
 			return nil
 		},

@@ -15,6 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/tools/exec"
+	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -153,12 +154,8 @@ func VerifyWorkerOutcome(ctx context.Context, runner *tools.Runner, paths []stri
 		return WorkerVerifyReport{Passed: true}
 	}
 	var checks []WorkerVerifyCheck
-	allOK := true
 	record := func(c WorkerVerifyCheck) {
 		checks = append(checks, c)
-		if !c.Skip && !c.OK {
-			allOK = false
-		}
 	}
 	for _, p := range paths {
 		record(verifyWorkerLSP(ctx, runner, p))
@@ -193,7 +190,47 @@ func VerifyWorkerOutcome(ctx context.Context, runner *tools.Runner, paths []stri
 			})
 		}
 	}
+	if fs.OverlayFrom(ctx) != nil {
+		checks = discountSharedLSP(checks)
+	}
+	allOK := true
+	for _, c := range checks {
+		if !c.Skip && !c.OK {
+			allOK = false
+		}
+	}
 	return WorkerVerifyReport{Passed: allOK, Checks: checks}
+}
+
+// discountSharedLSP sets aside an LSP error on a Go file whose package the
+// task's own view built cleanly.
+//
+// There is one language server for the process and it holds one version of
+// each document: the last one any task wrote. A task in its own layer is built
+// from its own view (go build -overlay), which is exact; the server may be
+// showing it a sibling's unfinished edit of a file it depends on. Where the
+// build of the task's view passed, an LSP error in that package says more
+// about the siblings than about the task.
+func discountSharedLSP(checks []WorkerVerifyCheck) []WorkerVerifyCheck {
+	built := map[string]bool{}
+	for _, c := range checks {
+		if c.Name == "go_build" && c.OK && !c.Skip {
+			built[c.Path] = true
+		}
+	}
+	for i, c := range checks {
+		if c.Name != "lsp" || c.OK || c.Skip || !strings.HasSuffix(c.Path, ".go") {
+			continue
+		}
+		if pkgs := goBuildPackages([]string{c.Path}); len(pkgs) != 1 || !built[pkgs[0]] {
+			continue
+		}
+		checks[i].OK = true
+		checks[i].Skip = true
+		checks[i].Detail = "set aside: the language server is shared by the whole turn and shows other tasks' unfinished edits; " +
+			"go build of this task's own view of the package passed (" + c.Detail + ")"
+	}
+	return checks
 }
 
 // verifyStagedGo builds — and, with exec consent, tests — the packages a
@@ -210,7 +247,7 @@ func verifyStagedGo(ctx context.Context, runner *tools.Runner, paths []string, o
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		return skip("no go.mod")
 	}
-	staged := runner.StagedFileContent()
+	staged := runner.StagedFileContent(ctx)
 	for rel := range staged {
 		switch filepath.Base(rel) {
 		case "go.mod", "go.sum", "go.work":
@@ -574,17 +611,16 @@ func wrapWorkerNoChanges(workerResult string, attempted []string) string {
 // steps before reporting. That empty string used to read as success
 // (workerTaskResultSuccess treats an absent status as success), so the Lead was
 // handed {"status":"verified_success","worker_result":""}: a WorkOrder marked
-// done with no account of what was done. Nothing about the workspace is claimed
-// here — edits may well have landed — only that no result was reported.
+// done with no account of what was done. A worker that reports nothing has not
+// succeeded, so its edits are dropped with its layer.
 func wrapWorkerNoResult(attempted []string) string {
 	payload := map[string]any{
 		"status": "no_result",
 		"detail": "The child finished without reporting a result: its task_result " +
-			"carried no content, or it ran out of steps before calling one. Any edits " +
-			"it made may still have landed — this says nothing about the workspace, " +
-			"only that nothing was reported.",
-		"suggestion_for_lead": "Do not count this as done. Inspect the target files " +
-			"yourself, or re-issue the WorkOrder naming the exact file and change.",
+			"carried no content, or it ran out of steps before calling one. Its edits " +
+			"were discarded with it: the target files are as they were before it ran.",
+		"suggestion_for_lead": "Do not count this as done. Re-issue the WorkOrder " +
+			"naming the exact file and change.",
 	}
 	if len(attempted) > 0 {
 		payload["attempted_paths"] = attempted

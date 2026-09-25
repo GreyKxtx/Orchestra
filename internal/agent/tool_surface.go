@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -63,10 +64,16 @@ func (a *Agent) modeLabel() string {
 func (a *Agent) leadWritablePath(path string) bool {
 	switch a.modeSpec().Write {
 	case roles.WriteOrchestraLead:
-		return plan.IsOrchestraLeadWritablePath(path, a.effectivePlanPath())
+		// Plans, playbook overlays, and the contract artifact the
+		// orchestrator owns (NFR.md).
+		return plan.IsOrchestraLeadWritablePath(path, a.effectivePlanPath()) ||
+			contract.OwnedBy(path, contract.OwnerOrchestrator)
 	case roles.WriteDeptLead:
-		// Dept Lead surface (spec §6.1): plans + L2 playbook + specs.
-		return plan.IsDeptLeadWritablePath(path, a.effectivePlanPath())
+		// Dept Lead surface (spec §6.1): plans + L2 playbook + specs, and
+		// the contract artifacts its department owns (spec §5.3): without
+		// them no role could write the contract at all (ORC-5).
+		return plan.IsDeptLeadWritablePath(path, a.effectivePlanPath()) ||
+			contract.OwnedBy(path, deptType(a.opts.Dept))
 	default:
 		return plan.IsWritablePath(path, a.effectivePlanPath())
 	}
@@ -80,6 +87,9 @@ func (a *Agent) leadWritablePath(path string) bool {
 func (a *Agent) finalPatchRefusal(path string) error {
 	if !a.offersTool("write") && !a.offersTool("edit") {
 		return fmt.Errorf("%s mode does not change files; report what should change in your answer instead of returning patches", a.modeLabel())
+	}
+	if err := a.runtimeOwnedRefusal(path, plan.IsRuntimeOwnedPath); err != nil {
+		return err
 	}
 	spec := a.modeSpec()
 	switch spec.Write {

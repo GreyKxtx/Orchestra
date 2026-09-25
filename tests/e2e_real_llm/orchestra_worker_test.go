@@ -131,7 +131,7 @@ func TestRealLLMOrchestra_LeadSpawnsWorker_LSPIterationsLeq3(t *testing.T) {
 	if workerMetrics.LSPIterationCount() > eval.MaxLSPIterations {
 		t.Fatalf("Worker iterations = %d, want ≤ %d", workerMetrics.LSPIterationCount(), eval.MaxLSPIterations)
 	}
-	staged := tr.StagedFileContent()
+	staged := tr.StagedFileContent(context.Background())
 	if content, ok := staged["main.go"]; !ok || strings.Contains(content, "badSymbol") {
 		t.Fatal("worker did not fix staged main.go")
 	}
