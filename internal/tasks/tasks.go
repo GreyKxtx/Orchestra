@@ -187,6 +187,11 @@ type TaskRunner struct {
 	messages int
 	// rootInbox holds notes for the top-level agent, drained on its next step.
 	rootInbox []agent.InboxMessage
+	// closed is set by Close. A spawn after it is refused: a relay or a
+	// task_spawn racing the end of the turn used to register into the fresh
+	// map Close left behind, was never cancelled, and edited the workspace
+	// during the next turn.
+	closed bool
 	// storeMu serialises the inbox and thread files under .orchestra/agency.
 	storeMu sync.Mutex
 }
@@ -204,6 +209,9 @@ var (
 	ErrCauseWaitAbandoned = errors.New("cancelled: parent stopped waiting (wait timeout or turn end)")
 	// ErrCauseShutdown marks children cancelled by TaskRunner.Close.
 	ErrCauseShutdown = errors.New("cancelled: task runner shutting down")
+	// ErrRunnerClosed refuses a spawn after TaskRunner.Close: the turn it
+	// belonged to is over.
+	ErrRunnerClosed = errors.New("the turn has ended; no new subagent can start")
 )
 
 // childReapTimeout bounds how long Wait/Close block for a cancelled child
@@ -338,6 +346,10 @@ type spawnExtra struct {
 
 func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.SubtaskSpawnRequest, extra spawnExtra) (string, error) {
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return "", ErrRunnerClosed
+	}
 	r.seq++
 	taskID := fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000)
 	r.mu.Unlock()
@@ -482,6 +494,11 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	// wait graph is acyclic by construction, and so is the depends_on
 	// graph: a dependency must already be registered.
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		cancel(nil)
+		return "", ErrRunnerClosed
+	}
 	deps, depErr := r.resolveDepsLocked(dependsOn)
 	if depErr != nil {
 		r.mu.Unlock()
@@ -1114,6 +1131,7 @@ func (r *TaskRunner) Close() {
 		return
 	}
 	r.mu.Lock()
+	r.closed = true
 	entries := make([]*taskEntry, 0, len(r.tasks))
 	for _, e := range r.tasks {
 		entries = append(entries, e)

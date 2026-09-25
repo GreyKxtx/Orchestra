@@ -338,6 +338,7 @@ func (r *TaskRunner) board() []agent.TaskBoardEntry {
 			Status:   e.status,
 			Goal:     e.goal,
 			ElapsedS: int(end.Sub(e.started).Seconds()),
+			Finished: !e.finished.IsZero(),
 		}
 		for _, d := range e.deps {
 			n := d.key

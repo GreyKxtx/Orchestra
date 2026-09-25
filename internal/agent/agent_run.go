@@ -48,6 +48,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	a.codeChangeReminded = false
 	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0
+	a.finalsWhileTasksRun = 0
 	a.llmInfraErr = nil
 	a.contextPressureWarned = false
 	a.tools.ResetDeptLessonBudget()
@@ -379,6 +380,11 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			continue
 
 		case StepFinal:
+			if msg, wait := a.finalWithRunningTasks(ctx); wait {
+				history = append(history, msg)
+				emitStepDone("invalid")
+				continue
+			}
 			if hint, reject := a.rejectPrematureFinal(userQuery, step, raw, steps); reject {
 				if cbErr := cb.RecordInvalid(); cbErr != nil {
 					return a.stopOnBreaker(history, steps, cbErr)

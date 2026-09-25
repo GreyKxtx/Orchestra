@@ -873,3 +873,14 @@ func TestReadOnlySpawnerGetsOnlyReaders(t *testing.T) {
 		t.Fatalf("an explore-based agent with write is guarded as a writer, got %v", guarded)
 	}
 }
+
+// After Close the turn is over: a relay or task_spawn racing it is refused
+// instead of registering a child nothing will ever cancel.
+func TestSpawnAfterCloseIsRefused(t *testing.T) {
+	m := &scriptLLM{reply: func(llm.CompleteRequest) llm.Message { return finish("ok") }}
+	r, _ := newAgencyRunner(t, m, ChildAgentConfig{Agency: agencyOn()})
+	r.Close()
+	if _, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{Goal: "late", SubagentType: "explore"}); err != ErrRunnerClosed {
+		t.Fatalf("spawn after Close = %v, want ErrRunnerClosed", err)
+	}
+}

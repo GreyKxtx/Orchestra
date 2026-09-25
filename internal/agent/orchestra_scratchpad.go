@@ -101,6 +101,7 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 	// can refresh phase_since when the orchestrator switches phases.
 	var prevPhase orchestrastate.Phase
 	frontmatterAdded := false
+	var runtimeOwned []string
 	if relPath == plan.OrchestraStateRelPath {
 		var prev *orchestrastate.State
 		if p, found, err := orchestrastate.Load(a.tools.WorkspaceRoot()); err == nil && found {
@@ -129,6 +130,18 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 			content = strings.TrimSpace(rendered)
 			frontmatterAdded = true
 		}
+		// Fields the runtime or the user owns come from the file on disk,
+		// whatever the new content says; the guard below judges the result.
+		if next, perr := orchestrastate.ParseContent(content); perr == nil {
+			if changed := orchestrastate.KeepRuntimeOwned(next, prev); len(changed) > 0 {
+				rendered, rerr := orchestrastate.Render(next)
+				if rerr != nil {
+					return nil, fmt.Errorf("update_working_state: %w", rerr)
+				}
+				content = strings.TrimSpace(rendered)
+				runtimeOwned = changed
+			}
+		}
 		// Transition gate (spec §4.2). Evaluated before the write, so a
 		// refused transition leaves the state file as it was: the Lead cannot
 		// declare a phase whose entry condition is unmet and then act on it.
@@ -146,6 +159,10 @@ func (a *Agent) handleUpdateWorkingState(input json.RawMessage) (json.RawMessage
 		"path":    relPath,
 		"written": len(content),
 		"status":  "ok",
+	}
+	if len(runtimeOwned) > 0 {
+		respFields["runtime_owned"] = "kept as on file: " + strings.Join(runtimeOwned, ", ") +
+			" — the runtime and the user set these (waivers other than prd/contract are the user's to grant)"
 	}
 	if frontmatterAdded {
 		phase := string(prevPhase)

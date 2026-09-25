@@ -197,7 +197,6 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if err != nil {
 		return nil, err
 	}
-	defer launch.Close()
 
 	// Semantic dry-run pipeline: edit/write always go through staging + LSP
 	// during the turn. params.Apply controls commit-to-disk at end of turn,
@@ -211,6 +210,10 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	defer c.tools.SetAllowExecDespiteDryRun(false)
 	c.tools.SetCommitsToDisk(params.Apply)
 	defer c.tools.SetCommitsToDisk(false)
+	// Registered after the lock and the runner flags so it runs before them
+	// (defers are LIFO): children still running stop while this turn owns the
+	// runner, not after the next turn has taken it.
+	defer launch.Close()
 
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {

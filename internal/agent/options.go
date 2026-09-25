@@ -643,6 +643,9 @@ type Agent struct {
 	// overflowRecoveries counts compact→retry cycles triggered by provider
 	// context-window rejections during this Run.
 	overflowRecoveries int
+	// finalsWhileTasksRun counts finals refused this turn because tasks ran
+	// (final_tasks.go): the first is sent back, the second waits for them.
+	finalsWhileTasksRun int
 
 	// llmInfraErr is set when an LLM call fails at connect (unreachable).
 	// Compaction must not issue another LLM request after this.
