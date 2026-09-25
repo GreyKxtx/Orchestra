@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"unicode"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // dedupThreshold is the Jaccard overlap at which two notes are treated as the
@@ -110,7 +112,7 @@ func (s *Store) replaceNearDuplicate(path, content, newEntry string) (bool, int,
 	entries[i] = strings.TrimSpace(replacement)
 
 	body := entrySep + strings.Join(entries, entrySep) + "\n"
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+	if err := fsutil.AtomicWriteFile(path, []byte(body), 0644); err != nil {
 		return false, 0, err
 	}
 	return true, len(replacement), nil

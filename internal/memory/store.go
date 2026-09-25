@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 const (
@@ -105,6 +106,19 @@ type AppendResult struct {
 // sits when memory is sliced into a prompt (see entrytype.go), and reports
 // whether it updated an existing fact rather than adding one.
 func (s *Store) AppendEntry(scope, entryType, content string) (AppendResult, error) {
+	return s.AppendEntryFrom(scope, entryType, content, "")
+}
+
+// AppendEntryFrom is AppendEntry with the entry's provenance (see
+// formatEntryFrom): who wrote it, recorded on its header line.
+//
+// The whole write — reading what is there, replacing a restated fact or
+// appending, compacting — happens under the target file's lock, and every
+// rewrite is atomic. Parallel subagents and two cores on one project (the VS
+// Code extension and the TUI) used to interleave read-modify-write cycles:
+// with 60 writers, 8 to 29 of 30 new facts survived, and a compaction racing
+// an append could leave agent.md truncated (DATA-1).
+func (s *Store) AppendEntryFrom(scope, entryType, content, source string) (AppendResult, error) {
 	content = sanitizeMemoryText(strings.TrimSpace(content))
 	if content == "" {
 		return AppendResult{}, fmt.Errorf("content must not be empty")
@@ -152,7 +166,13 @@ func (s *Store) AppendEntry(scope, entryType, content string) (AppendResult, err
 		rel = ".orchestra/memory/agent.md"
 	}
 
-	entry := formatEntry(timestampUTC(), entryType, content)
+	unlock, err := fsutil.LockFile(target + ".lock")
+	if err != nil {
+		return AppendResult{}, err
+	}
+	defer unlock()
+
+	entry := formatEntryFrom(timestampUTC(), entryType, content, source)
 
 	// A fact restated is an update, not a second fact. Only project memory
 	// deduplicates: session memory is the running log of one conversation,

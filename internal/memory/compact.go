@@ -3,6 +3,8 @@ package memory
 import (
 	"os"
 	"strings"
+
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func (s *Store) compactAgentFile(path string) error {
@@ -21,7 +23,7 @@ func (s *Store) compactAgentFile(path string) error {
 	entries := splitEntries(string(data))
 	if len(entries) <= 1 {
 		trimmed := tailBytes(string(data), maxBytes)
-		return os.WriteFile(path, []byte(trimmed), 0644)
+		return fsutil.AtomicWriteFile(path, []byte(trimmed), 0644)
 	}
 
 	kept := selectEntriesToKeep(entries, maxBytes)
@@ -38,7 +40,7 @@ func (s *Store) compactAgentFile(path string) error {
 	if !strings.HasPrefix(body, "---") {
 		body = entrySep + body
 	}
-	return os.WriteFile(path, []byte(body+"\n"), 0644)
+	return fsutil.AtomicWriteFile(path, []byte(body+"\n"), 0644)
 }
 
 // selectEntriesToKeep decides what survives compaction, in the priority order

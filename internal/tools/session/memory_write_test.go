@@ -9,6 +9,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func testMemoryClient(t *testing.T, dir string) *Client {
@@ -79,5 +80,25 @@ func TestMemoryWrite_HasTimestamp(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, ".orchestra", "memory", "agent.md"))
 	if !strings.Contains(string(data), "T") || !strings.Contains(string(data), "Z") {
 		t.Errorf("expected ISO timestamp in agent.md, got: %q", string(data))
+	}
+}
+
+// A note says which agent of which run wrote it.
+func TestMemoryWrite_RecordsWhoWroteIt(t *testing.T) {
+	dir := t.TempDir()
+	c := testMemoryClient(t, dir)
+	sub := llm.WithTrace(context.Background(), llm.Trace{RunID: "r1", TaskID: "task_2_9", Depth: 1})
+	if _, err := c.MemoryWrite(sub, MemoryWriteRequest{Content: "the billing module is legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	root := llm.WithTrace(context.Background(), llm.Trace{RunID: "r1"})
+	if _, err := c.MemoryWrite(root, MemoryWriteRequest{Content: "tests use testify only in pkg/api"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".orchestra", "memory", "agent.md"))
+	for _, want := range []string{"(by task_2_9, run r1) [project]", "(by main agent, run r1) [project]"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("agent.md lacks %q:\n%s", want, data)
+		}
 	}
 }

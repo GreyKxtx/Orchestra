@@ -70,7 +70,28 @@ func EntryTypeOf(entry string) string {
 // by the model, and a marker that appears only sometimes is harder to scan
 // than one that always does.
 func formatEntry(timestamp, entryType, content string) string {
-	return fmt.Sprintf("%s*%s* [%s]\n\n%s\n", entrySep, timestamp, NormalizeEntryType(entryType), content)
+	return formatEntryFrom(timestamp, entryType, content, "")
+}
+
+// formatEntryFrom is formatEntry with provenance: who wrote the entry — which
+// agent, task and run — sits on the header line between the timestamp and
+// the type, "*<ts>* (by task_3_41, run 20260925T0800-ab12) [project]".
+// Memory is re-injected into every later prompt, so a note a subagent wrote
+// from untrusted content has to stay traceable to the run that wrote it.
+// The type marker stays last and the timestamp first, where EntryTypeOf and
+// entryTimestamp look for them.
+func formatEntryFrom(timestamp, entryType, content, source string) string {
+	source = strings.Map(func(r rune) rune {
+		switch r {
+		case '*', '[', ']', '(', ')', '\n', '\r':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(source))
+	if source == "" {
+		return fmt.Sprintf("%s*%s* [%s]\n\n%s\n", entrySep, timestamp, NormalizeEntryType(entryType), content)
+	}
+	return fmt.Sprintf("%s*%s* (by %s) [%s]\n\n%s\n", entrySep, timestamp, source, NormalizeEntryType(entryType), content)
 }
 
 // joinEntriesByPriority renders entries in injection order: pinned first,
