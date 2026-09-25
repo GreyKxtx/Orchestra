@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/aymanbagabas/go-udiff"
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/resolver"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 func (c *Client) Preview(ctx context.Context, req FSPreviewRequest) (*FSPreviewResponse, error) {

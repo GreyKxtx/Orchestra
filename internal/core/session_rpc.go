@@ -16,15 +16,16 @@ import (
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/sessionfile"
-	"github.com/orchestra/orchestra/internal/tools"
 )
+
 // ── Session API ──────────────────────────────────────────────────────────────
 
 type SessionStartParams struct {

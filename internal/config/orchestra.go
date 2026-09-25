@@ -33,9 +33,9 @@ type OrchestraTier struct {
 
 // OrchestraConfig configures Lead + worker tiers for mode=orchestra.
 type OrchestraConfig struct {
-	Planner          OrchestraRole   `yaml:"planner,omitempty"`
-	Tiers            []OrchestraTier `yaml:"tiers,omitempty"`
-	DefaultTier      string          `yaml:"default_tier,omitempty"` // default focused
+	Planner     OrchestraRole   `yaml:"planner,omitempty"`
+	Tiers       []OrchestraTier `yaml:"tiers,omitempty"`
+	DefaultTier string          `yaml:"default_tier,omitempty"` // default focused
 	// PhaseEnforcement controls the runtime phase guard: strict (default)
 	// blocks worker spawn outside execution/maintenance when
 	// .orchestra/state.md exists; prompt_only disables the runtime gate.
@@ -43,15 +43,15 @@ type OrchestraConfig struct {
 	// Gates configures human gates (spec §4.4): key → required | off.
 	// Known keys: git_commit (G2), git_push (G3). Unset map = no gates
 	// (backward compatible); unknown keys are rejected at Load.
-	Gates            map[string]string `yaml:"gates,omitempty"`
+	Gates map[string]string `yaml:"gates,omitempty"`
 	// TierEscalation re-runs a WorkOrder on a senior tier after repeated
 	// verification failures (spec §5.5). Disabled unless enabled: true —
 	// escalation spends the expensive model without explicit opt-in.
-	TierEscalation   TierEscalationConfig `yaml:"tier_escalation,omitempty"`
-	MaxWorkerRetries int             `yaml:"max_worker_retries,omitempty"`
-	WorkerVerifyEnabled *bool         `yaml:"worker_verify_enabled,omitempty"`
-	MaxWorkerVerifyRetries int       `yaml:"max_worker_verify_retries,omitempty"`
-	WorkerLLMVerifyEnabled *bool      `yaml:"worker_llm_verify_enabled,omitempty"`
+	TierEscalation         TierEscalationConfig `yaml:"tier_escalation,omitempty"`
+	MaxWorkerRetries       int                  `yaml:"max_worker_retries,omitempty"`
+	WorkerVerifyEnabled    *bool                `yaml:"worker_verify_enabled,omitempty"`
+	MaxWorkerVerifyRetries int                  `yaml:"max_worker_verify_retries,omitempty"`
+	WorkerLLMVerifyEnabled *bool                `yaml:"worker_llm_verify_enabled,omitempty"`
 	// WorkerVerifyAffectedTests gates `go test` on worker-edited packages (default true).
 	WorkerVerifyAffectedTests *bool `yaml:"worker_verify_affected_tests,omitempty"`
 	// WorkerVerifyFrontendTypecheck gates `tsc --noEmit` after frontend edits (default true).

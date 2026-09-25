@@ -15,21 +15,21 @@ const worktreeRegistryVersion = 1
 
 // WorktreeEntry describes one git worktree (from porcelain list + orchestra metadata).
 type WorktreeEntry struct {
-	Path       string `json:"path"`
-	HEAD       string `json:"head,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Detached   bool   `json:"detached,omitempty"`
-	Locked     bool   `json:"locked,omitempty"`
-	Prunable   bool   `json:"prunable,omitempty"`
-	Bare       bool   `json:"bare,omitempty"`
-	Managed    bool   `json:"managed,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Main       bool   `json:"main,omitempty"`
+	Path     string `json:"path"`
+	HEAD     string `json:"head,omitempty"`
+	Branch   string `json:"branch,omitempty"`
+	Detached bool   `json:"detached,omitempty"`
+	Locked   bool   `json:"locked,omitempty"`
+	Prunable bool   `json:"prunable,omitempty"`
+	Bare     bool   `json:"bare,omitempty"`
+	Managed  bool   `json:"managed,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Main     bool   `json:"main,omitempty"`
 }
 
 type registryFile struct {
-	Version int                 `json:"version"`
-	Entries []registryEntry     `json:"entries"`
+	Version int             `json:"version"`
+	Entries []registryEntry `json:"entries"`
 }
 
 type registryEntry struct {

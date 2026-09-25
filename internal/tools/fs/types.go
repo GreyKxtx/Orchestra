@@ -21,13 +21,13 @@ type FSFileMeta struct {
 }
 
 type FSListRequest struct {
-	Path        string `json:"path,omitempty"`
-	Recursive   *bool  `json:"recursive,omitempty"`
-	MaxEntries  int    `json:"max_entries,omitempty"`
+	Path        string   `json:"path,omitempty"`
+	Recursive   *bool    `json:"recursive,omitempty"`
+	MaxEntries  int      `json:"max_entries,omitempty"`
 	ExcludeDirs []string `json:"exclude_dirs,omitempty"`
-	IncludeHash bool   `json:"include_hash,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	SkipBackups *bool  `json:"skip_backups,omitempty"`
+	IncludeHash bool     `json:"include_hash,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	SkipBackups *bool    `json:"skip_backups,omitempty"`
 }
 
 type FSListResponse struct {

@@ -6,9 +6,9 @@ import (
 
 	"github.com/orchestra/orchestra/internal/attachments"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 // MessageAttachment is the JSON-RPC attachment reference (alias for protocol docs).

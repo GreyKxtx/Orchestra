@@ -17,14 +17,14 @@ import (
 // the current set via CurrentStyles(); never cache a returned struct longer
 // than one render pass.
 type Styles struct {
-	t           theme.Theme
-	Muted       lipgloss.Style // muted fg, no bg
-	Text        lipgloss.Style // primary text fg
-	TextBold    lipgloss.Style
-	Warning     lipgloss.Style
-	Error       lipgloss.Style
-	Success     lipgloss.Style
-	Primary     lipgloss.Style
+	t        theme.Theme
+	Muted    lipgloss.Style // muted fg, no bg
+	Text     lipgloss.Style // primary text fg
+	TextBold lipgloss.Style
+	Warning  lipgloss.Style
+	Error    lipgloss.Style
+	Success  lipgloss.Style
+	Primary  lipgloss.Style
 
 	// Panel-bg variants (BackgroundSecondary fill).
 	PanelMuted    lipgloss.Style

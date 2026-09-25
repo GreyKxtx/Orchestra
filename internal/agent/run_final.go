@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/plan"
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
-	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // finalizeOnMaxSteps flushes staged changes when the step budget is exhausted

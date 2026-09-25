@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/sessionfile"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestParseSnapshot_V2RoundTrip(t *testing.T) {

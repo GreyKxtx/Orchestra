@@ -12,10 +12,10 @@ import (
 
 // RenderTodosChecklist renders an in-chat / sticky task list (Claude Code style):
 //
-//	* Working…
-//	  ■ current task
-//	  □ pending task
-//	  … +N pending, M completed
+//   - Working…
+//     ■ current task
+//     □ pending task
+//     … +N pending, M completed
 func RenderTodosChecklist(items []state.TodoItem, width int, streaming bool, spinFrame int) string {
 	return RenderTodosChecklistCapped(items, width, streaming, spinFrame, 0)
 }

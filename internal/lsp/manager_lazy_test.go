@@ -102,10 +102,10 @@ func TestManager_WarmupStart_LazySkipsSpawn(t *testing.T) {
 		Enabled:     &enabled,
 		AutoInstall: "false",
 		Servers: []lsp.LSPServerConfig{{
-		Language:   "go",
-		Extensions: []string{".go"},
-		Command:    []string{"unused"},
-	}}})
+			Language:   "go",
+			Extensions: []string{".go"},
+			Command:    []string{"unused"},
+		}}})
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -140,9 +140,9 @@ func TestManager_GoTSMonorepo_LazyPerExtension(t *testing.T) {
 		Enabled:     &enabled,
 		AutoInstall: "false",
 		Servers: []lsp.LSPServerConfig{
-		{Language: "go", Extensions: []string{".go"}, Command: []string{"unused-go"}},
-		{Language: "typescript", Extensions: []string{".ts", ".tsx"}, Command: []string{"unused-ts"}},
-	}})
+			{Language: "go", Extensions: []string{".go"}, Command: []string{"unused-go"}},
+			{Language: "typescript", Extensions: []string{".ts", ".tsx"}, Command: []string{"unused-ts"}},
+		}})
 	if len(errs) != 0 {
 		t.Fatalf("NewManager: %v", errs)
 	}
@@ -189,10 +189,10 @@ func TestManager_LazyStart_StartsOnFirstUse(t *testing.T) {
 		Enabled:     &enabled,
 		AutoInstall: "false",
 		Servers: []lsp.LSPServerConfig{{
-		Language:   "go",
-		Extensions: []string{".go"},
-		Command:    []string{"unused"},
-	}}})
+			Language:   "go",
+			Extensions: []string{".go"},
+			Command:    []string{"unused"},
+		}}})
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}

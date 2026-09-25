@@ -24,7 +24,7 @@ func TestCollapseOrchestraWorkerTaskOutputs(t *testing.T) {
 	assistant2 := llm.Message{
 		Role: llm.RoleAssistant,
 		ToolCalls: []llm.ToolCall{{
-			ID: "c2",
+			ID:       "c2",
 			Function: llm.ToolCallFunc{Name: "read", Arguments: llm.ToolArguments([]byte(`{"path":"a.go"}`))},
 		}},
 	}

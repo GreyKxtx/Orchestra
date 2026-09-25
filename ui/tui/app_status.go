@@ -15,17 +15,17 @@ import (
 
 // chromeMetrics groups status-bar / session gauges owned by App (not chat history).
 type chromeMetrics struct {
-	sessionTokens     int     // prompt+completion across the whole session
-	promptTokensUsed  int     // last LLM step prompt size — drives the ctx bar
-	livePromptTokens  int     // current step prompt tokens while a turn is running
-	tokensEstimated   bool    // true when last ctx figure is agent estimate, not provider usage
-	sessionCostUSD    float64 // accumulated spend (paid providers)
-	modelContextLimit int     // full model window (num_ctx / max_model_len)
-	promptBudgetTokens int    // prompt room after max_tokens reserve — ctx bar denominator
-	lspStatus         string  // off | idle | installing | active
-	lspInstallPercent int
-	lspInstallID      string
-	showCost          bool
+	sessionTokens      int     // prompt+completion across the whole session
+	promptTokensUsed   int     // last LLM step prompt size — drives the ctx bar
+	livePromptTokens   int     // current step prompt tokens while a turn is running
+	tokensEstimated    bool    // true when last ctx figure is agent estimate, not provider usage
+	sessionCostUSD     float64 // accumulated spend (paid providers)
+	modelContextLimit  int     // full model window (num_ctx / max_model_len)
+	promptBudgetTokens int     // prompt room after max_tokens reserve — ctx bar denominator
+	lspStatus          string  // off | idle | installing | active
+	lspInstallPercent  int
+	lspInstallID       string
+	showCost           bool
 }
 
 // syncStatusBar pushes App session metrics into the status bar widget.

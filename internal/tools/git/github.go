@@ -505,4 +505,3 @@ func (c *Client) GHIssueView(ctx context.Context, req GHIssueViewRequest) (*GHIs
 		Comments: comments,
 	}, nil
 }
-

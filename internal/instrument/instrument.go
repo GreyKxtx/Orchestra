@@ -13,7 +13,7 @@ import (
 // Result describes what was done for one language.
 type Result struct {
 	Lang          string
-	Skipped       bool   // already instrumented
+	Skipped       bool // already instrumented
 	SkipReason    string
 	TelemetryFile string // relative path written
 	Patched       bool   // entry point patched

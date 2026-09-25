@@ -31,14 +31,14 @@ type rpcEnvelope struct {
 }
 
 type coreRPCClient struct {
-	t       *testing.T
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	reader  *bufio.Reader
-	nextID  int
-	mu      sync.Mutex
-	events  []rpcEnvelope
-	cancel  context.CancelFunc
+	t      *testing.T
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	reader *bufio.Reader
+	nextID int
+	mu     sync.Mutex
+	events []rpcEnvelope
+	cancel context.CancelFunc
 }
 
 func startCoreRPC(t *testing.T, projectRoot string) *coreRPCClient {

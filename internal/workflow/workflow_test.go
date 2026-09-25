@@ -178,8 +178,8 @@ func TestRun_LoopUntilMarker_RedoRoutesBack(t *testing.T) {
 	w := &Workflow{Name: "w", Stages: []Stage{
 		{ID: "plan", Skill: "sp", Inputs: []string{"$ARGUMENTS"}},
 		{ID: "check", Skill: "sc",
-			DependsOn: []string{"plan"},
-			Inputs:    []string{"plan: {plan.output}"},
+			DependsOn:       []string{"plan"},
+			Inputs:          []string{"plan: {plan.output}"},
 			LoopUntilMarker: "## VERIFICATION PASSED",
 			OnMarker:        map[string]string{"## ISSUES FOUND": "redo:plan"},
 			MaxAttempts:     3,

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 func TestAgent_PlanEnter_LegacyStub(t *testing.T) {

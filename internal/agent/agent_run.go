@@ -239,10 +239,10 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 						historyRewritten = true
 						a.recordCompactMetrics(before, after, true)
 						// Forgive one repeat, do not forget them all: on a small
-					// window compaction runs every few steps, and clearing the
-					// counters reset the doom-loop guard faster than it could
-					// trip.
-					cb.ForgiveReadOnlyCallsAfterCompaction()
+						// window compaction runs every few steps, and clearing the
+						// counters reset the doom-loop guard faster than it could
+						// trip.
+						cb.ForgiveReadOnlyCallsAfterCompaction()
 						if a.opts.OnEvent != nil {
 							a.opts.OnEvent(AgentEvent{Step: steps, Stream: llm.StreamEvent{
 								Kind:    llm.StreamEventRecoverableError,

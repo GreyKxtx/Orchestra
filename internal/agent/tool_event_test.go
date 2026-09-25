@@ -9,7 +9,7 @@ import (
 
 func TestToolCallCompletedStreamEvent_Diagnostics(t *testing.T) {
 	out, _ := json.Marshal(map[string]any{
-		"path":     "main.go",
+		"path":      "main.go",
 		"file_hash": "abc",
 		"diagnostics": []map[string]any{
 			{"severity": "error", "message": "undefined: x", "start_line": 1, "start_col": 1},

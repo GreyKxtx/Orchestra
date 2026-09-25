@@ -9,11 +9,11 @@ import (
 // PanelOpts controls how panelBlock styles its output. Empty fields fall back
 // to sensible defaults (panel bg + text fg + 1×2 padding).
 type PanelOpts struct {
-	Width    int             // 0 = auto-fit
-	Padding  [2]int          // [vertical, horizontal]; default [1,2]
-	Accent   lipgloss.Color  // border color; "" = theme.Background()
-	TextFG   lipgloss.Color  // body text fg; "" = theme.Text()
-	NoBorder bool            // drop the thick left bar entirely
+	Width    int            // 0 = auto-fit
+	Padding  [2]int         // [vertical, horizontal]; default [1,2]
+	Accent   lipgloss.Color // border color; "" = theme.Background()
+	TextFG   lipgloss.Color // body text fg; "" = theme.Text()
+	NoBorder bool           // drop the thick left bar entirely
 }
 
 // panelBlock wraps content in the panel style shared by user-message and

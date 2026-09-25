@@ -28,8 +28,8 @@ type Patch struct {
 	Diff string `json:"diff,omitempty"`
 
 	// file.write_atomic
-	Content    string               `json:"content,omitempty"`
-	Mode       int                  `json:"mode,omitempty"` // e.g. 420 = 0644
+	Content    string                 `json:"content,omitempty"`
+	Mode       int                    `json:"mode,omitempty"` // e.g. 420 = 0644
 	Conditions *WriteAtomicConditions `json:"conditions,omitempty"`
 
 	// Versioning (minimum vNext): sha256:<hex> of file content used to plan the patch.

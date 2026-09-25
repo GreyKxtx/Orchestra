@@ -79,4 +79,3 @@ func TestSettingsDialog_LocalHidesAnswerMax(t *testing.T) {
 		t.Fatalf("maxTokens=%d want auto %d", d.maxTokens, autoAnswerBudget(122880))
 	}
 }
-

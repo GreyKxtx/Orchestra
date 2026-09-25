@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/internal/subproc"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
 
 // CoreChild holds a running "orchestra core" subprocess and its RPC client.

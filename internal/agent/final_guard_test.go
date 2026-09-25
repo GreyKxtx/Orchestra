@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
 )
 
 func TestQueryRequiresCodeChanges(t *testing.T) {
@@ -149,4 +149,3 @@ func TestRejectPrematureFinal_readOnlyCommentQueryAfterRead(t *testing.T) {
 		t.Fatal("read-only comment question should allow plain-text final after read")
 	}
 }
-

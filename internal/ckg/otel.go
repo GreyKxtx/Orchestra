@@ -15,11 +15,11 @@ import (
 
 // Resolve status constants written to spans.resolve_status.
 const (
-	ResolveStatusResolved          = "resolved"
-	ResolveStatusNoCodeAttrs       = "no_code_attrs"
-	ResolveStatusPathNotUnderRoot  = "path_not_under_root"
-	ResolveStatusPathNotInCKG      = "path_not_in_ckg"
-	ResolveStatusNoNodeAtLine      = "no_node_at_line"
+	ResolveStatusResolved         = "resolved"
+	ResolveStatusNoCodeAttrs      = "no_code_attrs"
+	ResolveStatusPathNotUnderRoot = "path_not_under_root"
+	ResolveStatusPathNotInCKG     = "path_not_in_ckg"
+	ResolveStatusNoNodeAtLine     = "no_node_at_line"
 )
 
 // ---- OTLP JSON wire types ----

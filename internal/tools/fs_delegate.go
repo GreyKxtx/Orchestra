@@ -8,8 +8,8 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools/fs"
-	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/patch/ops"
+	"github.com/orchestra/orchestra/patch/patches"
 )
 
 func (r *Runner) initFSClient(root string, exclude []string, dryRun, astGate bool) {
@@ -43,10 +43,10 @@ func (r *Runner) wireFSHooks() {
 		ExtraDiagnostics: func(content string) []lsp.ToolDiagnostic {
 			return r.extraTestDiagnostics(content)
 		},
-		GoFileRedirect:   r.goFileRedirectHook,
+		GoFileRedirect:       r.goFileRedirectHook,
 		DiscoverInstructions: r.discoverInstructions,
-		SymbolLineRange:  r.symbolLineRangeHook,
-		SymbolFQNAtLine:  r.symbolFQNAtLineHook,
+		SymbolLineRange:      r.symbolLineRangeHook,
+		SymbolFQNAtLine:      r.symbolFQNAtLineHook,
 		OnDidClose: func(ctx context.Context, relSlash string) {
 			if r.lspManager != nil {
 				r.lspManager.DidClose(ctx, relSlash)

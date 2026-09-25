@@ -135,8 +135,8 @@ func (r *TaskRunner) exhaustClarificationBudget(root, taskResult string, qs []Op
 	_ = decisions.Append(root, entries)
 	return attachBarrierPayload(taskResult, map[string]any{
 		"clarification_budget_exhausted": true,
-		"instruction": "max_clarification_rounds reached: do not re-ask the user. Choose the safest assumption per question, record it in assumptions[], and proceed.",
-		"decisions_ref": decisions.FileRel,
+		"instruction":                    "max_clarification_rounds reached: do not re-ask the user. Choose the safest assumption per question, record it in assumptions[], and proceed.",
+		"decisions_ref":                  decisions.FileRel,
 	})
 }
 

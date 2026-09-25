@@ -3,9 +3,9 @@ package core
 import (
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
-	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 type SessionRewindParams struct {

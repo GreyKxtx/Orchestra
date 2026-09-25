@@ -95,14 +95,14 @@ func TestRenderSessionHTML_RendersTheConversation(t *testing.T) {
 	out := string(RenderSessionHTML(htmlFixture(t)))
 
 	for _, want := range []string{
-		"wiring auth",                     // title
-		"claude-opus-5",                   // model
-		"how do I wire the bearer token",  // user text
-		"authTransport sets the header",   // assistant text
+		"wiring auth",                           // title
+		"claude-opus-5",                         // model
+		"how do I wire the bearer token",        // user text
+		"authTransport sets the header",         // assistant text
 		"the transport is the only shared seam", // reasoning
-		"read",                            // tool name
-		"internal/mcp/remote.go",          // tool args
-		"package mcp",                     // tool result
+		"read",                                  // tool name
+		"internal/mcp/remote.go",                // tool args
+		"package mcp",                           // tool result
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("export is missing %q", want)

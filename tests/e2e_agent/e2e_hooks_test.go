@@ -11,12 +11,12 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/hooks"
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // TestAgent_E2E_PreToolHookFires verifies that a pre-tool hook subprocess is

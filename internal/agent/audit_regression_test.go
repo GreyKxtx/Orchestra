@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 )
 
 // toolCallSequenceLLM returns predefined OpenAI-style tool_call responses.
@@ -148,7 +148,7 @@ func TestAgent_Run_MixedBatch_TodowritePlusRead_BothExecuted(t *testing.T) {
 				Role: llm.RoleAssistant,
 				ToolCalls: []llm.ToolCall{
 					{ID: "w1", Type: "function", Function: llm.ToolCallFunc{
-						Name: "todowrite",
+						Name:      "todowrite",
 						Arguments: llm.ToolArguments([]byte(`{"todos":[{"id":"1","content":"done task","status":"done"}]}`)),
 					}},
 					{ID: "r1", Type: "function", Function: llm.ToolCallFunc{

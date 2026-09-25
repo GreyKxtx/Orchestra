@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/tools/web"
-	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/protocol"
+	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
 
 // Notifier sends server-initiated JSON-RPC notifications to the client.

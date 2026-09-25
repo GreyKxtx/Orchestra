@@ -32,14 +32,14 @@ type Client interface {
 
 // OpenAIClient is an OpenAI-compatible LLM client
 type OpenAIClient struct {
-	baseURL string
+	baseURL     string
 	apiKey      string
 	tokenSource func() (string, error)
 	// azure is non-nil for an Azure OpenAI endpoint, which needs a
 	// deployment-scoped URL and the api-key header instead of a bearer.
 	azure *AzureConfig
 	// reasoning is the configured thinking dial, nil when unset.
-	reasoning *ReasoningConfig
+	reasoning     *ReasoningConfig
 	model         string
 	provider      string
 	wantMaxTokens int // user-configured; may exceed safe cap until context is known
@@ -47,9 +47,9 @@ type OpenAIClient struct {
 	contextTokens int // server / num_ctx window; 0 = unknown
 	// promptCal learns bytes-per-token from the usage this endpoint reports,
 	// so the pre-send size guard stops refusing prompts that actually fit.
-	promptCal promptCalibration
-	temperature   float32
-	toolChoice    string // resolved: auto | omit | none | required
+	promptCal   promptCalibration
+	temperature float32
+	toolChoice  string // resolved: auto | omit | none | required
 	// toolChoiceImplicit is true when cfg.ToolChoice was left blank and
 	// resolveToolChoice fell through to its provider-based guess. An implicit
 	// "omit" is the single biggest cause of "the model just ignores my

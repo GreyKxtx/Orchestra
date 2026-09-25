@@ -10,12 +10,12 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/agent/eval"
-	"github.com/orchestra/orchestra/patch/cache"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/lsp"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // orchestraLeadLLM delegates to Worker via sync task; never edits production files.

@@ -49,7 +49,7 @@ type AgentRunParams struct {
 	// person's cookies is stronger than every other op together.
 	// (ProtocolVersion 21.)
 	AllowBrowserEval bool `json:"allow_browser_eval,omitempty"`
-	Debug        bool `json:"debug,omitempty"`
+	Debug            bool `json:"debug,omitempty"`
 
 	// Mode selects the agent mode or custom agent name (from agents: in .orchestra.yml).
 	Mode string `json:"mode,omitempty"`

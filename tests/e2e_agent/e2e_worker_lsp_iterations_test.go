@@ -10,12 +10,12 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/agent/eval"
-	"github.com/orchestra/orchestra/patch/cache"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/lsp"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // workerLSPFixLLM scripts Worker mode: bad edit → LSP hint → fix → final (dry-run).
@@ -45,7 +45,7 @@ func (l *workerLSPFixLLM) Complete(_ context.Context, req llm.CompleteRequest) (
 				ID:   "call_read_main",
 				Type: "function",
 				Function: llm.ToolCallFunc{
-					Name: "read",
+					Name:      "read",
 					Arguments: llm.ToolArguments(`{"path":"main.go"}`),
 				},
 			}},

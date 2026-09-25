@@ -365,7 +365,6 @@ func TestExcerpt_KeepsAFailureLineReadable(t *testing.T) {
 	}
 }
 
-
 // ---- tool_used --------------------------------------------------------------
 
 // Every other check looks at the workspace after the run, which cannot tell

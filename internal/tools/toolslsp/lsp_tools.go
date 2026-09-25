@@ -11,7 +11,7 @@ import (
 
 // Client wraps LSP tool calls for a workspace.
 type Client struct {
-	root string
+	root    string
 	manager *lsp.Manager
 }
 
@@ -159,4 +159,3 @@ func (c *Client) LSPRename(ctx context.Context, req LSPRenameRequest) (*LSPRenam
 	}
 	return &LSPRenameResponse{Edits: edits}, nil
 }
-

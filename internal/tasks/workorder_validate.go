@@ -11,18 +11,18 @@ import (
 
 // WorkOrder is the Lead → Worker JSON contract (docs/architecture/planner-worker.md).
 type WorkOrder struct {
-	TaskID              string         `json:"task_id,omitempty"`
-	Tier                string         `json:"tier,omitempty"`
-	TargetFile          string         `json:"target_file,omitempty"`
-	TargetFiles         []string       `json:"target_files,omitempty"`
-	TargetSymbol        string         `json:"target_symbol,omitempty"`
-	Intent              string         `json:"intent,omitempty"`
-	Context             map[string]any `json:"context,omitempty"`
-	Instructions        []string       `json:"instructions,omitempty"`
-	Constraints         []string       `json:"constraints,omitempty"`
-	ReadonlyReferences  []string       `json:"readonly_references,omitempty"`
-	AllowedSymbols      []string       `json:"allowed_symbols,omitempty"`
-	AcceptanceCriteria  []string       `json:"acceptance_criteria,omitempty"`
+	TaskID             string         `json:"task_id,omitempty"`
+	Tier               string         `json:"tier,omitempty"`
+	TargetFile         string         `json:"target_file,omitempty"`
+	TargetFiles        []string       `json:"target_files,omitempty"`
+	TargetSymbol       string         `json:"target_symbol,omitempty"`
+	Intent             string         `json:"intent,omitempty"`
+	Context            map[string]any `json:"context,omitempty"`
+	Instructions       []string       `json:"instructions,omitempty"`
+	Constraints        []string       `json:"constraints,omitempty"`
+	ReadonlyReferences []string       `json:"readonly_references,omitempty"`
+	AllowedSymbols     []string       `json:"allowed_symbols,omitempty"`
+	AcceptanceCriteria []string       `json:"acceptance_criteria,omitempty"`
 
 	// ContractRefs pin the WorkOrder to contract artifact versions
 	// (spec §5.3): each ref carries the sha256 the Lead read. The runtime

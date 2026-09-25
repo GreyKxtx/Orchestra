@@ -18,9 +18,9 @@ var worktreeCmd = &cobra.Command{
 }
 
 var (
-	worktreeBranch  string
-	worktreeRef     string
-	worktreeForce   bool
+	worktreeBranch string
+	worktreeRef    string
+	worktreeForce  bool
 )
 
 var worktreeListCmd = &cobra.Command{

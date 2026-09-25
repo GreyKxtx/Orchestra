@@ -44,8 +44,8 @@ type RuntimeProviderEntry struct {
 // RuntimeListProvidersResult is returned by runtime.list_providers.
 type RuntimeListProvidersResult struct {
 	Providers      []RuntimeProviderEntry `json:"providers"`
-	ActiveProvider string               `json:"active_provider"`
-	ActiveModel    string               `json:"active_model"`
+	ActiveProvider string                 `json:"active_provider"`
+	ActiveModel    string                 `json:"active_model"`
 }
 
 // RuntimeListProviders returns the provider catalog + named entries with optional probe.

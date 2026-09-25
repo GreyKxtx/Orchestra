@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
-	"github.com/orchestra/orchestra/internal/tools"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/contract"
@@ -267,14 +267,14 @@ func TestSpawn_MaxStepsClampedTo12(t *testing.T) {
 
 func TestModeForSubagent(t *testing.T) {
 	cases := map[string]agent.Mode{
-		"":             agent.ModeExplore,
-		"explore":      agent.ModeExplore,
-		"ask":          agent.ModeAsk,
-		"debug":        agent.ModeDebug,
-		"architecture": agent.ModeArchitecture,
-		"general":      agent.ModeGeneral,
-		"worker":       agent.ModeWorker,
-		"verifier":     agent.ModeVerifier,
+		"":              agent.ModeExplore,
+		"explore":       agent.ModeExplore,
+		"ask":           agent.ModeAsk,
+		"debug":         agent.ModeDebug,
+		"architecture":  agent.ModeArchitecture,
+		"general":       agent.ModeGeneral,
+		"worker":        agent.ModeWorker,
+		"verifier":      agent.ModeVerifier,
 		"product":       agent.ModeProduct,
 		"documentation": agent.ModeDocs,
 	}

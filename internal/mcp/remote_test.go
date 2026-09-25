@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/mcpauth"
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type echoInput struct {

@@ -118,7 +118,6 @@ func formatTokenCount(n int) string {
 	return strconv.Itoa(n)
 }
 
-
 // Update implements Dialog.
 func (d *SettingsDialog) Update(msg tea.Msg) (Dialog, tea.Cmd) {
 	km, ok := msg.(tea.KeyMsg)

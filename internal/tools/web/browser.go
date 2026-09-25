@@ -535,4 +535,3 @@ func BrowserClose(ctx context.Context, cfg Config, req BrowserCloseRequest) (*Br
 	}
 	return &BrowserCloseResponse{Closed: true}, nil
 }
-

@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/ops"
 )
 
 // Session holds a persistent multi-turn conversation for one user.

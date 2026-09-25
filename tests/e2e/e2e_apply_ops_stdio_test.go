@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/protocol"
 )
 
 type rpcError struct {

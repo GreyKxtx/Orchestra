@@ -12,9 +12,9 @@ type AgentsListParams struct{}
 
 // AgentsListResult lists custom agents and built-in mode names.
 type AgentsListResult struct {
-	Agents          []config.AgentDefinition `json:"agents"`
-	BuiltInModes    []string                 `json:"built_in_modes"`
-	AvailableTools  []string                 `json:"available_tools"`
+	Agents         []config.AgentDefinition `json:"agents"`
+	BuiltInModes   []string                 `json:"built_in_modes"`
+	AvailableTools []string                 `json:"available_tools"`
 }
 
 // AgentsList returns custom agents from cfg. Read-only: takes cfgMu.RLock

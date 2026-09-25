@@ -59,15 +59,15 @@ type Options struct {
 
 // defaultIgnores are always skipped during the walk.
 var defaultIgnores = map[string]bool{
-	".git":        true,
+	".git":         true,
 	"node_modules": true,
-	"vendor":      true,
-	"dist":        true,
-	"build":       true,
-	".orchestra":  true,
-	".idea":       true,
-	".vscode":     true,
-	"target":      true, // Rust
+	"vendor":       true,
+	"dist":         true,
+	"build":        true,
+	".orchestra":   true,
+	".idea":        true,
+	".vscode":      true,
+	"target":       true, // Rust
 }
 
 // Build walks root and returns an outline of every parseable file it finds.
@@ -189,6 +189,7 @@ func isPrivate(name string) bool {
 //  1. dropping private symbols inside files with > 6 symbols;
 //  2. dropping whole files with the fewest symbols;
 //  3. emitting a trailing "(N more files omitted)" line when truncation occurred.
+//
 // The output is stable for a given input.
 func Format(rm *RepoMap, budgetBytes int) string {
 	if rm == nil || len(rm.Files) == 0 {

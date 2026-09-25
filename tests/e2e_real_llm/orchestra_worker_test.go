@@ -11,11 +11,11 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/agent/eval"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/lsp"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tasks"
 	toolsrunner "github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 // orchestraLeadForRealWorker delegates to a real local Worker model (P9 gated).

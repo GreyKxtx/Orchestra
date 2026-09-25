@@ -81,9 +81,9 @@ func TestBuildAgentOnEvent_DebounceFlushesOnToolBoundary(t *testing.T) {
 
 	onEvent(agent.AgentEvent{Step: 1, Stream: llm.StreamEvent{Kind: llm.StreamEventMessageDelta, Content: "x"}})
 	onEvent(agent.AgentEvent{Step: 1, Stream: llm.StreamEvent{
-		Kind:           llm.StreamEventToolCallStart,
-		ToolCallID:     "c1",
-		ToolCallName:   "read",
+		Kind:         llm.StreamEventToolCallStart,
+		ToolCallID:   "c1",
+		ToolCallName: "read",
 	}})
 
 	mu.Lock()

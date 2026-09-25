@@ -62,9 +62,9 @@ func runUsage(cmd *cobra.Command, args []string) error {
 
 	if usageJSON {
 		payload := struct {
-			Records []usage.Record `json:"records"`
-			PerModel []usage.Entry `json:"per_model"`
-			Totals  usage.Entry   `json:"totals"`
+			Records  []usage.Record `json:"records"`
+			PerModel []usage.Entry  `json:"per_model"`
+			Totals   usage.Entry    `json:"totals"`
 		}{records, perModel, totals}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

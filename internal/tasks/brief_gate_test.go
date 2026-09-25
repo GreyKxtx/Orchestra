@@ -26,11 +26,11 @@ func deptWorkOrder(instance string) *WorkOrder {
 
 func TestWorkOrderDeptInstance(t *testing.T) {
 	cases := map[string]string{
-		".orchestra/depts/frontend.md":     "frontend",
+		".orchestra/depts/frontend.md":       "frontend",
 		"./.orchestra/depts/frontend@web.md": "frontend@web",
-		".orchestra/state.md":              "",
-		".orchestra/depts/a/b.md":          "",
-		"":                                 "",
+		".orchestra/state.md":                "",
+		".orchestra/depts/a/b.md":            "",
+		"":                                   "",
 	}
 	for sp, want := range cases {
 		wo := &WorkOrder{Context: map[string]any{"scratchpad": sp}}

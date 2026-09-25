@@ -13,11 +13,11 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/agent/eval"
 	"github.com/orchestra/orchestra/internal/config"
-	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/internal/lsp"
-	"github.com/orchestra/orchestra/protocol/schema"
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/schema"
 )
 
 func setupWorkerLSPFixture(t *testing.T) string {
@@ -81,14 +81,14 @@ func TestRealLLMWorker_LSPIterationsLeq3(t *testing.T) {
 
 	metrics := eval.NewLoopMetrics()
 	ag, err := agent.New(client, v, tr, agent.Options{
-		Mode:              agent.ModeWorker,
-		MaxSteps:          15,
-		MaxFinalFailures:  3,
-		MaxInvalidRetries: 3,
+		Mode:                agent.ModeWorker,
+		MaxSteps:            15,
+		MaxFinalFailures:    3,
+		MaxInvalidRetries:   3,
 		MaxToolErrorRepeats: 3,
-		Apply:             false,
-		ModelLabel:        getLLMModel(),
-		OnEvent:           metrics.OnAgentEvent,
+		Apply:               false,
+		ModelLabel:          getLLMModel(),
+		OnEvent:             metrics.OnAgentEvent,
 	})
 	if err != nil {
 		t.Fatalf("New agent: %v", err)

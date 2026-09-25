@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orchestra/orchestra/llm"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // Decision is the classifier output.

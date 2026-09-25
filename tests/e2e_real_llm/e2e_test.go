@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	envE2ELLM    = "ORCH_E2E_LLM"
-	wantNumCtx   = 20000
+	envE2ELLM  = "ORCH_E2E_LLM"
+	wantNumCtx = 20000
 )
 
 // TestMain ensures the model is loaded with a 20k context window before any

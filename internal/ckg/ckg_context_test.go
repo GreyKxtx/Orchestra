@@ -16,8 +16,8 @@ func TestTokenizeQuery(t *testing.T) {
 		{"Handler agent runtime", []string{"handler", "agent", "runtime"}},
 		{"the and for with", nil}, // all stopwords
 		{"ab", nil},               // too short
-		{"agent.Run loop", []string{"agent", "loop"}},    // "run" is stopword
-		{"Agent Agent agent", []string{"agent"}},          // dedup
+		{"agent.Run loop", []string{"agent", "loop"}},                // "run" is stopword
+		{"Agent Agent agent", []string{"agent"}},                     // dedup
 		{"RuntimeQuery trace_id", []string{"runtimequery", "trace"}}, // split on _
 	}
 	for _, tc := range tests {

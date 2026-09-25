@@ -378,6 +378,7 @@ func interpolate(s string, outputs map[string]string, args string) string {
 //  1. stage.LoopUntilMarker (so the happy path is detected first),
 //  2. keys of stage.OnMarker,
 //  3. skill's CompletionMarkers list (markersFor).
+//
 // Returns the matched marker text (with the leading "## " preserved) or "".
 func detectMarker(output string, skillMarkers []string, onMarker map[string]string, loopMarker string) string {
 	candidates := make([]string, 0, len(skillMarkers)+len(onMarker)+1)
