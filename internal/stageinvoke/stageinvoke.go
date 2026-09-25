@@ -61,6 +61,9 @@ type Config struct {
 	// with its own model.
 	CompactionClient        llm.Client
 	CompactionContextTokens int
+
+	// Events is where a stage's lifecycle and stream go.
+	Events app.ChildEvents
 }
 
 // Invoker implements workflow.StageInvoker.
@@ -141,26 +144,32 @@ func (inv *Invoker) Invoke(ctx context.Context, skillName, userQuery string) (st
 
 	opts := buildAgentOptions(c, childTools, systemPrompt)
 
-	ag, err := agent.New(childClient, c.Validator, c.Runner, opts)
+	// A stage is a child of the workflow's turn: it writes into a layer of
+	// its own, committed when it succeeds and dropped when it fails, so a
+	// failed attempt leaves nothing for the next one to trip over.
+	out, err := app.RunChild(ctx, app.ChildRun{
+		Client:    childClient,
+		Validator: c.Validator,
+		Tools:     c.Runner,
+		Options:   opts,
+		Goal:      userQuery,
+		Kind:      "stage:" + skillName,
+		Events:    c.Events,
+	})
 	if err != nil {
 		return "", fmt.Errorf("skill %q: %w", skillName, err)
 	}
-
-	history, res, runErr := ag.Run(ctx, nil, userQuery)
-	if runErr != nil {
-		return "", fmt.Errorf("skill %q: %w", skillName, runErr)
+	if out.Result != nil && out.Result.SubtaskResult != "" {
+		return out.Result.SubtaskResult, nil
 	}
-	if res != nil && res.SubtaskResult != "" {
-		return res.SubtaskResult, nil
-	}
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Role == llm.RoleAssistant && strings.TrimSpace(history[i].Content) != "" {
-			return history[i].Content, nil
+	for i := len(out.History) - 1; i >= 0; i-- {
+		if out.History[i].Role == llm.RoleAssistant && strings.TrimSpace(out.History[i].Content) != "" {
+			return out.History[i].Content, nil
 		}
 	}
 	patchCount := 0
-	if res != nil {
-		patchCount = len(res.Patches)
+	if out.Result != nil {
+		patchCount = len(out.Result.Patches)
 	}
 	return fmt.Sprintf("skill %q finished (no text output; %d patch(es))", skillName, patchCount), nil
 }

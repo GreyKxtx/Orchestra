@@ -126,6 +126,9 @@ func (c *Core) WorkflowRun(ctx context.Context, params WorkflowRunParams) (*Work
 
 		CompactionClient:        wfCompactionClient,
 		CompactionContextTokens: wfCompactionCtxTokens,
+		// A stage is a child of the workflow: the client sees it start, its
+		// stream, and its end, beside the workflow's own stage events.
+		Events: childEventsFor(params.OnEvent, EventEnvelope{TurnID: NewTurnID()}),
 	})
 
 	// The workflow's own turn: its stages stage there, and params.Apply

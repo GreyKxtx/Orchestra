@@ -19,10 +19,10 @@ func TestInvokeSkill_RefusesANameACustomAgentAlreadyHas(t *testing.T) {
 	cfg := config.DefaultConfig(t.TempDir())
 	cfg.Agents = []config.AgentDefinition{{Name: "reviewer", SystemPrompt: "you review"}}
 
-	r := &Runner{
-		cfg:    cfg,
-		skills: []*skills.Skill{{Name: "reviewer", Description: "a skill by the same name", Body: "do the thing"}},
-	}
+	r := New(Config{
+		Cfg:    cfg,
+		Skills: []*skills.Skill{{Name: "reviewer", Description: "a skill by the same name", Body: "do the thing"}},
+	})
 
 	_, err := r.InvokeSkill(context.Background(), "reviewer", "review it")
 	if err == nil {
@@ -36,10 +36,10 @@ func TestInvokeSkill_RefusesANameACustomAgentAlreadyHas(t *testing.T) {
 // The built-in modes were already reserved on the CLI door only.
 func TestInvokeSkill_RefusesABuiltInModeName(t *testing.T) {
 	cfg := config.DefaultConfig(t.TempDir())
-	r := &Runner{
-		cfg:    cfg,
-		skills: []*skills.Skill{{Name: "worker", Description: "shadows a child-only mode", Body: "do the thing"}},
-	}
+	r := New(Config{
+		Cfg:    cfg,
+		Skills: []*skills.Skill{{Name: "worker", Description: "shadows a child-only mode", Body: "do the thing"}},
+	})
 
 	_, err := r.InvokeSkill(context.Background(), "worker", "work")
 	if err == nil {

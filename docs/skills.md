@@ -88,5 +88,5 @@ Use `--skill <name>` (CLI-driven) when you want to commit a whole run to one ski
 ## Implementation notes
 
 - CLI path (`--skill`) materialises the skill as a `config.AgentDefinition`, appends it to `cfg.Agents` for the run, and resolves it through the same code as `--mode <name>` for inline custom agents.
-- In-process path (`skill_invoke`) uses `agent.SkillRunner` (impl in `internal/cli/skill_runner.go`) to spawn a child agent with the skill's prompt/tools/model/provider, returning the result synchronously. The child runs with `SubtaskRunner=nil` and `SkillRunner=nil` to prevent recursive spawning.
+- In-process path (`skill_invoke`) and the RPC `skill.invoke` both use `agent.SkillRunner` (impl in `internal/skillrun`, one child through `app.RunChild`) to spawn a child agent with the skill's prompt/tools/model/provider, returning the result synchronously. The child runs with `SubtaskRunner=nil` and `SkillRunner=nil` to prevent recursive spawning. It writes into a layer of its own: its edits reach the turn only when it succeeds, and a skill whose child failed leaves nothing behind. The client sees the skill as a child (`child_started` / `child_done` and its stream).
 - Tool-name validation is shared via `config.ValidAgentTool`.

@@ -985,11 +985,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if mode == agent.ModeWorker {
 		hist, res, runErr = r.runWorkerWithVerification(ctx, client, opts, childGoal)
 	} else {
-		ag, err := agent.New(client, r.validator, r.toolRunner, opts)
-		if err != nil {
-			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
-		}
-		hist, res, runErr = ag.Run(ctx, append([]llm.Message(nil), history...), childGoal)
+		hist, res, runErr = r.launchChild(ctx, client, opts, append([]llm.Message(nil), history...), childGoal)
 	}
 	// Notes that arrived after the child's last step would be lost with it;
 	// they go to its inbox for the next agent at this address. A worker's
@@ -1107,25 +1103,40 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
 }
 
-// commitLayer merges the layer of the task behind ctx into its owner's. A
-// conflict — a file another task committed a change to since this one first
-// wrote it — is the task's error, and its layer is dropped. So is a task
-// that was cancelled on the way: its contract went stale, or its spawner
-// ended, and what it did goes with it.
+// launchChild builds and runs one child agent through the one launcher
+// (app.RunChild). The task forked its layer when it was spawned and decides
+// itself when that layer commits, and it announced its start and announces
+// its end with what it knows of the schedule (queued, waiting, cancelled),
+// so the launcher is told to leave both to it.
+func (r *TaskRunner) launchChild(ctx context.Context, client llm.Client, opts agent.Options, history []llm.Message, goal string) ([]llm.Message, *agent.Result, error) {
+	out, err := app.RunChild(ctx, app.ChildRun{
+		Client:          client,
+		Validator:       r.validator,
+		Tools:           r.toolRunner,
+		Options:         opts,
+		Goal:            goal,
+		History:         history,
+		Kind:            string(opts.Mode),
+		TaskID:          llm.TraceFrom(ctx).TaskID,
+		CallerOwnsLayer: true,
+	})
+	if out == nil {
+		return nil, nil, err
+	}
+	return out.History, out.Result, err
+}
+
+// commitLayer merges the layer of the task behind ctx into its owner's
+// (app.CommitLayer): a conflict, or a task cancelled on the way, is the
+// task's error and its layer is dropped. A committed contract artifact
+// moves the epoch.
 func (r *TaskRunner) commitLayer(ctx context.Context) error {
 	layer := fs.OverlayFrom(ctx)
 	if layer == nil {
 		return nil
 	}
-	if cause := context.Cause(ctx); cause != nil {
-		return fmt.Errorf("not committed: %w", cause)
-	}
-	paths, err := layer.Commit()
+	paths, err := app.CommitLayer(ctx, layer)
 	if err != nil {
-		var conflict *fs.MergeConflict
-		if errors.As(err, &conflict) {
-			return fmt.Errorf("merge_conflict: %w", err)
-		}
 		return err
 	}
 	r.afterContractCommit(ctx, layer, paths)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/wire"
@@ -60,6 +61,27 @@ func buildAgentOnEventWithChild(notify func(method string, params any), env Even
 		emitAgentStreamEvent(notify, env, child, ev)
 	}
 	return wrapStreamDebounce(emit)
+}
+
+// childEventsFor is how the children of a call report to its client:
+// their lifecycle stamped with the call's envelope, their stream scoped to
+// the child. Zero when the call has no client to notify.
+func childEventsFor(notify func(method string, params any), env EventEnvelope) app.ChildEvents {
+	if notify == nil {
+		return app.ChildEvents{}
+	}
+	return app.ChildEvents{
+		Notify: func(ev wire.AgentEvent) {
+			notify(wire.NotifyAgentEvent, env.stamp(ev, nil))
+		},
+		Stream: func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent) {
+			return buildAgentOnEventWithChild(notify, env, &ChildScopeMeta{
+				TaskID:           taskID,
+				ParentToolCallID: parentToolCallID,
+				SubagentType:     subagentType,
+			})
+		},
+	}
 }
 
 // emitAgentStreamEvent sends ev as the wire's AgentEvent (or ExecOutputChunk).

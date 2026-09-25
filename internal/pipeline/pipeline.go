@@ -284,7 +284,7 @@ func runInvestigator(
 	opts Options,
 ) (text string, steps int, err error) {
 	goal := buildInvestigatorGoal(query, runtimeEvidence)
-	ag, err := agent.New(llmClient, validator, toolRunner, stageOptions(opts, "investigator", func(o *agent.Options) {
+	out, err := runStage(ctx, llmClient, validator, toolRunner, "investigator", goal, stageOptions(opts, "investigator", func(o *agent.Options) {
 		o.MaxSteps = opts.MaxStepsInvestigator
 		// Read-only + task_result + runtime for trace correlation.
 		o.CustomTools = tools.ListToolsForInvestigator()
@@ -292,11 +292,7 @@ func runInvestigator(
 	if err != nil {
 		return "", 0, err
 	}
-	_, res, runErr := ag.Run(ctx, nil, goal)
-	if runErr != nil {
-		return "", 0, runErr
-	}
-	return res.SubtaskResult, res.Steps, nil
+	return out.Result.SubtaskResult, out.Result.Steps, nil
 }
 
 func runCoder(
@@ -307,7 +303,7 @@ func runCoder(
 	goal string,
 	opts Options,
 ) (res *agent.Result, steps int, err error) {
-	ag, err := agent.New(llmClient, validator, toolRunner, stageOptions(opts, "coder", func(o *agent.Options) {
+	out, err := runStage(ctx, llmClient, validator, toolRunner, "coder", goal, stageOptions(opts, "coder", func(o *agent.Options) {
 		o.MaxSteps = opts.MaxStepsCoder
 		// Full build mode, always dry-run — pipeline applies at the end.
 		o.Apply = false
@@ -316,11 +312,7 @@ func runCoder(
 	if err != nil {
 		return nil, 0, err
 	}
-	_, coderRes, runErr := ag.Run(ctx, nil, goal)
-	if runErr != nil {
-		return nil, 0, runErr
-	}
-	return coderRes, coderRes.Steps, nil
+	return out.Result, out.Result.Steps, nil
 }
 
 func runCritic(
@@ -331,7 +323,7 @@ func runCritic(
 	goal string,
 	opts Options,
 ) (accept bool, text string, steps int, err error) {
-	ag, err := agent.New(llmClient, validator, toolRunner, stageOptions(opts, "critic", func(o *agent.Options) {
+	out, err := runStage(ctx, llmClient, validator, toolRunner, "critic", goal, stageOptions(opts, "critic", func(o *agent.Options) {
 		o.MaxSteps = opts.MaxStepsCritic
 		// Read-only + task_result; no write tools.
 		o.CustomTools = tools.ListToolsForChild()
@@ -339,12 +331,37 @@ func runCritic(
 	if err != nil {
 		return false, "", 0, err
 	}
-	_, res, runErr := ag.Run(ctx, nil, goal)
-	if runErr != nil {
-		return false, "", 0, runErr
+	accepted, verdict := parseVerdict(out.Result.SubtaskResult)
+	return accepted, verdict, out.Result.Steps, nil
+}
+
+// runStage runs one stage as a child of the pipeline (app.RunChild): on a
+// layer of its own, committed into the pipeline's view when the stage
+// succeeds. A stage that ran but returned no result is an error here, so the
+// callers can read the result without a check each.
+func runStage(
+	ctx context.Context,
+	llmClient llm.Client,
+	validator *schema.Validator,
+	toolRunner *tools.Runner,
+	stage, goal string,
+	opts agent.Options,
+) (*app.ChildOutcome, error) {
+	out, err := app.RunChild(ctx, app.ChildRun{
+		Client:    llmClient,
+		Validator: validator,
+		Tools:     toolRunner,
+		Options:   opts,
+		Goal:      goal,
+		Kind:      "stage:" + stage,
+	})
+	if err != nil {
+		return nil, err
 	}
-	accepted, verdict := parseVerdict(res.SubtaskResult)
-	return accepted, verdict, res.Steps, nil
+	if out.Result == nil {
+		return nil, fmt.Errorf("stage %s returned no result", stage)
+	}
+	return out, nil
 }
 
 // --- goal builders ---
