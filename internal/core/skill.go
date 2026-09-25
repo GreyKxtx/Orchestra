@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -147,45 +147,29 @@ func (c *Core) SkillInvoke(ctx context.Context, params SkillInvokeParams) (*Skil
 	}
 
 	childClient := c.llmClient
-	if s.Provider != "" && c.cfg != nil {
-		provCfg, ok := c.cfg.FindProvider(s.Provider)
-		if !ok {
-			return nil, fmt.Errorf("skill %q: provider %q not found", params.Name, s.Provider)
+	if (s.Provider != "" || s.Model != "") && c.cfg != nil && !c.llmClientInjected {
+		client, _, err := app.ClientFor(c.cfg, s.Provider, s.Model, nil)
+		if err != nil {
+			return nil, fmt.Errorf("skill %q: %w", params.Name, err)
 		}
-		if s.Model != "" {
-			provCfg.Model = s.Model
-		}
-		childClient = llm.NewClient(provCfg)
-	} else if s.Model != "" && c.cfg != nil {
-		overrideCfg := c.cfg.LLM
-		overrideCfg.Model = s.Model
-		childClient = llm.NewClient(overrideCfg)
+		childClient = client
 	}
 
-	maxSteps := 24
-	if c.cfg != nil && c.cfg.Agent.MaxSteps > 0 {
-		maxSteps = c.cfg.Agent.MaxSteps
-	}
-	// llm.timeout_s bounds each model step, as on every other run path; left
-	// unset, the agent's 25-second default applied and its timeout message
-	// told the user to raise a setting this path did not read.
-	var stepTimeout time.Duration
-	if c.cfg != nil {
-		stepTimeout = time.Duration(c.cfg.LLM.TimeoutS) * time.Second
-	}
-
-	agOpts := agent.Options{
-		MaxSteps:             maxSteps,
-		LLMStepTimeout:       stepTimeout,
-		AllowExec:            allowExec,
-		AllowWeb:             params.AllowWeb,
-		AllowBrowser:         params.AllowBrowser,
-		CustomTools:          childTools,
-		SystemPromptOverride: systemPrompt,
-		IsChild:              true,
-		PermissionRequester:  convertPermissionRequester(params.PermissionRequester),
-	}
-	agent.ApplyHistoryConfig(&agOpts, c.cfg)
+	// The project's budgets, breakers, step timeout (llm.timeout_s bounds each
+	// model step, as on every other run path) and permission rules.
+	settings := app.SettingsFrom(c.cfg)
+	agOpts := app.ChildOptions(&settings, func(o *agent.Options) {
+		if o.MaxSteps <= 0 {
+			o.MaxSteps = 24
+		}
+		o.AllowExec = allowExec
+		o.AllowWeb = params.AllowWeb
+		o.AllowBrowser = params.AllowBrowser
+		o.CustomTools = childTools
+		o.SystemPromptOverride = systemPrompt
+		o.PermissionRequester = convertPermissionRequester(params.PermissionRequester)
+		agent.ApplyHistoryConfig(o, c.cfg)
+	})
 	ag, err := agent.New(childClient, c.validator, c.tools, agOpts)
 	if err != nil {
 		return nil, fmt.Errorf("skill %q: %w", params.Name, err)

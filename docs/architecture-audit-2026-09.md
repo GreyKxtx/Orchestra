@@ -135,11 +135,21 @@
 | ARCH-3 (режимы) | `internal/roles`: одна запись `roles.Spec` на режим. Из неё берут данные config (зарезервированные имена, spawnable, рёбра по умолчанию), `ListToolsForMode` (сверено побайтно со старыми билдерами по всем режимам и флагам), политика записи агента, `final.patches`, tasks (режим ребёнка, карточки, lead-роли, tier), enum `subagent_type`, фазовый гейт и промпты. Исправлен дефект: ask и verifier запускали `skill_invoke`, потому что их проверка стояла после in-process диспетчера | `9e31d7c` |
 | ARCH-2, SEC-4 (второй путь) | `toolGates` — одна цепочка для последовательного и параллельного путей. `refuseCall` вместо 18 копий блока отказа, таблица `inProcessTools` вместо цепочки `if name ==`. `batchNeedsSerialGates` удалён. Исправлен дефект: параллельный батч без этой маршрутизации выполнял инструмент, которого у режима нет, и `webfetch` без согласия | `f674205` |
 
-**Осталось по плану (фазы 3–8):**
+**Фаза 3 выполнена 2026-09-25**, та же ветка. Оба критерия приёмки закрыты тестами:
+- `TestAgentOptionsAreBuiltOnlyInApp`: литерал `agent.Options{` есть только в `internal/app` (было 11 мест);
+- паритет CLI и core обеспечен устройством: у CLI больше нет своей сборки агента, прямой режим `apply` вызывает `Core.AgentRun`. `TestRunApply_DirectRunsThroughTheCore` гоняет `apply` на mock-модели и проверяет, что `exec.allow` доходит до агента; на старом пути тест не проходит. LLM-верификатор воркеров и `PermissionRequester` CLI получает из той же сборки, что и core.
+
+| Находки | Что сделано | Коммит |
+|---|---|---|
+| ARCH-1 (CLI ↔ core) | Прямой режим `orchestra apply` запускает `core.Core` в своём процессе: `Options.Config` и `ExecInDryRun`, а также in-process поля `AllowWeb`, `OnAgentEvent`, `UserImages` и `BindInteractive`. Из CLI ушло около 390 строк своей сборки агента. CLI терял `exec.allow`/`exec.deny`, LLM-верификатор и `BytesPerContextToken`; теперь их даёт общая сборка. Инструменты custom-агента берутся с согласием хода | `e2870bc` |
+| ARCH-1, ARCH-10, ARCH-8 (клиенты) | `internal/app`: `Settings`, `TurnOptions`, `ChildOptions`, `ClientFor`. Все дети (задачи, верификатор, навыки, стадии workflow и pipeline) собираются одной функцией. Опции хода в core побайтно совпадают со старыми. Исправлены дефекты: стадии pipeline не были детьми и теряли `task_result`, из-за чего цикл Investigator → Critic не работал; правила `permissions` не действовали на подагентов; дети навыков шли без бюджета и с 25-секундным таймаутом шага; переопределение модели навыка или custom-агента теряло fallback и router | `de18880` |
+
+**Осталось по плану (фазы 4–8):**
 - ORC-1 (изоляция правок воркеров) и ORC-4…ORC-7, ORC-9, ORC-12;
 - SEC-8 (spotlighting результатов инструментов);
 - LLM-6 и LLM-7 (thinking и мультимодальность Anthropic), LLM-8…LLM-14, LLM-16;
-- DATA-3, DATA-5…DATA-11, ARCH-1, ARCH-4…ARCH-8, ARCH-10…ARCH-12 (кроме gofmt);
+- DATA-3, DATA-5…DATA-11, ARCH-4…ARCH-7, ARCH-11, ARCH-12 (кроме gofmt);
+- `pipeline` как пресет workflow (пока оставлен: у него стабильный флаг `--pipeline`);
 - UI доверия в клиентах.
 
 ---

@@ -5,14 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/internal/mcp"
 	"github.com/orchestra/orchestra/internal/permission"
-	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/llm"
 )
 
 // terminalConsent is the permission.Requester for `orchestra apply` on a
@@ -40,19 +35,4 @@ func (c *terminalConsent) RequestPermission(_ context.Context, req permission.Re
 		return permission.Response{Approved: true, Always: true}, nil
 	}
 	return permission.Response{}, nil
-}
-
-// applyMCPHooks wires an apply run's MCP servers to the terminal. Without a
-// TTY there is nobody to ask, so consent and questions are nil and the
-// core's hooks fail closed: sampling refused, elicitation declined. That is
-// the intended non-interactive behaviour, not a gap — a config flag alone is
-// permission to ask, never permission to proceed.
-func applyMCPHooks(client llm.Client, model string) mcp.Hooks {
-	var consent permission.Requester
-	var ask tools.QuestionAsker
-	if isTTY() {
-		consent = &terminalConsent{in: os.Stdin, out: os.Stderr}
-		ask = &tools.StdinQuestionAsker{}
-	}
-	return core.NewMCPHooks(func() (llm.Client, string) { return client, model }, consent, ask)
 }

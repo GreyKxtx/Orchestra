@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/skills"
@@ -195,12 +196,10 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	usageTracker := newUsageTracker("workflow:"+w.Name, cfg)
 
 	logger := llm.NewLogger(cfg.ProjectRoot)
-	llmClient := llm.NewClient(cfg.LLM)
-	if oc, ok := llm.AsOpenAIClient(llmClient); ok {
-		oc.SetLogger(logger)
+	llmClient, _, err := app.ClientFor(cfg, "", "", logger)
+	if err != nil {
+		return err
 	}
-	llmClient = llm.MaybeWrapFallback(llmClient, cfg.LLMRegistry(), cfg.LLM, logger)
-	llmClient = llm.MaybeWrapRouter(llmClient, cfg.LLMRegistry(), cfg.LLM.Router)
 
 	validator, err := schema.NewValidator()
 	if err != nil {

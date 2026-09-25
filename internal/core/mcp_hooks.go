@@ -86,6 +86,17 @@ func (h *mcpHost) bind(consent permission.Requester, ask tools.QuestionAsker) {
 	h.asker = ask
 }
 
+// BindInteractive gives the MCP servers of a core run in-process someone to
+// ask: consent for sampling, answers for elicitation. The RPC handler binds
+// its client's channel; `orchestra apply` binds the terminal. Unbound, the
+// hooks fail closed.
+func (c *Core) BindInteractive(consent permission.Requester, ask tools.QuestionAsker) {
+	if c == nil || c.mcpHost == nil {
+		return
+	}
+	c.mcpHost.bind(consent, ask)
+}
+
 // hooks is what mcp.NewManager takes.
 func (h *mcpHost) hooks() mcp.Hooks {
 	return mcp.Hooks{Consent: h.consent, Sample: h.sample, Elicit: h.elicit}

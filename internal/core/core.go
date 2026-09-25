@@ -87,6 +87,16 @@ type Options struct {
 	// needs none of these, and requiring them would mean it can't start at
 	// all without a working, reachable LLM endpoint configured.
 	ToolsOnly bool
+	// Config, when set, is the project config to run with instead of loading
+	// .orchestra.yml. `orchestra apply` runs the core in its own process and
+	// has already loaded the config and applied its flags (--provider,
+	// --skill) to it.
+	Config *config.ProjectConfig
+	// ExecInDryRun lets bash run in a turn whose edits are staged. A remote
+	// client's preview turn promises no side effects and keeps it off; at the
+	// terminal, --allow-exec is consent for this run's commands, previews
+	// included — `orchestra apply --allow-exec` runs the tests it is asked to.
+	ExecInDryRun bool
 }
 
 func New(workspaceRoot string, opts Options) (*Core, error) {
@@ -99,17 +109,21 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		return nil, fmt.Errorf("abs workspaceRoot: %w", err)
 	}
 
-	// Load project config from workspace root.
+	// Load project config from workspace root, unless the caller already has.
 	cfgPath := filepath.Join(rootAbs, ".orchestra.yml")
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-	// stderr only: stdout carries the JSON-RPC framing.
-	cfg.FprintWarnings(os.Stderr)
-	if st := cfg.Trust(); len(st.Ignored) > 0 {
-		fmt.Fprintf(os.Stderr, "orchestra: this workspace is not trusted — ignoring %s. "+
-			"Trust it with `orchestra trust` or the workspace.trust method.\n", strings.Join(st.Ignored, ", "))
+	cfg := opts.Config
+	if cfg == nil {
+		loaded, err := config.Load(cfgPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = loaded
+		// stderr only: stdout carries the JSON-RPC framing.
+		cfg.FprintWarnings(os.Stderr)
+		if st := cfg.Trust(); len(st.Ignored) > 0 {
+			fmt.Fprintf(os.Stderr, "orchestra: this workspace is not trusted — ignoring %s. "+
+				"Trust it with `orchestra trust` or the workspace.trust method.\n", strings.Join(st.Ignored, ", "))
+		}
 	}
 
 	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
@@ -140,9 +154,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		AllowBrowser: true,
 		// JSON-RPC core makes a hard "no side effects in dry-run" promise to
 		// remote clients (TUI / IDE / web). Block bash bypassing the staging
-		// overlay. CLI's plan-mode uses its own Runner without this flag so
-		// bash inspection (git status, go test) keeps working in plan mode.
-		BlockExecInDryRun: true,
+		// overlay. `orchestra apply` sets ExecInDryRun so bash inspection
+		// (git status, go test) keeps working in a preview at the terminal.
+		BlockExecInDryRun: !opts.ExecInDryRun,
 	})
 	if err != nil {
 		return nil, err
