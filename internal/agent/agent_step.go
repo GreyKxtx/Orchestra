@@ -101,7 +101,9 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			Content: userPrompt,
 		})
 	}
-	messages = append(messages, history...)
+	// Repairs histories saved before hints were deferred past a batch's
+	// replies (see deferNonToolMessages); a no-op on a well-formed history.
+	messages = append(messages, orderToolReplies(history)...)
 
 	// Debug: log history length before truncation
 	if a.opts.Debug {
@@ -242,6 +244,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 				a.logf("usage: provider %q returned nil Usage; this run undercounts tokens for one step", a.opts.ProviderLabel)
 			}
 		}
+		ensureToolCallIDs(resp, stepNum)
 		step, raw, nerr := NormalizeLLMWithDefs(a.validator, resp, toolDefs)
 		lastRaw = raw
 
@@ -530,4 +533,25 @@ func isBenignCancelErr(ctx context.Context, err error) bool {
 		return true
 	}
 	return ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled)
+}
+
+// ensureToolCallIDs names every tool call a provider left without an id. The
+// id pairs the assistant's call with its reply: minted on the reply alone, the
+// two never matched and every reply of the turn was an orphan. It is set once
+// here, on the response, so the assistant message, the parsed step and the
+// reply all carry the same value.
+func ensureToolCallIDs(resp *llm.CompleteResponse, stepNum int) {
+	if resp == nil {
+		return
+	}
+	var stamp int64
+	for i := range resp.Message.ToolCalls {
+		if strings.TrimSpace(resp.Message.ToolCalls[i].ID) != "" {
+			continue
+		}
+		if stamp == 0 {
+			stamp = time.Now().UnixNano()
+		}
+		resp.Message.ToolCalls[i].ID = fmt.Sprintf("call_%d_%d_%d", stepNum, stamp, i)
+	}
 }

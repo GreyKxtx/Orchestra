@@ -356,15 +356,23 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 				a.logf("agent.tool_call WARNING: no tool_calls in response, history_len=%d", len(history))
 			}
 
+			// Hints a call appends (LSP errors, "staged ready", repeat
+			// warnings, screenshots) wait until every call of the batch has
+			// its reply: a user message between two replies splits the batch
+			// and the provider rejects the second reply as an orphan.
+			var deferred []llm.Message
 			for _, tc := range calls {
+				mark := len(history)
 				outcome, err := a.runSerialToolCall(ctx, cb, &history, tc, steps, emitStepDone)
+				history, deferred = deferNonToolMessages(history, mark, deferred)
 				if err != nil {
-					return a.stopOnBreaker(history, steps, err)
+					return a.stopOnBreaker(append(history, deferred...), steps, err)
 				}
 				if outcome.EarlyResult != nil {
-					return history, outcome.EarlyResult, nil
+					return append(history, deferred...), outcome.EarlyResult, nil
 				}
 			}
+			history = append(history, deferred...)
 			emitStepDone("tool_call")
 			notifyStepHistory(history)
 			a.maybePersistMicroDigest(steps)
@@ -431,4 +439,22 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		MaxStepsExceeded: true,
 		StopReason:       "max_steps",
 	}, nil
+}
+
+// deferNonToolMessages moves the messages a serial tool call appended after
+// history[mark:] that are not tool replies into deferred, keeping the replies
+// in place and in order.
+func deferNonToolMessages(history []llm.Message, mark int, deferred []llm.Message) ([]llm.Message, []llm.Message) {
+	if mark >= len(history) {
+		return history, deferred
+	}
+	kept := history[:mark]
+	for _, m := range history[mark:] {
+		if m.Role == llm.RoleTool {
+			kept = append(kept, m)
+			continue
+		}
+		deferred = append(deferred, m)
+	}
+	return kept, deferred
 }

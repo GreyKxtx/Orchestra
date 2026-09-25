@@ -15,6 +15,10 @@ func truncateMessages(messages []llm.Message, maxBytes int) []llm.Message {
 	return history.TruncateMessages(messages, maxBytes)
 }
 
+func orderToolReplies(messages []llm.Message) []llm.Message {
+	return history.OrderToolReplies(messages)
+}
+
 func estimateMessageSize(msg llm.Message) int {
 	return history.EstimateMessageSize(msg)
 }

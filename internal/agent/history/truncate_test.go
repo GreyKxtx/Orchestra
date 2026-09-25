@@ -223,3 +223,53 @@ func TestTruncateMessages_NoMarkerWhenNothingDropped(t *testing.T) {
 		}
 	}
 }
+
+// A hint appended between two replies of one batch is moved after them, and
+// the truncator then keeps both replies instead of orphaning the second.
+func TestOrderToolReplies_MovesHintsAfterTheBatch(t *testing.T) {
+	call := func(id string) llm.ToolCall {
+		return llm.ToolCall{ID: id, Type: "function", Function: llm.ToolCallFunc{Name: "edit"}}
+	}
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "q"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{call("c1"), call("c2")}},
+		{Role: llm.RoleTool, ToolCallID: "c1", Content: "ok1"},
+		{Role: llm.RoleUser, Content: "LSP_ERRORS a.go"},
+		{Role: llm.RoleTool, ToolCallID: "c2", Content: "ok2"},
+		{Role: llm.RoleUser, Content: "after"},
+	}
+	got := OrderToolReplies(msgs)
+	want := []string{"q", "", "ok1", "ok2", "LSP_ERRORS a.go", "after"}
+	for i, w := range want {
+		if got[i].Content != w {
+			t.Fatalf("message %d = %q, want %q (%+v)", i, got[i].Content, w, got)
+		}
+	}
+	if msgs[3].Content != "LSP_ERRORS a.go" {
+		t.Fatal("the input slice must not be modified")
+	}
+
+	full := append([]llm.Message{{Role: llm.RoleSystem, Content: "sys"}}, msgs...)
+	var replies int
+	for _, m := range TruncateMessages(full, 1<<20) {
+		if m.Role == llm.RoleTool {
+			replies++
+		}
+	}
+	if replies != 2 {
+		t.Fatalf("both replies must survive truncation, got %d", replies)
+	}
+}
+
+func TestOrderToolReplies_WellFormedIsUntouched(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "a", Type: "function"}}},
+		{Role: llm.RoleTool, ToolCallID: "a", Content: "r"},
+		{Role: llm.RoleUser, Content: "hint"},
+		{Role: llm.RoleAssistant, Content: "done"},
+	}
+	got := OrderToolReplies(msgs)
+	if &got[0] != &msgs[0] {
+		t.Fatal("a well-formed history is returned as is, without a copy")
+	}
+}
