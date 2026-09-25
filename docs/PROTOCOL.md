@@ -4,17 +4,21 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `23`
+- **`protocol.ProtocolVersion`**: `24` — core говорит на диапазоне `MinProtocolVersion..ProtocolVersion` = `23..24`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `17`
+- **`protocol.ToolsVersion`**: `18`
 
-Совместимость проверяется в `initialize`:
+Совместимость проверяется в `initialize` (с v24 — по диапазону):
 
-- `protocol_version` **обязан** совпасть.
-- `ops_version` / `tools_version` — опциональны, но если переданы, то **должны** совпасть.
+- `protocol_version` — самая новая версия, которую говорит клиент; `min_protocol_version` (опционально, v24+) — самая старая. Core отвечает самой новой версией, которая есть у обеих сторон; если общих нет — `ProtocolMismatch` с `data.{client_min, client_max, core_min, core_max}`. Окно поддержки core — одна версия: `MinProtocolVersion` двигается вместе с `ProtocolVersion`. Клиент без `min_protocol_version` (до v24) говорит ровно одну версию, и core принимает её, если она в диапазоне.
+- `ops_version` — опционален, но если передан, то **должен** совпасть: internal ops — то, что попадает на диск.
+- `tools_version` — информационный (v24+): core записывает его и отвечает своим; клиенту, которому нужен конкретный инструмент, достаточно ответа. До v24 требовалось совпадение, и расширение, отставшее от core на один коммит с правкой инструментов, не подключалось вовсе.
+
+**Контракт — один.** Имена методов, уведомлений и запросов, все `*Params` / `*Result` и форма событий определены в Go-пакете `protocol/wire`; core отвечает и уведомляет его типами, TUI и CLI импортируют его. Из его исходников генерируются `ui/vscode/src/protocol/wire.generated.ts` (TypeScript для расширения), `ui/web/src/01-wire.generated.js` (версии и имена для веба) и `protocol/wire/wire.schema.json` (JSON Schema с сигнатурами методов): `go generate ./protocol/wire/...`; тест `protocol/wire/gen_test.go` падает, пока сгенерированные файлы устарели. Типы, несущие `ops.AnyOp` / `patches.Patch` (модуль `patch` стоит выше `protocol`), конфиг, снапшот сессии или граф кода — `agent.run`, `session.message`, `session.get`, `ops.apply`, результаты `agents.*` / `index.*` — остаются в `internal/core` и описаны в этом документе.
 
 ### История ProtocolVersion
 
+- **v24** (2026-09-25): рукопожатие по диапазону версий. `initialize` принимает `min_protocol_version` и отвечает согласованной `protocol_version`, своей `tools_version` и `capabilities` (`{methods[], notifications[], requests[]}` — что именно обслуживает этот core, чтобы клиент спрашивал про нужную возможность по имени, а не сравнивал числа); `tools_version` — информационная; `core.health` несёт `min_protocol_version`. Контракт целиком — пакет `protocol/wire` и сгенерированные из него TS / JS / JSON Schema (см. «Версии»). `agent/event` и `exec/output_chunk` — `wire.AgentEvent` и `wire.ExecOutputChunk`: те же поля и значения, что и раньше; `step`, `type`, `content` и `tool_call_index` есть всегда, остальные поля приходят только с непустым значением.
 - **v23** (2026-09-25): `agent.run` принимает `resume` — `run_id` хода или `"last"` — и продолжает ход, который его core не довёл до конца (крах, `kill -9`), с его checkpoint'а (`.orchestra/runs/<run_id>.checkpoint.json`). Ответ `agent.run` содержит `run_id`. Подробности — в описании `agent.run` ниже.
 - **v22** (2026-09-25): доверие к рабочей области. Новые методы `workspace.trust_status` и `workspace.trust` (`{revoke?: bool}`) — см. ниже. Настройки проекта, которые действуют на машину (MCP-серверы из `.orchestra.yml` и `.mcp.json`, `hooks`, `lsp.servers`, `exec.confirm` / `exec.allow` / `exec.env_passthrough`, `web.confirm`, правила `permissions` с `action: allow`, блоки `auth`, а также endpoint проекта, куда ушёл бы ключ пользователя — `${VAR}` или ключ из `~/.orchestra/config.yml`), вступают в силу только в доверенной рабочей области; до этого core их не применяет и пишет в stderr, что проигнорировано. `session.start` отклоняет `session_id`, который не является простым именем (буквы, цифры, `.`, `_`, `-`), с `InvalidParams`.
 - **v21** (2026-09-20): `agent.run` и `session.message` принимают `browser_panel` — `browser.*` хода действуют на браузерную панель, которую открыл сам клиент, через server-initiated запрос `browser/call`, а не на браузер, запущенный core. Клиент, который не отвечает на этот запрос, не должен передавать флаг.
@@ -269,8 +273,10 @@ Top-level JSON массив (**batch**) **не поддерживается**.
 
 `initialize` идемпотентен:
 
-- тот же набор параметров — OK
+- тот же набор параметров — OK (`tools_version` не сравнивается: она информационная)
 - несовпадение параметров — hard fail (состояние уже инициализированного core не ломается)
+
+Версия протокола (v24+) согласуется так: клиент называет диапазон `min_protocol_version..protocol_version`, core — свой `MinProtocolVersion..ProtocolVersion`; обе стороны говорят на самой новой версии, которая есть у обеих. Клиент, который умеет несколько версий, может выбрать нужную ещё до `initialize`: `core.health` отвечает `protocol_version` и `min_protocol_version` core. Core до v24 сравнивал число точно и называл своё в отказе — клиент v24+ (TUI, расширение, веб) просит у такого core ровно его версию, если сам её говорит.
 
 ## Методы
 
@@ -314,9 +320,10 @@ Response `result`:
 {
   "status": "ok",
   "core_version": "vnext",
-  "protocol_version": 9,
+  "protocol_version": 24,
+  "min_protocol_version": 23,
   "ops_version": 1,
-  "tools_version": 15,
+  "tools_version": 18,
   "workspace_root": "...",
   "project_id": "sha256:...",
   "model": "qwen2.5-coder-7b",
@@ -551,19 +558,32 @@ Vector-index CKG nodes using configured `embed.model`. Params: `rebuild` (clear 
 
 ### `initialize`
 
-`params`:
+`params` (`wire.InitializeParams`):
 
 - `project_root` (string)
 - `project_id` (string)
-- `protocol_version` (int)
-- `ops_version` (int, optional)
-- `tools_version` (int, optional)
+- `protocol_version` (int) — самая новая версия, которую говорит клиент
+- `min_protocol_version` (int, optional; v24+) — самая старая; без неё клиент говорит ровно `protocol_version`
+- `ops_version` (int, optional) — должна совпасть с core
+- `tools_version` (int, optional) — информационная
 
-Response `result`:
+Response `result` (`wire.InitializeResult`):
 
 ```json
-{"status":"ok","health":{...}}
+{
+  "status": "ok",
+  "protocol_version": 24,
+  "tools_version": 18,
+  "capabilities": {
+    "methods": ["$/cancelRequest", "agent.run", "agents.delete", "..."],
+    "notifications": ["agent/event", "exec/output_chunk", "workflow/stage_done", "workflow/stage_start"],
+    "requests": ["browser/call", "permission/request", "question/ask"]
+  },
+  "health": {"...": "как core.health"}
+}
 ```
+
+`protocol_version` — версия, на которой говорят обе стороны (v24+); `capabilities` — методы, которые этот core отвечает, уведомления, которые шлёт, и запросы, которые задаёт клиенту (`wire.Methods()`, `wire.Notifications()`, `wire.Requests()`; тест `internal/core/wire_contract_test.go` не даёт списку разойтись с обработчиком). Ошибки: `ProtocolMismatch` с `data.{client, core, client_min, client_max, core_min, core_max}`, когда у диапазонов нет общей версии или не совпала `ops_version`; `project_root` / `project_id` проверяются как раньше.
 
 ### `agent.run`
 
@@ -1129,23 +1149,29 @@ JSON-RPC notifications to the client (no `id` field, one-way).
 
 ### `agent/event`
 
-Generic envelope:
+The params are `wire.AgentEvent` (protocol/wire/events.go; `AgentEvent` in the generated TypeScript). `step`, `type`, `content` and `tool_call_index` are always present; every other field only when it has a value.
 
 | Field | Type | Description |
 |---|---|---|
 | `step` | int | Current agent loop step number |
-| `type` | string | One of the kinds below |
+| `type` | string | One of the kinds below (`wire.EventTypes()`) |
 | `content` | string | Type-specific payload (string), used for most kinds |
-| `data` | object | Type-specific structured payload, only for `pending_ops`, `step_usage`, `context_estimate` |
+| `data` | object | Type-specific structured payload: `wire.PendingOps` for `pending_ops`, `wire.Usage` for `step_usage` / `context_estimate`, `wire.ModeRoute` for `mode_route` |
+| `error` | string | The message of an `error` event, or a failed child's error on `child_done` |
 | `session_id` | string | Present for `session.message` turns; omitted for one-shot `agent.run` |
 | `turn_id` | string | Sortable id for this `agent.run` or `session.message` invocation |
-| `tool_call_id`, `tool_call_name`, `tool_call_index`, `args_delta` | optional | Set for tool-call-related kinds |
+| `tool_call_id`, `tool_call_name`, `tool_call_index`, `args_delta`, `diagnostics` | optional | Set for tool-call-related kinds; `diagnostics` is `[]wire.ToolDiagnostic` after an edit |
+| `scope`, `task_id`, `parent_tool_call_id`, `parent_task_id`, `subagent_type`, `tier`, `model`, `status`, `depth`, `agent`, `parent_agent`, `waiting_for`, `reason`, `lesson_promote_suggestion`, `playbook_promote_suggestion` | optional | Child scope (v12+, `scope: "child"` on every event a subagent emits) and the `child_*` lifecycle |
+| `channel`, `from`, `to`, `kind` | optional | `agent_message` |
+| `task_ids`, `rejected` | optional | `workorders_relayed` |
+| `workers`, `files`, `summary` | optional | `integration_verify` |
 
 ### Event types
 
 | `type` | Emitted when | Notable fields |
 |---|---|---|
 | `message_delta` | LLM streamed a token of assistant text | `content` |
+| `reasoning_delta` | LLM streamed a token of its visible reasoning | `content` |
 | `tool_call_start` | LLM declared intent to call a tool | `tool_call_name`, `tool_call_id` |
 | `tool_call_delta` | More argument bytes for in-progress call | `args_delta` |
 | `tool_call_completed` | Agent loop finished `tools.Call` | `tool_call_name`, `tool_call_id`, `content` (truncated preview, 256 bytes) |
@@ -1155,11 +1181,14 @@ Generic envelope:
 | `context_estimate` | Agent refreshed its byte-derived guess at the current prompt size (every step; not a provider measurement) | `data` = `{prompt_tokens, source: "estimate", breakdown: [...]}` — must never be summed with, or substituted for, `step_usage` |
 | `recoverable_error` | StaleContent / AmbiguousMatch / schema invalid; loop will retry | `content` (short message) |
 | `done` | LLM stream ended | (full assembled response in agent state) |
-| `error` | LLM-stream-level error (different from `recoverable_error`) | `content` |
+| `error` | LLM-stream-level error (different from `recoverable_error`) | `content`, `error` |
+| `todos_updated` | The model rewrote its checklist (`todowrite`) | `content` = JSON `[]wire.TodoItem` |
+| `mode_route` | A `mode: "agent"` turn was routed to its effective mode | `data` = `{from, to, reason, confidence}` |
+| `child_started`, `child_queued`, `child_done`, `agent_message`, `workorders_relayed`, `integration_verify` | The task runtime: see `agent.run` above | child scope fields |
 
 ### `exec/output_chunk`
 
-Streamed during `bash` (alias for `exec.run`) tool execution.
+Streamed during `bash` (alias for `exec.run`) tool execution. The params are `wire.ExecOutputChunk`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -1167,6 +1196,7 @@ Streamed during `bash` (alias for `exec.run`) tool execution.
 | `chunk` | string | Raw stdout/stderr chunk |
 | `session_id` | string | Present for `session.message` turns; omitted for one-shot `agent.run` |
 | `turn_id` | string | Sortable id for this turn |
+| `scope`, `task_id`, `parent_tool_call_id`, `subagent_type` | optional | Child scope, as on `agent/event`, when a subagent's command is running |
 
 ### `workflow/stage_start` (v4+)
 

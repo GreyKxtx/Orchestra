@@ -182,11 +182,22 @@
 
 Отступления от плана фазы: middleware — не отдельный пакет `llm/middleware`, а общие помощники и декораторы в `llm` (`retry.go`, `stack.go`, `fallback.go`, `router.go`). Ретрай живёт в клиентах: цикл OpenAI-совместимого клиента несёт восстановления своего диалекта (json_schema, маркеры prompt-cache, исправленный сервером `max_tokens`), которых обёртка не видит.
 
-**Осталось по плану (остатки фаз 4–5; фазы 6–8 не начаты):**
+**Фаза 6 выполнена 2026-09-25**, та же ветка. ARCH-4 закрыт: контракт определён один раз, рукопожатие — по диапазону версий, клиенты получают контракт кодогенерацией. Каждое изменение закрыто тестом и проверено мутацией (окно версий, дрейф списка методов, устаревшие сгенерированные файлы).
+
+| Что | Что сделано | Коммит |
+|---|---|---|
+| `protocol/wire`, рукопожатие | Пакет `protocol/wire`: имена всех методов, уведомлений и запросов, `InitializeParams` / `InitializeResult`, `Capabilities`, типизированный `AgentEvent` и `ExecOutputChunk` с полезными нагрузками (`PendingOps`, `Usage`, `ModeRoute`, `ToolDiagnostic`, …). `initialize` (ProtocolVersion 24) принимает `min_protocol_version`, отвечает согласованной версией, своей `tools_version` и `capabilities`; `tools_version` — информационная; окно поддержки — одна версия (`MinProtocolVersion`), `core.health` его показывает. Core везде шлёт `wire.AgentEvent` (стрим, `mode_route`, жизненный цикл детей, сообщения агентства). TUI декодирует события через тот же тип, шлёт диапазон и просит у core до v24 ровно его версию; расширение VS Code выбирает версию по `core.health`; CLI `--via-core` шлёт диапазон. Тест читает `RPCHandler.Handle` и не даёт списку методов разойтись с обработчиком | `6c9d31d` |
+| Перенос типов | 78 из 103 `*Params` / `*Result` (все, чьи поля — обычный JSON) и 12 view-типов, до которых они дотягиваются, перенесены в `protocol/wire`; в `internal/core` — алиасы, имена не изменились. `UsageSnapshot`, `MemoryNoteStatus`, `RuleSuggestionPayload` — `wire.Usage` / `MemoryNote` / `RuleSuggestion`. Дубликаты TUI (session, workflow, skill, MCP prompt) — алиасы к тем же типам | `e823fd1` |
+| Кодогенерация | `protocol/wire/internal/wiregen` читает исходники пакета через `go/parser` и пишет `ui/vscode/src/protocol/wire.generated.ts` (интерфейсы, версии, списки имён, `MethodSignatures`), `ui/web/src/01-wire.generated.js` (фрагмент бандла с версиями и именами) и `protocol/wire/wire.schema.json` (JSON Schema 2020-12 с сигнатурами). `go generate ./protocol/wire/...`; `gen_test.go` падает, пока файлы устарели. Расширение берёт версии и типы событий из сгенерированного файла; веб шлёт свой диапазон вместо эха `core.health` | `7a84f9d` |
+
+Отступления от плана фазы: 25 типов остаются в `internal/core` — они несут `ops.AnyOp` / `patches.Patch` (модуль `patch` стоит выше `protocol`), конфиг, снапшот сессии или граф кода (`agent.run`, `session.message`, `session.get`, `ops.apply`, результаты `agents.*` / `index.*`); в сгенерированном TS их сигнатуры — `unknown`, форма описана в `PROTOCOL.md`. Расширение VS Code оставляет свои нормализованные типы там, где они шире wire (`PendingOpsPayload`, `PermissionRequestPayload`, `QuestionItemPayload`, usage с `color` в breakdown); `AgentEventParams` — `Partial<AgentEvent>`.
+
+**Осталось по плану (остатки фаз 4–6; фазы 7–8 не начаты):**
 - 4.2: `TaskRunner` как адаптер над `Graph`, `StallDetector`; 4.5: типизированная шина артефактов; 4.6: OTel-экспорт и resume для `session.message` (сессия сохраняет историю после шагов, но не граф задач и staging);
 - ORC-8 (воркер с goal в прозе без проверок scope; `bash` мимо слоёв), ORC-12 (остаток: `acceptance_checks` и `tsc` в dry-run);
 - LLM-11 (остаток: `bash` и CKG видят диск, а не staging), LLM-13 (остаток: см. выше), кеш как отдельный слой (фаза 5);
-- DATA-3, DATA-5…DATA-11, ARCH-4…ARCH-7, ARCH-11, ARCH-12 (кроме gofmt);
+- 6: типы с `ops.AnyOp` / `patches.Patch` / config / session / CKG в `internal/core` (см. выше); TUI по-прежнему объявляет `SessionGetResult` (несёт `sessionfile.UIMessage`);
+- DATA-3, DATA-5…DATA-11, ARCH-5…ARCH-7, ARCH-11, ARCH-12 (кроме gofmt);
 - `pipeline` как пресет workflow (пока оставлен: у него стабильный флаг `--pipeline`);
 - UI доверия в клиентах.
 
