@@ -5,10 +5,24 @@
 
 use orchestra_desktop::sidecar::{spawn_and_announce, start};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 static FAKE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serialises the tests that touch the process environment. A test that
+/// panics while holding the lock poisons it; the next test takes it anyway,
+/// so one failure stays one failure instead of failing the whole file with
+/// `PoisonError`.
+fn serial() -> MutexGuard<'static, ()> {
+    FAKE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// How long a fake sidecar gets to start and speak. It is a freshly spawned
+/// copy of this binary; on a loaded CI runner that alone took longer than
+/// the 800 ms the timeout test used to allow, and the test failed with an
+/// empty stderr tail although the sidecar had not misbehaved.
+const FAKE_STARTUP: Duration = Duration::from_secs(5);
 
 fn fake(mode: &str) -> (PathBuf, Vec<String>) {
     std::env::set_var("FAKE_SIDECAR", mode);
@@ -20,7 +34,7 @@ fn fake(mode: &str) -> (PathBuf, Vec<String>) {
 
 #[test]
 fn announce_is_read_and_stop_closes_cleanly() {
-    let _g = FAKE_LOCK.lock().unwrap();
+    let _g = serial();
     let (exe, args) = fake("announce-then-wait-eof");
     let (sc, a) = spawn_and_announce(&exe, &args, Duration::from_secs(10))
         .map_err(|e| e.message)
@@ -37,16 +51,12 @@ fn announce_is_read_and_stop_closes_cleanly() {
 
 #[test]
 fn a_child_that_never_announces_is_a_timeout_with_its_stderr() {
-    let _g = FAKE_LOCK.lock().unwrap();
+    let _g = serial();
     let (exe, args) = fake("stderr-then-hang");
-    let err = spawn_and_announce(&exe, &args, Duration::from_millis(800))
+    let err = spawn_and_announce(&exe, &args, FAKE_STARTUP)
         .err()
         .expect("must time out");
-    assert!(
-        err.message.contains("15") || err.message.contains("announce"),
-        "message: {}",
-        err.message
-    );
+    assert!(err.message.contains("announce"), "message: {}", err.message);
     assert!(
         err.stderr_tail.contains("boom"),
         "stderr tail was not captured: {:?}",
@@ -56,7 +66,7 @@ fn a_child_that_never_announces_is_a_timeout_with_its_stderr() {
 
 #[test]
 fn a_child_that_prints_garbage_is_an_error() {
-    let _g = FAKE_LOCK.lock().unwrap();
+    let _g = serial();
     let (exe, args) = fake("garbage");
     let err = spawn_and_announce(&exe, &args, Duration::from_secs(10))
         .err()
@@ -70,7 +80,7 @@ fn a_missing_binary_is_skipped_and_the_next_candidate_used() {
     // The developer machine may well have a real orchestra on PATH, so the
     // test empties PATH for its duration (under the lock) — both candidates
     // must then fail, and the error must say what was looked for.
-    let _g = FAKE_LOCK.lock().unwrap();
+    let _g = serial();
     let saved = std::env::var_os("PATH");
     std::env::set_var("PATH", "");
     let empty = std::env::temp_dir().join("orchestra-desktop-empty-dir");
@@ -93,7 +103,7 @@ fn a_missing_binary_falls_back_to_a_working_one_on_path() {
     // missing, candidate 1 (bare name, resolved via PATH) exists and
     // announces. This is the path every developer run actually takes; only
     // the "both fail" half was covered before.
-    let _g = FAKE_LOCK.lock().unwrap();
+    let _g = serial();
     std::env::set_var("FAKE_SIDECAR", "announce-then-wait-eof");
 
     let exe_dir = std::env::temp_dir().join("orchestra-desktop-fallback-empty");
