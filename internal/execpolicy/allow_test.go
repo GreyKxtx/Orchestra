@@ -54,7 +54,8 @@ func TestCommandAllowed(t *testing.T) {
 		{"", nil, false},
 	}
 	for _, c := range cases {
-		got, reason := CommandAllowed(c.cmd, c.args, allow, deny)
+		// These lines are judged as sh reads them; cmd.exe has its own test.
+		got, reason := commandAllowedFor(c.cmd, c.args, allow, deny, false)
 		if got != c.want {
 			t.Errorf("CommandAllowed(%q, %v) = %v (%s), want %v", c.cmd, c.args, got, reason, c.want)
 		}

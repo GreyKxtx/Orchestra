@@ -230,8 +230,10 @@ func TestSourceHandler_RefusesCredentialsAndTraversal(t *testing.T) {
 	for _, f := range []string{".orchestra.env", "../../etc/passwd", "/etc/passwd"} {
 		w := httptest.NewRecorder()
 		h(w, makeSourceReq(f, "1", "5"))
-		if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "sk-live") {
-			t.Fatalf("%s: got %d %q, want 403", f, w.Code, w.Body.String())
+		// 403, or 404 where "/etc/passwd" is not an absolute path (Windows):
+		// either way nothing outside the workspace is served.
+		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "sk-live") {
+			t.Fatalf("%s: got %d %q, want it refused", f, w.Code, w.Body.String())
 		}
 	}
 }

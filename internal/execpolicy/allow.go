@@ -19,6 +19,11 @@ import (
 // it runs without a shell) would start is on allow and none is on deny. An
 // empty allow list allows nothing. reason says why a line was refused.
 func CommandAllowed(command string, args []string, allow, deny []string) (ok bool, reason string) {
+	return commandAllowedFor(command, args, allow, deny, runtime.GOOS == "windows")
+}
+
+// commandAllowedFor is CommandAllowed for the shell of the given platform.
+func commandAllowedFor(command string, args []string, allow, deny []string, windows bool) (ok bool, reason string) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return false, "empty command"
@@ -33,7 +38,7 @@ func CommandAllowed(command string, args []string, allow, deny []string) (ok boo
 		if len(args) > 0 {
 			return false, "a shell line cannot take args"
 		}
-		cmds, err := Commands(command)
+		cmds, err := commandsFor(command, windows)
 		if err != nil {
 			return false, err.Error()
 		}
