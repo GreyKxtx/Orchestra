@@ -83,10 +83,6 @@ type Runner struct {
 
 	lspManager     *lsp.Manager
 	lspAutoInstall string
-	// lspConsent is set by each turn and read by LSP warmups still running
-	// from an earlier one: guarded by lspConsentMu.
-	lspConsentMu sync.Mutex
-	lspConsent   permission.Requester
 
 	browserClient    *browser.Client
 	allowBrowserEval bool
@@ -356,19 +352,6 @@ func (r *Runner) LSPInstallProgress() *lsp.InstallProgress {
 	return r.lspManager.GetInstallProgress()
 }
 
-// SetLSPInstallConsent wires permission/request for missing language servers.
-func (r *Runner) SetLSPInstallConsent(req permission.Requester) {
-	if r == nil {
-		return
-	}
-	r.lspConsentMu.Lock()
-	r.lspConsent = req
-	r.lspConsentMu.Unlock()
-	if r.lspManager != nil {
-		r.lspManager.SetInstallConsent(req)
-	}
-}
-
 // WarmupLSP detects project languages and ensures missing automated servers.
 // With lazy_start (default), subprocesses spawn on first LSP tool touch only;
 // WarmupStart is skipped so a Go+TS monorepo does not eager-spawn both servers.
@@ -384,11 +367,10 @@ func (r *Runner) WarmupLSP(ctx context.Context) {
 		policy = "ask"
 	}
 	// Prefer silent install after detect when policy is ask but no interactive
-	// consent yet — still no network without consent. With consent (TUI turn),
-	// one batch modal covers all missing servers.
-	r.lspConsentMu.Lock()
-	consent := r.lspConsent
-	r.lspConsentMu.Unlock()
+	// consent yet — still no network without consent. With consent (the
+	// turn's client, carried in ctx), one batch modal covers all missing
+	// servers.
+	consent := permission.RequesterFrom(ctx)
 	installed, skipped, err := provision.EnsureDetected(ctx, r.workspaceRoot, policy, consent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "orchestra: lsp warmup: %v\n", err)

@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — the RPC handler is a table; consent is the turn's (2026-09)
+
+- **One decode for every method.** `RPCHandler.Handle` was a 538-line switch that repeated the same decode-and-refuse block for each of its 52 methods. The methods are a table now (`rpcMethods`), one line each, built by a generic `serve` that decodes the params once; a test holds the table to the wire's method list. Same methods, same params, same errors — `ops.apply`'s `InvalidParams` now names the method in its data like every other.
+- **A consent prompt reaches the turn that raised it.** The client that answers permission requests was set on the shared tool runner by whichever turn started last, so a language server the LSP manager had to install under one session's tool call could ask another session's client. The requester rides in the turn's context now; the runner has no consent setter.
+
 ### Changed — one launcher for every child (2026-09)
 
 - **Every child agent is started the same way.** The task runner, the skills (`skill_invoke` and the RPC `skill.invoke`), the workflow stages and the pipeline's three stages each built and ran their child by hand, and only the task runner gave its child a layer of its own, a trace of its own and a start and an end the client could see. They all go through `app.RunChild` now, and a test keeps it so. A skill or a workflow stage writes into a layer over its caller's view: its edits reach the turn when it succeeds, and a child that fails takes them with it — a failed skill used to leave its half-done write in the parent's view as if the parent had made it; a file a sibling committed under the child in the meantime is a merge conflict, as it is for tasks. Its model calls are logged under its own identity, below its caller. A panic on the child's path is the child's error.

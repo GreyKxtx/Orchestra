@@ -86,11 +86,15 @@ jobs:
             exit 1
           fi
 
-      # Linters and exclusions: .golangci.yml.
+      # Linters and exclusions: .golangci.yml. The action's config check
+      # downloads a JSON schema from golangci-lint.run first; on a slow runner
+      # that fetch timed out and failed the job before a linter ran, so it is
+      # off — the linters need nothing from the network.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
+          verify: false
           args: ./... ./llm/... ./patch/... ./protocol/...
 
   # Known vulnerabilities in the code paths the binary actually reaches, in
