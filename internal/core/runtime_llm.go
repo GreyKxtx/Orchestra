@@ -85,10 +85,11 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 	llmCfg.Model = model
 
 	if !c.llmClientInjected {
-		client := llm.NewClient(llmCfg)
-		if oc, ok := llm.AsOpenAIClient(client); ok {
-			_, _ = oc.DiscoverAndApplyLimits(ctx)
-		}
+		// The whole stack, as the core first built it: a bare NewClient here
+		// dropped the request log, the fallback provider and the router for
+		// the rest of the process after one model switch.
+		client := llm.BuildClient(llmCfg, c.cfg.LLMRegistry(), llm.NewLogger(c.workspaceRoot))
+		_, _, _ = llm.DiscoverLimits(ctx, client)
 		c.llmClient = client
 	}
 
@@ -144,10 +145,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 		c.noteConfigMTime()
 	}
 
-	ctxTokens := 0
-	if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
-		ctxTokens = oc.ContextTokens()
-	}
+	ctxTokens := llm.ContextTokensOf(c.llmClient)
 
 	return &RuntimeSetModelResult{
 		Model:         c.cfg.LLM.Model,
@@ -304,10 +302,7 @@ func (c *Core) RuntimeGetLLM(_ RuntimeGetLLMParams) (*RuntimeGetLLMResult, error
 	}
 	key := strings.TrimSpace(c.cfg.LLM.APIKey)
 	ctxTok := int(c.cfg.EffectiveNumCtx())
-	discCtx := 0
-	if oc, ok := llm.AsOpenAIClient(c.llmClient); ok {
-		discCtx = oc.ContextTokens()
-	}
+	discCtx := llm.ContextTokensOf(c.llmClient)
 	return &RuntimeGetLLMResult{
 		Provider:      c.cfg.LLM.Provider,
 		APIBase:       c.cfg.LLM.APIBase,
@@ -436,10 +431,8 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 		}
 
 		if !c.llmClientInjected {
-			client := llm.NewClient(c.cfg.LLM)
-			if oc, ok := llm.AsOpenAIClient(client); ok {
-				_, _ = oc.DiscoverAndApplyLimits(ctx)
-			}
+			client := llm.BuildClient(c.cfg.LLM, c.cfg.LLMRegistry(), llm.NewLogger(c.workspaceRoot))
+			_, _, _ = llm.DiscoverLimits(ctx, client)
 			c.llmClient = client
 		}
 

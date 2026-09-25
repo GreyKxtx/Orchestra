@@ -1,5 +1,7 @@
 package resolver
 
+import "strings"
+
 // levenshteinDistance returns the edit distance between two strings (runes).
 func levenshteinDistance(a, b string) int {
 	if a == b {
@@ -128,7 +130,8 @@ func fuzzyBlockFind(haystack, needle string) (start, end, matches int) {
 }
 
 // doubleAnchorFind uses the first two and last two non-empty trimmed lines as
-// anchors. Middle lines are verbatim from the file. Phase 11 pass 9 (E4).
+// anchors, and the lines between them must agree (middleAgrees, LLM-12).
+// Phase 11 pass 9 (E4).
 func doubleAnchorFind(haystack, needle string) (start, end, matches int) {
 	needleLines := splitBlockLines(needle)
 	needleAnchors := nonEmptyTrimmedLines(needleLines)
@@ -155,6 +158,9 @@ func doubleAnchorFind(haystack, needle string) (start, end, matches int) {
 		if winAnchors[len(winAnchors)-2] != b1 || winAnchors[len(winAnchors)-1] != b2 {
 			continue
 		}
+		if !middleAgrees(window, needleLines) {
+			continue
+		}
 		matches++
 		j := i + len(needleLines) - 1
 		if matches == 1 {
@@ -178,6 +184,36 @@ func nonEmptyTrimmedLines(lines []string) []string {
 		t := trimAnchorLine(ln)
 		if t != "" {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// middleAgrees reports whether a window of the file says what the needle
+// says, line for line, blank lines aside: each non-empty line equal once
+// runs of whitespace are collapsed, or as similar as fuzzyBlockFind asks of
+// its middle lines. The anchor passes tolerate drift — indentation, a
+// misremembered token — not a different body between two matching lines.
+func middleAgrees(window, needle []string) bool {
+	a, b := collapsedLines(window), collapsedLines(needle)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] && lineSimilarity(a[i], b[i]) < fuzzyLineMinRatio {
+			return false
+		}
+	}
+	return true
+}
+
+// collapsedLines is lines' non-empty lines with each run of whitespace made
+// one space.
+func collapsedLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, ln := range lines {
+		if f := strings.Fields(ln); len(f) > 0 {
+			out = append(out, strings.Join(f, " "))
 		}
 	}
 	return out

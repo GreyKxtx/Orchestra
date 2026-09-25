@@ -250,6 +250,13 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 		ensureToolCallIDs(resp, stepNum)
 		step, raw, nerr := NormalizeLLMWithDefs(a.validator, resp, toolDefs)
 		lastRaw = raw
+		if nerr == nil && resp != nil && resp.StopReason == llm.StopMaxTokens {
+			// A cut answer can still parse: the lenient JSON repair closes
+			// the braces of a final whose patches were cut away, or of a
+			// write whose content stops mid-function — which would then be
+			// written. Cut is never whole.
+			nerr = protocol.NewError(protocol.InvalidLLMOutput, "the answer was cut off at the output token limit before it was complete", nil)
+		}
 
 		if nerr != nil {
 			// Inject validation error as user message and retry
@@ -261,7 +268,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			// Add error feedback to messages for retry
 			errorMsg := llm.Message{
 				Role:    llm.RoleUser,
-				Content: formatValidatorErrorCompact(lastInvalid.Message),
+				Content: stopReasonHint(resp) + formatValidatorErrorCompact(lastInvalid.Message),
 			}
 			messages = append(messages, errorMsg)
 			// Truncate again if needed
@@ -293,8 +300,15 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 
 // streamStep calls CompleteStream and forwards events to OnEvent, returning
 // the final assembled CompleteResponse from the Done event. Transient stream
-// failures (dead tunnel, stall, reset) before any assistant content arrived
-// are retried in place so one network hiccup doesn't kill a long agent turn.
+// failures (dead tunnel, stall, reset, a stream cut off before its end) are
+// retried in place so one network hiccup doesn't kill a long agent turn.
+//
+// A stream cut off mid-answer is retried too (LLM-8). It used to be taken
+// as the model's whole answer — half a sentence, or a tool call with its
+// arguments cut short; once the parser called it an error, refusing to retry
+// after content had streamed would have ended the turn instead. The retry
+// is announced, so a client that already showed the partial answer shows
+// that it was dropped; only the retried answer enters the history.
 func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.Streamer, step int) (*llm.CompleteResponse, error) {
 	const maxStreamAttempts = 3
 	var lastErr error
@@ -314,9 +328,10 @@ func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.S
 			}
 			return nil, err
 		}
-		// Content already streamed to the UI: retrying would duplicate it and
-		// diverge from what the user saw  -  surface the error instead.
-		if ctx.Err() != nil || contentStarted || !llm.IsTransientLLMError(err) || attempt == maxStreamAttempts {
+		// A client that retried err itself (waiting out Retry-After) has
+		// done what a retry here would: doing it again made up to nine
+		// requests of one step (LLM-14).
+		if ctx.Err() != nil || !llm.IsTransientLLMError(err) || llm.AlreadyRetried(err) || attempt == maxStreamAttempts {
 			// Context overflow is handled by the Run loop (compact + replay);
 			// emitting a hard error here would show the user a failure for a
 			// step that is about to be retried successfully.
@@ -330,9 +345,13 @@ func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.S
 		}
 		a.logf("stream attempt %d/%d failed (transient): %v  -  retrying", attempt, maxStreamAttempts, err)
 		if a.opts.OnEvent != nil {
+			note := "LLM stream interrupted"
+			if contentStarted {
+				note = "LLM stream cut off mid-answer; the partial answer above is discarded"
+			}
 			a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 				Kind:    llm.StreamEventRecoverableError,
-				Content: truncate(fmt.Sprintf("LLM stream interrupted, retry %d/%d: %v", attempt, maxStreamAttempts-1, err), 200),
+				Content: truncate(fmt.Sprintf("%s, retry %d/%d: %v", note, attempt, maxStreamAttempts-1, err), 200),
 			}})
 		}
 		select {
@@ -557,4 +576,22 @@ func ensureToolCallIDs(resp *llm.CompleteResponse, stepNum int) {
 		}
 		resp.Message.ToolCalls[i].ID = fmt.Sprintf("call_%d_%d_%d", stepNum, stamp, i)
 	}
+}
+
+// stopReasonHint says why an answer that failed validation ended, when the
+// provider said it was not a natural end. An answer cut at max_tokens fails
+// as broken JSON or a tool call with half its arguments; told only "fix the
+// JSON", the model resends the same long answer and is cut again.
+func stopReasonHint(resp *llm.CompleteResponse) string {
+	if resp == nil {
+		return ""
+	}
+	switch resp.StopReason {
+	case llm.StopMaxTokens:
+		return "Your previous answer was cut off at the output token limit (max_tokens) before it was complete. " +
+			"Send a shorter answer: fewer tool calls per step, and write a large file in parts (a skeleton first, then edits).\n"
+	case llm.StopFiltered:
+		return "Your previous answer was stopped by the provider's content filter before it was complete.\n"
+	}
+	return ""
 }

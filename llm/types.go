@@ -34,6 +34,39 @@ type Message struct {
 
 	// ToolCalls is returned by the model when it wants to call tools.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	// Thinking is the reasoning an Anthropic answer carried, block by block,
+	// kept verbatim with its signature (LLM-6). Within a tool-use turn the
+	// API wants every block back, unmodified and in order, beside the
+	// tool_use it led to; dropping them failed the next step of a
+	// thinking-enabled run with a 400. Persisted with the history; never sent
+	// to an OpenAI-compatible endpoint.
+	Thinking []ThinkingBlock `json:"thinking,omitempty"`
+}
+
+// ThinkingBlock is one thinking or redacted_thinking block. Text may be
+// empty — models that hide their thinking send only the signature, which
+// carries it encrypted. Redacted holds a redacted_thinking block's data.
+type ThinkingBlock struct {
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Redacted  string `json:"redacted,omitempty"`
+}
+
+// WithoutThinking returns msgs with no Thinking blocks, copying only when
+// one carries some.
+func WithoutThinking(msgs []Message) []Message {
+	for i := range msgs {
+		if len(msgs[i].Thinking) == 0 {
+			continue
+		}
+		out := append([]Message(nil), msgs...)
+		for j := i; j < len(out); j++ {
+			out[j].Thinking = nil
+		}
+		return out
+	}
+	return msgs
 }
 
 // ContentPartKind enumerates the kinds of content a multimodal message
@@ -402,6 +435,38 @@ type CompleteResponse struct {
 	// Usage carries token accounting reported by the provider for this turn.
 	// Nil when the provider did not return usage info (some local servers omit it).
 	Usage *TokenUsage
+	// StopReason is why the model stopped, normalised across providers
+	// (StopEnd, StopMaxTokens, StopToolUse, StopFiltered; a provider value
+	// with no equivalent is passed through). Empty when it was not reported.
+	StopReason string
+}
+
+// Stop reasons, normalised from OpenAI's finish_reason and Anthropic's
+// stop_reason.
+const (
+	StopEnd       = "end"
+	StopMaxTokens = "max_tokens"
+	StopToolUse   = "tool_use"
+	StopFiltered  = "filtered"
+)
+
+// NormalizeStopReason maps a provider's finish/stop reason to the Stop*
+// constants.
+func NormalizeStopReason(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return ""
+	case "stop", "end_turn", "stop_sequence", "eos":
+		return StopEnd
+	case "length", "max_tokens", "model_context_window_exceeded":
+		return StopMaxTokens
+	case "tool_calls", "tool_use", "function_call":
+		return StopToolUse
+	case "content_filter", "refusal", "safety":
+		return StopFiltered
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
 }
 
 // TokenUsage is provider-reported token accounting for a single completion.

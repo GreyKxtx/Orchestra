@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/llm"
@@ -42,12 +43,20 @@ func containsAny(q string, words ...string) bool {
 	return false
 }
 
+// ClassifyTimeout bounds the classifier's call. A turn waits for its mode
+// before it starts, and the classifier ran with no limit of its own (LLM-14):
+// a router model that stopped answering held the turn with it. Past the
+// limit, the heuristic decides.
+var ClassifyTimeout = 30 * time.Second
+
 // Classify uses a one-shot LLM JSON reply, falling back to HeuristicClassify.
 func Classify(ctx context.Context, client llm.Client, query string) Decision {
 	fallback := HeuristicClassify(query)
 	if client == nil || strings.TrimSpace(query) == "" {
 		return fallback
 	}
+	ctx, cancel := context.WithTimeout(ctx, ClassifyTimeout)
+	defer cancel()
 	system := promptpkg.LoadEmbedded("auto-router.txt")
 	if system == "" {
 		system = defaultRouterPrompt

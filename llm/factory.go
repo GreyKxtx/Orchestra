@@ -38,9 +38,7 @@ func NewClient(cfg LLMConfig) Client {
 // NewClient stood before.
 func BuildClient(cfg LLMConfig, reg ProviderRegistry, logger *Logger) Client {
 	c := NewClient(cfg)
-	if oc, ok := AsOpenAIClient(c); ok && logger != nil {
-		oc.SetLogger(logger)
-	}
+	attachLogger(c, logger)
 	c = MaybeWrapFallback(c, reg, cfg, logger)
 	return MaybeWrapRouter(c, reg, cfg.Router)
 }

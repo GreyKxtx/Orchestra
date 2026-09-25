@@ -212,10 +212,7 @@ func runWorkflowRun(cmd *cobra.Command, args []string) error {
 	}
 	defer runner.Close()
 
-	var agentLogger *llm.Logger
-	if oc, ok := llm.AsOpenAIClient(llmClient); ok {
-		agentLogger = oc.GetLogger()
-	}
+	agentLogger := llm.LoggerOf(llmClient)
 	var hooksRunner agent.HooksRunner
 	if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
 		hooksRunner = hr

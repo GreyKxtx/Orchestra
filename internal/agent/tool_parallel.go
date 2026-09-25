@@ -138,6 +138,7 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 			Role:      llm.RoleAssistant,
 			Content:   "",
 			ToolCalls: llmResp.Message.ToolCalls,
+			Thinking:  llmResp.Message.Thinking,
 		})
 	}
 

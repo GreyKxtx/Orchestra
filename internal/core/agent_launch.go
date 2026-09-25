@@ -282,14 +282,11 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	allowWeb := spec.AllowWeb || (c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm)
 
 	// The agent's own lines (tool calls, results, classifications) go to
-	// llm_log.jsonl whatever the provider. Only the OpenAI-compatible client
-	// carries a logger of its own; the others used to leave the turn with no
-	// log at all.
-	agentLogger := llm.NewLogger(c.workspaceRoot)
-	if c.llmClient != nil {
-		if oc, ok := llm.AsOpenAIClient(c.llmClient); ok && oc.GetLogger() != nil {
-			agentLogger = oc.GetLogger()
-		}
+	// llm_log.jsonl whatever the provider: the client's logger when it has
+	// one, a fresh handle on the same file otherwise.
+	agentLogger := llm.LoggerOf(c.llmClient)
+	if agentLogger == nil {
+		agentLogger = llm.NewLogger(c.workspaceRoot)
 	}
 
 	var hooksRunner agent.HooksRunner

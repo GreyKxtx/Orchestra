@@ -355,6 +355,9 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 					Role:      llm.RoleAssistant,
 					Content:   "",
 					ToolCalls: llmResp.Message.ToolCalls,
+					// Anthropic wants the thinking back beside the tool_use
+					// it led to, or the next step is a 400 (LLM-6).
+					Thinking: llmResp.Message.Thinking,
 				})
 				a.logf("agent.tool_call added assistant message to history, history_len=%d, tool_calls=%d", len(history), len(calls))
 			} else {

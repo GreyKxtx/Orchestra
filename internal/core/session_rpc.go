@@ -347,6 +347,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err := validateTurnInput(params.Content, params.Attachments); err != nil {
 		return nil, err
 	}
+	if err := c.validateTurnMode(params.Mode); err != nil {
+		return nil, err
+	}
 
 	imageParts, err := loadAttachmentImages(c.cfg, c.workspaceRoot, params.Attachments)
 	if err != nil {

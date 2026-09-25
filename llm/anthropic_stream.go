@@ -10,28 +10,33 @@ import (
 )
 
 type anthropicStreamRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	System    any                `json:"system,omitempty"`
-	Messages  []anthropicMessage `json:"messages"`
-	Tools     []anthropicTool    `json:"tools,omitempty"`
-	Thinking  *anthropicThinking `json:"thinking,omitempty"`
-	Stream    bool               `json:"stream"`
+	Model     string                 `json:"model"`
+	MaxTokens int                    `json:"max_tokens"`
+	System    any                    `json:"system,omitempty"`
+	Messages  []anthropicMessage     `json:"messages"`
+	Tools     []anthropicTool        `json:"tools,omitempty"`
+	Thinking  *anthropicThinking     `json:"thinking,omitempty"`
+	Output    *anthropicOutputConfig `json:"output_config,omitempty"`
+	Stream    bool                   `json:"stream"`
 }
 
 type anthropicStreamEvent struct {
 	Type         string `json:"type"`
 	Index        int    `json:"index"`
 	ContentBlock struct {
-		Type string `json:"type"`
-		ID   string `json:"id,omitempty"`
-		Name string `json:"name,omitempty"`
-		Text string `json:"text,omitempty"`
+		Type      string `json:"type"`
+		ID        string `json:"id,omitempty"`
+		Name      string `json:"name,omitempty"`
+		Text      string `json:"text,omitempty"`
+		Thinking  string `json:"thinking,omitempty"`
+		Signature string `json:"signature,omitempty"`
+		Data      string `json:"data,omitempty"` // redacted_thinking
 	} `json:"content_block,omitempty"`
 	Delta struct {
 		Type         string `json:"type"`
 		Text         string `json:"text,omitempty"`
 		Thinking     string `json:"thinking,omitempty"`
+		Signature    string `json:"signature,omitempty"`
 		PartialJSON  string `json:"partial_json,omitempty"`
 		StopReason   string `json:"stop_reason,omitempty"`
 		StopSequence string `json:"stop_sequence,omitempty"`
@@ -97,6 +102,10 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 			case "content_block_start":
 				block := ev.ContentBlock
 				switch block.Type {
+				case "thinking":
+					acc.StartThinking(ev.Index, block.Thinking, block.Signature, "")
+				case "redacted_thinking":
+					acc.StartThinking(ev.Index, "", "", block.Data)
 				case "tool_use":
 					toolIndex++
 					toolIndices[ev.Index] = toolIndex
@@ -118,13 +127,16 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 						ch <- StreamEvent{Kind: StreamEventMessageDelta, Content: ev.Delta.Text}
 					}
 				case "thinking_delta":
-					// Extended thinking arrives in its own blocks. It goes to
-					// the reasoning channel, never into the message content:
-					// the accumulated content is what gets stored in history
-					// and re-sent, and Anthropic rejects replayed thinking.
+					// Thinking arrives in its own blocks. It is shown on the
+					// reasoning channel and kept, with its signature, in the
+					// message's Thinking — never in its content: the API
+					// wants the blocks back as blocks, unmodified.
+					acc.AppendThinking(ev.Index, ev.Delta.Thinking, "")
 					if ev.Delta.Thinking != "" {
 						ch <- StreamEvent{Kind: StreamEventReasoningDelta, Content: ev.Delta.Thinking}
 					}
+				case "signature_delta":
+					acc.AppendThinking(ev.Index, "", ev.Delta.Signature)
 				case "input_json_delta":
 					idx, ok := toolIndices[ev.Index]
 					if !ok {
@@ -140,6 +152,9 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 					}
 				}
 			case "message_delta":
+				if ev.Delta.StopReason != "" {
+					acc.stopReason = ev.Delta.StopReason
+				}
 				if ev.Usage != nil {
 					acc.usage = ev.Usage.toTokenUsage()
 				} else if ev.Message.Usage != nil {
@@ -158,7 +173,13 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			ch <- StreamEvent{Kind: StreamEventError, Err: err}
+			ch <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf("SSE read error: %w", err)}
+			return
+		}
+		// No message_stop: whole only if message_delta said why it stopped;
+		// otherwise the connection was cut mid-answer (LLM-8).
+		if acc.stopReason == "" {
+			ch <- StreamEvent{Kind: StreamEventError, Err: errStreamCutOff}
 			return
 		}
 		emitDone()

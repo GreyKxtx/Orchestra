@@ -352,7 +352,12 @@ func (a *Agent) afterRunnerSuccess(ctx, callCtx context.Context, cb *CircuitBrea
 	a.logf("agent.tool_call added tool message to history, history_len=%d, tool_call_id=%s", len(*history), toolCallID)
 	cb.ResetToolErrors()
 	cb.ResetDeniedForTool(name)
-	cb.ResetFinalFailures()
+	// A failed final is forgiven by a change, not by any call that worked:
+	// reset on every successful read, the loop read → failed final → read →
+	// failed final never tripped MaxFinalFailures (LLM-9).
+	if changesWorkspace(name) {
+		cb.ResetFinalFailures()
+	}
 }
 
 func (a *Agent) requestInteractivePermission(ctx context.Context, toolName, subject string, input json.RawMessage) (bool, error) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -44,22 +45,31 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 	var matches []search.Match
 	if search.HasRipgrep() {
 		var scopePaths []string
+		stagedOnly := 0
 		for _, p := range req.Paths {
 			p = strings.TrimSpace(p)
 			if p == "" {
 				continue
 			}
-			abs, _, err := resolveWorkspacePath(c.Root, p)
+			abs, rel, err := resolveWorkspacePath(c.Root, p)
 			if err != nil {
 				return nil, err
 			}
+			if c.onlyStaged(abs, rel) {
+				stagedOnly++
+				continue
+			}
 			scopePaths = append(scopePaths, abs)
 		}
-		m, err := search.SearchWithRipgrep(c.Root, query, exclude, opts, scopePaths)
-		if err != nil {
-			return nil, err
+		// Every scope exists only in the overlay: nothing on disk to search,
+		// and rg with no path would search the whole project.
+		if stagedOnly == 0 || len(scopePaths) > 0 {
+			m, err := search.SearchWithRipgrep(c.Root, query, exclude, opts, scopePaths)
+			if err != nil {
+				return nil, err
+			}
+			matches = m
 		}
-		matches = m
 	} else if len(req.Paths) == 0 {
 		m, err := search.SearchInProject(c.Root, query, exclude, opts)
 		if err != nil {
@@ -73,9 +83,12 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 			if p == "" {
 				continue
 			}
-			abs, _, err := resolveWorkspacePath(c.Root, p)
+			abs, rel, err := resolveWorkspacePath(c.Root, p)
 			if err != nil {
 				return nil, err
+			}
+			if c.onlyStaged(abs, rel) {
+				continue
 			}
 			st, err := os.Stat(abs)
 			if err != nil {
@@ -95,6 +108,11 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 			}
 			matches = append(matches, searchInSingleFile(abs, string(b), query, queryLower, opts)...)
 		}
+	}
+
+	matches, err := c.withStagedMatches(matches, req.Paths, query, exclude, opts, search.HasRipgrep())
+	if err != nil {
+		return nil, err
 	}
 
 	out := make([]SearchTextMatch, 0, len(matches))
@@ -274,4 +292,130 @@ func collectContextLines(lines []string, currentLine int, contextLines int, befo
 		ctx = append(ctx, strings.TrimRight(lines[i], "\r\n"))
 	}
 	return ctx
+}
+
+// withStagedMatches makes a dry run's search answer about the files as read
+// and edit see them: the staged overlay over the disk. It searched the disk
+// alone (LLM-11): a line the turn had already changed was still found, a line
+// it had added was not, and the edit built from the hit failed as stale —
+// the loop the model then went round.
+//
+// A staged file's disk matches are replaced by matches in its staged
+// content; a staged file new to the disk is searched too. regex follows the
+// disk search: ripgrep's pattern, or a plain substring without it.
+func (c *Client) withStagedMatches(matches []search.Match, scope []string, query string, exclude []string, opts search.Options, regex bool) ([]search.Match, error) {
+	if !c.isDryRun() || c.Overlay == nil {
+		return matches, nil
+	}
+	staged := c.Overlay.StagedFileContent()
+	if len(staged) == 0 {
+		return matches, nil
+	}
+	var scopes []string
+	for _, p := range scope {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		_, rel, err := resolveWorkspacePath(c.Root, p)
+		if err != nil {
+			return nil, err
+		}
+		scopes = append(scopes, rel)
+	}
+	kept := matches[:0:0]
+	for _, m := range matches {
+		rel, err := filepath.Rel(c.Root, m.FilePath)
+		if err == nil {
+			if _, isStaged := staged[filepath.ToSlash(rel)]; isStaged {
+				continue
+			}
+		}
+		kept = append(kept, m)
+	}
+	var re *regexp.Regexp
+	if regex {
+		pattern := query
+		if opts.CaseInsensitive {
+			pattern = "(?i)" + pattern
+		}
+		re, _ = regexp.Compile(pattern) // not RE2-compatible: fall back to a substring
+	}
+	paths := make([]string, 0, len(staged))
+	for rel := range staged {
+		paths = append(paths, rel)
+	}
+	sort.Strings(paths)
+	for _, rel := range paths {
+		if !inSearchScope(rel, scopes, exclude) {
+			continue
+		}
+		abs := filepath.Join(c.Root, filepath.FromSlash(rel))
+		if re != nil {
+			kept = append(kept, searchStagedRegex(abs, staged[rel], re, opts)...)
+			continue
+		}
+		kept = append(kept, searchInSingleFile(abs, staged[rel], query, strings.ToLower(query), opts)...)
+	}
+	return kept, nil
+}
+
+// inSearchScope reports whether rel is under one of scopes (all of the
+// project when none) and outside the excluded directories.
+func inSearchScope(rel string, scopes, exclude []string) bool {
+	for _, part := range strings.Split(rel, "/") {
+		for _, ex := range exclude {
+			if part == ex {
+				return false
+			}
+		}
+	}
+	if len(scopes) == 0 {
+		return true
+	}
+	for _, s := range scopes {
+		if s == "." || s == "" || rel == s || strings.HasPrefix(rel, strings.TrimSuffix(s, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func searchStagedRegex(filePath, content string, re *regexp.Regexp, opts search.Options) []search.Match {
+	var out []search.Match
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if len(out) >= opts.MaxMatchesPerFile {
+			break
+		}
+		if !re.MatchString(line) {
+			continue
+		}
+		out = append(out, search.Match{
+			FilePath:      filePath,
+			Line:          i + 1,
+			LineText:      strings.TrimRight(line, "\r\n"),
+			ContextBefore: collectContextLines(lines, i, opts.ContextLines, true),
+			ContextAfter:  collectContextLines(lines, i, opts.ContextLines, false),
+		})
+	}
+	return out
+}
+
+// onlyStaged reports whether a search scope exists in the dry run's overlay
+// but not on disk — a file or directory the turn has created. The disk
+// search skips it (ripgrep fails on a missing path); withStagedMatches
+// covers it.
+func (c *Client) onlyStaged(abs, rel string) bool {
+	if !c.isDryRun() || c.Overlay == nil {
+		return false
+	}
+	if _, err := os.Stat(abs); err == nil {
+		return false
+	}
+	for p := range c.Overlay.StagedFileContent() {
+		if p == rel || strings.HasPrefix(p, strings.TrimSuffix(rel, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }

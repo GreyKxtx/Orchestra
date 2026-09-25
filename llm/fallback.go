@@ -145,8 +145,8 @@ func (f *FallbackClient) Plan(ctx context.Context, prompt string) (string, error
 	return out, nil
 }
 
-// Unwrap exposes the primary so helpers such as AsOpenAIClient can reach the
-// concrete client the logger was attached to.
+// Unwrap exposes the primary, so the stack helpers (LoggerOf,
+// DiscoverLimits) reach the provider client beneath.
 func (f *FallbackClient) Unwrap() Client { return f.primary }
 
 // ContextTokens reports the smaller of the two windows: a run that may land
@@ -190,9 +190,7 @@ func MaybeWrapFallback(main Client, reg ProviderRegistry, cfg LLMConfig, logger 
 	}
 	fbCfg.FallbackProvider = "" // one hop only: no chains, no cycles
 	secondary := NewClient(fbCfg)
-	if oc, found := AsOpenAIClient(secondary); found && logger != nil {
-		oc.SetLogger(logger)
-	}
+	attachLogger(secondary, logger)
 	fb := NewFallbackClient(main, providerLabel(cfg), secondary, name)
 	if logger != nil {
 		fb.OnSwitch = func(from, to string, err error) {
@@ -219,11 +217,9 @@ func providerLabel(cfg LLMConfig) string {
 type clientUnwrapper interface{ Unwrap() Client }
 
 // AsOpenAIClient finds the concrete OpenAI-compatible client inside any stack
-// of decorators.
-//
-// Twenty-odd call sites attach the request logger with a plain type assertion
-// on the client. Every wrapper added since would have silently emptied
-// llm_log.jsonl at those sites; this is the assertion they should use.
+// of decorators. Code outside this package asks for a capability instead
+// (LoggerOf, ContextTokensOf, DiscoverLimits): a concrete type is a no-op on
+// every other provider.
 func AsOpenAIClient(c Client) (*OpenAIClient, bool) {
 	for i := 0; i < 8 && c != nil; i++ {
 		if oc, ok := c.(*OpenAIClient); ok {

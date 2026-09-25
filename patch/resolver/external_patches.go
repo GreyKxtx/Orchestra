@@ -775,8 +775,14 @@ func isBoundaryWS(b byte) bool {
 }
 
 // blockAnchorFind locates a multi-line block by matching trimmed first and last
-// lines (strict anchors) with the same line count as needle. Middle lines are
-// taken verbatim from the file — no Levenshtein. Phase 11 pass 7 (A2).
+// lines (strict anchors) with the same line count as needle. Phase 11 pass 7
+// (A2).
+//
+// The middle lines must agree too (middleAgrees). They were taken from the
+// file unchecked (LLM-12): a search block whose first and last lines were
+// unique matched any body of the same length between them, and the whole
+// function was replaced with text written against a body the model had
+// never read.
 func blockAnchorFind(haystack, needle string) (start, end, matches int) {
 	needleLines := splitBlockLines(needle)
 	if len(needleLines) < 2 {
@@ -799,6 +805,9 @@ func blockAnchorFind(haystack, needle string) (start, end, matches int) {
 		}
 		j := i + len(needleLines) - 1
 		if trimAnchorLine(hayLines[j]) != lastAnchor {
+			continue
+		}
+		if !middleAgrees(hayLines[i:j+1], needleLines) {
 			continue
 		}
 		matches++
